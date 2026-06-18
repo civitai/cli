@@ -32,6 +32,8 @@ plus the ported semantic rules and structural checks:
   - targets[].slotId must be a known registered slot
 
 Defaults to the current directory.`,
+		Example: `  civitai app validate            # the current directory
+  civitai app validate ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."

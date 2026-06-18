@@ -2,4 +2,7 @@
 /dist/
 *.out
 *.test
+coverage.out
+coverage.html
 .DS_Store
+.venv/
