@@ -1,0 +1,29 @@
+/// <reference types="vitest/config" />
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+
+// base MUST be '/' — the platform serves the build output at the root of the
+// app's own subdomain and server-owns the manifest iframe.src (the W10 page
+// surface iframes the bundle at /apps/run/{{ .Slug }}). No path prefix.
+export default defineConfig({
+  base: '/',
+  plugins: [react()],
+  server: {
+    // The dev harness fires a fake BLOCK_INIT from window.location.origin and
+    // the SDK IframeTransport drops any postMessage whose origin isn't its
+    // allowed parent origin. Pin host+port so that origin is stable.
+    host: 'localhost',
+    port: 5186,
+    strictPort: true,
+  },
+  build: {
+    target: 'es2022',
+    rollupOptions: { output: { manualChunks: undefined } },
+  },
+  test: {
+    // Pure-logic unit tests run in node; the cost-format / insufficient-Buzz
+    // sniff / poll-state helpers don't touch the DOM.
+    environment: 'node',
+    include: ['src/**/*.test.ts'],
+  },
+});

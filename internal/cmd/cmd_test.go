@@ -126,6 +126,127 @@ func TestAppInitPageViteTemplate(t *testing.T) {
 	}
 }
 
+func TestAppInitPageMoneyTemplate(t *testing.T) {
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	out, _, err := run(t, "app", "init", "money-app", "--template", "page-money")
+	if err != nil {
+		t.Fatalf("app init page-money: %v\n%s", err, out)
+	}
+	// SDK-wired files present.
+	for _, f := range []string{"package.json", "src/App.tsx", "src/Harness.tsx", "src/generation.ts", ".env.example"} {
+		if _, err := os.Stat(filepath.Join(tmp, "money-app", filepath.FromSlash(f))); err != nil {
+			t.Errorf("page-money should scaffold %s: %v", f, err)
+		}
+	}
+	// Next steps must use dev:harness (plain `dev` renders blank without a host).
+	if !strings.Contains(out, "npm run dev:harness") {
+		t.Errorf("page-money next steps should mention dev:harness: %s", out)
+	}
+	if strings.Contains(out, "npm run dev\n") {
+		t.Errorf("page-money next steps should NOT suggest plain `npm run dev`: %s", out)
+	}
+	// And it must validate clean (the scaffold sets a budget so no warnings).
+	if _, _, err := run(t, "app", "validate", filepath.Join(tmp, "money-app")); err != nil {
+		t.Errorf("scaffolded page-money should validate: %v", err)
+	}
+}
+
+func TestAppInitDirFlag(t *testing.T) {
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	target := filepath.Join("nested", "custom-dir")
+	out, _, err := run(t, "app", "init", "my-block", "--dir", target)
+	if err != nil {
+		t.Fatalf("app init --dir: %v\n%s", err, out)
+	}
+	// Project lands in the custom dir, not ./<slug>.
+	if _, err := os.Stat(filepath.Join(tmp, target, "block.manifest.json")); err != nil {
+		t.Errorf("expected manifest in --dir target: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "my-block")); err == nil {
+		t.Error("--dir should NOT create the default ./<slug> dir")
+	}
+	// The slug is still my-block (independent of the dir).
+	manifest := readManifest(t, filepath.Join(tmp, target))
+	if !strings.Contains(manifest, `"blockId": "my-block"`) {
+		t.Errorf("slug should remain my-block: %s", manifest)
+	}
+	// Next steps should cd into the target dir, not the slug.
+	if !strings.Contains(out, filepath.ToSlash(target)) && !strings.Contains(out, target) {
+		t.Errorf("next steps should reference the target dir: %s", out)
+	}
+}
+
+func TestAppInitPositionalDir(t *testing.T) {
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	_, _, err := run(t, "app", "init", "my-block", "out-dir")
+	if err != nil {
+		t.Fatalf("app init <name> <dir>: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(tmp, "out-dir", "block.manifest.json")); err != nil {
+		t.Errorf("positional dir should be used: %v", err)
+	}
+}
+
+func TestAppInitNameFlagSeparatesNameFromSlug(t *testing.T) {
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	_, _, err := run(t, "app", "init", "my-block", "--name", "My Fancy Block")
+	if err != nil {
+		t.Fatalf("app init --name: %v", err)
+	}
+	manifest := readManifest(t, filepath.Join(tmp, "my-block"))
+	// Display name from --name, slug from the positional arg — they differ.
+	if !strings.Contains(manifest, `"name": "My Fancy Block"`) {
+		t.Errorf("display name should be from --name: %s", manifest)
+	}
+	if !strings.Contains(manifest, `"blockId": "my-block"`) {
+		t.Errorf("slug should remain my-block: %s", manifest)
+	}
+}
+
+func TestAppInitConflictingDir(t *testing.T) {
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	_, _, err := run(t, "app", "init", "my-block", "posdir", "--dir", "flagdir")
+	if err == nil {
+		t.Fatal("expected error for conflicting positional dir and --dir")
+	}
+	if !strings.Contains(err.Error(), "conflicting") {
+		t.Errorf("error should mention the conflict: %v", err)
+	}
+}
+
+func TestAppValidateWarningsExitZero(t *testing.T) {
+	tmp := t.TempDir()
+	// A budgeted page with no budget: warns but is otherwise valid -> exit 0.
+	writeBudgetedNoBudgetManifest(t, tmp)
+	out, errOut, err := run(t, "app", "validate", tmp)
+	if err != nil {
+		t.Fatalf("warning-only validate should exit 0: %v\nstderr: %s", err, errOut)
+	}
+	if !strings.Contains(errOut, "warning(s)") {
+		t.Errorf("stderr should list warnings: %s", errOut)
+	}
+	if !strings.Contains(out, "OK (with") {
+		t.Errorf("stdout should report OK-with-warnings: %s", out)
+	}
+}
+
+func TestAppValidateStrictFailsOnWarnings(t *testing.T) {
+	tmp := t.TempDir()
+	writeBudgetedNoBudgetManifest(t, tmp)
+	_, errOut, err := run(t, "app", "validate", tmp, "--strict")
+	if err == nil {
+		t.Fatal("expected --strict to fail on warnings")
+	}
+	if !strings.Contains(errOut, "warning(s)") {
+		t.Errorf("stderr should list warnings under --strict: %s", errOut)
+	}
+}
+
 func TestAppInitRequiresName(t *testing.T) {
 	tmp := t.TempDir()
 	chdir(t, tmp)
@@ -263,6 +384,35 @@ func TestJoinLines(t *testing.T) {
 	}
 	if got := joinLines(nil); got != "" {
 		t.Errorf("joinLines(nil) = %q", got)
+	}
+}
+
+func readManifest(t *testing.T, dir string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, "block.manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	return string(b)
+}
+
+func writeBudgetedNoBudgetManifest(t *testing.T, dir string) {
+	t.Helper()
+	const m = `{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "blockId": "no-budget",
+  "version": "0.1.0",
+  "name": "No Budget",
+  "type": "block",
+  "scopes": ["ai:write:budgeted"],
+  "page": { "path": "/", "title": "No Budget" },
+  "iframe": { "minHeight": 600, "resizable": true, "sandbox": "allow-scripts allow-forms" },
+  "contentRating": "g",
+  "buildCommand": "npm run build",
+  "outputDir": "dist"
+}`
+	if err := os.WriteFile(filepath.Join(dir, "block.manifest.json"), []byte(m), 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 

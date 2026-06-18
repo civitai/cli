@@ -22,11 +22,20 @@ var printer = message.NewPrinter(language.English)
 
 // Result is the outcome of validating a project directory.
 type Result struct {
+	// Errors are hard failures: the server will reject the manifest. Non-empty
+	// Errors means validation failed.
 	Errors []string
+	// Warnings are non-fatal money-path / footgun advisories the schema can't
+	// express as hard errors (e.g. a budgeted page with no per-gen budget).
+	// They do not fail validation unless --strict is requested.
+	Warnings []string
 }
 
-// OK reports whether validation passed.
+// OK reports whether validation passed (no hard errors).
 func (r Result) OK() bool { return len(r.Errors) == 0 }
+
+// HasWarnings reports whether any non-fatal advisories were emitted.
+func (r Result) HasWarnings() bool { return len(r.Warnings) > 0 }
 
 var compiled *jsonschema.Schema
 
@@ -98,8 +107,15 @@ func Dir(dir string) (Result, error) {
 	// set"; here we also check the directory is declared/exists sanely).
 	res.Errors = append(res.Errors, buildCoherence(dir, m)...)
 
+	// Non-fatal advisories: real money-path footguns the schema can't catch as
+	// hard errors (see warnings.go). These never fail validation unless the
+	// caller opts into --strict.
+	res.Warnings = append(res.Warnings, warningChecks(generic)...)
+
 	sort.Strings(res.Errors)
 	res.Errors = dedupe(res.Errors)
+	sort.Strings(res.Warnings)
+	res.Warnings = dedupe(res.Warnings)
 	return res, nil
 }
 

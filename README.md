@@ -72,8 +72,8 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 | --- | --- |
 | `civitai login [--token <t>]` | Store your API token (`~/.config/civitai/config.yaml`, 0600). Also reads `CIVITAI_TOKEN`. |
 | `civitai whoami` | Verify the stored token; print the authenticated user. |
-| `civitai app init [name] [--template static\|page-vite]` | Scaffold a correct, ready-to-build App Block project. |
-| `civitai app validate [dir]` | Best-effort local pre-check of `block.manifest.json` (see [Validate fidelity](#validate-fidelity)). |
+| `civitai app init [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | Scaffold a correct, ready-to-build App Block project (default dir `./<slug>`). |
+| `civitai app validate [dir] [--strict]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + submit (or write the bundle + print manual next steps). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
@@ -87,6 +87,13 @@ full details and examples.
   `block.manifest.json` with `page:{}`, no build step).
 - **`page-vite`** — a Vite + React page block with config-as-code build fields
   (`buildCommand: "npm run build"` + `outputDir: "dist"`).
+- **`page-money`** — a Vite + React + TypeScript full-page (W10) **money-path**
+  block wired to the published App SDK (`@civitai/blocks-react` +
+  `@civitai/app-sdk`): prompt → estimate → lazy consent → submit → poll → real
+  Buzz spend, via `useBuzzWorkflow` / `useRequestConsent` / `useBlockResize`
+  (never raw `postMessage`). Ships a `dev:harness` mock host, `.env.*` allowed
+  parent-origin config, and a unit-test stub. Run `npm run dev:harness` (plain
+  `npm run dev` renders blank without a host).
 
 ### Examples
 

@@ -1,0 +1,60 @@
+# {{ .Name }}
+
+A Civitai **page money-path** App Block (Vite + React + TypeScript), wired to
+the published App SDK (`@civitai/blocks-react` + `@civitai/app-sdk`). It mounts
+as a full-page (W10) app at `/apps/run/{{ .Slug }}` and spends Buzz to generate
+an image: estimate → (lazy consent) → submit → poll → result.
+
+## What this is
+
+A sandboxed static web app served in an iframe by the Civitai host. The platform
+owns the build: it runs `npm ci` then the `buildCommand` from
+`block.manifest.json` (`npm run build`), serving the static output from
+`outputDir` (`dist/`). You do NOT commit `dist/` — the platform builds it.
+
+The money path uses the SDK hooks — never raw `window.parent.postMessage`:
+
+- `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).
+- `useRequestConsent()` — lazy, on first Generate: `ai:write:budgeted` is
+  consent-gated, so the token mints WITHOUT it; the grant arrives as a
+  `TOKEN_REFRESH` and the app auto-resumes the click.
+- `useBlockResize()` — the SDK reports height to the host safely.
+
+Page constraints: a page is `entity=none` (no model context, no model-picker), so
+the model is hardcoded (`GEN_MODEL` in `src/generation.ts`). A page hard-forbids
+`buzz:read:self`, so insufficient Buzz is detected from a failed snapshot, not
+read proactively. The budget comes from `page.buzzBudgetPerGen` in the manifest.
+
+## Develop
+
+```bash
+npm install
+npm run dev:harness   # http://localhost:5186 — mounts a MOCK host so you see something
+```
+
+`npm run dev` alone shows a blank screen — there's no host to send `BLOCK_INIT`.
+Use `dev:harness`. Query toggles: `?viewer=anon`, `?consent=granted`,
+`?fail=insufficient`, `?theme=light`.
+
+```bash
+npm test              # the pure-logic unit tests in src/*.test.ts
+npm run build         # what the platform produces (tsc typecheck + vite build)
+```
+
+## Allowed parent origins
+
+The SDK drops any inbound message whose origin isn't allowlisted and refuses to
+mount with an empty list. Set `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` per environment
+(`.env.development` for the harness, `.env.production` for the civitai.com host).
+See `.env.example`.
+
+## Validate & submit
+
+```bash
+civitai app validate
+civitai login        # once, to store your API token
+civitai app submit
+```
+
+`submit` packages the SOURCE tree (manifest + src + build config), excluding
+`.git`, `node_modules`, and `dist` — the platform rebuilds from source.

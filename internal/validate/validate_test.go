@@ -38,6 +38,21 @@ func TestValidateAcceptsPageViteTemplate(t *testing.T) {
 	}
 }
 
+func TestValidateAcceptsPageMoneyTemplate(t *testing.T) {
+	res, err := Dir(scaffoldGood(t, scaffold.PageMoney))
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if !res.OK() {
+		t.Fatalf("page-money template should be valid, got: %v", res.Errors)
+	}
+	// The scaffolded page-money manifest declares a budget, so it must be
+	// warning-free (no budgeted-without-budget advisory).
+	if res.HasWarnings() {
+		t.Errorf("page-money scaffold should be warning-free, got: %v", res.Warnings)
+	}
+}
+
 // writeManifest writes a manifest-only project dir and validates it.
 func validateManifest(t *testing.T, json string) Result {
 	t.Helper()

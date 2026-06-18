@@ -60,6 +60,84 @@ func TestRenderPageVite(t *testing.T) {
 	mustContain(t, pkg, `"name": "vite-block"`)
 }
 
+func TestRenderPageMoney(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "money-block")
+	written, err := Render(PageMoney, dest, Data{Slug: "money-block", Name: "Money Block"})
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	got := relNames(t, dest, written)
+	for _, expect := range []string{
+		"block.manifest.json", "package.json", "vite.config.ts", "tsconfig.json", "index.html",
+		"src/main.tsx", "src/App.tsx", "src/Harness.tsx", "src/generation.ts",
+		"src/generation.test.ts", "src/index.css",
+		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
+	} {
+		if !containsStr(got, expect) {
+			t.Errorf("page-money missing expected file %q (got %v)", expect, got)
+		}
+	}
+
+	// Money-path manifest: budgeted scope + per-gen budget + build fields.
+	manifest := readFile(t, filepath.Join(dest, "block.manifest.json"))
+	mustContain(t, manifest, `"ai:write:budgeted"`)
+	mustContain(t, manifest, `"buzzBudgetPerGen": 10`)
+	mustContain(t, manifest, `"buildCommand": "npm run build"`)
+	mustContain(t, manifest, `"outputDir": "dist"`)
+	// Server-owned fields must NOT be set.
+	if contains(manifest, "iframe.src") || contains(manifest, `"src"`) {
+		t.Error("page-money manifest must not declare iframe.src")
+	}
+	if contains(manifest, "trustTier") {
+		t.Error("page-money manifest must not declare trustTier")
+	}
+
+	// package.json: SDK deps + the dev:harness script + slug name.
+	pkg := readFile(t, filepath.Join(dest, "package.json"))
+	mustContain(t, pkg, `"@civitai/blocks-react"`)
+	mustContain(t, pkg, `"@civitai/app-sdk"`)
+	mustContain(t, pkg, `"dev:harness"`)
+	mustContain(t, pkg, `"build"`)
+	mustContain(t, pkg, `"test"`)
+	mustContain(t, pkg, `"name": "money-block"`)
+
+	// App.tsx must use the SDK, never raw postMessage('*').
+	app := readFile(t, filepath.Join(dest, "src", "App.tsx"))
+	mustContain(t, app, "useRequestConsent")
+	mustContain(t, app, "useBuzzWorkflow")
+	mustContain(t, app, "useBlockResize")
+	if contains(app, "window.parent.postMessage") {
+		t.Error("page-money App.tsx should not use raw window.parent.postMessage")
+	}
+
+	// The display name should land in the manifest + App heading.
+	mustContain(t, manifest, `"name": "Money Block"`)
+	mustContain(t, app, "Money Block")
+}
+
+func TestPageMoneyNeedsHarness(t *testing.T) {
+	if !PageMoney.NeedsHarness() {
+		t.Error("page-money should need the dev harness")
+	}
+	if Static.NeedsHarness() || PageVite.NeedsHarness() {
+		t.Error("static/page-vite should not need the dev harness")
+	}
+}
+
+func TestOutputNameMapsEnvFiles(t *testing.T) {
+	cases := map[string]string{
+		"env.development.tmpl": ".env.development",
+		"env.production.tmpl":  ".env.production",
+		"env.example.tmpl":     ".env.example",
+	}
+	for in, want := range cases {
+		if got := outputName(in); got != want {
+			t.Errorf("outputName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestRenderRefusesNonEmptyDir(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "existing"), []byte("x"), 0o644); err != nil {
@@ -76,6 +154,9 @@ func TestParseTemplate(t *testing.T) {
 	}
 	if _, err := ParseTemplate("page-vite"); err != nil {
 		t.Errorf("page-vite should parse: %v", err)
+	}
+	if _, err := ParseTemplate("page-money"); err != nil {
+		t.Errorf("page-money should parse: %v", err)
 	}
 	if _, err := ParseTemplate("nope"); err == nil {
 		t.Error("unknown template should error")
