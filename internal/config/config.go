@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -94,9 +95,43 @@ func (c *Config) save() error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	if err := c.v.WriteConfigAs(c.path); err != nil {
-		return err
+
+	// The file holds a credential. viper.WriteConfigAs creates the file at the
+	// process umask (typically 0644) and only chmods 0600 afterwards — a brief
+	// world-readable window during which another local user could read the
+	// token. Instead, write to a 0600 temp file (created owner-only from the
+	// start) and atomically rename it into place, so the token is never visible
+	// to other users even momentarily and a crash mid-write can't leave a
+	// truncated config.
+	out, err := yaml.Marshal(c.v.AllSettings())
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
 	}
-	// The file holds a credential — keep it owner-only.
-	return os.Chmod(c.path, 0o600)
+
+	tmp, err := os.CreateTemp(dir, ".config-*.yaml.tmp")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpName := tmp.Name()
+	// Best-effort cleanup if we bail before the rename succeeds.
+	defer func() { _ = os.Remove(tmpName) }()
+
+	// CreateTemp makes the file 0600 already, but set it explicitly so the
+	// guarantee doesn't depend on the stdlib's documented-but-incidental
+	// behaviour.
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("chmod temp config: %w", err)
+	}
+	if _, err := tmp.Write(out); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
+	}
+	if err := os.Rename(tmpName, c.path); err != nil {
+		return fmt.Errorf("install config: %w", err)
+	}
+	return nil
 }

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "blockId": "notepad",
+  "version": "0.1.1",
+  "name": "Notepad",
+  "type": "block",
+  "scopes": ["apps:storage:read", "apps:storage:write"],
+  "page": {
+    "path": "/",
+    "title": "Notepad",
+    "icon": "note"
+  },
+  "iframe": {
+    "minHeight": 600,
+    "maxHeight": 4000,
+    "resizable": true,
+    "sandbox": "allow-scripts allow-forms"
+  },
+  "contentRating": "g",
+  "minApiVersion": "1.0"
+}

@@ -85,6 +85,14 @@ func Dir(dir string) (Result, error) {
 	// failed", no field path) is useless — do it in Go for a clear message.
 	res.Errors = append(res.Errors, serverOwnedFieldChecks(generic)...)
 
+	// Semantic: the cross-field / tier-gated rules the server runs at approve
+	// time (BlockManifestValidator) that the JSON Schema cannot express —
+	// sandbox trust-tier allowlist, page⇒iframe, iframe required sub-fields,
+	// renderMode tier gate, target slotId registry. Without these, validate
+	// green-lights manifests the server rejects. See semantic.go / targets.go.
+	res.Errors = append(res.Errors, semanticChecks(generic)...)
+	res.Errors = append(res.Errors, targetChecks(generic)...)
+
 	// Structural: buildCommand + outputDir coherence beyond what the schema
 	// can express (the schema enforces "outputDir required when buildCommand
 	// set"; here we also check the directory is declared/exists sanely).
@@ -117,7 +125,8 @@ func serverOwnedFieldChecks(generic any) []string {
 func buildCoherence(dir string, m *manifest.Manifest) []string {
 	var errs []string
 	hasBuild := strings.TrimSpace(m.BuildCommand) != ""
-	hasOut := strings.TrimSpace(m.OutputDir) != ""
+	out := strings.TrimSpace(m.OutputDir)
+	hasOut := out != ""
 
 	switch {
 	case hasBuild && !hasOut:
@@ -126,6 +135,20 @@ func buildCoherence(dir string, m *manifest.Manifest) []string {
 		// Not fatal, but almost always a mistake: an outputDir with no build
 		// to produce it. Warn as an error so it surfaces.
 		errs = append(errs, "outputDir is set but buildCommand is missing — a no-build (static) app should omit outputDir; a built app must set buildCommand")
+	}
+
+	// outputDir must be a SAFE RELATIVE path. The server companion validates
+	// outputDir as a relative path under the project root (no absolute paths,
+	// no `..` traversal); the CLI matching that is correct. The JSON Schema's
+	// `^[^/]` pattern catches the leading-slash case but with a cryptic regex
+	// message and misses `..` traversal — do it in Go for a clear, aligned
+	// message.
+	if hasOut {
+		if strings.HasPrefix(out, "/") {
+			errs = append(errs, fmt.Sprintf("outputDir %q must be a relative path under the project root — remove the leading \"/\"", out))
+		} else if out == ".." || strings.HasPrefix(out, "../") || strings.Contains(out, "/../") || strings.HasSuffix(out, "/..") {
+			errs = append(errs, fmt.Sprintf("outputDir %q must not escape the project root — remove the \"..\" path traversal", out))
+		}
 	}
 	return errs
 }

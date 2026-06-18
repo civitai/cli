@@ -74,18 +74,62 @@ endpoint that returns a published block's source by slug. It prints a clear
 
 ### `civitai app validate`
 
-Validates `block.manifest.json` against a **vendored JSON Schema**
-([`schema/app-block.manifest.schema.json`](schema/app-block.manifest.schema.json)),
-plus structural checks:
+A **best-effort LOCAL pre-check** that mirrors the platform's approve-time
+validator (`BlockManifestValidator`). It catches most rejections before you
+submit, but **the server remains the source of truth** — see
+[Validate fidelity](#validate-fidelity) below.
+
+It validates `block.manifest.json` against a **vendored JSON Schema**
+([`schema/app-block.manifest.schema.json`](schema/app-block.manifest.schema.json),
+syntactic shape) **plus the ported semantic rules** the server runs at approve
+time and structural project checks:
 
 - manifest present at the project root;
-- `buildCommand` + `outputDir` coherence;
-- server-owned `iframe.src` / `trustTier` rejected with a clear message.
+- `buildCommand` + `outputDir` coherence, and `outputDir` is a safe **relative**
+  path (no leading `/`, no `..` traversal);
+- server-owned `iframe.src` / `trustTier` rejected with a clear message;
+- **sandbox** tokens limited to the unverified-tier allowlist
+  (`allow-scripts`, `allow-forms`); `allow-same-origin`+`allow-scripts`
+  (sandbox escape) rejected explicitly;
+- a `page` manifest must declare an `iframe` block, and `renderMode:iframe`
+  (the default) requires one too;
+- `iframe.minHeight` (40–4000) and `iframe.resizable` are **required** when an
+  iframe block is present;
+- `renderMode` `inline`/`hybrid` rejected (they need a verified/internal trust
+  tier, which the platform only assigns post-submit — `INLINE_REQUIRES_VERIFIED_TIER`);
+- `targets[].slotId` must be a **known registered slot** (and not the page slot).
 
 ```bash
 civitai app validate            # current directory
 civitai app validate ./my-block
 ```
+
+The two real example manifests under [`examples/`](examples/) (buzz-generator,
+notepad — copied from the shipping `civitai-block-*` apps) validate clean; a
+test asserts this so the claim stays true.
+
+#### Validate fidelity
+
+`validate` is a **local mirror** of the server validator, not the contract
+itself. The vendored JSON Schema covers only **syntactic** rules; the server's
+**semantic** rules (sandbox trust-tier allowlist, `page`⇒`iframe`, required
+iframe sub-fields, `renderMode` tier gate, slot-registry membership) are **ported
+into the Go `validate` layer** from
+`block-manifest-validator.service.ts`. A few checks are necessarily
+approximate locally:
+
+- **`targets[].slotId`** is checked against a **vendored** copy of the slot
+  registry (only 4 ids today). If the server adds a slot, the vendored list must
+  be updated; until then a manifest using a brand-new slot would false-INVALID
+  locally (it still validates correctly server-side).
+- Origin-binding (`iframe.src`/`assetBundleUrl` must be on an
+  `OauthClient.allowedOrigins`) and the scope⊆client check depend on
+  per-app server state the CLI can't see, so they are **not** reproduced.
+
+The durable fix is a **server `civitai app validate` endpoint** that calls the
+real `BlockManifestValidator` — the faithful contract. The server companion's
+published manifest schema is a first step toward that. Until it exists, keep the
+ported checks + vendored schema in sync with the server validator on each change.
 
 ### `civitai app submit`
 
@@ -118,14 +162,18 @@ is derived from the server-side validator
 (`civitai/civitai → src/server/services/block-manifest-validator.service.ts`):
 required fields, the scopes enum, page config (incl. positive-integer
 `buzzBudgetPerGen`), sandbox tokens, the `contentRating` enum. It is embedded in
-the binary (`go:embed`) so the CLI validates against the same contract it ships.
+the binary (`go:embed`). The schema covers the **syntactic** rules only; the
+server's **semantic** rules are ported into the Go `validate` layer (see
+[Validate fidelity](#validate-fidelity)).
 
-> **This schema should be published server-side as the shared contract.** Today
-> the CLI is the only thing validating against it; the long-term move is for the
-> platform to publish this exact file (e.g. at
-> `https://civitai.com/schemas/app-block/v1.json`) and validate against it too,
-> so both sides share one source of truth. Until then, keep this file in sync
-> with the server validator on each change.
+> **The schema is one step toward a published shared contract — but it is not the
+> whole contract.** The JSON Schema cannot express the cross-field / tier-gated
+> semantic rules, so the CLI ports those into Go. The durable fix is a
+> **server-side validate endpoint** that runs the real `BlockManifestValidator`
+> (the faithful contract), with this schema published (e.g. at
+> `https://civitai.com/schemas/app-block/v1.json`) as the syntactic half. Until
+> then, keep both the vendored schema and the ported Go checks in sync with the
+> server validator on each change.
 
 ## Submit & auth (current state)
 

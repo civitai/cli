@@ -13,13 +13,23 @@ func newAppValidateCmd() *cobra.Command {
 		Short: "Validate block.manifest.json against the App Block schema",
 		Long: `Validate an App Block project.
 
-Checks block.manifest.json against the vendored JSON Schema (the shared
-contract derived from the platform validator), plus structural checks:
-  - the manifest is present at the project root
-  - buildCommand and outputDir are coherent (outputDir set when buildCommand is)
+This is a best-effort LOCAL pre-check that mirrors the platform's approve-time
+validator (BlockManifestValidator). It catches most rejections before you
+submit, but the SERVER remains the source of truth.
 
-Server-owned fields (iframe.src, trustTier) are REJECTED if set — the platform
-assigns them; your manifest must not.
+Checks block.manifest.json against the vendored JSON Schema (syntactic shape),
+plus the ported semantic rules and structural checks:
+  - the manifest is present at the project root
+  - buildCommand and outputDir are coherent (outputDir set when buildCommand is);
+    outputDir must be a safe relative path (no leading "/", no ".." traversal)
+  - server-owned fields (iframe.src, trustTier) are REJECTED if set
+  - sandbox tokens are limited to the unverified-tier allowlist
+    (allow-scripts, allow-forms); allow-same-origin+allow-scripts is rejected
+  - a "page" manifest must declare an iframe block; renderMode=iframe needs one too
+  - iframe.minHeight and iframe.resizable are required when an iframe is present
+  - renderMode inline/hybrid is rejected (requires a verified tier the platform
+    only assigns post-submit)
+  - targets[].slotId must be a known registered slot
 
 Defaults to the current directory.`,
 		Args: cobra.MaximumNArgs(1),

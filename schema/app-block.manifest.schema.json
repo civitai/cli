@@ -25,9 +25,8 @@
     },
     "name": {
       "type": "string",
-      "description": "Human-readable display name.",
-      "minLength": 1,
-      "maxLength": 128
+      "description": "Human-readable display name. The server only requires a non-empty string (no length cap), so the CLI does not impose one either.",
+      "minLength": 1
     },
     "type": {
       "type": "string",
