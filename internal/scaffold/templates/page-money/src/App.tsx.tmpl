@@ -1,0 +1,470 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import {
+  useBlockContext,
+  useBlockResize,
+  useBlockToken,
+  useBuzzWorkflow,
+  useRequestConsent,
+  useRequestSignIn,
+} from '@civitai/blocks-react';
+import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+import {
+  GEN_MODEL,
+  PAGE_BUZZ_BUDGET,
+  PROMPT_MAX,
+  buildWorkflowBody,
+  firstImageUrl,
+  formatCost,
+  hasBudgetedScope,
+  isBusyPhase,
+  isInsufficientBuzz,
+  isTerminalStatus,
+  phaseForSnapshot,
+  type GenPhase,
+} from './generation.js';
+
+/**
+ * {{ .Name }} — a full-page (W10) money-path App Block. It exercises the page
+ * money path end-to-end: estimate -> (lazy consent) -> submit -> poll -> real
+ * Buzz spend, using the published SDK hooks (NEVER raw postMessage to the parent
+ * with a wildcard origin — the SDK does the origin-checked messaging safely).
+ *
+ * Page-native constraints:
+ *  - slot = app.page (entity=none) via the top-level `page:{}` manifest object.
+ *  - scopes = ['ai:write:budgeted'] ONLY. A page HARD-FORBIDS `buzz:read:self`,
+ *    so we CANNOT read the viewer's balance — insufficient Buzz is detected from
+ *    the `failed` snapshot, never proactively.
+ *  - budget comes from manifest `page.buzzBudgetPerGen`; a page is stateless.
+ *  - the model is hardcoded (a page has no slot model) — see GEN_MODEL.
+ *  - `ai:write:budgeted` is consent-gated -> withheld at mint, requested lazily
+ *    on first Generate via useRequestConsent; the grant arrives as a
+ *    TOKEN_REFRESH carrying the scope, which we observe + retry.
+ */
+export function App() {
+  const { ready, viewer, theme } = useBlockContext();
+  const token = useBlockToken();
+  const { estimate, submit, poll } = useBuzzWorkflow();
+  const { requestConsent } = useRequestConsent();
+  const { requestSignIn } = useRequestSignIn();
+
+  const isDark = theme === 'dark';
+  const c = palette(isDark);
+  const anon = ready && !viewer;
+  const granted = hasBudgetedScope(token.scopes);
+
+  const rootRef = useRef<HTMLDivElement>(null);
+  useBlockResize(rootRef);
+
+  const [prompt, setPrompt] = useState('');
+  const [phase, setPhase] = useState<GenPhase>('idle');
+  const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
+  const [actualCost, setActualCost] = useState<number | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // True once the user clicked Generate while the scope was missing — so when
+  // the consent grant lands (granted flips true) we auto-resume the submit.
+  const consentPendingRef = useRef(false);
+  // Cancellation token for the in-flight poll loop.
+  const pollCancelRef = useRef<{ cancelled: boolean } | null>(null);
+
+  // Latest poll fn in a ref so the poll loop always calls the current hook
+  // instance without re-subscribing.
+  const pollRef = useRef(poll);
+  pollRef.current = poll;
+
+  useEffect(() => {
+    return () => {
+      if (pollCancelRef.current) pollCancelRef.current.cancelled = true;
+    };
+  }, []);
+
+  // Apply a (submit- or poll-returned) snapshot to UI state.
+  const applySnapshot = useCallback((snap: BlockWorkflowSnapshot) => {
+    setActualCost(snap.cost?.total ?? null);
+    const url = firstImageUrl(snap);
+    if (url) setImageUrl(url);
+    const next = phaseForSnapshot(snap);
+    setPhase(next);
+    if (next === 'failed' || next === 'insufficient') {
+      setError(snap.error ?? 'Generation failed.');
+    }
+  }, []);
+
+  /**
+   * Drive a single workflow to terminal with an adaptive-backoff poll loop.
+   * `submit()` does NOT auto-poll (SDK contract) — the caller owns the loop.
+   */
+  const runPollLoop = useCallback(
+    (workflowId: string) => {
+      if (pollCancelRef.current) pollCancelRef.current.cancelled = true;
+      const tok = { cancelled: false };
+      pollCancelRef.current = tok;
+
+      const SCHEDULE_MS = [2000, 2000, 3000, 5000, 8000];
+      let attempt = 0;
+
+      const tick = async () => {
+        if (tok.cancelled) return;
+        let snap: BlockWorkflowSnapshot;
+        try {
+          snap = await pollRef.current(workflowId);
+        } catch {
+          // Transient hiccup — keep polling. A real terminal failure surfaces
+          // as a 'failed'/'expired' snapshot, not a throw.
+          if (tok.cancelled) return;
+          const delay = SCHEDULE_MS[Math.min(attempt, SCHEDULE_MS.length - 1)];
+          attempt += 1;
+          setTimeout(tick, delay);
+          return;
+        }
+        if (tok.cancelled) return;
+        applySnapshot(snap);
+        if (isTerminalStatus(snap.status)) return;
+        const delay = SCHEDULE_MS[Math.min(attempt, SCHEDULE_MS.length - 1)];
+        attempt += 1;
+        setTimeout(tick, delay);
+      };
+
+      setTimeout(tick, 0);
+    },
+    [applySnapshot],
+  );
+
+  // The estimate->submit->poll sequence, factored out so both the direct click
+  // and the post-consent auto-resume can call it.
+  const runGeneration = useCallback(async () => {
+    setError(null);
+    setImageUrl(null);
+    setActualCost(null);
+    const body = buildWorkflowBody(prompt);
+
+    // 1) Estimate (best-effort — a failed estimate doesn't block submit; the
+    //    host re-prices at submit anyway).
+    setPhase('estimating');
+    try {
+      const est = await estimate(body);
+      if (est.status === 'failed' || est.error) {
+        if (isInsufficientBuzz(est.error)) {
+          setPhase('insufficient');
+          setError(est.error ?? 'Not enough Buzz.');
+          return;
+        }
+        setEstimatedCost(null);
+      } else {
+        setEstimatedCost(est.cost?.total ?? null);
+      }
+    } catch {
+      setEstimatedCost(null);
+    }
+
+    // 2) Submit (the real spend).
+    setPhase('submitting');
+    let snap: BlockWorkflowSnapshot;
+    try {
+      snap = await submit(body);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'submit failed';
+      setPhase(isInsufficientBuzz(msg) ? 'insufficient' : 'failed');
+      setError(msg);
+      return;
+    }
+
+    // A host can return an instant terminal snapshot (cached / instant-fail).
+    applySnapshot(snap);
+    if (isTerminalStatus(snap.status)) return;
+
+    // 3) Poll to terminal.
+    setPhase('polling');
+    if (snap.workflowId) runPollLoop(snap.workflowId);
+  }, [prompt, estimate, submit, applySnapshot, runPollLoop]);
+
+  const handleGenerate = useCallback(() => {
+    // Anon: convert the click into a host login prompt. Generate is server-gated
+    // anyway (an anon token carries no budgeted scope).
+    if (!viewer) {
+      requestSignIn();
+      return;
+    }
+    // Lazy consent: if the budgeted scope isn't granted yet, ask the host to
+    // open its consent UI and remember the intent. The grant arrives as a
+    // TOKEN_REFRESH (granted flips true) -> the effect below auto-resumes.
+    if (!granted) {
+      consentPendingRef.current = true;
+      setPhase('needs-consent');
+      requestConsent({ scopes: ['ai:write:budgeted'] });
+      return;
+    }
+    void runGeneration();
+  }, [viewer, granted, requestSignIn, requestConsent, runGeneration]);
+
+  // Auto-resume after a consent grant.
+  useEffect(() => {
+    if (granted && consentPendingRef.current) {
+      consentPendingRef.current = false;
+      void runGeneration();
+    }
+  }, [granted, runGeneration]);
+
+  // ---- Render ----
+
+  if (!ready) {
+    return (
+      <div ref={rootRef} data-theme={isDark ? 'dark' : 'light'} style={pageStyle(c)}>
+        <div style={loadingStyle}>Loading…</div>
+      </div>
+    );
+  }
+
+  const busy = isBusyPhase(phase);
+  const showTopUp = phase === 'insufficient';
+
+  return (
+    <div ref={rootRef} data-theme={isDark ? 'dark' : 'light'} style={pageStyle(c)}>
+      <div style={contentStyle}>
+        <header style={headerStyle}>
+          <h1 style={titleStyle}>{{ .Name }}</h1>
+          <p style={subtitleStyle(c)}>
+            Type a prompt and generate one image with <strong>{GEN_MODEL.label}</strong>. Each
+            generation spends a small amount of Buzz (budget {PAGE_BUZZ_BUDGET} per generation).
+          </p>
+        </header>
+
+        <div style={fieldStyle}>
+          <label htmlFor="pm-prompt" style={labelStyle}>
+            Prompt
+          </label>
+          <textarea
+            id="pm-prompt"
+            value={prompt}
+            maxLength={PROMPT_MAX}
+            placeholder="a serene mountain lake at golden hour, highly detailed"
+            onChange={(e) => setPrompt(e.target.value)}
+            aria-label="Generation prompt"
+            rows={4}
+            style={textareaStyle(c)}
+          />
+        </div>
+
+        {anon ? (
+          <button type="button" onClick={handleGenerate} style={primaryBtn(c)} data-testid="pm-signin">
+            Sign in to generate
+          </button>
+        ) : showTopUp ? (
+          <p style={noteStyle(c)} role="status" data-testid="pm-insufficient">
+            Not enough Buzz for this generation. Top up your Buzz balance and try again.
+          </p>
+        ) : (
+          <button
+            type="button"
+            onClick={handleGenerate}
+            disabled={busy || prompt.trim().length === 0}
+            style={primaryBtn(c, busy || prompt.trim().length === 0)}
+            data-testid="pm-generate"
+          >
+            <GenerateLabel phase={phase} estimatedCost={estimatedCost} />
+          </button>
+        )}
+
+        {phase === 'needs-consent' && (
+          <p role="status" style={noteStyle(c)}>
+            Grant access to generate — confirm in the Civitai dialog. If you dismissed it,{' '}
+            <button type="button" onClick={handleGenerate} style={linkBtn(c)}>
+              try again
+            </button>
+            .
+          </p>
+        )}
+        {busy && (
+          <p role="status" style={noteStyle(c)}>
+            {phase === 'estimating'
+              ? 'Estimating cost…'
+              : phase === 'submitting'
+                ? 'Submitting generation…'
+                : 'Generating… this can take 10–60s.'}
+          </p>
+        )}
+
+        {phase === 'failed' && error && (
+          <div role="alert" style={errorBox(c)}>
+            {error}
+          </div>
+        )}
+
+        {phase === 'succeeded' && imageUrl && (
+          <figure style={figureStyle}>
+            <img src={imageUrl} alt="Generated result" style={imgStyle(c)} />
+            <figcaption style={captionStyle(c)}>
+              Done. Spent <strong style={strongFg(c)}>{formatCost(actualCost)}</strong> Buzz.
+            </figcaption>
+          </figure>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function GenerateLabel({
+  phase,
+  estimatedCost,
+}: {
+  phase: GenPhase;
+  estimatedCost: number | null;
+}) {
+  if (phase === 'estimating') return <>Estimating…</>;
+  if (phase === 'submitting') return <>Submitting…</>;
+  if (phase === 'polling') return <>Generating…</>;
+  if (estimatedCost != null) return <>Generate · {formatCost(estimatedCost)} Buzz</>;
+  return <>Generate</>;
+}
+
+// ------------------------------------------------------------------
+// Theme — the host can't inject CSS into the iframe, so colors come from
+// useBlockContext().theme via inline styles.
+// ------------------------------------------------------------------
+interface Palette {
+  bg: string;
+  fg: string;
+  border: string;
+  inputBg: string;
+  accent: string;
+  accentFg: string;
+  danger: string;
+  dangerBg: string;
+  muted: string;
+}
+
+function palette(dark: boolean): Palette {
+  return dark
+    ? {
+        bg: '#1a1b1e',
+        fg: '#e9ecef',
+        border: '#373a40',
+        inputBg: '#2c2e33',
+        accent: '#fab005',
+        accentFg: '#1a1b1e',
+        danger: '#ff8787',
+        dangerBg: '#2c1f1f',
+        muted: '#909296',
+      }
+    : {
+        bg: '#ffffff',
+        fg: '#1a1b1e',
+        border: '#dee2e6',
+        inputBg: '#ffffff',
+        accent: '#f08c00',
+        accentFg: '#ffffff',
+        danger: '#e03131',
+        dangerBg: '#fff5f5',
+        muted: '#868e96',
+      };
+}
+
+const loadingStyle: React.CSSProperties = { margin: 'auto', opacity: 0.7 };
+const headerStyle: React.CSSProperties = { display: 'grid', gap: 4 };
+const titleStyle: React.CSSProperties = { fontSize: 24, margin: 0 };
+const fieldStyle: React.CSSProperties = { display: 'grid', gap: 6 };
+const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 600 };
+const figureStyle: React.CSSProperties = { margin: 0, display: 'grid', gap: 8 };
+
+function pageStyle(c: Palette): React.CSSProperties {
+  return {
+    fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
+    background: c.bg,
+    color: c.fg,
+    width: '100%',
+    minHeight: '100dvh',
+    display: 'flex',
+    boxSizing: 'border-box',
+  };
+}
+
+const contentStyle: React.CSSProperties = {
+  margin: '0 auto',
+  width: '100%',
+  maxWidth: 640,
+  padding: 24,
+  display: 'grid',
+  gap: 16,
+  alignContent: 'start',
+  boxSizing: 'border-box',
+};
+
+function subtitleStyle(c: Palette): React.CSSProperties {
+  return { fontSize: 14, color: c.muted, margin: 0, lineHeight: 1.5 };
+}
+
+function textareaStyle(c: Palette): React.CSSProperties {
+  return {
+    resize: 'vertical',
+    padding: 12,
+    borderRadius: 8,
+    border: '1px solid ' + c.border,
+    background: c.inputBg,
+    color: c.fg,
+    fontSize: 15,
+    lineHeight: 1.5,
+    fontFamily: 'inherit',
+    boxSizing: 'border-box',
+    width: '100%',
+    minHeight: 96,
+  };
+}
+
+function primaryBtn(c: Palette, disabled = false): React.CSSProperties {
+  return {
+    padding: '12px 18px',
+    border: 'none',
+    borderRadius: 8,
+    background: disabled ? c.border : c.accent,
+    color: disabled ? c.muted : c.accentFg,
+    fontWeight: 700,
+    fontSize: 15,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  };
+}
+
+function linkBtn(c: Palette): React.CSSProperties {
+  return {
+    background: 'none',
+    border: 'none',
+    color: c.accent,
+    cursor: 'pointer',
+    padding: 0,
+    font: 'inherit',
+    textDecoration: 'underline',
+  };
+}
+
+function noteStyle(c: Palette): React.CSSProperties {
+  return { fontSize: 13, color: c.muted, margin: 0, lineHeight: 1.5 };
+}
+
+function errorBox(c: Palette): React.CSSProperties {
+  return {
+    background: c.dangerBg,
+    color: c.danger,
+    border: '1px solid ' + c.danger,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 13,
+  };
+}
+
+function imgStyle(c: Palette): React.CSSProperties {
+  return { width: '100%', borderRadius: 10, border: '1px solid ' + c.border };
+}
+
+function captionStyle(c: Palette): React.CSSProperties {
+  return { fontSize: 13, color: c.muted };
+}
+
+function strongFg(c: Palette): React.CSSProperties {
+  return { color: c.fg };
+}

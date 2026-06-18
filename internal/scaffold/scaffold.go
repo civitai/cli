@@ -24,10 +24,17 @@ const (
 	Static Template = "static"
 	// PageVite is a vite+React page block with config-as-code build fields.
 	PageVite Template = "page-vite"
+	// PageMoney is a vite+React+TS page block wired to the published App SDK
+	// for the money path (estimate → consent → submit → poll → Buzz spend).
+	PageMoney Template = "page-money"
 )
 
 // AllTemplates lists the templates available to `civitai app init`.
-func AllTemplates() []Template { return []Template{Static, PageVite} }
+func AllTemplates() []Template { return []Template{Static, PageVite, PageMoney} }
+
+// SDKTemplates are templates whose dev loop needs a mock host (`dev:harness`)
+// rather than a plain `dev` (which renders blank without a host).
+func (t Template) NeedsHarness() bool { return t == PageMoney }
 
 // ParseTemplate validates a template name.
 func ParseTemplate(s string) (Template, error) {
@@ -36,6 +43,8 @@ func ParseTemplate(s string) (Template, error) {
 		return Static, nil
 	case PageVite:
 		return PageVite, nil
+	case PageMoney:
+		return PageMoney, nil
 	default:
 		names := make([]string, 0, len(AllTemplates()))
 		for _, t := range AllTemplates() {
@@ -54,12 +63,20 @@ type Data struct {
 }
 
 // outputName maps an embedded template filename to its on-disk name.
-// `.tmpl` is stripped, and `gitignore` is written as `.gitignore` (go:embed
-// cannot embed files whose names begin with a dot).
+// `.tmpl` is stripped; some names are rewritten because go:embed cannot embed
+// files whose names begin with a dot:
+//   - `gitignore`        -> `.gitignore`
+//   - `env.development`  -> `.env.development`
+//   - `env.production`   -> `.env.production`
+//   - `env.example`      -> `.env.example`
 func outputName(rel string) string {
 	rel = strings.TrimSuffix(rel, ".tmpl")
-	if filepath.Base(rel) == "gitignore" {
+	base := filepath.Base(rel)
+	switch {
+	case base == "gitignore":
 		rel = filepath.Join(filepath.Dir(rel), ".gitignore")
+	case base == "env.development" || base == "env.production" || base == "env.example":
+		rel = filepath.Join(filepath.Dir(rel), "."+base)
 	}
 	return rel
 }

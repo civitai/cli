@@ -1,0 +1,144 @@
+// Pure logic for the {{ .Name }} page money app. No React, no DOM — unit-tested
+// in node (see generation.test.ts). The App glue imports these so the
+// load-bearing decisions (cost format, insufficient-Buzz sniff, terminal-status
+// reduction, scope check) live in one tested place.
+
+import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+/**
+ * The hardcoded model this app generates with.
+ *
+ * A W10 page slot is entity=none: it carries NO model/entity context (unlike a
+ * model slot), and the SDK exposes NO model-picker to a page app. The trust
+ * model for page generation is "any public, generatable model, server-validated"
+ * — so we hardcode a single known-good base. The canonical Stability AI "SD XL"
+ * base is public + generation-covered + SFW. Swap to your preferred public,
+ * generation-covered model if you like.
+ */
+export const GEN_MODEL = {
+  modelId: 101055,
+  modelVersionId: 128078,
+  label: 'SD XL 1.0',
+} as const;
+
+/** Server cap mirror — prompts over this are rejected by the workflow schema. */
+export const PROMPT_MAX = 1500;
+
+/**
+ * Manifest budget (page.buzzBudgetPerGen). Keep in sync with block.manifest.json
+ * — the SERVER reads the manifest value at mint and clamps to the per-gen cap;
+ * this constant only drives the client-side "Top up · N" CTA amount and budget
+ * copy. The real ceiling is enforced server-side.
+ */
+export const PAGE_BUZZ_BUDGET = 10;
+
+/** The scope the page token must carry before a generation can be submitted. */
+export const BUDGETED_SCOPE = 'ai:write:budgeted';
+
+/** Snapshot statuses that mean "stop polling". Mirrors the SDK's TERMINAL set. */
+const TERMINAL: ReadonlySet<BlockWorkflowSnapshot['status']> = new Set([
+  'succeeded',
+  'failed',
+  'expired',
+  'canceled',
+]);
+
+export function isTerminalStatus(status: BlockWorkflowSnapshot['status']): boolean {
+  return TERMINAL.has(status);
+}
+
+/**
+ * Does the token carry the budgeted-spend scope? Drives whether a Generate
+ * click submits directly or first asks the host to open the consent UI.
+ * `ai:write:budgeted` is consent-gated, so a fresh viewer's mint WITHHOLDS it
+ * until they grant it; after grant the host pushes TOKEN_REFRESH with the scope
+ * and this flips true -> retry.
+ */
+export function hasBudgetedScope(scopes: readonly string[] | undefined): boolean {
+  return Array.isArray(scopes) && scopes.includes(BUDGETED_SCOPE);
+}
+
+/**
+ * Sniff a workflow failure / error string for insufficient-Buzz language so the
+ * UI can swap to a Top-Up CTA. There is NO structured error.code on the
+ * BlockWorkflowSnapshot today (only a free-text `error`), so this is a substring
+ * heuristic. A page CANNOT request `buzz:read:self`, so we cannot read the
+ * balance proactively; detecting it from the `failed` snapshot is the only
+ * signal available on a page.
+ */
+export function isInsufficientBuzz(message: string | null | undefined): boolean {
+  if (!message) return false;
+  const m = message.toLowerCase();
+  return (
+    m.includes('insufficient') ||
+    m.includes('not enough') ||
+    m.includes('budget') ||
+    m.includes('balance') ||
+    m.includes('buzz')
+  );
+}
+
+/** Format a Buzz cost for display, with thousands separators. `null` -> '—'. */
+export function formatCost(cost: number | null | undefined): string {
+  if (cost == null || !Number.isFinite(cost)) return '—';
+  return Math.round(cost).toLocaleString();
+}
+
+/** Trim + clamp a prompt to the server cap so submit can't be rejected on length. */
+export function clampPrompt(raw: string): string {
+  return raw.slice(0, PROMPT_MAX);
+}
+
+/**
+ * Build the textToImage submit/estimate body. Page apps keep the param surface
+ * minimal: just the prompt — the host fills sensible defaults for
+ * dimensions/sampler/steps from the base-model family.
+ */
+export function buildWorkflowBody(prompt: string) {
+  return {
+    kind: 'textToImage' as const,
+    modelId: GEN_MODEL.modelId,
+    modelVersionId: GEN_MODEL.modelVersionId,
+    params: { prompt: clampPrompt(prompt.trim()) },
+  };
+}
+
+/** Pull the single displayable image url from a succeeded snapshot, if any. */
+export function firstImageUrl(snapshot: BlockWorkflowSnapshot | null): string | null {
+  if (!snapshot || !snapshot.imageUrls || snapshot.imageUrls.length === 0) return null;
+  return snapshot.imageUrls[0] ?? null;
+}
+
+/** The single-in-flight generation phase the page tracks. */
+export type GenPhase =
+  | 'idle'
+  | 'needs-consent'
+  | 'estimating'
+  | 'submitting'
+  | 'polling'
+  | 'succeeded'
+  | 'failed'
+  | 'insufficient';
+
+/** Is a generation in flight (Generate should be disabled / show progress)? */
+export function isBusyPhase(phase: GenPhase): boolean {
+  return phase === 'estimating' || phase === 'submitting' || phase === 'polling';
+}
+
+/**
+ * Reduce a polled snapshot to the next page phase. Keeps the status->phase
+ * mapping in one tested place so the poll loop stays a thin driver.
+ */
+export function phaseForSnapshot(snapshot: BlockWorkflowSnapshot): GenPhase {
+  switch (snapshot.status) {
+    case 'succeeded':
+      return 'succeeded';
+    case 'failed':
+    case 'expired':
+    case 'canceled':
+      return isInsufficientBuzz(snapshot.error) ? 'insufficient' : 'failed';
+    case 'pending':
+    case 'processing':
+      return 'polling';
+  }
+}

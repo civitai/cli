@@ -1,0 +1,27 @@
+import { StrictMode } from 'react';
+import { createRoot } from 'react-dom/client';
+
+import { App } from './App.js';
+import { Harness } from './Harness.js';
+import './index.css';
+
+// `npm run dev:harness` sets VITE_DEV_HARNESS=true to mount the local mock host
+// that posts a fake BLOCK_INIT (page context, entity=none), answers the consent
+// + token-refresh round-trip, and simulates the orchestrator money path
+// (estimate / submit / poll). Never set in prod.
+const useHarness = import.meta.env.VITE_DEV_HARNESS === 'true';
+
+const container = document.getElementById('root');
+if (!container) throw new Error('#root missing from index.html');
+
+createRoot(container).render(
+  <StrictMode>
+    {useHarness ? (
+      <Harness>
+        <App />
+      </Harness>
+    ) : (
+      <App />
+    )}
+  </StrictMode>,
+);

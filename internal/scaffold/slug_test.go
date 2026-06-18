@@ -37,7 +37,7 @@ func TestSlugifyAllPunctuationFails(t *testing.T) {
 
 func TestSlugifyAllTemplates(t *testing.T) {
 	ts := AllTemplates()
-	if len(ts) != 2 {
-		t.Errorf("AllTemplates = %v, want 2", ts)
+	if len(ts) != 3 {
+		t.Errorf("AllTemplates = %v, want 3", ts)
 	}
 }

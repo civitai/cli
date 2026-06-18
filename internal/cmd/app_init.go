@@ -12,25 +12,38 @@ import (
 func newAppInitCmd() *cobra.Command {
 	var templateFlag string
 	var fromSlug string
+	var dirFlag string
+	var nameFlag string
 
 	cmd := &cobra.Command{
-		Use:   "init [name]",
+		Use:   "init [name] [dir]",
 		Short: "Scaffold a ready-to-build App Block project",
-		Long: `Scaffold a correct, ready-to-build App Block project in a new directory
-named after the slug.
+		Long: `Scaffold a correct, ready-to-build App Block project.
 
 Templates:
-  static     a no-build page block (index.html + a tiny JS, no build step)
-  page-vite  a vite + React page block (config-as-code build: buildCommand + outputDir)
+  static      a no-build page block (index.html + a tiny JS, no build step)
+  page-vite   a vite + React page block (config-as-code build: buildCommand + outputDir)
+  page-money  a vite + React + TS full-page (W10) money-path block wired to the
+              published App SDK (estimate -> consent -> submit -> poll -> Buzz spend)
 
 The display name can be free-form ("My Cool Block"); it is slugified for the
-blockId and directory. A slug-shaped name is used verbatim.`,
-		Example: `  # A no-build static block.
+blockId. A slug-shaped name is used verbatim.
+
+By default the project is created in ./<slug>. Override the output directory with
+a positional [dir] or --dir <path>; override the display name independently with
+--name (so name, slug, and directory can all differ).`,
+		Example: `  # A no-build static block in ./my-block.
   civitai app init my-block
 
-  # A Vite + React block; "My Cool Block" -> slug my-cool-block.
-  civitai app init "My Cool Block" --template page-vite`,
-		Args: cobra.MaximumNArgs(1),
+  # A page-money block; "My Cool Block" -> slug my-cool-block, dir ./my-cool-block.
+  civitai app init "My Cool Block" --template page-money
+
+  # Custom output directory (slug stays my-block; created in ./apps/foo).
+  civitai app init my-block --dir ./apps/foo
+
+  # Name, slug, and dir all independent.
+  civitai app init my-block ./apps/foo --name "My Block"`,
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()
 
@@ -51,11 +64,25 @@ init and copy the upstream files in manually.`)
 			}
 
 			name := ""
-			if len(args) == 1 {
+			if len(args) >= 1 {
 				name = args[0]
 			}
 			if name == "" {
 				return fmt.Errorf("provide a project name: civitai app init <name>")
+			}
+
+			// Positional [dir] (args[1]) and --dir both set the output directory;
+			// they must not conflict.
+			posDir := ""
+			if len(args) == 2 {
+				posDir = args[1]
+			}
+			if posDir != "" && dirFlag != "" && posDir != dirFlag {
+				return fmt.Errorf("conflicting output directory: positional %q and --dir %q", posDir, dirFlag)
+			}
+			targetDir := dirFlag
+			if targetDir == "" {
+				targetDir = posDir
 			}
 
 			// Derive slug + display name. If the name is already a valid slug
@@ -72,7 +99,18 @@ init and copy the upstream files in manually.`)
 				display = name
 			}
 
+			// --name overrides the display name independently of the slug/dir,
+			// so name, slug, and directory can all differ.
+			if nameFlag != "" {
+				display = nameFlag
+			}
+
+			// Output directory: --dir / positional [dir] if given, else ./<slug>
+			// (back-compat: no flag -> current behaviour).
 			destDir := slug
+			if targetDir != "" {
+				destDir = targetDir
+			}
 			abs, err := filepath.Abs(destDir)
 			if err != nil {
 				return err
@@ -108,10 +146,15 @@ init and copy the upstream files in manually.`)
 				fmt.Fprintf(out, "    %s\n", rel)
 			}
 			fmt.Fprintln(out, "\nNext steps:")
-			if tmpl == scaffold.PageVite {
-				fmt.Fprintf(out, "  cd %s && npm install && npm run dev\n", slug)
-			} else {
-				fmt.Fprintf(out, "  cd %s   # open index.html or serve the directory\n", slug)
+			switch {
+			case tmpl.NeedsHarness():
+				// SDK/page-money apps render blank under plain `dev` (no host) —
+				// the dev loop needs the mock host via `dev:harness`.
+				fmt.Fprintf(out, "  cd %s && npm install && npm run dev:harness\n", destDir)
+			case tmpl == scaffold.PageVite:
+				fmt.Fprintf(out, "  cd %s && npm install && npm run dev\n", destDir)
+			default:
+				fmt.Fprintf(out, "  cd %s   # open index.html or serve the directory\n", destDir)
 			}
 			fmt.Fprintln(out, "  civitai app validate")
 			fmt.Fprintln(out, "  civitai app submit")
@@ -119,8 +162,10 @@ init and copy the upstream files in manually.`)
 		},
 	}
 
-	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.Static), "project template: static | page-vite")
+	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.Static), "project template: static | page-vite | page-money")
 	cmd.Flags().StringVar(&fromSlug, "from", "", "fork from an existing published block slug (not yet wired)")
+	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
+	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
 	return cmd
 }
 

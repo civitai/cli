@@ -1,0 +1,85 @@
+import { describe, expect, it } from 'vitest';
+
+import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+
+import {
+  GEN_MODEL,
+  PROMPT_MAX,
+  buildWorkflowBody,
+  clampPrompt,
+  formatCost,
+  hasBudgetedScope,
+  isInsufficientBuzz,
+  isTerminalStatus,
+  phaseForSnapshot,
+} from './generation.js';
+
+// A couple of pure-logic tests so authors inherit a working test setup. Run with
+// `npm test`. Add cases here as you grow the app's logic.
+
+describe('formatCost', () => {
+  it('renders an integer with separators', () => {
+    expect(formatCost(1234)).toBe('1,234');
+  });
+  it('renders a dash for null / non-finite', () => {
+    expect(formatCost(null)).toBe('—');
+    expect(formatCost(NaN)).toBe('—');
+  });
+});
+
+describe('hasBudgetedScope', () => {
+  it('true only when ai:write:budgeted is present', () => {
+    expect(hasBudgetedScope(['ai:write:budgeted'])).toBe(true);
+    expect(hasBudgetedScope([])).toBe(false);
+    expect(hasBudgetedScope(undefined)).toBe(false);
+  });
+});
+
+describe('isInsufficientBuzz', () => {
+  it('catches common phrasings, false for unrelated', () => {
+    expect(isInsufficientBuzz('Insufficient Buzz')).toBe(true);
+    expect(isInsufficientBuzz('prompt rejected by audit')).toBe(false);
+    expect(isInsufficientBuzz(null)).toBe(false);
+  });
+});
+
+describe('clampPrompt', () => {
+  it('trims to the server cap', () => {
+    expect(clampPrompt('x'.repeat(PROMPT_MAX + 100)).length).toBe(PROMPT_MAX);
+  });
+});
+
+describe('buildWorkflowBody', () => {
+  it('builds a textToImage body with the hardcoded model + trimmed prompt', () => {
+    expect(buildWorkflowBody('  a cat  ')).toEqual({
+      kind: 'textToImage',
+      modelId: GEN_MODEL.modelId,
+      modelVersionId: GEN_MODEL.modelVersionId,
+      params: { prompt: 'a cat' },
+    });
+  });
+});
+
+describe('isTerminalStatus', () => {
+  it('terminal for end states, not for in-flight', () => {
+    expect(isTerminalStatus('succeeded')).toBe(true);
+    expect(isTerminalStatus('processing')).toBe(false);
+  });
+});
+
+describe('phaseForSnapshot', () => {
+  const snap = (over: Partial<BlockWorkflowSnapshot>): BlockWorkflowSnapshot => ({
+    workflowId: 'wf',
+    status: 'pending',
+    ...over,
+  });
+  it('maps in-flight to polling and success to succeeded', () => {
+    expect(phaseForSnapshot(snap({ status: 'processing' }))).toBe('polling');
+    expect(phaseForSnapshot(snap({ status: 'succeeded' }))).toBe('succeeded');
+  });
+  it('maps an insufficient-Buzz failure to insufficient', () => {
+    expect(phaseForSnapshot(snap({ status: 'failed', error: 'Insufficient Buzz' }))).toBe(
+      'insufficient',
+    );
+  });
+});
