@@ -2,6 +2,8 @@ package config
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -52,6 +54,60 @@ func TestSetTokenPersists(t *testing.T) {
 	}
 	if perm := info.Mode().Perm(); perm != 0o600 {
 		t.Errorf("config perms = %o, want 600", perm)
+	}
+}
+
+func TestLoadMalformedConfigErrors(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	os.Unsetenv("CIVITAI_TOKEN")
+
+	cfgDir := filepath.Join(dir, "civitai")
+	if err := os.MkdirAll(cfgDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Not valid YAML.
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.yaml"), []byte("::: not: yaml: ["), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(); err == nil {
+		t.Fatal("expected a parse error for a malformed config file")
+	}
+}
+
+func TestDirHonoursXDG(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	got, err := Dir()
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if got != filepath.Join(dir, "civitai") {
+		t.Errorf("Dir = %q, want %q", got, filepath.Join(dir, "civitai"))
+	}
+}
+
+func TestSaveErrorOnUnwritableDir(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Getuid() == 0 {
+		t.Skip("permission-based test unreliable as root / on windows")
+	}
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	os.Unsetenv("CIVITAI_TOKEN")
+
+	// Make the config parent dir unwritable so MkdirAll/CreateTemp fails.
+	cfgParent := filepath.Join(dir, "civitai")
+	if err := os.MkdirAll(cfgParent, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(cfgParent, 0o700) })
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if err := cfg.SetToken("x"); err == nil {
+		t.Error("expected SetToken to fail writing into an unwritable dir")
 	}
 }
 

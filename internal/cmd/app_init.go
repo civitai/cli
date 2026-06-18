@@ -16,16 +16,20 @@ func newAppInitCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init [name]",
 		Short: "Scaffold a ready-to-build App Block project",
-		Long: `Scaffold a correct, ready-to-build App Block project.
+		Long: `Scaffold a correct, ready-to-build App Block project in a new directory
+named after the slug.
 
 Templates:
   static     a no-build page block (index.html + a tiny JS, no build step)
   page-vite  a vite + React page block (config-as-code build: buildCommand + outputDir)
 
-Examples:
+The display name can be free-form ("My Cool Block"); it is slugified for the
+blockId and directory. A slug-shaped name is used verbatim.`,
+		Example: `  # A no-build static block.
   civitai app init my-block
-  civitai app init "My Cool Block" --template page-vite
-  civitai app init forked --from some-published-slug`,
+
+  # A Vite + React block; "My Cool Block" -> slug my-cool-block.
+  civitai app init "My Cool Block" --template page-vite`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			out := cmd.OutOrStdout()

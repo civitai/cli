@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # create the GitHub Release + upload assets
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # goreleaser needs full history + tags for the changelog
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: goreleaser release
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          version: "~> v2"
+          args: release --clean
+        env:
+          # Used to create the release on this repo. Provided automatically.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # PAT with write access to civitai/homebrew-tap so goreleaser can push
+          # the updated formula. Set this repo secret (and create the tap repo)
+          # before tagging, or comment out the `brews:` block in .goreleaser.yaml.
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}

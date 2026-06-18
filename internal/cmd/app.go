@@ -11,10 +11,10 @@ func newAppCmd() *cobra.Command {
 
 An App Block is a sandboxed static web app served in an iframe. The platform
 owns the build and the runtime; the only mandatory file is block.manifest.json.
-
-  civitai app init my-block --template page-vite
-  civitai app validate
-  civitai app submit`,
+The typical lifecycle is init -> validate -> submit.`,
+		Example: `  civitai app init my-block --template page-vite
+  civitai app validate ./my-block
+  civitai app submit ./my-block`,
 	}
 	cmd.AddCommand(newAppInitCmd())
 	cmd.AddCommand(newAppValidateCmd())

@@ -15,7 +15,8 @@ func newWhoAmICmd() *cobra.Command {
 		Short: "Verify your stored API token",
 		Long: `Verify the stored API token by calling the Civitai API and printing the
 authenticated username. Reads the token from config or CIVITAI_TOKEN.`,
-		Args: cobra.NoArgs,
+		Example: `  civitai whoami`,
+		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {

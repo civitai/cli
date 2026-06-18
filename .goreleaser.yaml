@@ -1,6 +1,10 @@
 # goreleaser config for the civitai CLI.
 # Build + release binaries and a Homebrew tap formula.
 # Docs: https://goreleaser.com
+#
+# Validate without releasing:
+#   goreleaser check
+#   goreleaser release --snapshot --clean   # full dry-run into ./dist
 version: 2
 
 project_name: civitai
@@ -16,7 +20,10 @@ builds:
     env:
       - CGO_ENABLED=0
     ldflags:
-      - -s -w -X main.version={{ .Version }}
+      - -s -w
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .Commit }}
+      - -X main.date={{ .Date }}
     goos:
       - linux
       - darwin
@@ -32,12 +39,18 @@ archives:
   - id: civitai
     name_template: >-
       {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    files:
+      - README.md
+      - LICENSE
     format_overrides:
       - goos: windows
         formats: [zip]
 
 checksum:
   name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
 
 changelog:
   sort: asc
@@ -47,20 +60,31 @@ changelog:
       - "^test:"
       - "^chore:"
 
-# Homebrew tap. Point this at the org's tap repo when one exists.
-brews:
+# Homebrew tap (cask). goreleaser v2 replaced `brews:` with `homebrew_casks:`.
+# NOTE: the `civitai/homebrew-tap` repo must exist and the release workflow must
+# expose a HOMEBREW_TAP_GITHUB_TOKEN with write access to it. If you don't want
+# a tap yet, comment out this whole block (and the brew install line in README).
+homebrew_casks:
   - name: civitai
+    binaries:
+      - civitai
     repository:
       owner: civitai
       name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/civitai/cli"
     description: "Civitai CLI — author and ship App Blocks"
-    license: "MIT"
     commit_author:
       name: civitai-bot
       email: bot@civitai.com
-    test: |
-      system "#{bin}/civitai", "--version"
+    # Strip the macOS quarantine attribute so `civitai` runs without a Gatekeeper
+    # prompt (the binaries are not notarized).
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/civitai"]
+          end
 
 release:
   draft: true

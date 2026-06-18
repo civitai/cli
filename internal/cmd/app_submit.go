@@ -40,6 +40,9 @@ Submission path:
   --package-only always just writes the .zip and stops.
 
 Defaults to the current directory.`,
+		Example: `  civitai app submit                 # validate + package + submit (or print next steps)
+  civitai app submit --package-only  # just write the .zip
+  civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."

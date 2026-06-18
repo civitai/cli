@@ -19,9 +19,8 @@ func newLoginCmd() *cobra.Command {
 
 Create a token at https://civitai.com/user/account (API Keys). The token is
 saved to your config file (~/.config/civitai/config.yaml, owner-readable only)
-and can also be supplied via the CIVITAI_TOKEN environment variable.
-
-  civitai login --token <token>
+and can also be supplied via the CIVITAI_TOKEN environment variable.`,
+		Example: `  civitai login --token <token>
   civitai login                 # prompts for the token`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

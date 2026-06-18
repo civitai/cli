@@ -5,13 +5,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// version is overridden at build time via -ldflags.
-var version = "dev"
+// Build metadata, overridden at build time via -ldflags (see cmd/civitai/main.go
+// and .goreleaser.yaml). They default to dev values for source builds.
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
 
-// SetVersion lets main inject the build version.
-func SetVersion(v string) {
+// SetBuildInfo lets main inject the build version, commit, and date.
+func SetBuildInfo(v, c, d string) {
 	if v != "" {
 		version = v
+	}
+	if c != "" {
+		commit = c
+	}
+	if d != "" {
+		date = d
 	}
 }
 
@@ -19,19 +30,26 @@ func SetVersion(v string) {
 func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "civitai",
-		Short: "Civitai CLI — author and ship App Blocks (and more)",
-		Long: `civitai is the unified command-line interface for Civitai.
+		Short: "Civitai CLI — author and ship App Blocks",
+		Long: `civitai is the command-line interface for Civitai (https://civitai.com).
 
-Its first feature group is App Blocks authoring:
+Its first feature group is App Blocks authoring — App Blocks are small,
+sandboxed web apps that run inside Civitai surfaces. The CLI scaffolds a
+correct project, validates it against the platform contract, and packages it
+for submission, so you don't have to hand-format a ZIP.
 
-  civitai app init my-block        scaffold a ready-to-build block project
-  civitai app validate             validate block.manifest.json
-  civitai app submit               package + submit for review
-
-Authenticate once:
+Get started:
 
   civitai login                    store your API token
-  civitai whoami                   verify your token`,
+  civitai app init my-app          scaffold a ready-to-build App Block
+  civitai app validate             check the manifest before you submit
+  civitai app submit               package + submit for review`,
+		Example: `  # First time: authenticate, then scaffold and submit an app.
+  civitai login
+  civitai app init my-first-app --template page-vite
+  cd my-first-app
+  civitai app validate
+  civitai app submit`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
@@ -41,6 +59,8 @@ Authenticate once:
 	root.AddCommand(newAppCmd())
 	root.AddCommand(newLoginCmd())
 	root.AddCommand(newWhoAmICmd())
+	root.AddCommand(newVersionCmd())
+	root.AddCommand(newCompletionCmd())
 
 	return root
 }
