@@ -1,0 +1,36 @@
+# {{ .Name }}
+
+A Civitai App Block (static, no-build).
+
+## What this is
+
+A sandboxed static web app served in an iframe by the Civitai host. The only
+mandatory file is `block.manifest.json`. There is no build step — the platform
+serves these files as-is.
+
+## Develop
+
+Open `index.html` in a browser, or serve the directory:
+
+```bash
+python3 -m http.server 8080   # then open http://localhost:8080
+```
+
+Edit `app.js` / `style.css` / `index.html`. Talk to the host via
+`window.postMessage` (see the App SDK docs for the message protocol and scopes).
+
+## Validate
+
+```bash
+civitai app validate
+```
+
+## Submit
+
+```bash
+civitai login        # once, to store your API token
+civitai app submit
+```
+
+`submit` packages this directory (excluding `.git`, `node_modules`, `dist`) and
+submits it for moderator review.

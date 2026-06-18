@@ -1,0 +1,66 @@
+# goreleaser config for the civitai CLI.
+# Build + release binaries and a Homebrew tap formula.
+# Docs: https://goreleaser.com
+version: 2
+
+project_name: civitai
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: civitai
+    main: ./cmd/civitai
+    binary: civitai
+    env:
+      - CGO_ENABLED=0
+    ldflags:
+      - -s -w -X main.version={{ .Version }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: civitai
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+
+# Homebrew tap. Point this at the org's tap repo when one exists.
+brews:
+  - name: civitai
+    repository:
+      owner: civitai
+      name: homebrew-tap
+    homepage: "https://github.com/civitai/cli"
+    description: "Civitai CLI — author and ship App Blocks"
+    license: "MIT"
+    commit_author:
+      name: civitai-bot
+      email: bot@civitai.com
+    test: |
+      system "#{bin}/civitai", "--version"
+
+release:
+  draft: true
