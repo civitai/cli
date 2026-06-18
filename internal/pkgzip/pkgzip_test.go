@@ -1,0 +1,123 @@
+package pkgzip
+
+import (
+	"archive/zip"
+	"bytes"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+)
+
+func writeFile(t *testing.T, dir, rel, content string) {
+	t.Helper()
+	p := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildExcludesArtifacts(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "block.manifest.json", `{"blockId":"x"}`)
+	writeFile(t, dir, "src/main.jsx", "export default 1")
+	writeFile(t, dir, "package.json", "{}")
+	// These must be excluded:
+	writeFile(t, dir, "node_modules/react/index.js", "module.exports = {}")
+	writeFile(t, dir, "dist/bundle.js", "console.log(1)")
+	writeFile(t, dir, ".git/HEAD", "ref: refs/heads/main")
+
+	res, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+
+	got := namesInZip(t, res.Zip)
+	want := []string{"block.manifest.json", "package.json", "src/main.jsx"}
+	sort.Strings(got)
+	if len(got) != len(want) {
+		t.Fatalf("zip contents = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("zip[%d] = %q, want %q (all: %v)", i, got[i], want[i], got)
+		}
+	}
+
+	for _, bad := range got {
+		if bad == "dist/bundle.js" || bad == ".git/HEAD" {
+			t.Errorf("artifact %q should have been excluded", bad)
+		}
+		if strings.HasPrefix(bad, "node_modules") {
+			t.Errorf("node_modules entry %q should have been excluded", bad)
+		}
+	}
+}
+
+func TestBuildRequiresManifestAtRoot(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "src/block.manifest.json", `{"blockId":"x"}`) // nested, not root
+	if _, err := Build(dir); err == nil {
+		t.Fatal("expected error when manifest is not at the root")
+	}
+}
+
+func TestBuildRejectsOversizeFile(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "block.manifest.json", `{"blockId":"x"}`)
+	big := bytes.Repeat([]byte("a"), MaxFileSizeBytes+1)
+	if err := os.WriteFile(filepath.Join(dir, "big.bin"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Build(dir); err == nil {
+		t.Fatal("expected error for oversize file")
+	}
+}
+
+func TestBuildDeterministicOrder(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "block.manifest.json", `{"blockId":"x"}`)
+	writeFile(t, dir, "z.txt", "z")
+	writeFile(t, dir, "a.txt", "a")
+	res, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	want := []string{"a.txt", "block.manifest.json", "z.txt"}
+	if len(res.Files) != len(want) {
+		t.Fatalf("files = %v, want %v", res.Files, want)
+	}
+	for i := range want {
+		if res.Files[i] != want[i] {
+			t.Errorf("Files[%d] = %q, want %q", i, res.Files[i], want[i])
+		}
+	}
+}
+
+func TestExcludedNames(t *testing.T) {
+	for _, n := range []string{".git", "node_modules", "dist"} {
+		if !IsExcluded(n) {
+			t.Errorf("%q should be excluded", n)
+		}
+	}
+	if IsExcluded("src") {
+		t.Error("src should not be excluded")
+	}
+}
+
+func namesInZip(t *testing.T, b []byte) []string {
+	t.Helper()
+	r, err := zip.NewReader(bytes.NewReader(b), int64(len(b)))
+	if err != nil {
+		t.Fatalf("open zip: %v", err)
+	}
+	var out []string
+	for _, f := range r.File {
+		out = append(out, f.Name)
+	}
+	return out
+}

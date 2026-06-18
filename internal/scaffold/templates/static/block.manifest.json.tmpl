@@ -1,0 +1,21 @@
+{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "blockId": "{{ .Slug }}",
+  "version": "0.1.0",
+  "name": "{{ .Name }}",
+  "type": "block",
+  "scopes": [],
+  "page": {
+    "path": "/",
+    "title": "{{ .Name }}",
+    "icon": "bolt"
+  },
+  "iframe": {
+    "minHeight": 400,
+    "maxHeight": 4000,
+    "resizable": true,
+    "sandbox": "allow-scripts allow-forms"
+  },
+  "contentRating": "g",
+  "minApiVersion": "1.0"
+}

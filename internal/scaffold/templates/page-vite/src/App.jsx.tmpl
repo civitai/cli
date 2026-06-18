@@ -1,0 +1,30 @@
+import { useEffect, useState } from 'react';
+
+// {{ .Name }} — Civitai App Block (vite + React page template).
+//
+// The host serves this bundle in a sandboxed iframe and communicates over
+// window.postMessage. The example below reports the document height to the
+// host so the iframe resizes. See the App SDK for the full protocol + scopes.
+export default function App() {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    function reportHeight() {
+      window.parent.postMessage(
+        { type: 'RESIZE_IFRAME', height: document.documentElement.scrollHeight },
+        '*'
+      );
+    }
+    reportHeight();
+    window.addEventListener('resize', reportHeight);
+    return () => window.removeEventListener('resize', reportHeight);
+  });
+
+  return (
+    <main className="app">
+      <h1>{{ .Name }}</h1>
+      <p>A Civitai App Block built with Vite + React.</p>
+      <button onClick={() => setCount((c) => c + 1)}>count is {count}</button>
+    </main>
+  );
+}

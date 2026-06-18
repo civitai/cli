@@ -1,0 +1,30 @@
+// {{ .Name }} — Civitai App Block (static template).
+//
+// A block is a sandboxed static web app served in an iframe by the Civitai
+// host. The host owns the build and the runtime; this file is served as-is.
+//
+// The host and the block talk over window.postMessage. The minimal useful
+// thing a block can do is tell the host how tall it is so the iframe resizes.
+// See the App SDK for the full message protocol and the available scopes.
+
+(function () {
+  'use strict';
+
+  function reportHeight() {
+    var height = document.documentElement.scrollHeight;
+    // RESIZE_IFRAME is honoured when manifest iframe.resizable is true and the
+    // value is within [minHeight, maxHeight].
+    window.parent.postMessage(
+      { type: 'RESIZE_IFRAME', height: height },
+      '*'
+    );
+  }
+
+  document.addEventListener('DOMContentLoaded', function () {
+    reportHeight();
+    var btn = document.getElementById('ping');
+    if (btn) {
+      btn.addEventListener('click', reportHeight);
+    }
+  });
+})();

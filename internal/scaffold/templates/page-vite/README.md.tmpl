@@ -1,0 +1,39 @@
+# {{ .Name }}
+
+A Civitai App Block (Vite + React, config-as-code build).
+
+## What this is
+
+A sandboxed static web app served in an iframe by the Civitai host. The
+platform owns the build: it runs `npm ci` and then the `buildCommand` from
+`block.manifest.json` (`npm run build`), serving the static output from
+`outputDir` (`dist/`). You do NOT commit `dist/` — the platform builds it.
+
+## Develop
+
+```bash
+npm install
+npm run dev      # http://localhost:5173
+```
+
+Build locally to sanity-check what the platform will produce:
+
+```bash
+npm run build && npm run preview
+```
+
+## Validate
+
+```bash
+civitai app validate
+```
+
+## Submit
+
+```bash
+civitai login        # once, to store your API token
+civitai app submit
+```
+
+`submit` packages the SOURCE tree (manifest + src + build config), excluding
+`.git`, `node_modules`, and `dist` — the platform rebuilds from source.
