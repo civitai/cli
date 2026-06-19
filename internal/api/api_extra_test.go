@@ -10,8 +10,8 @@ import (
 
 func TestNewDefaultsSubmitPath(t *testing.T) {
 	c := New("https://civitai.com/", "tok", "")
-	if c.SubmitPath != "/api/blocks/submit-version" {
-		t.Errorf("default SubmitPath = %q", c.SubmitPath)
+	if c.SubmitPath != DefaultSubmitPath {
+		t.Errorf("default SubmitPath = %q, want %q", c.SubmitPath, DefaultSubmitPath)
 	}
 	if c.BaseURL != "https://civitai.com" {
 		t.Errorf("BaseURL should be trimmed of trailing slash: %q", c.BaseURL)
