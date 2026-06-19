@@ -91,7 +91,7 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 	// Tell the user what to do. Never print the device_code (secret).
 	uri := da.VerificationURI
 	if uri == "" {
-		uri = cfg.BaseURL() + "/oauth/device"
+		uri = cfg.BaseURL() + "/login/oauth/device"
 	}
 	fmt.Fprintln(out, "To authenticate, open this URL in your browser and enter the code:")
 	fmt.Fprintf(out, "\n  URL:  %s\n  Code: %s\n\n", uri, da.UserCode)
@@ -112,7 +112,7 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 	}
 
 	expiry := time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
-	if err := cfg.SetOAuthTokens(tr.AccessToken, tr.RefreshToken, expiry, tr.Scope); err != nil {
+	if err := cfg.SetOAuthTokens(tr.AccessToken, tr.RefreshToken, expiry, tr.Scope.String()); err != nil {
 		return err
 	}
 	fmt.Fprintf(out, "\nLogged in. Tokens saved to %s\n", cfg.Path())

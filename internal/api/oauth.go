@@ -33,6 +33,10 @@ const (
 	pathDeviceInit  = "/api/auth/oauth/device"
 	pathDeviceToken = "/api/auth/oauth/device-token"
 	pathToken       = "/api/auth/oauth/token"
+
+	// maxPollInterval caps the RFC 8628 +5s-per-slow_down backoff so a
+	// misbehaving (or repeated) slow_down can't stretch the poll unboundedly.
+	maxPollInterval = 60 * time.Second
 )
 
 // OAuthClient talks the device-flow + refresh endpoints.
@@ -59,6 +63,44 @@ type DeviceAuth struct {
 	Interval                int    `json:"interval"`
 }
 
+// Scope is a token scope that tolerates BOTH JSON shapes the server emits:
+// the device-token (login) route returns a plain string (`scope.toString()`),
+// while the token/refresh route returns the @node-oauth/oauth2-server shape
+// where scope is an ARRAY of strings (e.g. ["33554433"]). Declaring scope as a
+// plain `string` made json.Unmarshal of the refresh response fail the whole
+// struct, killing Refresh() after the 1h access-token TTL. UnmarshalJSON
+// normalizes either shape to a single space-joined string (OAuth convention).
+// The CLI only stores/displays scope, it never enforces it, so this is safe.
+type Scope string
+
+// UnmarshalJSON accepts a JSON string OR a JSON array of strings.
+func (s *Scope) UnmarshalJSON(b []byte) error {
+	// Null/absent -> empty.
+	if len(b) == 0 || string(b) == "null" {
+		*s = ""
+		return nil
+	}
+	// Array shape (refresh route): ["33554433"] -> "33554433".
+	if b[0] == '[' {
+		var arr []string
+		if err := json.Unmarshal(b, &arr); err != nil {
+			return err
+		}
+		*s = Scope(strings.Join(arr, " "))
+		return nil
+	}
+	// String shape (device-token route).
+	var str string
+	if err := json.Unmarshal(b, &str); err != nil {
+		return err
+	}
+	*s = Scope(str)
+	return nil
+}
+
+// String returns the scope as a plain string for storage/display.
+func (s Scope) String() string { return string(s) }
+
 // TokenResponse is the successful device-token / refresh response. RefreshToken
 // may be empty on a refresh that doesn't rotate.
 type TokenResponse struct {
@@ -66,7 +108,7 @@ type TokenResponse struct {
 	TokenType    string `json:"token_type"`
 	ExpiresIn    int    `json:"expires_in"`
 	RefreshToken string `json:"refresh_token"`
-	Scope        string `json:"scope"`
+	Scope        Scope  `json:"scope"`
 }
 
 // oauthErr is the OAuth error body ({"error": "..."}).
@@ -201,6 +243,9 @@ func (c *OAuthClient) PollToken(ctx context.Context, auth *DeviceAuth, sleep fun
 			return tr, nil
 		case pollSlowDown:
 			interval += 5 * time.Second
+			if interval > maxPollInterval {
+				interval = maxPollInterval
+			}
 		}
 		// Don't sleep past the deadline.
 		if time.Now().Add(interval).After(deadline) {

@@ -76,6 +76,13 @@ func (s *Source) Refresh(ctx context.Context) (string, error) {
 
 // refreshLocked performs the refresh grant and persists the result. Caller
 // holds s.mu.
+//
+// FOLLOW-UP (M3, not fixed here): this refresh is not coordinated across
+// concurrent CLI processes. The server rotates (and revokes the old) refresh
+// token on each refresh, so two processes refreshing at once can race: the
+// second sees its now-revoked token rejected and forces the user to re-login.
+// The fix is a cross-process file lock around read-refresh-persist; left as a
+// documented follow-up since the common single-process case is unaffected.
 func (s *Source) refreshLocked(ctx context.Context) (string, error) {
 	rt := s.cfg.RefreshToken()
 	if rt == "" {
@@ -90,9 +97,17 @@ func (s *Source) refreshLocked(ctx context.Context) (string, error) {
 	if newRefresh == "" {
 		newRefresh = rt
 	}
-	scope := tr.Scope
+	scope := tr.Scope.String()
 	if scope == "" {
 		scope = s.cfg.Scope()
+	}
+	// Floor-guard expires_in: a non-positive value would set the expiry to ~now
+	// and trigger a refresh on every subsequent call (or, with skew, never serve
+	// the token). The server always sends a positive lifetime, so treat a
+	// non-positive one as a malformed response rather than silently persisting a
+	// dead token.
+	if tr.ExpiresIn <= 0 {
+		return "", fmt.Errorf("refresh response had a non-positive expires_in (%d)", tr.ExpiresIn)
 	}
 	expiry := time.Now().Add(time.Duration(tr.ExpiresIn) * time.Second)
 	if err := s.cfg.SetOAuthTokens(tr.AccessToken, newRefresh, expiry, scope); err != nil {
