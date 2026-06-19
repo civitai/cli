@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -25,7 +26,7 @@ authenticated username. Reads the token from config or CIVITAI_TOKEN.`,
 			if cfg.Token() == "" {
 				return fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)")
 			}
-			client := api.New(cfg.BaseURL(), cfg.Token(), "")
+			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 			id, err := client.WhoAmI(context.Background())
 			if err != nil {
 				return err

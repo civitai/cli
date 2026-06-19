@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -18,6 +19,18 @@ const (
 
 	keyToken   = "token"
 	keyBaseURL = "base_url"
+
+	// OAuth (device-flow) keys.
+	keyAuthKind     = "auth_kind"
+	keyAccessToken  = "access_token"
+	keyRefreshToken = "refresh_token"
+	keyTokenExpiry  = "token_expiry" // RFC3339 absolute expiry of the access token
+	keyScope        = "scope"
+
+	// AuthKindOAuth marks a config holding device-flow OAuth tokens.
+	AuthKindOAuth = "oauth"
+	// AuthKindToken marks a config holding a personal API key (no refresh).
+	AuthKindToken = "token"
 
 	// EnvPrefix maps CIVITAI_TOKEN / CIVITAI_BASE_URL onto config keys.
 	EnvPrefix = "CIVITAI"
@@ -69,8 +82,15 @@ func Load() (*Config, error) {
 	return &Config{v: v, path: filepath.Join(dir, "config.yaml")}, nil
 }
 
-// Token returns the configured API token (env overrides file).
-func (c *Config) Token() string { return c.v.GetString(keyToken) }
+// Token returns the credential to send as a Bearer token. For an OAuth config
+// it is the stored access token; for a personal-key config it is the API key.
+// Env (CIVITAI_TOKEN) overrides the file in both cases.
+func (c *Config) Token() string {
+	if t := c.v.GetString(keyToken); t != "" {
+		return t
+	}
+	return c.v.GetString(keyAccessToken)
+}
 
 // BaseURL returns the configured API base URL.
 func (c *Config) BaseURL() string { return c.v.GetString(keyBaseURL) }
@@ -78,10 +98,73 @@ func (c *Config) BaseURL() string { return c.v.GetString(keyBaseURL) }
 // Path returns the on-disk config file path.
 func (c *Config) Path() string { return c.path }
 
-// SetToken stores the API token and persists the config file.
+// AuthKind reports how the stored credential was obtained: AuthKindOAuth (a
+// device-flow login that can refresh) or AuthKindToken (a personal key with no
+// refresh). A CIVITAI_TOKEN env override is always treated as a personal key.
+func (c *Config) AuthKind() string {
+	// An env-supplied token is a personal key — never refreshable.
+	if c.v.GetString(keyToken) != "" {
+		return AuthKindToken
+	}
+	if k := c.v.GetString(keyAuthKind); k != "" {
+		return k
+	}
+	if c.v.GetString(keyAccessToken) != "" {
+		return AuthKindOAuth
+	}
+	return AuthKindToken
+}
+
+// AccessToken returns the stored OAuth access token (empty for a personal key).
+func (c *Config) AccessToken() string { return c.v.GetString(keyAccessToken) }
+
+// RefreshToken returns the stored OAuth refresh token (empty for a personal key).
+func (c *Config) RefreshToken() string { return c.v.GetString(keyRefreshToken) }
+
+// Scope returns the stored OAuth scope string.
+func (c *Config) Scope() string { return c.v.GetString(keyScope) }
+
+// TokenExpiry returns the absolute access-token expiry, or the zero time if
+// none is stored.
+func (c *Config) TokenExpiry() time.Time {
+	s := c.v.GetString(keyTokenExpiry)
+	if s == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+// SetToken stores a personal API key and persists the config file. It clears
+// any OAuth state so the two auth kinds never coexist on disk.
 func (c *Config) SetToken(token string) error {
 	c.v.Set(keyToken, token)
+	c.v.Set(keyAuthKind, AuthKindToken)
+	c.clearOAuth()
 	return c.save()
+}
+
+// SetOAuthTokens stores device-flow tokens (access + refresh + expiry + scope)
+// and persists the config file. It clears any personal-key token so the two
+// auth kinds never coexist on disk.
+func (c *Config) SetOAuthTokens(accessToken, refreshToken string, expiry time.Time, scope string) error {
+	c.v.Set(keyAuthKind, AuthKindOAuth)
+	c.v.Set(keyAccessToken, accessToken)
+	c.v.Set(keyRefreshToken, refreshToken)
+	c.v.Set(keyTokenExpiry, expiry.UTC().Format(time.RFC3339))
+	c.v.Set(keyScope, scope)
+	c.v.Set(keyToken, "")
+	return c.save()
+}
+
+func (c *Config) clearOAuth() {
+	c.v.Set(keyAccessToken, "")
+	c.v.Set(keyRefreshToken, "")
+	c.v.Set(keyTokenExpiry, "")
+	c.v.Set(keyScope, "")
 }
 
 // SetBaseURL stores a custom base URL and persists the config file.

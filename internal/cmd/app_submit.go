@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/civitai/cli/internal/pkgzip"
@@ -30,12 +31,12 @@ prebuilt dist. The platform rebuilds from source. These are excluded:
   ` + pkgzip.JoinExcluded() + `
 
 Submission path:
-  The live server upload route (POST /api/blocks/submit-version) is SESSION-
-  COOKIE + moderator authenticated today — it does NOT accept an API token, so
-  a fully programmatic token submit needs a companion server endpoint (see the
-  repo README / PR). When CIVITAI_SUBMIT_PATH points at such a token-accepting
-  endpoint, this command uploads directly. Otherwise it writes the canonical
-  .zip and prints the exact manual next steps.
+  By default this uploads the bundle directly using your stored token to the
+  token-authenticated submit route (POST /api/v1/blocks/submit-version). OAuth
+  device-login tokens (` + "`civitai login`" + `) and personal API keys both work;
+  OAuth tokens refresh automatically. Set CIVITAI_SUBMIT_PATH to override the
+  route. With no token configured (and no --package-only), it writes the
+  canonical .zip and prints the manual next steps.
 
   --package-only always just writes the .zip and stops.
 
@@ -84,14 +85,13 @@ Defaults to the current directory.`,
 				return err
 			}
 
-			// Resolve the (optional) token-accepting submit endpoint.
+			// The submit route defaults to the v1 token route; env overrides it.
 			submitPath := os.Getenv("CIVITAI_SUBMIT_PATH")
 
-			// 3a. Programmatic submit if we have both a token and a configured
-			// token-accepting endpoint.
-			canUpload := !packageOnly && cfg.Token() != "" && submitPath != ""
+			// 3a. Programmatic submit if we have a token (OAuth or personal key).
+			canUpload := !packageOnly && cfg.Token() != ""
 			if canUpload {
-				client := api.New(cfg.BaseURL(), cfg.Token(), submitPath)
+				client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
 				return doUpload(cmd, client, pkg.Zip, m)
 			}
 
@@ -134,13 +134,11 @@ func doUpload(cmd *cobra.Command, client api.Submitter, zipBytes []byte, m *mani
 
 func printManualNextSteps(cmd *cobra.Command, cfg *config.Config, m *manifest.Manifest, zipPath string) {
 	out := cmd.OutOrStdout()
-	fmt.Fprintln(out, "\nSubmission is not yet automated for API tokens. Submit the bundle one of these ways:")
-	fmt.Fprintf(out, "\n  1) Web (works today): upload %s at\n", filepath.Base(zipPath))
+	fmt.Fprintln(out, "\nNo token configured, so the bundle was written but not uploaded.")
+	fmt.Fprintln(out, "\n  1) Authenticate, then re-run to upload directly:")
+	fmt.Fprintln(out, "     civitai login          # browser device login")
+	fmt.Fprintln(out, "     civitai app submit")
+	fmt.Fprintf(out, "\n  2) Or upload %s via the web UI:\n", filepath.Base(zipPath))
 	fmt.Fprintf(out, "     %s/apps/submit\n", cfg.BaseURL())
 	fmt.Fprintln(out, "     (requires a moderator account while App Blocks is mod-gated).")
-	fmt.Fprintln(out, "\n  2) Git push (for updates after your first version is approved):")
-	fmt.Fprintln(out, "     after approval, `blocks.getMyAppRepo` provisions a Forgejo repo —")
-	fmt.Fprintln(out, "     clone it and `git push` to park a pending review.")
-	fmt.Fprintln(out, "\n  To enable `civitai app submit` to upload directly, the server needs a")
-	fmt.Fprintln(out, "  token-authenticated submit endpoint; set CIVITAI_SUBMIT_PATH to it once it exists.")
 }

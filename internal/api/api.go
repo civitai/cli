@@ -1,22 +1,17 @@
 // Package api is the (thin) HTTP client for the Civitai App Blocks surface.
 //
-// Auth/submit contract (investigated against civitai/civitai @ main, 2026-06):
+// Auth/submit contract (civitai/civitai PR #2644):
 //
-//   - The live bundle-upload route is POST /api/blocks/submit-version. It is
-//     wrapped in ModEndpoint = SESSION-COOKIE auth + isModerator + appBlocks
-//     flag. It does NOT accept an API key / bearer token today, so a clean
-//     programmatic "civitai app submit" is blocked on a server change.
-//   - The git-push flow (blocks.getMyAppRepo, #2587) provisions a scoped
-//     Forgejo repo but only AFTER the first version has been ZIP-approved, and
-//     is itself session-auth tRPC.
+//   - The token-authenticated bundle-upload route is
+//     POST /api/v1/blocks/submit-version (Bearer access token). This is the
+//     default the CLI targets; CIVITAI_SUBMIT_PATH overrides it.
+//   - The legacy /api/blocks/submit-version route is session-cookie + moderator
+//     authenticated and not used by the CLI.
 //
-// So: this client speaks the submit-version payload shape and sends the token
-// as a Bearer header against a configurable path (CIVITAI_SUBMIT_PATH), which
-// is exactly what the companion server endpoint needs to accept. Until that
-// endpoint exists, `civitai app submit` falls back to writing the canonical
-// ZIP + printing next steps (see internal/cmd/app_submit.go). Keeping the
-// network call behind the Submitter interface makes the whole thing testable
-// without a live server.
+// Auth is supplied via a TokenSource so OAuth (device-flow) access tokens are
+// refreshed transparently before a request and once on a 401; a personal API
+// key is a static source with no refresh. Keeping the network call behind the
+// Submitter interface makes the whole thing testable without a live server.
 package api
 
 import (
@@ -30,6 +25,31 @@ import (
 	"strings"
 	"time"
 )
+
+// TokenSource yields the Bearer token to send. Refresh, if supported, refreshes
+// the token (e.g. after a 401) and returns the new one; a static personal-key
+// source returns ErrNoRefresh.
+type TokenSource interface {
+	// Token returns the current bearer token, refreshing first if it is known
+	// to be expired. An empty token means "unauthenticated".
+	Token(ctx context.Context) (string, error)
+	// Refresh forces a refresh (used on a 401) and returns the new token.
+	// Sources that cannot refresh return ("", ErrNoRefresh).
+	Refresh(ctx context.Context) (string, error)
+}
+
+// ErrNoRefresh is returned by a non-refreshable (personal-key) TokenSource.
+var ErrNoRefresh = fmt.Errorf("token source cannot refresh")
+
+// StaticToken is a TokenSource for a fixed token (personal API key). It never
+// refreshes.
+type StaticToken string
+
+// Token returns the static token.
+func (s StaticToken) Token(context.Context) (string, error) { return string(s), nil }
+
+// Refresh always fails: a personal key has no refresh path.
+func (s StaticToken) Refresh(context.Context) (string, error) { return "", ErrNoRefresh }
 
 // Submitter submits a packaged bundle and returns the server's response.
 type Submitter interface {
@@ -55,25 +75,76 @@ type SubmitResult struct {
 	Status           string `json:"status"`
 }
 
+// DefaultSubmitPath is the token-authenticated submit-version route.
+const DefaultSubmitPath = "/api/v1/blocks/submit-version"
+
 // Client is the default HTTP implementation.
 type Client struct {
 	BaseURL    string
-	Token      string
-	SubmitPath string // route for submit-version; companion endpoint, configurable
+	Tokens     TokenSource
+	SubmitPath string // route for submit-version; CIVITAI_SUBMIT_PATH overrides
 	HTTP       *http.Client
 }
 
-// New builds a Client with sane defaults.
+// New builds a Client with sane defaults from a static token (personal API key
+// or a one-shot access token). For refreshable OAuth credentials use
+// NewWithSource.
 func New(baseURL, token, submitPath string) *Client {
+	return NewWithSource(baseURL, StaticToken(token), submitPath)
+}
+
+// NewWithSource builds a Client backed by a TokenSource (which may refresh).
+func NewWithSource(baseURL string, src TokenSource, submitPath string) *Client {
 	if submitPath == "" {
-		submitPath = "/api/blocks/submit-version"
+		submitPath = DefaultSubmitPath
 	}
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
-		Token:      token,
+		Tokens:     src,
 		SubmitPath: submitPath,
 		HTTP:       &http.Client{Timeout: 120 * time.Second},
 	}
+}
+
+// authedDo runs build() (which builds a fresh *http.Request each call, since a
+// retried request needs a fresh body) with a Bearer token from the source,
+// refreshing once on a 401 and retrying. The returned response body is fully
+// read into raw and the response is closed.
+func (c *Client) authedDo(ctx context.Context, build func() (*http.Request, error)) (int, []byte, error) {
+	token, err := c.Tokens.Token(ctx)
+	if err != nil {
+		return 0, nil, err
+	}
+	status, raw, err := c.doOnce(ctx, build, token)
+	if err != nil {
+		return 0, nil, err
+	}
+	if status == http.StatusUnauthorized {
+		// Try a single refresh + retry. A non-refreshable source returns
+		// ErrNoRefresh and we keep the original 401.
+		newTok, rerr := c.Tokens.Refresh(ctx)
+		if rerr == nil && newTok != "" {
+			return c.doOnce(ctx, build, newTok)
+		}
+	}
+	return status, raw, nil
+}
+
+func (c *Client) doOnce(ctx context.Context, build func() (*http.Request, error), token string) (int, []byte, error) {
+	req, err := build()
+	if err != nil {
+		return 0, nil, err
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, raw, nil
 }
 
 // submitBody mirrors submitVersionSchema: a base64-encoded ZIP.
@@ -81,8 +152,8 @@ type submitBody struct {
 	BundleBase64 string `json:"bundleBase64"`
 }
 
-// SubmitVersion uploads the bundle. The server route this targets must accept
-// a Bearer token (the companion change); see package doc.
+// SubmitVersion uploads the bundle to the token-authenticated submit route,
+// refreshing the OAuth access token transparently if needed.
 func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte) (*SubmitResult, error) {
 	body, err := json.Marshal(submitBody{
 		BundleBase64: base64.StdEncoding.EncodeToString(zipBytes),
@@ -90,51 +161,47 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte) (*SubmitRes
 	if err != nil {
 		return nil, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+c.SubmitPath, bytes.NewReader(body))
+	build := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+c.SubmitPath, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	}
+	status, raw, err := c.authedDo(ctx, build)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
-	}
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, serverError(resp.StatusCode, raw)
+	if status != http.StatusOK {
+		return nil, serverError(status, raw)
 	}
 	var out SubmitResult
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, fmt.Errorf("unexpected response (status %d): %s", resp.StatusCode, string(raw))
+		return nil, fmt.Errorf("unexpected response (status %d): %s", status, string(raw))
 	}
 	return &out, nil
 }
 
-// WhoAmI verifies the token. The public Civitai REST surface exposes
-// authenticated user details; we hit a configurable path and tolerate either
-// {username,id} directly or wrapped. Minimal by design.
+// WhoAmI verifies the token against /api/v1/me, refreshing the OAuth access
+// token transparently if needed.
 func (c *Client) WhoAmI(ctx context.Context) (*Identity, error) {
-	if c.Token == "" {
+	tok, err := c.Tokens.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if tok == "" {
 		return nil, fmt.Errorf("no token configured — run `civitai login` first")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/v1/me", nil)
+	build := func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/v1/me", nil)
+	}
+	status, raw, err := c.authedDo(ctx, build)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
-		return nil, serverError(resp.StatusCode, raw)
+	if status != http.StatusOK {
+		return nil, serverError(status, raw)
 	}
 	var id Identity
 	if err := json.Unmarshal(raw, &id); err != nil {

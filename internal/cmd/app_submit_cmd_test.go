@@ -54,7 +54,7 @@ func TestAppSubmitFallbackPrintsManualSteps(t *testing.T) {
 	tmp := t.TempDir()
 	writeStaticManifest(t, tmp)
 
-	// No token + no submit path => fallback to writing zip + manual steps.
+	// No token => fallback to writing zip + manual steps.
 	cfgdir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfgdir)
 	t.Setenv("CIVITAI_TOKEN", "")
@@ -65,8 +65,11 @@ func TestAppSubmitFallbackPrintsManualSteps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit fallback: %v\n%s", err, stdout)
 	}
-	if !strings.Contains(stdout, "not yet automated") || !strings.Contains(stdout, "/apps/submit") {
+	if !strings.Contains(stdout, "No token configured") || !strings.Contains(stdout, "/apps/submit") {
 		t.Errorf("fallback should print manual next steps: %s", stdout)
+	}
+	if !strings.Contains(stdout, "civitai login") {
+		t.Errorf("fallback should point at `civitai login`: %s", stdout)
 	}
 }
 
@@ -115,6 +118,51 @@ func TestAppSubmitUploadsWhenTokenAndPathConfigured(t *testing.T) {
 		t.Errorf("server saw auth %q, want Bearer tok-xyz", gotAuth)
 	}
 	if !strings.Contains(stdout, "pr_42") || !strings.Contains(stdout, "pending") {
+		t.Errorf("output should report the publish request: %s", stdout)
+	}
+}
+
+func TestAppSubmitUploadsToV1RouteByDefault(t *testing.T) {
+	tmp := t.TempDir()
+	writeStaticManifest(t, tmp)
+
+	var gotPath, gotAuth, gotBundle string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
+		var body struct {
+			BundleBase64 string `json:"bundleBase64"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotBundle = body.BundleBase64
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"publishRequestId": "pr_77", "slug": "demo-block", "version": "0.1.0", "status": "pending",
+		})
+	}))
+	defer srv.Close()
+
+	cfgdir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgdir)
+	t.Setenv("CIVITAI_TOKEN", "tok-default")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	// No CIVITAI_SUBMIT_PATH => must default to the v1 token route.
+	t.Setenv("CIVITAI_SUBMIT_PATH", "")
+
+	stdout, _, err := run(t, "app", "submit", tmp)
+	if err != nil {
+		t.Fatalf("submit default upload: %v\n%s", err, stdout)
+	}
+	if gotPath != "/api/v1/blocks/submit-version" {
+		t.Errorf("submit path = %q, want /api/v1/blocks/submit-version", gotPath)
+	}
+	if gotAuth != "Bearer tok-default" {
+		t.Errorf("auth = %q, want Bearer tok-default", gotAuth)
+	}
+	if gotBundle == "" {
+		t.Error("server should have received a bundleBase64 body")
+	}
+	if !strings.Contains(stdout, "pr_77") {
 		t.Errorf("output should report the publish request: %s", stdout)
 	}
 }

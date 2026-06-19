@@ -46,7 +46,7 @@ civitai version
 ## Quickstart
 
 ```bash
-# 1. Authenticate once (create a token at https://civitai.com/user/account).
+# 1. Authenticate once (browser device login; or `civitai login --token <t>`).
 civitai login
 
 # 2. Scaffold a ready-to-build App Block.
@@ -56,7 +56,7 @@ cd my-app
 # 3. Edit your app, then check the manifest before submitting.
 civitai app validate
 
-# 4. Package + submit for review (or write the bundle + print next steps).
+# 4. Package + submit for review (uploads with your stored token by default).
 civitai app submit
 ```
 
@@ -70,11 +70,11 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 
 | Command | What it does |
 | --- | --- |
-| `civitai login [--token <t>]` | Store your API token (`~/.config/civitai/config.yaml`, 0600). Also reads `CIVITAI_TOKEN`. |
+| `civitai login [--token <t>] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens); `--token` stores a personal API key instead. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
 | `civitai whoami` | Verify the stored token; print the authenticated user. |
 | `civitai app init [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | Scaffold a correct, ready-to-build App Block project (default dir `./<slug>`). |
 | `civitai app validate [dir] [--strict]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). See [Validate fidelity](#validate-fidelity). |
-| `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + submit (or write the bundle + print manual next steps). |
+| `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
 
@@ -126,18 +126,24 @@ the real `BlockManifestValidator` (the faithful contract), with this schema
 published as the syntactic half. See [`CLAUDE.md`](CLAUDE.md) for the full
 caveat and how the vendored schema + Go checks are kept in sync.
 
-## Submit & auth (current state)
+## Submit & auth
 
-The live upload route (`POST /api/blocks/submit-version`) is **session-cookie +
-moderator** authenticated today — it does not accept an API token — so a fully
-programmatic `civitai app submit` needs a companion token-accepting server
-endpoint. Until that ships:
+`civitai login` (no flags) runs the **OAuth device-authorization grant**: it
+prints a URL + a short code, you approve in your browser, and the CLI stores a
+short-lived access token (1h) plus a refresh token (30d) that it rotates
+automatically before requests and once on a `401`. `civitai login --token <key>`
+stores a personal API key instead (no refresh). `CIVITAI_TOKEN` overrides the
+stored credential (treated as a personal key).
 
-- `civitai app submit` always **validates + packages** the canonical source ZIP.
-- If a token *and* a token-accepting endpoint are configured (set
-  `CIVITAI_SUBMIT_PATH`), it uploads directly with `Authorization: Bearer`.
-- Otherwise it **writes the `.zip` and prints the exact manual next steps**
-  (web upload at `/apps/submit`, or the git-push path for updates).
+`civitai app submit`:
+
+- always **validates + packages** the canonical source ZIP, then
+- **uploads it with your stored token** to the token-authenticated route
+  `POST /api/v1/blocks/submit-version` (`Authorization: Bearer`). OAuth tokens
+  refresh transparently. Set `CIVITAI_SUBMIT_PATH` to override the route.
+- With **no token configured** (and not `--package-only`), it instead writes the
+  `.zip` and prints the next steps (`civitai login`, or web upload at
+  `/apps/submit`).
 
 `--package-only` always just writes the `.zip` and stops.
 
@@ -145,9 +151,10 @@ endpoint. Until that ships:
 
 | Setting | Config key | Env var | Default |
 | --- | --- | --- | --- |
-| API token | `token` | `CIVITAI_TOKEN` | — |
+| Personal API key | `token` | `CIVITAI_TOKEN` | — |
+| OAuth tokens (device login) | `auth_kind`, `access_token`, `refresh_token`, `token_expiry`, `scope` | — | — |
 | API base URL | `base_url` | `CIVITAI_BASE_URL` | `https://civitai.com` |
-| Submit endpoint | — | `CIVITAI_SUBMIT_PATH` | `/api/blocks/submit-version` |
+| Submit endpoint | — | `CIVITAI_SUBMIT_PATH` | `/api/v1/blocks/submit-version` |
 
 Config lives at `~/.config/civitai/config.yaml` (honours `XDG_CONFIG_HOME`),
 written owner-readable only.
@@ -155,8 +162,10 @@ written owner-readable only.
 ## Troubleshooting
 
 - **`no token configured`** — run `civitai login` (or set `CIVITAI_TOKEN`).
-- **`unauthorized (401)`** — your token is invalid/expired; create a new one at
-  `https://civitai.com/user/account` and `civitai login` again.
+- **`unauthorized (401)`** — your token is invalid/expired. OAuth tokens refresh
+  automatically; if the refresh token has also expired, run `civitai login`
+  again. For a personal key, create a new one at
+  `https://civitai.com/user/account` and `civitai login --token <key>`.
 - **`forbidden (403)` / `service unavailable (503)`** — your account may lack
   App Blocks access while the feature is gated.
 - **`validation failed`** — read each `- ...` line; fix the manifest, or pass
