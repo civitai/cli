@@ -152,10 +152,19 @@ func TestRefreshRotatesToken(t *testing.T) {
 		if r.URL.Path != pathToken {
 			t.Errorf("refresh hit wrong path %q", r.URL.Path)
 		}
-		var body map[string]string
-		_ = json.NewDecoder(r.Body).Decode(&body)
-		if body["grant_type"] != grantTypeRefreshToken || body["refresh_token"] != "old-rt" {
-			t.Errorf("refresh body = %v", body)
+		// The /token route (the @node-oauth/oauth2-server token handler) REQUIRES
+		// application/x-www-form-urlencoded and rejects JSON with "content must be
+		// application/x-www-form-urlencoded". Assert the CLI sends form encoding —
+		// this is the regression guard for the bug where Refresh() posted JSON and
+		// the real server rejected every refresh after the 1h access-token TTL.
+		if ct := r.Header.Get("Content-Type"); ct != "application/x-www-form-urlencoded" {
+			t.Errorf("refresh Content-Type = %q, want application/x-www-form-urlencoded", ct)
+		}
+		if err := r.ParseForm(); err != nil {
+			t.Fatalf("ParseForm: %v", err)
+		}
+		if r.PostFormValue("grant_type") != grantTypeRefreshToken || r.PostFormValue("refresh_token") != "old-rt" {
+			t.Errorf("refresh form = %v", r.PostForm)
 		}
 		_ = json.NewEncoder(w).Encode(TokenResponse{
 			AccessToken: "new-at", ExpiresIn: 3600, RefreshToken: "new-rt", Scope: DeviceScope,
