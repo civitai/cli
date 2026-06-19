@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -264,12 +265,17 @@ func (c *OAuthClient) PollToken(ctx context.Context, auth *DeviceAuth, sleep fun
 // Refresh exchanges a refresh token for a new access token. The server may
 // rotate the refresh token; callers must persist tr.RefreshToken if non-empty.
 func (c *OAuthClient) Refresh(ctx context.Context, refreshToken string) (*TokenResponse, error) {
-	body, _ := json.Marshal(map[string]string{
-		"grant_type":    grantTypeRefreshToken,
-		"refresh_token": refreshToken,
-		"client_id":     ClientID,
-	})
-	status, raw, err := c.post(ctx, pathToken, body)
+	// The /token endpoint is the @node-oauth/oauth2-server token handler, which
+	// REQUIRES application/x-www-form-urlencoded (it rejects JSON with "content
+	// must be application/x-www-form-urlencoded"). Unlike the custom device-flow
+	// endpoints (/device, /device-token) which accept JSON via post(), the refresh
+	// grant must be form-encoded.
+	form := url.Values{
+		"grant_type":    {grantTypeRefreshToken},
+		"refresh_token": {refreshToken},
+		"client_id":     {ClientID},
+	}
+	status, raw, err := c.postForm(ctx, pathToken, form)
 	if err != nil {
 		return nil, err
 	}
@@ -298,6 +304,25 @@ func (c *OAuthClient) post(ctx context.Context, path string, body []byte) (int, 
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, raw, nil
+}
+
+// postForm sends an application/x-www-form-urlencoded POST. Used for the OAuth
+// /token endpoint (the refresh grant), whose @node-oauth/oauth2-server handler
+// requires form encoding and rejects JSON.
+func (c *OAuthClient) postForm(ctx context.Context, path string, form url.Values) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, strings.NewReader(form.Encode()))
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
