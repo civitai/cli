@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"path/filepath"
 
 	"github.com/civitai/cli/internal/scaffold"
@@ -45,120 +46,7 @@ a positional [dir] or --dir <path>; override the display name independently with
   civitai app init my-block ./apps/foo --name "My Block"`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			out := cmd.OutOrStdout()
-
-			if fromSlug != "" {
-				return fmt.Errorf(`--from is not yet wired up.
-
-Forking an existing published block requires fetching its source from the
-server, which this CLI cannot do yet (no programmatic block-source endpoint).
-
-TODO(server): expose a read endpoint that returns a published block's canonical
-source tree by slug, then --from can scaffold from it. For now, run a plain
-init and copy the upstream files in manually.`)
-			}
-
-			tmpl, err := scaffold.ParseTemplate(templateFlag)
-			if err != nil {
-				return err
-			}
-
-			name := ""
-			if len(args) >= 1 {
-				name = args[0]
-			}
-			if name == "" {
-				return fmt.Errorf("provide a project name: civitai app init <name>")
-			}
-
-			// Positional [dir] (args[1]) and --dir both set the output directory;
-			// they must not conflict.
-			posDir := ""
-			if len(args) == 2 {
-				posDir = args[1]
-			}
-			if posDir != "" && dirFlag != "" && posDir != dirFlag {
-				return fmt.Errorf("conflicting output directory: positional %q and --dir %q", posDir, dirFlag)
-			}
-			targetDir := dirFlag
-			if targetDir == "" {
-				targetDir = posDir
-			}
-
-			// Derive slug + display name. If the name is already a valid slug
-			// use it verbatim; otherwise slugify and title-case for display.
-			var slug, display string
-			if err := scaffold.ValidateSlug(name); err == nil {
-				slug = name
-				display = scaffold.TitleFromSlug(name)
-			} else {
-				slug, err = scaffold.Slugify(name)
-				if err != nil {
-					return err
-				}
-				display = name
-			}
-
-			// --name overrides the display name independently of the slug/dir,
-			// so name, slug, and directory can all differ.
-			if nameFlag != "" {
-				display = nameFlag
-			}
-
-			// Output directory: --dir / positional [dir] if given, else ./<slug>
-			// (back-compat: no flag -> current behaviour).
-			destDir := slug
-			if targetDir != "" {
-				destDir = targetDir
-			}
-			abs, err := filepath.Abs(destDir)
-			if err != nil {
-				return err
-			}
-
-			written, err := scaffold.Render(tmpl, destDir, scaffold.Data{
-				Slug: slug,
-				Name: display,
-			})
-			if err != nil {
-				return err
-			}
-
-			// Sanity-check the scaffold we just produced is schema-valid. If it
-			// isn't, that's a bug in our own templates — fail loudly.
-			res, verr := validate.Dir(destDir)
-			if verr != nil {
-				return verr
-			}
-			if !res.OK() {
-				return fmt.Errorf("internal error: scaffolded manifest failed validation:\n  %s", joinLines(res.Errors))
-			}
-
-			fmt.Fprintf(out, "Created App Block %q (slug: %s, template: %s)\n", display, slug, tmpl)
-			fmt.Fprintf(out, "  %s\n", abs)
-			for _, w := range written {
-				// `written` paths are relative to destDir's parent; show them
-				// relative to the project dir for a clean tree.
-				rel, err := filepath.Rel(destDir, w)
-				if err != nil {
-					rel = w
-				}
-				fmt.Fprintf(out, "    %s\n", rel)
-			}
-			fmt.Fprintln(out, "\nNext steps:")
-			switch {
-			case tmpl.NeedsHarness():
-				// SDK/page-money apps render blank under plain `dev` (no host) —
-				// the dev loop needs the mock host via `dev:harness`.
-				fmt.Fprintf(out, "  cd %s && npm install && npm run dev:harness\n", destDir)
-			case tmpl == scaffold.PageVite:
-				fmt.Fprintf(out, "  cd %s && npm install && npm run dev\n", destDir)
-			default:
-				fmt.Fprintf(out, "  cd %s   # open index.html or serve the directory\n", destDir)
-			}
-			fmt.Fprintln(out, "  civitai app validate")
-			fmt.Fprintln(out, "  civitai app submit")
-			return nil
+			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag)
 		},
 	}
 
@@ -167,6 +55,132 @@ init and copy the upstream files in manually.`)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
 	return cmd
+}
+
+// runAppScaffold is the shared scaffold body behind both `app init` and
+// `app create`. The two commands differ only in the default template; all of
+// the slug/display derivation, dir resolution, rendering, self-validation, and
+// next-steps output lives here so there is a single code path.
+func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, dirFlag, nameFlag string) error {
+	out := cmd.OutOrStdout()
+
+	if fromSlug != "" {
+		return fmt.Errorf(`--from is not yet wired up.
+
+Forking an existing published block requires fetching its source from the
+server, which this CLI cannot do yet (no programmatic block-source endpoint).
+
+TODO(server): expose a read endpoint that returns a published block's canonical
+source tree by slug, then --from can scaffold from it. For now, run a plain
+init and copy the upstream files in manually.`)
+	}
+
+	tmpl, err := scaffold.ParseTemplate(templateFlag)
+	if err != nil {
+		return err
+	}
+
+	name := ""
+	if len(args) >= 1 {
+		name = args[0]
+	}
+	if name == "" {
+		return fmt.Errorf("provide a project name: %s <name>", cmd.CommandPath())
+	}
+
+	// Positional [dir] (args[1]) and --dir both set the output directory;
+	// they must not conflict.
+	posDir := ""
+	if len(args) == 2 {
+		posDir = args[1]
+	}
+	if posDir != "" && dirFlag != "" && posDir != dirFlag {
+		return fmt.Errorf("conflicting output directory: positional %q and --dir %q", posDir, dirFlag)
+	}
+	targetDir := dirFlag
+	if targetDir == "" {
+		targetDir = posDir
+	}
+
+	// Derive slug + display name. If the name is already a valid slug
+	// use it verbatim; otherwise slugify and title-case for display.
+	var slug, display string
+	if err := scaffold.ValidateSlug(name); err == nil {
+		slug = name
+		display = scaffold.TitleFromSlug(name)
+	} else {
+		slug, err = scaffold.Slugify(name)
+		if err != nil {
+			return err
+		}
+		display = name
+	}
+
+	// --name overrides the display name independently of the slug/dir,
+	// so name, slug, and directory can all differ.
+	if nameFlag != "" {
+		display = nameFlag
+	}
+
+	// Output directory: --dir / positional [dir] if given, else ./<slug>
+	// (back-compat: no flag -> current behaviour).
+	destDir := slug
+	if targetDir != "" {
+		destDir = targetDir
+	}
+	abs, err := filepath.Abs(destDir)
+	if err != nil {
+		return err
+	}
+
+	written, err := scaffold.Render(tmpl, destDir, scaffold.Data{
+		Slug: slug,
+		Name: display,
+	})
+	if err != nil {
+		return err
+	}
+
+	// Sanity-check the scaffold we just produced is schema-valid. If it
+	// isn't, that's a bug in our own templates — fail loudly.
+	res, verr := validate.Dir(destDir)
+	if verr != nil {
+		return verr
+	}
+	if !res.OK() {
+		return fmt.Errorf("internal error: scaffolded manifest failed validation:\n  %s", joinLines(res.Errors))
+	}
+
+	printScaffoldResult(out, display, slug, tmpl, destDir, abs, written)
+	return nil
+}
+
+// printScaffoldResult prints the created-files tree + harness-aware next steps.
+func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Template, destDir, abs string, written []string) {
+	fmt.Fprintf(out, "Created App Block %q (slug: %s, template: %s)\n", display, slug, tmpl)
+	fmt.Fprintf(out, "  %s\n", abs)
+	for _, w := range written {
+		// `written` paths are relative to destDir's parent; show them
+		// relative to the project dir for a clean tree.
+		rel, err := filepath.Rel(destDir, w)
+		if err != nil {
+			rel = w
+		}
+		fmt.Fprintf(out, "    %s\n", rel)
+	}
+	fmt.Fprintln(out, "\nNext steps:")
+	switch {
+	case tmpl.NeedsHarness():
+		// SDK/page-money apps render blank under plain `dev` (no host) —
+		// the dev loop needs the mock host via `dev:harness`.
+		fmt.Fprintf(out, "  cd %s && npm install && npm run dev:harness\n", destDir)
+	case tmpl == scaffold.PageVite:
+		fmt.Fprintf(out, "  cd %s && npm install && npm run dev\n", destDir)
+	default:
+		fmt.Fprintf(out, "  cd %s   # open index.html or serve the directory\n", destDir)
+	}
+	fmt.Fprintln(out, "  civitai app validate")
+	fmt.Fprintln(out, "  civitai app submit")
 }
 
 func joinLines(lines []string) string {

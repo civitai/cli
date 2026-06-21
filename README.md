@@ -49,8 +49,8 @@ civitai version
 # 1. Authenticate once (browser device login; or `civitai login --token <t>`).
 civitai login
 
-# 2. Scaffold a ready-to-build App Block.
-civitai app init my-app --template page-vite
+# 2. Scaffold a ready-to-build App Block (batteries-included page-money default).
+civitai app create my-app
 cd my-app
 
 # 3. Edit your app, then check the manifest before submitting.
@@ -72,7 +72,8 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 | --- | --- |
 | `civitai login [--token <t>] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens); `--token` stores a personal API key instead. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
 | `civitai whoami` | Verify the stored token; print the authenticated user. |
-| `civitai app init [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | Scaffold a correct, ready-to-build App Block project (default dir `./<slug>`). |
+| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App Block, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
+| `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
 | `civitai app validate [dir] [--strict]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai version` | Print version / commit / build date. |
