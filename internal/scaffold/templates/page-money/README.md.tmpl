@@ -36,10 +36,27 @@ npm run dev:harness   # http://localhost:5186 — mounts a MOCK host so you see 
 Use `dev:harness`. Query toggles: `?viewer=anon`, `?consent=granted`,
 `?fail=insufficient`, `?theme=light`.
 
+`npm run dev:harness` mounts the published SDK mock host
+(`@civitai/blocks-react/testing`) — no hand-rolled simulator to maintain.
+
 ```bash
-npm test              # the pure-logic unit tests in src/*.test.ts
+npm test              # all tests (vitest run), two suites:
+                      #   node : pure-logic units    (src/*.test.ts)
+                      #   dom  : component + e2e      (src/*.test.tsx, jsdom)
 npm run build         # what the platform produces (tsc typecheck + vite build)
 ```
+
+### Tests
+
+`npm test` runs both vitest projects in one go (split in `vite.config.ts`):
+
+- **`src/generation.test.ts`** — pure-logic units (node env).
+- **`src/App.test.tsx`** — component tests: render `<App/>` against
+  `createMockHost()` and assert the UI (anon → sign-in, signed-in → prompt).
+- **`src/e2e.test.tsx`** — the money-path proof: drives the FULL
+  estimate → consent → submit → poll → succeeded flow through the REAL SDK
+  transport against the mock host (no hook mocking). This is what tells you the
+  spend wiring still works after you edit the app.
 
 ## Allowed parent origins
 

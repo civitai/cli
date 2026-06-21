@@ -1,0 +1,46 @@
+import { render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
+
+import { createMockHost } from '@civitai/blocks-react/testing';
+
+import { App } from './App.js';
+
+// Component tests: render <App/> against the SDK mock host under a scenario and
+// assert the rendered UI. We install the mock host directly (not the React
+// <Harness>) so each test controls its own scenario + teardown. The transport
+// is reset before each test by src/test-setup.ts.
+
+describe('App (component)', () => {
+  let uninstall: (() => void) | undefined;
+  afterEach(() => {
+    uninstall?.();
+    uninstall = undefined;
+  });
+
+  it('shows a loading state before BLOCK_INIT lands', () => {
+    // Install the host but render before its setTimeout(0) BLOCK_INIT fires.
+    uninstall = createMockHost({ viewer: null }).install();
+    render(<App />);
+    expect(screen.getByText(/loading/i)).toBeInTheDocument();
+  });
+
+  it('anon viewer -> renders the sign-in affordance (no Generate button)', async () => {
+    uninstall = createMockHost({ viewer: null }).install();
+    render(<App />);
+
+    // Once BLOCK_INIT arrives with viewer=null, the App swaps the loading state
+    // for the sign-in CTA.
+    const signIn = await screen.findByTestId('pm-signin');
+    expect(signIn).toHaveTextContent(/sign in to generate/i);
+    expect(screen.queryByTestId('pm-generate')).not.toBeInTheDocument();
+  });
+
+  it('signed-in viewer -> renders the prompt field + Generate button', async () => {
+    uninstall = createMockHost({ viewer: { id: 2, username: 'dev', status: 'active' } }).install();
+    render(<App />);
+
+    expect(await screen.findByTestId('pm-generate')).toBeInTheDocument();
+    expect(screen.getByLabelText(/generation prompt/i)).toBeInTheDocument();
+    expect(screen.queryByTestId('pm-signin')).not.toBeInTheDocument();
+  });
+});
