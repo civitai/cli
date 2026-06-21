@@ -36,3 +36,44 @@ jobs:
 
       - name: build
         run: go build ./...
+
+  # Rot-guard: scaffold the page-money template and run its JS toolchain against
+  # the PUBLISHED SDK (@civitai/blocks-react). Catches a template that renders
+  # but no longer installs / typechecks / tests / builds after an SDK bump — the
+  # out-of-the-box contract the template promises.
+  template-page-money:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: scaffold page-money
+        run: go run ./cmd/civitai app init "CI Money Block" --dir ./_ci-page-money --template page-money
+
+      - name: install
+        working-directory: ./_ci-page-money
+        run: npm install --no-audit --no-fund
+
+      - name: typecheck
+        working-directory: ./_ci-page-money
+        run: npm run typecheck
+
+      - name: test (node + dom suites)
+        working-directory: ./_ci-page-money
+        run: npm test
+
+      - name: build
+        working-directory: ./_ci-page-money
+        run: npm run build
+
+      - name: validate
+        working-directory: ./_ci-page-money
+        run: go run ../cmd/civitai app validate

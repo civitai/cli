@@ -1,0 +1,20 @@
+// Setup for the jsdom (component + e2e) test project. Loaded via setupFiles in
+// vite.config.ts's `dom` project.
+
+import '@testing-library/jest-dom/vitest';
+import { cleanup } from '@testing-library/react';
+import { afterEach, beforeEach } from 'vitest';
+
+import { resetHarnessTransport } from './dev-transport.js';
+
+// The SDK transport is a process-wide singleton — reset it before each test so
+// each gets a fresh instance whose allowlist contains the jsdom origin, and so
+// no BLOCK_INIT / token state leaks between tests.
+beforeEach(() => {
+  resetHarnessTransport();
+});
+
+// Unmount React trees + clear jsdom between tests.
+afterEach(() => {
+  cleanup();
+});

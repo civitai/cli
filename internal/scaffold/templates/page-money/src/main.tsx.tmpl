@@ -3,13 +3,20 @@ import { createRoot } from 'react-dom/client';
 
 import { App } from './App.js';
 import { Harness } from './Harness.js';
+import { installHarnessTransport } from './dev-transport.js';
 import './index.css';
 
 // `npm run dev:harness` sets VITE_DEV_HARNESS=true to mount the local mock host
-// that posts a fake BLOCK_INIT (page context, entity=none), answers the consent
-// + token-refresh round-trip, and simulates the orchestrator money path
-// (estimate / submit / poll). Never set in prod.
+// (the published `@civitai/blocks-react/testing` Harness) that posts a fake
+// BLOCK_INIT (page context, entity=none), answers the consent + token-refresh
+// round-trip, and simulates the orchestrator money path (estimate / submit /
+// poll). Never set in prod.
 const useHarness = import.meta.env.VITE_DEV_HARNESS === 'true';
+
+// The mock host replies from window.location.origin; the SDK transport drops
+// mismatched-origin messages. Allowlist this origin BEFORE any hook runs so
+// BLOCK_INIT lands. (Prod uses VITE_BLOCK_ALLOWED_PARENT_ORIGINS instead.)
+if (useHarness) installHarnessTransport();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('#root missing from index.html');

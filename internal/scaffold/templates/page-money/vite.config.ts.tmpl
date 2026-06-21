@@ -21,9 +21,28 @@ export default defineConfig({
     rollupOptions: { output: { manualChunks: undefined } },
   },
   test: {
-    // Pure-logic unit tests run in node; the cost-format / insufficient-Buzz
-    // sniff / poll-state helpers don't touch the DOM.
-    environment: 'node',
-    include: ['src/**/*.test.ts'],
+    // Two suites in one `vitest run`:
+    //  - `node`: pure-logic unit tests (*.test.ts) — no DOM, fast.
+    //  - `dom` : component + e2e tests (*.test.tsx) — jsdom + testing-library,
+    //            driving <App/> against the SDK's createMockHost.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'node',
+          environment: 'node',
+          include: ['src/**/*.test.ts'],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'dom',
+          environment: 'jsdom',
+          include: ['src/**/*.test.tsx'],
+          setupFiles: ['./src/test-setup.ts'],
+        },
+      },
+    ],
   },
 });
