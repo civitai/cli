@@ -13,6 +13,25 @@ import { getTransport } from '@civitai/blocks-react';
 import { resetTransport } from '@civitai/blocks-react/testing';
 
 /**
+ * Dev harness modes. Selected by `VITE_HARNESS_MODE` (the `dev:harness` and
+ * `dev:live` npm scripts set it):
+ *
+ *  - `'mock'`  (default) — the SDK mock host. Synthetic, no real Buzz, no
+ *    network. Safe to spam.
+ *  - `'live'`  — talk to a REAL host with a REAL block token (spends REAL Buzz
+ *    and real compute). **Layer 2 — not built yet.** A true live proxy-host
+ *    needs a server dev-token endpoint to mint a scoped block token; until that
+ *    lands, live mode FAILS SAFE (see {@link resolveLiveConfig}): it never
+ *    silently spends.
+ */
+export type HarnessMode = 'mock' | 'live';
+
+/** Read the configured harness mode (defaults to `'mock'`). */
+export function getHarnessMode(): HarnessMode {
+  return import.meta.env.VITE_HARNESS_MODE === 'live' ? 'live' : 'mock';
+}
+
+/**
  * Initialize the SDK transport with the current page origin allowlisted, so the
  * mock host's `window.location.origin` replies are accepted. Call this once,
  * before rendering, in the dev harness entry. Idempotent at the singleton level
@@ -31,4 +50,48 @@ export function installHarnessTransport() {
 export function resetHarnessTransport() {
   resetTransport();
   getTransport({ allowedParentOrigins: [window.location.origin] });
+}
+
+/**
+ * The result of trying to wire LIVE mode. `ready: false` means Layer-2 plumbing
+ * (a server dev-token endpoint) isn't available yet OR no token was provided —
+ * in either case the harness must show {@link reason} and NOT mount a real
+ * money path. `ready: true` carries the token + target origin to wire a real
+ * host with (the actual live proxy-host is Layer 2 / not built — see README).
+ */
+export type LiveConfig =
+  | { ready: false; reason: string }
+  | { ready: true; token: string; targetOrigin: string };
+
+/**
+ * Resolve live-mode config from env. FAIL-SAFE by design: a true live
+ * proxy-host needs a server dev-token endpoint (Layer 2) that doesn't exist
+ * yet, so this returns `{ ready: false }` with a clear reason unless BOTH a
+ * block token (`VITE_LIVE_BLOCK_TOKEN`) and the Layer-2 enablement flag
+ * (`VITE_LIVE_PROXY_READY=true`) are present. We read the env + the mode switch
+ * now so this lights up the moment Layer 2 lands — without faking "live" as
+ * mock.
+ */
+export function resolveLiveConfig(): LiveConfig {
+  const token = import.meta.env.VITE_LIVE_BLOCK_TOKEN as string | undefined;
+  const targetOrigin =
+    (import.meta.env.VITE_LIVE_HOST_ORIGIN as string | undefined) ?? 'https://civitai.com';
+  // Layer-2 plumbing (the dev-token endpoint + live proxy-host) is not built.
+  const layer2Ready = import.meta.env.VITE_LIVE_PROXY_READY === 'true';
+
+  if (!token) {
+    return {
+      ready: false,
+      reason:
+        'Live mode needs a dev block token (VITE_LIVE_BLOCK_TOKEN). See the dev-token endpoint — not yet available (Layer 2).',
+    };
+  }
+  if (!layer2Ready) {
+    return {
+      ready: false,
+      reason:
+        'Live mode plumbing (the server dev-token endpoint / live proxy-host) is Layer 2 and not built yet. A token is set, but there is no real host to spend against — refusing to mount to avoid silently breaking.',
+    };
+  }
+  return { ready: true, token, targetOrigin };
 }

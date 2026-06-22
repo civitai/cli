@@ -1,34 +1,98 @@
-import { StrictMode } from 'react';
+import { StrictMode, type CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App.js';
 import { Harness } from './Harness.js';
-import { installHarnessTransport } from './dev-transport.js';
+import {
+  getHarnessMode,
+  installHarnessTransport,
+  resolveLiveConfig,
+} from './dev-transport.js';
 import './index.css';
 
-// `npm run dev:harness` sets VITE_DEV_HARNESS=true to mount the local mock host
-// (the published `@civitai/blocks-react/testing` Harness) that posts a fake
-// BLOCK_INIT (page context, entity=none), answers the consent + token-refresh
-// round-trip, and simulates the orchestrator money path (estimate / submit /
-// poll). Never set in prod.
+// Dev harness entry. Two mounts decide the surface:
+//
+//   VITE_DEV_HARNESS=true   -> mount a harness at all (never in prod).
+//   VITE_HARNESS_MODE=mock  -> (default) the SDK MOCK host. Synthetic, no real
+//                              Buzz, no compute, no network. `npm run dev:harness`.
+//   VITE_HARNESS_MODE=live  -> talk to a REAL host with a REAL block token —
+//                              spends REAL Buzz / real compute. `npm run dev:live`.
+//                              LIVE IS A WIRED STUB: a true live proxy-host needs
+//                              a server dev-token endpoint (Layer 2), not built
+//                              yet. Until then live FAILS SAFE — it renders a
+//                              clear message instead of silently spending.
+//
+// Prod builds set neither and render <App/> bare (the platform is the host).
 const useHarness = import.meta.env.VITE_DEV_HARNESS === 'true';
+const mode = getHarnessMode();
 
 // The mock host replies from window.location.origin; the SDK transport drops
 // mismatched-origin messages. Allowlist this origin BEFORE any hook runs so
 // BLOCK_INIT lands. (Prod uses VITE_BLOCK_ALLOWED_PARENT_ORIGINS instead.)
-if (useHarness) installHarnessTransport();
+if (useHarness && mode === 'mock') installHarnessTransport();
 
 const container = document.getElementById('root');
 if (!container) throw new Error('#root missing from index.html');
 
+/** Render decision for the harness. */
+function Root() {
+  if (!useHarness) return <App />;
+
+  if (mode === 'live') {
+    const live = resolveLiveConfig();
+    if (!live.ready) return <LiveUnavailable reason={live.reason} />;
+    // Layer 2 (the real live proxy-host) is not built. When it lands, wire the
+    // real transport here using `live.token` + `live.targetOrigin`, then render
+    // <App/>. Until then resolveLiveConfig() returns ready:false above, so this
+    // branch is unreachable — we never silently spend.
+    return <LiveUnavailable reason="Live proxy-host wiring is Layer 2 — not implemented yet." />;
+  }
+
+  // mode === 'mock'
+  return (
+    <Harness>
+      <App />
+    </Harness>
+  );
+}
+
+/**
+ * Fail-safe LIVE screen. Shown when `dev:live` is requested but the Layer-2
+ * plumbing (server dev-token endpoint / live proxy-host) isn't available — so a
+ * dev sees WHY nothing is spending instead of a silent mock or a blank screen.
+ */
+function LiveUnavailable({ reason }: { reason: string }) {
+  return (
+    <div data-harness-banner="live-unavailable" style={liveWrapStyle}>
+      <div style={liveInnerStyle}>
+        <div style={liveTitleStyle}>⚠️ LIVE MODE — spends REAL Buzz / real compute</div>
+        <p style={liveReasonStyle}>{reason}</p>
+        <p style={liveHintStyle}>
+          Use <code>npm run dev:harness</code> (mock host) for free local
+          development. See README → “Mock vs live”.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+const liveWrapStyle: CSSProperties = {
+  minHeight: '100dvh',
+  display: 'grid',
+  placeItems: 'center',
+  background: '#1a1207',
+  color: '#ffd8a8',
+  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+  padding: 24,
+  textAlign: 'center',
+};
+const liveInnerStyle: CSSProperties = { maxWidth: 560 };
+const liveTitleStyle: CSSProperties = { fontSize: 20, fontWeight: 800, color: '#ffa94d' };
+const liveReasonStyle: CSSProperties = { marginTop: 12, lineHeight: 1.5 };
+const liveHintStyle: CSSProperties = { marginTop: 12, opacity: 0.8 };
+
 createRoot(container).render(
   <StrictMode>
-    {useHarness ? (
-      <Harness>
-        <App />
-      </Harness>
-    ) : (
-      <App />
-    )}
+    <Root />
   </StrictMode>,
 );

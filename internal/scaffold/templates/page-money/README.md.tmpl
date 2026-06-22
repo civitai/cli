@@ -33,11 +33,58 @@ npm run dev:harness   # http://localhost:5186 — mounts a MOCK host so you see 
 ```
 
 `npm run dev` alone shows a blank screen — there's no host to send `BLOCK_INIT`.
-Use `dev:harness`. Query toggles: `?viewer=anon`, `?consent=granted`,
-`?fail=insufficient`, `?theme=light`.
+Use `dev:harness`.
 
 `npm run dev:harness` mounts the published SDK mock host
-(`@civitai/blocks-react/testing`) — no hand-rolled simulator to maintain.
+(`@civitai/blocks-react/testing`) — no hand-rolled simulator to maintain. A loud
+**🧪 MOCK HOST · no real Buzz spent** banner is always on screen so you never
+mistake it for the real thing.
+
+### Mock vs live
+
+There are two harness modes, selected by `VITE_HARNESS_MODE` (the npm scripts
+set it for you):
+
+| Script | Mode | What it does |
+|---|---|---|
+| `npm run dev:harness` | **mock** (default) | The SDK mock host. Synthetic — **no real Buzz, no compute, no network.** Safe to spam. |
+| `npm run dev:live` | **live** | Talk to a REAL host with a REAL block token — **spends REAL Buzz / real compute.** |
+
+> ⚠️ **Live mode is a wired stub.** A true live proxy-host needs a server
+> dev-token endpoint to mint a scoped block token — that's **Layer 2, not built
+> yet.** Until it lands, `dev:live` **fails safe**: it reads `VITE_LIVE_BLOCK_TOKEN`
+> + `VITE_LIVE_PROXY_READY` and, finding the plumbing absent, renders a clear
+> notice instead of silently spending or breaking. The env + mode switch are
+> already wired, so live lights up the moment Layer 2 ships. Do **not** fake
+> "live" as mock.
+
+### Scenarios (exercise the money / error / storage UX for free)
+
+The mock host is configurable, so you can test the full spend / failure /
+insufficient-Buzz UX without spending anything. Drive it two ways:
+
+- **On-screen scenario panel** (top-left, collapsed): buttons + inputs to flip
+  *force insufficient Buzz*, *fail next generation*, *50% failure rate*, a
+  simulated *balance*, and *latency* live — no reload.
+- **URL query params** (read once on load):
+
+  | Param | Effect |
+  |---|---|
+  | `?viewer=anon` | anonymous viewer (sign-in CTA) |
+  | `?consent=granted` | start with the budgeted scope granted |
+  | `?theme=light` | light theme (default dark) |
+  | `?balance=0` | simulate a Buzz balance — a gen over it returns insufficient-Buzz |
+  | `?fail=insufficient` | force every submit down the insufficient path |
+  | `?latency=2000` | 2s synthetic gen latency (`?latency=500-2000` for a range) |
+  | `?costPerGen=12` | cost reported per generation |
+  | `?failNext=1` | fail the next N submits (generic gen error) |
+  | `?failRate=0.5` | probabilistic submit failures |
+
+  e.g. `http://localhost:5186/?balance=0&fail=insufficient` to land straight in
+  the insufficient-Buzz / top-up flow.
+
+These map to the `createMockHost` scenario options
+(`generation` / `buzz` / `storage`) from `@civitai/blocks-react`.
 
 ```bash
 npm test              # all tests (vitest run), two suites:
