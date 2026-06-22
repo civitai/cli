@@ -1,6 +1,10 @@
-import type { ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type ReactNode } from 'react';
 
-import { Harness as SdkHarness } from '@civitai/blocks-react/testing';
+import {
+  Harness as SdkHarness,
+  readMockHostUrlOptions,
+  type MockHostOptions,
+} from '@civitai/blocks-react/testing';
 
 /**
  * Local dev mock host for the {{ .Name }} PAGE app.
@@ -9,14 +13,24 @@ import { Harness as SdkHarness } from '@civitai/blocks-react/testing';
  * /apps/run/{{ .Slug }} and routes the money messages (ESTIMATE/SUBMIT/POLL) to
  * the generation orchestrator. Locally there's no host, so this plays one — but
  * we no longer hand-roll it: the published SDK ships the mock host
- * (`@civitai/blocks-react/testing`). This wrapper just mounts it.
+ * (`@civitai/blocks-react/testing`). This wrapper mounts it AND renders a loud
+ * "MOCK HOST" banner + a tiny scenario panel so it's always obvious that
+ * **no real Buzz is being spent**.
  *
- * `applyUrlToggles` (default true) reads the URL query knobs so the dev loop
- * stays interactive:
- *   ?viewer=anon       -> anonymous viewer (sign-in CTA)
- *   ?consent=granted   -> start WITH the budgeted scope already granted
- *   ?fail=insufficient -> SUBMIT returns an insufficient-Buzz failed snapshot
- *   ?theme=light       -> light theme (default dark)
+ * URL query knobs (read once on mount) drive the initial scenario — both the
+ * original toggles and the new Layer-1 scenario knobs:
+ *   ?viewer=anon        -> anonymous viewer (sign-in CTA)
+ *   ?consent=granted    -> start WITH the budgeted scope already granted
+ *   ?fail=insufficient  -> SUBMIT returns an insufficient-Buzz failed snapshot
+ *   ?theme=light        -> light theme (default dark)
+ *   ?balance=0          -> simulate a Buzz balance (a gen over it -> insufficient)
+ *   ?latency=2000       -> 2s synthetic gen latency (or ?latency=500-2000 range)
+ *   ?costPerGen=12      -> cost reported per generation
+ *   ?failNext=1         -> fail the next N submits (generic gen error)
+ *   ?failRate=0.5       -> probabilistic submit failures
+ *
+ * The on-screen scenario panel maps the same controls onto buttons so a dev can
+ * flip them live (it re-mounts the mock host with the new options).
  *
  * IMPORTANT: the SDK transport DROPS inbound messages whose origin isn't in its
  * allowlist, and the mock host fires from `window.location.origin`. The harness
@@ -24,5 +38,148 @@ import { Harness as SdkHarness } from '@civitai/blocks-react/testing';
  * see `installHarnessTransport`. No real Buzz is spent (there is no orchestrator).
  */
 export function Harness({ children }: { children: ReactNode }) {
-  return <SdkHarness>{children}</SdkHarness>;
+  // Read the URL toggles ONCE; the scenario panel then owns the live options
+  // (so a panel choice isn't wiped by a re-mount re-reading the URL).
+  const initial = useRef<MockHostOptions | null>(null);
+  if (initial.current === null) initial.current = readMockHostUrlOptions();
+
+  const [scenario, setScenario] = useState<MockHostOptions>(initial.current);
+  const [scenarioKey, setScenarioKey] = useState(0);
+  const apply = (patch: MockHostOptions) => {
+    setScenario((prev) => ({ ...prev, ...patch }));
+    setScenarioKey((k) => k + 1);
+  };
+
+  return (
+    <div style={rootStyle}>
+      <MockBanner />
+      <ScenarioPanel onApply={apply} />
+      {/* applyUrlToggles=false: the panel is authoritative once mounted. */}
+      <SdkHarness key={scenarioKey} applyUrlToggles={false} {...scenario}>
+        {children}
+      </SdkHarness>
+    </div>
+  );
 }
+
+/** Loud, always-visible banner so a dev never mistakes mock for live. */
+function MockBanner() {
+  return (
+    <div data-harness-banner="mock" style={bannerStyle}>
+      🧪 MOCK HOST · no real Buzz spent · no real compute
+    </div>
+  );
+}
+
+/**
+ * Dev-only scenario control panel. Maps buttons onto the new `createMockHost`
+ * options so a dev can flip insufficient-buzz / failures / latency WITHOUT
+ * editing code or reloading with URL params. Collapsed by default.
+ */
+function ScenarioPanel({ onApply }: { onApply: (patch: MockHostOptions) => void }) {
+  const [balance, setBalance] = useState('');
+  const [latency, setLatency] = useState('');
+
+  return (
+    <details data-harness-scenario-panel="true" style={panelStyle}>
+      <summary style={summaryStyle}>scenarios</summary>
+      <div style={panelBodyStyle}>
+        <button type="button" onClick={() => onApply({ failMode: 'none', buzz: undefined })}>
+          reset (all succeed)
+        </button>
+        <button type="button" onClick={() => onApply({ failMode: 'insufficient' })}>
+          force insufficient Buzz
+        </button>
+        <button type="button" onClick={() => onApply({ generation: { failNext: 1 } })}>
+          fail next generation
+        </button>
+        <button type="button" onClick={() => onApply({ generation: { failRate: 0.5 } })}>
+          50% failure rate
+        </button>
+        <label style={rowStyle}>
+          balance
+          <input
+            value={balance}
+            placeholder="e.g. 5"
+            onChange={(e) => setBalance(e.target.value)}
+            style={inputStyle}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              const n = Number(balance);
+              if (Number.isFinite(n)) onApply({ buzz: { balance: n } });
+            }}
+          >
+            set
+          </button>
+        </label>
+        <label style={rowStyle}>
+          latency ms
+          <input
+            value={latency}
+            placeholder="e.g. 2000"
+            onChange={(e) => setLatency(e.target.value)}
+            style={inputStyle}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              const n = Number(latency);
+              if (Number.isFinite(n)) onApply({ generation: { latencyMs: n } });
+            }}
+          >
+            set
+          </button>
+        </label>
+      </div>
+    </details>
+  );
+}
+
+const MONO = 'ui-monospace, SFMono-Regular, monospace';
+
+const rootStyle: CSSProperties = { position: 'relative', minHeight: '100dvh' };
+
+const bannerStyle: CSSProperties = {
+  position: 'fixed',
+  top: 0,
+  left: 0,
+  right: 0,
+  zIndex: 10000,
+  background: '#1971c2',
+  color: '#fff',
+  fontFamily: MONO,
+  fontSize: 12,
+  fontWeight: 700,
+  textAlign: 'center',
+  padding: '4px 8px',
+  letterSpacing: 0.3,
+};
+
+const panelStyle: CSSProperties = {
+  position: 'fixed',
+  top: 28,
+  left: 8,
+  zIndex: 10000,
+  background: 'rgba(17,17,17,0.92)',
+  color: '#7fc',
+  fontFamily: MONO,
+  fontSize: 11,
+  padding: '6px 10px',
+  borderRadius: 6,
+  maxWidth: 300,
+};
+
+const summaryStyle: CSSProperties = { cursor: 'pointer' };
+
+const panelBodyStyle: CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: 6,
+  marginTop: 6,
+};
+
+const rowStyle: CSSProperties = { display: 'flex', gap: 4, alignItems: 'center' };
+
+const inputStyle: CSSProperties = { width: 60 };
