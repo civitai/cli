@@ -25,11 +25,33 @@ const (
 )
 
 // excludedDirs are directory names skipped anywhere in the tree. The platform
-// rebuilds from source, so build output and dependencies must not be shipped.
+// rebuilds from source, so VCS metadata, dependency installs, build output, and
+// tooling caches must not be shipped — they bloat the bundle (a stray Python
+// .venv alone added ~860 files / ~11 MiB to a Vite/TS block) and slow the
+// review-repo push without ever being used by the server build recipe.
 var excludedDirs = map[string]struct{}{
-	".git":         {},
+	// VCS metadata
+	".git": {},
+	".hg":  {},
+	".svn": {},
+	// dependency installs
 	"node_modules": {},
-	"dist":         {},
+	".venv":        {},
+	"venv":         {},
+	".pnpm-store":  {},
+	// build output
+	"dist":  {},
+	"build": {},
+	"out":   {},
+	".next": {},
+	// tooling / test caches
+	".vite":         {},
+	".cache":        {},
+	"coverage":      {},
+	".pytest_cache": {},
+	".mypy_cache":   {},
+	".ruff_cache":   {},
+	".turbo":        {},
 }
 
 // Result describes a produced package.

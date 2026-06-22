@@ -99,13 +99,55 @@ func TestBuildDeterministicOrder(t *testing.T) {
 }
 
 func TestExcludedNames(t *testing.T) {
-	for _, n := range []string{".git", "node_modules", "dist"} {
+	for _, n := range []string{
+		".git", ".hg", ".svn",
+		"node_modules", ".venv", "venv", ".pnpm-store",
+		"dist", "build", "out", ".next",
+		".vite", ".cache", "coverage", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".turbo",
+	} {
 		if !IsExcluded(n) {
 			t.Errorf("%q should be excluded", n)
 		}
 	}
-	if IsExcluded("src") {
-		t.Error("src should not be excluded")
+	for _, n := range []string{"src", "public", "assets", "lib"} {
+		if IsExcluded(n) {
+			t.Errorf("%q should NOT be excluded", n)
+		}
+	}
+}
+
+// TestBuildExcludesVenvAndCaches guards the regression that bloated the
+// gen-matrix bundle to 888 files: a stray Python .venv plus build/test caches
+// leaking into the SOURCE bundle. Only real source must survive.
+func TestBuildExcludesVenvAndCaches(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "block.manifest.json", `{"blockId":"x"}`)
+	writeFile(t, dir, "package.json", "{}")
+	writeFile(t, dir, "src/main.tsx", "export default 1")
+	// Junk that must all be excluded:
+	writeFile(t, dir, ".venv/lib/python3.12/site-packages/foo/__init__.py", "x")
+	writeFile(t, dir, "venv/bin/activate", "x")
+	writeFile(t, dir, "build/index.js", "x")
+	writeFile(t, dir, "out/page.html", "x")
+	writeFile(t, dir, ".next/server/app.js", "x")
+	writeFile(t, dir, ".vite/deps/chunk.js", "x")
+	writeFile(t, dir, "coverage/lcov.info", "x")
+	writeFile(t, dir, ".pytest_cache/v/cache/lastfailed", "x")
+
+	res, err := Build(dir)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	got := namesInZip(t, res.Zip)
+	sort.Strings(got)
+	want := []string{"block.manifest.json", "package.json", "src/main.tsx"}
+	if len(got) != len(want) {
+		t.Fatalf("zip contents = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("zip[%d] = %q, want %q (all: %v)", i, got[i], want[i], got)
+		}
 	}
 }
 

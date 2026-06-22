@@ -8,13 +8,23 @@ import (
 
 func TestExcludedNamesAndJoin(t *testing.T) {
 	names := ExcludedNames()
-	if len(names) != 3 {
-		t.Fatalf("ExcludedNames = %v, want 3 entries", names)
+	if len(names) < 3 {
+		t.Fatalf("ExcludedNames = %v, want at least the core entries", names)
 	}
 	// Sorted.
 	for i := 1; i < len(names); i++ {
 		if names[i-1] > names[i] {
 			t.Errorf("ExcludedNames not sorted: %v", names)
+		}
+	}
+	// Must include the original core dirs.
+	have := map[string]bool{}
+	for _, n := range names {
+		have[n] = true
+	}
+	for _, core := range []string{".git", "node_modules", "dist"} {
+		if !have[core] {
+			t.Errorf("ExcludedNames missing core entry %q: %v", core, names)
 		}
 	}
 	if JoinExcluded() == "" {
