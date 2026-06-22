@@ -2,12 +2,14 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // run executes the root command with args, capturing stdout+stderr.
@@ -363,18 +365,62 @@ func TestLoginStoresToken(t *testing.T) {
 	}
 }
 
-func TestLoginEmptyTokenViaStdinFails(t *testing.T) {
+// TestLoginDeviceStartFailureReturnsError drives the DEFAULT `civitai login`
+// (no --token => OAuth device flow) against an httptest server whose device-init
+// endpoint fails, and asserts login returns an error FAST.
+//
+// This replaces the old TestLoginEmptyTokenViaStdinFails, which assumed the
+// default path read a token from stdin ("no token provided"). It no longer
+// does: with no --token, login runs the device flow and makes a real network
+// call to base_url. With no CIVITAI_BASE_URL override that call hit the REAL
+// https://civitai.com — when egress was open, device-init succeeded and the
+// poll looped until the device-code expired (~10 min), tripping Go's 10-min
+// test timeout (network-dependent flake). Here we point the CLI at a local
+// server (t.Setenv CIVITAI_BASE_URL = srv.URL) that returns 4xx on device-init,
+// so StartDevice errors immediately, no polling, no real network, sub-second.
+func TestLoginDeviceStartFailureReturnsError(t *testing.T) {
+	var gotDeviceInit bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Device-init is the first (and here, only) request the device flow makes.
+		if r.URL.Path == "/api/auth/oauth/device" {
+			gotDeviceInit = true
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_client"})
+			return
+		}
+		// Reaching the poll endpoint would mean StartDevice wrongly succeeded.
+		t.Errorf("unexpected path %q — login should fail at device-init, never poll", r.URL.Path)
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
 	t.Setenv("CIVITAI_TOKEN", "")
-	root := NewRootCmd()
-	var out, errb bytes.Buffer
-	root.SetOut(&out)
-	root.SetErr(&errb)
-	root.SetIn(strings.NewReader("\n")) // empty line at the prompt
-	root.SetArgs([]string{"login"})
-	if err := root.Execute(); err == nil {
-		t.Fatal("expected error for empty token")
+	// Hermetic: pin the CLI at the local server so it NEVER touches civitai.com.
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	start := time.Now()
+	// --no-browser so a failure can't spawn anything; the device flow still runs.
+	_, _, err := run(t, "login", "--no-browser")
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected an error when device-init fails")
+	}
+	if !strings.Contains(err.Error(), "device init failed") {
+		t.Errorf("error should report the device-init failure, got: %v", err)
+	}
+	if !gotDeviceInit {
+		t.Error("login should have hit the local device-init endpoint")
+	}
+	// Deterministic + fast: a clean device-init failure must not poll/wait.
+	if elapsed > 5*time.Second {
+		t.Errorf("login took %v — should fail fast without polling", elapsed)
+	}
+	// Nothing persisted on a failed login.
+	if _, statErr := os.Stat(filepath.Join(dir, "civitai", "config.yaml")); statErr == nil {
+		t.Error("no config should be written on a failed login")
 	}
 }
 
