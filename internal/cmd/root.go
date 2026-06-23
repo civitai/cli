@@ -2,6 +2,8 @@
 package cmd
 
 import (
+	"runtime/debug"
+
 	"github.com/spf13/cobra"
 )
 
@@ -13,7 +15,16 @@ var (
 	date    = "unknown"
 )
 
-// SetBuildInfo lets main inject the build version, commit, and date.
+// readBuildInfo is a seam so tests can stub runtime/debug.ReadBuildInfo.
+var readBuildInfo = debug.ReadBuildInfo
+
+// SetBuildInfo lets main inject the build version, commit, and date. Goreleaser
+// release binaries pass real ldflag values, which are authoritative. For a plain
+// `go install github.com/civitai/cli/cmd/civitai@latest` (or any source build),
+// the ldflags are absent and the injected values are still the "dev" defaults —
+// in that case we fall back to runtime/debug.ReadBuildInfo so `civitai version`
+// reports the module version (e.g. v0.1.1 or a pseudo-version) and the embedded
+// VCS revision/time instead of dev/none/unknown.
 func SetBuildInfo(v, c, d string) {
 	if v != "" {
 		version = v
@@ -24,6 +35,40 @@ func SetBuildInfo(v, c, d string) {
 	if d != "" {
 		date = d
 	}
+	applyBuildInfoFallback()
+}
+
+// applyBuildInfoFallback fills version/commit/date from the embedded Go build
+// info when (and only when) the corresponding value is still its dev default —
+// i.e. no goreleaser ldflag overrode it. Each field falls back independently.
+func applyBuildInfoFallback() {
+	info, ok := readBuildInfo()
+	if !ok || info == nil {
+		return
+	}
+	if isDevDefault(version) {
+		if v := info.Main.Version; v != "" && v != "(devel)" {
+			version = v
+		}
+	}
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			if commit == "none" && s.Value != "" {
+				commit = s.Value
+			}
+		case "vcs.time":
+			if date == "unknown" && s.Value != "" {
+				date = s.Value
+			}
+		}
+	}
+}
+
+// isDevDefault reports whether v is one of the placeholder values that mean
+// "no real version was stamped in" (so a build-info fallback should apply).
+func isDevDefault(v string) bool {
+	return v == "" || v == "dev"
 }
 
 // NewRootCmd builds the root command with all subcommands attached.

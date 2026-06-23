@@ -115,6 +115,31 @@ full details and examples.
   parent-origin config, and a unit-test stub. Run `npm run dev:harness` (plain
   `npm run dev` renders blank without a host).
 
+### Local dev loop (harness: mock vs live)
+
+A scaffolded App Block is a sandboxed iframe — `npm run dev` alone shows a blank
+screen because there's no host to send `BLOCK_INIT`. The `page-money` /
+`page-vite` templates ship a dev **harness** (the SDK's
+[`@civitai/blocks-react/testing`](https://www.npmjs.com/package/@civitai/blocks-react)
+hosts) with two modes:
+
+| Command | Mode | What it does |
+|---|---|---|
+| `npm run dev:harness` | **mock** (default) | Mounts the SDK **mock host** — synthetic replies, **no real Buzz, no compute, no network.** Safe to spam; drive money/error/insufficient-Buzz UX via on-screen scenarios or `?` URL params. Start here. |
+| `npm run dev:live` | **live** | Mounts the SDK **live host** (`createLiveHost`) — forwards the App-Block protocol to the **real Civitai backend** with a pasted dev token (Bearer). **Spends REAL Buzz / real compute.** |
+
+**Live mode** needs a short-lived dev block token (mint via the moderator-gated
+`POST /api/v1/blocks/dev-token`), pasted into `.env.development` as
+`VITE_LIVE_BLOCK_TOKEN=` (never committed — `submit` excludes `.env.development`).
+With no token it **fails safe** (renders a notice, never spends). Live v1 covers
+the money path (`estimate`/`submit`/`poll`/`cancel`); pickers, checkpoint-set,
+App-Storage KV, and in-band Buzz purchase are mock-only.
+
+Env vars (`VITE_BLOCK_ALLOWED_PARENT_ORIGINS`, `VITE_HARNESS_MODE`,
+`VITE_LIVE_BLOCK_TOKEN`, …) and the scenario knobs are documented in depth in the
+scaffolded project's own `README.md` and `.env.example` — see
+[`internal/scaffold/templates/page-money/README.md.tmpl`](internal/scaffold/templates/page-money/README.md.tmpl).
+
 ### Examples
 
 Two real example manifests live under [`examples/`](examples/) (copied from the

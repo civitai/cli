@@ -48,15 +48,27 @@ set it for you):
 | Script | Mode | What it does |
 |---|---|---|
 | `npm run dev:harness` | **mock** (default) | The SDK mock host. Synthetic — **no real Buzz, no compute, no network.** Safe to spam. |
-| `npm run dev:live` | **live** | Talk to a REAL host with a REAL block token — **spends REAL Buzz / real compute.** |
+| `npm run dev:live` | **live** | The SDK **live host** (`createLiveHost`) — forwards the protocol to the **real Civitai backend** with a real dev token. **Spends REAL Buzz / real compute.** |
 
-> ⚠️ **Live mode is a wired stub.** A true live proxy-host needs a server
-> dev-token endpoint to mint a scoped block token — that's **Layer 2, not built
-> yet.** Until it lands, `dev:live` **fails safe**: it reads `VITE_LIVE_BLOCK_TOKEN`
-> + `VITE_LIVE_PROXY_READY` and, finding the plumbing absent, renders a clear
-> notice instead of silently spending or breaking. The env + mode switch are
-> already wired, so live lights up the moment Layer 2 ships. Do **not** fake
-> "live" as mock.
+**Live mode setup.** `dev:live` mounts `createLiveHost` from
+`@civitai/blocks-react/testing`, which forwards the App-Block postMessage
+protocol to the real backend using a pasted dev token (Bearer). To use it:
+
+1. Mint a short-lived dev block token via the moderator-gated endpoint
+   `POST /api/v1/blocks/dev-token` (the token is a ~15-minute RS256 JWT; re-mint
+   + restart when it expires).
+2. Paste it into `.env.development` as `VITE_LIVE_BLOCK_TOKEN=` (never commit it;
+   `submit` excludes `.env.development`).
+3. `npm run dev:live` — a persistent **⚠️ LIVE HOST** banner stays on screen; a
+   successful Generate spends your own real Buzz.
+
+> ⚠️ With no `VITE_LIVE_BLOCK_TOKEN`, `dev:live` **fails safe**: it renders a
+> notice telling you to mint a token, and never silently spends.
+>
+> **Live v1 scope:** `createLiveHost` supports the money path
+> (`estimate`/`submit`/`poll`/`cancel`). It does **not** support pickers,
+> `SET_USER_CHECKPOINT`, the App-Storage KV protocol, or in-band Buzz purchase —
+> those reply "not supported in live v1" (use mock mode for them).
 
 ### Scenarios (exercise the money / error / storage UX for free)
 
