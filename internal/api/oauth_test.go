@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -38,6 +39,39 @@ func TestStartDeviceParsesResponse(t *testing.T) {
 	}
 	if d.UserCode != "WXYZ-1234" || d.DeviceCode != "dev-secret" {
 		t.Errorf("device auth = %+v", d)
+	}
+}
+
+// TestDeviceScopeCarriesRequiredBits pins the login scope contract: `civitai
+// login` must REQUEST UserRead + AIServicesWrite + AppBlocksSubmit so a granted
+// token can (a) identify the user, (b) mint a SPEND-capable App-Blocks dev token
+// for dev:live, and (c) submit/mint via the AppBlocksSubmit-gated routes. The
+// effective grant is still capped server-side by the civitai-cli client's
+// allowedScopes, but the CLI must ASK for these or dev:live can never spend.
+func TestDeviceScopeCarriesRequiredBits(t *testing.T) {
+	const (
+		userRead        = 1 << 0  // 1
+		aiServicesWrite = 1 << 15 // 32768
+		appBlocksSubmit = 1 << 25 // 33554432
+	)
+	got, err := strconv.Atoi(DeviceScope)
+	if err != nil {
+		t.Fatalf("DeviceScope %q is not a base-10 bitmask: %v", DeviceScope, err)
+	}
+	for _, c := range []struct {
+		name string
+		bit  int
+	}{
+		{"UserRead", userRead},
+		{"AIServicesWrite", aiServicesWrite},
+		{"AppBlocksSubmit", appBlocksSubmit},
+	} {
+		if got&c.bit == 0 {
+			t.Errorf("DeviceScope=%d is missing the %s bit (%d)", got, c.name, c.bit)
+		}
+	}
+	if want := userRead | aiServicesWrite | appBlocksSubmit; got != want {
+		t.Errorf("DeviceScope=%d, want exactly %d (UserRead|AIServicesWrite|AppBlocksSubmit)", got, want)
 	}
 }
 

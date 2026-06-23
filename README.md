@@ -139,6 +139,18 @@ With no token it **fails safe** (renders a notice, never spends). Live v1 covers
 the money path (`estimate`/`submit`/`poll`/`cancel`); pickers, checkpoint-set,
 App-Storage KV, and in-band Buzz purchase are mock-only.
 
+**Auth for the dev-token mint.** The mint needs a credential carrying the **App
+Blocks submit** scope; **real Buzz spend additionally needs AI Services scope**
+(the server applies a uniform AI-Services ceiling — a credential without it mints
+a read/estimate-only token). The simplest credential is a full-scope **personal
+API key** (create at `civitai.com/user/account` — a personal key carries every
+scope). Alternatively `civitai login` works once the `civitai-cli` OAuth client
+is granted those scopes: `civitai login` already **requests** App Blocks submit +
+AI Services on the device flow, and the granted token mints a spend-capable dev
+token (paired with the server change that lets the dev-token endpoint accept an
+App-Blocks-submit-scoped OAuth token). Until that client config is applied, use a
+personal API key.
+
 Env vars (`VITE_BLOCK_ALLOWED_PARENT_ORIGINS`, `VITE_HARNESS_MODE`,
 `VITE_LIVE_BLOCK_TOKEN`, …) and the scenario knobs are documented in depth in the
 scaffolded project's own `README.md` and `.env.example` — see
@@ -180,9 +192,14 @@ caveat and how the vendored schema + Go checks are kept in sync.
 `civitai login` (no flags) runs the **OAuth device-authorization grant**: it
 prints a URL + a short code, you approve in your browser, and the CLI stores a
 short-lived access token (1h) plus a refresh token (30d) that it rotates
-automatically before requests and once on a `401`. `civitai login --token <key>`
-stores a personal API key instead (no refresh). `CIVITAI_TOKEN` overrides the
-stored credential (treated as a personal key).
+automatically before requests and once on a `401`. It **requests** the scopes
+`UserRead | AppBlocksSubmit | AIServicesWrite` — identity, App-Blocks submit (for
+`app submit` and the dev-token mint), and AI Services (so the token can mint a
+**spend-capable** dev token for `dev:live`). The effective grant is the
+intersection with the `civitai-cli` OAuth client's `allowedScopes`, so AI
+Services takes effect only once that client is granted it server-side.
+`civitai login --token <key>` stores a personal API key instead (no refresh).
+`CIVITAI_TOKEN` overrides the stored credential (treated as a personal key).
 
 `civitai app submit`:
 

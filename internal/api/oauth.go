@@ -24,9 +24,20 @@ const (
 	// ClientID is the public OAuth client id for the CLI.
 	ClientID = "civitai-cli"
 
-	// DeviceScope is UserRead|AppBlocksSubmit (bit flags), the fixed scope the
-	// CLI requests. 33554433 == (1<<0)|(1<<25) in the server's scope bitset.
-	DeviceScope = "33554433"
+	// DeviceScope is UserRead|AIServicesWrite|AppBlocksSubmit (bit flags), the
+	// fixed scope the CLI requests on login. 33587201 == (1<<0)|(1<<15)|(1<<25)
+	// in the server's scope bitset:
+	//   - UserRead        (1<<0  = 1)        — whoami / identity.
+	//   - AIServicesWrite (1<<15 = 32768)    — so a granted token can mint a
+	//     SPEND-capable App-Blocks dev token (dev:live real-Buzz path). The
+	//     server's dev-token mint applies a uniform AIServicesWrite ceiling on the
+	//     budgeted-spend scope, so WITHOUT this bit dev:live can only read/estimate.
+	//   - AppBlocksSubmit (1<<25 = 33554432) — `app submit` AND the dev-token mint
+	//     gate (both require this on an OAuth token).
+	// The server only grants the INTERSECTION of this request and the civitai-cli
+	// OauthClient.allowedScopes bitmask, so the effective token is capped server-
+	// side regardless of what is requested here.
+	DeviceScope = "33587201"
 
 	grantTypeDeviceCode   = "urn:ietf:params:oauth:grant-type:device_code"
 	grantTypeRefreshToken = "refresh_token"

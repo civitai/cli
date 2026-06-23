@@ -56,9 +56,28 @@ protocol to the real backend using a pasted dev token (Bearer). To use it:
 
 1. Mint a short-lived dev block token via the moderator-gated endpoint
    `POST /api/v1/blocks/dev-token` (the token is a ~15-minute RS256 JWT; re-mint
-   + restart when it expires).
-2. Paste it into `.env.development` as `VITE_LIVE_BLOCK_TOKEN=` (never commit it;
-   `submit` excludes `.env.development`).
+   + restart when it expires). **Auth — the credential you mint with decides what
+   the dev token can do:**
+   - The mint needs a credential carrying the **App Blocks submit** scope. The
+     simplest is a full-scope **personal API key** (create one at
+     `https://civitai.com/user/account` — a personal key carries every scope):
+     ```bash
+     curl -s -X POST https://civitai.com/api/v1/blocks/dev-token \
+       -H "Authorization: Bearer $CIVITAI_TOKEN" \
+       -H 'Content-Type: application/json' \
+       -d '{"slug":"{{ .Slug }}"}'   # → { token, expiresAt, scopes, buzzBudget }
+     ```
+   - Or `civitai login` (the OAuth device flow) — **once the `civitai-cli` OAuth
+     client is granted the App Blocks submit + AI Services scopes** (the CLI
+     requests them on login; the client's `allowedScopes` must allow them). Until
+     that client config lands, use a personal API key.
+   - **Real Buzz spend additionally needs AI Services scope** on that credential.
+     The server applies a uniform AI-Services ceiling: a credential without it
+     mints a read/estimate-only dev token (no spend scope, no budget). A
+     full-scope personal key has it; an OAuth login has it only if the client was
+     granted AI Services and you consented.
+2. Paste the returned `token` into `.env.development` as `VITE_LIVE_BLOCK_TOKEN=`
+   (never commit it; `submit` excludes `.env.development`).
 3. `npm run dev:live` — a persistent **⚠️ LIVE HOST** banner stays on screen; a
    successful Generate spends your own real Buzz.
 
