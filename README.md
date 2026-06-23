@@ -14,15 +14,6 @@ contract, and **packages/submits** it for review.
 
 ## Install
 
-### Homebrew
-
-```bash
-brew install civitai/tap/civitai
-```
-
-> The tap (`civitai/homebrew-tap`) is published from this repo's release flow.
-> Until the first tagged release lands, use one of the methods below.
-
 ### Go install (Go 1.25+)
 
 ```bash
@@ -42,6 +33,15 @@ tar xzf civitai_*_linux_amd64.tar.gz
 sudo mv civitai /usr/local/bin/
 civitai version
 ```
+
+### Homebrew
+
+> ⚠️ Not available yet — the Homebrew tap is still being set up. Use **Go install**
+> or a **prebuilt binary** (above) for now. Once the tap is live:
+>
+> ```bash
+> brew install civitai/tap/civitai
+> ```
 
 ## Quickstart
 
