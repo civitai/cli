@@ -1,4 +1,4 @@
-import { StrictMode, type CSSProperties } from 'react';
+import { StrictMode, useEffect, useState, type CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { App } from './App.js';
@@ -6,21 +6,21 @@ import { Harness } from './Harness.js';
 import {
   getHarnessMode,
   installHarnessTransport,
+  installLiveHost,
   resolveLiveConfig,
 } from './dev-transport.js';
 import './index.css';
 
-// Dev harness entry. Two mounts decide the surface:
+// Dev harness entry. The mode decides the surface:
 //
 //   VITE_DEV_HARNESS=true   -> mount a harness at all (never in prod).
 //   VITE_HARNESS_MODE=mock  -> (default) the SDK MOCK host. Synthetic, no real
 //                              Buzz, no compute, no network. `npm run dev:harness`.
-//   VITE_HARNESS_MODE=live  -> talk to a REAL host with a REAL block token —
-//                              spends REAL Buzz / real compute. `npm run dev:live`.
-//                              LIVE IS A WIRED STUB: a true live proxy-host needs
-//                              a server dev-token endpoint (Layer 2), not built
-//                              yet. Until then live FAILS SAFE — it renders a
-//                              clear message instead of silently spending.
+//   VITE_HARNESS_MODE=live  -> the SDK LIVE host (`createLiveHost`): forwards the
+//                              protocol to the REAL Civitai backend with a REAL
+//                              block token — spends REAL Buzz / real compute.
+//                              `npm run dev:live`. With no VITE_LIVE_BLOCK_TOKEN
+//                              it FAILS SAFE (renders a notice, never spends).
 //
 // Prod builds set neither and render <App/> bare (the platform is the host).
 const useHarness = import.meta.env.VITE_DEV_HARNESS === 'true';
@@ -29,6 +29,7 @@ const mode = getHarnessMode();
 // The mock host replies from window.location.origin; the SDK transport drops
 // mismatched-origin messages. Allowlist this origin BEFORE any hook runs so
 // BLOCK_INIT lands. (Prod uses VITE_BLOCK_ALLOWED_PARENT_ORIGINS instead.)
+// Live mode does the same inside installLiveHost (deferred to mount).
 if (useHarness && mode === 'mock') installHarnessTransport();
 
 const container = document.getElementById('root');
@@ -41,11 +42,7 @@ function Root() {
   if (mode === 'live') {
     const live = resolveLiveConfig();
     if (!live.ready) return <LiveUnavailable reason={live.reason} />;
-    // Layer 2 (the real live proxy-host) is not built. When it lands, wire the
-    // real transport here using `live.token` + `live.targetOrigin`, then render
-    // <App/>. Until then resolveLiveConfig() returns ready:false above, so this
-    // branch is unreachable — we never silently spend.
-    return <LiveUnavailable reason="Live proxy-host wiring is Layer 2 — not implemented yet." />;
+    return <LiveApp token={live.token} backendBaseUrl={live.backendBaseUrl} />;
   }
 
   // mode === 'mock'
@@ -57,9 +54,33 @@ function Root() {
 }
 
 /**
- * Fail-safe LIVE screen. Shown when `dev:live` is requested but the Layer-2
- * plumbing (server dev-token endpoint / live proxy-host) isn't available — so a
- * dev sees WHY nothing is spending instead of a silent mock or a blank screen.
+ * LIVE harness mount. Installs the SDK's real `createLiveHost` (which forwards
+ * the protocol to the real backend, Bearer = the dev token) on mount and tears
+ * it down on unmount, then renders <App/> against it. A successful submit here
+ * SPENDS REAL BUZZ. A persistent ⚠️ banner keeps that unmistakable on screen.
+ */
+function LiveApp({ token, backendBaseUrl }: { token: string; backendBaseUrl: string }) {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    const uninstall = installLiveHost({ token, backendBaseUrl });
+    setReady(true);
+    return uninstall;
+  }, [token, backendBaseUrl]);
+
+  return (
+    <>
+      <div data-harness-banner="live" style={liveBannerStyle}>
+        ⚠️ LIVE HOST · spends REAL Buzz / real compute · {backendBaseUrl}
+      </div>
+      {ready ? <App /> : null}
+    </>
+  );
+}
+
+/**
+ * Fail-safe LIVE screen. Shown when `dev:live` is requested but no dev block
+ * token is set — so a dev sees WHY nothing is spending instead of a silent mock
+ * or a blank screen.
  */
 function LiveUnavailable({ reason }: { reason: string }) {
   return (
@@ -75,6 +96,19 @@ function LiveUnavailable({ reason }: { reason: string }) {
     </div>
   );
 }
+
+const liveBannerStyle: CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 9999,
+  background: '#7a1f1f',
+  color: '#ffd8a8',
+  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+  fontSize: 13,
+  fontWeight: 700,
+  padding: '6px 12px',
+  textAlign: 'center',
+};
 
 const liveWrapStyle: CSSProperties = {
   minHeight: '100dvh',

@@ -15,7 +15,7 @@ manifest against the platform contract, and packages/submits it for review.
 ```
 cmd/civitai/main.go        binary entrypoint; injects build version/commit/date
 internal/cmd/              the Cobra command tree (one file per command)
-  root.go                  root command + SetBuildInfo + subcommand wiring
+  root.go                  root command + SetBuildInfo (ldflags authoritative; falls back to runtime/debug.ReadBuildInfo for `go install` builds) + subcommand wiring
   app.go                   `civitai app` group
   app_init.go              `civitai app init`   -> internal/scaffold
   app_validate.go          `civitai app validate` -> internal/validate
