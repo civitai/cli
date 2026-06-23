@@ -15,10 +15,10 @@ contract, and **packages/submits** it for review.
 > ⚠️ **App Blocks is in a limited, moderator-gated preview (pre-GA).** You can
 > install this CLI, `login`, scaffold, validate, and run a block locally right
 > now — but **`civitai app submit` requires App Blocks access**. While the
-> feature is dark, submission is restricted to enrolled/approved accounts: an
-> un-enrolled account can't submit (or its block won't be reviewed/approved, so
-> it won't go live) until App Blocks opens up. There is no public self-serve
-> "request access" form yet — watch [civitai.com](https://civitai.com) and the
+> feature is dark, submission is restricted to **Civitai moderators / the team**:
+> a non-moderator account can't submit (or its block won't be reviewed/approved,
+> so it won't go live) until App Blocks opens to the public. There is no public
+> self-serve "request access" form yet — watch [civitai.com](https://civitai.com) and the
 > [issues on this repo](https://github.com/civitai/cli/issues) for the
 > general-availability announcement.
 
@@ -208,7 +208,7 @@ written owner-readable only.
   `https://civitai.com/user/account` and `civitai login --token <key>`.
 - **`forbidden (403)` / `service unavailable (503)`** — your account may lack
   App Blocks access while the feature is in its gated preview (see the warning at
-  the top of this README). Submission is limited to enrolled/approved accounts
+  the top of this README). Submission is limited to Civitai moderators / the team
   until App Blocks reaches general availability.
 - **`validation failed`** — read each `- ...` line; fix the manifest, or pass
   `--skip-validate` to package anyway (the server will still re-validate).
