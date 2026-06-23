@@ -121,4 +121,9 @@ civitai app submit
 ```
 
 `submit` packages the SOURCE tree (manifest + src + build config), excluding
-`.git`, `node_modules`, and `dist` — the platform rebuilds from source.
+`.git`, `node_modules`, and `dist` — the platform rebuilds from source. It also
+excludes build artifacts (`*.zip`) and dev-local / secret-bearing dotenv files
+(`.env`, `.env.local`, `.env.development`, `.env.*.local`) so a pasted
+`VITE_LIVE_BLOCK_TOKEN` can never leak into the upload. `.env.example` and
+`.env.production` (public `VITE_` origins only) ARE included — the production
+build reads `.env.production`.
