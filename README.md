@@ -12,6 +12,16 @@ contract, and **packages/submits** it for review.
 > Learn more about App Blocks in the [Civitai App Blocks docs](https://civitai.com/articles)
 > (search "App Blocks").
 
+> ⚠️ **App Blocks is in a limited, moderator-gated preview (pre-GA).** You can
+> install this CLI, `login`, scaffold, validate, and run a block locally right
+> now — but **`civitai app submit` requires App Blocks access**. While the
+> feature is dark, submission is restricted to enrolled/approved accounts: an
+> un-enrolled account can't submit (or its block won't be reviewed/approved, so
+> it won't go live) until App Blocks opens up. There is no public self-serve
+> "request access" form yet — watch [civitai.com](https://civitai.com) and the
+> [issues on this repo](https://github.com/civitai/cli/issues) for the
+> general-availability announcement.
+
 ## Install
 
 ### Go install (Go 1.25+)
@@ -59,6 +69,15 @@ civitai app validate
 # 4. Package + submit for review (uploads with your stored token by default).
 civitai app submit
 ```
+
+> **Submit ≠ live.** `civitai app submit` enters your block into **moderator
+> review** — it is **not** published immediately. The lifecycle is
+> **submit → review → approve → build + deploy → `https://<blockId>.civit.ai/`**:
+> that URL **404s until a moderator approves your submission and the platform
+> builds + deploys it** (a few minutes after approval). Until then, track status
+> on **`/apps/my-submissions`** (a fresh submission sits at `pending`). See
+> [Submit & auth](#submit--auth) for the full flow. (And note App Blocks is a
+> gated preview — see the warning above.)
 
 Enable shell completion (optional):
 
@@ -148,6 +167,26 @@ stored credential (treated as a personal key).
 
 `--package-only` always just writes the `.zip` and stops.
 
+### After you submit: review → approve → deploy
+
+A successful `submit` does **not** publish your block — it queues it for
+moderator review. The lifecycle is:
+
+1. **submit** → your submission lands at `/apps/my-submissions` with status
+   `pending`.
+2. **review** → a moderator reviews the manifest + files. They either **approve**
+   or **reject** (with a reason you can read inline, then fix and resubmit).
+3. **deploy** → on **approval**, the platform builds and deploys your block
+   (injects its build recipe → builds the image → deploys → programs the
+   `<blockId>.civit.ai` DNS record). A few minutes after approval it serves live
+   at **`https://<blockId>.civit.ai/`**.
+
+Before approval, **`https://<blockId>.civit.ai/` 404s** — submitting does not
+make the subdomain serve. For the full end-to-end walkthrough (build → submit →
+review → deploy), see the
+[Build your first App Block](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md)
+guide.
+
 ## Configuration
 
 | Setting | Config key | Env var | Default |
@@ -168,7 +207,9 @@ written owner-readable only.
   again. For a personal key, create a new one at
   `https://civitai.com/user/account` and `civitai login --token <key>`.
 - **`forbidden (403)` / `service unavailable (503)`** — your account may lack
-  App Blocks access while the feature is gated.
+  App Blocks access while the feature is in its gated preview (see the warning at
+  the top of this README). Submission is limited to enrolled/approved accounts
+  until App Blocks reaches general availability.
 - **`validation failed`** — read each `- ...` line; fix the manifest, or pass
   `--skip-validate` to package anyway (the server will still re-validate).
 - **`<dir> is not empty — refusing to overwrite`** — `app init` won't clobber an
