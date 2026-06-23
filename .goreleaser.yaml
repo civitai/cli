@@ -61,30 +61,32 @@ changelog:
       - "^chore:"
 
 # Homebrew tap (cask). goreleaser v2 replaced `brews:` with `homebrew_casks:`.
-# NOTE: the `civitai/homebrew-tap` repo must exist and the release workflow must
-# expose a HOMEBREW_TAP_GITHUB_TOKEN with write access to it. If you don't want
-# a tap yet, comment out this whole block (and the brew install line in README).
-homebrew_casks:
-  - name: civitai
-    binaries:
-      - civitai
-    repository:
-      owner: civitai
-      name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-    homepage: "https://github.com/civitai/cli"
-    description: "Civitai CLI — author and ship App Blocks"
-    commit_author:
-      name: civitai-bot
-      email: bot@civitai.com
-    # Strip the macOS quarantine attribute so `civitai` runs without a Gatekeeper
-    # prompt (the binaries are not notarized).
-    hooks:
-      post:
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/civitai"]
-          end
+# DISABLED for the binaries-only v0.1.0 release: the `civitai/homebrew-tap` repo
+# is still private and no HOMEBREW_TAP_GITHUB_TOKEN secret is set, so a release
+# with this block enabled would fail at the formula-push step. To re-enable:
+#   1. make `civitai/homebrew-tap` public (after its own secret audit),
+#   2. set the HOMEBREW_TAP_GITHUB_TOKEN repo secret (PAT w/ write to the tap),
+#   3. uncomment this block + restore the `brew install` line in README.md,
+#   4. cut the next tag.
+# homebrew_casks:
+#   - name: civitai
+#     binaries:
+#       - civitai
+#     repository:
+#       owner: civitai
+#       name: homebrew-tap
+#       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+#     homepage: "https://github.com/civitai/cli"
+#     description: "Civitai CLI — author and ship App Blocks"
+#     commit_author:
+#       name: civitai-bot
+#       email: bot@civitai.com
+#     hooks:
+#       post:
+#         install: |
+#           if OS.mac?
+#             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/civitai"]
+#           end
 
 release:
   draft: true
