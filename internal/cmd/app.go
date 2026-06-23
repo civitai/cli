@@ -18,11 +18,13 @@ the rich page-money SDK template); "civitai app init" is the same scaffolder
 with a no-build static default (back-compat alias).`,
 		Example: `  civitai app create my-block
   civitai app validate ./my-block
-  civitai app submit ./my-block`,
+  civitai app submit ./my-block
+  civitai app status`,
 	}
 	cmd.AddCommand(newAppCreateCmd())
 	cmd.AddCommand(newAppInitCmd())
 	cmd.AddCommand(newAppValidateCmd())
 	cmd.AddCommand(newAppSubmitCmd())
+	cmd.AddCommand(newAppStatusCmd())
 	return cmd
 }

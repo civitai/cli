@@ -20,6 +20,7 @@ internal/cmd/              the Cobra command tree (one file per command)
   app_init.go              `civitai app init`   -> internal/scaffold
   app_validate.go          `civitai app validate` -> internal/validate
   app_submit.go            `civitai app submit` -> internal/{pkgzip,api}
+  app_status.go            `civitai app status` -> internal/api (GET /api/v1/blocks/submissions, self-scoped)
   login.go / whoami.go     auth -> internal/{config,api}
   version.go               `civitai version`
   completion.go            `civitai completion` (Cobra built-in generators)
@@ -27,7 +28,7 @@ internal/scaffold/         embedded project templates (go:embed) + slug logic
 internal/validate/         JSON-Schema + ported semantic checks (see fidelity caveat)
 internal/pkgzip/           canonical source-tree ZIP packaging + server caps
 internal/manifest/         the manifest filename + a thin reader
-internal/api/              HTTP client (submit + whoami) behind interfaces
+internal/api/              HTTP client (submit + whoami + submission status) behind interfaces
 internal/config/           Viper-backed config (~/.config/civitai/config.yaml)
 schema/                    vendored App Block manifest JSON Schema (embedded)
 examples/                  real example manifests (validated by examples_test.go)
