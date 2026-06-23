@@ -68,6 +68,9 @@ civitai app validate
 
 # 4. Package + submit for review (uploads with your stored token by default).
 civitai app submit
+
+# 5. Check where your submission is in review / deploy.
+civitai app status
 ```
 
 > **Submit ≠ live.** `civitai app submit` enters your block into **moderator
@@ -95,6 +98,7 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
 | `civitai app validate [dir] [--strict]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
+| `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
 
@@ -211,6 +215,47 @@ make the subdomain serve. For the full end-to-end walkthrough (build → submit 
 review → deploy), see the
 [Build your first App Block](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md)
 guide.
+
+## Submission status
+
+`civitai app status` checks where **your own** submissions are in that lifecycle
+without leaving the terminal. It calls the token-authenticated, self-scoped route
+`GET /api/v1/blocks/submissions` with your stored credential — you only ever see
+your own submissions (the same token that submitted can read its status; OAuth
+tokens need the App Blocks submit scope).
+
+With no argument it lists every submission, newest first:
+
+```text
+$ civitai app status
+BLOCK_ID    VERSION  STATUS    DEPLOY    SUBMITTED   URL
+gen-matrix  0.6.0    approved  live      2026-06-22  https://gen-matrix.civit.ai/
+my-block    0.2.0    pending   -         2026-06-21  -
+old-app     0.1.0    approved  building  2026-06-19  -
+```
+
+Pass a `blockId` (app slug) or `--id <pubreq_id>` to see one in detail — including
+the **rejection reason** if it was rejected (so you can fix + resubmit) and the
+**live URL** once it is approved and deployed:
+
+```text
+$ civitai app status gen-matrix
+Block ID:         gen-matrix
+Version:          0.6.0
+Publish request:  pubreq_01HZX
+Status:           rejected
+Deploy state:     -
+Submitted:        2026-06-22 09:05 CDT
+Reviewed:         2026-06-22 11:40 CDT
+
+Rejection reason:
+  the budgeted scope needs the per-app Sybil cap signed off first
+
+Not live yet — gen-matrix.civit.ai only serves after the app is approved and deployed (deployState 'live').
+```
+
+`--json` emits the raw response for scripting. An empty list prints a friendly
+"run `civitai app submit`" hint; with no token it points you at `civitai login`.
 
 ## Configuration
 

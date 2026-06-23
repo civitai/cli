@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -61,6 +62,37 @@ type Verifier interface {
 	WhoAmI(ctx context.Context) (*Identity, error)
 }
 
+// StatusReader reads the caller's own App-Block submission review/deploy state.
+type StatusReader interface {
+	// ListSubmissions returns the caller's submissions, newest first. An empty
+	// blockId lists all of them.
+	ListSubmissions(ctx context.Context, blockID string) ([]Submission, error)
+	// GetSubmission returns a single submission. Exactly one of id (a
+	// pubreq_<ULID>) or blockID (an app slug) must be set.
+	GetSubmission(ctx context.Context, id, blockID string) (*Submission, error)
+}
+
+// Submission mirrors the shaped row from GET /api/v1/blocks/submissions
+// (civitai/civitai src/pages/api/v1/blocks/submissions.ts -> shapeRow). Field
+// names + JSON casing track the server EXACTLY.
+type Submission struct {
+	ID              string  `json:"id"`
+	BlockID         string  `json:"blockId"` // the app slug; builds <blockId>.civit.ai
+	AppBlockID      *string `json:"appBlockId"`
+	Version         string  `json:"version"`
+	Status          string  `json:"status"` // pending | approved | rejected | withdrawn
+	RejectionReason *string `json:"rejectionReason"`
+	ApprovalNotes   *string `json:"approvalNotes"`
+	DeployState     *string `json:"deployState"` // null | building | deploying | live | failed
+	DeployDetail    *string `json:"deployDetail"`
+	DeployUpdatedAt *string `json:"deployUpdatedAt"`
+	SubmittedAt     string  `json:"submittedAt"`
+	ReviewedAt      *string `json:"reviewedAt"`
+	UpdatedAt       string  `json:"updatedAt"`
+	CreatedAt       string  `json:"createdAt"`
+	LiveURL         *string `json:"liveUrl"` // set once serving (approved+live)
+}
+
 // Identity is the minimal authenticated-user view `whoami` reports.
 type Identity struct {
 	Username string `json:"username"`
@@ -77,6 +109,10 @@ type SubmitResult struct {
 
 // DefaultSubmitPath is the token-authenticated submit-version route.
 const DefaultSubmitPath = "/api/v1/blocks/submit-version"
+
+// SubmissionsPath is the token-authenticated, self-scoped submission-status
+// route (GET; civitai/civitai src/pages/api/v1/blocks/submissions.ts).
+const SubmissionsPath = "/api/v1/blocks/submissions"
 
 // Client is the default HTTP implementation.
 type Client struct {
@@ -210,21 +246,119 @@ func (c *Client) WhoAmI(ctx context.Context) (*Identity, error) {
 	return &id, nil
 }
 
-// serverError turns a non-2xx response into a clear, actionable error.
-func serverError(status int, raw []byte) error {
+// submissionsURL builds the GET URL with optional id / blockId query params.
+func (c *Client) submissionsURL(id, blockID string) string {
+	u := c.BaseURL + SubmissionsPath
+	q := url.Values{}
+	if id != "" {
+		q.Set("id", id)
+	}
+	if blockID != "" {
+		q.Set("blockId", blockID)
+	}
+	if len(q) > 0 {
+		u += "?" + q.Encode()
+	}
+	return u
+}
+
+// ListSubmissions returns the caller's own submissions (newest first). An empty
+// blockID lists all; a non-empty blockID narrows to that app's submissions.
+func (c *Client) ListSubmissions(ctx context.Context, blockID string) ([]Submission, error) {
+	build := func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, c.submissionsURL("", blockID), nil)
+	}
+	status, raw, err := c.authedDo(ctx, build)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, submissionsError(status, raw)
+	}
+	var out struct {
+		Submissions []Submission `json:"submissions"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("unexpected /api/v1/blocks/submissions response: %s", string(raw))
+	}
+	return out.Submissions, nil
+}
+
+// GetSubmission returns a single submission. Exactly one of id (a pubreq id) or
+// blockID (an app slug) should be set; id takes precedence if both are given.
+func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submission, error) {
+	build := func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, c.submissionsURL(id, blockID), nil)
+	}
+	status, raw, err := c.authedDo(ctx, build)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, submissionsError(status, raw)
+	}
+	// An `?id=` lookup returns {submission: {...}}; an `?blockId=` lookup returns
+	// {submissions: [...]} (narrowed list) — handle both so either selector works.
+	var single struct {
+		Submission *Submission `json:"submission"`
+	}
+	if err := json.Unmarshal(raw, &single); err == nil && single.Submission != nil {
+		return single.Submission, nil
+	}
+	var list struct {
+		Submissions []Submission `json:"submissions"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, fmt.Errorf("unexpected /api/v1/blocks/submissions response: %s", string(raw))
+	}
+	if len(list.Submissions) == 0 {
+		return nil, fmt.Errorf("no such submission")
+	}
+	return &list.Submissions[0], nil
+}
+
+// submissionsError maps a non-2xx submissions response to a clear, actionable
+// error, with App-Blocks-specific guidance for 403/404/429/503.
+func submissionsError(status int, raw []byte) error {
+	msg := serverMessage(raw)
+	switch status {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("not logged in (401): %s — run `civitai login`", msg)
+	case http.StatusForbidden:
+		return fmt.Errorf("App Blocks access required (gated preview) (403): %s", msg)
+	case http.StatusNotFound:
+		return fmt.Errorf("no such submission (404): %s", msg)
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("rate limited (429): %s — wait a moment and retry", msg)
+	case http.StatusServiceUnavailable:
+		return fmt.Errorf("App Blocks is not enabled (503): %s", msg)
+	default:
+		return fmt.Errorf("server returned %d: %s", status, msg)
+	}
+}
+
+// serverMessage extracts the {"message"|"error": ...} field, falling back to the
+// trimmed raw body.
+func serverMessage(raw []byte) string {
 	msg := strings.TrimSpace(string(raw))
-	// The server returns {"message": "..."} for these routes.
 	var wrapped struct {
 		Message string `json:"message"`
 		Error   string `json:"error"`
 	}
 	if json.Unmarshal(raw, &wrapped) == nil {
 		if wrapped.Message != "" {
-			msg = wrapped.Message
-		} else if wrapped.Error != "" {
-			msg = wrapped.Error
+			return wrapped.Message
+		}
+		if wrapped.Error != "" {
+			return wrapped.Error
 		}
 	}
+	return msg
+}
+
+// serverError turns a non-2xx response into a clear, actionable error.
+func serverError(status int, raw []byte) error {
+	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("unauthorized (401): %s — check your token with `civitai login`", msg)
