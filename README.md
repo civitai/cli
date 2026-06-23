@@ -140,16 +140,21 @@ the money path (`estimate`/`submit`/`poll`/`cancel`); pickers, checkpoint-set,
 App-Storage KV, and in-band Buzz purchase are mock-only.
 
 **Auth for the dev-token mint.** The mint needs a credential carrying the **App
-Blocks submit** scope; **real Buzz spend additionally needs AI Services scope**
-(the server applies a uniform AI-Services ceiling — a credential without it mints
-a read/estimate-only token). The simplest credential is a full-scope **personal
-API key** (create at `civitai.com/user/account` — a personal key carries every
-scope). Alternatively `civitai login` works once the `civitai-cli` OAuth client
-is granted those scopes: `civitai login` already **requests** App Blocks submit +
-AI Services on the device flow, and the granted token mints a spend-capable dev
-token (paired with the server change that lets the dev-token endpoint accept an
-App-Blocks-submit-scoped OAuth token). Until that client config is applied, use a
-personal API key.
+Blocks submit** scope. The server applies a uniform **AI Services ceiling** on the
+budgeted-spend scope, so the minted dev token can only **spend real Buzz** if the
+credential ALSO carries AI Services — a credential without it mints a
+**read/estimate-only** token (cost preview / whatif, catalog browsing, app
+storage; no real generation).
+
+- **`civitai login` (OAuth) → `dev:live` estimate/read/storage.** Login requests
+  only `UserRead | AppBlocksSubmit` (the `civitai-cli` client's allowed set — it
+  deliberately does NOT carry AI Services). The granted token mints a dev token,
+  but with AI Services stripped that token is **read/estimate only** — it can
+  preview costs and browse, but **cannot run a real generation**.
+- **Personal API key (full scope) → real generation/spend.** Create one at
+  `civitai.com/user/account`; a personal key carries every scope (including AI
+  Services), so its minted dev token spends real Buzz. Paste it as
+  `VITE_LIVE_BLOCK_TOKEN` for a `dev:live` session that actually generates.
 
 Env vars (`VITE_BLOCK_ALLOWED_PARENT_ORIGINS`, `VITE_HARNESS_MODE`,
 `VITE_LIVE_BLOCK_TOKEN`, …) and the scenario knobs are documented in depth in the
@@ -193,11 +198,15 @@ caveat and how the vendored schema + Go checks are kept in sync.
 prints a URL + a short code, you approve in your browser, and the CLI stores a
 short-lived access token (1h) plus a refresh token (30d) that it rotates
 automatically before requests and once on a `401`. It **requests** the scopes
-`UserRead | AppBlocksSubmit | AIServicesWrite` — identity, App-Blocks submit (for
-`app submit` and the dev-token mint), and AI Services (so the token can mint a
-**spend-capable** dev token for `dev:live`). The effective grant is the
-intersection with the `civitai-cli` OAuth client's `allowedScopes`, so AI
-Services takes effect only once that client is granted it server-side.
+`UserRead | AppBlocksSubmit` (== `33554433`, exactly the `civitai-cli` OAuth
+client's `allowedScopes`) — identity plus App-Blocks submit, which gates both
+`app submit` and the dev-token mint. It deliberately does **not** request
+`AIServicesWrite`: the server's device-flow scope check is all-or-nothing, so
+asking for a scope the client doesn't allow would reject the whole login. A
+login token therefore drives the **read/estimate** `dev:live` paths (estimate /
+cost preview, catalog, app storage) but **cannot spend real Buzz** — for a real
+generation use a full-scope **personal API key** (see "Auth for the dev-token
+mint" above), which carries AI Services.
 `civitai login --token <key>` stores a personal API key instead (no refresh).
 `CIVITAI_TOKEN` overrides the stored credential (treated as a personal key).
 

@@ -41,10 +41,10 @@ func TestLoginDeviceFlowHappyPath(t *testing.T) {
 				"token_type":    "Bearer",
 				"expires_in":    3600,
 				"refresh_token": "refresh-456",
-				// Echo the login scope the CLI requests (UserRead|AIServicesWrite|
-				// AppBlocksSubmit = 33587201) so the persisted-scope assertion
-				// below reflects what `civitai login` obtains for dev:live.
-				"scope": "33587201",
+				// Echo the login scope the CLI requests (UserRead|AppBlocksSubmit
+				// = 33554433) so the persisted-scope assertion below reflects what
+				// `civitai login` obtains for the dev:live read/estimate paths.
+				"scope": "33554433",
 			})
 		default:
 			t.Errorf("unexpected path %q", r.URL.Path)
@@ -97,7 +97,7 @@ func TestLoginDeviceFlowHappyPath(t *testing.T) {
 	if onDisk["auth_kind"] != "oauth" {
 		t.Errorf("auth_kind = %v, want oauth", onDisk["auth_kind"])
 	}
-	if onDisk["scope"] != "33587201" {
+	if onDisk["scope"] != "33554433" {
 		t.Errorf("scope = %v", onDisk["scope"])
 	}
 }

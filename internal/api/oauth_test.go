@@ -43,11 +43,13 @@ func TestStartDeviceParsesResponse(t *testing.T) {
 }
 
 // TestDeviceScopeCarriesRequiredBits pins the login scope contract: `civitai
-// login` must REQUEST UserRead + AIServicesWrite + AppBlocksSubmit so a granted
-// token can (a) identify the user, (b) mint a SPEND-capable App-Blocks dev token
-// for dev:live, and (c) submit/mint via the AppBlocksSubmit-gated routes. The
-// effective grant is still capped server-side by the civitai-cli client's
-// allowedScopes, but the CLI must ASK for these or dev:live can never spend.
+// login` must REQUEST exactly UserRead + AppBlocksSubmit — the civitai-cli
+// client's allowedScopes set. It must NOT request AIServicesWrite: the server's
+// device-flow validateScope is all-or-nothing, so asking for a scope the client
+// doesn't allow would REJECT the whole login. A granted token can still (a)
+// identify the user, (b) MINT an App-Blocks dev token (read/estimate; the mint
+// strips ai:write:budgeted without AIServicesWrite), and (c) submit via the
+// AppBlocksSubmit-gated routes. Real-Buzz dev:live needs a personal API key.
 func TestDeviceScopeCarriesRequiredBits(t *testing.T) {
 	const (
 		userRead        = 1 << 0  // 1
@@ -63,15 +65,19 @@ func TestDeviceScopeCarriesRequiredBits(t *testing.T) {
 		bit  int
 	}{
 		{"UserRead", userRead},
-		{"AIServicesWrite", aiServicesWrite},
 		{"AppBlocksSubmit", appBlocksSubmit},
 	} {
 		if got&c.bit == 0 {
 			t.Errorf("DeviceScope=%d is missing the %s bit (%d)", got, c.name, c.bit)
 		}
 	}
-	if want := userRead | aiServicesWrite | appBlocksSubmit; got != want {
-		t.Errorf("DeviceScope=%d, want exactly %d (UserRead|AIServicesWrite|AppBlocksSubmit)", got, want)
+	// AIServicesWrite must be ABSENT — requesting it would break `civitai login`
+	// (the civitai-cli client does not allow it, and validateScope is all-or-nothing).
+	if got&aiServicesWrite != 0 {
+		t.Errorf("DeviceScope=%d unexpectedly includes the AIServicesWrite bit (%d) — would break login", got, aiServicesWrite)
+	}
+	if want := userRead | appBlocksSubmit; got != want {
+		t.Errorf("DeviceScope=%d, want exactly %d (UserRead|AppBlocksSubmit)", got, want)
 	}
 }
 
