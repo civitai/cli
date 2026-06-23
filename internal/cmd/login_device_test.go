@@ -41,7 +41,10 @@ func TestLoginDeviceFlowHappyPath(t *testing.T) {
 				"token_type":    "Bearer",
 				"expires_in":    3600,
 				"refresh_token": "refresh-456",
-				"scope":         "33554433",
+				// Echo the login scope the CLI requests (UserRead|AppBlocksSubmit
+				// = 33554433) so the persisted-scope assertion below reflects what
+				// `civitai login` obtains for the dev:live read/estimate paths.
+				"scope": "33554433",
 			})
 		default:
 			t.Errorf("unexpected path %q", r.URL.Path)

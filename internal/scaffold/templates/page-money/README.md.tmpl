@@ -56,9 +56,27 @@ protocol to the real backend using a pasted dev token (Bearer). To use it:
 
 1. Mint a short-lived dev block token via the moderator-gated endpoint
    `POST /api/v1/blocks/dev-token` (the token is a ~15-minute RS256 JWT; re-mint
-   + restart when it expires).
-2. Paste it into `.env.development` as `VITE_LIVE_BLOCK_TOKEN=` (never commit it;
-   `submit` excludes `.env.development`).
+   + restart when it expires). **Auth — the credential you mint with decides what
+   the dev token can do:**
+   - The mint needs a credential carrying the **App Blocks submit** scope.
+   - **Real generation (spends real Buzz) needs a full-scope personal API key.**
+     Create one at `https://civitai.com/user/account` (a personal key carries
+     every scope, including AI Services):
+     ```bash
+     curl -s -X POST https://civitai.com/api/v1/blocks/dev-token \
+       -H "Authorization: Bearer $CIVITAI_TOKEN" \
+       -H 'Content-Type: application/json' \
+       -d '{"slug":"{{ .Slug }}"}'   # → { token, expiresAt, scopes, buzzBudget }
+     ```
+   - **`civitai login` (the OAuth device flow) mints a read/estimate-only dev
+     token.** The `civitai-cli` client carries App Blocks submit but NOT AI
+     Services (by design — login shouldn't grant general Buzz spend). The server
+     applies a uniform AI-Services ceiling on the spend scope, so a login-minted
+     token can estimate / preview cost, browse the catalog, and use app storage,
+     but **cannot run a real generation**. For that, use the personal API key
+     above.
+2. Paste the returned `token` into `.env.development` as `VITE_LIVE_BLOCK_TOKEN=`
+   (never commit it; `submit` excludes `.env.development`).
 3. `npm run dev:live` — a persistent **⚠️ LIVE HOST** banner stays on screen; a
    successful Generate spends your own real Buzz.
 

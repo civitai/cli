@@ -24,8 +24,24 @@ const (
 	// ClientID is the public OAuth client id for the CLI.
 	ClientID = "civitai-cli"
 
-	// DeviceScope is UserRead|AppBlocksSubmit (bit flags), the fixed scope the
-	// CLI requests. 33554433 == (1<<0)|(1<<25) in the server's scope bitset.
+	// DeviceScope is UserRead|AppBlocksSubmit (bit flags), the fixed scope the CLI
+	// requests on login. 33554433 == (1<<0)|(1<<25) in the server's scope bitset:
+	//   - UserRead        (1<<0  = 1)        — whoami / identity.
+	//   - AppBlocksSubmit (1<<25 = 33554432) — `app submit` AND the dev-token mint
+	//     gate (both require this on an OAuth token).
+	// This is exactly the civitai-cli OauthClient.allowedScopes set (33554433). We
+	// deliberately do NOT request AIServicesWrite: the server's device-flow
+	// validateScope is all-or-nothing — requesting any scope the client doesn't
+	// allow REJECTS the whole login — and we don't want every login token to carry
+	// general Buzz-spend authority.
+	//
+	// What a login token can do: it can MINT an App-Blocks dev token (the mint gate
+	// only needs AppBlocksSubmit) and drive the read/estimate harness paths — cost
+	// preview / whatif, catalog browsing, and app storage. It CANNOT run a real
+	// generation: the dev-token mint applies a uniform AIServicesWrite ceiling on
+	// the budgeted-spend scope, so a login-minted dev token has ai:write:budgeted
+	// STRIPPED (read/estimate only). Real-Buzz dev:live needs a personal API key
+	// with full scope (civitai.com/user/account), which carries AIServicesWrite.
 	DeviceScope = "33554433"
 
 	grantTypeDeviceCode   = "urn:ietf:params:oauth:grant-type:device_code"
