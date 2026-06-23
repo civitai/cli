@@ -139,6 +139,15 @@ With no token it **fails safe** (renders a notice, never spends). Live v1 covers
 the money path (`estimate`/`submit`/`poll`/`cancel`); pickers, checkpoint-set,
 App-Storage KV, and in-band Buzz purchase are mock-only.
 
+`dev:live` routes the live host's backend calls through the **vite dev proxy**
+(`server.proxy['/api']`), not straight to `civitai.com`: `createLiveHost` fetches
+`/api/...` SAME-ORIGIN against the dev server (`localhost:5186`), and vite proxies
+that server-side to civitai with the `Origin` header rewritten to an allowlisted
+host. This is load-bearing — a direct cross-origin fetch from `localhost` is both
+blocked by CORS preflight and rejected by civitai's tRPC origin gate. The
+same-origin proxy + Origin rewrite fixes both. `VITE_LIVE_HOST_ORIGIN` overrides
+the proxy target (default `https://civitai.com`).
+
 **Auth for the dev-token mint.** The mint needs a credential carrying the **App
 Blocks submit** scope. The server applies a uniform **AI Services ceiling** on the
 budgeted-spend scope, so the minted dev token can only **spend real Buzz** if the
@@ -146,11 +155,15 @@ credential ALSO carries AI Services — a credential without it mints a
 **read/estimate-only** token (cost preview / whatif, catalog browsing, app
 storage; no real generation).
 
-- **`civitai login` (OAuth) → `dev:live` estimate/read/storage.** Login requests
-  only `UserRead | AppBlocksSubmit` (the `civitai-cli` client's allowed set — it
-  deliberately does NOT carry AI Services). The granted token mints a dev token,
-  but with AI Services stripped that token is **read/estimate only** — it can
-  preview costs and browse, but **cannot run a real generation**.
+- **`civitai login` (OAuth) → `dev:live` read/identity only (for a generation
+  app).** Login requests only `UserRead | AppBlocksSubmit` (the `civitai-cli`
+  client's allowed set — it deliberately does NOT carry AI Services). A page-money
+  app's manifest declares only `ai:write:budgeted`, which the server strips from
+  an OAuth-minted token (no AI Services), leaving it **read/identity only** —
+  `dev:live` shows your viewer plus catalog/storage, but **estimate → submit →
+  real generation does NOT work**. (A paired civitai server change grants
+  `user:read:self` so the viewer resolves cleanly; until it lands OAuth dev:live
+  is limited.) For real generation/spend use a full-scope **personal API key**.
 - **Personal API key (full scope) → real generation/spend.** Create one at
   `civitai.com/user/account`; a personal key carries every scope (including AI
   Services), so its minted dev token spends real Buzz. Paste it as
@@ -203,8 +216,9 @@ client's `allowedScopes`) — identity plus App-Blocks submit, which gates both
 `app submit` and the dev-token mint. It deliberately does **not** request
 `AIServicesWrite`: the server's device-flow scope check is all-or-nothing, so
 asking for a scope the client doesn't allow would reject the whole login. A
-login token therefore drives the **read/estimate** `dev:live` paths (estimate /
-cost preview, catalog, app storage) but **cannot spend real Buzz** — for a real
+login token therefore drives the **read/identity** `dev:live` paths (viewer,
+catalog, app storage) but — for a generation app whose only `ai:write:budgeted`
+scope is stripped — **cannot estimate, submit, or spend real Buzz**. For real
 generation use a full-scope **personal API key** (see "Auth for the dev-token
 mint" above), which carries AI Services.
 `civitai login --token <key>` stores a personal API key instead (no refresh).
