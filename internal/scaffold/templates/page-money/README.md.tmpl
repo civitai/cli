@@ -50,9 +50,20 @@ set it for you):
 | `npm run dev:harness` | **mock** (default) | The SDK mock host. Synthetic — **no real Buzz, no compute, no network.** Safe to spam. |
 | `npm run dev:live` | **live** | The SDK **live host** (`createLiveHost`) — forwards the protocol to the **real Civitai backend** with a real dev token. **Spends REAL Buzz / real compute.** |
 
-**Live mode setup.** `dev:live` mounts `createLiveHost` from
+**How `dev:live` reaches the backend.** `dev:live` mounts `createLiveHost` from
 `@civitai/blocks-react/testing`, which forwards the App-Block postMessage
-protocol to the real backend using a pasted dev token (Bearer). To use it:
+protocol to the real backend using a pasted dev token (Bearer). The live host's
+backend calls go through the **vite dev proxy** (`server.proxy['/api']` in
+`vite.config.ts`), NOT straight to `civitai.com`: `createLiveHost` is configured
+with an empty `backendBaseUrl`, so it fetches `/api/...` SAME-ORIGIN against the
+dev server (`localhost:5186`), and vite proxies that server-side to civitai with
+the `Origin` header rewritten to an allowlisted host. That's load-bearing — a
+direct cross-origin fetch from `localhost` would (1) be blocked by CORS preflight
+and (2) be rejected by civitai's tRPC origin gate ("Please use the public API
+instead"). The same-origin proxy + Origin rewrite fixes both. Override the proxy
+target with `VITE_LIVE_HOST_ORIGIN` (default `https://civitai.com`).
+
+**Live mode setup.** To use it:
 
 1. Mint a short-lived dev block token via the moderator-gated endpoint
    `POST /api/v1/blocks/dev-token` (the token is a ~15-minute RS256 JWT; re-mint
@@ -68,13 +79,17 @@ protocol to the real backend using a pasted dev token (Bearer). To use it:
        -H 'Content-Type: application/json' \
        -d '{"slug":"{{ .Slug }}"}'   # → { token, expiresAt, scopes, buzzBudget }
      ```
-   - **`civitai login` (the OAuth device flow) mints a read/estimate-only dev
-     token.** The `civitai-cli` client carries App Blocks submit but NOT AI
-     Services (by design — login shouldn't grant general Buzz spend). The server
-     applies a uniform AI-Services ceiling on the spend scope, so a login-minted
-     token can estimate / preview cost, browse the catalog, and use app storage,
-     but **cannot run a real generation**. For that, use the personal API key
-     above.
+   - **`civitai login` (the OAuth device flow) mints a read/identity-only dev
+     token for this app.** The `civitai-cli` client carries App Blocks submit but
+     NOT AI Services (by design — login shouldn't grant general Buzz spend). A
+     page-money app's manifest declares only `ai:write:budgeted`, and the server
+     strips that budgeted-spend scope from an OAuth-minted token (no AI Services),
+     so what's left is **read/identity only**: `dev:live` shows your **viewer**
+     plus catalog/storage, but **estimate → submit → real generation does NOT
+     work**. For real generation/spend, use the full-scope **personal API key**
+     above. (A separate civitai server change grants `user:read:self` so the
+     viewer/identity resolves cleanly for OAuth dev:live; until that lands, OAuth
+     dev:live is limited.)
 2. Paste the returned `token` into `.env.development` as `VITE_LIVE_BLOCK_TOKEN=`
    (never commit it; `submit` excludes `.env.development`).
 3. `npm run dev:live` — a persistent **⚠️ LIVE HOST** banner stays on screen; a

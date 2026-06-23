@@ -73,8 +73,15 @@ export type LiveConfig =
  */
 export function resolveLiveConfig(): LiveConfig {
   const token = import.meta.env.VITE_LIVE_BLOCK_TOKEN as string | undefined;
-  const backendBaseUrl =
-    (import.meta.env.VITE_LIVE_HOST_ORIGIN as string | undefined) ?? 'https://civitai.com';
+  // SAME-ORIGIN by design. createLiveHost fetches `${backendBaseUrl}/api/...`;
+  // with an empty base it fetches `/api/...` against THIS dev server, which the
+  // vite `server.proxy` (vite.config.ts) forwards to civitai with a rewritten
+  // Origin. That makes the request same-origin (no CORS preflight, N1) AND lets
+  // the proxy satisfy civitai's tRPC origin gate (N2) — the two failures that
+  // broke direct `https://civitai.com` fetches from localhost. The proxy TARGET
+  // is overridden by VITE_LIVE_HOST_ORIGIN (read in vite.config.ts), not here.
+  // createLiveHost accepts '' (it strips trailing slashes and prefixes paths).
+  const backendBaseUrl = '';
 
   if (!token) {
     return {

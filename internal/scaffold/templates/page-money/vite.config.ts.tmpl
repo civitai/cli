@@ -15,6 +15,22 @@ export default defineConfig({
     host: 'localhost',
     port: 5186,
     strictPort: true,
+    // dev:live backend proxy. In live mode the SDK's createLiveHost fetches
+    // /api/... with `backendBaseUrl: ''` (see src/dev-transport.ts) so the
+    // browser hits THIS dev server SAME-ORIGIN — no cross-origin preflight (N1).
+    // Vite then proxies server-side to civitai and REWRITES the Origin header to
+    // an allowlisted host, which is LOAD-BEARING: civitai's tRPC isAcceptableOrigin
+    // gate rejects a localhost Origin with "Please use the public API instead" (N2).
+    // Both N1 and N2 are fixed by this one same-origin + Origin-rewrite proxy.
+    // `VITE_LIVE_HOST_ORIGIN` overrides the proxy TARGET (read from process.env at
+    // config time — NOT import.meta.env); default https://civitai.com.
+    proxy: {
+      '/api': {
+        target: process.env.VITE_LIVE_HOST_ORIGIN ?? 'https://civitai.com',
+        changeOrigin: true, // rewrites Host to the target
+        headers: { origin: 'https://civitai.com' }, // satisfies the origin gate (N2) + no CORS (N1)
+      },
+    },
   },
   build: {
     target: 'es2022',

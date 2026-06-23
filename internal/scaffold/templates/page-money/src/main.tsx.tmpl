@@ -70,7 +70,8 @@ function LiveApp({ token, backendBaseUrl }: { token: string; backendBaseUrl: str
   return (
     <>
       <div data-harness-banner="live" style={liveBannerStyle}>
-        ⚠️ LIVE HOST · spends REAL Buzz / real compute · {backendBaseUrl}
+        ⚠️ LIVE HOST · spends REAL Buzz / real compute · backend via vite proxy →{' '}
+        {import.meta.env.VITE_LIVE_HOST_ORIGIN || 'https://civitai.com'}
       </div>
       {ready ? <App /> : null}
     </>
