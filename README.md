@@ -46,12 +46,9 @@ civitai version
 
 ### Homebrew
 
-> ⚠️ Not available yet — the Homebrew tap is still being set up. Use **Go install**
-> or a **prebuilt binary** (above) for now. Once the tap is live:
->
-> ```bash
-> brew install civitai/tap/civitai
-> ```
+```bash
+brew install civitai/tap/civitai
+```
 
 ## Quickstart
 

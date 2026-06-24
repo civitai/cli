@@ -61,32 +61,28 @@ changelog:
       - "^chore:"
 
 # Homebrew tap (cask). goreleaser v2 replaced `brews:` with `homebrew_casks:`.
-# DISABLED: `civitai/homebrew-tap` is now PUBLIC (audited clean 2026-06-23), but
-# the HOMEBREW_TAP_GITHUB_TOKEN repo secret is still unset, so a release with this
-# block enabled would fail at the formula-push step. ONE step remains to re-enable:
-#   1. (DONE) make `civitai/homebrew-tap` public.
-#   2. set the HOMEBREW_TAP_GITHUB_TOKEN repo secret (PAT w/ write to the tap),
-#   3. uncomment this block + restore the `brew install` line in README.md,
-#   4. cut the next tag.
-# homebrew_casks:
-#   - name: civitai
-#     binaries:
-#       - civitai
-#     repository:
-#       owner: civitai
-#       name: homebrew-tap
-#       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
-#     homepage: "https://github.com/civitai/cli"
-#     description: "Civitai CLI — author and ship App Blocks"
-#     commit_author:
-#       name: civitai-bot
-#       email: bot@civitai.com
-#     hooks:
-#       post:
-#         install: |
-#           if OS.mac?
-#             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/civitai"]
-#           end
+# ENABLED 2026-06-24: `civitai/homebrew-tap` is PUBLIC (audited clean) and the
+# HOMEBREW_TAP_GITHUB_TOKEN repo secret (write to the tap) is set, so goreleaser
+# pushes the updated cask formula to the tap on each tag.
+homebrew_casks:
+  - name: civitai
+    binaries:
+      - civitai
+    repository:
+      owner: civitai
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/civitai/cli"
+    description: "Civitai CLI — author and ship App Blocks"
+    commit_author:
+      name: civitai-bot
+      email: bot@civitai.com
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/civitai"]
+          end
 
 release:
   draft: true
