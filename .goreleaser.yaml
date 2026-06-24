@@ -61,10 +61,10 @@ changelog:
       - "^chore:"
 
 # Homebrew tap (cask). goreleaser v2 replaced `brews:` with `homebrew_casks:`.
-# DISABLED for the binaries-only v0.1.0 release: the `civitai/homebrew-tap` repo
-# is still private and no HOMEBREW_TAP_GITHUB_TOKEN secret is set, so a release
-# with this block enabled would fail at the formula-push step. To re-enable:
-#   1. make `civitai/homebrew-tap` public (after its own secret audit),
+# DISABLED: `civitai/homebrew-tap` is now PUBLIC (audited clean 2026-06-23), but
+# the HOMEBREW_TAP_GITHUB_TOKEN repo secret is still unset, so a release with this
+# block enabled would fail at the formula-push step. ONE step remains to re-enable:
+#   1. (DONE) make `civitai/homebrew-tap` public.
 #   2. set the HOMEBREW_TAP_GITHUB_TOKEN repo secret (PAT w/ write to the tap),
 #   3. uncomment this block + restore the `brew install` line in README.md,
 #   4. cut the next tag.
