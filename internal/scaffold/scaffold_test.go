@@ -71,7 +71,7 @@ func TestRenderPageMoney(t *testing.T) {
 	for _, expect := range []string{
 		"block.manifest.json", "package.json", "vite.config.ts", "tsconfig.json", "index.html",
 		"src/main.tsx", "src/App.tsx", "src/Harness.tsx", "src/generation.ts",
-		"src/generation.test.ts", "src/index.css",
+		"src/generation.test.ts", "src/App.pollretry.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
 	} {
 		if !containsStr(got, expect) {
@@ -110,6 +110,11 @@ func TestRenderPageMoney(t *testing.T) {
 	if contains(app, "window.parent.postMessage") {
 		t.Error("page-money App.tsx should not use raw window.parent.postMessage")
 	}
+	// The poll loop must retry transient transport errors (a throw), not turn
+	// them into a terminal failure — guards the round-5 dogfood regression where
+	// a poll blip marked a server-side SUCCESS as FAILED.
+	mustContain(t, app, "MAX_TRANSIENT_ERRORS")
+	mustContain(t, app, "consecutiveErrors")
 
 	// The display name should land in the manifest + App heading.
 	mustContain(t, manifest, `"name": "Money Block"`)

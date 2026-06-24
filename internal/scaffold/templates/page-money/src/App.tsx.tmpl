@@ -96,6 +96,17 @@ export function App() {
   /**
    * Drive a single workflow to terminal with an adaptive-backoff poll loop.
    * `submit()` does NOT auto-poll (SDK contract) — the caller owns the loop.
+   *
+   * Robustness contract: a `poll()` THROW is a transport/infra blip (a network
+   * hiccup, a not-yet-rolled-out backend pod 401ing for a few seconds, …) — NOT
+   * a workflow failure. A workflow that the orchestrator actually failed comes
+   * back as a 'failed'/'expired'/'canceled' SNAPSHOT, never a throw. So we retry
+   * a throw with bounded backoff instead of failing the generation (which would
+   * mark a server-side SUCCESS as FAILED — the round-5 dogfood bug). Only after
+   * MAX_TRANSIENT_ERRORS consecutive failures (the backend is genuinely
+   * unreachable, not just blipping) do we give up with a clear transport error.
+   * The error counter resets on any successful poll, so a long generation that
+   * hits the occasional blip never accumulates toward the cap.
    */
   const runPollLoop = useCallback(
     (workflowId: string) => {
@@ -103,8 +114,16 @@ export function App() {
       const tok = { cancelled: false };
       pollCancelRef.current = tok;
 
+      // Backoff between normal (snapshot-returning) polls.
       const SCHEDULE_MS = [2000, 2000, 3000, 5000, 8000];
+      // Shorter backoff between retries of a transient transport error, so a
+      // brief blip recovers fast.
+      const RETRY_MS = [500, 1000, 2000, 4000];
+      // Give up only after this many CONSECUTIVE transport failures (~30s of
+      // retries) — a genuinely-down backend, not a transient blip.
+      const MAX_TRANSIENT_ERRORS = 8;
       let attempt = 0;
+      let consecutiveErrors = 0;
 
       const tick = async () => {
         if (tok.cancelled) return;
@@ -112,15 +131,27 @@ export function App() {
         try {
           snap = await pollRef.current(workflowId);
         } catch {
-          // Transient hiccup — keep polling. A real terminal failure surfaces
-          // as a 'failed'/'expired' snapshot, not a throw.
+          // Transient hiccup — retry with bounded backoff. A real terminal
+          // failure surfaces as a 'failed'/'expired' snapshot, not a throw.
           if (tok.cancelled) return;
-          const delay = SCHEDULE_MS[Math.min(attempt, SCHEDULE_MS.length - 1)];
-          attempt += 1;
+          consecutiveErrors += 1;
+          if (consecutiveErrors > MAX_TRANSIENT_ERRORS) {
+            // Backend unreachable after repeated retries — surface a transport
+            // error (distinct from a workflow failure) and stop.
+            setPhase('failed');
+            setError(
+              "Couldn't reach the generation service after several retries. " +
+                'Your generation may still be running — refresh to check.',
+            );
+            return;
+          }
+          const delay = RETRY_MS[Math.min(consecutiveErrors - 1, RETRY_MS.length - 1)];
           setTimeout(tick, delay);
           return;
         }
         if (tok.cancelled) return;
+        // A successful poll clears the transient-error streak.
+        consecutiveErrors = 0;
         applySnapshot(snap);
         if (isTerminalStatus(snap.status)) return;
         const delay = SCHEDULE_MS[Math.min(attempt, SCHEDULE_MS.length - 1)];

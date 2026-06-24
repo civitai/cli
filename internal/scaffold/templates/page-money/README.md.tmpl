@@ -149,6 +149,10 @@ npm run build         # what the platform produces (tsc typecheck + vite build)
   estimate → consent → submit → poll → succeeded flow through the REAL SDK
   transport against the mock host (no hook mocking). This is what tells you the
   spend wiring still works after you edit the app.
+- **`src/App.pollretry.test.tsx`** — poll-loop robustness: a transient poll
+  error (a transport blip, e.g. a not-yet-rolled-out pod) is retried, not turned
+  into a terminal failure, while a genuine `failed` status stays terminal. Keep
+  this if you customize `runPollLoop`.
 
 ## Allowed parent origins
 
