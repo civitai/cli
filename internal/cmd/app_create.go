@@ -39,7 +39,11 @@ blockId. A slug-shaped name is used verbatim.
 
 By default the project is created in ./<slug>. Override the output directory with
 a positional [dir] or --dir <path>; override the display name independently with
---name (so name, slug, and directory can all differ).`,
+--name (so name, slug, and directory can all differ).
+
+Note: ` + "`civitai login`" + ` (OAuth) grants submit but NOT Buzz-spend. To run
+` + "`dev:live`" + ` real generations, authenticate with a full-scope personal API key
+(` + "`civitai login --token <key>`" + `, created at https://civitai.com/user/account).`,
 		Example: `  # A page-money block in ./my-block (the batteries-included default).
   civitai app create my-block
 

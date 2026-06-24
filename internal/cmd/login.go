@@ -31,7 +31,11 @@ OAuth tokens that refresh automatically.
 Alternatively, pass --token to store a personal API key created at
 https://civitai.com/user/account (API Keys). Either way the credential is saved
 to your config file (~/.config/civitai/config.yaml, owner-readable only). The
-CIVITAI_TOKEN environment variable still overrides the stored credential.`,
+CIVITAI_TOKEN environment variable still overrides the stored credential.
+
+Note: ` + "`civitai login`" + ` (OAuth) grants submit but NOT Buzz-spend. To run
+` + "`dev:live`" + ` real generations, authenticate with a full-scope personal API key
+(` + "`civitai login --token <key>`" + `, created at https://civitai.com/user/account).`,
 		Example: `  civitai login                 # browser device login (recommended)
   civitai login --no-browser    # device login without auto-opening a browser
   civitai login --token <token> # store a personal API key instead`,

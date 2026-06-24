@@ -129,6 +129,13 @@ hosts) with two modes:
 | `npm run dev:harness` | **mock** (default) | Mounts the SDK **mock host** — synthetic replies, **no real Buzz, no compute, no network.** Safe to spam; drive money/error/insufficient-Buzz UX via on-screen scenarios or `?` URL params. Start here. |
 | `npm run dev:live` | **live** | Mounts the SDK **live host** (`createLiveHost`) — forwards the App-Block protocol to the **real Civitai backend** with a pasted dev token (Bearer). **Spends REAL Buzz / real compute.** |
 
+> ⚠️ **`dev:live` needs an approved + deployed app.** It talks to a **deployed
+> block instance**, so the dev-token mint only succeeds once the app is approved
+> and deployed (deployState `live`). A brand-new app — even right after a
+> successful `civitai app submit` (status `pending`) — gets `App not found`. You
+> **can't `dev:live`-test your own first app before its first approval + deploy**;
+> validate with `dev:harness` (mock) until your first version is live.
+
 **Live mode** needs a short-lived dev block token (mint via the moderator-gated
 `POST /api/v1/blocks/dev-token`), pasted into `.env.development` as
 `VITE_LIVE_BLOCK_TOKEN=` (never committed — `submit` excludes `.env.development`).
