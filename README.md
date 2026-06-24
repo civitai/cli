@@ -164,10 +164,13 @@ storage; no real generation).
   real generation does NOT work**. (A paired civitai server change grants
   `user:read:self` so the viewer resolves cleanly; until it lands OAuth dev:live
   is limited.) For real generation/spend use a full-scope **personal API key**.
-- **Personal API key (full scope) → real generation/spend.** Create one at
-  `civitai.com/user/account`; a personal key carries every scope (including AI
-  Services), so its minted dev token spends real Buzz. Paste it as
-  `VITE_LIVE_BLOCK_TOKEN` for a `dev:live` session that actually generates.
+- **Personal API key (full scope) → real generation/spend.** Create one **in the
+  web UI** at `civitai.com/user/account` — you can't mint a personal key over
+  OAuth or the CLI (`apiKey.add` returns 403 without a full-scope session), so an
+  OAuth-only dev must visit the web UI for a real-spend `dev:live`. A personal key
+  carries every scope (including AI Services), so its minted dev token spends real
+  Buzz. Paste it as `VITE_LIVE_BLOCK_TOKEN` for a `dev:live` session that actually
+  generates.
 
 Env vars (`VITE_BLOCK_ALLOWED_PARENT_ORIGINS`, `VITE_HARNESS_MODE`,
 `VITE_LIVE_BLOCK_TOKEN`, …) and the scenario knobs are documented in depth in the
