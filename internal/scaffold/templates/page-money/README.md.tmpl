@@ -63,7 +63,19 @@ and (2) be rejected by civitai's tRPC origin gate ("Please use the public API
 instead"). The same-origin proxy + Origin rewrite fixes both. Override the proxy
 target with `VITE_LIVE_HOST_ORIGIN` (default `https://civitai.com`).
 
-**Live mode setup.** To use it:
+**Live mode setup.**
+
+> ⚠️ **Prerequisite — `dev:live` needs an approved + DEPLOYED app.** `dev:live`
+> talks to a **deployed block instance**, so the dev-token mint
+> (`POST /api/v1/blocks/dev-token`) only succeeds once **this app is approved and
+> deployed** (deployState `live`). For a brand-new app — even right after a
+> successful `civitai app submit` (status `pending`) — the mint returns
+> **`App not found`**. That's expected: you **cannot `dev:live`-test your own
+> first app before its first approval + deploy**. Until your first version is
+> live, validate everything with `dev:harness` (the mock host — no real Buzz, no
+> network). Once the app is live, come back here for real-spend testing.
+
+To use it:
 
 1. Mint a short-lived dev block token via the moderator-gated endpoint
    `POST /api/v1/blocks/dev-token` (the token is a ~15-minute RS256 JWT; re-mint
