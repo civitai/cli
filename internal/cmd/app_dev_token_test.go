@@ -141,7 +141,7 @@ func TestAppDevTokenErrorMapping(t *testing.T) {
 		body   map[string]any
 		want   string
 	}{
-		{http.StatusNotFound, map[string]any{"message": "no such app"}, "app not found (or not yours)"},
+		{http.StatusNotFound, map[string]any{"message": "no such app"}, "civitai app submit"},
 		{http.StatusForbidden, map[string]any{"message": "mods only"}, "not authorized"},
 		{http.StatusUnauthorized, map[string]any{"message": "bad key"}, "not logged in"},
 		{http.StatusTooManyRequests, map[string]any{"message": "slow down"}, "rate limited"},

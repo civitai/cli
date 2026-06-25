@@ -121,15 +121,28 @@ function LiveUnavailable({ reason }: { reason: string }) {
 
         <div style={liveSectionStyle}>
           <div style={liveSectionTitleStyle}>How to get a dev token</div>
-          <div style={liveCmdRowStyle}>
-            <pre style={liveCmdStyle}>{cliCmd}</pre>
-            <CopyButton text={cliCmd} />
-          </div>
           <p style={liveHintStyle}>
-            Paste the token into <code>VITE_LIVE_BLOCK_TOKEN</code> in{' '}
-            <code>.env.development.local</code>, then re-run{' '}
-            <code>npm run dev:live</code>.
+            To run <code>dev:live</code> you need a dev token. Your app must be{' '}
+            <strong>submitted first</strong> — the token is minted against your
+            submitted (pending-review) app.
           </p>
+          <ol style={liveStepsStyle}>
+            <li style={liveStepStyle}>
+              <code style={liveStepCmdStyle}>civitai app submit</code>{' '}
+              <span style={liveStepNoteStyle}># registers the app (pending review)</span>
+            </li>
+            <li style={liveStepStyle}>
+              <div style={liveCmdRowStyle}>
+                <pre style={liveCmdStyle}>{cliCmd}</pre>
+                <CopyButton text={cliCmd} />
+              </div>
+            </li>
+            <li style={liveStepStyle}>
+              Paste the token into <code>VITE_LIVE_BLOCK_TOKEN</code> in{' '}
+              <code>.env.development.local</code>, then re-run{' '}
+              <code>npm run dev:live</code>.
+            </li>
+          </ol>
           <p style={liveHintStyle}>
             Real generation needs a <strong>full-scope personal API key</strong>{' '}
             (create one at <code>civitai.com/user/account</code>) — an OAuth{' '}
@@ -139,7 +152,7 @@ function LiveUnavailable({ reason }: { reason: string }) {
         </div>
 
         <div style={liveSectionStyle}>
-          <div style={liveSectionTitleStyle}>No CLI? Mint it with curl</div>
+          <div style={liveSectionTitleStyle}>No CLI? Mint it with curl (after submitting)</div>
           <div style={liveCmdRowStyle}>
             <pre style={liveCmdSmallStyle}>{curlCmd}</pre>
             <CopyButton text={curlCmd} />
@@ -194,6 +207,22 @@ const liveSectionTitleStyle: CSSProperties = {
   color: '#ffa94d',
   marginBottom: 8,
 };
+const liveStepsStyle: CSSProperties = {
+  marginTop: 12,
+  marginBottom: 0,
+  paddingLeft: 22,
+  display: 'grid',
+  gap: 10,
+};
+const liveStepStyle: CSSProperties = { lineHeight: 1.5 };
+const liveStepCmdStyle: CSSProperties = {
+  background: '#0d0904',
+  border: '1px solid #5a3a17',
+  borderRadius: 4,
+  padding: '2px 6px',
+  color: '#ffe8c2',
+};
+const liveStepNoteStyle: CSSProperties = { opacity: 0.7 };
 const liveCmdRowStyle: CSSProperties = {
   display: 'flex',
   alignItems: 'stretch',
