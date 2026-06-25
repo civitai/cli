@@ -46,23 +46,58 @@ func applyBuildInfoFallback() {
 	if !ok || info == nil {
 		return
 	}
-	if isDevDefault(version) {
-		if v := info.Main.Version; v != "" && v != "(devel)" {
-			version = v
-		}
-	}
+	var mainVersion, rev, vcsTime, modified string
+	mainVersion = info.Main.Version
 	for _, s := range info.Settings {
 		switch s.Key {
 		case "vcs.revision":
-			if commit == "none" && s.Value != "" {
-				commit = s.Value
-			}
+			rev = s.Value
 		case "vcs.time":
-			if date == "unknown" && s.Value != "" {
-				date = s.Value
-			}
+			vcsTime = s.Value
+		case "vcs.modified":
+			modified = s.Value
 		}
 	}
+	version, commit, date = mergeBuildInfo(version, commit, date, mainVersion, rev, vcsTime, modified)
+}
+
+// mergeBuildInfo merges the (possibly ldflag-stamped) version/commit/date with
+// the values read from runtime/debug.ReadBuildInfo. The ldflag values are
+// authoritative: a field is only filled from build info when it's still its
+// dev/none/unknown default. Pure function so the merge logic is unit-testable
+// without mocking ReadBuildInfo.
+//
+//   - version: if dev/empty, use mainVersion (the module version from
+//     `go install module@vX`), unless it's "" or "(devel)".
+//   - commit:  if "none", use vcs.revision shortened to 12 chars, with "+dirty"
+//     appended when vcs.modified == "true".
+//   - date:    if "unknown", use vcs.time.
+func mergeBuildInfo(version, commit, date, mainVersion, rev, vcsTime, modified string) (string, string, string) {
+	if isDevDefault(version) {
+		if mainVersion != "" && mainVersion != "(devel)" {
+			version = mainVersion
+		}
+	}
+	if commit == "none" && rev != "" {
+		commit = shortenRevision(rev)
+		if modified == "true" {
+			commit += "+dirty"
+		}
+	}
+	if date == "unknown" && vcsTime != "" {
+		date = vcsTime
+	}
+	return version, commit, date
+}
+
+// shortenRevision trims a full 40-char git SHA to 12 chars; shorter values are
+// returned unchanged.
+func shortenRevision(rev string) string {
+	const n = 12
+	if len(rev) > n {
+		return rev[:n]
+	}
+	return rev
 }
 
 // isDevDefault reports whether v is one of the placeholder values that mean
