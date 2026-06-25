@@ -113,6 +113,16 @@ To use it:
 3. `npm run dev:live` — a persistent **⚠️ LIVE HOST** banner stays on screen; a
    successful Generate spends your own real Buzz.
 
+**Check your own Buzz balance before a live test.** There is **no public REST
+Buzz endpoint**; the balance lives behind a tRPC procedure that works with a
+personal API key (Bearer, no `Origin` needed):
+
+```bash
+# Read your spendable Buzz balance (blue/green/yellow) with a personal API key:
+curl -s -H "Authorization: Bearer $CIVITAI_TOKEN" \
+  'https://civitai.com/api/trpc/buzz.getBuzzAccount'
+```
+
 > ⚠️ With no `VITE_LIVE_BLOCK_TOKEN`, `dev:live` **fails safe**: it renders a
 > notice telling you to mint a token, and never silently spends.
 >
@@ -194,3 +204,23 @@ excludes build artifacts (`*.zip`) and dev-local / secret-bearing dotenv files
 `VITE_LIVE_BLOCK_TOKEN` can never leak into the upload. `.env.example` and
 `.env.production` (public `VITE_` origins only) ARE included — the production
 build reads `.env.production`.
+
+## Submission lifecycle
+
+After `civitai app submit`, your publish request is `pending` review — a
+Civitai-side **moderator** approves (or rejects) it. **This is not self-service
+today**; you cannot approve your own app. Track it with `civitai app status`.
+
+- **`dev:live` / live real-Buzz spend only works once the app is approved AND
+  deployed** (deployState `live`) — see the live-mode prerequisite above. Until
+  then, develop against `dev:harness` (the mock host).
+- Need to change the bundle while a request is still `pending`? **Withdraw your
+  own pending submission** and resubmit a different one:
+
+  ```bash
+  civitai app withdraw <pubreq-id>   # the pubreq id from `civitai app status`
+  ```
+
+  Only a `pending` request can be withdrawn (an already-approved/rejected one
+  cannot). Withdrawing is idempotent and frees the slug so a fresh
+  `civitai app submit` can take its place.

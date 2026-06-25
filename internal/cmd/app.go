@@ -19,12 +19,14 @@ with a no-build static default (back-compat alias).`,
 		Example: `  civitai app create my-block
   civitai app validate ./my-block
   civitai app submit ./my-block
-  civitai app status`,
+  civitai app status
+  civitai app withdraw pubreq_01H`,
 	}
 	cmd.AddCommand(newAppCreateCmd())
 	cmd.AddCommand(newAppInitCmd())
 	cmd.AddCommand(newAppValidateCmd())
 	cmd.AddCommand(newAppSubmitCmd())
 	cmd.AddCommand(newAppStatusCmd())
+	cmd.AddCommand(newAppWithdrawCmd())
 	return cmd
 }
