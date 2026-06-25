@@ -18,8 +18,11 @@ import (
 // success -> tokens persisted at 0600.
 func TestLoginDeviceFlowHappyPath(t *testing.T) {
 	var polls int32
+	var base string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			writeLoginDiscovery(w, base)
 		case "/api/auth/oauth/device":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"device_code":               "dev-secret-code",
@@ -51,6 +54,7 @@ func TestLoginDeviceFlowHappyPath(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	base = srv.URL
 
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -104,8 +108,11 @@ func TestLoginDeviceFlowHappyPath(t *testing.T) {
 
 // TestLoginDeviceFlowDenied surfaces a terminal access_denied error.
 func TestLoginDeviceFlowDenied(t *testing.T) {
+	var base string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			writeLoginDiscovery(w, base)
 		case "/api/auth/oauth/device":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"device_code": "dc", "user_code": "X", "verification_uri": "https://e/x",
@@ -117,6 +124,7 @@ func TestLoginDeviceFlowDenied(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
+	base = srv.URL
 
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -159,4 +167,16 @@ func TestLoginTokenFlagStillWorks(t *testing.T) {
 	if onDisk["auth_kind"] != "token" {
 		t.Errorf("auth_kind = %v, want token", onDisk["auth_kind"])
 	}
+}
+
+// writeLoginDiscovery serves an OpenID discovery doc whose endpoints point back
+// at the test server `base`, mirroring how the real auth host advertises its
+// OAuth endpoints. The CLI resolves these before the device-init POST.
+func writeLoginDiscovery(w http.ResponseWriter, base string) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"issuer":                        base,
+		"device_authorization_endpoint": base + "/api/auth/oauth/device",
+		"token_endpoint":                base + "/api/auth/oauth/token",
+	})
 }

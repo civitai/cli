@@ -1,23 +1,38 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
 
+// stderr is where low-noise security warnings go (e.g. a discovery doc that
+// advertised an off-origin endpoint). It is a package var so tests can capture
+// it. It MUST never receive tokens or codes — only the fact that a fallback
+// occurred.
+var stderr io.Writer = os.Stderr
+
 // OAuth device-authorization-grant client for the civitai-cli public client.
 //
-// Contract (civitai/civitai PR #2644):
-//   - device init:  POST {BaseURL}/api/auth/oauth/device
-//   - device poll:  POST {BaseURL}/api/auth/oauth/device-token
-//   - token refresh: POST {BaseURL}/api/auth/oauth/token
+// Contract: the OAuth provider lives on a dedicated auth origin (production:
+// auth.civitai.com) discovered via OpenID well-known metadata. civitai.com
+// itself does NOT serve the OAuth endpoints or the discovery document — it 404s
+// to the SPA. The endpoints (resolved from the discovery doc) are:
+//   - device init:   POST {issuer}/api/auth/oauth/device       (device_authorization_endpoint)
+//   - device poll:   POST {issuer}/api/auth/oauth/device-token (issuer + pathDeviceToken; not in the doc)
+//   - token refresh: POST {issuer}/api/auth/oauth/token        (token_endpoint)
+//
+// ALL THREE are application/x-www-form-urlencoded AND must carry an
+// Origin: {issuer} header — the auth host enforces a host-wide same-origin
+// guard on form POSTs (origin-less/cross-site form POST -> 403; a JSON body ->
+// 400 "Missing client_id"). See resolveEndpoints / postForm.
 //
 // civitai-cli is a PUBLIC client (PKCE/device): no client secret.
 const (
@@ -60,6 +75,28 @@ const (
 type OAuthClient struct {
 	BaseURL string
 	HTTP    *http.Client
+
+	// endpoints, once resolved, hold the concrete OAuth endpoint URLs + issuer
+	// used for the POSTs (and the Origin header). Resolved lazily via OpenID
+	// discovery — see resolveEndpoints. nil until first resolution.
+	endpoints *oauthEndpoints
+}
+
+// oauthEndpoints holds the concrete URLs the device flow POSTs to, plus the
+// issuer (used as the same-origin Origin header value). Populated by OpenID
+// discovery (resolveEndpoints).
+type oauthEndpoints struct {
+	Issuer      string // e.g. https://auth.civitai.com
+	DeviceInit  string // device_authorization_endpoint
+	DeviceToken string // issuer + pathDeviceToken (not in the discovery doc)
+	Token       string // token_endpoint
+}
+
+// openIDConfig is the subset of the OpenID Provider Metadata we consume.
+type openIDConfig struct {
+	Issuer                      string `json:"issuer"`
+	DeviceAuthorizationEndpoint string `json:"device_authorization_endpoint"`
+	TokenEndpoint               string `json:"token_endpoint"`
 }
 
 // NewOAuthClient builds an OAuthClient with sane defaults.
@@ -68,6 +105,163 @@ func NewOAuthClient(baseURL string) *OAuthClient {
 		BaseURL: strings.TrimRight(baseURL, "/"),
 		HTTP:    &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// discoveryURL returns the OpenID well-known URL for a given origin (scheme +
+// host[:port]), e.g. https://auth.civitai.com/.well-known/openid-configuration.
+func discoveryURL(origin string) string {
+	return strings.TrimRight(origin, "/") + "/.well-known/openid-configuration"
+}
+
+// isLocalOrExemptHost reports whether host is one we must NOT treat as a real,
+// public, multi-label DNS host: an IP literal, a loopback name, or a
+// single-label host (localhost, httptest's 127.0.0.1, a bare service name).
+// These are exempt from BOTH the "auth." derivation AND the https upgrade so
+// local-dev and httptest (which serve http on 127.0.0.1 / localhost) keep
+// working. Everything else is a real dotted public host that must use https.
+func isLocalOrExemptHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	if net.ParseIP(host) != nil { // IPv4/IPv6 literal (covers 127.0.0.1, ::1)
+		return true
+	}
+	if !strings.Contains(host, ".") { // single-label (localhost, bare name)
+		return true
+	}
+	return false
+}
+
+// authOrigin maps the configured BaseURL to the origin that serves the OpenID
+// discovery document (and the OAuth endpoints).
+//
+// On production civitai.com the OAuth provider lives on a dedicated subdomain
+// (auth.civitai.com); civitai.com itself does NOT serve the discovery document
+// (it 404s to the SPA). So for a real, dotted public host we prepend "auth."
+// to reach the provider. For hosts that are already an auth.* host, an IP, or a
+// single-label host (localhost, httptest's 127.0.0.1) we use BaseURL as-is —
+// prepending would break local/test servers and the discovery doc is served
+// from the same origin in those cases.
+//
+// SECURITY (FIX 2): for the derived public auth host we FORCE https. The CLI
+// POSTs the device_code and the refresh token (long-lived credentials) to this
+// origin; an http:// public BaseURL would otherwise send them in cleartext.
+// Loopback / single-label / IP hosts keep their input scheme (http allowed) so
+// local-dev + httptest still work.
+func authOrigin(baseURL string) string {
+	u, err := url.Parse(baseURL)
+	if err != nil || u.Host == "" {
+		return strings.TrimRight(baseURL, "/")
+	}
+	host := u.Hostname()
+	// Already the auth host, an IP, or a single-label host: use as-is (scheme
+	// preserved — http is allowed for local-dev/test).
+	if strings.HasPrefix(host, "auth.") || isLocalOrExemptHost(host) {
+		return u.Scheme + "://" + u.Host
+	}
+	// Real dotted public host: derive auth.<host> AND force https so the
+	// device_code / refresh-token POSTs are never sent in cleartext.
+	newHost := "auth." + host
+	if u.Port() != "" {
+		newHost += ":" + u.Port()
+	}
+	return "https://" + newHost
+}
+
+// resolveEndpoints lazily resolves the concrete OAuth endpoints via OpenID
+// discovery and caches them on the client. It fetches the discovery document
+// from the auth origin (authOrigin(BaseURL)); on any failure it falls back to
+// the well-known paths on that same origin so login still works if discovery is
+// briefly unavailable. The DeviceToken (poll) endpoint is always derived as
+// issuer + pathDeviceToken — it is not advertised in the discovery document.
+func (c *OAuthClient) resolveEndpoints(ctx context.Context) (*oauthEndpoints, error) {
+	if c.endpoints != nil {
+		return c.endpoints, nil
+	}
+	origin := authOrigin(c.BaseURL)
+
+	fallback := func() *oauthEndpoints {
+		return &oauthEndpoints{
+			Issuer:      origin,
+			DeviceInit:  origin + pathDeviceInit,
+			DeviceToken: origin + pathDeviceToken,
+			Token:       origin + pathToken,
+		}
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, discoveryURL(origin), nil)
+	if err != nil {
+		c.endpoints = fallback()
+		return c.endpoints, nil
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		c.endpoints = fallback()
+		return c.endpoints, nil
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode != http.StatusOK {
+		c.endpoints = fallback()
+		return c.endpoints, nil
+	}
+	var oc openIDConfig
+	if err := json.Unmarshal(raw, &oc); err != nil || oc.Issuer == "" ||
+		oc.DeviceAuthorizationEndpoint == "" || oc.TokenEndpoint == "" {
+		c.endpoints = fallback()
+		return c.endpoints, nil
+	}
+	// SECURITY (FIX 1): the discovery document is fetched over the network and
+	// could be tampered with. We POST the device_code AND the refresh token to
+	// device_authorization_endpoint / token_endpoint, so a doc pointing either at
+	// a FOREIGN host (or downgrading to http) could exfiltrate those credentials.
+	// Require every discovered endpoint to live on the SAME host as the discovery
+	// origin AND to be https (exempting loopback/single-label/IP hosts so local
+	// dev + httptest keep working). On any mismatch, fall back to the well-known
+	// paths on the trusted auth origin rather than trusting the doc.
+	if !sameOriginEndpoint(origin, oc.DeviceAuthorizationEndpoint) ||
+		!sameOriginEndpoint(origin, oc.TokenEndpoint) {
+		fmt.Fprintln(stderr, "warning: discovery document advertised an off-origin or non-https OAuth endpoint; falling back to default endpoints")
+		c.endpoints = fallback()
+		return c.endpoints, nil
+	}
+	issuer := strings.TrimRight(oc.Issuer, "/")
+	c.endpoints = &oauthEndpoints{
+		Issuer:     issuer,
+		DeviceInit: oc.DeviceAuthorizationEndpoint,
+		// The poll (device-token) endpoint is NOT advertised in the OpenID doc;
+		// it is the issuer + the known custom path.
+		DeviceToken: issuer + pathDeviceToken,
+		Token:       oc.TokenEndpoint,
+	}
+	return c.endpoints, nil
+}
+
+// sameOriginEndpoint reports whether a discovered endpoint URL is safe to POST
+// credentials to: it must parse, share the discovery origin's host (so the
+// refresh-token / device_code POST can't be redirected cross-host), and use
+// https. As in authOrigin, loopback / single-label / IP origins are exempt from
+// the https requirement (local-dev + httptest serve http on 127.0.0.1 /
+// localhost) — but the host must still match the discovery origin's host.
+func sameOriginEndpoint(origin, endpoint string) bool {
+	ou, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	eu, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	if eu.Hostname() == "" || !strings.EqualFold(eu.Hostname(), ou.Hostname()) {
+		return false
+	}
+	// Public (real dotted) hosts MUST be https; loopback/single-label/IP may
+	// stay http for local-dev/test.
+	if !isLocalOrExemptHost(eu.Hostname()) && eu.Scheme != "https" {
+		return false
+	}
+	return true
 }
 
 // DeviceAuth is the device-init response.
@@ -157,12 +351,21 @@ func (e *DeviceFlowError) Error() string {
 }
 
 // StartDevice initiates the device-authorization grant.
+//
+// The device endpoint (auth.civitai.com) requires application/x-www-form-urlencoded
+// AND a same-origin Origin header — a JSON body 400s ("Missing client_id") and a
+// form POST without a matching Origin 403s ("Cross-site POST form submissions are
+// forbidden"). The endpoint URL + Origin come from OpenID discovery.
 func (c *OAuthClient) StartDevice(ctx context.Context) (*DeviceAuth, error) {
-	body, _ := json.Marshal(map[string]string{
-		"client_id": ClientID,
-		"scope":     DeviceScope,
-	})
-	resp, raw, err := c.post(ctx, pathDeviceInit, body)
+	ep, err := c.resolveEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
+	form := url.Values{
+		"client_id": {ClientID},
+		"scope":     {DeviceScope},
+	}
+	resp, raw, err := c.postForm(ctx, ep.DeviceInit, form, ep.Issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -194,14 +397,20 @@ const (
 	pollDone                        // success
 )
 
-// pollOnce performs a single device-token POST.
+// pollOnce performs a single device-token POST. Like the device-init POST it
+// must be application/x-www-form-urlencoded with a same-origin Origin header
+// (the host-wide guard applies to every OAuth form POST).
 func (c *OAuthClient) pollOnce(ctx context.Context, deviceCode string) (pollOutcome, *TokenResponse, error) {
-	body, _ := json.Marshal(map[string]string{
-		"grant_type":  grantTypeDeviceCode,
-		"device_code": deviceCode,
-		"client_id":   ClientID,
-	})
-	status, raw, err := c.post(ctx, pathDeviceToken, body)
+	ep, err := c.resolveEndpoints(ctx)
+	if err != nil {
+		return pollPending, nil, err
+	}
+	form := url.Values{
+		"grant_type":  {grantTypeDeviceCode},
+		"device_code": {deviceCode},
+		"client_id":   {ClientID},
+	}
+	status, raw, err := c.postForm(ctx, ep.DeviceToken, form, ep.Issuer)
 	if err != nil {
 		return pollPending, nil, err
 	}
@@ -283,15 +492,20 @@ func (c *OAuthClient) PollToken(ctx context.Context, auth *DeviceAuth, sleep fun
 func (c *OAuthClient) Refresh(ctx context.Context, refreshToken string) (*TokenResponse, error) {
 	// The /token endpoint is the @node-oauth/oauth2-server token handler, which
 	// REQUIRES application/x-www-form-urlencoded (it rejects JSON with "content
-	// must be application/x-www-form-urlencoded"). Unlike the custom device-flow
-	// endpoints (/device, /device-token) which accept JSON via post(), the refresh
-	// grant must be form-encoded.
+	// must be application/x-www-form-urlencoded"). The auth host (auth.civitai.com)
+	// ALSO enforces a host-wide same-origin guard on form POSTs, so the refresh
+	// must carry an Origin header matching the issuer or it 403s. Endpoint URL +
+	// Origin come from OpenID discovery.
+	ep, err := c.resolveEndpoints(ctx)
+	if err != nil {
+		return nil, err
+	}
 	form := url.Values{
 		"grant_type":    {grantTypeRefreshToken},
 		"refresh_token": {refreshToken},
 		"client_id":     {ClientID},
 	}
-	status, raw, err := c.postForm(ctx, pathToken, form)
+	status, raw, err := c.postForm(ctx, ep.Token, form, ep.Issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -313,33 +527,23 @@ func (c *OAuthClient) Refresh(ctx context.Context, refreshToken string) (*TokenR
 	return &tr, nil
 }
 
-// post sends a JSON POST and returns the status + body.
-func (c *OAuthClient) post(ctx context.Context, path string, body []byte) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
-	if err != nil {
-		return 0, nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	resp, err := c.HTTP.Do(req)
-	if err != nil {
-		return 0, nil, err
-	}
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	return resp.StatusCode, raw, nil
-}
-
-// postForm sends an application/x-www-form-urlencoded POST. Used for the OAuth
-// /token endpoint (the refresh grant), whose @node-oauth/oauth2-server handler
-// requires form encoding and rejects JSON.
-func (c *OAuthClient) postForm(ctx context.Context, path string, form url.Values) (int, []byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, strings.NewReader(form.Encode()))
+// postForm sends an application/x-www-form-urlencoded POST to an absolute URL,
+// setting the Origin header to satisfy the auth host's same-origin guard. ALL
+// OAuth POSTs (device-init, device-token poll, refresh) go through this: the
+// @node-oauth/oauth2-server token handler requires form encoding (rejects JSON)
+// and the auth host (auth.civitai.com) rejects any cross-site / origin-less form
+// POST with 403 "Cross-site POST form submissions are forbidden". origin should
+// be the issuer (the host being POSTed to).
+func (c *OAuthClient) postForm(ctx context.Context, rawURL string, form url.Values, origin string) (int, []byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, rawURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return 0, nil, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
+	if origin != "" {
+		req.Header.Set("Origin", origin)
+	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
 		return 0, nil, err

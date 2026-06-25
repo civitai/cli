@@ -380,8 +380,15 @@ func TestLoginStoresToken(t *testing.T) {
 // so StartDevice errors immediately, no polling, no real network, sub-second.
 func TestLoginDeviceStartFailureReturnsError(t *testing.T) {
 	var gotDeviceInit bool
+	var base string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Device-init is the first (and here, only) request the device flow makes.
+		// The device flow first resolves endpoints via OpenID discovery, which
+		// advertises the endpoints back at this server.
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			writeLoginDiscovery(w, base)
+			return
+		}
+		// Device-init is the first (and here, only) OAuth request the device flow makes.
 		if r.URL.Path == "/api/auth/oauth/device" {
 			gotDeviceInit = true
 			w.WriteHeader(http.StatusForbidden)
@@ -393,6 +400,7 @@ func TestLoginDeviceStartFailureReturnsError(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 	}))
 	defer srv.Close()
+	base = srv.URL
 
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
