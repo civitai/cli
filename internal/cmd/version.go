@@ -8,7 +8,6 @@ import (
 )
 
 func newVersionCmd() *cobra.Command {
-	var noUpdateCheck bool
 	cmd := &cobra.Command{
 		Use:   "version",
 		Short: "Print the CLI version, commit, and build date",
@@ -32,13 +31,13 @@ token. Skip it with --no-update-check or by setting CIVITAI_NO_UPDATE_CHECK.`,
 			fmt.Fprintf(out, "  built:  %s\n", date)
 			fmt.Fprintf(out, "  go:     %s %s/%s\n", runtime.Version(), runtime.GOOS, runtime.GOARCH)
 
+			// --no-update-check is now a persistent flag inherited from root.
+			noUpdateCheck, _ := cmd.Flags().GetBool("no-update-check")
 			if !updateCheckDisabled(noUpdateCheck) {
 				printUpdateNotice(out, version)
 			}
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&noUpdateCheck, "no-update-check", false,
-		"skip the GitHub check for a newer release (also via CIVITAI_NO_UPDATE_CHECK)")
 	return cmd
 }

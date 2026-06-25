@@ -23,6 +23,13 @@ var latestReleaseURL = "https://api.github.com/repos/civitai/cli/releases/latest
 // version` never hangs on a slow/offline network.
 const updateCheckTimeout = 2500 * time.Millisecond
 
+// contextWithUpdateTimeout returns a context bounded by updateCheckTimeout for
+// the unauthenticated GitHub round-trip. Shared by the synchronous `version`
+// check and the detached background refresh.
+func contextWithUpdateTimeout() (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.Background(), updateCheckTimeout)
+}
+
 // updateCheckDisabled reports whether the GitHub update check should be skipped:
 // the --no-update-check flag (noFlag) or a non-empty CIVITAI_NO_UPDATE_CHECK env
 // var both opt out.
