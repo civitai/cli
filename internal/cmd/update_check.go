@@ -45,6 +45,12 @@ func printUpdateNotice(w io.Writer, current string) {
 		return // fail-silent: offline, timeout, non-200, or parse error.
 	}
 
+	// If we can't parse latest, the check effectively failed — stay silent
+	// rather than make an unfounded "up to date" claim (fail-silent contract).
+	if !isParseableVersion(latest) {
+		return
+	}
+
 	switch compareVersions(current, latest) {
 	case -1:
 		// current < latest (or current is unparseable) => newer is available.
@@ -54,9 +60,15 @@ func printUpdateNotice(w io.Writer, current string) {
 			fmt.Fprintf(w, "\nLatest release: %s — https://github.com/civitai/cli/releases/latest\n", latest)
 		}
 		fmt.Fprintln(w, "Upgrade with: brew upgrade civitai")
-	default:
-		// current == latest or current > latest: nothing actionable.
+	case 0:
+		// Verified equal: both current and latest parse and match. This is the
+		// ONLY path that may honestly claim the user is up to date.
 		fmt.Fprintln(w, "\nYou're on the latest version.")
+	default:
+		// current > latest (dev/pre-release build ahead of the newest release):
+		// don't claim "on the latest version" — say nothing actionable, just
+		// surface the latest release informationally and honestly.
+		fmt.Fprintf(w, "\nLatest release: %s — https://github.com/civitai/cli/releases/latest\n", latest)
 	}
 }
 

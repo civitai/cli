@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestMergeBuildInfo(t *testing.T) {
@@ -201,8 +202,14 @@ func TestPrintUpdateNotice_CurrentAhead(t *testing.T) {
 	if strings.Contains(out, "newer version is available") {
 		t.Errorf("should not prompt upgrade when current is ahead: %s", out)
 	}
-	if !strings.Contains(out, "latest version") {
-		t.Errorf("expected up-to-date message when ahead: %s", out)
+	// When ahead (a dev/pre-release build newer than the latest release), we must
+	// NOT claim "You're on the latest version." — that would be a false claim.
+	if strings.Contains(out, "You're on the latest version") {
+		t.Errorf("should not claim 'on the latest version' when current is ahead: %s", out)
+	}
+	// Instead it surfaces the latest release informationally and honestly.
+	if !strings.Contains(out, "Latest release: v0.1.9") {
+		t.Errorf("ahead build should surface the latest release informationally: %s", out)
 	}
 }
 
@@ -259,6 +266,93 @@ func TestPrintUpdateNotice_UnreachableFailsSilent(t *testing.T) {
 	printUpdateNotice(&buf, "v0.1.9")
 	if buf.Len() != 0 {
 		t.Errorf("unreachable endpoint should produce no output, got: %s", buf.String())
+	}
+}
+
+// TestPrintUpdateNotice_UnparseableLatestFailsSilent proves the 🟡 fix: when the
+// GitHub response carries a garbage or empty tag_name, compareVersions returns 0
+// by fallback — but we must NOT print "You're on the latest version." (that would
+// be an unfounded reassurance for a check that effectively failed). Stay silent.
+func TestPrintUpdateNotice_UnparseableLatestFailsSilent(t *testing.T) {
+	for _, tag := range []string{"", "garbage", "not-a-version", "vX.Y.Z"} {
+		t.Run("tag="+tag, func(t *testing.T) {
+			srv, hits := newReleaseServer(t, tag, http.StatusOK)
+			pointAtServer(t, srv.URL)
+
+			var buf bytes.Buffer
+			printUpdateNotice(&buf, "v0.1.9")
+
+			if *hits != 1 {
+				t.Errorf("expected exactly 1 GitHub hit, got %d", *hits)
+			}
+			if buf.Len() != 0 {
+				t.Errorf("unparseable latest %q must produce NO output (no 'up to date' claim), got: %s", tag, buf.String())
+			}
+		})
+	}
+}
+
+// TestPrintUpdateNotice_VerifiedEqual asserts the up-to-date line prints ONLY on a
+// verified equal (both current and latest parse and match).
+func TestPrintUpdateNotice_VerifiedEqual(t *testing.T) {
+	srv, _ := newReleaseServer(t, "v0.1.9", http.StatusOK)
+	pointAtServer(t, srv.URL)
+
+	var buf bytes.Buffer
+	printUpdateNotice(&buf, "v0.1.9")
+	out := buf.String()
+
+	if !strings.Contains(out, "You're on the latest version.") {
+		t.Errorf("verified-equal should print the up-to-date line: %s", out)
+	}
+	if strings.Contains(out, "newer version is available") {
+		t.Errorf("verified-equal must not prompt an upgrade: %s", out)
+	}
+}
+
+// TestPrintUpdateNotice_SlowBodyHonorsDeadline proves `civitai version` can never
+// hang on a slow server: the endpoint writes a 200 + headers, then STALLS past the
+// update-check deadline before writing the body. printUpdateNotice must return
+// within roughly the timeout, print nothing, and never error/panic.
+func TestPrintUpdateNotice_SlowBodyHonorsDeadline(t *testing.T) {
+	released := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush() // commit 200 + headers, then stall on the body.
+		}
+		// Stall well past updateCheckTimeout; bail early if the client gives up.
+		select {
+		case <-r.Context().Done():
+		case <-time.After(updateCheckTimeout + 5*time.Second):
+		case <-released:
+		}
+		_, _ = w.Write([]byte(`{"tag_name":"v9.9.9"}`))
+	}))
+	t.Cleanup(func() { close(released); srv.Close() })
+	pointAtServer(t, srv.URL)
+
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	start := time.Now()
+	go func() {
+		printUpdateNotice(&buf, "v0.1.9")
+		close(done)
+	}()
+
+	// Generous ceiling above the 2.5s deadline but far below a hang.
+	select {
+	case <-done:
+	case <-time.After(updateCheckTimeout + 2*time.Second):
+		t.Fatalf("printUpdateNotice hung on a slow server (no return after %s)", updateCheckTimeout+2*time.Second)
+	}
+
+	if elapsed := time.Since(start); elapsed > updateCheckTimeout+2*time.Second {
+		t.Errorf("printUpdateNotice took %s, expected to bail near the %s deadline", elapsed, updateCheckTimeout)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("slow-body deadline hit should produce no output, got: %s", buf.String())
 	}
 }
 
