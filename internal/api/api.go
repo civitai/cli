@@ -110,6 +110,19 @@ type SubmitResult struct {
 // DefaultSubmitPath is the token-authenticated submit-version route.
 const DefaultSubmitPath = "/api/v1/blocks/submit-version"
 
+// defaultTimeout governs the fast, interactive calls (whoami, submissions).
+// Kept short so a hung connection surfaces quickly.
+const defaultTimeout = 30 * time.Second
+
+// submitTimeout governs the submit-version upload specifically. A submit
+// uploads a multi-file base64 ZIP and then waits for server-side processing
+// (publish-request creation), which can take well over the fast-call timeout.
+// A short timeout here produced a FALSE failure ("context deadline exceeded")
+// on submits that had actually succeeded server-side, so the user's retry hit
+// "you already have a pending submission". Scope this longer window to submit
+// only — do NOT lengthen the fast calls.
+const submitTimeout = 120 * time.Second
+
 // SubmissionsPath is the token-authenticated, self-scoped submission-status
 // route (GET; civitai/civitai src/pages/api/v1/blocks/submissions.ts).
 const SubmissionsPath = "/api/v1/blocks/submissions"
@@ -138,7 +151,7 @@ func NewWithSource(baseURL string, src TokenSource, submitPath string) *Client {
 		BaseURL:    strings.TrimRight(baseURL, "/"),
 		Tokens:     src,
 		SubmitPath: submitPath,
-		HTTP:       &http.Client{Timeout: 120 * time.Second},
+		HTTP:       &http.Client{Timeout: defaultTimeout},
 	}
 }
 
@@ -147,11 +160,18 @@ func NewWithSource(baseURL string, src TokenSource, submitPath string) *Client {
 // refreshing once on a 401 and retrying. The returned response body is fully
 // read into raw and the response is closed.
 func (c *Client) authedDo(ctx context.Context, build func() (*http.Request, error)) (int, []byte, error) {
+	return c.authedDoWith(ctx, c.HTTP, build)
+}
+
+// authedDoWith is authedDo against a specific *http.Client, so a slow call
+// (the submit upload) can use a longer-timeout client without affecting the
+// fast, interactive calls that share c.HTTP.
+func (c *Client) authedDoWith(ctx context.Context, httpClient *http.Client, build func() (*http.Request, error)) (int, []byte, error) {
 	token, err := c.Tokens.Token(ctx)
 	if err != nil {
 		return 0, nil, err
 	}
-	status, raw, err := c.doOnce(ctx, build, token)
+	status, raw, err := c.doOnceWith(httpClient, build, token)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -160,13 +180,13 @@ func (c *Client) authedDo(ctx context.Context, build func() (*http.Request, erro
 		// ErrNoRefresh and we keep the original 401.
 		newTok, rerr := c.Tokens.Refresh(ctx)
 		if rerr == nil && newTok != "" {
-			return c.doOnce(ctx, build, newTok)
+			return c.doOnceWith(httpClient, build, newTok)
 		}
 	}
 	return status, raw, nil
 }
 
-func (c *Client) doOnce(ctx context.Context, build func() (*http.Request, error), token string) (int, []byte, error) {
+func (c *Client) doOnceWith(httpClient *http.Client, build func() (*http.Request, error), token string) (int, []byte, error) {
 	req, err := build()
 	if err != nil {
 		return 0, nil, err
@@ -174,7 +194,7 @@ func (c *Client) doOnce(ctx context.Context, build func() (*http.Request, error)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	resp, err := c.HTTP.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -186,6 +206,24 @@ func (c *Client) doOnce(ctx context.Context, build func() (*http.Request, error)
 // submitBody mirrors submitVersionSchema: a base64-encoded ZIP.
 type submitBody struct {
 	BundleBase64 string `json:"bundleBase64"`
+}
+
+// submitClient returns an *http.Client for the submit upload: it mirrors the
+// shared client's Transport but uses the longer submitTimeout, so the slow
+// upload + server-side processing doesn't trip the short fast-call timeout
+// (which caused false "context deadline exceeded" failures on submits that had
+// already succeeded). If no shared client is set, a zero Client is used.
+func (c *Client) submitClient() *http.Client {
+	base := c.HTTP
+	if base == nil {
+		base = &http.Client{}
+	}
+	return &http.Client{
+		Timeout:       submitTimeout,
+		Transport:     base.Transport,
+		CheckRedirect: base.CheckRedirect,
+		Jar:           base.Jar,
+	}
 }
 
 // SubmitVersion uploads the bundle to the token-authenticated submit route,
@@ -205,7 +243,7 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte) (*SubmitRes
 		req.Header.Set("Content-Type", "application/json")
 		return req, nil
 	}
-	status, raw, err := c.authedDo(ctx, build)
+	status, raw, err := c.authedDoWith(ctx, c.submitClient(), build)
 	if err != nil {
 		return nil, err
 	}
