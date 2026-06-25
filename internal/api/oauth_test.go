@@ -455,6 +455,16 @@ func TestAuthOriginDerivation(t *testing.T) {
 		{"http://127.0.0.1:8080", "http://127.0.0.1:8080"},
 		{"http://localhost:3000", "http://localhost:3000"},
 		{"https://staging.example.com:8443", "https://auth.staging.example.com:8443"},
+		// FIX 2: a real dotted public host on http MUST be upgraded to https —
+		// the device_code + refresh token are POSTed here and must never go in
+		// cleartext.
+		{"http://civitai.com", "https://auth.civitai.com"},
+		{"http://staging.example.com:8443", "https://auth.staging.example.com:8443"},
+		// Exemptions PRESERVED: loopback / single-label / IP keep their http
+		// scheme for local-dev/test.
+		{"http://localhost", "http://localhost"},
+		{"http://myservice:8080", "http://myservice:8080"},
+		{"http://127.0.0.1", "http://127.0.0.1"},
 	}
 	for _, c := range cases {
 		if got := authOrigin(c.in); got != c.want {
@@ -466,8 +476,11 @@ func TestAuthOriginDerivation(t *testing.T) {
 // TestResolveEndpointsFromDiscovery confirms the device flow uses the endpoints
 // + issuer the OpenID discovery document advertises (the device-token poll
 // endpoint is derived as issuer + pathDeviceToken since it is NOT in the doc).
+// The advertised endpoints share the discovery origin's host — as production
+// (auth.civitai.com advertises its OWN endpoints) and FIX 1's same-origin
+// validation require.
 func TestResolveEndpointsFromDiscovery(t *testing.T) {
-	const issuer = "https://auth.example.test"
+	var issuer string // = srv.URL (the discovery origin)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/.well-known/openid-configuration" {
 			t.Errorf("discovery hit wrong path %q", r.URL.Path)
@@ -478,6 +491,7 @@ func TestResolveEndpointsFromDiscovery(t *testing.T) {
 			`"token_endpoint":"` + issuer + `/api/auth/oauth/token"}`))
 	}))
 	defer srv.Close()
+	issuer = srv.URL
 
 	// Force the client to discover against this test server's origin by using it
 	// as the BaseURL (a single-label/IP host is used as-is by authOrigin).
@@ -499,6 +513,93 @@ func TestResolveEndpointsFromDiscovery(t *testing.T) {
 	if ep.DeviceToken != issuer+pathDeviceToken {
 		t.Errorf("DeviceToken = %q, want %q (issuer + path)", ep.DeviceToken, issuer+pathDeviceToken)
 	}
+}
+
+// TestResolveEndpointsRejectsForeignTokenEndpoint is the FIX 1 regression guard:
+// a (tampered) discovery doc whose token_endpoint points at a FOREIGN host must
+// NOT be trusted — the client falls back to the well-known paths on the trusted
+// auth origin so the refresh-token POST can't be redirected cross-host. We test
+// the token endpoint (refresh-token target) and the device endpoint (device_code
+// target) separately, with both an http and an https foreign host.
+func TestResolveEndpointsRejectsForeignTokenEndpoint(t *testing.T) {
+	cases := []struct {
+		name              string
+		deviceEP, tokenEP string
+	}{
+		{"foreign token_endpoint (https)", "/api/auth/oauth/device", "https://evil.example/api/auth/oauth/token"},
+		{"foreign token_endpoint (http)", "/api/auth/oauth/device", "http://attacker.example/api/auth/oauth/token"},
+		{"foreign device_endpoint (https)", "https://evil.example/api/auth/oauth/device", "/api/auth/oauth/token"},
+	}
+	// Capture the low-noise security warning so it doesn't litter test output,
+	// and assert it carries no token/code material.
+	var warnBuf strings.Builder
+	prevStderr := stderr
+	stderr = &warnBuf
+	defer func() { stderr = prevStderr }()
+
+	for _, tc := range cases {
+		warnBuf.Reset()
+		t.Run(tc.name, func(t *testing.T) {
+			var origin string // = srv.URL (the discovery + auth origin)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/.well-known/openid-configuration" {
+					t.Errorf("discovery hit wrong path %q", r.URL.Path)
+				}
+				// Resolve a same-origin path to a full URL on this server; a foreign
+				// host stays as given.
+				deviceEP := tc.deviceEP
+				if strings.HasPrefix(deviceEP, "/") {
+					deviceEP = origin + deviceEP
+				}
+				tokenEP := tc.tokenEP
+				if strings.HasPrefix(tokenEP, "/") {
+					tokenEP = origin + tokenEP
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"issuer":"` + origin + `",` +
+					`"device_authorization_endpoint":"` + deviceEP + `",` +
+					`"token_endpoint":"` + tokenEP + `"}`))
+			}))
+			defer srv.Close()
+			origin = srv.URL
+
+			c := NewOAuthClient(srv.URL)
+			ep, err := c.resolveEndpoints(context.Background())
+			if err != nil {
+				t.Fatalf("resolveEndpoints: %v", err)
+			}
+			// The client must have fallen back to the well-known paths on the
+			// trusted auth origin — NOT the attacker's host.
+			authOrig := authOrigin(srv.URL) // == srv.URL for an IP host
+			if ep.DeviceInit != authOrig+pathDeviceInit ||
+				ep.DeviceToken != authOrig+pathDeviceToken ||
+				ep.Token != authOrig+pathToken {
+				t.Errorf("did not fall back to the auth origin: ep=%+v, want paths on %q", ep, authOrig)
+			}
+			// Every resolved endpoint must share the auth origin's host.
+			wantHost := mustHost(t, authOrig)
+			for name, u := range map[string]string{"DeviceInit": ep.DeviceInit, "DeviceToken": ep.DeviceToken, "Token": ep.Token} {
+				if h := mustHost(t, u); h != wantHost {
+					t.Errorf("%s host = %q, want auth-origin host %q (untrusted endpoint leaked)", name, h, wantHost)
+				}
+			}
+			// A warning should have been emitted, and it must NOT leak the
+			// attacker host's credentials path or any code/token.
+			if got := warnBuf.String(); !strings.Contains(got, "falling back") {
+				t.Errorf("expected a fallback warning, got %q", got)
+			}
+		})
+	}
+}
+
+// mustHost parses a URL and returns its host, failing the test on a parse error.
+func mustHost(t *testing.T, raw string) string {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("url.Parse(%q): %v", raw, err)
+	}
+	return u.Hostname()
 }
 
 // TestResolveEndpointsFallbackOn404 confirms that when discovery is unavailable

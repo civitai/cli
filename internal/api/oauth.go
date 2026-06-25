@@ -8,9 +8,16 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
+
+// stderr is where low-noise security warnings go (e.g. a discovery doc that
+// advertised an off-origin endpoint). It is a package var so tests can capture
+// it. It MUST never receive tokens or codes — only the fact that a fallback
+// occurred.
+var stderr io.Writer = os.Stderr
 
 // OAuth device-authorization-grant client for the civitai-cli public client.
 //
@@ -106,6 +113,25 @@ func discoveryURL(origin string) string {
 	return strings.TrimRight(origin, "/") + "/.well-known/openid-configuration"
 }
 
+// isLocalOrExemptHost reports whether host is one we must NOT treat as a real,
+// public, multi-label DNS host: an IP literal, a loopback name, or a
+// single-label host (localhost, httptest's 127.0.0.1, a bare service name).
+// These are exempt from BOTH the "auth." derivation AND the https upgrade so
+// local-dev and httptest (which serve http on 127.0.0.1 / localhost) keep
+// working. Everything else is a real dotted public host that must use https.
+func isLocalOrExemptHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	if net.ParseIP(host) != nil { // IPv4/IPv6 literal (covers 127.0.0.1, ::1)
+		return true
+	}
+	if !strings.Contains(host, ".") { // single-label (localhost, bare name)
+		return true
+	}
+	return false
+}
+
 // authOrigin maps the configured BaseURL to the origin that serves the OpenID
 // discovery document (and the OAuth endpoints).
 //
@@ -116,21 +142,30 @@ func discoveryURL(origin string) string {
 // single-label host (localhost, httptest's 127.0.0.1) we use BaseURL as-is —
 // prepending would break local/test servers and the discovery doc is served
 // from the same origin in those cases.
+//
+// SECURITY (FIX 2): for the derived public auth host we FORCE https. The CLI
+// POSTs the device_code and the refresh token (long-lived credentials) to this
+// origin; an http:// public BaseURL would otherwise send them in cleartext.
+// Loopback / single-label / IP hosts keep their input scheme (http allowed) so
+// local-dev + httptest still work.
 func authOrigin(baseURL string) string {
 	u, err := url.Parse(baseURL)
 	if err != nil || u.Host == "" {
 		return strings.TrimRight(baseURL, "/")
 	}
 	host := u.Hostname()
-	// Already the auth host, an IP, or a single-label host: use as-is.
-	if strings.HasPrefix(host, "auth.") || net.ParseIP(host) != nil || !strings.Contains(host, ".") {
+	// Already the auth host, an IP, or a single-label host: use as-is (scheme
+	// preserved — http is allowed for local-dev/test).
+	if strings.HasPrefix(host, "auth.") || isLocalOrExemptHost(host) {
 		return u.Scheme + "://" + u.Host
 	}
+	// Real dotted public host: derive auth.<host> AND force https so the
+	// device_code / refresh-token POSTs are never sent in cleartext.
 	newHost := "auth." + host
 	if u.Port() != "" {
 		newHost += ":" + u.Port()
 	}
-	return u.Scheme + "://" + newHost
+	return "https://" + newHost
 }
 
 // resolveEndpoints lazily resolves the concrete OAuth endpoints via OpenID
@@ -177,6 +212,20 @@ func (c *OAuthClient) resolveEndpoints(ctx context.Context) (*oauthEndpoints, er
 		c.endpoints = fallback()
 		return c.endpoints, nil
 	}
+	// SECURITY (FIX 1): the discovery document is fetched over the network and
+	// could be tampered with. We POST the device_code AND the refresh token to
+	// device_authorization_endpoint / token_endpoint, so a doc pointing either at
+	// a FOREIGN host (or downgrading to http) could exfiltrate those credentials.
+	// Require every discovered endpoint to live on the SAME host as the discovery
+	// origin AND to be https (exempting loopback/single-label/IP hosts so local
+	// dev + httptest keep working). On any mismatch, fall back to the well-known
+	// paths on the trusted auth origin rather than trusting the doc.
+	if !sameOriginEndpoint(origin, oc.DeviceAuthorizationEndpoint) ||
+		!sameOriginEndpoint(origin, oc.TokenEndpoint) {
+		fmt.Fprintln(stderr, "warning: discovery document advertised an off-origin or non-https OAuth endpoint; falling back to default endpoints")
+		c.endpoints = fallback()
+		return c.endpoints, nil
+	}
 	issuer := strings.TrimRight(oc.Issuer, "/")
 	c.endpoints = &oauthEndpoints{
 		Issuer:     issuer,
@@ -187,6 +236,32 @@ func (c *OAuthClient) resolveEndpoints(ctx context.Context) (*oauthEndpoints, er
 		Token:       oc.TokenEndpoint,
 	}
 	return c.endpoints, nil
+}
+
+// sameOriginEndpoint reports whether a discovered endpoint URL is safe to POST
+// credentials to: it must parse, share the discovery origin's host (so the
+// refresh-token / device_code POST can't be redirected cross-host), and use
+// https. As in authOrigin, loopback / single-label / IP origins are exempt from
+// the https requirement (local-dev + httptest serve http on 127.0.0.1 /
+// localhost) — but the host must still match the discovery origin's host.
+func sameOriginEndpoint(origin, endpoint string) bool {
+	ou, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	eu, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	if eu.Hostname() == "" || !strings.EqualFold(eu.Hostname(), ou.Hostname()) {
+		return false
+	}
+	// Public (real dotted) hosts MUST be https; loopback/single-label/IP may
+	// stay http for local-dev/test.
+	if !isLocalOrExemptHost(eu.Hostname()) && eu.Scheme != "https" {
+		return false
+	}
+	return true
 }
 
 // DeviceAuth is the device-init response.
