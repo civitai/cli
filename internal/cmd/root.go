@@ -2,7 +2,9 @@
 package cmd
 
 import (
+	"regexp"
 	"runtime/debug"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -72,6 +74,13 @@ func applyBuildInfoFallback() {
 //   - commit:  if "none", use vcs.revision shortened to 12 chars, with "+dirty"
 //     appended when vcs.modified == "true".
 //   - date:    if "unknown", use vcs.time.
+//
+// Precedence per field: ldflags > vcs.* > Go pseudo-version. The vcs.* settings
+// are absent for `go install module@version` builds (the module proxy cache has
+// no VCS checkout), so as a last resort we recover commit/date from a Go
+// pseudo-version mainVersion (the `vX.Y.Z-<timestamp>-<sha>` form used for
+// untagged/branch installs, which embeds both). A clean release tag (e.g.
+// `v0.1.12`) carries no commit/date, so those stay at their defaults here.
 func mergeBuildInfo(version, commit, date, mainVersion, rev, vcsTime, modified string) (string, string, string) {
 	if isDevDefault(version) {
 		if mainVersion != "" && mainVersion != "(devel)" {
@@ -87,7 +96,54 @@ func mergeBuildInfo(version, commit, date, mainVersion, rev, vcsTime, modified s
 	if date == "unknown" && vcsTime != "" {
 		date = vcsTime
 	}
+
+	// Last-resort recovery from a Go pseudo-version (no vcs.* present): fills
+	// only the fields still at their defaults; vcs.*/ldflags above already won.
+	if commit == "none" || date == "unknown" {
+		if psha, pdate, ok := parsePseudoVersion(mainVersion); ok {
+			if commit == "none" && psha != "" {
+				commit = shortenRevision(psha)
+			}
+			if date == "unknown" && pdate != "" {
+				date = pdate
+			}
+		}
+	}
 	return version, commit, date
+}
+
+// pseudoVersionRE matches the three Go pseudo-version forms and captures the
+// 14-digit `yyyymmddhhmmss` timestamp and the trailing 12-hex commit prefix:
+//
+//	vX.Y.Z-yyyymmddhhmmss-sha            (no known base tag below the commit)
+//	vX.Y.Z-0.yyyymmddhhmmss-sha          (base release tag)
+//	vX.Y.Z-pre.0.yyyymmddhhmmss-sha      (base pre-release tag, e.g. -pre / -beta.1)
+//
+// See https://go.dev/ref/mod#pseudo-versions. The timestamp is preceded by a
+// `-` (form 1, no base tag) or a `.` (forms 2/3, where it's the final dotted
+// segment of a `0` / `pre.0` pre-release), so we anchor on the unambiguous
+// `[.-]<14 digits>-<12 hex>$` tail. The optional pre-release run before it is
+// non-greedy so it can't swallow the timestamp.
+var pseudoVersionRE = regexp.MustCompile(`^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+?)?[.-](\d{14})-([0-9a-f]{12})$`)
+
+// parsePseudoVersion extracts the commit SHA and build date embedded in a Go
+// pseudo-version string. It returns (sha, rfc3339Date, true) on a match, or
+// ("", "", false) for any non-pseudo or malformed value (a clean release tag,
+// "dev", "", a git-describe string, etc.). Pure + offline.
+//
+// The date is the pseudo-version's `yyyymmddhhmmss` timestamp (always UTC),
+// formatted as RFC3339 (e.g. "2026-06-25T19:47:26Z") to match the shape of the
+// vcs.time value the rest of the command prints.
+func parsePseudoVersion(v string) (sha, date string, ok bool) {
+	m := pseudoVersionRE.FindStringSubmatch(v)
+	if m == nil {
+		return "", "", false
+	}
+	ts, err := time.Parse("20060102150405", m[1])
+	if err != nil {
+		return "", "", false
+	}
+	return m[2], ts.UTC().Format(time.RFC3339), true
 }
 
 // shortenRevision trims a full 40-char git SHA to 12 chars; shorter values are
