@@ -8,6 +8,18 @@ import {
   useRequestConsent,
   useRequestSignIn,
 } from '@civitai/blocks-react';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Modal,
+  Stack,
+  TextInput,
+  Textarea,
+  injectBlocksStyles,
+} from '@civitai/blocks-react/ui';
 import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
 import {
@@ -25,11 +37,19 @@ import {
   type GenPhase,
 } from './generation.js';
 
+// Inject the W6 component pack's stylesheet at module init (before first paint)
+// to avoid the documented one-frame FOUC (the pack's components also call
+// useBlocksStyles() internally, but injecting up front means the first paint is
+// already styled). Idempotent.
+injectBlocksStyles();
+
 /**
- * {{ .Name }} — a full-page (W10) money-path App Block. It exercises the page
- * money path end-to-end: estimate -> (lazy consent) -> submit -> poll -> real
- * Buzz spend, using the published SDK hooks (NEVER raw postMessage to the parent
- * with a wildcard origin — the SDK does the origin-checked messaging safely).
+ * {{ .Name }} — a full-page (W10) money-path App Block whose ENTIRE interface is
+ * built from the `@civitai/blocks-react/ui` W6 component pack (Button, TextInput,
+ * Textarea, Card, Stack, Group, Alert, Modal, Badge). It exercises the page money
+ * path end-to-end: estimate -> (lazy consent) -> submit -> poll -> real Buzz
+ * spend, using the published SDK hooks (NEVER raw postMessage to the parent with
+ * a wildcard origin — the SDK does the origin-checked messaging safely).
  *
  * Page-native constraints:
  *  - slot = app.page (entity=none) via the top-level `page:{}` manifest object.
@@ -49,8 +69,6 @@ export function App() {
   const { requestConsent } = useRequestConsent();
   const { requestSignIn } = useRequestSignIn();
 
-  const isDark = theme === 'dark';
-  const c = palette(isDark);
   const anon = ready && !viewer;
   const granted = hasBudgetedScope(token.scopes);
 
@@ -58,11 +76,14 @@ export function App() {
   useBlockResize(rootRef);
 
   const [prompt, setPrompt] = useState('');
+  const [touched, setTouched] = useState(false);
   const [phase, setPhase] = useState<GenPhase>('idle');
   const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
   const [actualCost, setActualCost] = useState<number | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [aboutOpen, setAboutOpen] = useState(false);
 
   // True once the user clicked Generate while the scope was missing — so when
   // the consent grant lands (granted flips true) we auto-resume the submit.
@@ -212,7 +233,9 @@ export function App() {
     if (snap.workflowId) runPollLoop(snap.workflowId);
   }, [prompt, estimate, submit, applySnapshot, runPollLoop]);
 
-  const handleGenerate = useCallback(() => {
+  // The actual gate: sign-in -> consent -> generate. Called by the confirm modal.
+  const proceed = useCallback(() => {
+    setConfirmOpen(false);
     // Anon: convert the click into a host login prompt. Generate is server-gated
     // anyway (an anon token carries no budgeted scope).
     if (!viewer) {
@@ -239,263 +262,206 @@ export function App() {
     }
   }, [granted, runGeneration]);
 
+  const promptError =
+    touched && prompt.trim().length === 0 ? 'Enter a prompt to generate.' : undefined;
+  const busy = isBusyPhase(phase);
+
   // ---- Render ----
 
   if (!ready) {
     return (
-      <div ref={rootRef} data-theme={isDark ? 'dark' : 'light'} style={pageStyle(c)}>
-        <div style={loadingStyle}>Loading…</div>
+      // Theme the block's OWN root; that's what the pack's CSS reads.
+      <div ref={rootRef} data-theme={theme} style={shell}>
+        <Card padding="lg">
+          <Group gap={10}>
+            <Badge color="info" variant="light">
+              loading
+            </Badge>
+            <span>Connecting to host…</span>
+          </Group>
+        </Card>
       </div>
     );
   }
 
-  const busy = isBusyPhase(phase);
-  const showTopUp = phase === 'insufficient';
+  const onGenerateClick = () => {
+    setTouched(true);
+    if (prompt.trim().length === 0) return;
+    setConfirmOpen(true);
+  };
 
   return (
-    <div ref={rootRef} data-theme={isDark ? 'dark' : 'light'} style={pageStyle(c)}>
-      <div style={contentStyle}>
-        <header style={headerStyle}>
-          <h1 style={titleStyle}>{{ .Name }}</h1>
-          <p style={subtitleStyle(c)}>
+    <div ref={rootRef} data-theme={theme} style={shell}>
+      <Card padding="lg" style={cardStyle}>
+        <Stack gap={16}>
+          <Group justify="space-between">
+            <strong style={titleStyle}>{{ .Name }}</strong>
+            <Badge color={anon ? 'warning' : granted ? 'success' : 'info'} variant="light">
+              {anon ? 'signed out' : granted ? 'ready' : 'needs access'}
+            </Badge>
+          </Group>
+
+          <Alert color="info" title="How this works">
             Type a prompt and generate one image with <strong>{GEN_MODEL.label}</strong>. Each
-            generation spends a small amount of Buzz (budget {PAGE_BUZZ_BUDGET} per generation).
-          </p>
-        </header>
-
-        <div style={fieldStyle}>
-          <label htmlFor="pm-prompt" style={labelStyle}>
-            Prompt
-          </label>
-          <textarea
-            id="pm-prompt"
-            value={prompt}
-            maxLength={PROMPT_MAX}
-            placeholder="a serene mountain lake at golden hour, highly detailed"
-            onChange={(e) => setPrompt(e.target.value)}
-            aria-label="Generation prompt"
-            rows={4}
-            style={textareaStyle(c)}
-          />
-        </div>
-
-        {anon ? (
-          <button type="button" onClick={handleGenerate} style={primaryBtn(c)} data-testid="pm-signin">
-            Sign in to generate
-          </button>
-        ) : showTopUp ? (
-          <p style={noteStyle(c)} role="status" data-testid="pm-insufficient">
-            Not enough Buzz for this generation. Top up your Buzz balance and try again.
-          </p>
-        ) : (
-          <button
-            type="button"
-            onClick={handleGenerate}
-            disabled={busy || prompt.trim().length === 0}
-            style={primaryBtn(c, busy || prompt.trim().length === 0)}
-            data-testid="pm-generate"
-          >
-            <GenerateLabel phase={phase} estimatedCost={estimatedCost} />
-          </button>
-        )}
-
-        {phase === 'needs-consent' && (
-          <p role="status" style={noteStyle(c)}>
-            Grant access to generate — confirm in the Civitai dialog. If you dismissed it,{' '}
-            <button type="button" onClick={handleGenerate} style={linkBtn(c)}>
-              try again
+            generation spends a small amount of Buzz (budget {PAGE_BUZZ_BUDGET} per generation).{' '}
+            <button type="button" onClick={() => setAboutOpen(true)} style={linkButtonStyle}>
+              Details
             </button>
-            .
-          </p>
-        )}
-        {busy && (
-          <p role="status" style={noteStyle(c)}>
-            {phase === 'estimating'
-              ? 'Estimating cost…'
-              : phase === 'submitting'
-                ? 'Submitting generation…'
-                : 'Generating… this can take 10–60s.'}
-          </p>
-        )}
+          </Alert>
 
-        {phase === 'failed' && error && (
-          <div role="alert" style={errorBox(c)}>
-            {error}
-          </div>
-        )}
+          <Textarea
+            label="Prompt"
+            description="Describe what you want to generate."
+            placeholder="a serene mountain lake at golden hour, highly detailed"
+            value={prompt}
+            minRows={4}
+            maxLength={PROMPT_MAX}
+            required
+            error={promptError}
+            onChange={(e) => setPrompt(e.target.value)}
+            onBlur={() => setTouched(true)}
+          />
 
-        {phase === 'succeeded' && imageUrl && (
-          <figure style={figureStyle}>
-            <img src={imageUrl} alt="Generated result" style={imgStyle(c)} />
-            <figcaption style={captionStyle(c)}>
-              Done. Spent <strong style={strongFg(c)}>{formatCost(actualCost)}</strong> Buzz.
-            </figcaption>
-          </figure>
-        )}
-      </div>
+          <TextInput
+            label="Model"
+            description="A page block has no model picker, so the model is fixed."
+            value={GEN_MODEL.label}
+            readOnly
+            disabled
+          />
+
+          {anon ? (
+            <Button fullWidth onClick={() => requestSignIn()} data-testid="pm-signin">
+              Sign in to generate
+            </Button>
+          ) : (
+            <Group gap={8}>
+              <Button variant="subtle" onClick={() => setAboutOpen(true)}>
+                How it works
+              </Button>
+              <Button
+                fullWidth
+                loading={busy}
+                disabled={prompt.trim().length === 0}
+                onClick={onGenerateClick}
+                data-testid="pm-generate"
+              >
+                {busy
+                  ? phaseLabel(phase)
+                  : estimatedCost != null
+                    ? `Generate · ${formatCost(estimatedCost)} Buzz`
+                    : 'Generate'}
+              </Button>
+            </Group>
+          )}
+
+          {phase === 'needs-consent' && (
+            <Alert color="info" title="Grant access to generate">
+              Confirm in the Civitai dialog. If you dismissed it, click Generate again.
+            </Alert>
+          )}
+
+          {phase === 'insufficient' && (
+            <Alert color="warning" title="Not enough Buzz" data-testid="pm-insufficient">
+              Top up your Buzz balance and try again.
+            </Alert>
+          )}
+
+          {phase === 'failed' && error && (
+            <Alert
+              color="error"
+              title="Generation failed"
+              withCloseButton
+              onClose={() => setError(null)}
+            >
+              {error}
+            </Alert>
+          )}
+
+          {phase === 'succeeded' && imageUrl && (
+            <Stack gap={8}>
+              <Alert color="success" title="Done">
+                Spent <strong>{formatCost(actualCost)}</strong> Buzz.
+              </Alert>
+              <img src={imageUrl} alt="Generated result" style={imageStyle} />
+            </Stack>
+          )}
+        </Stack>
+      </Card>
+
+      {/* Confirm-spend modal — exercises Modal in its opened state with live data. */}
+      <Modal
+        opened={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        title="Confirm generation"
+        size="sm"
+      >
+        <Stack gap={14}>
+          <span>
+            Generate one image with <strong>{GEN_MODEL.label}</strong>? This spends up to{' '}
+            <strong>{PAGE_BUZZ_BUDGET}</strong> Buzz.
+          </span>
+          <Group justify="flex-end" gap={8}>
+            <Button variant="subtle" onClick={() => setConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button color="success" onClick={proceed}>
+              Generate
+            </Button>
+          </Group>
+        </Stack>
+      </Modal>
+
+      {/* About modal — a second Modal instance, opened independently. */}
+      <Modal opened={aboutOpen} onClose={() => setAboutOpen(false)} title="About this block" size="md">
+        <Stack gap={10}>
+          <span>
+            This is a sandboxed Civitai App Block. The interface is built entirely with the{' '}
+            <strong>@civitai/blocks-react/ui</strong> W6 component pack — Button, TextInput,
+            Textarea, Card, Stack, Group, Alert, Badge and Modal.
+          </span>
+          <Alert color="info">
+            Generations run on the real Civitai backend and spend real Buzz when run in live mode.
+          </Alert>
+          <Group justify="flex-end">
+            <Button onClick={() => setAboutOpen(false)}>Got it</Button>
+          </Group>
+        </Stack>
+      </Modal>
     </div>
   );
 }
 
-function GenerateLabel({
-  phase,
-  estimatedCost,
-}: {
-  phase: GenPhase;
-  estimatedCost: number | null;
-}) {
-  if (phase === 'estimating') return <>Estimating…</>;
-  if (phase === 'submitting') return <>Submitting…</>;
-  if (phase === 'polling') return <>Generating…</>;
-  if (estimatedCost != null) return <>Generate · {formatCost(estimatedCost)} Buzz</>;
-  return <>Generate</>;
+function phaseLabel(phase: GenPhase): string {
+  if (phase === 'estimating') return 'Estimating…';
+  if (phase === 'submitting') return 'Submitting…';
+  if (phase === 'polling') return 'Generating…';
+  return 'Working…';
 }
 
-// ------------------------------------------------------------------
-// Theme — the host can't inject CSS into the iframe, so colors come from
-// useBlockContext().theme via inline styles.
-// ------------------------------------------------------------------
-interface Palette {
-  bg: string;
-  fg: string;
-  border: string;
-  inputBg: string;
-  accent: string;
-  accentFg: string;
-  danger: string;
-  dangerBg: string;
-  muted: string;
-}
-
-function palette(dark: boolean): Palette {
-  return dark
-    ? {
-        bg: '#1a1b1e',
-        fg: '#e9ecef',
-        border: '#373a40',
-        inputBg: '#2c2e33',
-        accent: '#fab005',
-        accentFg: '#1a1b1e',
-        danger: '#ff8787',
-        dangerBg: '#2c1f1f',
-        muted: '#909296',
-      }
-    : {
-        bg: '#ffffff',
-        fg: '#1a1b1e',
-        border: '#dee2e6',
-        inputBg: '#ffffff',
-        accent: '#f08c00',
-        accentFg: '#ffffff',
-        danger: '#e03131',
-        dangerBg: '#fff5f5',
-        muted: '#868e96',
-      };
-}
-
-const loadingStyle: React.CSSProperties = { margin: 'auto', opacity: 0.7 };
-const headerStyle: React.CSSProperties = { display: 'grid', gap: 4 };
-const titleStyle: React.CSSProperties = { fontSize: 24, margin: 0 };
-const fieldStyle: React.CSSProperties = { display: 'grid', gap: 6 };
-const labelStyle: React.CSSProperties = { fontSize: 13, fontWeight: 600 };
-const figureStyle: React.CSSProperties = { margin: 0, display: 'grid', gap: 8 };
-
-function pageStyle(c: Palette): React.CSSProperties {
-  return {
-    fontFamily: 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif',
-    background: c.bg,
-    color: c.fg,
-    width: '100%',
-    minHeight: '100dvh',
-    display: 'flex',
-    boxSizing: 'border-box',
-  };
-}
-
-const contentStyle: React.CSSProperties = {
-  margin: '0 auto',
+// The pack themes everything via data-theme; the block root only needs layout +
+// a themed page background so the iframe surface matches the card.
+const shell: React.CSSProperties = {
+  minHeight: '100dvh',
   width: '100%',
-  maxWidth: 640,
+  display: 'flex',
+  justifyContent: 'center',
+  alignItems: 'flex-start',
   padding: 24,
-  display: 'grid',
-  gap: 16,
-  alignContent: 'start',
   boxSizing: 'border-box',
+  background: 'var(--ci-color-surface-2)',
+  color: 'var(--ci-color-text)',
 };
 
-function subtitleStyle(c: Palette): React.CSSProperties {
-  return { fontSize: 14, color: c.muted, margin: 0, lineHeight: 1.5 };
-}
-
-function textareaStyle(c: Palette): React.CSSProperties {
-  return {
-    resize: 'vertical',
-    padding: 12,
-    borderRadius: 8,
-    border: '1px solid ' + c.border,
-    background: c.inputBg,
-    color: c.fg,
-    fontSize: 15,
-    lineHeight: 1.5,
-    fontFamily: 'inherit',
-    boxSizing: 'border-box',
-    width: '100%',
-    minHeight: 96,
-  };
-}
-
-function primaryBtn(c: Palette, disabled = false): React.CSSProperties {
-  return {
-    padding: '12px 18px',
-    border: 'none',
-    borderRadius: 8,
-    background: disabled ? c.border : c.accent,
-    color: disabled ? c.muted : c.accentFg,
-    fontWeight: 700,
-    fontSize: 15,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
-  };
-}
-
-function linkBtn(c: Palette): React.CSSProperties {
-  return {
-    background: 'none',
-    border: 'none',
-    color: c.accent,
-    cursor: 'pointer',
-    padding: 0,
-    font: 'inherit',
-    textDecoration: 'underline',
-  };
-}
-
-function noteStyle(c: Palette): React.CSSProperties {
-  return { fontSize: 13, color: c.muted, margin: 0, lineHeight: 1.5 };
-}
-
-function errorBox(c: Palette): React.CSSProperties {
-  return {
-    background: c.dangerBg,
-    color: c.danger,
-    border: '1px solid ' + c.danger,
-    borderRadius: 8,
-    padding: 12,
-    fontSize: 13,
-  };
-}
-
-function imgStyle(c: Palette): React.CSSProperties {
-  return { width: '100%', borderRadius: 10, border: '1px solid ' + c.border };
-}
-
-function captionStyle(c: Palette): React.CSSProperties {
-  return { fontSize: 13, color: c.muted };
-}
-
-function strongFg(c: Palette): React.CSSProperties {
-  return { color: c.fg };
-}
+const cardStyle: React.CSSProperties = { width: '100%', maxWidth: 640 };
+const titleStyle: React.CSSProperties = { fontSize: 20 };
+const imageStyle: React.CSSProperties = { width: '100%', borderRadius: 8, display: 'block' };
+const linkButtonStyle: React.CSSProperties = {
+  background: 'none',
+  border: 'none',
+  padding: 0,
+  color: 'inherit',
+  textDecoration: 'underline',
+  cursor: 'pointer',
+  font: 'inherit',
+};

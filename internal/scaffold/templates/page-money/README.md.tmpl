@@ -7,7 +7,13 @@ an image: estimate → (lazy consent) → submit → poll → result.
 
 ## What this is
 
-A sandboxed static web app served in an iframe by the Civitai host. The platform
+A sandboxed static web app served in an iframe by the Civitai host. Its entire
+UI is built from the **`@civitai/blocks-react/ui`** W6 component pack (Button,
+TextInput, Textarea, Card, Stack, Group, Alert, Modal, Badge) — no hand-rolled
+controls. The pack ships its own theme-aware styles; `injectBlocksStyles()` is
+called at module init in `src/App.tsx` so the first paint is already styled.
+
+The platform
 owns the build: it runs `npm ci` then the `buildCommand` from
 `block.manifest.json` (`npm run build`), serving the static output from
 `outputDir` (`dist/`). You do NOT commit `dist/` — the platform builds it.

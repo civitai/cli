@@ -19,15 +19,11 @@ body {
   font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
-/* Focus affordances key off the root data-theme (the host can't inject CSS). */
-[data-theme='dark'] textarea:focus-visible,
-[data-theme='dark'] button:focus-visible {
-  outline: 2px solid #fab005;
-  outline-offset: 2px;
-}
-
-[data-theme='light'] textarea:focus-visible,
-[data-theme='light'] button:focus-visible {
-  outline: 2px solid #f08c00;
+/* Focus affordance for any raw textarea/button (the W6 /ui pack styles its own
+   controls). Use the pack's brand accent so the outline matches, not a clashing
+   gold; --ci-color-primary is defined by the pack's injected stylesheet. */
+textarea:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--ci-color-primary);
   outline-offset: 2px;
 }
