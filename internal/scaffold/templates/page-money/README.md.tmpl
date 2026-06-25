@@ -120,7 +120,7 @@ personal API key (Bearer, no `Origin` needed):
 ```bash
 # Read your spendable Buzz balance (blue/green/yellow) with a personal API key:
 curl -s -H "Authorization: Bearer $CIVITAI_TOKEN" \
-  'https://civitai.com/api/trpc/buzz.getBuzzAccount?input=%7B%22json%22%3Anull%7D'
+  'https://civitai.com/api/trpc/buzz.getBuzzAccount'
 ```
 
 > ⚠️ With no `VITE_LIVE_BLOCK_TOKEN`, `dev:live` **fails safe**: it renders a

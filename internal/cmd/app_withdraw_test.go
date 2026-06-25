@@ -97,6 +97,34 @@ func TestAppWithdrawMissingIDErrors(t *testing.T) {
 	}
 }
 
+func TestAppWithdrawWhitespaceIDErrors(t *testing.T) {
+	// A whitespace-only id is rejected client-side (no wasted round-trip /
+	// rate-limit token) just like an empty one.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	_, _, err := run(t, "app", "withdraw", "   ")
+	if err == nil {
+		t.Fatal("expected error for a whitespace-only publish-request id")
+	}
+	if !strings.Contains(err.Error(), "publish-request id is required") {
+		t.Errorf("whitespace-id error should explain: %v", err)
+	}
+}
+
+func TestAppWithdrawArgAndFlagErrors(t *testing.T) {
+	// Supplying both a positional arg and --id is a usage error, not a silent
+	// drop of one.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	_, _, err := run(t, "app", "withdraw", "pubreq_arg", "--id", "pubreq_flag")
+	if err == nil {
+		t.Fatal("expected error when both an arg and --id are given")
+	}
+	if !strings.Contains(err.Error(), "not both") {
+		t.Errorf("arg+flag conflict error should explain: %v", err)
+	}
+}
+
 func TestAppWithdrawMissingTokenErrors(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("CIVITAI_TOKEN", "")
@@ -110,16 +138,19 @@ func TestAppWithdrawMissingTokenErrors(t *testing.T) {
 }
 
 func TestAppWithdrawErrorMapping(t *testing.T) {
+	// The server returns {"message": ...} on EVERY error status (incl. 409 — see
+	// the paired server PR #2774); these mocks exercise that real shape.
 	cases := []struct {
 		status int
 		body   map[string]any
 		want   string
 	}{
-		{http.StatusNotFound, map[string]any{"error": "not found"}, "not found (or not yours)"},
-		{http.StatusConflict, map[string]any{"error": "request is already approved"}, "request is already approved"},
-		{http.StatusUnauthorized, map[string]any{"error": "invalid key"}, "not authorized"},
-		{http.StatusForbidden, map[string]any{"error": "no access"}, "not authorized"},
-		{http.StatusTooManyRequests, map[string]any{"error": "slow down"}, "rate limited"},
+		{http.StatusNotFound, map[string]any{"message": "not found"}, "not found (or not yours)"},
+		{http.StatusConflict, map[string]any{"message": "request is already approved"}, "request is already approved"},
+		{http.StatusUnauthorized, map[string]any{"message": "invalid key"}, "not authorized"},
+		{http.StatusForbidden, map[string]any{"message": "no access"}, "not authorized"},
+		{http.StatusTooManyRequests, map[string]any{"message": "slow down"}, "rate limited"},
+		{http.StatusServiceUnavailable, map[string]any{"message": "Rate limiter unavailable; please retry"}, "App Blocks unavailable (503)"},
 	}
 	for _, tc := range cases {
 		srv := withdrawServer(t, tc.body, tc.status, nil)

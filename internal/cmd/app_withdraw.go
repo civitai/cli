@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
@@ -43,10 +44,14 @@ Pass the publish-request id as a positional argument or via --id (find it with
 				return fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)")
 			}
 
+			if idFlag != "" && len(args) == 1 {
+				return fmt.Errorf("pass the publish-request id as an argument OR via --id, not both")
+			}
 			id := idFlag
 			if id == "" && len(args) == 1 {
 				id = args[0]
 			}
+			id = strings.TrimSpace(id)
 			if id == "" {
 				return fmt.Errorf("a publish-request id is required — pass it as an argument or with --id (find it via `civitai app status`)")
 			}

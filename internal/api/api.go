@@ -525,9 +525,10 @@ func (c *Client) WithdrawRequest(ctx context.Context, publishRequestID string) e
 }
 
 // withdrawError maps a non-2xx withdraw response to a clear, actionable CLI
-// error. The withdraw route returns: 404 not-found-or-not-yours, 409
-// not-in-a-withdrawable-(pending)-state (the server's {"error": ...} carries the
-// reason), 401/403 auth, 429 rate-limited.
+// error. The withdraw route returns {"message": ...} on every error status:
+// 404 not-found-or-not-yours, 409 not-in-a-withdrawable-(pending)-state (the
+// server's message carries the reason), 401/403 auth, 429 rate-limited, 503
+// flag-off/rate-limiter-incident.
 func withdrawError(status int, raw []byte) error {
 	msg := serverMessage(raw)
 	switch status {
@@ -536,11 +537,13 @@ func withdrawError(status int, raw []byte) error {
 	case http.StatusNotFound:
 		return fmt.Errorf("publish request not found (or not yours) (404): %s", msg)
 	case http.StatusConflict:
-		// The request is not in a withdrawable (pending) state; surface the
-		// server's own reason verbatim.
-		return fmt.Errorf("cannot withdraw (409): %s", msg)
+		// The request is not in a withdrawable (pending) state; the server's
+		// message is already a complete sentence, so surface it verbatim.
+		return fmt.Errorf("%s (409)", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
+	case http.StatusServiceUnavailable:
+		return fmt.Errorf("App Blocks unavailable (503): %s", msg)
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}

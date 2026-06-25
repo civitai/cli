@@ -61,17 +61,21 @@ func TestWithdrawRequestIdempotentOK(t *testing.T) {
 }
 
 func TestWithdrawRequestErrorMapping(t *testing.T) {
+	// The server returns {"message": ...} on EVERY error status (incl. 409 —
+	// see the paired server PR #2774). These mocks prove the command parses the
+	// server's real {message} shape, not just that serverMessage reads both keys.
 	cases := []struct {
 		status int
 		body   map[string]string
 		want   string
 	}{
-		{http.StatusNotFound, map[string]string{"error": "not found"}, "not found (or not yours)"},
-		{http.StatusConflict, map[string]string{"error": "request is already approved"}, "request is already approved"},
-		{http.StatusUnauthorized, map[string]string{"error": "bad key"}, "not authorized"},
-		{http.StatusForbidden, map[string]string{"error": "no mod"}, "not authorized"},
-		{http.StatusTooManyRequests, map[string]string{"error": "slow"}, "rate limited"},
-		{http.StatusInternalServerError, map[string]string{"error": "boom"}, "server returned 500"},
+		{http.StatusNotFound, map[string]string{"message": "not found"}, "not found (or not yours)"},
+		{http.StatusConflict, map[string]string{"message": "request is already approved"}, "request is already approved"},
+		{http.StatusUnauthorized, map[string]string{"message": "bad key"}, "not authorized"},
+		{http.StatusForbidden, map[string]string{"message": "no mod"}, "not authorized"},
+		{http.StatusTooManyRequests, map[string]string{"message": "slow"}, "rate limited"},
+		{http.StatusServiceUnavailable, map[string]string{"message": "App Blocks is not enabled"}, "App Blocks unavailable (503)"},
+		{http.StatusInternalServerError, map[string]string{"message": "boom"}, "server returned 500"},
 	}
 	for _, tc := range cases {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
