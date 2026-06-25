@@ -13,13 +13,17 @@ import (
 
 // fakeSubmitter records the bytes it was handed.
 type fakeSubmitter struct {
-	got    []byte
-	result *api.SubmitResult
-	err    error
+	got        []byte
+	gotSlug    string
+	gotVersion string
+	result     *api.SubmitResult
+	err        error
 }
 
-func (f *fakeSubmitter) SubmitVersion(_ context.Context, zip []byte) (*api.SubmitResult, error) {
+func (f *fakeSubmitter) SubmitVersion(_ context.Context, zip []byte, slug, version string) (*api.SubmitResult, error) {
 	f.got = zip
+	f.gotSlug = slug
+	f.gotVersion = version
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -40,6 +44,9 @@ func TestDoUploadHandsBytesToSubmitter(t *testing.T) {
 	}
 	if string(fs.got) != "ZIPBYTES" {
 		t.Errorf("submitter got %q, want ZIPBYTES", fs.got)
+	}
+	if fs.gotSlug != "demo" || fs.gotVersion != "0.1.0" {
+		t.Errorf("submitter got slug/version %q/%q, want demo/0.1.0", fs.gotSlug, fs.gotVersion)
 	}
 	if !strings.Contains(out.String(), "pr_9") || !strings.Contains(out.String(), "pending") {
 		t.Errorf("output should report the publish request + status, got: %s", out.String())

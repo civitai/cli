@@ -34,7 +34,7 @@ func TestSubmitVersionStatusErrors(t *testing.T) {
 			_, _ = w.Write([]byte(`{"error":"boom"}`))
 		}))
 		c := New(srv.URL, "tok", "")
-		_, err := c.SubmitVersion(context.Background(), []byte("z"))
+		_, err := c.SubmitVersion(context.Background(), []byte("z"), "my-block", "0.1.0")
 		srv.Close()
 		if err == nil {
 			t.Errorf("status %d: expected error", tc.status)
@@ -52,7 +52,7 @@ func TestSubmitVersionGarbageResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, "tok", "")
-	if _, err := c.SubmitVersion(context.Background(), []byte("z")); err == nil {
+	if _, err := c.SubmitVersion(context.Background(), []byte("z"), "my-block", "0.1.0"); err == nil {
 		t.Fatal("expected error for non-JSON 200 response")
 	}
 }

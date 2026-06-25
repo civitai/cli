@@ -9,7 +9,35 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+// TestSubmitTimeoutIsLongAndScoped pins the F6 fix: the submit upload gets a
+// substantially longer timeout than the fast, interactive calls, scoped to the
+// submit client only. A short shared timeout previously produced false
+// "context deadline exceeded" failures on submits that had already succeeded
+// server-side, so the user's retry hit "you already have a pending submission".
+func TestSubmitTimeoutIsLongAndScoped(t *testing.T) {
+	if submitTimeout != 120*time.Second {
+		t.Errorf("submitTimeout = %v, want 120s", submitTimeout)
+	}
+	if defaultTimeout != 30*time.Second {
+		t.Errorf("defaultTimeout = %v, want 30s", defaultTimeout)
+	}
+	if submitTimeout <= defaultTimeout {
+		t.Errorf("submit timeout (%v) must exceed the fast-call timeout (%v)", submitTimeout, defaultTimeout)
+	}
+
+	c := New("https://example.com", "tok", "")
+	// The shared client stays on the short fast-call timeout...
+	if c.HTTP.Timeout != defaultTimeout {
+		t.Errorf("shared client timeout = %v, want %v (fast calls must not be lengthened)", c.HTTP.Timeout, defaultTimeout)
+	}
+	// ...while the submit client uses the long timeout.
+	if got := c.submitClient().Timeout; got != submitTimeout {
+		t.Errorf("submit client timeout = %v, want %v", got, submitTimeout)
+	}
+}
 
 func TestSubmitVersionSendsBearerAndBase64(t *testing.T) {
 	var gotAuth, gotBody string
@@ -27,7 +55,7 @@ func TestSubmitVersionSendsBearerAndBase64(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok123", "/api/blocks/submit-version")
-	res, err := c.SubmitVersion(context.Background(), []byte("ZIPDATA"))
+	res, err := c.SubmitVersion(context.Background(), []byte("ZIPDATA"), "my-block", "0.1.0")
 	if err != nil {
 		t.Fatalf("SubmitVersion: %v", err)
 	}
@@ -51,7 +79,7 @@ func TestSubmitVersionSurfacesServerMessage(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok", "")
-	_, err := c.SubmitVersion(context.Background(), []byte("x"))
+	_, err := c.SubmitVersion(context.Background(), []byte("x"), "my-block", "0.1.0")
 	if err == nil {
 		t.Fatal("expected error")
 	}
