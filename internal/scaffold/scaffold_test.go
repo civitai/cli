@@ -1,6 +1,7 @@
 package scaffold
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -55,9 +56,15 @@ func TestRenderPageVite(t *testing.T) {
 	mustContain(t, manifest, `"buildCommand": "npm run build"`)
 	mustContain(t, manifest, `"outputDir": "dist"`)
 
-	// package.json name should use the slug.
+	// package.json name should use the slug, carry a postinstall next-step hint,
+	// and stay valid JSON after rendering.
 	pkg := readFile(t, filepath.Join(dest, "package.json"))
 	mustContain(t, pkg, `"name": "vite-block"`)
+	mustContain(t, pkg, `"postinstall"`)
+	mustContain(t, pkg, "npm run dev")
+	if !json.Valid([]byte(pkg)) {
+		t.Errorf("page-vite package.json is not valid JSON:\n%s", pkg)
+	}
 }
 
 func TestRenderPageMoney(t *testing.T) {
@@ -93,7 +100,8 @@ func TestRenderPageMoney(t *testing.T) {
 		t.Error("page-money manifest must not declare trustTier")
 	}
 
-	// package.json: SDK deps + the dev:harness script + slug name.
+	// package.json: SDK deps + the dev:harness script + slug name + a postinstall
+	// next-step hint, all while staying valid JSON after rendering.
 	pkg := readFile(t, filepath.Join(dest, "package.json"))
 	mustContain(t, pkg, `"@civitai/blocks-react"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
@@ -101,6 +109,11 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, pkg, `"build"`)
 	mustContain(t, pkg, `"test"`)
 	mustContain(t, pkg, `"name": "money-block"`)
+	mustContain(t, pkg, `"postinstall"`)
+	mustContain(t, pkg, "dev:harness")
+	if !json.Valid([]byte(pkg)) {
+		t.Errorf("page-money package.json is not valid JSON:\n%s", pkg)
+	}
 
 	// App.tsx must use the SDK, never raw postMessage('*').
 	app := readFile(t, filepath.Join(dest, "src", "App.tsx"))
@@ -124,6 +137,10 @@ func TestRenderPageMoney(t *testing.T) {
 	// user HOW to get one: the CLI one-liner with the real slug, a copy handler,
 	// the VITE_LIVE_BLOCK_TOKEN paste instruction, and the personal-key note.
 	mainTSX := readFile(t, filepath.Join(dest, "src", "main.tsx"))
+	// The required order is submit-first (the token is minted against the
+	// submitted/pending app) — the screen must surface `civitai app submit`
+	// as the prerequisite step, not just the dev-token mint.
+	mustContain(t, mainTSX, "civitai app submit")
 	mustContain(t, mainTSX, "civitai app dev-token money-block")
 	mustContain(t, mainTSX, "clipboard?.writeText")
 	mustContain(t, mainTSX, "VITE_LIVE_BLOCK_TOKEN")

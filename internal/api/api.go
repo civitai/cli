@@ -681,7 +681,7 @@ func devTokenError(status int, raw []byte) error {
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusNotFound:
-		return fmt.Errorf("app not found (or not yours) (404): %s — check the slug, and that you've submitted the app (`civitai app status`)", msg)
+		return fmt.Errorf("app not found (404): %s — run `civitai app submit` first to register it (the dev token is minted against your submitted app), then retry. (check status: `civitai app status`)", msg)
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
 	case http.StatusForbidden:

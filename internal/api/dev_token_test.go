@@ -70,7 +70,7 @@ func TestMintDevTokenErrorMapping(t *testing.T) {
 		body   map[string]string
 		want   string
 	}{
-		{http.StatusNotFound, map[string]string{"message": "no such app"}, "app not found (or not yours)"},
+		{http.StatusNotFound, map[string]string{"message": "no such app"}, "civitai app submit"},
 		{http.StatusForbidden, map[string]string{"message": "mods only"}, "not authorized (403)"},
 		{http.StatusUnauthorized, map[string]string{"message": "bad key"}, "not logged in"},
 		{http.StatusTooManyRequests, map[string]string{"message": "slow"}, "rate limited"},
