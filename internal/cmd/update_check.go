@@ -19,6 +19,13 @@ import (
 // user's Civitai API token (or any Authorization header) to it.
 var latestReleaseURL = "https://api.github.com/repos/civitai/cli/releases/latest"
 
+// commitsBaseURL is the GitHub public API base for resolving a tag/ref to its
+// commit (`<base>/<ref>` => the GitHub commit object). A package var so tests
+// can point it at an httptest server.
+//
+// SECURITY: like latestReleaseURL, this is UNAUTHENTICATED — never tokened.
+var commitsBaseURL = "https://api.github.com/repos/civitai/cli/commits"
+
 // updateCheckTimeout bounds the GitHub round-trip. Kept short so `civitai
 // version` never hangs on a slow/offline network.
 const updateCheckTimeout = 2500 * time.Millisecond
@@ -112,6 +119,97 @@ func fetchLatestRelease(ctx context.Context, url string) (string, error) {
 	return rel.TagName, nil
 }
 
+// enrichBuildInfoFromGitHub fills the commit and/or date from GitHub when a
+// go-install build left them unresolved AND the resolved version is a clean,
+// parseable release tag (a tagged `go install module@vX.Y.Z` build: the module
+// proxy has no VCS checkout, so the binary carries no commit/date, and the
+// pseudo-version offline path can't help because the version is a plain tag).
+//
+// It is deliberately best-effort and reuses the same contract as the update
+// check: a single UNAUTHENTICATED GET (no Authorization header), the shared
+// short context timeout, a 1 MiB body cap, and fail-silent on ANY error /
+// non-200 / timeout / parse failure (the inputs are returned unchanged). It
+// only fills fields that are still at their defaults; ldflag/vcs/pseudo values
+// already resolved upstream are never overwritten.
+//
+// It does NOTHING (no HTTP call) when:
+//   - both commit and date are already resolved (a fully-stamped build), or
+//   - the version isn't a clean parseable tag (dev / pseudo-version / empty), or
+//   - the update check is disabled (--no-update-check / CIVITAI_NO_UPDATE_CHECK).
+func enrichBuildInfoFromGitHub(commitIn, dateIn, version string, disabled bool) (commitOut, dateOut string) {
+	commitOut, dateOut = commitIn, dateIn
+	if disabled {
+		return
+	}
+	if commitIn != "none" && dateIn != "unknown" {
+		return // fully stamped — nothing to enrich, make no call.
+	}
+	if !isCleanReleaseTag(version) {
+		return // dev / pseudo-version / empty — not a clean tag we can resolve.
+	}
+
+	ctx, cancel := contextWithUpdateTimeout()
+	defer cancel()
+
+	sha, date, err := fetchCommitForRef(ctx, commitsBaseURL, version)
+	if err != nil {
+		return // fail-silent: offline, timeout, non-200, or parse error.
+	}
+	if commitOut == "none" && sha != "" {
+		commitOut = shortenRevision(sha)
+	}
+	if dateOut == "unknown" && date != "" {
+		dateOut = date
+	}
+	return
+}
+
+// fetchCommitForRef does the unauthenticated GitHub call to resolve a ref (tag)
+// to its commit, returning the full SHA and the committer (or author) date in
+// RFC3339. Returns an error on any non-200 or transport/parse failure; callers
+// treat that as "skip the enrichment".
+func fetchCommitForRef(ctx context.Context, base, ref string) (sha, date string, err error) {
+	url := strings.TrimRight(base, "/") + "/" + ref
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	// NOTE: intentionally NO Authorization header — public, token-free call.
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", fmt.Errorf("github commits: status %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", "", err
+	}
+	var c struct {
+		SHA    string `json:"sha"`
+		Commit struct {
+			Committer struct {
+				Date string `json:"date"`
+			} `json:"committer"`
+			Author struct {
+				Date string `json:"date"`
+			} `json:"author"`
+		} `json:"commit"`
+	}
+	if err := json.Unmarshal(body, &c); err != nil {
+		return "", "", err
+	}
+	date = c.Commit.Committer.Date
+	if date == "" {
+		date = c.Commit.Author.Date
+	}
+	return c.SHA, date, nil
+}
+
 // semver is a minimal parsed vMAJOR.MINOR.PATCH triple. Pre-release/build
 // suffixes (-rc1, +meta) are ignored for comparison.
 type semver struct {
@@ -158,6 +256,18 @@ func parseSemver(s string) (semver, bool) {
 func isParseableVersion(s string) bool {
 	_, ok := parseSemver(s)
 	return ok
+}
+
+// isCleanReleaseTag reports whether s is a real release tag we could resolve to
+// a GitHub commit — i.e. a parseable semver that is NOT a Go pseudo-version.
+// (parseSemver alone says "yes" to a pseudo-version because it strips at the
+// first '-', so we must exclude pseudo-versions explicitly; their commit/date
+// is recovered offline instead, not via the GitHub commits API.)
+func isCleanReleaseTag(s string) bool {
+	if _, _, ok := parsePseudoVersion(s); ok {
+		return false
+	}
+	return isParseableVersion(s)
 }
 
 // compareVersions compares current vs latest by semver. Returns:
