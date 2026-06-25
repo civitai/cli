@@ -108,6 +108,7 @@ func isDevDefault(v string) bool {
 
 // NewRootCmd builds the root command with all subcommands attached.
 func NewRootCmd() *cobra.Command {
+	var noUpdateCheck bool
 	root := &cobra.Command{
 		Use:   "civitai",
 		Short: "Civitai CLI — author and ship App Blocks",
@@ -133,15 +134,29 @@ Get started:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
+		// PersistentPostRun fires after ANY subcommand's RunE. It prints at most
+		// one cached "new version available" line to stderr and (when the cache
+		// is stale) kicks off a detached background refresh. It is best-effort
+		// and NEVER blocks the command — see maybeNotifyUpdate.
+		PersistentPostRun: func(cmd *cobra.Command, args []string) {
+			maybeNotifyUpdate(cmd.ErrOrStderr(), cmd.Name(), noUpdateCheck)
+		},
 	}
 	root.SetVersionTemplate("civitai {{.Version}}\n")
+
+	// A persistent flag so every command honours --no-update-check, and the
+	// post-run hook can read its resolved value.
+	root.PersistentFlags().BoolVar(&noUpdateCheck, "no-update-check", false,
+		"skip the background check for a newer release (also via CIVITAI_NO_UPDATE_CHECK)")
 
 	root.AddCommand(newAppCmd())
 	root.AddCommand(newLoginCmd())
 	root.AddCommand(newWhoAmICmd())
 	root.AddCommand(newBuzzCmd())
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newUpgradeCmd())
 	root.AddCommand(newCompletionCmd())
+	root.AddCommand(newUpdateCheckCmd())
 
 	return root
 }
