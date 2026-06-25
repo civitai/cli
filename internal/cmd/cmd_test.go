@@ -37,6 +37,8 @@ func TestRootHelpListsCommands(t *testing.T) {
 }
 
 func TestVersionCommand(t *testing.T) {
+	// Keep this test hermetic — don't reach out to GitHub for the update check.
+	t.Setenv("CIVITAI_NO_UPDATE_CHECK", "1")
 	out, _, err := run(t, "version")
 	if err != nil {
 		t.Fatalf("version: %v", err)
