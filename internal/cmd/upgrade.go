@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -28,6 +29,66 @@ const upgradeTimeout = 60 * time.Second
 // maxDownloadBytes caps each download so a misbehaving/hostile endpoint can't
 // make us read forever. The largest current asset is ~5MB; 64MB is ample.
 const maxDownloadBytes = 64 << 20
+
+// assetHostAllowlist is the set of hosts GitHub serves release assets (and the
+// hosts it redirects browser_download_url through). A release's asset URLs are
+// attacker-influenced data (they come straight out of the release JSON), so we
+// pin both the scheme (https) AND the host before fetching either the tarball
+// or checksums.txt. Without this, a release that advertised an http:// pair
+// (checksums.txt + tarball) would make the SHA-256 gate self-referential —
+// both halves attacker-controlled — and http.DefaultClient would happily follow
+// an https->http downgrade redirect.
+//
+//   - github.com                        — the canonical browser_download_url host
+//   - objects.githubusercontent.com     — the S3-backed CDN github.com 302s to
+//   - release-assets.githubusercontent.com — newer release-asset redirect target
+//
+// It is a var (not a const map) so tests can inject the httptest loopback host
+// via withAssetHost without weakening the production default.
+var assetHostAllowlist = map[string]bool{
+	"github.com":                           true,
+	"objects.githubusercontent.com":        true,
+	"release-assets.githubusercontent.com": true,
+}
+
+// validateAssetURL rejects any asset URL that is not https on an allowlisted
+// GitHub host. It returns a non-nil error (aborting the upgrade, before any
+// bytes are read) for anything else.
+func validateAssetURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid asset URL %q: %w", rawURL, err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("refusing asset URL %q: scheme %q is not https", rawURL, u.Scheme)
+	}
+	if !assetHostAllowlist[u.Hostname()] {
+		return fmt.Errorf("refusing asset URL %q: host %q is not an allowed GitHub release host", rawURL, u.Hostname())
+	}
+	return nil
+}
+
+// assetDownloadClient is the HTTP client used for the tarball + checksums.txt
+// downloads. Unlike http.DefaultClient it refuses to follow a redirect to a
+// non-https URL or to a host outside assetHostAllowlist — closing the
+// https->http downgrade (and host-pivot) foot-gun on every hop, not just the
+// initial URL. Timeouts/body caps stay on the request context + LimitReader.
+var assetDownloadClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return errors.New("stopped after 10 redirects")
+		}
+		if err := validateAssetURL(req.URL.String()); err != nil {
+			return fmt.Errorf("insecure redirect: %w", err)
+		}
+		return nil
+	},
+}
+
+// releaseClient fetches the release JSON. It is http.DefaultClient in
+// production; tests override its transport to trust an httptest TLS server (the
+// asset URLs are now scheme-pinned to https, so the test fixtures serve TLS).
+var releaseClient = http.DefaultClient
 
 // releaseAsset is a single downloadable asset.
 type releaseAsset struct {
@@ -146,6 +207,16 @@ func runUpgrade(out io.Writer, force, noUpdateCheck bool) error {
 		return errors.New("release is missing checksums.txt — refusing to upgrade without integrity verification")
 	}
 
+	// Defense-in-depth on the transport: the asset URLs come from the release
+	// JSON, so pin scheme+host BEFORE fetching anything. An http:// or
+	// non-GitHub asset URL aborts the upgrade here — the binary is never touched.
+	if err := validateAssetURL(tarURL); err != nil {
+		return err
+	}
+	if err := validateAssetURL(sumsURL); err != nil {
+		return err
+	}
+
 	// Download the checksums and the tarball.
 	sums, err := download(ctx, sumsURL)
 	if err != nil {
@@ -210,7 +281,7 @@ func fetchRelease(ctx context.Context, url string) (fullRelease, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	// NOTE: intentionally NO Authorization header — public, token-free.
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := releaseClient.Do(req)
 	if err != nil {
 		return fullRelease{}, err
 	}
@@ -246,7 +317,7 @@ func download(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := assetDownloadClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

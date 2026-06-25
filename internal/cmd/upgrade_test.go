@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -98,9 +99,49 @@ func newUpgradeServer(t *testing.T, tag string, binContent []byte, tarChecksumOv
 		us.tarHits++
 		_, _ = w.Write(us.tarBytes)
 	})
-	us.srv = httptest.NewServer(mux)
+	// Serve over TLS: production now scheme-pins asset URLs to https, so the
+	// asset URLs (and the release JSON they're embedded in) must be https.
+	us.srv = httptest.NewTLSServer(mux)
 	t.Cleanup(us.srv.Close)
+	// The httptest server listens on 127.0.0.1, which is not a real GitHub
+	// release host. Inject it into the asset-host allowlist for this test so the
+	// production allowlist stays untouched while the integration path still runs.
+	if u, err := url.Parse(us.srv.URL); err == nil {
+		withAssetHost(t, u.Hostname())
+	}
+	// Point both the release-lookup and asset-download clients at a transport
+	// that trusts the test server's self-signed cert, for this test only.
+	withTrustedClients(t, us.srv.Client())
 	return us
+}
+
+// withTrustedClients swaps the transports of releaseClient + assetDownloadClient
+// to trust the given test client's TLS cert, restoring them after the test. The
+// asset client keeps its production CheckRedirect (the security control under
+// test); only the transport (cert trust) is borrowed.
+func withTrustedClients(t *testing.T, trusted *http.Client) {
+	t.Helper()
+	origRelease := releaseClient
+	origAssetTransport := assetDownloadClient.Transport
+	releaseClient = trusted
+	assetDownloadClient.Transport = trusted.Transport
+	t.Cleanup(func() {
+		releaseClient = origRelease
+		assetDownloadClient.Transport = origAssetTransport
+	})
+}
+
+// withAssetHost temporarily adds host to assetHostAllowlist for the duration of
+// a test (restoring the original state afterward). This is the seam that lets
+// the httptest loopback host pass validateAssetURL without weakening the
+// production allowlist.
+func withAssetHost(t *testing.T, host string) {
+	t.Helper()
+	if assetHostAllowlist[host] {
+		return
+	}
+	assetHostAllowlist[host] = true
+	t.Cleanup(func() { delete(assetHostAllowlist, host) })
 }
 
 func (us *upgradeServer) releaseURL() string { return us.srv.URL + "/release" }
@@ -375,6 +416,131 @@ func TestUpgrade_PermissionDeniedClearError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "permission denied") || !strings.Contains(err.Error(), "sudo") {
 		t.Errorf("permission error should suggest sudo: %v", err)
+	}
+}
+
+func TestValidateAssetURL(t *testing.T) {
+	allowed := []string{
+		"https://github.com/civitai/cli/releases/download/v0.1.11/civitai_0.1.11_linux_amd64.tar.gz",
+		"https://objects.githubusercontent.com/foo/bar",
+		"https://release-assets.githubusercontent.com/foo/bar",
+		"https://github.com/checksums.txt",
+	}
+	for _, u := range allowed {
+		if err := validateAssetURL(u); err != nil {
+			t.Errorf("expected %q to be allowed, got: %v", u, err)
+		}
+	}
+	rejected := []string{
+		"http://github.com/civitai/cli/releases/download/x.tar.gz", // https downgrade
+		"http://objects.githubusercontent.com/foo",                 // http CDN
+		"https://evil.example.com/civitai.tar.gz",                  // off-host
+		"https://github.com.evil.com/x",                            // host-suffix spoof
+		"ftp://github.com/x",                                       // wrong scheme
+		"https://raw.githubusercontent.com/x",                      // GitHub but not a release host
+		"://nonsense",                                              // unparseable
+	}
+	for _, u := range rejected {
+		if err := validateAssetURL(u); err == nil {
+			t.Errorf("expected %q to be REJECTED, but it passed", u)
+		}
+	}
+}
+
+// TestUpgrade_RejectsHTTPAssetURL proves an http:// tarball asset URL aborts the
+// upgrade BEFORE any download, leaving the binary untouched. This closes the
+// self-referential-checksum foot-gun (an attacker-served http checksums+tarball
+// pair).
+func TestUpgrade_RejectsHTTPAssetURL(t *testing.T) {
+	withParseableVersion(t, "v0.1.10")
+	// Release JSON advertising an http:// tarball + an http:// checksums.txt.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tarName := fmt.Sprintf("civitai_0.1.11_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+		fmt.Fprintf(w, `{"tag_name":"v0.1.11","assets":[
+			{"name":%q,"browser_download_url":"http://github.com/dl/%s"},
+			{"name":"checksums.txt","browser_download_url":"http://github.com/dl/checksums.txt"}]}`,
+			tarName, tarName)
+	}))
+	t.Cleanup(srv.Close)
+	pointAtServer(t, srv.URL)
+	target := captureApply(t)
+
+	exe := filepath.Join(t.TempDir(), "civitai")
+	original := []byte("ORIGINAL-UNTOUCHED")
+	if err := os.WriteFile(exe, original, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	withExecutable(t, exe)
+
+	var out bytes.Buffer
+	err := runUpgrade(&out, false, false)
+	if err == nil {
+		t.Fatal("expected an http:// asset URL to abort the upgrade")
+	}
+	if !strings.Contains(err.Error(), "not https") {
+		t.Errorf("error should mention the non-https scheme: %v", err)
+	}
+	if *target != "" {
+		t.Error("an http:// asset URL must NOT call applyUpdate")
+	}
+	got, _ := os.ReadFile(exe)
+	if !bytes.Equal(got, original) {
+		t.Errorf("binary must be untouched when the asset URL is rejected, got %q", got)
+	}
+}
+
+// TestUpgrade_RejectsNonGitHubAssetHost proves an https asset URL on a host
+// outside the allowlist aborts before download.
+func TestUpgrade_RejectsNonGitHubAssetHost(t *testing.T) {
+	withParseableVersion(t, "v0.1.10")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tarName := fmt.Sprintf("civitai_0.1.11_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+		fmt.Fprintf(w, `{"tag_name":"v0.1.11","assets":[
+			{"name":%q,"browser_download_url":"https://evil.example.com/%s"},
+			{"name":"checksums.txt","browser_download_url":"https://evil.example.com/checksums.txt"}]}`,
+			tarName, tarName)
+	}))
+	t.Cleanup(srv.Close)
+	pointAtServer(t, srv.URL)
+	target := captureApply(t)
+	withExecutable(t, filepath.Join(t.TempDir(), "civitai"))
+
+	var out bytes.Buffer
+	err := runUpgrade(&out, false, false)
+	if err == nil || !strings.Contains(err.Error(), "not an allowed GitHub release host") {
+		t.Errorf("expected an off-host rejection, got: %v", err)
+	}
+	if *target != "" {
+		t.Error("an off-host asset URL must NOT call applyUpdate")
+	}
+}
+
+// TestDownload_RejectsInsecureRedirect proves the asset download client refuses
+// to follow an https->http downgrade redirect.
+func TestDownload_RejectsInsecureRedirect(t *testing.T) {
+	// Stand up an http target the redirect would point at (must not be reached).
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "ATTACKER-PAYLOAD")
+	}))
+	t.Cleanup(plain.Close)
+
+	// A redirector that 302s to the http:// target. We allowlist its loopback
+	// host so the INITIAL URL passes validation and the redirect (not the first
+	// hop) is what gets rejected.
+	redir := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, plain.URL+"/payload", http.StatusFound)
+	}))
+	t.Cleanup(redir.Close)
+	if u, err := url.Parse(redir.URL); err == nil {
+		withAssetHost(t, u.Hostname())
+	}
+
+	_, err := download(t.Context(), redir.URL+"/start")
+	if err == nil {
+		t.Fatal("expected an insecure-redirect rejection")
+	}
+	if !strings.Contains(err.Error(), "insecure redirect") {
+		t.Errorf("error should flag the insecure redirect: %v", err)
 	}
 }
 
