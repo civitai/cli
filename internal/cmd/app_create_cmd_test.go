@@ -41,24 +41,40 @@ func TestAppCreateDefaultsToPageMoney(t *testing.T) {
 		t.Fatalf("app create: %v\n%s", err, stdout)
 	}
 
-	// Defaulted to the batteries-included page-money template.
-	if !strings.Contains(stdout, "template: page-money") {
+	// Defaulted to the batteries-included page-money template (named in the
+	// one-line summary).
+	if !strings.Contains(stdout, "(page-money)") {
 		t.Errorf("create should default to page-money:\n%s", stdout)
+	}
+	// The summary reports a file COUNT, not a per-file tree.
+	if !strings.Contains(stdout, "files") {
+		t.Errorf("create should report a file count in the summary:\n%s", stdout)
+	}
+	// The per-file tree is gone: no individual scaffold filename leaks into output.
+	for _, leaked := range []string{"vite.config.ts", "block.manifest.json", "package.json"} {
+		if strings.Contains(stdout, leaked) {
+			t.Errorf("create should NOT list individual files (%q leaked):\n%s", leaked, stdout)
+		}
+	}
+	// Numbered, scannable next steps.
+	if !strings.Contains(stdout, "1. cd ") || !strings.Contains(stdout, "npm install") {
+		t.Errorf("create should print a numbered cd+install step:\n%s", stdout)
 	}
 	// Harness-aware next steps (page-money needs the mock host).
 	if !strings.Contains(stdout, "dev:harness") {
 		t.Errorf("create should print dev:harness next step:\n%s", stdout)
 	}
-	// The mock-vs-live clarification must be visible at the moment the user
-	// reads the next steps (a placeholder Generate result is the mock, not a bug).
+	// The mock-vs-live clarification must survive (a placeholder Generate
+	// result is the mock, not a bug).
 	if !strings.Contains(stdout, "MOCK") {
 		t.Errorf("create should flag dev:harness as a MOCK host:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "dev:live") {
 		t.Errorf("create should point at dev:live for a real generation:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "civitai app validate") {
-		t.Errorf("create should print the validate next step:\n%s", stdout)
+	// Validate is folded into the submit step.
+	if !strings.Contains(stdout, "civitai app submit") {
+		t.Errorf("create should print the submit next step:\n%s", stdout)
 	}
 
 	assertScaffoldValid(t, dest)
@@ -87,7 +103,7 @@ func TestAppCreateRespectsTemplateOverride(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app create --template static: %v\n%s", err, stdout)
 	}
-	if !strings.Contains(stdout, "template: static") {
+	if !strings.Contains(stdout, "(static)") {
 		t.Errorf("--template static should override the page-money default:\n%s", stdout)
 	}
 	assertScaffoldValid(t, dest)
@@ -105,8 +121,11 @@ func TestAppCreateDerivesSlugFromDisplayName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app create with display name: %v\n%s", err, stdout)
 	}
-	if !strings.Contains(stdout, "slug: my-cool-block") {
-		t.Errorf("display name should slugify to my-cool-block:\n%s", stdout)
+	// The display name slugifies to my-cool-block in the manifest (the
+	// summary line no longer prints the slug separately).
+	manifest := readManifest(t, dest)
+	if !strings.Contains(manifest, `"blockId": "my-cool-block"`) {
+		t.Errorf("display name should slugify to my-cool-block:\n%s", manifest)
 	}
 	if !strings.Contains(stdout, `"My Cool Block"`) {
 		t.Errorf("output should report the display name:\n%s", stdout)
@@ -145,7 +164,7 @@ func TestAppInitStillDefaultsToStatic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app init: %v\n%s", err, stdout)
 	}
-	if !strings.Contains(stdout, "template: static") {
+	if !strings.Contains(stdout, "(static)") {
 		t.Errorf("init should still default to static:\n%s", stdout)
 	}
 	assertScaffoldValid(t, dest)
@@ -162,7 +181,7 @@ func TestAppInitPageMoneyViaFlag(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app init --template page-money: %v\n%s", err, stdout)
 	}
-	if !strings.Contains(stdout, "template: page-money") {
+	if !strings.Contains(stdout, "(page-money)") {
 		t.Errorf("init --template page-money should scaffold page-money:\n%s", stdout)
 	}
 	assertScaffoldValid(t, dest)
