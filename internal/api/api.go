@@ -200,6 +200,16 @@ const SubmissionsPath = "/api/v1/blocks/submissions"
 // (pending) state.
 const WithdrawPath = "/api/v1/blocks/withdraw"
 
+// DevTokenPath is the moderator-gated route that mints a short-lived dev block
+// token for `npm run dev:live` (POST {"slug": ...}; civitai/civitai
+// src/pages/api/v1/blocks/dev-token.ts). 200 { token, ... } on success; a
+// PENDING (un-approved) slug is accepted (200 since #2777). Error bodies are
+// {message}: 404 not-found/not-yours, 403 not-mod/insufficient-scope, 429
+// rate-limited, 503 flag-off. The minted token's CAPABILITIES depend on the
+// bearer: a full-scope personal API key mints a spend-capable token; an OAuth
+// (`civitai login`) credential mints a read-only one.
+const DevTokenPath = "/api/v1/blocks/dev-token"
+
 // Client is the default HTTP implementation.
 type Client struct {
 	BaseURL    string
@@ -613,6 +623,76 @@ func (c *Client) WithdrawRequest(ctx context.Context, publishRequestID string) e
 		return withdrawError(status, raw)
 	}
 	return nil
+}
+
+// DevTokenMinter mints a short-lived dev block token for `npm run dev:live`.
+type DevTokenMinter interface {
+	// MintDevToken mints a dev block token for the given app slug and returns
+	// the JWT. A non-2xx is mapped to an actionable error by devTokenError.
+	MintDevToken(ctx context.Context, slug string) (string, error)
+}
+
+// devTokenBody is the POST /api/v1/blocks/dev-token request body.
+type devTokenBody struct {
+	Slug string `json:"slug"`
+}
+
+// MintDevToken mints a short-lived dev block token for the given app slug,
+// returning the JWT from the response's .token field. The OAuth access token is
+// refreshed transparently on a 401. A non-2xx is mapped by devTokenError.
+func (c *Client) MintDevToken(ctx context.Context, slug string) (string, error) {
+	body, err := json.Marshal(devTokenBody{Slug: slug})
+	if err != nil {
+		return "", err
+	}
+	build := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+DevTokenPath, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	}
+	status, raw, err := c.authedDo(ctx, build)
+	if err != nil {
+		return "", err
+	}
+	if status != http.StatusOK {
+		return "", devTokenError(status, raw)
+	}
+	var out struct {
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return "", fmt.Errorf("unexpected /api/v1/blocks/dev-token response: %s", string(raw))
+	}
+	if out.Token == "" {
+		return "", fmt.Errorf("dev-token response had no token: %s", string(raw))
+	}
+	return out.Token, nil
+}
+
+// devTokenError maps a non-2xx dev-token response to a clear, actionable CLI
+// error. The route returns {"message": ...} on every error status: 404
+// not-found-or-not-yours, 403 not-moderator-or-insufficient-scope, 429
+// rate-limited, 503 flag-off. The 403 message is the key DX case — a spend
+// token needs a full-scope personal API key (an OAuth login mints read-only).
+func devTokenError(status int, raw []byte) error {
+	msg := serverMessage(raw)
+	switch status {
+	case http.StatusNotFound:
+		return fmt.Errorf("app not found (or not yours) (404): %s — check the slug, and that you've submitted the app (`civitai app status`)", msg)
+	case http.StatusUnauthorized:
+		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
+	case http.StatusForbidden:
+		return fmt.Errorf("not authorized (403): %s — minting needs moderator access AND a full-scope personal API key; an OAuth `civitai login` token can't mint a spend token (check with `civitai whoami`)", msg)
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
+	case http.StatusServiceUnavailable:
+		return fmt.Errorf("App Blocks unavailable (503): %s", msg)
+	default:
+		return fmt.Errorf("server returned %d: %s", status, msg)
+	}
 }
 
 // withdrawError maps a non-2xx withdraw response to a clear, actionable CLI

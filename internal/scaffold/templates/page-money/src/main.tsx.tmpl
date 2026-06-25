@@ -79,18 +79,75 @@ function LiveApp({ token, backendBaseUrl }: { token: string; backendBaseUrl: str
 }
 
 /**
+ * A small "copy to clipboard" button with a transient "Copied!" state. No deps —
+ * just `navigator.clipboard.writeText` + a `useState`. Used on the
+ * LiveUnavailable screen so the one-liner to mint a dev token is one click away.
+ */
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      style={liveCopyBtnStyle}
+      onClick={() => {
+        void navigator.clipboard?.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+    >
+      {copied ? 'Copied!' : 'Copy'}
+    </button>
+  );
+}
+
+/**
  * Fail-safe LIVE screen. Shown when `dev:live` is requested but no dev block
- * token is set — so a dev sees WHY nothing is spending instead of a silent mock
- * or a blank screen.
+ * token is set — so a dev sees WHY nothing is spending AND exactly how to get a
+ * token, instead of a silent mock or a blank screen.
  */
 function LiveUnavailable({ reason }: { reason: string }) {
+  const cliCmd = 'civitai app dev-token {{ .Slug }}';
+  const curlCmd =
+    `curl -s -X POST https://civitai.com/api/v1/blocks/dev-token ` +
+    `-H "Authorization: Bearer $CIVITAI_TOKEN" ` +
+    `-H 'Content-Type: application/json' ` +
+    `-d '{"slug":"{{ .Slug }}"}'`;
   return (
     <div data-harness-banner="live-unavailable" style={liveWrapStyle}>
       <div style={liveInnerStyle}>
         <div style={liveTitleStyle}>⚠️ LIVE MODE — spends REAL Buzz / real compute</div>
         <p style={liveReasonStyle}>{reason}</p>
+
+        <div style={liveSectionStyle}>
+          <div style={liveSectionTitleStyle}>How to get a dev token</div>
+          <div style={liveCmdRowStyle}>
+            <pre style={liveCmdStyle}>{cliCmd}</pre>
+            <CopyButton text={cliCmd} />
+          </div>
+          <p style={liveHintStyle}>
+            Paste the token into <code>VITE_LIVE_BLOCK_TOKEN</code> in{' '}
+            <code>.env.development.local</code>, then re-run{' '}
+            <code>npm run dev:live</code>.
+          </p>
+          <p style={liveHintStyle}>
+            Real generation needs a <strong>full-scope personal API key</strong>{' '}
+            (create one at <code>civitai.com/user/account</code>) — an OAuth{' '}
+            <code>civitai login</code> token can&apos;t spend. Confirm with{' '}
+            <code>civitai whoami</code>.
+          </p>
+        </div>
+
+        <div style={liveSectionStyle}>
+          <div style={liveSectionTitleStyle}>No CLI? Mint it with curl</div>
+          <div style={liveCmdRowStyle}>
+            <pre style={liveCmdSmallStyle}>{curlCmd}</pre>
+            <CopyButton text={curlCmd} />
+          </div>
+        </div>
+
         <p style={liveHintStyle}>
-          Use <code>npm run dev:harness</code> (mock host) for free local
+          Or use <code>npm run dev:harness</code> (mock host) for free local
           development. See README → “Mock vs live”.
         </p>
       </div>
@@ -121,10 +178,52 @@ const liveWrapStyle: CSSProperties = {
   padding: 24,
   textAlign: 'center',
 };
-const liveInnerStyle: CSSProperties = { maxWidth: 560 };
-const liveTitleStyle: CSSProperties = { fontSize: 20, fontWeight: 800, color: '#ffa94d' };
-const liveReasonStyle: CSSProperties = { marginTop: 12, lineHeight: 1.5 };
-const liveHintStyle: CSSProperties = { marginTop: 12, opacity: 0.8 };
+const liveInnerStyle: CSSProperties = { maxWidth: 620, textAlign: 'left' };
+const liveTitleStyle: CSSProperties = { fontSize: 20, fontWeight: 800, color: '#ffa94d', textAlign: 'center' };
+const liveReasonStyle: CSSProperties = { marginTop: 12, lineHeight: 1.5, textAlign: 'center' };
+const liveHintStyle: CSSProperties = { marginTop: 12, opacity: 0.8, lineHeight: 1.5 };
+
+const liveSectionStyle: CSSProperties = {
+  marginTop: 20,
+  paddingTop: 16,
+  borderTop: '1px solid #5a3a17',
+};
+const liveSectionTitleStyle: CSSProperties = {
+  fontSize: 14,
+  fontWeight: 700,
+  color: '#ffa94d',
+  marginBottom: 8,
+};
+const liveCmdRowStyle: CSSProperties = {
+  display: 'flex',
+  alignItems: 'stretch',
+  gap: 8,
+};
+const liveCmdStyle: CSSProperties = {
+  flex: 1,
+  margin: 0,
+  padding: '10px 12px',
+  background: '#0d0904',
+  border: '1px solid #5a3a17',
+  borderRadius: 6,
+  color: '#ffe8c2',
+  fontSize: 14,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+};
+const liveCmdSmallStyle: CSSProperties = { ...liveCmdStyle, fontSize: 12, opacity: 0.85 };
+const liveCopyBtnStyle: CSSProperties = {
+  flex: '0 0 auto',
+  padding: '0 14px',
+  background: '#7a1f1f',
+  color: '#ffd8a8',
+  border: '1px solid #a8492f',
+  borderRadius: 6,
+  fontFamily: 'inherit',
+  fontSize: 13,
+  fontWeight: 700,
+  cursor: 'pointer',
+};
 
 createRoot(container).render(
   <StrictMode>
