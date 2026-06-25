@@ -71,15 +71,16 @@ target with `VITE_LIVE_HOST_ORIGIN` (default `https://civitai.com`).
 
 **Live mode setup.**
 
-> ⚠️ **Prerequisite — `dev:live` needs an approved + DEPLOYED app.** `dev:live`
-> talks to a **deployed block instance**, so the dev-token mint
-> (`POST /api/v1/blocks/dev-token`) only succeeds once **this app is approved and
-> deployed** (deployState `live`). For a brand-new app — even right after a
-> successful `civitai app submit` (status `pending`) — the mint returns
-> **`App not found`**. That's expected: you **cannot `dev:live`-test your own
-> first app before its first approval + deploy**. Until your first version is
-> live, validate everything with `dev:harness` (the mock host — no real Buzz, no
-> network). Once the app is live, come back here for real-spend testing.
+> ⚠️ **`dev:live` works on a PENDING (un-approved) app.** The dev-token mint
+> (`POST /api/v1/blocks/dev-token`) accepts a **pending** slug — right after a
+> successful `civitai app submit` (status `pending`) it returns `200` with
+> `appId: pending-pubreq_…`, and `dev:live` mounts the live host against the
+> pending app. You do **not** need to wait for approval + deploy to dev:live-test.
+> For **real generation** you must mint with a **full-scope personal API key**; an
+> OAuth (`civitai login`) token mints read-only (`user:read:self`) and **cannot
+> spend**. Use `civitai buzz` / `civitai whoami` to confirm your credential can
+> spend. With no `VITE_LIVE_BLOCK_TOKEN` `dev:live` fails safe (renders a notice,
+> never spends), and `dev:harness` (the mock host) needs no token at all.
 
 To use it:
 
@@ -211,9 +212,11 @@ After `civitai app submit`, your publish request is `pending` review — a
 Civitai-side **moderator** approves (or rejects) it. **This is not self-service
 today**; you cannot approve your own app. Track it with `civitai app status`.
 
-- **`dev:live` / live real-Buzz spend only works once the app is approved AND
-  deployed** (deployState `live`) — see the live-mode prerequisite above. Until
-  then, develop against `dev:harness` (the mock host).
+- **`dev:live` works on a pending (un-approved) app** — the dev-token mint accepts
+  a pending slug (returns `appId: pending-pubreq_…`), so you can real-spend-test
+  before approval. Real generation needs a **full-scope personal API key** (an
+  OAuth `civitai login` token mints read-only and can't spend); confirm with
+  `civitai buzz` / `civitai whoami`. See the live-mode prerequisite above.
 - Need to change the bundle while a request is still `pending`? **Withdraw your
   own pending submission** and resubmit a different one:
 

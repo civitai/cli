@@ -112,7 +112,58 @@ type Submission struct {
 type Identity struct {
 	Username string `json:"username"`
 	ID       int    `json:"id"`
+	// TokenScope is the bearer token's scope bitmask as returned by
+	// GET /api/v1/me. Decode it with the Scope* bits below to learn what the
+	// credential can do (spend Buzz, read balance, …). A personal full-scope key
+	// has every bit; an OAuth device-login token typically has neither
+	// AIServicesWrite nor BuzzRead.
+	TokenScope int `json:"tokenScope"`
 }
+
+// Token-scope bits, mirrored from civitai/civitai
+// src/shared/constants/token-scope.constants.ts. These are STABLE bit positions
+// in the tokenScope bitmask GET /api/v1/me returns. Only the bits the CLI needs
+// are mirrored here.
+const (
+	// ScopeUserRead (1<<0) — read the authenticated user's identity.
+	ScopeUserRead = 1 << 0
+	// ScopeAIServicesWrite (1<<15) — spend Buzz on AI services (generation). A
+	// credential "can spend Buzz" iff tokenScope & ScopeAIServicesWrite != 0.
+	ScopeAIServicesWrite = 1 << 15
+	// ScopeBuzzRead (1<<16) — read the user's Buzz balance. A credential "can
+	// read balance" iff tokenScope & ScopeBuzzRead != 0.
+	ScopeBuzzRead = 1 << 16
+)
+
+// CanSpendBuzz reports whether the identity's token carries the AI-Services
+// (Buzz-spend) scope.
+func (id *Identity) CanSpendBuzz() bool { return id.TokenScope&ScopeAIServicesWrite != 0 }
+
+// CanReadBuzz reports whether the identity's token can read the Buzz balance.
+func (id *Identity) CanReadBuzz() bool { return id.TokenScope&ScopeBuzzRead != 0 }
+
+// BuzzAccount is the spendable Buzz balance from buzz.getBuzzAccount. Yellow is
+// the currency generation spend draws from.
+type BuzzAccount struct {
+	Blue   int64 `json:"blue"`
+	Green  int64 `json:"green"`
+	Yellow int64 `json:"yellow"`
+}
+
+// BuzzReader reads the caller's spendable Buzz balance.
+type BuzzReader interface {
+	// GetBuzzAccount returns the caller's Buzz balance. A credential lacking the
+	// Buzz-read scope yields ErrBuzzScope (the server answers 403).
+	GetBuzzAccount(ctx context.Context) (*BuzzAccount, error)
+}
+
+// ErrBuzzScope is returned by GetBuzzAccount when the stored credential lacks
+// the Buzz-read scope (the server answers 403 FORBIDDEN). The command layer maps
+// this to actionable, personal-key guidance.
+var ErrBuzzScope = fmt.Errorf("credential lacks the Buzz-read scope")
+
+// BuzzAccountPath is the tRPC route that returns the spendable Buzz balance.
+const BuzzAccountPath = "/api/trpc/buzz.getBuzzAccount"
 
 // SubmitResult is the publish-request result the server returns.
 type SubmitResult struct {
@@ -420,6 +471,46 @@ func (c *Client) WhoAmI(ctx context.Context) (*Identity, error) {
 		return nil, fmt.Errorf("unexpected /api/v1/me response: %s", string(raw))
 	}
 	return &id, nil
+}
+
+// GetBuzzAccount reads the caller's spendable Buzz balance via the
+// buzz.getBuzzAccount tRPC route, refreshing the OAuth access token if needed.
+// On 200 it returns the {blue,green,yellow} balance; on a 403 (the credential
+// lacks the Buzz-read scope) it returns ErrBuzzScope so the command layer can
+// print the personal-key guidance. The tRPC success envelope is
+// {"result":{"data":{"json":{...}}}}.
+func (c *Client) GetBuzzAccount(ctx context.Context) (*BuzzAccount, error) {
+	tok, err := c.Tokens.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if tok == "" {
+		return nil, fmt.Errorf("no token configured — run `civitai login` first")
+	}
+	build := func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+BuzzAccountPath, nil)
+	}
+	status, raw, err := c.authedDo(ctx, build)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusForbidden {
+		return nil, ErrBuzzScope
+	}
+	if status != http.StatusOK {
+		return nil, serverError(status, raw)
+	}
+	var env struct {
+		Result struct {
+			Data struct {
+				JSON *BuzzAccount `json:"json"`
+			} `json:"data"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
+		return nil, fmt.Errorf("unexpected buzz.getBuzzAccount response: %s", string(raw))
+	}
+	return env.Result.Data.JSON, nil
 }
 
 // submissionsURL builds the GET URL with optional id / blockId query params.

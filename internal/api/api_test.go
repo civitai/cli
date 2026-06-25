@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -113,5 +114,98 @@ func TestWhoAmIParsesIdentity(t *testing.T) {
 	}
 	if id.Username != "zach" || id.ID != 42 {
 		t.Errorf("identity = %+v", id)
+	}
+}
+
+func TestWhoAmIParsesTokenScope(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// A full-scope personal key: UserRead | AIServicesWrite | BuzzRead.
+		_, _ = w.Write([]byte(`{"username":"zach","id":42,"tokenScope":98305}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", "")
+	id, err := c.WhoAmI(context.Background())
+	if err != nil {
+		t.Fatalf("WhoAmI: %v", err)
+	}
+	if id.TokenScope != (ScopeUserRead | ScopeAIServicesWrite | ScopeBuzzRead) {
+		t.Errorf("tokenScope = %d", id.TokenScope)
+	}
+	if !id.CanSpendBuzz() {
+		t.Error("CanSpendBuzz should be true for a full-scope key")
+	}
+	if !id.CanReadBuzz() {
+		t.Error("CanReadBuzz should be true for a full-scope key")
+	}
+}
+
+func TestIdentityCapabilityBits(t *testing.T) {
+	// An OAuth login token: UserRead | AppBlocksSubmit (bit 25) — no spend, no
+	// balance-read.
+	oauth := &Identity{TokenScope: ScopeUserRead | (1 << 25)}
+	if oauth.CanSpendBuzz() {
+		t.Error("OAuth token must not be able to spend Buzz")
+	}
+	if oauth.CanReadBuzz() {
+		t.Error("OAuth token must not be able to read Buzz balance")
+	}
+
+	spendOnly := &Identity{TokenScope: ScopeAIServicesWrite}
+	if !spendOnly.CanSpendBuzz() || spendOnly.CanReadBuzz() {
+		t.Errorf("AIServicesWrite-only: spend=%v read=%v", spendOnly.CanSpendBuzz(), spendOnly.CanReadBuzz())
+	}
+
+	readOnly := &Identity{TokenScope: ScopeBuzzRead}
+	if readOnly.CanSpendBuzz() || !readOnly.CanReadBuzz() {
+		t.Errorf("BuzzRead-only: spend=%v read=%v", readOnly.CanSpendBuzz(), readOnly.CanReadBuzz())
+	}
+}
+
+func TestGetBuzzAccountParsesBalance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != BuzzAccountPath {
+			t.Errorf("path = %q, want %q", r.URL.Path, BuzzAccountPath)
+		}
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_, _ = w.Write([]byte(`{"result":{"data":{"json":{"blue":10,"green":20,"yellow":1234}}}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", "")
+	acct, err := c.GetBuzzAccount(context.Background())
+	if err != nil {
+		t.Fatalf("GetBuzzAccount: %v", err)
+	}
+	if acct.Yellow != 1234 || acct.Blue != 10 || acct.Green != 20 {
+		t.Errorf("balance = %+v", acct)
+	}
+}
+
+func TestGetBuzzAccount403ReturnsScopeError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"json": map[string]any{
+				"message": "Your API key does not have the required scope for this action",
+			}},
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", "")
+	_, err := c.GetBuzzAccount(context.Background())
+	if !errors.Is(err, ErrBuzzScope) {
+		t.Errorf("expected ErrBuzzScope, got %v", err)
+	}
+}
+
+func TestGetBuzzAccountRequiresToken(t *testing.T) {
+	c := New("https://example.com", "", "")
+	if _, err := c.GetBuzzAccount(context.Background()); err == nil {
+		t.Fatal("expected error with no token")
 	}
 }
