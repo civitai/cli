@@ -104,6 +104,7 @@ Get started:
 	root.AddCommand(newAppCmd())
 	root.AddCommand(newLoginCmd())
 	root.AddCommand(newWhoAmICmd())
+	root.AddCommand(newBuzzCmd())
 	root.AddCommand(newVersionCmd())
 	root.AddCommand(newCompletionCmd())
 

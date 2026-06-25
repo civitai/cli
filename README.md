@@ -91,12 +91,14 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 | Command | What it does |
 | --- | --- |
 | `civitai login [--token <t>] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens); `--token` stores a personal API key instead. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
-| `civitai whoami` | Verify the stored token; print the authenticated user. |
+| `civitai whoami` | Verify the stored token; print the authenticated user **and a Capabilities section** (`Spend Buzz`, `Read Buzz balance`) decoded from the token's scope, so a money-path dead end (OAuth login can't spend) is visible before `dev:live`. |
+| `civitai buzz` | Show your spendable Buzz balance (blue / green / **yellow** — the generation-spend currency). Needs a full-scope personal API key to read; an OAuth login token can't, and gets a clear "switch to a personal key" message. |
 | `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App Block, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
 | `civitai app validate [dir] [--strict]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
+| `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
 
@@ -130,12 +132,14 @@ hosts) with two modes:
 | `npm run dev:harness` | **mock** (default) | Mounts the SDK **mock host** — synthetic replies, **no real Buzz, no compute, no network.** Safe to spam; drive money/error/insufficient-Buzz UX via on-screen scenarios or `?` URL params. Start here. |
 | `npm run dev:live` | **live** | Mounts the SDK **live host** (`createLiveHost`) — forwards the App-Block protocol to the **real Civitai backend** with a pasted dev token (Bearer). **Spends REAL Buzz / real compute.** |
 
-> ⚠️ **`dev:live` needs an approved + deployed app.** It talks to a **deployed
-> block instance**, so the dev-token mint only succeeds once the app is approved
-> and deployed (deployState `live`). A brand-new app — even right after a
-> successful `civitai app submit` (status `pending`) — gets `App not found`. You
-> **can't `dev:live`-test your own first app before its first approval + deploy**;
-> validate with `dev:harness` (mock) until your first version is live.
+> ⚠️ **`dev:live` works on a pending (un-approved) app.** The dev-token mint
+> (`POST /api/v1/blocks/dev-token`) accepts a **pending** slug — right after a
+> successful `civitai app submit` (status `pending`) it returns `200` with
+> `appId: pending-pubreq_…` and `dev:live` mounts the live host against the
+> pending app. For **real generation** you must mint with a **full-scope personal
+> API key**; an OAuth (`civitai login`) token mints read-only (`user:read:self`)
+> and **cannot spend**. Use `civitai buzz` / `civitai whoami` to confirm your
+> credential can spend before a live run.
 
 **Live mode** needs a short-lived dev block token (mint via the moderator-gated
 `POST /api/v1/blocks/dev-token`), pasted into `.env.development` as
@@ -250,10 +254,25 @@ moderator review. The lifecycle is:
    at **`https://<blockId>.civit.ai/`**.
 
 Before approval, **`https://<blockId>.civit.ai/` 404s** — submitting does not
-make the subdomain serve. For the full end-to-end walkthrough (build → submit →
-review → deploy), see the
+make the subdomain serve (but `dev:live` works against a pending app — see
+[Local dev loop](#local-dev-loop-harness-mock-vs-live)). For the full end-to-end
+walkthrough (build → submit → review → deploy), see the
 [Build your first App Block](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md)
 guide.
+
+**Need to change the bundle while a request is still `pending`?** Withdraw it
+first to free the slug, then resubmit:
+
+```text
+$ civitai app status                          # find the pubreq_ id
+$ civitai app withdraw pubreq_01HZX           # frees the slug
+$ civitai app submit                          # resubmit the new bundle
+```
+
+`civitai app withdraw <pubreq-id>` (or `--id <pubreq>`) withdraws **your own**
+pending publish request. It is **idempotent** (an already-withdrawn request still
+returns success) and only a **`pending`** request can be withdrawn — an already
+approved/rejected one cannot.
 
 ## Submission status
 

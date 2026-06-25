@@ -29,7 +29,7 @@ func TestRootHelpListsCommands(t *testing.T) {
 	if err != nil {
 		t.Fatalf("--help: %v", err)
 	}
-	for _, want := range []string{"app", "login", "whoami", "version", "completion"} {
+	for _, want := range []string{"app", "login", "whoami", "buzz", "version", "completion"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("root help missing command %q\n%s", want, out)
 		}

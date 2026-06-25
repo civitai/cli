@@ -31,9 +31,29 @@ authenticated username. Reads the token from config or CIVITAI_TOKEN.`,
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Logged in as %s (id %d) at %s\n", id.Username, id.ID, cfg.BaseURL())
+			out := cmd.OutOrStdout()
+			fmt.Fprintf(out, "Logged in as %s (id %d) at %s\n", id.Username, id.ID, cfg.BaseURL())
+
+			// Decode the token's scope bitmask so the money-path dead end (an
+			// OAuth login can't spend) is visible BEFORE a dev:live run.
+			fmt.Fprintln(out, "\nCapabilities:")
+			fmt.Fprintf(out, "  Spend Buzz (AI Services): %s\n", yesNo(id.CanSpendBuzz()))
+			fmt.Fprintf(out, "  Read Buzz balance:        %s\n", yesNo(id.CanReadBuzz()))
+			if !id.CanSpendBuzz() {
+				fmt.Fprintln(out, "\nThis credential can't spend Buzz — money-path `dev:live` generation needs a")
+				fmt.Fprintln(out, "full-scope personal API key: create one at https://civitai.com/user/account,")
+				fmt.Fprintln(out, "then `civitai login --token <key>`. (OAuth login can submit/withdraw but not spend.)")
+			}
 			return nil
 		},
 	}
 	return cmd
+}
+
+// yesNo renders a capability bit as "yes"/"no".
+func yesNo(b bool) string {
+	if b {
+		return "yes"
+	}
+	return "no"
 }

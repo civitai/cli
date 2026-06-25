@@ -120,6 +120,10 @@ func TestAppSubmitUploadsWhenTokenAndPathConfigured(t *testing.T) {
 	if !strings.Contains(stdout, "pr_42") || !strings.Contains(stdout, "pending") {
 		t.Errorf("output should report the publish request: %s", stdout)
 	}
+	// #34: a successful submit surfaces the personal-key money-path tip.
+	if !strings.Contains(stdout, "personal API key") || !strings.Contains(stdout, "civitai whoami") {
+		t.Errorf("submit success should print the personal-key tip: %s", stdout)
+	}
 }
 
 func TestAppSubmitUploadsToV1RouteByDefault(t *testing.T) {
