@@ -120,6 +120,20 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, manifest, `"name": "Money Block"`)
 	mustContain(t, app, "Money Block")
 
+	// The LiveUnavailable screen (shown by dev:live with no token) must tell the
+	// user HOW to get one: the CLI one-liner with the real slug, a copy handler,
+	// the VITE_LIVE_BLOCK_TOKEN paste instruction, and the personal-key note.
+	mainTSX := readFile(t, filepath.Join(dest, "src", "main.tsx"))
+	mustContain(t, mainTSX, "civitai app dev-token money-block")
+	mustContain(t, mainTSX, "clipboard?.writeText")
+	mustContain(t, mainTSX, "VITE_LIVE_BLOCK_TOKEN")
+	mustContain(t, mainTSX, ".env.development.local")
+	mustContain(t, mainTSX, "full-scope personal API key")
+	mustContain(t, mainTSX, "civitai whoami")
+	// Curl fallback for users without the CLI, carrying the real slug.
+	mustContain(t, mainTSX, `"slug":"money-block"`)
+	mustContain(t, mainTSX, "/api/v1/blocks/dev-token")
+
 	// README docs the live-mode Buzz-balance recipe (#30) — the only working path
 	// is the tRPC procedure with a bearer key (no public REST buzz endpoint).
 	readme := readFile(t, filepath.Join(dest, "README.md"))
