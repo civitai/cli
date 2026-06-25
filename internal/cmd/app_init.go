@@ -155,36 +155,32 @@ init and copy the upstream files in manually.`)
 	return nil
 }
 
-// printScaffoldResult prints the created-files tree + harness-aware next steps.
+// printScaffoldResult prints a one-line summary (with a file count, not the
+// full tree) followed by a numbered, template-tailored "Next steps" sequence.
 func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Template, destDir, abs string, written []string) {
-	fmt.Fprintf(out, "Created App Block %q (slug: %s, template: %s)\n", display, slug, tmpl)
-	fmt.Fprintf(out, "  %s\n", abs)
-	for _, w := range written {
-		// `written` paths are relative to destDir's parent; show them
-		// relative to the project dir for a clean tree.
-		rel, err := filepath.Rel(destDir, w)
-		if err != nil {
-			rel = w
-		}
-		fmt.Fprintf(out, "    %s\n", rel)
-	}
+	// One scannable line: name, template, where, and how many files — no tree.
+	fmt.Fprintf(out, "✓ Created App Block %q (%s)  ·  %s/  ·  %d files\n", display, tmpl, destDir, len(written))
+
 	fmt.Fprintln(out, "\nNext steps:")
 	switch {
 	case tmpl.NeedsHarness():
-		// SDK/page-money apps render blank under plain `dev` (no host) —
-		// the dev loop needs the mock host via `dev:harness`. Spell out the
-		// mock-vs-live distinction here so a "Generate" returning a placeholder
-		// image isn't mistaken for a broken real generation.
-		fmt.Fprintf(out, "  cd %s && npm install && npm run dev:harness\n", destDir)
-		fmt.Fprintln(out, "    dev:harness mounts a MOCK host — synthetic results, no real Buzz/compute.")
-		fmt.Fprintln(out, "    For a real generation that spends Buzz: npm run dev:live  (needs a full-scope personal API key — see README).")
+		// SDK/page-money apps render blank under plain `dev` (no host) — the
+		// dev loop needs the mock host via `dev:harness`. Keep the mock-vs-live
+		// distinction as a clearly-separate tip so a placeholder "Generate"
+		// result isn't mistaken for a broken real generation.
+		fmt.Fprintf(out, "  1. cd %s && npm install\n", destDir)
+		fmt.Fprintln(out, "  2. npm run dev:harness      # preview locally — MOCK host, no real Buzz")
+		fmt.Fprintln(out, "  3. civitai app submit       # validate + submit for review")
+		fmt.Fprintln(out)
+		fmt.Fprintln(out, "  Real generation (spends Buzz)? npm run dev:live — needs a personal API key (see README)")
 	case tmpl == scaffold.PageVite:
-		fmt.Fprintf(out, "  cd %s && npm install && npm run dev\n", destDir)
+		fmt.Fprintf(out, "  1. cd %s && npm install\n", destDir)
+		fmt.Fprintln(out, "  2. npm run dev              # preview locally")
+		fmt.Fprintln(out, "  3. civitai app submit       # validate + submit for review")
 	default:
-		fmt.Fprintf(out, "  cd %s   # open index.html or serve the directory\n", destDir)
+		fmt.Fprintf(out, "  1. cd %s              # then open index.html or serve the directory\n", destDir)
+		fmt.Fprintln(out, "  2. civitai app submit       # validate + submit for review")
 	}
-	fmt.Fprintln(out, "  civitai app validate")
-	fmt.Fprintln(out, "  civitai app submit")
 }
 
 func joinLines(lines []string) string {
