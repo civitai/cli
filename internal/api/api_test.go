@@ -55,7 +55,7 @@ func TestSubmitVersionSendsBearerAndBase64(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok123", "/api/blocks/submit-version")
-	res, err := c.SubmitVersion(context.Background(), []byte("ZIPDATA"))
+	res, err := c.SubmitVersion(context.Background(), []byte("ZIPDATA"), "my-block", "0.1.0")
 	if err != nil {
 		t.Fatalf("SubmitVersion: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestSubmitVersionSurfacesServerMessage(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok", "")
-	_, err := c.SubmitVersion(context.Background(), []byte("x"))
+	_, err := c.SubmitVersion(context.Background(), []byte("x"), "my-block", "0.1.0")
 	if err == nil {
 		t.Fatal("expected error")
 	}

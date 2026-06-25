@@ -95,7 +95,7 @@ func TestSubmitVersionUsesV1RouteAndRefreshes(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok", "")
-	if _, err := c.SubmitVersion(context.Background(), []byte("ZIP")); err != nil {
+	if _, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.1.0"); err != nil {
 		t.Fatalf("SubmitVersion: %v", err)
 	}
 	if path != DefaultSubmitPath {

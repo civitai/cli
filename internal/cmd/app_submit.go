@@ -123,7 +123,7 @@ Defaults to the current directory.`,
 func doUpload(cmd *cobra.Command, client api.Submitter, zipBytes []byte, m *manifest.Manifest) error {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "Submitting %s@%s ...\n", m.BlockID, m.Version)
-	r, err := client.SubmitVersion(context.Background(), zipBytes)
+	r, err := client.SubmitVersion(context.Background(), zipBytes, m.BlockID, m.Version)
 	if err != nil {
 		return err
 	}

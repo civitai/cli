@@ -19,10 +19,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -52,9 +55,12 @@ func (s StaticToken) Token(context.Context) (string, error) { return string(s), 
 // Refresh always fails: a personal key has no refresh path.
 func (s StaticToken) Refresh(context.Context) (string, error) { return "", ErrNoRefresh }
 
-// Submitter submits a packaged bundle and returns the server's response.
+// Submitter submits a packaged bundle and returns the server's response. The
+// slug + version identify the submission so that, if the upload's response is
+// lost to a timeout, the submit path can poll for a landed submission and
+// recover rather than reporting a false failure (see SubmitVersion).
 type Submitter interface {
-	SubmitVersion(ctx context.Context, zipBytes []byte) (*SubmitResult, error)
+	SubmitVersion(ctx context.Context, zipBytes []byte, slug, version string) (*SubmitResult, error)
 }
 
 // Verifier verifies a token and returns the authenticated identity.
@@ -133,6 +139,14 @@ type Client struct {
 	Tokens     TokenSource
 	SubmitPath string // route for submit-version; CIVITAI_SUBMIT_PATH overrides
 	HTTP       *http.Client
+	// SubmitTimeout overrides the submit-upload timeout when non-zero; it
+	// defaults to submitTimeout. Used by tests to exercise the timeout-recovery
+	// path without a real slow upload.
+	SubmitTimeout time.Duration
+	// SubmitPollDelay overrides the inter-attempt delay of the post-timeout
+	// recovery poll when set (>= 0 with the zero value meaning "use the
+	// default"); tests set it to 0 to avoid sleeping.
+	SubmitPollDelay *time.Duration
 }
 
 // New builds a Client with sane defaults from a static token (personal API key
@@ -218,8 +232,12 @@ func (c *Client) submitClient() *http.Client {
 	if base == nil {
 		base = &http.Client{}
 	}
+	timeout := submitTimeout
+	if c.SubmitTimeout > 0 {
+		timeout = c.SubmitTimeout
+	}
 	return &http.Client{
-		Timeout:       submitTimeout,
+		Timeout:       timeout,
 		Transport:     base.Transport,
 		CheckRedirect: base.CheckRedirect,
 		Jar:           base.Jar,
@@ -228,7 +246,18 @@ func (c *Client) submitClient() *http.Client {
 
 // SubmitVersion uploads the bundle to the token-authenticated submit route,
 // refreshing the OAuth access token transparently if needed.
-func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte) (*SubmitResult, error) {
+//
+// The upload can complete server-side while its HTTP response is slow or never
+// arrives within the timeout — observed in the wild as a false "context
+// deadline exceeded" failure on a submit that had actually landed, leaving the
+// user to retry into "you already have a pending submission". So when (and only
+// when) the POST fails with a timeout / deadline-exceeded / no-response error
+// (as opposed to a clean HTTP error status), this polls
+// GET /api/v1/blocks/submissions for a submission matching slug+version and, if
+// one is now present, reports it as a success — surfacing the pubreq id. If no
+// matching submission is found, it returns a clear error telling the user to
+// check `civitai app status` before resubmitting.
+func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, version string) (*SubmitResult, error) {
 	body, err := json.Marshal(submitBody{
 		BundleBase64: base64.StdEncoding.EncodeToString(zipBytes),
 	})
@@ -245,6 +274,9 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte) (*SubmitRes
 	}
 	status, raw, err := c.authedDoWith(ctx, c.submitClient(), build)
 	if err != nil {
+		if isTimeoutErr(err) {
+			return c.recoverTimedOutSubmit(ctx, slug, version, err)
+		}
 		return nil, err
 	}
 	if status != http.StatusOK {
@@ -255,6 +287,96 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte) (*SubmitRes
 		return nil, fmt.Errorf("unexpected response (status %d): %s", status, string(raw))
 	}
 	return &out, nil
+}
+
+// isTimeoutErr reports whether err is a request timeout / deadline-exceeded /
+// no-response condition (as opposed to a clean HTTP error response). It matches
+// context.DeadlineExceeded, os timeouts, and any net.Error whose Timeout() is
+// true (which is what http.Client.Timeout surfaces when awaiting headers).
+func isTimeoutErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) {
+		return netErr.Timeout()
+	}
+	return false
+}
+
+// submitPollAttempts / submitPollDelay bound the post-timeout recovery poll:
+// the submission may take a moment to become visible after the upload lands, so
+// poll a few times with a short delay rather than just once.
+const (
+	submitPollAttempts = 3
+	submitPollDelay    = 2 * time.Second
+)
+
+// recoverTimedOutSubmit is called only after a submit POST timed out. It polls
+// the submissions list for a row matching slug+version; if found it reports a
+// success (the submit landed), otherwise a clear error citing the original
+// timeout and pointing at `civitai app status`.
+func (c *Client) recoverTimedOutSubmit(ctx context.Context, slug, version string, cause error) (*SubmitResult, error) {
+	delay := submitPollDelay
+	if c.SubmitPollDelay != nil {
+		delay = *c.SubmitPollDelay
+	}
+	for attempt := 0; attempt < submitPollAttempts; attempt++ {
+		if attempt > 0 && delay > 0 {
+			t := time.NewTimer(delay)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return nil, timedOutSubmitError(slug, cause)
+			case <-t.C:
+			}
+		}
+		subs, err := c.ListSubmissions(ctx, slug)
+		if err != nil {
+			// The poll itself failed; keep trying within the bound.
+			continue
+		}
+		if sub := latestMatchingSubmission(subs, slug, version); sub != nil {
+			return &SubmitResult{
+				PublishRequestID: sub.ID,
+				Slug:             sub.BlockID,
+				Version:          sub.Version,
+				Status:           sub.Status,
+			}, nil
+		}
+	}
+	return nil, timedOutSubmitError(slug, cause)
+}
+
+// latestMatchingSubmission returns the first submission matching slug+version in
+// a non-terminal (pending/submitted) state, falling back to any slug+version
+// match. Submissions are returned newest-first, so the first match is latest.
+func latestMatchingSubmission(subs []Submission, slug, version string) *Submission {
+	var anyMatch *Submission
+	for i := range subs {
+		s := &subs[i]
+		if s.BlockID != slug || s.Version != version {
+			continue
+		}
+		switch strings.ToLower(s.Status) {
+		case "pending", "submitted":
+			return s
+		}
+		if anyMatch == nil {
+			anyMatch = s
+		}
+	}
+	return anyMatch
+}
+
+// timedOutSubmitError builds the actionable error returned when a submit timed
+// out and no matching submission could be confirmed afterwards.
+func timedOutSubmitError(slug string, cause error) error {
+	return fmt.Errorf("submit timed out and the upload may not have completed (%v) — "+
+		"run `civitai app status %s` to check whether it landed before resubmitting", cause, slug)
 }
 
 // WhoAmI verifies the token against /api/v1/me, refreshing the OAuth access
