@@ -49,6 +49,14 @@ func TestAppCreateDefaultsToPageMoney(t *testing.T) {
 	if !strings.Contains(stdout, "dev:harness") {
 		t.Errorf("create should print dev:harness next step:\n%s", stdout)
 	}
+	// The mock-vs-live clarification must be visible at the moment the user
+	// reads the next steps (a placeholder Generate result is the mock, not a bug).
+	if !strings.Contains(stdout, "MOCK") {
+		t.Errorf("create should flag dev:harness as a MOCK host:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "dev:live") {
+		t.Errorf("create should point at dev:live for a real generation:\n%s", stdout)
+	}
 	if !strings.Contains(stdout, "civitai app validate") {
 		t.Errorf("create should print the validate next step:\n%s", stdout)
 	}

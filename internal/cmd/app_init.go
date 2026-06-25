@@ -172,8 +172,12 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	switch {
 	case tmpl.NeedsHarness():
 		// SDK/page-money apps render blank under plain `dev` (no host) —
-		// the dev loop needs the mock host via `dev:harness`.
+		// the dev loop needs the mock host via `dev:harness`. Spell out the
+		// mock-vs-live distinction here so a "Generate" returning a placeholder
+		// image isn't mistaken for a broken real generation.
 		fmt.Fprintf(out, "  cd %s && npm install && npm run dev:harness\n", destDir)
+		fmt.Fprintln(out, "    dev:harness mounts a MOCK host — synthetic results, no real Buzz/compute.")
+		fmt.Fprintln(out, "    For a real generation that spends Buzz: npm run dev:live  (needs a full-scope personal API key — see README).")
 	case tmpl == scaffold.PageVite:
 		fmt.Fprintf(out, "  cd %s && npm install && npm run dev\n", destDir)
 	default:
