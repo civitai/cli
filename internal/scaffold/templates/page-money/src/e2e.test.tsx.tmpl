@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -9,18 +9,25 @@ import { App } from './App.js';
 // End-to-end proof of the money wiring: this drives the FULL page money path
 // through the REAL SDK transport (NO hook mocking) against the published mock
 // host. It is the regression guard that estimate -> consent -> submit -> poll
-// stays wired:
+// stays wired. The UI is the @civitai/blocks-react/ui pack, so the Generate
+// click first opens a confirm Modal; confirming inside it proceeds:
 //
 //   render <App/> (consent WITHHELD)
 //     -> type a prompt
-//     -> click Generate
+//     -> click Generate -> confirm Modal opens
+//     -> click Generate INSIDE the modal
 //     -> App asks the host for consent (REQUEST_CONSENT)
 //     -> host grants + pushes a TOKEN_REFRESH carrying ai:write:budgeted
 //     -> App auto-resumes: estimate -> submit -> poll
-//     -> succeeded snapshot -> result image + spent-cost caption
+//     -> succeeded snapshot -> result image + spent-cost success Alert
 //
 // The mock host's internal timers all fire on setTimeout(0), so real timers +
 // findBy/waitFor resolve promptly — no fake-timer juggling required.
+
+async function confirmInModal(user: ReturnType<typeof userEvent.setup>) {
+  const dialog = await screen.findByRole('dialog', { name: /confirm generation/i });
+  await user.click(within(dialog).getByRole('button', { name: /generate/i }));
+}
 
 describe('App money path (e2e)', () => {
   let uninstall: (() => void) | undefined;
@@ -47,27 +54,30 @@ describe('App money path (e2e)', () => {
     const generate = await screen.findByTestId('pm-generate');
 
     // Enter a prompt (Generate is disabled while empty).
-    await user.type(screen.getByLabelText(/generation prompt/i), 'a serene mountain lake');
+    await user.type(screen.getByLabelText(/prompt/i), 'a serene mountain lake');
     expect(generate).toBeEnabled();
 
-    // Click Generate. Scope is withheld -> App requests consent first.
+    // Click Generate -> confirm Modal -> confirm. Scope is withheld so the App
+    // requests consent first, then auto-resumes.
     await user.click(generate);
+    await confirmInModal(user);
 
     // The host grants consent + token-refreshes; the App auto-resumes through
     // estimate -> submit -> poll -> succeeded. Assert the terminal success UI.
     const result = await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
     expect(result).toBeInTheDocument();
 
-    // The succeeded snapshot's cost is rendered in the caption.
+    // The succeeded snapshot's cost is rendered in the success Alert.
     await waitFor(() => {
       expect(screen.getByText(/spent/i)).toHaveTextContent('8');
     });
 
-    // No error surfaced anywhere in the happy path.
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    // No ERROR alert surfaced on the happy path (the info + success Alerts do
+    // carry role="alert"; assert the failure copy is absent instead).
+    expect(screen.queryByText(/generation failed/i)).not.toBeInTheDocument();
   });
 
-  it('insufficient Buzz on submit -> Top-Up CTA, no result image', async () => {
+  it('insufficient Buzz on submit -> warning Alert, no result image', async () => {
     const user = userEvent.setup();
     uninstall = createMockHost({
       viewer: { id: 2, username: 'dev', status: 'active' },
@@ -78,12 +88,13 @@ describe('App money path (e2e)', () => {
     render(<App />);
 
     const generate = await screen.findByTestId('pm-generate');
-    await user.type(screen.getByLabelText(/generation prompt/i), 'a cat');
+    await user.type(screen.getByLabelText(/prompt/i), 'a cat');
     await user.click(generate);
+    await confirmInModal(user);
 
     // The failed snapshot carries insufficient-Buzz text -> the App swaps to
-    // the Top-Up CTA and renders no image.
-    expect(await screen.findByTestId('pm-insufficient')).toBeInTheDocument();
+    // the Top-Up warning Alert and renders no image.
+    expect(await screen.findByText(/not enough buzz/i)).toBeInTheDocument();
     expect(screen.queryByAltText(/generated result/i)).not.toBeInTheDocument();
   });
 });

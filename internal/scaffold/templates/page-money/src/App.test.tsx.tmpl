@@ -40,7 +40,7 @@ describe('App (component)', () => {
     render(<App />);
 
     expect(await screen.findByTestId('pm-generate')).toBeInTheDocument();
-    expect(screen.getByLabelText(/generation prompt/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/prompt/i)).toBeInTheDocument();
     expect(screen.queryByTestId('pm-signin')).not.toBeInTheDocument();
   });
 });
