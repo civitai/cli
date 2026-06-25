@@ -119,6 +119,16 @@ func TestRenderPageMoney(t *testing.T) {
 	// The display name should land in the manifest + App heading.
 	mustContain(t, manifest, `"name": "Money Block"`)
 	mustContain(t, app, "Money Block")
+
+	// README docs the live-mode Buzz-balance recipe (#30) — the only working path
+	// is the tRPC procedure with a bearer key (no public REST buzz endpoint).
+	readme := readFile(t, filepath.Join(dest, "README.md"))
+	mustContain(t, readme, "buzz.getBuzzAccount")
+	mustContain(t, readme, "no public REST")
+	// README docs the submission lifecycle + the withdraw escape hatch (#29).
+	mustContain(t, readme, "Submission lifecycle")
+	mustContain(t, readme, "civitai app withdraw")
+	mustContain(t, readme, "pending")
 }
 
 func TestPageMoneyNeedsHarness(t *testing.T) {

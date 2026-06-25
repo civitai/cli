@@ -78,6 +78,15 @@ type StatusReader interface {
 	GetSubmission(ctx context.Context, id, blockID string) (*Submission, error)
 }
 
+// Withdrawer withdraws the caller's own pending App-Block publish request so a
+// new bundle can be submitted for the same slug.
+type Withdrawer interface {
+	// WithdrawRequest withdraws the publish request with the given id. It is
+	// idempotent: a 200 (incl. already-withdrawn) is success; a 409 means the
+	// request is not in a withdrawable (pending) state.
+	WithdrawRequest(ctx context.Context, publishRequestID string) error
+}
+
 // Submission mirrors the shaped row from GET /api/v1/blocks/submissions
 // (civitai/civitai src/pages/api/v1/blocks/submissions.ts -> shapeRow). Field
 // names + JSON casing track the server EXACTLY.
@@ -132,6 +141,13 @@ const submitTimeout = 120 * time.Second
 // SubmissionsPath is the token-authenticated, self-scoped submission-status
 // route (GET; civitai/civitai src/pages/api/v1/blocks/submissions.ts).
 const SubmissionsPath = "/api/v1/blocks/submissions"
+
+// WithdrawPath is the token-authenticated, self-scoped withdraw route
+// (POST {"publishRequestId": ...}; civitai/civitai
+// src/pages/api/v1/blocks/withdraw.ts). 200 on success (incl. an idempotent
+// already-withdrawn), 404 not-found-or-not-yours, 409 not in a withdrawable
+// (pending) state.
+const WithdrawPath = "/api/v1/blocks/withdraw"
 
 // Client is the default HTTP implementation.
 type Client struct {
@@ -475,6 +491,59 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 		return nil, fmt.Errorf("no such submission")
 	}
 	return &list.Submissions[0], nil
+}
+
+// withdrawBody is the POST /api/v1/blocks/withdraw request body.
+type withdrawBody struct {
+	PublishRequestID string `json:"publishRequestId"`
+}
+
+// WithdrawRequest withdraws the caller's own pending publish request. A 200 is
+// success (the server is idempotent: already-withdrawn also returns 200). A
+// non-2xx is mapped to an actionable error by withdrawError.
+func (c *Client) WithdrawRequest(ctx context.Context, publishRequestID string) error {
+	body, err := json.Marshal(withdrawBody{PublishRequestID: publishRequestID})
+	if err != nil {
+		return err
+	}
+	build := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+WithdrawPath, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	}
+	status, raw, err := c.authedDo(ctx, build)
+	if err != nil {
+		return err
+	}
+	if status != http.StatusOK {
+		return withdrawError(status, raw)
+	}
+	return nil
+}
+
+// withdrawError maps a non-2xx withdraw response to a clear, actionable CLI
+// error. The withdraw route returns: 404 not-found-or-not-yours, 409
+// not-in-a-withdrawable-(pending)-state (the server's {"error": ...} carries the
+// reason), 401/403 auth, 429 rate-limited.
+func withdrawError(status int, raw []byte) error {
+	msg := serverMessage(raw)
+	switch status {
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Errorf("not authorized (check your API key / moderator access) (%d): %s", status, msg)
+	case http.StatusNotFound:
+		return fmt.Errorf("publish request not found (or not yours) (404): %s", msg)
+	case http.StatusConflict:
+		// The request is not in a withdrawable (pending) state; surface the
+		// server's own reason verbatim.
+		return fmt.Errorf("cannot withdraw (409): %s", msg)
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
+	default:
+		return fmt.Errorf("server returned %d: %s", status, msg)
+	}
 }
 
 // submissionsError maps a non-2xx submissions response to a clear, actionable
