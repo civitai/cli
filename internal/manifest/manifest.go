@@ -17,11 +17,30 @@ const Filename = "block.manifest.json"
 // reads directly. Full validation is done against the JSON Schema, not this
 // struct, so unknown fields are intentionally ignored here.
 type Manifest struct {
-	BlockID      string `json:"blockId"`
-	Version      string `json:"version"`
-	Name         string `json:"name"`
-	BuildCommand string `json:"buildCommand"`
-	OutputDir    string `json:"outputDir"`
+	BlockID      string   `json:"blockId"`
+	Version      string   `json:"version"`
+	Name         string   `json:"name"`
+	BuildCommand string   `json:"buildCommand"`
+	OutputDir    string   `json:"outputDir"`
+	Scopes       []string `json:"scopes"`
+}
+
+// LoadScopes reads the `scopes` array from the manifest in dir, degrading
+// gracefully: a missing manifest, an unreadable file, or malformed JSON all
+// return nil (no scopes) with no error. This is used by `civitai app dev-token`
+// to send the dev's LOCAL manifest scopes for the server's no-row mint path —
+// the slug arg still identifies a registered app even when the manifest is
+// absent, so a read failure must never block minting.
+func LoadScopes(dir string) []string {
+	raw, err := os.ReadFile(Path(dir))
+	if err != nil {
+		return nil
+	}
+	var m Manifest
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return nil
+	}
+	return m.Scopes
 }
 
 // Path returns the manifest path for a project directory.

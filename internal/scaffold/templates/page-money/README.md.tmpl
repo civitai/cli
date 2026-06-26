@@ -71,11 +71,12 @@ target with `VITE_LIVE_HOST_ORIGIN` (default `https://civitai.com`).
 
 **Live mode setup.**
 
-> ⚠️ **`dev:live` works on a PENDING (un-approved) app.** The dev-token mint
-> (`POST /api/v1/blocks/dev-token`) accepts a **pending** slug — right after a
-> successful `civitai app submit` (status `pending`) it returns `200` with
-> `appId: pending-pubreq_…`, and `dev:live` mounts the live host against the
-> pending app. You do **not** need to wait for approval + deploy to dev:live-test.
+> ⚠️ **`dev:live` works WITHOUT submitting first.** The dev-token mint
+> (`POST /api/v1/blocks/dev-token`) accepts a brand-new slug with **no app row
+> yet** — it mints from the `scopes` in your local `block.manifest.json` (clamped
+> server-side), so `create → dev-token → dev:live` works directly. (A pending
+> slug after `civitai app submit` is accepted too.) You do **not** need to submit
+> or wait for approval to dev:live-test — submit when you're ready to publish.
 > For **real generation** you must mint with a **full-scope personal API key**; an
 > OAuth (`civitai login`) token mints read-only (`user:read:self`) and **cannot
 > spend**. Use `civitai buzz` / `civitai whoami` to confirm your credential can
@@ -96,7 +97,7 @@ To use it:
      curl -s -X POST https://civitai.com/api/v1/blocks/dev-token \
        -H "Authorization: Bearer $CIVITAI_TOKEN" \
        -H 'Content-Type: application/json' \
-       -d '{"slug":"{{ .Slug }}"}'   # → { token, expiresAt, scopes, buzzBudget }
+       -d '{"slug":"{{ .Slug }}","scopes":["ai:write:budgeted"]}'   # → { token, expiresAt, scopes, buzzBudget }
      ```
    - **`civitai login` (the OAuth device flow) mints a read/identity-only dev
      token for this app.** The `civitai-cli` client carries App Blocks submit but
@@ -212,9 +213,10 @@ After `civitai app submit`, your publish request is `pending` review — a
 Civitai-side **moderator** approves (or rejects) it. **This is not self-service
 today**; you cannot approve your own app. Track it with `civitai app status`.
 
-- **`dev:live` works on a pending (un-approved) app** — the dev-token mint accepts
-  a pending slug (returns `appId: pending-pubreq_…`), so you can real-spend-test
-  before approval. Real generation needs a **full-scope personal API key** (an
+- **`dev:live` works before you submit** — the dev-token mint accepts a brand-new
+  slug with no app row yet (minting from your local manifest scopes) as well as a
+  pending slug, so you can real-spend-test before submit/approval. Real generation
+  needs a **full-scope personal API key** (an
   OAuth `civitai login` token mints read-only and can't spend); confirm with
   `civitai buzz` / `civitai whoami`. See the live-mode prerequisite above.
 - Need to change the bundle while a request is still `pending`? **Withdraw your

@@ -201,10 +201,13 @@ const SubmissionsPath = "/api/v1/blocks/submissions"
 const WithdrawPath = "/api/v1/blocks/withdraw"
 
 // DevTokenPath is the moderator-gated route that mints a short-lived dev block
-// token for `npm run dev:live` (POST {"slug": ...}; civitai/civitai
-// src/pages/api/v1/blocks/dev-token.ts). 200 { token, ... } on success; a
-// PENDING (un-approved) slug is accepted (200 since #2777). Error bodies are
-// {message}: 404 not-found/not-yours, 403 not-mod/insufficient-scope, 429
+// token for `npm run dev:live` (POST {"slug": ..., "scopes"?: [...]};
+// civitai/civitai src/pages/api/v1/blocks/dev-token.ts). 200 { token, ... } on
+// success; a PENDING (un-approved) slug is accepted, and a slug with NO app row
+// yet mints from the request-body `scopes` (the dev's LOCAL manifest scopes,
+// clamped server-side) — so `create → dev-token → dev:live` works with no
+// submit step. Error bodies are {message}: 404 slug registered to a different
+// account / genuinely not found, 403 not-mod/insufficient-scope, 429
 // rate-limited, 503 flag-off. The minted token's CAPABILITIES depend on the
 // bearer: a full-scope personal API key mints a spend-capable token; an OAuth
 // (`civitai login`) credential mints a read-only one.
@@ -628,20 +631,29 @@ func (c *Client) WithdrawRequest(ctx context.Context, publishRequestID string) e
 // DevTokenMinter mints a short-lived dev block token for `npm run dev:live`.
 type DevTokenMinter interface {
 	// MintDevToken mints a dev block token for the given app slug and returns
-	// the JWT. A non-2xx is mapped to an actionable error by devTokenError.
-	MintDevToken(ctx context.Context, slug string) (string, error)
+	// the JWT. scopes carries the caller's LOCAL block.manifest.json scopes for
+	// the server's no-row mint path (clamped server-side); pass nil/empty when
+	// no manifest is available. A non-2xx is mapped by devTokenError.
+	MintDevToken(ctx context.Context, slug string, scopes []string) (string, error)
 }
 
-// devTokenBody is the POST /api/v1/blocks/dev-token request body.
+// devTokenBody is the POST /api/v1/blocks/dev-token request body. Scopes is the
+// caller's LOCAL manifest scopes; it is omitted (not sent) when empty so a
+// registered app's server-side scopes still govern.
 type devTokenBody struct {
-	Slug string `json:"slug"`
+	Slug   string   `json:"slug"`
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // MintDevToken mints a short-lived dev block token for the given app slug,
-// returning the JWT from the response's .token field. The OAuth access token is
-// refreshed transparently on a 401. A non-2xx is mapped by devTokenError.
-func (c *Client) MintDevToken(ctx context.Context, slug string) (string, error) {
-	body, err := json.Marshal(devTokenBody{Slug: slug})
+// returning the JWT from the response's .token field. scopes carries the
+// caller's local manifest scopes for the server's no-row (no app registered
+// yet) mint path; they are clamped server-side and omitted from the body when
+// empty/nil (registered-app and read-only paths are unaffected). The OAuth
+// access token is refreshed transparently on a 401. A non-2xx is mapped by
+// devTokenError.
+func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string) (string, error) {
+	body, err := json.Marshal(devTokenBody{Slug: slug, Scopes: scopes})
 	if err != nil {
 		return "", err
 	}
@@ -681,7 +693,7 @@ func devTokenError(status int, raw []byte) error {
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusNotFound:
-		return fmt.Errorf("app not found (404): %s — run `civitai app submit` first to register it (the dev token is minted against your submitted app), then retry. (check status: `civitai app status`)", msg)
+		return fmt.Errorf("app not found (404): %s — check the slug. (dev-token mints from your local block.manifest.json; a 404 means the slug is registered to a different account.)", msg)
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
 	case http.StatusForbidden:

@@ -137,18 +137,22 @@ func TestRenderPageMoney(t *testing.T) {
 	// user HOW to get one: the CLI one-liner with the real slug, a copy handler,
 	// the VITE_LIVE_BLOCK_TOKEN paste instruction, and the personal-key note.
 	mainTSX := readFile(t, filepath.Join(dest, "src", "main.tsx"))
-	// The required order is submit-first (the token is minted against the
-	// submitted/pending app) — the screen must surface `civitai app submit`
-	// as the prerequisite step, not just the dev-token mint.
-	mustContain(t, mainTSX, "civitai app submit")
+	// dev-token now mints from the LOCAL manifest (server no-row path), so the
+	// dev:live screen no longer requires submit-first: step 1 is the dev-token
+	// mint with the real slug, and the screen says you don't need to submit
+	// first. (`civitai app submit` must NOT be a prerequisite step here.)
 	mustContain(t, mainTSX, "civitai app dev-token money-block")
+	mustNotContain(t, mainTSX, "civitai app submit")
+	mustContain(t, mainTSX, "don&apos;t need to submit the app first")
 	mustContain(t, mainTSX, "clipboard?.writeText")
 	mustContain(t, mainTSX, "VITE_LIVE_BLOCK_TOKEN")
 	mustContain(t, mainTSX, ".env.development.local")
 	mustContain(t, mainTSX, "full-scope personal API key")
 	mustContain(t, mainTSX, "civitai whoami")
-	// Curl fallback for users without the CLI, carrying the real slug.
+	// Curl fallback for users without the CLI, carrying the real slug AND the
+	// local manifest scopes (so the no-row mint path works via curl too).
 	mustContain(t, mainTSX, `"slug":"money-block"`)
+	mustContain(t, mainTSX, `"scopes":["ai:write:budgeted"]`)
 	mustContain(t, mainTSX, "/api/v1/blocks/dev-token")
 
 	// README docs the live-mode Buzz-balance recipe (#30) — the only working path
@@ -281,6 +285,13 @@ func mustContain(t *testing.T, haystack, needle string) {
 	t.Helper()
 	if !contains(haystack, needle) {
 		t.Errorf("expected to contain %q\n--- content ---\n%s", needle, haystack)
+	}
+}
+
+func mustNotContain(t *testing.T, haystack, needle string) {
+	t.Helper()
+	if contains(haystack, needle) {
+		t.Errorf("expected NOT to contain %q\n--- content ---\n%s", needle, haystack)
 	}
 }
 

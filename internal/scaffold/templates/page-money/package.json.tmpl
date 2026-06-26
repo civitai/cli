@@ -6,7 +6,7 @@
   "description": "Civitai App Block (page money path) — estimate -> consent -> submit -> poll -> real Buzz spend, wired to the published App SDK.",
   "license": "MIT",
   "scripts": {
-    "postinstall": "node -e \"console.log('\\n✓ Installed. Next: npm run dev:harness   (preview — mock host, no Buzz)\\n  When ready: civitai app submit   ·   real generation: npm run dev:live (see README)')\"",
+    "postinstall": "node -e \"console.log('\\n✓ Installed. Next: npm run dev:harness   (preview — mock host, no Buzz)\\n  real generation: civitai app dev-token <slug> -> npm run dev:live (no submit needed; see README)   ·   publish: civitai app submit')\"",
     "dev": "vite",
     "dev:harness": "VITE_DEV_HARNESS=true VITE_HARNESS_MODE=mock vite --host localhost --port 5186",
     "dev:live": "VITE_DEV_HARNESS=true VITE_HARNESS_MODE=live vite --host localhost --port 5186",

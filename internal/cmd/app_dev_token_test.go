@@ -5,6 +5,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -12,6 +15,8 @@ import (
 // devTokenRec records the request the CLI sent to the dev-token endpoint.
 type devTokenRec struct {
 	auth, method, path, contentType, slug string
+	scopes                                []string
+	hasScopesKey                          bool
 }
 
 // devTokenServer stands up an httptest server emulating
@@ -27,10 +32,15 @@ func devTokenServer(t *testing.T, body any, status int, rec *devTokenRec) *httpt
 			rec.contentType = r.Header.Get("Content-Type")
 			raw, _ := io.ReadAll(r.Body)
 			var parsed struct {
-				Slug string `json:"slug"`
+				Slug   string   `json:"slug"`
+				Scopes []string `json:"scopes"`
 			}
 			_ = json.Unmarshal(raw, &parsed)
 			rec.slug = parsed.Slug
+			rec.scopes = parsed.Scopes
+			var generic map[string]any
+			_ = json.Unmarshal(raw, &generic)
+			_, rec.hasScopesKey = generic["scopes"]
 		}
 		if status != 0 && status != http.StatusOK {
 			w.WriteHeader(status)
@@ -141,7 +151,7 @@ func TestAppDevTokenErrorMapping(t *testing.T) {
 		body   map[string]any
 		want   string
 	}{
-		{http.StatusNotFound, map[string]any{"message": "no such app"}, "civitai app submit"},
+		{http.StatusNotFound, map[string]any{"message": "no such app"}, "registered to a different account"},
 		{http.StatusForbidden, map[string]any{"message": "mods only"}, "not authorized"},
 		{http.StatusUnauthorized, map[string]any{"message": "bad key"}, "not logged in"},
 		{http.StatusTooManyRequests, map[string]any{"message": "slow down"}, "rate limited"},
@@ -179,6 +189,96 @@ func TestAppDevTokenForbiddenNamesPersonalKey(t *testing.T) {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("403 error %q should mention %q", err.Error(), want)
 		}
+	}
+}
+
+// writeDevTokenManifest writes a block.manifest.json with the given raw body
+// into dir.
+func writeDevTokenManifest(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "block.manifest.json"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestAppDevTokenSendsManifestScopes: a block.manifest.json with `scopes` in the
+// current working directory is read and its scopes are POSTed in the body — this
+// is the no-row local-manifest mint path.
+func TestAppDevTokenSendsManifestScopes(t *testing.T) {
+	var rec devTokenRec
+	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writeDevTokenManifest(t, dir, `{
+  "blockId": "my-block",
+  "version": "0.1.0",
+  "name": "My Block",
+  "scopes": ["ai:write:budgeted", "identity:read"]
+}`)
+	chdir(t, dir)
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	if _, _, err := run(t, "app", "dev-token", "my-block"); err != nil {
+		t.Fatalf("app dev-token: %v", err)
+	}
+	if rec.slug != "my-block" {
+		t.Errorf("slug = %q, want my-block", rec.slug)
+	}
+	want := []string{"ai:write:budgeted", "identity:read"}
+	if !reflect.DeepEqual(rec.scopes, want) {
+		t.Errorf("scopes = %v, want %v", rec.scopes, want)
+	}
+}
+
+// TestAppDevTokenNoManifestSendsNoScopes: with no manifest in cwd the body has
+// no `scopes` key (just the slug) — the slug still identifies a registered app.
+func TestAppDevTokenNoManifestSendsNoScopes(t *testing.T) {
+	var rec devTokenRec
+	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	chdir(t, t.TempDir()) // empty dir, no manifest
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	if _, _, err := run(t, "app", "dev-token", "my-block"); err != nil {
+		t.Fatalf("app dev-token: %v", err)
+	}
+	if rec.slug != "my-block" {
+		t.Errorf("slug = %q, want my-block", rec.slug)
+	}
+	if rec.hasScopesKey {
+		t.Errorf("body should carry NO scopes key without a manifest, got %v", rec.scopes)
+	}
+}
+
+// TestAppDevTokenMalformedManifestDegrades: a malformed manifest must not crash
+// or fail the command — it degrades to sending no scopes (still mints for a
+// registered app / read-only token).
+func TestAppDevTokenMalformedManifestDegrades(t *testing.T) {
+	var rec devTokenRec
+	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writeDevTokenManifest(t, dir, `{ this is not valid json `)
+	chdir(t, dir)
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	if _, _, err := run(t, "app", "dev-token", "my-block"); err != nil {
+		t.Fatalf("malformed manifest should degrade, not fail: %v", err)
+	}
+	if rec.hasScopesKey {
+		t.Errorf("malformed manifest should send NO scopes, got %v", rec.scopes)
 	}
 }
 
