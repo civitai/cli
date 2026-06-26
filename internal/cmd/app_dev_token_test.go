@@ -21,10 +21,16 @@ type devTokenRec struct {
 
 // devTokenServer stands up an httptest server emulating
 // POST /api/v1/blocks/dev-token, returning the canned body+status and recording
-// the request (incl. the decoded slug).
+// the request (incl. the decoded slug). It also answers GET /api/v1/me with a
+// minimal non-spendable identity — the dev-token command calls WhoAmI in the
+// read-only warning path, and that call must neither error nor pollute `rec`.
 func devTokenServer(t *testing.T, body any, status int, rec *devTokenRec) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/me") {
+			_ = json.NewEncoder(w).Encode(map[string]any{"username": "u", "id": 1, "tokenScope": 0})
+			return
+		}
 		if rec != nil {
 			rec.auth = r.Header.Get("Authorization")
 			rec.method = r.Method

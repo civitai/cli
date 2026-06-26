@@ -50,6 +50,40 @@ func tokenCanSpend(jwt string) bool {
 	return false
 }
 
+// readOnlyTokenWarning builds the stderr warning shown when a minted dev token
+// can't spend. It names the ACTUAL cause instead of presuming OAuth:
+//   - credential CAN spend (per whoami) → the request never asked for the
+//     scope; the fix is the manifest, not the credential.
+//   - credential can't spend + OAuth login → OAuth grants no Buzz-spend.
+//   - credential can't spend + personal key → that key lacks AI Services.
+//
+// It's a pure function (canSpend from whoami, authKind from config) so the
+// branch logic is unit-testable without a network round-trip.
+func readOnlyTokenWarning(canSpend bool, authKind, slug string) string {
+	const header = "\n⚠  This token is READ-ONLY (no `ai:write:budgeted` scope) — " +
+		"`npm run dev:live` will NOT spend Buzz or generate; Generate dead-ends silently."
+	remint := "     civitai app dev-token " + slug + " --env >> .env.development.local   # re-mint, then restart dev:live"
+
+	switch {
+	case canSpend:
+		// The stored credential CAN spend, so the token is read-only because the
+		// mint request didn't carry the scope — i.e. the manifest omits it.
+		return header + "\n" +
+			"   Cause: your credential CAN spend, but `ai:write:budgeted` wasn't requested — add it to `scopes` in block.manifest.json, then re-mint:\n" +
+			remint
+	case authKind == config.AuthKindOAuth:
+		return header + "\n" +
+			"   Cause: you're signed in with an OAuth login (`civitai login`), which can't spend Buzz. Use a full-scope personal API key:\n" +
+			"     civitai login --token <key>      # create one at https://civitai.com/user/account\n" +
+			remint
+	default:
+		return header + "\n" +
+			"   Cause: your stored personal API key lacks the AI Services (Buzz-spend) scope. Create a full-scope key, then re-store it:\n" +
+			"     civitai login --token <key>      # https://civitai.com/user/account\n" +
+			remint
+	}
+}
+
 func newAppDevTokenCmd() *cobra.Command {
 	var envOut bool
 
@@ -124,17 +158,19 @@ never commit it; re-mint when it expires.`,
 				"Paste into VITE_LIVE_BLOCK_TOKEN in .env.development.local, then restart `npm run dev:live`. "+
 					"Short-lived (~15min); never commit it.")
 
-			// Catch the #1 dev:live dead-end EARLY: a token minted from an OAuth
-			// login carries no spend scope, so `dev:live` Generate silently does
-			// nothing (the live host can't grant consent for a scope the token
-			// lacks). Warn at the source — the mint — not after a wasted click.
+			// Catch the #1 dev:live dead-end EARLY: a read-only token makes
+			// `dev:live` Generate silently do nothing (the live host can't grant
+			// consent for a scope the token lacks). Warn at the source — the
+			// mint — not after a wasted click, and name the ACTUAL cause: a
+			// read-only token can come from an OAuth login, a personal key
+			// lacking AI Services, OR a manifest that never asked for the spend
+			// scope. Disambiguate with whoami (the credential's real capability).
 			if !tokenCanSpend(token) {
-				fmt.Fprintln(errOut,
-					"\n⚠  This token is READ-ONLY — it has no `ai:write:budgeted` scope, so "+
-						"`npm run dev:live` will NOT spend Buzz or generate (Generate dead-ends silently).\n"+
-						"   You're authenticated with an OAuth login. Real generation needs a full-scope personal API key:\n"+
-						"     civitai login --token <key>      # create one at https://civitai.com/user/account\n"+
-						"     civitai app dev-token "+slug+" --env >> .env.development.local   # re-mint, then restart dev:live")
+				canSpend := false
+				if id, whoErr := client.WhoAmI(context.Background()); whoErr == nil {
+					canSpend = id.CanSpendBuzz()
+				}
+				fmt.Fprintln(errOut, readOnlyTokenWarning(canSpend, cfg.AuthKind(), slug))
 			}
 			return nil
 		},
