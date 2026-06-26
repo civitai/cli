@@ -87,7 +87,7 @@ export function resolveLiveConfig(): LiveConfig {
     return {
       ready: false,
       reason:
-        'No VITE_LIVE_BLOCK_TOKEN set, so dev:live has nothing to spend with. Follow the steps below to authenticate and mint a short-lived dev token (never commit it).',
+        'No VITE_LIVE_BLOCK_TOKEN set — follow the steps below to mint one (never commit it).',
     };
   }
   return { ready: true, token, backendBaseUrl };
