@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,6 +13,42 @@ import (
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/spf13/cobra"
 )
+
+// budgetedScope is the spend scope a dev token must carry for `npm run dev:live`
+// to actually generate (spend Buzz). The server strips it from an OAuth-minted
+// token (the civitai-cli OAuth client lacks AI Services), so an OAuth login
+// yields a read-only token whose Generate button silently dead-ends in the live
+// harness. We decode the minted JWT to detect that case and warn loudly.
+const budgetedScope = "ai:write:budgeted"
+
+// tokenCanSpend reports whether the minted dev-token JWT carries the budgeted
+// spend scope. It decodes the JWT payload segment WITHOUT verifying the
+// signature (that's the server's job on every API call) — we only need the
+// claims to give an early, actionable warning. Any malformed input returns
+// false conservatively (the worst case is an extra warning, never a missed
+// spend). Mirrors the SDK live host's decodeBlockTokenPayload.
+func tokenCanSpend(jwt string) bool {
+	parts := strings.Split(jwt, ".")
+	if len(parts) < 2 {
+		return false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return false
+	}
+	var claims struct {
+		Scopes []string `json:"scopes"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return false
+	}
+	for _, s := range claims.Scopes {
+		if s == budgetedScope {
+			return true
+		}
+	}
+	return false
+}
 
 func newAppDevTokenCmd() *cobra.Command {
 	var envOut bool
@@ -81,9 +119,23 @@ never commit it; re-mint when it expires.`,
 			} else {
 				fmt.Fprintln(out, token)
 			}
-			fmt.Fprintln(cmd.ErrOrStderr(),
+			errOut := cmd.ErrOrStderr()
+			fmt.Fprintln(errOut,
 				"Paste into VITE_LIVE_BLOCK_TOKEN in .env.development.local, then restart `npm run dev:live`. "+
-					"Short-lived (~15min); never commit it. Real spend needs a full-scope personal API key (`civitai whoami`).")
+					"Short-lived (~15min); never commit it.")
+
+			// Catch the #1 dev:live dead-end EARLY: a token minted from an OAuth
+			// login carries no spend scope, so `dev:live` Generate silently does
+			// nothing (the live host can't grant consent for a scope the token
+			// lacks). Warn at the source — the mint — not after a wasted click.
+			if !tokenCanSpend(token) {
+				fmt.Fprintln(errOut,
+					"\n⚠  This token is READ-ONLY — it has no `ai:write:budgeted` scope, so "+
+						"`npm run dev:live` will NOT spend Buzz or generate (Generate dead-ends silently).\n"+
+						"   You're authenticated with an OAuth login. Real generation needs a full-scope personal API key:\n"+
+						"     civitai login --token <key>      # create one at https://civitai.com/user/account\n"+
+						"     civitai app dev-token "+slug+" --env >> .env.development.local   # re-mint, then restart dev:live")
+			}
 			return nil
 		},
 	}
