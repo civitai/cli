@@ -85,14 +85,21 @@ target with `VITE_LIVE_HOST_ORIGIN` (default `https://civitai.com`).
 
 To use it:
 
-1. Mint a short-lived dev block token via the moderator-gated endpoint
-   `POST /api/v1/blocks/dev-token` (the token is a ~15-minute RS256 JWT; re-mint
-   + restart when it expires). **Auth — the credential you mint with decides what
-   the dev token can do:**
+1. Mint a short-lived dev block token (a ~15-minute RS256 JWT; re-mint + restart
+   when it expires). The friendly path is the CLI — it calls the moderator-gated
+   mint route with your stored credential and writes a paste-ready line:
+   ```bash
+   civitai app dev-token {{ .Slug }} --env >> .env.development.local
+   ```
+   (drop `--env >> …` to just print the token). **Auth — the credential you mint
+   with decides what the dev token can do:**
    - The mint needs a credential carrying the **App Blocks submit** scope.
    - **Real generation (spends real Buzz) needs a full-scope personal API key.**
      Create one at `https://civitai.com/user/account` (a personal key carries
-     every scope, including AI Services):
+     every scope, including AI Services), store it with
+     `civitai login --token <key>` (plain `civitai login` is OAuth and can't
+     spend), then `civitai app dev-token` mints a spendable token. Or pass the
+     key as the Bearer to the raw route directly:
      ```bash
      curl -s -X POST https://civitai.com/api/v1/blocks/dev-token \
        -H "Authorization: Bearer $CIVITAI_TOKEN" \
@@ -110,8 +117,11 @@ To use it:
      above. (A separate civitai server change grants `user:read:self` so the
      viewer/identity resolves cleanly for OAuth dev:live; until that lands, OAuth
      dev:live is limited.)
-2. Paste the returned `token` into `.env.development` as `VITE_LIVE_BLOCK_TOKEN=`
-   (never commit it; `submit` excludes `.env.development`).
+2. If you printed the token instead of using `--env >> …`, paste it into
+   `.env.development.local` as `VITE_LIVE_BLOCK_TOKEN=<token>`. Keep the secret in
+   `.env.development.local` (git-ignored), NOT the committed `.env.development`.
+   (Never commit it; `submit` excludes every dotenv but `.env.example` /
+   `.env.production` anyway.)
 3. `npm run dev:live` — a persistent **⚠️ LIVE HOST** banner stays on screen; a
    successful Generate spends your own real Buzz.
 

@@ -178,12 +178,12 @@ for submission, so you don't have to hand-format a ZIP.
 Get started:
 
   civitai login                    store your API token
-  civitai app init my-app          scaffold a ready-to-build App Block
+  civitai app create my-app        scaffold a ready-to-build App Block
   civitai app validate             check the manifest before you submit
   civitai app submit               package + submit for review`,
 		Example: `  # First time: authenticate, then scaffold and submit an app.
   civitai login
-  civitai app init my-first-app --template page-vite
+  civitai app create my-first-app
   cd my-first-app
   civitai app validate
   civitai app submit`,
