@@ -80,16 +80,32 @@ function LiveApp({ token, backendBaseUrl }: { token: string; backendBaseUrl: str
   );
 }
 
+/** Clipboard / check glyphs for the copy icon button (zero-dep inline SVG). */
+const ClipboardGlyph = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <rect x="9" y="9" width="13" height="13" rx="2" />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </svg>
+);
+const CheckGlyph = () => (
+  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d="M20 6 9 17l-5-5" />
+  </svg>
+);
+
 /**
- * A small "copy to clipboard" button with a transient "Copied!" state, built on
- * the W6 component pack's Button. Used on the LiveUnavailable screen so each
- * setup command is one click away.
+ * An icon-only "copy to clipboard" button (W6 pack Button) with a transient
+ * checkmark state, so each command row stays compact.
  */
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
     <Button
       variant="subtle"
+      size="sm"
+      color={copied ? 'success' : 'primary'}
+      aria-label={copied ? 'Copied' : 'Copy command'}
+      title={copied ? 'Copied!' : 'Copy'}
       onClick={() => {
         void navigator.clipboard?.writeText(text).then(() => {
           setCopied(true);
@@ -97,33 +113,39 @@ function CopyButton({ text }: { text: string }) {
         });
       }}
     >
-      {copied ? 'Copied!' : 'Copy'}
+      {copied ? <CheckGlyph /> : <ClipboardGlyph />}
     </Button>
   );
 }
 
-/** One numbered setup step: a label plus a copyable command row. */
+/** A copyable command row: the command in a code block + a copy icon button. */
+function CmdRow({ cmd }: { cmd: string }) {
+  return (
+    <Group gap={8} align="stretch" wrap={false}>
+      <pre style={cmdStyle}>{cmd}</pre>
+      <CopyButton text={cmd} />
+    </Group>
+  );
+}
+
+/** One numbered setup step: a short label above a copyable command row. */
 function CmdStep({ n, label, cmd }: { n: number; label: ReactNode; cmd: string }) {
   return (
     <Stack gap={6}>
       <span style={stepLabelStyle}>
         <strong>{n}.</strong> {label}
       </span>
-      <Group gap={8} align="stretch" wrap={false}>
-        <pre style={cmdStyle}>{cmd}</pre>
-        <CopyButton text={cmd} />
-      </Group>
+      <CmdRow cmd={cmd} />
     </Stack>
   );
 }
 
 /**
  * Fail-safe LIVE screen — shown when `dev:live` is requested but no spendable
- * dev token is set, so the dev sees WHY nothing generates AND the exact steps,
- * instead of a silent mock or a blank screen. Built entirely from the
- * `@civitai/blocks-react/ui` pack. Live mode ALWAYS spends real Buzz, so it
- * leads with the credential step: authenticate with a personal API key (an
- * OAuth `civitai login` can't spend), then mint a dev token.
+ * dev token is set. Built entirely from the `@civitai/blocks-react/ui` pack.
+ * Live mode ALWAYS spends real Buzz, so it leads with the credential step:
+ * authenticate with a personal API key (an OAuth `civitai login` can't spend),
+ * then mint a dev token.
  */
 function LiveUnavailable({ reason }: { reason: string }) {
   injectBlocksStyles();
@@ -140,38 +162,36 @@ function LiveUnavailable({ reason }: { reason: string }) {
             </Badge>
           </Group>
 
-          <Alert color="warning" title="dev:live needs a spendable dev token">
+          <Alert color="warning" title="No spendable dev token">
             {reason}
           </Alert>
 
-          <span style={stepLabelStyle}>
-            Live mode runs real generations and <strong>spends real Buzz</strong>, so you need a
-            full-scope <strong>personal API key</strong> — an OAuth <code>civitai login</code>{' '}
-            can&apos;t spend. Create one at <code>civitai.com/user/account</code>.
-          </span>
-
           <CmdStep
             n={1}
-            label="Authenticate with that personal key (not plain `civitai login`):"
-            cmd={loginCmd}
-          />
-          <CmdStep
-            n={2}
             label={
               <>
-                Mint a dev token into <code>.env.development.local</code> (no submit needed):
+                Sign in with a <strong>personal API key</strong> from{' '}
+                <code>civitai.com/user/account</code> (an OAuth login can&apos;t spend):
               </>
             }
-            cmd={mintCmd}
+            cmd={loginCmd}
           />
-          <span style={stepLabelStyle}>
-            <strong>3.</strong> Restart <code>npm run dev:live</code>. Confirm your key can spend
-            with <code>civitai whoami</code> (look for <em>Spend Buzz: yes</em>).
-          </span>
+          <CmdStep n={2} label="Mint a dev token (no submit needed):" cmd={mintCmd} />
+          <CmdStep
+            n={3}
+            label={
+              <>
+                Restart — then check <code>civitai whoami</code> shows <em>Spend Buzz: yes</em>:
+              </>
+            }
+            cmd="npm run dev:live"
+          />
 
           <Alert color="info">
-            Just exploring? <code>npm run dev:harness</code> (the mock host) runs free — no token,
-            no Buzz, no network.
+            <Stack gap={8}>
+              <span>Just exploring? The mock host runs free — no token, no Buzz:</span>
+              <CmdRow cmd="npm run dev:harness" />
+            </Stack>
           </Alert>
         </Stack>
       </Card>
