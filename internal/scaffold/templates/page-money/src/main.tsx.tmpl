@@ -1,5 +1,7 @@
-import { StrictMode, useEffect, useState, type CSSProperties } from 'react';
+import { StrictMode, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
+
+import { Alert, Badge, Button, Card, Group, Stack, injectBlocksStyles } from '@civitai/blocks-react/ui';
 
 import { App } from './App.js';
 import { Harness } from './Harness.js';
@@ -79,16 +81,15 @@ function LiveApp({ token, backendBaseUrl }: { token: string; backendBaseUrl: str
 }
 
 /**
- * A small "copy to clipboard" button with a transient "Copied!" state. No deps —
- * just `navigator.clipboard.writeText` + a `useState`. Used on the
- * LiveUnavailable screen so the one-liner to mint a dev token is one click away.
+ * A small "copy to clipboard" button with a transient "Copied!" state, built on
+ * the W6 component pack's Button. Used on the LiveUnavailable screen so each
+ * setup command is one click away.
  */
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
   return (
-    <button
-      type="button"
-      style={liveCopyBtnStyle}
+    <Button
+      variant="subtle"
       onClick={() => {
         void navigator.clipboard?.writeText(text).then(() => {
           setCopied(true);
@@ -97,73 +98,83 @@ function CopyButton({ text }: { text: string }) {
       }}
     >
       {copied ? 'Copied!' : 'Copy'}
-    </button>
+    </Button>
+  );
+}
+
+/** One numbered setup step: a label plus a copyable command row. */
+function CmdStep({ n, label, cmd }: { n: number; label: ReactNode; cmd: string }) {
+  return (
+    <Stack gap={6}>
+      <span style={stepLabelStyle}>
+        <strong>{n}.</strong> {label}
+      </span>
+      <Group gap={8} align="stretch" wrap={false}>
+        <pre style={cmdStyle}>{cmd}</pre>
+        <CopyButton text={cmd} />
+      </Group>
+    </Stack>
   );
 }
 
 /**
- * Fail-safe LIVE screen. Shown when `dev:live` is requested but no dev block
- * token is set — so a dev sees WHY nothing is spending AND exactly how to get a
- * token, instead of a silent mock or a blank screen.
+ * Fail-safe LIVE screen — shown when `dev:live` is requested but no spendable
+ * dev token is set, so the dev sees WHY nothing generates AND the exact steps,
+ * instead of a silent mock or a blank screen. Built entirely from the
+ * `@civitai/blocks-react/ui` pack. Live mode ALWAYS spends real Buzz, so it
+ * leads with the credential step: authenticate with a personal API key (an
+ * OAuth `civitai login` can't spend), then mint a dev token.
  */
 function LiveUnavailable({ reason }: { reason: string }) {
-  const cliCmd = 'civitai app dev-token {{ .Slug }}';
-  const curlCmd =
-    `curl -s -X POST https://civitai.com/api/v1/blocks/dev-token ` +
-    `-H "Authorization: Bearer $CIVITAI_TOKEN" ` +
-    `-H 'Content-Type: application/json' ` +
-    `-d '{"slug":"{{ .Slug }}","scopes":["ai:write:budgeted"]}'`;
+  injectBlocksStyles();
+  const loginCmd = 'civitai login --token <your-personal-api-key>';
+  const mintCmd = 'civitai app dev-token {{ .Slug }} --env >> .env.development.local';
   return (
-    <div data-harness-banner="live-unavailable" style={liveWrapStyle}>
-      <div style={liveInnerStyle}>
-        <div style={liveTitleStyle}>⚠️ LIVE MODE — spends REAL Buzz / real compute</div>
-        <p style={liveReasonStyle}>{reason}</p>
+    <div data-harness-banner="live-unavailable" data-theme="dark" style={liveScreenStyle}>
+      <Card padding="lg" style={liveCardStyle}>
+        <Stack gap={16}>
+          <Group justify="space-between">
+            <strong style={liveCardTitleStyle}>Live mode setup</strong>
+            <Badge color="warning" variant="light">
+              spends REAL Buzz
+            </Badge>
+          </Group>
 
-        <div style={liveSectionStyle}>
-          <div style={liveSectionTitleStyle}>How to get a dev token</div>
-          <p style={liveHintStyle}>
-            To run <code>dev:live</code> you need a dev token (minted from your
-            local manifest):
-          </p>
-          <ol style={liveStepsStyle}>
-            <li style={liveStepStyle}>
-              <div style={liveCmdRowStyle}>
-                <pre style={liveCmdStyle}>{cliCmd}</pre>
-                <CopyButton text={cliCmd} />
-              </div>
-            </li>
-            <li style={liveStepStyle}>
-              Paste the token into <code>VITE_LIVE_BLOCK_TOKEN</code> in{' '}
-              <code>.env.development.local</code>, then re-run{' '}
-              <code>npm run dev:live</code>.
-            </li>
-          </ol>
-          <p style={liveHintStyle}>
-            Real generation needs a <strong>full-scope personal API key</strong>{' '}
-            (create one at <code>civitai.com/user/account</code>) — an OAuth{' '}
-            <code>civitai login</code> token can&apos;t spend. Confirm with{' '}
-            <code>civitai whoami</code>.
-          </p>
-          <p style={liveHintStyle}>
-            You don&apos;t need to submit the app first — <code>dev-token</code>{' '}
-            mints against your local <code>block.manifest.json</code>. Submit
-            when you&apos;re ready to publish.
-          </p>
-        </div>
+          <Alert color="warning" title="dev:live needs a spendable dev token">
+            {reason}
+          </Alert>
 
-        <div style={liveSectionStyle}>
-          <div style={liveSectionTitleStyle}>No CLI? Mint it with curl</div>
-          <div style={liveCmdRowStyle}>
-            <pre style={liveCmdSmallStyle}>{curlCmd}</pre>
-            <CopyButton text={curlCmd} />
-          </div>
-        </div>
+          <span style={stepLabelStyle}>
+            Live mode runs real generations and <strong>spends real Buzz</strong>, so you need a
+            full-scope <strong>personal API key</strong> — an OAuth <code>civitai login</code>{' '}
+            can&apos;t spend. Create one at <code>civitai.com/user/account</code>.
+          </span>
 
-        <p style={liveHintStyle}>
-          Or use <code>npm run dev:harness</code> (mock host) for free local
-          development. See README → “Mock vs live”.
-        </p>
-      </div>
+          <CmdStep
+            n={1}
+            label="Authenticate with that personal key (not plain `civitai login`):"
+            cmd={loginCmd}
+          />
+          <CmdStep
+            n={2}
+            label={
+              <>
+                Mint a dev token into <code>.env.development.local</code> (no submit needed):
+              </>
+            }
+            cmd={mintCmd}
+          />
+          <span style={stepLabelStyle}>
+            <strong>3.</strong> Restart <code>npm run dev:live</code>. Confirm your key can spend
+            with <code>civitai whoami</code> (look for <em>Spend Buzz: yes</em>).
+          </span>
+
+          <Alert color="info">
+            Just exploring? <code>npm run dev:harness</code> (the mock host) runs free — no token,
+            no Buzz, no network.
+          </Alert>
+        </Stack>
+      </Card>
     </div>
   );
 }
@@ -181,69 +192,34 @@ const liveBannerStyle: CSSProperties = {
   textAlign: 'center',
 };
 
-const liveWrapStyle: CSSProperties = {
+// The fail-safe screen themes its OWN root (data-theme) so the W6 pack's CSS
+// vars resolve, then uses the pack's surface/text tokens — matching the real
+// app instead of the old bespoke amber theme.
+const liveScreenStyle: CSSProperties = {
   minHeight: '100dvh',
-  display: 'grid',
-  placeItems: 'center',
-  background: '#1a1207',
-  color: '#ffd8a8',
-  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-  padding: 24,
-  textAlign: 'center',
-};
-const liveInnerStyle: CSSProperties = { maxWidth: 620, textAlign: 'left' };
-const liveTitleStyle: CSSProperties = { fontSize: 20, fontWeight: 800, color: '#ffa94d', textAlign: 'center' };
-const liveReasonStyle: CSSProperties = { marginTop: 12, lineHeight: 1.5, textAlign: 'center' };
-const liveHintStyle: CSSProperties = { marginTop: 12, opacity: 0.8, lineHeight: 1.5 };
-
-const liveSectionStyle: CSSProperties = {
-  marginTop: 20,
-  paddingTop: 16,
-  borderTop: '1px solid #5a3a17',
-};
-const liveSectionTitleStyle: CSSProperties = {
-  fontSize: 14,
-  fontWeight: 700,
-  color: '#ffa94d',
-  marginBottom: 8,
-};
-const liveStepsStyle: CSSProperties = {
-  marginTop: 12,
-  marginBottom: 0,
-  paddingLeft: 22,
-  display: 'grid',
-  gap: 10,
-};
-const liveStepStyle: CSSProperties = { lineHeight: 1.5 };
-const liveCmdRowStyle: CSSProperties = {
   display: 'flex',
-  alignItems: 'stretch',
-  gap: 8,
+  justifyContent: 'center',
+  alignItems: 'flex-start',
+  padding: 24,
+  boxSizing: 'border-box',
+  background: 'var(--ci-color-surface-2)',
+  color: 'var(--ci-color-text)',
 };
-const liveCmdStyle: CSSProperties = {
+const liveCardStyle: CSSProperties = { width: '100%', maxWidth: 640 };
+const liveCardTitleStyle: CSSProperties = { fontSize: 20 };
+const stepLabelStyle: CSSProperties = { lineHeight: 1.5 };
+const cmdStyle: CSSProperties = {
   flex: 1,
   margin: 0,
   padding: '10px 12px',
-  background: '#0d0904',
-  border: '1px solid #5a3a17',
+  background: 'var(--ci-color-surface)',
+  border: '1px solid var(--ci-color-border)',
   borderRadius: 6,
-  color: '#ffe8c2',
-  fontSize: 14,
+  color: 'var(--ci-color-text)',
+  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+  fontSize: 13,
   whiteSpace: 'pre-wrap',
   wordBreak: 'break-all',
-};
-const liveCmdSmallStyle: CSSProperties = { ...liveCmdStyle, fontSize: 12, opacity: 0.85 };
-const liveCopyBtnStyle: CSSProperties = {
-  flex: '0 0 auto',
-  padding: '0 14px',
-  background: '#7a1f1f',
-  color: '#ffd8a8',
-  border: '1px solid #a8492f',
-  borderRadius: 6,
-  fontFamily: 'inherit',
-  fontSize: 13,
-  fontWeight: 700,
-  cursor: 'pointer',
 };
 
 createRoot(container).render(

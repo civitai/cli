@@ -87,7 +87,7 @@ export function resolveLiveConfig(): LiveConfig {
     return {
       ready: false,
       reason:
-        'Live mode needs a dev block token (VITE_LIVE_BLOCK_TOKEN). Mint a short-lived token via the moderator-gated dev-token endpoint (POST /api/v1/blocks/dev-token) and paste it into .env.development — never commit it.',
+        'No VITE_LIVE_BLOCK_TOKEN set, so dev:live has nothing to spend with. Follow the steps below to authenticate and mint a short-lived dev token (never commit it).',
     };
   }
   return { ready: true, token, backendBaseUrl };
