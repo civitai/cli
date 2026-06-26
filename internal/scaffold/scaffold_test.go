@@ -144,6 +144,11 @@ func TestRenderPageMoney(t *testing.T) {
 	// Leads with the spendable-credential step (the #1 dev:live dead-end).
 	mustContain(t, mainTSX, "civitai login --token")
 	mustContain(t, mainTSX, "personal API key")
+	// "personal API key" is an anchor that deeplinks to the Add-API-Key modal,
+	// pre-filled with a name + the minimal AI Services scope.
+	mustContain(t, mainTSX, "<a href={apiKeyUrl}")
+	mustContain(t, mainTSX, "user/account?addApiKey=1")
+	mustContain(t, mainTSX, "scope=AIServices")
 	// Then the dev-token mint with the real slug, writing straight to the env
 	// file (no manual VITE_LIVE_BLOCK_TOKEN paste, no submit-first).
 	mustContain(t, mainTSX, "civitai app dev-token money-block")

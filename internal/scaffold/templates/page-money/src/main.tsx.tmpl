@@ -151,6 +151,12 @@ function LiveUnavailable({ reason }: { reason: string }) {
   injectBlocksStyles();
   const loginCmd = 'civitai login --token <your-personal-api-key>';
   const mintCmd = 'civitai app dev-token {{ .Slug }} --env >> .env.development.local';
+  // Deeplink: opens the Add-API-Key modal pre-filled with a name + the minimal
+  // "AI Services" scope (the only scope a personal key needs to mint a spendable
+  // dev token). The query params are inert on older civitai builds — the link
+  // still lands on /user/account, so it degrades gracefully.
+  const apiKeyUrl =
+    'https://civitai.com/user/account?addApiKey=1&name=App%20Blocks%20dev%3Alive&scope=AIServices';
   return (
     <div data-harness-banner="live-unavailable" data-theme="dark" style={liveScreenStyle}>
       <Card padding="lg" style={liveCardStyle}>
@@ -170,8 +176,11 @@ function LiveUnavailable({ reason }: { reason: string }) {
             n={1}
             label={
               <>
-                Sign in with a <strong>personal API key</strong> from{' '}
-                <code>civitai.com/user/account</code> (an OAuth login can&apos;t spend):
+                Sign in with a{' '}
+                <a href={apiKeyUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
+                  personal API key
+                </a>{' '}
+                (opens the key dialog pre-filled; an OAuth login can&apos;t spend):
               </>
             }
             cmd={loginCmd}
@@ -228,6 +237,7 @@ const liveScreenStyle: CSSProperties = {
 const liveCardStyle: CSSProperties = { width: '100%', maxWidth: 640 };
 const liveCardTitleStyle: CSSProperties = { fontSize: 20 };
 const stepLabelStyle: CSSProperties = { lineHeight: 1.5 };
+const linkStyle: CSSProperties = { color: 'var(--ci-color-primary)', fontWeight: 600 };
 const cmdStyle: CSSProperties = {
   flex: 1,
   margin: 0,
