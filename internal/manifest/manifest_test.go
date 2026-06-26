@@ -88,6 +88,35 @@ func TestLoadRawMissingAndInvalid(t *testing.T) {
 	}
 }
 
+func TestLoadScopes(t *testing.T) {
+	// Present scopes are returned.
+	dir := t.TempDir()
+	write(t, dir, `{"blockId":"x","scopes":["ai:write:budgeted","identity:read"]}`)
+	got := LoadScopes(dir)
+	if len(got) != 2 || got[0] != "ai:write:budgeted" || got[1] != "identity:read" {
+		t.Errorf("LoadScopes = %v", got)
+	}
+
+	// No scopes field → nil.
+	dir2 := t.TempDir()
+	write(t, dir2, `{"blockId":"x"}`)
+	if got := LoadScopes(dir2); got != nil {
+		t.Errorf("LoadScopes (no scopes) = %v, want nil", got)
+	}
+
+	// Missing manifest → nil, no error (graceful degrade).
+	if got := LoadScopes(t.TempDir()); got != nil {
+		t.Errorf("LoadScopes (missing) = %v, want nil", got)
+	}
+
+	// Malformed JSON → nil, no error (graceful degrade).
+	dir3 := t.TempDir()
+	write(t, dir3, `{ not json `)
+	if got := LoadScopes(dir3); got != nil {
+		t.Errorf("LoadScopes (malformed) = %v, want nil", got)
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
 }

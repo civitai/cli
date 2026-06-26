@@ -112,7 +112,7 @@ function LiveUnavailable({ reason }: { reason: string }) {
     `curl -s -X POST https://civitai.com/api/v1/blocks/dev-token ` +
     `-H "Authorization: Bearer $CIVITAI_TOKEN" ` +
     `-H 'Content-Type: application/json' ` +
-    `-d '{"slug":"{{ .Slug }}"}'`;
+    `-d '{"slug":"{{ .Slug }}","scopes":["ai:write:budgeted"]}'`;
   return (
     <div data-harness-banner="live-unavailable" style={liveWrapStyle}>
       <div style={liveInnerStyle}>
@@ -122,15 +122,10 @@ function LiveUnavailable({ reason }: { reason: string }) {
         <div style={liveSectionStyle}>
           <div style={liveSectionTitleStyle}>How to get a dev token</div>
           <p style={liveHintStyle}>
-            To run <code>dev:live</code> you need a dev token. Your app must be{' '}
-            <strong>submitted first</strong> — the token is minted against your
-            submitted (pending-review) app.
+            To run <code>dev:live</code> you need a dev token (minted from your
+            local manifest):
           </p>
           <ol style={liveStepsStyle}>
-            <li style={liveStepStyle}>
-              <code style={liveStepCmdStyle}>civitai app submit</code>{' '}
-              <span style={liveStepNoteStyle}># registers the app (pending review)</span>
-            </li>
             <li style={liveStepStyle}>
               <div style={liveCmdRowStyle}>
                 <pre style={liveCmdStyle}>{cliCmd}</pre>
@@ -149,10 +144,15 @@ function LiveUnavailable({ reason }: { reason: string }) {
             <code>civitai login</code> token can&apos;t spend. Confirm with{' '}
             <code>civitai whoami</code>.
           </p>
+          <p style={liveHintStyle}>
+            You don&apos;t need to submit the app first — <code>dev-token</code>{' '}
+            mints against your local <code>block.manifest.json</code>. Submit
+            when you&apos;re ready to publish.
+          </p>
         </div>
 
         <div style={liveSectionStyle}>
-          <div style={liveSectionTitleStyle}>No CLI? Mint it with curl (after submitting)</div>
+          <div style={liveSectionTitleStyle}>No CLI? Mint it with curl</div>
           <div style={liveCmdRowStyle}>
             <pre style={liveCmdSmallStyle}>{curlCmd}</pre>
             <CopyButton text={curlCmd} />

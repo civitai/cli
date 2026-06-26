@@ -8,6 +8,7 @@ import (
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/manifest"
 	"github.com/spf13/cobra"
 )
 
@@ -32,8 +33,11 @@ The minted token's CAPABILITIES depend on the credential you mint with:
     spend) — dev:live shows your viewer + catalog/storage, but estimate →
     submit → generation will NOT spend.
 
-Pre-GA the mint route is moderator-only; a PENDING (un-approved) slug is
-accepted. The token is short-lived — never commit it; re-mint when it expires.`,
+Pre-GA the mint route is moderator-only. You do NOT need to submit the app
+first — for a brand-new slug with no app row yet, the token is minted from the
+scopes in your local block.manifest.json (clamped server-side), so
+"create → dev-token → dev:live" works directly. The token is short-lived —
+never commit it; re-mint when it expires.`,
 		Example: `  civitai app dev-token my-block               # print the token to stdout
   civitai app dev-token my-block --env         # print VITE_LIVE_BLOCK_TOKEN=<token>
   civitai app dev-token my-block --env >> .env.development.local`,
@@ -55,8 +59,16 @@ accepted. The token is short-lived — never commit it; re-mint when it expires.
 				return fmt.Errorf("an app slug is required — e.g. `civitai app dev-token my-block` (find it with `civitai app status`)")
 			}
 
+			// Read the LOCAL manifest scopes (current working directory — the
+			// user runs this from the scaffolded project dir) so the server can
+			// mint a token for a slug with no app row yet (no submit needed).
+			// Degrade gracefully: a missing/malformed manifest sends no scopes
+			// (read-only token), and a registered app's server-side scopes still
+			// govern when none are sent.
+			scopes := manifest.LoadScopes(".")
+
 			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
-			token, err := client.MintDevToken(context.Background(), slug)
+			token, err := client.MintDevToken(context.Background(), slug, scopes)
 			if err != nil {
 				return err
 			}
