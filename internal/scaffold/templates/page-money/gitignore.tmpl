@@ -3,3 +3,10 @@ dist/
 *.log
 .DS_Store
 .vite/
+
+# Local secrets — a pasted VITE_LIVE_BLOCK_TOKEN spends REAL Buzz; never commit it.
+# `civitai app dev-token <slug> --env >> .env.development.local` writes here.
+# The committed .env.development / .env.example / .env.production hold only
+# non-secret VITE_ values and ARE tracked.
+.env.local
+.env.*.local
