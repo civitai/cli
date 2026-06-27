@@ -53,7 +53,7 @@ function Root() {
 
   if (mode === 'live') {
     const live = resolveLiveConfig();
-    if (!live.ready) return <LiveUnavailable reason={live.reason} />;
+    if (!live.ready) return <LiveUnavailable />;
     return <LiveApp token={live.token} backendBaseUrl={live.backendBaseUrl} />;
   }
 
@@ -277,7 +277,7 @@ type SetupState =
  * key (never bundled). The browser never persists it; this client code never
  * bundles the plugin (it's `apply: 'serve'`).
  */
-function LiveUnavailable({ reason }: { reason: string }) {
+function LiveUnavailable() {
   injectBlocksStyles();
   const [apiKey, setApiKey] = useState('');
   const [setup, setSetup] = useState<SetupState>({ kind: 'idle' });
@@ -337,23 +337,18 @@ function LiveUnavailable({ reason }: { reason: string }) {
             </Badge>
           </Group>
 
-          <Alert color="warning" title="No spendable dev token">
-            {reason}
+          <Alert color="warning" title="Set your API key to authorize buzz spend">
+            Paste your personal API key and we'll set up your dev environment automatically.
+            <br />
+            Don't have one? Create a key at{' '}
+            <a href={apiKeyUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
+              civitai.com/user/account
+            </a>
           </Alert>
 
           {/* PRIMARY path — one click. Paste the key, click, the dev server mints
               the token + writes the env + auto-restarts into live mode. */}
           <Stack gap={10}>
-            <span style={stepLabelStyle}>
-              Paste your personal API key and we'll set up live mode for you — mint a dev
-              token from your local manifest, write{' '}
-              <code style={inlineCodeStyle}>.env.development.local</code>, and restart into
-              live mode. Don't have one?{' '}
-              <a href={apiKeyUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
-                Create a key at civitai.com/user/account
-              </a>
-              .
-            </span>
             <TextInput
               label="Your personal API key"
               placeholder="paste the key you just created"
@@ -513,14 +508,6 @@ const liveCardStyle: CSSProperties = { width: '100%', maxWidth: 640 };
 const liveCardTitleStyle: CSSProperties = { fontSize: 20 };
 const stepLabelStyle: CSSProperties = { lineHeight: 1.5 };
 const linkStyle: CSSProperties = { color: 'var(--ci-color-primary)', fontWeight: 600 };
-const inlineCodeStyle: CSSProperties = {
-  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-  fontSize: 12,
-  padding: '1px 5px',
-  borderRadius: 4,
-  background: 'var(--ci-color-surface)',
-  border: '1px solid var(--ci-color-border)',
-};
 const setupDoneStyle: CSSProperties = { color: 'var(--ci-color-success, #2f9e44)', fontWeight: 600 };
 // The manual fallback is a quiet disclosure beneath the one-click path.
 const manualDetailsStyle: CSSProperties = {
