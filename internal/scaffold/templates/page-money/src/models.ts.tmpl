@@ -1,26 +1,27 @@
-// Curated checkpoint set for {{ .Name }}, plus pick→option helpers.
+// Model types + pick→option helpers for {{ .Name }}.
 //
-// WHY A CURATED DEFAULT SET (the page platform reality):
+// WHY A CURATED DEFAULT CHECKPOINT (the page platform reality):
 //   A W10 page slot is entity=none — it carries NO model context (unlike a model
 //   slot, which delivers modelId/modelVersionId via BLOCK_INIT). So a page app
-//   must ship a known-good DEFAULT checkpoint that works at first paint / offline
-//   / before the in-block catalog loads, and let the user pick others via the
-//   in-block catalog browser (see catalog-api.ts). Each curated entry below is a
-//   foundational, multi-million-generation public base verified to be
-//   generation-covered + SFW — the same bar the reference apps use.
+//   must ship a known-good DEFAULT checkpoint that works at first paint, BEFORE
+//   the user opens the host's resource picker. The user then picks any other
+//   checkpoint (or layers on LoRAs) via the SDK's `useResourcePicker` /
+//   `useCheckpointPicker` hooks, which open the HOST's native picker — the block
+//   never browses the catalog itself (the host serves it, in dev:live and prod).
 //
-// MONEY-SAFETY: a pick here is DISCOVERY ONLY. Nothing about a client-chosen
-// checkpoint is trusted — the SERVER re-validates (public? covered? SFW for the
-// domain?) and RE-PRICES every estimate and submit. We never imply otherwise.
+// MONEY-SAFETY: a pick is DISCOVERY ONLY. Nothing about a client-chosen
+// checkpoint OR LoRA is trusted — the SERVER re-validates (public? covered? SFW
+// for the domain? LoRA-only? compatible? entitled?) and RE-PRICES every estimate
+// and submit. We never imply otherwise.
 
 export interface CheckpointOption {
   /** ModelVersion id submitted to the workflow as `modelVersionId`. */
   versionId: number;
   /** Parent Model id submitted as `modelId`. */
   modelId: number;
-  /** Short display label for the picker. */
+  /** Short display label for the current-model label. */
   label: string;
-  /** Base-model family — display/label only; compatibility is a SERVER authority. */
+  /** Base-model family — display + the picker's family hint; compatibility is a SERVER authority. */
   baseModel: string;
 }
 
@@ -61,17 +62,6 @@ export interface LoraOption {
   weight: number;
 }
 
-/**
- * A small curated LoRA fallback set so the picker has something to ADD at first
- * paint / offline / before the catalog loads — the same role the curated
- * CHECKPOINTS play. Foundational, broadly-compatible public SDXL LoRAs (the
- * curated checkpoints are SDXL/Pony). DISCOVERY ONLY — server-revalidated.
- */
-export const LORAS: readonly Omit<LoraOption, 'weight'>[] = [
-  { versionId: 135867, modelId: 122359, label: 'Detail Tweaker XL', baseModel: 'SDXL 1.0' },
-  { versionId: 152309, modelId: 136749, label: 'Add More Details XL', baseModel: 'SDXL 1.0' },
-] as const;
-
 /** Clamp a LoRA weight into the server-accepted [-1, 2] range; non-finite → default. */
 export function clampLoraWeight(weight: number | null | undefined): number {
   const w = weight == null || !Number.isFinite(weight) ? DEFAULT_LORA_WEIGHT : weight;
@@ -84,34 +74,37 @@ export function roundLoraWeight(weight: number): number {
 }
 
 /**
- * Curated checkpoints. Foundational, multi-million-generation public bases that
- * effectively never lose coverage:
- *  - SD XL 1.0 (VAE fix) — the canonical SDXL base (101055/128078).
- *  - Pony Diffusion V6 XL — the single most-generated model on the platform
- *    (257749/290640).
- * Both are Public + generation-covered + SFW. The first is the default a fresh
- * session starts with.
+ * The default checkpoint a fresh session starts on — a foundational,
+ * multi-million-generation public base verified Public + generation-covered +
+ * SFW: SD XL 1.0 (VAE fix) (versionId 128078 / modelId 101055). It's the initial
+ * state so Generate works at first paint, before the user opens the picker. The
+ * user replaces it via the host's checkpoint picker (`useCheckpointPicker`).
+ * DISCOVERY ONLY — the server re-validates + re-prices it like any pick.
  */
-export const CHECKPOINTS: readonly CheckpointOption[] = [
-  { versionId: 128078, modelId: 101055, label: 'SD XL 1.0', baseModel: 'SDXL 1.0' },
-  { versionId: 290640, modelId: 257749, label: 'Pony V6 XL', baseModel: 'Pony' },
-] as const;
-
-/** The default checkpoint a fresh session starts with (the first curated entry). */
-export const DEFAULT_CHECKPOINT: CheckpointOption = CHECKPOINTS[0]!;
+export const DEFAULT_CHECKPOINT: CheckpointOption = {
+  versionId: 128078,
+  modelId: 101055,
+  label: 'SD XL 1.0',
+  baseModel: 'SDXL 1.0',
+};
 
 // ---------------------------------------------------------------------------
 // Pick → option helpers.
 //
-// The in-block catalog browser produces a BlockResourceInfo-shaped pick =
-// { versionId, modelId, modelName, versionName, baseModel, modelType }.
-// `modelName`/`versionName` are the public display names. Everything here is
-// DISCOVERY ONLY — the wire is re-validated + re-priced server-side at
-// estimate/submit. These turn a pick into a CheckpointOption with the same
-// money-safety invariants as the curated entries.
+// `useCheckpointPicker().open(...)` resolves with a `BlockCheckpointInfo` and
+// `useResourcePicker().open(...)` with a `BlockResourceInfo` — both carry the
+// public display names (`modelName`/`versionName`) the HOST resolved for the
+// resource the user picked. These mappers turn that pick into a CheckpointOption
+// / LoraOption with the same money-safety invariants as the default checkpoint.
+// Everything here is DISCOVERY ONLY — the wire is re-validated + re-priced
+// server-side at estimate/submit.
 // ---------------------------------------------------------------------------
 
-/** Minimal shape of a picked resource (mirrors the SDK's BlockResourceInfo). */
+/**
+ * Minimal shape of a picked resource — the common subset of the SDK's
+ * `BlockCheckpointInfo` and `BlockResourceInfo`. We accept the names as optional
+ * so the mappers tolerate a host that omitted them (older host / partial reply).
+ */
 export interface PickedResource {
   versionId: number;
   modelId: number;
@@ -120,7 +113,6 @@ export interface PickedResource {
   /** Public display name of the picked model version (e.g. "v8"). */
   versionName?: string;
   baseModel: string;
-  modelType?: string;
 }
 
 /**
@@ -149,7 +141,7 @@ export function pickedCheckpointLabel(
   return resourceDisplayName(names) ?? `Model #${versionId} (${baseModel})`;
 }
 
-/** Turn a picked resource into a `CheckpointOption`. */
+/** Turn a picked resource (`BlockCheckpointInfo`) into a `CheckpointOption`. */
 export function checkpointFromPick(picked: PickedResource): CheckpointOption {
   return {
     versionId: picked.versionId,
@@ -157,26 +149,6 @@ export function checkpointFromPick(picked: PickedResource): CheckpointOption {
     label: pickedCheckpointLabel(picked.versionId, picked.baseModel, picked),
     baseModel: picked.baseModel,
   };
-}
-
-/**
- * Merge the curated set with catalog-browsed options, de-duplicated by
- * versionId. Curated entries lead (so the default checkpoint is stable across
- * catalog states); a catalog option whose versionId is already curated is
- * dropped. Pure + total — drives the picker's option list.
- */
-export function mergeCheckpoints(
-  curated: readonly CheckpointOption[],
-  extra: readonly CheckpointOption[],
-): CheckpointOption[] {
-  const seen = new Set<number>();
-  const out: CheckpointOption[] = [];
-  for (const opt of [...curated, ...extra]) {
-    if (seen.has(opt.versionId)) continue;
-    seen.add(opt.versionId);
-    out.push(opt);
-  }
-  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -187,9 +159,9 @@ export function mergeCheckpoints(
 // ---------------------------------------------------------------------------
 
 /**
- * Turn a discovered LoRA (curated or catalog-browsed) into a selectable
- * LoraOption at a given weight (defaults to DEFAULT_LORA_WEIGHT). The weight is
- * clamped + rounded so the value the user sees is exactly what's submitted.
+ * Turn a discovered LoRA into a selectable LoraOption at a given weight
+ * (defaults to DEFAULT_LORA_WEIGHT). The weight is clamped + rounded so the
+ * value the user sees is exactly what's submitted.
  */
 export function loraOption(
   src: Omit<LoraOption, 'weight'>,
@@ -198,7 +170,7 @@ export function loraOption(
   return { ...src, weight: roundLoraWeight(clampLoraWeight(weight)) };
 }
 
-/** Turn a picked resource into a LoraOption (label-resolved like a checkpoint). */
+/** Turn a picked resource (`BlockResourceInfo`) into a LoraOption (label-resolved like a checkpoint). */
 export function loraFromPick(picked: PickedResource, weight?: number): LoraOption {
   return loraOption(
     {
@@ -240,7 +212,7 @@ export function setLoraWeight(
   return selected.map((l) => (l.versionId === versionId ? { ...l, weight: w } : l));
 }
 
-/** versionIds already selected — drives the "add" list's disabled/added state. */
+/** versionIds already selected — drives dedup at the picker callback. */
 export function selectedLoraIds(selected: readonly LoraOption[]): Set<number> {
   return new Set(selected.map((l) => l.versionId));
 }

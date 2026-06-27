@@ -1,0 +1,98 @@
+// Pure logic for the dev:live host NAV (profile name + Buzz balance). No React,
+// no DOM — unit-tested in node (see nav.test.ts). On the real platform this nav
+// is the platform's OWN chrome (outside the iframe); the dev:live harness IS the
+// host, so it renders a minimal equivalent.
+//
+// THE CREDENTIAL SPLIT (security-critical):
+//  - The PROFILE NAME comes from `/api/v1/blocks/me` authed with the page-scoped
+//    block token — faithful to prod (the block can read its own viewer).
+//  - The BUZZ BALANCE needs a buzz-read credential the page token DOESN'T carry.
+//    It's fetched same-origin through the vite proxy, which injects the dev's
+//    PERSONAL key server-side (see vite.config.ts). The key is NEVER bundled into
+//    client JS — this module only parses the same-origin response; it never sees
+//    or references the key. With no key set the balance route 401s and the nav
+//    gracefully shows the name only.
+
+/**
+ * The Buzz buckets `buzz.getBuzzAccount` returns. The wallet total is their sum;
+ * the real response has NO flat `balance` field (confirmed against the live
+ * endpoint: `{ blue, green, yellow }`).
+ */
+const BUZZ_BUCKETS = ['blue', 'yellow', 'green'] as const;
+
+/**
+ * Recursively dig the Buzz balance out of an arbitrary object. The real shape is
+ * `{ blue, green, yellow }` numeric buckets — sum the present ones. Falls back to
+ * a flat numeric `balance` field for forward/back-compat. Returns the FIRST node
+ * that yields a number (bucketed sum preferred over a stray nested `balance`).
+ */
+function findBalance(node: unknown, depth = 0): number | null {
+  if (depth > 6 || node == null || typeof node !== 'object') return null;
+  const obj = node as Record<string, unknown>;
+  const buckets = BUZZ_BUCKETS.map((k) => obj[k]).filter(
+    (v): v is number => typeof v === 'number' && Number.isFinite(v),
+  );
+  if (buckets.length > 0) return buckets.reduce((a, b) => a + b, 0);
+  if (typeof obj.balance === 'number' && Number.isFinite(obj.balance)) return obj.balance;
+  for (const key of Object.keys(obj)) {
+    const found = findBalance(obj[key], depth + 1);
+    if (found != null) return found;
+  }
+  return null;
+}
+
+/**
+ * Parse the spendable Buzz balance out of a `buzz.getBuzzAccount` tRPC response.
+ * The live shape is `{ result: { data: { json: { blue, green, yellow }}}}` — the
+ * balance is the SUM of the buckets (no flat `balance` field). Tolerant of any
+ * nesting + a flat `{ balance }` fallback, and SAFE on garbage: a malformed /
+ * empty / non-object body returns `null` (the nav then shows the name only,
+ * never an error). Never throws.
+ */
+export function parseBuzzBalance(body: unknown): number | null {
+  return findBalance(body);
+}
+
+/**
+ * Parse the viewer `username` out of a `/api/v1/blocks/me` response. Tolerant of
+ * a bare `{ username }` or an envelope, and SAFE on garbage (returns `null`).
+ * A whitespace-only username is treated as absent. Never throws.
+ */
+export function parseViewerName(body: unknown): string | null {
+  if (body == null || typeof body !== 'object') return null;
+  const direct = (body as Record<string, unknown>).username;
+  if (typeof direct === 'string' && direct.trim().length > 0) return direct.trim();
+  // Tolerate an envelope (e.g. `{ result: { data: { username }}}`).
+  for (const key of Object.keys(body as Record<string, unknown>)) {
+    const nested = parseViewerName((body as Record<string, unknown>)[key]);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+/** What the nav displays, derived from the (possibly absent) fetched values. */
+export interface NavDisplay {
+  /** The viewer name to show, or a neutral fallback while it's unresolved. */
+  name: string;
+  /** The formatted balance to show, or `null` to HIDE the balance entirely. */
+  balance: string | null;
+}
+
+/** Format a Buzz balance with thousands separators; `null`/non-finite → null (hidden). */
+export function formatBalance(balance: number | null | undefined): string | null {
+  if (balance == null || !Number.isFinite(balance)) return null;
+  return Math.round(balance).toLocaleString();
+}
+
+/**
+ * Derive the nav's display from the fetched name + balance. The name falls back
+ * to a neutral 'viewer' label while unresolved (never blank); the balance is
+ * HIDDEN (null) when absent — e.g. the proxy's personal key is unset — so the
+ * nav degrades to name-only with no error. Pure + total.
+ */
+export function navDisplay(name: string | null, balance: number | null): NavDisplay {
+  return {
+    name: name && name.trim().length > 0 ? name.trim() : 'viewer',
+    balance: formatBalance(balance),
+  };
+}

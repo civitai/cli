@@ -35,12 +35,17 @@ describe('App (component)', () => {
     expect(screen.queryByTestId('pm-generate')).not.toBeInTheDocument();
   });
 
-  it('signed-in viewer -> renders the prompt field + Generate button', async () => {
+  it('signed-in viewer -> renders the prompt field + Generate + picker buttons', async () => {
     uninstall = createMockHost({ viewer: { id: 2, username: 'dev', status: 'active' } }).install();
     render(<App />);
 
     expect(await screen.findByTestId('pm-generate')).toBeInTheDocument();
     expect(screen.getByLabelText(/prompt/i)).toBeInTheDocument();
     expect(screen.queryByTestId('pm-signin')).not.toBeInTheDocument();
+    // The host-picker affordances: Change model + Add LoRA, starting on the
+    // curated default checkpoint.
+    expect(screen.getByTestId('pm-change-model')).toBeInTheDocument();
+    expect(screen.getByTestId('pm-model-label')).toHaveTextContent(/SD XL 1\.0/);
+    expect(screen.getByTestId('pm-lora-add')).toBeInTheDocument();
   });
 });

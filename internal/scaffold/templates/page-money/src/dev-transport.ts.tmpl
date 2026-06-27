@@ -100,9 +100,14 @@ export function resolveLiveConfig(): LiveConfig {
  * real compute. Like the mock host, it replies from `window.location.origin`,
  * so the SDK transport must allow this origin first ({@link installHarnessTransport}).
  *
- * Returns the `uninstall()` teardown. v1 live mode does NOT support pickers,
+ * The live host SERVES the resource pickers locally (it opens an in-harness
+ * catalog overlay backed by `/api/v1/blocks/models` and resolves a real
+ * BlockCheckpointInfo / BlockResourceInfo), so `useCheckpointPicker` /
+ * `useResourcePicker` work in `dev:live` exactly as in prod. It does NOT support
  * SET_USER_CHECKPOINT, the App-Storage KV protocol, or in-band Buzz purchase —
  * those reply "not supported in live v1" (use mock mode for them).
+ *
+ * Returns the `uninstall()` teardown.
  */
 export function installLiveHost(config: { token: string; backendBaseUrl: string }): () => void {
   // Same origin requirement as the mock host: createLiveHost fires its replies
@@ -111,6 +116,13 @@ export function installLiveHost(config: { token: string; backendBaseUrl: string 
   const host = createLiveHost({
     blockToken: config.token,
     backendBaseUrl: config.backendBaseUrl,
+    // Pass a BOUND fetch. The SDK's live host + its in-harness picker overlay
+    // fetch the catalog through this `fetchImpl`; a bare `globalThis.fetch`
+    // reference called detached throws "Illegal invocation" in the browser
+    // (a DOM binding requirement), which breaks the picker's catalog load. A
+    // small arrow wrapper preserves the `window` receiver so the picker
+    // populates. Harmless on the platform (prod is the host, not this).
+    fetchImpl: (input: RequestInfo | URL, init?: RequestInit) => fetch(input, init),
   });
   return host.install();
 }

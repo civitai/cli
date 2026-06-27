@@ -23,15 +23,13 @@ vi.mock('@civitai/blocks-react', () => ({
   useBlockContext: () => ({ ready: true, viewer: { id: 2, username: 'dev' }, theme: 'dark' }),
   useBlockResize: () => {},
   useBlockToken: () => ({ scopes: ['ai:write:budgeted'], raw: 't', expiresAt: '' }),
-  useDomainMaturity: () => ({ isSfw: true }),
   useBuzzWorkflow: () => ({ estimate: estimateFn, submit: submitFn, poll: pollFn }),
   useRequestConsent: () => ({ requestConsent: vi.fn() }),
   useRequestSignIn: () => ({ requestSignIn: vi.fn() }),
+  // The host pickers — inert here (this test is about the poll loop, not picking).
+  useCheckpointPicker: () => ({ open: vi.fn().mockResolvedValue({ selected: undefined }), persist: vi.fn() }),
+  useResourcePicker: () => ({ open: vi.fn().mockResolvedValue(null) }),
 }));
-
-// The App's catalog-load effect calls global fetch; stub it so the picker stays
-// on the curated set (this test is about the poll loop, not the catalog).
-vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('no network in unit test')));
 
 // Imported AFTER the mock is registered.
 const { App } = await import('./App.js');

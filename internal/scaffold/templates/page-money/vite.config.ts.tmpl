@@ -1,11 +1,24 @@
 /// <reference types="vitest/config" />
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 // base MUST be '/' — the platform serves the build output at the root of the
 // app's own subdomain and server-owns the manifest iframe.src (the W10 page
 // surface iframes the bundle at /apps/run/{{ .Slug }}). No path prefix.
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // Read NON-`VITE_`-prefixed env (the empty prefix loads everything) SERVER-SIDE
+  // at config time. CIVITAI_HOST_KEY is the dev's PERSONAL key — it must NEVER be
+  // bundled into client JS (that's why it's not `VITE_`-prefixed: Vite only
+  // exposes `VITE_*` to client code). The dev-live host nav reads the Buzz
+  // balance through the proxy below, which injects this key SERVER-SIDE as the
+  // Authorization header — the client never sees or references the key. Put it in
+  // the git-ignored `.env.development.local`. Unset → the balance route 401s and
+  // the nav gracefully shows the name only.
+  const env = loadEnv(mode, process.cwd(), '');
+  const hostKey = env.CIVITAI_HOST_KEY;
+  const proxyTarget = env.VITE_LIVE_HOST_ORIGIN || 'https://civitai.com';
+
+  return {
   base: '/',
   plugins: [react()],
   server: {
@@ -22,11 +35,29 @@ export default defineConfig({
     // an allowlisted host, which is LOAD-BEARING: civitai's tRPC isAcceptableOrigin
     // gate rejects a localhost Origin with "Please use the public API instead" (N2).
     // Both N1 and N2 are fixed by this one same-origin + Origin-rewrite proxy.
-    // `VITE_LIVE_HOST_ORIGIN` overrides the proxy TARGET (read from process.env at
-    // config time — NOT import.meta.env); default https://civitai.com.
+    // `VITE_LIVE_HOST_ORIGIN` overrides the proxy TARGET (read from env at config
+    // time — NOT import.meta.env); default https://civitai.com.
     proxy: {
+      // The Buzz-balance route for the dev:live host nav. The page block token
+      // can't read Buzz, so we inject the dev's PERSONAL key (CIVITAI_HOST_KEY)
+      // as the Authorization header SERVER-SIDE here — it never reaches client
+      // JS. This route MUST be declared BEFORE the catch-all `/api` so it wins.
+      // No key set → no header injected → the route 401s → nav shows name only.
+      '/api/trpc/buzz.getBuzzAccount': {
+        target: proxyTarget,
+        changeOrigin: true,
+        headers: {
+          origin: 'https://civitai.com',
+          // Injected only when CIVITAI_HOST_KEY is present (empty object otherwise).
+          ...(hostKey ? { authorization: `Bearer ${hostKey}` } : {}),
+        },
+      },
+      // Catch-all backend proxy for the live host's protocol calls (estimate /
+      // submit / poll / cancel / blocks.me / blocks.models). These carry the
+      // BLOCK token from the client (the live host sets the Bearer); we only
+      // rewrite the Origin. The personal key is NEVER injected here.
       '/api': {
-        target: process.env.VITE_LIVE_HOST_ORIGIN ?? 'https://civitai.com',
+        target: proxyTarget,
         changeOrigin: true, // rewrites Host to the target
         headers: { origin: 'https://civitai.com' }, // satisfies the origin gate (N2) + no CORS (N1)
       },
@@ -61,4 +92,5 @@ export default defineConfig({
       },
     ],
   },
+  };
 });

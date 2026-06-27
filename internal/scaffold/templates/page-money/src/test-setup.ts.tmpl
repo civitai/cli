@@ -7,12 +7,12 @@ import { afterEach, beforeEach, vi } from 'vitest';
 
 import { resetHarnessTransport } from './dev-transport.js';
 
-// The App's catalog-load effect calls the real `fetch` (the civitai catalog
-// endpoint). jsdom has no network, so stub it to reject — `fetchCatalog` catches
-// that gracefully and the picker stays on the curated set. Component/e2e tests
-// drive the money path through the SDK postMessage transport, not HTTP, so this
-// never touches the flows under test. (A test that wants catalog options can
-// override this stub locally.)
+// <App/> drives the money path + the host pickers entirely through the SDK
+// postMessage transport (no HTTP). jsdom has no network, so stub global `fetch`
+// to reject — nothing in the <App/> flows depends on it, but the stub keeps any
+// stray fetch (e.g. the dev:live host nav's reads, which never run in <App/>
+// tests) from hitting a real network. (Override this stub locally if a test
+// needs a fetch response.)
 beforeEach(() => {
   vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('no network in test')));
 });

@@ -1,0 +1,73 @@
+import { describe, expect, it } from 'vitest';
+
+import { formatBalance, navDisplay, parseBuzzBalance, parseViewerName } from './nav.js';
+
+// Pure-logic units for the dev:live host nav. The parsers must be SAFE on any
+// shape (tRPC envelope, bare, malformed, empty) so a bad response degrades the
+// nav to name-only — never an error, never a crash.
+
+describe('parseBuzzBalance', () => {
+  it('sums the {blue,green,yellow} buckets out of the real tRPC envelope', () => {
+    // The ACTUAL buzz.getBuzzAccount shape (confirmed live) — no flat `balance`.
+    const body = { result: { data: { json: { blue: 488754, green: 0, yellow: 849237 } } } };
+    expect(parseBuzzBalance(body)).toBe(488754 + 0 + 849237);
+  });
+  it('sums whichever buckets are present (missing buckets ignored)', () => {
+    expect(parseBuzzBalance({ result: { data: { json: { blue: 100, yellow: 50 } } } })).toBe(150);
+    expect(parseBuzzBalance({ blue: 0, green: 0, yellow: 0 })).toBe(0);
+  });
+  it('falls back to a flat { balance } when no buckets are present', () => {
+    expect(parseBuzzBalance({ balance: 50 })).toBe(50);
+  });
+  it('returns null for malformed / empty / non-object / no-balance bodies', () => {
+    expect(parseBuzzBalance(null)).toBeNull();
+    expect(parseBuzzBalance(undefined)).toBeNull();
+    expect(parseBuzzBalance('nope')).toBeNull();
+    expect(parseBuzzBalance(42)).toBeNull();
+    expect(parseBuzzBalance({})).toBeNull();
+    expect(parseBuzzBalance({ result: { data: {} } })).toBeNull();
+    expect(parseBuzzBalance({ balance: 'NaN-string' })).toBeNull();
+    expect(parseBuzzBalance({ balance: Infinity })).toBeNull();
+    expect(parseBuzzBalance({ blue: 'x', yellow: null })).toBeNull();
+  });
+});
+
+describe('parseViewerName', () => {
+  it('reads a bare { username }', () => {
+    expect(parseViewerName({ id: 2, username: 'zach' })).toBe('zach');
+  });
+  it('digs username out of an envelope + trims', () => {
+    expect(parseViewerName({ result: { data: { username: '  zach  ' } } })).toBe('zach');
+  });
+  it('returns null for absent / blank / malformed', () => {
+    expect(parseViewerName(null)).toBeNull();
+    expect(parseViewerName({})).toBeNull();
+    expect(parseViewerName({ username: null })).toBeNull();
+    expect(parseViewerName({ username: '   ' })).toBeNull();
+    expect(parseViewerName('nope')).toBeNull();
+  });
+});
+
+describe('formatBalance', () => {
+  it('formats finite numbers with separators; null/non-finite → null (hidden)', () => {
+    expect(formatBalance(1234567)).toBe((1234567).toLocaleString());
+    expect(formatBalance(0)).toBe('0');
+    expect(formatBalance(null)).toBeNull();
+    expect(formatBalance(undefined)).toBeNull();
+    expect(formatBalance(NaN)).toBeNull();
+    expect(formatBalance(Infinity)).toBeNull();
+  });
+});
+
+describe('navDisplay', () => {
+  it('shows the name + balance when both present', () => {
+    expect(navDisplay('zach', 5000)).toEqual({ name: 'zach', balance: (5000).toLocaleString() });
+  });
+  it('HIDES the balance (null) when absent — e.g. CIVITAI_HOST_KEY unset', () => {
+    expect(navDisplay('zach', null)).toEqual({ name: 'zach', balance: null });
+  });
+  it('falls back to a neutral name when unresolved (never blank)', () => {
+    expect(navDisplay(null, null)).toEqual({ name: 'viewer', balance: null });
+    expect(navDisplay('   ', 100)).toEqual({ name: 'viewer', balance: (100).toLocaleString() });
+  });
+});
