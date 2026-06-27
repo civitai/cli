@@ -20,7 +20,13 @@ import {
   installLiveHost,
   resolveLiveConfig,
 } from './dev-transport.js';
-import { navDisplay, parseBuzzBalance, parseViewerName } from './nav.js';
+import {
+  isTokenExpired,
+  navDisplay,
+  parseBuzzBalance,
+  parseViewerName,
+  shouldPromptReMint,
+} from './nav.js';
 import './index.css';
 
 // Dev harness entry. The mode decides the surface:
@@ -107,25 +113,43 @@ function LiveApp({ token, backendBaseUrl }: { token: string; backendBaseUrl: str
  *    vite.config.ts). The key is NEVER `VITE_`-bundled — this client code never
  *    references it; it just fetches the same-origin route. With no key set the
  *    balance route 401s and the nav GRACEFULLY shows the name only (no error).
+ *
+ * EXPIRED-TOKEN SURFACING: dev block tokens live ~15min. An expired token
+ * SILENTLY degrades (the block still renders — `createLiveHost` reads claims
+ * unverified — and the balance still resolves via the personal key), so a dead
+ * token looks like feature bugs. We detect it two ways — a client-side `exp`
+ * read AND a 401 from `/blocks/me` (server reject) — and render a prominent
+ * re-mint banner ABOVE the nav strip instead of the misleading neutral 'viewer'.
  */
 function HostNav({ blockToken, backendBaseUrl }: { blockToken: string; backendBaseUrl: string }) {
   const [name, setName] = useState<string | null>(null);
   const [balance, setBalance] = useState<number | null>(null);
+  // The HTTP status of the LAST `/blocks/me` failure (a 401 = server rejected
+  // the token), or `null` on success / network error. Distinct from `name` so a
+  // 401 surfaces the re-mint banner even when the name can't resolve.
+  const [meStatus, setMeStatus] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     const base = backendBaseUrl.replace(/\/+$/, '');
 
-    // Profile name: block token, same-origin via the proxy.
+    // Profile name: block token, same-origin via the proxy. CAPTURE the HTTP
+    // status on failure (don't discard it) — a 401 means the server rejected the
+    // token (expired / bad kid) and we must prompt a re-mint.
     void fetch(`${base}/api/v1/blocks/me`, {
       headers: { Authorization: `Bearer ${blockToken}` },
     })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((body) => {
-        if (!cancelled) setName(parseViewerName(body));
+      .then(async (r) => {
+        if (cancelled) return;
+        if (!r.ok) {
+          setMeStatus(r.status); // name stays null; status drives the banner
+          return;
+        }
+        setMeStatus(null);
+        setName(parseViewerName(await r.json()));
       })
       .catch(() => {
-        /* name stays null → nav shows the neutral fallback */
+        /* network error → name stays null, no server status (no banner from here) */
       });
 
     // Buzz balance: NO Authorization header here — the dev proxy injects the
@@ -145,27 +169,68 @@ function HostNav({ blockToken, backendBaseUrl }: { blockToken: string; backendBa
     };
   }, [blockToken, backendBaseUrl]);
 
+  // The token is static, so a component-body Date.now() is fine. clientExpired =
+  // our unverified exp-read; promptReMint folds in the server's 401.
+  const clientExpired = isTokenExpired(blockToken, Date.now());
+  const promptReMint = shouldPromptReMint(clientExpired, meStatus);
+
   const display = navDisplay(name, balance);
 
   return (
-    <nav data-harness-banner="live" data-theme="dark" style={navStyle}>
-      <span style={navProfileStyle} data-testid="pm-nav-name">
-        <span style={navAvatarStyle} aria-hidden>
-          {display.name.charAt(0).toUpperCase()}
+    <>
+      {promptReMint && (
+        <div data-testid="pm-nav-remint" data-theme="dark" style={remintBannerStyle}>
+          <Alert
+            color="warning"
+            title="Dev token expired — re-mint to restore your session"
+            data-harness-banner="token-expired"
+          >
+            <Stack gap={8}>
+              <span style={stepLabelStyle}>
+                Your dev block token is no longer valid (they last ~15&nbsp;min). The block still
+                renders and your Buzz balance still shows (those use your personal key), but the
+                live session is running on a dead token — re-mint it:
+              </span>
+              <CmdRow cmd="civitai app dev-token {{ .Slug }} --env >> .env.development.local" />
+              <span style={stepLabelStyle}>
+                then restart <code>dev:live</code> (or it auto-restarts when <code>.env</code>{' '}
+                changes).
+              </span>
+            </Stack>
+          </Alert>
+        </div>
+      )}
+      <nav data-harness-banner="live" data-theme="dark" style={navStyle}>
+        <span style={navProfileStyle} data-testid="pm-nav-name">
+          {promptReMint ? (
+            <span style={navExpiredStyle}>token expired</span>
+          ) : (
+            <>
+              <span style={navAvatarStyle} aria-hidden>
+                {display.name.charAt(0).toUpperCase()}
+              </span>
+              {display.name}
+            </>
+          )}
         </span>
-        {display.name}
-      </span>
-      <span style={navRightStyle}>
-        {display.balance != null && (
-          <span style={navBalanceStyle} data-testid="pm-nav-balance">
-            ⚡ {display.balance} Buzz
-          </span>
-        )}
-        <span style={navPillStyle} data-testid="pm-nav-pill">
-          LIVE · spends real Buzz
+        <span style={navRightStyle}>
+          {display.balance != null && (
+            <span style={navBalanceStyle} data-testid="pm-nav-balance">
+              ⚡ {display.balance} Buzz
+            </span>
+          )}
+          {promptReMint ? (
+            <span style={navExpiredPillStyle} data-testid="pm-nav-pill">
+              token expired
+            </span>
+          ) : (
+            <span style={navPillStyle} data-testid="pm-nav-pill">
+              LIVE · spends real Buzz
+            </span>
+          )}
         </span>
-      </span>
-    </nav>
+      </nav>
+    </>
   );
 }
 
@@ -489,6 +554,27 @@ const navPillStyle: CSSProperties = {
   padding: '3px 10px',
   borderRadius: 999,
   whiteSpace: 'nowrap',
+};
+// When the dev token is expired, the name area + pill go honest ("token expired")
+// instead of the misleading neutral 'viewer' + the LIVE-spend pill.
+const navExpiredStyle: CSSProperties = { color: '#ffa94d', fontWeight: 700 };
+const navExpiredPillStyle: CSSProperties = {
+  background: '#7a5a1f',
+  color: '#ffe8cc',
+  fontWeight: 700,
+  padding: '3px 10px',
+  borderRadius: 999,
+  whiteSpace: 'nowrap',
+};
+// The re-mint banner sits sticky ABOVE the nav strip, themed so the W6 Alert's
+// CSS vars resolve against the dark host chrome.
+const remintBannerStyle: CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 10000,
+  padding: '10px 14px',
+  background: '#0e0f12',
+  borderBottom: '1px solid #2a2c31',
 };
 
 // The fail-safe screen themes its OWN root (data-theme) so the W6 pack's CSS

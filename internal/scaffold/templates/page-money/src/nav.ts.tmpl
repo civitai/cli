@@ -96,3 +96,65 @@ export function navDisplay(name: string | null, balance: number | null): NavDisp
     balance: formatBalance(balance),
   };
 }
+
+// ── Dev-token expiry detection ──────────────────────────────────────────────
+// Dev block tokens are short-lived (~15min). When the pasted block token (the
+// app's dev:live credential) expires the harness SILENTLY degrades —
+// `createLiveHost` decodes the token's
+// claims client-side WITHOUT verifying (so the block still renders), and the Buzz
+// balance comes from the dev's PERSONAL key via the proxy (not the block token) —
+// so a dead token masquerades as feature bugs. These pure helpers let the nav
+// SURFACE "your dev token expired — re-mint" instead. No imports, never throw.
+
+/**
+ * Decode a JWT's `exp` (seconds since epoch) WITHOUT verifying the signature.
+ * Mirrors the SDK's base64url→base64 padding. Returns the numeric `exp` if the
+ * payload carries a finite number, else `null` (no exp / non-numeric exp /
+ * malformed / non-string input). SAFE on any input — never throws.
+ */
+export function decodeTokenExp(token: string): number | null {
+  try {
+    if (typeof token !== 'string') return null;
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const payloadSeg = parts[1];
+    if (!payloadSeg) return null;
+    // base64url → base64 + pad to a multiple of 4.
+    let b64 = payloadSeg.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4 !== 0) b64 += '=';
+    let json: string;
+    if (typeof atob === 'function') {
+      json = atob(b64);
+    } else if (typeof Buffer !== 'undefined') {
+      json = Buffer.from(b64, 'base64').toString('utf8');
+    } else {
+      return null;
+    }
+    const payload = JSON.parse(json) as unknown;
+    if (payload == null || typeof payload !== 'object') return null;
+    const exp = (payload as Record<string, unknown>).exp;
+    return typeof exp === 'number' && Number.isFinite(exp) ? exp : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether the token's `exp` is in the past relative to `nowMs` (ms since epoch).
+ * A token with no/non-numeric exp is NOT treated as expired by this client check
+ * (→ `false`) — the server's 401 path covers that. Pure + total.
+ */
+export function isTokenExpired(token: string, nowMs: number): boolean {
+  const exp = decodeTokenExp(token);
+  return exp != null && exp * 1000 <= nowMs;
+}
+
+/**
+ * Whether to prompt the dev to re-mint their token. True when our client-side
+ * exp-read says it's expired OR the server rejected the token with a 401 from
+ * `/blocks/me` (e.g. bad kid / past maxTokenAge even if our exp-read disagreed).
+ * Pure + total.
+ */
+export function shouldPromptReMint(clientExpired: boolean, meHttpStatus: number | null): boolean {
+  return clientExpired || meHttpStatus === 401;
+}
