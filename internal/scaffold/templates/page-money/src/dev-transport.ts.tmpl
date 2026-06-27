@@ -86,8 +86,7 @@ export function resolveLiveConfig(): LiveConfig {
   if (!token) {
     return {
       ready: false,
-      reason:
-        'No VITE_LIVE_BLOCK_TOKEN set — follow the steps below to mint one (never commit it).',
+      reason: 'Set one up below to run against your own account.',
     };
   }
   return { ready: true, token, backendBaseUrl };

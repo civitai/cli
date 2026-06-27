@@ -305,11 +305,11 @@ function LiveUnavailable({ reason }: { reason: string }) {
           <WizardStep n={1} current={step} title="Create your API key">
             <Stack gap={10}>
               <span style={stepLabelStyle}>
-                Opens the key dialog pre-filled (name + minimal scope) on{' '}
+                Create your personal API key so your app can spend Buzz from your local dev
+                environment.{' '}
                 <a href={apiKeyUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
                   civitai.com/user/account
                 </a>
-                . An OAuth login can&apos;t spend, so create a key, then paste it:
               </span>
               <TextInput
                 label="Your API key"
