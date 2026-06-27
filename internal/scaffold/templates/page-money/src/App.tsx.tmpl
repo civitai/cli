@@ -5,9 +5,10 @@ import {
   useBlockResize,
   useBlockToken,
   useBuzzWorkflow,
-  useDomainMaturity,
+  useCheckpointPicker,
   useRequestConsent,
   useRequestSignIn,
+  useResourcePicker,
 } from '@civitai/blocks-react';
 import {
   Alert,
@@ -15,7 +16,6 @@ import {
   Button,
   Card,
   Group,
-  Loader,
   Stack,
   Textarea,
   injectBlocksStyles,
@@ -35,27 +35,18 @@ import {
   type GenPhase,
 } from './generation.js';
 import {
-  CHECKPOINTS,
   DEFAULT_CHECKPOINT,
-  LORAS,
   LORA_STRENGTH_MAX,
   LORA_STRENGTH_MIN,
   MAX_LORAS,
   addLora,
-  loraOption,
-  mergeCheckpoints,
+  checkpointFromPick,
+  loraFromPick,
   removeLora,
-  selectedLoraIds,
   setLoraWeight,
   type CheckpointOption,
   type LoraOption,
 } from './models.js';
-import {
-  catalogSfwOnly,
-  defaultFetch,
-  fetchCatalog,
-  fetchLoraCatalog,
-} from './catalog-api.js';
 
 // Inject the W6 component pack's stylesheet at module init (before first paint)
 // to avoid the documented one-frame FOUC (the pack's components also call
@@ -65,22 +56,24 @@ injectBlocksStyles();
 
 /**
  * {{ .Name }} — a full-page (W10) money-path App Block whose ENTIRE interface is
- * built from the `@civitai/blocks-react/ui` W6 component pack (Button, TextInput,
- * Textarea, Card, Stack, Group, Alert, Modal, Badge). It exercises the page money
- * path end-to-end: estimate -> (lazy consent) -> submit -> poll -> real Buzz
- * spend, using the published SDK hooks (NEVER raw postMessage to the parent with
- * a wildcard origin — the SDK does the origin-checked messaging safely).
+ * built from the `@civitai/blocks-react/ui` W6 component pack (Button, Textarea,
+ * Card, Stack, Group, Alert, Badge). It exercises the page money path end-to-end:
+ * estimate -> (lazy consent) -> submit -> poll -> real Buzz spend, using the
+ * published SDK hooks (NEVER raw postMessage to the parent with a wildcard origin
+ * — the SDK does the origin-checked messaging safely).
  *
  * Page-native constraints:
  *  - slot = app.page (entity=none) via the top-level `page:{}` manifest object.
  *  - scopes = ['ai:write:budgeted'] ONLY. A page HARD-FORBIDS `buzz:read:self`,
- *    so we CANNOT read the viewer's balance — insufficient Buzz is detected from
- *    the `failed` snapshot, never proactively.
+ *    so we CANNOT read the viewer's balance from in-block — insufficient Buzz is
+ *    detected from the `failed` snapshot, never proactively.
  *  - budget comes from manifest `page.buzzBudgetPerGen`; a page is stateless.
  *  - a page has no HOST model context (entity=none), so the app ships a curated
- *    default checkpoint (DEFAULT_CHECKPOINT) and an in-block picker that browses
- *    the catalog (see models.ts / catalog-api.ts). A pick is DISCOVERY ONLY —
- *    the server re-validates + re-prices it at estimate/submit.
+ *    default checkpoint (DEFAULT_CHECKPOINT) and lets the user change it via the
+ *    HOST's resource picker (`useCheckpointPicker` / `useResourcePicker`). The
+ *    block never browses a catalog itself — the host serves the picker (in
+ *    dev:live AND on the real platform). A pick is DISCOVERY ONLY — the server
+ *    re-validates + re-prices it at estimate/submit.
  *  - on top of the checkpoint the user can add up to MAX_LORAS LoRAs, each with
  *    an adjustable weight; they ride along as `additionalResources` in the body.
  *    LoRA picks + weights are ALSO discovery only — the server re-validates
@@ -92,10 +85,15 @@ injectBlocksStyles();
 export function App() {
   const { ready, viewer, theme } = useBlockContext();
   const token = useBlockToken();
-  const { isSfw: domainIsSfw } = useDomainMaturity();
   const { estimate, submit, poll } = useBuzzWorkflow();
   const { requestConsent } = useRequestConsent();
   const { requestSignIn } = useRequestSignIn();
+  // The host-mediated pickers. `open(...)` asks the HOST to open its own native
+  // resource modal; the block never sees a catalog, only the chosen resource.
+  // Identical protocol in dev:harness (mock pick), dev:live (host-served
+  // overlay), and on the real platform. A pick is DISCOVERY ONLY.
+  const { open: openCheckpointPicker } = useCheckpointPicker();
+  const { open: openResourcePicker } = useResourcePicker();
 
   const anon = ready && !viewer;
   const granted = hasBudgetedScope(token.scopes);
@@ -111,26 +109,17 @@ export function App() {
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  // The selected checkpoint. Starts on the curated DEFAULT (works at first paint
-  // / offline / before the catalog loads); the in-block picker can replace it.
-  // A pick is DISCOVERY ONLY — the server re-validates + re-prices it.
+  // The selected checkpoint. Starts on the curated DEFAULT (works at first paint,
+  // before the user opens the picker); the host picker replaces it. A pick is
+  // DISCOVERY ONLY — the server re-validates + re-prices it.
   const [checkpoint, setCheckpoint] = useState<CheckpointOption>(DEFAULT_CHECKPOINT);
-  // Catalog-browsed options, merged with the curated set in the picker. Empty
-  // until the catalog read resolves (or stays empty if it's unreachable — the
-  // curated set always works, so the picker is never blocked on the network).
-  const [catalogOptions, setCatalogOptions] = useState<CheckpointOption[]>([]);
-  const [catalogLoading, setCatalogLoading] = useState(false);
-
   // The LoRAs the user has layered on top of the checkpoint, with their weights.
   // Drives `additionalResources` in the body. All mutations go through the pure
   // models.ts helpers (dedup, MAX_LORAS cap, weight clamp). DISCOVERY ONLY.
   const [loras, setLoras] = useState<LoraOption[]>([]);
-  // The LoRA catalog to ADD from: the curated LORAS fallback first paint, then
-  // catalog-browsed LoRAs once the read resolves (stays curated if unreachable).
-  const [loraCatalog, setLoraCatalog] = useState<LoraOption[]>(() =>
-    LORAS.map((l) => loraOption(l)),
-  );
-  const [loraCatalogLoading, setLoraCatalogLoading] = useState(false);
+  // True while a host picker modal is open, so the trigger button shows progress
+  // and we don't fire a second open over the first.
+  const [pickerBusy, setPickerBusy] = useState(false);
 
   // True once the user clicked Generate while the scope was missing — so when
   // the consent grant lands (granted flips true) we auto-resume the submit.
@@ -310,79 +299,50 @@ export function App() {
     }
   }, [granted, runGeneration]);
 
-  // Load the in-block catalog once the host is ready: token-authoritative
-  // (maturity-clamped) when signed in, public + advisory-SFW otherwise. The
-  // curated CHECKPOINTS already populate the picker, so a failed/empty read just
-  // leaves the picker on the curated set — the catalog only ADDS options.
-  // DISCOVERY ONLY: every option is re-validated + re-priced server-side.
-  useEffect(() => {
-    if (!ready) return;
-    let cancelled = false;
-    setCatalogLoading(true);
-    fetchCatalog(
-      {},
-      {
-        fetch: defaultFetch,
-        auth: { token: token.raw },
-        anonSfwOnly: catalogSfwOnly(domainIsSfw),
-      },
-    )
-      .then((res) => {
-        if (cancelled) return;
-        setCatalogOptions(res.kind === 'ok' ? res.options : []);
-      })
-      .finally(() => {
-        if (!cancelled) setCatalogLoading(false);
+  // --- Host pickers (checkpoint + LoRA) ---
+  //
+  // Both open the HOST's native resource modal via the SDK hooks. The block
+  // never sees a catalog, a list, or any resource the user didn't pick. Every
+  // pick is DISCOVERY ONLY — the server re-validates + re-prices the id at
+  // estimate/submit, so threading a pick into the body is money-safe.
+
+  // Open the host's Checkpoint picker, pre-filtered to the current base-model
+  // family + pre-highlighting the current pick. On a selection, map it into the
+  // checkpoint state. A dismissal (`selected` undefined) leaves the pick as-is.
+  const onChangeModel = useCallback(async () => {
+    setPickerBusy(true);
+    try {
+      const { selected } = await openCheckpointPicker({
+        baseModelGroup: checkpoint.baseModel,
+        currentVersionId: checkpoint.versionId,
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, token.raw, domainIsSfw]);
+      if (selected) setCheckpoint(checkpointFromPick(selected));
+    } finally {
+      setPickerBusy(false);
+    }
+  }, [openCheckpointPicker, checkpoint.baseModel, checkpoint.versionId]);
 
-  // Load the in-block LoRA catalog the same way (token-authoritative, public
-  // fallback) — only `types=LORA` + the LoRA mapper differ. The curated LORAS
-  // already populate the add-list, so a failed/empty read just leaves it on the
-  // curated set. DISCOVERY ONLY: every LoRA + weight is re-validated server-side.
-  useEffect(() => {
-    if (!ready) return;
-    let cancelled = false;
-    setLoraCatalogLoading(true);
-    fetchLoraCatalog(
-      {},
-      {
-        fetch: defaultFetch,
-        auth: { token: token.raw },
-        anonSfwOnly: catalogSfwOnly(domainIsSfw),
-      },
-    )
-      .then((res) => {
-        if (cancelled) return;
-        // Curated LoRAs lead; append catalog LoRAs that aren't already curated.
-        const curated = LORAS.map((l) => loraOption(l));
-        const seen = new Set(curated.map((l) => l.versionId));
-        const extra = res.kind === 'ok' ? res.options.filter((l) => !seen.has(l.versionId)) : [];
-        setLoraCatalog([...curated, ...extra]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoraCatalogLoading(false);
+  // Open the host's resource picker filtered to LoRAs, in the checkpoint's
+  // base-model family. Append the pick (deduped + MAX_LORAS-capped via addLora).
+  // A dismissal (`null`) is a no-op.
+  const onAddLora = useCallback(async () => {
+    setPickerBusy(true);
+    try {
+      const picked = await openResourcePicker({
+        resourceType: 'LORA',
+        baseModelGroup: checkpoint.baseModel,
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [ready, token.raw, domainIsSfw]);
+      if (picked) setLoras((cur) => addLora(cur, loraFromPick(picked)));
+    } finally {
+      setPickerBusy(false);
+    }
+  }, [openResourcePicker, checkpoint.baseModel]);
 
-  // The picker's option list: curated set first, then catalog-browsed options,
-  // de-duplicated by versionId. The curated entries always lead so the default
-  // is stable across catalog states.
-  const pickerOptions = mergeCheckpoints(CHECKPOINTS, catalogOptions);
-
-  // LoRA selection mutators — all routed through the pure models.ts helpers so
-  // the dedup / MAX_LORAS cap / weight clamp stay in one tested place.
-  const selectedIds = selectedLoraIds(loras);
-  const onAddLora = (lora: LoraOption) => setLoras((cur) => addLora(cur, lora));
   const onRemoveLora = (versionId: number) => setLoras((cur) => removeLora(cur, versionId));
   const onLoraWeight = (versionId: number, weight: number) =>
     setLoras((cur) => setLoraWeight(cur, versionId, weight));
+  // Whether the LoRA list can still take another. (The picker can return a dup;
+  // addLora drops it, but we also disable Add at the cap.)
   const loraCapReached = loras.length >= MAX_LORAS;
 
   const promptError =
@@ -416,13 +376,6 @@ export function App() {
     proceed();
   };
 
-  // Resolve a picker <option> value (the versionId) back to a CheckpointOption.
-  const onCheckpointChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const versionId = Number(e.target.value);
-    const next = pickerOptions.find((o) => o.versionId === versionId);
-    if (next) setCheckpoint(next);
-  };
-
   return (
     <div ref={rootRef} data-theme={theme} style={shell}>
       <Card padding="lg" style={cardStyle}>
@@ -442,51 +395,44 @@ export function App() {
             onBlur={() => setTouched(true)}
           />
 
-          {/* Model picker. The W6 pack ships no Select, so this is a themed
-              native <select> (theme tokens via the pack's CSS vars). The curated
-              CHECKPOINTS always work; the catalog ADDS more once it loads. Every
-              pick is DISCOVERY ONLY — the server re-validates + re-prices it. */}
-          <label style={fieldStyle}>
+          {/* Model control. A page carries no host model context, so the app
+              starts on DEFAULT_CHECKPOINT and lets the user CHANGE it via the
+              HOST's checkpoint picker (useCheckpointPicker) — the block never
+              browses a catalog. Every pick is DISCOVERY ONLY: the server
+              re-validates + re-prices it at estimate/submit. */}
+          <div style={fieldStyle}>
             <span style={fieldLabelStyle}>Model</span>
             <span style={fieldDescStyle}>
-              Pick a checkpoint to generate with. The server validates + prices every generation.
+              The checkpoint to generate with. The server validates + prices every generation.
             </span>
-            <span style={selectWrapStyle}>
-              <select
-                value={checkpoint.versionId}
-                onChange={onCheckpointChange}
-                aria-label="Model"
-                style={selectStyle}
-                data-testid="pm-model-select"
+            <Group justify="space-between" align="center" gap={8} wrap={false}>
+              <span style={currentModelStyle} title={checkpoint.label} data-testid="pm-model-label">
+                {checkpoint.label}
+                {checkpoint.baseModel ? ` (${checkpoint.baseModel})` : ''}
+              </span>
+              <Button
+                variant="light"
+                size="sm"
+                loading={pickerBusy}
+                onClick={() => void onChangeModel()}
+                data-testid="pm-change-model"
               >
-                {pickerOptions.map((opt) => (
-                  <option key={opt.versionId} value={opt.versionId}>
-                    {opt.label}
-                    {opt.baseModel ? ` (${opt.baseModel})` : ''}
-                  </option>
-                ))}
-              </select>
-              {catalogLoading && (
-                <span style={selectLoaderStyle} aria-hidden>
-                  <Loader size="sm" />
-                </span>
-              )}
-            </span>
-          </label>
+                Change model
+              </Button>
+            </Group>
+          </div>
 
-          {/* LoRA selector. Add up to MAX_LORAS LoRAs on top of the checkpoint,
-              each with an adjustable weight (a themed native range input — the W6
-              pack ships no Slider). Every LoRA + weight is DISCOVERY ONLY: the
-              server re-validates (LoRA-only? base-model compatible? entitled?) +
-              re-prices the whole body at estimate/submit, so a client choice is
-              never trusted. */}
+          {/* LoRA control. Add up to MAX_LORAS LoRAs on top of the checkpoint
+              via the HOST's resource picker (useResourcePicker, type=LORA), each
+              with an adjustable weight (a themed native range input — the W6 pack
+              ships no Slider). Every LoRA + weight is DISCOVERY ONLY: the server
+              re-validates (LoRA-only? base-model compatible? entitled?) +
+              re-prices the whole body at estimate/submit. */}
           <LoraSelector
-            catalog={loraCatalog}
-            catalogLoading={loraCatalogLoading}
             selected={loras}
-            selectedIds={selectedIds}
             capReached={loraCapReached}
-            onAdd={onAddLora}
+            pickerBusy={pickerBusy}
+            onAdd={() => void onAddLora()}
             onRemove={onRemoveLora}
             onWeight={onLoraWeight}
           />
@@ -549,33 +495,26 @@ export function App() {
 }
 
 /**
- * The LoRA selector: an ADD list (from the curated/catalog LoRAs) + the selected
- * rows, each with a weight control. Built from the W6 pack (Group/Stack/Badge/
- * Button/Loader) plus a themed native range input (the pack ships no Slider).
- * Every pick + weight is DISCOVERY ONLY — server-revalidated + re-priced.
+ * The LoRA selector: an "Add LoRA" button (opens the HOST resource picker) + the
+ * selected rows, each with a weight control + Remove. Built from the W6 pack
+ * (Group/Stack/Badge/Button) plus a themed native range input (the pack ships no
+ * Slider). Every pick + weight is DISCOVERY ONLY — server-revalidated + re-priced.
  */
 function LoraSelector({
-  catalog,
-  catalogLoading,
   selected,
-  selectedIds,
   capReached,
+  pickerBusy,
   onAdd,
   onRemove,
   onWeight,
 }: {
-  catalog: readonly LoraOption[];
-  catalogLoading: boolean;
   selected: readonly LoraOption[];
-  selectedIds: Set<number>;
   capReached: boolean;
-  onAdd: (lora: LoraOption) => void;
+  pickerBusy: boolean;
+  onAdd: () => void;
   onRemove: (versionId: number) => void;
   onWeight: (versionId: number, weight: number) => void;
 }) {
-  // The LoRAs available to add: catalog minus the already-selected ones.
-  const addable = catalog.filter((l) => !selectedIds.has(l.versionId));
-
   return (
     <div style={fieldStyle}>
       <span style={fieldLabelStyle}>
@@ -629,32 +568,19 @@ function LoraSelector({
         </Stack>
       )}
 
-      {/* Add a LoRA — one chip-button per addable catalog LoRA. */}
+      {/* Add a LoRA — opens the host's resource picker filtered to LoRAs. */}
       <span style={loraAddWrapStyle}>
-        {capReached ? (
-          <span style={fieldDescStyle}>Max {MAX_LORAS} LoRAs selected.</span>
-        ) : addable.length > 0 ? (
-          addable.map((l) => (
-            <Button
-              key={l.versionId}
-              variant="light"
-              size="sm"
-              onClick={() => onAdd(l)}
-              data-testid="pm-lora-add"
-            >
-              + {l.label}
-            </Button>
-          ))
-        ) : (
-          <span style={fieldDescStyle}>
-            {catalogLoading ? 'Loading LoRAs…' : 'No more LoRAs to add.'}
-          </span>
-        )}
-        {catalogLoading && !capReached && (
-          <span aria-hidden>
-            <Loader size="sm" />
-          </span>
-        )}
+        <Button
+          variant="light"
+          size="sm"
+          disabled={capReached}
+          loading={pickerBusy}
+          onClick={onAdd}
+          data-testid="pm-lora-add"
+        >
+          + Add LoRA
+        </Button>
+        {capReached && <span style={fieldDescStyle}>Max {MAX_LORAS} LoRAs selected.</span>}
       </span>
     </div>
   );
@@ -685,9 +611,8 @@ const cardStyle: React.CSSProperties = { width: '100%', maxWidth: 640 };
 const titleStyle: React.CSSProperties = { fontSize: 20 };
 const imageStyle: React.CSSProperties = { width: '100%', borderRadius: 8, display: 'block' };
 
-// The W6 pack has no Select, so the model picker is a themed native <select>.
-// These read the same pack CSS vars the pack's own inputs use, so it matches the
-// Textarea/TextInput surface across light/dark themes.
+// Field chrome — read the same pack CSS vars the pack's own inputs use, so the
+// Model + LoRA controls match the Textarea/TextInput surface across themes.
 const fieldStyle: React.CSSProperties = { display: 'grid', gap: 4 };
 const fieldLabelStyle: React.CSSProperties = { fontSize: 14, fontWeight: 600 };
 const fieldDescStyle: React.CSSProperties = {
@@ -695,23 +620,18 @@ const fieldDescStyle: React.CSSProperties = {
   color: 'var(--ci-color-text-muted, var(--ci-color-text))',
   opacity: 0.8,
 };
-const selectWrapStyle: React.CSSProperties = { position: 'relative', display: 'block' };
-const selectStyle: React.CSSProperties = {
-  width: '100%',
+const currentModelStyle: React.CSSProperties = {
+  flex: 1,
+  minWidth: 0,
   padding: '10px 12px',
   borderRadius: 8,
   border: '1px solid var(--ci-color-border)',
   background: 'var(--ci-color-surface)',
   color: 'var(--ci-color-text)',
   fontSize: 14,
-  appearance: 'none',
-};
-const selectLoaderStyle: React.CSSProperties = {
-  position: 'absolute',
-  top: '50%',
-  right: 12,
-  transform: 'translateY(-50%)',
-  pointerEvents: 'none',
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
 };
 
 // The W6 pack ships no Slider, so each LoRA's weight uses a themed native range

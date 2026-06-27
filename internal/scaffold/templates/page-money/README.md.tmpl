@@ -10,11 +10,13 @@ weight) → estimate → (lazy consent) → submit → poll → result.
 
 A sandboxed static web app served in an iframe by the Civitai host. Its UI is
 built from the **`@civitai/blocks-react/ui`** W6 component pack (Button, Textarea,
-Card, Stack, Group, Alert, Loader, Badge) — the two exceptions are the model
-picker (a themed native `<select>`) and each LoRA's weight control (a themed
-native range `<input>`), since the pack ships no Select/Slider yet. The pack
-ships its own theme-aware styles; `injectBlocksStyles()` is called at module init
-in `src/App.tsx` so the first paint is already styled.
+Card, Stack, Group, Alert, Badge) — the one exception is each LoRA's weight
+control (a themed native range `<input>`, since the pack ships no Slider yet).
+The model + LoRA pickers are the HOST's own — the block never browses a catalog;
+it calls the SDK's `useCheckpointPicker` / `useResourcePicker` hooks and the host
+opens its native resource modal. The pack ships its own theme-aware styles;
+`injectBlocksStyles()` is called at module init in `src/App.tsx` so the first
+paint is already styled.
 
 The platform
 owns the build: it runs `npm ci` then the `buildCommand` from
@@ -24,6 +26,8 @@ owns the build: it runs `npm ci` then the `buildCommand` from
 The money path uses the SDK hooks — never raw `window.parent.postMessage`:
 
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).
+- `useCheckpointPicker()` / `useResourcePicker()` — open the HOST's native
+  resource picker for the checkpoint + LoRAs (the block never browses a catalog).
 - `useRequestConsent()` — lazy, on first Generate: `ai:write:budgeted` is
   consent-gated, so the token mints WITHOUT it; the grant arrives as a
   `TOKEN_REFRESH` and the app auto-resumes the click.
@@ -31,45 +35,42 @@ The money path uses the SDK hooks — never raw `window.parent.postMessage`:
 
 Page constraints: a page is `entity=none` — it carries no HOST model context (a
 model slot would deliver `modelId`/`modelVersionId` via `BLOCK_INIT`; a page does
-not). So this app ships its OWN model choice: a curated default checkpoint
-(`DEFAULT_CHECKPOINT` in `src/models.ts`, works at first paint / offline) plus an
-in-block picker that browses the catalog (`src/catalog-api.ts`). A page hard-forbids
+not). So this app ships its OWN initial model choice — a curated default
+checkpoint (`DEFAULT_CHECKPOINT` in `src/models.ts`, so Generate works at first
+paint) — and lets the user CHANGE it via the host picker. A page hard-forbids
 `buzz:read:self`, so insufficient Buzz is detected from a failed snapshot, not
 read proactively. The budget comes from `page.buzzBudgetPerGen` in the manifest.
 
-### Model picker (server-revalidated)
+### Model picker (host-served, server-revalidated)
 
-The picker reads the public model catalog so the user can choose any checkpoint:
-
-- **`src/models.ts`** — a curated `CHECKPOINTS` set (verified Public +
-  generation-covered + SFW) and the `DEFAULT_CHECKPOINT` the app starts on. The
-  app never blocks on the network: the curated set always populates the picker.
-- **`src/catalog-api.ts`** — fetches more checkpoints. Signed-in, it uses the
-  **token-authoritative** `/api/v1/blocks/models` (Bearer = the block token),
-  which the server **maturity-clamps** to the token's signed ceiling — the client
-  never sends `nsfw`/`browsingLevel`. Anon (or as a fallback), it uses the public
-  `/api/v1/models` with `nsfw=false` advisory-SFW, gated by the block's domain
-  maturity. No extra manifest scope is needed — the block token alone gates it.
+The **Change model** button calls `useCheckpointPicker().open({ baseModelGroup,
+currentVersionId })`. The HOST opens its own native checkpoint picker (in
+`dev:live` the SDK live host serves a protocol-identical in-harness catalog
+overlay; on the real platform it's civitai's own modal); the block never sees a
+catalog, a list, or any resource the user didn't pick. The picker resolves with a
+`BlockCheckpointInfo`, which `checkpointFromPick` (`src/models.ts`) maps into the
+selected checkpoint.
 
 A pick is **discovery only**. Nothing about a client-chosen checkpoint is trusted:
 the server **re-validates** (public? generation-covered? SFW for the domain?) and
-**re-prices** the body at every `estimate` AND `submit`. A client can't smuggle a
-non-generatable or mis-priced model through `buildWorkflowBody`.
+**re-prices** the body at every `estimate` AND `submit`. A client can POST any id
+regardless of what the picker showed — `buildWorkflowBody` is not the enforcement
+boundary; the spend path is.
 
-### LoRA selector (server-revalidated)
+### LoRA selector (host-served, server-revalidated)
 
 On top of the checkpoint the user can layer up to **5 LoRAs**, each with an
 adjustable **weight** (the LoRA's `strength`, clamped to the server's `[-1, 2]`
-bound). They ride along as `additionalResources` in the workflow body — one
-`{ modelVersionId, strength }` entry per selected LoRA, emitted only when at
-least one is selected (a checkpoint-only body stays backward compatible).
+bound). The **Add LoRA** button calls `useResourcePicker().open({ resourceType:
+'LORA', baseModelGroup })`, the host opens its LoRA picker, and the pick
+(`BlockResourceInfo`) is appended via `loraFromPick` + `addLora`. LoRAs ride along
+as `additionalResources` in the workflow body — one `{ modelVersionId, strength }`
+entry per selected LoRA, emitted only when at least one is selected (a
+checkpoint-only body stays backward compatible).
 
-- **`src/models.ts`** — a curated `LORAS` fallback set (first paint / offline)
-  plus the pure selection helpers (`addLora` / `removeLora` / `setLoraWeight`)
-  that enforce the dedup, the 5-LoRA cap (`MAX_LORAS`), and the weight clamp.
-- **`src/catalog-api.ts`** — `fetchLoraCatalog` reads the SAME authoritative
-  (`/api/v1/blocks/models`, Bearer) / public (`/api/v1/models`, advisory-SFW)
-  catalog, only `types=LORA` differs. No extra manifest scope is needed.
+- **`src/models.ts`** — the LoRA types + the pure selection helpers (`addLora` /
+  `removeLora` / `setLoraWeight`) that enforce the dedup, the 5-LoRA cap
+  (`MAX_LORAS`), and the weight clamp, plus the pick→option mappers.
 
 LoRA picks + weights are **discovery only**, exactly like the checkpoint: the
 server is LoRA-only for additional resources and **re-validates** base-model
@@ -167,26 +168,50 @@ To use it:
    `.env.development.local` (git-ignored), NOT the committed `.env.development`.
    (Never commit it; `submit` excludes every dotenv but `.env.example` /
    `.env.production` anyway.)
-3. `npm run dev:live` — a persistent **⚠️ LIVE HOST** banner stays on screen; a
-   successful Generate spends your own real Buzz.
+3. `npm run dev:live` — a minimal **host nav** sits at the top (your profile name,
+   Buzz balance, and a persistent **LIVE · spends real Buzz** pill); a successful
+   Generate spends your own real Buzz.
 
-**Check your own Buzz balance before a live test.** There is **no public REST
-Buzz endpoint**; the balance lives behind a tRPC procedure that works with a
-personal API key (Bearer, no `Origin` needed):
+### The dev:live host nav + your Buzz balance (the credential split)
 
-```bash
-# Read your spendable Buzz balance (blue/green/yellow) with a personal API key:
-curl -s -H "Authorization: Bearer $CIVITAI_TOKEN" \
-  'https://civitai.com/api/trpc/buzz.getBuzzAccount'
-```
+On the real platform the nav above the app is civitai's OWN chrome (outside the
+iframe). In `dev:live` the harness IS the host, so it renders a minimal
+equivalent: your **profile name**, your **Buzz balance**, and the LIVE safety
+pill. Both reads go same-origin through the vite dev proxy.
+
+The two reads use **different credentials** — by design, and security-critical:
+
+- **Profile name** — `/api/v1/blocks/me`, authed with the page-scoped
+  **block token** (`VITE_LIVE_BLOCK_TOKEN`). Faithful to prod: a page block can
+  read its own viewer.
+- **Buzz balance** — `/api/trpc/buzz.getBuzzAccount`. The page block token can't
+  read Buzz (no `buzz:read:self`), so the balance needs a buzz-read credential:
+  your **personal key**. There is **no public REST Buzz endpoint**; the balance
+  lives behind this tRPC procedure.
+
+  > 🔐 The personal key is set as **`CIVITAI_HOST_KEY`** (note: **NO `VITE_`
+  > prefix**) in the git-ignored **`.env.development.local`**. Vite reads it
+  > **server-side** and the dev proxy injects it as the `Authorization` header on
+  > the balance route **only** — it is **NEVER bundled into client JS** (Vite only
+  > exposes `VITE_*` to the client). Client code never references the key; it just
+  > fetches the same-origin route. If `CIVITAI_HOST_KEY` is unset the nav
+  > gracefully shows your name only (no balance, no error). Dev-only — never
+  > commit it.
+
+  ```bash
+  # In .env.development.local (git-ignored), NOT committed:
+  echo 'CIVITAI_HOST_KEY=<your-personal-api-key>' >> .env.development.local
+  ```
 
 > ⚠️ With no `VITE_LIVE_BLOCK_TOKEN`, `dev:live` **fails safe**: it renders a
 > notice telling you to mint a token, and never silently spends.
 >
 > **Live v1 scope:** `createLiveHost` supports the money path
-> (`estimate`/`submit`/`poll`/`cancel`). It does **not** support pickers,
-> `SET_USER_CHECKPOINT`, the App-Storage KV protocol, or in-band Buzz purchase —
-> those reply "not supported in live v1" (use mock mode for them).
+> (`estimate`/`submit`/`poll`/`cancel`) AND the resource pickers — it serves a
+> protocol-identical in-harness picker overlay, so `useCheckpointPicker` /
+> `useResourcePicker` work in `dev:live`. It does **not** support
+> `SET_USER_CHECKPOINT` persistence, the App-Storage KV protocol, or in-band Buzz
+> purchase — those reply "not supported in live v1" (use mock mode for them).
 
 ### Scenarios (exercise the money / error / storage UX for free)
 
@@ -228,17 +253,17 @@ npm run build         # what the platform produces (tsc typecheck + vite build)
 `npm test` runs both vitest projects in one go (split in `vite.config.ts`):
 
 - **`src/generation.test.ts`** — pure-logic units (node env).
-- **`src/models.test.ts`** — the curated checkpoint set + the pick→option
-  helpers (`checkpointFromPick`, `mergeCheckpoints`), AND the LoRA selection
+- **`src/models.test.ts`** — the default checkpoint + the pick→option helpers
+  (`checkpointFromPick` / `loraFromPick` from the SDK's `BlockCheckpointInfo` /
+  `BlockResourceInfo`, with missing-field tolerance), AND the LoRA selection
   helpers (`addLora`/`removeLora`/`setLoraWeight`, the dedup + 5-LoRA cap + the
-  weight clamp). Locks the verified curated ids so an accidental edit is caught.
-- **`src/catalog-api.test.ts`** — the in-block catalog client: URL builder
-  (Checkpoint + `types=LORA`), the response→option mappers (checkpoint + LoRA),
-  the SFW clamp, and the injectable-`fetch` client for BOTH `fetchCatalog` and
-  `fetchLoraCatalog` (success / empty / network-throw / authoritative→public
-  fallback). No network.
+  weight clamp).
+- **`src/nav.test.ts`** — the dev:live host nav's pure logic: the balance-response
+  parser (`parseBuzzBalance`: tRPC envelope / bare / malformed / empty → safe),
+  the viewer-name parser, and `navDisplay` (name present, balance present/absent).
 - **`src/App.test.tsx`** — component tests: render `<App/>` against
-  `createMockHost()` and assert the UI (anon → sign-in, signed-in → prompt).
+  `createMockHost()` and assert the UI (anon → sign-in, signed-in → prompt + the
+  Change model / Add LoRA picker buttons).
 - **`src/e2e.test.tsx`** — the money-path proof: drives the FULL
   estimate → consent → submit → poll → succeeded flow through the REAL SDK
   transport against the mock host (no hook mocking). This is what tells you the

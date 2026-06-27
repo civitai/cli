@@ -47,24 +47,24 @@ describe('App money path (e2e)', () => {
     // Wait for BLOCK_INIT -> the Generate button appears.
     const generate = await screen.findByTestId('pm-generate');
 
-    // The model picker is present, defaulted to SD XL 1.0; switch to Pony so the
-    // generation runs against the user's pick (still server-revalidated).
-    const picker = screen.getByTestId('pm-model-select') as HTMLSelectElement;
-    expect(picker.value).toBe('128078'); // DEFAULT_CHECKPOINT (SD XL 1.0)
-    await user.selectOptions(picker, '290640'); // Pony V6 XL
-    expect(picker.value).toBe('290640');
+    // The model starts on the curated DEFAULT (SD XL 1.0). Click "Change model" —
+    // the mock host returns its canned Checkpoint pick (FLUX.1 [dev]); the label
+    // updates to the picked model (the pick is still server-revalidated).
+    expect(screen.getByTestId('pm-model-label')).toHaveTextContent(/SD XL 1\.0/);
+    await user.click(screen.getByTestId('pm-change-model'));
+    await waitFor(() =>
+      expect(screen.getByTestId('pm-model-label')).toHaveTextContent(/FLUX\.1 \[dev\]/),
+    );
 
-    // Add TWO LoRAs from the curated add-list (they ride along as
-    // additionalResources in the body — server-revalidated + re-priced).
-    const addButtons = screen.getAllByTestId('pm-lora-add');
-    expect(addButtons.length).toBeGreaterThanOrEqual(2);
-    await user.click(addButtons[0]);
-    await user.click(screen.getAllByTestId('pm-lora-add')[0]); // list re-renders; click the next
-    const rows = screen.getAllByTestId('pm-lora-row');
-    expect(rows).toHaveLength(2);
+    // Add a LoRA via the host resource picker — the mock host returns its canned
+    // LoRA pick (Sinfully Stylish); it rides along as an additionalResource in
+    // the body (server-revalidated + re-priced).
+    await user.click(screen.getByTestId('pm-lora-add'));
+    await waitFor(() => expect(screen.getAllByTestId('pm-lora-row')).toHaveLength(1));
+    expect(screen.getByTestId('pm-lora-row')).toHaveTextContent(/Sinfully Stylish/);
 
-    // Change the first LoRA's weight via its range input.
-    const weight = screen.getAllByTestId('pm-lora-weight')[0] as HTMLInputElement;
+    // Change the LoRA's weight via its range input.
+    const weight = screen.getByTestId('pm-lora-weight') as HTMLInputElement;
     fireEvent.change(weight, { target: { value: '0.6' } });
     expect(weight.value).toBe('0.6');
 

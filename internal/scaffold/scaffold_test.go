@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -78,13 +79,21 @@ func TestRenderPageMoney(t *testing.T) {
 	for _, expect := range []string{
 		"block.manifest.json", "package.json", "vite.config.ts", "tsconfig.json", "index.html",
 		"src/main.tsx", "src/App.tsx", "src/Harness.tsx", "src/generation.ts",
-		"src/models.ts", "src/catalog-api.ts",
-		"src/generation.test.ts", "src/models.test.ts", "src/catalog-api.test.ts",
+		"src/models.ts", "src/nav.ts",
+		"src/generation.test.ts", "src/models.test.ts", "src/nav.test.ts",
 		"src/App.pollretry.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
 	} {
 		if !containsStr(got, expect) {
 			t.Errorf("page-money missing expected file %q (got %v)", expect, got)
+		}
+	}
+	// The in-block catalog browser is gone — the HOST serves the picker now
+	// (useCheckpointPicker / useResourcePicker), so catalog-api.ts + its test
+	// must NOT be scaffolded.
+	for _, gone := range []string{"src/catalog-api.ts", "src/catalog-api.test.ts"} {
+		if containsStr(got, gone) {
+			t.Errorf("page-money should NOT scaffold %q anymore (host serves the picker)", gone)
 		}
 	}
 
@@ -106,6 +115,8 @@ func TestRenderPageMoney(t *testing.T) {
 	// next-step hint, all while staying valid JSON after rendering.
 	pkg := readFile(t, filepath.Join(dest, "package.json"))
 	mustContain(t, pkg, `"@civitai/blocks-react"`)
+	// The SDK live host that SERVES the resource picker locally ships in 0.13.0.
+	mustContain(t, pkg, `"@civitai/blocks-react": "^0.13.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)
 	mustContain(t, pkg, `"build"`)
@@ -122,6 +133,10 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "useRequestConsent")
 	mustContain(t, app, "useBuzzWorkflow")
 	mustContain(t, app, "useBlockResize")
+	// The model + LoRA controls drive the HOST's native pickers via the SDK hooks
+	// (the in-block catalog browser is gone).
+	mustContain(t, app, "useCheckpointPicker")
+	mustContain(t, app, "useResourcePicker")
 	if contains(app, "window.parent.postMessage") {
 		t.Error("page-money App.tsx should not use raw window.parent.postMessage")
 	}
@@ -152,20 +167,26 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "hasBudgetedScope")
 	mustContain(t, app, "requestConsent")
 
-	// Model picker: the page ships a curated default checkpoint + an in-block
-	// picker (entity=none means no host model context). The old hardcoded
-	// GEN_MODEL is gone; the picker is wired into the workflow body.
+	// Model control: the page ships a curated default checkpoint + a "Change
+	// model" button that opens the HOST's checkpoint picker (entity=none means no
+	// host model context). The old hardcoded GEN_MODEL + the in-block <select> are
+	// gone; the pick threads into the workflow body. A pick is DISCOVERY ONLY.
 	mustNotContain(t, app, "GEN_MODEL")
+	mustNotContain(t, app, "pm-model-select") // the old in-block <select> is gone
+	mustNotContain(t, app, "fetchCatalog")    // the in-block catalog browser is gone
 	mustContain(t, app, "DEFAULT_CHECKPOINT")
-	mustContain(t, app, "pm-model-select")
+	mustContain(t, app, "pm-change-model")
+	mustContain(t, app, "openCheckpointPicker(")
+	mustContain(t, app, "checkpointFromPick")
 	mustContain(t, app, "buildWorkflowBody(prompt, checkpoint, loras)")
-	mustContain(t, app, "fetchCatalog")
 
-	// LoRA selector (the main feature): the user can add up to MAX_LORAS LoRAs
-	// on top of the checkpoint, each with a weight, threaded into the body as
-	// additionalResources. The App holds the selection + wires the catalog read.
-	mustContain(t, app, "fetchLoraCatalog")
+	// LoRA selector (the main feature): the user adds up to MAX_LORAS LoRAs on top
+	// of the checkpoint via the HOST resource picker (type=LORA), each with a
+	// weight, threaded into the body as additionalResources.
 	mustContain(t, app, "LoraSelector")
+	mustContain(t, app, "openResourcePicker(")
+	mustContain(t, app, "resourceType: 'LORA'")
+	mustContain(t, app, "loraFromPick")
 	mustContain(t, app, "pm-lora-add")
 	mustContain(t, app, "pm-lora-weight")
 	mustContain(t, app, "addLora")
@@ -180,30 +201,36 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, gen, "loras: readonly LoraOption[]")
 	mustContain(t, gen, "body.additionalResources = loras.map")
 
-	// models.ts ships the curated, verified checkpoint ids the app starts on /
-	// falls back to (Public + generation-covered + SFW), PLUS the LoRA types +
-	// the selection helpers (cap + weight clamp) and the curated LoRA fallback.
+	// models.ts ships the verified DEFAULT checkpoint id the app starts on (Public
+	// + generation-covered + SFW), the pick→option mappers (from the SDK's
+	// BlockCheckpointInfo / BlockResourceInfo), PLUS the LoRA types + the selection
+	// helpers (cap + weight clamp). The curated CHECKPOINTS/LORAS browse lists are
+	// gone (the host serves the picker).
 	models := readFile(t, filepath.Join(dest, "src", "models.ts"))
 	mustContain(t, models, "CheckpointOption")
 	mustContain(t, models, "DEFAULT_CHECKPOINT")
-	mustContain(t, models, "128078") // SD XL 1.0 version id
-	mustContain(t, models, "290640") // Pony V6 XL version id
+	mustContain(t, models, "128078") // SD XL 1.0 — the default checkpoint version id
+	mustContain(t, models, "checkpointFromPick")
+	mustContain(t, models, "loraFromPick")
 	mustContain(t, models, "LoraOption")
 	mustContain(t, models, "MAX_LORAS")
 	mustContain(t, models, "clampLoraWeight")
 	mustContain(t, models, "LORA_STRENGTH_MAX")
+	// The catalog-fetch surface is gone from models.ts (host serves the picker).
+	mustNotContain(t, models, "fetchCatalog")
+	mustNotContain(t, models, "mergeCheckpoints")
 
-	// catalog-api.ts uses the token-authoritative block endpoint (Bearer-gated,
-	// server-maturity-clamped) with a public, advisory-SFW fallback, for BOTH
-	// the checkpoint and the LoRA (types=LORA) catalogs. The picks are
-	// server-revalidated, so no extra manifest scope is needed.
-	catalog := readFile(t, filepath.Join(dest, "src", "catalog-api.ts"))
-	mustContain(t, catalog, "/api/v1/blocks/models")
-	mustContain(t, catalog, "/api/v1/models")
-	mustContain(t, catalog, "Authorization")
-	mustContain(t, catalog, "catalogSfwOnly")
-	mustContain(t, catalog, "fetchLoraCatalog")
-	mustContain(t, catalog, "'LORA'")
+	// nav.ts: the dev:live host-nav pure logic (profile name + Buzz balance
+	// parsers + display logic). The balance parser must be tolerant of the tRPC
+	// envelope + safe on garbage.
+	nav := readFile(t, filepath.Join(dest, "src", "nav.ts"))
+	mustContain(t, nav, "parseBuzzBalance")
+	mustContain(t, nav, "parseViewerName")
+	mustContain(t, nav, "navDisplay")
+	// The personal key is NEVER referenced in client code — only the proxy
+	// (vite.config.ts) injects it server-side.
+	mustNotContain(t, nav, "CIVITAI_HOST_KEY")
+	mustNotContain(t, nav, "VITE_LIVE_BLOCK_TOKEN")
 
 	// The display name should land in the manifest + App heading.
 	mustContain(t, manifest, `"name": "Money Block"`)
@@ -216,9 +243,19 @@ func TestRenderPageMoney(t *testing.T) {
 	// Built on the component pack, not bespoke HTML + inline styles.
 	mustContain(t, mainTSX, "@civitai/blocks-react/ui")
 	mustContain(t, mainTSX, "injectBlocksStyles")
-	// Progressive wizard: a step counter that advances via Next buttons.
+	// Progressive wizard: a step counter that advances automatically.
 	mustContain(t, mainTSX, "function WizardStep")
 	mustContain(t, mainTSX, "setStep(")
+	// Wizard AUTO-ADVANCE: step 1 advances on a non-empty key (no Next button),
+	// and steps 2 + 3 advance on the copy-icon click of that step's command
+	// (CopyButton's onCopied, wired only when it's the current step).
+	mustContain(t, mainTSX, "if (step === 1 && trimmedKey.length > 0) setStep(2)")
+	mustContain(t, mainTSX, "onCopied")
+	mustContain(t, mainTSX, "step === 2 ? () => setStep(3)")
+	mustContain(t, mainTSX, "step === 3 ? () => setStep(4)")
+	// The old per-step "Next" buttons are gone (advance is automatic now).
+	mustNotContain(t, mainTSX, ">Next<")
+	mustNotContain(t, mainTSX, "onClick={() => setStep(2)}")
 	// Step 1 deeplinks to the Add-API-Key modal, pre-filled with an APP-SPECIFIC
 	// token name + the minimal AI Services scope; the link is masked as the URL
 	// (NOT "personal API key"), and there's an input to paste the key.
@@ -239,10 +276,21 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, mainTSX, "clipboard?.writeText")
 	// The mock-host escape hatch is still offered for free local dev.
 	mustContain(t, mainTSX, "dev:harness")
-	// The LIVE banner reads exactly "LIVE HOST · spends REAL Buzz" (the longer
-	// emoji + extra-clauses banner was trimmed to this exact string).
-	mustContain(t, mainTSX, "LIVE HOST · spends REAL Buzz")
-	mustNotContain(t, mainTSX, "real compute · backend via vite proxy")
+	// The sticky LIVE banner was replaced by a minimal HOST NAV (profile name +
+	// Buzz balance) — but the LIVE safety pill must NOT be lost.
+	mustContain(t, mainTSX, "function HostNav")
+	mustContain(t, mainTSX, "LIVE · spends real Buzz")
+	mustNotContain(t, mainTSX, "LIVE HOST · spends REAL Buzz") // the old banner copy is gone
+	// The nav reads the profile name with the BLOCK token and the balance through
+	// the same-origin proxy (NO Authorization header on the balance fetch — the
+	// proxy injects the personal key server-side).
+	mustContain(t, mainTSX, "/api/v1/blocks/me")
+	mustContain(t, mainTSX, "buzz.getBuzzAccount")
+	mustContain(t, mainTSX, "parseBuzzBalance")
+	mustContain(t, mainTSX, "parseViewerName")
+	// The personal key is NEVER referenced in client code (main.tsx). Only the
+	// vite proxy injects it server-side.
+	mustNotContain(t, mainTSX, "CIVITAI_HOST_KEY")
 
 	// Harness.tsx: the mock chrome reads as a console/terminal strip. The MOCK
 	// banner is exactly "MOCK HOST · no real Buzz spent" and the scenario panel
@@ -252,11 +300,39 @@ func TestRenderPageMoney(t *testing.T) {
 	mustNotContain(t, harness, "no real compute")
 	mustContain(t, harness, "mock scenarios")
 
+	// vite.config.ts: the credential split. The personal key (CIVITAI_HOST_KEY) is
+	// read NON-VITE-prefixed server-side via loadEnv(..., '') and injected as the
+	// Authorization header ONLY on the dedicated balance route — never bundled to
+	// the client. The balance route is declared before the catch-all `/api`.
+	vite := readFile(t, filepath.Join(dest, "vite.config.ts"))
+	mustContain(t, vite, "loadEnv")
+	mustContain(t, vite, "CIVITAI_HOST_KEY")
+	mustContain(t, vite, "/api/trpc/buzz.getBuzzAccount")
+	mustContain(t, vite, "authorization: `Bearer ${hostKey}`")
+	// The balance route key must come BEFORE the catch-all `/api` so it wins.
+	if strings.Index(vite, "/api/trpc/buzz.getBuzzAccount") > strings.Index(vite, "'/api':") {
+		t.Error("vite.config.ts: the balance route must be declared before the catch-all '/api'")
+	}
+
+	// env.example documents CIVITAI_HOST_KEY as a NON-VITE_, dev-only secret that
+	// goes in .env.development.local.
+	envExample := readFile(t, filepath.Join(dest, ".env.example"))
+	mustContain(t, envExample, "CIVITAI_HOST_KEY")
+	mustContain(t, envExample, ".env.development.local")
+	// It must be documented as a NON-VITE_ var (no VITE_CIVITAI_HOST_KEY alias).
+	mustNotContain(t, envExample, "VITE_CIVITAI_HOST_KEY")
+
 	// README docs the live-mode Buzz-balance recipe (#30) — the only working path
 	// is the tRPC procedure with a bearer key (no public REST buzz endpoint).
 	readme := readFile(t, filepath.Join(dest, "README.md"))
 	mustContain(t, readme, "buzz.getBuzzAccount")
 	mustContain(t, readme, "no public REST")
+	// README docs the dev:live host nav + the credential split (CIVITAI_HOST_KEY).
+	mustContain(t, readme, "CIVITAI_HOST_KEY")
+	mustContain(t, readme, ".env.development.local")
+	// README docs the host-served pickers (the in-block catalog browser is gone).
+	mustContain(t, readme, "useCheckpointPicker")
+	mustContain(t, readme, "useResourcePicker")
 	// README docs the submission lifecycle + the withdraw escape hatch (#29).
 	mustContain(t, readme, "Submission lifecycle")
 	mustContain(t, readme, "civitai app withdraw")

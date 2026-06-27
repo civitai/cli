@@ -1,31 +1,28 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  CHECKPOINTS,
   DEFAULT_CHECKPOINT,
-  LORAS,
   MAX_LORAS,
   addLora,
   checkpointFromPick,
   clampLoraWeight,
   loraFromPick,
   loraOption,
-  mergeCheckpoints,
   pickedCheckpointLabel,
   removeLora,
   setLoraWeight,
   type LoraOption,
 } from './models.js';
 
-// Pure-logic units for the curated checkpoint set + pick→option helpers. The
-// curated ids are load-bearing (verified Public + generation-covered + SFW), so
-// they're asserted here so an accidental edit is caught.
+// Pure-logic units for the default checkpoint + the pick→option mappers (the SDK
+// pickers resolve with a BlockCheckpointInfo / BlockResourceInfo) + the LoRA
+// selection helpers. The default-checkpoint id is load-bearing (a verified Public
+// + generation-covered + SFW base), so it's asserted here.
 
-describe('curated checkpoints', () => {
-  it('ships the verified default + Pony bases', () => {
-    expect(DEFAULT_CHECKPOINT).toEqual(CHECKPOINTS[0]);
+describe('default checkpoint', () => {
+  it('ships the verified SD XL 1.0 base as the initial state', () => {
     expect(DEFAULT_CHECKPOINT).toMatchObject({ versionId: 128078, modelId: 101055 });
-    expect(CHECKPOINTS.some((c) => c.versionId === 290640 && c.modelId === 257749)).toBe(true);
+    expect(DEFAULT_CHECKPOINT.baseModel).toBe('SDXL 1.0');
   });
 });
 
@@ -40,35 +37,32 @@ describe('pickedCheckpointLabel', () => {
   });
 });
 
-describe('checkpointFromPick', () => {
-  it('maps a pick into a CheckpointOption', () => {
+describe('checkpointFromPick (BlockCheckpointInfo → CheckpointOption)', () => {
+  it('maps a full pick into a CheckpointOption', () => {
     expect(
       checkpointFromPick({
         versionId: 290640,
         modelId: 257749,
         modelName: 'Pony Diffusion V6 XL',
+        versionName: 'V6',
         baseModel: 'Pony',
       }),
     ).toEqual({
       versionId: 290640,
       modelId: 257749,
-      label: 'Pony Diffusion V6 XL',
+      label: 'Pony Diffusion V6 XL — V6',
       baseModel: 'Pony',
     });
   });
-});
-
-describe('mergeCheckpoints', () => {
-  it('keeps curated entries first and de-dupes by versionId', () => {
-    const extra = [
-      { versionId: 128078, modelId: 101055, label: 'dup', baseModel: 'SDXL 1.0' }, // already curated
-      { versionId: 999, modelId: 888, label: 'New Model', baseModel: 'SD 1.5' },
-    ];
-    const merged = mergeCheckpoints(CHECKPOINTS, extra);
-    // Curated lead, the dup is dropped, the genuinely new one is appended.
-    expect(merged[0]).toEqual(CHECKPOINTS[0]);
-    expect(merged.filter((m) => m.versionId === 128078)).toHaveLength(1);
-    expect(merged.some((m) => m.versionId === 999)).toBe(true);
+  it('tolerates missing display names → deterministic id fallback label', () => {
+    expect(
+      checkpointFromPick({ versionId: 691639, modelId: 618692, baseModel: 'Flux.1 D' }),
+    ).toEqual({
+      versionId: 691639,
+      modelId: 618692,
+      label: 'Model #691639 (Flux.1 D)',
+      baseModel: 'Flux.1 D',
+    });
   });
 });
 
@@ -87,16 +81,31 @@ describe('clampLoraWeight', () => {
   });
 });
 
-describe('loraFromPick', () => {
-  it('maps a picked resource into a LoraOption (default weight, clamped)', () => {
+describe('loraFromPick (BlockResourceInfo → LoraOption)', () => {
+  it('maps a full pick into a LoraOption (default weight, clamped)', () => {
     expect(
-      loraFromPick({ versionId: 135867, modelId: 122359, modelName: 'Detail Tweaker XL', baseModel: 'SDXL 1.0' }),
+      loraFromPick({
+        versionId: 135867,
+        modelId: 122359,
+        modelName: 'Detail Tweaker XL',
+        versionName: 'v1',
+        baseModel: 'SDXL 1.0',
+      }),
     ).toEqual({
       versionId: 135867,
       modelId: 122359,
-      label: 'Detail Tweaker XL',
+      label: 'Detail Tweaker XL — v1',
       baseModel: 'SDXL 1.0',
       weight: 1,
+    });
+  });
+  it('tolerates missing names → id-fallback label, and honors an explicit weight', () => {
+    expect(loraFromPick({ versionId: 42, modelId: 7, baseModel: 'SDXL 1.0' }, 0.5)).toEqual({
+      versionId: 42,
+      modelId: 7,
+      label: 'LoRA #42 (SDXL 1.0)',
+      baseModel: 'SDXL 1.0',
+      weight: 0.5,
     });
   });
 });
@@ -125,12 +134,5 @@ describe('addLora / removeLora / setLoraWeight', () => {
     expect(setLoraWeight(sel, 1, 9)[0].weight).toBe(2); // clamped
     expect(setLoraWeight(sel, 1, 0.333333)[0].weight).toBe(0.33); // rounded
     expect(setLoraWeight(sel, 2, 0.5)).toEqual(sel); // no match → unchanged
-  });
-});
-
-describe('curated LORAs', () => {
-  it('ships a small fallback set used at first paint', () => {
-    expect(LORAS.length).toBeGreaterThan(0);
-    expect(LORAS.every((l) => Number.isFinite(l.versionId))).toBe(true);
   });
 });
