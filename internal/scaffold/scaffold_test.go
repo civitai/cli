@@ -79,8 +79,10 @@ func TestRenderPageMoney(t *testing.T) {
 	for _, expect := range []string{
 		"block.manifest.json", "package.json", "vite.config.ts", "tsconfig.json", "index.html",
 		"src/main.tsx", "src/App.tsx", "src/Harness.tsx", "src/generation.ts",
-		"src/models.ts", "src/nav.ts",
+		"src/models.ts", "src/nav.ts", "src/setup-dev-live.ts",
+		"vite-plugin-civitai-setup.ts",
 		"src/generation.test.ts", "src/models.test.ts", "src/nav.test.ts",
+		"src/setup-dev-live.test.ts", "src/setup-plugin.test.ts",
 		"src/App.pollretry.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
 	} {
@@ -236,13 +238,33 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, manifest, `"name": "Money Block"`)
 	mustContain(t, app, "Money Block")
 
-	// The LiveUnavailable screen (shown by dev:live with no token) is a 4-step
-	// progressive wizard built from the W6 /ui pack: create key -> authenticate ->
-	// mint -> restart. Live mode always spends real Buzz, so it's credential-first.
+	// The LiveUnavailable screen (shown by dev:live with no token). The PRIMARY
+	// path is now one-click "Set up automatically" (the dev-only vite plugin mints
+	// + writes the env + auto-restarts); the manual 4-step command wizard is kept
+	// as a FALLBACK behind a disclosure. Live mode always spends real Buzz, so
+	// it's credential-first.
 	mainTSX := readFile(t, filepath.Join(dest, "src", "main.tsx"))
 	// Built on the component pack, not bespoke HTML + inline styles.
 	mustContain(t, mainTSX, "@civitai/blocks-react/ui")
 	mustContain(t, mainTSX, "injectBlocksStyles")
+
+	// AUTO-SETUP (the primary path): an input + a "Set up automatically" button
+	// that POSTs the pasted key to the dev-only plugin endpoint; on ok it reloads
+	// into live mode (vite restart). The button + the endpoint are present.
+	mustContain(t, mainTSX, "Set up automatically")
+	mustContain(t, mainTSX, "/__civitai/setup-dev-live")
+	mustContain(t, mainTSX, "setUpAutomatically")
+	mustContain(t, mainTSX, "Setting up…")
+	mustContain(t, mainTSX, "Done — restarting…")
+	mustContain(t, mainTSX, "pm-setup-auto")
+	// The personal key only travels in the POST body to localhost — the client
+	// never references the NON-VITE_ CIVITAI_HOST_KEY var.
+	mustContain(t, mainTSX, "apiKey: trimmedKey")
+
+	// MANUAL FALLBACK (demoted behind a disclosure — the knowledge is kept, not
+	// deleted): the original progressive command wizard.
+	mustContain(t, mainTSX, "Prefer to run the commands yourself?")
+	mustContain(t, mainTSX, "function ManualSetupSteps")
 	// Progressive wizard: a step counter that advances automatically.
 	mustContain(t, mainTSX, "function WizardStep")
 	mustContain(t, mainTSX, "setStep(")
@@ -313,6 +335,38 @@ func TestRenderPageMoney(t *testing.T) {
 	if strings.Index(vite, "/api/trpc/buzz.getBuzzAccount") > strings.Index(vite, "'/api':") {
 		t.Error("vite.config.ts: the balance route must be declared before the catch-all '/api'")
 	}
+	// The dev-only auto-setup plugin is imported + wired into plugins.
+	mustContain(t, vite, "vite-plugin-civitai-setup")
+	mustContain(t, vite, "civitaiSetupPlugin")
+	mustContain(t, vite, "civitaiSetupPlugin()")
+
+	// The auto-setup vite plugin (Node side of the dev:live "Set up automatically"
+	// button). It is dev-only (apply: 'serve' — never in `vite build`), registers
+	// the POST /__civitai/setup-dev-live route, and mints via the local manifest
+	// (no CLI shell-out, no global-auth mutation). The pasted personal key it
+	// writes is CIVITAI_HOST_KEY — still a NON-VITE_ var (never bundled).
+	plugin := readFile(t, filepath.Join(dest, "vite-plugin-civitai-setup.ts"))
+	mustContain(t, plugin, "apply: 'serve'") // dev-only — never in build
+	mustContain(t, plugin, "/__civitai/setup-dev-live")
+	mustContain(t, plugin, "runDevLiveSetup")
+	mustContain(t, plugin, "CIVITAI_HOST_KEY")
+	mustContain(t, plugin, ".env.development.local")
+	// It calls the SAME no-row local-manifest mint as `civitai app dev-token`.
+	mustContain(t, plugin, "block.manifest.json")
+	// Never log the pasted key.
+	mustNotContain(t, plugin, "console.log(apiKey")
+
+	// The pure, node-testable core lives in src/setup-dev-live.ts (so vitest's
+	// node project + tsconfig pick it up; the plugin is a thin shell over it).
+	setup := readFile(t, filepath.Join(dest, "src", "setup-dev-live.ts"))
+	mustContain(t, setup, "mergeEnvFile")
+	mustContain(t, setup, "manifestToMintRequest")
+	mustContain(t, setup, "mapMintError")
+	mustContain(t, setup, "mintDevToken")
+	mustContain(t, setup, "runDevLiveSetup")
+	mustContain(t, setup, "/api/v1/blocks/dev-token")
+	mustContain(t, setup, "VITE_LIVE_BLOCK_TOKEN")
+	mustContain(t, setup, "CIVITAI_HOST_KEY")
 
 	// env.example documents CIVITAI_HOST_KEY as a NON-VITE_, dev-only secret that
 	// goes in .env.development.local.

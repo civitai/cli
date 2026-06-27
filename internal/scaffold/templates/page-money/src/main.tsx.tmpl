@@ -252,19 +252,35 @@ function WizardStep({
   );
 }
 
+/** The endpoint the dev-only vite plugin registers (vite-plugin-civitai-setup.ts). */
+const SETUP_ENDPOINT = '/__civitai/setup-dev-live';
+
+/** Auto-setup request state for the "Set up automatically" button. */
+type SetupState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'done' }
+  | { kind: 'error'; message: string };
+
 /**
  * Fail-safe LIVE screen — shown when `dev:live` is requested but no spendable
- * dev token is set. Built from the `@civitai/blocks-react/ui` pack as a 4-step
- * wizard: create a personal API key (deeplinked, pre-filled name + minimal AI
- * Services scope), authenticate the CLI WITH the pasted key, mint the dev token,
- * restart. Each step unlocks the next so there's no wall of text. Live mode
- * ALWAYS spends real Buzz, hence the credential-first flow (an OAuth login can't
- * spend).
+ * dev token is set. The PRIMARY path is ONE CLICK: paste your personal API key,
+ * click "Set up automatically", and the dev server (which runs in Node, unlike
+ * the page) mints the dev block token from your local `block.manifest.json` +
+ * writes `.env.development.local` + auto-restarts into live mode — paste → click
+ * → done. The manual command recipe (login → dev-token → restart) is kept as a
+ * FALLBACK behind a disclosure. Live mode ALWAYS spends real Buzz, hence the
+ * credential-first flow (an OAuth login can't spend).
+ *
+ * SECURITY: the pasted key is POSTed to the localhost dev-only endpoint, which
+ * writes it to the git-ignored `.env.development.local` as the non-`VITE_` host
+ * key (never bundled). The browser never persists it; this client code never
+ * bundles the plugin (it's `apply: 'serve'`).
  */
 function LiveUnavailable({ reason }: { reason: string }) {
   injectBlocksStyles();
-  const [step, setStep] = useState(1);
   const [apiKey, setApiKey] = useState('');
+  const [setup, setSetup] = useState<SetupState>({ kind: 'idle' });
   const trimmedKey = apiKey.trim();
 
   // The minted key's name is app-specific so it's recognizable in the user's key
@@ -276,16 +292,39 @@ function LiveUnavailable({ reason }: { reason: string }) {
     'https://civitai.com/user/account?addApiKey=1&name=' +
     encodeURIComponent(tokenName) +
     '&scope=AIServices';
-  // Step 2's command carries the pasted key (placeholder until they paste).
-  const loginCmd = 'civitai login --token ' + (trimmedKey || '<your-personal-api-key>');
-  const mintCmd = 'civitai app dev-token {{ .Slug }} --env >> .env.development.local';
 
-  // Step 1 AUTO-advances to step 2 the moment the API-key input becomes
-  // non-empty (no Next button) — there's nothing else to do on step 1. Guarded
-  // so it only advances FORWARD from step 1 (a later edit doesn't yank you back).
-  useEffect(() => {
-    if (step === 1 && trimmedKey.length > 0) setStep(2);
-  }, [step, trimmedKey]);
+  // The one-click path: POST the pasted key to the dev-only localhost endpoint.
+  // On success the dev server writes .env.development.local → vite auto-restarts
+  // (it watches .env*) → the page reloads itself into live mode, so we just show
+  // "Done — restarting…". On failure we surface the actionable error + retry.
+  async function setUpAutomatically() {
+    if (trimmedKey.length === 0) {
+      setSetup({ kind: 'error', message: 'Paste your personal API key first.' });
+      return;
+    }
+    setSetup({ kind: 'loading' });
+    try {
+      const res = await fetch(SETUP_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apiKey: trimmedKey }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (res.ok && body.ok) {
+        // Success — vite is about to restart; the page will reload itself.
+        setSetup({ kind: 'done' });
+      } else {
+        setSetup({ kind: 'error', message: body.error || `Setup failed (${res.status}).` });
+      }
+    } catch (e) {
+      setSetup({
+        kind: 'error',
+        message:
+          'Could not reach the dev server. Is `npm run dev:live` running? ' +
+          (e instanceof Error ? e.message : String(e)),
+      });
+    }
+  }
 
   return (
     <div data-harness-banner="live-unavailable" data-theme="dark" style={liveScreenStyle}>
@@ -302,46 +341,115 @@ function LiveUnavailable({ reason }: { reason: string }) {
             {reason}
           </Alert>
 
-          <WizardStep n={1} current={step} title="Create your API key">
-            <Stack gap={10}>
-              <span style={stepLabelStyle}>
-                Create your personal API key so your app can spend Buzz from your local dev
-                environment.{' '}
-                <a href={apiKeyUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
-                  civitai.com/user/account
-                </a>
-              </span>
-              <TextInput
-                label="Your API key"
-                placeholder="paste the key you just created"
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-              />
-              {/* No Next button — step 1 auto-advances once the key is non-empty. */}
-            </Stack>
-          </WizardStep>
+          {/* PRIMARY path — one click. Paste the key, click, the dev server mints
+              the token + writes the env + auto-restarts into live mode. */}
+          <Stack gap={10}>
+            <span style={stepLabelStyle}>
+              Paste your personal API key and we'll set up live mode for you — mint a dev
+              token from your local manifest, write{' '}
+              <code style={inlineCodeStyle}>.env.development.local</code>, and restart into
+              live mode. Don't have one?{' '}
+              <a href={apiKeyUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
+                Create a key at civitai.com/user/account
+              </a>
+              .
+            </span>
+            <TextInput
+              label="Your personal API key"
+              placeholder="paste the key you just created"
+              value={apiKey}
+              onChange={(e) => {
+                setApiKey(e.target.value);
+                if (setup.kind === 'error') setSetup({ kind: 'idle' });
+              }}
+            />
+            <Group gap={10} align="center">
+              <Button
+                color="primary"
+                onClick={() => void setUpAutomatically()}
+                disabled={setup.kind === 'loading' || setup.kind === 'done'}
+                data-testid="pm-setup-auto"
+              >
+                {setup.kind === 'loading'
+                  ? 'Setting up…'
+                  : setup.kind === 'done'
+                    ? 'Done — restarting…'
+                    : 'Set up automatically'}
+              </Button>
+              {setup.kind === 'done' && (
+                <span style={setupDoneStyle} data-testid="pm-setup-done">
+                  ✓ Reloading into live mode…
+                </span>
+              )}
+            </Group>
+            {setup.kind === 'error' && (
+              <Alert color="error" title="Setup failed">
+                {setup.message}
+              </Alert>
+            )}
+          </Stack>
 
-          {/* Steps 2 + 3 AUTO-advance when you copy that step's command (the copy
-              icon's onCopied) — but only while it's the CURRENT step, so re-copying
-              an earlier command later doesn't jump you forward. */}
-          <WizardStep n={2} current={step} title="Authenticate the CLI with your key">
-            <Stack gap={10}>
-              <CmdRow cmd={loginCmd} onCopied={step === 2 ? () => setStep(3) : undefined} />
-            </Stack>
-          </WizardStep>
-
-          <WizardStep n={3} current={step} title="Mint the dev token (no submit needed)">
-            <Stack gap={10}>
-              <CmdRow cmd={mintCmd} onCopied={step === 3 ? () => setStep(4) : undefined} />
-            </Stack>
-          </WizardStep>
-
-          <WizardStep n={4} current={step} title="Restart dev:live">
-            <CmdRow cmd="npm run dev:live" />
-          </WizardStep>
+          {/* FALLBACK — the manual command recipe, demoted behind a disclosure.
+              Same knowledge as before (login → dev-token → restart), kept for
+              devs who prefer running the commands themselves. */}
+          <details style={manualDetailsStyle}>
+            <summary style={manualSummaryStyle}>Prefer to run the commands yourself?</summary>
+            <ManualSetupSteps apiKeyUrl={apiKeyUrl} trimmedKey={trimmedKey} />
+          </details>
         </Stack>
       </Card>
     </div>
+  );
+}
+
+/**
+ * The manual fallback: the original 4-step progressive wizard (create key →
+ * authenticate the CLI → mint the dev token → restart), kept so the recipe isn't
+ * lost. Steps auto-advance (key non-empty → step 2; copying a step's command →
+ * the next step). Lives behind the "Prefer to run the commands yourself?"
+ * disclosure in {@link LiveUnavailable}.
+ */
+function ManualSetupSteps({ apiKeyUrl, trimmedKey }: { apiKeyUrl: string; trimmedKey: string }) {
+  const [step, setStep] = useState(1);
+  // Step 2's command carries the pasted key (placeholder until they paste).
+  const loginCmd = 'civitai login --token ' + (trimmedKey || '<your-personal-api-key>');
+  const mintCmd = 'civitai app dev-token {{ .Slug }} --env >> .env.development.local';
+
+  // Step 1 AUTO-advances to step 2 the moment the API-key input becomes
+  // non-empty (no Next button) — there's nothing else to do on step 1. Guarded
+  // so it only advances FORWARD from step 1 (a later edit doesn't yank you back).
+  useEffect(() => {
+    if (step === 1 && trimmedKey.length > 0) setStep(2);
+  }, [step, trimmedKey]);
+
+  return (
+    <Stack gap={14} style={manualStepsStyle}>
+      <WizardStep n={1} current={step} title="Create your API key">
+        <span style={stepLabelStyle}>
+          Create your personal API key so your app can spend Buzz from your local dev
+          environment.{' '}
+          <a href={apiKeyUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
+            civitai.com/user/account
+          </a>
+          {trimmedKey.length === 0 && ' — then paste it into the field above.'}
+        </span>
+      </WizardStep>
+
+      {/* Steps 2 + 3 AUTO-advance when you copy that step's command (the copy
+          icon's onCopied) — but only while it's the CURRENT step, so re-copying
+          an earlier command later doesn't jump you forward. */}
+      <WizardStep n={2} current={step} title="Authenticate the CLI with your key">
+        <CmdRow cmd={loginCmd} onCopied={step === 2 ? () => setStep(3) : undefined} />
+      </WizardStep>
+
+      <WizardStep n={3} current={step} title="Mint the dev token (no submit needed)">
+        <CmdRow cmd={mintCmd} onCopied={step === 3 ? () => setStep(4) : undefined} />
+      </WizardStep>
+
+      <WizardStep n={4} current={step} title="Restart dev:live">
+        <CmdRow cmd="npm run dev:live" />
+      </WizardStep>
+    </Stack>
   );
 }
 
@@ -405,6 +513,27 @@ const liveCardStyle: CSSProperties = { width: '100%', maxWidth: 640 };
 const liveCardTitleStyle: CSSProperties = { fontSize: 20 };
 const stepLabelStyle: CSSProperties = { lineHeight: 1.5 };
 const linkStyle: CSSProperties = { color: 'var(--ci-color-primary)', fontWeight: 600 };
+const inlineCodeStyle: CSSProperties = {
+  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
+  fontSize: 12,
+  padding: '1px 5px',
+  borderRadius: 4,
+  background: 'var(--ci-color-surface)',
+  border: '1px solid var(--ci-color-border)',
+};
+const setupDoneStyle: CSSProperties = { color: 'var(--ci-color-success, #2f9e44)', fontWeight: 600 };
+// The manual fallback is a quiet disclosure beneath the one-click path.
+const manualDetailsStyle: CSSProperties = {
+  borderTop: '1px solid var(--ci-color-border)',
+  paddingTop: 12,
+};
+const manualSummaryStyle: CSSProperties = {
+  cursor: 'pointer',
+  color: 'var(--ci-color-text-muted, #868e96)',
+  fontSize: 13,
+  userSelect: 'none',
+};
+const manualStepsStyle: CSSProperties = { marginTop: 14 };
 const cmdStyle: CSSProperties = {
   flex: 1,
   margin: 0,
