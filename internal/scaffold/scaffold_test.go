@@ -133,29 +133,34 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, manifest, `"name": "Money Block"`)
 	mustContain(t, app, "Money Block")
 
-	// The LiveUnavailable screen (shown by dev:live with no token) is built from
-	// the W6 /ui component pack and LEADS with the credential step — live mode
-	// always spends real Buzz, so a personal API key (not an OAuth login) is the
-	// first thing it asks for, then the dev-token mint (no submit-first).
+	// The LiveUnavailable screen (shown by dev:live with no token) is a 4-step
+	// progressive wizard built from the W6 /ui pack: create key -> authenticate ->
+	// mint -> restart. Live mode always spends real Buzz, so it's credential-first.
 	mainTSX := readFile(t, filepath.Join(dest, "src", "main.tsx"))
 	// Built on the component pack, not bespoke HTML + inline styles.
 	mustContain(t, mainTSX, "@civitai/blocks-react/ui")
 	mustContain(t, mainTSX, "injectBlocksStyles")
-	// Leads with the spendable-credential step (the #1 dev:live dead-end).
-	mustContain(t, mainTSX, "civitai login --token")
-	mustContain(t, mainTSX, "personal API key")
-	// "personal API key" is an anchor that deeplinks to the Add-API-Key modal,
-	// pre-filled with a name + the minimal AI Services scope.
+	// Progressive wizard: a step counter that advances via Next buttons.
+	mustContain(t, mainTSX, "function WizardStep")
+	mustContain(t, mainTSX, "setStep(")
+	// Step 1 deeplinks to the Add-API-Key modal, pre-filled with an APP-SPECIFIC
+	// token name + the minimal AI Services scope; the link is masked as the URL
+	// (NOT "personal API key"), and there's an input to paste the key.
 	mustContain(t, mainTSX, "<a href={apiKeyUrl}")
+	mustContain(t, mainTSX, "civitai.com/user/account")
+	mustNotContain(t, mainTSX, "personal API key</a>")
+	mustContain(t, mainTSX, "App Money Block dev token")
 	mustContain(t, mainTSX, "user/account?addApiKey=1")
 	mustContain(t, mainTSX, "scope=AIServices")
-	// Then the dev-token mint with the real slug, writing straight to the env
-	// file (no manual VITE_LIVE_BLOCK_TOKEN paste, no submit-first).
+	mustContain(t, mainTSX, "TextInput")
+	mustContain(t, mainTSX, "setApiKey(")
+	// Step 2 authenticates WITH the pasted key (not a bare placeholder line).
+	mustContain(t, mainTSX, "'civitai login --token ' + (trimmedKey")
+	// Step 3: the dev-token mint with the real slug, straight to the env file.
 	mustContain(t, mainTSX, "civitai app dev-token money-block")
 	mustContain(t, mainTSX, ".env.development.local")
 	mustNotContain(t, mainTSX, "civitai app submit")
 	mustContain(t, mainTSX, "clipboard?.writeText")
-	mustContain(t, mainTSX, "civitai whoami")
 	// The mock-host escape hatch is still offered for free local dev.
 	mustContain(t, mainTSX, "dev:harness")
 

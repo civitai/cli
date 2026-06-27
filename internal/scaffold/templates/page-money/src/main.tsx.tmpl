@@ -1,7 +1,16 @@
 import { StrictMode, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
 import { createRoot } from 'react-dom/client';
 
-import { Alert, Badge, Button, Card, Group, Stack, injectBlocksStyles } from '@civitai/blocks-react/ui';
+import {
+  Alert,
+  Badge,
+  Button,
+  Card,
+  Group,
+  Stack,
+  TextInput,
+  injectBlocksStyles,
+} from '@civitai/blocks-react/ui';
 
 import { App } from './App.js';
 import { Harness } from './Harness.js';
@@ -128,35 +137,66 @@ function CmdRow({ cmd }: { cmd: string }) {
   );
 }
 
-/** One numbered setup step: a short label above a copyable command row. */
-function CmdStep({ n, label, cmd }: { n: number; label: ReactNode; cmd: string }) {
+/**
+ * One step of the progressive setup wizard. Hidden until reached (`n <= current`);
+ * once the user advances past it (`n < current`) the number badge becomes a green
+ * check, but the step's content (commands) stays visible so the full recipe is
+ * always there to re-copy.
+ */
+function WizardStep({
+  n,
+  current,
+  title,
+  children,
+}: {
+  n: number;
+  current: number;
+  title: ReactNode;
+  children: ReactNode;
+}) {
+  if (n > current) return null;
+  const done = n < current;
   return (
-    <Stack gap={6}>
-      <span style={stepLabelStyle}>
-        <strong>{n}.</strong> {label}
-      </span>
-      <CmdRow cmd={cmd} />
+    <Stack gap={8}>
+      <Group gap={10} align="center">
+        <Badge color={done ? 'success' : 'primary'} variant={done ? 'filled' : 'light'}>
+          {done ? '✓' : n}
+        </Badge>
+        <strong style={stepLabelStyle}>{title}</strong>
+      </Group>
+      {children}
     </Stack>
   );
 }
 
 /**
  * Fail-safe LIVE screen — shown when `dev:live` is requested but no spendable
- * dev token is set. Built entirely from the `@civitai/blocks-react/ui` pack.
- * Live mode ALWAYS spends real Buzz, so it leads with the credential step:
- * authenticate with a personal API key (an OAuth `civitai login` can't spend),
- * then mint a dev token.
+ * dev token is set. Built from the `@civitai/blocks-react/ui` pack as a 4-step
+ * wizard: create a personal API key (deeplinked, pre-filled name + minimal AI
+ * Services scope), authenticate the CLI WITH the pasted key, mint the dev token,
+ * restart. Each step unlocks the next so there's no wall of text. Live mode
+ * ALWAYS spends real Buzz, hence the credential-first flow (an OAuth login can't
+ * spend).
  */
 function LiveUnavailable({ reason }: { reason: string }) {
   injectBlocksStyles();
-  const loginCmd = 'civitai login --token <your-personal-api-key>';
-  const mintCmd = 'civitai app dev-token {{ .Slug }} --env >> .env.development.local';
-  // Deeplink: opens the Add-API-Key modal pre-filled with a name + the minimal
-  // "AI Services" scope (the only scope a personal key needs to mint a spendable
-  // dev token). The query params are inert on older civitai builds — the link
-  // still lands on /user/account, so it degrades gracefully.
+  const [step, setStep] = useState(1);
+  const [apiKey, setApiKey] = useState('');
+  const trimmedKey = apiKey.trim();
+
+  // The minted key's name is app-specific so it's recognizable in the user's key
+  // list; the scope is the minimal "AI Services" preset (all a personal key needs
+  // to mint a spendable dev token). Params are inert on older civitai builds —
+  // the link still lands on /user/account, so it degrades gracefully.
+  const tokenName = 'App {{ .Name }} dev token';
   const apiKeyUrl =
-    'https://civitai.com/user/account?addApiKey=1&name=App%20Blocks%20dev%3Alive&scope=AIServices';
+    'https://civitai.com/user/account?addApiKey=1&name=' +
+    encodeURIComponent(tokenName) +
+    '&scope=AIServices';
+  // Step 2's command carries the pasted key (placeholder until they paste).
+  const loginCmd = 'civitai login --token ' + (trimmedKey || '<your-personal-api-key>');
+  const mintCmd = 'civitai app dev-token {{ .Slug }} --env >> .env.development.local';
+
   return (
     <div data-harness-banner="live-unavailable" data-theme="dark" style={liveScreenStyle}>
       <Card padding="lg" style={liveCardStyle}>
@@ -172,29 +212,56 @@ function LiveUnavailable({ reason }: { reason: string }) {
             {reason}
           </Alert>
 
-          <CmdStep
-            n={1}
-            label={
-              <>
-                Sign in with a{' '}
+          <WizardStep n={1} current={step} title="Create your API key">
+            <Stack gap={10}>
+              <span style={stepLabelStyle}>
+                Opens the key dialog pre-filled (name + minimal scope) on{' '}
                 <a href={apiKeyUrl} target="_blank" rel="noopener noreferrer" style={linkStyle}>
-                  personal API key
-                </a>{' '}
-                (opens the key dialog pre-filled; an OAuth login can&apos;t spend):
-              </>
-            }
-            cmd={loginCmd}
-          />
-          <CmdStep n={2} label="Mint a dev token (no submit needed):" cmd={mintCmd} />
-          <CmdStep
-            n={3}
-            label={
-              <>
-                Restart — then check <code>civitai whoami</code> shows <em>Spend Buzz: yes</em>:
-              </>
-            }
-            cmd="npm run dev:live"
-          />
+                  civitai.com/user/account
+                </a>
+                . An OAuth login can&apos;t spend, so create a key, then paste it:
+              </span>
+              <TextInput
+                label="Your API key"
+                placeholder="paste the key you just created"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+              {step === 1 && (
+                <Group justify="flex-end">
+                  <Button disabled={!trimmedKey} onClick={() => setStep(2)}>
+                    Next
+                  </Button>
+                </Group>
+              )}
+            </Stack>
+          </WizardStep>
+
+          <WizardStep n={2} current={step} title="Authenticate the CLI with your key">
+            <Stack gap={10}>
+              <CmdRow cmd={loginCmd} />
+              {step === 2 && (
+                <Group justify="flex-end">
+                  <Button onClick={() => setStep(3)}>Next</Button>
+                </Group>
+              )}
+            </Stack>
+          </WizardStep>
+
+          <WizardStep n={3} current={step} title="Mint the dev token (no submit needed)">
+            <Stack gap={10}>
+              <CmdRow cmd={mintCmd} />
+              {step === 3 && (
+                <Group justify="flex-end">
+                  <Button onClick={() => setStep(4)}>Next</Button>
+                </Group>
+              )}
+            </Stack>
+          </WizardStep>
+
+          <WizardStep n={4} current={step} title="Restart dev:live">
+            <CmdRow cmd="npm run dev:live" />
+          </WizardStep>
 
           <Alert color="info">
             <Stack gap={8}>
