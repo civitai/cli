@@ -7,11 +7,16 @@ import { formatBalance, navDisplay, parseBuzzBalance, parseViewerName } from './
 // nav to name-only — never an error, never a crash.
 
 describe('parseBuzzBalance', () => {
-  it('digs the balance out of the tRPC envelope', () => {
-    const body = { result: { data: { json: { balance: 12345, lifetimeBalance: 99 } } } };
-    expect(parseBuzzBalance(body)).toBe(12345);
+  it('sums the {blue,green,yellow} buckets out of the real tRPC envelope', () => {
+    // The ACTUAL buzz.getBuzzAccount shape (confirmed live) — no flat `balance`.
+    const body = { result: { data: { json: { blue: 488754, green: 0, yellow: 849237 } } } };
+    expect(parseBuzzBalance(body)).toBe(488754 + 0 + 849237);
   });
-  it('reads a bare { balance }', () => {
+  it('sums whichever buckets are present (missing buckets ignored)', () => {
+    expect(parseBuzzBalance({ result: { data: { json: { blue: 100, yellow: 50 } } } })).toBe(150);
+    expect(parseBuzzBalance({ blue: 0, green: 0, yellow: 0 })).toBe(0);
+  });
+  it('falls back to a flat { balance } when no buckets are present', () => {
     expect(parseBuzzBalance({ balance: 50 })).toBe(50);
   });
   it('returns null for malformed / empty / non-object / no-balance bodies', () => {
@@ -23,6 +28,7 @@ describe('parseBuzzBalance', () => {
     expect(parseBuzzBalance({ result: { data: {} } })).toBeNull();
     expect(parseBuzzBalance({ balance: 'NaN-string' })).toBeNull();
     expect(parseBuzzBalance({ balance: Infinity })).toBeNull();
+    expect(parseBuzzBalance({ blue: 'x', yellow: null })).toBeNull();
   });
 });
 

@@ -13,12 +13,27 @@
 //    or references the key. With no key set the balance route 401s and the nav
 //    gracefully shows the name only.
 
-/** Recursively dig a finite numeric `balance` field out of an arbitrary object. */
+/**
+ * The Buzz buckets `buzz.getBuzzAccount` returns. The wallet total is their sum;
+ * the real response has NO flat `balance` field (confirmed against the live
+ * endpoint: `{ blue, green, yellow }`).
+ */
+const BUZZ_BUCKETS = ['blue', 'yellow', 'green'] as const;
+
+/**
+ * Recursively dig the Buzz balance out of an arbitrary object. The real shape is
+ * `{ blue, green, yellow }` numeric buckets — sum the present ones. Falls back to
+ * a flat numeric `balance` field for forward/back-compat. Returns the FIRST node
+ * that yields a number (bucketed sum preferred over a stray nested `balance`).
+ */
 function findBalance(node: unknown, depth = 0): number | null {
   if (depth > 6 || node == null || typeof node !== 'object') return null;
   const obj = node as Record<string, unknown>;
-  const direct = obj.balance;
-  if (typeof direct === 'number' && Number.isFinite(direct)) return direct;
+  const buckets = BUZZ_BUCKETS.map((k) => obj[k]).filter(
+    (v): v is number => typeof v === 'number' && Number.isFinite(v),
+  );
+  if (buckets.length > 0) return buckets.reduce((a, b) => a + b, 0);
+  if (typeof obj.balance === 'number' && Number.isFinite(obj.balance)) return obj.balance;
   for (const key of Object.keys(obj)) {
     const found = findBalance(obj[key], depth + 1);
     if (found != null) return found;
@@ -27,9 +42,10 @@ function findBalance(node: unknown, depth = 0): number | null {
 }
 
 /**
- * Parse a spendable Buzz balance out of a `buzz.getBuzzAccount` tRPC response.
- * Tolerant of the tRPC envelope shape (`{ result: { data: { json: { balance }}}}`),
- * a bare `{ balance }`, and any nesting — and SAFE on garbage: a malformed /
+ * Parse the spendable Buzz balance out of a `buzz.getBuzzAccount` tRPC response.
+ * The live shape is `{ result: { data: { json: { blue, green, yellow }}}}` — the
+ * balance is the SUM of the buckets (no flat `balance` field). Tolerant of any
+ * nesting + a flat `{ balance }` fallback, and SAFE on garbage: a malformed /
  * empty / non-object body returns `null` (the nav then shows the name only,
  * never an error). Never throws.
  */
