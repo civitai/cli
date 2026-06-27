@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
 import {
-  GEN_MODEL,
   PROMPT_MAX,
   buildWorkflowBody,
   clampPrompt,
@@ -13,6 +12,7 @@ import {
   isTerminalStatus,
   phaseForSnapshot,
 } from './generation.js';
+import { DEFAULT_CHECKPOINT } from './models.js';
 
 // A couple of pure-logic tests so authors inherit a working test setup. Run with
 // `npm test`. Add cases here as you grow the app's logic.
@@ -50,13 +50,19 @@ describe('clampPrompt', () => {
 });
 
 describe('buildWorkflowBody', () => {
-  it('builds a textToImage body with the hardcoded model + trimmed prompt', () => {
-    expect(buildWorkflowBody('  a cat  ')).toEqual({
+  it('builds a textToImage body with the chosen checkpoint + trimmed prompt', () => {
+    expect(buildWorkflowBody('  a cat  ', DEFAULT_CHECKPOINT)).toEqual({
       kind: 'textToImage',
-      modelId: GEN_MODEL.modelId,
-      modelVersionId: GEN_MODEL.modelVersionId,
+      modelId: DEFAULT_CHECKPOINT.modelId,
+      modelVersionId: DEFAULT_CHECKPOINT.versionId,
       params: { prompt: 'a cat' },
     });
+  });
+  it('threads the picked checkpoint into modelId/modelVersionId', () => {
+    const pick = { versionId: 290640, modelId: 257749, label: 'Pony V6 XL', baseModel: 'Pony' };
+    const body = buildWorkflowBody('x', pick);
+    expect(body.modelId).toBe(257749);
+    expect(body.modelVersionId).toBe(290640);
   });
 });
 

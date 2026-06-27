@@ -3,15 +3,16 @@
 A Civitai **page money-path** App Block (Vite + React + TypeScript), wired to
 the published App SDK (`@civitai/blocks-react` + `@civitai/app-sdk`). It mounts
 as a full-page (W10) app at `/apps/run/{{ .Slug }}` and spends Buzz to generate
-an image: estimate → (lazy consent) → submit → poll → result.
+an image: pick a checkpoint → estimate → (lazy consent) → submit → poll → result.
 
 ## What this is
 
-A sandboxed static web app served in an iframe by the Civitai host. Its entire
-UI is built from the **`@civitai/blocks-react/ui`** W6 component pack (Button,
-TextInput, Textarea, Card, Stack, Group, Alert, Modal, Badge) — no hand-rolled
-controls. The pack ships its own theme-aware styles; `injectBlocksStyles()` is
-called at module init in `src/App.tsx` so the first paint is already styled.
+A sandboxed static web app served in an iframe by the Civitai host. Its UI is
+built from the **`@civitai/blocks-react/ui`** W6 component pack (Button, Textarea,
+Card, Stack, Group, Alert, Loader, Modal, Badge) — the one exception is the model
+picker, a themed native `<select>` (the pack ships no Select yet). The pack ships
+its own theme-aware styles; `injectBlocksStyles()` is called at module init in
+`src/App.tsx` so the first paint is already styled.
 
 The platform
 owns the build: it runs `npm ci` then the `buildCommand` from
@@ -26,10 +27,32 @@ The money path uses the SDK hooks — never raw `window.parent.postMessage`:
   `TOKEN_REFRESH` and the app auto-resumes the click.
 - `useBlockResize()` — the SDK reports height to the host safely.
 
-Page constraints: a page is `entity=none` (no model context, no model-picker), so
-the model is hardcoded (`GEN_MODEL` in `src/generation.ts`). A page hard-forbids
+Page constraints: a page is `entity=none` — it carries no HOST model context (a
+model slot would deliver `modelId`/`modelVersionId` via `BLOCK_INIT`; a page does
+not). So this app ships its OWN model choice: a curated default checkpoint
+(`DEFAULT_CHECKPOINT` in `src/models.ts`, works at first paint / offline) plus an
+in-block picker that browses the catalog (`src/catalog-api.ts`). A page hard-forbids
 `buzz:read:self`, so insufficient Buzz is detected from a failed snapshot, not
 read proactively. The budget comes from `page.buzzBudgetPerGen` in the manifest.
+
+### Model picker (server-revalidated)
+
+The picker reads the public model catalog so the user can choose any checkpoint:
+
+- **`src/models.ts`** — a curated `CHECKPOINTS` set (verified Public +
+  generation-covered + SFW) and the `DEFAULT_CHECKPOINT` the app starts on. The
+  app never blocks on the network: the curated set always populates the picker.
+- **`src/catalog-api.ts`** — fetches more checkpoints. Signed-in, it uses the
+  **token-authoritative** `/api/v1/blocks/models` (Bearer = the block token),
+  which the server **maturity-clamps** to the token's signed ceiling — the client
+  never sends `nsfw`/`browsingLevel`. Anon (or as a fallback), it uses the public
+  `/api/v1/models` with `nsfw=false` advisory-SFW, gated by the block's domain
+  maturity. No extra manifest scope is needed — the block token alone gates it.
+
+A pick is **discovery only**. Nothing about a client-chosen checkpoint is trusted:
+the server **re-validates** (public? generation-covered? SFW for the domain?) and
+**re-prices** the body at every `estimate` AND `submit`. A client can't smuggle a
+non-generatable or mis-priced model through `buildWorkflowBody`.
 
 ## Develop
 
@@ -183,6 +206,12 @@ npm run build         # what the platform produces (tsc typecheck + vite build)
 `npm test` runs both vitest projects in one go (split in `vite.config.ts`):
 
 - **`src/generation.test.ts`** — pure-logic units (node env).
+- **`src/models.test.ts`** — the curated checkpoint set + the pick→option
+  helpers (`checkpointFromPick`, `mergeCheckpoints`). Locks the verified curated
+  ids so an accidental edit is caught.
+- **`src/catalog-api.test.ts`** — the in-block catalog client: URL builder, the
+  response→option mapper, the SFW clamp, and the injectable-`fetch` client
+  (success / empty / network-throw / authoritative→public fallback). No network.
 - **`src/App.test.tsx`** — component tests: render `<App/>` against
   `createMockHost()` and assert the UI (anon → sign-in, signed-in → prompt).
 - **`src/e2e.test.tsx`** — the money-path proof: drives the FULL

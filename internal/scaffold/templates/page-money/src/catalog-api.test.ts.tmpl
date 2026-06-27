@@ -1,0 +1,118 @@
+import { describe, expect, it, vi } from 'vitest';
+
+import {
+  CATALOG_API_BASE,
+  CATALOG_API_BASE_BLOCKS,
+  buildCatalogUrl,
+  catalogSfwOnly,
+  fetchCatalog,
+  modelToCheckpoint,
+  responseToCheckpoints,
+  type FetchLike,
+} from './catalog-api.js';
+
+// Pure + injectable-fetch units for the in-block catalog client. No network —
+// the fetch client takes an injectable `fetch`, so success / empty / non-OK /
+// network-throw / authoritative-fallback are all driven deterministically.
+
+describe('buildCatalogUrl', () => {
+  it('always scopes to Checkpoints and clamps the limit', () => {
+    const url = new URL(buildCatalogUrl({ limit: 9999 }));
+    expect(url.origin + url.pathname).toBe(CATALOG_API_BASE);
+    expect(url.searchParams.get('types')).toBe('Checkpoint');
+    expect(url.searchParams.get('limit')).toBe('100');
+  });
+  it('omits an empty query and only adds nsfw=false when sfwOnly', () => {
+    const plain = new URL(buildCatalogUrl({ query: '   ' }));
+    expect(plain.searchParams.has('query')).toBe(false);
+    expect(plain.searchParams.has('nsfw')).toBe(false);
+
+    const sfw = new URL(buildCatalogUrl({ query: 'anime' }, { sfwOnly: true }));
+    expect(sfw.searchParams.get('query')).toBe('anime');
+    expect(sfw.searchParams.get('nsfw')).toBe('false');
+  });
+});
+
+describe('catalogSfwOnly (fail-closed SFW for the anon read)', () => {
+  it('only a red domain (isSfw=false) relaxes; unknown stays SFW', () => {
+    expect(catalogSfwOnly(true)).toBe(true);
+    expect(catalogSfwOnly(undefined)).toBe(true);
+    expect(catalogSfwOnly(false)).toBe(false);
+  });
+});
+
+describe('modelToCheckpoint / responseToCheckpoints', () => {
+  it('maps a model via its first version; skips rows with no version id', () => {
+    expect(
+      modelToCheckpoint({
+        id: 101055,
+        name: 'SD XL',
+        modelVersions: [{ id: 128078, name: '1.0', baseModel: 'SDXL 1.0' }],
+      }),
+    ).toEqual({ versionId: 128078, modelId: 101055, label: 'SD XL — 1.0', baseModel: 'SDXL 1.0' });
+
+    expect(modelToCheckpoint({ id: 1, modelVersions: [] })).toBeNull();
+    expect(modelToCheckpoint(null)).toBeNull();
+  });
+  it('drops malformed rows but keeps usable ones', () => {
+    const page = responseToCheckpoints({
+      items: [
+        { id: 1, name: 'Good', modelVersions: [{ id: 11, baseModel: 'SD 1.5' }] },
+        { id: 2, name: 'NoVersion' },
+      ],
+    });
+    expect(page).toHaveLength(1);
+    expect(page[0].versionId).toBe(11);
+  });
+});
+
+const okRes = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+
+describe('fetchCatalog', () => {
+  const page = { items: [{ id: 1, name: 'M', modelVersions: [{ id: 11, baseModel: 'SD 1.5' }] }] };
+
+  it('anon → public endpoint, advisory SFW honored', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(okRes(page));
+    const res = await fetchCatalog({}, { fetch: fetchMock, anonSfwOnly: true });
+    expect(res.kind).toBe('ok');
+    if (res.kind === 'ok') expect(res.authoritative).toBe(false);
+    const calledUrl = fetchMock.mock.calls[0][0];
+    expect(calledUrl).toContain(CATALOG_API_BASE);
+    expect(calledUrl).toContain('nsfw=false');
+  });
+
+  it('signed-in → authoritative /blocks/models with a Bearer header', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(okRes(page));
+    const res = await fetchCatalog({}, { fetch: fetchMock, auth: { token: 'jwt' } });
+    expect(res.kind).toBe('ok');
+    if (res.kind === 'ok') expect(res.authoritative).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toContain(CATALOG_API_BASE_BLOCKS);
+    expect(fetchMock.mock.calls[0][1]?.headers?.Authorization).toBe('Bearer jwt');
+    // The authoritative URL never leaks client maturity (server clamps).
+    expect(fetchMock.mock.calls[0][0]).not.toContain('nsfw=');
+  });
+
+  it('authoritative 404 → graceful fallback to the public read', async () => {
+    const fetchMock = vi
+      .fn<FetchLike>()
+      .mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) })
+      .mockResolvedValueOnce(okRes(page));
+    const res = await fetchCatalog({}, { fetch: fetchMock, auth: { token: 'jwt' } });
+    expect(res.kind).toBe('ok');
+    if (res.kind === 'ok') expect(res.authoritative).toBe(false); // fell back to public
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1][0]).toContain(CATALOG_API_BASE);
+  });
+
+  it('a public network throw → error result (never throws)', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockRejectedValue(new Error('CORS'));
+    const res = await fetchCatalog({}, { fetch: fetchMock });
+    expect(res.kind).toBe('error');
+  });
+
+  it('an empty public page → empty result', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(okRes({ items: [] }));
+    const res = await fetchCatalog({}, { fetch: fetchMock });
+    expect(res.kind).toBe('empty');
+  });
+});

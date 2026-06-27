@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -9,13 +9,12 @@ import { App } from './App.js';
 // End-to-end proof of the money wiring: this drives the FULL page money path
 // through the REAL SDK transport (NO hook mocking) against the published mock
 // host. It is the regression guard that estimate -> consent -> submit -> poll
-// stays wired. The UI is the @civitai/blocks-react/ui pack, so the Generate
-// click first opens a confirm Modal; confirming inside it proceeds:
+// stays wired. Generate is ONE click — no confirm modal (consent is the real,
+// host-driven spend gate):
 //
 //   render <App/> (consent WITHHELD)
 //     -> type a prompt
-//     -> click Generate -> confirm Modal opens
-//     -> click Generate INSIDE the modal
+//     -> click Generate
 //     -> App asks the host for consent (REQUEST_CONSENT)
 //     -> host grants + pushes a TOKEN_REFRESH carrying ai:write:budgeted
 //     -> App auto-resumes: estimate -> submit -> poll
@@ -23,11 +22,6 @@ import { App } from './App.js';
 //
 // The mock host's internal timers all fire on setTimeout(0), so real timers +
 // findBy/waitFor resolve promptly — no fake-timer juggling required.
-
-async function confirmInModal(user: ReturnType<typeof userEvent.setup>) {
-  const dialog = await screen.findByRole('dialog', { name: /confirm generation/i });
-  await user.click(within(dialog).getByRole('button', { name: /generate/i }));
-}
 
 describe('App money path (e2e)', () => {
   let uninstall: (() => void) | undefined;
@@ -53,14 +47,20 @@ describe('App money path (e2e)', () => {
     // Wait for BLOCK_INIT -> the Generate button appears.
     const generate = await screen.findByTestId('pm-generate');
 
+    // The model picker is present, defaulted to SD XL 1.0; switch to Pony so the
+    // generation runs against the user's pick (still server-revalidated).
+    const picker = screen.getByTestId('pm-model-select') as HTMLSelectElement;
+    expect(picker.value).toBe('128078'); // DEFAULT_CHECKPOINT (SD XL 1.0)
+    await user.selectOptions(picker, '290640'); // Pony V6 XL
+    expect(picker.value).toBe('290640');
+
     // Enter a prompt (Generate is disabled while empty).
     await user.type(screen.getByLabelText(/prompt/i), 'a serene mountain lake');
     expect(generate).toBeEnabled();
 
-    // Click Generate -> confirm Modal -> confirm. Scope is withheld so the App
-    // requests consent first, then auto-resumes.
+    // Click Generate. Scope is withheld so the App requests consent first, then
+    // auto-resumes once the host grants it.
     await user.click(generate);
-    await confirmInModal(user);
 
     // The host grants consent + token-refreshes; the App auto-resumes through
     // estimate -> submit -> poll -> succeeded. Assert the terminal success UI.
@@ -90,7 +90,6 @@ describe('App money path (e2e)', () => {
     const generate = await screen.findByTestId('pm-generate');
     await user.type(screen.getByLabelText(/prompt/i), 'a cat');
     await user.click(generate);
-    await confirmInModal(user);
 
     // The failed snapshot carries insufficient-Buzz text -> the App swaps to
     // the Top-Up warning Alert and renders no image.

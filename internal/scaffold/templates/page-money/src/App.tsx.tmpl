@@ -5,6 +5,7 @@ import {
   useBlockResize,
   useBlockToken,
   useBuzzWorkflow,
+  useDomainMaturity,
   useRequestConsent,
   useRequestSignIn,
 } from '@civitai/blocks-react';
@@ -14,16 +15,15 @@ import {
   Button,
   Card,
   Group,
+  Loader,
   Modal,
   Stack,
-  TextInput,
   Textarea,
   injectBlocksStyles,
 } from '@civitai/blocks-react/ui';
 import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
 import {
-  GEN_MODEL,
   PAGE_BUZZ_BUDGET,
   PROMPT_MAX,
   buildWorkflowBody,
@@ -36,6 +36,13 @@ import {
   phaseForSnapshot,
   type GenPhase,
 } from './generation.js';
+import {
+  CHECKPOINTS,
+  DEFAULT_CHECKPOINT,
+  mergeCheckpoints,
+  type CheckpointOption,
+} from './models.js';
+import { catalogSfwOnly, defaultFetch, fetchCatalog } from './catalog-api.js';
 
 // Inject the W6 component pack's stylesheet at module init (before first paint)
 // to avoid the documented one-frame FOUC (the pack's components also call
@@ -57,7 +64,10 @@ injectBlocksStyles();
  *    so we CANNOT read the viewer's balance — insufficient Buzz is detected from
  *    the `failed` snapshot, never proactively.
  *  - budget comes from manifest `page.buzzBudgetPerGen`; a page is stateless.
- *  - the model is hardcoded (a page has no slot model) — see GEN_MODEL.
+ *  - a page has no HOST model context (entity=none), so the app ships a curated
+ *    default checkpoint (DEFAULT_CHECKPOINT) and an in-block picker that browses
+ *    the catalog (see models.ts / catalog-api.ts). A pick is DISCOVERY ONLY —
+ *    the server re-validates + re-prices it at estimate/submit.
  *  - `ai:write:budgeted` is consent-gated -> withheld at mint, requested lazily
  *    on first Generate via useRequestConsent; the grant arrives as a
  *    TOKEN_REFRESH carrying the scope, which we observe + retry.
@@ -65,6 +75,7 @@ injectBlocksStyles();
 export function App() {
   const { ready, viewer, theme } = useBlockContext();
   const token = useBlockToken();
+  const { isSfw: domainIsSfw } = useDomainMaturity();
   const { estimate, submit, poll } = useBuzzWorkflow();
   const { requestConsent } = useRequestConsent();
   const { requestSignIn } = useRequestSignIn();
@@ -82,8 +93,17 @@ export function App() {
   const [actualCost, setActualCost] = useState<number | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const [aboutOpen, setAboutOpen] = useState(false);
+
+  // The selected checkpoint. Starts on the curated DEFAULT (works at first paint
+  // / offline / before the catalog loads); the in-block picker can replace it.
+  // A pick is DISCOVERY ONLY — the server re-validates + re-prices it.
+  const [checkpoint, setCheckpoint] = useState<CheckpointOption>(DEFAULT_CHECKPOINT);
+  // Catalog-browsed options, merged with the curated set in the picker. Empty
+  // until the catalog read resolves (or stays empty if it's unreachable — the
+  // curated set always works, so the picker is never blocked on the network).
+  const [catalogOptions, setCatalogOptions] = useState<CheckpointOption[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
 
   // True once the user clicked Generate while the scope was missing — so when
   // the consent grant lands (granted flips true) we auto-resume the submit.
@@ -191,7 +211,7 @@ export function App() {
     setError(null);
     setImageUrl(null);
     setActualCost(null);
-    const body = buildWorkflowBody(prompt);
+    const body = buildWorkflowBody(prompt, checkpoint);
 
     // 1) Estimate (best-effort — a failed estimate doesn't block submit; the
     //    host re-prices at submit anyway).
@@ -231,11 +251,12 @@ export function App() {
     // 3) Poll to terminal.
     setPhase('polling');
     if (snap.workflowId) runPollLoop(snap.workflowId);
-  }, [prompt, estimate, submit, applySnapshot, runPollLoop]);
+  }, [prompt, checkpoint, estimate, submit, applySnapshot, runPollLoop]);
 
-  // The actual gate: sign-in -> consent -> generate. Called by the confirm modal.
+  // The actual gate: sign-in -> consent -> generate. Wired straight to the
+  // Generate button — the cost is already shown on the button, so there's no
+  // separate confirm step (consent is the real, host-driven spend gate).
   const proceed = useCallback(() => {
-    setConfirmOpen(false);
     // Anon: convert the click into a host login prompt. Generate is server-gated
     // anyway (an anon token carries no budgeted scope).
     if (!viewer) {
@@ -262,6 +283,40 @@ export function App() {
     }
   }, [granted, runGeneration]);
 
+  // Load the in-block catalog once the host is ready: token-authoritative
+  // (maturity-clamped) when signed in, public + advisory-SFW otherwise. The
+  // curated CHECKPOINTS already populate the picker, so a failed/empty read just
+  // leaves the picker on the curated set — the catalog only ADDS options.
+  // DISCOVERY ONLY: every option is re-validated + re-priced server-side.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    setCatalogLoading(true);
+    fetchCatalog(
+      {},
+      {
+        fetch: defaultFetch,
+        auth: { token: token.raw },
+        anonSfwOnly: catalogSfwOnly(domainIsSfw),
+      },
+    )
+      .then((res) => {
+        if (cancelled) return;
+        setCatalogOptions(res.kind === 'ok' ? res.options : []);
+      })
+      .finally(() => {
+        if (!cancelled) setCatalogLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, token.raw, domainIsSfw]);
+
+  // The picker's option list: curated set first, then catalog-browsed options,
+  // de-duplicated by versionId. The curated entries always lead so the default
+  // is stable across catalog states.
+  const pickerOptions = mergeCheckpoints(CHECKPOINTS, catalogOptions);
+
   const promptError =
     touched && prompt.trim().length === 0 ? 'Enter a prompt to generate.' : undefined;
   const busy = isBusyPhase(phase);
@@ -284,10 +339,20 @@ export function App() {
     );
   }
 
+  // Generate is one click: validate the prompt, then run the gate
+  // (sign-in -> consent -> spend). The button already shows the live cost, so
+  // there's no separate confirm step — consent is the real host-driven gate.
   const onGenerateClick = () => {
     setTouched(true);
     if (prompt.trim().length === 0) return;
-    setConfirmOpen(true);
+    proceed();
+  };
+
+  // Resolve a picker <option> value (the versionId) back to a CheckpointOption.
+  const onCheckpointChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const versionId = Number(e.target.value);
+    const next = pickerOptions.find((o) => o.versionId === versionId);
+    if (next) setCheckpoint(next);
   };
 
   return (
@@ -302,8 +367,8 @@ export function App() {
           </Group>
 
           <Alert color="info" title="How this works">
-            Type a prompt and generate one image with <strong>{GEN_MODEL.label}</strong>. Each
-            generation spends a small amount of Buzz (budget {PAGE_BUZZ_BUDGET} per generation).{' '}
+            Pick a checkpoint, type a prompt, and generate one image. Each generation spends a
+            small amount of Buzz (budget {PAGE_BUZZ_BUDGET} per generation).{' '}
             <button type="button" onClick={() => setAboutOpen(true)} style={linkButtonStyle}>
               Details
             </button>
@@ -322,13 +387,37 @@ export function App() {
             onBlur={() => setTouched(true)}
           />
 
-          <TextInput
-            label="Model"
-            description="A page block has no model picker, so the model is fixed."
-            value={GEN_MODEL.label}
-            readOnly
-            disabled
-          />
+          {/* Model picker. The W6 pack ships no Select, so this is a themed
+              native <select> (theme tokens via the pack's CSS vars). The curated
+              CHECKPOINTS always work; the catalog ADDS more once it loads. Every
+              pick is DISCOVERY ONLY — the server re-validates + re-prices it. */}
+          <label style={fieldStyle}>
+            <span style={fieldLabelStyle}>Model</span>
+            <span style={fieldDescStyle}>
+              Pick a checkpoint to generate with. The server validates + prices every generation.
+            </span>
+            <span style={selectWrapStyle}>
+              <select
+                value={checkpoint.versionId}
+                onChange={onCheckpointChange}
+                aria-label="Model"
+                style={selectStyle}
+                data-testid="pm-model-select"
+              >
+                {pickerOptions.map((opt) => (
+                  <option key={opt.versionId} value={opt.versionId}>
+                    {opt.label}
+                    {opt.baseModel ? ` (${opt.baseModel})` : ''}
+                  </option>
+                ))}
+              </select>
+              {catalogLoading && (
+                <span style={selectLoaderStyle} aria-hidden>
+                  <Loader size="sm" />
+                </span>
+              )}
+            </span>
+          </label>
 
           {anon ? (
             <Button fullWidth onClick={() => requestSignIn()} data-testid="pm-signin">
@@ -389,39 +478,19 @@ export function App() {
         </Stack>
       </Card>
 
-      {/* Confirm-spend modal — exercises Modal in its opened state with live data. */}
-      <Modal
-        opened={confirmOpen}
-        onClose={() => setConfirmOpen(false)}
-        title="Confirm generation"
-        size="sm"
-      >
-        <Stack gap={14}>
-          <span>
-            Generate one image with <strong>{GEN_MODEL.label}</strong>? This spends up to{' '}
-            <strong>{PAGE_BUZZ_BUDGET}</strong> Buzz.
-          </span>
-          <Group justify="flex-end" gap={8}>
-            <Button variant="subtle" onClick={() => setConfirmOpen(false)}>
-              Cancel
-            </Button>
-            <Button color="success" onClick={proceed}>
-              Generate
-            </Button>
-          </Group>
-        </Stack>
-      </Modal>
-
-      {/* About modal — a second Modal instance, opened independently. */}
+      {/* About modal — demonstrates the pack's Modal, opened independently. */}
       <Modal opened={aboutOpen} onClose={() => setAboutOpen(false)} title="About this block" size="md">
         <Stack gap={10}>
           <span>
-            This is a sandboxed Civitai App Block. The interface is built entirely with the{' '}
-            <strong>@civitai/blocks-react/ui</strong> W6 component pack — Button, TextInput,
-            Textarea, Card, Stack, Group, Alert, Badge and Modal.
+            This is a sandboxed Civitai App Block. The interface is built from the{' '}
+            <strong>@civitai/blocks-react/ui</strong> W6 component pack — Button, Textarea, Card,
+            Stack, Group, Alert, Badge, Loader and Modal — plus a themed native{' '}
+            <code>&lt;select&gt;</code> for the model picker (the pack ships no Select yet).
           </span>
           <Alert color="info">
-            Generations run on the real Civitai backend and spend real Buzz when run in live mode.
+            Pick any checkpoint and we send it to generate — but a pick is just discovery. The
+            Civitai backend re-validates and re-prices every generation, so a client choice is
+            never trusted. Generations spend real Buzz when run in live mode.
           </Alert>
           <Group justify="flex-end">
             <Button onClick={() => setAboutOpen(false)}>Got it</Button>
@@ -464,4 +533,33 @@ const linkButtonStyle: React.CSSProperties = {
   textDecoration: 'underline',
   cursor: 'pointer',
   font: 'inherit',
+};
+
+// The W6 pack has no Select, so the model picker is a themed native <select>.
+// These read the same pack CSS vars the pack's own inputs use, so it matches the
+// Textarea/TextInput surface across light/dark themes.
+const fieldStyle: React.CSSProperties = { display: 'grid', gap: 4 };
+const fieldLabelStyle: React.CSSProperties = { fontSize: 14, fontWeight: 600 };
+const fieldDescStyle: React.CSSProperties = {
+  fontSize: 12,
+  color: 'var(--ci-color-text-muted, var(--ci-color-text))',
+  opacity: 0.8,
+};
+const selectWrapStyle: React.CSSProperties = { position: 'relative', display: 'block' };
+const selectStyle: React.CSSProperties = {
+  width: '100%',
+  padding: '10px 12px',
+  borderRadius: 8,
+  border: '1px solid var(--ci-color-border)',
+  background: 'var(--ci-color-surface)',
+  color: 'var(--ci-color-text)',
+  fontSize: 14,
+  appearance: 'none',
+};
+const selectLoaderStyle: React.CSSProperties = {
+  position: 'absolute',
+  top: '50%',
+  right: 12,
+  transform: 'translateY(-50%)',
+  pointerEvents: 'none',
 };

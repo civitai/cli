@@ -5,21 +5,7 @@
 
 import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
-/**
- * The hardcoded model this app generates with.
- *
- * A W10 page slot is entity=none: it carries NO model/entity context (unlike a
- * model slot), and the SDK exposes NO model-picker to a page app. The trust
- * model for page generation is "any public, generatable model, server-validated"
- * — so we hardcode a single known-good base. The canonical Stability AI "SD XL"
- * base is public + generation-covered + SFW. Swap to your preferred public,
- * generation-covered model if you like.
- */
-export const GEN_MODEL = {
-  modelId: 101055,
-  modelVersionId: 128078,
-  label: 'SD XL 1.0',
-} as const;
+import type { CheckpointOption } from './models.js';
 
 /** Server cap mirror — prompts over this are rejected by the workflow schema. */
 export const PROMPT_MAX = 1500;
@@ -90,15 +76,20 @@ export function clampPrompt(raw: string): string {
 }
 
 /**
- * Build the textToImage submit/estimate body. Page apps keep the param surface
- * minimal: just the prompt — the host fills sensible defaults for
- * dimensions/sampler/steps from the base-model family.
+ * Build the textToImage submit/estimate body for the chosen checkpoint. Page
+ * apps keep the param surface minimal: just the prompt — the host fills sensible
+ * defaults for dimensions/sampler/steps from the base-model family.
+ *
+ * MONEY-SAFETY: the checkpoint is the user's in-block PICK (default or catalog-
+ * browsed), which is DISCOVERY ONLY. The server re-validates (public? covered?
+ * SFW for the domain?) AND re-prices this body at estimate AND submit — a client
+ * can't force a non-generatable or mis-priced model through here.
  */
-export function buildWorkflowBody(prompt: string) {
+export function buildWorkflowBody(prompt: string, checkpoint: CheckpointOption) {
   return {
     kind: 'textToImage' as const,
-    modelId: GEN_MODEL.modelId,
-    modelVersionId: GEN_MODEL.modelVersionId,
+    modelId: checkpoint.modelId,
+    modelVersionId: checkpoint.versionId,
     params: { prompt: clampPrompt(prompt.trim()) },
   };
 }

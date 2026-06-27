@@ -78,7 +78,9 @@ func TestRenderPageMoney(t *testing.T) {
 	for _, expect := range []string{
 		"block.manifest.json", "package.json", "vite.config.ts", "tsconfig.json", "index.html",
 		"src/main.tsx", "src/App.tsx", "src/Harness.tsx", "src/generation.ts",
-		"src/generation.test.ts", "src/App.pollretry.test.tsx", "src/index.css",
+		"src/models.ts", "src/catalog-api.ts",
+		"src/generation.test.ts", "src/models.test.ts", "src/catalog-api.test.ts",
+		"src/App.pollretry.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
 	} {
 		if !containsStr(got, expect) {
@@ -128,6 +130,47 @@ func TestRenderPageMoney(t *testing.T) {
 	// a poll blip marked a server-side SUCCESS as FAILED.
 	mustContain(t, app, "MAX_TRANSIENT_ERRORS")
 	mustContain(t, app, "consecutiveErrors")
+
+	// The confirm-spend modal was removed: Generate is one click → consent →
+	// spend (the button already shows the cost). The "About" modal stays (it
+	// demonstrates Modal), so we assert the CONFIRM modal specifically is gone.
+	mustNotContain(t, app, "Confirm generation")
+	mustNotContain(t, app, "setConfirmOpen")
+	// The Generate click runs the gate directly (no intermediate confirm state).
+	mustContain(t, app, "proceed()")
+
+	// Model picker: the page ships a curated default checkpoint + an in-block
+	// picker (entity=none means no host model context). The old hardcoded
+	// GEN_MODEL is gone; the picker is wired into the workflow body.
+	mustNotContain(t, app, "GEN_MODEL")
+	mustContain(t, app, "DEFAULT_CHECKPOINT")
+	mustContain(t, app, "pm-model-select")
+	mustContain(t, app, "buildWorkflowBody(prompt, checkpoint)")
+	mustContain(t, app, "fetchCatalog")
+
+	// generation.ts threads the chosen checkpoint into modelId/modelVersionId
+	// instead of a hardcoded constant.
+	gen := readFile(t, filepath.Join(dest, "src", "generation.ts"))
+	mustNotContain(t, gen, "GEN_MODEL")
+	mustContain(t, gen, "checkpoint: CheckpointOption")
+	mustContain(t, gen, "modelVersionId: checkpoint.versionId")
+
+	// models.ts ships the curated, verified checkpoint ids the app starts on /
+	// falls back to (Public + generation-covered + SFW).
+	models := readFile(t, filepath.Join(dest, "src", "models.ts"))
+	mustContain(t, models, "CheckpointOption")
+	mustContain(t, models, "DEFAULT_CHECKPOINT")
+	mustContain(t, models, "128078") // SD XL 1.0 version id
+	mustContain(t, models, "290640") // Pony V6 XL version id
+
+	// catalog-api.ts uses the token-authoritative block endpoint (Bearer-gated,
+	// server-maturity-clamped) with a public, advisory-SFW fallback. The picks
+	// are server-revalidated, so no extra manifest scope is needed.
+	catalog := readFile(t, filepath.Join(dest, "src", "catalog-api.ts"))
+	mustContain(t, catalog, "/api/v1/blocks/models")
+	mustContain(t, catalog, "/api/v1/models")
+	mustContain(t, catalog, "Authorization")
+	mustContain(t, catalog, "catalogSfwOnly")
 
 	// The display name should land in the manifest + App heading.
 	mustContain(t, manifest, `"name": "Money Block"`)
