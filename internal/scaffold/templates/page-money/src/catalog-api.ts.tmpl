@@ -1,0 +1,246 @@
+// Catalog client for the in-block checkpoint picker.
+//
+// TWO READ PATHS, chosen by whether a block token is available:
+//
+//  1. AUTHORITATIVE (signed-in): when the block has a block-scoped JWT we fetch
+//     the block-gated endpoint `/api/v1/blocks/models` with an
+//     `Authorization: Bearer <token>` header. Same response shape as the public
+//     `/api/v1/models`, but it AUTHORITATIVELY CLAMPS the catalog's browsing
+//     level to the token's signed `maxBrowsingLevel` ceiling. The client NEVER
+//     sends `nsfw`/`browsingLevel` — maturity is server-enforced. This is gated
+//     by the block token alone; no extra manifest scope is needed.
+//
+//  2. PUBLIC (anon, or graceful fallback): the public REST endpoint
+//     `https://civitai.com/api/v1/models` returns `Access-Control-Allow-Origin`
+//     for the block, so a sandboxed iframe can call it with a plain `fetch`. We
+//     pass `nsfw=false` for an advisory-SFW view (gated by the block's domain
+//     maturity). Runs for anon viewers AND as a deploy-order fallback.
+//
+// MONEY-SAFETY: this only DISCOVERS checkpoints. Every pick is re-validated AND
+// re-priced server-side at estimate/submit, so a public/anon read is money-safe
+// — a client can't smuggle a non-generatable or mis-priced model through here.
+//
+// All non-trivial logic here is pure + node-testable: the URL builder, the
+// response→Option mapper, and a thin fetch client that takes an INJECTABLE
+// `fetch` (so tests mock success / empty / error / malformed without a network).
+
+import type { CheckpointOption, PickedResource } from './models.js';
+import { checkpointFromPick } from './models.js';
+
+/** The public REST base. Overridable for tests / a future env pin. */
+export const CATALOG_API_BASE = 'https://civitai.com/api/v1/models';
+
+/** The authoritative, block-token-gated, maturity-clamped catalog base. */
+export const CATALOG_API_BASE_BLOCKS = 'https://civitai.com/api/v1/blocks/models';
+
+export interface CatalogQuery {
+  /** Meili text search; empty/whitespace → omitted (default popular view). */
+  query?: string;
+  /** ≤100 (server cap). Defaults to DEFAULT_LIMIT. */
+  limit?: number;
+}
+
+/** Default page size — small enough to keep the picker list + payload light. */
+export const DEFAULT_LIMIT = 20;
+
+export interface BuildUrlOptions {
+  base?: string;
+  /**
+   * Append `nsfw=false` (advisory SFW). Only the PUBLIC endpoint reads this; the
+   * authoritative `/blocks/models` IGNORES client maturity (server clamps), so we
+   * never send it there. Defaults to `false`.
+   */
+  sfwOnly?: boolean;
+}
+
+/**
+ * Build a catalog URL for a query (Checkpoints only). Pure + deterministic.
+ * Empty query is omitted (the default popular view). `limit` is clamped to
+ * [1, 100]. `sfwOnly` appends `nsfw=false` — public endpoint only.
+ */
+export function buildCatalogUrl(
+  q: CatalogQuery,
+  baseOrOpts: string | BuildUrlOptions = CATALOG_API_BASE,
+): string {
+  const opts: BuildUrlOptions = typeof baseOrOpts === 'string' ? { base: baseOrOpts } : baseOrOpts;
+  const base = opts.base ?? CATALOG_API_BASE;
+  const params = new URLSearchParams();
+  params.set('types', 'Checkpoint');
+  params.set('sort', 'Most Downloaded');
+  const query = q.query?.trim();
+  if (query) params.set('query', query);
+  params.set('limit', String(clampLimit(q.limit ?? DEFAULT_LIMIT)));
+  if (opts.sfwOnly) params.set('nsfw', 'false');
+  return `${base}?${params.toString()}`;
+}
+
+function clampLimit(n: number): number {
+  if (!Number.isFinite(n)) return DEFAULT_LIMIT;
+  return Math.max(1, Math.min(100, Math.floor(n)));
+}
+
+/**
+ * Resolve the advisory-SFW flag for the ANON public read from the block's domain
+ * maturity (`useDomainMaturity().isSfw`). Fail-closed SFW: a green/blue domain
+ * (isSfw true, or unknown) browses SFW-only; only a red domain (isSfw false)
+ * relaxes it. Does NOT affect the authoritative path (server-clamped).
+ */
+export function catalogSfwOnly(domainIsSfw: boolean | undefined): boolean {
+  return domainIsSfw !== false;
+}
+
+// ---------------------------------------------------------------------------
+// Response shapes (minimal — only the fields we read). Tolerant of missing
+// fields (malformed payload → skipped, never throws).
+// ---------------------------------------------------------------------------
+
+interface RawModelVersion {
+  id?: number;
+  name?: string;
+  baseModel?: string;
+}
+interface RawModel {
+  id?: number;
+  name?: string;
+  modelVersions?: RawModelVersion[];
+}
+interface RawResponse {
+  items?: RawModel[];
+}
+
+/**
+ * Map ONE raw model → a CheckpointOption using its FIRST modelVersion (REST
+ * default order puts the latest/primary first). Returns `null` for an unusable
+ * row (no version id). Tolerant of any missing field.
+ */
+export function modelToCheckpoint(raw: RawModel | null | undefined): CheckpointOption | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const version = raw.modelVersions?.[0];
+  const versionId = version?.id;
+  if (typeof versionId !== 'number' || !Number.isFinite(versionId)) return null;
+  const modelId = typeof raw.id === 'number' ? raw.id : 0;
+  const picked: PickedResource = {
+    versionId,
+    modelId,
+    modelName: (raw.name ?? '').trim() || undefined,
+    versionName: (version?.name ?? '').trim() || undefined,
+    baseModel: (version?.baseModel ?? '').trim(),
+  };
+  return checkpointFromPick(picked);
+}
+
+/** Map a full raw response → a list of checkpoint options. Never throws. */
+export function responseToCheckpoints(raw: RawResponse | null | undefined): CheckpointOption[] {
+  const items = Array.isArray(raw?.items) ? raw!.items! : [];
+  const out: CheckpointOption[] = [];
+  for (const item of items) {
+    const opt = modelToCheckpoint(item);
+    if (opt) out.push(opt);
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// The fetch client. Takes an injectable `fetch` so tests drive success / empty /
+// network-error / non-OK / malformed without a real network. Returns a
+// discriminated result instead of throwing so the UI can show retry/empty.
+// ---------------------------------------------------------------------------
+
+export type FetchLike = (
+  url: string,
+  init?: { headers?: Record<string, string> },
+) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+
+export type CatalogResult =
+  | { kind: 'ok'; options: CheckpointOption[]; authoritative: boolean }
+  | { kind: 'empty'; authoritative: boolean }
+  | { kind: 'error'; status?: number; message: string };
+
+export interface CatalogAuth {
+  /** Raw block JWT (`useBlockToken().raw`). Absent → anon. */
+  token?: string | null;
+}
+
+/** Statuses that mean "not available yet, fall back to public". */
+function isFallbackStatus(status: number): boolean {
+  return status === 404 || status === 401 || status === 403;
+}
+
+async function toResult(
+  res: Awaited<ReturnType<FetchLike>>,
+  authoritative: boolean,
+): Promise<CatalogResult> {
+  if (!res.ok) {
+    return { kind: 'error', status: res.status, message: `request failed (${res.status})` };
+  }
+  let body: unknown;
+  try {
+    body = await res.json();
+  } catch (err) {
+    return {
+      kind: 'error',
+      status: res.status,
+      message: err instanceof Error ? err.message : 'bad JSON',
+    };
+  }
+  const options = responseToCheckpoints(body as RawResponse);
+  if (options.length === 0) return { kind: 'empty', authoritative };
+  return { kind: 'ok', options, authoritative };
+}
+
+/**
+ * Fetch one catalog page, choosing the authoritative (token, maturity-clamped)
+ * or public (anon, advisory-SFW) endpoint and gracefully falling back from the
+ * former to the latter when it isn't deployed / authorized yet, or throws
+ * (CORS/preflight/network). A failure on the PUBLIC path is a hard error (no
+ * infinite loop). Never throws.
+ */
+export async function fetchCatalog(
+  q: CatalogQuery,
+  deps: {
+    fetch: FetchLike;
+    auth?: CatalogAuth;
+    /** Advisory SFW for the ANON public read. Defaults to true (fail-closed SFW). */
+    anonSfwOnly?: boolean;
+    publicBase?: string;
+    blocksBase?: string;
+  },
+): Promise<CatalogResult> {
+  const token = deps.auth?.token;
+  const publicBase = deps.publicBase ?? CATALOG_API_BASE;
+  const blocksBase = deps.blocksBase ?? CATALOG_API_BASE_BLOCKS;
+  const anonSfwOnly = deps.anonSfwOnly !== false;
+
+  const fetchPublic = async (sfwOnly: boolean): Promise<CatalogResult> => {
+    const url = buildCatalogUrl(q, { base: publicBase, sfwOnly });
+    let res: Awaited<ReturnType<FetchLike>>;
+    try {
+      res = await deps.fetch(url);
+    } catch (err) {
+      return { kind: 'error', message: err instanceof Error ? err.message : 'network error' };
+    }
+    return toResult(res, false);
+  };
+
+  // Anon: public endpoint, advisory SFW per the domain ceiling.
+  if (!token) return fetchPublic(anonSfwOnly);
+
+  // Signed-in: authoritative, maturity-clamped endpoint (server clamps maturity).
+  const authUrl = buildCatalogUrl(q, { base: blocksBase });
+  let authRes: Awaited<ReturnType<FetchLike>>;
+  try {
+    authRes = await deps.fetch(authUrl, { headers: { Authorization: `Bearer ${token}` } });
+  } catch {
+    return fetchPublic(true);
+  }
+
+  if (!authRes.ok && isFallbackStatus(authRes.status)) {
+    return fetchPublic(true);
+  }
+
+  return toResult(authRes, true);
+}
+
+/** Default real-network fetch adapter for the app (tests inject their own). */
+export const defaultFetch: FetchLike = (url, init) =>
+  fetch(url, init ? { headers: init.headers } : undefined);

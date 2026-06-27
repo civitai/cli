@@ -262,13 +262,6 @@ function LiveUnavailable({ reason }: { reason: string }) {
           <WizardStep n={4} current={step} title="Restart dev:live">
             <CmdRow cmd="npm run dev:live" />
           </WizardStep>
-
-          <Alert color="info">
-            <Stack gap={8}>
-              <span>Just exploring? The mock host runs free — no token, no Buzz:</span>
-              <CmdRow cmd="npm run dev:harness" />
-            </Stack>
-          </Alert>
         </Stack>
       </Card>
     </div>

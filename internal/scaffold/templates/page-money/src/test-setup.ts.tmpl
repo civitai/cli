@@ -3,9 +3,19 @@
 
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
-import { afterEach, beforeEach } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 
 import { resetHarnessTransport } from './dev-transport.js';
+
+// The App's catalog-load effect calls the real `fetch` (the civitai catalog
+// endpoint). jsdom has no network, so stub it to reject — `fetchCatalog` catches
+// that gracefully and the picker stays on the curated set. Component/e2e tests
+// drive the money path through the SDK postMessage transport, not HTTP, so this
+// never touches the flows under test. (A test that wants catalog options can
+// override this stub locally.)
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('no network in test')));
+});
 
 // The SDK transport is a process-wide singleton — reset it before each test so
 // each gets a fresh instance whose allowlist contains the jsdom origin, and so

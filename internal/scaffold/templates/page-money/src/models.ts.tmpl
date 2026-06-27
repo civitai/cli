@@ -1,0 +1,121 @@
+// Curated checkpoint set for {{ .Name }}, plus pick→option helpers.
+//
+// WHY A CURATED DEFAULT SET (the page platform reality):
+//   A W10 page slot is entity=none — it carries NO model context (unlike a model
+//   slot, which delivers modelId/modelVersionId via BLOCK_INIT). So a page app
+//   must ship a known-good DEFAULT checkpoint that works at first paint / offline
+//   / before the in-block catalog loads, and let the user pick others via the
+//   in-block catalog browser (see catalog-api.ts). Each curated entry below is a
+//   foundational, multi-million-generation public base verified to be
+//   generation-covered + SFW — the same bar the reference apps use.
+//
+// MONEY-SAFETY: a pick here is DISCOVERY ONLY. Nothing about a client-chosen
+// checkpoint is trusted — the SERVER re-validates (public? covered? SFW for the
+// domain?) and RE-PRICES every estimate and submit. We never imply otherwise.
+
+export interface CheckpointOption {
+  /** ModelVersion id submitted to the workflow as `modelVersionId`. */
+  versionId: number;
+  /** Parent Model id submitted as `modelId`. */
+  modelId: number;
+  /** Short display label for the picker. */
+  label: string;
+  /** Base-model family — display/label only; compatibility is a SERVER authority. */
+  baseModel: string;
+}
+
+/**
+ * Curated checkpoints. Foundational, multi-million-generation public bases that
+ * effectively never lose coverage:
+ *  - SD XL 1.0 (VAE fix) — the canonical SDXL base (101055/128078).
+ *  - Pony Diffusion V6 XL — the single most-generated model on the platform
+ *    (257749/290640).
+ * Both are Public + generation-covered + SFW. The first is the default a fresh
+ * session starts with.
+ */
+export const CHECKPOINTS: readonly CheckpointOption[] = [
+  { versionId: 128078, modelId: 101055, label: 'SD XL 1.0', baseModel: 'SDXL 1.0' },
+  { versionId: 290640, modelId: 257749, label: 'Pony V6 XL', baseModel: 'Pony' },
+] as const;
+
+/** The default checkpoint a fresh session starts with (the first curated entry). */
+export const DEFAULT_CHECKPOINT: CheckpointOption = CHECKPOINTS[0]!;
+
+// ---------------------------------------------------------------------------
+// Pick → option helpers.
+//
+// The in-block catalog browser produces a BlockResourceInfo-shaped pick =
+// { versionId, modelId, modelName, versionName, baseModel, modelType }.
+// `modelName`/`versionName` are the public display names. Everything here is
+// DISCOVERY ONLY — the wire is re-validated + re-priced server-side at
+// estimate/submit. These turn a pick into a CheckpointOption with the same
+// money-safety invariants as the curated entries.
+// ---------------------------------------------------------------------------
+
+/** Minimal shape of a picked resource (mirrors the SDK's BlockResourceInfo). */
+export interface PickedResource {
+  versionId: number;
+  modelId: number;
+  /** Public display name of the picked model (e.g. "DreamShaper"). */
+  modelName?: string;
+  /** Public display name of the picked model version (e.g. "v8"). */
+  versionName?: string;
+  baseModel: string;
+  modelType?: string;
+}
+
+/**
+ * Build a human display name from a pick's `modelName`/`versionName`, or
+ * `undefined` when neither is present. Prefers "<model> — <version>" when both
+ * exist (e.g. "DreamShaper — v8"); falls back to whichever single name is set.
+ * Whitespace-only names are treated as absent.
+ */
+function resourceDisplayName(names?: { modelName?: string; versionName?: string }): string | undefined {
+  const model = names?.modelName?.trim();
+  const version = names?.versionName?.trim();
+  if (model && version) return `${model} — ${version}`;
+  return model || version || undefined;
+}
+
+/**
+ * Label a picked checkpoint. PREFER the public display name; fall back to the
+ * version id + base model ("Model #128078 (SDXL 1.0)") when no name is present.
+ * The fallback is deterministic, dedupes, and still tells the user the family.
+ */
+export function pickedCheckpointLabel(
+  versionId: number,
+  baseModel: string,
+  names?: { modelName?: string; versionName?: string },
+): string {
+  return resourceDisplayName(names) ?? `Model #${versionId} (${baseModel})`;
+}
+
+/** Turn a picked resource into a `CheckpointOption`. */
+export function checkpointFromPick(picked: PickedResource): CheckpointOption {
+  return {
+    versionId: picked.versionId,
+    modelId: picked.modelId,
+    label: pickedCheckpointLabel(picked.versionId, picked.baseModel, picked),
+    baseModel: picked.baseModel,
+  };
+}
+
+/**
+ * Merge the curated set with catalog-browsed options, de-duplicated by
+ * versionId. Curated entries lead (so the default checkpoint is stable across
+ * catalog states); a catalog option whose versionId is already curated is
+ * dropped. Pure + total — drives the picker's option list.
+ */
+export function mergeCheckpoints(
+  curated: readonly CheckpointOption[],
+  extra: readonly CheckpointOption[],
+): CheckpointOption[] {
+  const seen = new Set<number>();
+  const out: CheckpointOption[] = [];
+  for (const opt of [...curated, ...extra]) {
+    if (seen.has(opt.versionId)) continue;
+    seen.add(opt.versionId);
+    out.push(opt);
+  }
+  return out;
+}

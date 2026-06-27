@@ -1,0 +1,64 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  CHECKPOINTS,
+  DEFAULT_CHECKPOINT,
+  checkpointFromPick,
+  mergeCheckpoints,
+  pickedCheckpointLabel,
+} from './models.js';
+
+// Pure-logic units for the curated checkpoint set + pick→option helpers. The
+// curated ids are load-bearing (verified Public + generation-covered + SFW), so
+// they're asserted here so an accidental edit is caught.
+
+describe('curated checkpoints', () => {
+  it('ships the verified default + Pony bases', () => {
+    expect(DEFAULT_CHECKPOINT).toEqual(CHECKPOINTS[0]);
+    expect(DEFAULT_CHECKPOINT).toMatchObject({ versionId: 128078, modelId: 101055 });
+    expect(CHECKPOINTS.some((c) => c.versionId === 290640 && c.modelId === 257749)).toBe(true);
+  });
+});
+
+describe('pickedCheckpointLabel', () => {
+  it('prefers the public display name (model — version)', () => {
+    expect(
+      pickedCheckpointLabel(8, 'SDXL', { modelName: 'DreamShaper', versionName: 'v8' }),
+    ).toBe('DreamShaper — v8');
+  });
+  it('falls back to "Model #id (base)" with no names', () => {
+    expect(pickedCheckpointLabel(128078, 'SDXL 1.0')).toBe('Model #128078 (SDXL 1.0)');
+  });
+});
+
+describe('checkpointFromPick', () => {
+  it('maps a pick into a CheckpointOption', () => {
+    expect(
+      checkpointFromPick({
+        versionId: 290640,
+        modelId: 257749,
+        modelName: 'Pony Diffusion V6 XL',
+        baseModel: 'Pony',
+      }),
+    ).toEqual({
+      versionId: 290640,
+      modelId: 257749,
+      label: 'Pony Diffusion V6 XL',
+      baseModel: 'Pony',
+    });
+  });
+});
+
+describe('mergeCheckpoints', () => {
+  it('keeps curated entries first and de-dupes by versionId', () => {
+    const extra = [
+      { versionId: 128078, modelId: 101055, label: 'dup', baseModel: 'SDXL 1.0' }, // already curated
+      { versionId: 999, modelId: 888, label: 'New Model', baseModel: 'SD 1.5' },
+    ];
+    const merged = mergeCheckpoints(CHECKPOINTS, extra);
+    // Curated lead, the dup is dropped, the genuinely new one is appended.
+    expect(merged[0]).toEqual(CHECKPOINTS[0]);
+    expect(merged.filter((m) => m.versionId === 128078)).toHaveLength(1);
+    expect(merged.some((m) => m.versionId === 999)).toBe(true);
+  });
+});
