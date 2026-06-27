@@ -1,6 +1,21 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatBalance, navDisplay, parseBuzzBalance, parseViewerName } from './nav.js';
+import {
+  decodeTokenExp,
+  formatBalance,
+  isTokenExpired,
+  navDisplay,
+  parseBuzzBalance,
+  parseViewerName,
+  shouldPromptReMint,
+} from './nav.js';
+
+/** Build an (unsigned-payload) JWT from a payload object: header.payload.sig. */
+function makeJwt(payload: unknown): string {
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const body = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  return `${header}.${body}.sig`;
+}
 
 // Pure-logic units for the dev:live host nav. The parsers must be SAFE on any
 // shape (tRPC envelope, bare, malformed, empty) so a bad response degrades the
@@ -69,5 +84,62 @@ describe('navDisplay', () => {
   it('falls back to a neutral name when unresolved (never blank)', () => {
     expect(navDisplay(null, null)).toEqual({ name: 'viewer', balance: null });
     expect(navDisplay('   ', 100)).toEqual({ name: 'viewer', balance: (100).toLocaleString() });
+  });
+});
+
+// ── Dev-token expiry surfacing ──────────────────────────────────────────────
+// An expired dev:live token silently degrades (the block still renders, balance
+// still resolves via the personal key), so these helpers must reliably name the
+// dead-token state — and be SAFE on any garbage input (never throw).
+
+describe('decodeTokenExp', () => {
+  it('reads a numeric exp out of a JWT payload', () => {
+    expect(decodeTokenExp(makeJwt({ exp: 1735689600, sub: 'u' }))).toBe(1735689600);
+  });
+  it('returns null when the payload has no exp', () => {
+    expect(decodeTokenExp(makeJwt({ sub: 'u' }))).toBeNull();
+  });
+  it('returns null for a non-numeric / non-finite exp', () => {
+    expect(decodeTokenExp(makeJwt({ exp: 'soon' }))).toBeNull();
+    expect(decodeTokenExp(makeJwt({ exp: null }))).toBeNull();
+    expect(decodeTokenExp(makeJwt({ exp: Infinity }))).toBeNull(); // JSON → null
+  });
+  it('returns null for malformed / empty / too-few-segments / non-string input', () => {
+    expect(decodeTokenExp('')).toBeNull();
+    expect(decodeTokenExp('x.y')).toBeNull(); // payload 'y' isn't valid JSON
+    expect(decodeTokenExp('onlyonesegment')).toBeNull();
+    expect(decodeTokenExp('a..c')).toBeNull(); // empty payload segment
+    // @ts-expect-error — guarding the non-string runtime path
+    expect(decodeTokenExp(null)).toBeNull();
+    // @ts-expect-error — guarding the non-string runtime path
+    expect(decodeTokenExp(12345)).toBeNull();
+  });
+});
+
+describe('isTokenExpired', () => {
+  const now = 1_700_000_000_000; // fixed nowMs — never call Date.now() in tests
+  it('is true when exp is in the past relative to nowMs', () => {
+    expect(isTokenExpired(makeJwt({ exp: 1_699_999_000 }), now)).toBe(true);
+  });
+  it('is false when exp is in the future relative to nowMs', () => {
+    expect(isTokenExpired(makeJwt({ exp: 1_700_001_000 }), now)).toBe(false);
+  });
+  it('is false for a token with no/unreadable exp (the 401 path covers that)', () => {
+    expect(isTokenExpired(makeJwt({ sub: 'u' }), now)).toBe(false);
+    expect(isTokenExpired('garbage', now)).toBe(false);
+  });
+});
+
+describe('shouldPromptReMint', () => {
+  it('prompts when the client-side exp read says expired', () => {
+    expect(shouldPromptReMint(true, null)).toBe(true);
+  });
+  it('prompts on a 401 from /blocks/me even if the client exp read disagreed', () => {
+    expect(shouldPromptReMint(false, 401)).toBe(true);
+  });
+  it('does NOT prompt on a healthy token / non-401 status', () => {
+    expect(shouldPromptReMint(false, 200)).toBe(false);
+    expect(shouldPromptReMint(false, null)).toBe(false);
+    expect(shouldPromptReMint(false, 403)).toBe(false);
   });
 });

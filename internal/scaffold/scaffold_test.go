@@ -117,8 +117,11 @@ func TestRenderPageMoney(t *testing.T) {
 	// next-step hint, all while staying valid JSON after rendering.
 	pkg := readFile(t, filepath.Join(dest, "package.json"))
 	mustContain(t, pkg, `"@civitai/blocks-react"`)
-	// The SDK live host that SERVES the resource picker locally ships in 0.13.0.
-	mustContain(t, pkg, `"@civitai/blocks-react": "^0.13.0"`)
+	// The SDK live host that SERVES the resource picker locally ships in 0.13.0;
+	// 0.14.1 adds the picker + storage fixes new scaffolds should get.
+	mustContain(t, pkg, `"@civitai/blocks-react": "^0.14.1"`)
+	// @civitai/app-sdk stays on 0.13.0 (only blocks-react was bumped).
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.13.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)
 	mustContain(t, pkg, `"build"`)
@@ -233,6 +236,11 @@ func TestRenderPageMoney(t *testing.T) {
 	// (vite.config.ts) injects it server-side.
 	mustNotContain(t, nav, "CIVITAI_HOST_KEY")
 	mustNotContain(t, nav, "VITE_LIVE_BLOCK_TOKEN")
+	// Dev-token expiry surfacing: pure helpers that name the dead-token state so
+	// an expired (~15min) token stops masquerading as feature bugs.
+	mustContain(t, nav, "decodeTokenExp")
+	mustContain(t, nav, "isTokenExpired")
+	mustContain(t, nav, "shouldPromptReMint")
 
 	// The display name should land in the manifest + App heading.
 	mustContain(t, manifest, `"name": "Money Block"`)
@@ -313,6 +321,18 @@ func TestRenderPageMoney(t *testing.T) {
 	// The personal key is NEVER referenced in client code (main.tsx). Only the
 	// vite proxy injects it server-side.
 	mustNotContain(t, mainTSX, "CIVITAI_HOST_KEY")
+	// Expired-dev-token surfacing: the nav captures the /blocks/me HTTP status
+	// (a 401 = server-rejected token) + computes promptReMint, and renders a
+	// re-mint banner with the dev-token mint command instead of silently
+	// degrading to the neutral 'viewer'.
+	mustContain(t, mainTSX, "meStatus")
+	mustContain(t, mainTSX, "promptReMint")
+	mustContain(t, mainTSX, "isTokenExpired")
+	mustContain(t, mainTSX, "shouldPromptReMint")
+	mustContain(t, mainTSX, `data-testid="pm-nav-remint"`)
+	mustContain(t, mainTSX, `data-harness-banner="token-expired"`)
+	mustContain(t, mainTSX, "Dev token expired — re-mint to restore your session")
+	mustContain(t, mainTSX, "civitai app dev-token money-block")
 
 	// Harness.tsx: the mock chrome reads as a console/terminal strip. The MOCK
 	// banner is exactly "MOCK HOST · no real Buzz spent" and the scenario panel
