@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -53,6 +53,20 @@ describe('App money path (e2e)', () => {
     expect(picker.value).toBe('128078'); // DEFAULT_CHECKPOINT (SD XL 1.0)
     await user.selectOptions(picker, '290640'); // Pony V6 XL
     expect(picker.value).toBe('290640');
+
+    // Add TWO LoRAs from the curated add-list (they ride along as
+    // additionalResources in the body — server-revalidated + re-priced).
+    const addButtons = screen.getAllByTestId('pm-lora-add');
+    expect(addButtons.length).toBeGreaterThanOrEqual(2);
+    await user.click(addButtons[0]);
+    await user.click(screen.getAllByTestId('pm-lora-add')[0]); // list re-renders; click the next
+    const rows = screen.getAllByTestId('pm-lora-row');
+    expect(rows).toHaveLength(2);
+
+    // Change the first LoRA's weight via its range input.
+    const weight = screen.getAllByTestId('pm-lora-weight')[0] as HTMLInputElement;
+    fireEvent.change(weight, { target: { value: '0.6' } });
+    expect(weight.value).toBe('0.6');
 
     // Enter a prompt (Generate is disabled while empty).
     await user.type(screen.getByLabelText(/prompt/i), 'a serene mountain lake');

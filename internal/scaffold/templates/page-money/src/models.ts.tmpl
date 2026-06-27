@@ -24,6 +24,65 @@ export interface CheckpointOption {
   baseModel: string;
 }
 
+// ---------------------------------------------------------------------------
+// LoRAs — the main feature. A LoRA is an ADDITIONAL resource layered on top of
+// the checkpoint, each with an adjustable weight (its `strength`). It maps to a
+// `body.additionalResources[]` entry, NOT to `modelVersionId` (that's the
+// checkpoint). The SDK's WorkflowBody documents the server bounds we mirror:
+//   - max 5 entries (MAX_LORAS)
+//   - each strength in [-1, 2] (LORA_STRENGTH_MIN/MAX), default 1
+//   - LoRA-only; the server rejects non-LoRA versions AND re-checks base-model
+//     compatibility + entitlement BEFORE any Buzz spend.
+//
+// MONEY-SAFETY: a LoRA pick + its weight are DISCOVERY ONLY. The server
+// re-validates (LoRA? compatible? entitled?) AND re-prices the whole body at
+// every estimate AND submit, so a client choice is never trusted.
+// ---------------------------------------------------------------------------
+
+/** Server `additionalResources[].strength` bounds (mirrors WorkflowBody). */
+export const LORA_STRENGTH_MIN = -1;
+export const LORA_STRENGTH_MAX = 2;
+/** Server default strength when none is given. */
+export const DEFAULT_LORA_WEIGHT = 1;
+/** Server cap on additional resources (max 5 LoRAs per body). */
+export const MAX_LORAS = 5;
+
+/** A LoRA the user has added on top of the checkpoint, with its weight. */
+export interface LoraOption {
+  /** ModelVersion id → an `additionalResources[].modelVersionId` entry. */
+  versionId: number;
+  /** Parent Model id — display/label only (the wire only needs versionId). */
+  modelId: number;
+  /** Short display label for the list. */
+  label: string;
+  /** Base-model family — display/label only; compatibility is a SERVER authority. */
+  baseModel: string;
+  /** The LoRA's weight → its `additionalResources[].strength`. Clamped to [-1, 2]. */
+  weight: number;
+}
+
+/**
+ * A small curated LoRA fallback set so the picker has something to ADD at first
+ * paint / offline / before the catalog loads — the same role the curated
+ * CHECKPOINTS play. Foundational, broadly-compatible public SDXL LoRAs (the
+ * curated checkpoints are SDXL/Pony). DISCOVERY ONLY — server-revalidated.
+ */
+export const LORAS: readonly Omit<LoraOption, 'weight'>[] = [
+  { versionId: 135867, modelId: 122359, label: 'Detail Tweaker XL', baseModel: 'SDXL 1.0' },
+  { versionId: 152309, modelId: 136749, label: 'Add More Details XL', baseModel: 'SDXL 1.0' },
+] as const;
+
+/** Clamp a LoRA weight into the server-accepted [-1, 2] range; non-finite → default. */
+export function clampLoraWeight(weight: number | null | undefined): number {
+  const w = weight == null || !Number.isFinite(weight) ? DEFAULT_LORA_WEIGHT : weight;
+  return Math.max(LORA_STRENGTH_MIN, Math.min(LORA_STRENGTH_MAX, w));
+}
+
+/** Round a weight to 2 decimals so display + dedup agree (0.30000001 → 0.3). */
+export function roundLoraWeight(weight: number): number {
+  return Math.round(weight * 100) / 100;
+}
+
 /**
  * Curated checkpoints. Foundational, multi-million-generation public bases that
  * effectively never lose coverage:
@@ -118,4 +177,70 @@ export function mergeCheckpoints(
     out.push(opt);
   }
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// LoRA pick → option + the selected-LoRA list mutators (pure + total). The App
+// holds the selected list in state and drives every change through these so the
+// money-relevant invariants (the MAX_LORAS cap, the weight clamp, no duplicate
+// versionId) live in one tested place.
+// ---------------------------------------------------------------------------
+
+/**
+ * Turn a discovered LoRA (curated or catalog-browsed) into a selectable
+ * LoraOption at a given weight (defaults to DEFAULT_LORA_WEIGHT). The weight is
+ * clamped + rounded so the value the user sees is exactly what's submitted.
+ */
+export function loraOption(
+  src: Omit<LoraOption, 'weight'>,
+  weight: number = DEFAULT_LORA_WEIGHT,
+): LoraOption {
+  return { ...src, weight: roundLoraWeight(clampLoraWeight(weight)) };
+}
+
+/** Turn a picked resource into a LoraOption (label-resolved like a checkpoint). */
+export function loraFromPick(picked: PickedResource, weight?: number): LoraOption {
+  return loraOption(
+    {
+      versionId: picked.versionId,
+      modelId: picked.modelId,
+      label: resourceDisplayName(picked) ?? `LoRA #${picked.versionId} (${picked.baseModel})`,
+      baseModel: picked.baseModel,
+    },
+    weight,
+  );
+}
+
+/**
+ * Add a LoRA to the selected list. No-ops if it's already present (dedup by
+ * versionId) OR the MAX_LORAS cap is already reached (the server caps at 5; we
+ * never let the UI build a body that would be rejected). Returns a new array.
+ */
+export function addLora(
+  selected: readonly LoraOption[],
+  lora: LoraOption,
+): LoraOption[] {
+  if (selected.length >= MAX_LORAS) return [...selected];
+  if (selected.some((l) => l.versionId === lora.versionId)) return [...selected];
+  return [...selected, loraOption(lora, lora.weight)];
+}
+
+/** Remove a LoRA from the selected list by versionId. Returns a new array. */
+export function removeLora(selected: readonly LoraOption[], versionId: number): LoraOption[] {
+  return selected.filter((l) => l.versionId !== versionId);
+}
+
+/** Set a selected LoRA's weight (clamped + rounded). Returns a new array. */
+export function setLoraWeight(
+  selected: readonly LoraOption[],
+  versionId: number,
+  weight: number,
+): LoraOption[] {
+  const w = roundLoraWeight(clampLoraWeight(weight));
+  return selected.map((l) => (l.versionId === versionId ? { ...l, weight: w } : l));
+}
+
+/** versionIds already selected — drives the "add" list's disabled/added state. */
+export function selectedLoraIds(selected: readonly LoraOption[]): Set<number> {
+  return new Set(selected.map((l) => l.versionId));
 }

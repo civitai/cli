@@ -3,9 +3,18 @@ import { describe, expect, it } from 'vitest';
 import {
   CHECKPOINTS,
   DEFAULT_CHECKPOINT,
+  LORAS,
+  MAX_LORAS,
+  addLora,
   checkpointFromPick,
+  clampLoraWeight,
+  loraFromPick,
+  loraOption,
   mergeCheckpoints,
   pickedCheckpointLabel,
+  removeLora,
+  setLoraWeight,
+  type LoraOption,
 } from './models.js';
 
 // Pure-logic units for the curated checkpoint set + pick→option helpers. The
@@ -60,5 +69,68 @@ describe('mergeCheckpoints', () => {
     expect(merged[0]).toEqual(CHECKPOINTS[0]);
     expect(merged.filter((m) => m.versionId === 128078)).toHaveLength(1);
     expect(merged.some((m) => m.versionId === 999)).toBe(true);
+  });
+});
+
+// --- LoRA selection (the main feature) ---
+
+const lora = (versionId: number, weight = 1): LoraOption =>
+  loraOption({ versionId, modelId: versionId * 10, label: `L${versionId}`, baseModel: 'SDXL 1.0' }, weight);
+
+describe('clampLoraWeight', () => {
+  it('clamps to the server [-1, 2] bound; non-finite → default 1', () => {
+    expect(clampLoraWeight(0.5)).toBe(0.5);
+    expect(clampLoraWeight(9)).toBe(2);
+    expect(clampLoraWeight(-9)).toBe(-1);
+    expect(clampLoraWeight(undefined)).toBe(1);
+    expect(clampLoraWeight(NaN)).toBe(1);
+  });
+});
+
+describe('loraFromPick', () => {
+  it('maps a picked resource into a LoraOption (default weight, clamped)', () => {
+    expect(
+      loraFromPick({ versionId: 135867, modelId: 122359, modelName: 'Detail Tweaker XL', baseModel: 'SDXL 1.0' }),
+    ).toEqual({
+      versionId: 135867,
+      modelId: 122359,
+      label: 'Detail Tweaker XL',
+      baseModel: 'SDXL 1.0',
+      weight: 1,
+    });
+  });
+});
+
+describe('addLora / removeLora / setLoraWeight', () => {
+  it('adds a LoRA, dedups by versionId, and caps at MAX_LORAS', () => {
+    let sel: LoraOption[] = [];
+    sel = addLora(sel, lora(1));
+    sel = addLora(sel, lora(1)); // dup → ignored
+    expect(sel).toHaveLength(1);
+
+    // Fill to the cap, then prove a further add is a no-op.
+    sel = [];
+    for (let i = 0; i < MAX_LORAS; i++) sel = addLora(sel, lora(100 + i));
+    expect(sel).toHaveLength(MAX_LORAS);
+    sel = addLora(sel, lora(999));
+    expect(sel).toHaveLength(MAX_LORAS);
+    expect(sel.some((l) => l.versionId === 999)).toBe(false);
+  });
+  it('removeLora drops the matching versionId', () => {
+    const sel = [lora(1), lora(2)];
+    expect(removeLora(sel, 1).map((l) => l.versionId)).toEqual([2]);
+  });
+  it('setLoraWeight clamps + rounds the weight in place', () => {
+    const sel = [lora(1, 1)];
+    expect(setLoraWeight(sel, 1, 9)[0].weight).toBe(2); // clamped
+    expect(setLoraWeight(sel, 1, 0.333333)[0].weight).toBe(0.33); // rounded
+    expect(setLoraWeight(sel, 2, 0.5)).toEqual(sel); // no match → unchanged
+  });
+});
+
+describe('curated LORAs', () => {
+  it('ships a small fallback set used at first paint', () => {
+    expect(LORAS.length).toBeGreaterThan(0);
+    expect(LORAS.every((l) => Number.isFinite(l.versionId))).toBe(true);
   });
 });
