@@ -24,8 +24,11 @@
 // response→Option mapper, and a thin fetch client that takes an INJECTABLE
 // `fetch` (so tests mock success / empty / error / malformed without a network).
 
-import type { CheckpointOption, PickedResource } from './models.js';
-import { checkpointFromPick } from './models.js';
+import type { CheckpointOption, LoraOption, PickedResource } from './models.js';
+import { checkpointFromPick, loraFromPick } from './models.js';
+
+/** The REST model types this client browses (maps to the `types` param). */
+export type CatalogType = 'Checkpoint' | 'LORA';
 
 /** The public REST base. Overridable for tests / a future env pin. */
 export const CATALOG_API_BASE = 'https://civitai.com/api/v1/models';
@@ -34,6 +37,8 @@ export const CATALOG_API_BASE = 'https://civitai.com/api/v1/models';
 export const CATALOG_API_BASE_BLOCKS = 'https://civitai.com/api/v1/blocks/models';
 
 export interface CatalogQuery {
+  /** Model type to browse. Defaults to `Checkpoint`. `LORA` for the LoRA picker. */
+  type?: CatalogType;
   /** Meili text search; empty/whitespace → omitted (default popular view). */
   query?: string;
   /** ≤100 (server cap). Defaults to DEFAULT_LIMIT. */
@@ -54,9 +59,10 @@ export interface BuildUrlOptions {
 }
 
 /**
- * Build a catalog URL for a query (Checkpoints only). Pure + deterministic.
- * Empty query is omitted (the default popular view). `limit` is clamped to
- * [1, 100]. `sfwOnly` appends `nsfw=false` — public endpoint only.
+ * Build a catalog URL for a query. Pure + deterministic. `type` selects the
+ * REST `types` param (Checkpoint default, or LORA for the LoRA picker). Empty
+ * query is omitted (the default popular view). `limit` is clamped to [1, 100].
+ * `sfwOnly` appends `nsfw=false` — public endpoint only.
  */
 export function buildCatalogUrl(
   q: CatalogQuery,
@@ -65,7 +71,7 @@ export function buildCatalogUrl(
   const opts: BuildUrlOptions = typeof baseOrOpts === 'string' ? { base: baseOrOpts } : baseOrOpts;
   const base = opts.base ?? CATALOG_API_BASE;
   const params = new URLSearchParams();
-  params.set('types', 'Checkpoint');
+  params.set('types', q.type ?? 'Checkpoint');
   params.set('sort', 'Most Downloaded');
   const query = q.query?.trim();
   if (query) params.set('query', query);
@@ -140,6 +146,39 @@ export function responseToCheckpoints(raw: RawResponse | null | undefined): Chec
   return out;
 }
 
+/**
+ * Map ONE raw model → a `LoraOption` (default weight) using its first
+ * modelVersion. Same shape + tolerance as `modelToCheckpoint`; only the
+ * pick→option mapper differs (a LoRA maps to an `additionalResources[]` entry,
+ * not the checkpoint). Returns `null` for an unusable row (no version id).
+ */
+export function modelToLora(raw: RawModel | null | undefined): LoraOption | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const version = raw.modelVersions?.[0];
+  const versionId = version?.id;
+  if (typeof versionId !== 'number' || !Number.isFinite(versionId)) return null;
+  const modelId = typeof raw.id === 'number' ? raw.id : 0;
+  const picked: PickedResource = {
+    versionId,
+    modelId,
+    modelName: (raw.name ?? '').trim() || undefined,
+    versionName: (version?.name ?? '').trim() || undefined,
+    baseModel: (version?.baseModel ?? '').trim(),
+  };
+  return loraFromPick(picked);
+}
+
+/** Map a full raw response → a list of LoRA options (default weight). Never throws. */
+export function responseToLoras(raw: RawResponse | null | undefined): LoraOption[] {
+  const items = Array.isArray(raw?.items) ? raw!.items! : [];
+  const out: LoraOption[] = [];
+  for (const item of items) {
+    const opt = modelToLora(item);
+    if (opt) out.push(opt);
+  }
+  return out;
+}
+
 // ---------------------------------------------------------------------------
 // The fetch client. Takes an injectable `fetch` so tests drive success / empty /
 // network-error / non-OK / malformed without a real network. Returns a
@@ -156,6 +195,11 @@ export type CatalogResult =
   | { kind: 'empty'; authoritative: boolean }
   | { kind: 'error'; status?: number; message: string };
 
+export type LoraCatalogResult =
+  | { kind: 'ok'; options: LoraOption[]; authoritative: boolean }
+  | { kind: 'empty'; authoritative: boolean }
+  | { kind: 'error'; status?: number; message: string };
+
 export interface CatalogAuth {
   /** Raw block JWT (`useBlockToken().raw`). Absent → anon. */
   token?: string | null;
@@ -166,10 +210,21 @@ function isFallbackStatus(status: number): boolean {
   return status === 404 || status === 401 || status === 403;
 }
 
-async function toResult(
+/**
+ * Reduce a fetch response to a discriminated result, mapping the JSON body with
+ * the caller-supplied mapper (checkpoints or LoRAs). Never throws. Generic over
+ * the option type so both the checkpoint and the LoRA catalogs share the exact
+ * same OK/empty/error reduction.
+ */
+async function toResult<T>(
   res: Awaited<ReturnType<FetchLike>>,
   authoritative: boolean,
-): Promise<CatalogResult> {
+  map: (raw: RawResponse | null | undefined) => T[],
+): Promise<
+  | { kind: 'ok'; options: T[]; authoritative: boolean }
+  | { kind: 'empty'; authoritative: boolean }
+  | { kind: 'error'; status?: number; message: string }
+> {
   if (!res.ok) {
     return { kind: 'error', status: res.status, message: `request failed (${res.status})` };
   }
@@ -183,9 +238,18 @@ async function toResult(
       message: err instanceof Error ? err.message : 'bad JSON',
     };
   }
-  const options = responseToCheckpoints(body as RawResponse);
+  const options = map(body as RawResponse);
   if (options.length === 0) return { kind: 'empty', authoritative };
   return { kind: 'ok', options, authoritative };
+}
+
+export interface FetchCatalogDeps {
+  fetch: FetchLike;
+  auth?: CatalogAuth;
+  /** Advisory SFW for the ANON public read. Defaults to true (fail-closed SFW). */
+  anonSfwOnly?: boolean;
+  publicBase?: string;
+  blocksBase?: string;
 }
 
 /**
@@ -193,33 +257,34 @@ async function toResult(
  * or public (anon, advisory-SFW) endpoint and gracefully falling back from the
  * former to the latter when it isn't deployed / authorized yet, or throws
  * (CORS/preflight/network). A failure on the PUBLIC path is a hard error (no
- * infinite loop). Never throws.
+ * infinite loop). Never throws. Generic over the option type via `map`.
  */
-export async function fetchCatalog(
+async function fetchCatalogWith<T>(
   q: CatalogQuery,
-  deps: {
-    fetch: FetchLike;
-    auth?: CatalogAuth;
-    /** Advisory SFW for the ANON public read. Defaults to true (fail-closed SFW). */
-    anonSfwOnly?: boolean;
-    publicBase?: string;
-    blocksBase?: string;
-  },
-): Promise<CatalogResult> {
+  deps: FetchCatalogDeps,
+  map: (raw: RawResponse | null | undefined) => T[],
+): Promise<
+  | { kind: 'ok'; options: T[]; authoritative: boolean }
+  | { kind: 'empty'; authoritative: boolean }
+  | { kind: 'error'; status?: number; message: string }
+> {
   const token = deps.auth?.token;
   const publicBase = deps.publicBase ?? CATALOG_API_BASE;
   const blocksBase = deps.blocksBase ?? CATALOG_API_BASE_BLOCKS;
   const anonSfwOnly = deps.anonSfwOnly !== false;
 
-  const fetchPublic = async (sfwOnly: boolean): Promise<CatalogResult> => {
+  const fetchPublic = async (sfwOnly: boolean) => {
     const url = buildCatalogUrl(q, { base: publicBase, sfwOnly });
     let res: Awaited<ReturnType<FetchLike>>;
     try {
       res = await deps.fetch(url);
     } catch (err) {
-      return { kind: 'error', message: err instanceof Error ? err.message : 'network error' };
+      return {
+        kind: 'error' as const,
+        message: err instanceof Error ? err.message : 'network error',
+      };
     }
-    return toResult(res, false);
+    return toResult(res, false, map);
   };
 
   // Anon: public endpoint, advisory SFW per the domain ceiling.
@@ -238,7 +303,25 @@ export async function fetchCatalog(
     return fetchPublic(true);
   }
 
-  return toResult(authRes, true);
+  return toResult(authRes, true, map);
+}
+
+/** Fetch one CHECKPOINT catalog page (the model picker). */
+export function fetchCatalog(q: CatalogQuery, deps: FetchCatalogDeps): Promise<CatalogResult> {
+  return fetchCatalogWith({ ...q, type: 'Checkpoint' }, deps, responseToCheckpoints);
+}
+
+/**
+ * Fetch one LORA catalog page (the LoRA selector). Same two-path
+ * (authoritative/public) + graceful-fallback logic as `fetchCatalog`, only the
+ * `types=LORA` query + the LoRA mapper differ. DISCOVERY ONLY — the server
+ * re-validates (LoRA? compatible? entitled?) + re-prices at estimate/submit.
+ */
+export function fetchLoraCatalog(
+  q: CatalogQuery,
+  deps: FetchCatalogDeps,
+): Promise<LoraCatalogResult> {
+  return fetchCatalogWith({ ...q, type: 'LORA' }, deps, responseToLoras);
 }
 
 /** Default real-network fetch adapter for the app (tests inject their own). */

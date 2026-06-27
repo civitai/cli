@@ -16,7 +16,6 @@ import {
   Card,
   Group,
   Loader,
-  Modal,
   Stack,
   Textarea,
   injectBlocksStyles,
@@ -24,7 +23,6 @@ import {
 import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
 import {
-  PAGE_BUZZ_BUDGET,
   PROMPT_MAX,
   buildWorkflowBody,
   firstImageUrl,
@@ -39,10 +37,25 @@ import {
 import {
   CHECKPOINTS,
   DEFAULT_CHECKPOINT,
+  LORAS,
+  LORA_STRENGTH_MAX,
+  LORA_STRENGTH_MIN,
+  MAX_LORAS,
+  addLora,
+  loraOption,
   mergeCheckpoints,
+  removeLora,
+  selectedLoraIds,
+  setLoraWeight,
   type CheckpointOption,
+  type LoraOption,
 } from './models.js';
-import { catalogSfwOnly, defaultFetch, fetchCatalog } from './catalog-api.js';
+import {
+  catalogSfwOnly,
+  defaultFetch,
+  fetchCatalog,
+  fetchLoraCatalog,
+} from './catalog-api.js';
 
 // Inject the W6 component pack's stylesheet at module init (before first paint)
 // to avoid the documented one-frame FOUC (the pack's components also call
@@ -68,6 +81,10 @@ injectBlocksStyles();
  *    default checkpoint (DEFAULT_CHECKPOINT) and an in-block picker that browses
  *    the catalog (see models.ts / catalog-api.ts). A pick is DISCOVERY ONLY —
  *    the server re-validates + re-prices it at estimate/submit.
+ *  - on top of the checkpoint the user can add up to MAX_LORAS LoRAs, each with
+ *    an adjustable weight; they ride along as `additionalResources` in the body.
+ *    LoRA picks + weights are ALSO discovery only — the server re-validates
+ *    (LoRA-only? base-model compatible? entitled?) + re-prices before any spend.
  *  - `ai:write:budgeted` is consent-gated -> withheld at mint, requested lazily
  *    on first Generate via useRequestConsent; the grant arrives as a
  *    TOKEN_REFRESH carrying the scope, which we observe + retry.
@@ -93,7 +110,6 @@ export function App() {
   const [actualCost, setActualCost] = useState<number | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [aboutOpen, setAboutOpen] = useState(false);
 
   // The selected checkpoint. Starts on the curated DEFAULT (works at first paint
   // / offline / before the catalog loads); the in-block picker can replace it.
@@ -104,6 +120,17 @@ export function App() {
   // curated set always works, so the picker is never blocked on the network).
   const [catalogOptions, setCatalogOptions] = useState<CheckpointOption[]>([]);
   const [catalogLoading, setCatalogLoading] = useState(false);
+
+  // The LoRAs the user has layered on top of the checkpoint, with their weights.
+  // Drives `additionalResources` in the body. All mutations go through the pure
+  // models.ts helpers (dedup, MAX_LORAS cap, weight clamp). DISCOVERY ONLY.
+  const [loras, setLoras] = useState<LoraOption[]>([]);
+  // The LoRA catalog to ADD from: the curated LORAS fallback first paint, then
+  // catalog-browsed LoRAs once the read resolves (stays curated if unreachable).
+  const [loraCatalog, setLoraCatalog] = useState<LoraOption[]>(() =>
+    LORAS.map((l) => loraOption(l)),
+  );
+  const [loraCatalogLoading, setLoraCatalogLoading] = useState(false);
 
   // True once the user clicked Generate while the scope was missing — so when
   // the consent grant lands (granted flips true) we auto-resume the submit.
@@ -211,7 +238,7 @@ export function App() {
     setError(null);
     setImageUrl(null);
     setActualCost(null);
-    const body = buildWorkflowBody(prompt, checkpoint);
+    const body = buildWorkflowBody(prompt, checkpoint, loras);
 
     // 1) Estimate (best-effort — a failed estimate doesn't block submit; the
     //    host re-prices at submit anyway).
@@ -251,7 +278,7 @@ export function App() {
     // 3) Poll to terminal.
     setPhase('polling');
     if (snap.workflowId) runPollLoop(snap.workflowId);
-  }, [prompt, checkpoint, estimate, submit, applySnapshot, runPollLoop]);
+  }, [prompt, checkpoint, loras, estimate, submit, applySnapshot, runPollLoop]);
 
   // The actual gate: sign-in -> consent -> generate. Wired straight to the
   // Generate button — the cost is already shown on the button, so there's no
@@ -312,10 +339,51 @@ export function App() {
     };
   }, [ready, token.raw, domainIsSfw]);
 
+  // Load the in-block LoRA catalog the same way (token-authoritative, public
+  // fallback) — only `types=LORA` + the LoRA mapper differ. The curated LORAS
+  // already populate the add-list, so a failed/empty read just leaves it on the
+  // curated set. DISCOVERY ONLY: every LoRA + weight is re-validated server-side.
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    setLoraCatalogLoading(true);
+    fetchLoraCatalog(
+      {},
+      {
+        fetch: defaultFetch,
+        auth: { token: token.raw },
+        anonSfwOnly: catalogSfwOnly(domainIsSfw),
+      },
+    )
+      .then((res) => {
+        if (cancelled) return;
+        // Curated LoRAs lead; append catalog LoRAs that aren't already curated.
+        const curated = LORAS.map((l) => loraOption(l));
+        const seen = new Set(curated.map((l) => l.versionId));
+        const extra = res.kind === 'ok' ? res.options.filter((l) => !seen.has(l.versionId)) : [];
+        setLoraCatalog([...curated, ...extra]);
+      })
+      .finally(() => {
+        if (!cancelled) setLoraCatalogLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, token.raw, domainIsSfw]);
+
   // The picker's option list: curated set first, then catalog-browsed options,
   // de-duplicated by versionId. The curated entries always lead so the default
   // is stable across catalog states.
   const pickerOptions = mergeCheckpoints(CHECKPOINTS, catalogOptions);
+
+  // LoRA selection mutators — all routed through the pure models.ts helpers so
+  // the dedup / MAX_LORAS cap / weight clamp stay in one tested place.
+  const selectedIds = selectedLoraIds(loras);
+  const onAddLora = (lora: LoraOption) => setLoras((cur) => addLora(cur, lora));
+  const onRemoveLora = (versionId: number) => setLoras((cur) => removeLora(cur, versionId));
+  const onLoraWeight = (versionId: number, weight: number) =>
+    setLoras((cur) => setLoraWeight(cur, versionId, weight));
+  const loraCapReached = loras.length >= MAX_LORAS;
 
   const promptError =
     touched && prompt.trim().length === 0 ? 'Enter a prompt to generate.' : undefined;
@@ -359,20 +427,7 @@ export function App() {
     <div ref={rootRef} data-theme={theme} style={shell}>
       <Card padding="lg" style={cardStyle}>
         <Stack gap={16}>
-          <Group justify="space-between">
-            <strong style={titleStyle}>{{ .Name }}</strong>
-            <Badge color={anon ? 'warning' : granted ? 'success' : 'info'} variant="light">
-              {anon ? 'signed out' : granted ? 'ready' : 'needs access'}
-            </Badge>
-          </Group>
-
-          <Alert color="info" title="How this works">
-            Pick a checkpoint, type a prompt, and generate one image. Each generation spends a
-            small amount of Buzz (budget {PAGE_BUZZ_BUDGET} per generation).{' '}
-            <button type="button" onClick={() => setAboutOpen(true)} style={linkButtonStyle}>
-              Details
-            </button>
-          </Alert>
+          <strong style={titleStyle}>{{ .Name }}</strong>
 
           <Textarea
             label="Prompt"
@@ -419,29 +474,41 @@ export function App() {
             </span>
           </label>
 
+          {/* LoRA selector. Add up to MAX_LORAS LoRAs on top of the checkpoint,
+              each with an adjustable weight (a themed native range input — the W6
+              pack ships no Slider). Every LoRA + weight is DISCOVERY ONLY: the
+              server re-validates (LoRA-only? base-model compatible? entitled?) +
+              re-prices the whole body at estimate/submit, so a client choice is
+              never trusted. */}
+          <LoraSelector
+            catalog={loraCatalog}
+            catalogLoading={loraCatalogLoading}
+            selected={loras}
+            selectedIds={selectedIds}
+            capReached={loraCapReached}
+            onAdd={onAddLora}
+            onRemove={onRemoveLora}
+            onWeight={onLoraWeight}
+          />
+
           {anon ? (
             <Button fullWidth onClick={() => requestSignIn()} data-testid="pm-signin">
               Sign in to generate
             </Button>
           ) : (
-            <Group gap={8}>
-              <Button variant="subtle" onClick={() => setAboutOpen(true)}>
-                How it works
-              </Button>
-              <Button
-                fullWidth
-                loading={busy}
-                disabled={prompt.trim().length === 0}
-                onClick={onGenerateClick}
-                data-testid="pm-generate"
-              >
-                {busy
-                  ? phaseLabel(phase)
-                  : estimatedCost != null
-                    ? `Generate · ${formatCost(estimatedCost)} Buzz`
-                    : 'Generate'}
-              </Button>
-            </Group>
+            <Button
+              fullWidth
+              loading={busy}
+              disabled={prompt.trim().length === 0}
+              onClick={onGenerateClick}
+              data-testid="pm-generate"
+            >
+              {busy
+                ? phaseLabel(phase)
+                : estimatedCost != null
+                  ? `Generate · ${formatCost(estimatedCost)} Buzz`
+                  : 'Generate'}
+            </Button>
           )}
 
           {phase === 'needs-consent' && (
@@ -477,26 +544,118 @@ export function App() {
           )}
         </Stack>
       </Card>
+    </div>
+  );
+}
 
-      {/* About modal — demonstrates the pack's Modal, opened independently. */}
-      <Modal opened={aboutOpen} onClose={() => setAboutOpen(false)} title="About this block" size="md">
-        <Stack gap={10}>
-          <span>
-            This is a sandboxed Civitai App Block. The interface is built from the{' '}
-            <strong>@civitai/blocks-react/ui</strong> W6 component pack — Button, Textarea, Card,
-            Stack, Group, Alert, Badge, Loader and Modal — plus a themed native{' '}
-            <code>&lt;select&gt;</code> for the model picker (the pack ships no Select yet).
-          </span>
-          <Alert color="info">
-            Pick any checkpoint and we send it to generate — but a pick is just discovery. The
-            Civitai backend re-validates and re-prices every generation, so a client choice is
-            never trusted. Generations spend real Buzz when run in live mode.
-          </Alert>
-          <Group justify="flex-end">
-            <Button onClick={() => setAboutOpen(false)}>Got it</Button>
-          </Group>
+/**
+ * The LoRA selector: an ADD list (from the curated/catalog LoRAs) + the selected
+ * rows, each with a weight control. Built from the W6 pack (Group/Stack/Badge/
+ * Button/Loader) plus a themed native range input (the pack ships no Slider).
+ * Every pick + weight is DISCOVERY ONLY — server-revalidated + re-priced.
+ */
+function LoraSelector({
+  catalog,
+  catalogLoading,
+  selected,
+  selectedIds,
+  capReached,
+  onAdd,
+  onRemove,
+  onWeight,
+}: {
+  catalog: readonly LoraOption[];
+  catalogLoading: boolean;
+  selected: readonly LoraOption[];
+  selectedIds: Set<number>;
+  capReached: boolean;
+  onAdd: (lora: LoraOption) => void;
+  onRemove: (versionId: number) => void;
+  onWeight: (versionId: number, weight: number) => void;
+}) {
+  // The LoRAs available to add: catalog minus the already-selected ones.
+  const addable = catalog.filter((l) => !selectedIds.has(l.versionId));
+
+  return (
+    <div style={fieldStyle}>
+      <span style={fieldLabelStyle}>
+        LoRAs{' '}
+        <Badge color="info" variant="light">
+          {selected.length}/{MAX_LORAS}
+        </Badge>
+      </span>
+      <span style={fieldDescStyle}>
+        Optional. Layer up to {MAX_LORAS} LoRAs on the checkpoint, each with a weight. The server
+        validates compatibility + prices every generation.
+      </span>
+
+      {/* Selected LoRAs, each with a weight control + remove. */}
+      {selected.length > 0 && (
+        <Stack gap={8} style={loraListStyle}>
+          {selected.map((l) => (
+            <div key={l.versionId} style={loraRowStyle} data-testid="pm-lora-row">
+              <div style={loraRowHeadStyle}>
+                <span style={loraNameStyle} title={l.label}>
+                  {l.label}
+                  {l.baseModel ? ` (${l.baseModel})` : ''}
+                </span>
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  color="error"
+                  onClick={() => onRemove(l.versionId)}
+                  aria-label={`Remove ${l.label}`}
+                >
+                  Remove
+                </Button>
+              </div>
+              <label style={loraWeightRowStyle}>
+                <span style={loraWeightLabelStyle}>weight</span>
+                <input
+                  type="range"
+                  min={LORA_STRENGTH_MIN}
+                  max={LORA_STRENGTH_MAX}
+                  step={0.05}
+                  value={l.weight}
+                  onChange={(e) => onWeight(l.versionId, Number(e.target.value))}
+                  aria-label={`${l.label} weight`}
+                  data-testid="pm-lora-weight"
+                  style={loraRangeStyle}
+                />
+                <span style={loraWeightValueStyle}>{l.weight.toFixed(2)}</span>
+              </label>
+            </div>
+          ))}
         </Stack>
-      </Modal>
+      )}
+
+      {/* Add a LoRA — one chip-button per addable catalog LoRA. */}
+      <span style={loraAddWrapStyle}>
+        {capReached ? (
+          <span style={fieldDescStyle}>Max {MAX_LORAS} LoRAs selected.</span>
+        ) : addable.length > 0 ? (
+          addable.map((l) => (
+            <Button
+              key={l.versionId}
+              variant="light"
+              size="sm"
+              onClick={() => onAdd(l)}
+              data-testid="pm-lora-add"
+            >
+              + {l.label}
+            </Button>
+          ))
+        ) : (
+          <span style={fieldDescStyle}>
+            {catalogLoading ? 'Loading LoRAs…' : 'No more LoRAs to add.'}
+          </span>
+        )}
+        {catalogLoading && !capReached && (
+          <span aria-hidden>
+            <Loader size="sm" />
+          </span>
+        )}
+      </span>
     </div>
   );
 }
@@ -525,15 +684,6 @@ const shell: React.CSSProperties = {
 const cardStyle: React.CSSProperties = { width: '100%', maxWidth: 640 };
 const titleStyle: React.CSSProperties = { fontSize: 20 };
 const imageStyle: React.CSSProperties = { width: '100%', borderRadius: 8, display: 'block' };
-const linkButtonStyle: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  padding: 0,
-  color: 'inherit',
-  textDecoration: 'underline',
-  cursor: 'pointer',
-  font: 'inherit',
-};
 
 // The W6 pack has no Select, so the model picker is a themed native <select>.
 // These read the same pack CSS vars the pack's own inputs use, so it matches the
@@ -562,4 +712,45 @@ const selectLoaderStyle: React.CSSProperties = {
   right: 12,
   transform: 'translateY(-50%)',
   pointerEvents: 'none',
+};
+
+// The W6 pack ships no Slider, so each LoRA's weight uses a themed native range
+// input. These read the same pack CSS vars so the LoRA list matches the surface.
+const loraListStyle: React.CSSProperties = { marginTop: 4 };
+const loraRowStyle: React.CSSProperties = {
+  display: 'grid',
+  gap: 6,
+  padding: '8px 10px',
+  borderRadius: 8,
+  border: '1px solid var(--ci-color-border)',
+  background: 'var(--ci-color-surface)',
+};
+const loraRowHeadStyle: React.CSSProperties = {
+  display: 'flex',
+  justifyContent: 'space-between',
+  alignItems: 'center',
+  gap: 8,
+};
+const loraNameStyle: React.CSSProperties = {
+  fontSize: 13,
+  fontWeight: 600,
+  overflow: 'hidden',
+  textOverflow: 'ellipsis',
+  whiteSpace: 'nowrap',
+};
+const loraWeightRowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 };
+const loraWeightLabelStyle: React.CSSProperties = { fontSize: 12, opacity: 0.8, minWidth: 44 };
+const loraRangeStyle: React.CSSProperties = { flex: 1, accentColor: 'var(--ci-color-primary)' };
+const loraWeightValueStyle: React.CSSProperties = {
+  fontSize: 12,
+  fontVariantNumeric: 'tabular-nums',
+  minWidth: 36,
+  textAlign: 'right',
+};
+const loraAddWrapStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 6,
+  alignItems: 'center',
+  marginTop: 4,
 };

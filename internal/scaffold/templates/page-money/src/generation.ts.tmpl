@@ -5,7 +5,8 @@
 
 import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
-import type { CheckpointOption } from './models.js';
+import type { CheckpointOption, LoraOption } from './models.js';
+import { clampLoraWeight, roundLoraWeight } from './models.js';
 
 /** Server cap mirror — prompts over this are rejected by the workflow schema. */
 export const PROMPT_MAX = 1500;
@@ -76,22 +77,47 @@ export function clampPrompt(raw: string): string {
 }
 
 /**
- * Build the textToImage submit/estimate body for the chosen checkpoint. Page
- * apps keep the param surface minimal: just the prompt — the host fills sensible
- * defaults for dimensions/sampler/steps from the base-model family.
+ * Build the textToImage submit/estimate body for the chosen checkpoint + the
+ * selected LoRAs. Page apps keep the param surface minimal: just the prompt —
+ * the host fills sensible defaults for dimensions/sampler/steps from the
+ * base-model family.
  *
- * MONEY-SAFETY: the checkpoint is the user's in-block PICK (default or catalog-
- * browsed), which is DISCOVERY ONLY. The server re-validates (public? covered?
- * SFW for the domain?) AND re-prices this body at estimate AND submit — a client
- * can't force a non-generatable or mis-priced model through here.
+ * LoRAs are layered on as `additionalResources` — ONE entry per selected LoRA,
+ * `{ modelVersionId, strength }` where strength is the user's weight (clamped +
+ * rounded to the server's [-1, 2] bound). The key is emitted ONLY when at least
+ * one LoRA is selected, so a checkpoint-only body stays backward compatible.
+ *
+ * MONEY-SAFETY: both the checkpoint AND every LoRA + weight are the user's
+ * in-block PICKS (curated default or catalog-browsed), which are DISCOVERY ONLY.
+ * The server re-validates (public? covered? SFW? LoRA-only? base-model
+ * compatible? entitled?) AND re-prices this body at estimate AND submit — a
+ * client can't force a non-generatable / incompatible / mis-priced resource
+ * through here.
  */
-export function buildWorkflowBody(prompt: string, checkpoint: CheckpointOption) {
-  return {
-    kind: 'textToImage' as const,
+export function buildWorkflowBody(
+  prompt: string,
+  checkpoint: CheckpointOption,
+  loras: readonly LoraOption[] = [],
+) {
+  const body: {
+    kind: 'textToImage';
+    modelId: number;
+    modelVersionId: number;
+    params: { prompt: string };
+    additionalResources?: Array<{ modelVersionId: number; strength: number }>;
+  } = {
+    kind: 'textToImage',
     modelId: checkpoint.modelId,
     modelVersionId: checkpoint.versionId,
     params: { prompt: clampPrompt(prompt.trim()) },
   };
+  if (loras.length > 0) {
+    body.additionalResources = loras.map((l) => ({
+      modelVersionId: l.versionId,
+      strength: roundLoraWeight(clampLoraWeight(l.weight)),
+    }));
+  }
+  return body;
 }
 
 /** Pull the single displayable image url from a succeeded snapshot, if any. */

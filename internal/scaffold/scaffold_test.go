@@ -132,12 +132,25 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "consecutiveErrors")
 
 	// The confirm-spend modal was removed: Generate is one click → consent →
-	// spend (the button already shows the cost). The "About" modal stays (it
-	// demonstrates Modal), so we assert the CONFIRM modal specifically is gone.
+	// spend (the button already shows the cost).
 	mustNotContain(t, app, "Confirm generation")
 	mustNotContain(t, app, "setConfirmOpen")
 	// The Generate click runs the gate directly (no intermediate confirm state).
 	mustContain(t, app, "proceed()")
+
+	// The "About this block" modal + the "How this works" section/button were
+	// removed (a clean, minimal scaffold). The status Badge near the title was
+	// removed too — but its underlying consent/auth logic (granted/anon) stays.
+	mustNotContain(t, app, "About this block")
+	mustNotContain(t, app, "aboutOpen")
+	mustNotContain(t, app, "How this works")
+	mustNotContain(t, app, "How it works")
+	mustNotContain(t, app, "signed out") // the removed status-Badge copy
+	mustNotContain(t, app, "needs access")
+	// The load-bearing consent/auth logic the removed Badge merely surfaced MUST
+	// remain — it's what makes the first Generate request consent.
+	mustContain(t, app, "hasBudgetedScope")
+	mustContain(t, app, "requestConsent")
 
 	// Model picker: the page ships a curated default checkpoint + an in-block
 	// picker (entity=none means no host model context). The old hardcoded
@@ -145,32 +158,52 @@ func TestRenderPageMoney(t *testing.T) {
 	mustNotContain(t, app, "GEN_MODEL")
 	mustContain(t, app, "DEFAULT_CHECKPOINT")
 	mustContain(t, app, "pm-model-select")
-	mustContain(t, app, "buildWorkflowBody(prompt, checkpoint)")
+	mustContain(t, app, "buildWorkflowBody(prompt, checkpoint, loras)")
 	mustContain(t, app, "fetchCatalog")
 
+	// LoRA selector (the main feature): the user can add up to MAX_LORAS LoRAs
+	// on top of the checkpoint, each with a weight, threaded into the body as
+	// additionalResources. The App holds the selection + wires the catalog read.
+	mustContain(t, app, "fetchLoraCatalog")
+	mustContain(t, app, "LoraSelector")
+	mustContain(t, app, "pm-lora-add")
+	mustContain(t, app, "pm-lora-weight")
+	mustContain(t, app, "addLora")
+
 	// generation.ts threads the chosen checkpoint into modelId/modelVersionId
-	// instead of a hardcoded constant.
+	// instead of a hardcoded constant, AND emits the selected LoRAs as
+	// additionalResources (only when non-empty).
 	gen := readFile(t, filepath.Join(dest, "src", "generation.ts"))
 	mustNotContain(t, gen, "GEN_MODEL")
 	mustContain(t, gen, "checkpoint: CheckpointOption")
 	mustContain(t, gen, "modelVersionId: checkpoint.versionId")
+	mustContain(t, gen, "loras: readonly LoraOption[]")
+	mustContain(t, gen, "body.additionalResources = loras.map")
 
 	// models.ts ships the curated, verified checkpoint ids the app starts on /
-	// falls back to (Public + generation-covered + SFW).
+	// falls back to (Public + generation-covered + SFW), PLUS the LoRA types +
+	// the selection helpers (cap + weight clamp) and the curated LoRA fallback.
 	models := readFile(t, filepath.Join(dest, "src", "models.ts"))
 	mustContain(t, models, "CheckpointOption")
 	mustContain(t, models, "DEFAULT_CHECKPOINT")
 	mustContain(t, models, "128078") // SD XL 1.0 version id
 	mustContain(t, models, "290640") // Pony V6 XL version id
+	mustContain(t, models, "LoraOption")
+	mustContain(t, models, "MAX_LORAS")
+	mustContain(t, models, "clampLoraWeight")
+	mustContain(t, models, "LORA_STRENGTH_MAX")
 
 	// catalog-api.ts uses the token-authoritative block endpoint (Bearer-gated,
-	// server-maturity-clamped) with a public, advisory-SFW fallback. The picks
-	// are server-revalidated, so no extra manifest scope is needed.
+	// server-maturity-clamped) with a public, advisory-SFW fallback, for BOTH
+	// the checkpoint and the LoRA (types=LORA) catalogs. The picks are
+	// server-revalidated, so no extra manifest scope is needed.
 	catalog := readFile(t, filepath.Join(dest, "src", "catalog-api.ts"))
 	mustContain(t, catalog, "/api/v1/blocks/models")
 	mustContain(t, catalog, "/api/v1/models")
 	mustContain(t, catalog, "Authorization")
 	mustContain(t, catalog, "catalogSfwOnly")
+	mustContain(t, catalog, "fetchLoraCatalog")
+	mustContain(t, catalog, "'LORA'")
 
 	// The display name should land in the manifest + App heading.
 	mustContain(t, manifest, `"name": "Money Block"`)
@@ -206,6 +239,18 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, mainTSX, "clipboard?.writeText")
 	// The mock-host escape hatch is still offered for free local dev.
 	mustContain(t, mainTSX, "dev:harness")
+	// The LIVE banner reads exactly "LIVE HOST · spends REAL Buzz" (the longer
+	// emoji + extra-clauses banner was trimmed to this exact string).
+	mustContain(t, mainTSX, "LIVE HOST · spends REAL Buzz")
+	mustNotContain(t, mainTSX, "real compute · backend via vite proxy")
+
+	// Harness.tsx: the mock chrome reads as a console/terminal strip. The MOCK
+	// banner is exactly "MOCK HOST · no real Buzz spent" and the scenario panel
+	// is labelled "mock scenarios".
+	harness := readFile(t, filepath.Join(dest, "src", "Harness.tsx"))
+	mustContain(t, harness, "MOCK HOST · no real Buzz spent")
+	mustNotContain(t, harness, "no real compute")
+	mustContain(t, harness, "mock scenarios")
 
 	// README docs the live-mode Buzz-balance recipe (#30) — the only working path
 	// is the tRPC procedure with a bearer key (no public REST buzz endpoint).

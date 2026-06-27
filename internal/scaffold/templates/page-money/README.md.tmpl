@@ -3,16 +3,18 @@
 A Civitai **page money-path** App Block (Vite + React + TypeScript), wired to
 the published App SDK (`@civitai/blocks-react` + `@civitai/app-sdk`). It mounts
 as a full-page (W10) app at `/apps/run/{{ .Slug }}` and spends Buzz to generate
-an image: pick a checkpoint → estimate → (lazy consent) → submit → poll → result.
+an image: pick a checkpoint, optionally layer on a few LoRAs (each with a
+weight) → estimate → (lazy consent) → submit → poll → result.
 
 ## What this is
 
 A sandboxed static web app served in an iframe by the Civitai host. Its UI is
 built from the **`@civitai/blocks-react/ui`** W6 component pack (Button, Textarea,
-Card, Stack, Group, Alert, Loader, Modal, Badge) — the one exception is the model
-picker, a themed native `<select>` (the pack ships no Select yet). The pack ships
-its own theme-aware styles; `injectBlocksStyles()` is called at module init in
-`src/App.tsx` so the first paint is already styled.
+Card, Stack, Group, Alert, Loader, Badge) — the two exceptions are the model
+picker (a themed native `<select>`) and each LoRA's weight control (a themed
+native range `<input>`), since the pack ships no Select/Slider yet. The pack
+ships its own theme-aware styles; `injectBlocksStyles()` is called at module init
+in `src/App.tsx` so the first paint is already styled.
 
 The platform
 owns the build: it runs `npm ci` then the `buildCommand` from
@@ -53,6 +55,26 @@ A pick is **discovery only**. Nothing about a client-chosen checkpoint is truste
 the server **re-validates** (public? generation-covered? SFW for the domain?) and
 **re-prices** the body at every `estimate` AND `submit`. A client can't smuggle a
 non-generatable or mis-priced model through `buildWorkflowBody`.
+
+### LoRA selector (server-revalidated)
+
+On top of the checkpoint the user can layer up to **5 LoRAs**, each with an
+adjustable **weight** (the LoRA's `strength`, clamped to the server's `[-1, 2]`
+bound). They ride along as `additionalResources` in the workflow body — one
+`{ modelVersionId, strength }` entry per selected LoRA, emitted only when at
+least one is selected (a checkpoint-only body stays backward compatible).
+
+- **`src/models.ts`** — a curated `LORAS` fallback set (first paint / offline)
+  plus the pure selection helpers (`addLora` / `removeLora` / `setLoraWeight`)
+  that enforce the dedup, the 5-LoRA cap (`MAX_LORAS`), and the weight clamp.
+- **`src/catalog-api.ts`** — `fetchLoraCatalog` reads the SAME authoritative
+  (`/api/v1/blocks/models`, Bearer) / public (`/api/v1/models`, advisory-SFW)
+  catalog, only `types=LORA` differs. No extra manifest scope is needed.
+
+LoRA picks + weights are **discovery only**, exactly like the checkpoint: the
+server is LoRA-only for additional resources and **re-validates** base-model
+compatibility + per-resource entitlement (early-access / Private) AND
+**re-prices** the whole body **before any Buzz spend**.
 
 ## Develop
 
@@ -207,11 +229,14 @@ npm run build         # what the platform produces (tsc typecheck + vite build)
 
 - **`src/generation.test.ts`** — pure-logic units (node env).
 - **`src/models.test.ts`** — the curated checkpoint set + the pick→option
-  helpers (`checkpointFromPick`, `mergeCheckpoints`). Locks the verified curated
-  ids so an accidental edit is caught.
-- **`src/catalog-api.test.ts`** — the in-block catalog client: URL builder, the
-  response→option mapper, the SFW clamp, and the injectable-`fetch` client
-  (success / empty / network-throw / authoritative→public fallback). No network.
+  helpers (`checkpointFromPick`, `mergeCheckpoints`), AND the LoRA selection
+  helpers (`addLora`/`removeLora`/`setLoraWeight`, the dedup + 5-LoRA cap + the
+  weight clamp). Locks the verified curated ids so an accidental edit is caught.
+- **`src/catalog-api.test.ts`** — the in-block catalog client: URL builder
+  (Checkpoint + `types=LORA`), the response→option mappers (checkpoint + LoRA),
+  the SFW clamp, and the injectable-`fetch` client for BOTH `fetchCatalog` and
+  `fetchLoraCatalog` (success / empty / network-throw / authoritative→public
+  fallback). No network.
 - **`src/App.test.tsx`** — component tests: render `<App/>` against
   `createMockHost()` and assert the UI (anon → sign-in, signed-in → prompt).
 - **`src/e2e.test.tsx`** — the money-path proof: drives the FULL

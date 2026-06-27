@@ -12,7 +12,7 @@ import {
   isTerminalStatus,
   phaseForSnapshot,
 } from './generation.js';
-import { DEFAULT_CHECKPOINT } from './models.js';
+import { DEFAULT_CHECKPOINT, type LoraOption } from './models.js';
 
 // A couple of pure-logic tests so authors inherit a working test setup. Run with
 // `npm test`. Add cases here as you grow the app's logic.
@@ -63,6 +63,22 @@ describe('buildWorkflowBody', () => {
     const body = buildWorkflowBody('x', pick);
     expect(body.modelId).toBe(257749);
     expect(body.modelVersionId).toBe(290640);
+  });
+  it('omits additionalResources when no LoRAs are selected', () => {
+    const body = buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, []);
+    expect(body.additionalResources).toBeUndefined();
+  });
+  it('emits one additionalResources entry per selected LoRA (version + clamped strength)', () => {
+    const loras: LoraOption[] = [
+      { versionId: 135867, modelId: 122359, label: 'Detail Tweaker XL', baseModel: 'SDXL 1.0', weight: 0.8 },
+      // weight out of the [-1, 2] bound is clamped at build time too.
+      { versionId: 152309, modelId: 136749, label: 'Add More Details XL', baseModel: 'SDXL 1.0', weight: 9 },
+    ];
+    const body = buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, loras);
+    expect(body.additionalResources).toEqual([
+      { modelVersionId: 135867, strength: 0.8 },
+      { modelVersionId: 152309, strength: 2 },
+    ]);
   });
 });
 

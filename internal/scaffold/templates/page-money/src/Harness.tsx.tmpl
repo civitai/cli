@@ -66,7 +66,7 @@ export function Harness({ children }: { children: ReactNode }) {
 function MockBanner() {
   return (
     <div data-harness-banner="mock" style={bannerStyle}>
-      🧪 MOCK HOST · no real Buzz spent · no real compute
+      MOCK HOST · no real Buzz spent
     </div>
   );
 }
@@ -82,18 +82,34 @@ function ScenarioPanel({ onApply }: { onApply: (patch: MockHostOptions) => void 
 
   return (
     <details data-harness-scenario-panel="true" style={panelStyle}>
-      <summary style={summaryStyle}>scenarios</summary>
+      <summary style={summaryStyle}>mock scenarios</summary>
       <div style={panelBodyStyle}>
-        <button type="button" onClick={() => onApply({ failMode: 'none', buzz: undefined })}>
+        <button
+          type="button"
+          style={btnStyle}
+          onClick={() => onApply({ failMode: 'none', buzz: undefined })}
+        >
           reset (all succeed)
         </button>
-        <button type="button" onClick={() => onApply({ failMode: 'insufficient' })}>
+        <button
+          type="button"
+          style={btnStyle}
+          onClick={() => onApply({ failMode: 'insufficient' })}
+        >
           force insufficient Buzz
         </button>
-        <button type="button" onClick={() => onApply({ generation: { failNext: 1 } })}>
+        <button
+          type="button"
+          style={btnStyle}
+          onClick={() => onApply({ generation: { failNext: 1 } })}
+        >
           fail next generation
         </button>
-        <button type="button" onClick={() => onApply({ generation: { failRate: 0.5 } })}>
+        <button
+          type="button"
+          style={btnStyle}
+          onClick={() => onApply({ generation: { failRate: 0.5 } })}
+        >
           50% failure rate
         </button>
         <label style={rowStyle}>
@@ -106,6 +122,7 @@ function ScenarioPanel({ onApply }: { onApply: (patch: MockHostOptions) => void 
           />
           <button
             type="button"
+            style={btnStyle}
             onClick={() => {
               const n = Number(balance);
               if (Number.isFinite(n)) onApply({ buzz: { balance: n } });
@@ -124,6 +141,7 @@ function ScenarioPanel({ onApply }: { onApply: (patch: MockHostOptions) => void 
           />
           <button
             type="button"
+            style={btnStyle}
             onClick={() => {
               const n = Number(latency);
               if (Number.isFinite(n)) onApply({ generation: { latencyMs: n } });
@@ -137,7 +155,15 @@ function ScenarioPanel({ onApply }: { onApply: (patch: MockHostOptions) => void 
   );
 }
 
-const MONO = 'ui-monospace, SFMono-Regular, monospace';
+// Cohesive console/terminal aesthetic for the mock chrome: a tidy dark terminal
+// strip (the banner) over a compact, monospace console panel — minimal, dark,
+// subtle borders, console-green accent — so the whole mock chrome reads as one
+// unobtrusive developer console and is never mistaken for the real (live) host.
+const MONO = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+const TERMINAL_BG = '#0d1117'; // near-black terminal background
+const TERMINAL_BORDER = '#30363d'; // subtle console border
+const TERMINAL_TEXT = '#c9d1d9'; // muted console foreground
+const TERMINAL_ACCENT = '#3fb950'; // console-green accent
 
 const rootStyle: CSSProperties = { position: 'relative', minHeight: '100dvh' };
 
@@ -147,14 +173,15 @@ const bannerStyle: CSSProperties = {
   left: 0,
   right: 0,
   zIndex: 10000,
-  background: '#1971c2',
-  color: '#fff',
+  background: TERMINAL_BG,
+  color: TERMINAL_ACCENT,
   fontFamily: MONO,
   fontSize: 12,
-  fontWeight: 700,
+  fontWeight: 600,
   textAlign: 'center',
   padding: '4px 8px',
   letterSpacing: 0.3,
+  borderBottom: `1px solid ${TERMINAL_BORDER}`,
 };
 
 const panelStyle: CSSProperties = {
@@ -162,16 +189,21 @@ const panelStyle: CSSProperties = {
   top: 28,
   left: 8,
   zIndex: 10000,
-  background: 'rgba(17,17,17,0.92)',
-  color: '#7fc',
+  background: TERMINAL_BG,
+  color: TERMINAL_TEXT,
   fontFamily: MONO,
   fontSize: 11,
   padding: '6px 10px',
   borderRadius: 6,
+  border: `1px solid ${TERMINAL_BORDER}`,
   maxWidth: 300,
 };
 
-const summaryStyle: CSSProperties = { cursor: 'pointer' };
+const summaryStyle: CSSProperties = {
+  cursor: 'pointer',
+  color: TERMINAL_ACCENT,
+  letterSpacing: 0.3,
+};
 
 const panelBodyStyle: CSSProperties = {
   display: 'flex',
@@ -182,4 +214,25 @@ const panelBodyStyle: CSSProperties = {
 
 const rowStyle: CSSProperties = { display: 'flex', gap: 4, alignItems: 'center' };
 
-const inputStyle: CSSProperties = { width: 60 };
+const inputStyle: CSSProperties = {
+  width: 60,
+  background: '#161b22',
+  color: TERMINAL_TEXT,
+  border: `1px solid ${TERMINAL_BORDER}`,
+  borderRadius: 4,
+  fontFamily: MONO,
+  fontSize: 11,
+  padding: '2px 4px',
+};
+
+const btnStyle: CSSProperties = {
+  background: '#161b22',
+  color: TERMINAL_TEXT,
+  border: `1px solid ${TERMINAL_BORDER}`,
+  borderRadius: 4,
+  fontFamily: MONO,
+  fontSize: 11,
+  padding: '3px 6px',
+  cursor: 'pointer',
+  textAlign: 'left',
+};

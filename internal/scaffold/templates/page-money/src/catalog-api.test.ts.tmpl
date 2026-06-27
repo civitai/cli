@@ -6,21 +6,29 @@ import {
   buildCatalogUrl,
   catalogSfwOnly,
   fetchCatalog,
+  fetchLoraCatalog,
   modelToCheckpoint,
+  modelToLora,
   responseToCheckpoints,
+  responseToLoras,
   type FetchLike,
 } from './catalog-api.js';
+import { DEFAULT_LORA_WEIGHT } from './models.js';
 
 // Pure + injectable-fetch units for the in-block catalog client. No network —
 // the fetch client takes an injectable `fetch`, so success / empty / non-OK /
 // network-throw / authoritative-fallback are all driven deterministically.
 
 describe('buildCatalogUrl', () => {
-  it('always scopes to Checkpoints and clamps the limit', () => {
+  it('defaults to Checkpoints and clamps the limit', () => {
     const url = new URL(buildCatalogUrl({ limit: 9999 }));
     expect(url.origin + url.pathname).toBe(CATALOG_API_BASE);
     expect(url.searchParams.get('types')).toBe('Checkpoint');
     expect(url.searchParams.get('limit')).toBe('100');
+  });
+  it('honors an explicit type (LORA)', () => {
+    const url = new URL(buildCatalogUrl({ type: 'LORA' }));
+    expect(url.searchParams.get('types')).toBe('LORA');
   });
   it('omits an empty query and only adds nsfw=false when sfwOnly', () => {
     const plain = new URL(buildCatalogUrl({ query: '   ' }));
@@ -63,6 +71,38 @@ describe('modelToCheckpoint / responseToCheckpoints', () => {
     });
     expect(page).toHaveLength(1);
     expect(page[0].versionId).toBe(11);
+  });
+});
+
+describe('modelToLora / responseToLoras', () => {
+  it('maps a model into a LoraOption at the default weight; skips no-version rows', () => {
+    expect(
+      modelToLora({
+        id: 122359,
+        name: 'Detail Tweaker XL',
+        modelVersions: [{ id: 135867, name: 'v1', baseModel: 'SDXL 1.0' }],
+      }),
+    ).toEqual({
+      versionId: 135867,
+      modelId: 122359,
+      label: 'Detail Tweaker XL — v1',
+      baseModel: 'SDXL 1.0',
+      weight: DEFAULT_LORA_WEIGHT,
+    });
+
+    expect(modelToLora({ id: 1, modelVersions: [] })).toBeNull();
+    expect(modelToLora(null)).toBeNull();
+  });
+  it('responseToLoras drops malformed rows but keeps usable ones', () => {
+    const page = responseToLoras({
+      items: [
+        { id: 1, name: 'Good LoRA', modelVersions: [{ id: 11, baseModel: 'SDXL 1.0' }] },
+        { id: 2, name: 'NoVersion' },
+      ],
+    });
+    expect(page).toHaveLength(1);
+    expect(page[0].versionId).toBe(11);
+    expect(page[0].weight).toBe(DEFAULT_LORA_WEIGHT);
   });
 });
 
@@ -114,5 +154,34 @@ describe('fetchCatalog', () => {
     const fetchMock = vi.fn<FetchLike>().mockResolvedValue(okRes({ items: [] }));
     const res = await fetchCatalog({}, { fetch: fetchMock });
     expect(res.kind).toBe('empty');
+  });
+});
+
+describe('fetchLoraCatalog', () => {
+  const loraPage = {
+    items: [{ id: 122359, name: 'Detail Tweaker XL', modelVersions: [{ id: 135867, baseModel: 'SDXL 1.0' }] }],
+  };
+
+  it('queries types=LORA and maps to LoraOptions (anon → public)', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(okRes(loraPage));
+    const res = await fetchLoraCatalog({}, { fetch: fetchMock });
+    expect(res.kind).toBe('ok');
+    if (res.kind === 'ok') {
+      expect(res.options[0].versionId).toBe(135867);
+      expect(res.options[0].weight).toBe(DEFAULT_LORA_WEIGHT);
+    }
+    const calledUrl = fetchMock.mock.calls[0][0];
+    expect(calledUrl).toContain('types=LORA');
+    expect(calledUrl).toContain(CATALOG_API_BASE);
+  });
+
+  it('signed-in → authoritative /blocks/models with a Bearer header + types=LORA', async () => {
+    const fetchMock = vi.fn<FetchLike>().mockResolvedValue(okRes(loraPage));
+    const res = await fetchLoraCatalog({}, { fetch: fetchMock, auth: { token: 'jwt' } });
+    expect(res.kind).toBe('ok');
+    if (res.kind === 'ok') expect(res.authoritative).toBe(true);
+    expect(fetchMock.mock.calls[0][0]).toContain(CATALOG_API_BASE_BLOCKS);
+    expect(fetchMock.mock.calls[0][0]).toContain('types=LORA');
+    expect(fetchMock.mock.calls[0][1]?.headers?.Authorization).toBe('Bearer jwt');
   });
 });
