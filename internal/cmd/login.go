@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -93,12 +94,7 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 	}
 
 	// Tell the user what to do. Never print the device_code (secret).
-	uri := da.VerificationURI
-	if uri == "" {
-		uri = cfg.BaseURL() + "/login/oauth/device"
-	}
-	fmt.Fprintln(out, "To authenticate, open this URL in your browser and enter the code:")
-	fmt.Fprintf(out, "\n  URL:  %s\n  Code: %s\n\n", uri, da.UserCode)
+	renderDeviceInstructions(out, da, cfg.BaseURL())
 
 	if !noBrowser && da.VerificationURIComplete != "" {
 		if err := openBrowser(da.VerificationURIComplete); err == nil {
@@ -122,6 +118,27 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 	fmt.Fprintf(out, "\nLogged in. Tokens saved to %s\n", cfg.Path())
 	fmt.Fprintln(out, "Verify with: civitai whoami")
 	return nil
+}
+
+// renderDeviceInstructions prints the device-flow instructions to out. When the
+// server supplies verification_uri_complete (the code pre-filled in the URL) it
+// is printed as the PRIMARY, copyable link so a user who pastes it gets the code
+// prefilled (matters for --no-browser / headless / when openBrowser fails), with
+// the bare URL + code kept as a clearly-labeled manual fallback. When it's empty
+// it falls back to the bare URL + Code form. Never prints the device_code (secret).
+func renderDeviceInstructions(out io.Writer, da *api.DeviceAuth, baseURL string) {
+	uri := da.VerificationURI
+	if uri == "" {
+		uri = baseURL + "/login/oauth/device"
+	}
+	if da.VerificationURIComplete != "" {
+		fmt.Fprintln(out, "To authenticate, open this URL (your code is pre-filled):")
+		fmt.Fprintf(out, "\n  %s\n\n", da.VerificationURIComplete)
+		fmt.Fprintf(out, "Or open %s and enter the code manually:  %s\n\n", uri, da.UserCode)
+		return
+	}
+	fmt.Fprintln(out, "To authenticate, open this URL in your browser and enter the code:")
+	fmt.Fprintf(out, "\n  URL:  %s\n  Code: %s\n\n", uri, da.UserCode)
 }
 
 // openBrowser best-effort opens url in the default browser. A failure is
