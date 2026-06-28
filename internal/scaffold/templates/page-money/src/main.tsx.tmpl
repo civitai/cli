@@ -114,7 +114,7 @@ function LiveApp({ token, backendBaseUrl }: { token: string; backendBaseUrl: str
  *    references it; it just fetches the same-origin route. With no key set the
  *    balance route 401s and the nav GRACEFULLY shows the name only (no error).
  *
- * EXPIRED-TOKEN SURFACING: dev block tokens live ~15min. An expired token
+ * EXPIRED-TOKEN SURFACING: dev block tokens live ~4h. An expired token
  * SILENTLY degrades (the block still renders — `createLiveHost` reads claims
  * unverified — and the balance still resolves via the personal key), so a dead
  * token looks like feature bugs. We detect it two ways — a client-side `exp`
@@ -187,7 +187,7 @@ function HostNav({ blockToken, backendBaseUrl }: { blockToken: string; backendBa
           >
             <Stack gap={8}>
               <span style={stepLabelStyle}>
-                Your dev block token is no longer valid (they last ~15&nbsp;min). The block still
+                Your dev block token is no longer valid (they last ~4&nbsp;h). The block still
                 renders and your Buzz balance still shows (those use your personal key), but the
                 live session is running on a dead token — re-mint it:
               </span>

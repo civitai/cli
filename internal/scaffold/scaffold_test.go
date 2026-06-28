@@ -237,7 +237,7 @@ func TestRenderPageMoney(t *testing.T) {
 	mustNotContain(t, nav, "CIVITAI_HOST_KEY")
 	mustNotContain(t, nav, "VITE_LIVE_BLOCK_TOKEN")
 	// Dev-token expiry surfacing: pure helpers that name the dead-token state so
-	// an expired (~15min) token stops masquerading as feature bugs.
+	// an expired (~4h) token stops masquerading as feature bugs.
 	mustContain(t, nav, "decodeTokenExp")
 	mustContain(t, nav, "isTokenExpired")
 	mustContain(t, nav, "shouldPromptReMint")
