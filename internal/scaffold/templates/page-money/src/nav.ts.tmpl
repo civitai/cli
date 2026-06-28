@@ -98,7 +98,7 @@ export function navDisplay(name: string | null, balance: number | null): NavDisp
 }
 
 // ── Dev-token expiry detection ──────────────────────────────────────────────
-// Dev block tokens are short-lived (~15min). When the pasted block token (the
+// Dev block tokens are short-lived (~4h). When the pasted block token (the
 // app's dev:live credential) expires the harness SILENTLY degrades —
 // `createLiveHost` decodes the token's
 // claims client-side WITHOUT verifying (so the block still renders), and the Buzz

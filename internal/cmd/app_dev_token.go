@@ -94,7 +94,7 @@ func newAppDevTokenCmd() *cobra.Command {
 "npm run dev:live" against the REAL Civitai backend.
 
 Calls the moderator-gated mint route (POST /api/v1/blocks/dev-token) with your
-stored credential and prints the token (a ~15-minute RS256 JWT). Paste it into
+stored credential and prints the token (a ~4-hour RS256 JWT). Paste it into
 VITE_LIVE_BLOCK_TOKEN in .env.development.local, then restart "npm run dev:live".
 
 The minted token's CAPABILITIES depend on the credential you mint with:
@@ -156,7 +156,7 @@ never commit it; re-mint when it expires.`,
 			errOut := cmd.ErrOrStderr()
 			fmt.Fprintln(errOut,
 				"Paste into VITE_LIVE_BLOCK_TOKEN in .env.development.local, then restart `npm run dev:live`. "+
-					"Short-lived (~15min); never commit it.")
+					"Short-lived (~4h); never commit it.")
 
 			// Catch the #1 dev:live dead-end EARLY: a read-only token makes
 			// `dev:live` Generate silently do nothing (the live host can't grant
