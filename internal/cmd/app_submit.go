@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
@@ -92,7 +93,7 @@ Defaults to the current directory.`,
 			canUpload := !packageOnly && cfg.Token() != ""
 			if canUpload {
 				client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
-				return doUpload(cmd, client, pkg.Zip, m)
+				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL())
 			}
 
 			// 3b. Fallback: write the canonical .zip + print next steps.
@@ -120,17 +121,19 @@ Defaults to the current directory.`,
 	return cmd
 }
 
-func doUpload(cmd *cobra.Command, client api.Submitter, zipBytes []byte, m *manifest.Manifest) error {
+func doUpload(cmd *cobra.Command, client api.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string) error {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Submitting %s@%s ...\n", m.BlockID, m.Version)
+	fmt.Fprintf(out, "Submitting %s@%s …\n", m.BlockID, m.Version)
 	r, err := client.SubmitVersion(context.Background(), zipBytes, m.BlockID, m.Version)
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Submitted. Publish request %s (%s@%s) is now %s — pending moderator review.\n",
-		r.PublishRequestID, r.Slug, r.Version, r.Status)
-	fmt.Fprintln(out, "\nTip: real `dev:live` generation spends Buzz and needs a full-scope personal API key —")
-	fmt.Fprintln(out, "run `civitai whoami` to check if your current credential can spend (OAuth login can submit/withdraw but not spend).")
+	base := strings.TrimRight(baseURL, "/")
+	fmt.Fprintf(out, "✓ Submitted — %s is pending moderator review.\n", r.PublishRequestID)
+	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to https://%s.civit.ai (usually a few minutes).\n", r.Slug)
+	fmt.Fprintln(out, "\nTrack it:")
+	fmt.Fprintln(out, "  civitai app status                          # review + deploy status")
+	fmt.Fprintf(out, "  %s/apps/my-submissions               # your submissions\n", base)
 	return nil
 }
 

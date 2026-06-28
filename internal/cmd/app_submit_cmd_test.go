@@ -120,9 +120,13 @@ func TestAppSubmitUploadsWhenTokenAndPathConfigured(t *testing.T) {
 	if !strings.Contains(stdout, "pr_42") || !strings.Contains(stdout, "pending") {
 		t.Errorf("output should report the publish request: %s", stdout)
 	}
-	// #34: a successful submit surfaces the personal-key money-path tip.
-	if !strings.Contains(stdout, "personal API key") || !strings.Contains(stdout, "civitai whoami") {
-		t.Errorf("submit success should print the personal-key tip: %s", stdout)
+	// A successful submit surfaces actionable next-steps: the per-app deploy URL
+	// and the submissions link — and drops the old, unrelated dev:live Buzz tip.
+	if !strings.Contains(stdout, "https://demo-block.civit.ai") || !strings.Contains(stdout, "/apps/my-submissions") {
+		t.Errorf("submit success should print the deploy URL + submissions link: %s", stdout)
+	}
+	if strings.Contains(stdout, "spends Buzz") || strings.Contains(stdout, "dev:live") {
+		t.Errorf("submit success should not print the dev:live Buzz tip: %s", stdout)
 	}
 }
 
