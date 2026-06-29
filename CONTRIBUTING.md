@@ -38,7 +38,7 @@ patterns we use.
 
 ## Architecture
 
-See [`CLAUDE.md`](CLAUDE.md) for the full layout, conventions, how to add a new
+See [`AGENTS.md`](AGENTS.md) for the full layout, conventions, how to add a new
 command, and the release process. The short version:
 
 - `cmd/civitai` — the binary entrypoint.
@@ -52,7 +52,7 @@ command, and the release process. The short version:
 `BlockManifestValidator`. The server is the source of truth. If you change a
 validation rule, keep the vendored schema (`schema/`) and the ported Go checks
 (`internal/validate`) in sync with the server validator, and update the docs.
-See `CLAUDE.md` for details.
+See `AGENTS.md` for details.
 
 ## Commit / PR style
 
