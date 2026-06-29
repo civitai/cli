@@ -11,13 +11,16 @@ import (
 )
 
 func newWhoAmICmd() *cobra.Command {
+	var jsonOut bool
+
 	cmd := &cobra.Command{
 		Use:   "whoami",
 		Short: "Verify your stored API token",
 		Long: `Verify the stored API token by calling the Civitai API and printing the
 authenticated username. Reads the token from config or CIVITAI_TOKEN.`,
-		Example: `  civitai whoami`,
-		Args:    cobra.NoArgs,
+		Example: `  civitai whoami
+  civitai whoami --json   # raw JSON (scriptable)`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -32,6 +35,19 @@ authenticated username. Reads the token from config or CIVITAI_TOKEN.`,
 				return err
 			}
 			out := cmd.OutOrStdout()
+
+			if jsonOut {
+				return writeJSON(out, map[string]any{
+					"username": id.Username,
+					"id":       id.ID,
+					"base_url": cfg.BaseURL(),
+					"capabilities": map[string]bool{
+						"can_spend_buzz": id.CanSpendBuzz(),
+						"can_read_buzz":  id.CanReadBuzz(),
+					},
+				})
+			}
+
 			fmt.Fprintf(out, "Logged in as %s (id %d) at %s\n", id.Username, id.ID, cfg.BaseURL())
 
 			// Decode the token's scope bitmask so the money-path dead end (an
@@ -47,6 +63,7 @@ authenticated username. Reads the token from config or CIVITAI_TOKEN.`,
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON (scriptable)")
 	return cmd
 }
 

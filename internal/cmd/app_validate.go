@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/civitai/cli/internal/validate"
 	"github.com/spf13/cobra"
@@ -10,6 +11,7 @@ import (
 
 func newAppValidateCmd() *cobra.Command {
 	var strict bool
+	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "validate [dir]",
 		Short: "Validate block.manifest.json against the App Block schema",
@@ -40,7 +42,8 @@ NOT fail validation (exit 0) unless --strict is passed.
 Defaults to the current directory.`,
 		Example: `  civitai app validate            # the current directory
   civitai app validate ./my-block
-  civitai app validate --strict   # treat warnings as failures`,
+  civitai app validate --strict   # treat warnings as failures
+  civitai app validate --json     # raw JSON result (scriptable)`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dir := "."
@@ -53,6 +56,29 @@ Defaults to the current directory.`,
 			res, err := validate.Dir(dir)
 			if err != nil {
 				return err
+			}
+
+			// JSON mode: emit the full structured result to stdout (so an agent
+			// can parse failures), then preserve the same non-zero exit the text
+			// path uses (hard errors always fail; warnings fail only --strict).
+			if jsonOut {
+				ok := res.OK() && !(strict && res.HasWarnings())
+				payload := map[string]any{
+					"ok":       ok,
+					"dir":      dir,
+					"errors":   issues(res.Errors),
+					"warnings": issues(res.Warnings),
+				}
+				if err := writeJSON(out, payload); err != nil {
+					return err
+				}
+				if !res.OK() {
+					return fmt.Errorf("validation failed")
+				}
+				if strict && res.HasWarnings() {
+					return fmt.Errorf("validation failed: %d warning(s) with --strict", len(res.Warnings))
+				}
+				return nil
 			}
 
 			// Hard errors always fail.
@@ -81,7 +107,39 @@ Defaults to the current directory.`,
 		},
 	}
 	cmd.Flags().BoolVar(&strict, "strict", false, "treat warnings as failures (non-zero exit)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the validation result as JSON (scriptable)")
 	return cmd
+}
+
+// issues converts the flat validation messages into structured objects with a
+// machine-readable field (when one can be derived) plus the full message. Schema
+// errors are formatted "<json/path>: <reason>"; we surface the leading path as
+// the field. Messages with no derivable path carry field "" (omitted).
+func issues(msgs []string) []map[string]string {
+	out := make([]map[string]string, 0, len(msgs))
+	for _, m := range msgs {
+		item := map[string]string{"message": m}
+		if field, ok := deriveField(m); ok {
+			item["field"] = field
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+// deriveField pulls the JSON-path field out of a schema-style "<path>: <reason>"
+// message. It only treats the prefix as a field when it looks like a path
+// (starts with "/" or is the literal "(root)") so prose messages aren't split.
+func deriveField(msg string) (string, bool) {
+	i := strings.Index(msg, ": ")
+	if i <= 0 {
+		return "", false
+	}
+	prefix := msg[:i]
+	if prefix == "(root)" || strings.HasPrefix(prefix, "/") {
+		return prefix, true
+	}
+	return "", false
 }
 
 func printWarnings(w io.Writer, res validate.Result) {
