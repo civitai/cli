@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -31,6 +32,40 @@ func TestBuzzCommandPrintsBalance(t *testing.T) {
 	}
 	if !strings.Contains(out, "Yellow") || !strings.Contains(out, "generation-spend") {
 		t.Errorf("buzz output should label yellow as the generation-spend currency: %s", out)
+	}
+}
+
+// TestBuzzCommandJSON asserts --json emits a parseable balance object with the
+// stable yellow/blue/green field names.
+func TestBuzzCommandJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"result":{"data":{"json":{"blue":5,"green":7,"yellow":4242}}}}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CIVITAI_TOKEN", "tok-buzz")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, _, err := run(t, "buzz", "--json")
+	if err != nil {
+		t.Fatalf("buzz --json: %v", err)
+	}
+	var got struct {
+		Yellow int64 `json:"yellow"`
+		Blue   int64 `json:"blue"`
+		Green  int64 `json:"green"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v\n%s", err, out)
+	}
+	if got.Yellow != 4242 || got.Blue != 5 || got.Green != 7 {
+		t.Errorf("unexpected --json balance payload: %+v\n%s", got, out)
+	}
+	// JSON mode must not leak the human prose.
+	if strings.Contains(out, "Spendable Buzz") || strings.Contains(out, "generation-spend") {
+		t.Errorf("--json should not emit human text: %s", out)
 	}
 }
 
@@ -155,5 +190,50 @@ func TestWhoAmICapabilitiesReadOnly(t *testing.T) {
 	}
 	if !strings.Contains(out, "Read Buzz balance:        yes") {
 		t.Errorf("read-only token should show Read Buzz balance: yes: %s", out)
+	}
+}
+
+// TestWhoAmIJSON asserts --json emits the user identity plus the decoded
+// capability bits as a parseable object.
+func TestWhoAmIJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// UserRead | AIServicesWrite | BuzzRead = 1 | 32768 | 65536 = 98305.
+		_, _ = w.Write([]byte(`{"username":"zach","id":7,"tokenScope":98305}`))
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CIVITAI_TOKEN", "full-key")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, _, err := run(t, "whoami", "--json")
+	if err != nil {
+		t.Fatalf("whoami --json: %v", err)
+	}
+	var got struct {
+		Username     string `json:"username"`
+		ID           int    `json:"id"`
+		BaseURL      string `json:"base_url"`
+		Capabilities struct {
+			CanSpendBuzz bool `json:"can_spend_buzz"`
+			CanReadBuzz  bool `json:"can_read_buzz"`
+		} `json:"capabilities"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v\n%s", err, out)
+	}
+	if got.Username != "zach" || got.ID != 7 {
+		t.Errorf("unexpected identity in --json: %+v\n%s", got, out)
+	}
+	if !got.Capabilities.CanSpendBuzz || !got.Capabilities.CanReadBuzz {
+		t.Errorf("full-scope key should report both capabilities true: %+v", got.Capabilities)
+	}
+	if got.BaseURL != srv.URL {
+		t.Errorf("base_url = %q, want %q", got.BaseURL, srv.URL)
+	}
+	// JSON mode must not leak the human prose.
+	if strings.Contains(out, "Logged in as") || strings.Contains(out, "Capabilities:") {
+		t.Errorf("--json should not emit human text: %s", out)
 	}
 }

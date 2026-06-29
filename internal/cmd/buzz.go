@@ -21,6 +21,8 @@ const buzzScopeHint = "This credential can't read your Buzz balance (needs a ful
 	"OAuth login tokens (`civitai login`) can't read balance or spend Buzz."
 
 func newBuzzCmd() *cobra.Command {
+	var jsonOut bool
+
 	cmd := &cobra.Command{
 		Use:   "buzz",
 		Short: "Show your spendable Buzz balance",
@@ -31,8 +33,9 @@ Reads buzz.getBuzzAccount with the same credential as ` + "`whoami`" + ` / ` + "
 A full-scope personal API key can read your balance; an OAuth login token
 (` + "`civitai login`" + `) cannot read balance or spend Buzz — in that case this prints
 how to switch to a personal key.`,
-		Example: `  civitai buzz`,
-		Args:    cobra.NoArgs,
+		Example: `  civitai buzz
+  civitai buzz --json   # raw JSON (scriptable)`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -55,6 +58,15 @@ how to switch to a personal key.`,
 			}
 
 			out := cmd.OutOrStdout()
+
+			if jsonOut {
+				return writeJSON(out, map[string]any{
+					"yellow": acct.Yellow,
+					"blue":   acct.Blue,
+					"green":  acct.Green,
+				})
+			}
+
 			fmt.Fprintln(out, "Spendable Buzz:")
 			fmt.Fprintf(out, "  Yellow: %d  (the generation-spend currency)\n", acct.Yellow)
 			fmt.Fprintf(out, "  Blue:   %d\n", acct.Blue)
@@ -62,5 +74,6 @@ how to switch to a personal key.`,
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON (scriptable)")
 	return cmd
 }
