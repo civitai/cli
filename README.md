@@ -86,6 +86,26 @@ Enable shell completion (optional):
 source <(civitai completion bash)   # bash; see `civitai completion --help` for zsh/fish/powershell
 ```
 
+## SDK packages
+
+This CLI scaffolds, validates, and submits — but the code your block actually
+imports lives in two published npm packages (the `page-money` / `page-vite`
+templates wire them for you):
+
+| Package | What it is |
+| --- | --- |
+| [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react) | The React hooks + iframe transport block authors call — `useBlockContext`, `useBuzzWorkflow`, `useBlockResize`, the `/ui` component pack, and the `/testing` dev hosts. **Start here for the hook reference.** |
+| [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk) | The framework-agnostic contract under the hooks — manifest types, scope strings, the `postMessage` protocol, and the `defineBlock` validator (`@civitai/app-sdk/blocks`). |
+
+```bash
+# Already installed by the scaffold; this is the explicit install line:
+pnpm add @civitai/blocks-react @civitai/app-sdk react
+```
+
+The full hook-by-hook reference (with snippets) lives in each package's npm
+README. For the end-to-end walkthrough, see
+[Build your first App Block](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md).
+
 ## Command reference
 
 | Command | What it does |
