@@ -61,15 +61,26 @@ civitai login
 civitai app create my-app
 cd my-app
 
-# 3. Edit your app, then check the manifest before submitting.
+# 3. Install deps and run it locally against the mock host (no real Buzz/compute).
+#    `npm run dev` alone renders blank — the harness supplies the host.
+npm install
+npm run dev:harness
+
+# 4. Edit your app; build it, then check the manifest before submitting.
+#    (the `static` template has no build step — skip `npm run build`.)
+npm run build
 civitai app validate
 
-# 4. Package + submit for review (uploads with your stored token by default).
+# 5. Package + submit for review (uploads with your stored token by default).
 civitai app submit
 
-# 5. Check where your submission is in review / deploy.
+# 6. Check where your submission is in review / deploy.
 civitai app status
 ```
+
+> Want to drive the **real** backend (real Buzz/compute) before submitting? Mint
+> a dev token with `civitai app dev-token` and run `npm run dev:live` — see
+> [Local dev loop](#local-dev-loop-harness-mock-vs-live).
 
 > **Submit ≠ live.** `civitai app submit` enters your block into **moderator
 > review** — it is **not** published immediately. The lifecycle is
