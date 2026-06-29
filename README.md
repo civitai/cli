@@ -25,11 +25,13 @@ contract, and **packages/submits** it for review.
 
 ## Install
 
-### Go install (Go 1.25+)
+Pick whichever fits — Homebrew is the quickest on macOS/Linux; the prebuilt
+binary needs no toolchain; `go install` builds from source.
+
+### Homebrew (macOS / Linux)
 
 ```bash
-go install github.com/civitai/cli/cmd/civitai@latest
-# installs the `civitai` binary into $(go env GOPATH)/bin
+brew install civitai/tap/civitai
 ```
 
 ### Prebuilt binary
@@ -45,10 +47,11 @@ sudo mv civitai /usr/local/bin/
 civitai version
 ```
 
-### Homebrew
+### Go install (from source, Go 1.25+)
 
 ```bash
-brew install civitai/tap/civitai
+go install github.com/civitai/cli/cmd/civitai@latest
+# installs the `civitai` binary into $(go env GOPATH)/bin
 ```
 
 ## Quickstart
