@@ -103,9 +103,10 @@ func newWhoAmICmd() *cobra.Command {
 
 ## Intentional decisions that look wrong (read before "fixing")
 
-These are deliberate mirrors of `civitai/civitai`. The durable fix for both is a
-server-side `civitai app validate` endpoint that calls the real
-`BlockManifestValidator` — until that exists, the mirroring is on purpose.
+Items 1–2 are deliberate mirrors of `civitai/civitai` (item 3 is a deliberate
+*non*-mirror). The durable fix for the mirroring is a server-side
+`civitai app validate` endpoint that calls the real `BlockManifestValidator` —
+until that exists, vendoring is on purpose.
 
 1. **`civitai app validate` is a best-effort LOCAL mirror, not the authority.**
    The server-side `BlockManifestValidator`
@@ -123,15 +124,18 @@ server-side `civitai app validate` endpoint that calls the real
    hard-codes `vendoredSlotIDs` (4 entries) mirroring
    `civitai/civitai → src/shared/constants/slot-registry.ts`. Go can't import the
    TS registry; the set is small and historically stable, so vendoring is cheap.
-3. **The token-scope bitmask is VENDORED.** `internal/api/api.go` hard-codes bit
-   positions (`ScopeAIServicesWrite = 1<<15`, etc.) mirroring
-   `civitai/civitai → src/shared/constants/token-scope.constants.ts`. These
-   stable bits power the `whoami` "can spend Buzz" capability check.
+3. **The CLI does NOT vendor the server's token-scope bitmask — and shouldn't.**
+   The `whoami` / `dev-token` "can spend Buzz" capability check decodes the JWT
+   `scopes` (a **string array**) and looks for the `ai:write:budgeted` scope
+   string (see `tokenCanSpend` in `internal/cmd/app_dev_token.go`). It does NOT
+   reproduce the server's numeric scope bit positions — all bit/scope authority
+   stays server-side. Don't "helpfully" add a vendored bitmask; the string check
+   is deliberate.
 
-**When you change any validation rule, keep all three vendored mirrors
-(`schema/`, the ported Go checks, the bitmask/slot constants) in sync with the
-server, and update `examples_test.go` (asserts shipped examples validate clean)
-+ the README.**
+**When you change a validation rule, keep both vendored mirrors (`schema/` + the
+ported Go checks in `internal/validate/`, including the slot registry) in sync
+with the server, and update `examples_test.go` (asserts shipped examples
+validate clean) + the README.**
 
 ## Permission boundaries
 
@@ -142,7 +146,7 @@ server, and update `examples_test.go` (asserts shipped examples validate clean)
 - Use conventional-commit subjects (`feat:`/`fix:`/`docs:`/`test:`/`chore:`); the changelog filters on them.
 
 ⚠️ **Ask first**
-- Editing a vendored mirror (`schema/`, `internal/validate/targets.go` slot ids, `internal/api/api.go` scope bits) — confirm it matches the server constants in `civitai/civitai` before changing.
+- Editing a vendored mirror (`schema/`, `internal/validate/targets.go` slot ids) — confirm it matches the server constants in `civitai/civitai` before changing.
 - Changing `.goreleaser.yaml`, `.github/workflows/*`, or anything that affects the published binary or the Homebrew tap.
 - Adding a new third-party dependency (this is a small, focused project).
 
