@@ -115,6 +115,7 @@ README. For the end-to-end walkthrough, see
 | `civitai buzz` | Show your spendable Buzz balance (blue / green / **yellow** — the generation-spend currency). Needs a full-scope personal API key to read; an OAuth login token can't, and gets a clear "switch to a personal key" message. |
 | `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App Block, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
+| `civitai app dev-token <slug> [--env]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the moderator-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app validate [dir] [--strict]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
@@ -161,12 +162,24 @@ hosts) with two modes:
 > and **cannot spend**. Use `civitai buzz` / `civitai whoami` to confirm your
 > credential can spend before a live run.
 
-**Live mode** needs a short-lived dev block token (mint via the moderator-gated
-`POST /api/v1/blocks/dev-token`), pasted into `.env.development` as
-`VITE_LIVE_BLOCK_TOKEN=` (never committed — `submit` excludes `.env.development`).
-With no token it **fails safe** (renders a notice, never spends). Live v1 covers
-the money path (`estimate`/`submit`/`poll`/`cancel`); pickers, checkpoint-set,
-App-Storage KV, and in-band Buzz purchase are mock-only.
+**Live mode** needs a short-lived dev block token. Mint it with **`civitai app
+dev-token`** (the CLI handles the moderator-gated `POST /api/v1/blocks/dev-token`
+call with your stored credential — no hand-rolled curl) and paste it into
+`.env.development.local` as `VITE_LIVE_BLOCK_TOKEN=`:
+
+```bash
+# From your scaffolded project dir (reads scopes from block.manifest.json):
+civitai app dev-token my-block --env >> .env.development.local
+npm run dev:live
+```
+
+`.env.development*` is never committed (`submit` excludes it) and the token is
+short-lived (~4h) — re-run `dev-token` when it expires. Mint with a **full-scope
+personal API key** for real generation; an OAuth login mints a read-only token
+(the command warns you at mint time). With no token, `dev:live` **fails safe**
+(renders a notice, never spends). Live v1 covers the money path
+(`estimate`/`submit`/`poll`/`cancel`); pickers, checkpoint-set, App-Storage KV,
+and in-band Buzz purchase are mock-only.
 
 **Under the hood (the scaffold wires this — you don't configure it):** `dev:live`
 routes the live host's backend calls through the **vite dev proxy**
