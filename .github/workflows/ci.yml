@@ -37,6 +37,17 @@ jobs:
       - name: build
         run: go build ./...
 
+  # Drift-guard: the vendored block-manifest schema (go:embed'd for offline
+  # `civitai app validate`) must stay identical to the canonical the platform
+  # publishes at civitai.com/schemas/app-block/v1.json (the single source of
+  # truth). Fails if a server-side contract change leaves the CLI stale.
+  schema-drift:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: check canonical schema
+        run: ./scripts/check-canonical-schema.sh
+
   # Rot-guard: scaffold the page-money template and run its JS toolchain against
   # the PUBLISHED SDK (@civitai/blocks-react). Catches a template that renders
   # but no longer installs / typechecks / tests / builds after an SDK bump — the

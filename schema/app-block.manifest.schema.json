@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://civitai.com/schemas/app-block/v1.json",
   "title": "Civitai App Block Manifest",
-  "description": "Schema for block.manifest.json — the ONLY mandatory file in a Civitai App Block. Derived from the server-side validator (src/server/services/block-manifest-validator.service.ts). This is the shared contract between the `civitai` CLI and the platform; it is intended to be published server-side so both sides validate against one source of truth.",
+  "description": "THE canonical, server-published schema for block.manifest.json — the ONLY mandatory file in a Civitai App Block. Published at https://civitai.com/schemas/app-block/v1.json. This is the single source of truth for the block manifest contract: the platform's server-side validator (src/server/services/block-manifest-validator.service.ts) and the `civitai` CLI both validate against these same rules. Set this URL as your manifest's `$schema` for editor validation.",
   "type": "object",
   "required": ["blockId", "version", "name", "contentRating", "scopes"],
   "properties": {
@@ -183,7 +183,7 @@
   },
   "allOf": [
     {
-      "$comment": "outputDir is required whenever buildCommand is set. NOTE: the server-owned iframe.src and trustTier fields are rejected by the CLI in Go (clearer error messages than JSON Schema's `not`); they are declared in `properties` above only so the schema documents them.",
+      "$comment": "outputDir is required whenever buildCommand is set. NOTE: the server-owned iframe.src and trustTier fields are rejected by the platform validator (and the CLI in Go) with clearer error messages than JSON Schema's `not`; they are declared in `properties` above only so the schema documents them.",
       "if": {
         "required": ["buildCommand"]
       },
