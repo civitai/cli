@@ -251,7 +251,7 @@ not reproduced).
 
 The **durable fix** is a server-side `civitai app validate` endpoint that calls
 the real `BlockManifestValidator` (the faithful contract), with this schema
-published as the syntactic half. See [`CLAUDE.md`](CLAUDE.md) for the full
+published as the syntactic half. See [`AGENTS.md`](AGENTS.md) for the full
 caveat and how the vendored schema + Go checks are kept in sync.
 
 ## Submit & auth
@@ -403,7 +403,7 @@ go test ./... -cover
 - **Language:** Go 1.25, [Cobra](https://github.com/spf13/cobra) (commands) +
   [Viper](https://github.com/spf13/viper) (config).
 - **Layout / conventions / how to add a command / release process:** see
-  [`CLAUDE.md`](CLAUDE.md).
+  [`AGENTS.md`](AGENTS.md).
 - **Contributing:** see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 CI (`.github/workflows/ci.yml`) runs `go vet`, `gofmt -s -l .`, `go test ./...`,
@@ -421,7 +421,7 @@ git push origin v0.1.0
 
 This cross-compiles for linux/darwin/windows × amd64/arm64, stamps
 version/commit/date, and publishes a GitHub Release with archives +
-`checksums.txt` plus a Homebrew tap bump. See [`CLAUDE.md`](CLAUDE.md) for the
+`checksums.txt` plus a Homebrew tap bump. See [`AGENTS.md`](AGENTS.md) for the
 full process and the secrets it needs (`HOMEBREW_TAP_GITHUB_TOKEN`).
 
 ## License
