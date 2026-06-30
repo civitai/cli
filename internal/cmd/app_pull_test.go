@@ -96,6 +96,14 @@ func TestAppPullClonesFreshDir(t *testing.T) {
 	if !strings.Contains(errOut, "embeds your access token") {
 		t.Errorf("pull must warn about token-in-URL leakage: %s", errOut)
 	}
+	// The CLONE path persists the URL to .git/config, so the warning MUST claim
+	// config-persistence and offer the set-url remedy.
+	if !strings.Contains(errOut, ".git/config") {
+		t.Errorf("clone warning must mention .git/config persistence: %s", errOut)
+	}
+	if !strings.Contains(errOut, "remote set-url origin "+okHTTPURL) {
+		t.Errorf("clone warning must offer the set-url remedy: %s", errOut)
+	}
 }
 
 func TestAppPullSyncsExistingCheckout(t *testing.T) {
@@ -118,22 +126,42 @@ func TestAppPullSyncsExistingCheckout(t *testing.T) {
 	t.Setenv("CIVITAI_TOKEN", "tok-1")
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)
 
-	out, _, err := run(t, "app", "pull", "--app", "my-block")
+	out, errOut, err := run(t, "app", "pull", "--app", "my-block")
 	if err != nil {
 		t.Fatalf("app pull (sync): %v", err)
 	}
-	// An existing checkout → `git -C my-block pull <cloneUrl>`.
+	// An existing checkout → `git -C my-block pull --ff-only <cloneUrl>`.
 	if len(gitCalls) != 1 {
 		t.Fatalf("expected one git call, got %v", gitCalls)
 	}
-	want := []string{"-C", "my-block", "pull", okCloneURL}
+	want := []string{"-C", "my-block", "pull", "--ff-only", okCloneURL}
 	for i, a := range want {
 		if i >= len(gitCalls[0]) || gitCalls[0][i] != a {
 			t.Fatalf("pull args = %v, want %v", gitCalls[0], want)
 		}
 	}
+	if len(gitCalls[0]) != len(want) {
+		t.Fatalf("pull args = %v, want exactly %v", gitCalls[0], want)
+	}
 	if !strings.Contains(out, "Syncing existing checkout") {
 		t.Errorf("output should announce the sync: %s", out)
+	}
+	// The SYNC path passes the URL explicitly; git does NOT persist it to
+	// .git/config, so the warning must NOT claim config-persistence (that would
+	// send the user chasing a non-existent on-disk token + a useless set-url).
+	if strings.Contains(errOut, "stored it in .git/config") {
+		t.Errorf("sync warning must NOT claim the token was stored in .git/config: %s", errOut)
+	}
+	if strings.Contains(errOut, "remote set-url") {
+		t.Errorf("sync warning must NOT offer the clone-only set-url remedy: %s", errOut)
+	}
+	// And it should affirmatively reassure that nothing was persisted to config.
+	if !strings.Contains(errOut, "NOT persisted to .git/config") {
+		t.Errorf("sync warning should clarify the token was NOT persisted to config: %s", errOut)
+	}
+	// It should still surface the transient process-args exposure accurately.
+	if !strings.Contains(errOut, "access token") {
+		t.Errorf("sync should still warn about the transient token exposure: %s", errOut)
 	}
 }
 

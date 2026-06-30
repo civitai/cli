@@ -35,10 +35,12 @@ var gitRunner = func(dir string, args ...string) error {
 }
 
 // isGitRepo reports whether dir contains a git working tree (a `.git` entry).
-// Used to decide clone (fresh dir) vs pull (existing checkout).
+// Used to decide clone (fresh dir) vs pull (existing checkout). A `.git` entry
+// is either a directory (normal checkout) or a gitfile (linked worktree), so any
+// stat hit counts.
 func isGitRepo(dir string) bool {
-	info, err := os.Stat(filepath.Join(dir, ".git"))
-	return err == nil && (info.IsDir() || !info.IsDir()) // dir OR a gitfile (worktree)
+	_, err := os.Stat(filepath.Join(dir, ".git"))
+	return err == nil
 }
 
 func newAppPullCmd() *cobra.Command {
@@ -58,13 +60,15 @@ scoped, read-only Forgejo identity for you and returns a clone URL with a push/
 pull token embedded.
 
 ⚠  SECURITY — TOKEN-IN-URL LEAKAGE: the clone URL embeds your access token as
-HTTP-Basic credentials (https://<user>:<token>@...). git stores the remote URL
-in .git/config, so the token lands on disk in the clone, and a clone/pull
-command line can be captured in your shell history. Treat the checkout as
-sensitive: do NOT commit .git/config or share the directory, and consider
-clearing the remote URL (or replacing it with the credential-less HTTPS URL
-` + "`git remote set-url origin <httpUrl>`" + `) after the first pull if you rely on a
-git credential helper.
+HTTP-Basic credentials (https://<user>:<token>@...). On a fresh CLONE, git
+stores the remote URL in .git/config, so the token lands on disk in the clone;
+treat the checkout as sensitive: do NOT commit .git/config or share the
+directory, and consider clearing the remote URL (or replacing it with the
+credential-less HTTPS URL ` + "`git remote set-url origin <httpUrl>`" + `) after the
+clone if you rely on a git credential helper. On a SYNC (pull into an existing
+checkout) the URL is passed explicitly and is NOT persisted to .git/config, but
+the token still transiently appears in the git child process's arguments, so it
+is briefly visible to other processes via ` + "`ps`" + ` / /proc/<pid>/cmdline.
 
 The repo only exists once your FIRST version has been submitted as a ZIP and
 approved; before then the command tells you so instead of failing obscurely.`,
@@ -129,22 +133,25 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, app string, args []s
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
 
-	// Always surface the leakage caveat (the token is now on the user's machine).
-	defer func() {
-		fmt.Fprintln(errOut,
-			"\n⚠  The clone URL embeds your access token. git stored it in .git/config — "+
-				"do not commit or share it. To drop it: `git -C "+dir+" remote set-url origin "+info.HTTPURL+"`.")
-	}()
-
 	if isGitRepo(dir) {
 		// Existing checkout → pull. We don't trust the stored remote (it may be
 		// stale or credential-less); fetch + reset to the tokened URL's HEAD branch
-		// would be heavier than needed, so do a plain `git -C dir pull <url>`.
+		// would be heavier than needed, so pass the tokened URL explicitly. Use
+		// --ff-only so a diverged/dirty checkout fails cleanly with git's own
+		// message instead of silently creating a merge commit.
 		fmt.Fprintf(out, "Syncing existing checkout in %s …\n", dir)
-		if err := gitRunner("", "-C", dir, "pull", info.CloneURL); err != nil {
+		if err := gitRunner("", "-C", dir, "pull", "--ff-only", info.CloneURL); err != nil {
 			return fmt.Errorf("git pull failed: %w", err)
 		}
 		fmt.Fprintf(out, "Synced %s.\n", info.Slug)
+		// On the pull path the tokened URL is passed explicitly on the command line
+		// and is NOT written to .git/config — so there's nothing to scrub from disk.
+		// The only exposure is the transient one: the token appeared in the git
+		// child process's arguments while the pull ran.
+		fmt.Fprintln(errOut,
+			"\n⚠  The pull URL embedded your access token in the git command line — it was "+
+				"briefly visible to other local processes (via `ps` / /proc/<pid>/cmdline) "+
+				"while syncing. It was NOT persisted to .git/config.")
 		return nil
 	}
 
@@ -155,5 +162,10 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, app string, args []s
 		return fmt.Errorf("git clone failed: %w", err)
 	}
 	fmt.Fprintf(out, "Cloned %s into %s.\n", info.Slug, dir)
+	// On the clone path git persists the tokened remote URL to .git/config, so the
+	// token now lives on disk. Surface the config-persistence caveat + the remedy.
+	fmt.Fprintln(errOut,
+		"\n⚠  The clone URL embeds your access token. git stored it in .git/config — "+
+			"do not commit or share it. To drop it: `git -C "+dir+" remote set-url origin "+info.HTTPURL+"`.")
 	return nil
 }
