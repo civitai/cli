@@ -1,0 +1,239 @@
+package cmd
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// cloneInfoServer stands up an httptest server emulating the
+// GET /api/trpc/blocks.getMyForgejoCloneInfo query, returning the canned tRPC
+// envelope + recording the decoded `input` so URL/input encoding is asserted.
+func cloneInfoServer(t *testing.T, jsonResult any, status int, gotInput *string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if gotInput != nil {
+			*gotInput = r.URL.Query().Get("input")
+		}
+		if status != 0 && status != http.StatusOK {
+			w.WriteHeader(status)
+			// tRPC error envelope.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"json": map[string]any{"message": "boom", "code": status}},
+			})
+			return
+		}
+		// tRPC success envelope: { result: { data: { json: <result> } } }.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": map[string]any{"data": map[string]any{"json": jsonResult}},
+		})
+	}))
+}
+
+// stubGit replaces gitRunner for the duration of the test, recording calls.
+func stubGit(t *testing.T, fn func(dir string, args ...string) error) {
+	t.Helper()
+	orig := gitRunner
+	gitRunner = fn
+	t.Cleanup(func() { gitRunner = orig })
+}
+
+const okCloneURL = "https://dev-7:tok-sha1@forgejo.civitai.com/civitai-apps/my-block.git"
+const okHTTPURL = "https://forgejo.civitai.com/civitai-apps/my-block.git"
+
+func okCloneInfo() map[string]any {
+	return map[string]any{
+		"notYetAvailable": false,
+		"slug":            "my-block",
+		"forgejoUsername": "dev-7",
+		"token":           "tok-sha1",
+		"httpUrl":         okHTTPURL,
+		"cloneUrl":        okCloneURL,
+	}
+}
+
+func TestAppPullClonesFreshDir(t *testing.T) {
+	var gotInput string
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, &gotInput)
+	defer srv.Close()
+
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, errOut, err := run(t, "app", "pull", "--app", "my-block")
+	if err != nil {
+		t.Fatalf("app pull: %v\n%s", err, errOut)
+	}
+
+	// The tRPC input carries the slug under {"json":{"slug":...}}.
+	if !strings.Contains(gotInput, `"slug":"my-block"`) {
+		t.Errorf("tRPC input should carry the slug: %q", gotInput)
+	}
+	// A fresh dir → `git clone <cloneUrl> <slug>`.
+	if len(gitCalls) != 1 {
+		t.Fatalf("expected exactly one git call, got %d: %v", len(gitCalls), gitCalls)
+	}
+	if gitCalls[0][0] != "clone" || gitCalls[0][1] != okCloneURL || gitCalls[0][2] != "my-block" {
+		t.Errorf("clone args = %v", gitCalls[0])
+	}
+	if !strings.Contains(out, "Cloning my-block") {
+		t.Errorf("output should announce the clone: %s", out)
+	}
+	// The token-leakage caveat MUST be surfaced (token now on disk).
+	if !strings.Contains(errOut, "embeds your access token") {
+		t.Errorf("pull must warn about token-in-URL leakage: %s", errOut)
+	}
+}
+
+func TestAppPullSyncsExistingCheckout(t *testing.T) {
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	// Make ./my-block already a git checkout (a .git dir).
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err != nil {
+		t.Fatalf("app pull (sync): %v", err)
+	}
+	// An existing checkout → `git -C my-block pull <cloneUrl>`.
+	if len(gitCalls) != 1 {
+		t.Fatalf("expected one git call, got %v", gitCalls)
+	}
+	want := []string{"-C", "my-block", "pull", okCloneURL}
+	for i, a := range want {
+		if i >= len(gitCalls[0]) || gitCalls[0][i] != a {
+			t.Fatalf("pull args = %v, want %v", gitCalls[0], want)
+		}
+	}
+	if !strings.Contains(out, "Syncing existing checkout") {
+		t.Errorf("output should announce the sync: %s", out)
+	}
+}
+
+func TestAppPullExplicitDir(t *testing.T) {
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	if _, _, err := run(t, "app", "pull", "custom-dir", "--app", "my-block"); err != nil {
+		t.Fatalf("app pull custom-dir: %v", err)
+	}
+	if gitCalls[0][2] != "custom-dir" {
+		t.Errorf("explicit dir should be the clone target: %v", gitCalls[0])
+	}
+}
+
+func TestAppPullNotYetAvailable(t *testing.T) {
+	srv := cloneInfoServer(t, map[string]any{
+		"notYetAvailable": true,
+		"slug":            "my-block",
+		"message":         "approve your first version first",
+	}, http.StatusOK, nil)
+	defer srv.Close()
+
+	called := false
+	stubGit(t, func(dir string, args ...string) error { called = true; return nil })
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil {
+		t.Fatal("expected error when git access is not yet available")
+	}
+	if !strings.Contains(err.Error(), "approve your first version") {
+		t.Errorf("error should carry the server message: %v", err)
+	}
+	if called {
+		t.Error("git must NOT run when the repo is not yet available")
+	}
+}
+
+func TestAppPullMissingAppErrors(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	_, _, err := run(t, "app", "pull")
+	if err == nil {
+		t.Fatal("expected error when --app is missing")
+	}
+}
+
+func TestAppPullMissingTokenErrors(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "")
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil {
+		t.Fatal("expected error with no token")
+	}
+	if !strings.Contains(err.Error(), "no token") {
+		t.Errorf("missing-token error should explain: %v", err)
+	}
+}
+
+func TestAppPullServerErrorMapped(t *testing.T) {
+	srv := cloneInfoServer(t, nil, http.StatusForbidden, nil)
+	defer srv.Close()
+	stubGit(t, func(dir string, args ...string) error {
+		t.Error("git must not run on a server error")
+		return nil
+	})
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil {
+		t.Fatal("expected error on 403")
+	}
+	if !strings.Contains(err.Error(), "not permitted") {
+		t.Errorf("403 should map to a not-permitted message: %v", err)
+	}
+}
+
+func TestAppHelpListsPull(t *testing.T) {
+	out, _, err := run(t, "app", "--help")
+	if err != nil {
+		t.Fatalf("app --help: %v", err)
+	}
+	if !strings.Contains(out, "pull") {
+		t.Errorf("app help should list the pull subcommand:\n%s", out)
+	}
+}
