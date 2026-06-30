@@ -82,12 +82,20 @@ func TestAppPullClonesFreshDir(t *testing.T) {
 	if !strings.Contains(gotInput, `"slug":"my-block"`) {
 		t.Errorf("tRPC input should carry the slug: %q", gotInput)
 	}
-	// A fresh dir → `git clone <cloneUrl> <slug>`.
+	// A fresh dir → `git clone -- <cloneUrl> <slug>`. The literal `--` separator
+	// is mandatory: it stops git from parsing a dash-leading URL/dir as a flag
+	// (argument-injection hardening).
 	if len(gitCalls) != 1 {
 		t.Fatalf("expected exactly one git call, got %d: %v", len(gitCalls), gitCalls)
 	}
-	if gitCalls[0][0] != "clone" || gitCalls[0][1] != okCloneURL || gitCalls[0][2] != "my-block" {
-		t.Errorf("clone args = %v", gitCalls[0])
+	wantClone := []string{"clone", "--", okCloneURL, "my-block"}
+	if len(gitCalls[0]) != len(wantClone) {
+		t.Fatalf("clone args = %v, want %v", gitCalls[0], wantClone)
+	}
+	for i, a := range wantClone {
+		if gitCalls[0][i] != a {
+			t.Fatalf("clone args = %v, want %v", gitCalls[0], wantClone)
+		}
 	}
 	if !strings.Contains(out, "Cloning my-block") {
 		t.Errorf("output should announce the clone: %s", out)
@@ -183,8 +191,68 @@ func TestAppPullExplicitDir(t *testing.T) {
 	if _, _, err := run(t, "app", "pull", "custom-dir", "--app", "my-block"); err != nil {
 		t.Fatalf("app pull custom-dir: %v", err)
 	}
-	if gitCalls[0][2] != "custom-dir" {
-		t.Errorf("explicit dir should be the clone target: %v", gitCalls[0])
+	// `clone -- <url> <dir>` → the explicit dir is the 4th argv element.
+	if len(gitCalls[0]) != 4 || gitCalls[0][3] != "custom-dir" {
+		t.Errorf("explicit dir should be the clone target after `--`: %v", gitCalls[0])
+	}
+}
+
+// TestAppPullCloneSeparatesPositionals pins the argument-injection hardening: a
+// dash-leading target dir (e.g. `-bad`) MUST be passed as a positional AFTER the
+// literal `--` separator, so git treats it as the clone destination rather than
+// parsing it as a flag (e.g. `--bare`, `-c core.hooksPath=…`, `--template=…`).
+func TestAppPullCloneSeparatesPositionals(t *testing.T) {
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	// A dash-leading target dir — the canonical argument-injection probe. The CLI
+	// `--` lets cobra accept `-bad` as a positional arg (rather than a CLI flag);
+	// the code under test must in turn pass it to git after git's own `--`.
+	if _, _, err := run(t, "app", "pull", "--app", "my-block", "--", "-bad"); err != nil {
+		t.Fatalf("app pull -- -bad: %v", err)
+	}
+	if len(gitCalls) != 1 {
+		t.Fatalf("expected one git call, got %v", gitCalls)
+	}
+	argv := gitCalls[0]
+	// `--` must appear immediately before the URL+dir positionals.
+	want := []string{"clone", "--", okCloneURL, "-bad"}
+	if len(argv) != len(want) {
+		t.Fatalf("clone argv = %v, want %v", argv, want)
+	}
+	for i, a := range want {
+		if argv[i] != a {
+			t.Fatalf("clone argv = %v, want %v", argv, want)
+		}
+	}
+	// Belt-and-suspenders: the dash-leading dir must come AFTER the `--`, never
+	// before it (where git would interpret it as a flag).
+	dashSep, dirIdx := -1, -1
+	for i, a := range argv {
+		if a == "--" {
+			dashSep = i
+		}
+		if a == "-bad" {
+			dirIdx = i
+		}
+	}
+	if dashSep == -1 {
+		t.Fatalf("clone argv must contain a `--` separator: %v", argv)
+	}
+	if dirIdx <= dashSep {
+		t.Fatalf("dash-leading dir must come after `--` (got sep=%d dir=%d): %v", dashSep, dirIdx, argv)
 	}
 }
 

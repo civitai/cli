@@ -158,7 +158,7 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, app string, args []s
 	// Fresh dir → clone. git refuses to clone into a non-empty existing dir, so a
 	// pre-existing-but-not-a-repo dir surfaces git's own clear error.
 	fmt.Fprintf(out, "Cloning %s into %s …\n", info.Slug, dir)
-	if err := gitRunner("", "clone", info.CloneURL, dir); err != nil {
+	if err := gitRunner("", "clone", "--", info.CloneURL, dir); err != nil {
 		return fmt.Errorf("git clone failed: %w", err)
 	}
 	fmt.Fprintf(out, "Cloned %s into %s.\n", info.Slug, dir)
