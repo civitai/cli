@@ -124,32 +124,49 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, app string, args []s
 		return fmt.Errorf("server returned no clone URL")
 	}
 
-	// Target dir: explicit [dir] arg, else ./<slug>.
+	// Target dir: explicit [dir] arg, else ./<slug>. The slug is server-controlled,
+	// so a default dir derived from it must NOT be allowed to escape the current
+	// directory: reject a slug-derived dir that contains a path separator or `..`
+	// (a malicious server could otherwise target an arbitrary/absolute path). An
+	// explicit user-supplied [dir] is the user's own choice, so it's left as-is.
 	dir := info.Slug
 	if len(args) == 1 && strings.TrimSpace(args[0]) != "" {
 		dir = strings.TrimSpace(args[0])
+	} else {
+		if dir != filepath.Base(dir) || dir == "." || dir == ".." || strings.ContainsRune(dir, filepath.Separator) || strings.Contains(dir, "..") {
+			return fmt.Errorf("server returned an unsafe slug %q for the target directory — pass an explicit [dir] instead", info.Slug)
+		}
 	}
 
 	out := cmd.OutOrStdout()
 	errOut := cmd.ErrOrStderr()
 
 	if isGitRepo(dir) {
-		// Existing checkout → pull. We don't trust the stored remote (it may be
-		// stale or credential-less); fetch + reset to the tokened URL's HEAD branch
-		// would be heavier than needed, so pass the tokened URL explicitly. Use
-		// --ff-only so a diverged/dirty checkout fails cleanly with git's own
-		// message instead of silently creating a merge commit.
+		// Existing checkout → sync. We don't trust the stored remote (it may be
+		// stale or credential-less), so pass the tokened URL explicitly. Done as an
+		// explicit fetch+merge rather than `git pull <url>`: the `--` before the URL
+		// neutralizes a dash-leading URL (argument-injection hardening — a bare
+		// positional URL beginning with `-` would otherwise be parsed by git as an
+		// option, e.g. `--upload-pack=<cmd>`, and execute attacker-chosen commands).
+		// `merge --ff-only FETCH_HEAD` keeps the fast-forward-only semantics: it
+		// blocks DIVERGED history and aborts on a CONFLICTING dirty tree, and never
+		// creates a merge commit. It merges FETCH_HEAD into whatever branch is
+		// currently checked out (not a server-named branch) — same as the prior
+		// no-refspec pull, just made injection-safe.
 		fmt.Fprintf(out, "Syncing existing checkout in %s …\n", dir)
-		if err := gitRunner("", "-C", dir, "pull", "--ff-only", info.CloneURL); err != nil {
-			return fmt.Errorf("git pull failed: %w", err)
+		if err := gitRunner("", "-C", dir, "fetch", "--", info.CloneURL, "HEAD"); err != nil {
+			return fmt.Errorf("git fetch failed: %w", err)
+		}
+		if err := gitRunner("", "-C", dir, "merge", "--ff-only", "FETCH_HEAD"); err != nil {
+			return fmt.Errorf("git merge --ff-only failed: %w", err)
 		}
 		fmt.Fprintf(out, "Synced %s.\n", info.Slug)
-		// On the pull path the tokened URL is passed explicitly on the command line
-		// and is NOT written to .git/config — so there's nothing to scrub from disk.
-		// The only exposure is the transient one: the token appeared in the git
-		// child process's arguments while the pull ran.
+		// On the sync path the tokened URL is passed explicitly to `git fetch` and is
+		// NOT written to .git/config — so there's nothing to scrub from disk. The only
+		// exposure is the transient one: the token appeared in the git fetch child
+		// process's arguments while the fetch ran.
 		fmt.Fprintln(errOut,
-			"\n⚠  The pull URL embedded your access token in the git command line — it was "+
+			"\n⚠  The fetch URL embedded your access token in the git command line — it was "+
 				"briefly visible to other local processes (via `ps` / /proc/<pid>/cmdline) "+
 				"while syncing. It was NOT persisted to .git/config.")
 		return nil
