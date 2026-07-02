@@ -172,7 +172,9 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		fmt.Fprintln(out, "  2. npm run dev:harness      # preview locally — MOCK host, no real Buzz")
 		fmt.Fprintln(out, "  3. civitai app submit       # validate + submit for review")
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, "  Real generation (spends Buzz)? npm run dev:live — needs a personal API key (see README)")
+		fmt.Fprintln(out, "  Real generation (spends real Buzz)? npm run dev:live needs a full-scope personal API")
+		fmt.Fprintln(out, "  key: create at https://civitai.com/user/account, then `civitai login --token <key>`.")
+		fmt.Fprintln(out, "  An OAuth `civitai login` can submit/withdraw but cannot spend Buzz (check `civitai whoami`).")
 	case tmpl == scaffold.PageVite:
 		fmt.Fprintf(out, "  1. cd %s && npm install\n", destDir)
 		fmt.Fprintln(out, "  2. npm run dev              # preview locally")

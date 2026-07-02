@@ -30,8 +30,17 @@ func TestBuzzCommandPrintsBalance(t *testing.T) {
 	if !strings.Contains(out, "4242") {
 		t.Errorf("buzz output should show the yellow balance: %s", out)
 	}
-	if !strings.Contains(out, "Yellow") || !strings.Contains(out, "generation-spend") {
-		t.Errorf("buzz output should label yellow as the generation-spend currency: %s", out)
+	// Neutral colour labels (no invented semantics) + a Blue+Green+Yellow total.
+	for _, want := range []string{"Blue", "Green", "Yellow", "Total"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("buzz output should include the %q label: %s", want, out)
+		}
+	}
+	if strings.Contains(out, "generation-spend") {
+		t.Errorf("buzz output should use neutral colour labels (no invented semantics): %s", out)
+	}
+	if !strings.Contains(out, "4254") { // 5 + 7 + 4242
+		t.Errorf("buzz output should show Total = blue+green+yellow (4254): %s", out)
 	}
 }
 
@@ -56,6 +65,7 @@ func TestBuzzCommandJSON(t *testing.T) {
 		Yellow int64 `json:"yellow"`
 		Blue   int64 `json:"blue"`
 		Green  int64 `json:"green"`
+		Total  int64 `json:"total"`
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("--json output is not valid JSON: %v\n%s", err, out)
@@ -63,8 +73,11 @@ func TestBuzzCommandJSON(t *testing.T) {
 	if got.Yellow != 4242 || got.Blue != 5 || got.Green != 7 {
 		t.Errorf("unexpected --json balance payload: %+v\n%s", got, out)
 	}
+	if got.Total != 4254 {
+		t.Errorf("--json total = %d, want 4254 (blue+green+yellow): %s", got.Total, out)
+	}
 	// JSON mode must not leak the human prose.
-	if strings.Contains(out, "Spendable Buzz") || strings.Contains(out, "generation-spend") {
+	if strings.Contains(out, "Buzz balance:") || strings.Contains(out, "generation-spend") {
 		t.Errorf("--json should not emit human text: %s", out)
 	}
 }
@@ -236,4 +249,130 @@ func TestWhoAmIJSON(t *testing.T) {
 	if strings.Contains(out, "Logged in as") || strings.Contains(out, "Capabilities:") {
 		t.Errorf("--json should not emit human text: %s", out)
 	}
+}
+
+// meHandler serves a fixed /api/v1/me body.
+func meHandler(body string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte(body)) }
+}
+
+func setupWhoAmI(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(meHandler(body))
+	t.Cleanup(srv.Close)
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	return srv
+}
+
+// TestWhoAmICredentialTypeOAuth: subject.type=oauth → "OAuth login" + the
+// money-path steer (the #34 dead end surfaced before dev:live).
+func TestWhoAmICredentialTypeOAuth(t *testing.T) {
+	// UserRead | AppBlocksSubmit = 1 | 33554432 = 33554433 (no spend/read).
+	setupWhoAmI(t, `{"username":"zach","id":1,"tokenScope":33554433,"subject":{"type":"oauth","id":"a"}}`)
+	out, _, err := run(t, "whoami")
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	if !strings.Contains(out, "Credential type:") || !strings.Contains(out, "OAuth login") {
+		t.Errorf("should show credential type OAuth login: %s", out)
+	}
+	if !strings.Contains(out, "Spend Buzz (AI Services): no") {
+		t.Errorf("OAuth token can't spend: %s", out)
+	}
+	if !strings.Contains(out, "personal API key") || !strings.Contains(out, "civitai login --token") {
+		t.Errorf("can't-spend should steer to a personal key: %s", out)
+	}
+}
+
+// TestWhoAmICredentialTypePersonalKey: a full-scope personal key → "personal API
+// key", can spend + read, no steer.
+func TestWhoAmICredentialTypePersonalKey(t *testing.T) {
+	// UserRead | AIServicesWrite | BuzzRead = 98305.
+	setupWhoAmI(t, `{"username":"zach","id":1,"tokenScope":98305,"subject":{"type":"apiKey","id":"k"}}`)
+	out, _, err := run(t, "whoami")
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	if !strings.Contains(out, "personal API key") {
+		t.Errorf("should show credential type personal API key: %s", out)
+	}
+	if !strings.Contains(out, "Spend Buzz (AI Services): yes") || !strings.Contains(out, "Read Buzz balance:        yes") {
+		t.Errorf("full-scope key spends + reads: %s", out)
+	}
+	if strings.Contains(out, "can't spend Buzz") {
+		t.Errorf("no steer should print for a spend-capable key: %s", out)
+	}
+}
+
+// TestWhoAmIScopesFlag: --scopes lists the granted scope bit names.
+func TestWhoAmIScopesFlag(t *testing.T) {
+	setupWhoAmI(t, `{"username":"zach","id":1,"tokenScope":98305,"subject":{"type":"apiKey","id":"k"}}`)
+	out, _, err := run(t, "whoami", "--scopes")
+	if err != nil {
+		t.Fatalf("whoami --scopes: %v", err)
+	}
+	if !strings.Contains(out, "Scopes") {
+		t.Errorf("--scopes should print a Scopes section: %s", out)
+	}
+	for _, want := range []string{"UserRead", "AIServicesWrite", "BuzzRead"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--scopes should list %s (mask 98305): %s", want, out)
+		}
+	}
+}
+
+// TestWhoAmIScopeUnknownDegrades: an absent tokenScope must not crash and must
+// say capabilities are unknown (cookie/degraded auth).
+func TestWhoAmIScopeUnknownDegrades(t *testing.T) {
+	setupWhoAmI(t, `{"username":"zach","id":1}`)
+	out, _, err := run(t, "whoami")
+	if err != nil {
+		t.Fatalf("whoami: %v", err)
+	}
+	if !strings.Contains(out, "unknown") {
+		t.Errorf("absent scope should report capabilities unknown: %s", out)
+	}
+	if strings.Contains(out, "Spend Buzz (AI Services): no") {
+		t.Errorf("absent scope must NOT claim 'can't spend' as fact: %s", out)
+	}
+}
+
+// TestWhoAmIJSONCredentialAndScopes: --json carries credentialType + decoded
+// booleans + the scope-name list.
+func TestWhoAmIJSONCredentialAndScopes(t *testing.T) {
+	setupWhoAmI(t, `{"username":"zach","id":7,"tokenScope":98305,"subject":{"type":"apiKey","id":"k"}}`)
+	out, _, err := run(t, "whoami", "--json")
+	if err != nil {
+		t.Fatalf("whoami --json: %v", err)
+	}
+	var got struct {
+		CredentialType string   `json:"credentialType"`
+		CanReadBalance bool     `json:"canReadBalance"`
+		CanSpend       bool     `json:"canSpend"`
+		Scopes         []string `json:"scopes"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v\n%s", err, out)
+	}
+	if got.CredentialType != "personal API key" {
+		t.Errorf("credentialType = %q, want personal API key", got.CredentialType)
+	}
+	if !got.CanReadBalance || !got.CanSpend {
+		t.Errorf("full-scope key should report canReadBalance+canSpend true: %+v", got)
+	}
+	if !containsStrCmd(got.Scopes, "AIServicesWrite") || !containsStrCmd(got.Scopes, "BuzzRead") {
+		t.Errorf("--json scopes should list the decoded bit names: %v", got.Scopes)
+	}
+}
+
+func containsStrCmd(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
 }
