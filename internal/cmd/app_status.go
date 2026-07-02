@@ -20,13 +20,13 @@ func newAppStatusCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "status [blockId]",
-		Short: "Check the review/deploy status of your App Block submissions",
-		Long: `Check the review and deploy status of your own App Block submissions.
+		Short: "Check the review/deploy status of your App submissions",
+		Long: `Check the review and deploy status of your own App submissions.
 
 Calls the token-authenticated, self-scoped status route
 (GET /api/v1/blocks/submissions) with your stored credential — you only ever see
 your OWN submissions. Both a personal API key and an OAuth login (civitai login)
-work; the OAuth token must carry the App Blocks submit scope (the same gate the
+work; the OAuth token must carry the Apps submit scope (the same gate the
 submit route uses).
 
 With no argument it lists all your submissions (newest first). Pass a blockId

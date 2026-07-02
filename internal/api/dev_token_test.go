@@ -143,7 +143,7 @@ func TestMintDevTokenErrorMapping(t *testing.T) {
 		{http.StatusForbidden, map[string]string{"message": "mods only"}, "not authorized (403)"},
 		{http.StatusUnauthorized, map[string]string{"message": "bad key"}, "not logged in"},
 		{http.StatusTooManyRequests, map[string]string{"message": "slow"}, "rate limited"},
-		{http.StatusServiceUnavailable, map[string]string{"message": "flag off"}, "App Blocks unavailable (503)"},
+		{http.StatusServiceUnavailable, map[string]string{"message": "flag off"}, "Apps unavailable (503)"},
 		{http.StatusInternalServerError, map[string]string{"message": "boom"}, "server returned 500"},
 	}
 	for _, tc := range cases {

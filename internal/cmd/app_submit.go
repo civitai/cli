@@ -23,8 +23,8 @@ func newAppSubmitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
-		Short: "Package and submit an App Block for review",
-		Long: `Package the canonical App Block source tree and submit it for moderator
+		Short: "Package and submit an App for review",
+		Long: `Package the canonical App source tree and submit it for moderator
 review.
 
 The package is the SOURCE tree (manifest + src + build config) — NOT a
@@ -145,5 +145,5 @@ func printManualNextSteps(cmd *cobra.Command, cfg *config.Config, m *manifest.Ma
 	fmt.Fprintln(out, "     civitai app submit")
 	fmt.Fprintf(out, "\n  2) Or upload %s via the web UI:\n", filepath.Base(zipPath))
 	fmt.Fprintf(out, "     %s/apps/submit\n", cfg.BaseURL())
-	fmt.Fprintln(out, "     (requires a moderator account while App Blocks is mod-gated).")
+	fmt.Fprintln(out, "     (requires an invite while Apps is in invite-only beta).")
 }

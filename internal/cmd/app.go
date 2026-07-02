@@ -2,14 +2,14 @@ package cmd
 
 import "github.com/spf13/cobra"
 
-// newAppCmd is the `civitai app` command group for App Blocks authoring.
+// newAppCmd is the `civitai app` command group for Apps authoring.
 func newAppCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "app",
-		Short: "Author and ship Civitai App Blocks",
-		Long: `Author and ship Civitai App Blocks.
+		Short: "Author and ship Civitai Apps",
+		Long: `Author and ship Civitai Apps.
 
-An App Block is a sandboxed static web app served in an iframe. The platform
+An App is a sandboxed static web app served in an iframe. The platform
 owns the build and the runtime; the only mandatory file is block.manifest.json.
 The typical lifecycle is create -> validate -> submit.
 

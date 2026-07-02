@@ -1,4 +1,4 @@
-// Package manifest holds the App Block manifest filename constant and a
+// Package manifest holds the App manifest filename constant and a
 // lightweight reader for the fields the CLI needs (slug/version/name).
 package manifest
 
@@ -16,7 +16,7 @@ import (
 // the key + separator prefix, preserved verbatim on rewrite.
 var blockIDField = regexp.MustCompile(`("blockId"\s*:\s*)"[^"]*"`)
 
-// Filename is the one mandatory file in an App Block, at the project root.
+// Filename is the one mandatory file in an App, at the project root.
 // The server matches this exact path inside the ZIP (no nesting).
 const Filename = "block.manifest.json"
 
@@ -59,7 +59,7 @@ func Load(dir string) (*Manifest, error) {
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("no %s found in %s — is this an App Block project? run `civitai app init` to create one", Filename, dir)
+			return nil, fmt.Errorf("no %s found in %s — is this an App project? run `civitai app init` to create one", Filename, dir)
 		}
 		return nil, err
 	}
@@ -82,7 +82,7 @@ func SetBlockID(dir, newBlockID string) error {
 	info, err := os.Stat(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("no %s found in %s — is this an App Block project?", Filename, dir)
+			return fmt.Errorf("no %s found in %s — is this an App project?", Filename, dir)
 		}
 		return err
 	}
@@ -149,7 +149,7 @@ func LoadRaw(dir string) (any, *Manifest, error) {
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, fmt.Errorf("no %s found in %s — is this an App Block project? run `civitai app init` to create one", Filename, dir)
+			return nil, nil, fmt.Errorf("no %s found in %s — is this an App project? run `civitai app init` to create one", Filename, dir)
 		}
 		return nil, nil, err
 	}

@@ -108,8 +108,8 @@ describe('mapMintError', () => {
   it('maps 401 → invalid key', () => {
     expect(mapMintError(401, '{}')).toMatch(/Invalid API key/);
   });
-  it('maps 403 → needs moderator access (pre-GA)', () => {
-    expect(mapMintError(403, '{}')).toMatch(/moderator access/);
+  it('maps 403 → needs an invite (invite-only beta)', () => {
+    expect(mapMintError(403, '{}')).toMatch(/invite/);
   });
   it('maps 404 → registered to a different account', () => {
     expect(mapMintError(404, '{}')).toMatch(/different account/);
@@ -166,7 +166,7 @@ describe('mintDevToken', () => {
       fetch: fakeFetch(403, JSON.stringify({ message: 'not a mod' }), {}),
       backendOrigin: 'https://civitai.com',
     });
-    expect(res).toEqual({ error: expect.stringMatching(/moderator access/) });
+    expect(res).toEqual({ error: expect.stringMatching(/invite/) });
   });
 
   it('maps a 401 to an invalid-key error', async () => {

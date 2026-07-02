@@ -167,10 +167,10 @@ func NewRootCmd() *cobra.Command {
 	var noUpdateCheck bool
 	root := &cobra.Command{
 		Use:   "civitai",
-		Short: "Civitai CLI — author and ship App Blocks",
+		Short: "Civitai CLI — author and ship Apps",
 		Long: `civitai is the command-line interface for Civitai (https://civitai.com).
 
-Its first feature group is App Blocks authoring — App Blocks are small,
+Its first feature group is Apps authoring — Apps are small,
 sandboxed web apps that run inside Civitai surfaces. The CLI scaffolds a
 correct project, validates it against the platform contract, and packages it
 for submission, so you don't have to hand-format a ZIP.
@@ -178,7 +178,7 @@ for submission, so you don't have to hand-format a ZIP.
 Get started:
 
   civitai login                    store your API token
-  civitai app create my-app        scaffold a ready-to-build App Block
+  civitai app create my-app        scaffold a ready-to-build App
   civitai app validate             check the manifest before you submit
   civitai app submit               package + submit for review`,
 		Example: `  # First time: authenticate, then scaffold and submit an app.

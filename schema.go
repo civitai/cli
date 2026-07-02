@@ -2,7 +2,7 @@ package cli
 
 import "embed"
 
-// SchemaJSON is the vendored App Block manifest JSON Schema, embedded so the
+// SchemaJSON is the vendored App manifest JSON Schema, embedded so the
 // CLI validates against the same contract it ships. The file is the canonical
 // copy intended to also be published server-side (see README).
 //

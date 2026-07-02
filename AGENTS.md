@@ -18,7 +18,7 @@ contributor checklist see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## What this is
 
-`civitai` is the App Blocks authoring CLI. `civitai app` scaffolds a correct
+`civitai` is the Apps authoring CLI. `civitai app` scaffolds a correct
 project, validates the manifest against the platform contract, packages it, and
 submits it for review. See the README command reference — don't re-derive it.
 

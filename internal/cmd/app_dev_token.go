@@ -105,7 +105,7 @@ func newAppDevTokenCmd() *cobra.Command {
 		Long: `Mint a short-lived dev block token so a scaffolded page-money app can run
 "npm run dev:live" against the REAL Civitai backend.
 
-Calls the moderator-gated mint route (POST /api/v1/blocks/dev-token) with your
+Calls the invite-gated mint route (POST /api/v1/blocks/dev-token) with your
 stored credential and prints the token (a ~4-hour RS256 JWT). Paste it into
 VITE_LIVE_BLOCK_TOKEN in .env.development.local, then restart "npm run dev:live".
 
@@ -117,7 +117,7 @@ The minted token's CAPABILITIES depend on the credential you mint with:
     spend) — dev:live shows your viewer + catalog/storage, but estimate →
     submit → generation will NOT spend.
 
-Pre-GA the mint route is moderator-only. You do NOT need to submit the app
+Pre-GA the mint route is invite-only. You do NOT need to submit the app
 first — for a brand-new slug with no app row yet, the token is minted from the
 scopes in your local block.manifest.json (clamped server-side), so
 "create → dev-token → dev:live" works directly. The token is short-lived —

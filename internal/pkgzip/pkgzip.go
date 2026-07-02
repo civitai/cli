@@ -1,4 +1,4 @@
-// Package pkgzip packages an App Block project directory into the canonical
+// Package pkgzip packages an App project directory into the canonical
 // ZIP the platform build recipe expects: the SOURCE tree (manifest + src +
 // build config), with build artifacts and VCS/dependency dirs excluded.
 //

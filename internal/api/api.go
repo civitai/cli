@@ -1,4 +1,4 @@
-// Package api is the (thin) HTTP client for the Civitai App Blocks surface.
+// Package api is the (thin) HTTP client for the Civitai Apps surface.
 //
 // Auth/submit contract (civitai/civitai PR #2644):
 //
@@ -200,14 +200,14 @@ const SubmissionsPath = "/api/v1/blocks/submissions"
 // (pending) state.
 const WithdrawPath = "/api/v1/blocks/withdraw"
 
-// DevTokenPath is the moderator-gated route that mints a short-lived dev block
+// DevTokenPath is the invite-gated route that mints a short-lived dev block
 // token for `npm run dev:live` (POST {"slug": ..., "scopes"?: [...]};
 // civitai/civitai src/pages/api/v1/blocks/dev-token.ts). 200 { token, ... } on
 // success; a PENDING (un-approved) slug is accepted, and a slug with NO app row
 // yet mints from the request-body `scopes` (the dev's LOCAL manifest scopes,
 // clamped server-side) — so `create → dev-token → dev:live` works with no
 // submit step. Error bodies are {message}: 404 slug registered to a different
-// account / genuinely not found, 403 not-mod/insufficient-scope, 429
+// account / genuinely not found, 403 not-invited/insufficient-scope, 429
 // rate-limited, 503 flag-off. The minted token's CAPABILITIES depend on the
 // bearer: a full-scope personal API key mints a spend-capable token; an OAuth
 // (`civitai login`) credential mints a read-only one.
@@ -696,7 +696,7 @@ func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string)
 
 // devTokenError maps a non-2xx dev-token response to a clear, actionable CLI
 // error. The route returns {"message": ...} on every error status: 404
-// not-found-or-not-yours, 403 not-moderator-or-insufficient-scope, 429
+// not-found-or-not-yours, 403 not-invited-or-insufficient-scope, 429
 // rate-limited, 503 flag-off. The 403 message is the key DX case — a spend
 // token needs a full-scope personal API key (an OAuth login mints read-only).
 func devTokenError(status int, raw []byte) error {
@@ -715,11 +715,11 @@ func devTokenError(status int, raw []byte) error {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
 	case http.StatusForbidden:
-		return fmt.Errorf("not authorized (403): %s — minting needs moderator access AND a full-scope personal API key; an OAuth `civitai login` token can't mint a spend token (check with `civitai whoami`)", msg)
+		return fmt.Errorf("not authorized (403): %s — minting needs an invite (invite-only beta) AND a full-scope personal API key; an OAuth `civitai login` token can't mint a spend token (check with `civitai whoami`)", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("App Blocks unavailable (503): %s", msg)
+		return fmt.Errorf("Apps unavailable (503): %s", msg)
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
@@ -734,7 +734,7 @@ func withdrawError(status int, raw []byte) error {
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
-		return fmt.Errorf("not authorized (check your API key / moderator access) (%d): %s", status, msg)
+		return fmt.Errorf("not authorized (check your API key / Apps invite) (%d): %s", status, msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("publish request not found (or not yours) (404): %s", msg)
 	case http.StatusConflict:
@@ -744,27 +744,27 @@ func withdrawError(status int, raw []byte) error {
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("App Blocks unavailable (503): %s", msg)
+		return fmt.Errorf("Apps unavailable (503): %s", msg)
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
 }
 
 // submissionsError maps a non-2xx submissions response to a clear, actionable
-// error, with App-Blocks-specific guidance for 403/404/429/503.
+// error, with Apps-specific guidance for 403/404/429/503.
 func submissionsError(status int, raw []byte) error {
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login`", msg)
 	case http.StatusForbidden:
-		return fmt.Errorf("App Blocks access required (gated preview) (403): %s", msg)
+		return fmt.Errorf("Apps access required — invite-only beta (403): %s", msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("no such submission (404): %s", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited (429): %s — wait a moment and retry", msg)
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("App Blocks is not enabled (503): %s", msg)
+		return fmt.Errorf("Apps is not enabled (503): %s", msg)
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
@@ -796,9 +796,9 @@ func serverError(status int, raw []byte) error {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("unauthorized (401): %s — check your token with `civitai login`", msg)
 	case http.StatusForbidden:
-		return fmt.Errorf("forbidden (403): %s — your account may lack App Blocks access", msg)
+		return fmt.Errorf("forbidden (403): %s — your account may lack Apps access", msg)
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("service unavailable (503): %s — App Blocks may not be enabled", msg)
+		return fmt.Errorf("service unavailable (503): %s — Apps may not be enabled", msg)
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}

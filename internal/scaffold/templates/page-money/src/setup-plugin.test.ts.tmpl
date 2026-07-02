@@ -170,7 +170,7 @@ describe('civitaiSetupPlugin middleware', () => {
     expect(res.statusCode).toBe(200);
     const parsed = JSON.parse(res.body);
     expect(parsed.ok).toBe(false);
-    expect(parsed.error).toMatch(/moderator access/);
+    expect(parsed.error).toMatch(/invite/);
     expect(existsSync(join(dir, '.env.development.local'))).toBe(false);
   });
 
