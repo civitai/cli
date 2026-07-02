@@ -24,6 +24,8 @@ vi.mock('@civitai/blocks-react', () => ({
   useBlockResize: () => {},
   useBlockToken: () => ({ scopes: ['ai:write:budgeted'], raw: 't', expiresAt: '' }),
   useBuzzWorkflow: () => ({ estimate: estimateFn, submit: submitFn, poll: pollFn }),
+  // Balance read is inert here (this test is about the poll loop, not balance).
+  useBuzzBalance: () => ({ balance: null, loading: false, error: null, refetch: vi.fn() }),
   useRequestConsent: () => ({ requestConsent: vi.fn() }),
   useRequestSignIn: () => ({ requestSignIn: vi.fn() }),
   // The host pickers — inert here (this test is about the poll loop, not picking).

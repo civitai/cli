@@ -4,13 +4,17 @@ import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
 
 import {
   PROMPT_MAX,
+  accountLabel,
   buildWorkflowBody,
   clampPrompt,
   formatCost,
   hasBudgetedScope,
+  isDisallowedAccountError,
   isInsufficientBuzz,
   isTerminalStatus,
+  phaseForError,
   phaseForSnapshot,
+  spentAccountLabel,
 } from './generation.js';
 import { DEFAULT_CHECKPOINT, type LoraOption } from './models.js';
 
@@ -80,6 +84,57 @@ describe('buildWorkflowBody', () => {
       { modelVersionId: 152309, strength: 2 },
     ]);
   });
+
+  it('Auto (omitted / "auto") threads NO accountType — today’s behavior byte-for-byte', () => {
+    const base = buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, []);
+    expect('accountType' in base).toBe(false);
+    // Passing 'auto' explicitly is identical to omitting it.
+    expect(buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, [], 'auto')).toEqual(base);
+  });
+  it('a picked pool is threaded as accountType', () => {
+    const body = buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, [], 'yellow');
+    expect(body.accountType).toBe('yellow');
+    const green = buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, [], 'green');
+    expect(green.accountType).toBe('green');
+  });
+});
+
+describe('accountLabel / spentAccountLabel', () => {
+  it('labels each account choice', () => {
+    expect(accountLabel('auto')).toBe('Auto');
+    expect(accountLabel('blue')).toBe('Blue');
+    expect(accountLabel('green')).toBe('Green');
+    expect(accountLabel('yellow')).toBe('Yellow');
+  });
+  it('spentAccountLabel is the pool label, or null when absent', () => {
+    expect(spentAccountLabel('yellow')).toBe('Yellow');
+    expect(spentAccountLabel(undefined)).toBeNull();
+  });
+});
+
+describe('isDisallowedAccountError', () => {
+  it('catches the server domain-clamp rejection (before the buzz-in-message trap)', () => {
+    const msg = "buzz account 'yellow' is not spendable for this app's content rating";
+    expect(isDisallowedAccountError(msg)).toBe(true);
+    // The disallowed message contains "buzz" — insufficient WOULD match it, so
+    // callers must check disallowed FIRST (phaseForError does).
+    expect(isInsufficientBuzz(msg)).toBe(true);
+  });
+  it('false for unrelated / insufficient errors', () => {
+    expect(isDisallowedAccountError('Insufficient Buzz')).toBe(false);
+    expect(isDisallowedAccountError('prompt rejected by audit')).toBe(false);
+    expect(isDisallowedAccountError(null)).toBe(false);
+  });
+});
+
+describe('phaseForError', () => {
+  it('classifies disallowed-account BEFORE insufficient (both contain "buzz")', () => {
+    expect(
+      phaseForError("buzz account 'yellow' is not spendable for this app's content rating"),
+    ).toBe('account-rejected');
+    expect(phaseForError('Insufficient Buzz')).toBe('insufficient');
+    expect(phaseForError('prompt rejected by audit')).toBe('failed');
+  });
 });
 
 describe('isTerminalStatus', () => {
@@ -103,5 +158,15 @@ describe('phaseForSnapshot', () => {
     expect(phaseForSnapshot(snap({ status: 'failed', error: 'Insufficient Buzz' }))).toBe(
       'insufficient',
     );
+  });
+  it('maps a disallowed-account failure to account-rejected', () => {
+    expect(
+      phaseForSnapshot(
+        snap({
+          status: 'failed',
+          error: "buzz account 'yellow' is not spendable for this app's content rating",
+        }),
+      ),
+    ).toBe('account-rejected');
   });
 });

@@ -1,0 +1,194 @@
+// Test/dev-only mock augmentation. NOT imported by production code.
+//
+// The published SDK mock host (`@civitai/blocks-react/testing` `createMockHost`)
+// answers the estimate → submit → poll money path, but as of 0.16 it does NOT
+// answer the two newer per-account-buzz behaviours this app uses:
+//
+//   1. GET_BUZZ_BALANCE  → BUZZ_BALANCE_RESULT   (the `useBuzzBalance()` read)
+//   2. `spentAccountType` on a succeeded snapshot (the "funded from your <pool>"
+//      note the App shows after a generation)
+//
+// So the dev harness AND the vitest suites layer these two on top of the mock
+// host — entirely synthetically, no real Buzz, no network. In PRODUCTION the
+// real civitai host answers both natively (Phase 3), so none of this ships.
+//
+// DOM ordering note (load-bearing): a message dispatched directly on `window`
+// invokes the target's listeners in REGISTRATION ORDER (the `capture` flag does
+// NOT reorder at the target). The `spentAccountType` stamper below mutates the
+// inbound snapshot IN PLACE before the SDK transport reads it, so it MUST be
+// registered BEFORE the transport's listener — hence its callers register it
+// first (main.tsx before `installHarnessTransport()`; `installMockMoneyHost`
+// before re-creating the transport).
+
+import { createMockHost, mockParentMessage, type MockHostOptions } from '@civitai/blocks-react/testing';
+import type { BuzzAccountType } from '@civitai/app-sdk/blocks';
+import type { BuzzBalance } from '@civitai/blocks-react';
+
+import { resetHarnessTransport } from './dev-transport.js';
+
+// The pool the block most recently submitted with (null = Auto / host-chosen).
+// Written by the outbound handler, read by the inbound stamper — module state so
+// the two halves stay in sync across the harness and the tests.
+let lastSubmittedAccountType: BuzzAccountType | null = null;
+
+// When true, the stamper rewrites the next FAILED snapshot's error into the
+// server's domain-clamp rejection — but only when the last submit named a pool.
+// Lets a test exercise the "disallowed account → friendly reset to Auto" path.
+let rejectAccountMode = false;
+
+const isBuzzAccountType = (v: unknown): v is BuzzAccountType =>
+  v === 'blue' || v === 'green' || v === 'yellow';
+
+/** The server's domain-clamp rejection text (mirrors generation.ts). */
+export const DISALLOWED_ACCOUNT_ERROR =
+  "buzz account is not spendable for this app's content rating";
+
+/** A sensible 3-pool balance when the mock host isn't simulating a wallet. */
+export const DEFAULT_MOCK_BALANCE: BuzzBalance = { blue: 1500, green: 250, yellow: 6000 };
+
+/**
+ * Project the mock host's single spendable wallet number (the `buzz.balance`
+ * knob that drives the insufficient-Buzz UX) into a plausible 3-pool split for
+ * the balance display: mostly yellow (purchased) with a little blue (free), so
+ * all three pools render and `?balance=0` shows zeros. `undefined` (wallet not
+ * simulated) -> the default set.
+ */
+export function mockBuzzBalance(total: number | undefined): BuzzBalance {
+  if (total == null || !Number.isFinite(total)) return DEFAULT_MOCK_BALANCE;
+  const clamped = Math.max(0, total);
+  return {
+    yellow: Math.round(clamped * 0.8),
+    blue: Math.round(clamped * 0.2),
+    green: 0,
+  };
+}
+
+interface MockBuzzOutboundOptions {
+  /** Reads the mock host's current wallet (its `buzz.balance`), or `undefined`. */
+  getBalance: () => number | undefined;
+  /** Reply to the balance read with an error instead of a balance. */
+  balanceError?: boolean;
+}
+
+/**
+ * Build an `onOutbound` handler (fed to `createMockHost` / `<Harness>`) that:
+ *  - tracks the pool the block submits with (for the `spentAccountType` stamp),
+ *  - answers a `GET_BUZZ_BALANCE` request by dispatching a `BUZZ_BALANCE_RESULT`
+ *    from `window.location.origin` (so the SDK transport accepts it).
+ */
+export function makeMockBuzzOnOutbound(opts: MockBuzzOutboundOptions) {
+  return (msg: { type: string; payload?: unknown }) => {
+    if (msg.type === 'SUBMIT_WORKFLOW') {
+      const at = (msg.payload as { body?: { accountType?: unknown } } | undefined)?.body
+        ?.accountType;
+      lastSubmittedAccountType = isBuzzAccountType(at) ? at : null;
+    }
+    if (msg.type === 'GET_BUZZ_BALANCE') {
+      const requestId = (msg.payload as { requestId?: string } | undefined)?.requestId;
+      const payload = opts.balanceError
+        ? { requestId, error: 'mock host: balance unavailable' }
+        : { requestId, balance: mockBuzzBalance(opts.getBalance()) };
+      // Mimic the host's async reply, from window.location.origin so the SDK
+      // transport's origin filter accepts it.
+      setTimeout(() => {
+        window.dispatchEvent(
+          mockParentMessage({ type: 'BUZZ_BALANCE_RESULT', payload }, window.location.origin),
+        );
+      }, 0);
+    }
+  };
+}
+
+/**
+ * Install the inbound `spentAccountType` stamper on `window`. Returns a teardown.
+ * MUST be registered before the SDK transport's message listener (see the DOM
+ * ordering note at the top of this file).
+ */
+export function installSpentAccountStamper(): () => void {
+  const stamp = (event: MessageEvent) => {
+    const data = event.data as
+      | {
+          type?: string;
+          payload?: { snapshot?: { status?: string; error?: string; spentAccountType?: string } };
+        }
+      | null
+      | undefined;
+    if (!data || (data.type !== 'WORKFLOW_STATUS' && data.type !== 'WORKFLOW_SUBMITTED')) return;
+    const snap = data.payload?.snapshot;
+    if (!snap) return;
+    if (snap.status === 'succeeded' && snap.spentAccountType == null) {
+      // Auto (no pick) → report `blue` (free/earned) as the primary funder, which
+      // mirrors the real host's "spentAccountType can be blue" semantics; a
+      // picked pool → report that pool.
+      snap.spentAccountType = lastSubmittedAccountType ?? 'blue';
+    }
+    if (
+      rejectAccountMode &&
+      snap.status === 'failed' &&
+      lastSubmittedAccountType != null &&
+      snap.error != null
+    ) {
+      snap.error = DISALLOWED_ACCOUNT_ERROR;
+    }
+  };
+  window.addEventListener('message', stamp);
+  return () => window.removeEventListener('message', stamp);
+}
+
+/** Reset the module state the tests rely on. Call between tests. */
+export function resetMockBuzz() {
+  lastSubmittedAccountType = null;
+  rejectAccountMode = false;
+}
+
+/** Extra knobs for {@link installMockMoneyHost} on top of the SDK mock options. */
+export interface MockMoneyHostOptions extends MockHostOptions {
+  /** Answer the balance read with an error (exercise the balance-error UI). */
+  balanceError?: boolean;
+  /** Rewrite a failed submit that named a pool into the domain-clamp rejection. */
+  rejectAccount?: boolean;
+}
+
+/**
+ * Install a full mock host for the App's money path, with the per-account-buzz
+ * extras the SDK mock host doesn't natively answer wired in (the balance read +
+ * the `spentAccountType` stamp). Returns an `uninstall()`.
+ *
+ * Registers the inbound stamper FIRST, then re-creates the transport (so the
+ * stamper mutates snapshots before the transport reads them — see the DOM
+ * ordering note at the top of this file), then installs the SDK mock host with
+ * an `onOutbound` that answers `GET_BUZZ_BALANCE`.
+ *
+ * Test-only — mirrors the `createMockHost(...).install()` shape the suites use.
+ */
+export function installMockMoneyHost(options: MockMoneyHostOptions = {}): () => void {
+  const { balanceError, rejectAccount, onOutbound, ...hostOptions } = options;
+  resetMockBuzz();
+  rejectAccountMode = !!rejectAccount;
+
+  const removeStamper = installSpentAccountStamper();
+  // Re-create the transport AFTER the stamper so the stamper's listener is
+  // earlier in registration order than the transport's.
+  resetHarnessTransport();
+
+  // The mock host's wallet handle isn't known until after createMockHost, so
+  // read it lazily through a mutable reference.
+  let getBalance: () => number | undefined = () => hostOptions.buzz?.balance;
+  const onBuzz = makeMockBuzzOnOutbound({ getBalance: () => getBalance(), balanceError });
+
+  const host = createMockHost({
+    ...hostOptions,
+    onOutbound: (m) => {
+      onOutbound?.(m);
+      onBuzz(m);
+    },
+  });
+  getBalance = host.buzz.getBalance;
+  const uninstallHost = host.install();
+
+  return () => {
+    uninstallHost();
+    removeStamper();
+    resetMockBuzz();
+  };
+}

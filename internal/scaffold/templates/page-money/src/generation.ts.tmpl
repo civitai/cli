@@ -3,13 +3,61 @@
 // load-bearing decisions (cost format, insufficient-Buzz sniff, terminal-status
 // reduction, scope check) live in one tested place.
 
-import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+import type { BlockWorkflowSnapshot, BuzzAccountType } from '@civitai/app-sdk/blocks';
 
 import type { CheckpointOption, LoraOption } from './models.js';
 import { clampLoraWeight, roundLoraWeight } from './models.js';
 
 /** Server cap mirror — prompts over this are rejected by the workflow schema. */
 export const PROMPT_MAX = 1500;
+
+// ---------------------------------------------------------------------------
+// Per-account Buzz — which pool funds a generation.
+//
+// A block can prefer + read exactly three pools (the SDK's `BuzzAccountType`):
+//   blue   = free / earned Buzz
+//   yellow = purchased Buzz
+//   green  = creator-earned / tips
+// The platform-internal pools (red/purple) are never exposed to a block.
+// ---------------------------------------------------------------------------
+
+/** The Buzz pools a block can prefer + read ({ blue, green, yellow }). */
+export const BUZZ_ACCOUNT_TYPES: readonly BuzzAccountType[] = ['blue', 'green', 'yellow'];
+
+/**
+ * What the account picker offers: `'auto'` (the default — let the host choose the
+ * funding order, today's behavior) plus one entry per readable pool.
+ */
+export type AccountChoice = 'auto' | BuzzAccountType;
+
+/** Picker order: Auto first, then the pools. */
+export const ACCOUNT_CHOICES: readonly AccountChoice[] = ['auto', 'blue', 'green', 'yellow'];
+
+/** Human label for an account choice (Auto / Blue / Green / Yellow). */
+export function accountLabel(choice: AccountChoice): string {
+  switch (choice) {
+    case 'auto':
+      return 'Auto';
+    case 'blue':
+      return 'Blue';
+    case 'green':
+      return 'Green';
+    case 'yellow':
+      return 'Yellow';
+  }
+}
+
+/**
+ * Label the pool that PRIMARILY funded a generation
+ * (`BlockWorkflowSnapshot.spentAccountType`). This is the largest-debit account,
+ * NOT necessarily "the paid account": a gen covered mostly by free/earned Buzz
+ * reports `blue`. `undefined` (a host predating the field, or no spend) -> null,
+ * so the caller can skip the "funded from…" note.
+ */
+export function spentAccountLabel(spent: BuzzAccountType | undefined): string | null {
+  if (!spent) return null;
+  return accountLabel(spent);
+}
 
 /**
  * Manifest budget (page.buzzBudgetPerGen). Keep in sync with block.manifest.json
@@ -49,9 +97,11 @@ export function hasBudgetedScope(scopes: readonly string[] | undefined): boolean
  * Sniff a workflow failure / error string for insufficient-Buzz language so the
  * UI can swap to a Top-Up CTA. There is NO structured error.code on the
  * BlockWorkflowSnapshot today (only a free-text `error`), so this is a substring
- * heuristic. A page CANNOT request `buzz:read:self`, so we cannot read the
- * balance proactively; detecting it from the `failed` snapshot is the only
- * signal available on a page.
+ * heuristic.
+ *
+ * NOTE: call {@link isDisallowedAccountError} FIRST — the disallowed-account
+ * message also contains the word "buzz", which this heuristic would otherwise
+ * misclassify as insufficient.
  */
 export function isInsufficientBuzz(message: string | null | undefined): boolean {
   if (!message) return false;
@@ -63,6 +113,24 @@ export function isInsufficientBuzz(message: string | null | undefined): boolean 
     m.includes('balance') ||
     m.includes('buzz')
   );
+}
+
+/**
+ * Sniff for the server's domain-clamp rejection of a preferred `accountType`.
+ * When a page picks a Buzz pool that isn't spendable on this app's content-rating
+ * domain, `blocks.submitWorkflow` rejects with a tRPC BAD_REQUEST whose message
+ * is (civitai/civitai `blocks.router`):
+ *
+ *   buzz account '<type>' is not spendable for this app's content rating
+ *
+ * Detecting it lets the UI show a friendly "switched back to Auto" note instead
+ * of a raw error. MUST be checked before {@link isInsufficientBuzz} (that
+ * message contains "buzz").
+ */
+export function isDisallowedAccountError(message: string | null | undefined): boolean {
+  if (!message) return false;
+  const m = message.toLowerCase();
+  return m.includes('not spendable') || (m.includes('account') && m.includes('content rating'));
 }
 
 /** Format a Buzz cost for display, with thousands separators. `null` -> '—'. */
@@ -93,11 +161,19 @@ export function clampPrompt(raw: string): string {
  * compatible? entitled?) AND re-prices this body at estimate AND submit — a
  * client can't force a non-generatable / incompatible / mis-priced resource
  * through here.
+ *
+ * `accountType` is the OPTIONAL preferred Buzz pool. `'auto'` (or omitted) =
+ * today's behavior BYTE-FOR-BYTE: the body carries NO `accountType`, so the host
+ * drains its default domain-allowed order. A real pool ('blue'|'green'|'yellow')
+ * is a *preference* — the server clamps it to what the viewer holds + the
+ * domain-allowed set (preferred-first, then falls back), and REJECTS a pool the
+ * domain forbids (see {@link isDisallowedAccountError}).
  */
 export function buildWorkflowBody(
   prompt: string,
   checkpoint: CheckpointOption,
   loras: readonly LoraOption[] = [],
+  accountType?: AccountChoice,
 ) {
   const body: {
     kind: 'textToImage';
@@ -105,6 +181,7 @@ export function buildWorkflowBody(
     modelVersionId: number;
     params: { prompt: string };
     additionalResources?: Array<{ modelVersionId: number; strength: number }>;
+    accountType?: BuzzAccountType;
   } = {
     kind: 'textToImage',
     modelId: checkpoint.modelId,
@@ -116,6 +193,9 @@ export function buildWorkflowBody(
       modelVersionId: l.versionId,
       strength: roundLoraWeight(clampLoraWeight(l.weight)),
     }));
+  }
+  if (accountType && accountType !== 'auto') {
+    body.accountType = accountType;
   }
   return body;
 }
@@ -135,11 +215,23 @@ export type GenPhase =
   | 'polling'
   | 'succeeded'
   | 'failed'
-  | 'insufficient';
+  | 'insufficient'
+  | 'account-rejected';
 
 /** Is a generation in flight (Generate should be disabled / show progress)? */
 export function isBusyPhase(phase: GenPhase): boolean {
   return phase === 'estimating' || phase === 'submitting' || phase === 'polling';
+}
+
+/**
+ * Classify a submit/estimate ERROR string (the thrown-rejection path) into a
+ * terminal phase. Order matters: disallowed-account BEFORE insufficient (the
+ * disallowed message contains "buzz").
+ */
+export function phaseForError(message: string | null | undefined): GenPhase {
+  if (isDisallowedAccountError(message)) return 'account-rejected';
+  if (isInsufficientBuzz(message)) return 'insufficient';
+  return 'failed';
 }
 
 /**
@@ -153,7 +245,7 @@ export function phaseForSnapshot(snapshot: BlockWorkflowSnapshot): GenPhase {
     case 'failed':
     case 'expired':
     case 'canceled':
-      return isInsufficientBuzz(snapshot.error) ? 'insufficient' : 'failed';
+      return phaseForError(snapshot.error);
     case 'pending':
     case 'processing':
       return 'polling';

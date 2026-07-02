@@ -117,11 +117,10 @@ func TestRenderPageMoney(t *testing.T) {
 	// next-step hint, all while staying valid JSON after rendering.
 	pkg := readFile(t, filepath.Join(dest, "package.json"))
 	mustContain(t, pkg, `"@civitai/blocks-react"`)
-	// The SDK live host that SERVES the resource picker locally ships in 0.13.0;
-	// 0.14.1 adds the picker + storage fixes new scaffolds should get.
-	mustContain(t, pkg, `"@civitai/blocks-react": "^0.14.1"`)
-	// @civitai/app-sdk stays on 0.13.0 (only blocks-react was bumped).
-	mustContain(t, pkg, `"@civitai/app-sdk": "^0.13.0"`)
+	// Per-account Buzz (useBuzzBalance / body.accountType / snapshot.spentAccountType)
+	// needs @civitai/blocks-react@0.16.0 + @civitai/app-sdk@0.14.0.
+	mustContain(t, pkg, `"@civitai/blocks-react": "^0.16.0"`)
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.14.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)
 	mustContain(t, pkg, `"build"`)
@@ -183,7 +182,17 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "pm-change-model")
 	mustContain(t, app, "openCheckpointPicker(")
 	mustContain(t, app, "checkpointFromPick")
-	mustContain(t, app, "buildWorkflowBody(prompt, checkpoint, loras)")
+	mustContain(t, app, "buildWorkflowBody(prompt, checkpoint, loras, account)")
+
+	// Per-account Buzz: the viewer's 3-pool balance is read host-side via
+	// useBuzzBalance, and an account picker threads the chosen pool into the body
+	// (Auto = omit accountType = unchanged behavior). spentAccountType is surfaced
+	// after a successful generation.
+	mustContain(t, app, "useBuzzBalance")
+	mustContain(t, app, "AccountPicker")
+	mustContain(t, app, "spentAccountType")
+	mustContain(t, app, "pm-account-") // the picker radios' testid prefix
+	mustContain(t, app, "pm-balance")
 
 	// LoRA selector (the main feature): the user adds up to MAX_LORAS LoRAs on top
 	// of the checkpoint via the HOST resource picker (type=LORA), each with a

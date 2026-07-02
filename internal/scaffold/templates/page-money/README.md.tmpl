@@ -26,6 +26,9 @@ owns the build: it runs `npm ci` then the `buildCommand` from
 The money path uses the SDK hooks — never raw `window.parent.postMessage`:
 
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).
+- `useBuzzBalance()` — the viewer's per-pool balance (`{ blue, green, yellow }`),
+  read host-side via the `GET_BUZZ_BALANCE` bridge — **no `buzz:read:self` scope
+  needed** (the host resolves the viewer from the block token).
 - `useCheckpointPicker()` / `useResourcePicker()` — open the HOST's native
   resource picker for the checkpoint + LoRAs (the app never browses a catalog).
 - `useRequestConsent()` — lazy, on first Generate: `ai:write:budgeted` is
@@ -37,9 +40,10 @@ Page constraints: a page is `entity=none` — it carries no HOST model context (
 model slot would deliver `modelId`/`modelVersionId` via `BLOCK_INIT`; a page does
 not). So this app ships its OWN initial model choice — a curated default
 checkpoint (`DEFAULT_CHECKPOINT` in `src/models.ts`, so Generate works at first
-paint) — and lets the user CHANGE it via the host picker. A page hard-forbids
-`buzz:read:self`, so insufficient Buzz is detected from a failed snapshot, not
-read proactively. The budget comes from `page.buzzBudgetPerGen` in the manifest.
+paint) — and lets the user CHANGE it via the host picker. The viewer's Buzz
+balance is read in-block via `useBuzzBalance()` (host-mediated, no scope) — an
+insufficient-Buzz `failed` snapshot is still handled as a backstop. The budget
+comes from `page.buzzBudgetPerGen` in the manifest.
 
 ### Model picker (host-served, server-revalidated)
 
@@ -76,6 +80,39 @@ LoRA picks + weights are **discovery only**, exactly like the checkpoint: the
 server is LoRA-only for additional resources and **re-validates** base-model
 compatibility + per-resource entitlement (early-access / Private) AND
 **re-prices** the whole body **before any Buzz spend**.
+
+### Buzz balance + account picker (per-account spend)
+
+Above the prompt, the app shows the viewer's **per-pool Buzz balance** —
+**blue** (free / earned), **green** (creator-earned / tips), **yellow**
+(purchased) — plus a total, read via `useBuzzBalance()`. It's purely
+informational and additive: if the balance is loading, errored, or unavailable it
+degrades quietly (a small line) and **never blocks generation**.
+
+Below the LoRA selector, a **"Spend from"** picker lets the viewer choose which
+pool funds the generation:
+
+- **Auto** (the default) — omits `accountType` from the workflow body entirely.
+  This is the pre-existing behavior byte-for-byte: the host drains its default
+  domain-allowed order.
+- **Blue / Green / Yellow** — threads that pool as `body.accountType`, a
+  *preference*. The server clamps it to what you actually hold + the app's
+  content-rating domain (preferred-first, then falls back). A pool with a 0
+  balance is annotated but stays selectable (the server falls back).
+
+A pick the app's content-rating domain forbids is rejected server-side
+(`BAD_REQUEST`, `"buzz account '<type>' is not spendable for this app's content
+rating"`); the app catches that, shows a friendly "switched back to Auto" note,
+and resets the picker to Auto so the retry just works.
+
+After a successful generation, the success note reports **which pool primarily
+funded it** — read from `snapshot.spentAccountType` (the account with the LARGEST
+debit). Note this can be **blue** even when you paid: a gen covered mostly by
+free/earned Buzz reports `blue`. It's informational only.
+
+`accountType` / `spentAccountType` / `useBuzzBalance` require
+`@civitai/app-sdk@^0.14.0` + `@civitai/blocks-react@^0.16.0` (already pinned in
+`package.json`).
 
 ## Develop
 
@@ -222,8 +259,13 @@ The two reads use **different credentials** — by design, and security-critical
 > (`estimate`/`submit`/`poll`/`cancel`) AND the resource pickers — it serves a
 > protocol-identical in-harness picker overlay, so `useCheckpointPicker` /
 > `useResourcePicker` work in `dev:live`. It does **not** support
-> `SET_USER_CHECKPOINT` persistence, the App-Storage KV protocol, or in-band Buzz
-> purchase — those reply "not supported in live v1" (use mock mode for them).
+> `SET_USER_CHECKPOINT` persistence, the App-Storage KV protocol, in-band Buzz
+> purchase, or the `GET_BUZZ_BALANCE` read (`useBuzzBalance`) — those reply "not
+> supported in live v1" (use mock mode for them). So in `dev:live` the in-app
+> 3-pool balance panel shows **"Buzz balance unavailable"** (the host nav's total,
+> read via your personal key through the proxy, still works). The panel populates
+> in **`dev:harness`** (synthetic, wired to the `balance` scenario) and on the
+> **real platform** (the civitai host answers `GET_BUZZ_BALANCE` natively).
 
 ### Scenarios (exercise the money / error / storage UX for free)
 
@@ -240,7 +282,7 @@ insufficient-Buzz UX without spending anything. Drive it two ways:
   | `?viewer=anon` | anonymous viewer (sign-in CTA) |
   | `?consent=granted` | start with the budgeted scope granted |
   | `?theme=light` | light theme (default dark) |
-  | `?balance=0` | simulate a Buzz balance — a gen over it returns insufficient-Buzz |
+  | `?balance=0` | simulate a Buzz balance — a gen over it returns insufficient-Buzz, AND the 3-pool balance panel shows the split (mostly yellow + a little blue) |
   | `?fail=insufficient` | force every submit down the insufficient path |
   | `?latency=2000` | 2s synthetic gen latency (`?latency=500-2000` for a range) |
   | `?costPerGen=12` | cost reported per generation |
@@ -273,13 +315,22 @@ npm run build         # what the platform produces (tsc typecheck + vite build)
 - **`src/nav.test.ts`** — the dev:live host nav's pure logic: the balance-response
   parser (`parseBuzzBalance`: tRPC envelope / bare / malformed / empty → safe),
   the viewer-name parser, and `navDisplay` (name present, balance present/absent).
-- **`src/App.test.tsx`** — component tests: render `<App/>` against
-  `createMockHost()` and assert the UI (anon → sign-in, signed-in → prompt + the
-  Change model / Add LoRA picker buttons).
+- **`src/App.test.tsx`** — component tests: render `<App/>` against the mock host
+  and assert the UI (anon → sign-in, signed-in → prompt + the Change model / Add
+  LoRA picker buttons, the 3-pool balance panel, the Auto-default account picker,
+  and the graceful balance-error state).
 - **`src/e2e.test.tsx`** — the money-path proof: drives the FULL
   estimate → consent → submit → poll → succeeded flow through the REAL SDK
-  transport against the mock host (no hook mocking). This is what tells you the
-  spend wiring still works after you edit the app.
+  transport against the mock host (no hook mocking) — plus the per-account paths:
+  Auto omits `accountType`, a pick threads it, `spentAccountType` renders after
+  success, and a disallowed pool resets to Auto with a friendly note. This is what
+  tells you the spend wiring still works after you edit the app.
+- **`src/mock-buzz.ts`** — dev/test-only glue (NOT shipped in prod). The published
+  SDK mock host doesn't answer the newer per-account-buzz messages
+  (`GET_BUZZ_BALANCE`, `spentAccountType`), so this layers them on synthetically:
+  `installMockMoneyHost` (the `createMockHost` wrapper the tests + the App-level
+  suites use) answers the balance read and stamps `spentAccountType`. The dev
+  harness uses the same helpers so `dev:harness` exercises the full UI.
 - **`src/App.pollretry.test.tsx`** — poll-loop robustness: a transient poll
   error (a transport blip, e.g. a not-yet-rolled-out pod) is retried, not turned
   into a terminal failure, while a genuine `failed` status stays terminal. Keep
