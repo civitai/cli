@@ -638,6 +638,100 @@ func (c *Client) WithdrawRequest(ctx context.Context, publishRequestID string) e
 // errors.Is(err, ErrSlugRegisteredToOtherAccount) rather than matching strings.
 var ErrSlugRegisteredToOtherAccount = errors.New("slug is registered to a different account")
 
+// CloneInfoPath is the tRPC query that returns the caller's per-user Forgejo
+// clone info for one of THEIR apps (owner-only, App-Blocks-flag-gated). Backs
+// `civitai app pull`. The token is embedded in CloneURL (HTTP-Basic) — caller
+// must treat it as a secret (see the leakage caveat in `civitai app pull`).
+const CloneInfoPath = "/api/trpc/blocks.getMyForgejoCloneInfo"
+
+// ForgejoCloneInfo mirrors the getMyForgejoCloneInfo result. When the app's
+// first version has not yet been ZIP-approved the server returns
+// NotYetAvailable=true (no credential is minted) with a Message explaining why.
+type ForgejoCloneInfo struct {
+	NotYetAvailable bool   `json:"notYetAvailable"`
+	Slug            string `json:"slug"`
+	Message         string `json:"message"`
+	ForgejoUsername string `json:"forgejoUsername"`
+	Token           string `json:"token"`
+	HTTPURL         string `json:"httpUrl"`
+	CloneURL        string `json:"cloneUrl"`
+}
+
+// GetForgejoCloneInfo calls the owner-only getMyForgejoCloneInfo tRPC query for
+// the given app (a slug — the repo name — or an appBlockId). It lazily
+// provisions the caller's scoped Forgejo identity server-side and returns the
+// tokened clone URL the `pull` command hands to git.
+func (c *Client) GetForgejoCloneInfo(ctx context.Context, app string) (*ForgejoCloneInfo, error) {
+	tok, err := c.Tokens.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if tok == "" {
+		return nil, fmt.Errorf("no token configured — run `civitai login` first")
+	}
+
+	// tRPC query input: ?input={"json":{"slug":"<app>"}}. The server accepts the
+	// human-friendly slug OR an appBlockId; the slug is what a developer knows, so
+	// we always send `slug` (an appBlockId is also a valid blockId lookup miss →
+	// the server falls through to NOT_FOUND, which the caller reports cleanly).
+	inputJSON, err := json.Marshal(map[string]any{"json": map[string]string{"slug": app}})
+	if err != nil {
+		return nil, err
+	}
+	q := url.Values{}
+	q.Set("input", string(inputJSON))
+	reqURL := c.BaseURL + CloneInfoPath + "?" + q.Encode()
+
+	build := func() (*http.Request, error) {
+		return http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	}
+	status, raw, err := c.authedDo(ctx, build)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, cloneInfoError(status, raw)
+	}
+	var env struct {
+		Result struct {
+			Data struct {
+				JSON *ForgejoCloneInfo `json:"json"`
+			} `json:"data"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
+		return nil, fmt.Errorf("unexpected getMyForgejoCloneInfo response: %s", string(raw))
+	}
+	return env.Result.Data.JSON, nil
+}
+
+// cloneInfoError maps a non-200 from the clone-info tRPC query to an actionable
+// message. tRPC error bodies are {error:{json:{message,code,...}}}.
+func cloneInfoError(status int, raw []byte) error {
+	var env struct {
+		Error struct {
+			JSON struct {
+				Message string `json:"message"`
+				Code    int    `json:"code"`
+			} `json:"json"`
+		} `json:"error"`
+	}
+	msg := strings.TrimSpace(string(raw))
+	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
+		msg = env.Error.JSON.Message
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("not authenticated — run `civitai login` (or set CIVITAI_TOKEN): %s", msg)
+	case http.StatusForbidden:
+		return fmt.Errorf("not permitted (are you the app owner, and is App Blocks enabled for your account?): %s", msg)
+	case http.StatusNotFound:
+		return fmt.Errorf("no such app for your account — check the slug with `civitai app status`: %s", msg)
+	default:
+		return fmt.Errorf("getMyForgejoCloneInfo failed (HTTP %d): %s", status, msg)
+	}
+}
+
 // DevTokenMinter mints a short-lived dev block token for `npm run dev:live`.
 type DevTokenMinter interface {
 	// MintDevToken mints a dev block token for the given app slug and returns

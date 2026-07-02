@@ -1,0 +1,481 @@
+package cmd
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// cloneInfoServer stands up an httptest server emulating the
+// GET /api/trpc/blocks.getMyForgejoCloneInfo query, returning the canned tRPC
+// envelope + recording the decoded `input` so URL/input encoding is asserted.
+func cloneInfoServer(t *testing.T, jsonResult any, status int, gotInput *string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if gotInput != nil {
+			*gotInput = r.URL.Query().Get("input")
+		}
+		if status != 0 && status != http.StatusOK {
+			w.WriteHeader(status)
+			// tRPC error envelope.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"json": map[string]any{"message": "boom", "code": status}},
+			})
+			return
+		}
+		// tRPC success envelope: { result: { data: { json: <result> } } }.
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": map[string]any{"data": map[string]any{"json": jsonResult}},
+		})
+	}))
+}
+
+// stubGit replaces gitRunner for the duration of the test, recording calls.
+func stubGit(t *testing.T, fn func(dir string, args ...string) error) {
+	t.Helper()
+	orig := gitRunner
+	gitRunner = fn
+	t.Cleanup(func() { gitRunner = orig })
+}
+
+const okCloneURL = "https://dev-7:tok-sha1@forgejo.civitai.com/civitai-apps/my-block.git"
+const okHTTPURL = "https://forgejo.civitai.com/civitai-apps/my-block.git"
+
+func okCloneInfo() map[string]any {
+	return map[string]any{
+		"notYetAvailable": false,
+		"slug":            "my-block",
+		"forgejoUsername": "dev-7",
+		"token":           "tok-sha1",
+		"httpUrl":         okHTTPURL,
+		"cloneUrl":        okCloneURL,
+	}
+}
+
+func TestAppPullClonesFreshDir(t *testing.T) {
+	var gotInput string
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, &gotInput)
+	defer srv.Close()
+
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, errOut, err := run(t, "app", "pull", "--app", "my-block")
+	if err != nil {
+		t.Fatalf("app pull: %v\n%s", err, errOut)
+	}
+
+	// The tRPC input carries the slug under {"json":{"slug":...}}.
+	if !strings.Contains(gotInput, `"slug":"my-block"`) {
+		t.Errorf("tRPC input should carry the slug: %q", gotInput)
+	}
+	// A fresh dir → `git clone -- <cloneUrl> <slug>`. The literal `--` separator
+	// is mandatory: it stops git from parsing a dash-leading URL/dir as a flag
+	// (argument-injection hardening).
+	if len(gitCalls) != 1 {
+		t.Fatalf("expected exactly one git call, got %d: %v", len(gitCalls), gitCalls)
+	}
+	wantClone := []string{"clone", "--", okCloneURL, "my-block"}
+	if len(gitCalls[0]) != len(wantClone) {
+		t.Fatalf("clone args = %v, want %v", gitCalls[0], wantClone)
+	}
+	for i, a := range wantClone {
+		if gitCalls[0][i] != a {
+			t.Fatalf("clone args = %v, want %v", gitCalls[0], wantClone)
+		}
+	}
+	if !strings.Contains(out, "Cloning my-block") {
+		t.Errorf("output should announce the clone: %s", out)
+	}
+	// The token-leakage caveat MUST be surfaced (token now on disk).
+	if !strings.Contains(errOut, "embeds your access token") {
+		t.Errorf("pull must warn about token-in-URL leakage: %s", errOut)
+	}
+	// The CLONE path persists the URL to .git/config, so the warning MUST claim
+	// config-persistence and offer the set-url remedy.
+	if !strings.Contains(errOut, ".git/config") {
+		t.Errorf("clone warning must mention .git/config persistence: %s", errOut)
+	}
+	if !strings.Contains(errOut, "remote set-url origin "+okHTTPURL) {
+		t.Errorf("clone warning must offer the set-url remedy: %s", errOut)
+	}
+}
+
+func TestAppPullSyncsExistingCheckout(t *testing.T) {
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	// Make ./my-block already a git checkout (a .git dir).
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, errOut, err := run(t, "app", "pull", "--app", "my-block")
+	if err != nil {
+		t.Fatalf("app pull (sync): %v", err)
+	}
+	// An existing checkout → fetch+merge, NOT `git pull <url>`. The fetch carries
+	// a literal `--` immediately before the URL (argument-injection hardening: a
+	// dash-leading URL must be a positional, never a flag), then a separate
+	// `merge --ff-only FETCH_HEAD` preserves the fast-forward-only semantics.
+	if len(gitCalls) != 2 {
+		t.Fatalf("expected two git calls (fetch + merge), got %v", gitCalls)
+	}
+	wantFetch := []string{"-C", "my-block", "fetch", "--", okCloneURL, "HEAD"}
+	if len(gitCalls[0]) != len(wantFetch) {
+		t.Fatalf("fetch args = %v, want %v", gitCalls[0], wantFetch)
+	}
+	for i, a := range wantFetch {
+		if gitCalls[0][i] != a {
+			t.Fatalf("fetch args = %v, want %v", gitCalls[0], wantFetch)
+		}
+	}
+	// The `--` must appear immediately before the URL.
+	dashIdx, urlIdx := -1, -1
+	for i, a := range gitCalls[0] {
+		if a == "--" {
+			dashIdx = i
+		}
+		if a == okCloneURL {
+			urlIdx = i
+		}
+	}
+	if dashIdx == -1 || urlIdx != dashIdx+1 {
+		t.Fatalf("fetch must place `--` immediately before the URL (sep=%d url=%d): %v", dashIdx, urlIdx, gitCalls[0])
+	}
+	wantMerge := []string{"-C", "my-block", "merge", "--ff-only", "FETCH_HEAD"}
+	if len(gitCalls[1]) != len(wantMerge) {
+		t.Fatalf("merge args = %v, want %v", gitCalls[1], wantMerge)
+	}
+	for i, a := range wantMerge {
+		if gitCalls[1][i] != a {
+			t.Fatalf("merge args = %v, want %v", gitCalls[1], wantMerge)
+		}
+	}
+	if !strings.Contains(out, "Syncing existing checkout") {
+		t.Errorf("output should announce the sync: %s", out)
+	}
+	// The SYNC path passes the URL explicitly; git does NOT persist it to
+	// .git/config, so the warning must NOT claim config-persistence (that would
+	// send the user chasing a non-existent on-disk token + a useless set-url).
+	if strings.Contains(errOut, "stored it in .git/config") {
+		t.Errorf("sync warning must NOT claim the token was stored in .git/config: %s", errOut)
+	}
+	if strings.Contains(errOut, "remote set-url") {
+		t.Errorf("sync warning must NOT offer the clone-only set-url remedy: %s", errOut)
+	}
+	// And it should affirmatively reassure that nothing was persisted to config.
+	if !strings.Contains(errOut, "NOT persisted to .git/config") {
+		t.Errorf("sync warning should clarify the token was NOT persisted to config: %s", errOut)
+	}
+	// It should still surface the transient process-args exposure accurately.
+	if !strings.Contains(errOut, "access token") {
+		t.Errorf("sync should still warn about the transient token exposure: %s", errOut)
+	}
+}
+
+func TestAppPullExplicitDir(t *testing.T) {
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	if _, _, err := run(t, "app", "pull", "custom-dir", "--app", "my-block"); err != nil {
+		t.Fatalf("app pull custom-dir: %v", err)
+	}
+	// `clone -- <url> <dir>` → the explicit dir is the 4th argv element.
+	if len(gitCalls[0]) != 4 || gitCalls[0][3] != "custom-dir" {
+		t.Errorf("explicit dir should be the clone target after `--`: %v", gitCalls[0])
+	}
+}
+
+// TestAppPullCloneSeparatesPositionals pins the argument-injection hardening: a
+// dash-leading target dir (e.g. `-bad`) MUST be passed as a positional AFTER the
+// literal `--` separator, so git treats it as the clone destination rather than
+// parsing it as a flag (e.g. `--bare`, `-c core.hooksPath=…`, `--template=…`).
+func TestAppPullCloneSeparatesPositionals(t *testing.T) {
+	srv := cloneInfoServer(t, okCloneInfo(), http.StatusOK, nil)
+	defer srv.Close()
+
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	// A dash-leading target dir — the canonical argument-injection probe. The CLI
+	// `--` lets cobra accept `-bad` as a positional arg (rather than a CLI flag);
+	// the code under test must in turn pass it to git after git's own `--`.
+	if _, _, err := run(t, "app", "pull", "--app", "my-block", "--", "-bad"); err != nil {
+		t.Fatalf("app pull -- -bad: %v", err)
+	}
+	if len(gitCalls) != 1 {
+		t.Fatalf("expected one git call, got %v", gitCalls)
+	}
+	argv := gitCalls[0]
+	// `--` must appear immediately before the URL+dir positionals.
+	want := []string{"clone", "--", okCloneURL, "-bad"}
+	if len(argv) != len(want) {
+		t.Fatalf("clone argv = %v, want %v", argv, want)
+	}
+	for i, a := range want {
+		if argv[i] != a {
+			t.Fatalf("clone argv = %v, want %v", argv, want)
+		}
+	}
+	// Belt-and-suspenders: the dash-leading dir must come AFTER the `--`, never
+	// before it (where git would interpret it as a flag).
+	dashSep, dirIdx := -1, -1
+	for i, a := range argv {
+		if a == "--" {
+			dashSep = i
+		}
+		if a == "-bad" {
+			dirIdx = i
+		}
+	}
+	if dashSep == -1 {
+		t.Fatalf("clone argv must contain a `--` separator: %v", argv)
+	}
+	if dirIdx <= dashSep {
+		t.Fatalf("dash-leading dir must come after `--` (got sep=%d dir=%d): %v", dashSep, dirIdx, argv)
+	}
+}
+
+// TestAppPullSyncSeparatesPositionals pins the SYNC-path argument-injection
+// hardening: a dash-leading cloneURL (the structurally-identical hole the clone
+// fix originally missed) MUST be passed to `git fetch` as a positional AFTER the
+// literal `--`, never as a flag (e.g. `--upload-pack=<cmd>` would execute an
+// attacker-chosen command).
+func TestAppPullSyncSeparatesPositionals(t *testing.T) {
+	const evilURL = "--upload-pack=/tmp/pwn.sh"
+	info := okCloneInfo()
+	info["cloneUrl"] = evilURL
+	srv := cloneInfoServer(t, info, http.StatusOK, nil)
+	defer srv.Close()
+
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	// Make ./my-block already a git checkout so we take the sync path.
+	if err := os.MkdirAll(filepath.Join(tmp, "my-block", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	if _, _, err := run(t, "app", "pull", "--app", "my-block"); err != nil {
+		t.Fatalf("app pull (sync, evil url): %v", err)
+	}
+	if len(gitCalls) != 2 {
+		t.Fatalf("expected two git calls (fetch + merge), got %v", gitCalls)
+	}
+	argv := gitCalls[0]
+	dashSep, urlIdx := -1, -1
+	for i, a := range argv {
+		if a == "--" {
+			dashSep = i
+		}
+		if a == evilURL {
+			urlIdx = i
+		}
+	}
+	if dashSep == -1 {
+		t.Fatalf("fetch argv must contain a `--` separator: %v", argv)
+	}
+	if urlIdx == -1 {
+		t.Fatalf("fetch argv must contain the dash-leading URL as a positional: %v", argv)
+	}
+	// The dash-leading URL must come AFTER the `--`, never before (where git would
+	// interpret it as a flag and execute `--upload-pack`).
+	if urlIdx != dashSep+1 {
+		t.Fatalf("dash-leading URL must immediately follow `--` (sep=%d url=%d): %v", dashSep, urlIdx, argv)
+	}
+}
+
+// TestAppPullRejectsUnsafeSlugDir pins F3: a server-controlled `slug` that, when
+// used as the default target dir, would escape the current directory (path
+// separator, `..`, or absolute path) MUST be rejected before any git command
+// runs. An explicit user-supplied [dir] is unaffected.
+func TestAppPullRejectsUnsafeSlugDir(t *testing.T) {
+	for _, slug := range []string{"../evil", "/abs/path", "sub/dir", "..", "."} {
+		t.Run(slug, func(t *testing.T) {
+			info := okCloneInfo()
+			info["slug"] = slug
+			srv := cloneInfoServer(t, info, http.StatusOK, nil)
+			defer srv.Close()
+
+			called := false
+			stubGit(t, func(dir string, args ...string) error { called = true; return nil })
+
+			tmp := t.TempDir()
+			chdir(t, tmp)
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("CIVITAI_TOKEN", "tok-1")
+			t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+			_, _, err := run(t, "app", "pull", "--app", "my-block")
+			if err == nil {
+				t.Fatalf("expected rejection of unsafe slug-derived dir %q", slug)
+			}
+			if !strings.Contains(err.Error(), "unsafe slug") {
+				t.Errorf("error should explain the unsafe slug: %v", err)
+			}
+			if called {
+				t.Errorf("git must NOT run for an unsafe slug-derived dir %q", slug)
+			}
+		})
+	}
+}
+
+// TestAppPullExplicitDirOverridesUnsafeSlug confirms an explicit [dir] is honored
+// even when the server slug would have been unsafe — the validation only guards
+// the slug-DERIVED default, not the user's own choice.
+func TestAppPullExplicitDirOverridesUnsafeSlug(t *testing.T) {
+	info := okCloneInfo()
+	info["slug"] = "../evil"
+	srv := cloneInfoServer(t, info, http.StatusOK, nil)
+	defer srv.Close()
+
+	var gitCalls [][]string
+	stubGit(t, func(dir string, args ...string) error {
+		gitCalls = append(gitCalls, args)
+		return nil
+	})
+
+	tmp := t.TempDir()
+	chdir(t, tmp)
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	if _, _, err := run(t, "app", "pull", "safe-dir", "--app", "my-block"); err != nil {
+		t.Fatalf("explicit dir should override unsafe slug: %v", err)
+	}
+	if len(gitCalls) != 1 || gitCalls[0][3] != "safe-dir" {
+		t.Errorf("explicit dir should be the clone target: %v", gitCalls)
+	}
+}
+
+func TestAppPullNotYetAvailable(t *testing.T) {
+	srv := cloneInfoServer(t, map[string]any{
+		"notYetAvailable": true,
+		"slug":            "my-block",
+		"message":         "approve your first version first",
+	}, http.StatusOK, nil)
+	defer srv.Close()
+
+	called := false
+	stubGit(t, func(dir string, args ...string) error { called = true; return nil })
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil {
+		t.Fatal("expected error when git access is not yet available")
+	}
+	if !strings.Contains(err.Error(), "approve your first version") {
+		t.Errorf("error should carry the server message: %v", err)
+	}
+	if called {
+		t.Error("git must NOT run when the repo is not yet available")
+	}
+}
+
+func TestAppPullMissingAppErrors(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	_, _, err := run(t, "app", "pull")
+	if err == nil {
+		t.Fatal("expected error when --app is missing")
+	}
+}
+
+func TestAppPullMissingTokenErrors(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "")
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil {
+		t.Fatal("expected error with no token")
+	}
+	if !strings.Contains(err.Error(), "no token") {
+		t.Errorf("missing-token error should explain: %v", err)
+	}
+}
+
+func TestAppPullServerErrorMapped(t *testing.T) {
+	srv := cloneInfoServer(t, nil, http.StatusForbidden, nil)
+	defer srv.Close()
+	stubGit(t, func(dir string, args ...string) error {
+		t.Error("git must not run on a server error")
+		return nil
+	})
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil {
+		t.Fatal("expected error on 403")
+	}
+	if !strings.Contains(err.Error(), "not permitted") {
+		t.Errorf("403 should map to a not-permitted message: %v", err)
+	}
+}
+
+func TestAppHelpListsPull(t *testing.T) {
+	out, _, err := run(t, "app", "--help")
+	if err != nil {
+		t.Fatalf("app --help: %v", err)
+	}
+	if !strings.Contains(out, "pull") {
+		t.Errorf("app help should list the pull subcommand:\n%s", out)
+	}
+}
