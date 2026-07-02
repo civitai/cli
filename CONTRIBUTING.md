@@ -44,7 +44,7 @@ command, and the release process. The short version:
 - `cmd/civitai` — the binary entrypoint.
 - `internal/cmd` — the Cobra command tree (one file per command).
 - `internal/{scaffold,validate,pkgzip,manifest,api,config}` — the building blocks.
-- `schema/` — the vendored App Block manifest JSON Schema.
+- `schema/` — the vendored App manifest JSON Schema.
 
 ## The validate fidelity caveat
 

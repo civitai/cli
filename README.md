@@ -1,27 +1,26 @@
 # civitai CLI
 
-The command-line interface for [Civitai](https://civitai.com) — a single static
-binary for authoring and shipping **App Blocks**.
+> ⚠️ **Apps is in a limited, invite-only beta (pre-GA).** You can install this
+> CLI, `login`, scaffold, validate, and run an app locally right now — but
+> **`civitai app submit` and `dev:live` require an invite**: submission and
+> `dev:live` are limited to **invited beta testers** while the feature is in a
+> limited (pre-GA) beta, until Apps opens to the public. There is no public
+> self-serve "request access" form yet — watch [civitai.com](https://civitai.com) and the
+> [issues on this repo](https://github.com/civitai/cli/issues) for the
+> general-availability announcement.
 
-An **App Block** is a small, sandboxed web app that runs inside Civitai
+The command-line interface for [Civitai](https://civitai.com) — a single static
+binary for authoring and shipping **Apps**.
+
+An **App** is a small, sandboxed web app that runs inside Civitai
 surfaces (it's served in an iframe; the platform owns the build and the
 runtime). The CLI replaces the error-prone "hand-format a ZIP" flow: it
 **scaffolds** a correct project, **validates** the manifest against the platform
 contract, and **packages/submits** it for review.
 
 > New here? The
-> [Build your first App Block](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md)
+> [Build your first App](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md)
 > guide is the full end-to-end walkthrough.
-
-> ⚠️ **App Blocks is in a limited, moderator-gated preview (pre-GA).** You can
-> install this CLI, `login`, scaffold, validate, and run a block locally right
-> now — but **`civitai app submit` requires App Blocks access**. While the
-> feature is dark, submission is restricted to **Civitai moderators / the team**:
-> a non-moderator account can't submit (or its block won't be reviewed/approved,
-> so it won't go live) until App Blocks opens to the public. There is no public
-> self-serve "request access" form yet — watch [civitai.com](https://civitai.com) and the
-> [issues on this repo](https://github.com/civitai/cli/issues) for the
-> general-availability announcement.
 
 ## Install
 
@@ -60,7 +59,7 @@ go install github.com/civitai/cli/cmd/civitai@latest
 # 1. Authenticate once (browser device login; or `civitai login --token <t>`).
 civitai login
 
-# 2. Scaffold a ready-to-build App Block (batteries-included page-money default).
+# 2. Scaffold a ready-to-build App (batteries-included page-money default).
 civitai app create my-app
 cd my-app
 
@@ -85,14 +84,14 @@ civitai app status
 > a dev token with `civitai app dev-token` and run `npm run dev:live` — see
 > [Local dev loop](#local-dev-loop-harness-mock-vs-live).
 
-> **Submit ≠ live.** `civitai app submit` enters your block into **moderator
+> **Submit ≠ live.** `civitai app submit` enters your app into **moderator
 > review** — it is **not** published immediately. The lifecycle is
 > **submit → review → approve → build + deploy → `https://<blockId>.civit.ai/`**:
 > that URL **404s until a moderator approves your submission and the platform
 > builds + deploys it** (a few minutes after approval). Until then, track status
 > on **`/apps/my-submissions`** (a fresh submission sits at `pending`). See
-> [Submit & auth](#submit--auth) for the full flow. (And note App Blocks is a
-> gated preview — see the warning above.)
+> [Submit & auth](#submit--auth) for the full flow. (And note Apps is in an
+> invite-only beta — see the warning above.)
 
 Enable shell completion (optional):
 
@@ -102,13 +101,13 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 
 ## SDK packages
 
-This CLI scaffolds, validates, and submits — but the code your block actually
+This CLI scaffolds, validates, and submits — but the code your app actually
 imports lives in two published npm packages (the `page-money` / `page-vite`
 templates wire them for you):
 
 | Package | What it is |
 | --- | --- |
-| [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react) | The React hooks + iframe transport block authors call — `useBlockContext`, `useBuzzWorkflow`, `useBlockResize`, the `/ui` component pack, and the `/testing` dev hosts. **Start here for the hook reference.** |
+| [`@civitai/blocks-react`](https://www.npmjs.com/package/@civitai/blocks-react) | The React hooks + iframe transport app authors call — `useBlockContext`, `useBuzzWorkflow`, `useBlockResize`, the `/ui` component pack, and the `/testing` dev hosts. **Start here for the hook reference.** |
 | [`@civitai/app-sdk`](https://www.npmjs.com/package/@civitai/app-sdk) | The framework-agnostic contract under the hooks — manifest types, scope strings, the `postMessage` protocol, and the `defineBlock` validator (`@civitai/app-sdk/blocks`). |
 
 ```bash
@@ -118,7 +117,7 @@ pnpm add @civitai/blocks-react @civitai/app-sdk react
 
 The full hook-by-hook reference (with snippets) lives in each package's npm
 README. For the end-to-end walkthrough, see
-[Build your first App Block](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md).
+[Build your first App](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md).
 
 ## Command reference
 
@@ -127,9 +126,9 @@ README. For the end-to-end walkthrough, see
 | `civitai login [--token <t>] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens); `--token` stores a personal API key instead. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
 | `civitai whoami [--json]` | Verify the stored token; print the authenticated user **and a Capabilities section** (`Spend Buzz`, `Read Buzz balance`) decoded from the token's scope, so a money-path dead end (OAuth login can't spend) is visible before `dev:live`. `--json` emits the user + capabilities as a JSON object (scriptable). |
 | `civitai buzz [--json]` | Show your spendable Buzz balance (blue / green / **yellow** — the generation-spend currency). Needs a full-scope personal API key to read; an OAuth login token can't, and gets a clear "switch to a personal key" message. `--json` emits the balances as a JSON object (scriptable). |
-| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App Block, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
+| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
-| `civitai app dev-token <slug> [--env]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the moderator-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
+| `civitai app dev-token <slug> [--env]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the invite-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message`) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
@@ -142,12 +141,12 @@ full details and examples.
 
 ### Templates
 
-- **`static`** — a no-build page block (`index.html` + a tiny `app.js`,
+- **`static`** — a no-build page app (`index.html` + a tiny `app.js`,
   `block.manifest.json` with `page:{}`, no build step).
-- **`page-vite`** — a Vite + React page block with config-as-code build fields
+- **`page-vite`** — a Vite + React page app with config-as-code build fields
   (`buildCommand: "npm run build"` + `outputDir: "dist"`).
 - **`page-money`** — a Vite + React + TypeScript full-page (W10) **money-path**
-  block wired to the published App SDK (`@civitai/blocks-react` +
+  app wired to the published App SDK (`@civitai/blocks-react` +
   `@civitai/app-sdk`): prompt → estimate → lazy consent → submit → poll → real
   Buzz spend, via `useBuzzWorkflow` / `useRequestConsent` / `useBlockResize`
   (never raw `postMessage`). Ships a `dev:harness` mock host, `.env.*` allowed
@@ -156,7 +155,7 @@ full details and examples.
 
 ### Local dev loop (harness: mock vs live)
 
-A scaffolded App Block is a sandboxed iframe — `npm run dev` alone shows a blank
+A scaffolded App is a sandboxed iframe — `npm run dev` alone shows a blank
 screen because there's no host to send `BLOCK_INIT`. The `page-money` /
 `page-vite` templates ship a dev **harness** (the SDK's
 [`@civitai/blocks-react/testing`](https://www.npmjs.com/package/@civitai/blocks-react)
@@ -165,7 +164,7 @@ hosts) with two modes:
 | Command | Mode | What it does |
 |---|---|---|
 | `npm run dev:harness` | **mock** (default) | Mounts the SDK **mock host** — synthetic replies, **no real Buzz, no compute, no network.** Safe to spam; drive money/error/insufficient-Buzz UX via on-screen scenarios or `?` URL params. Start here. |
-| `npm run dev:live` | **live** | Mounts the SDK **live host** (`createLiveHost`) — forwards the App-Block protocol to the **real Civitai backend** with a pasted dev token (Bearer). **Spends REAL Buzz / real compute.** |
+| `npm run dev:live` | **live** | Mounts the SDK **live host** (`createLiveHost`) — forwards the App protocol to the **real Civitai backend** with a pasted dev token (Bearer). **Spends REAL Buzz / real compute.** |
 
 > ⚠️ **`dev:live` works on a pending (un-approved) app.** The dev-token mint
 > (`POST /api/v1/blocks/dev-token`) accepts a **pending** slug — right after a
@@ -177,7 +176,7 @@ hosts) with two modes:
 > credential can spend before a live run.
 
 **Live mode** needs a short-lived dev block token. Mint it with **`civitai app
-dev-token`** (the CLI handles the moderator-gated `POST /api/v1/blocks/dev-token`
+dev-token`** (the CLI handles the invite-gated `POST /api/v1/blocks/dev-token`
 call with your stored credential — no hand-rolled curl) and paste it into
 `.env.development.local` as `VITE_LIVE_BLOCK_TOKEN=`:
 
@@ -261,7 +260,7 @@ prints a URL + a short code, you approve in your browser, and the CLI stores a
 short-lived access token (1h) plus a refresh token (30d) that it rotates
 automatically before requests and once on a `401`. It **requests** the scopes
 `UserRead | AppBlocksSubmit` (== `33554433`, exactly the `civitai-cli` OAuth
-client's `allowedScopes`) — identity plus App-Blocks submit, which gates both
+client's `allowedScopes`) — identity plus Apps submit, which gates both
 `app submit` and the dev-token mint. It deliberately does **not** request
 `AIServicesWrite`: the server's device-flow scope check is all-or-nothing, so
 asking for a scope the client doesn't allow would reject the whole login. A
@@ -288,14 +287,14 @@ Services.
 
 ### After you submit: review → approve → deploy
 
-A successful `submit` does **not** publish your block — it queues it for
+A successful `submit` does **not** publish your app — it queues it for
 moderator review. The lifecycle is:
 
 1. **submit** → your submission lands at `/apps/my-submissions` with status
    `pending`.
 2. **review** → a moderator reviews the manifest + files. They either **approve**
    or **reject** (with a reason you can read inline, then fix and resubmit).
-3. **deploy** → on **approval**, the platform builds and deploys your block
+3. **deploy** → on **approval**, the platform builds and deploys your app
    (injects its build recipe → builds the image → deploys → programs the
    `<blockId>.civit.ai` DNS record). A few minutes after approval it serves live
    at **`https://<blockId>.civit.ai/`**.
@@ -304,7 +303,7 @@ Before approval, **`https://<blockId>.civit.ai/` 404s** — submitting does not
 make the subdomain serve (but `dev:live` works against a pending app — see
 [Local dev loop](#local-dev-loop-harness-mock-vs-live)). For the full end-to-end
 walkthrough (build → submit → review → deploy), see the
-[Build your first App Block](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md)
+[Build your first App](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md)
 guide.
 
 **Need to change the bundle while a request is still `pending`?** Withdraw it
@@ -327,7 +326,7 @@ approved/rejected one cannot.
 without leaving the terminal. It calls the token-authenticated, self-scoped route
 `GET /api/v1/blocks/submissions` with your stored credential — you only ever see
 your own submissions (the same token that submitted can read its status; OAuth
-tokens need the App Blocks submit scope).
+tokens need the Apps submit scope).
 
 With no argument it lists every submission, newest first:
 
@@ -382,9 +381,9 @@ written owner-readable only.
   again. For a personal key, create a new one at
   `https://civitai.com/user/account` and `civitai login --token <key>`.
 - **`forbidden (403)` / `service unavailable (503)`** — your account may lack
-  App Blocks access while the feature is in its gated preview (see the warning at
-  the top of this README). Submission is limited to Civitai moderators / the team
-  until App Blocks reaches general availability.
+  Apps access while the feature is in its invite-only beta (see the warning at
+  the top of this README). Submission is limited to invited beta testers
+  until Apps reaches general availability.
 - **`validation failed`** — read each `- ...` line; fix the manifest, or pass
   `--skip-validate` to package anyway (the server will still re-validate).
 - **`<dir> is not empty — refusing to overwrite`** — `app init` won't clobber an

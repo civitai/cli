@@ -150,7 +150,7 @@ func TestAppWithdrawErrorMapping(t *testing.T) {
 		{http.StatusUnauthorized, map[string]any{"message": "invalid key"}, "not authorized"},
 		{http.StatusForbidden, map[string]any{"message": "no access"}, "not authorized"},
 		{http.StatusTooManyRequests, map[string]any{"message": "slow down"}, "rate limited"},
-		{http.StatusServiceUnavailable, map[string]any{"message": "Rate limiter unavailable; please retry"}, "App Blocks unavailable (503)"},
+		{http.StatusServiceUnavailable, map[string]any{"message": "Rate limiter unavailable; please retry"}, "Apps unavailable (503)"},
 	}
 	for _, tc := range cases {
 		srv := withdrawServer(t, tc.body, tc.status, nil)

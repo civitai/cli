@@ -14,8 +14,8 @@ func newAppValidateCmd() *cobra.Command {
 	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "validate [dir]",
-		Short: "Validate block.manifest.json against the App Block schema",
-		Long: `Validate an App Block project.
+		Short: "Validate block.manifest.json against the App schema",
+		Long: `Validate an App project.
 
 This is a best-effort LOCAL pre-check that mirrors the platform's approve-time
 validator (BlockManifestValidator). It catches most rejections before you

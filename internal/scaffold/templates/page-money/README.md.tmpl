@@ -1,6 +1,6 @@
 # {{ .Name }}
 
-A Civitai **page money-path** App Block (Vite + React + TypeScript), wired to
+A Civitai **page money-path** App (Vite + React + TypeScript), wired to
 the published App SDK (`@civitai/blocks-react` + `@civitai/app-sdk`). It mounts
 as a full-page (W10) app at `/apps/run/{{ .Slug }}` and spends Buzz to generate
 an image: pick a checkpoint, optionally layer on a few LoRAs (each with a
@@ -12,7 +12,7 @@ A sandboxed static web app served in an iframe by the Civitai host. Its UI is
 built from the **`@civitai/blocks-react/ui`** W6 component pack (Button, Textarea,
 Card, Stack, Group, Alert, Badge) — the one exception is each LoRA's weight
 control (a themed native range `<input>`, since the pack ships no Slider yet).
-The model + LoRA pickers are the HOST's own — the block never browses a catalog;
+The model + LoRA pickers are the HOST's own — the app never browses a catalog;
 it calls the SDK's `useCheckpointPicker` / `useResourcePicker` hooks and the host
 opens its native resource modal. The pack ships its own theme-aware styles;
 `injectBlocksStyles()` is called at module init in `src/App.tsx` so the first
@@ -27,7 +27,7 @@ The money path uses the SDK hooks — never raw `window.parent.postMessage`:
 
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).
 - `useCheckpointPicker()` / `useResourcePicker()` — open the HOST's native
-  resource picker for the checkpoint + LoRAs (the block never browses a catalog).
+  resource picker for the checkpoint + LoRAs (the app never browses a catalog).
 - `useRequestConsent()` — lazy, on first Generate: `ai:write:budgeted` is
   consent-gated, so the token mints WITHOUT it; the grant arrives as a
   `TOKEN_REFRESH` and the app auto-resumes the click.
@@ -46,7 +46,7 @@ read proactively. The budget comes from `page.buzzBudgetPerGen` in the manifest.
 The **Change model** button calls `useCheckpointPicker().open({ baseModelGroup,
 currentVersionId })`. The HOST opens its own native checkpoint picker (in
 `dev:live` the SDK live host serves a protocol-identical in-harness catalog
-overlay; on the real platform it's civitai's own modal); the block never sees a
+overlay; on the real platform it's civitai's own modal); the app never sees a
 catalog, a list, or any resource the user didn't pick. The picker resolves with a
 `BlockCheckpointInfo`, which `checkpointFromPick` (`src/models.ts`) maps into the
 selected checkpoint.
@@ -103,7 +103,7 @@ set it for you):
 | `npm run dev:live` | **live** | The SDK **live host** (`createLiveHost`) — forwards the protocol to the **real Civitai backend** with a real dev token. **Spends REAL Buzz / real compute.** |
 
 **How `dev:live` reaches the backend.** `dev:live` mounts `createLiveHost` from
-`@civitai/blocks-react/testing`, which forwards the App-Block postMessage
+`@civitai/blocks-react/testing`, which forwards the App postMessage
 protocol to the real backend using a pasted dev token (Bearer). The live host's
 backend calls go through the **vite dev proxy** (`server.proxy['/api']` in
 `vite.config.ts`), NOT straight to `civitai.com`: `createLiveHost` is configured
@@ -132,14 +132,14 @@ target with `VITE_LIVE_HOST_ORIGIN` (default `https://civitai.com`).
 To use it:
 
 1. Mint a short-lived dev block token (a ~4-hour RS256 JWT; re-mint + restart
-   when it expires). The friendly path is the CLI — it calls the moderator-gated
+   when it expires). The friendly path is the CLI — it calls the invite-gated
    mint route with your stored credential and writes a paste-ready line:
    ```bash
    civitai app dev-token {{ .Slug }} --env >> .env.development.local
    ```
    (drop `--env >> …` to just print the token). **Auth — the credential you mint
    with decides what the dev token can do:**
-   - The mint needs a credential carrying the **App Blocks submit** scope.
+   - The mint needs a credential carrying the **Apps submit** scope.
    - **Real generation (spends real Buzz) needs a full-scope personal API key.**
      Create one at `https://civitai.com/user/account` (a personal key carries
      every scope, including AI Services), store it with
@@ -153,7 +153,7 @@ To use it:
        -d '{"slug":"{{ .Slug }}","scopes":["ai:write:budgeted"]}'   # → { token, expiresAt, scopes, buzzBudget }
      ```
    - **`civitai login` (the OAuth device flow) mints a read/identity-only dev
-     token for this app.** The `civitai-cli` client carries App Blocks submit but
+     token for this app.** The `civitai-cli` client carries Apps submit but
      NOT AI Services (by design — login shouldn't grant general Buzz spend). A
      page-money app's manifest declares only `ai:write:budgeted`, and the server
      strips that budgeted-spend scope from an OAuth-minted token (no AI Services),
@@ -182,7 +182,7 @@ pill. Both reads go same-origin through the vite dev proxy.
 The two reads use **different credentials** — by design, and security-critical:
 
 - **Profile name** — `/api/v1/blocks/me`, authed with the page-scoped
-  **block token** (`VITE_LIVE_BLOCK_TOKEN`). Faithful to prod: a page block can
+  **block token** (`VITE_LIVE_BLOCK_TOKEN`). Faithful to prod: a page app can
   read its own viewer.
 - **Buzz balance** — `/api/trpc/buzz.getBuzzAccount`. The page block token can't
   read Buzz (no `buzz:read:self`), so the balance needs a buzz-read credential:

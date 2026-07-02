@@ -73,7 +73,7 @@ homebrew_casks:
       name: homebrew-tap
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/civitai/cli"
-    description: "Civitai CLI — author and ship App Blocks"
+    description: "Civitai CLI — author and ship Apps"
     commit_author:
       name: civitai-bot
       email: bot@civitai.com

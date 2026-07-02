@@ -103,7 +103,7 @@ func TestAppInitScaffoldsAndValidates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app init: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "Created App Block") {
+	if !strings.Contains(out, "Created App") {
 		t.Errorf("unexpected init output: %s", out)
 	}
 	// Manifest must exist and validate clean.

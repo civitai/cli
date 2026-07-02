@@ -103,10 +103,10 @@ export function mergeEnvFile(existing: string | undefined, vars: DevLiveEnv): st
  * the CLI's `devTokenError` mapping (api.go) so the auto-setup path and the
  * manual path explain failures the same way.
  *  - 401 → invalid / not-a-spend key
- *  - 403 → needs moderator access (pre-GA) + a full-scope personal key
+ *  - 403 → needs an invite (invite-only beta) + a full-scope personal key
  *  - 404 → slug registered to a different account
  *  - 429 → rate limited
- *  - 503 → App Blocks unavailable
+ *  - 503 → Apps unavailable
  * `body` is the raw response text; a `{ "message": ... }` field is surfaced.
  */
 export function mapMintError(status: number, body: string): string {
@@ -122,13 +122,13 @@ export function mapMintError(status: number, body: string): string {
     case 401:
       return `Invalid API key (401)${suffix}. Paste a full-scope personal API key from civitai.com/user/account.`;
     case 403:
-      return `Not authorized (403)${suffix}. Minting a dev token needs moderator access (pre-GA) AND a full-scope personal API key — an OAuth login key can't spend.`;
+      return `Not authorized (403)${suffix}. Minting a dev token needs an invite (invite-only beta) AND a full-scope personal API key — an OAuth login key can't spend.`;
     case 404:
       return `App not found (404)${suffix}. The slug is registered to a different account.`;
     case 429:
       return `Rate limited (429)${suffix}. Try again shortly.`;
     case 503:
-      return `App Blocks is unavailable (503)${suffix}. Try again later.`;
+      return `Apps is unavailable (503)${suffix}. Try again later.`;
     default:
       return `Mint failed (${status})${suffix}.`;
   }

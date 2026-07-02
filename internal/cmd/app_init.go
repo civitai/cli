@@ -18,13 +18,13 @@ func newAppInitCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "init [name] [dir]",
-		Short: "Scaffold a ready-to-build App Block project",
-		Long: `Scaffold a correct, ready-to-build App Block project.
+		Short: "Scaffold a ready-to-build App project",
+		Long: `Scaffold a correct, ready-to-build App project.
 
 Templates:
-  static      a no-build page block (index.html + a tiny JS, no build step)
-  page-vite   a vite + React page block (config-as-code build: buildCommand + outputDir)
-  page-money  a vite + React + TS full-page (W10) money-path block wired to the
+  static      a no-build page app (index.html + a tiny JS, no build step)
+  page-vite   a vite + React page app (config-as-code build: buildCommand + outputDir)
+  page-money  a vite + React + TS full-page (W10) money-path app wired to the
               published App SDK (estimate -> consent -> submit -> poll -> Buzz spend)
 
 The display name can be free-form ("My Cool Block"); it is slugified for the
@@ -33,10 +33,10 @@ blockId. A slug-shaped name is used verbatim.
 By default the project is created in ./<slug>. Override the output directory with
 a positional [dir] or --dir <path>; override the display name independently with
 --name (so name, slug, and directory can all differ).`,
-		Example: `  # A no-build static block in ./my-block.
+		Example: `  # A no-build static app in ./my-block.
   civitai app init my-block
 
-  # A page-money block; "My Cool Block" -> slug my-cool-block, dir ./my-cool-block.
+  # A page-money app; "My Cool Block" -> slug my-cool-block, dir ./my-cool-block.
   civitai app init "My Cool Block" --template page-money
 
   # Custom output directory (slug stays my-block; created in ./apps/foo).
@@ -51,7 +51,7 @@ a positional [dir] or --dir <path>; override the display name independently with
 	}
 
 	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.Static), "project template: static | page-vite | page-money")
-	cmd.Flags().StringVar(&fromSlug, "from", "", "fork from an existing published block slug (not yet wired)")
+	cmd.Flags().StringVar(&fromSlug, "from", "", "fork from an existing published app slug (not yet wired)")
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
 	return cmd
@@ -67,10 +67,10 @@ func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, d
 	if fromSlug != "" {
 		return fmt.Errorf(`--from is not yet wired up.
 
-Forking an existing published block requires fetching its source from the
-server, which this CLI cannot do yet (no programmatic block-source endpoint).
+Forking an existing published app requires fetching its source from the
+server, which this CLI cannot do yet (no programmatic app-source endpoint).
 
-TODO(server): expose a read endpoint that returns a published block's canonical
+TODO(server): expose a read endpoint that returns a published app's canonical
 source tree by slug, then --from can scaffold from it. For now, run a plain
 init and copy the upstream files in manually.`)
 	}
@@ -159,7 +159,7 @@ init and copy the upstream files in manually.`)
 // full tree) followed by a numbered, template-tailored "Next steps" sequence.
 func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Template, destDir, abs string, written []string) {
 	// One scannable line: name, template, where, and how many files — no tree.
-	fmt.Fprintf(out, "✓ Created App Block %q (%s)  ·  %s/  ·  %d files\n", display, tmpl, destDir, len(written))
+	fmt.Fprintf(out, "✓ Created App %q (%s)  ·  %s/  ·  %d files\n", display, tmpl, destDir, len(written))
 
 	fmt.Fprintln(out, "\nNext steps:")
 	switch {

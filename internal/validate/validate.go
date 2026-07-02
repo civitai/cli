@@ -60,7 +60,7 @@ func schema() (*jsonschema.Schema, error) {
 	return s, nil
 }
 
-// Dir validates the App Block project in dir.
+// Dir validates the App project in dir.
 func Dir(dir string) (Result, error) {
 	var res Result
 

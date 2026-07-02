@@ -74,7 +74,7 @@ func TestWithdrawRequestErrorMapping(t *testing.T) {
 		{http.StatusUnauthorized, map[string]string{"message": "bad key"}, "not authorized"},
 		{http.StatusForbidden, map[string]string{"message": "no mod"}, "not authorized"},
 		{http.StatusTooManyRequests, map[string]string{"message": "slow"}, "rate limited"},
-		{http.StatusServiceUnavailable, map[string]string{"message": "App Blocks is not enabled"}, "App Blocks unavailable (503)"},
+		{http.StatusServiceUnavailable, map[string]string{"message": "App Blocks is not enabled"}, "Apps unavailable (503)"},
 		{http.StatusInternalServerError, map[string]string{"message": "boom"}, "server returned 500"},
 	}
 	for _, tc := range cases {

@@ -20,7 +20,7 @@ import { createLiveHost, resetTransport } from '@civitai/blocks-react/testing';
  *    network. Safe to spam.
  *  - `'live'`  — talk to a REAL host with a REAL block token (spends REAL Buzz
  *    and real compute) via the SDK's `createLiveHost`, which forwards the
- *    App-Block postMessage protocol to the real Civitai backend (Bearer = the
+ *    App postMessage protocol to the real Civitai backend (Bearer = the
  *    pasted dev token). Needs a `VITE_LIVE_BLOCK_TOKEN`; until you paste one,
  *    live mode FAILS SAFE (see {@link resolveLiveConfig}) — it never silently
  *    spends.
@@ -69,7 +69,7 @@ export type LiveConfig =
  * unless a dev block token (`VITE_LIVE_BLOCK_TOKEN`) is present — returning
  * `{ ready: false }` with a clear reason otherwise. The token is a short-lived
  * RS256 JWT minted by the server dev-token endpoint (`POST /api/v1/blocks/dev-token`,
- * moderator-gated); paste it into `VITE_LIVE_BLOCK_TOKEN` (never commit it).
+ * invite-gated); paste it into `VITE_LIVE_BLOCK_TOKEN` (never commit it).
  */
 export function resolveLiveConfig(): LiveConfig {
   const token = import.meta.env.VITE_LIVE_BLOCK_TOKEN as string | undefined;
@@ -94,7 +94,7 @@ export function resolveLiveConfig(): LiveConfig {
 
 /**
  * Mount the SDK's real LIVE host (`createLiveHost`) for `dev:live`. It forwards
- * the App-Block postMessage protocol to the real Civitai backend using the
+ * the App postMessage protocol to the real Civitai backend using the
  * pasted dev token (Bearer), so a successful submit SPENDS REAL BUZZ against
  * real compute. Like the mock host, it replies from `window.location.origin`,
  * so the SDK transport must allow this origin first ({@link installHarnessTransport}).

@@ -16,14 +16,14 @@ func newAppWithdrawCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "withdraw [pubreq-id]",
-		Short: "Withdraw your own pending App Block submission",
-		Long: `Withdraw your own pending App Block submission so you can resubmit a new bundle
+		Short: "Withdraw your own pending App submission",
+		Long: `Withdraw your own pending App submission so you can resubmit a new bundle
 for the same slug.
 
 Calls the token-authenticated, self-scoped withdraw route
 (POST /api/v1/blocks/withdraw) with your stored credential — you can only ever
 withdraw your OWN submissions. Both a personal API key and an OAuth login
-(civitai login) work; the OAuth token must carry the App Blocks submit scope
+(civitai login) work; the OAuth token must carry the Apps submit scope
 (the same gate the submit route uses).
 
 Only a submission still in the 'pending' review state can be withdrawn; an

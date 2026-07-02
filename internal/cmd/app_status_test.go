@@ -201,7 +201,7 @@ func TestAppStatusErrorMapping(t *testing.T) {
 		want   string
 	}{
 		{http.StatusUnauthorized, "Invalid API key", "civitai login"},
-		{http.StatusForbidden, "restricted to the civitai team", "gated preview"},
+		{http.StatusForbidden, "restricted to the civitai team", "invite-only beta"},
 		{http.StatusNotFound, "Submission not found", "no such submission"},
 		{http.StatusTooManyRequests, "Rate limit exceeded", "rate limited"},
 		{http.StatusServiceUnavailable, "App Blocks is not enabled", "not enabled"},

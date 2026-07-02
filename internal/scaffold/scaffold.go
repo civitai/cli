@@ -1,4 +1,4 @@
-// Package scaffold renders embedded App Block project templates onto disk.
+// Package scaffold renders embedded App project templates onto disk.
 package scaffold
 
 import (
