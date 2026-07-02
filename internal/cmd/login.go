@@ -93,18 +93,24 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 		return err
 	}
 
-	// Tell the user what to do. Never print the device_code (secret).
-	renderDeviceInstructions(out, da, cfg.BaseURL())
-
+	// Primary action: auto-open the code-prefilled URL. Only when that FAILS (or
+	// --no-browser / no complete URL) do we print the full manual instructions.
+	// Never print the device_code (secret).
+	opened := false
 	if !noBrowser && da.VerificationURIComplete != "" {
-		if err := openBrowser(da.VerificationURIComplete); err == nil {
-			fmt.Fprintln(out, "Opened your browser. Waiting for approval...")
-		} else {
-			fmt.Fprintln(out, "Waiting for approval...")
+		if err := browserOpener(da.VerificationURIComplete); err == nil {
+			opened = true
 		}
-	} else {
-		fmt.Fprintln(out, "Waiting for approval...")
 	}
+	if opened {
+		// The browser is already open on the prefilled URL — print a single
+		// "or open ..." fallback (the BARE url + the code, not the complete URL).
+		fmt.Fprintf(out, "Opened your browser to approve. Or open %s and enter code %s\n",
+			deviceVerificationURI(da, cfg.BaseURL()), da.UserCode)
+	} else {
+		renderDeviceInstructions(out, da, cfg.BaseURL())
+	}
+	fmt.Fprintln(out, "Waiting for approval...")
 
 	tr, err := oc.PollToken(ctx, da, nil)
 	if err != nil {
@@ -120,26 +126,33 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 	return nil
 }
 
-// renderDeviceInstructions prints the device-flow instructions to out. When the
-// server supplies verification_uri_complete (the code pre-filled in the URL) it
-// is printed as the PRIMARY, copyable link so a user who pastes it gets the code
-// prefilled (matters for --no-browser / headless / when openBrowser fails), with
-// the bare URL + code kept as a clearly-labeled manual fallback. When it's empty
-// it falls back to the bare URL + Code form. Never prints the device_code (secret).
-func renderDeviceInstructions(out io.Writer, da *api.DeviceAuth, baseURL string) {
-	uri := da.VerificationURI
-	if uri == "" {
-		uri = baseURL + "/login/oauth/device"
+// deviceVerificationURI returns the BARE verification URI (no code prefilled),
+// falling back to the base URL's device path when the server omits it.
+func deviceVerificationURI(da *api.DeviceAuth, baseURL string) string {
+	if da.VerificationURI != "" {
+		return da.VerificationURI
 	}
+	return baseURL + "/login/oauth/device"
+}
+
+// renderDeviceInstructions prints the MANUAL device-flow instructions used when
+// the browser was not opened (--no-browser, headless, or openBrowser failed). It
+// prints a SINGLE actionable form — the code-prefilled complete URL when the
+// server supplies one, otherwise the bare URL + code — rather than both URLs up
+// front. Never prints the device_code (secret).
+func renderDeviceInstructions(out io.Writer, da *api.DeviceAuth, baseURL string) {
 	if da.VerificationURIComplete != "" {
 		fmt.Fprintln(out, "To authenticate, open this URL (your code is pre-filled):")
 		fmt.Fprintf(out, "\n  %s\n\n", da.VerificationURIComplete)
-		fmt.Fprintf(out, "Or open %s and enter the code manually:  %s\n\n", uri, da.UserCode)
 		return
 	}
 	fmt.Fprintln(out, "To authenticate, open this URL in your browser and enter the code:")
-	fmt.Fprintf(out, "\n  URL:  %s\n  Code: %s\n\n", uri, da.UserCode)
+	fmt.Fprintf(out, "\n  URL:  %s\n  Code: %s\n\n", deviceVerificationURI(da, baseURL), da.UserCode)
 }
+
+// browserOpener opens a URL in the default browser. It is a package var so tests
+// can simulate open success/failure without spawning a real browser.
+var browserOpener = openBrowser
 
 // openBrowser best-effort opens url in the default browser. A failure is
 // non-fatal (the user can use the printed URL).
