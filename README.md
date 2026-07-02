@@ -4,10 +4,11 @@
 > CLI, `login`, scaffold, validate, and run an app locally right now — but
 > **`civitai app submit` and `dev:live` require an invite**: submission and
 > `dev:live` are limited to **invited beta testers** while the feature is in a
-> limited (pre-GA) beta, until Apps opens to the public. There is no public
-> self-serve "request access" form yet — watch [civitai.com](https://civitai.com) and the
-> [issues on this repo](https://github.com/civitai/cli/issues) for the
-> general-availability announcement.
+> limited (pre-GA) beta, until Apps opens to the public.
+>
+> **Anyone can request an invite** — open a request below and we'll review it:
+
+[![Request access](https://img.shields.io/badge/Request%20access-invite--only%20beta-3b82f6?style=for-the-badge&logo=github)](https://github.com/civitai/cli/issues/new?template=request-access.yml)
 
 The command-line interface for [Civitai](https://civitai.com) — a single static
 binary for authoring and shipping **Apps**.

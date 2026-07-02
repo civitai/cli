@@ -1,0 +1,41 @@
+name: Request access (invite-only beta)
+description: Request access to the Apps invite-only beta — unlocks `civitai app submit` + `dev:live`.
+title: "[Access request] "
+labels: ["access-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Apps is in an invite-only beta.** You can already install the CLI, `login`, scaffold, validate, and run an app **locally** without an invite — an invite unlocks **`civitai app submit`** and **`dev:live`** (real generations).
+
+        Fill this out and we'll review your request. Only the username is required.
+  - type: input
+    id: username
+    attributes:
+      label: Civitai username
+      description: The account you'll build and submit with.
+      placeholder: your-civitai-username
+    validations:
+      required: true
+  - type: textarea
+    id: building
+    attributes:
+      label: What do you want to build?
+      description: A sentence or two about the app you have in mind. Optional, but it helps us prioritize.
+      placeholder: "e.g. a checkpoint × LoRA matrix generator, a prompt library, a seed explorer…"
+    validations:
+      required: false
+  - type: input
+    id: links
+    attributes:
+      label: Anything to show? (optional)
+      description: Links to prior work, a repo, a portfolio — anything that helps.
+    validations:
+      required: false
+  - type: checkboxes
+    id: ack
+    attributes:
+      label: Getting started
+      options:
+        - label: I've installed the CLI (`brew install civitai/tap/civitai`) — and ideally scaffolded an app locally with `civitai app create`.
+          required: false
