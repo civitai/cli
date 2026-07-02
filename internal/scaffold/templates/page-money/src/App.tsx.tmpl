@@ -4,6 +4,7 @@ import {
   useBlockContext,
   useBlockResize,
   useBlockToken,
+  useBuzzBalance,
   useBuzzWorkflow,
   useCheckpointPicker,
   useRequestConsent,
@@ -20,18 +21,22 @@ import {
   Textarea,
   injectBlocksStyles,
 } from '@civitai/blocks-react/ui';
-import type { BlockWorkflowSnapshot } from '@civitai/app-sdk/blocks';
+import type { BlockWorkflowSnapshot, BuzzAccountType } from '@civitai/app-sdk/blocks';
 
 import {
+  ACCOUNT_CHOICES,
   PROMPT_MAX,
+  accountLabel,
   buildWorkflowBody,
   firstImageUrl,
   formatCost,
   hasBudgetedScope,
   isBusyPhase,
-  isInsufficientBuzz,
-  isTerminalStatus,
+  phaseForError,
   phaseForSnapshot,
+  spentAccountLabel,
+  isTerminalStatus,
+  type AccountChoice,
   type GenPhase,
 } from './generation.js';
 import {
@@ -64,9 +69,11 @@ injectBlocksStyles();
  *
  * Page-native constraints:
  *  - slot = app.page (entity=none) via the top-level `page:{}` manifest object.
- *  - scopes = ['ai:write:budgeted'] ONLY. A page HARD-FORBIDS `buzz:read:self`,
- *    so we CANNOT read the viewer's balance from in-block — insufficient Buzz is
- *    detected from the `failed` snapshot, never proactively.
+ *  - scopes = ['ai:write:budgeted'] ONLY. The viewer's per-pool balance is read
+ *    via the host-mediated `useBuzzBalance()` bridge (GET_BUZZ_BALANCE) — the
+ *    host resolves the viewer from the block token, so NO `buzz:read:self` scope
+ *    is needed and the block never touches the balance API directly. (Insufficient
+ *    Buzz is still ALSO surfaced from a `failed` snapshot, as a backstop.)
  *  - budget comes from manifest `page.buzzBudgetPerGen`; a page is stateless.
  *  - a page has no HOST model context (entity=none), so the app ships a curated
  *    default checkpoint (DEFAULT_CHECKPOINT) and lets the user change it via the
@@ -81,6 +88,14 @@ injectBlocksStyles();
  *  - `ai:write:budgeted` is consent-gated -> withheld at mint, requested lazily
  *    on first Generate via useRequestConsent; the grant arrives as a
  *    TOKEN_REFRESH carrying the scope, which we observe + retry.
+ *
+ * Per-account Buzz: the viewer can pick which pool (Blue/Green/Yellow) funds the
+ * generation, or leave it on Auto (the default — host-chosen order, UNCHANGED
+ * behavior: Auto threads no `accountType`). A pick is a *preference*: the server
+ * clamps it to what the viewer holds + the app's content-rating domain, and
+ * REJECTS a pool the domain forbids (handled gracefully -> a friendly note +
+ * reset to Auto). After a gen, `snapshot.spentAccountType` tells you which pool
+ * primarily funded it (can be blue/free).
  */
 export function App() {
   const { ready, viewer, theme } = useBlockContext();
@@ -94,6 +109,11 @@ export function App() {
   // overlay), and on the real platform. A pick is DISCOVERY ONLY.
   const { open: openCheckpointPicker } = useCheckpointPicker();
   const { open: openResourcePicker } = useResourcePicker();
+  // The viewer's per-pool Buzz balance, read host-side (no scope needed). Purely
+  // informational + additive — it NEVER blocks generation (a missing/errored
+  // balance still lets the user generate; the server is the real gate).
+  const { balance, loading: balanceLoading, error: balanceError, refetch: refetchBalance } =
+    useBuzzBalance();
 
   const anon = ready && !viewer;
   const granted = hasBudgetedScope(token.scopes);
@@ -103,9 +123,11 @@ export function App() {
 
   const [prompt, setPrompt] = useState('');
   const [touched, setTouched] = useState(false);
+  const [account, setAccount] = useState<AccountChoice>('auto');
   const [phase, setPhase] = useState<GenPhase>('idle');
   const [estimatedCost, setEstimatedCost] = useState<number | null>(null);
   const [actualCost, setActualCost] = useState<number | null>(null);
+  const [spentAccount, setSpentAccount] = useState<BuzzAccountType | null>(null);
   const [imageUrl, setImageUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -138,17 +160,42 @@ export function App() {
     };
   }, []);
 
-  // Apply a (submit- or poll-returned) snapshot to UI state.
-  const applySnapshot = useCallback((snap: BlockWorkflowSnapshot) => {
-    setActualCost(snap.cost?.total ?? null);
-    const url = firstImageUrl(snap);
-    if (url) setImageUrl(url);
-    const next = phaseForSnapshot(snap);
-    setPhase(next);
-    if (next === 'failed' || next === 'insufficient') {
-      setError(snap.error ?? 'Generation failed.');
-    }
+  // Refetch the balance after a successful generation debits it.
+  useEffect(() => {
+    if (phase === 'succeeded') refetchBalance();
+  }, [phase, refetchBalance]);
+
+  // The server rejected the picked pool for this app's content-rating domain.
+  // Surface a friendly note and fall back to Auto so the retry just works.
+  const handleAccountRejected = useCallback(() => {
+    setAccount('auto');
+    setError(
+      "That Buzz account can't be used for this app's content rating — switched back to Auto. Try again.",
+    );
   }, []);
+
+  // Apply a (submit- or poll-returned) snapshot to UI state.
+  const applySnapshot = useCallback(
+    (snap: BlockWorkflowSnapshot) => {
+      setActualCost(snap.cost?.total ?? null);
+      const url = firstImageUrl(snap);
+      if (url) setImageUrl(url);
+      const next = phaseForSnapshot(snap);
+      setPhase(next);
+      if (next === 'succeeded') {
+        // The pool that PRIMARILY funded the gen (largest debit) — can be blue
+        // (free/earned), not necessarily the paid account. Informational only.
+        setSpentAccount(snap.spentAccountType ?? null);
+      }
+      if (next === 'failed' || next === 'insufficient') {
+        setError(snap.error ?? 'Generation failed.');
+      }
+      if (next === 'account-rejected') {
+        handleAccountRejected();
+      }
+    },
+    [handleAccountRejected],
+  );
 
   /**
    * Drive a single workflow to terminal with an adaptive-backoff poll loop.
@@ -227,7 +274,9 @@ export function App() {
     setError(null);
     setImageUrl(null);
     setActualCost(null);
-    const body = buildWorkflowBody(prompt, checkpoint, loras);
+    setSpentAccount(null);
+    // Auto ('auto') threads NO accountType — today's default host funding order.
+    const body = buildWorkflowBody(prompt, checkpoint, loras, account);
 
     // 1) Estimate (best-effort — a failed estimate doesn't block submit; the
     //    host re-prices at submit anyway).
@@ -235,7 +284,13 @@ export function App() {
     try {
       const est = await estimate(body);
       if (est.status === 'failed' || est.error) {
-        if (isInsufficientBuzz(est.error)) {
+        const estPhase = phaseForError(est.error);
+        if (estPhase === 'account-rejected') {
+          setPhase('account-rejected');
+          handleAccountRejected();
+          return;
+        }
+        if (estPhase === 'insufficient') {
           setPhase('insufficient');
           setError(est.error ?? 'Not enough Buzz.');
           return;
@@ -255,8 +310,10 @@ export function App() {
       snap = await submit(body);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'submit failed';
-      setPhase(isInsufficientBuzz(msg) ? 'insufficient' : 'failed');
-      setError(msg);
+      const failPhase = phaseForError(msg);
+      setPhase(failPhase);
+      if (failPhase === 'account-rejected') handleAccountRejected();
+      else setError(msg);
       return;
     }
 
@@ -267,7 +324,17 @@ export function App() {
     // 3) Poll to terminal.
     setPhase('polling');
     if (snap.workflowId) runPollLoop(snap.workflowId);
-  }, [prompt, checkpoint, loras, estimate, submit, applySnapshot, runPollLoop]);
+  }, [
+    prompt,
+    checkpoint,
+    loras,
+    account,
+    estimate,
+    submit,
+    applySnapshot,
+    runPollLoop,
+    handleAccountRejected,
+  ]);
 
   // The actual gate: sign-in -> consent -> generate. Wired straight to the
   // Generate button — the cost is already shown on the button, so there's no
@@ -382,6 +449,10 @@ export function App() {
         <Stack gap={16}>
           <strong style={titleStyle}>{{ .Name }}</strong>
 
+          {!anon && (
+            <BalancePanel balance={balance} loading={balanceLoading} error={balanceError} />
+          )}
+
           <Textarea
             label="Prompt"
             description="Describe what you want to generate."
@@ -437,6 +508,10 @@ export function App() {
             onWeight={onLoraWeight}
           />
 
+          {!anon && (
+            <AccountPicker value={account} onChange={setAccount} balance={balance} disabled={busy} />
+          )}
+
           {anon ? (
             <Button fullWidth onClick={() => requestSignIn()} data-testid="pm-signin">
               Sign in to generate
@@ -469,6 +544,18 @@ export function App() {
             </Alert>
           )}
 
+          {phase === 'account-rejected' && error && (
+            <Alert
+              color="warning"
+              title="Buzz account not available"
+              withCloseButton
+              onClose={() => setError(null)}
+              data-testid="pm-account-rejected"
+            >
+              {error}
+            </Alert>
+          )}
+
           {phase === 'failed' && error && (
             <Alert
               color="error"
@@ -482,8 +569,9 @@ export function App() {
 
           {phase === 'succeeded' && imageUrl && (
             <Stack gap={8}>
-              <Alert color="success" title="Done">
-                Spent <strong>{formatCost(actualCost)}</strong> Buzz.
+              <Alert color="success" title="Done" data-testid="pm-spent">
+                Spent <strong>{formatCost(actualCost)}</strong> Buzz
+                <SpentAccountNote spentAccount={spentAccount} />.
               </Alert>
               <img src={imageUrl} alt="Generated result" style={imageStyle} />
             </Stack>
@@ -586,6 +674,143 @@ function LoraSelector({
   );
 }
 
+/**
+ * The viewer's per-pool Buzz balance ({ blue, green, yellow } + total), read via
+ * the host-mediated `useBuzzBalance()`. Purely INFORMATIONAL and additive — it
+ * NEVER blocks generation. Graceful when the balance is loading, errored, or
+ * unavailable (`null`): a quiet line, never a crash.
+ */
+function BalancePanel({
+  balance,
+  loading,
+  error,
+}: {
+  balance: { blue: number; green: number; yellow: number } | null;
+  loading: boolean;
+  error: Error | null;
+}) {
+  if (!balance) {
+    if (loading) {
+      return (
+        <div style={balancePanelStyle} data-testid="pm-balance">
+          <span style={fieldDescStyle}>Loading your Buzz balance…</span>
+        </div>
+      );
+    }
+    if (error) {
+      return (
+        <div style={balancePanelStyle} data-testid="pm-balance">
+          <span style={fieldDescStyle}>Buzz balance unavailable.</span>
+        </div>
+      );
+    }
+    return null;
+  }
+  const total = balance.blue + balance.green + balance.yellow;
+  return (
+    <div style={balancePanelStyle} data-testid="pm-balance">
+      <PoolChip label="Blue" value={balance.blue} color={POOL_COLORS.blue} testid="pm-balance-blue" />
+      <PoolChip
+        label="Green"
+        value={balance.green}
+        color={POOL_COLORS.green}
+        testid="pm-balance-green"
+      />
+      <PoolChip
+        label="Yellow"
+        value={balance.yellow}
+        color={POOL_COLORS.yellow}
+        testid="pm-balance-yellow"
+      />
+      <span style={balanceTotalStyle} data-testid="pm-balance-total">
+        Total <strong>{formatCost(total)}</strong> Buzz
+      </span>
+    </div>
+  );
+}
+
+function PoolChip({
+  label,
+  value,
+  color,
+  testid,
+}: {
+  label: string;
+  value: number;
+  color: string;
+  testid: string;
+}) {
+  return (
+    <span style={poolChipStyle} data-testid={testid}>
+      <span style={poolDotStyle(color)} aria-hidden />
+      <span style={fieldDescStyle}>{label}</span>{' '}
+      <strong style={poolValueStyle}>{formatCost(value)}</strong>
+    </span>
+  );
+}
+
+/**
+ * Choose which Buzz pool funds the generation. Auto (default) omits `accountType`
+ * from the submit body entirely — today's host-chosen behavior. Pools with a 0
+ * balance are annotated but stay selectable (the server still preferred-first
+ * falls back, and a picked-but-empty pool is harmless).
+ */
+function AccountPicker({
+  value,
+  onChange,
+  balance,
+  disabled,
+}: {
+  value: AccountChoice;
+  onChange: (v: AccountChoice) => void;
+  balance: { blue: number; green: number; yellow: number } | null;
+  disabled: boolean;
+}) {
+  return (
+    <div style={fieldStyle}>
+      <span style={fieldLabelStyle}>Spend from</span>
+      <span style={fieldDescStyle}>
+        Which Buzz account to fund this generation. Auto lets the server choose; a pick is a
+        preference the server clamps to what you hold + this app's rating.
+      </span>
+      <div role="radiogroup" aria-label="Buzz account" style={pickerRowStyle}>
+        {ACCOUNT_CHOICES.map((choice) => {
+          const selected = value === choice;
+          const zero = choice !== 'auto' && balance != null && balance[choice] === 0;
+          return (
+            <button
+              key={choice}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              disabled={disabled}
+              onClick={() => onChange(choice)}
+              data-testid={`pm-account-${choice}`}
+              style={pickerBtnStyle(selected, disabled)}
+              title={zero ? 'You have 0 Buzz in this account' : undefined}
+            >
+              {accountLabel(choice)}
+              {zero ? ' · 0' : ''}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** " from your Yellow account" — reads the succeeded snapshot's spentAccountType. */
+function SpentAccountNote({ spentAccount }: { spentAccount: BuzzAccountType | null }) {
+  const label = spentAccountLabel(spentAccount ?? undefined);
+  if (!label) return null;
+  return (
+    <>
+      {' '}
+      from your <strong>{label}</strong> account
+    </>
+  );
+}
+
 function phaseLabel(phase: GenPhase): string {
   if (phase === 'estimating') return 'Estimating…';
   if (phase === 'submitting') return 'Submitting…';
@@ -633,6 +858,59 @@ const currentModelStyle: React.CSSProperties = {
   textOverflow: 'ellipsis',
   whiteSpace: 'nowrap',
 };
+
+// Buzz-pool identity colors (semantic, not theme-derived) for the balance chips.
+const POOL_COLORS = { blue: '#4dabf7', green: '#51cf66', yellow: '#ffd43b' } as const;
+
+// The balance panel + account-picker chrome read the same pack CSS vars as the
+// Model/LoRA controls so they match the surface across themes.
+const balancePanelStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  gap: 12,
+  padding: '8px 12px',
+  borderRadius: 8,
+  border: '1px solid var(--ci-color-border)',
+  background: 'var(--ci-color-surface)',
+  fontSize: 13,
+};
+const balanceTotalStyle: React.CSSProperties = {
+  marginLeft: 'auto',
+  color: 'var(--ci-color-text)',
+  fontVariantNumeric: 'tabular-nums',
+};
+const poolChipStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 4,
+  fontVariantNumeric: 'tabular-nums',
+};
+// A function returning the merged style (rather than an inline object-literal
+// style prop) so the scaffold template renderer can process this file cleanly.
+function poolDotStyle(color: string): React.CSSProperties {
+  return { width: 8, height: 8, borderRadius: '50%', display: 'inline-block', background: color };
+}
+const poolValueStyle: React.CSSProperties = { color: 'var(--ci-color-text)' };
+const pickerRowStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  gap: 6,
+  marginTop: 4,
+};
+function pickerBtnStyle(selected: boolean, disabled: boolean): React.CSSProperties {
+  return {
+    padding: '6px 14px',
+    borderRadius: 999,
+    border: '1px solid ' + (selected ? 'var(--ci-color-primary)' : 'var(--ci-color-border)'),
+    background: selected ? 'var(--ci-color-primary)' : 'var(--ci-color-surface)',
+    color: selected ? 'var(--ci-color-primary-contrast, #fff)' : 'var(--ci-color-text)',
+    fontSize: 13,
+    fontWeight: 600,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.6 : 1,
+  };
+}
 
 // The W6 pack ships no Slider, so each LoRA's weight uses a themed native range
 // input. These read the same pack CSS vars so the LoRA list matches the surface.

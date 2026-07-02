@@ -4,11 +4,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createMockHost } from '@civitai/blocks-react/testing';
 
 import { App } from './App.js';
+import { installMockMoneyHost } from './mock-buzz.js';
 
 // Component tests: render <App/> against the SDK mock host under a scenario and
-// assert the rendered UI. We install the mock host directly (not the React
-// <Harness>) so each test controls its own scenario + teardown. The transport
-// is reset before each test by src/test-setup.ts.
+// assert the rendered UI. `installMockMoneyHost` is the createMockHost wrapper
+// that ALSO answers the per-account-buzz messages the SDK mock host doesn't (the
+// balance read + the spentAccountType stamp). Each test controls its own scenario
+// + teardown; the transport is reset before each test by src/test-setup.ts.
 
 describe('App (component)', () => {
   let uninstall: (() => void) | undefined;
@@ -19,24 +21,27 @@ describe('App (component)', () => {
 
   it('shows a loading state before BLOCK_INIT lands', () => {
     // Install the host but render before its setTimeout(0) BLOCK_INIT fires.
+    // (Plain createMockHost is fine here — we assert the pre-init frame.)
     uninstall = createMockHost({ viewer: null }).install();
     render(<App />);
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
-  it('anon viewer -> renders the sign-in affordance (no Generate button)', async () => {
-    uninstall = createMockHost({ viewer: null }).install();
+  it('anon viewer -> renders the sign-in affordance (no Generate button / balance / picker)', async () => {
+    uninstall = installMockMoneyHost({ viewer: null });
     render(<App />);
 
     // Once BLOCK_INIT arrives with viewer=null, the App swaps the loading state
-    // for the sign-in CTA.
+    // for the sign-in CTA. The balance panel + account picker are viewer-only.
     const signIn = await screen.findByTestId('pm-signin');
     expect(signIn).toHaveTextContent(/sign in to generate/i);
     expect(screen.queryByTestId('pm-generate')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pm-balance')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pm-account-auto')).not.toBeInTheDocument();
   });
 
   it('signed-in viewer -> renders the prompt field + Generate + picker buttons', async () => {
-    uninstall = createMockHost({ viewer: { id: 2, username: 'dev', status: 'active' } }).install();
+    uninstall = installMockMoneyHost({ viewer: { id: 2, username: 'dev', status: 'active' } });
     render(<App />);
 
     expect(await screen.findByTestId('pm-generate')).toBeInTheDocument();
@@ -47,5 +52,42 @@ describe('App (component)', () => {
     expect(screen.getByTestId('pm-change-model')).toBeInTheDocument();
     expect(screen.getByTestId('pm-model-label')).toHaveTextContent(/SD XL 1\.0/);
     expect(screen.getByTestId('pm-lora-add')).toBeInTheDocument();
+  });
+
+  it('renders the 3-pool Buzz balance (blue/green/yellow + total) from useBuzzBalance', async () => {
+    // A simulated wallet of 100 splits to yellow 80 / blue 20 / green 0 (mock-buzz).
+    uninstall = installMockMoneyHost({
+      viewer: { id: 2, username: 'dev', status: 'active' },
+      buzz: { balance: 100 },
+    });
+    render(<App />);
+
+    expect(await screen.findByTestId('pm-balance-blue')).toHaveTextContent(/20/);
+    expect(screen.getByTestId('pm-balance-yellow')).toHaveTextContent(/80/);
+    expect(screen.getByTestId('pm-balance-green')).toHaveTextContent(/0/);
+    expect(screen.getByTestId('pm-balance-total')).toHaveTextContent(/100/);
+  });
+
+  it('account picker defaults to Auto and offers all three pools', async () => {
+    uninstall = installMockMoneyHost({ viewer: { id: 2, username: 'dev', status: 'active' } });
+    render(<App />);
+
+    const auto = await screen.findByTestId('pm-account-auto');
+    expect(auto).toHaveAttribute('aria-checked', 'true');
+    for (const pool of ['blue', 'green', 'yellow'] as const) {
+      expect(screen.getByTestId(`pm-account-${pool}`)).toHaveAttribute('aria-checked', 'false');
+    }
+  });
+
+  it('gracefully shows "unavailable" when the balance read errors (never crashes)', async () => {
+    uninstall = installMockMoneyHost({
+      viewer: { id: 2, username: 'dev', status: 'active' },
+      balanceError: true,
+    });
+    render(<App />);
+
+    // The app still works — Generate is present; the balance panel degrades.
+    expect(await screen.findByTestId('pm-generate')).toBeInTheDocument();
+    expect(await screen.findByText(/balance unavailable/i)).toBeInTheDocument();
   });
 });

@@ -2,15 +2,15 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createMockHost } from '@civitai/blocks-react/testing';
-
 import { App } from './App.js';
+import { installMockMoneyHost } from './mock-buzz.js';
 
 // End-to-end proof of the money wiring: this drives the FULL page money path
-// through the REAL SDK transport (NO hook mocking) against the published mock
-// host. It is the regression guard that estimate -> consent -> submit -> poll
-// stays wired. Generate is ONE click — no confirm modal (consent is the real,
-// host-driven spend gate):
+// through the REAL SDK transport (NO hook mocking) against the mock host. It is
+// the regression guard that estimate -> consent -> submit -> poll stays wired,
+// plus the per-account-buzz surface (pick a pool -> accountType on the body,
+// spentAccountType feedback, disallowed-pool reset). Generate is ONE click — no
+// confirm modal (consent is the real, host-driven spend gate):
 //
 //   render <App/> (consent WITHHELD)
 //     -> type a prompt
@@ -20,8 +20,9 @@ import { App } from './App.js';
 //     -> App auto-resumes: estimate -> submit -> poll
 //     -> succeeded snapshot -> result image + spent-cost success Alert
 //
-// The mock host's internal timers all fire on setTimeout(0), so real timers +
-// findBy/waitFor resolve promptly — no fake-timer juggling required.
+// `installMockMoneyHost` is the createMockHost wrapper that ALSO answers the
+// balance read + stamps spentAccountType (the SDK mock host doesn't). Its timers
+// all fire on setTimeout(0), so real timers + findBy/waitFor resolve promptly.
 
 describe('App money path (e2e)', () => {
   let uninstall: (() => void) | undefined;
@@ -30,17 +31,17 @@ describe('App money path (e2e)', () => {
     uninstall = undefined;
   });
 
-  it('estimate -> consent -> submit -> poll -> succeeded (+cost)', async () => {
+  it('estimate -> consent -> submit -> poll -> succeeded (+cost, +funded-from note)', async () => {
     const user = userEvent.setup();
     // consentGranted:false -> the first token has NO budgeted scope, so the
     // first Generate must go through the lazy-consent round-trip. cost:8 is the
     // succeeded snapshot's reported cost.
-    uninstall = createMockHost({
+    uninstall = installMockMoneyHost({
       viewer: { id: 2, username: 'dev', status: 'active' },
       consentGranted: false,
       cost: 8,
       pollsUntilDone: 2,
-    }).install();
+    });
 
     render(<App />);
 
@@ -81,23 +82,107 @@ describe('App money path (e2e)', () => {
     const result = await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
     expect(result).toBeInTheDocument();
 
-    // The succeeded snapshot's cost is rendered in the success Alert.
-    await waitFor(() => {
-      expect(screen.getByText(/spent/i)).toHaveTextContent('8');
+    // The succeeded snapshot's cost + funded-from note render (Auto -> blue funder).
+    const spent = screen.getByTestId('pm-spent');
+    expect(spent).toHaveTextContent('8');
+    expect(spent).toHaveTextContent(/from your blue account/i);
+
+    // No ERROR alert surfaced on the happy path.
+    expect(screen.queryByText(/generation failed/i)).not.toBeInTheDocument();
+  });
+
+  it('picking a pool -> accountType rides on the submit body; the funder note reflects it', async () => {
+    const user = userEvent.setup();
+    const submittedBodies: Array<{ accountType?: string }> = [];
+    uninstall = installMockMoneyHost({
+      viewer: { id: 2, username: 'dev', status: 'active' },
+      consentGranted: true,
+      cost: 8,
+      pollsUntilDone: 2,
+      onOutbound: (m) => {
+        if (m.type === 'SUBMIT_WORKFLOW') {
+          submittedBodies.push((m.payload as { body: { accountType?: string } }).body);
+        }
+      },
     });
 
-    // No ERROR alert surfaced on the happy path (the info + success Alerts do
-    // carry role="alert"; assert the failure copy is absent instead).
+    render(<App />);
+    await screen.findByTestId('pm-generate');
+
+    // Pick Yellow, then generate.
+    await user.click(screen.getByTestId('pm-account-yellow'));
+    expect(screen.getByTestId('pm-account-yellow')).toHaveAttribute('aria-checked', 'true');
+    await user.type(screen.getByLabelText(/prompt/i), 'a cat');
+    await user.click(screen.getByTestId('pm-generate'));
+
+    await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
+
+    // The picked pool was threaded into the body, and the funder note reflects it.
+    expect(submittedBodies.at(-1)?.accountType).toBe('yellow');
+    expect(screen.getByTestId('pm-spent')).toHaveTextContent(/from your yellow account/i);
+  });
+
+  it('Auto (default) omits accountType from the body — today’s behavior', async () => {
+    const user = userEvent.setup();
+    const submittedBodies: Array<Record<string, unknown>> = [];
+    uninstall = installMockMoneyHost({
+      viewer: { id: 2, username: 'dev', status: 'active' },
+      consentGranted: true,
+      cost: 8,
+      pollsUntilDone: 2,
+      onOutbound: (m) => {
+        if (m.type === 'SUBMIT_WORKFLOW') {
+          submittedBodies.push((m.payload as { body: Record<string, unknown> }).body);
+        }
+      },
+    });
+
+    render(<App />);
+    await screen.findByTestId('pm-generate');
+    // Leave the picker on Auto (the default).
+    expect(screen.getByTestId('pm-account-auto')).toHaveAttribute('aria-checked', 'true');
+    await user.type(screen.getByLabelText(/prompt/i), 'a cat');
+    await user.click(screen.getByTestId('pm-generate'));
+
+    await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
+    expect(submittedBodies.at(-1)).not.toHaveProperty('accountType');
+  });
+
+  it('a disallowed pool (server BAD_REQUEST) -> friendly note + reset to Auto', async () => {
+    const user = userEvent.setup();
+    uninstall = installMockMoneyHost({
+      viewer: { id: 2, username: 'dev', status: 'active' },
+      consentGranted: true,
+      // Force the submit to fail; rejectAccount rewrites it into the domain-clamp
+      // rejection (since a pool was picked) so the App classifies it correctly.
+      generation: { failNext: 1 },
+      rejectAccount: true,
+    });
+
+    render(<App />);
+    await screen.findByTestId('pm-generate');
+
+    await user.click(screen.getByTestId('pm-account-green'));
+    await user.type(screen.getByLabelText(/prompt/i), 'a cat');
+    await user.click(screen.getByTestId('pm-generate'));
+
+    // The App surfaces a friendly "not available" note and falls back to Auto.
+    expect(await screen.findByTestId('pm-account-rejected')).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId('pm-account-auto')).toHaveAttribute('aria-checked', 'true'),
+    );
+    // Not shown as a hard "generation failed" error, and no image.
     expect(screen.queryByText(/generation failed/i)).not.toBeInTheDocument();
+    expect(screen.queryByAltText(/generated result/i)).not.toBeInTheDocument();
   });
 
   it('insufficient Buzz on submit -> warning Alert, no result image', async () => {
     const user = userEvent.setup();
-    uninstall = createMockHost({
+    uninstall = installMockMoneyHost({
       viewer: { id: 2, username: 'dev', status: 'active' },
       consentGranted: true, // skip the consent round-trip; go straight to submit
       failMode: 'insufficient',
-    }).install();
+    });
 
     render(<App />);
 
