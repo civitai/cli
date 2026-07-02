@@ -10,6 +10,10 @@ import {
   mapMintError,
   mintDevToken,
   runDevLiveSetup,
+  renameSlug,
+  setManifestBlockId,
+  randomSlugSuffix,
+  MAX_RENAME_ATTEMPTS,
   type FetchLike,
 } from './setup-dev-live.js';
 
@@ -280,5 +284,122 @@ describe('runDevLiveSetup (the orchestration the middleware calls)', () => {
       envPath,
     });
     expect(res).toEqual({ ok: false, error: expect.stringMatching(/manifest\.json not found/) });
+  });
+
+  it('auto-renames + retries on the slug-collision 404, then succeeds', async () => {
+    const fs = memFs({
+      [manifestPath]: JSON.stringify({ blockId: 'money-block', scopes: ['identity:read'] }),
+    });
+    const notes: string[] = [];
+    let calls = 0;
+    const res = await runDevLiveSetup('pk-personal', {
+      // Collide on the original slug, succeed on the renamed one.
+      fetch: async (_url, init) => {
+        calls++;
+        const slug = JSON.parse(init.body).slug as string;
+        if (slug === 'money-block') {
+          return { status: 404, ok: false, text: async () => JSON.stringify({ message: 'App not found' }) };
+        }
+        return { status: 200, ok: true, text: async () => JSON.stringify({ token: 'JWT.live' }) };
+      },
+      backendOrigin: 'https://civitai.com',
+      readFile: fs.readFile,
+      writeFile: fs.writeFile,
+      manifestPath,
+      envPath,
+      randomSuffix: () => 'abc12',
+      notify: (m) => void notes.push(m),
+    });
+    expect(res).toEqual({ ok: true });
+    expect(calls).toBe(2); // collision + retry
+    // The manifest on "disk" now carries the renamed slug (other fields kept).
+    const manifest = JSON.parse(fs.files.get(manifestPath)!);
+    expect(manifest.blockId).toBe('money-block-abc12');
+    expect(manifest.scopes).toEqual(['identity:read']);
+    expect(notes.some((m) => /renamed to "money-block-abc12"/.test(m))).toBe(true);
+    expect(fs.files.get(envPath)).toContain('VITE_LIVE_BLOCK_TOKEN=JWT.live');
+  });
+
+  it('bounds the rename loop when every alternative also collides', async () => {
+    const fs = memFs({ [manifestPath]: JSON.stringify({ blockId: 'money-block' }) });
+    let calls = 0;
+    let i = 0;
+    const res = await runDevLiveSetup('pk', {
+      fetch: async () => {
+        calls++;
+        return { status: 404, ok: false, text: async () => JSON.stringify({ message: 'App not found' }) };
+      },
+      backendOrigin: 'https://civitai.com',
+      readFile: fs.readFile,
+      writeFile: fs.writeFile,
+      manifestPath,
+      envPath,
+      randomSuffix: () => `ab${i++}`,
+      notify: () => {},
+    });
+    expect(res.ok).toBe(false);
+    expect('error' in res && res.error).toMatch(/all\s+registered to other accounts/);
+    expect(calls).toBe(1 + MAX_RENAME_ATTEMPTS);
+    expect(fs.files.has(envPath)).toBe(false);
+  });
+
+  it('does NOT rename on a non-collision 404 (owned-but-undeployed app)', async () => {
+    const fs = memFs({ [manifestPath]: JSON.stringify({ blockId: 'money-block' }) });
+    let calls = 0;
+    const res = await runDevLiveSetup('pk', {
+      fetch: async () => {
+        calls++;
+        return {
+          status: 404,
+          ok: false,
+          text: async () => JSON.stringify({ message: "block 'money-block' has no live deployment" }),
+        };
+      },
+      backendOrigin: 'https://civitai.com',
+      readFile: fs.readFile,
+      writeFile: fs.writeFile,
+      manifestPath,
+      envPath,
+      randomSuffix: () => {
+        throw new Error('must not rename on a non-collision 404');
+      },
+      notify: () => {},
+    });
+    expect(res.ok).toBe(false);
+    expect(calls).toBe(1);
+    // The manifest is untouched.
+    expect(JSON.parse(fs.files.get(manifestPath)!).blockId).toBe('money-block');
+  });
+});
+
+describe('slug rename helpers', () => {
+  it('renameSlug appends a suffix and stays within the 3-40 bound', () => {
+    expect(renameSlug('money-block', 'abc12')).toBe('money-block-abc12');
+    const long = renameSlug('a'.repeat(60), 'abc12');
+    expect(long.length).toBeLessThanOrEqual(40);
+    expect(/^[a-z][a-z0-9-]*[a-z0-9]$/.test(long)).toBe(true);
+  });
+
+  it('renameSlug rejects a non-alphanumeric suffix', () => {
+    expect(() => renameSlug('money-block', 'BAD!')).toThrow(/lowercase-alphanumeric/);
+  });
+
+  it('randomSlugSuffix yields a lowercase-alphanumeric string of length n', () => {
+    const s = randomSlugSuffix(5);
+    expect(s).toHaveLength(5);
+    expect(/^[a-z0-9]+$/.test(s)).toBe(true);
+  });
+
+  it('setManifestBlockId rewrites only blockId, preserving order + other fields', () => {
+    const src = `{
+  "blockId": "money-block",
+  "version": "0.1.0",
+  "name": "My Block"
+}`;
+    const out = setManifestBlockId(src, 'money-block-abc12');
+    expect(out).toContain('"blockId": "money-block-abc12"');
+    expect(out).toContain('"name": "My Block"');
+    expect(out.indexOf('blockId')).toBeLessThan(out.indexOf('version'));
+    expect(JSON.parse(out).blockId).toBe('money-block-abc12');
   });
 });

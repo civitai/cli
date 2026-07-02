@@ -146,7 +146,12 @@ export interface MintDeps {
   backendOrigin: string;
 }
 
-export type MintResult = { token: string } | { error: string };
+export type MintResult =
+  | { token: string }
+  // `slugCollision` marks the anti-shadow 404 (the slug is an approved app owned
+  // by ANOTHER account) — the only rename-retriable failure. Other 404s (e.g. an
+  // owned-but-undeployed app: "no live deployment") do NOT set it.
+  | { error: string; slugCollision?: boolean };
 
 /**
  * Mint the dev block token via `POST <backendOrigin>/api/v1/blocks/dev-token`
@@ -195,7 +200,15 @@ export async function mintDevToken(
   }
 
   const raw = await res.text();
-  if (!res.ok) return { error: mapMintError(res.status, raw) };
+  if (!res.ok) {
+    const error = mapMintError(res.status, raw);
+    // A bare 404 ("App not found") is the anti-shadow collision → rename-retriable.
+    // The owned-but-undeployed 404 carries "no live deployment" and is not.
+    if (res.status === 404 && !/no live deployment/i.test(raw)) {
+      return { error, slugCollision: true };
+    }
+    return { error };
+  }
 
   let parsed: { token?: unknown };
   try {
@@ -207,6 +220,66 @@ export async function mintDevToken(
     return { error: 'Mint succeeded but the response had no token.' };
   }
   return { token: parsed.token };
+}
+
+// The server slug contract: starts with a letter, lowercase, hyphen-separated,
+// ends alphanumeric, 3-40 chars. Mirrors the CLI's scaffold/slug.go.
+const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$/;
+const SLUG_SUFFIX_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
+
+/** Bound the auto-rename-on-collision retry loop (mirrors the CLI). */
+export const MAX_RENAME_ATTEMPTS = 5;
+
+/**
+ * A lowercase-alphanumeric slug suffix of length `n` (no hyphens, so it can
+ * safely start/end a slug). Uses Math.random — a suffix collision is harmless
+ * (the retry loop just tries again).
+ */
+export function randomSlugSuffix(n = 5): string {
+  let s = '';
+  for (let i = 0; i < n; i++) {
+    s += SLUG_SUFFIX_ALPHABET[Math.floor(Math.random() * SLUG_SUFFIX_ALPHABET.length)];
+  }
+  return s;
+}
+
+/**
+ * Return `<original>-<suffix>`, truncating `original` if needed so the result
+ * stays within the 3-40 char slug bounds, and validate it against SLUG_REGEX.
+ * Mirrors the CLI's scaffold.SuffixSlug. Throws on an unusable suffix/base.
+ */
+export function renameSlug(original: string, suffix: string): string {
+  const suf = suffix.trim().toLowerCase();
+  if (suf === '' || !/^[a-z0-9]+$/.test(suf)) {
+    throw new Error(`slug suffix "${suffix}" must be lowercase-alphanumeric`);
+  }
+  const maxBase = 40 - 1 - suf.length;
+  if (maxBase < 1) throw new Error(`slug suffix "${suffix}" is too long`);
+  let base = original.trim().toLowerCase();
+  if (base.length > maxBase) base = base.slice(0, maxBase);
+  base = base.replace(/^-+|-+$/g, '');
+  if (base === '') throw new Error(`cannot derive a base slug from "${original}"`);
+  const candidate = `${base}-${suf}`;
+  if (candidate.length < 3 || candidate.length > 40 || !SLUG_REGEX.test(candidate)) {
+    throw new Error(`generated slug "${candidate}" is invalid`);
+  }
+  return candidate;
+}
+
+/**
+ * Rewrite the manifest text's `blockId` value in place, preserving every other
+ * field, its order, and the file's formatting (it edits only the blockId value).
+ * Falls back to a structural re-emit if no `blockId` key is present. Mirrors the
+ * CLI's manifest.SetBlockID.
+ */
+export function setManifestBlockId(manifestJson: string, newBlockId: string): string {
+  const re = /("blockId"\s*:\s*)"[^"]*"/;
+  if (re.test(manifestJson)) {
+    return manifestJson.replace(re, `$1${JSON.stringify(newBlockId)}`);
+  }
+  const parsed = JSON.parse(manifestJson) as Record<string, unknown>;
+  parsed.blockId = newBlockId;
+  return `${JSON.stringify(parsed, null, 2)}\n`;
 }
 
 /** Filesystem + fetch surface `runDevLiveSetup` needs, all injectable. */
@@ -221,6 +294,10 @@ export interface SetupDeps {
   manifestPath: string;
   /** Absolute path to the `.env.development.local` to merge-write. */
   envPath: string;
+  /** Generate a random slug suffix; injectable for deterministic tests. */
+  randomSuffix?: () => string;
+  /** Notify the dev of a slug rename; defaults to console.error. */
+  notify?: (message: string) => void;
 }
 
 export type SetupResult = { ok: true } | { ok: false; error: string };
@@ -236,20 +313,67 @@ export async function runDevLiveSetup(apiKey: string, deps: SetupDeps): Promise<
   const key = apiKey.trim();
   if (key === '') return { ok: false, error: 'Paste your personal API key first.' };
 
-  const manifestJson = deps.readFile(deps.manifestPath);
+  let manifestJson = deps.readFile(deps.manifestPath);
   if (manifestJson === undefined) {
     return { ok: false, error: 'block.manifest.json not found in the project root.' };
   }
 
-  const minted = await mintDevToken(key, manifestJson, {
-    fetch: deps.fetch,
-    backendOrigin: deps.backendOrigin,
-  });
-  if ('error' in minted) return { ok: false, error: minted.error };
+  let originalSlug: string;
+  try {
+    originalSlug = manifestToMintRequest(manifestJson).slug;
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) };
+  }
+
+  const randomSuffix = deps.randomSuffix ?? (() => randomSlugSuffix(5));
+  const notify = deps.notify ?? ((m: string) => console.error(m));
+
+  // Mint, and on the anti-shadow collision auto-rename the slug (append a random
+  // suffix to the ORIGINAL), rewrite block.manifest.json's blockId, notify, and
+  // retry — bounded by MAX_RENAME_ATTEMPTS. Any non-collision error aborts.
+  let currentSlug = originalSlug;
+  let token: string | undefined;
+  for (let attempt = 0; attempt <= MAX_RENAME_ATTEMPTS; attempt++) {
+    const minted = await mintDevToken(key, manifestJson, {
+      fetch: deps.fetch,
+      backendOrigin: deps.backendOrigin,
+    });
+    if (!('error' in minted)) {
+      token = minted.token;
+      break;
+    }
+    if (!minted.slugCollision) return { ok: false, error: minted.error };
+    if (attempt === MAX_RENAME_ATTEMPTS) {
+      return {
+        ok: false,
+        error:
+          `Slug "${originalSlug}" and ${MAX_RENAME_ATTEMPTS} generated alternatives are all ` +
+          `registered to other accounts — choose a different blockId in block.manifest.json.`,
+      };
+    }
+    let newSlug: string;
+    try {
+      newSlug = renameSlug(originalSlug, randomSuffix());
+    } catch (e) {
+      return { ok: false, error: `Could not generate an alternative slug: ${e instanceof Error ? e.message : String(e)}` };
+    }
+    manifestJson = setManifestBlockId(manifestJson, newSlug);
+    deps.writeFile(deps.manifestPath, manifestJson);
+    notify(
+      `Slug "${currentSlug}" is registered to another account — renamed to "${newSlug}" ` +
+        `for your app (block.manifest.json updated).`,
+    );
+    currentSlug = newSlug;
+  }
+
+  if (token === undefined) {
+    // Defensive: the loop only exits via return or a successful mint.
+    return { ok: false, error: 'Mint failed after auto-rename retries.' };
+  }
 
   const existing = deps.readFile(deps.envPath);
   const merged = mergeEnvFile(existing, {
-    VITE_LIVE_BLOCK_TOKEN: minted.token,
+    VITE_LIVE_BLOCK_TOKEN: token,
     CIVITAI_HOST_KEY: key,
   });
   deps.writeFile(deps.envPath, merged);
