@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 📖 Build your first app (walkthrough)
+    url: https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md
+    about: The end-to-end guide to scaffolding, validating, and running an app locally.
+  - name: 🐛 Bug or feature request
+    url: https://github.com/civitai/cli/issues/new
+    about: Something broken or missing in the CLI? Open a blank issue.
