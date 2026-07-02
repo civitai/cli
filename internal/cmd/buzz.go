@@ -26,8 +26,8 @@ func newBuzzCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "buzz",
 		Short: "Show your spendable Buzz balance",
-		Long: `Show your spendable Buzz balance (blue / green / yellow) using your stored
-credential. Yellow Buzz is the currency real dev:live generation spends.
+		Long: `Show your spendable Buzz balance (blue / green / yellow, plus a total) using
+your stored credential.
 
 Reads buzz.getBuzzAccount with the same credential as ` + "`whoami`" + ` / ` + "`app status`" + `.
 A full-scope personal API key can read your balance; an OAuth login token
@@ -61,16 +61,18 @@ how to switch to a personal key.`,
 
 			if jsonOut {
 				return writeJSON(out, map[string]any{
-					"yellow": acct.Yellow,
 					"blue":   acct.Blue,
 					"green":  acct.Green,
+					"yellow": acct.Yellow,
+					"total":  acct.Total(),
 				})
 			}
 
-			fmt.Fprintln(out, "Spendable Buzz:")
-			fmt.Fprintf(out, "  Yellow: %d  (the generation-spend currency)\n", acct.Yellow)
+			fmt.Fprintln(out, "Buzz balance:")
 			fmt.Fprintf(out, "  Blue:   %d\n", acct.Blue)
 			fmt.Fprintf(out, "  Green:  %d\n", acct.Green)
+			fmt.Fprintf(out, "  Yellow: %d\n", acct.Yellow)
+			fmt.Fprintf(out, "  Total:  %d\n", acct.Total())
 			return nil
 		},
 	}

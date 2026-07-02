@@ -189,6 +189,18 @@ The two reads use **different credentials** — by design, and security-critical
   your **personal key**. There is **no public REST Buzz endpoint**; the balance
   lives behind this tRPC procedure.
 
+  > 💡 From a terminal, don't hand-roll that tRPC call — run **`civitai buzz`**
+  > (it reads the same route with your stored personal key). Use
+  > **`civitai buzz --json`** before and after a `dev:live` generation to diff
+  > the spend, e.g.:
+  > ```bash
+  > civitai buzz --json > before.json   # { "blue":…, "green":…, "yellow":…, "total":… }
+  > # …run a dev:live generation…
+  > civitai buzz --json > after.json     # compare total to confirm the debit
+  > ```
+  > (An OAuth `civitai login` token can't read balance — `civitai buzz` will tell
+  > you to switch to a personal key; confirm your credential with `civitai whoami`.)
+
   > 🔐 The personal key is set as **`CIVITAI_HOST_KEY`** (note: **NO `VITE_`
   > prefix**) in the git-ignored **`.env.development.local`**. Vite reads it
   > **server-side** and the dev proxy injects it as the `Authorization` header on

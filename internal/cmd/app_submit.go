@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,7 +135,32 @@ func doUpload(cmd *cobra.Command, client api.Submitter, zipBytes []byte, m *mani
 	fmt.Fprintln(out, "\nTrack it:")
 	fmt.Fprintln(out, "  civitai app status                          # review + deploy status")
 	fmt.Fprintf(out, "  %s/apps/my-submissions               # your submissions\n", base)
+	printMoneyPathNote(out, m)
 	return nil
+}
+
+// manifestNeedsSpend reports whether the manifest declares a Buzz-spend scope
+// (an `ai:write*` scope) — i.e. the money path where the OAuth spend dead end
+// is relevant. Keeps the note scoped to money apps only.
+func manifestNeedsSpend(m *manifest.Manifest) bool {
+	for _, s := range m.Scopes {
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "ai:write") {
+			return true
+		}
+	}
+	return false
+}
+
+// printMoneyPathNote prints a concise reminder — only for money-path apps — that
+// real `dev:live` Buzz spend needs a full-scope personal API key, since an OAuth
+// `civitai login` can submit/withdraw but cannot spend Buzz (issue #34).
+func printMoneyPathNote(out io.Writer, m *manifest.Manifest) {
+	if !manifestNeedsSpend(m) {
+		return
+	}
+	fmt.Fprintln(out, "\nNote: real `dev:live` Buzz spend needs a full-scope personal API key")
+	fmt.Fprintln(out, "(create at https://civitai.com/user/account, then `civitai login --token <key>`).")
+	fmt.Fprintln(out, "An OAuth `civitai login` can submit/withdraw but cannot spend Buzz — check with `civitai whoami`.")
 }
 
 func printManualNextSteps(cmd *cobra.Command, cfg *config.Config, m *manifest.Manifest, zipPath string) {
@@ -146,4 +172,5 @@ func printManualNextSteps(cmd *cobra.Command, cfg *config.Config, m *manifest.Ma
 	fmt.Fprintf(out, "\n  2) Or upload %s via the web UI:\n", filepath.Base(zipPath))
 	fmt.Fprintf(out, "     %s/apps/submit\n", cfg.BaseURL())
 	fmt.Fprintln(out, "     (requires an invite while Apps is in invite-only beta).")
+	printMoneyPathNote(out, m)
 }

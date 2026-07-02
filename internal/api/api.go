@@ -108,47 +108,153 @@ type Submission struct {
 	LiveURL         *string `json:"liveUrl"` // set once serving (approved+live)
 }
 
-// Identity is the minimal authenticated-user view `whoami` reports.
+// Subject identifies the credential behind a token as returned by
+// GET /api/v1/me. Type == "oauth" means an OAuth device-login token (from
+// `civitai login`); any other type (e.g. "apiKey"/"user") is a personal API
+// key. Absent when auth is cookie/session (not applicable to the CLI).
+type Subject struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
+// Identity is the authenticated-user view `whoami` reports. TokenScope,
+// BuzzLimit, and Subject are pointers because GET /api/v1/me omits them for some
+// auth kinds (e.g. cookie/session), and a nil TokenScope must degrade to
+// "scopes unknown" rather than decode as "no capabilities".
 type Identity struct {
 	Username string `json:"username"`
 	ID       int    `json:"id"`
-	// TokenScope is the bearer token's scope bitmask as returned by
-	// GET /api/v1/me. Decode it with the Scope* bits below to learn what the
-	// credential can do (spend Buzz, read balance, …). A personal full-scope key
-	// has every bit; an OAuth device-login token typically has neither
-	// AIServicesWrite nor BuzzRead.
-	TokenScope int `json:"tokenScope"`
+	// TokenScope is the bearer token's scope bitmask. Decode it with the Scope*
+	// bits below to learn what the credential can do (spend Buzz, read balance,
+	// …). A personal full-scope key has every bit; an OAuth device-login token
+	// typically has neither AIServicesWrite nor BuzzRead. nil ⇒ unknown (absent
+	// from the response, e.g. cookie auth).
+	TokenScope *int `json:"tokenScope,omitempty"`
+	// BuzzLimit is the credential's per-window spend cap, when the server reports
+	// one. nil ⇒ absent/unknown.
+	BuzzLimit *int64 `json:"buzzLimit,omitempty"`
+	// Subject identifies the credential (OAuth login vs personal API key). nil ⇒
+	// cookie/session auth (not applicable to the CLI).
+	Subject *Subject `json:"subject,omitempty"`
 }
 
-// Token-scope bits, mirrored from civitai/civitai
-// src/shared/constants/token-scope.constants.ts. These are STABLE bit positions
-// in the tokenScope bitmask GET /api/v1/me returns. Only the bits the CLI needs
-// are mirrored here.
+// Token-scope bits, mirrored from @civitai/auth token-scope (civitai/civitai
+// src/shared/constants/token-scope.constants.ts). These are STABLE/frozen bit
+// positions in the tokenScope bitmask GET /api/v1/me returns.
 const (
-	// ScopeUserRead (1<<0) — read the authenticated user's identity.
-	ScopeUserRead = 1 << 0
-	// ScopeAIServicesWrite (1<<15) — spend Buzz on AI services (generation). A
-	// credential "can spend Buzz" iff tokenScope & ScopeAIServicesWrite != 0.
-	ScopeAIServicesWrite = 1 << 15
-	// ScopeBuzzRead (1<<16) — read the user's Buzz balance. A credential "can
-	// read balance" iff tokenScope & ScopeBuzzRead != 0.
-	ScopeBuzzRead = 1 << 16
+	ScopeUserRead           = 1 << 0
+	ScopeUserWrite          = 1 << 1
+	ScopeModelsRead         = 1 << 2
+	ScopeModelsWrite        = 1 << 3
+	ScopeModelsDelete       = 1 << 4
+	ScopeMediaRead          = 1 << 5
+	ScopeMediaWrite         = 1 << 6
+	ScopeMediaDelete        = 1 << 7
+	ScopeArticlesRead       = 1 << 8
+	ScopeArticlesWrite      = 1 << 9
+	ScopeArticlesDelete     = 1 << 10
+	ScopeBountiesRead       = 1 << 11
+	ScopeBountiesWrite      = 1 << 12
+	ScopeBountiesDelete     = 1 << 13
+	ScopeAIServicesRead     = 1 << 14
+	ScopeAIServicesWrite    = 1 << 15 // spend Buzz on AI services (generation)
+	ScopeBuzzRead           = 1 << 16 // read the user's Buzz balance
+	ScopeCollectionsRead    = 1 << 17
+	ScopeCollectionsWrite   = 1 << 18
+	ScopeSocialWrite        = 1 << 19
+	ScopeSocialTip          = 1 << 20
+	ScopeNotificationsRead  = 1 << 21
+	ScopeNotificationsWrite = 1 << 22
+	ScopeVaultRead          = 1 << 23
+	ScopeVaultWrite         = 1 << 24
+	ScopeAppBlocksSubmit    = 1 << 25
+	// ScopeFull is the OR of bits 0..24 — every scope a personal key carries. It
+	// EXCLUDES AppBlocksSubmit (1<<25), matching the upstream Full constant
+	// (1<<25)-1.
+	ScopeFull = (1 << 25) - 1
 )
 
+// scopeBit maps a single scope bit to its (upstream-const-style) name for the
+// `whoami --scopes` decode. Ordered low → high bit.
+type scopeBit struct {
+	bit  int
+	name string
+}
+
+var scopeBits = []scopeBit{
+	{ScopeUserRead, "UserRead"}, {ScopeUserWrite, "UserWrite"},
+	{ScopeModelsRead, "ModelsRead"}, {ScopeModelsWrite, "ModelsWrite"}, {ScopeModelsDelete, "ModelsDelete"},
+	{ScopeMediaRead, "MediaRead"}, {ScopeMediaWrite, "MediaWrite"}, {ScopeMediaDelete, "MediaDelete"},
+	{ScopeArticlesRead, "ArticlesRead"}, {ScopeArticlesWrite, "ArticlesWrite"}, {ScopeArticlesDelete, "ArticlesDelete"},
+	{ScopeBountiesRead, "BountiesRead"}, {ScopeBountiesWrite, "BountiesWrite"}, {ScopeBountiesDelete, "BountiesDelete"},
+	{ScopeAIServicesRead, "AIServicesRead"}, {ScopeAIServicesWrite, "AIServicesWrite"},
+	{ScopeBuzzRead, "BuzzRead"},
+	{ScopeCollectionsRead, "CollectionsRead"}, {ScopeCollectionsWrite, "CollectionsWrite"},
+	{ScopeSocialWrite, "SocialWrite"}, {ScopeSocialTip, "SocialTip"},
+	{ScopeNotificationsRead, "NotificationsRead"}, {ScopeNotificationsWrite, "NotificationsWrite"},
+	{ScopeVaultRead, "VaultRead"}, {ScopeVaultWrite, "VaultWrite"},
+	{ScopeAppBlocksSubmit, "AppBlocksSubmit"},
+}
+
+// ScopeKnown reports whether the identity carries a decodable scope bitmask.
+// When false, capability queries are unknowable and the caller should say so
+// rather than reporting "no".
+func (id *Identity) ScopeKnown() bool { return id.TokenScope != nil }
+
+// hasScope reports whether a KNOWN scope mask includes bit. A nil (unknown)
+// mask is false.
+func (id *Identity) hasScope(bit int) bool {
+	return id.TokenScope != nil && *id.TokenScope&bit != 0
+}
+
 // CanSpendBuzz reports whether the identity's token carries the AI-Services
-// (Buzz-spend) scope.
-func (id *Identity) CanSpendBuzz() bool { return id.TokenScope&ScopeAIServicesWrite != 0 }
+// (Buzz-spend) scope. An unknown scope is treated as false.
+func (id *Identity) CanSpendBuzz() bool { return id.hasScope(ScopeAIServicesWrite) }
 
 // CanReadBuzz reports whether the identity's token can read the Buzz balance.
-func (id *Identity) CanReadBuzz() bool { return id.TokenScope&ScopeBuzzRead != 0 }
+// An unknown scope is treated as false.
+func (id *Identity) CanReadBuzz() bool { return id.hasScope(ScopeBuzzRead) }
 
-// BuzzAccount is the spendable Buzz balance from buzz.getBuzzAccount. Yellow is
-// the currency generation spend draws from.
+// DecodeScopes returns the names of every set scope bit (low → high). A nil
+// (unknown) mask returns nil.
+func (id *Identity) DecodeScopes() []string {
+	if id.TokenScope == nil {
+		return nil
+	}
+	var out []string
+	for _, s := range scopeBits {
+		if *id.TokenScope&s.bit != 0 {
+			out = append(out, s.name)
+		}
+	}
+	return out
+}
+
+// IsOAuth reports whether the credential is an OAuth device-login token
+// (subject.type == "oauth"). A nil/absent subject is not OAuth.
+func (id *Identity) IsOAuth() bool { return id.Subject != nil && id.Subject.Type == "oauth" }
+
+// CredentialType is a human label for the credential behind the token:
+// "OAuth login", "personal API key", or "unknown" when the subject is absent.
+func (id *Identity) CredentialType() string {
+	if id.Subject == nil || id.Subject.Type == "" {
+		return "unknown"
+	}
+	if id.Subject.Type == "oauth" {
+		return "OAuth login"
+	}
+	return "personal API key"
+}
+
+// BuzzAccount is the spendable Buzz balance from buzz.getBuzzAccount.
 type BuzzAccount struct {
 	Blue   int64 `json:"blue"`
 	Green  int64 `json:"green"`
 	Yellow int64 `json:"yellow"`
 }
+
+// Total is the sum of the blue, green, and yellow balances.
+func (a *BuzzAccount) Total() int64 { return a.Blue + a.Green + a.Yellow }
 
 // BuzzReader reads the caller's spendable Buzz balance.
 type BuzzReader interface {

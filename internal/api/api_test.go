@@ -129,8 +129,11 @@ func TestWhoAmIParsesTokenScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WhoAmI: %v", err)
 	}
-	if id.TokenScope != (ScopeUserRead | ScopeAIServicesWrite | ScopeBuzzRead) {
-		t.Errorf("tokenScope = %d", id.TokenScope)
+	if id.TokenScope == nil || *id.TokenScope != (ScopeUserRead|ScopeAIServicesWrite|ScopeBuzzRead) {
+		t.Errorf("tokenScope = %v", id.TokenScope)
+	}
+	if !id.ScopeKnown() {
+		t.Error("ScopeKnown should be true when tokenScope is present")
 	}
 	if !id.CanSpendBuzz() {
 		t.Error("CanSpendBuzz should be true for a full-scope key")
@@ -140,10 +143,13 @@ func TestWhoAmIParsesTokenScope(t *testing.T) {
 	}
 }
 
+// scopePtr is a test helper for building an Identity with a known scope mask.
+func scopePtr(v int) *int { return &v }
+
 func TestIdentityCapabilityBits(t *testing.T) {
 	// An OAuth login token: UserRead | AppBlocksSubmit (bit 25) — no spend, no
 	// balance-read.
-	oauth := &Identity{TokenScope: ScopeUserRead | (1 << 25)}
+	oauth := &Identity{TokenScope: scopePtr(ScopeUserRead | ScopeAppBlocksSubmit)}
 	if oauth.CanSpendBuzz() {
 		t.Error("OAuth token must not be able to spend Buzz")
 	}
@@ -151,14 +157,116 @@ func TestIdentityCapabilityBits(t *testing.T) {
 		t.Error("OAuth token must not be able to read Buzz balance")
 	}
 
-	spendOnly := &Identity{TokenScope: ScopeAIServicesWrite}
+	spendOnly := &Identity{TokenScope: scopePtr(ScopeAIServicesWrite)}
 	if !spendOnly.CanSpendBuzz() || spendOnly.CanReadBuzz() {
 		t.Errorf("AIServicesWrite-only: spend=%v read=%v", spendOnly.CanSpendBuzz(), spendOnly.CanReadBuzz())
 	}
 
-	readOnly := &Identity{TokenScope: ScopeBuzzRead}
+	readOnly := &Identity{TokenScope: scopePtr(ScopeBuzzRead)}
 	if readOnly.CanSpendBuzz() || !readOnly.CanReadBuzz() {
 		t.Errorf("BuzzRead-only: spend=%v read=%v", readOnly.CanSpendBuzz(), readOnly.CanReadBuzz())
+	}
+}
+
+// TestIdentityScopeUnknown: an absent tokenScope must degrade to "unknown", not
+// decode as "no capabilities".
+func TestIdentityScopeUnknown(t *testing.T) {
+	id := &Identity{Username: "zach", ID: 1} // no TokenScope
+	if id.ScopeKnown() {
+		t.Error("ScopeKnown should be false when tokenScope is absent")
+	}
+	if id.CanSpendBuzz() || id.CanReadBuzz() {
+		t.Error("unknown scope must not report capabilities as true")
+	}
+	if id.DecodeScopes() != nil {
+		t.Errorf("unknown scope should decode to nil, got %v", id.DecodeScopes())
+	}
+}
+
+// TestDecodeScopes exercises the bit-decode helper against representative masks.
+func TestDecodeScopes(t *testing.T) {
+	full := &Identity{TokenScope: scopePtr(ScopeFull)}
+	names := full.DecodeScopes()
+	// Full is bits 0..24 (25 bits) and EXCLUDES AppBlocksSubmit.
+	if len(names) != 25 {
+		t.Errorf("Full should decode to 25 scopes, got %d: %v", len(names), names)
+	}
+	if containsStr(names, "AppBlocksSubmit") {
+		t.Errorf("Full must NOT include AppBlocksSubmit: %v", names)
+	}
+	for _, want := range []string{"UserRead", "AIServicesWrite", "BuzzRead", "VaultWrite"} {
+		if !containsStr(names, want) {
+			t.Errorf("Full should include %s: %v", want, names)
+		}
+	}
+
+	fullSubmit := &Identity{TokenScope: scopePtr(ScopeFull | ScopeAppBlocksSubmit)}
+	if !containsStr(fullSubmit.DecodeScopes(), "AppBlocksSubmit") {
+		t.Errorf("Full|AppBlocksSubmit should include AppBlocksSubmit: %v", fullSubmit.DecodeScopes())
+	}
+
+	// A typical civitai-cli OAuth mask: UserRead + AppBlocksSubmit, no spend/read.
+	oauth := &Identity{TokenScope: scopePtr(ScopeUserRead | ScopeAppBlocksSubmit)}
+	got := oauth.DecodeScopes()
+	if len(got) != 2 || got[0] != "UserRead" || got[1] != "AppBlocksSubmit" {
+		t.Errorf("OAuth mask decode = %v, want [UserRead AppBlocksSubmit]", got)
+	}
+	if containsStr(got, "AIServicesWrite") || containsStr(got, "BuzzRead") {
+		t.Errorf("OAuth mask must lack spend/read scopes: %v", got)
+	}
+}
+
+// TestCredentialType maps subject.type to a human label.
+func TestCredentialType(t *testing.T) {
+	oauth := &Identity{Subject: &Subject{Type: "oauth", ID: "1"}}
+	if oauth.CredentialType() != "OAuth login" || !oauth.IsOAuth() {
+		t.Errorf("oauth subject: type=%q isOAuth=%v", oauth.CredentialType(), oauth.IsOAuth())
+	}
+	key := &Identity{Subject: &Subject{Type: "apiKey", ID: "1"}}
+	if key.CredentialType() != "personal API key" || key.IsOAuth() {
+		t.Errorf("apiKey subject: type=%q isOAuth=%v", key.CredentialType(), key.IsOAuth())
+	}
+	absent := &Identity{}
+	if absent.CredentialType() != "unknown" || absent.IsOAuth() {
+		t.Errorf("absent subject: type=%q isOAuth=%v", absent.CredentialType(), absent.IsOAuth())
+	}
+}
+
+// TestWhoAmIParsesSubjectAndBuzzLimit confirms the extended /api/v1/me fields
+// (subject + buzzLimit) parse.
+func TestWhoAmIParsesSubjectAndBuzzLimit(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"username":"zach","id":42,"tokenScope":98305,"buzzLimit":5000,"subject":{"type":"oauth","id":"abc"}}`))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", "")
+	id, err := c.WhoAmI(context.Background())
+	if err != nil {
+		t.Fatalf("WhoAmI: %v", err)
+	}
+	if !id.IsOAuth() {
+		t.Errorf("subject.type oauth should set IsOAuth: %+v", id.Subject)
+	}
+	if id.BuzzLimit == nil || *id.BuzzLimit != 5000 {
+		t.Errorf("buzzLimit = %v, want 5000", id.BuzzLimit)
+	}
+}
+
+func containsStr(xs []string, want string) bool {
+	for _, x := range xs {
+		if x == want {
+			return true
+		}
+	}
+	return false
+}
+
+// TestBuzzAccountTotal checks the Total helper.
+func TestBuzzAccountTotal(t *testing.T) {
+	a := &BuzzAccount{Blue: 5, Green: 7, Yellow: 4242}
+	if a.Total() != 4254 {
+		t.Errorf("Total = %d, want 4254", a.Total())
 	}
 }
 
