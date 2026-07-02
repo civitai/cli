@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,37 @@ import (
 	"strings"
 	"testing"
 )
+
+// TestMintDevToken404SentinelWrapping: the bare "App not found" 404 wraps
+// ErrSlugRegisteredToOtherAccount (rename-retriable); the owned-but-undeployed
+// "no live deployment" 404 does NOT.
+func TestMintDevToken404SentinelWrapping(t *testing.T) {
+	cases := []struct {
+		name        string
+		message     string
+		wantWrapped bool
+	}{
+		{"bare app-not-found is the collision", "App not found", true},
+		{"generic 404 is treated as a collision", "no such app", true},
+		{"no-live-deployment is NOT a collision", "block 'x' has no live deployment — deploy first", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{"message": tc.message})
+			}))
+			defer srv.Close()
+			_, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil)
+			if err == nil {
+				t.Fatal("expected a 404 error")
+			}
+			if got := errors.Is(err, ErrSlugRegisteredToOtherAccount); got != tc.wantWrapped {
+				t.Errorf("errors.Is(err, sentinel) = %v, want %v (err=%q)", got, tc.wantWrapped, err)
+			}
+		})
+	}
+}
 
 func TestMintDevTokenSendsBearerAndBody(t *testing.T) {
 	var gotAuth, gotMethod, gotPath, gotCT, gotSlug string

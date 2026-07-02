@@ -4,15 +4,27 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/manifest"
+	"github.com/civitai/cli/internal/scaffold"
 	"github.com/spf13/cobra"
 )
+
+// maxDevTokenRenameAttempts bounds the auto-rename-on-collision retry loop: after
+// this many generated alternatives still collide, dev-token gives up.
+const maxDevTokenRenameAttempts = 5
+
+// devTokenSuffixGen generates the random lowercase-alphanumeric suffix appended
+// to a colliding slug. It is a package var so tests can inject a deterministic
+// sequence.
+var devTokenSuffixGen = func() string { return scaffold.RandomSuffix(5) }
 
 // budgetedScope is the spend scope a dev token must carry for `npm run dev:live`
 // to actually generate (spend Buzz). The server strips it from an OAuth-minted
@@ -140,7 +152,8 @@ never commit it; re-mint when it expires.`,
 			scopes := manifest.LoadScopes(".")
 
 			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
-			token, err := client.MintDevToken(context.Background(), slug, scopes)
+			errOut := cmd.ErrOrStderr()
+			token, slug, err := mintDevTokenWithRename(context.Background(), client, errOut, ".", slug, scopes)
 			if err != nil {
 				return err
 			}
@@ -153,7 +166,6 @@ never commit it; re-mint when it expires.`,
 			} else {
 				fmt.Fprintln(out, token)
 			}
-			errOut := cmd.ErrOrStderr()
 			fmt.Fprintln(errOut,
 				"Paste into VITE_LIVE_BLOCK_TOKEN in .env.development.local, then restart `npm run dev:live`. "+
 					"Short-lived (~4h); never commit it.")
@@ -177,4 +189,47 @@ never commit it; re-mint when it expires.`,
 	}
 	cmd.Flags().BoolVar(&envOut, "env", false, "print VITE_LIVE_BLOCK_TOKEN=<token> (paste-ready into .env.development.local)")
 	return cmd
+}
+
+// mintDevTokenWithRename mints a dev token for slug, and on the anti-shadow
+// collision (api.ErrSlugRegisteredToOtherAccount — the slug is an approved app
+// owned by another account) it appends a random suffix to the ORIGINAL slug,
+// PERMANENTLY rewrites block.manifest.json's blockId, notifies on errOut, and
+// retries — up to maxDevTokenRenameAttempts. It returns the token and the FINAL
+// slug used (so callers reference the renamed slug in follow-up hints).
+//
+// Renaming only applies when a local manifest exists in dir (nothing to rewrite
+// otherwise); any non-collision error, or a collision with no manifest, is
+// surfaced verbatim without a rename.
+func mintDevTokenWithRename(ctx context.Context, client *api.Client, errOut io.Writer, dir, slug string, scopes []string) (string, string, error) {
+	original := slug
+	for attempt := 0; ; attempt++ {
+		token, err := client.MintDevToken(ctx, slug, scopes)
+		if err == nil {
+			return token, slug, nil
+		}
+		if !errors.Is(err, api.ErrSlugRegisteredToOtherAccount) {
+			return "", slug, err
+		}
+		// Auto-rename only makes sense when there's a local manifest to rewrite.
+		if _, lerr := manifest.Load(dir); lerr != nil {
+			return "", slug, err
+		}
+		if attempt >= maxDevTokenRenameAttempts {
+			return "", slug, fmt.Errorf(
+				"slug %q and %d generated alternatives are all registered to other accounts — choose a different blockId in %s",
+				original, maxDevTokenRenameAttempts, manifest.Filename)
+		}
+		newSlug, gerr := scaffold.SuffixSlug(original, devTokenSuffixGen())
+		if gerr != nil {
+			return "", slug, fmt.Errorf("could not generate an alternative slug for %q: %w", original, gerr)
+		}
+		if serr := manifest.SetBlockID(dir, newSlug); serr != nil {
+			return "", slug, fmt.Errorf("could not update %s with the renamed slug %q: %w", manifest.Filename, newSlug, serr)
+		}
+		fmt.Fprintf(errOut,
+			"Slug %q is registered to another account — renamed to %q for your app (%s updated).\n",
+			slug, newSlug, manifest.Filename)
+		slug = newSlug
+	}
 }

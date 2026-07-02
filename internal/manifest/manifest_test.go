@@ -117,6 +117,94 @@ func TestLoadScopes(t *testing.T) {
 	}
 }
 
+func TestSetBlockIDPreservesOrderAndFields(t *testing.T) {
+	dir := t.TempDir()
+	src := `{
+  "blockId": "my-block",
+  "version": "0.1.0",
+  "name": "My Block",
+  "scopes": ["identity:read"]
+}`
+	write(t, dir, src)
+	if err := SetBlockID(dir, "my-block-abc12"); err != nil {
+		t.Fatalf("SetBlockID: %v", err)
+	}
+	raw, _ := os.ReadFile(Path(dir))
+	out := string(raw)
+	if !contains(out, `"blockId": "my-block-abc12"`) {
+		t.Errorf("blockId not updated:\n%s", out)
+	}
+	// Other fields + their order preserved (surgical value replace).
+	if !contains(out, `"name": "My Block"`) || !contains(out, `"identity:read"`) {
+		t.Errorf("other fields not preserved:\n%s", out)
+	}
+	if indexOf(out, "blockId") >= indexOf(out, "version") {
+		t.Errorf("field order not preserved:\n%s", out)
+	}
+	m, err := Load(dir)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if m.BlockID != "my-block-abc12" {
+		t.Errorf("reloaded blockId = %q", m.BlockID)
+	}
+	// Mode preserved at 0600.
+	info, _ := os.Stat(Path(dir))
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("mode = %o, want 600", perm)
+	}
+}
+
+func TestSetBlockIDMissingKeyFallsBack(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, `{"version":"0.1.0","name":"X"}`)
+	if err := SetBlockID(dir, "new-slug"); err != nil {
+		t.Fatalf("SetBlockID (no key): %v", err)
+	}
+	m, err := Load(dir)
+	if err != nil {
+		t.Fatalf("reload: %v", err)
+	}
+	if m.BlockID != "new-slug" {
+		t.Errorf("blockId = %q, want new-slug", m.BlockID)
+	}
+	if m.Name != "X" {
+		t.Errorf("other fields lost: name = %q", m.Name)
+	}
+}
+
+func TestSetBlockIDMissingFileErrors(t *testing.T) {
+	if err := SetBlockID(t.TempDir(), "x-slug"); err == nil {
+		t.Error("expected an error when no manifest exists")
+	}
+}
+
+// TestSetBlockIDRefusesInvalidResultDoesNotClobber: a blockId key inside otherwise
+// malformed JSON is value-replaced, but the result fails the json.Valid guard, so
+// SetBlockID errors WITHOUT writing (the original file is left intact).
+func TestSetBlockIDRefusesInvalidResultDoesNotClobber(t *testing.T) {
+	dir := t.TempDir()
+	broken := `{ "blockId": "old-slug" this is not valid json`
+	write(t, dir, broken)
+	if err := SetBlockID(dir, "new-slug"); err == nil {
+		t.Fatal("expected an error when the rewrite would produce invalid JSON")
+	}
+	raw, _ := os.ReadFile(Path(dir))
+	if string(raw) != broken {
+		t.Errorf("file must be untouched on a refused write:\n%s", raw)
+	}
+}
+
+// TestSetBlockIDInvalidJSONNoKeyErrors: with no blockId key AND invalid JSON, the
+// fallback structural rewrite fails to parse and returns an error (no write).
+func TestSetBlockIDInvalidJSONNoKeyErrors(t *testing.T) {
+	dir := t.TempDir()
+	write(t, dir, `{ not valid and no key `)
+	if err := SetBlockID(dir, "x-slug"); err == nil {
+		t.Error("expected an error rewriting invalid JSON with no blockId key")
+	}
+}
+
 func contains(s, sub string) bool {
 	return len(sub) == 0 || (len(s) >= len(sub) && indexOf(s, sub) >= 0)
 }
