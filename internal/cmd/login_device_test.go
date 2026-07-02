@@ -169,6 +169,124 @@ func TestLoginTokenFlagStillWorks(t *testing.T) {
 	}
 }
 
+// loginDeviceServer stands up an httptest server for the device flow: discovery,
+// device-init (with a code-prefilled complete URL), and an immediate 200 token.
+func loginDeviceServer(t *testing.T) (*httptest.Server, *string) {
+	t.Helper()
+	var base string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/openid-configuration":
+			writeLoginDiscovery(w, base)
+		case "/api/auth/oauth/device":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"device_code":               "dev-secret-code",
+				"user_code":                 "ABCD-1234",
+				"verification_uri":          "https://civitai.com/oauth/device",
+				"verification_uri_complete": "https://civitai.com/oauth/device?user_code=ABCD-1234",
+				"expires_in":                900,
+				"interval":                  1,
+			})
+		case "/api/auth/oauth/device-token":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"access_token": "access-123", "token_type": "Bearer",
+				"expires_in": 3600, "refresh_token": "refresh-456", "scope": "33554433",
+			})
+		default:
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	return srv, &base
+}
+
+// TestLoginDeviceOpensBrowserAndPrintsSingleFallback: with browser-open enabled
+// and SUCCEEDING, the primary action is the auto-open and the output carries a
+// SINGLE "or open ..." fallback (bare URL + code) — NOT the code-prefilled
+// complete URL again, and never the device_code.
+func TestLoginDeviceOpensBrowserAndPrintsSingleFallback(t *testing.T) {
+	srv, base := loginDeviceServer(t)
+	defer srv.Close()
+	*base = srv.URL
+
+	var openedURL string
+	prev := browserOpener
+	browserOpener = func(u string) error { openedURL = u; return nil }
+	defer func() { browserOpener = prev }()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, _, err := run(t, "login") // browser-open ENABLED
+	if err != nil {
+		t.Fatalf("login: %v\n%s", err, out)
+	}
+
+	// The browser was auto-opened on the code-prefilled complete URL.
+	if openedURL != "https://civitai.com/oauth/device?user_code=ABCD-1234" {
+		t.Errorf("browser should open the complete URL, opened %q", openedURL)
+	}
+	if !strings.Contains(out, "Opened your browser to approve.") {
+		t.Errorf("expected the opened-browser primary line:\n%s", out)
+	}
+	// Single "or open ..." fallback: the BARE url + the code shown separately.
+	if !strings.Contains(out, "Or open https://civitai.com/oauth/device and enter code ABCD-1234") {
+		t.Errorf("expected the single bare-URL fallback line:\n%s", out)
+	}
+	// The complete (code-prefilled) URL must NOT be printed again in the happy path.
+	if strings.Contains(out, "?user_code=") {
+		t.Errorf("happy path must not reprint the code-prefilled complete URL:\n%s", out)
+	}
+	// The old both-URLs manual block must be gone.
+	if strings.Contains(out, "URL:  ") {
+		t.Errorf("happy path must not print the manual URL:/Code: block:\n%s", out)
+	}
+	if strings.Contains(out, "dev-secret-code") {
+		t.Errorf("device_code (secret) must never be printed:\n%s", out)
+	}
+	if !strings.Contains(out, "Logged in") {
+		t.Errorf("login should confirm success:\n%s", out)
+	}
+}
+
+// TestLoginDeviceBrowserOpenFailureFallsBack: when browser-open FAILS, the flow
+// falls back to the full manual instructions (the complete URL to open) and does
+// NOT claim it opened a browser. The device_code is never printed.
+func TestLoginDeviceBrowserOpenFailureFallsBack(t *testing.T) {
+	srv, base := loginDeviceServer(t)
+	defer srv.Close()
+	*base = srv.URL
+
+	prev := browserOpener
+	browserOpener = func(string) error { return errStub }
+	defer func() { browserOpener = prev }()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, _, err := run(t, "login") // browser-open ENABLED but fails
+	if err != nil {
+		t.Fatalf("login: %v\n%s", err, out)
+	}
+	if strings.Contains(out, "Opened your browser") {
+		t.Errorf("must not claim it opened a browser when open failed:\n%s", out)
+	}
+	if !strings.Contains(out, "your code is pre-filled") || !strings.Contains(out, "?user_code=ABCD-1234") {
+		t.Errorf("expected the manual complete-URL instructions on open failure:\n%s", out)
+	}
+	if strings.Contains(out, "dev-secret-code") {
+		t.Errorf("device_code (secret) must never be printed:\n%s", out)
+	}
+}
+
+// errStub is a fixed non-nil error for simulating browser-open failure.
+var errStub = stubErr("open failed")
+
+type stubErr string
+
+func (e stubErr) Error() string { return string(e) }
+
 // writeLoginDiscovery serves an OpenID discovery doc whose endpoints point back
 // at the test server `base`, mirroring how the real auth host advertises its
 // OAuth endpoints. The CLI resolves these before the device-init POST.

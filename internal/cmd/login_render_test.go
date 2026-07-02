@@ -8,10 +8,11 @@ import (
 	"github.com/civitai/cli/internal/api"
 )
 
-// TestRenderDeviceInstructionsComplete: when the server supplies
-// verification_uri_complete, the printed output uses it as the PRIMARY copyable
-// (code pre-filled) link, and still surfaces the bare URL + user_code as a
-// manual fallback. The device_code (secret) is never printed.
+// TestRenderDeviceInstructionsComplete: renderDeviceInstructions is the MANUAL
+// fallback (browser not opened). When the server supplies
+// verification_uri_complete it prints a SINGLE actionable form — the
+// code-prefilled complete URL — and does NOT also print the bare URL:/Code:
+// form. The device_code (secret) is never printed.
 func TestRenderDeviceInstructionsComplete(t *testing.T) {
 	da := &api.DeviceAuth{
 		DeviceCode:              "dev-secret-code",
@@ -26,14 +27,9 @@ func TestRenderDeviceInstructionsComplete(t *testing.T) {
 	if !strings.Contains(out, da.VerificationURIComplete) {
 		t.Errorf("expected the code-prefilled complete URL %q in output:\n%s", da.VerificationURIComplete, out)
 	}
-	if !strings.Contains(out, "?code=") {
-		t.Errorf("expected a ?code= prefilled link in output:\n%s", out)
-	}
-	if !strings.Contains(out, da.VerificationURI) {
-		t.Errorf("expected the bare verification_uri %q as manual fallback:\n%s", da.VerificationURI, out)
-	}
-	if !strings.Contains(out, da.UserCode) {
-		t.Errorf("expected the user_code %q for manual entry:\n%s", da.UserCode, out)
+	// The old "both URLs" form is gone: no separate bare URL:/Code: manual block.
+	if strings.Contains(out, "URL:  ") || strings.Contains(out, "Code: ") {
+		t.Errorf("did not expect the bare URL:/Code: block when a complete URL is present:\n%s", out)
 	}
 	if strings.Contains(out, da.DeviceCode) {
 		t.Errorf("device_code (secret) must NEVER be printed:\n%s", out)
@@ -78,5 +74,15 @@ func TestRenderDeviceInstructionsEmptyURIFallback(t *testing.T) {
 
 	if !strings.Contains(out, "https://civitai.com/login/oauth/device") {
 		t.Errorf("expected baseURL-derived device path fallback:\n%s", out)
+	}
+}
+
+// TestDeviceVerificationURIFallback covers the bare-URI helper's baseURL fallback.
+func TestDeviceVerificationURIFallback(t *testing.T) {
+	if got := deviceVerificationURI(&api.DeviceAuth{VerificationURI: "https://x/y"}, "https://b"); got != "https://x/y" {
+		t.Errorf("expected the server-supplied URI, got %q", got)
+	}
+	if got := deviceVerificationURI(&api.DeviceAuth{}, "https://b"); got != "https://b/login/oauth/device" {
+		t.Errorf("expected baseURL fallback, got %q", got)
 	}
 }

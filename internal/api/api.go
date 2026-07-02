@@ -628,6 +628,16 @@ func (c *Client) WithdrawRequest(ctx context.Context, publishRequestID string) e
 	return nil
 }
 
+// ErrSlugRegisteredToOtherAccount is wrapped by MintDevToken's error when the
+// dev-token route 404s with the bare "App not found" — the server's anti-shadow
+// guard: the requested slug is an APPROVED app owned by a DIFFERENT account, so
+// the no-row local-manifest mint path is refused. It is the ONLY rename-retriable
+// 404 (the caller can pick a new, free slug and retry). Other 404s (e.g. an
+// owned-but-not-yet-deployed app, which carries a "no live deployment" message)
+// are NOT retriable and do NOT wrap this sentinel. Callers branch with
+// errors.Is(err, ErrSlugRegisteredToOtherAccount) rather than matching strings.
+var ErrSlugRegisteredToOtherAccount = errors.New("slug is registered to a different account")
+
 // DevTokenMinter mints a short-lived dev block token for `npm run dev:live`.
 type DevTokenMinter interface {
 	// MintDevToken mints a dev block token for the given app slug and returns
@@ -693,7 +703,15 @@ func devTokenError(status int, raw []byte) error {
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusNotFound:
-		return fmt.Errorf("app not found (404): %s — check the slug. (dev-token mints from your local block.manifest.json; a 404 means the slug is registered to a different account.)", msg)
+		// Two 404 shapes: the anti-shadow guard returns a bare "App not found"
+		// when the slug is an approved app owned by another account (the no-row
+		// mint is refused) — that one is rename-retriable, so wrap the sentinel.
+		// The owned-but-not-yet-deployed 404 carries a "no live deployment"
+		// message and is NOT retriable (you own the slug; renaming is wrong).
+		if strings.Contains(strings.ToLower(msg), "no live deployment") {
+			return fmt.Errorf("app not found (404): %s", msg)
+		}
+		return fmt.Errorf("app not found (404): %s — check the slug. (dev-token mints from your local block.manifest.json; a 404 means the slug is registered to a different account.): %w", msg, ErrSlugRegisteredToOtherAccount)
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
 	case http.StatusForbidden:

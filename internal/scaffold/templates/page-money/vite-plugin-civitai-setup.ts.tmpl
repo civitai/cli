@@ -119,6 +119,9 @@ export function civitaiSetupPlugin(): Plugin {
           writeFile: (p, contents) => writeFileSync(p, contents, 'utf8'),
           manifestPath: resolve(root, 'block.manifest.json'),
           envPath: resolve(root, '.env.development.local'),
+          // Surface a slug auto-rename (collision with another account's app) in
+          // the dev-server log so the developer sees block.manifest.json changed.
+          notify: (message) => server.config.logger.info(`[civitai] ${message}`),
         });
 
         if (result.ok) {
