@@ -10,34 +10,28 @@ on:
 permissions:
   contents: read
 jobs:
-  guard:
-    runs-on: ubuntu-latest
-    outputs:
-      has_npm_token: ${{ steps.c.outputs.has }}
-    steps:
-      - id: c
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          if [ -n "$NPM_TOKEN" ]; then
-            echo "has=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "NPM_TOKEN not set — skipping npm publish."
-            echo "has=false" >> "$GITHUB_OUTPUT"
-          fi
   publish:
-    needs: guard
-    if: needs.guard.outputs.has_npm_token == 'true'
     runs-on: ubuntu-latest
+    # OIDC trusted publishing: no NPM_TOKEN secret. The runner presents a
+    # short-lived OIDC token to npm; npm verifies it against the trusted
+    # publisher configured on the @civitai/cli package (repo civitai/cli +
+    # this workflow file). id-token:write is what mints that token.
     permissions:
       contents: read
-      id-token: write # npm provenance
+      id-token: write # required for OIDC trusted publishing (+ provenance)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
+      - name: Ensure npm supports OIDC trusted publishing (>= 11.5.1)
+        # The npm bundled with Node 22 (npm 10.x) predates OIDC trusted
+        # publishing. npm auto-detects the OIDC env and uses it before any
+        # token, but only on 11.5.1+. Pin the floor and print it for the log.
+        run: |
+          npm install -g npm@latest
+          npm --version
       - name: Resolve version
         id: v
         env:
@@ -95,6 +89,9 @@ jobs:
       - name: Publish
         if: steps.pub.outputs.skip == 'false'
         working-directory: ./npm
+        # No NODE_AUTH_TOKEN: npm authenticates via OIDC. `--access public`
+        # keeps the scoped @civitai/cli package public. `--provenance` is kept
+        # explicit — docs say provenance is automatic under trusted publishing,
+        # but practitioners report it is not always emitted without the flag;
+        # passing it is idempotent and guarantees the attestation.
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
