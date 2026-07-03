@@ -1,12 +1,54 @@
 package devtunnel
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 )
+
+// TestGenerateEphemeralKeyNeverPersisted pins the security property directly: the
+// keypair is generated IN MEMORY and NO key material is written to disk — not to
+// ~/.ssh, not anywhere under HOME. Points HOME (and the derived ~/.ssh) at a
+// fresh temp dir, mints a key, and asserts the tree stays empty.
+func TestGenerateEphemeralKeyNeverPersisted(t *testing.T) {
+	home := t.TempDir()
+	// Redirect every "home" the runtime/ssh tooling might consult.
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	t.Setenv("USERPROFILE", home) // Windows
+
+	key, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatalf("GenerateEphemeralKey: %v", err)
+	}
+	if key.Signer == nil || key.AuthorizedKey == "" {
+		t.Fatal("expected an in-memory key")
+	}
+
+	// ~/.ssh must not have been created.
+	if _, err := os.Stat(filepath.Join(home, ".ssh")); !os.IsNotExist(err) {
+		t.Errorf("~/.ssh should not exist after keygen (stat err=%v)", err)
+	}
+
+	// The HOME tree must contain no files at all (no key material anywhere).
+	var files []string
+	_ = filepath.Walk(home, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if len(files) != 0 {
+		t.Errorf("keygen must not write any file under HOME, found: %v", files)
+	}
+}
 
 // TestGenerateEphemeralKeyIsValidEd25519 asserts the minted key is a real,
 // parseable ed25519 OpenSSH public key and that the signer's public half matches

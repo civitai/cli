@@ -89,17 +89,37 @@ func (d *fakeDialer) Dial(_ context.Context, opts devtunnel.DialOptions) (devtun
 }
 
 // fakeTimer is a Timer whose channel the test fires by hand.
+// fakeTimer is shared between the session goroutine (Reset/Stop/C) and the test
+// goroutine (reads), so its counters are mutex-guarded. Stop() reports the timer
+// as already-stopped (returns false) so runTunnelSession exercises the drain
+// path on Reset.
 type fakeTimer struct {
 	ch      chan time.Time
+	mu      sync.Mutex
 	resets  int
-	stopped bool
+	stopped int
 }
 
-func newFakeTimer() *fakeTimer                { return &fakeTimer{ch: make(chan time.Time, 1)} }
-func (t *fakeTimer) C() <-chan time.Time      { return t.ch }
-func (t *fakeTimer) Reset(time.Duration) bool { t.resets++; return true }
-func (t *fakeTimer) Stop() bool               { t.stopped = true; return true }
-func (t *fakeTimer) fire()                    { t.ch <- time.Now() }
+func newFakeTimer() *fakeTimer           { return &fakeTimer{ch: make(chan time.Time, 1)} }
+func (t *fakeTimer) C() <-chan time.Time { return t.ch }
+func (t *fakeTimer) Reset(time.Duration) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.resets++
+	return true
+}
+func (t *fakeTimer) Stop() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.stopped++
+	return false // force the drain branch (already fired / not active)
+}
+func (t *fakeTimer) fire() { t.ch <- time.Now() }
+func (t *fakeTimer) resetCount() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.resets
+}
 
 // goodKeygen mints a real ephemeral key (cheap, keeps the pubkey plumbing real).
 func goodKeygen() (*devtunnel.EphemeralKey, error) { return devtunnel.GenerateEphemeralKey() }
@@ -125,6 +145,7 @@ func baseDeps(t *testing.T, apiStub *fakeTunnelAPI, dialer *fakeDialer, timer *f
 		blockID:  "my-block",
 		port:     5186,
 		endpoint: "sish.example:2224",
+		baseURL:  "https://civitai.com",
 		idle:     30 * time.Minute,
 		newTimer: func(time.Duration) devtunnel.Timer { return timer },
 		signals:  sigs,
@@ -141,6 +162,81 @@ func runInBackground(deps tunnelSessionDeps) <-chan error {
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
+
+// TestValidateMintResponse: the mint response's host must match the P1
+// dev-<16hex>.<domain> shape and its URL must be same-origin as the configured
+// base — a compromised/malicious response can't steer the bind name or the URL.
+func TestValidateMintResponse(t *testing.T) {
+	const base = "https://civitai.com"
+	cases := []struct {
+		name    string
+		host    string
+		url     string
+		wantErr string // "" = should pass
+	}{
+		{"valid", "dev-0123456789abcdef.civit.ai", "https://civitai.com/apps/dev/my-block", ""},
+		{"bad host prefix", "evil-0123456789abcdef.civit.ai", "https://civitai.com/apps/dev/x", "unexpected tunnel host"},
+		{"bad host not-hex", "dev-zzzzzzzzzzzzzzzz.civit.ai", "https://civitai.com/apps/dev/x", "unexpected tunnel host"},
+		{"bad host too-short", "dev-abc.civit.ai", "https://civitai.com/apps/dev/x", "unexpected tunnel host"},
+		{"cross-origin host", "dev-0123456789abcdef.civit.ai", "https://evil.example/apps/dev/x", "cross-origin"},
+		{"cross-origin scheme", "dev-0123456789abcdef.civit.ai", "http://civitai.com/apps/dev/x", "cross-origin"},
+		{"unparseable url", "dev-0123456789abcdef.civit.ai", "://nope", "unparseable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateMintResponse(&api.DevTunnelSession{Host: tc.host, URL: tc.url}, base)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected pass, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("want error containing %q, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// TestRunTunnelSessionRejectsBadMint: a mint response whose host fails validation
+// is refused AND the just-minted session is revoked (no orphan), with no tunnel
+// dial.
+func TestRunTunnelSessionRejectsBadMint(t *testing.T) {
+	bad := sampleSession()
+	bad.Host = "evil-0123456789abcdef.civit.ai" // wrong prefix
+	apiStub := &fakeTunnelAPI{startResult: bad}
+	dialer := &fakeDialer{tunnel: newFakeTunnel()}
+
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), make(chan os.Signal))
+	err := runTunnelSession(context.Background(), deps)
+	if err == nil || !strings.Contains(err.Error(), "unexpected tunnel host") {
+		t.Fatalf("expected a bad-host rejection, got %v", err)
+	}
+	if dialer.dialed {
+		t.Error("must NOT dial the tunnel on a rejected mint response")
+	}
+	if apiStub.stopCount() != 1 || apiStub.stopCalls[0].sessionID != "bki_test" {
+		t.Errorf("a rejected mint must be revoked (avoid orphan), stop calls=%+v", apiStub.stopCalls)
+	}
+}
+
+// TestRunTunnelSessionRejectsCrossOriginURL: a same-shape host but a
+// cross-origin URL is refused (the dev must not be handed an off-origin link).
+func TestRunTunnelSessionRejectsCrossOriginURL(t *testing.T) {
+	bad := sampleSession()
+	bad.URL = "https://evil.example/apps/dev/my-block"
+	apiStub := &fakeTunnelAPI{startResult: bad}
+	dialer := &fakeDialer{tunnel: newFakeTunnel()}
+
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), make(chan os.Signal))
+	err := runTunnelSession(context.Background(), deps)
+	if err == nil || !strings.Contains(err.Error(), "cross-origin") {
+		t.Fatalf("expected a cross-origin URL rejection, got %v", err)
+	}
+	if apiStub.stopCount() != 1 {
+		t.Errorf("a rejected mint must be revoked, stop calls=%d", apiStub.stopCount())
+	}
+}
 
 // TestRunTunnelSessionSignalTeardown: SIGINT tears down — closes the tunnel and
 // calls StopDevTunnel with the minted sessionId.
@@ -233,12 +329,12 @@ func TestRunTunnelSessionActivityResetsIdle(t *testing.T) {
 	// Give the loop a moment, then confirm it's still running (no teardown yet).
 	deadline := time.After(500 * time.Millisecond)
 	for {
-		if timer.resets >= 1 {
+		if timer.resetCount() >= 1 {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("activity did not reset the idle timer (resets=%d)", timer.resets)
+			t.Fatalf("activity did not reset the idle timer (resets=%d)", timer.resetCount())
 		case err := <-errc:
 			t.Fatalf("session exited early on activity (err=%v)", err)
 		default:

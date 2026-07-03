@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -16,6 +18,12 @@ import (
 	"github.com/civitai/cli/internal/devtunnel"
 	"github.com/spf13/cobra"
 )
+
+// devHostPrefixRE mirrors the P1 DEV_HOST_LABEL_REGEX shape (dev-tunnel-session.ts):
+// the server-assigned host MUST be `dev-<16hex>.<domain>`. Defense-in-depth — a
+// compromised/malicious mint response must not be able to steer the reverse-
+// forward bind name to an arbitrary host.
+var devHostPrefixRE = regexp.MustCompile(`^dev-[a-f0-9]{16}\.`)
 
 // Dev-tunnel defaults.
 const (
@@ -52,6 +60,9 @@ type tunnelSessionDeps struct {
 	blockID  string
 	port     int
 	endpoint string
+	// baseURL is the configured Civitai origin; the mint response's URL must be
+	// same-origin as this (defense-in-depth against an attacker-influenced URL).
+	baseURL  string
 	idle     time.Duration
 	newTimer func(d time.Duration) devtunnel.Timer
 	signals  <-chan os.Signal
@@ -143,6 +154,7 @@ pending.`,
 				blockID:  blockID,
 				port:     port,
 				endpoint: ep,
+				baseURL:  cfg.BaseURL(),
 				idle:     idle,
 				newTimer: devtunnel.NewRealTimer,
 				signals:  sigCh,
@@ -174,6 +186,16 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey)
 	if err != nil {
 		return err
+	}
+
+	// Defense-in-depth: never trust the mint response blindly. The assigned host
+	// feeds the `ssh -R` bind name and the URL is what the developer clicks, so a
+	// compromised/malicious response must not be able to steer either. Validate
+	// the host shape + that the URL is same-origin as the configured base, and
+	// revoke the just-minted session on rejection so nothing is orphaned.
+	if verr := validateMintResponse(sess, d.baseURL); verr != nil {
+		_, _ = d.api.StopDevTunnel(context.Background(), sess.SessionID, "")
+		return verr
 	}
 
 	// From here a server session exists — guarantee teardown on every path.
@@ -219,6 +241,15 @@ loop:
 			break loop
 		case <-tunnel.Activity():
 			// A connection came through — the session is not idle; reset the timer.
+			// Stop + drain any already-fired tick first (the standard time.Timer
+			// idiom) so a stale tick can't trigger a spurious early teardown on the
+			// next loop iteration.
+			if !idleTimer.Stop() {
+				select {
+				case <-idleTimer.C():
+				default:
+				}
+			}
 			idleTimer.Reset(d.idle)
 			continue
 		case <-ctx.Done():
@@ -240,4 +271,28 @@ func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, port int) {
 	fmt.Fprintf(out, "      %s\n\n", sess.URL)
 	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on port %d.\n", port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
+}
+
+// validateMintResponse asserts the server-returned session is well-formed before
+// the CLI acts on it: the host matches the P1 `dev-<16hex>.<domain>` shape (it
+// becomes the reverse-forward bind name) and the URL is same-origin (scheme +
+// host) as the configured Civitai base (it is what the developer opens). Either
+// failing is a hard error — a mint that tries to steer the bind name or hand the
+// dev an attacker-influenced URL is refused, not followed.
+func validateMintResponse(sess *api.DevTunnelSession, baseURL string) error {
+	if !devHostPrefixRE.MatchString(sess.Host) {
+		return fmt.Errorf("server returned an unexpected tunnel host %q (want dev-<16hex>.<domain>) — refusing to bind", sess.Host)
+	}
+	base, err := url.Parse(baseURL)
+	if err != nil || base.Host == "" {
+		return fmt.Errorf("cannot validate the tunnel URL against base %q: %v", baseURL, err)
+	}
+	u, err := url.Parse(sess.URL)
+	if err != nil {
+		return fmt.Errorf("server returned an unparseable URL %q — refusing to open", sess.URL)
+	}
+	if u.Scheme != base.Scheme || u.Host != base.Host {
+		return fmt.Errorf("server returned a cross-origin URL %q (expected same origin as %s) — refusing to open", sess.URL, baseURL)
+	}
+	return nil
 }
