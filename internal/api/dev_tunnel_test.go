@@ -23,11 +23,12 @@ func TestStartDevTunnelRequestResponse(t *testing.T) {
 		gotBody = string(raw)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"result": map[string]any{"data": map[string]any{"json": map[string]any{
-				"sessionId":    "bki_abc",
-				"host":         "dev-0123456789abcdef.civit.ai",
-				"url":          "https://civitai.com/apps/dev/my-block",
-				"expiresAt":    1893456000,
-				"spendCapBuzz": 5000,
+				"sessionId":        "bki_abc",
+				"host":             "dev-0123456789abcdef.civit.ai",
+				"url":              "https://civitai.com/apps/dev/my-block",
+				"expiresAt":        1893456000,
+				"spendCapBuzz":     5000,
+				"sshHostPublicKey": "ssh-ed25519 AAAAHOSTKEY",
 			}}},
 		})
 	}))
@@ -67,6 +68,10 @@ func TestStartDevTunnelRequestResponse(t *testing.T) {
 	}
 	if sess.ExpiresAt != 1893456000 {
 		t.Errorf("expiresAt = %d", sess.ExpiresAt)
+	}
+	// R1: the sish host public key the CLI pins is decoded from the mint response.
+	if sess.SSHHostPublicKey != "ssh-ed25519 AAAAHOSTKEY" {
+		t.Errorf("sshHostPublicKey = %q, want the pinned host key line", sess.SSHHostPublicKey)
 	}
 }
 

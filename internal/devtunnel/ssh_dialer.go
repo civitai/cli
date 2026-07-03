@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,21 +43,44 @@ func (d *sshDialer) logf(format string, a ...any) {
 	fmt.Fprintf(d.log, format, a...)
 }
 
+// pinnedHostKeyCallback builds a FixedHostKey callback from the mint-provided
+// OpenSSH host public-key line, PINNING the sish host key so an on-path attacker
+// impersonating the sish endpoint is rejected at the SSH handshake (a MITM there
+// would otherwise reach the dev's localhost + read/tamper tunneled traffic).
+//
+// FAIL CLOSED: an empty/absent host key is a hard error — the dialer refuses to
+// connect rather than fall back to ssh.InsecureIgnoreHostKey. A malformed key
+// yields a clear parse error. There is NO code path here that accepts an
+// unverified host key.
+func pinnedHostKeyCallback(hostPublicKey string) (ssh.HostKeyCallback, error) {
+	if strings.TrimSpace(hostPublicKey) == "" {
+		return nil, fmt.Errorf("server did not provide a sish host key to pin; refusing to connect")
+	}
+	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(hostPublicKey))
+	if err != nil {
+		return nil, fmt.Errorf("parse sish host key %q: %w", hostPublicKey, err)
+	}
+	return ssh.FixedHostKey(pub), nil
+}
+
 // Dial opens the SSH connection to the sish endpoint and requests a reverse
 // forward for the assigned host, then proxies inbound connections to the local
 // dev server.
 //
-// SECURITY (host key): host-key verification is deferred to P3 — the sish
-// endpoint + its host key are not provisioned yet. Until then this uses
-// InsecureIgnoreHostKey; P3 MUST pin the sish host key (known_hosts) before the
-// public listener is exposed. The tunnel's security boundary is the edge
-// forwardAuth + the pubkey-bound credential (design §5/§6), not this leg, but a
-// pinned host key closes MITM on the first-party SSH hop.
+// SECURITY (host key): the sish host key is PINNED from the mint's
+// sshHostPublicKey (opts.SSHHostPublicKey) via ssh.FixedHostKey — this closes
+// MITM on the first-party SSH hop. If the mint did not supply a host key the
+// dial FAILS CLOSED (see pinnedHostKeyCallback); it never uses
+// InsecureIgnoreHostKey.
 func (d *sshDialer) Dial(ctx context.Context, opts DialOptions) (Tunnel, error) {
+	hostKeyCallback, err := pinnedHostKeyCallback(opts.SSHHostPublicKey)
+	if err != nil {
+		return nil, err
+	}
 	cfg := &ssh.ClientConfig{
 		User:            sshDialUser,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(opts.Signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // TODO(P3): pin the sish host key
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         dialTimeout,
 	}
 
