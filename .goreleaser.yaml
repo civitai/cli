@@ -102,3 +102,16 @@ homebrew_casks:
 
 release:
   draft: true
+  footer: |
+    ## Install
+
+    ```bash
+    # npm (Node) — downloads + sha256-verifies the matching binary on install
+    npm install -g @civitai/cli        # or: npx @civitai/cli
+    # Homebrew (macOS / Linux)
+    brew install civitai/tap/civitai
+    # Go (from source)
+    go install github.com/civitai/cli/cmd/civitai@latest
+    ```
+
+    Or grab a prebuilt binary from the assets below and verify it against `checksums.txt`.

@@ -25,8 +25,20 @@ contract, and **packages/submits** it for review.
 
 ## Install
 
-Pick whichever fits — Homebrew is the quickest on macOS/Linux; the prebuilt
+Pick whichever fits — **npm** is the most convenient if you already have Node
+(App authors usually do); Homebrew is quickest on macOS/Linux; the prebuilt
 binary needs no toolchain; `go install` builds from source.
+
+### npm (Node)
+
+A thin wrapper that downloads the matching prebuilt binary for your OS/arch on
+install and verifies its sha256 against the release `checksums.txt`:
+
+```bash
+npm install -g @civitai/cli
+# or run it without installing:
+npx @civitai/cli --help
+```
 
 ### Homebrew (macOS / Linux)
 
