@@ -144,7 +144,7 @@ func TestSubmissionsErrorMapping(t *testing.T) {
 		{http.StatusForbidden, map[string]string{"message": "restricted to the civitai team"}, "Apps access required — invite-only beta"},
 		{http.StatusNotFound, map[string]string{"message": "Submission not found"}, "no such submission"},
 		{http.StatusTooManyRequests, map[string]string{"message": "Rate limit exceeded"}, "rate limited"},
-		{http.StatusServiceUnavailable, map[string]string{"message": "App Blocks is not enabled"}, "not enabled"},
+		{http.StatusServiceUnavailable, map[string]string{"message": "Apps are not enabled"}, "not enabled"},
 	}
 	for _, tc := range cases {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
