@@ -1,0 +1,7 @@
+# Downloaded at install time — never commit or ship these.
+lib/binaries/
+*.tgz
+
+# Copied from the repo root at publish/pack time by the workflow (and local
+# `cp ../LICENSE .`); keep the duplicate out of the committed tree.
+LICENSE

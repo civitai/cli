@@ -45,6 +45,15 @@ archives:
     format_overrides:
       - goos: windows
         formats: [zip]
+  # Raw (uncompressed) binary archive so the npm wrapper can download a bare
+  # executable directly from the GitHub Release — no tar/zip extraction in the
+  # postinstall. Named e.g. civitai_0.1.40_linux_amd64 (+ .exe on windows).
+  # These also get sha256 entries in checksums.txt for the wrapper to verify.
+  - id: civitai-raw
+    ids: [civitai]
+    formats: [binary]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}
 
 checksum:
   name_template: "checksums.txt"
@@ -66,6 +75,13 @@ changelog:
 # pushes the updated cask formula to the tap on each tag.
 homebrew_casks:
   - name: civitai
+    # Pin the cask to the tar.gz archive only. Without this, the added
+    # `civitai-raw` (bare binary) archive gives two archives per OS/Arch and
+    # goreleaser errors ("one tap can handle only one archive of an OS/Arch
+    # combination"). This keeps Homebrew's output identical to before the raw
+    # archive was added.
+    ids:
+      - civitai
     binaries:
       - civitai
     repository:

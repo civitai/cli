@@ -1,0 +1,76 @@
+name: Release npm
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (no leading v), e.g. 0.1.40"
+        required: true
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      has_npm_token: ${{ steps.c.outputs.has }}
+    steps:
+      - id: c
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "has=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "NPM_TOKEN not set — skipping npm publish."
+            echo "has=false" >> "$GITHUB_OUTPUT"
+          fi
+  publish:
+    needs: guard
+    if: needs.guard.outputs.has_npm_token == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Resolve version
+        id: v
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            V="$INPUT_VERSION"
+          else
+            V="${RELEASE_TAG#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - name: Stamp version + license
+        working-directory: ./npm
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          cp ../LICENSE ./LICENSE
+      - name: Skip if already published (idempotent)
+        id: pub
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          if npm view "@civitai/cli@$VERSION" version >/dev/null 2>&1; then
+            echo "Already on npm; skipping."; echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish
+        if: steps.pub.outputs.skip == 'false'
+        working-directory: ./npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
