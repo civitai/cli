@@ -50,7 +50,7 @@ func newAppPullCmd() *cobra.Command {
 		Use:   "pull [dir]",
 		Short: "Clone or sync your app's repository from Civitai",
 		Long: `Clone (or, if [dir] is already a checkout, pull) the canonical repository
-backing one of YOUR approved App Blocks. This is the read side of git authoring:
+backing one of YOUR approved Apps. This is the read side of git authoring:
 it fetches the current block.manifest.json + source so you can edit locally and
 then submit (` + "`civitai app submit`" + `) or push.
 
