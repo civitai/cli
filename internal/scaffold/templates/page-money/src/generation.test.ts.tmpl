@@ -7,8 +7,10 @@ import {
   accountLabel,
   buildWorkflowBody,
   clampPrompt,
+  firstImageUrl,
   formatCost,
   hasBudgetedScope,
+  isBusyPhase,
   isDisallowedAccountError,
   isInsufficientBuzz,
   isTerminalStatus,
@@ -25,9 +27,15 @@ describe('formatCost', () => {
   it('renders an integer with separators', () => {
     expect(formatCost(1234)).toBe('1,234');
   });
-  it('renders a dash for null / non-finite', () => {
+  it('renders a dash for null / undefined / non-finite', () => {
     expect(formatCost(null)).toBe('—');
+    expect(formatCost(undefined)).toBe('—');
     expect(formatCost(NaN)).toBe('—');
+    expect(formatCost(Infinity)).toBe('—');
+  });
+  it('rounds fractional costs and separates large ones', () => {
+    expect(formatCost(1234.6)).toBe('1,235');
+    expect(formatCost(1_234_567)).toBe((1_234_567).toLocaleString());
   });
 });
 
@@ -44,6 +52,14 @@ describe('isInsufficientBuzz', () => {
     expect(isInsufficientBuzz('Insufficient Buzz')).toBe(true);
     expect(isInsufficientBuzz('prompt rejected by audit')).toBe(false);
     expect(isInsufficientBuzz(null)).toBe(false);
+    expect(isInsufficientBuzz(undefined)).toBe(false);
+  });
+  it('catches each budget/balance phrasing the sniff covers', () => {
+    // Each substring the heuristic keys on should independently match.
+    expect(isInsufficientBuzz('not enough funds')).toBe(true);
+    expect(isInsufficientBuzz('over your per-gen budget')).toBe(true);
+    expect(isInsufficientBuzz('your balance is too low')).toBe(true);
+    expect(isInsufficientBuzz('needs more buzz')).toBe(true);
   });
 });
 
@@ -91,11 +107,10 @@ describe('buildWorkflowBody', () => {
     // Passing 'auto' explicitly is identical to omitting it.
     expect(buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, [], 'auto')).toEqual(base);
   });
-  it('a picked pool is threaded as accountType', () => {
-    const body = buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, [], 'yellow');
-    expect(body.accountType).toBe('yellow');
-    const green = buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, [], 'green');
-    expect(green.accountType).toBe('green');
+  it('a picked pool is threaded as accountType (blue/green/yellow)', () => {
+    expect(buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, [], 'yellow').accountType).toBe('yellow');
+    expect(buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, [], 'green').accountType).toBe('green');
+    expect(buildWorkflowBody('a cat', DEFAULT_CHECKPOINT, [], 'blue').accountType).toBe('blue');
   });
 });
 
@@ -108,6 +123,8 @@ describe('accountLabel / spentAccountLabel', () => {
   });
   it('spentAccountLabel is the pool label, or null when absent', () => {
     expect(spentAccountLabel('yellow')).toBe('Yellow');
+    expect(spentAccountLabel('blue')).toBe('Blue');
+    expect(spentAccountLabel('green')).toBe('Green');
     expect(spentAccountLabel(undefined)).toBeNull();
   });
 });
@@ -168,5 +185,48 @@ describe('phaseForSnapshot', () => {
         }),
       ),
     ).toBe('account-rejected');
+  });
+  it('routes expired / canceled terminal statuses through the error classifier', () => {
+    // Both non-success terminal states reduce via phaseForError: a plain reason
+    // -> failed, an insufficient-Buzz reason -> insufficient.
+    expect(phaseForSnapshot(snap({ status: 'expired' }))).toBe('failed');
+    expect(phaseForSnapshot(snap({ status: 'canceled' }))).toBe('failed');
+    expect(phaseForSnapshot(snap({ status: 'expired', error: 'Insufficient Buzz' }))).toBe(
+      'insufficient',
+    );
+  });
+});
+
+describe('isBusyPhase', () => {
+  it('true only for the in-flight phases', () => {
+    for (const p of ['estimating', 'submitting', 'polling'] as const) {
+      expect(isBusyPhase(p)).toBe(true);
+    }
+    for (const p of [
+      'idle',
+      'needs-consent',
+      'succeeded',
+      'failed',
+      'insufficient',
+      'account-rejected',
+    ] as const) {
+      expect(isBusyPhase(p)).toBe(false);
+    }
+  });
+});
+
+describe('firstImageUrl', () => {
+  const snap = (over: Partial<BlockWorkflowSnapshot>): BlockWorkflowSnapshot => ({
+    workflowId: 'wf',
+    status: 'succeeded',
+    ...over,
+  });
+  it('returns the first image url when present', () => {
+    expect(firstImageUrl(snap({ imageUrls: ['a.png', 'b.png'] }))).toBe('a.png');
+  });
+  it('returns null for a null snapshot / empty or missing imageUrls', () => {
+    expect(firstImageUrl(null)).toBeNull();
+    expect(firstImageUrl(snap({ imageUrls: [] }))).toBeNull();
+    expect(firstImageUrl(snap({}))).toBeNull();
   });
 });
