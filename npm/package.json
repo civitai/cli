@@ -1,0 +1,17 @@
+{
+  "name": "@civitai/cli",
+  "version": "0.0.0-dev",
+  "description": "The Civitai CLI — author and ship Civitai App Blocks. Installs the prebuilt Go binary.",
+  "bin": { "civitai": "bin/civitai.js" },
+  "files": ["bin/", "lib/", "README.md", "LICENSE"],
+  "scripts": { "postinstall": "node lib/install.js" },
+  "engines": { "node": ">=18" },
+  "license": "Apache-2.0",
+  "publishConfig": { "access": "public" },
+  "repository": { "type": "git", "url": "git+https://github.com/civitai/cli.git" },
+  "homepage": "https://github.com/civitai/cli#readme",
+  "bugs": { "url": "https://github.com/civitai/cli/issues" },
+  "keywords": ["civitai", "app-blocks", "cli", "civitai-apps"],
+  "os": ["linux", "darwin", "win32"],
+  "cpu": ["x64", "arm64"]
+}

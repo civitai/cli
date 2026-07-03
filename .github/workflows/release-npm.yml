@@ -1,0 +1,100 @@
+name: Release npm
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (no leading v), e.g. 0.1.40"
+        required: true
+permissions:
+  contents: read
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      has_npm_token: ${{ steps.c.outputs.has }}
+    steps:
+      - id: c
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NPM_TOKEN" ]; then
+            echo "has=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "NPM_TOKEN not set — skipping npm publish."
+            echo "has=false" >> "$GITHUB_OUTPUT"
+          fi
+  publish:
+    needs: guard
+    if: needs.guard.outputs.has_npm_token == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+      - name: Resolve version
+        id: v
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            V="$INPUT_VERSION"
+          else
+            V="${RELEASE_TAG#v}"
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+      - name: Assert release carries the raw-binary assets
+        # Guards against publishing an npm version that points at a release with
+        # no `civitai-raw` bare binary (e.g. any pre-#85 tag, or a bad manual
+        # dispatch) — that would be a package that 404s on postinstall forever.
+        # Cheap correctness check; runs for both triggers.
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets="$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name')" || {
+            echo "::error::GitHub release v$VERSION not found (or not readable)."
+            exit 1
+          }
+          if ! printf '%s\n' "$assets" | grep -qx "civitai_${VERSION}_linux_amd64"; then
+            echo "::error::Release v$VERSION is missing the raw binary asset civitai_${VERSION}_linux_amd64. Refusing to publish a package that would 404 on postinstall."
+            printf 'assets present:\n%s\n' "$assets"
+            exit 1
+          fi
+          if ! printf '%s\n' "$assets" | grep -qx "checksums.txt"; then
+            echo "::error::Release v$VERSION is missing checksums.txt. Refusing to publish."
+            exit 1
+          fi
+          echo "Release v$VERSION carries civitai-raw assets + checksums.txt — OK."
+      - name: Stamp version + license
+        working-directory: ./npm
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          npm version "$VERSION" --no-git-tag-version --allow-same-version
+          cp ../LICENSE ./LICENSE
+      - name: Skip if already published (idempotent)
+        id: pub
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          if npm view "@civitai/cli@$VERSION" version >/dev/null 2>&1; then
+            echo "Already on npm; skipping."; echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Publish
+        if: steps.pub.outputs.skip == 'false'
+        working-directory: ./npm
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
