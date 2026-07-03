@@ -51,6 +51,30 @@ jobs:
             V="${RELEASE_TAG#v}"
           fi
           echo "version=$V" >> "$GITHUB_OUTPUT"
+      - name: Assert release carries the raw-binary assets
+        # Guards against publishing an npm version that points at a release with
+        # no `civitai-raw` bare binary (e.g. any pre-#85 tag, or a bad manual
+        # dispatch) — that would be a package that 404s on postinstall forever.
+        # Cheap correctness check; runs for both triggers.
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          assets="$(gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name')" || {
+            echo "::error::GitHub release v$VERSION not found (or not readable)."
+            exit 1
+          }
+          if ! printf '%s\n' "$assets" | grep -qx "civitai_${VERSION}_linux_amd64"; then
+            echo "::error::Release v$VERSION is missing the raw binary asset civitai_${VERSION}_linux_amd64. Refusing to publish a package that would 404 on postinstall."
+            printf 'assets present:\n%s\n' "$assets"
+            exit 1
+          fi
+          if ! printf '%s\n' "$assets" | grep -qx "checksums.txt"; then
+            echo "::error::Release v$VERSION is missing checksums.txt. Refusing to publish."
+            exit 1
+          fi
+          echo "Release v$VERSION carries civitai-raw assets + checksums.txt — OK."
       - name: Stamp version + license
         working-directory: ./npm
         env:

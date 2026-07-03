@@ -81,8 +81,14 @@ function download(url, redirectsLeft = 5) {
           reject(new Error(`Too many redirects fetching ${url}`));
           return;
         }
-        const next = new URL(res.headers.location, url).toString();
-        resolve(download(next, redirectsLeft - 1));
+        const nextUrl = new URL(res.headers.location, url);
+        if (nextUrl.protocol !== "https:") {
+          reject(
+            new Error(`Refusing to follow non-https redirect to ${nextUrl.toString()}`)
+          );
+          return;
+        }
+        resolve(download(nextUrl.toString(), redirectsLeft - 1));
         return;
       }
       if (status === 404) {
@@ -108,6 +114,12 @@ function download(url, redirectsLeft = 5) {
     req.on("error", (err) =>
       reject(new Error(`Network error fetching ${url}: ${err.message}`))
     );
+    // Fail-closed on a silent stall: a stuck CDN socket never emits 'error',
+    // so postinstall would hang forever without this. destroy(err) surfaces
+    // through the 'error' handler above.
+    req.setTimeout(30000, () => {
+      req.destroy(new Error(`download timed out after 30s fetching ${url}`));
+    });
   });
 }
 
