@@ -154,7 +154,7 @@ func TestGetForgejoCloneInfoMapsStatusError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]any{"json": map[string]any{"message": "App Blocks not enabled"}},
+			"error": map[string]any{"json": map[string]any{"message": "Apps are not enabled"}},
 		})
 	}))
 	defer srv.Close()
@@ -164,7 +164,7 @@ func TestGetForgejoCloneInfoMapsStatusError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on 403")
 	}
-	if !strings.Contains(err.Error(), "not permitted") || !strings.Contains(err.Error(), "App Blocks not enabled") {
+	if !strings.Contains(err.Error(), "not permitted") || !strings.Contains(err.Error(), "Apps are not enabled") {
 		t.Errorf("403 should map to not-permitted + server message: %v", err)
 	}
 }

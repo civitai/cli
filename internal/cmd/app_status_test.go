@@ -204,7 +204,7 @@ func TestAppStatusErrorMapping(t *testing.T) {
 		{http.StatusForbidden, "restricted to the civitai team", "invite-only beta"},
 		{http.StatusNotFound, "Submission not found", "no such submission"},
 		{http.StatusTooManyRequests, "Rate limit exceeded", "rate limited"},
-		{http.StatusServiceUnavailable, "App Blocks is not enabled", "not enabled"},
+		{http.StatusServiceUnavailable, "Apps are not enabled", "not enabled"},
 	}
 	for _, tc := range cases {
 		srv := statusServer(t, map[string]string{"message": tc.msg}, tc.status, nil)
