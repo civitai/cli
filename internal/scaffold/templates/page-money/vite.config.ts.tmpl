@@ -3,6 +3,7 @@ import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 
 import { civitaiSetupPlugin } from './vite-plugin-civitai-setup.js';
+import { DEV_ALLOWED_HOSTS, devServerSecurityHeaders } from './src/dev-embed.js';
 
 // base MUST be '/' — the platform serves the build output at the root of the
 // app's own subdomain and server-owns the manifest iframe.src (the W10 page
@@ -35,6 +36,18 @@ export default defineConfig(({ mode }) => {
     host: 'localhost',
     port: 5186,
     strictPort: true,
+    // `civitai app dev-tunnel` serves THIS dev server, through a reverse tunnel,
+    // as a dev-*.civit.ai host that the real https://civitai.com/apps/dev/<id>
+    // parent iframes. Two things make that embed work (both DEV-ONLY — `server.*`
+    // never applies to `vite build`, so the production framing is untouched):
+    //   1. allowedHosts admits the tunneled `.civit.ai` host (Vite's DNS-rebinding
+    //      check would otherwise 403 it), and
+    //   2. a `frame-ancestors https://civitai.com` CSP + NO X-Frame-Options lets
+    //      civitai.com frame it. (The block's parent-origin ALLOWLIST also needs
+    //      civitai.com — see .env.development's VITE_BLOCK_ALLOWED_PARENT_ORIGINS.)
+    // See src/dev-embed.ts (single source of truth + tests).
+    allowedHosts: DEV_ALLOWED_HOSTS,
+    headers: devServerSecurityHeaders(),
     // dev:live backend proxy. In live mode the SDK's createLiveHost fetches
     // /api/... with `backendBaseUrl: ''` (see src/dev-transport.ts) so the
     // browser hits THIS dev server SAME-ORIGIN — no cross-origin preflight (N1).

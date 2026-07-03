@@ -1,0 +1,49 @@
+// Asserts the dev server is embeddable from the real Civitai host (for
+// `civitai app dev-tunnel`) WITHOUT loosening the production build.
+import { describe, it, expect } from 'vitest';
+
+import {
+  PROD_PARENT_ORIGIN,
+  DEV_ALLOWED_HOSTS,
+  DEV_TUNNEL_HOST_SUFFIX,
+  devServerSecurityHeaders,
+  devAllowedParentOrigins,
+} from './dev-embed.js';
+
+describe('dev-tunnel embeddability', () => {
+  it('emits a frame-ancestors CSP that admits civitai.com', () => {
+    const headers = devServerSecurityHeaders();
+    const csp = headers['Content-Security-Policy'];
+    expect(csp).toContain('frame-ancestors');
+    expect(csp).toContain(PROD_PARENT_ORIGIN); // https://civitai.com
+  });
+
+  it('does NOT set X-Frame-Options (would block the cross-origin embed)', () => {
+    const headers = devServerSecurityHeaders();
+    const keys = Object.keys(headers).map((k) => k.toLowerCase());
+    expect(keys).not.toContain('x-frame-options');
+  });
+
+  it('allows the tunnel host suffix in the dev server host check', () => {
+    expect(DEV_ALLOWED_HOSTS).toContain(DEV_TUNNEL_HOST_SUFFIX); // .civit.ai
+    expect(DEV_TUNNEL_HOST_SUFFIX).toBe('.civit.ai');
+  });
+
+  it('adds civitai.com to the block parent-origin allowlist (merged, deduped)', () => {
+    // Local harness origin already present → civitai.com is appended once.
+    const merged = devAllowedParentOrigins('http://localhost:5186');
+    expect(merged).toContain('http://localhost:5186');
+    expect(merged).toContain(PROD_PARENT_ORIGIN);
+    expect(merged.filter((o) => o === PROD_PARENT_ORIGIN)).toHaveLength(1);
+  });
+
+  it('is idempotent when civitai.com is already in the env value', () => {
+    const merged = devAllowedParentOrigins('https://civitai.com');
+    expect(merged).toEqual(['https://civitai.com']);
+  });
+
+  it('handles an empty/undefined env value', () => {
+    expect(devAllowedParentOrigins(undefined)).toEqual([PROD_PARENT_ORIGIN]);
+    expect(devAllowedParentOrigins('')).toEqual([PROD_PARENT_ORIGIN]);
+  });
+});
