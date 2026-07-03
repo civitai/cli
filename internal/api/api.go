@@ -925,6 +925,187 @@ func devTokenError(status int, raw []byte) error {
 	}
 }
 
+// ── APP DEV TUNNEL (P2 CLI ↔ P1 server contract) ─────────────────────────────
+//
+// The `civitai app dev-tunnel` command drives three tRPC procedures on the
+// `blocks` router (civitai/civitai src/server/routers/blocks.router.ts):
+//
+//   - blocks.startDevTunnel  (mutation) input  { blockId, sshPublicKey }
+//                                      result { sessionId, host, url, expiresAt, spendCapBuzz }
+//   - blocks.stopDevTunnel   (mutation) input  { sessionId? , blockId? } (one required)
+//                                      result { ok, stopped }
+//
+// These are non-batched tRPC HTTP calls: the request body is `{"json": <input>}`
+// and the success envelope is `{"result":{"data":{"json":<result>}}}` (superjson),
+// exactly matching GetBuzzAccount above. All three procedures are gated
+// server-side behind `appDeveloperProcedure` + the dark `app-blocks-dev-tunnel`
+// kill-switch, so until P1 merges + P3 flips the flag every call answers
+// FORBIDDEN — that is expected (the command is inert end-to-end pre-P3).
+//
+// The CLI sends its EPHEMERAL SSH PUBLIC key: the server keys the tunnel
+// credential by sha256(normalized pubkey) and the CLI's `ssh -R` bind presents
+// the matching private key (which never leaves memory). See
+// dev-tunnel-session.ts (normalizeSshPublicKey / fingerprintSshPublicKey).
+
+// StartDevTunnelPath / StopDevTunnelPath are the non-batched tRPC routes.
+const (
+	StartDevTunnelPath = "/api/trpc/blocks.startDevTunnel"
+	StopDevTunnelPath  = "/api/trpc/blocks.stopDevTunnel"
+)
+
+// DevTunnelSession mirrors blocks.startDevTunnel's result (the server's
+// StartDevTunnelResult in dev-tunnel.service.ts). Field names + JSON casing
+// track the server EXACTLY.
+type DevTunnelSession struct {
+	SessionID string `json:"sessionId"`
+	// Host is the assigned unguessable `dev-<16hex>.<APPS_DOMAIN>` the reverse
+	// tunnel binds to; the CLI passes it to `ssh -R` as the remote bind host.
+	Host string `json:"host"`
+	// URL is the `/apps/dev/<blockId>` page the developer opens in their browser.
+	URL string `json:"url"`
+	// ExpiresAt is the hard-TTL expiry (unix seconds) after which the server
+	// reaper reclaims the route even if the CLI never calls stopDevTunnel.
+	ExpiresAt int64 `json:"expiresAt"`
+	// SpendCapBuzz is the per-session cumulative Buzz ceiling (backstop).
+	SpendCapBuzz int64 `json:"spendCapBuzz"`
+}
+
+// DevTunnelController mints + revokes a dev-tunnel session. Behind an interface
+// so the command layer is testable without a live server.
+type DevTunnelController interface {
+	// StartDevTunnel mints a tunnel credential + host for blockId, binding it to
+	// the caller's ephemeral SSH public key. Returns the assigned host + the
+	// /apps/dev URL the developer opens.
+	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string) (*DevTunnelSession, error)
+	// StopDevTunnel revokes the caller's tunnel by sessionId (preferred) or, when
+	// sessionId is empty, by blockId. Returns whether a session was torn down.
+	StopDevTunnel(ctx context.Context, sessionID, blockID string) (bool, error)
+}
+
+// startDevTunnelInput mirrors the blocks.startDevTunnel zod input.
+type startDevTunnelInput struct {
+	BlockID      string `json:"blockId"`
+	SSHPublicKey string `json:"sshPublicKey"`
+}
+
+// stopDevTunnelInput mirrors the blocks.stopDevTunnel zod input (one of the two
+// is set). `omitempty` so exactly the provided selector is sent.
+type stopDevTunnelInput struct {
+	SessionID string `json:"sessionId,omitempty"`
+	BlockID   string `json:"blockId,omitempty"`
+}
+
+// StartDevTunnel POSTs blocks.startDevTunnel and returns the minted session. The
+// OAuth access token is refreshed transparently on a 401.
+func (c *Client) StartDevTunnel(ctx context.Context, blockID, sshPublicKey string) (*DevTunnelSession, error) {
+	body, err := json.Marshal(map[string]any{"json": startDevTunnelInput{BlockID: blockID, SSHPublicKey: sshPublicKey}})
+	if err != nil {
+		return nil, err
+	}
+	build := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+StartDevTunnelPath, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	}
+	status, raw, err := c.authedDo(ctx, build)
+	if err != nil {
+		return nil, err
+	}
+	if status != http.StatusOK {
+		return nil, devTunnelError(status, raw)
+	}
+	var env struct {
+		Result struct {
+			Data struct {
+				JSON *DevTunnelSession `json:"json"`
+			} `json:"data"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil || env.Result.Data.JSON == nil {
+		return nil, fmt.Errorf("unexpected blocks.startDevTunnel response: %s", string(raw))
+	}
+	if env.Result.Data.JSON.Host == "" || env.Result.Data.JSON.SessionID == "" {
+		return nil, fmt.Errorf("blocks.startDevTunnel response missing host/sessionId: %s", string(raw))
+	}
+	return env.Result.Data.JSON, nil
+}
+
+// StopDevTunnel POSTs blocks.stopDevTunnel. A non-empty sessionID selects by
+// session (preferred); otherwise blockID selects the caller's active tunnel for
+// that app. Returns whether the server tore a session down.
+func (c *Client) StopDevTunnel(ctx context.Context, sessionID, blockID string) (bool, error) {
+	if sessionID == "" && blockID == "" {
+		return false, fmt.Errorf("stopDevTunnel needs a sessionId or blockId")
+	}
+	body, err := json.Marshal(map[string]any{"json": stopDevTunnelInput{SessionID: sessionID, BlockID: blockID}})
+	if err != nil {
+		return false, err
+	}
+	build := func() (*http.Request, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+StopDevTunnelPath, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		return req, nil
+	}
+	status, raw, err := c.authedDo(ctx, build)
+	if err != nil {
+		return false, err
+	}
+	if status != http.StatusOK {
+		return false, devTunnelError(status, raw)
+	}
+	var env struct {
+		Result struct {
+			Data struct {
+				JSON struct {
+					OK      bool `json:"ok"`
+					Stopped bool `json:"stopped"`
+				} `json:"json"`
+			} `json:"data"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return false, fmt.Errorf("unexpected blocks.stopDevTunnel response: %s", string(raw))
+	}
+	return env.Result.Data.JSON.Stopped, nil
+}
+
+// devTunnelError maps a non-200 dev-tunnel tRPC response to an actionable CLI
+// error. tRPC error bodies are {error:{json:{message,code,...}}}; the HTTP
+// status carries the mapped code (403 flag-off/not-author, 404 not-your-app).
+func devTunnelError(status int, raw []byte) error {
+	var env struct {
+		Error struct {
+			JSON struct {
+				Message string `json:"message"`
+			} `json:"json"`
+		} `json:"error"`
+	}
+	msg := serverMessage(raw)
+	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
+		msg = env.Error.JSON.Message
+	}
+	switch status {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
+	case http.StatusForbidden:
+		return fmt.Errorf("dev tunnels are not available for your account (403): %s — needs an Apps-author invite AND the dev-tunnel flag (dark until GA)", msg)
+	case http.StatusNotFound:
+		return fmt.Errorf("app not found (404): %s — check the blockId with `civitai app status` (you can only tunnel your OWN app)", msg)
+	case http.StatusTooManyRequests:
+		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
+	case http.StatusServiceUnavailable:
+		return fmt.Errorf("dev tunnels unavailable (503): %s", msg)
+	default:
+		return fmt.Errorf("server returned %d: %s", status, msg)
+	}
+}
+
 // withdrawError maps a non-2xx withdraw response to a clear, actionable CLI
 // error. The withdraw route returns {"message": ...} on every error status:
 // 404 not-found-or-not-yours, 409 not-in-a-withdrawable-(pending)-state (the
