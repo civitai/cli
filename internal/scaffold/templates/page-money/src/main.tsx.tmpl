@@ -20,7 +20,6 @@ import {
   installLiveHost,
   resolveLiveConfig,
 } from './dev-transport.js';
-import { installSpentAccountStamper } from './mock-buzz.js';
 import {
   isTokenExpired,
   navDisplay,
@@ -50,10 +49,9 @@ const mode = getHarnessMode();
 // BLOCK_INIT lands. (Prod uses VITE_BLOCK_ALLOWED_PARENT_ORIGINS instead.)
 // Live mode does the same inside installLiveHost (deferred to mount).
 if (useHarness && mode === 'mock') {
-  // Register the spentAccountType stamper BEFORE the transport so it mutates the
-  // mock host's succeeded snapshots first (registration order — see mock-buzz.ts).
-  // The balance read is answered via Harness's onOutbound.
-  installSpentAccountStamper();
+  // 0.18's mock host natively answers the balance read (from the `buzzBalance`
+  // option <Harness> passes) and stamps `spentAccountType` on succeeded
+  // snapshots, so no local shim is registered here.
   installHarnessTransport();
 }
 

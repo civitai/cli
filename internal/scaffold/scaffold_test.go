@@ -118,9 +118,11 @@ func TestRenderPageMoney(t *testing.T) {
 	pkg := readFile(t, filepath.Join(dest, "package.json"))
 	mustContain(t, pkg, `"@civitai/blocks-react"`)
 	// Per-account Buzz (useBuzzBalance / body.accountType / snapshot.spentAccountType)
-	// needs @civitai/blocks-react@0.17.0 (createLiveHost answers GET_BUZZ_BALANCE so
-	// dev:live shows the balance too) + @civitai/app-sdk@0.14.0.
-	mustContain(t, pkg, `"@civitai/blocks-react": "^0.17.0"`)
+	// needs @civitai/blocks-react@0.18.0 (createMockHost now answers GET_BUZZ_BALANCE
+	// from the `buzzBalance` option AND stamps spentAccountType on succeeded
+	// snapshots natively — so the scaffold no longer ships a mock balance shim) +
+	// @civitai/app-sdk@0.14.0.
+	mustContain(t, pkg, `"@civitai/blocks-react": "^0.18.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk": "^0.14.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)

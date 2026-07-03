@@ -20,9 +20,12 @@ import { installMockMoneyHost } from './mock-buzz.js';
 //     -> App auto-resumes: estimate -> submit -> poll
 //     -> succeeded snapshot -> result image + spent-cost success Alert
 //
-// `installMockMoneyHost` is the createMockHost wrapper that ALSO answers the
-// balance read + stamps spentAccountType (the SDK mock host doesn't). Its timers
-// all fire on setTimeout(0), so real timers + findBy/waitFor resolve promptly.
+// `installMockMoneyHost` is a thin createMockHost wrapper. 0.18 answers the
+// balance read + stamps `spentAccountType` (the largest-debit `buzzBalance` pool)
+// NATIVELY; the wrapper only adds the domain-clamp rejection the mock host doesn't
+// model. The funder note therefore reflects the wallet's primary funder — the pick
+// itself is proven by the `accountType` on the submit body (asserted below). Its
+// timers all fire on setTimeout(0), so real timers + findBy/waitFor resolve promptly.
 
 describe('App money path (e2e)', () => {
   let uninstall: (() => void) | undefined;
@@ -41,6 +44,9 @@ describe('App money path (e2e)', () => {
       consentGranted: false,
       cost: 8,
       pollsUntilDone: 2,
+      // A blue-only wallet -> the native primary-funder stamp reports `blue` on
+      // the succeeded snapshot (Auto funds from the only funded pool).
+      buzzBalance: { blue: 100, green: 0, yellow: 0 },
     });
 
     render(<App />);
@@ -82,7 +88,8 @@ describe('App money path (e2e)', () => {
     const result = await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
     expect(result).toBeInTheDocument();
 
-    // The succeeded snapshot's cost + funded-from note render (Auto -> blue funder).
+    // The succeeded snapshot's cost + funded-from note render (blue-only wallet
+    // -> primary funder is blue).
     const spent = screen.getByTestId('pm-spent');
     expect(spent).toHaveTextContent('8');
     expect(spent).toHaveTextContent(/from your blue account/i);
@@ -91,7 +98,7 @@ describe('App money path (e2e)', () => {
     expect(screen.queryByText(/generation failed/i)).not.toBeInTheDocument();
   });
 
-  it('picking a pool -> accountType rides on the submit body; the funder note reflects it', async () => {
+  it('picking a pool -> accountType rides on the submit body; the funder note renders', async () => {
     const user = userEvent.setup();
     const submittedBodies: Array<{ accountType?: string }> = [];
     uninstall = installMockMoneyHost({
@@ -99,6 +106,8 @@ describe('App money path (e2e)', () => {
       consentGranted: true,
       cost: 8,
       pollsUntilDone: 2,
+      // A yellow-only wallet -> the native primary-funder stamp reports `yellow`.
+      buzzBalance: { blue: 0, green: 0, yellow: 100 },
       onOutbound: (m) => {
         if (m.type === 'SUBMIT_WORKFLOW') {
           submittedBodies.push((m.payload as { body: { accountType?: string } }).body);
@@ -117,7 +126,9 @@ describe('App money path (e2e)', () => {
 
     await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
 
-    // The picked pool was threaded into the body, and the funder note reflects it.
+    // The picked pool is threaded into the submit body (the real proof of the
+    // pick wiring). The funder note reflects the wallet's primary funder — yellow
+    // here — which the mock host stamps natively from `buzzBalance`.
     expect(submittedBodies.at(-1)?.accountType).toBe('yellow');
     expect(screen.getByTestId('pm-spent')).toHaveTextContent(/from your yellow account/i);
   });

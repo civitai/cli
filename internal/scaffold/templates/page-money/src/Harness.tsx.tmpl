@@ -6,7 +6,7 @@ import {
   type MockHostOptions,
 } from '@civitai/blocks-react/testing';
 
-import { makeMockBuzzOnOutbound } from './mock-buzz.js';
+import { mockBuzzBalance } from './mock-buzz.js';
 
 /**
  * Local dev mock host for the {{ .Name }} PAGE app.
@@ -52,23 +52,19 @@ export function Harness({ children }: { children: ReactNode }) {
     setScenarioKey((k) => k + 1);
   };
 
-  // The SDK mock host doesn't answer GET_BUZZ_BALANCE (the `useBuzzBalance` read)
-  // as of 0.16, so we answer it here via onOutbound — projecting the current
-  // scenario's simulated wallet (`buzz.balance`, the same knob the panel/URL
-  // drives) into a { blue, green, yellow } split. A stable handler that reads a
-  // live ref, so the answer tracks the panel without re-installing the host.
-  const scenarioRef = useRef(scenario);
-  scenarioRef.current = scenario;
-  const onBuzz = useRef(
-    makeMockBuzzOnOutbound({ getBalance: () => scenarioRef.current.buzz?.balance }),
-  ).current;
+  // 0.18's mock host answers GET_BUZZ_BALANCE natively from the `buzzBalance`
+  // option (which `<SdkHarness>` forwards to `createMockHost`). Project the
+  // current scenario's simulated wallet (`buzz.balance`, the same knob the
+  // panel/URL drives) into a { blue, green, yellow } split. `key={scenarioKey}`
+  // remounts <SdkHarness> on each panel `apply`, so the new wallet is re-applied.
+  const buzzBalance = mockBuzzBalance(scenario.buzz?.balance);
 
   return (
     <div style={rootStyle}>
       <MockBanner />
       <ScenarioPanel onApply={apply} />
       {/* applyUrlToggles=false: the panel is authoritative once mounted. */}
-      <SdkHarness key={scenarioKey} applyUrlToggles={false} {...scenario} onOutbound={onBuzz}>
+      <SdkHarness key={scenarioKey} applyUrlToggles={false} {...scenario} buzzBalance={buzzBalance}>
         {children}
       </SdkHarness>
     </div>
