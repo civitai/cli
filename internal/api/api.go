@@ -830,7 +830,7 @@ func cloneInfoError(status int, raw []byte) error {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not authenticated — run `civitai login` (or set CIVITAI_TOKEN): %s", msg)
 	case http.StatusForbidden:
-		return fmt.Errorf("not permitted (are you the app owner, and is App Blocks enabled for your account?): %s", msg)
+		return fmt.Errorf("not permitted (are you the app owner, and is Apps enabled for your account?): %s", msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("no such app for your account — check the slug with `civitai app status`: %s", msg)
 	default:
