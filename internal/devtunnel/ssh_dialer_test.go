@@ -43,8 +43,12 @@ func TestSSHDialerDialErrorFast(t *testing.T) {
 	// 127.0.0.1:1 is reliably closed; DialContext should fail promptly.
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
+	hostKey, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
 	start := time.Now()
-	_, err = d.Dial(ctx, DialOptions{Endpoint: "127.0.0.1:1", RemoteHost: "dev-x.civit.ai", LocalPort: 5186, Signer: key.Signer})
+	_, err = d.Dial(ctx, DialOptions{Endpoint: "127.0.0.1:1", RemoteHost: "dev-x.civit.ai", LocalPort: 5186, Signer: key.Signer, SSHHostPublicKey: hostKey.AuthorizedKey})
 	if err == nil {
 		t.Fatal("expected a dial error against a closed port")
 	}
@@ -105,6 +109,13 @@ func newForwardServer(t *testing.T) *forwardServer {
 
 func (fs *forwardServer) addr() string { return fs.ln.Addr().String() }
 func (fs *forwardServer) close()       { _ = fs.ln.Close() }
+
+// hostAuthorizedKey is the server's host public key in OpenSSH authorized-key
+// line form — the value the dialer must pin (opts.SSHHostPublicKey) to complete
+// the handshake against this server.
+func (fs *forwardServer) hostAuthorizedKey() string {
+	return strings.TrimSpace(string(ssh.MarshalAuthorizedKey(fs.hostSigner.PublicKey())))
+}
 
 func (fs *forwardServer) accept() {
 	nconn, err := fs.ln.Accept()
@@ -187,7 +198,7 @@ func TestSSHDialerReverseForwardProxies(t *testing.T) {
 	d := NewSSHDialer(io.Discard)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	tunnel, err := d.Dial(ctx, DialOptions{Endpoint: fs.addr(), RemoteHost: host, LocalPort: localPort, Signer: key.Signer})
+	tunnel, err := d.Dial(ctx, DialOptions{Endpoint: fs.addr(), RemoteHost: host, LocalPort: localPort, Signer: key.Signer, SSHHostPublicKey: fs.hostAuthorizedKey()})
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -262,7 +273,7 @@ func TestSSHDialerLocalDevDown(t *testing.T) {
 
 	var logbuf syncBuffer
 	d := NewSSHDialer(&logbuf)
-	tunnel, err := d.Dial(context.Background(), DialOptions{Endpoint: fs.addr(), RemoteHost: host, LocalPort: deadPort, Signer: key.Signer})
+	tunnel, err := d.Dial(context.Background(), DialOptions{Endpoint: fs.addr(), RemoteHost: host, LocalPort: deadPort, Signer: key.Signer, SSHHostPublicKey: fs.hostAuthorizedKey()})
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
@@ -287,5 +298,119 @@ func TestSSHDialerLocalDevDown(t *testing.T) {
 		default:
 			time.Sleep(5 * time.Millisecond)
 		}
+	}
+}
+
+// TestPinnedHostKeyCallback proves the host-key pin: a valid host key yields a
+// FixedHostKey callback that ACCEPTS the matching host key and REJECTS a
+// DIFFERENT one; an empty key fails closed; a malformed key gives a parse error.
+func TestPinnedHostKeyCallback(t *testing.T) {
+	pinned, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Valid key → non-nil callback.
+	cb, err := pinnedHostKeyCallback(pinned.AuthorizedKey)
+	if err != nil {
+		t.Fatalf("valid host key should build a callback, got %v", err)
+	}
+	if cb == nil {
+		t.Fatal("expected a non-nil HostKeyCallback for a valid host key")
+	}
+	addr := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 2224}
+	// Accepts the matching host key.
+	if err := cb("sish.example:2224", addr, pinned.Signer.PublicKey()); err != nil {
+		t.Errorf("callback should ACCEPT the matching host key, got %v", err)
+	}
+	// Rejects a different host key (the MITM case).
+	if err := cb("sish.example:2224", addr, other.Signer.PublicKey()); err == nil {
+		t.Error("callback must REJECT a different host key (MITM), got nil")
+	}
+
+	// Empty → fail closed, NO callback.
+	if _, err := pinnedHostKeyCallback(""); err == nil || !strings.Contains(err.Error(), "sish host key to pin") {
+		t.Errorf("empty host key must fail closed, got %v", err)
+	}
+	if _, err := pinnedHostKeyCallback("   "); err == nil || !strings.Contains(err.Error(), "sish host key to pin") {
+		t.Errorf("blank host key must fail closed, got %v", err)
+	}
+
+	// Malformed → clear parse error, NO callback.
+	if _, err := pinnedHostKeyCallback("not-a-valid-openssh-key"); err == nil || !strings.Contains(err.Error(), "parse sish host key") {
+		t.Errorf("malformed host key must yield a parse error, got %v", err)
+	}
+}
+
+// TestSSHDialerFailsClosedWithoutHostKey proves the dialer refuses to connect
+// when the mint provided no host key to pin — it NEVER falls back to
+// InsecureIgnoreHostKey. The error surfaces before any TCP dial.
+func TestSSHDialerFailsClosedWithoutHostKey(t *testing.T) {
+	key, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewSSHDialer(io.Discard)
+	// Endpoint is irrelevant: the fail-closed check precedes the dial.
+	_, err = d.Dial(context.Background(), DialOptions{
+		Endpoint: "sish.example:2224", RemoteHost: "dev-0123456789abcdef.civit.ai",
+		LocalPort: 5186, Signer: key.Signer, SSHHostPublicKey: "",
+	})
+	if err == nil || !strings.Contains(err.Error(), "sish host key to pin") {
+		t.Fatalf("expected a fail-closed error with no host key, got %v", err)
+	}
+}
+
+// TestSSHDialerMalformedHostKey proves a malformed pinned host key is a clear
+// parse error (still no InsecureIgnoreHostKey path).
+func TestSSHDialerMalformedHostKey(t *testing.T) {
+	key, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := NewSSHDialer(io.Discard)
+	_, err = d.Dial(context.Background(), DialOptions{
+		Endpoint: "sish.example:2224", RemoteHost: "dev-0123456789abcdef.civit.ai",
+		LocalPort: 5186, Signer: key.Signer, SSHHostPublicKey: "ssh-ed25519 not-base64!!!",
+	})
+	if err == nil || !strings.Contains(err.Error(), "parse sish host key") {
+		t.Fatalf("expected a parse error for a malformed host key, got %v", err)
+	}
+}
+
+// TestSSHDialerRejectsWrongPinnedHostKey is the end-to-end MITM guard: the
+// dialer pins a host key that does NOT match the server's actual host key, so
+// the SSH handshake is rejected and Dial fails (the impersonated endpoint can't
+// complete). Proves FixedHostKey is enforced on the real handshake.
+func TestSSHDialerRejectsWrongPinnedHostKey(t *testing.T) {
+	fs := newForwardServer(t)
+	defer fs.close()
+
+	key, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pin a DIFFERENT key than the server presents.
+	wrong, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewSSHDialer(io.Discard)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err = d.Dial(ctx, DialOptions{
+		Endpoint: fs.addr(), RemoteHost: "dev-0123456789abcdef.civit.ai",
+		LocalPort: 5186, Signer: key.Signer, SSHHostPublicKey: wrong.AuthorizedKey,
+	})
+	if err == nil {
+		t.Fatal("expected the handshake to FAIL when the pinned host key does not match the server")
+	}
+	if !strings.Contains(err.Error(), "ssh handshake") {
+		t.Errorf("expected an ssh handshake failure, got %v", err)
 	}
 }

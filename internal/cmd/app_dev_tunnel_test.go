@@ -124,13 +124,25 @@ func (t *fakeTimer) resetCount() int {
 // goodKeygen mints a real ephemeral key (cheap, keeps the pubkey plumbing real).
 func goodKeygen() (*devtunnel.EphemeralKey, error) { return devtunnel.GenerateEphemeralKey() }
 
+// sampleHostKey is a real OpenSSH ed25519 public-key line the tests use as the
+// mint's sshHostPublicKey (the value the CLI pins). Generated once so the
+// happy-path session carries a valid, pinnable host key.
+var sampleHostKey = func() string {
+	k, err := devtunnel.GenerateEphemeralKey()
+	if err != nil {
+		panic(err)
+	}
+	return k.AuthorizedKey
+}()
+
 func sampleSession() *api.DevTunnelSession {
 	return &api.DevTunnelSession{
-		SessionID:    "bki_test",
-		Host:         "dev-0123456789abcdef.civit.ai",
-		URL:          "https://civitai.com/apps/dev/my-block",
-		ExpiresAt:    time.Now().Add(8 * time.Hour).Unix(),
-		SpendCapBuzz: 5000,
+		SessionID:        "bki_test",
+		Host:             "dev-0123456789abcdef.civit.ai",
+		URL:              "https://civitai.com/apps/dev/my-block",
+		ExpiresAt:        time.Now().Add(8 * time.Hour).Unix(),
+		SpendCapBuzz:     5000,
+		SSHHostPublicKey: sampleHostKey,
 	}
 }
 
@@ -172,19 +184,24 @@ func TestValidateMintResponse(t *testing.T) {
 		name    string
 		host    string
 		url     string
+		hostKey string
 		wantErr string // "" = should pass
 	}{
-		{"valid", "dev-0123456789abcdef.civit.ai", "https://civitai.com/apps/dev/my-block", ""},
-		{"bad host prefix", "evil-0123456789abcdef.civit.ai", "https://civitai.com/apps/dev/x", "unexpected tunnel host"},
-		{"bad host not-hex", "dev-zzzzzzzzzzzzzzzz.civit.ai", "https://civitai.com/apps/dev/x", "unexpected tunnel host"},
-		{"bad host too-short", "dev-abc.civit.ai", "https://civitai.com/apps/dev/x", "unexpected tunnel host"},
-		{"cross-origin host", "dev-0123456789abcdef.civit.ai", "https://evil.example/apps/dev/x", "cross-origin"},
-		{"cross-origin scheme", "dev-0123456789abcdef.civit.ai", "http://civitai.com/apps/dev/x", "cross-origin"},
-		{"unparseable url", "dev-0123456789abcdef.civit.ai", "://nope", "unparseable"},
+		{"valid", "dev-0123456789abcdef.civit.ai", "https://civitai.com/apps/dev/my-block", sampleHostKey, ""},
+		{"bad host prefix", "evil-0123456789abcdef.civit.ai", "https://civitai.com/apps/dev/x", sampleHostKey, "unexpected tunnel host"},
+		{"bad host not-hex", "dev-zzzzzzzzzzzzzzzz.civit.ai", "https://civitai.com/apps/dev/x", sampleHostKey, "unexpected tunnel host"},
+		{"bad host too-short", "dev-abc.civit.ai", "https://civitai.com/apps/dev/x", sampleHostKey, "unexpected tunnel host"},
+		{"cross-origin host", "dev-0123456789abcdef.civit.ai", "https://evil.example/apps/dev/x", sampleHostKey, "cross-origin"},
+		{"cross-origin scheme", "dev-0123456789abcdef.civit.ai", "http://civitai.com/apps/dev/x", sampleHostKey, "cross-origin"},
+		{"unparseable url", "dev-0123456789abcdef.civit.ai", "://nope", sampleHostKey, "unparseable"},
+		// FAIL CLOSED: an absent host key to pin is a hard rejection (no
+		// InsecureIgnoreHostKey fallback anywhere).
+		{"missing host key", "dev-0123456789abcdef.civit.ai", "https://civitai.com/apps/dev/x", "", "sish host key to pin"},
+		{"blank host key", "dev-0123456789abcdef.civit.ai", "https://civitai.com/apps/dev/x", "   ", "sish host key to pin"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateMintResponse(&api.DevTunnelSession{Host: tc.host, URL: tc.url}, base)
+			err := validateMintResponse(&api.DevTunnelSession{Host: tc.host, URL: tc.url, SSHHostPublicKey: tc.hostKey}, base)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("expected pass, got %v", err)
@@ -453,5 +470,33 @@ func TestRunTunnelSessionDialOptions(t *testing.T) {
 	}
 	if dialer.lastOpt.Signer == nil {
 		t.Error("dial must carry the ephemeral signer")
+	}
+	// R1: the mint's sish host key is plumbed through to the dialer so it can be
+	// PINNED (never InsecureIgnoreHostKey).
+	if dialer.lastOpt.SSHHostPublicKey != sampleHostKey {
+		t.Errorf("dial SSHHostPublicKey = %q, want the mint-provided host key %q", dialer.lastOpt.SSHHostPublicKey, sampleHostKey)
+	}
+}
+
+// TestRunTunnelSessionRejectsMissingHostKey: FAIL CLOSED — a mint response that
+// omits sshHostPublicKey is refused (clear message), the just-minted session is
+// revoked (no orphan), and the tunnel is NEVER dialed (so no unverified/
+// InsecureIgnoreHostKey connection is ever attempted).
+func TestRunTunnelSessionRejectsMissingHostKey(t *testing.T) {
+	bad := sampleSession()
+	bad.SSHHostPublicKey = "" // mint did not provide a host key to pin
+	apiStub := &fakeTunnelAPI{startResult: bad}
+	dialer := &fakeDialer{tunnel: newFakeTunnel()}
+
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), make(chan os.Signal))
+	err := runTunnelSession(context.Background(), deps)
+	if err == nil || !strings.Contains(err.Error(), "sish host key to pin") {
+		t.Fatalf("expected a fail-closed missing-host-key rejection, got %v", err)
+	}
+	if dialer.dialed {
+		t.Error("must NOT dial the tunnel when no host key was provided to pin")
+	}
+	if apiStub.stopCount() != 1 || apiStub.stopCalls[0].sessionID != "bki_test" {
+		t.Errorf("a rejected mint must be revoked (avoid orphan), stop calls=%+v", apiStub.stopCalls)
 	}
 }

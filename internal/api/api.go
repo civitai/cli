@@ -968,6 +968,13 @@ type DevTunnelSession struct {
 	ExpiresAt int64 `json:"expiresAt"`
 	// SpendCapBuzz is the per-session cumulative Buzz ceiling (backstop).
 	SpendCapBuzz int64 `json:"spendCapBuzz"`
+	// SSHHostPublicKey is the sish endpoint's OpenSSH host public-key line
+	// (`ssh-ed25519 AAAA...`) — a NON-SECRET value the CLI PINS as the SSH
+	// HostKeyCallback so the `ssh -R` bind can't be MITM'd (an on-path attacker
+	// impersonating sish would reach the dev's localhost + tamper tunneled
+	// traffic). The mint returns it; the CLI fails closed if it is absent
+	// (never falls back to InsecureIgnoreHostKey).
+	SSHHostPublicKey string `json:"sshHostPublicKey"`
 }
 
 // DevTunnelController mints + revokes a dev-tunnel session. Behind an interface

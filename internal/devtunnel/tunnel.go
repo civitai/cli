@@ -18,6 +18,11 @@ type DialOptions struct {
 	LocalPort int
 	// Signer is the ephemeral private key authenticating the `ssh -R` bind.
 	Signer ssh.Signer
+	// SSHHostPublicKey is the sish endpoint's OpenSSH host public-key line
+	// (`ssh-ed25519 AAAA...`, from StartDevTunnel's sshHostPublicKey) that the
+	// dialer PINS as its HostKeyCallback. The dialer FAILS CLOSED when this is
+	// empty (refuses to connect) — it NEVER falls back to InsecureIgnoreHostKey.
+	SSHHostPublicKey string
 }
 
 // Tunnel is a live reverse tunnel. Consumers select on Done (terminated),

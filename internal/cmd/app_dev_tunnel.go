@@ -209,10 +209,11 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	}
 
 	tunnel, err := d.dialer.Dial(ctx, devtunnel.DialOptions{
-		Endpoint:   d.endpoint,
-		RemoteHost: sess.Host,
-		LocalPort:  d.port,
-		Signer:     key.Signer,
+		Endpoint:         d.endpoint,
+		RemoteHost:       sess.Host,
+		LocalPort:        d.port,
+		Signer:           key.Signer,
+		SSHHostPublicKey: sess.SSHHostPublicKey,
 	})
 	if err != nil {
 		// The mint succeeded but we couldn't bind — revoke so we don't orphan the
@@ -275,13 +276,22 @@ func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, port int) {
 
 // validateMintResponse asserts the server-returned session is well-formed before
 // the CLI acts on it: the host matches the P1 `dev-<16hex>.<domain>` shape (it
-// becomes the reverse-forward bind name) and the URL is same-origin (scheme +
-// host) as the configured Civitai base (it is what the developer opens). Either
-// failing is a hard error — a mint that tries to steer the bind name or hand the
-// dev an attacker-influenced URL is refused, not followed.
+// becomes the reverse-forward bind name), the URL is same-origin (scheme + host)
+// as the configured Civitai base (it is what the developer opens), and a sish
+// host public key is present to PIN (it secures the `ssh -R` hop). Any failing
+// is a hard error — a mint that tries to steer the bind name, hand the dev an
+// attacker-influenced URL, or omit the host key to pin is refused, not followed.
+//
+// FAIL CLOSED (host key): an absent sshHostPublicKey is rejected here so the CLI
+// never dials without a pinned host key. The dialer independently fails closed
+// too (pinnedHostKeyCallback), so there is no reachable InsecureIgnoreHostKey
+// path from either layer.
 func validateMintResponse(sess *api.DevTunnelSession, baseURL string) error {
 	if !devHostPrefixRE.MatchString(sess.Host) {
 		return fmt.Errorf("server returned an unexpected tunnel host %q (want dev-<16hex>.<domain>) — refusing to bind", sess.Host)
+	}
+	if strings.TrimSpace(sess.SSHHostPublicKey) == "" {
+		return fmt.Errorf("server did not provide a sish host key to pin; refusing to connect")
 	}
 	base, err := url.Parse(baseURL)
 	if err != nil || base.Host == "" {
