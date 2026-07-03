@@ -4,13 +4,15 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createMockHost } from '@civitai/blocks-react/testing';
 
 import { App } from './App.js';
-import { installMockMoneyHost } from './mock-buzz.js';
+import { installMockMoneyHost, mockBuzzBalance } from './mock-buzz.js';
 
 // Component tests: render <App/> against the SDK mock host under a scenario and
-// assert the rendered UI. `installMockMoneyHost` is the createMockHost wrapper
-// that ALSO answers the per-account-buzz messages the SDK mock host doesn't (the
-// balance read + the spentAccountType stamp). Each test controls its own scenario
-// + teardown; the transport is reset before each test by src/test-setup.ts.
+// assert the rendered UI. `installMockMoneyHost` is a thin createMockHost wrapper:
+// the 3-pool balance + spentAccountType are answered NATIVELY by 0.18 (pass the
+// `buzzBalance` / `viewer` options straight through); the wrapper only adds the
+// two behaviours 0.18 doesn't model — a balance-read error + the domain-clamp
+// rejection. Each test controls its own scenario + teardown; the transport is
+// reset before each test by src/test-setup.ts.
 
 describe('App (component)', () => {
   let uninstall: (() => void) | undefined;
@@ -55,10 +57,11 @@ describe('App (component)', () => {
   });
 
   it('renders the 3-pool Buzz balance (blue/green/yellow + total) from useBuzzBalance', async () => {
-    // A simulated wallet of 100 splits to yellow 80 / blue 20 / green 0 (mock-buzz).
+    // A simulated wallet of 100 splits to yellow 80 / blue 20 / green 0 (mock-buzz),
+    // handed to 0.18's native `buzzBalance` option (what useBuzzBalance reads).
     uninstall = installMockMoneyHost({
       viewer: { id: 2, username: 'dev', status: 'active' },
-      buzz: { balance: 100 },
+      buzzBalance: mockBuzzBalance(100),
     });
     render(<App />);
 
