@@ -85,6 +85,7 @@ type forwardServer struct {
 	hostSigner   ssh.Signer
 	sconnCh      chan *ssh.ServerConn
 	forwardReady chan struct{}
+	boundAddr    chan string // the address the client requested in `tcpip-forward`
 }
 
 func newForwardServer(t *testing.T) *forwardServer {
@@ -102,6 +103,7 @@ func newForwardServer(t *testing.T) *forwardServer {
 		hostSigner:   host.Signer,
 		sconnCh:      make(chan *ssh.ServerConn, 1),
 		forwardReady: make(chan struct{}, 1),
+		boundAddr:    make(chan string, 1),
 	}
 	go fs.accept()
 	return fs
@@ -142,6 +144,19 @@ func (fs *forwardServer) accept() {
 	go func() {
 		for req := range reqs {
 			if req.Type == "tcpip-forward" {
+				// The `tcpip-forward` payload is `string addr, uint32 port`
+				// (RFC 4254 §7.1). Capture the requested bind ADDRESS so the test
+				// can assert the client bound the subdomain LABEL, not the full host.
+				var fwd struct {
+					Addr string
+					Port uint32
+				}
+				if err := ssh.Unmarshal(req.Payload, &fwd); err == nil {
+					select {
+					case fs.boundAddr <- fwd.Addr:
+					default:
+					}
+				}
 				if req.WantReply {
 					_ = req.Reply(true, nil)
 				}
@@ -217,8 +232,10 @@ func TestSSHDialerReverseForwardProxies(t *testing.T) {
 		t.Fatal("server never saw the tcpip-forward request")
 	}
 
-	// Simulate a browser connection: open a forwarded channel on the assigned host.
-	ch := fs.pushConnection(t, sconn, host, uint32(remoteBindPort))
+	// Simulate a browser connection: sish opens the forwarded-tcpip channel keyed
+	// by the bound SUBDOMAIN LABEL (the address the client requested), so push with
+	// the label — the full host would not match the client's registered forward.
+	ch := fs.pushConnection(t, sconn, subdomainLabel(host), uint32(remoteBindPort))
 	defer ch.Close()
 
 	// The dialer should proxy this to the local echo server → round-trip.
@@ -254,6 +271,59 @@ func TestSSHDialerReverseForwardProxies(t *testing.T) {
 	}
 }
 
+// TestSSHDialerBindsSubdomainLabel is the regression guard for the sish
+// domain-doubling bug: the reverse forward MUST request the subdomain LABEL
+// (`dev-<16hex>`), NOT the full assigned host (`dev-<16hex>.civit.ai`). sish
+// forms the served vhost as `<requested-subdomain>.<sish-domain>`, so binding the
+// full host makes sish register `dev-<16hex>.civit.ai.civit.ai` — the SSH forward
+// succeeds but the browser's real `Host: dev-<16hex>.civit.ai` 404s. This test
+// captures the `tcpip-forward` bind address the client actually requested and
+// asserts it is the label. It FAILS against the old full-host bind.
+func TestSSHDialerBindsSubdomainLabel(t *testing.T) {
+	fs := newForwardServer(t)
+	defer fs.close()
+
+	key, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const fullHost = "dev-0123456789abcdef.civit.ai"
+	const wantLabel = "dev-0123456789abcdef"
+
+	d := NewSSHDialer(io.Discard)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tunnel, err := d.Dial(ctx, DialOptions{Endpoint: fs.addr(), RemoteHost: fullHost, LocalPort: 5186, Signer: key.Signer, SSHHostPublicKey: fs.hostAuthorizedKey()})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer tunnel.Close()
+
+	select {
+	case got := <-fs.boundAddr:
+		if got != wantLabel {
+			t.Errorf("reverse forward bound %q; want the subdomain LABEL %q (binding the full host %q makes sish double-append its domain → 404)", got, wantLabel, fullHost)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("server never saw the tcpip-forward bind address")
+	}
+}
+
+// TestSubdomainLabel unit-covers the label extraction across the shapes the
+// dialer can see (the full assigned host, and defensively a bare host with no dot).
+func TestSubdomainLabel(t *testing.T) {
+	cases := map[string]string{
+		"dev-0123456789abcdef.civit.ai":         "dev-0123456789abcdef",
+		"dev-0123456789abcdef.apps.example.com": "dev-0123456789abcdef",
+		"dev-0123456789abcdef":                  "dev-0123456789abcdef", // no dot → unchanged
+	}
+	for host, want := range cases {
+		if got := subdomainLabel(host); got != want {
+			t.Errorf("subdomainLabel(%q) = %q; want %q", host, got, want)
+		}
+	}
+}
+
 // TestSSHDialerLocalDevDown: when the local dev server is NOT running, a
 // forwarded connection is accepted but the proxy can't reach localhost — the
 // tunnel logs guidance and stays up (doesn't crash).
@@ -281,7 +351,7 @@ func TestSSHDialerLocalDevDown(t *testing.T) {
 
 	sconn := <-fs.sconnCh
 	<-fs.forwardReady
-	ch := fs.pushConnection(t, sconn, host, uint32(remoteBindPort))
+	ch := fs.pushConnection(t, sconn, subdomainLabel(host), uint32(remoteBindPort))
 	defer ch.Close()
 
 	// The proxy dial to the dead local port fails; the channel closes. Poll the
