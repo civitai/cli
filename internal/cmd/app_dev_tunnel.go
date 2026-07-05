@@ -188,11 +188,15 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		return err
 	}
 
-	// Defense-in-depth: never trust the mint response blindly. The assigned host
-	// feeds the `ssh -R` bind name and the URL is what the developer clicks, so a
-	// compromised/malicious response must not be able to steer either. Validate
-	// the host shape + that the URL is same-origin as the configured base, and
-	// revoke the just-minted session on rejection so nothing is orphaned.
+	// Defense-in-depth: never trust the mint response blindly. The assigned host's
+	// subdomain LABEL feeds the `ssh -R` bind (the dialer binds
+	// subdomainLabel(host), NOT the full host — sish appends its own domain to the
+	// requested subdomain, so binding the full `dev-<16hex>.civit.ai` would
+	// double-append to `dev-<16hex>.civit.ai.civit.ai` and 404 the browser), and the
+	// URL is what the developer clicks — so a compromised/malicious response must
+	// not be able to steer either. Validate the host shape + that the URL is
+	// same-origin as the configured base, and revoke the just-minted session on
+	// rejection so nothing is orphaned.
 	if verr := validateMintResponse(sess, d.baseURL); verr != nil {
 		_, _ = d.api.StopDevTunnel(context.Background(), sess.SessionID, "")
 		return verr

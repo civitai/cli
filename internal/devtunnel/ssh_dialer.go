@@ -18,6 +18,26 @@ import (
 // it against the real sish image.
 const remoteBindPort = 80
 
+// subdomainLabel returns the first DNS label of a host — the piece BEFORE the
+// first `.` (e.g. "dev-0123456789abcdef.civit.ai" → "dev-0123456789abcdef").
+//
+// WHY this matters for the `ssh -R` bind: sish forms the served HTTP vhost as
+// `<requested-bind-subdomain>.<sish-domain>` (sish is configured `domain: civit.ai`,
+// `force-requested-subdomains: true`). So the reverse forward must request the
+// SUBDOMAIN LABEL, not the full assigned host: binding the full host
+// `dev-<16hex>.civit.ai` makes sish register the vhost as
+// `dev-<16hex>.civit.ai.civit.ai` (domain DOUBLED) — the SSH auth + the forward
+// reservation both succeed, but the browser's real `Host: dev-<16hex>.civit.ai`
+// (via Traefik) 404s and the tunnel never serves. Binding the label
+// `dev-<16hex>` makes sish form `dev-<16hex>.civit.ai`, which matches.
+//
+// The assigned host is always `dev-<16hex>.<domain>` (regex-validated upstream in
+// app_dev_tunnel.go before we ever dial), so the label is the first component. A
+// bare host with no `.` (shouldn't happen) is returned unchanged.
+func subdomainLabel(host string) string {
+	return strings.SplitN(host, ".", 2)[0]
+}
+
 // sshDialUser is the SSH username presented on the bind. sish authorizes by the
 // PUBLIC KEY (the callback), not the username, so this is cosmetic/log-only.
 const sshDialUser = "civitai-dev"
@@ -96,7 +116,12 @@ func (d *sshDialer) Dial(ctx context.Context, opts DialOptions) (Tunnel, error) 
 	}
 	client := ssh.NewClient(sshConn, chans, reqs)
 
-	bindAddr := fmt.Sprintf("%s:%d", opts.RemoteHost, remoteBindPort)
+	// Bind the SUBDOMAIN LABEL, not the full host: sish appends its own domain to
+	// the requested subdomain, so requesting the full `dev-<16hex>.civit.ai`
+	// double-appends to `dev-<16hex>.civit.ai.civit.ai` and the browser's real
+	// `Host: dev-<16hex>.civit.ai` request 404s. See subdomainLabel. opts.RemoteHost
+	// stays the full host for logging / the ready-URL / upstream validation.
+	bindAddr := fmt.Sprintf("%s:%d", subdomainLabel(opts.RemoteHost), remoteBindPort)
 	listener, err := client.Listen("tcp", bindAddr)
 	if err != nil {
 		_ = client.Close()
