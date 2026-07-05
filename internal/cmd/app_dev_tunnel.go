@@ -16,6 +16,7 @@ import (
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/devtunnel"
+	"github.com/civitai/cli/internal/manifest"
 	"github.com/spf13/cobra"
 )
 
@@ -97,6 +98,10 @@ Start your dev server first, in another terminal:
 then run this against the SAME port. Authentication uses your stored credential
 (` + "`civitai login`" + ` or a personal API key); you can only tunnel your OWN app.
 
+The blockId is resolved from (in order): the ` + "`--block`" + ` flag, the positional
+argument, then the ` + "`blockId`" + ` in ` + "`block.manifest.json`" + ` in the current
+directory. Run it from your App project dir and you can omit the blockId entirely.
+
 ⚠️ PRE-GA / DARK: dev tunnels are gated behind an Apps-author invite AND a
 kill-switch flag that is OFF today, and the public tunnel endpoint is not exposed
 yet — so end-to-end this will report "not available" until it ships. The command,
@@ -105,17 +110,30 @@ pending.`,
 		Example: `  # In terminal 1: start the embeddable dev server.
   npm run dev:tunnel
   # In terminal 2: open the tunnel (Ctrl-C to tear down).
+  civitai app dev-tunnel                 # blockId from block.manifest.json in the CWD
   civitai app dev-tunnel my-block
   civitai app dev-tunnel my-block --port 5173
   civitai app dev-tunnel --block my-block --idle-timeout 15m`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Precedence: --block flag > positional arg > block.manifest.json in the
+			// CWD. The manifest fallback mirrors `civitai app submit` (which defaults
+			// to the current directory) so a dev in their App project dir can run
+			// `civitai app dev-tunnel` with no args.
 			blockID := strings.TrimSpace(blockFlag)
 			if blockID == "" && len(args) == 1 {
 				blockID = strings.TrimSpace(args[0])
 			}
 			if blockID == "" {
-				return fmt.Errorf("a blockId is required — e.g. `civitai app dev-tunnel my-block` (find it with `civitai app status`)")
+				// Fall back to the local project manifest. A missing/unreadable/
+				// malformed manifest is NOT fatal here — fall through to the error
+				// below so an absent manifest still yields the clear guidance.
+				if m, merr := manifest.Load("."); merr == nil {
+					blockID = strings.TrimSpace(m.BlockID)
+				}
+			}
+			if blockID == "" {
+				return fmt.Errorf("a blockId is required — pass it (`civitai app dev-tunnel my-block`), or run from an App directory containing %s (list your submitted apps with `civitai app status`)", manifest.Filename)
 			}
 			if port < 1 || port > 65535 {
 				return fmt.Errorf("invalid --port %d (must be 1-65535)", port)
@@ -164,7 +182,7 @@ pending.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&blockFlag, "block", "", "the blockId (app slug) to tunnel (or pass it positionally)")
+	cmd.Flags().StringVar(&blockFlag, "block", "", "the blockId (app slug) to tunnel (or pass it positionally; defaults to the blockId in "+manifest.Filename+" in the CWD)")
 	cmd.Flags().IntVar(&port, "port", defaultDevTunnelPort, "local dev-server port to tunnel (matches the scaffold's dev:tunnel)")
 	cmd.Flags().StringVar(&endpoint, "tunnel-endpoint", "", "sish SSH endpoint host:port (default "+defaultDevTunnelEndpoint+", or $"+devTunnelEndpointEnv+"; P3-provisioned)")
 	cmd.Flags().DurationVar(&idle, "idle-timeout", defaultDevTunnelIdle, "tear the tunnel down after this much inactivity")
