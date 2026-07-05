@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +12,20 @@ import (
 	"strings"
 	"testing"
 )
+
+// listenLocal opens a listener on an ephemeral 127.0.0.1 port and returns the
+// port, so a full-path dev-tunnel test can pass `--port <port>` and satisfy the
+// pre-flight local-dev-server probe (which TCP-dials 127.0.0.1:<port> before the
+// mint). The listener is closed at test end.
+func listenLocal(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("open local listener: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+	return l.Addr().(*net.TCPAddr).Port
+}
 
 // TestAppDevTunnelMissingBlockErrors: no blockId (positional, --block, or a
 // manifest in the CWD) is a clear, non-network error. Run from a temp dir with
@@ -66,7 +82,9 @@ func TestAppDevTunnelBlockIdFromManifest(t *testing.T) {
 	t.Setenv("CIVITAI_TOKEN", "tok-1")
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)
 
-	_, _, err := run(t, "app", "dev-tunnel")
+	// A live local listener so the pre-flight probe passes and we reach the mint.
+	port := listenLocal(t)
+	_, _, err := run(t, "app", "dev-tunnel", "--port", fmt.Sprint(port))
 	// It must get PAST the blockId check — the only remaining failure is the
 	// (expected, pre-GA) forbidden mint, never "blockId is required".
 	if err != nil && strings.Contains(err.Error(), "blockId is required") {
@@ -75,6 +93,64 @@ func TestAppDevTunnelBlockIdFromManifest(t *testing.T) {
 	// Proof the resolved blockId came from the manifest and reached the request.
 	if !strings.Contains(gotBody, `"blockId":"demo"`) {
 		t.Errorf("start body should carry the manifest blockId 'demo': %s", gotBody)
+	}
+}
+
+// TestAppDevTunnelBlockFlagWinsOverPositionalWithWarning: passing BOTH --block
+// and a DIFFERENT positional blockId warns on stderr that --block wins, and the
+// resolved blockId (carried to the mint request) is the --block value.
+func TestAppDevTunnelBlockFlagWinsOverPositionalWithWarning(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
+		})
+	}))
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	port := listenLocal(t)
+	_, errOut, _ := run(t, "app", "dev-tunnel", "positional-block", "--block", "flag-block", "--port", fmt.Sprint(port))
+
+	// The conflict warning names both values and says --block wins.
+	if !strings.Contains(errOut, "flag-block") || !strings.Contains(errOut, "positional-block") ||
+		!strings.Contains(strings.ToLower(errOut), "using --block") {
+		t.Errorf("expected a --block-wins conflict warning on stderr, got: %s", errOut)
+	}
+	// --block wins: the mint request carries flag-block, NOT positional-block.
+	if !strings.Contains(gotBody, `"blockId":"flag-block"`) {
+		t.Errorf("resolved blockId should be the --block value: %s", gotBody)
+	}
+	if strings.Contains(gotBody, `"blockId":"positional-block"`) {
+		t.Errorf("the positional blockId must be ignored when --block is set: %s", gotBody)
+	}
+}
+
+// TestAppDevTunnelBlockFlagEqualsPositionalNoWarning: when --block and the
+// positional are the SAME value they are redundant, not a conflict — no warning.
+func TestAppDevTunnelBlockFlagEqualsPositionalNoWarning(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
+		})
+	}))
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	port := listenLocal(t)
+	_, errOut, _ := run(t, "app", "dev-tunnel", "same-block", "--block", "same-block", "--port", fmt.Sprint(port))
+	if strings.Contains(strings.ToLower(errOut), "using --block") {
+		t.Errorf("equal --block and positional must NOT warn: %s", errOut)
 	}
 }
 
@@ -150,7 +226,9 @@ func TestAppDevTunnelForbiddenMapsToGuidance(t *testing.T) {
 	t.Setenv("CIVITAI_TOKEN", "tok-1")
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)
 
-	_, _, err := run(t, "app", "dev-tunnel", "my-block")
+	// A live local listener so the pre-flight probe passes and we reach the mint.
+	port := listenLocal(t)
+	_, _, err := run(t, "app", "dev-tunnel", "my-block", "--port", fmt.Sprint(port))
 	if err == nil {
 		t.Fatal("expected a forbidden error while the flag is dark")
 	}

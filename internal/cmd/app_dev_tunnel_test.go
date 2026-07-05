@@ -53,6 +53,12 @@ func (f *fakeTunnelAPI) stopCount() int {
 	return len(f.stopCalls)
 }
 
+func (f *fakeTunnelAPI) startCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.startCalls)
+}
+
 // fakeTunnel is a controllable devtunnel.Tunnel.
 type fakeTunnel struct {
 	done      chan struct{}
@@ -151,18 +157,19 @@ func baseDeps(t *testing.T, apiStub *fakeTunnelAPI, dialer *fakeDialer, timer *f
 	t.Helper()
 	var out, errw strings.Builder
 	return tunnelSessionDeps{
-		api:      apiStub,
-		keygen:   goodKeygen,
-		dialer:   dialer,
-		blockID:  "my-block",
-		port:     5186,
-		endpoint: "sish.example:2224",
-		baseURL:  "https://civitai.com",
-		idle:     30 * time.Minute,
-		newTimer: func(time.Duration) devtunnel.Timer { return timer },
-		signals:  sigs,
-		out:      &out,
-		errw:     &errw,
+		api:        apiStub,
+		probeLocal: func(int) error { return nil }, // no-op: local dev server "up"
+		keygen:     goodKeygen,
+		dialer:     dialer,
+		blockID:    "my-block",
+		port:       5186,
+		endpoint:   "sish.example:2224",
+		baseURL:    "https://civitai.com",
+		idle:       30 * time.Minute,
+		newTimer:   func(time.Duration) devtunnel.Timer { return timer },
+		signals:    sigs,
+		out:        &out,
+		errw:       &errw,
 	}
 }
 
@@ -430,6 +437,37 @@ func TestRunTunnelSessionDialError(t *testing.T) {
 	}
 	if apiStub.stopCount() != 1 {
 		t.Errorf("a failed dial must revoke the minted session (avoid orphan), stop calls=%d", apiStub.stopCount())
+	}
+}
+
+// TestRunTunnelSessionProbeError: the pre-flight local-dev-server probe runs
+// FIRST — a probe failure returns that error verbatim and NEVER mints (no
+// keygen-dependent StartDevTunnel, no dial), so a not-running dev server can't
+// burn a rate-limited/reaper-tracked server session.
+func TestRunTunnelSessionProbeError(t *testing.T) {
+	apiStub := &fakeTunnelAPI{startResult: sampleSession()}
+	dialer := &fakeDialer{tunnel: newFakeTunnel()}
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), make(chan os.Signal))
+	probeErr := errors.New("no local dev server is listening on 127.0.0.1:5186")
+	deps.probeLocal = func(port int) error {
+		if port != 5186 {
+			t.Errorf("probe got port %d, want the session port 5186", port)
+		}
+		return probeErr
+	}
+
+	err := runTunnelSession(context.Background(), deps)
+	if err == nil || !errors.Is(err, probeErr) {
+		t.Fatalf("expected the probe error to propagate verbatim, got %v", err)
+	}
+	if apiStub.startCount() != 0 {
+		t.Errorf("a failed pre-flight probe must NOT mint (StartDevTunnel calls=%d)", apiStub.startCount())
+	}
+	if dialer.dialed {
+		t.Error("a failed pre-flight probe must NOT dial the tunnel")
+	}
+	if apiStub.stopCount() != 0 {
+		t.Error("nothing was minted, so there is nothing to stop")
 	}
 }
 

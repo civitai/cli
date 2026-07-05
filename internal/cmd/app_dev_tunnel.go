@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"os/signal"
@@ -34,11 +35,8 @@ const (
 	// defaultDevTunnelIdle is the client-side idle timeout (design §9: 30m). The
 	// server reaper is the authoritative backstop; this is the CLI doing its part.
 	defaultDevTunnelIdle = 30 * time.Minute
-	// defaultDevTunnelEndpoint is the public sish SSH listener. ⚠️ PLACEHOLDER —
-	// the real endpoint is provisioned in P3 (a fresh port on the shared proxy,
-	// design Revision #1/#2). Override with --tunnel-endpoint or
-	// CIVITAI_DEV_TUNNEL_ENDPOINT until then; the command is inert end-to-end
-	// without it.
+	// defaultDevTunnelEndpoint is the live public sish SSH listener. Override with
+	// --tunnel-endpoint or CIVITAI_DEV_TUNNEL_ENDPOINT for a different deployment.
 	defaultDevTunnelEndpoint = "sish.civitai.com:2224"
 	// devTunnelEndpointEnv overrides the endpoint from the environment.
 	devTunnelEndpointEnv = "CIVITAI_DEV_TUNNEL_ENDPOINT"
@@ -55,12 +53,18 @@ type tunnelAPI interface {
 // side effect (API, keygen, tunnel, clock, signals, IO) goes through here so the
 // lifecycle is unit-testable with no network.
 type tunnelSessionDeps struct {
-	api      tunnelAPI
-	keygen   func() (*devtunnel.EphemeralKey, error)
-	dialer   devtunnel.Dialer
-	blockID  string
-	port     int
-	endpoint string
+	api tunnelAPI
+	// probeLocal pre-flight-checks that the developer's local dev server is
+	// actually listening on 127.0.0.1:<port> BEFORE anything is minted server-side.
+	// A non-nil error aborts the session before keygen/StartDevTunnel, so a
+	// not-running dev server fails fast with clear guidance instead of minting a
+	// rate-limited/reaper-tracked session that would only serve connection-refused.
+	probeLocal func(port int) error
+	keygen     func() (*devtunnel.EphemeralKey, error)
+	dialer     devtunnel.Dialer
+	blockID    string
+	port       int
+	endpoint   string
 	// baseURL is the configured Civitai origin; the mint response's URL must be
 	// same-origin as this (defense-in-depth against an attacker-influenced URL).
 	baseURL  string
@@ -102,11 +106,9 @@ The blockId is resolved from (in order): the ` + "`--block`" + ` flag, the posit
 argument, then the ` + "`blockId`" + ` in ` + "`block.manifest.json`" + ` in the current
 directory. Run it from your App project dir and you can omit the blockId entirely.
 
-⚠️ PRE-GA / DARK: dev tunnels are gated behind an Apps-author invite AND a
-kill-switch flag that is OFF today, and the public tunnel endpoint is not exposed
-yet — so end-to-end this will report "not available" until it ships. The command,
-its contract, and its teardown are complete; only the server flag + endpoint are
-pending.`,
+⚠️ GATED: dev tunnels are limited to invited Apps authors / moderators and are
+guarded by a server kill-switch flag. The tunnel endpoint is live; if you are not
+enrolled the mint reports "not available" — ask to be added to the cohort.`,
 		Example: `  # In terminal 1: start the embeddable dev server.
   npm run dev:tunnel
   # In terminal 2: open the tunnel (Ctrl-C to tear down).
@@ -121,6 +123,15 @@ pending.`,
 			// to the current directory) so a dev in their App project dir can run
 			// `civitai app dev-tunnel` with no args.
 			blockID := strings.TrimSpace(blockFlag)
+			// If BOTH --block and a positional blockId were given and they DIFFER,
+			// the positional is silently ignored (--block wins). Warn so the dev
+			// isn't confused about which one took effect. Equal values are redundant,
+			// not a conflict — stay silent.
+			if blockFlag != "" && len(args) == 1 && strings.TrimSpace(args[0]) != strings.TrimSpace(blockFlag) {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"warning: both --block %q and positional blockId %q were given; using --block (%q)\n",
+					strings.TrimSpace(blockFlag), strings.TrimSpace(args[0]), strings.TrimSpace(blockFlag))
+			}
 			if blockID == "" && len(args) == 1 {
 				blockID = strings.TrimSpace(args[0])
 			}
@@ -166,25 +177,26 @@ pending.`,
 			defer signal.Stop(sigCh)
 
 			return runTunnelSession(context.Background(), tunnelSessionDeps{
-				api:      client,
-				keygen:   devtunnel.GenerateEphemeralKey,
-				dialer:   devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
-				blockID:  blockID,
-				port:     port,
-				endpoint: ep,
-				baseURL:  cfg.BaseURL(),
-				idle:     idle,
-				newTimer: devtunnel.NewRealTimer,
-				signals:  sigCh,
-				out:      cmd.OutOrStdout(),
-				errw:     cmd.ErrOrStderr(),
+				api:        client,
+				probeLocal: probeLocalDevServer,
+				keygen:     devtunnel.GenerateEphemeralKey,
+				dialer:     devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
+				blockID:    blockID,
+				port:       port,
+				endpoint:   ep,
+				baseURL:    cfg.BaseURL(),
+				idle:       idle,
+				newTimer:   devtunnel.NewRealTimer,
+				signals:    sigCh,
+				out:        cmd.OutOrStdout(),
+				errw:       cmd.ErrOrStderr(),
 			})
 		},
 	}
 
 	cmd.Flags().StringVar(&blockFlag, "block", "", "the blockId (app slug) to tunnel (or pass it positionally; defaults to the blockId in "+manifest.Filename+" in the CWD)")
 	cmd.Flags().IntVar(&port, "port", defaultDevTunnelPort, "local dev-server port to tunnel (matches the scaffold's dev:tunnel)")
-	cmd.Flags().StringVar(&endpoint, "tunnel-endpoint", "", "sish SSH endpoint host:port (default "+defaultDevTunnelEndpoint+", or $"+devTunnelEndpointEnv+"; P3-provisioned)")
+	cmd.Flags().StringVar(&endpoint, "tunnel-endpoint", "", "sish SSH endpoint host:port (default "+defaultDevTunnelEndpoint+", or $"+devTunnelEndpointEnv+")")
 	cmd.Flags().DurationVar(&idle, "idle-timeout", defaultDevTunnelIdle, "tear the tunnel down after this much inactivity")
 	return cmd
 }
@@ -196,6 +208,14 @@ pending.`,
 // injected via deps so this is exercised with mocks (no SSH, no network, no real
 // clock).
 func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
+	// Pre-flight FIRST: fail fast if the local dev server isn't listening, BEFORE
+	// minting anything server-side. Nothing to tear down yet — return directly.
+	if d.probeLocal != nil {
+		if err := d.probeLocal(d.port); err != nil {
+			return err
+		}
+	}
+
 	key, err := d.keygen()
 	if err != nil {
 		return fmt.Errorf("generate ephemeral tunnel key: %w", err)
@@ -283,6 +303,20 @@ loop:
 
 	_ = tunnel.Close()
 	stop(reason)
+	return nil
+}
+
+// probeLocalDevServer is the production probeLocal: a short TCP dial of
+// 127.0.0.1:<port>. A successful connect means the dev server is up; a refused
+// connection / timeout is a HARD error with actionable guidance. Run BEFORE the
+// mint so a not-running dev server never burns a rate-limited/reaper-tracked
+// server session (which would only serve the browser connection-refused).
+func probeLocalDevServer(port int) error {
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("no local dev server is listening on 127.0.0.1:%d — start it first (e.g. `npm run dev:tunnel`), then re-run. (override the port with --port)", port)
+	}
+	_ = conn.Close()
 	return nil
 }
 
