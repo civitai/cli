@@ -1141,15 +1141,18 @@ func TestRunTunnelSessionReadinessTimeoutNonFatal(t *testing.T) {
 	}
 
 	errc := runInBackground(deps)
-	if !waitForOutput(t, &out, "isn't resolving/serving yet", errc) {
+	// Wait for the URL — the last-relevant line of the timeout block. The block is
+	// several sequential Fprintf calls, so waiting on the FIRST line (the warning)
+	// then asserting the LATER URL line races the writes (flaky under CI scheduling).
+	if !waitForOutput(t, &out, sampleSession().URL, errc) {
 		return
+	}
+	if !strings.Contains(out.String(), "isn't resolving/serving yet") {
+		t.Errorf("timeout path must print the warning:\n%s", out.String())
 	}
 	// The readiness timeout is non-fatal: nothing torn down, session still alive.
 	if apiStub.stopCount() != 0 {
 		t.Errorf("readiness timeout must NOT tear the tunnel down; stop calls=%d", apiStub.stopCount())
-	}
-	if !strings.Contains(out.String(), sampleSession().URL) {
-		t.Errorf("timeout path must still print the URL:\n%s", out.String())
 	}
 	// Now really end it.
 	sigs <- os.Interrupt
