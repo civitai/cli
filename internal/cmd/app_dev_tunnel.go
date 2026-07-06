@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
@@ -21,6 +22,7 @@ import (
 	"github.com/civitai/cli/internal/devtunnel"
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // devHostPrefixRE mirrors the P1 DEV_HOST_LABEL_REGEX shape (dev-tunnel-session.ts):
@@ -45,18 +47,34 @@ const (
 	// defaultReadyTimeout bounds the post-dial readiness wait. The PUBLIC host
 	// `dev-<16hex>.civit.ai` isn't reachable the instant the reverse tunnel binds —
 	// external-dns + Cloudflare propagation + Traefik router build take up to
-	// ~1–2 min. We poll until the server path is live (or this deadline), so the dev
-	// isn't handed a URL that NXDOMAINs/404s. Non-fatal on expiry (the host may
-	// still come up shortly) — override with --ready-timeout, skip with --no-wait.
-	defaultReadyTimeout = 120 * time.Second
+	// ~1–2 min. The DEFAULT is 0 = wait INDEFINITELY (until ready, Ctrl-C, or the
+	// tunnel drops) — the host reliably comes up, and aborting mid-propagation only
+	// hands the dev a URL that NXDOMAINs/404s. A POSITIVE --ready-timeout re-imposes
+	// a cap (warn + print the URL anyway on expiry, non-fatal); --no-wait skips the
+	// wait entirely.
+	defaultReadyTimeout = 0
 	// defaultReadyPollInterval is how often the readiness wait re-probes the public
 	// host. ~5s balances responsiveness against hammering CF/Traefik while a route
 	// is still being built.
 	defaultReadyPollInterval = 5 * time.Second
+	// defaultNudgeAfter is how long the wait runs before printing the one-time
+	// "taking longer than usual — the tunnel IS live, try the URL or keep waiting"
+	// nudge. It fires exactly once, then the wait keeps going.
+	defaultNudgeAfter = 2 * time.Minute
+	// defaultSpinnerInterval is the TTY spinner frame cadence (smooth animation even
+	// though probes are ~readyPollInterval apart). defaultQuietInterval is the
+	// non-TTY (piped/CI) "still waiting" heartbeat cadence — a deterministic,
+	// greppable line at most this often (NOT one-per-probe-attempt). Both are
+	// injectable via deps so tests drive them fast without sleeps.
+	defaultSpinnerInterval = 100 * time.Millisecond
+	defaultQuietInterval   = 15 * time.Second
 	// probePublicTimeout bounds a single unauthenticated public-host GET so a hung
 	// connection (SYN blackhole during propagation) can't stall a poll iteration.
 	probePublicTimeout = 8 * time.Second
 )
+
+// spinnerFrames is the braille animation cycle for the TTY readiness indicator.
+var spinnerFrames = []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
 
 // tunnelAPI is the subset of the API client the session core needs (seam for a
 // mock in tests).
@@ -96,12 +114,21 @@ type tunnelSessionDeps struct {
 	// same-origin as this (defense-in-depth against an attacker-influenced URL).
 	baseURL string
 	idle    time.Duration
-	// readyTimeout bounds the post-dial readiness wait (default defaultReadyTimeout);
-	// readyPollInterval is the re-probe cadence (default defaultReadyPollInterval).
-	// noWait skips the wait entirely (print the URL immediately, as before).
+	// readyTimeout bounds the post-dial readiness wait: 0 (the default) = wait
+	// INDEFINITELY (until ready / Ctrl-C / tunnel-close); >0 = cap it (warn + print
+	// the URL anyway on expiry, non-fatal). readyPollInterval is the re-probe cadence
+	// (default defaultReadyPollInterval). noWait skips the wait entirely (print the
+	// URL immediately, as before). nudgeAfter is the one-time "taking longer than
+	// usual" nudge delay (default defaultNudgeAfter). spinnerInterval /
+	// quietInterval tune the TTY spinner animation cadence and the non-TTY heartbeat
+	// cadence respectively (defaults defaultSpinnerInterval / defaultQuietInterval);
+	// all three are injectable so tests drive them fast without real sleeps.
 	readyTimeout      time.Duration
 	readyPollInterval time.Duration
 	noWait            bool
+	nudgeAfter        time.Duration
+	spinnerInterval   time.Duration
+	quietInterval     time.Duration
 	newTimer          func(d time.Duration) devtunnel.Timer
 	signals           <-chan os.Signal
 	out               io.Writer
@@ -187,8 +214,8 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 			if idle <= 0 {
 				return fmt.Errorf("--idle-timeout must be positive (got %s)", idle)
 			}
-			if readyTimeout <= 0 {
-				return fmt.Errorf("--ready-timeout must be positive (got %s)", readyTimeout)
+			if readyTimeout < 0 {
+				return fmt.Errorf("--ready-timeout must be >= 0 (0 = wait indefinitely until ready or Ctrl-C; got %s)", readyTimeout)
 			}
 
 			// Endpoint: flag > env > documented placeholder default.
@@ -228,6 +255,9 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				readyTimeout:      readyTimeout,
 				readyPollInterval: defaultReadyPollInterval,
 				noWait:            noWait,
+				nudgeAfter:        defaultNudgeAfter,
+				spinnerInterval:   defaultSpinnerInterval,
+				quietInterval:     defaultQuietInterval,
 				newTimer:          devtunnel.NewRealTimer,
 				signals:           sigCh,
 				out:               cmd.OutOrStdout(),
@@ -240,7 +270,7 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 	cmd.Flags().IntVar(&port, "port", defaultDevTunnelPort, "local dev-server port to tunnel (matches the scaffold's dev:tunnel)")
 	cmd.Flags().StringVar(&endpoint, "tunnel-endpoint", "", "sish SSH endpoint host:port (default "+defaultDevTunnelEndpoint+", or $"+devTunnelEndpointEnv+")")
 	cmd.Flags().DurationVar(&idle, "idle-timeout", defaultDevTunnelIdle, "tear the tunnel down after this much inactivity")
-	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultReadyTimeout, "how long to wait for the public host to start serving before printing the URL anyway")
+	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultReadyTimeout, "cap the wait for the public host to start serving (0 = wait indefinitely until ready or Ctrl-C; a positive value warns + prints the URL anyway on expiry)")
 	cmd.Flags().BoolVar(&noWait, "no-wait", false, "skip the readiness wait and print the URL immediately (it may 404/NXDOMAIN for ~1–2 min while DNS/route propagate)")
 	return cmd
 }
@@ -320,7 +350,7 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		printTunnelReady(d.out, sess, d.port)
 	} else {
 		fmt.Fprintf(d.errw, "\nDev tunnel established — serving 127.0.0.1:%d as %s. Waiting for it to become reachable…\n", d.port, sess.Host)
-		ready, abortReason := waitForTunnelReachable(ctx, d, tunnel, sess.Host)
+		ready, abortReason := waitForTunnelReachable(ctx, d, tunnel, sess.Host, sess.URL)
 		if abortReason != "" {
 			// The dev aborted (Ctrl-C / ctx) or the tunnel dropped DURING the wait —
 			// tear down now rather than fall into the idle loop.
@@ -331,9 +361,10 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		if ready {
 			printTunnelReadyConfirmed(d.out, sess, d.port)
 		} else {
-			// Readiness timeout is NON-fatal: the host may still come up shortly, so
-			// keep the tunnel and print the URL with a clear "not up yet" warning.
-			printTunnelReadyTimeout(d.out, sess, d.port, resolveReadyTimeout(d))
+			// A POSITIVE --ready-timeout cap elapsed (the default is indefinite, which
+			// never lands here). NON-fatal: the host may still come up shortly, so keep
+			// the tunnel and print the URL with a clear "not up yet" warning.
+			printTunnelReadyTimeout(d.out, sess, d.port, d.readyTimeout)
 		}
 	}
 
@@ -449,16 +480,11 @@ func printTunnelReadyTimeout(out io.Writer, sess *api.DevTunnelSession, port int
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
 }
 
-// resolveReadyTimeout / resolveReadyPollInterval apply the documented defaults
-// when a dep leaves the value unset (zero), so a zero-value deps set (e.g. a
-// focused unit test) still behaves sanely.
-func resolveReadyTimeout(d tunnelSessionDeps) time.Duration {
-	if d.readyTimeout > 0 {
-		return d.readyTimeout
-	}
-	return defaultReadyTimeout
-}
-
+// resolveReadyPollInterval / resolveNudgeAfter / resolveSpinnerInterval /
+// resolveQuietInterval apply the documented defaults when a dep leaves the value
+// unset (zero), so a zero-value deps set (e.g. a focused unit test) still behaves
+// sanely. (readyTimeout intentionally has NO resolver — 0 is the meaningful
+// "indefinite" value, not "unset".)
 func resolveReadyPollInterval(d tunnelSessionDeps) time.Duration {
 	if d.readyPollInterval > 0 {
 		return d.readyPollInterval
@@ -466,55 +492,201 @@ func resolveReadyPollInterval(d tunnelSessionDeps) time.Duration {
 	return defaultReadyPollInterval
 }
 
+func resolveNudgeAfter(d tunnelSessionDeps) time.Duration {
+	if d.nudgeAfter > 0 {
+		return d.nudgeAfter
+	}
+	return defaultNudgeAfter
+}
+
+func resolveSpinnerInterval(d tunnelSessionDeps) time.Duration {
+	if d.spinnerInterval > 0 {
+		return d.spinnerInterval
+	}
+	return defaultSpinnerInterval
+}
+
+func resolveQuietInterval(d tunnelSessionDeps) time.Duration {
+	if d.quietInterval > 0 {
+		return d.quietInterval
+	}
+	return defaultQuietInterval
+}
+
+// writerIsTTY reports whether w is a terminal we can animate on — true only when
+// w is an *os.File whose fd is a TTY. A bytes.Buffer / syncBuffer (tests) or a
+// pipe (CI) is NOT a TTY, so it takes the quiet non-animated path.
+func writerIsTTY(w io.Writer) bool {
+	if f, ok := w.(*os.File); ok {
+		return term.IsTerminal(int(f.Fd()))
+	}
+	return false
+}
+
+// fmtMMSS renders an elapsed duration as M:SS (e.g. 2:07).
+func fmtMMSS(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	total := int(d.Seconds())
+	return fmt.Sprintf("%d:%02d", total/60, total%60)
+}
+
 // waitForTunnelReachable polls the PUBLIC tunnel host until it starts serving
-// (d.probePublic reports ready) or the readiness deadline elapses, printing an
-// unobtrusive progress line to d.errw on each not-ready attempt. It probes
-// immediately, then every readyPollInterval.
+// (d.probePublic reports ready), showing a live progress indicator on d.errw. By
+// DEFAULT (readyTimeout == 0) it waits INDEFINITELY — until ready, Ctrl-C, or the
+// tunnel drops; a POSITIVE readyTimeout re-imposes a non-fatal cap.
+//
+// The indicator degrades by destination:
+//   - TTY (d.errw is a terminal): a braille spinner that rewrites ONE line in place
+//     via \r, advancing every spinnerInterval, showing elapsed M:SS. Cleared before
+//     any other block (nudge / ready / abort) is printed.
+//   - non-TTY (piped/CI/tests): NO \r/animation — a quiet, greppable heartbeat line
+//     at most every quietInterval ("  … still waiting for <host> (M:SS)").
+//
+// Each probe runs in its own goroutine on a cancelable context, so an abort
+// (signal / tunnel-close / ctx) returns PROMPTLY even mid-probe (the in-flight
+// probe's context is canceled rather than riding out its ~8s HTTP timeout).
+//
+// After nudgeAfter it prints a one-time "taking longer than usual" nudge (with the
+// URL) and keeps waiting.
 //
 // Returns:
 //   - (true, "")           the host became reachable — print the ready block.
-//   - (false, "")          the deadline elapsed (NON-fatal) — print the URL with a
-//     "not up yet" warning and keep the tunnel.
+//   - (false, "")          a positive readyTimeout cap elapsed (NON-fatal) — print
+//     the URL with a "not up yet" warning and keep the tunnel.
 //   - (false, <reason>)    the dev aborted (Ctrl-C / ctx canceled) or the tunnel
 //     dropped mid-wait — the caller tears the session down with <reason>.
 //
 // A nil d.probePublic disables the wait (returns ready immediately).
-func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, host string) (bool, string) {
+func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, host, tunnelURL string) (bool, string) {
 	if d.probePublic == nil {
 		return true, ""
 	}
 	interval := resolveReadyPollInterval(d)
-	deadline := time.NewTimer(resolveReadyTimeout(d))
-	defer deadline.Stop()
-	// Fire immediately for the first probe, then re-arm at `interval` after each
-	// not-ready result.
-	tick := time.NewTimer(0)
-	defer tick.Stop()
+	tty := writerIsTTY(d.errw)
+	start := time.Now()
+
+	// A single reusable probe goroutine + buffered result channel. Only one probe is
+	// ever outstanding, so a cap-1 channel means the goroutine never blocks on send
+	// after we've returned (no goroutine leak).
+	type probeResult struct {
+		ready  bool
+		detail string
+		err    error
+	}
+	resultCh := make(chan probeResult, 1)
+	var probeCancel context.CancelFunc
+	startProbe := func() {
+		pctx, cancel := context.WithCancel(ctx)
+		probeCancel = cancel
+		go func() {
+			ready, detail, err := d.probePublic(pctx, host)
+			resultCh <- probeResult{ready, detail, err}
+		}()
+	}
+	cancelProbe := func() {
+		if probeCancel != nil {
+			probeCancel()
+			probeCancel = nil
+		}
+	}
+
+	// Progress-indicator state (TTY only tracks lastLen so it can clear its line).
+	frame := 0
+	lastLen := 0
+	renderSpinner := func() {
+		if !tty {
+			return
+		}
+		line := fmt.Sprintf("%c Waiting for %s to come up… %s elapsed",
+			spinnerFrames[frame%len(spinnerFrames)], host, fmtMMSS(time.Since(start)))
+		fmt.Fprintf(d.errw, "\r%s", line)
+		lastLen = utf8.RuneCountInString(line)
+	}
+	clearLine := func() {
+		if tty && lastLen > 0 {
+			fmt.Fprintf(d.errw, "\r%s\r", strings.Repeat(" ", lastLen))
+			lastLen = 0
+		}
+	}
+
+	// UI ticker: fast spinner frames on a TTY, slow heartbeat otherwise.
+	uiEvery := resolveSpinnerInterval(d)
+	if !tty {
+		uiEvery = resolveQuietInterval(d)
+	}
+	ui := time.NewTicker(uiEvery)
+	defer ui.Stop()
+
+	// Optional cap (only when readyTimeout > 0). A nil channel never fires, giving
+	// the indefinite default.
+	var deadlineC <-chan time.Time
+	if d.readyTimeout > 0 {
+		dt := time.NewTimer(d.readyTimeout)
+		defer dt.Stop()
+		deadlineC = dt.C
+	}
+
+	// One-time nudge timer.
+	nudge := time.NewTimer(resolveNudgeAfter(d))
+	defer nudge.Stop()
+
+	// Scheduler for the NEXT probe after a not-ready result. Start it stopped/drained
+	// — the first probe is kicked immediately below.
+	schedule := time.NewTimer(0)
+	if !schedule.Stop() {
+		<-schedule.C
+	}
+	defer schedule.Stop()
+
+	startProbe()    // probe immediately
+	renderSpinner() // paint the initial spinner frame on a TTY
 
 	for {
 		select {
 		case <-d.signals:
+			cancelProbe()
+			clearLine()
 			return false, "interrupt"
 		case <-ctx.Done():
+			cancelProbe()
+			clearLine()
 			return false, "canceled"
 		case <-tunnel.Done():
+			cancelProbe()
+			clearLine()
 			return false, "tunnel closed"
-		case <-deadline.C:
-			return false, "" // timeout — non-fatal
-		case <-tick.C:
-			ready, detail, err := d.probePublic(ctx, host)
-			if ready {
+		case <-deadlineC:
+			cancelProbe()
+			clearLine()
+			return false, "" // positive-cap timeout — non-fatal
+		case <-nudge.C:
+			// Fire exactly once (the timer is one-shot; this arm is only reachable the
+			// first time). Clear the spinner, print the nudge block, resume the spinner.
+			clearLine()
+			fmt.Fprintf(d.errw, "! Taking longer than usual. The tunnel IS live — you can try opening the URL now,\n")
+			fmt.Fprintf(d.errw, "  or keep waiting. (Ctrl-C to tear down.)\n\n")
+			fmt.Fprintf(d.errw, "      %s\n\n", tunnelURL)
+			renderSpinner()
+		case <-ui.C:
+			if tty {
+				frame++
+				renderSpinner()
+			} else {
+				fmt.Fprintf(d.errw, "  … still waiting for %s (%s)\n", host, fmtMMSS(time.Since(start)))
+			}
+		case res := <-resultCh:
+			probeCancel = nil
+			if res.ready {
+				clearLine()
 				return true, ""
 			}
-			if detail == "" {
-				if err != nil {
-					detail = err.Error()
-				} else {
-					detail = "not ready"
-				}
-			}
-			fmt.Fprintf(d.errw, "  … waiting for %s to come up (%s)\n", host, detail)
-			tick.Reset(interval)
+			// Not ready — re-probe after the poll interval. (The detail/err is folded
+			// into the indicator, not spammed per-attempt.)
+			schedule.Reset(interval)
+		case <-schedule.C:
+			startProbe()
 		}
 	}
 }
