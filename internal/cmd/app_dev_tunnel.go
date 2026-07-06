@@ -677,7 +677,11 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 				fmt.Fprintf(d.errw, "  … still waiting for %s (%s)\n", host, fmtMMSS(time.Since(start)))
 			}
 		case res := <-resultCh:
-			probeCancel = nil
+			// The probe returned — cancel its context (release resources) rather than
+			// dropping the CancelFunc, honoring the always-call-cancel contract (a no-op
+			// on the completed ctx today, but leak-safe if a cancelable parent is ever
+			// threaded through runTunnelSession).
+			cancelProbe()
 			if res.ready {
 				clearLine()
 				return true, ""
