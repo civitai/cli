@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -45,6 +46,37 @@ const sshDialUser = "civitai-dev"
 // dialTimeout bounds the initial SSH handshake so a dead/unreachable endpoint
 // (the common case pre-P3) fails fast instead of hanging.
 const dialTimeout = 15 * time.Second
+
+// localDialTimeout bounds each attempt to reach the developer's local dev server.
+// Loopback connects/refusals resolve in well under a millisecond, so this only
+// matters for a wedged (accepting-but-never-completing) local server.
+const localDialTimeout = 3 * time.Second
+
+// loopbackHosts are the addresses a local dev server may be bound to. A dev
+// server launched with `--host localhost` (the scaffold's `dev:tunnel`) binds to
+// whichever family `localhost` resolves to — `::1` on a dual-stack box, else
+// `127.0.0.1` — and to that ONE family only. So the CLI must try both loopback
+// families rather than assume IPv4; otherwise a perfectly-running dev server on
+// `::1` looks "unreachable" to both the pre-flight probe and the tunnel proxy.
+// IPv4 is tried first (still the common bind), IPv6 second.
+var loopbackHosts = []string{"127.0.0.1", "::1"}
+
+// DialLocalDevServer connects to the developer's local dev server on `port`,
+// trying each loopback family in turn with a per-attempt timeout, and returns
+// the first successful connection. Shared by the pre-flight probe (which closes
+// the returned conn) and the live tunnel proxy (which uses it) so the two always
+// agree on whether the dev server is reachable.
+func DialLocalDevServer(port int, timeout time.Duration) (net.Conn, error) {
+	var lastErr error
+	for _, host := range loopbackHosts {
+		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), timeout)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
 
 // sshDialer is the production Dialer: an in-process `ssh -R` via
 // golang.org/x/crypto/ssh, so the ephemeral private key never touches disk.
@@ -183,12 +215,13 @@ func (t *sshTunnel) serve() {
 	}
 }
 
-// proxy bridges one forwarded connection to 127.0.0.1:<localPort>.
+// proxy bridges one forwarded connection to the local dev server on
+// 127.0.0.1/::1:<localPort> (whichever loopback family it is bound to).
 func (t *sshTunnel) proxy(remote net.Conn) {
 	defer remote.Close()
-	local, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", t.localPort))
+	local, err := DialLocalDevServer(t.localPort, localDialTimeout)
 	if err != nil {
-		t.logf("  tunnel: local dev server 127.0.0.1:%d unreachable (%v) — is `npm run dev` running?\n", t.localPort, err)
+		t.logf("  tunnel: local dev server on port %d unreachable (%v) — is your dev server running (`npm run dev:tunnel`)?\n", t.localPort, err)
 		return
 	}
 	defer local.Close()

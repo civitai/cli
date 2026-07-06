@@ -358,7 +358,7 @@ func TestSSHDialerLocalDevDown(t *testing.T) {
 	// log for the guidance line.
 	deadline := time.After(2 * time.Second)
 	for {
-		if strings.Contains(logbuf.String(), fmt.Sprintf("127.0.0.1:%d", deadPort)) {
+		if strings.Contains(logbuf.String(), fmt.Sprintf("on port %d unreachable", deadPort)) {
 			return
 		}
 		select {
@@ -369,6 +369,56 @@ func TestSSHDialerLocalDevDown(t *testing.T) {
 			time.Sleep(5 * time.Millisecond)
 		}
 	}
+}
+
+// TestDialLocalDevServerBothFamilies proves the loopback dialer reaches a dev
+// server bound to EITHER family. The IPv6-only case is the real regression: a
+// `--host localhost` dev server binds `::1` only on a dual-stack box, and the
+// old 127.0.0.1-hardcoded dialer/probe falsely reported it unreachable.
+func TestDialLocalDevServerBothFamilies(t *testing.T) {
+	t.Run("ipv4", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ln.Close()
+		port := ln.Addr().(*net.TCPAddr).Port
+		conn, err := DialLocalDevServer(port, 2*time.Second)
+		if err != nil {
+			t.Fatalf("expected to reach the IPv4 dev server on port %d: %v", port, err)
+		}
+		_ = conn.Close()
+	})
+
+	t.Run("ipv6", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "[::1]:0")
+		if err != nil {
+			t.Skipf("IPv6 loopback unavailable on this host: %v", err)
+		}
+		defer ln.Close()
+		port := ln.Addr().(*net.TCPAddr).Port
+		// Regression guard: on the old code this returned "connection refused"
+		// because it only ever dialed 127.0.0.1.
+		conn, err := DialLocalDevServer(port, 2*time.Second)
+		if err != nil {
+			t.Fatalf("expected to reach the IPv6-only dev server on port %d (this is the localhost→::1 fix): %v", port, err)
+		}
+		_ = conn.Close()
+	})
+
+	t.Run("nothing-listening", func(t *testing.T) {
+		// A port that is (almost certainly) closed: bind then immediately free.
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadPort := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+		if conn, err := DialLocalDevServer(deadPort, 500*time.Millisecond); err == nil {
+			_ = conn.Close()
+			t.Fatalf("expected an error dialing the closed port %d", deadPort)
+		}
+	})
 }
 
 // TestPinnedHostKeyCallback proves the host-key pin: a valid host key yields a
