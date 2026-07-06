@@ -36,10 +36,15 @@ CIVITAI_TOKEN environment variable still overrides the stored credential.
 
 Note: ` + "`civitai login`" + ` (OAuth) grants submit but NOT Buzz-spend. To run
 ` + "`dev:live`" + ` real generations, authenticate with a full-scope personal API key
-(` + "`civitai login --token <key>`" + `, created at https://civitai.com/user/account).`,
+(` + "`civitai login --token <key>`" + `, created at https://civitai.com/user/account).
+
+Switching accounts: running ` + "`civitai login`" + ` again overwrites the stored
+credential with the new account — no separate logout needed. (Check the active
+account with ` + "`civitai whoami`" + `.)`,
 		Example: `  civitai login                 # browser device login (recommended)
   civitai login --no-browser    # device login without auto-opening a browser
-  civitai login --token <token> # store a personal API key instead`,
+  civitai login --token <token> # store a personal API key instead
+  civitai login                 # run again to SWITCH the active account (overwrites the stored credential)`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()

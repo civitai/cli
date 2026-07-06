@@ -13,6 +13,11 @@ import (
 	"testing"
 )
 
+// startDevTunnelRoute is the non-batched tRPC mint route. The forbidden-mint
+// tests must record ONLY this request's body/path — the 403 now triggers a
+// follow-up WhoAmI (/api/v1/me), which would otherwise clobber the recorders.
+const startDevTunnelRoute = "/api/trpc/blocks.startDevTunnel"
+
 // listenLocal opens a listener on an ephemeral 127.0.0.1 port and returns the
 // port, so a full-path dev-tunnel test can pass `--port <port>` and satisfy the
 // pre-flight local-dev-server probe (which TCP-dials 127.0.0.1:<port> before the
@@ -54,12 +59,18 @@ func TestAppDevTunnelMissingBlockErrors(t *testing.T) {
 func TestAppDevTunnelBlockIdFromManifest(t *testing.T) {
 	var gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		gotBody = string(raw)
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
-		})
+		// The forbidden mint now triggers a follow-up WhoAmI (/api/v1/me) to enrich
+		// the error — only record the START request so WhoAmI can't clobber gotBody.
+		if r.URL.Path == startDevTunnelRoute {
+			raw, _ := io.ReadAll(r.Body)
+			gotBody = string(raw)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"username": "tester", "id": 7})
 	}))
 	defer srv.Close()
 
@@ -102,12 +113,16 @@ func TestAppDevTunnelBlockIdFromManifest(t *testing.T) {
 func TestAppDevTunnelBlockFlagWinsOverPositionalWithWarning(t *testing.T) {
 	var gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		raw, _ := io.ReadAll(r.Body)
-		gotBody = string(raw)
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
-		})
+		if r.URL.Path == startDevTunnelRoute {
+			raw, _ := io.ReadAll(r.Body)
+			gotBody = string(raw)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"username": "tester", "id": 7})
 	}))
 	defer srv.Close()
 
@@ -212,13 +227,20 @@ func TestAppHelpListsDevTunnel(t *testing.T) {
 func TestAppDevTunnelForbiddenMapsToGuidance(t *testing.T) {
 	var gotPath, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		raw, _ := io.ReadAll(r.Body)
-		gotBody = string(raw)
-		w.WriteHeader(http.StatusForbidden)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
-		})
+		// Record ONLY the mint request — the 403 now triggers a follow-up WhoAmI
+		// (/api/v1/me) to name the signed-in account, which we serve a valid
+		// identity for so the enriched error can be asserted.
+		if r.URL.Path == startDevTunnelRoute {
+			gotPath = r.URL.Path
+			raw, _ := io.ReadAll(r.Body)
+			gotBody = string(raw)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"username": "tester", "id": 7})
 	}))
 	defer srv.Close()
 
@@ -235,7 +257,14 @@ func TestAppDevTunnelForbiddenMapsToGuidance(t *testing.T) {
 	if !strings.Contains(err.Error(), "not available") || !strings.Contains(err.Error(), "403") {
 		t.Errorf("403 should map to dark/pre-GA guidance: %v", err)
 	}
-	if gotPath != "/api/trpc/blocks.startDevTunnel" {
+	// The 403 is enriched with the signed-in identity + how to switch/check accounts.
+	if !strings.Contains(err.Error(), "tester") {
+		t.Errorf("403 should name the signed-in account (tester): %v", err)
+	}
+	if !strings.Contains(err.Error(), "civitai login") || !strings.Contains(err.Error(), "civitai whoami") {
+		t.Errorf("403 should carry account-switch guidance (civitai login / civitai whoami): %v", err)
+	}
+	if gotPath != startDevTunnelRoute {
 		t.Errorf("start path = %q, want the tRPC startDevTunnel route", gotPath)
 	}
 	// The request carries the ephemeral pubkey + blockId under the tRPC `json` key.

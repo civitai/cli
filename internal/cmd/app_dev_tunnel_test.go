@@ -25,6 +25,29 @@ type fakeTunnelAPI struct {
 
 	stopErr   error
 	stopCalls []struct{ sessionID, blockID string }
+
+	// whoami / whoamiErr are the canned WhoAmI result used to enrich a 403 mint
+	// refusal; whoamiCalls counts invocations so a test can assert WhoAmI is NOT
+	// called on a non-forbidden error.
+	whoami     *api.Identity
+	whoamiErr  error
+	whoamiCall int
+}
+
+func (f *fakeTunnelAPI) WhoAmI(_ context.Context) (*api.Identity, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.whoamiCall++
+	if f.whoamiErr != nil {
+		return nil, f.whoamiErr
+	}
+	return f.whoami, nil
+}
+
+func (f *fakeTunnelAPI) whoamiCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.whoamiCall
 }
 
 func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string) (*api.DevTunnelSession, error) {
@@ -420,6 +443,94 @@ func TestRunTunnelSessionStartError(t *testing.T) {
 	}
 	if apiStub.stopCount() != 0 {
 		t.Error("should NOT call stop when nothing was started")
+	}
+}
+
+// TestRunTunnelSessionForbiddenEnrichedWithIdentity: a 403 mint refusal is
+// enriched with the signed-in account + account-switch guidance, still errors.As
+// to *api.DevTunnelForbiddenError, and NEVER dials/stops (it's on the mint-error
+// path, before any tunnel dial).
+func TestRunTunnelSessionForbiddenEnrichedWithIdentity(t *testing.T) {
+	apiStub := &fakeTunnelAPI{
+		startErr: &api.DevTunnelForbiddenError{ServerMsg: "Dev tunnels are not available"},
+		whoami:   &api.Identity{Username: "zach", ID: 42},
+	}
+	dialer := &fakeDialer{tunnel: newFakeTunnel()}
+
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), make(chan os.Signal))
+	err := runTunnelSession(context.Background(), deps)
+	if err == nil {
+		t.Fatal("expected the forbidden mint to error")
+	}
+	// (a) still unwraps to the typed forbidden error.
+	var forbidden *api.DevTunnelForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("enriched error must still errors.As to *api.DevTunnelForbiddenError, got %v", err)
+	}
+	// (b) names the account + carries the switch/check guidance.
+	msg := err.Error()
+	for _, want := range []string{"signed in as zach", "id 42", "civitai login", "civitai whoami", "not available", "403"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("enriched error missing %q: %v", want, msg)
+		}
+	}
+	// (c) never dialed and never stopped (nothing was minted).
+	if dialer.dialed {
+		t.Error("a forbidden mint must NOT dial the tunnel")
+	}
+	if apiStub.stopCount() != 0 {
+		t.Errorf("a forbidden mint must NOT stop (nothing minted), stop calls=%d", apiStub.stopCount())
+	}
+	if apiStub.whoamiCount() != 1 {
+		t.Errorf("WhoAmI should be consulted once to name the account, got %d", apiStub.whoamiCount())
+	}
+}
+
+// TestRunTunnelSessionForbiddenWhoAmIFails: a 403 mint with a failing WhoAmI still
+// carries the switch guidance but omits the account name (best effort).
+func TestRunTunnelSessionForbiddenWhoAmIFails(t *testing.T) {
+	apiStub := &fakeTunnelAPI{
+		startErr:  &api.DevTunnelForbiddenError{ServerMsg: "Dev tunnels are not available"},
+		whoamiErr: errors.New("token expired"),
+	}
+	dialer := &fakeDialer{tunnel: newFakeTunnel()}
+
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), make(chan os.Signal))
+	err := runTunnelSession(context.Background(), deps)
+	if err == nil {
+		t.Fatal("expected the forbidden mint to error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "civitai login") || !strings.Contains(msg, "civitai whoami") {
+		t.Errorf("guidance must survive a failed WhoAmI: %v", msg)
+	}
+	if strings.Contains(msg, "signed in as") {
+		t.Errorf("a failed WhoAmI must NOT claim an account name: %v", msg)
+	}
+	if dialer.dialed {
+		t.Error("a forbidden mint must NOT dial the tunnel")
+	}
+}
+
+// TestRunTunnelSessionNonForbiddenErrorPassesThrough: a NON-forbidden mint error
+// passes through unchanged and does NOT consult WhoAmI.
+func TestRunTunnelSessionNonForbiddenErrorPassesThrough(t *testing.T) {
+	apiStub := &fakeTunnelAPI{
+		startErr: errors.New("boom: transient server error"),
+		whoami:   &api.Identity{Username: "zach", ID: 42},
+	}
+	dialer := &fakeDialer{tunnel: newFakeTunnel()}
+
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), make(chan os.Signal))
+	err := runTunnelSession(context.Background(), deps)
+	if err == nil || err.Error() != "boom: transient server error" {
+		t.Fatalf("a non-forbidden error must pass through unchanged, got %v", err)
+	}
+	if apiStub.whoamiCount() != 0 {
+		t.Errorf("a non-forbidden error must NOT consult WhoAmI, got %d", apiStub.whoamiCount())
+	}
+	if dialer.dialed {
+		t.Error("a failed mint must NOT dial the tunnel")
 	}
 }
 
