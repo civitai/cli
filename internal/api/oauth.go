@@ -39,25 +39,34 @@ const (
 	// ClientID is the public OAuth client id for the CLI.
 	ClientID = "civitai-cli"
 
-	// DeviceScope is UserRead|AppBlocksSubmit (bit flags), the fixed scope the CLI
-	// requests on login. 33554433 == (1<<0)|(1<<25) in the server's scope bitset:
-	//   - UserRead        (1<<0  = 1)        — whoami / identity.
-	//   - AppBlocksSubmit (1<<25 = 33554432) — `app submit` AND the dev-token mint
+	// DeviceScope is UserRead|AppBlocksSubmit|AppBlocksDevTunnel (bit flags), the
+	// fixed scope the CLI requests on login. 100663297 == (1<<0)|(1<<25)|(1<<26):
+	//   - UserRead           (1<<0  = 1)        — whoami / identity.
+	//   - AppBlocksSubmit     (1<<25 = 33554432) — `app submit` AND the dev-token mint
 	//     gate (both require this on an OAuth token).
-	// This is exactly the civitai-cli OauthClient.allowedScopes set (33554433). We
+	//   - AppBlocksDevTunnel  (1<<26 = 67108864) — `app dev-tunnel` (start/stop/status).
+	//     The dev-tunnel tRPC procs require this bit on an OAuth token; without it a
+	//     login token 403s the scope gate and only a Full personal API key works.
+	// This is exactly the civitai-cli OauthClient.allowedScopes set (100663297). We
 	// deliberately do NOT request AIServicesWrite: the server's device-flow
 	// validateScope is all-or-nothing — requesting any scope the client doesn't
 	// allow REJECTS the whole login — and we don't want every login token to carry
 	// general Buzz-spend authority.
 	//
-	// What a login token can do: it can MINT an App-Blocks dev token (the mint gate
-	// only needs AppBlocksSubmit) and drive the read/estimate harness paths — cost
-	// preview / whatif, catalog browsing, and app storage. It CANNOT run a real
-	// generation: the dev-token mint applies a uniform AIServicesWrite ceiling on
-	// the budgeted-spend scope, so a login-minted dev token has ai:write:budgeted
-	// STRIPPED (read/estimate only). Real-Buzz dev:live needs a personal API key
-	// with full scope (civitai.com/user/account), which carries AIServicesWrite.
-	DeviceScope = "33554433"
+	// 🔴 SERVER DEPENDENCY: AppBlocksDevTunnel (bit 26) + the widened civitai-cli
+	// allowedScopes (100663297) must be LIVE on prod auth (migration applied) BEFORE
+	// this ships — else the device request exceeds allowedScopes and login 400s
+	// (invalid_scope). Do NOT release this ahead of the civitai server change.
+	//
+	// What a login token can do: MINT an App-Blocks dev token (the mint gate needs
+	// AppBlocksSubmit), open an on-site dev tunnel (AppBlocksDevTunnel), and drive
+	// the read/estimate harness paths — cost preview / whatif, catalog browsing, app
+	// storage. It CANNOT run a real generation: the dev-token mint applies a uniform
+	// AIServicesWrite ceiling on the budgeted-spend scope, so a login-minted dev
+	// token has ai:write:budgeted STRIPPED (read/estimate only). Real-Buzz dev:live
+	// needs a personal API key with full scope (civitai.com/user/account), which
+	// carries AIServicesWrite.
+	DeviceScope = "100663297"
 
 	grantTypeDeviceCode   = "urn:ietf:params:oauth:grant-type:device_code"
 	grantTypeRefreshToken = "refresh_token"
