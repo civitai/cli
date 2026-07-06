@@ -321,6 +321,13 @@ func enrichDevTunnelAuthError(ctx context.Context, d tunnelSessionDeps, err erro
 	if !errors.As(err, &forbidden) {
 		return err
 	}
+	// A token-SCOPE refusal is a different fix from the author/flag gate: the
+	// credential needs FULL scope, not a different account. Don't misdirect the
+	// user to account-switching — an OAuth `civitai login` token can't open dev
+	// tunnels; a full-scope personal API key can.
+	if forbidden.InsufficientScope {
+		return fmt.Errorf("%w — this credential lacks Full scope. Create a full-scope personal API key at https://civitai.com/user/account, then `civitai login --token <key>` (an OAuth `civitai login` token can't open dev tunnels); check your credential + scopes with `civitai whoami`", err)
+	}
 	who := ""
 	if id, werr := d.api.WhoAmI(ctx); werr == nil && id != nil {
 		who = fmt.Sprintf(" You are signed in as %s (id %d).", id.Username, id.ID)

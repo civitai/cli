@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -172,5 +173,44 @@ func TestStartDevTunnelErrorMapping(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("status %d: error %q should contain %q", tc.status, err.Error(), tc.want)
 		}
+	}
+}
+
+// TestStartDevTunnelForbiddenClassifiesScope: a 403 is split by its server
+// message into a token-SCOPE refusal (fix = full-scope key) vs the author/flag
+// gate (fix = enrolled account). Both are FORBIDDEN with no distinct code, so
+// the message is the only signal.
+func TestStartDevTunnelForbiddenClassifiesScope(t *testing.T) {
+	cases := []struct {
+		name      string
+		serverMsg string
+		wantScope bool
+		wantText  string
+	}{
+		{"scope", "Your API key does not have the required scope for this action", true, "full-scope credential"},
+		{"authorFlag", "Dev tunnels are not available", false, "not available for your account"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(http.StatusForbidden)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"error": map[string]any{"json": map[string]any{"message": tc.serverMsg}},
+				})
+			}))
+			defer srv.Close()
+			c := New(srv.URL, "tok", "")
+			_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K")
+			var forbidden *DevTunnelForbiddenError
+			if !errors.As(err, &forbidden) {
+				t.Fatalf("403 should map to *DevTunnelForbiddenError, got %v", err)
+			}
+			if forbidden.InsufficientScope != tc.wantScope {
+				t.Errorf("InsufficientScope = %v, want %v (msg %q)", forbidden.InsufficientScope, tc.wantScope, tc.serverMsg)
+			}
+			if !strings.Contains(err.Error(), tc.wantText) || !strings.Contains(err.Error(), "403") {
+				t.Errorf("error %q should contain %q and 403", err.Error(), tc.wantText)
+			}
+		})
 	}
 }

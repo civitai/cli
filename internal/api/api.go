@@ -1082,14 +1082,32 @@ func (c *Client) StopDevTunnel(ctx context.Context, sessionID, blockID string) (
 	return env.Result.Data.JSON.Stopped, nil
 }
 
-// DevTunnelForbiddenError is returned when the dev-tunnel mint is refused with 403
-// — the authenticated account lacks the Apps-author invite + dev-tunnel flag. Typed
-// so the command layer can errors.As it and enrich the message with the signed-in
-// identity + account-switch guidance.
-type DevTunnelForbiddenError struct{ ServerMsg string }
+// DevTunnelForbiddenError is returned when the dev-tunnel mint is refused with 403.
+// Typed so the command layer can errors.As it and give the RIGHT fix, which differs
+// by cause:
+//   - InsufficientScope: the CLI's credential lacks Full scope (the token-scope
+//     gate runs before the author/flag gates) → fix is a full-scope personal API
+//     key, NOT a different account.
+//   - otherwise: the account lacks the Apps-author invite + dev-tunnel flag → fix
+//     is signing in as an enrolled account.
+type DevTunnelForbiddenError struct {
+	ServerMsg         string
+	InsufficientScope bool
+}
 
 func (e *DevTunnelForbiddenError) Error() string {
+	if e.InsufficientScope {
+		return fmt.Sprintf("dev tunnels need a full-scope credential (403): %s", e.ServerMsg)
+	}
 	return fmt.Sprintf("dev tunnels are not available for your account (403): %s — needs an Apps-author invite AND the dev-tunnel flag (dark until GA)", e.ServerMsg)
+}
+
+// isInsufficientScopeMsg detects the server's token-SCOPE refusal. It is the only
+// wire signal that distinguishes it from the author/flag 403s — both are TRPCError
+// FORBIDDEN with no distinct code — so we classify on the stable core of the server
+// message "Your API key does not have the required scope for this action".
+func isInsufficientScopeMsg(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "required scope")
 }
 
 // devTunnelError maps a non-200 dev-tunnel tRPC response to an actionable CLI
@@ -1111,7 +1129,7 @@ func devTunnelError(status int, raw []byte) error {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
 	case http.StatusForbidden:
-		return &DevTunnelForbiddenError{ServerMsg: msg}
+		return &DevTunnelForbiddenError{ServerMsg: msg, InsufficientScope: isInsufficientScopeMsg(msg)}
 	case http.StatusNotFound:
 		return fmt.Errorf("app not found (404): %s — check the blockId with `civitai app status` (you can only tunnel your OWN app)", msg)
 	case http.StatusTooManyRequests:
