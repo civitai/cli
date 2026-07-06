@@ -486,6 +486,47 @@ func TestRunTunnelSessionForbiddenEnrichedWithIdentity(t *testing.T) {
 	}
 }
 
+// TestRunTunnelSessionForbiddenScopeGuidance: a token-SCOPE 403 gives full-scope-key
+// guidance (NOT account-switching), and does NOT consult WhoAmI (the account is
+// fine — the credential's scope is the problem).
+func TestRunTunnelSessionForbiddenScopeGuidance(t *testing.T) {
+	apiStub := &fakeTunnelAPI{
+		startErr: &api.DevTunnelForbiddenError{
+			ServerMsg:         "Your API key does not have the required scope for this action",
+			InsufficientScope: true,
+		},
+		whoami: &api.Identity{Username: "zach", ID: 42},
+	}
+	dialer := &fakeDialer{tunnel: newFakeTunnel()}
+
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), make(chan os.Signal))
+	err := runTunnelSession(context.Background(), deps)
+	if err == nil {
+		t.Fatal("expected the forbidden mint to error")
+	}
+	var forbidden *api.DevTunnelForbiddenError
+	if !errors.As(err, &forbidden) {
+		t.Fatalf("enriched error must still errors.As to *api.DevTunnelForbiddenError, got %v", err)
+	}
+	msg := err.Error()
+	// Scope-specific guidance — full-scope key + whoami, NOT account-switching.
+	for _, want := range []string{"full-scope personal API key", "civitai login --token", "civitai whoami", "403"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("scope-403 guidance missing %q: %v", want, msg)
+		}
+	}
+	if strings.Contains(msg, "Switch accounts") || strings.Contains(msg, "signed in as") {
+		t.Errorf("a scope-403 must NOT misdirect to account-switching: %v", msg)
+	}
+	// The account is not the problem, so WhoAmI is not consulted; nothing dialed.
+	if apiStub.whoamiCount() != 0 {
+		t.Errorf("a scope-403 must NOT consult WhoAmI, got %d", apiStub.whoamiCount())
+	}
+	if dialer.dialed {
+		t.Error("a forbidden mint must NOT dial the tunnel")
+	}
+}
+
 // TestRunTunnelSessionForbiddenWhoAmIFails: a 403 mint with a failing WhoAmI still
 // carries the switch guidance but omits the account name (best effort).
 func TestRunTunnelSessionForbiddenWhoAmIFails(t *testing.T) {
