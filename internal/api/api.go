@@ -1082,6 +1082,16 @@ func (c *Client) StopDevTunnel(ctx context.Context, sessionID, blockID string) (
 	return env.Result.Data.JSON.Stopped, nil
 }
 
+// DevTunnelForbiddenError is returned when the dev-tunnel mint is refused with 403
+// — the authenticated account lacks the Apps-author invite + dev-tunnel flag. Typed
+// so the command layer can errors.As it and enrich the message with the signed-in
+// identity + account-switch guidance.
+type DevTunnelForbiddenError struct{ ServerMsg string }
+
+func (e *DevTunnelForbiddenError) Error() string {
+	return fmt.Sprintf("dev tunnels are not available for your account (403): %s — needs an Apps-author invite AND the dev-tunnel flag (dark until GA)", e.ServerMsg)
+}
+
 // devTunnelError maps a non-200 dev-tunnel tRPC response to an actionable CLI
 // error. tRPC error bodies are {error:{json:{message,code,...}}}; the HTTP
 // status carries the mapped code (403 flag-off/not-author, 404 not-your-app).
@@ -1101,7 +1111,7 @@ func devTunnelError(status int, raw []byte) error {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
 	case http.StatusForbidden:
-		return fmt.Errorf("dev tunnels are not available for your account (403): %s — needs an Apps-author invite AND the dev-tunnel flag (dark until GA)", msg)
+		return &DevTunnelForbiddenError{ServerMsg: msg}
 	case http.StatusNotFound:
 		return fmt.Errorf("app not found (404): %s — check the blockId with `civitai app status` (you can only tunnel your OWN app)", msg)
 	case http.StatusTooManyRequests:

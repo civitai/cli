@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -46,6 +47,10 @@ const (
 type tunnelAPI interface {
 	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string) (*api.DevTunnelSession, error)
 	StopDevTunnel(ctx context.Context, sessionID, blockID string) (bool, error)
+	// WhoAmI resolves the signed-in identity — used to enrich a 403 mint refusal
+	// with which account the CLI is authenticated as (the usual cause is being
+	// logged in as the wrong account). The real *api.Client already implements it.
+	WhoAmI(ctx context.Context) (*api.Identity, error)
 }
 
 // tunnelSessionDeps are the injectable dependencies of runTunnelSession — every
@@ -222,7 +227,10 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 
 	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey)
 	if err != nil {
-		return err
+		// A 403 mint refusal is the common "wrong account" case — enrich it with
+		// the signed-in identity + how to switch accounts. This runs on the
+		// mint-error path, BEFORE any tunnel dial, so a forbidden mint never dials.
+		return enrichDevTunnelAuthError(ctx, d, err)
 	}
 
 	// Defense-in-depth: never trust the mint response blindly. The assigned host's
@@ -303,6 +311,21 @@ loop:
 	_ = tunnel.Close()
 	stop(reason)
 	return nil
+}
+
+// enrichDevTunnelAuthError augments a 403 mint refusal with the identity the CLI is
+// signed in as + how to switch accounts (the usual cause is "wrong account"). Best
+// effort: a failed WhoAmI just omits the name. Non-forbidden errors pass through.
+func enrichDevTunnelAuthError(ctx context.Context, d tunnelSessionDeps, err error) error {
+	var forbidden *api.DevTunnelForbiddenError
+	if !errors.As(err, &forbidden) {
+		return err
+	}
+	who := ""
+	if id, werr := d.api.WhoAmI(ctx); werr == nil && id != nil {
+		who = fmt.Sprintf(" You are signed in as %s (id %d).", id.Username, id.ID)
+	}
+	return fmt.Errorf("%w.%s Switch accounts with `civitai login` (browser) or `civitai login --token <key>`, then re-run; check the active account any time with `civitai whoami`", err, who)
 }
 
 // probeLocalDevServer is the production probeLocal: a short TCP dial of the local
