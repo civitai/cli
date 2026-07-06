@@ -3,6 +3,9 @@ package cmd
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"sync"
@@ -12,6 +15,26 @@ import (
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/devtunnel"
 )
+
+// syncBuffer is a goroutine-safe io.Writer the concurrent runTunnelSession tests
+// use for stdout/stderr, so the test goroutine can read what the session goroutine
+// wrote without racing on a strings.Builder.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
 
 // ── test doubles ─────────────────────────────────────────────────────────────
 
@@ -182,17 +205,25 @@ func baseDeps(t *testing.T, apiStub *fakeTunnelAPI, dialer *fakeDialer, timer *f
 	return tunnelSessionDeps{
 		api:        apiStub,
 		probeLocal: func(int) error { return nil }, // no-op: local dev server "up"
-		keygen:     goodKeygen,
-		dialer:     dialer,
-		blockID:    "my-block",
-		port:       5186,
-		endpoint:   "sish.example:2224",
-		baseURL:    "https://civitai.com",
-		idle:       30 * time.Minute,
-		newTimer:   func(time.Duration) devtunnel.Timer { return timer },
-		signals:    sigs,
-		out:        &out,
-		errw:       &errw,
+		// probePublic left nil by default → the readiness wait treats the host as
+		// immediately reachable, so lifecycle tests that don't care about the wait are
+		// unaffected. Tests exercising the wait set it explicitly.
+		probePublic: nil,
+		keygen:      goodKeygen,
+		dialer:      dialer,
+		blockID:     "my-block",
+		port:        5186,
+		endpoint:    "sish.example:2224",
+		baseURL:     "https://civitai.com",
+		idle:        30 * time.Minute,
+		// Short readiness knobs so any wait-exercising test completes fast (the probe
+		// is injected and returns instantly — no real network).
+		readyTimeout:      100 * time.Millisecond,
+		readyPollInterval: time.Millisecond,
+		newTimer:          func(time.Duration) devtunnel.Timer { return timer },
+		signals:           sigs,
+		out:               &out,
+		errw:              &errw,
 	}
 }
 
@@ -688,5 +719,340 @@ func TestRunTunnelSessionRejectsMissingHostKey(t *testing.T) {
 	}
 	if apiStub.stopCount() != 1 || apiStub.stopCalls[0].sessionID != "bki_test" {
 		t.Errorf("a rejected mint must be revoked (avoid orphan), stop calls=%+v", apiStub.stopCalls)
+	}
+}
+
+// ── readiness-wait tests ─────────────────────────────────────────────────────
+
+const testTunnelHost = "dev-0123456789abcdef.civit.ai"
+
+// TestWaitForTunnelReachableReadyAfterRetries: the wait re-probes until the public
+// host reports ready (200/401/403), printing a progress line each not-ready
+// attempt, then returns (true, "").
+func TestWaitForTunnelReachableReadyAfterRetries(t *testing.T) {
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), make(chan os.Signal))
+	var out, errw syncBuffer
+	deps.out = &out
+	deps.errw = &errw
+	deps.readyPollInterval = time.Millisecond
+	deps.readyTimeout = 5 * time.Second
+
+	// waitForTunnelReachable runs synchronously in THIS goroutine, so a plain
+	// counter is race-free.
+	calls := 0
+	deps.probePublic = func(_ context.Context, host string) (bool, string, error) {
+		if host != testTunnelHost {
+			t.Errorf("probe got host %q, want %q", host, testTunnelHost)
+		}
+		calls++
+		if calls < 4 {
+			return false, "http 404", nil
+		}
+		return true, "http 401", nil
+	}
+
+	ready, abort := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost)
+	if !ready || abort != "" {
+		t.Fatalf("want (true, \"\"), got (%v, %q)", ready, abort)
+	}
+	if calls < 4 {
+		t.Fatalf("expected at least 4 probes (3 not-ready + 1 ready), got %d", calls)
+	}
+	if !strings.Contains(errw.String(), "waiting for "+testTunnelHost+" to come up (http 404)") {
+		t.Errorf("expected per-attempt progress on stderr:\n%s", errw.String())
+	}
+}
+
+// TestWaitForTunnelReachableAbortOnSignal: Ctrl-C during the wait returns
+// (false, "interrupt") so the caller tears the session down instead of proceeding.
+func TestWaitForTunnelReachableAbortOnSignal(t *testing.T) {
+	sigs := make(chan os.Signal, 1)
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), sigs)
+	var errw syncBuffer
+	deps.errw = &errw
+	deps.readyPollInterval = 20 * time.Millisecond
+	deps.readyTimeout = 5 * time.Second
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		return false, "http 502", nil // never ready
+	}
+
+	type res struct {
+		ready bool
+		abort string
+	}
+	resc := make(chan res, 1)
+	go func() {
+		r, a := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost)
+		resc <- res{r, a}
+	}()
+	sigs <- os.Interrupt
+
+	select {
+	case got := <-resc:
+		if got.ready || got.abort != "interrupt" {
+			t.Fatalf("want (false, \"interrupt\"), got (%v, %q)", got.ready, got.abort)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait did not abort on signal")
+	}
+}
+
+// TestWaitForTunnelReachableAbortOnTunnelClose: a tunnel that drops mid-wait ends
+// the wait with the "tunnel closed" reason.
+func TestWaitForTunnelReachableAbortOnTunnelClose(t *testing.T) {
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), make(chan os.Signal))
+	var errw syncBuffer
+	deps.errw = &errw
+	deps.readyPollInterval = 20 * time.Millisecond
+	deps.readyTimeout = 5 * time.Second
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		return false, "http 404", nil
+	}
+
+	tun := newFakeTunnel()
+	resc := make(chan string, 1)
+	go func() {
+		_, a := waitForTunnelReachable(context.Background(), deps, tun, testTunnelHost)
+		resc <- a
+	}()
+	close(tun.done)
+
+	select {
+	case a := <-resc:
+		if a != "tunnel closed" {
+			t.Fatalf("want abort reason \"tunnel closed\", got %q", a)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait did not end when the tunnel closed")
+	}
+}
+
+// TestWaitForTunnelReachableNilProbeSkips: a nil probePublic disables the wait
+// (returns ready immediately) — so lifecycle tests that don't wire a probe are
+// unaffected.
+func TestWaitForTunnelReachableNilProbeSkips(t *testing.T) {
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), make(chan os.Signal))
+	deps.probePublic = nil
+	ready, abort := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost)
+	if !ready || abort != "" {
+		t.Fatalf("nil probe should return (true, \"\"), got (%v, %q)", ready, abort)
+	}
+}
+
+// TestRunTunnelSessionReadyPrintsConfirmedURL: on the ready path runTunnelSession
+// prints the ✓ Ready confirmation + the /apps/dev URL (only after the wait
+// succeeds), with the "waiting…" progress on stderr.
+func TestRunTunnelSessionReadyPrintsConfirmedURL(t *testing.T) {
+	apiStub := &fakeTunnelAPI{startResult: sampleSession()}
+	tunnel := newFakeTunnel()
+	dialer := &fakeDialer{tunnel: tunnel}
+	timer := newFakeTimer()
+	sigs := make(chan os.Signal, 1)
+	var out, errw syncBuffer
+	deps := baseDeps(t, apiStub, dialer, timer, sigs)
+	deps.out = &out
+	deps.errw = &errw
+	deps.readyPollInterval = time.Millisecond
+	deps.readyTimeout = 5 * time.Second
+	// Not-ready twice, then ready. Only the session goroutine touches `calls`.
+	calls := 0
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		calls++
+		if calls < 3 {
+			return false, "http 502", nil
+		}
+		return true, "http 401", nil
+	}
+
+	errc := runInBackground(deps)
+	if !waitForOutput(t, &out, "✓ Ready", errc) {
+		return
+	}
+	sigs <- os.Interrupt
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("runTunnelSession: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session did not exit after signal")
+	}
+	if !strings.Contains(out.String(), sampleSession().URL) {
+		t.Errorf("ready path must print the /apps/dev URL:\n%s", out.String())
+	}
+	if !strings.Contains(errw.String(), "Waiting for it to become reachable") {
+		t.Errorf("expected the 'established, waiting' status on stderr:\n%s", errw.String())
+	}
+}
+
+// TestRunTunnelSessionReadinessTimeoutNonFatal: when the host never becomes
+// reachable, the readiness deadline elapses, the WARNING + URL are printed, and
+// the tunnel is NOT torn down (it may still come up) — it stays alive in the idle
+// loop until an actual signal.
+func TestRunTunnelSessionReadinessTimeoutNonFatal(t *testing.T) {
+	apiStub := &fakeTunnelAPI{startResult: sampleSession()}
+	tunnel := newFakeTunnel()
+	dialer := &fakeDialer{tunnel: tunnel}
+	timer := newFakeTimer()
+	sigs := make(chan os.Signal, 1)
+	var out, errw syncBuffer
+	deps := baseDeps(t, apiStub, dialer, timer, sigs)
+	deps.out = &out
+	deps.errw = &errw
+	deps.readyPollInterval = time.Millisecond
+	deps.readyTimeout = 30 * time.Millisecond
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		return false, "http 404", nil // never ready → deadline elapses
+	}
+
+	errc := runInBackground(deps)
+	if !waitForOutput(t, &out, "isn't resolving/serving yet", errc) {
+		return
+	}
+	// The readiness timeout is non-fatal: nothing torn down, session still alive.
+	if apiStub.stopCount() != 0 {
+		t.Errorf("readiness timeout must NOT tear the tunnel down; stop calls=%d", apiStub.stopCount())
+	}
+	if !strings.Contains(out.String(), sampleSession().URL) {
+		t.Errorf("timeout path must still print the URL:\n%s", out.String())
+	}
+	// Now really end it.
+	sigs <- os.Interrupt
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("runTunnelSession: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session did not exit after signal")
+	}
+	if !tunnel.closed || apiStub.stopCount() != 1 {
+		t.Errorf("expected exactly one teardown on the follow-up signal (closed=%v, stops=%d)", tunnel.closed, apiStub.stopCount())
+	}
+}
+
+// TestRunTunnelSessionNoWaitSkipsProbe: --no-wait prints the URL immediately and
+// NEVER calls probePublic.
+func TestRunTunnelSessionNoWaitSkipsProbe(t *testing.T) {
+	apiStub := &fakeTunnelAPI{startResult: sampleSession()}
+	tunnel := newFakeTunnel()
+	dialer := &fakeDialer{tunnel: tunnel}
+	timer := newFakeTimer()
+	sigs := make(chan os.Signal, 1)
+	var out syncBuffer
+	deps := baseDeps(t, apiStub, dialer, timer, sigs)
+	deps.out = &out
+	deps.noWait = true
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		t.Error("probePublic must NOT be called when --no-wait is set")
+		return false, "", nil
+	}
+
+	errc := runInBackground(deps)
+	sigs <- os.Interrupt
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("runTunnelSession: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("session did not exit after signal")
+	}
+	if !strings.Contains(out.String(), sampleSession().URL) {
+		t.Errorf("--no-wait must print the URL immediately:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), "✓ Ready") || strings.Contains(out.String(), "isn't resolving") {
+		t.Errorf("--no-wait must use the plain ready block (no wait outcome):\n%s", out.String())
+	}
+}
+
+// waitForOutput polls buf until it contains want, failing if the session exits
+// (via errc) first or the deadline passes. Returns true on success. Uses the
+// race-safe syncBuffer so reading buf while the session goroutine writes is safe.
+func waitForOutput(t *testing.T, buf *syncBuffer, want string, errc <-chan error) bool {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		if strings.Contains(buf.String(), want) {
+			return true
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("output never contained %q:\n%s", want, buf.String())
+			return false
+		case err := <-errc:
+			t.Fatalf("session exited before printing %q (err=%v):\n%s", want, err, buf.String())
+			return false
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+}
+
+// TestClassifyReadyStatus: only 200/401/403 mean the full server path is live; a
+// naked no-token request being DENIED with 401/403 proves DNS→Traefik→forwardAuth
+// are all up. 404 (no route yet), 5xx, and Cloudflare 520–526 are NOT ready.
+func TestClassifyReadyStatus(t *testing.T) {
+	ready := []int{200, 401, 403}
+	notReady := []int{404, 500, 502, 503, 504, 520, 521, 522, 523, 524, 525, 526, 301, 400, 429}
+	for _, c := range ready {
+		if !classifyReadyStatus(c) {
+			t.Errorf("status %d should be READY", c)
+		}
+	}
+	for _, c := range notReady {
+		if classifyReadyStatus(c) {
+			t.Errorf("status %d should be NOT ready", c)
+		}
+	}
+}
+
+// TestProbePublicURLClassification: exercise probePublicURL against a real
+// httptest server returning each status — 200/401/403 → ready, others → not ready,
+// with a "http <code>" detail.
+func TestProbePublicURLClassification(t *testing.T) {
+	cases := []struct {
+		code  int
+		ready bool
+	}{
+		{200, true}, {401, true}, {403, true},
+		{404, false}, {500, false}, {502, false}, {503, false}, {504, false},
+		{520, false}, {526, false},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("http_%d", tc.code), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+
+			ready, detail, err := probePublicURL(context.Background(), srv.Client(), srv.URL+"/")
+			if err != nil {
+				t.Fatalf("unexpected transport error for %d: %v", tc.code, err)
+			}
+			if ready != tc.ready {
+				t.Errorf("status %d: ready=%v, want %v", tc.code, ready, tc.ready)
+			}
+			if want := fmt.Sprintf("http %d", tc.code); detail != want {
+				t.Errorf("detail = %q, want %q", detail, want)
+			}
+		})
+	}
+}
+
+// TestProbePublicURLUnreachable: a GET against a closed port is a transport error
+// → not ready (mirrors DNS-failure/connection-refused during propagation).
+func TestProbePublicURLUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	closedURL := srv.URL // capture, then close so the port refuses connections
+	srv.Close()
+
+	client := &http.Client{Timeout: time.Second}
+	ready, detail, err := probePublicURL(context.Background(), client, closedURL+"/")
+	if err == nil {
+		t.Fatal("expected a transport error against a closed port")
+	}
+	if ready {
+		t.Errorf("a connection-refused host must be NOT ready (detail %q)", detail)
 	}
 }
