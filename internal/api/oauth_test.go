@@ -76,18 +76,20 @@ func TestStartDeviceParsesResponse(t *testing.T) {
 }
 
 // TestDeviceScopeCarriesRequiredBits pins the login scope contract: `civitai
-// login` must REQUEST exactly UserRead + AppBlocksSubmit — the civitai-cli
-// client's allowedScopes set. It must NOT request AIServicesWrite: the server's
-// device-flow validateScope is all-or-nothing, so asking for a scope the client
-// doesn't allow would REJECT the whole login. A granted token can still (a)
-// identify the user, (b) MINT an App-Blocks dev token (read/estimate; the mint
-// strips ai:write:budgeted without AIServicesWrite), and (c) submit via the
-// AppBlocksSubmit-gated routes. Real-Buzz dev:live needs a personal API key.
+// login` must REQUEST exactly UserRead + AppBlocksSubmit + AppBlocksDevTunnel —
+// the civitai-cli client's allowedScopes set. It must NOT request AIServicesWrite:
+// the server's device-flow validateScope is all-or-nothing, so asking for a scope
+// the client doesn't allow would REJECT the whole login. A granted token can still
+// (a) identify the user, (b) MINT an App-Blocks dev token (read/estimate; the mint
+// strips ai:write:budgeted without AIServicesWrite), (c) submit via the
+// AppBlocksSubmit-gated routes, and (d) open an on-site dev tunnel
+// (AppBlocksDevTunnel). Real-Buzz dev:live needs a personal API key.
 func TestDeviceScopeCarriesRequiredBits(t *testing.T) {
 	const (
-		userRead        = 1 << 0  // 1
-		aiServicesWrite = 1 << 15 // 32768
-		appBlocksSubmit = 1 << 25 // 33554432
+		userRead           = 1 << 0  // 1
+		aiServicesWrite    = 1 << 15 // 32768
+		appBlocksSubmit    = 1 << 25 // 33554432
+		appBlocksDevTunnel = 1 << 26 // 67108864
 	)
 	got, err := strconv.Atoi(DeviceScope)
 	if err != nil {
@@ -99,6 +101,7 @@ func TestDeviceScopeCarriesRequiredBits(t *testing.T) {
 	}{
 		{"UserRead", userRead},
 		{"AppBlocksSubmit", appBlocksSubmit},
+		{"AppBlocksDevTunnel", appBlocksDevTunnel},
 	} {
 		if got&c.bit == 0 {
 			t.Errorf("DeviceScope=%d is missing the %s bit (%d)", got, c.name, c.bit)
@@ -109,8 +112,8 @@ func TestDeviceScopeCarriesRequiredBits(t *testing.T) {
 	if got&aiServicesWrite != 0 {
 		t.Errorf("DeviceScope=%d unexpectedly includes the AIServicesWrite bit (%d) — would break login", got, aiServicesWrite)
 	}
-	if want := userRead | appBlocksSubmit; got != want {
-		t.Errorf("DeviceScope=%d, want exactly %d (UserRead|AppBlocksSubmit)", got, want)
+	if want := userRead | appBlocksSubmit | appBlocksDevTunnel; got != want {
+		t.Errorf("DeviceScope=%d, want exactly %d (UserRead|AppBlocksSubmit|AppBlocksDevTunnel)", got, want)
 	}
 }
 
