@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net"
 	"net/url"
 	"os"
 	"os/signal"
@@ -306,15 +305,19 @@ loop:
 	return nil
 }
 
-// probeLocalDevServer is the production probeLocal: a short TCP dial of
-// 127.0.0.1:<port>. A successful connect means the dev server is up; a refused
-// connection / timeout is a HARD error with actionable guidance. Run BEFORE the
-// mint so a not-running dev server never burns a rate-limited/reaper-tracked
-// server session (which would only serve the browser connection-refused).
+// probeLocalDevServer is the production probeLocal: a short TCP dial of the local
+// dev server on <port>, trying BOTH loopback families (127.0.0.1 and ::1) so a
+// server bound only to IPv6 (`--host localhost` → `::1` on a dual-stack box) is
+// not falsely reported down. Uses the SAME dialer as the live tunnel proxy, so
+// "probe passed" implies "the proxy can reach it too." A successful connect means
+// the dev server is up; a refused connection / timeout is a HARD error with
+// actionable guidance. Run BEFORE the mint so a not-running dev server never
+// burns a rate-limited/reaper-tracked server session (which would only serve the
+// browser connection-refused).
 func probeLocalDevServer(port int) error {
-	conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 2*time.Second)
+	conn, err := devtunnel.DialLocalDevServer(port, 2*time.Second)
 	if err != nil {
-		return fmt.Errorf("no local dev server is listening on 127.0.0.1:%d — start it first (e.g. `npm run dev:tunnel`), then re-run. (override the port with --port)", port)
+		return fmt.Errorf("no local dev server is listening on port %d (tried 127.0.0.1 and ::1) — start it first (e.g. `npm run dev:tunnel`), then re-run. (override the port with --port)", port)
 	}
 	_ = conn.Close()
 	return nil
