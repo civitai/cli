@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
@@ -40,6 +42,20 @@ const (
 	defaultDevTunnelEndpoint = "sish.civitai.com:2224"
 	// devTunnelEndpointEnv overrides the endpoint from the environment.
 	devTunnelEndpointEnv = "CIVITAI_DEV_TUNNEL_ENDPOINT"
+	// defaultReadyTimeout bounds the post-dial readiness wait. The PUBLIC host
+	// `dev-<16hex>.civit.ai` isn't reachable the instant the reverse tunnel binds —
+	// external-dns + Cloudflare propagation + Traefik router build take up to
+	// ~1–2 min. We poll until the server path is live (or this deadline), so the dev
+	// isn't handed a URL that NXDOMAINs/404s. Non-fatal on expiry (the host may
+	// still come up shortly) — override with --ready-timeout, skip with --no-wait.
+	defaultReadyTimeout = 120 * time.Second
+	// defaultReadyPollInterval is how often the readiness wait re-probes the public
+	// host. ~5s balances responsiveness against hammering CF/Traefik while a route
+	// is still being built.
+	defaultReadyPollInterval = 5 * time.Second
+	// probePublicTimeout bounds a single unauthenticated public-host GET so a hung
+	// connection (SYN blackhole during propagation) can't stall a poll iteration.
+	probePublicTimeout = 8 * time.Second
 )
 
 // tunnelAPI is the subset of the API client the session core needs (seam for a
@@ -64,19 +80,32 @@ type tunnelSessionDeps struct {
 	// not-running dev server fails fast with clear guidance instead of minting a
 	// rate-limited/reaper-tracked session that would only serve connection-refused.
 	probeLocal func(port int) error
-	keygen     func() (*devtunnel.EphemeralKey, error)
-	dialer     devtunnel.Dialer
-	blockID    string
-	port       int
-	endpoint   string
+	// probePublic checks whether the PUBLIC tunnel host is serving yet: it does an
+	// unauthenticated GET of https://<host>/ and reports ready per the classification
+	// in probePublicTunnel (HTTP 200/401/403 = the whole server path works — a naked
+	// no-token request is DENIED with 401 by the forwardAuth gate, which proves
+	// DNS→Traefik-router→gate are all up; 404/5xx/52x/DNS/refused = not up yet). Wired
+	// to probePublicTunnel in production; injected in tests. Nil disables the wait.
+	probePublic func(ctx context.Context, host string) (ready bool, detail string, err error)
+	keygen      func() (*devtunnel.EphemeralKey, error)
+	dialer      devtunnel.Dialer
+	blockID     string
+	port        int
+	endpoint    string
 	// baseURL is the configured Civitai origin; the mint response's URL must be
 	// same-origin as this (defense-in-depth against an attacker-influenced URL).
-	baseURL  string
-	idle     time.Duration
-	newTimer func(d time.Duration) devtunnel.Timer
-	signals  <-chan os.Signal
-	out      io.Writer
-	errw     io.Writer
+	baseURL string
+	idle    time.Duration
+	// readyTimeout bounds the post-dial readiness wait (default defaultReadyTimeout);
+	// readyPollInterval is the re-probe cadence (default defaultReadyPollInterval).
+	// noWait skips the wait entirely (print the URL immediately, as before).
+	readyTimeout      time.Duration
+	readyPollInterval time.Duration
+	noWait            bool
+	newTimer          func(d time.Duration) devtunnel.Timer
+	signals           <-chan os.Signal
+	out               io.Writer
+	errw              io.Writer
 }
 
 func newAppDevTunnelCmd() *cobra.Command {
@@ -84,6 +113,8 @@ func newAppDevTunnelCmd() *cobra.Command {
 	var port int
 	var endpoint string
 	var idle time.Duration
+	var readyTimeout time.Duration
+	var noWait bool
 
 	cmd := &cobra.Command{
 		Use:   "dev-tunnel [blockId]",
@@ -156,6 +187,9 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 			if idle <= 0 {
 				return fmt.Errorf("--idle-timeout must be positive (got %s)", idle)
 			}
+			if readyTimeout <= 0 {
+				return fmt.Errorf("--ready-timeout must be positive (got %s)", readyTimeout)
+			}
 
 			// Endpoint: flag > env > documented placeholder default.
 			ep := strings.TrimSpace(endpoint)
@@ -181,19 +215,23 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 			defer signal.Stop(sigCh)
 
 			return runTunnelSession(context.Background(), tunnelSessionDeps{
-				api:        client,
-				probeLocal: probeLocalDevServer,
-				keygen:     devtunnel.GenerateEphemeralKey,
-				dialer:     devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
-				blockID:    blockID,
-				port:       port,
-				endpoint:   ep,
-				baseURL:    cfg.BaseURL(),
-				idle:       idle,
-				newTimer:   devtunnel.NewRealTimer,
-				signals:    sigCh,
-				out:        cmd.OutOrStdout(),
-				errw:       cmd.ErrOrStderr(),
+				api:               client,
+				probeLocal:        probeLocalDevServer,
+				probePublic:       probePublicTunnel,
+				keygen:            devtunnel.GenerateEphemeralKey,
+				dialer:            devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
+				blockID:           blockID,
+				port:              port,
+				endpoint:          ep,
+				baseURL:           cfg.BaseURL(),
+				idle:              idle,
+				readyTimeout:      readyTimeout,
+				readyPollInterval: defaultReadyPollInterval,
+				noWait:            noWait,
+				newTimer:          devtunnel.NewRealTimer,
+				signals:           sigCh,
+				out:               cmd.OutOrStdout(),
+				errw:              cmd.ErrOrStderr(),
 			})
 		},
 	}
@@ -202,6 +240,8 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 	cmd.Flags().IntVar(&port, "port", defaultDevTunnelPort, "local dev-server port to tunnel (matches the scaffold's dev:tunnel)")
 	cmd.Flags().StringVar(&endpoint, "tunnel-endpoint", "", "sish SSH endpoint host:port (default "+defaultDevTunnelEndpoint+", or $"+devTunnelEndpointEnv+")")
 	cmd.Flags().DurationVar(&idle, "idle-timeout", defaultDevTunnelIdle, "tear the tunnel down after this much inactivity")
+	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultReadyTimeout, "how long to wait for the public host to start serving before printing the URL anyway")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "skip the readiness wait and print the URL immediately (it may 404/NXDOMAIN for ~1–2 min while DNS/route propagate)")
 	return cmd
 }
 
@@ -271,8 +311,34 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		return fmt.Errorf("open reverse tunnel to %s: %w", d.endpoint, err)
 	}
 
-	printTunnelReady(d.out, sess, d.port)
+	// The reverse tunnel is bound, but the PUBLIC host is not reachable yet —
+	// external-dns + Cloudflare + Traefik router readiness lag the bind by up to
+	// ~1–2 min. Wait for the server path to actually serve before telling the dev to
+	// open it, so they don't hit NXDOMAIN/404/502 on a too-early click. --no-wait
+	// skips this and prints the URL immediately (old behavior).
+	if d.noWait {
+		printTunnelReady(d.out, sess, d.port)
+	} else {
+		fmt.Fprintf(d.errw, "\nDev tunnel established — serving 127.0.0.1:%d as %s. Waiting for it to become reachable…\n", d.port, sess.Host)
+		ready, abortReason := waitForTunnelReachable(ctx, d, tunnel, sess.Host)
+		if abortReason != "" {
+			// The dev aborted (Ctrl-C / ctx) or the tunnel dropped DURING the wait —
+			// tear down now rather than fall into the idle loop.
+			_ = tunnel.Close()
+			stop(abortReason)
+			return nil
+		}
+		if ready {
+			printTunnelReadyConfirmed(d.out, sess, d.port)
+		} else {
+			// Readiness timeout is NON-fatal: the host may still come up shortly, so
+			// keep the tunnel and print the URL with a clear "not up yet" warning.
+			printTunnelReadyTimeout(d.out, sess, d.port, resolveReadyTimeout(d))
+		}
+	}
 
+	// Start the idle timer AFTER the readiness wait so the wait doesn't count
+	// against the idle-timeout budget.
 	idleTimer := d.newTimer(d.idle)
 	defer idleTimer.Stop()
 
@@ -361,6 +427,161 @@ func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, port int) {
 	fmt.Fprintf(out, "      %s\n\n", sess.URL)
 	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on port %d.\n", port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
+}
+
+// printTunnelReadyConfirmed is the ready path: the public host answered healthy,
+// so lead with a ✓ confirmation then the standard "open this" block.
+func printTunnelReadyConfirmed(out io.Writer, sess *api.DevTunnelSession, port int) {
+	fmt.Fprintf(out, "\n✓ Ready — %s is reachable.\n", sess.Host)
+	printTunnelReady(out, sess, port)
+}
+
+// printTunnelReadyTimeout is the readiness-timeout path: the host did not answer
+// healthy within the deadline, but that is NON-fatal — DNS/Cloudflare/Traefik
+// propagation can still land shortly. Print the URL with a clear warning so the
+// dev knows to retry the browser in a moment rather than assume it's broken.
+func printTunnelReadyTimeout(out io.Writer, sess *api.DevTunnelSession, port int, waited time.Duration) {
+	fmt.Fprintf(out, "\n⚠ %s isn't resolving/serving yet (waited %s).\n", sess.Host, waited)
+	fmt.Fprintf(out, "  This is usually just DNS + Cloudflare + route propagation — it can take a minute.\n")
+	fmt.Fprintf(out, "  The tunnel is UP; open the URL and retry in a bit if it NXDOMAINs / 404s / 502s:\n\n")
+	fmt.Fprintf(out, "      %s\n\n", sess.URL)
+	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on port %d.\n", port)
+	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
+}
+
+// resolveReadyTimeout / resolveReadyPollInterval apply the documented defaults
+// when a dep leaves the value unset (zero), so a zero-value deps set (e.g. a
+// focused unit test) still behaves sanely.
+func resolveReadyTimeout(d tunnelSessionDeps) time.Duration {
+	if d.readyTimeout > 0 {
+		return d.readyTimeout
+	}
+	return defaultReadyTimeout
+}
+
+func resolveReadyPollInterval(d tunnelSessionDeps) time.Duration {
+	if d.readyPollInterval > 0 {
+		return d.readyPollInterval
+	}
+	return defaultReadyPollInterval
+}
+
+// waitForTunnelReachable polls the PUBLIC tunnel host until it starts serving
+// (d.probePublic reports ready) or the readiness deadline elapses, printing an
+// unobtrusive progress line to d.errw on each not-ready attempt. It probes
+// immediately, then every readyPollInterval.
+//
+// Returns:
+//   - (true, "")           the host became reachable — print the ready block.
+//   - (false, "")          the deadline elapsed (NON-fatal) — print the URL with a
+//     "not up yet" warning and keep the tunnel.
+//   - (false, <reason>)    the dev aborted (Ctrl-C / ctx canceled) or the tunnel
+//     dropped mid-wait — the caller tears the session down with <reason>.
+//
+// A nil d.probePublic disables the wait (returns ready immediately).
+func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, host string) (bool, string) {
+	if d.probePublic == nil {
+		return true, ""
+	}
+	interval := resolveReadyPollInterval(d)
+	deadline := time.NewTimer(resolveReadyTimeout(d))
+	defer deadline.Stop()
+	// Fire immediately for the first probe, then re-arm at `interval` after each
+	// not-ready result.
+	tick := time.NewTimer(0)
+	defer tick.Stop()
+
+	for {
+		select {
+		case <-d.signals:
+			return false, "interrupt"
+		case <-ctx.Done():
+			return false, "canceled"
+		case <-tunnel.Done():
+			return false, "tunnel closed"
+		case <-deadline.C:
+			return false, "" // timeout — non-fatal
+		case <-tick.C:
+			ready, detail, err := d.probePublic(ctx, host)
+			if ready {
+				return true, ""
+			}
+			if detail == "" {
+				if err != nil {
+					detail = err.Error()
+				} else {
+					detail = "not ready"
+				}
+			}
+			fmt.Fprintf(d.errw, "  … waiting for %s to come up (%s)\n", host, detail)
+			tick.Reset(interval)
+		}
+	}
+}
+
+// probePublicTunnel is the production probePublic: an UNAUTHENTICATED GET of
+// https://<host>/ (a fresh client that does NOT carry the CLI's credential), with
+// the response classified by classifyReadyStatus.
+//
+// WHY 401/403 mean healthy: a naked (un-embedded, no-token) request to the tunnel
+// host is DENIED by the forwardAuth gate with 401/403 precisely WHEN the whole
+// server path works — DNS resolved, Traefik built the router, and the forwardAuth
+// gate is reachable. 200 also = ready (the path serves). Everything else means the
+// path isn't up yet: 404 (Traefik has no route), 502/503/504 (backend/gate down),
+// Cloudflare origin errors 520–526, or a DNS/connection error.
+func probePublicTunnel(ctx context.Context, host string) (bool, string, error) {
+	// A dedicated client with NO auth transport — this is a public probe; it must
+	// not reuse the CLI credential. Redirect-following is fine (default).
+	client := &http.Client{Timeout: probePublicTimeout}
+	return probePublicURL(ctx, client, "https://"+host+"/")
+}
+
+// probePublicURL is the testable core of probePublicTunnel: GET rawURL with the
+// given client and classify. Split out so tests can point it at an httptest
+// server (real statuses) without needing a real https host.
+func probePublicURL(ctx context.Context, client *http.Client, rawURL string) (bool, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return false, "bad-url", err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		// DNS failure, connection refused, timeout — the host/route/backend isn't up.
+		return false, classifyProbeErr(err), err
+	}
+	defer resp.Body.Close()
+	// Drain a little so the connection can be reused / closed cleanly.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return classifyReadyStatus(resp.StatusCode), fmt.Sprintf("http %d", resp.StatusCode), nil
+}
+
+// classifyReadyStatus maps an HTTP status to readiness: only 200/401/403 mean the
+// full server path is live (see probePublicTunnel). 404 (no route yet), 5xx, and
+// Cloudflare 520–526 are explicitly NOT ready.
+func classifyReadyStatus(code int) bool {
+	switch code {
+	case http.StatusOK, http.StatusUnauthorized, http.StatusForbidden:
+		return true
+	default:
+		return false
+	}
+}
+
+// classifyProbeErr gives a short human tag for a transport-level probe failure,
+// for the progress line ("dns", "timeout", "unreachable").
+func classifyProbeErr(err error) string {
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		return "dns"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "timeout"
+	}
+	var nerr net.Error
+	if errors.As(err, &nerr) && nerr.Timeout() {
+		return "timeout"
+	}
+	return "unreachable"
 }
 
 // validateMintResponse asserts the server-returned session is well-formed before
