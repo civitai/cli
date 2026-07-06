@@ -14,13 +14,15 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/devtunnel"
 	"github.com/civitai/cli/internal/manifest"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -72,9 +74,6 @@ const (
 	// connection (SYN blackhole during propagation) can't stall a poll iteration.
 	probePublicTimeout = 8 * time.Second
 )
-
-// spinnerFrames is the braille animation cycle for the TTY readiness indicator.
-var spinnerFrames = []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
 
 // tunnelAPI is the subset of the API client the session core needs (seam for a
 // mock in tests).
@@ -319,7 +318,7 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 
 	// From here a server session exists — guarantee teardown on every path.
 	stop := func(reason string) {
-		fmt.Fprintf(d.errw, "\nTearing down dev tunnel (%s)…\n", reason)
+		fmt.Fprintf(d.errw, "\n%s\n", ui.Dim(fmt.Sprintf("Tearing down dev tunnel (%s)…", reason)))
 		// Use a fresh context so teardown still runs if ctx was canceled.
 		if _, serr := d.api.StopDevTunnel(context.Background(), sess.SessionID, ""); serr != nil {
 			fmt.Fprintf(d.errw, "warning: stopDevTunnel failed (the server reaper will reclaim it by %s): %v\n",
@@ -453,17 +452,17 @@ func probeLocalDevServer(port int) error {
 // printTunnelReady prints the actionable "tunnel is up" block, with the
 // /apps/dev URL made prominent (it is the one thing the developer must open).
 func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, port int) {
-	fmt.Fprintf(out, "\nDev tunnel ready — serving 127.0.0.1:%d as %s\n\n", port, sess.Host)
+	fmt.Fprintf(out, "\nDev tunnel ready — serving 127.0.0.1:%d as %s\n\n", port, ui.Bold(sess.Host))
 	fmt.Fprintf(out, "  ▶ Open this in your browser (you must be logged in):\n\n")
-	fmt.Fprintf(out, "      %s\n\n", sess.URL)
-	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on port %d.\n", port)
+	fmt.Fprintf(out, "      %s\n\n", ui.URL(sess.URL))
+	fmt.Fprintf(out, "  Make sure your dev server is running (%s) on port %d.\n", ui.Code("npm run dev:tunnel"), port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
 }
 
 // printTunnelReadyConfirmed is the ready path: the public host answered healthy,
 // so lead with a ✓ confirmation then the standard "open this" block.
 func printTunnelReadyConfirmed(out io.Writer, sess *api.DevTunnelSession, port int) {
-	fmt.Fprintf(out, "\n✓ Ready — %s is reachable.\n", sess.Host)
+	fmt.Fprintf(out, "\n%s\n", ui.Success(fmt.Sprintf("Ready — %s is reachable.", sess.Host)))
 	printTunnelReady(out, sess, port)
 }
 
@@ -472,19 +471,20 @@ func printTunnelReadyConfirmed(out io.Writer, sess *api.DevTunnelSession, port i
 // propagation can still land shortly. Print the URL with a clear warning so the
 // dev knows to retry the browser in a moment rather than assume it's broken.
 func printTunnelReadyTimeout(out io.Writer, sess *api.DevTunnelSession, port int, waited time.Duration) {
-	fmt.Fprintf(out, "\n⚠ %s isn't resolving/serving yet (waited %s).\n", sess.Host, waited)
+	fmt.Fprintf(out, "\n%s\n", ui.Warn(fmt.Sprintf("%s isn't resolving/serving yet (waited %s).", sess.Host, waited)))
 	fmt.Fprintf(out, "  This is usually just DNS + Cloudflare + route propagation — it can take a minute.\n")
 	fmt.Fprintf(out, "  The tunnel is UP; open the URL and retry in a bit if it NXDOMAINs / 404s / 502s:\n\n")
-	fmt.Fprintf(out, "      %s\n\n", sess.URL)
-	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on port %d.\n", port)
+	fmt.Fprintf(out, "      %s\n\n", ui.URL(sess.URL))
+	fmt.Fprintf(out, "  Make sure your dev server is running (%s) on port %d.\n", ui.Code("npm run dev:tunnel"), port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
 }
 
-// resolveReadyPollInterval / resolveNudgeAfter / resolveSpinnerInterval /
-// resolveQuietInterval apply the documented defaults when a dep leaves the value
-// unset (zero), so a zero-value deps set (e.g. a focused unit test) still behaves
-// sanely. (readyTimeout intentionally has NO resolver — 0 is the meaningful
-// "indefinite" value, not "unset".)
+// resolveReadyPollInterval / resolveNudgeAfter / resolveQuietInterval apply the
+// documented defaults when a dep leaves the value unset (zero), so a zero-value
+// deps set (e.g. a focused unit test) still behaves sanely. (readyTimeout
+// intentionally has NO resolver — 0 is the meaningful "indefinite" value, not
+// "unset". spinnerInterval is likewise no longer resolved: the TTY path now uses
+// bubbles/spinner, which drives its own frame cadence.)
 func resolveReadyPollInterval(d tunnelSessionDeps) time.Duration {
 	if d.readyPollInterval > 0 {
 		return d.readyPollInterval
@@ -497,13 +497,6 @@ func resolveNudgeAfter(d tunnelSessionDeps) time.Duration {
 		return d.nudgeAfter
 	}
 	return defaultNudgeAfter
-}
-
-func resolveSpinnerInterval(d tunnelSessionDeps) time.Duration {
-	if d.spinnerInterval > 0 {
-		return d.spinnerInterval
-	}
-	return defaultSpinnerInterval
 }
 
 func resolveQuietInterval(d tunnelSessionDeps) time.Duration {
@@ -559,12 +552,30 @@ func fmtMMSS(d time.Duration) string {
 //     dropped mid-wait — the caller tears the session down with <reason>.
 //
 // A nil d.probePublic disables the wait (returns ready immediately).
+//
+// The indicator degrades by destination: a TTY errw drives a bubbletea +
+// bubbles/spinner program (waitTunnelTTY); a non-TTY errw (pipe / CI / tests)
+// takes the quiet, greppable, animation-free heartbeat loop (waitTunnelQuiet).
+// bubbletea NEVER runs on a non-TTY writer — the quiet loop is fully
+// test-drivable without a real terminal, and every abort/return semantic is
+// identical across both paths.
 func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, host, tunnelURL string) (bool, string) {
 	if d.probePublic == nil {
 		return true, ""
 	}
+	if writerIsTTY(d.errw) {
+		return waitTunnelTTY(ctx, d, tunnel, host, tunnelURL)
+	}
+	return waitTunnelQuiet(ctx, d, tunnel, host, tunnelURL)
+}
+
+// waitTunnelQuiet is the non-TTY readiness wait: a select loop that re-probes on
+// a cancelable context and emits a quiet, greppable "still waiting" heartbeat at
+// most every quietInterval (NOT one line per probe). No \r, no animation. This is
+// the path all the readiness-wait unit tests drive (they pass buffer writers), so
+// its behavior — and the (ready, reason) exit contract — is load-bearing.
+func waitTunnelQuiet(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, host, tunnelURL string) (bool, string) {
 	interval := resolveReadyPollInterval(d)
-	tty := writerIsTTY(d.errw)
 	start := time.Now()
 
 	// A single reusable probe goroutine + buffered result channel. Only one probe is
@@ -592,32 +603,9 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 		}
 	}
 
-	// Progress-indicator state (TTY only tracks lastLen so it can clear its line).
-	frame := 0
-	lastLen := 0
-	renderSpinner := func() {
-		if !tty {
-			return
-		}
-		line := fmt.Sprintf("%c Waiting for %s to come up… %s elapsed",
-			spinnerFrames[frame%len(spinnerFrames)], host, fmtMMSS(time.Since(start)))
-		fmt.Fprintf(d.errw, "\r%s", line)
-		lastLen = utf8.RuneCountInString(line)
-	}
-	clearLine := func() {
-		if tty && lastLen > 0 {
-			fmt.Fprintf(d.errw, "\r%s\r", strings.Repeat(" ", lastLen))
-			lastLen = 0
-		}
-	}
-
-	// UI ticker: fast spinner frames on a TTY, slow heartbeat otherwise.
-	uiEvery := resolveSpinnerInterval(d)
-	if !tty {
-		uiEvery = resolveQuietInterval(d)
-	}
-	ui := time.NewTicker(uiEvery)
-	defer ui.Stop()
+	// Quiet heartbeat ticker (NOT per-probe).
+	heartbeat := time.NewTicker(resolveQuietInterval(d))
+	defer heartbeat.Stop()
 
 	// Optional cap (only when readyTimeout > 0). A nil channel never fires, giving
 	// the indefinite default.
@@ -640,42 +628,28 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 	}
 	defer schedule.Stop()
 
-	startProbe()    // probe immediately
-	renderSpinner() // paint the initial spinner frame on a TTY
+	startProbe() // probe immediately
 
 	for {
 		select {
 		case <-d.signals:
 			cancelProbe()
-			clearLine()
 			return false, "interrupt"
 		case <-ctx.Done():
 			cancelProbe()
-			clearLine()
 			return false, "canceled"
 		case <-tunnel.Done():
 			cancelProbe()
-			clearLine()
 			return false, "tunnel closed"
 		case <-deadlineC:
 			cancelProbe()
-			clearLine()
 			return false, "" // positive-cap timeout — non-fatal
 		case <-nudge.C:
 			// Fire exactly once (the timer is one-shot; this arm is only reachable the
-			// first time). Clear the spinner, print the nudge block, resume the spinner.
-			clearLine()
-			fmt.Fprintf(d.errw, "! Taking longer than usual. The tunnel IS live — you can try opening the URL now,\n")
-			fmt.Fprintf(d.errw, "  or keep waiting. (Ctrl-C to tear down.)\n\n")
-			fmt.Fprintf(d.errw, "      %s\n\n", tunnelURL)
-			renderSpinner()
-		case <-ui.C:
-			if tty {
-				frame++
-				renderSpinner()
-			} else {
-				fmt.Fprintf(d.errw, "  … still waiting for %s (%s)\n", host, fmtMMSS(time.Since(start)))
-			}
+			// first time).
+			printTunnelNudge(d.errw, tunnelURL)
+		case <-heartbeat.C:
+			fmt.Fprintf(d.errw, "  … still waiting for %s (%s)\n", host, fmtMMSS(time.Since(start)))
 		case res := <-resultCh:
 			// The probe returned — cancel its context (release resources) rather than
 			// dropping the CancelFunc, honoring the always-call-cancel contract (a no-op
@@ -683,7 +657,6 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 			// threaded through runTunnelSession).
 			cancelProbe()
 			if res.ready {
-				clearLine()
 				return true, ""
 			}
 			// Not ready — re-probe after the poll interval. (The detail/err is folded
@@ -693,6 +666,204 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 			startProbe()
 		}
 	}
+}
+
+// printTunnelNudge writes the one-time "taking longer than usual" block (with the
+// URL so the dev can act). Shared by the quiet loop (direct Fprintf) — the TTY
+// path renders the same wording above the spinner via tea.Printf.
+func printTunnelNudge(w io.Writer, tunnelURL string) {
+	fmt.Fprintf(w, "! Taking longer than usual. The tunnel IS live — you can try opening the URL now,\n")
+	fmt.Fprintf(w, "  or keep waiting. (Ctrl-C to tear down.)\n\n")
+	fmt.Fprintf(w, "      %s\n\n", tunnelURL)
+}
+
+// ── TTY readiness wait (bubbletea + bubbles/spinner) ─────────────────────────
+
+// probeResultMsg carries a completed public-host probe into the model.
+type probeResultMsg struct{ ready bool }
+
+// reprobeMsg fires after the poll interval to kick the next probe.
+type reprobeMsg struct{}
+
+// tunnelAbortMsg ends the wait with a teardown reason (interrupt / canceled /
+// tunnel closed). An empty reason from tunnelDeadlineMsg is handled separately.
+type tunnelAbortMsg struct{ reason string }
+
+// tunnelDeadlineMsg fires when a POSITIVE readyTimeout cap elapses (non-fatal:
+// returns (false, "")).
+type tunnelDeadlineMsg struct{}
+
+// tunnelNudgeMsg fires once after nudgeAfter.
+type tunnelNudgeMsg struct{}
+
+// tunnelWaitModel is the bubbletea model for the TTY readiness wait. It owns the
+// same probe/abort/nudge/deadline machinery as waitTunnelQuiet, rendered as a
+// live spinner. Pointer receiver so it can retain the in-flight probe's cancel
+// func across Update calls (to cancel it PROMPTLY on abort — snappy Ctrl-C).
+type tunnelWaitModel struct {
+	ctx       context.Context
+	d         tunnelSessionDeps
+	tunnel    devtunnel.Tunnel
+	host      string
+	tunnelURL string
+	interval  time.Duration
+	start     time.Time
+	sp        spinner.Model
+
+	probeCancel context.CancelFunc
+	nudged      bool
+
+	// outcome (read after the program exits).
+	ready  bool
+	reason string
+}
+
+func (m *tunnelWaitModel) Init() tea.Cmd {
+	cmds := []tea.Cmd{
+		m.sp.Tick,
+		m.watchCtx(),
+		m.watchTunnel(),
+		m.watchSignals(),
+		m.nudgeCmd(),
+		m.startProbe(),
+	}
+	if m.d.readyTimeout > 0 {
+		cmds = append(cmds, m.deadlineCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
+// startProbe stores a fresh cancelable context for the in-flight probe and
+// returns the command that runs it.
+func (m *tunnelWaitModel) startProbe() tea.Cmd {
+	pctx, cancel := context.WithCancel(m.ctx)
+	m.probeCancel = cancel
+	probe := m.d.probePublic
+	host := m.host
+	return func() tea.Msg {
+		ready, _, _ := probe(pctx, host)
+		return probeResultMsg{ready: ready}
+	}
+}
+
+func (m *tunnelWaitModel) cancelProbe() {
+	if m.probeCancel != nil {
+		m.probeCancel()
+		m.probeCancel = nil
+	}
+}
+
+func (m *tunnelWaitModel) watchCtx() tea.Cmd {
+	ctx := m.ctx
+	return func() tea.Msg {
+		<-ctx.Done()
+		return tunnelAbortMsg{reason: "canceled"}
+	}
+}
+
+func (m *tunnelWaitModel) watchTunnel() tea.Cmd {
+	done := m.tunnel.Done()
+	return func() tea.Msg {
+		<-done
+		return tunnelAbortMsg{reason: "tunnel closed"}
+	}
+}
+
+// watchSignals catches SIGTERM (and SIGINT if signal handling is delivered) via
+// the injected channel. Under bubbletea raw mode Ctrl-C arrives as a KeyCtrlC
+// message instead (handled in Update), so this is the belt-and-suspenders path.
+func (m *tunnelWaitModel) watchSignals() tea.Cmd {
+	sig := m.d.signals
+	if sig == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		<-sig
+		return tunnelAbortMsg{reason: "interrupt"}
+	}
+}
+
+func (m *tunnelWaitModel) deadlineCmd() tea.Cmd {
+	return tea.Tick(m.d.readyTimeout, func(time.Time) tea.Msg { return tunnelDeadlineMsg{} })
+}
+
+func (m *tunnelWaitModel) nudgeCmd() tea.Cmd {
+	return tea.Tick(resolveNudgeAfter(m.d), func(time.Time) tea.Msg { return tunnelNudgeMsg{} })
+}
+
+func (m *tunnelWaitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyCtrlC {
+			m.cancelProbe()
+			m.ready, m.reason = false, "interrupt"
+			return m, tea.Quit
+		}
+		return m, nil
+	case tunnelAbortMsg:
+		m.cancelProbe()
+		m.ready, m.reason = false, msg.reason
+		return m, tea.Quit
+	case tunnelDeadlineMsg:
+		// Positive-cap timeout — NON-fatal: (false, "").
+		m.cancelProbe()
+		m.ready, m.reason = false, ""
+		return m, tea.Quit
+	case tunnelNudgeMsg:
+		if m.nudged {
+			return m, nil
+		}
+		m.nudged = true
+		// tea.Printf renders ABOVE the spinner without corrupting it.
+		return m, tea.Printf("! Taking longer than usual. The tunnel IS live — you can try opening the URL now,\n  or keep waiting. (Ctrl-C to tear down.)\n\n      %s\n", m.tunnelURL)
+	case probeResultMsg:
+		m.cancelProbe()
+		if msg.ready {
+			m.ready, m.reason = true, ""
+			return m, tea.Quit
+		}
+		// Not ready — re-probe after the poll interval.
+		return m, tea.Tick(m.interval, func(time.Time) tea.Msg { return reprobeMsg{} })
+	case reprobeMsg:
+		return m, m.startProbe()
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.sp, cmd = m.sp.Update(msg)
+		return m, cmd
+	default:
+		return m, nil
+	}
+}
+
+func (m *tunnelWaitModel) View() string {
+	return fmt.Sprintf("%s Waiting for %s to come up… %s elapsed",
+		m.sp.View(), m.host, fmtMMSS(time.Since(m.start)))
+}
+
+// waitTunnelTTY runs the bubbletea readiness spinner and returns the same
+// (ready, reason) contract as waitTunnelQuiet. Only reached when d.errw is a real
+// TTY, so it cannot run under the buffer-driven tests.
+func waitTunnelTTY(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, host, tunnelURL string) (bool, string) {
+	m := &tunnelWaitModel{
+		ctx:       ctx,
+		d:         d,
+		tunnel:    tunnel,
+		host:      host,
+		tunnelURL: tunnelURL,
+		interval:  resolveReadyPollInterval(d),
+		start:     time.Now(),
+		sp:        ui.Spinner(),
+	}
+	// Render to errw (status stream). WithoutSignalHandler so OUR reason strings
+	// win — Ctrl-C is handled as KeyCtrlC, SIGTERM via the injected signals chan.
+	p := tea.NewProgram(m, tea.WithOutput(d.errw), tea.WithoutSignalHandler())
+	if _, err := p.Run(); err != nil {
+		// A bubbletea failure shouldn't strand the session — fall back to treating it
+		// as ready so the caller prints the URL rather than tearing down. (Best-effort;
+		// the tunnel is bound regardless.)
+		return true, ""
+	}
+	return m.ready, m.reason
 }
 
 // probePublicTunnel is the production probePublic: an UNAUTHENTICATED GET of

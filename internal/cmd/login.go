@@ -12,6 +12,7 @@ import (
 
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -79,8 +80,8 @@ func loginWithToken(cmd *cobra.Command, cfg *config.Config, tokenFlag string) er
 	if err := cfg.SetToken(token); err != nil {
 		return err
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "Token saved to %s\n", cfg.Path())
-	fmt.Fprintln(cmd.OutOrStdout(), "Verify with: civitai whoami")
+	fmt.Fprintln(cmd.OutOrStdout(), ui.Success(fmt.Sprintf("Token saved to %s", cfg.Path())))
+	fmt.Fprintf(cmd.OutOrStdout(), "Verify with: %s\n", ui.Code("civitai whoami"))
 	return nil
 }
 
@@ -126,8 +127,8 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 	if err := cfg.SetOAuthTokens(tr.AccessToken, tr.RefreshToken, expiry, tr.Scope.String()); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "\nLogged in. Tokens saved to %s\n", cfg.Path())
-	fmt.Fprintln(out, "Verify with: civitai whoami")
+	fmt.Fprintf(out, "\n%s\n", ui.Success(fmt.Sprintf("Logged in. Tokens saved to %s", cfg.Path())))
+	fmt.Fprintf(out, "Verify with: %s\n", ui.Code("civitai whoami"))
 	return nil
 }
 
