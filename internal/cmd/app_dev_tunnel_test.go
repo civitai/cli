@@ -217,9 +217,14 @@ func baseDeps(t *testing.T, apiStub *fakeTunnelAPI, dialer *fakeDialer, timer *f
 		baseURL:     "https://civitai.com",
 		idle:        30 * time.Minute,
 		// Short readiness knobs so any wait-exercising test completes fast (the probe
-		// is injected and returns instantly — no real network).
+		// is injected and returns instantly — no real network). nudgeAfter/quietInterval
+		// default LARGE so they don't fire in tests that don't exercise them; tests
+		// that do override them to a few ms.
 		readyTimeout:      100 * time.Millisecond,
 		readyPollInterval: time.Millisecond,
+		nudgeAfter:        time.Hour,
+		spinnerInterval:   10 * time.Millisecond,
+		quietInterval:     time.Hour,
 		newTimer:          func(time.Duration) devtunnel.Timer { return timer },
 		signals:           sigs,
 		out:               &out,
@@ -725,41 +730,104 @@ func TestRunTunnelSessionRejectsMissingHostKey(t *testing.T) {
 // ── readiness-wait tests ─────────────────────────────────────────────────────
 
 const testTunnelHost = "dev-0123456789abcdef.civit.ai"
+const testTunnelURL = "https://civitai.com/apps/dev/my-block"
 
 // TestWaitForTunnelReachableReadyAfterRetries: the wait re-probes until the public
-// host reports ready (200/401/403), printing a progress line each not-ready
-// attempt, then returns (true, "").
+// host reports ready (200/401/403), then returns (true, ""). Crucially it does NOT
+// emit the old one-line-per-attempt spam (that was replaced by the spinner /
+// heartbeat indicator).
 func TestWaitForTunnelReachableReadyAfterRetries(t *testing.T) {
 	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), make(chan os.Signal))
 	var out, errw syncBuffer
 	deps.out = &out
-	deps.errw = &errw
+	deps.errw = &errw // syncBuffer → non-TTY path
 	deps.readyPollInterval = time.Millisecond
 	deps.readyTimeout = 5 * time.Second
 
-	// waitForTunnelReachable runs synchronously in THIS goroutine, so a plain
-	// counter is race-free.
+	// Probe runs in a goroutine now, so guard the counter.
+	var mu sync.Mutex
 	calls := 0
 	deps.probePublic = func(_ context.Context, host string) (bool, string, error) {
 		if host != testTunnelHost {
 			t.Errorf("probe got host %q, want %q", host, testTunnelHost)
 		}
+		mu.Lock()
 		calls++
-		if calls < 4 {
+		n := calls
+		mu.Unlock()
+		if n < 4 {
 			return false, "http 404", nil
 		}
 		return true, "http 401", nil
 	}
 
-	ready, abort := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost)
+	ready, abort := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
 	if !ready || abort != "" {
 		t.Fatalf("want (true, \"\"), got (%v, %q)", ready, abort)
 	}
-	if calls < 4 {
-		t.Fatalf("expected at least 4 probes (3 not-ready + 1 ready), got %d", calls)
+	mu.Lock()
+	got := calls
+	mu.Unlock()
+	if got < 4 {
+		t.Fatalf("expected at least 4 probes (3 not-ready + 1 ready), got %d", got)
 	}
-	if !strings.Contains(errw.String(), "waiting for "+testTunnelHost+" to come up (http 404)") {
-		t.Errorf("expected per-attempt progress on stderr:\n%s", errw.String())
+	// The old per-attempt "waiting for … to come up (http 404)" spam is gone.
+	if strings.Contains(errw.String(), "to come up (http 404)") {
+		t.Errorf("must NOT emit one-line-per-attempt spam:\n%s", errw.String())
+	}
+}
+
+// TestWaitForTunnelReachableQuietHeartbeat: on the non-TTY path the wait emits the
+// quiet, greppable "still waiting" heartbeat at most every quietInterval (NOT one
+// per probe attempt), then the host becomes ready.
+func TestWaitForTunnelReachableQuietHeartbeat(t *testing.T) {
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), make(chan os.Signal))
+	var errw syncBuffer
+	deps.errw = &errw // syncBuffer → non-TTY path
+	deps.readyPollInterval = 2 * time.Millisecond
+	deps.readyTimeout = 0 // indefinite
+	deps.quietInterval = 3 * time.Millisecond
+
+	// Stay not-ready until the test has observed at least one heartbeat line, then
+	// flip to ready so the wait finishes.
+	release := make(chan struct{})
+	deps.probePublic = func(_ context.Context, _ string) (bool, string, error) {
+		select {
+		case <-release:
+			return true, "http 401", nil
+		default:
+			return false, "http 404", nil
+		}
+	}
+
+	resc := make(chan bool, 1)
+	go func() {
+		ready, _ := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
+		resc <- ready
+	}()
+
+	// Wait for a heartbeat line to appear.
+	deadline := time.After(2 * time.Second)
+	for !strings.Contains(errw.String(), "still waiting for "+testTunnelHost) {
+		select {
+		case <-deadline:
+			t.Fatalf("no quiet heartbeat line appeared:\n%s", errw.String())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	close(release) // let the next probe report ready
+	select {
+	case ready := <-resc:
+		if !ready {
+			t.Fatal("wait should end ready once the probe flips")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait did not finish after the probe flipped ready")
+	}
+	// No \r animation on the non-TTY path.
+	if strings.Contains(errw.String(), "\r") {
+		t.Errorf("non-TTY path must not emit carriage-return animation:\n%q", errw.String())
 	}
 }
 
@@ -782,7 +850,7 @@ func TestWaitForTunnelReachableAbortOnSignal(t *testing.T) {
 	}
 	resc := make(chan res, 1)
 	go func() {
-		r, a := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost)
+		r, a := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
 		resc <- res{r, a}
 	}()
 	sigs <- os.Interrupt
@@ -812,7 +880,7 @@ func TestWaitForTunnelReachableAbortOnTunnelClose(t *testing.T) {
 	tun := newFakeTunnel()
 	resc := make(chan string, 1)
 	go func() {
-		_, a := waitForTunnelReachable(context.Background(), deps, tun, testTunnelHost)
+		_, a := waitForTunnelReachable(context.Background(), deps, tun, testTunnelHost, testTunnelURL)
 		resc <- a
 	}()
 	close(tun.done)
@@ -833,9 +901,176 @@ func TestWaitForTunnelReachableAbortOnTunnelClose(t *testing.T) {
 func TestWaitForTunnelReachableNilProbeSkips(t *testing.T) {
 	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), make(chan os.Signal))
 	deps.probePublic = nil
-	ready, abort := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost)
+	ready, abort := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
 	if !ready || abort != "" {
 		t.Fatalf("nil probe should return (true, \"\"), got (%v, %q)", ready, abort)
+	}
+}
+
+// TestWaitForTunnelReachableIndefiniteDefault: with readyTimeout == 0 (the new
+// default) a host that never becomes reachable must NOT make the wait return —
+// it keeps polling until an abort (signal / tunnel-close / ctx). It must NEVER
+// return (false, "") (that's the positive-cap path, which the default disables).
+func TestWaitForTunnelReachableIndefiniteDefault(t *testing.T) {
+	sigs := make(chan os.Signal, 1)
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), sigs)
+	var errw syncBuffer
+	deps.errw = &errw
+	deps.readyTimeout = 0 // indefinite
+	deps.readyPollInterval = time.Millisecond
+	deps.quietInterval = time.Hour // keep stderr quiet
+
+	var probes int
+	var mu sync.Mutex
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		mu.Lock()
+		probes++
+		mu.Unlock()
+		return false, "http 404", nil // never ready
+	}
+
+	type res struct {
+		ready bool
+		abort string
+	}
+	resc := make(chan res, 1)
+	go func() {
+		r, a := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
+		resc <- res{r, a}
+	}()
+
+	// Give it long enough to have polled many times and — critically — long past any
+	// legacy 120s default would be irrelevant; the point is it must still be running.
+	select {
+	case got := <-resc:
+		t.Fatalf("indefinite wait returned prematurely: (%v, %q)", got.ready, got.abort)
+	case <-time.After(60 * time.Millisecond):
+	}
+	mu.Lock()
+	if probes < 2 {
+		t.Errorf("expected the wait to keep re-probing, got %d probes", probes)
+	}
+	mu.Unlock()
+
+	// Now abort it — proves it was still alive and responsive.
+	sigs <- os.Interrupt
+	select {
+	case got := <-resc:
+		if got.ready || got.abort != "interrupt" {
+			t.Fatalf("want (false, \"interrupt\"), got (%v, %q)", got.ready, got.abort)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("indefinite wait did not abort on signal")
+	}
+}
+
+// TestWaitForTunnelReachableNudgeFiresOnce: after nudgeAfter elapses the one-time
+// "taking longer than usual" nudge (with the URL) is printed EXACTLY once, and the
+// wait keeps going.
+func TestWaitForTunnelReachableNudgeFiresOnce(t *testing.T) {
+	sigs := make(chan os.Signal, 1)
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), sigs)
+	var errw syncBuffer
+	deps.errw = &errw
+	deps.readyTimeout = 0
+	deps.readyPollInterval = time.Millisecond
+	deps.quietInterval = time.Hour
+	deps.nudgeAfter = 5 * time.Millisecond
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		return false, "http 404", nil // never ready → wait keeps running
+	}
+
+	resc := make(chan struct{}, 1)
+	go func() {
+		waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
+		resc <- struct{}{}
+	}()
+
+	// Wait for the nudge to appear.
+	deadline := time.After(2 * time.Second)
+	for !strings.Contains(errw.String(), "Taking longer than usual") {
+		select {
+		case <-deadline:
+			t.Fatalf("nudge never printed:\n%s", errw.String())
+		case <-resc:
+			t.Fatalf("wait exited before nudging:\n%s", errw.String())
+		default:
+			time.Sleep(time.Millisecond)
+		}
+	}
+	// Let it run well past nudgeAfter again to prove the nudge does NOT repeat.
+	time.Sleep(50 * time.Millisecond)
+	sigs <- os.Interrupt
+	select {
+	case <-resc:
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait did not abort on signal")
+	}
+
+	if n := strings.Count(errw.String(), "Taking longer than usual"); n != 1 {
+		t.Errorf("nudge must fire exactly once, fired %d times:\n%s", n, errw.String())
+	}
+	if !strings.Contains(errw.String(), testTunnelURL) {
+		t.Errorf("nudge must include the URL so the dev can act:\n%s", errw.String())
+	}
+}
+
+// TestWaitForTunnelReachableCancelsInFlightProbe: a signal arriving WHILE a probe
+// is in flight must make the wait return PROMPTLY, canceling the probe's context
+// (not riding out its ~8s HTTP timeout). Proven by a probe that blocks until its
+// context is canceled.
+func TestWaitForTunnelReachableCancelsInFlightProbe(t *testing.T) {
+	sigs := make(chan os.Signal, 1)
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), sigs)
+	var errw syncBuffer
+	deps.errw = &errw
+	deps.readyTimeout = 0
+	deps.quietInterval = time.Hour
+	deps.nudgeAfter = time.Hour
+
+	probeStarted := make(chan struct{}, 1)
+	probeCanceled := make(chan struct{})
+	deps.probePublic = func(pctx context.Context, _ string) (bool, string, error) {
+		select {
+		case probeStarted <- struct{}{}:
+		default:
+		}
+		<-pctx.Done() // block until the wait cancels us
+		close(probeCanceled)
+		return false, "canceled", pctx.Err()
+	}
+
+	type res struct {
+		ready bool
+		abort string
+	}
+	resc := make(chan res, 1)
+	go func() {
+		r, a := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
+		resc <- res{r, a}
+	}()
+
+	// Wait until the probe is actually in flight, THEN signal.
+	select {
+	case <-probeStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("probe never started")
+	}
+	sigs <- os.Interrupt
+
+	select {
+	case got := <-resc:
+		if got.ready || got.abort != "interrupt" {
+			t.Fatalf("want (false, \"interrupt\"), got (%v, %q)", got.ready, got.abort)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait did not return promptly on signal during an in-flight probe")
+	}
+	// The in-flight probe's context WAS canceled (snappy Ctrl-C, not an 8s wait).
+	select {
+	case <-probeCanceled:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the in-flight probe's context was not canceled")
 	}
 }
 
@@ -906,15 +1141,18 @@ func TestRunTunnelSessionReadinessTimeoutNonFatal(t *testing.T) {
 	}
 
 	errc := runInBackground(deps)
-	if !waitForOutput(t, &out, "isn't resolving/serving yet", errc) {
+	// Wait for the URL — the last-relevant line of the timeout block. The block is
+	// several sequential Fprintf calls, so waiting on the FIRST line (the warning)
+	// then asserting the LATER URL line races the writes (flaky under CI scheduling).
+	if !waitForOutput(t, &out, sampleSession().URL, errc) {
 		return
+	}
+	if !strings.Contains(out.String(), "isn't resolving/serving yet") {
+		t.Errorf("timeout path must print the warning:\n%s", out.String())
 	}
 	// The readiness timeout is non-fatal: nothing torn down, session still alive.
 	if apiStub.stopCount() != 0 {
 		t.Errorf("readiness timeout must NOT tear the tunnel down; stop calls=%d", apiStub.stopCount())
-	}
-	if !strings.Contains(out.String(), sampleSession().URL) {
-		t.Errorf("timeout path must still print the URL:\n%s", out.String())
 	}
 	// Now really end it.
 	sigs <- os.Interrupt
