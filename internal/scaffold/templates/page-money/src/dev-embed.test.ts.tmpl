@@ -18,6 +18,14 @@ describe('dev-tunnel embeddability', () => {
     expect(csp).toContain(PROD_PARENT_ORIGIN); // https://civitai.com
   });
 
+  it('sets Access-Control-Allow-Origin:* so the null-origin sandboxed iframe can load ES modules', () => {
+    // The dev-tunnel embeds this server in App Blocks' PageBlockHost iframe,
+    // which is sandboxed with a null origin. Its ES-module fetches are CORS-
+    // blocked without ACAO, matching how prod app-blocks serve their modules.
+    const headers = devServerSecurityHeaders();
+    expect(headers['Access-Control-Allow-Origin']).toBe('*');
+  });
+
   it('does NOT set X-Frame-Options (would block the cross-origin embed)', () => {
     const headers = devServerSecurityHeaders();
     const keys = Object.keys(headers).map((k) => k.toLowerCase());
