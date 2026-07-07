@@ -153,7 +153,7 @@ func TestStartDevTunnelErrorMapping(t *testing.T) {
 		want   string
 	}{
 		{http.StatusForbidden, "not available"},
-		{http.StatusNotFound, "app not found"},
+		{http.StatusNotFound, "app not registered"},
 		{http.StatusUnauthorized, "not logged in"},
 		{http.StatusServiceUnavailable, "unavailable (503)"},
 	}
@@ -173,6 +173,56 @@ func TestStartDevTunnelErrorMapping(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("status %d: error %q should contain %q", tc.status, err.Error(), tc.want)
 		}
+	}
+}
+
+// TestStartDevTunnel401DropsServerMessage: on this path a 401 is always a
+// missing/expired/invalid credential, and the server's tRPC message is the
+// misleading origin-gate string ("Please use the public API instead"). The
+// mapped error must NOT echo it — it should just tell the user to log in.
+func TestStartDevTunnel401DropsServerMessage(t *testing.T) {
+	const serverMsg = "Please use the public API instead"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"json": map[string]any{"message": serverMsg}},
+		})
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "tok", "")
+	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K")
+	if err == nil {
+		t.Fatal("expected error on 401")
+	}
+	if strings.Contains(err.Error(), serverMsg) {
+		t.Errorf("401 error %q should NOT echo the server message %q", err.Error(), serverMsg)
+	}
+	if !strings.Contains(err.Error(), "civitai login") {
+		t.Errorf("401 error %q should tell the user to run `civitai login`", err.Error())
+	}
+}
+
+// TestStartDevTunnel404MentionsRegister: a 404 is the common new-app case (an
+// app just `civitai app create`d has no server-side row yet), so the error must
+// lead the user to register it with `civitai app submit`.
+func TestStartDevTunnel404MentionsRegister(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{"json": map[string]any{"message": "not found"}},
+		})
+	}))
+	defer srv.Close()
+	c := New(srv.URL, "tok", "")
+	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K")
+	if err == nil {
+		t.Fatal("expected error on 404")
+	}
+	if !strings.Contains(err.Error(), "civitai app submit") {
+		t.Errorf("404 error %q should mention `civitai app submit`", err.Error())
+	}
+	if !strings.Contains(err.Error(), "civitai app status") {
+		t.Errorf("404 error %q should still mention `civitai app status` for the not-yours case", err.Error())
 	}
 }
 

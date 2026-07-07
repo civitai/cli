@@ -1127,11 +1127,20 @@ func devTunnelError(status int, raw []byte) error {
 	}
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
+		// A 401 here is always a missing/expired/invalid credential; the server
+		// message on this path is the origin-gate string ("Please use the public
+		// API instead"), which is misleading to a CLI user. Drop it — the only
+		// action is `civitai login`.
+		return fmt.Errorf("not logged in (401) — run `civitai login` (or set CIVITAI_TOKEN)")
 	case http.StatusForbidden:
 		return &DevTunnelForbiddenError{ServerMsg: msg, InsufficientScope: isInsufficientScopeMsg(msg)}
 	case http.StatusNotFound:
-		return fmt.Errorf("app not found (404): %s — check the blockId with `civitai app status` (you can only tunnel your OWN app)", msg)
+		// blocks.startDevTunnel resolves the app via an owned appBlock row of ANY
+		// status; a brand-new app (just `civitai app create`d) has no server-side
+		// row yet → NOT_FOUND. Lead with the new-app path (register with `civitai
+		// app submit`, which POSTs submit-version to create the pending row the
+		// tunnel then resolves), then the wrong-slug/not-yours case.
+		return fmt.Errorf("app not registered to your account (404): %s — if it's a new app, register it first with `civitai app submit`; otherwise verify the blockId with `civitai app status` (you can only tunnel your OWN app)", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:
