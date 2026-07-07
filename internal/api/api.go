@@ -1135,12 +1135,15 @@ func devTunnelError(status int, raw []byte) error {
 	case http.StatusForbidden:
 		return &DevTunnelForbiddenError{ServerMsg: msg, InsufficientScope: isInsufficientScopeMsg(msg)}
 	case http.StatusNotFound:
-		// blocks.startDevTunnel resolves the app via an owned appBlock row of ANY
-		// status; a brand-new app (just `civitai app create`d) has no server-side
-		// row yet → NOT_FOUND. Lead with the new-app path (register with `civitai
-		// app submit`, which POSTs submit-version to create the pending row the
-		// tunnel then resolves), then the wrong-slug/not-yours case.
-		return fmt.Errorf("app not registered to your account (404): %s — if it's a new app, register it first with `civitai app submit`; otherwise verify the blockId with `civitai app status` (you can only tunnel your OWN app)", msg)
+		// With the ephemeral pre-submit resolver deployed (civitai #2983/#2984), a
+		// brand-new UNCLAIMED app owned by the caller now tunnels WITHOUT submitting
+		// (run `civitai app dev-tunnel` from the app dir). The server returns
+		// NOT_FOUND now only when the slug is registered/claimed by a DIFFERENT
+		// account (anti-shadow refusal) or the blockId isn't a valid canonical slug
+		// (the #2984 SLUG_REGEX guard maps a malformed slug → null → NOT_FOUND). A
+		// caller lacking cohort access gets a 403 (DevTunnelForbiddenError), not this
+		// 404 — so don't mention the invite/cohort here.
+		return fmt.Errorf("can't tunnel this app (404): %s — that slug is registered to a different account, or isn't a valid app slug. A new app of your own now tunnels without submitting (run this from its dir); list your apps with `civitai app status`", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:
