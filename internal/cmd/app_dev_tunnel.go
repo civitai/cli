@@ -12,6 +12,7 @@ import (
 	"os/signal"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -63,13 +64,12 @@ const (
 	// "taking longer than usual — the tunnel IS live, try the URL or keep waiting"
 	// nudge. It fires exactly once, then the wait keeps going.
 	defaultNudgeAfter = 2 * time.Minute
-	// defaultSpinnerInterval is the TTY spinner frame cadence (smooth animation even
-	// though probes are ~readyPollInterval apart). defaultQuietInterval is the
-	// non-TTY (piped/CI) "still waiting" heartbeat cadence — a deterministic,
-	// greppable line at most this often (NOT one-per-probe-attempt). Both are
-	// injectable via deps so tests drive them fast without sleeps.
-	defaultSpinnerInterval = 100 * time.Millisecond
-	defaultQuietInterval   = 15 * time.Second
+	// defaultQuietInterval is the non-TTY (piped/CI) "still waiting" heartbeat
+	// cadence — a deterministic, greppable line at most this often (NOT
+	// one-per-probe-attempt). Injectable via deps so tests drive it fast without
+	// sleeps. (The TTY path's spinner cadence is owned by bubbles/spinner, so there
+	// is no spinner-interval knob anymore.)
+	defaultQuietInterval = 15 * time.Second
 	// probePublicTimeout bounds a single unauthenticated public-host GET so a hung
 	// connection (SYN blackhole during propagation) can't stall a poll iteration.
 	probePublicTimeout = 8 * time.Second
@@ -118,15 +118,14 @@ type tunnelSessionDeps struct {
 	// the URL anyway on expiry, non-fatal). readyPollInterval is the re-probe cadence
 	// (default defaultReadyPollInterval). noWait skips the wait entirely (print the
 	// URL immediately, as before). nudgeAfter is the one-time "taking longer than
-	// usual" nudge delay (default defaultNudgeAfter). spinnerInterval /
-	// quietInterval tune the TTY spinner animation cadence and the non-TTY heartbeat
-	// cadence respectively (defaults defaultSpinnerInterval / defaultQuietInterval);
-	// all three are injectable so tests drive them fast without real sleeps.
+	// usual" nudge delay (default defaultNudgeAfter). quietInterval tunes the
+	// non-TTY heartbeat cadence (default defaultQuietInterval); both are injectable
+	// so tests drive them fast without real sleeps. (The TTY spinner cadence is
+	// owned by bubbles/spinner, so there is no spinner-interval knob.)
 	readyTimeout      time.Duration
 	readyPollInterval time.Duration
 	noWait            bool
 	nudgeAfter        time.Duration
-	spinnerInterval   time.Duration
 	quietInterval     time.Duration
 	newTimer          func(d time.Duration) devtunnel.Timer
 	signals           <-chan os.Signal
@@ -255,7 +254,6 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				readyPollInterval: defaultReadyPollInterval,
 				noWait:            noWait,
 				nudgeAfter:        defaultNudgeAfter,
-				spinnerInterval:   defaultSpinnerInterval,
 				quietInterval:     defaultQuietInterval,
 				newTimer:          devtunnel.NewRealTimer,
 				signals:           sigCh,
@@ -483,7 +481,7 @@ func printTunnelReadyTimeout(out io.Writer, sess *api.DevTunnelSession, port int
 // documented defaults when a dep leaves the value unset (zero), so a zero-value
 // deps set (e.g. a focused unit test) still behaves sanely. (readyTimeout
 // intentionally has NO resolver — 0 is the meaningful "indefinite" value, not
-// "unset". spinnerInterval is likewise no longer resolved: the TTY path now uses
+// "unset". There is no spinner-cadence resolver: the TTY path uses
 // bubbles/spinner, which drives its own frame cadence.)
 func resolveReadyPollInterval(d tunnelSessionDeps) time.Duration {
 	if d.readyPollInterval > 0 {
@@ -529,13 +527,6 @@ func fmtMMSS(d time.Duration) string {
 // (d.probePublic reports ready), showing a live progress indicator on d.errw. By
 // DEFAULT (readyTimeout == 0) it waits INDEFINITELY — until ready, Ctrl-C, or the
 // tunnel drops; a POSITIVE readyTimeout re-imposes a non-fatal cap.
-//
-// The indicator degrades by destination:
-//   - TTY (d.errw is a terminal): a braille spinner that rewrites ONE line in place
-//     via \r, advancing every spinnerInterval, showing elapsed M:SS. Cleared before
-//     any other block (nudge / ready / abort) is printed.
-//   - non-TTY (piped/CI/tests): NO \r/animation — a quiet, greppable heartbeat line
-//     at most every quietInterval ("  … still waiting for <host> (M:SS)").
 //
 // Each probe runs in its own goroutine on a cancelable context, so an abort
 // (signal / tunnel-close / ctx) returns PROMPTLY even mid-probe (the in-flight
@@ -718,12 +709,17 @@ type tunnelWaitModel struct {
 	reason string
 }
 
+// Init starts the spinner, the first probe, the one-shot nudge, and (when a
+// positive cap is set) the deadline. The abort SOURCES (signals / ctx / tunnel)
+// are NOT started here as fire-and-forget tea.Cmds — bubbletea never cancels a
+// command goroutine on Quit, so a tea.Cmd parked reading the send-based,
+// never-closed d.signals channel would survive the wait and STEAL the next
+// SIGINT/SIGTERM from runTunnelSession's serving loop. Instead waitTunnelTTY owns
+// those watchers on a WaitGroup and joins them before returning (see
+// startTunnelWaitWatchers).
 func (m *tunnelWaitModel) Init() tea.Cmd {
 	cmds := []tea.Cmd{
 		m.sp.Tick,
-		m.watchCtx(),
-		m.watchTunnel(),
-		m.watchSignals(),
 		m.nudgeCmd(),
 		m.startProbe(),
 	}
@@ -753,33 +749,63 @@ func (m *tunnelWaitModel) cancelProbe() {
 	}
 }
 
-func (m *tunnelWaitModel) watchCtx() tea.Cmd {
-	ctx := m.ctx
-	return func() tea.Msg {
-		<-ctx.Done()
-		return tunnelAbortMsg{reason: "canceled"}
-	}
-}
+// startTunnelWaitWatchers launches STOPPABLE goroutines that watch the abort
+// sources (signals / ctx / tunnel) and feed the program the corresponding abort
+// message via send (p.Send in production). It returns a stop func that closes the
+// quit channel AND joins every watcher, GUARANTEEING none survives the wait — in
+// particular, that no goroutine is left reading the send-based, single-receiver
+// d.signals channel (which would otherwise steal the next signal from the caller's
+// serving loop). watchCtx/watchTunnel are close-broadcast and would be benign
+// leaks, but are joined too for tidiness + determinism.
+//
+// send may be called after the program has finished (a delivered abort racing the
+// program's own Quit) — p.Send is a no-op once the program's context is done, so
+// that is safe.
+func startTunnelWaitWatchers(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, send func(tea.Msg)) (stop func()) {
+	quit := make(chan struct{})
+	var wg sync.WaitGroup
 
-func (m *tunnelWaitModel) watchTunnel() tea.Cmd {
-	done := m.tunnel.Done()
-	return func() tea.Msg {
-		<-done
-		return tunnelAbortMsg{reason: "tunnel closed"}
+	watch := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
 	}
-}
 
-// watchSignals catches SIGTERM (and SIGINT if signal handling is delivered) via
-// the injected channel. Under bubbletea raw mode Ctrl-C arrives as a KeyCtrlC
-// message instead (handled in Update), so this is the belt-and-suspenders path.
-func (m *tunnelWaitModel) watchSignals() tea.Cmd {
-	sig := m.d.signals
-	if sig == nil {
-		return nil
+	// Signals: the ONLY send-based single-receiver source — MUST stop reading
+	// d.signals when the wait ends so a later SIGINT/SIGTERM reaches the caller.
+	if d.signals != nil {
+		sig := d.signals
+		watch(func() {
+			select {
+			case <-sig:
+				send(tunnelAbortMsg{reason: "interrupt"})
+			case <-quit:
+			}
+		})
 	}
-	return func() tea.Msg {
-		<-sig
-		return tunnelAbortMsg{reason: "interrupt"}
+	// Ctx cancellation (close-broadcast).
+	watch(func() {
+		select {
+		case <-ctx.Done():
+			send(tunnelAbortMsg{reason: "canceled"})
+		case <-quit:
+		}
+	})
+	// Tunnel drop (close-broadcast).
+	done := tunnel.Done()
+	watch(func() {
+		select {
+		case <-done:
+			send(tunnelAbortMsg{reason: "tunnel closed"})
+		case <-quit:
+		}
+	})
+
+	return func() {
+		close(quit)
+		wg.Wait()
 	}
 }
 
@@ -857,7 +883,12 @@ func waitTunnelTTY(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tu
 	// Render to errw (status stream). WithoutSignalHandler so OUR reason strings
 	// win — Ctrl-C is handled as KeyCtrlC, SIGTERM via the injected signals chan.
 	p := tea.NewProgram(m, tea.WithOutput(d.errw), tea.WithoutSignalHandler())
-	if _, err := p.Run(); err != nil {
+	// Own the abort-source watchers so NONE survives this function (esp. the
+	// d.signals reader) — join them before returning.
+	stop := startTunnelWaitWatchers(ctx, d, tunnel, p.Send)
+	_, err := p.Run()
+	stop()
+	if err != nil {
 		// A bubbletea failure shouldn't strand the session — fall back to treating it
 		// as ready so the caller prints the URL rather than tearing down. (Best-effort;
 		// the tunnel is bound regardless.)

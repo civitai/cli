@@ -223,7 +223,6 @@ func baseDeps(t *testing.T, apiStub *fakeTunnelAPI, dialer *fakeDialer, timer *f
 		readyTimeout:      100 * time.Millisecond,
 		readyPollInterval: time.Millisecond,
 		nudgeAfter:        time.Hour,
-		spinnerInterval:   10 * time.Millisecond,
 		quietInterval:     time.Hour,
 		newTimer:          func(time.Duration) devtunnel.Timer { return timer },
 		signals:           sigs,

@@ -93,3 +93,17 @@ escape. Re-assert this whenever you add a helper.
   `scaffoldPromptFn`) so the non-interactive path is testable.
 - The cmd test package's `TestMain` forces `stdinIsTTY` OFF by default; opt back
   in per-test with a stubbed prompt.
+
+## Deferred to PR 2 (known limitations, intentionally not fixed in PR 1)
+
+- **Per-stream color resolution.** `ui.Configure` auto-detects color against a
+  single writer (stdout). Helpers written to *stderr* therefore inherit stdout's
+  TTY decision — e.g. `civitai whoami > file` (stdout redirected, stderr still a
+  TTY) disables color for a stderr status line too. Acceptable for now (the
+  invariant "piping disables ANSI" still holds); PR 2 can thread per-stream
+  enablement if a command needs colored stderr while stdout is piped.
+- **`lipgloss.AdaptiveColor` for contrast-sensitive styles.** The palette uses
+  fixed ANSI256 colors. On terminals whose background clashes (e.g. the cyan
+  `URL` / pink spinner on a light theme) contrast may be poor. PR 2 can switch
+  the contrast-sensitive styles (URL, spinner, maybe Dim) to `AdaptiveColor`
+  (light/dark variants) once we decide the light-mode palette.
