@@ -1116,8 +1116,8 @@ func TestRunTunnelSessionReadyPrintsConfirmedURL(t *testing.T) {
 	if !strings.Contains(out.String(), sampleSession().URL) {
 		t.Errorf("ready path must print the /apps/dev URL:\n%s", out.String())
 	}
-	if !strings.Contains(errw.String(), "Waiting for it to become reachable") {
-		t.Errorf("expected the 'established, waiting' status on stderr:\n%s", errw.String())
+	if !strings.Contains(errw.String(), "Waiting for "+sampleSession().Host) {
+		t.Errorf("expected the 'established, waiting for <subdomain>' status on stderr:\n%s", errw.String())
 	}
 	// Change 2: the immediate startup status fills the previously-silent mint+dial
 	// window (printed BEFORE keygen/mint, so the terminal never looks hung).
