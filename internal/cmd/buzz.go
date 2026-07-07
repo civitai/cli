@@ -8,6 +8,7 @@ import (
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -51,7 +52,8 @@ how to switch to a personal key.`,
 				if errors.Is(err, api.ErrBuzzScope) {
 					// Actionable guidance + a non-zero exit (a 403 is a real,
 					// fixable failure, not "balance is zero").
-					fmt.Fprintln(cmd.ErrOrStderr(), buzzScopeHint)
+					errw := cmd.ErrOrStderr()
+					fmt.Fprintln(errw, ui.For(errw).Warn(buzzScopeHint))
 					return fmt.Errorf("credential can't read Buzz balance")
 				}
 				return err
@@ -68,7 +70,7 @@ how to switch to a personal key.`,
 				})
 			}
 
-			fmt.Fprintln(out, "Buzz balance:")
+			fmt.Fprintln(out, ui.Bold("Buzz balance:"))
 			fmt.Fprintf(out, "  Blue:   %d\n", acct.Blue)
 			fmt.Fprintf(out, "  Green:  %d\n", acct.Green)
 			fmt.Fprintf(out, "  Yellow: %d\n", acct.Yellow)

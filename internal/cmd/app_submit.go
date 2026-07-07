@@ -62,9 +62,10 @@ Defaults to the current directory.`,
 					return err
 				}
 				if !res.OK() {
-					fmt.Fprintln(cmd.ErrOrStderr(), ui.ErrorMsg(fmt.Sprintf("validation failed (%d error(s)) — fix before submitting, or pass --skip-validate:", len(res.Errors))))
+					errw := cmd.ErrOrStderr()
+					fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("validation failed (%d error(s)) — fix before submitting, or pass --skip-validate:", len(res.Errors))))
 					for _, e := range res.Errors {
-						fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", e)
+						fmt.Fprintf(errw, "  - %s\n", e)
 					}
 					return fmt.Errorf("validation failed")
 				}

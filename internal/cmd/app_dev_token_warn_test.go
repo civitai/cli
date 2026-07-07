@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/ui"
 )
 
 // makeJWT builds a syntactically-valid JWT whose payload carries the given
@@ -130,7 +132,7 @@ func TestReadOnlyTokenWarning(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := readOnlyTokenWarning(tc.canSpend, tc.authKind, "my-block")
+			got := readOnlyTokenWarning(ui.For(io.Discard), tc.canSpend, tc.authKind, "my-block")
 			if !strings.Contains(got, "READ-ONLY") {
 				t.Errorf("missing READ-ONLY header; got:\n%s", got)
 			}

@@ -94,16 +94,21 @@ escape. Re-assert this whenever you add a helper.
 - The cmd test package's `TestMain` forces `stdinIsTTY` OFF by default; opt back
   in per-test with a stubbed prompt.
 
-## Deferred to PR 2 (known limitations, intentionally not fixed in PR 1)
+## Per-stream color + adaptive colors (implemented in PR 2)
 
-- **Per-stream color resolution.** `ui.Configure` auto-detects color against a
-  single writer (stdout). Helpers written to *stderr* therefore inherit stdout's
-  TTY decision — e.g. `civitai whoami > file` (stdout redirected, stderr still a
-  TTY) disables color for a stderr status line too. Acceptable for now (the
-  invariant "piping disables ANSI" still holds); PR 2 can thread per-stream
-  enablement if a command needs colored stderr while stdout is piped.
-- **`lipgloss.AdaptiveColor` for contrast-sensitive styles.** The palette uses
-  fixed ANSI256 colors. On terminals whose background clashes (e.g. the cyan
-  `URL` / pink spinner on a light theme) contrast may be poor. PR 2 can switch
-  the contrast-sensitive styles (URL, spinner, maybe Dim) to `AdaptiveColor`
-  (light/dark variants) once we decide the light-mode palette.
+- **Per-stream color resolution.** The force overrides (`--no-color`/`NO_COLOR`,
+  `--color`/`CLICOLOR_FORCE`, `TERM=dumb`) are absolute and stream-independent;
+  the AUTO case is resolved **per-writer**. `ui.Configure` records the mode + the
+  bare-helper default writer (stdout); `ui.EnabledFor(w)` answers a specific
+  stream's enablement. The bare helpers (`ui.Success`, …) resolve against stdout;
+  a `ui.Printer` or `ui.For(w)` **Styler** resolves against the writer it renders
+  to. So `civitai app validate > file` on a TTY stderr gets a plain stdout and a
+  colored stderr. When a status line goes to **stderr**, bind `ui.For(errw)` (or
+  `ui.NewPrinter(errw)`) instead of the bare helper so color follows that stream.
+- **`lipgloss.AdaptiveColor` for contrast-sensitive styles.** The two genuinely
+  contrast-sensitive styles — `URL` (underlined cyan) and the spinner accent
+  (pink) — use `lipgloss.AdaptiveColor{Light, Dark}` so they stay legible on both
+  light and dark backgrounds. The `Dark` variant matches the historical fixed
+  color, and the `io.Discard` renderer resolves adaptive colors deterministically
+  (dark), so golden tests stay stable. `Dim`/`Bold`/`Success`/`Warn`/`ErrorMsg`/
+  `Code` keep their fixed profile (they read fine on both).

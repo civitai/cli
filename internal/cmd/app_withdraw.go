@@ -8,6 +8,7 @@ import (
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -62,7 +63,7 @@ Pass the publish-request id as a positional argument or via --id (find it with
 			if err := client.WithdrawRequest(ctx, id); err != nil {
 				return err
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "✓ Withdrew %s\n", id)
+			fmt.Fprintln(cmd.OutOrStdout(), ui.Success(fmt.Sprintf("Withdrew %s", id)))
 			return nil
 		},
 	}

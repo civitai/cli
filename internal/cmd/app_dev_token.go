@@ -14,6 +14,7 @@ import (
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/civitai/cli/internal/scaffold"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -70,10 +71,12 @@ func tokenCanSpend(jwt string) bool {
 //   - credential can't spend + personal key → that key lacks AI Services.
 //
 // It's a pure function (canSpend from whoami, authKind from config) so the
-// branch logic is unit-testable without a network round-trip.
-func readOnlyTokenWarning(canSpend bool, authKind, slug string) string {
-	const header = "\n⚠  This token is READ-ONLY (no `ai:write:budgeted` scope) — " +
-		"`npm run dev:live` will NOT spend Buzz or generate; Generate dead-ends silently."
+// branch logic is unit-testable without a network round-trip. The header glyph +
+// color are resolved against sty's writer (the command's stderr) so color
+// follows that stream independently of stdout.
+func readOnlyTokenWarning(sty ui.Styler, canSpend bool, authKind, slug string) string {
+	header := "\n" + sty.Warn("This token is READ-ONLY (no `ai:write:budgeted` scope) — "+
+		"`npm run dev:live` will NOT spend Buzz or generate; Generate dead-ends silently.")
 	remint := "     civitai app dev-token " + slug + " --env >> .env.development.local   # re-mint, then restart dev:live"
 
 	switch {
@@ -182,7 +185,7 @@ never commit it; re-mint when it expires.`,
 				if id, whoErr := client.WhoAmI(context.Background()); whoErr == nil {
 					canSpend = id.CanSpendBuzz()
 				}
-				fmt.Fprintln(errOut, readOnlyTokenWarning(canSpend, cfg.AuthKind(), slug))
+				fmt.Fprintln(errOut, readOnlyTokenWarning(ui.For(errOut), canSpend, cfg.AuthKind(), slug))
 			}
 			return nil
 		},
@@ -227,9 +230,9 @@ func mintDevTokenWithRename(ctx context.Context, client *api.Client, errOut io.W
 		if serr := manifest.SetBlockID(dir, newSlug); serr != nil {
 			return "", slug, fmt.Errorf("could not update %s with the renamed slug %q: %w", manifest.Filename, newSlug, serr)
 		}
-		fmt.Fprintf(errOut,
-			"Slug %q is registered to another account — renamed to %q for your app (%s updated).\n",
-			slug, newSlug, manifest.Filename)
+		fmt.Fprintln(errOut, ui.For(errOut).Warn(fmt.Sprintf(
+			"Slug %q is registered to another account — renamed to %q for your app (%s updated).",
+			slug, newSlug, manifest.Filename)))
 		slug = newSlug
 	}
 }

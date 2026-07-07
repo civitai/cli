@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -137,15 +138,13 @@ func maybeNotifyUpdate(errW io.Writer, cmdName string, noFlag bool) {
 }
 
 // printDim writes s as a dim line to w, framed by a leading newline so it
-// visually separates from the command's own output. ANSI dim is only emitted
-// when w is the real terminal (we already gate on stderr being a TTY before
-// calling, but keep the escape minimal and safe).
+// visually separates from the command's own output. Color is resolved against w
+// itself (the command's stderr) via the shared ui layer — so ANSI is emitted
+// only when w is a real terminal, and NO_COLOR/--no-color suppress it. We
+// already gate on stderr being a TTY before calling, but routing through ui
+// keeps the escape handling in one place.
 func printDim(w io.Writer, s string) {
-	const (
-		dim   = "\033[2m"
-		reset = "\033[0m"
-	)
-	_, _ = io.WriteString(w, "\n"+dim+s+reset+"\n")
+	_, _ = io.WriteString(w, "\n"+ui.For(w).Dim(s)+"\n")
 }
 
 // spawnDetachedRefresh launches `civitai __update-check` as a detached

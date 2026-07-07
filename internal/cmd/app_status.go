@@ -11,6 +11,7 @@ import (
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -79,7 +80,7 @@ and deployed (deployState 'live').`,
 				return writeJSON(out, map[string]any{"submissions": subs})
 			}
 			if len(subs) == 0 {
-				fmt.Fprintln(out, "No submissions yet — run `civitai app submit` to create one.")
+				fmt.Fprintf(out, "No submissions yet — run %s to create one.\n", ui.Code("civitai app submit"))
 				return nil
 			}
 			printSubmissionTable(out, subs)
@@ -139,7 +140,7 @@ func printSubmissionDetail(w io.Writer, s *api.Submission) {
 		fmt.Fprintf(w, "\nApproval notes:\n  %s\n", *s.ApprovalNotes)
 	}
 	if s.LiveURL != nil && *s.LiveURL != "" {
-		fmt.Fprintf(w, "\nLive at: %s\n", *s.LiveURL)
+		fmt.Fprintf(w, "\nLive at: %s\n", ui.URL(*s.LiveURL))
 	} else {
 		fmt.Fprintf(w, "\nNot live yet — %s.civit.ai only serves after the app is approved and deployed (deployState 'live').\n", s.BlockID)
 	}

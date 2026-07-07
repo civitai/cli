@@ -234,8 +234,8 @@ func TestAppValidateWarningsExitZero(t *testing.T) {
 	if !strings.Contains(errOut, "warning(s)") {
 		t.Errorf("stderr should list warnings: %s", errOut)
 	}
-	if !strings.Contains(out, "OK (with") {
-		t.Errorf("stdout should report OK-with-warnings: %s", out)
+	if !strings.Contains(out, "is valid") || !strings.Contains(out, "warning(s)") {
+		t.Errorf("stdout should report valid-with-warnings: %s", out)
 	}
 }
 
