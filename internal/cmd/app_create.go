@@ -14,6 +14,7 @@ func newAppCreateCmd() *cobra.Command {
 	var fromSlug string
 	var dirFlag string
 	var nameFlag string
+	var noInput bool
 
 	cmd := &cobra.Command{
 		Use:   "create [name] [dir]",
@@ -57,7 +58,7 @@ Note: ` + "`civitai login`" + ` (OAuth) grants submit but NOT Buzz-spend. To run
   civitai app create my-block --dir ./apps/foo`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag)
+			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, noInput)
 		},
 	}
 
@@ -67,5 +68,6 @@ Note: ` + "`civitai login`" + ` (OAuth) grants submit but NOT Buzz-spend. To run
 	cmd.Flags().StringVar(&fromSlug, "from", "", "fork from an existing published app slug (not yet wired)")
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
+	cmd.Flags().BoolVarP(&noInput, "yes", "y", false, "non-interactive: never prompt (use flags/defaults; fail if a name is missing)")
 	return cmd
 }

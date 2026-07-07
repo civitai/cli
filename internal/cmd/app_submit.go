@@ -13,6 +13,7 @@ import (
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/civitai/cli/internal/pkgzip"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/civitai/cli/internal/validate"
 	"github.com/spf13/cobra"
 )
@@ -61,7 +62,7 @@ Defaults to the current directory.`,
 					return err
 				}
 				if !res.OK() {
-					fmt.Fprintf(cmd.ErrOrStderr(), "validation failed (%d error(s)) — fix before submitting, or pass --skip-validate:\n", len(res.Errors))
+					fmt.Fprintln(cmd.ErrOrStderr(), ui.ErrorMsg(fmt.Sprintf("validation failed (%d error(s)) — fix before submitting, or pass --skip-validate:", len(res.Errors))))
 					for _, e := range res.Errors {
 						fmt.Fprintf(cmd.ErrOrStderr(), "  - %s\n", e)
 					}
@@ -106,7 +107,7 @@ Defaults to the current directory.`,
 				return err
 			}
 			abs, _ := filepath.Abs(zipPath)
-			fmt.Fprintf(out, "Wrote canonical bundle: %s\n", abs)
+			fmt.Fprintln(out, ui.Success(fmt.Sprintf("Wrote canonical bundle: %s", abs)))
 
 			if packageOnly {
 				return nil
@@ -124,16 +125,29 @@ Defaults to the current directory.`,
 
 func doUpload(cmd *cobra.Command, client api.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string) error {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "Submitting %s@%s …\n", m.BlockID, m.Version)
-	r, err := client.SubmitVersion(context.Background(), zipBytes, m.BlockID, m.Version)
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	// Spin (on a TTY) while the bundle uploads — a real network wait. On a non-TTY
+	// (pipe/CI/tests) WithSpinner prints one plain "Submitting …" line and runs the
+	// upload inline, so scripted/captured output stays deterministic.
+	var r *api.SubmitResult
+	err := ui.WithSpinner(ctx, out, fmt.Sprintf("Submitting %s@%s", m.BlockID, m.Version),
+		func(ctx context.Context) error {
+			var e error
+			r, e = client.SubmitVersion(ctx, zipBytes, m.BlockID, m.Version)
+			return e
+		})
 	if err != nil {
 		return err
 	}
 	base := strings.TrimRight(baseURL, "/")
-	fmt.Fprintf(out, "✓ Submitted — %s is pending moderator review.\n", r.PublishRequestID)
-	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to https://%s.civit.ai (usually a few minutes).\n", r.Slug)
+	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Submitted — %s is pending moderator review.", r.PublishRequestID)))
+	fmt.Fprintf(out, "\nWhat's next: a moderator reviews it; on approval it builds + deploys to %s (usually a few minutes).\n", ui.URL(fmt.Sprintf("https://%s.civit.ai", r.Slug)))
 	fmt.Fprintln(out, "\nTrack it:")
-	fmt.Fprintln(out, "  civitai app status                          # review + deploy status")
+	fmt.Fprintf(out, "  %s                          # review + deploy status\n", ui.Code("civitai app status"))
 	fmt.Fprintf(out, "  %s/apps/my-submissions               # your submissions\n", base)
 	printMoneyPathNote(out, m)
 	return nil

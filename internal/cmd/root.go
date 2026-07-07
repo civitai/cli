@@ -6,7 +6,9 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // Build metadata, overridden at build time via -ldflags (see cmd/civitai/main.go
@@ -165,6 +167,11 @@ func isDevDefault(v string) bool {
 // NewRootCmd builds the root command with all subcommands attached.
 func NewRootCmd() *cobra.Command {
 	var noUpdateCheck bool
+	var noColor, forceColor bool
+	// A dedicated viper instance (not the global) binds the color flags + their
+	// CIVITAI_* env fallbacks, scoped to this root so repeated NewRootCmd calls
+	// (tests) don't cross-wire flag pointers.
+	colorViper := viper.New()
 	root := &cobra.Command{
 		Use:   "civitai",
 		Short: "Civitai CLI — author and ship Apps",
@@ -190,6 +197,23 @@ Get started:
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Version:       version,
+		// PersistentPreRunE runs before ANY subcommand's RunE. It configures the
+		// shared ui presentation layer ONCE — resolving color enablement from the
+		// --no-color/--color flags (bound via viper, so CIVITAI_NO_COLOR /
+		// CIVITAI_COLOR env work too), the standard NO_COLOR/CLICOLOR_FORCE env,
+		// and whether stdout is a real TTY. Piping stdout (or NO_COLOR) fully
+		// disables ANSI. cobra runs the nearest PersistentPreRunE, and no
+		// subcommand defines its own, so this always runs.
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			ui.Configure(ui.Options{
+				NoColor:    colorViper.GetBool("no_color"),
+				ForceColor: colorViper.GetBool("color"),
+				// Auto-detect against stdout — where the user-facing status output
+				// (login/whoami/submit success lines) goes; piping it disables color.
+				Writer: cmd.OutOrStdout(),
+			})
+			return nil
+		},
 		// PersistentPostRun fires after ANY subcommand's RunE. It prints at most
 		// one cached "new version available" line to stderr and (when the cache
 		// is stale) kicks off a detached background refresh. It is best-effort
@@ -204,6 +228,17 @@ Get started:
 	// post-run hook can read its resolved value.
 	root.PersistentFlags().BoolVar(&noUpdateCheck, "no-update-check", false,
 		"skip the background check for a newer release (also via CIVITAI_NO_UPDATE_CHECK)")
+
+	// Global color controls (honored by the shared ui package). --no-color wins
+	// over --color; the standard NO_COLOR / CLICOLOR_FORCE env are also honored.
+	root.PersistentFlags().BoolVar(&noColor, "no-color", false,
+		"disable colored/styled output (also via NO_COLOR or CIVITAI_NO_COLOR)")
+	root.PersistentFlags().BoolVar(&forceColor, "color", false,
+		"force colored output even when stdout is not a TTY (also via CLICOLOR_FORCE)")
+	_ = colorViper.BindPFlag("no_color", root.PersistentFlags().Lookup("no-color"))
+	_ = colorViper.BindPFlag("color", root.PersistentFlags().Lookup("color"))
+	_ = colorViper.BindEnv("no_color", "CIVITAI_NO_COLOR")
+	_ = colorViper.BindEnv("color", "CIVITAI_COLOR")
 
 	root.AddCommand(newAppCmd())
 	root.AddCommand(newLoginCmd())

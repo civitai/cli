@@ -3,11 +3,16 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/civitai/cli/internal/scaffold"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/civitai/cli/internal/validate"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func newAppInitCmd() *cobra.Command {
@@ -15,6 +20,7 @@ func newAppInitCmd() *cobra.Command {
 	var fromSlug string
 	var dirFlag string
 	var nameFlag string
+	var noInput bool
 
 	cmd := &cobra.Command{
 		Use:   "init [name] [dir]",
@@ -46,7 +52,7 @@ a positional [dir] or --dir <path>; override the display name independently with
   civitai app init my-block ./apps/foo --name "My Block"`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag)
+			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, noInput)
 		},
 	}
 
@@ -54,6 +60,7 @@ a positional [dir] or --dir <path>; override the display name independently with
 	cmd.Flags().StringVar(&fromSlug, "from", "", "fork from an existing published app slug (not yet wired)")
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
+	cmd.Flags().BoolVarP(&noInput, "yes", "y", false, "non-interactive: never prompt (use flags/defaults; fail if a name is missing)")
 	return cmd
 }
 
@@ -61,7 +68,7 @@ a positional [dir] or --dir <path>; override the display name independently with
 // `app create`. The two commands differ only in the default template; all of
 // the slug/display derivation, dir resolution, rendering, self-validation, and
 // next-steps output lives here so there is a single code path.
-func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, dirFlag, nameFlag string) error {
+func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, dirFlag, nameFlag string, noInput bool) error {
 	out := cmd.OutOrStdout()
 
 	if fromSlug != "" {
@@ -75,15 +82,32 @@ source tree by slug, then --from can scaffold from it. For now, run a plain
 init and copy the upstream files in manually.`)
 	}
 
+	name := ""
+	if len(args) >= 1 {
+		name = args[0]
+	}
+
+	// Interactive prompts (huh) ONLY when a name wasn't supplied AND we're on an
+	// interactive terminal AND --yes wasn't passed. A supplied name, a piped/CI
+	// stdin (not a TTY), or --yes all SKIP huh — so scripted invocations never
+	// block on a prompt (huh requires a TTY). The prompt fills in the name +
+	// template; everything downstream is identical to the flag-driven path.
+	if name == "" && !noInput && stdinIsTTY() {
+		inputs, err := scaffoldPromptFn(cmd, templateFlag)
+		if err != nil {
+			return err
+		}
+		name = strings.TrimSpace(inputs.name)
+		if inputs.template != "" {
+			templateFlag = inputs.template
+		}
+	}
+
 	tmpl, err := scaffold.ParseTemplate(templateFlag)
 	if err != nil {
 		return err
 	}
 
-	name := ""
-	if len(args) >= 1 {
-		name = args[0]
-	}
 	if name == "" {
 		return fmt.Errorf("provide a project name: %s <name>", cmd.CommandPath())
 	}
@@ -159,9 +183,9 @@ init and copy the upstream files in manually.`)
 // full tree) followed by a numbered, template-tailored "Next steps" sequence.
 func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Template, destDir, abs string, written []string) {
 	// One scannable line: name, template, where, and how many files — no tree.
-	fmt.Fprintf(out, "✓ Created App %q (%s)  ·  %s/  ·  %d files\n", display, tmpl, destDir, len(written))
+	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Created App %q (%s)  ·  %s/  ·  %d files", display, tmpl, destDir, len(written))))
 
-	fmt.Fprintln(out, "\nNext steps:")
+	fmt.Fprintln(out, "\n"+ui.Bold("Next steps:"))
 	switch {
 	case tmpl.NeedsHarness():
 		// SDK/page-money apps render blank under plain `dev` (no host) — the
@@ -183,6 +207,55 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		fmt.Fprintf(out, "  1. cd %s              # then open index.html or serve the directory\n", destDir)
 		fmt.Fprintln(out, "  2. civitai app submit       # validate + submit for review")
 	}
+}
+
+// stdinIsTTY reports whether stdin is an interactive terminal. A package var so
+// tests can force it (huh needs a real TTY, so the non-interactive path must be
+// exercisable without one).
+var stdinIsTTY = func() bool { return term.IsTerminal(int(os.Stdin.Fd())) }
+
+// scaffoldInputs are the values the interactive prompt collects.
+type scaffoldInputs struct {
+	name     string
+	template string
+}
+
+// scaffoldPromptFn is the interactive collector. A package var so tests can stub
+// it (the real one runs a huh form, which needs a TTY).
+var scaffoldPromptFn = runScaffoldForm
+
+// runScaffoldForm runs the huh form that collects a missing app name + template.
+// defaultTemplate pre-selects the template (the command's default). The form
+// renders to stderr (status stream) and reads the command's stdin.
+func runScaffoldForm(cmd *cobra.Command, defaultTemplate string) (scaffoldInputs, error) {
+	in := scaffoldInputs{template: defaultTemplate}
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewInput().
+				Title("App name").
+				Description(`Free-form ("My Cool Block") — slugified for the blockId.`).
+				Value(&in.name).
+				Validate(func(s string) error {
+					if strings.TrimSpace(s) == "" {
+						return fmt.Errorf("a name is required")
+					}
+					return nil
+				}),
+			huh.NewSelect[string]().
+				Title("Template").
+				Options(
+					huh.NewOption("static — no-build page app (index.html + a tiny JS)", string(scaffold.Static)),
+					huh.NewOption("page-vite — Vite + React page app", string(scaffold.PageVite)),
+					huh.NewOption("page-money — Vite + React + TS SDK money-path app", string(scaffold.PageMoney)),
+				).
+				Value(&in.template),
+		),
+	).WithInput(cmd.InOrStdin()).WithOutput(cmd.ErrOrStderr())
+	if err := form.Run(); err != nil {
+		return in, err
+	}
+	in.name = strings.TrimSpace(in.name)
+	return in, nil
 }
 
 func joinLines(lines []string) string {

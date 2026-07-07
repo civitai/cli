@@ -8,6 +8,7 @@ import (
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -64,14 +65,14 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			}
 
 			// Preserve this first line verbatim (scripts + tests depend on it).
-			fmt.Fprintf(out, "Logged in as %s (id %d) at %s\n", id.Username, id.ID, cfg.BaseURL())
+			fmt.Fprintf(out, "Logged in as %s (id %d) at %s\n", ui.Bold(id.Username), id.ID, cfg.BaseURL())
 
 			// A short capability summary so the money-path dead end (an OAuth
 			// login can't spend) is visible BEFORE a dev:live run.
-			fmt.Fprintln(out, "\nCapabilities:")
+			fmt.Fprintln(out, "\n"+ui.Bold("Capabilities:"))
 			fmt.Fprintf(out, "  Credential type:          %s\n", id.CredentialType())
 			if !id.ScopeKnown() {
-				fmt.Fprintln(out, "  (token scope not reported by the server — capabilities unknown)")
+				fmt.Fprintln(out, "  "+ui.Dim("(token scope not reported by the server — capabilities unknown)"))
 				return nil
 			}
 			fmt.Fprintf(out, "  Read Buzz balance:        %s\n", yesNo(id.CanReadBuzz()))
@@ -84,7 +85,7 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			// The #34 dead end, made visible before dev:live: an OAuth login (or
 			// any credential without the AI-Services scope) can't spend.
 			if !id.CanSpendBuzz() {
-				fmt.Fprintln(out, "\nThis credential can't spend Buzz — money-path `dev:live` generation needs a")
+				fmt.Fprintln(out, "\n"+ui.Warn("This credential can't spend Buzz — money-path `dev:live` generation needs a"))
 				fmt.Fprintln(out, "full-scope personal API key: create one at https://civitai.com/user/account,")
 				fmt.Fprintln(out, "then `civitai login --token <key>`. (OAuth login can submit/withdraw but not spend.)")
 			}

@@ -12,16 +12,19 @@ import (
 	"os/signal"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
+	"github.com/charmbracelet/bubbles/spinner"
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/devtunnel"
 	"github.com/civitai/cli/internal/dnsprobe"
 	"github.com/civitai/cli/internal/manifest"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -87,9 +90,6 @@ const (
 	// two right after mint).
 	defaultDNSPendingGrace = 5 * time.Second
 )
-
-// spinnerFrames is the braille animation cycle for the TTY readiness indicator.
-var spinnerFrames = []rune{'⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'}
 
 // tunnelAPI is the subset of the API client the session core needs (seam for a
 // mock in tests).
@@ -372,7 +372,7 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 
 	// From here a server session exists — guarantee teardown on every path.
 	stop := func(reason string) {
-		fmt.Fprintf(d.errw, "\nTearing down dev tunnel (%s)…\n", reason)
+		fmt.Fprintf(d.errw, "\n%s\n", ui.Dim(fmt.Sprintf("Tearing down dev tunnel (%s)…", reason)))
 		// Use a fresh context so teardown still runs if ctx was canceled.
 		if _, serr := d.api.StopDevTunnel(context.Background(), sess.SessionID, ""); serr != nil {
 			fmt.Fprintf(d.errw, "warning: stopDevTunnel failed (the server reaper will reclaim it by %s): %v\n",
@@ -527,17 +527,17 @@ func localDialTargets(host string) string {
 // printTunnelReady prints the actionable "tunnel is up" block, with the
 // /apps/dev URL made prominent (it is the one thing the developer must open).
 func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, localHost string, port int) {
-	fmt.Fprintf(out, "\nDev tunnel ready — serving %s:%d as %s\n\n", localHostForDisplay(localHost), port, sess.Host)
+	fmt.Fprintf(out, "\nDev tunnel ready — serving %s:%d as %s\n\n", localHostForDisplay(localHost), port, ui.Bold(sess.Host))
 	fmt.Fprintf(out, "  ▶ Open this in your browser (you must be logged in):\n\n")
-	fmt.Fprintf(out, "      %s\n\n", sess.URL)
-	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on %s:%d.\n", localHostForDisplay(localHost), port)
+	fmt.Fprintf(out, "      %s\n\n", ui.URL(sess.URL))
+	fmt.Fprintf(out, "  Make sure your dev server is running (%s) on %s:%d.\n", ui.Code("npm run dev:tunnel"), localHostForDisplay(localHost), port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
 }
 
 // printTunnelReadyConfirmed is the ready path: the public host answered healthy,
 // so lead with a ✓ confirmation then the standard "open this" block.
 func printTunnelReadyConfirmed(out io.Writer, sess *api.DevTunnelSession, localHost string, port int) {
-	fmt.Fprintf(out, "\n✓ Ready — %s is reachable (local hop verified).\n", sess.Host)
+	fmt.Fprintf(out, "\n%s\n", ui.Success(fmt.Sprintf("Ready — %s is reachable (local hop verified).", sess.Host)))
 	printTunnelReady(out, sess, localHost, port)
 }
 
@@ -546,19 +546,20 @@ func printTunnelReadyConfirmed(out io.Writer, sess *api.DevTunnelSession, localH
 // propagation can still land shortly. Print the URL with a clear warning so the
 // dev knows to retry the browser in a moment rather than assume it's broken.
 func printTunnelReadyTimeout(out io.Writer, sess *api.DevTunnelSession, localHost string, port int, waited time.Duration) {
-	fmt.Fprintf(out, "\n⚠ %s isn't resolving/serving yet (waited %s).\n", sess.Host, waited)
+	fmt.Fprintf(out, "\n%s\n", ui.Warn(fmt.Sprintf("%s isn't resolving/serving yet (waited %s).", sess.Host, waited)))
 	fmt.Fprintf(out, "  This is usually just DNS + Cloudflare + route propagation — it can take a minute.\n")
 	fmt.Fprintf(out, "  The tunnel is UP; open the URL and retry in a bit if it NXDOMAINs / 404s / 502s:\n\n")
-	fmt.Fprintf(out, "      %s\n\n", sess.URL)
-	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on %s:%d.\n", localHostForDisplay(localHost), port)
+	fmt.Fprintf(out, "      %s\n\n", ui.URL(sess.URL))
+	fmt.Fprintf(out, "  Make sure your dev server is running (%s) on %s:%d.\n", ui.Code("npm run dev:tunnel"), localHostForDisplay(localHost), port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
 }
 
-// resolveReadyPollInterval / resolveNudgeAfter / resolveSpinnerInterval /
-// resolveQuietInterval apply the documented defaults when a dep leaves the value
-// unset (zero), so a zero-value deps set (e.g. a focused unit test) still behaves
-// sanely. (readyTimeout intentionally has NO resolver — 0 is the meaningful
-// "indefinite" value, not "unset".)
+// resolveReadyPollInterval / resolveNudgeAfter / resolveQuietInterval apply the
+// documented defaults when a dep leaves the value unset (zero), so a zero-value
+// deps set (e.g. a focused unit test) still behaves sanely. (readyTimeout
+// intentionally has NO resolver — 0 is the meaningful "indefinite" value, not
+// "unset". The TTY spinner cadence is owned by bubbles/spinner, so spinnerInterval
+// has no resolver either — the field is retained only for deps API compatibility.)
 func resolveReadyPollInterval(d tunnelSessionDeps) time.Duration {
 	if d.readyPollInterval > 0 {
 		return d.readyPollInterval
@@ -571,13 +572,6 @@ func resolveNudgeAfter(d tunnelSessionDeps) time.Duration {
 		return d.nudgeAfter
 	}
 	return defaultNudgeAfter
-}
-
-func resolveSpinnerInterval(d tunnelSessionDeps) time.Duration {
-	if d.spinnerInterval > 0 {
-		return d.spinnerInterval
-	}
-	return defaultSpinnerInterval
 }
 
 func resolveQuietInterval(d tunnelSessionDeps) time.Duration {
@@ -620,81 +614,124 @@ func fmtMMSS(d time.Duration) string {
 	return fmt.Sprintf("%d:%02d", total/60, total%60)
 }
 
-// waitForTunnelReachable polls the PUBLIC tunnel host until it starts serving
-// (d.probePublic reports ready), showing a live progress indicator on d.errw. By
-// DEFAULT (readyTimeout == 0) it waits INDEFINITELY — until ready, Ctrl-C, or the
-// tunnel drops; a POSITIVE readyTimeout re-imposes a non-fatal cap.
+// waitForTunnelReachable polls the PUBLIC tunnel host until it starts serving,
+// showing a live progress indicator on d.errw. By DEFAULT (readyTimeout == 0) it
+// waits INDEFINITELY — until ready, Ctrl-C, or the tunnel drops; a POSITIVE
+// readyTimeout re-imposes a non-fatal cap.
+//
+// Each probe checks the GATE (probePublic) and, when the gate is reachable and a
+// probeLocalHop is wired, the LOCAL HOP (a subresource-shaped request the gate
+// forwards to sish → the local dev server). FULL readiness = gate reachable AND the
+// local hop is not a bad-gateway (or no local-hop probe wired). The indicator has
+// three states — "waiting for <host> to come up", "waiting for DNS to publish" (DoH
+// says the record isn't published yet, after a short grace), and "tunnel up —
+// waiting for your local dev server" (gate up but the hop 502s) — plus a clear,
+// rate-limited local-unreachable notice.
 //
 // The indicator degrades by destination:
-//   - TTY (d.errw is a terminal): a braille spinner that rewrites ONE line in place
-//     via \r, advancing every spinnerInterval, showing elapsed M:SS. Cleared before
-//     any other block (nudge / ready / abort) is printed.
-//   - non-TTY (piped/CI/tests): NO \r/animation — a quiet, greppable heartbeat line
-//     at most every quietInterval ("  … still waiting for <host> (M:SS)").
+//   - TTY (d.errw is a terminal): a bubbletea + bubbles/spinner program
+//     (waitTunnelTTY) renders those states as a live spinner.
+//   - non-TTY (piped/CI/tests): NO animation — a quiet, greppable heartbeat line at
+//     most every quietInterval (waitTunnelQuiet). This is the path all the
+//     readiness-wait unit tests drive, so its behavior + the (ready, reason) exit
+//     contract are load-bearing. bubbletea NEVER runs on a non-TTY writer.
 //
-// Each probe runs in its own goroutine on a cancelable context, so an abort
-// (signal / tunnel-close / ctx) returns PROMPTLY even mid-probe (the in-flight
-// probe's context is canceled rather than riding out its ~8s HTTP timeout).
-//
-// After nudgeAfter it prints a one-time "taking longer than usual" nudge (with the
-// URL) and keeps waiting.
+// Each probe runs on a cancelable context, so an abort (signal / tunnel-close /
+// ctx) returns PROMPTLY even mid-probe. After nudgeAfter a one-time "taking longer
+// than usual" nudge (with the URL) prints and the wait keeps going.
 //
 // Returns:
-//   - (true, "")           the host became reachable — print the ready block.
-//   - (false, "")          a positive readyTimeout cap elapsed (NON-fatal) — print
-//     the URL with a "not up yet" warning and keep the tunnel.
-//   - (false, <reason>)    the dev aborted (Ctrl-C / ctx canceled) or the tunnel
-//     dropped mid-wait — the caller tears the session down with <reason>.
+//   - (true, "")        the host became reachable (local hop verified) — ready block.
+//   - (false, "")       a positive readyTimeout cap elapsed (NON-fatal).
+//   - (false, <reason>) the dev aborted (Ctrl-C / ctx) or the tunnel dropped.
 //
 // A nil d.probePublic disables the wait (returns ready immediately).
 func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, host, tunnelURL string) (bool, string) {
 	if d.probePublic == nil {
 		return true, ""
 	}
+	if writerIsTTY(d.errw) {
+		return waitTunnelTTY(ctx, d, tunnel, host, tunnelURL)
+	}
+	return waitTunnelQuiet(ctx, d, tunnel, host, tunnelURL)
+}
+
+// tunnelProbeResult is one combined gate+local-hop readiness probe outcome. Shared
+// by both the quiet loop and the bubbletea model so the readiness decision + state
+// classification are computed identically on both paths.
+type tunnelProbeResult struct {
+	gateReady    bool
+	localHopDone bool // the local-hop probe returned a definitive status (err==nil)
+	localOK      bool // the local hop responded non-bad-gateway
+	detail       string
+	err          error
+}
+
+// runTunnelReadinessProbe runs the gate probe and, when the gate is reachable and a
+// probeLocalHop is wired, the local-hop probe, folding both into a tunnelProbeResult.
+// A local-hop transport error (lerr != nil) is left inconclusive (localHopDone=false)
+// so it is re-probed, not reported as local-unreachable.
+func runTunnelReadinessProbe(pctx context.Context, d tunnelSessionDeps, host string) tunnelProbeResult {
+	gateReady, detail, err := d.probePublic(pctx, host)
+	res := tunnelProbeResult{gateReady: gateReady, detail: detail, err: err}
+	if gateReady && d.probeLocalHop != nil {
+		ok, ldetail, lerr := d.probeLocalHop(pctx, host)
+		if lerr == nil {
+			res.localHopDone = true
+			res.localOK = ok
+			res.detail = ldetail
+		}
+	}
+	return res
+}
+
+// tunnelProbeReady reports FULL readiness: the gate is reachable AND the local hop
+// is not a bad-gateway (or no local-hop probe is wired). This is the core fix —
+// gate-only readiness (200/401/403) declared "ready" while the local dev server was
+// dead behind sish → the browser silently 502'd.
+func tunnelProbeReady(d tunnelSessionDeps, res tunnelProbeResult) bool {
+	return res.gateReady && (d.probeLocalHop == nil || res.localOK)
+}
+
+// classifyNotReady maps a NOT-ready probe result to the two indicator flags:
+// localHopDown (gate reachable but the local hop returned a bad-gateway) takes
+// precedence; otherwise dnsPending is set when DoH reports the record isn't
+// published yet. Shared by the quiet loop and the bubbletea model.
+func classifyNotReady(res tunnelProbeResult) (localHopDown, dnsPending bool) {
+	if res.gateReady && res.localHopDone && !res.localOK {
+		return true, false
+	}
+	return false, isDNSPending(res.detail, res.err)
+}
+
+// printTunnelNudge writes the one-time "taking longer than usual" block (with the
+// URL). Shared by the quiet loop; the TTY path renders the same wording above the
+// spinner via tea.Printf.
+func printTunnelNudge(w io.Writer, tunnelURL string) {
+	fmt.Fprintf(w, "! Taking longer than usual. The tunnel IS live — you can try opening the URL now,\n")
+	fmt.Fprintf(w, "  or keep waiting. (Ctrl-C to tear down.)\n\n")
+	fmt.Fprintf(w, "      %s\n\n", tunnelURL)
+}
+
+// waitTunnelQuiet is the non-TTY readiness wait: a select loop that re-probes on a
+// cancelable context and emits a quiet, greppable heartbeat at most every
+// quietInterval (NOT one line per probe). No animation. It surfaces all three
+// states — generic "still waiting", DNS-pending, and "tunnel up; waiting for your
+// local dev server" — plus the rate-limited local-unreachable notice. This is the
+// path all the readiness-wait unit tests drive; its behavior + the (ready, reason)
+// exit contract are load-bearing.
+func waitTunnelQuiet(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, host, tunnelURL string) (bool, string) {
 	interval := resolveReadyPollInterval(d)
-	tty := writerIsTTY(d.errw)
 	start := time.Now()
 
-	// A single reusable probe goroutine + buffered result channel. Only one probe is
-	// ever outstanding, so a cap-1 channel means the goroutine never blocks on send
-	// after we've returned (no goroutine leak).
-	//
-	// Each probe first checks the GATE (probePublic). If the gate is reachable AND a
-	// probeLocalHop is wired, it then checks the LOCAL HOP (a subresource-shaped
-	// request that the forwardAuth gate forwards to sish → the local dev server):
-	//   - gateReady=false                 → propagation not done; keep waiting.
-	//   - gateReady + localHopDone+localOK → the FULL path works → ready.
-	//   - gateReady + localHopDone+!localOK→ tunnel up but LOCAL server unreachable
-	//     (502/503/504): surface the clear notice, keep waiting (NOT ready).
-	//   - gateReady + !localHopDone        → local-hop probe errored transiently
-	//     (or no probeLocalHop wired → treated as OK): re-probe.
-	type probeResult struct {
-		gateReady    bool
-		localHopDone bool // the local-hop probe returned a definitive status (err==nil)
-		localOK      bool // the local hop responded non-bad-gateway
-		detail       string
-		err          error
-	}
-	resultCh := make(chan probeResult, 1)
+	// One reusable probe goroutine + a cap-1 result channel (only one probe is ever
+	// outstanding, so the goroutine never blocks on send after we've returned).
+	resultCh := make(chan tunnelProbeResult, 1)
 	var probeCancel context.CancelFunc
 	startProbe := func() {
 		pctx, cancel := context.WithCancel(ctx)
 		probeCancel = cancel
-		go func() {
-			gateReady, detail, err := d.probePublic(pctx, host)
-			res := probeResult{gateReady: gateReady, detail: detail, err: err}
-			if gateReady && d.probeLocalHop != nil {
-				ok, ldetail, lerr := d.probeLocalHop(pctx, host)
-				if lerr == nil {
-					res.localHopDone = true
-					res.localOK = ok
-					res.detail = ldetail
-				}
-				// A local-hop transport error (lerr != nil) is left inconclusive
-				// (localHopDone=false) → re-probed, not reported as local-unreachable.
-			}
-			resultCh <- res
-		}()
+		go func() { resultCh <- runTunnelReadinessProbe(pctx, d, host) }()
 	}
 	cancelProbe := func() {
 		if probeCancel != nil {
@@ -703,52 +740,17 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 		}
 	}
 
-	// Progress-indicator state (TTY only tracks lastLen so it can clear its line).
-	// localHopDown is set once the gate is reachable but the local hop 502s, so the
-	// indicator switches from "waiting for the host" to "waiting for your local dev
-	// server" — the actionable state.
-	frame := 0
-	lastLen := 0
+	// Indicator state. localHopDown = gate reachable but the local hop 502s;
+	// dnsPending = DoH authoritatively reports the host isn't published yet (shown
+	// only after a short grace so a single first-probe NXDOMAIN doesn't flip it).
 	localHopDown := false
-	// dnsPending is set once DoH AUTHORITATIVELY reports the tunnel host isn't
-	// published yet (external-dns + Cloudflare haven't propagated the record). It
-	// switches the indicator to the DNS-specific line — but only after a short
-	// grace period, so a single first-probe NXDOMAIN doesn't flip the message
-	// instantly.
 	dnsPending := false
 	dnsGrace := resolveDNSPendingGrace(d)
 	showDNSPending := func() bool { return dnsPending && time.Since(start) >= dnsGrace }
 	localTarget := fmt.Sprintf("%s:%d", localHostForDisplay(d.localHost), d.port)
-	renderSpinner := func() {
-		if !tty {
-			return
-		}
-		var line string
-		switch {
-		case localHopDown:
-			line = fmt.Sprintf("%c Tunnel up — waiting for your local dev server on %s… %s elapsed",
-				spinnerFrames[frame%len(spinnerFrames)], localTarget, fmtMMSS(time.Since(start)))
-		case showDNSPending():
-			line = fmt.Sprintf("%c Waiting for DNS to publish for %s (external-dns + Cloudflare, usually <1 min)… %s elapsed",
-				spinnerFrames[frame%len(spinnerFrames)], host, fmtMMSS(time.Since(start)))
-		default:
-			line = fmt.Sprintf("%c Waiting for %s to come up… %s elapsed",
-				spinnerFrames[frame%len(spinnerFrames)], host, fmtMMSS(time.Since(start)))
-		}
-		fmt.Fprintf(d.errw, "\r%s", line)
-		lastLen = utf8.RuneCountInString(line)
-	}
-	clearLine := func() {
-		if tty && lastLen > 0 {
-			fmt.Fprintf(d.errw, "\r%s\r", strings.Repeat(" ", lastLen))
-			lastLen = 0
-		}
-	}
 
-	// localUnreachableNotice prints the CLEAR, persistent "tunnel up but local dev
-	// server unreachable" guidance, rate-limited to at most every
-	// localHopNoticeInterval so a stuck local hop is surfaced repeatedly without
-	// one line per poll. On a TTY it clears the spinner line first, then repaints.
+	// localUnreachableNotice prints the clear, persistent "tunnel up but local dev
+	// server unreachable" guidance, rate-limited to at most every localHopNoticeInterval.
 	lastLocalNotice := time.Time{}
 	localNoticeEvery := resolveLocalHopNoticeInterval(d)
 	localUnreachableNotice := func() {
@@ -757,21 +759,12 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 			return
 		}
 		lastLocalNotice = now
-		clearLine()
 		fmt.Fprintf(d.errw, "⚠ Tunnel is up, but your local dev server on %s is unreachable through the tunnel\n", localTarget)
 		fmt.Fprintf(d.errw, "  — is it running, and is --local-host correct? (currently %q)\n", localHostForDisplay(d.localHost))
-		if tty {
-			renderSpinner()
-		}
 	}
 
-	// UI ticker: fast spinner frames on a TTY, slow heartbeat otherwise.
-	uiEvery := resolveSpinnerInterval(d)
-	if !tty {
-		uiEvery = resolveQuietInterval(d)
-	}
-	ui := time.NewTicker(uiEvery)
-	defer ui.Stop()
+	heartbeat := time.NewTicker(resolveQuietInterval(d))
+	defer heartbeat.Stop()
 
 	// Optional cap (only when readyTimeout > 0). A nil channel never fires, giving
 	// the indefinite default.
@@ -782,52 +775,38 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 		deadlineC = dt.C
 	}
 
-	// One-time nudge timer.
 	nudge := time.NewTimer(resolveNudgeAfter(d))
 	defer nudge.Stop()
 
-	// Scheduler for the NEXT probe after a not-ready result. Start it stopped/drained
-	// — the first probe is kicked immediately below.
+	// Scheduler for the NEXT probe after a not-ready result. Start it stopped/drained.
 	schedule := time.NewTimer(0)
 	if !schedule.Stop() {
 		<-schedule.C
 	}
 	defer schedule.Stop()
 
-	startProbe()    // probe immediately
-	renderSpinner() // paint the initial spinner frame on a TTY
+	startProbe()
 
 	for {
 		select {
 		case <-d.signals:
 			cancelProbe()
-			clearLine()
 			return false, "interrupt"
 		case <-ctx.Done():
 			cancelProbe()
-			clearLine()
 			return false, "canceled"
 		case <-tunnel.Done():
 			cancelProbe()
-			clearLine()
 			return false, "tunnel closed"
 		case <-deadlineC:
 			cancelProbe()
-			clearLine()
 			return false, "" // positive-cap timeout — non-fatal
 		case <-nudge.C:
 			// Fire exactly once (the timer is one-shot; this arm is only reachable the
-			// first time). Clear the spinner, print the nudge block, resume the spinner.
-			clearLine()
-			fmt.Fprintf(d.errw, "! Taking longer than usual. The tunnel IS live — you can try opening the URL now,\n")
-			fmt.Fprintf(d.errw, "  or keep waiting. (Ctrl-C to tear down.)\n\n")
-			fmt.Fprintf(d.errw, "      %s\n\n", tunnelURL)
-			renderSpinner()
-		case <-ui.C:
+			// first time).
+			printTunnelNudge(d.errw, tunnelURL)
+		case <-heartbeat.C:
 			switch {
-			case tty:
-				frame++
-				renderSpinner()
 			case localHopDown:
 				fmt.Fprintf(d.errw, "  … tunnel up; still waiting for your local dev server on %s (%s)\n", localTarget, fmtMMSS(time.Since(start)))
 			case showDNSPending():
@@ -836,41 +815,276 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 				fmt.Fprintf(d.errw, "  … still waiting for %s (%s)\n", host, fmtMMSS(time.Since(start)))
 			}
 		case res := <-resultCh:
-			// The probe returned — cancel its context (release resources) rather than
-			// dropping the CancelFunc, honoring the always-call-cancel contract (a no-op
-			// on the completed ctx today, but leak-safe if a cancelable parent is ever
-			// threaded through runTunnelSession).
 			cancelProbe()
-			// FULLY ready only when the gate is reachable AND the local hop is not a
-			// bad-gateway (or no local-hop probe is wired). This is the fix: gate-only
-			// readiness (200/401/403) declared "ready" while the local dev server was
-			// dead behind sish → the browser silently 502'd.
-			if res.gateReady && (d.probeLocalHop == nil || res.localOK) {
-				clearLine()
+			if tunnelProbeReady(d, res) {
 				return true, ""
 			}
-			if res.gateReady && res.localHopDone && !res.localOK {
-				// Tunnel/gate up, but the local hop 502s — the local dev server is
-				// unreachable through the tunnel. Surface the clear, persistent notice
-				// and KEEP waiting (don't declare ready, don't hang silently).
-				localHopDown = true
-				dnsPending = false
+			localHopDown, dnsPending = classifyNotReady(res)
+			if localHopDown {
 				localUnreachableNotice()
-			} else {
-				// Gate not up yet (or the local-hop probe was inconclusive) — back to
-				// the plain "waiting for the host" indicator. If DoH reports the record
-				// isn't published yet, switch to the DNS-specific indicator (after the
-				// grace period) so "DNS not up" reads differently from "route not built".
-				localHopDown = false
-				dnsPending = isDNSPending(res.detail, res.err)
 			}
-			// Not ready — re-probe after the poll interval. (The detail/err is folded
-			// into the indicator, not spammed per-attempt.)
 			schedule.Reset(interval)
 		case <-schedule.C:
 			startProbe()
 		}
 	}
+}
+
+// ── TTY readiness wait (bubbletea + bubbles/spinner) ─────────────────────────
+
+// probeResultMsg carries a completed combined readiness probe into the model.
+type probeResultMsg struct{ res tunnelProbeResult }
+
+// reprobeMsg fires after the poll interval to kick the next probe.
+type reprobeMsg struct{}
+
+// tunnelAbortMsg ends the wait with a teardown reason (interrupt / canceled /
+// tunnel closed).
+type tunnelAbortMsg struct{ reason string }
+
+// tunnelDeadlineMsg fires when a POSITIVE readyTimeout cap elapses (non-fatal).
+type tunnelDeadlineMsg struct{}
+
+// tunnelNudgeMsg fires once after nudgeAfter.
+type tunnelNudgeMsg struct{}
+
+// tunnelWaitModel is the bubbletea model for the TTY readiness wait. It drives the
+// SAME gate+local-hop probe machinery + state classification as waitTunnelQuiet,
+// rendered as a live spinner. Pointer receiver so it retains the in-flight probe's
+// cancel func across Update calls (to cancel it promptly on abort — snappy Ctrl-C).
+type tunnelWaitModel struct {
+	ctx       context.Context
+	d         tunnelSessionDeps
+	tunnel    devtunnel.Tunnel
+	host      string
+	tunnelURL string
+	interval  time.Duration
+	start     time.Time
+	sp        spinner.Model
+
+	localTarget string
+	dnsGrace    time.Duration
+
+	probeCancel      context.CancelFunc
+	nudged           bool
+	localHopDown     bool
+	dnsPending       bool
+	lastLocalNotice  time.Time
+	localNoticeEvery time.Duration
+
+	// outcome (read after the program exits).
+	ready  bool
+	reason string
+}
+
+// Init starts the spinner, the first probe, the one-shot nudge, and (when a
+// positive cap is set) the deadline. The abort SOURCES (signals / ctx / tunnel) are
+// NOT started here as fire-and-forget tea.Cmds — bubbletea never cancels a command
+// goroutine on Quit, so a tea.Cmd parked reading the send-based, never-closed
+// d.signals channel would survive the wait and STEAL the next SIGINT/SIGTERM from
+// runTunnelSession's serving loop. Instead waitTunnelTTY owns those watchers on a
+// WaitGroup and joins them before returning (see startTunnelWaitWatchers).
+func (m *tunnelWaitModel) Init() tea.Cmd {
+	cmds := []tea.Cmd{m.sp.Tick, m.nudgeCmd(), m.startProbe()}
+	if m.d.readyTimeout > 0 {
+		cmds = append(cmds, m.deadlineCmd())
+	}
+	return tea.Batch(cmds...)
+}
+
+// startProbe stores a fresh cancelable context for the in-flight probe and returns
+// the command that runs the combined gate+local-hop probe.
+func (m *tunnelWaitModel) startProbe() tea.Cmd {
+	pctx, cancel := context.WithCancel(m.ctx)
+	m.probeCancel = cancel
+	d := m.d
+	host := m.host
+	return func() tea.Msg { return probeResultMsg{res: runTunnelReadinessProbe(pctx, d, host)} }
+}
+
+func (m *tunnelWaitModel) cancelProbe() {
+	if m.probeCancel != nil {
+		m.probeCancel()
+		m.probeCancel = nil
+	}
+}
+
+func (m *tunnelWaitModel) deadlineCmd() tea.Cmd {
+	return tea.Tick(m.d.readyTimeout, func(time.Time) tea.Msg { return tunnelDeadlineMsg{} })
+}
+
+func (m *tunnelWaitModel) nudgeCmd() tea.Cmd {
+	return tea.Tick(resolveNudgeAfter(m.d), func(time.Time) tea.Msg { return tunnelNudgeMsg{} })
+}
+
+// maybeLocalNotice returns a rate-limited tea.Printf command that renders the clear
+// "local dev server unreachable" guidance ABOVE the spinner, or nil if the last
+// notice was too recent.
+func (m *tunnelWaitModel) maybeLocalNotice() tea.Cmd {
+	now := time.Now()
+	if !m.lastLocalNotice.IsZero() && now.Sub(m.lastLocalNotice) < m.localNoticeEvery {
+		return nil
+	}
+	m.lastLocalNotice = now
+	return tea.Printf("⚠ Tunnel is up, but your local dev server on %s is unreachable through the tunnel\n  — is it running, and is --local-host correct? (currently %q)",
+		m.localTarget, localHostForDisplay(m.d.localHost))
+}
+
+func (m *tunnelWaitModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.Type == tea.KeyCtrlC {
+			m.cancelProbe()
+			m.ready, m.reason = false, "interrupt"
+			return m, tea.Quit
+		}
+		return m, nil
+	case tunnelAbortMsg:
+		m.cancelProbe()
+		m.ready, m.reason = false, msg.reason
+		return m, tea.Quit
+	case tunnelDeadlineMsg:
+		// Positive-cap timeout — NON-fatal: (false, "").
+		m.cancelProbe()
+		m.ready, m.reason = false, ""
+		return m, tea.Quit
+	case tunnelNudgeMsg:
+		if m.nudged {
+			return m, nil
+		}
+		m.nudged = true
+		// tea.Printf renders ABOVE the spinner without corrupting it.
+		return m, tea.Printf("! Taking longer than usual. The tunnel IS live — you can try opening the URL now,\n  or keep waiting. (Ctrl-C to tear down.)\n\n      %s\n", m.tunnelURL)
+	case probeResultMsg:
+		m.cancelProbe()
+		if tunnelProbeReady(m.d, msg.res) {
+			m.ready, m.reason = true, ""
+			return m, tea.Quit
+		}
+		var cmds []tea.Cmd
+		m.localHopDown, m.dnsPending = classifyNotReady(msg.res)
+		if m.localHopDown {
+			if c := m.maybeLocalNotice(); c != nil {
+				cmds = append(cmds, c)
+			}
+		}
+		// Not ready — re-probe after the poll interval.
+		cmds = append(cmds, tea.Tick(m.interval, func(time.Time) tea.Msg { return reprobeMsg{} }))
+		return m, tea.Batch(cmds...)
+	case reprobeMsg:
+		return m, m.startProbe()
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		m.sp, cmd = m.sp.Update(msg)
+		return m, cmd
+	default:
+		return m, nil
+	}
+}
+
+func (m *tunnelWaitModel) View() string {
+	elapsed := fmtMMSS(time.Since(m.start))
+	switch {
+	case m.localHopDown:
+		return fmt.Sprintf("%s Tunnel up — waiting for your local dev server on %s… %s elapsed", m.sp.View(), m.localTarget, elapsed)
+	case m.dnsPending && time.Since(m.start) >= m.dnsGrace:
+		return fmt.Sprintf("%s Waiting for DNS to publish for %s (external-dns + Cloudflare, usually <1 min)… %s elapsed", m.sp.View(), m.host, elapsed)
+	default:
+		return fmt.Sprintf("%s Waiting for %s to come up… %s elapsed", m.sp.View(), m.host, elapsed)
+	}
+}
+
+// startTunnelWaitWatchers launches STOPPABLE goroutines that watch the abort
+// sources (signals / ctx / tunnel) and feed the program the corresponding abort
+// message via send (p.Send in production). It returns a stop func that closes the
+// quit channel AND joins every watcher, GUARANTEEING none survives the wait — in
+// particular, that no goroutine is left reading the send-based, single-receiver
+// d.signals channel (which would otherwise steal the next signal from the caller's
+// serving loop). watchCtx/watchTunnel are close-broadcast and would be benign leaks,
+// but are joined too for tidiness + determinism.
+//
+// send may be called after the program has finished (a delivered abort racing the
+// program's own Quit) — p.Send is a no-op once the program's context is done, so
+// that is safe.
+func startTunnelWaitWatchers(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, send func(tea.Msg)) (stop func()) {
+	quit := make(chan struct{})
+	var wg sync.WaitGroup
+
+	watch := func(fn func()) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn()
+		}()
+	}
+
+	// Signals: the ONLY send-based single-receiver source — MUST stop reading
+	// d.signals when the wait ends so a later SIGINT/SIGTERM reaches the caller.
+	if d.signals != nil {
+		sig := d.signals
+		watch(func() {
+			select {
+			case <-sig:
+				send(tunnelAbortMsg{reason: "interrupt"})
+			case <-quit:
+			}
+		})
+	}
+	// Ctx cancellation (close-broadcast).
+	watch(func() {
+		select {
+		case <-ctx.Done():
+			send(tunnelAbortMsg{reason: "canceled"})
+		case <-quit:
+		}
+	})
+	// Tunnel drop (close-broadcast).
+	done := tunnel.Done()
+	watch(func() {
+		select {
+		case <-done:
+			send(tunnelAbortMsg{reason: "tunnel closed"})
+		case <-quit:
+		}
+	})
+
+	return func() {
+		close(quit)
+		wg.Wait()
+	}
+}
+
+// waitTunnelTTY runs the bubbletea readiness spinner and returns the same
+// (ready, reason) contract as waitTunnelQuiet. Only reached when d.errw is a real
+// TTY, so it cannot run under the buffer-driven tests.
+func waitTunnelTTY(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.Tunnel, host, tunnelURL string) (bool, string) {
+	m := &tunnelWaitModel{
+		ctx:              ctx,
+		d:                d,
+		tunnel:           tunnel,
+		host:             host,
+		tunnelURL:        tunnelURL,
+		interval:         resolveReadyPollInterval(d),
+		start:            time.Now(),
+		sp:               ui.Spinner(),
+		localTarget:      fmt.Sprintf("%s:%d", localHostForDisplay(d.localHost), d.port),
+		dnsGrace:         resolveDNSPendingGrace(d),
+		localNoticeEvery: resolveLocalHopNoticeInterval(d),
+	}
+	// Render to errw (status stream). WithoutSignalHandler so OUR reason strings
+	// win — Ctrl-C is handled as KeyCtrlC, SIGTERM via the injected signals chan.
+	p := tea.NewProgram(m, tea.WithOutput(d.errw), tea.WithoutSignalHandler())
+	// Own the abort-source watchers so NONE survives this function (esp. the
+	// d.signals reader) — join them before returning.
+	stop := startTunnelWaitWatchers(ctx, d, tunnel, p.Send)
+	_, err := p.Run()
+	stop()
+	if err != nil {
+		// A bubbletea failure shouldn't strand the session — treat it as ready so the
+		// caller prints the URL rather than tearing down (the tunnel is bound regardless).
+		return true, ""
+	}
+	return m.ready, m.reason
 }
 
 // devTunnelResolver is the DoH resolver the readiness probes use to resolve the
