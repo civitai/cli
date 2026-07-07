@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -204,7 +205,7 @@ func baseDeps(t *testing.T, apiStub *fakeTunnelAPI, dialer *fakeDialer, timer *f
 	var out, errw strings.Builder
 	return tunnelSessionDeps{
 		api:        apiStub,
-		probeLocal: func(int) error { return nil }, // no-op: local dev server "up"
+		probeLocal: func(string, int) error { return nil }, // no-op: local dev server "up"
 		// probePublic left nil by default → the readiness wait treats the host as
 		// immediately reachable, so lifecycle tests that don't care about the wait are
 		// unaffected. Tests exercising the wait set it explicitly.
@@ -223,6 +224,7 @@ func baseDeps(t *testing.T, apiStub *fakeTunnelAPI, dialer *fakeDialer, timer *f
 		readyTimeout:      100 * time.Millisecond,
 		readyPollInterval: time.Millisecond,
 		nudgeAfter:        time.Hour,
+		spinnerInterval:   10 * time.Millisecond,
 		quietInterval:     time.Hour,
 		newTimer:          func(time.Duration) devtunnel.Timer { return timer },
 		signals:           sigs,
@@ -636,7 +638,7 @@ func TestRunTunnelSessionProbeError(t *testing.T) {
 	dialer := &fakeDialer{tunnel: newFakeTunnel()}
 	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), make(chan os.Signal))
 	probeErr := errors.New("no local dev server is listening on 127.0.0.1:5186")
-	deps.probeLocal = func(port int) error {
+	deps.probeLocal = func(host string, port int) error {
 		if port != 5186 {
 			t.Errorf("probe got port %d, want the session port 5186", port)
 		}
@@ -1223,6 +1225,302 @@ func waitForOutput(t *testing.T, buf *syncBuffer, want string, errc <-chan error
 		default:
 			time.Sleep(time.Millisecond)
 		}
+	}
+}
+
+// ── --local-host + local-hop readiness tests ─────────────────────────────────
+
+// TestRunTunnelSessionThreadsLocalHost: a set localHost reaches BOTH the pre-flight
+// probe AND the tunnel proxy (the DialOptions), so the two agree on where the
+// local dev server lives.
+func TestRunTunnelSessionThreadsLocalHost(t *testing.T) {
+	apiStub := &fakeTunnelAPI{startResult: sampleSession()}
+	tunnel := newFakeTunnel()
+	dialer := &fakeDialer{tunnel: tunnel}
+	timer := newFakeTimer()
+	sigs := make(chan os.Signal, 1)
+
+	deps := baseDeps(t, apiStub, dialer, timer, sigs)
+	deps.localHost = "10.42.0.100"
+	var gotProbeHost string
+	deps.probeLocal = func(host string, port int) error {
+		gotProbeHost = host
+		if port != 5186 {
+			t.Errorf("probe port = %d, want 5186", port)
+		}
+		return nil
+	}
+
+	errc := runInBackground(deps)
+	sigs <- os.Interrupt
+	<-errc
+
+	if gotProbeHost != "10.42.0.100" {
+		t.Errorf("pre-flight probe got host %q, want the --local-host value", gotProbeHost)
+	}
+	if dialer.lastOpt.LocalHost != "10.42.0.100" {
+		t.Errorf("dial LocalHost = %q, want the --local-host value threaded to the proxy", dialer.lastOpt.LocalHost)
+	}
+}
+
+// TestRunTunnelSessionDefaultLocalHostViaCommand: the --local-host flag defaults to
+// "localhost" (loopback), preserving the pre-flag behavior, and threads that
+// default all the way to the dialer.
+func TestRunTunnelSessionDefaultLocalHostViaCommand(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == startDevTunnelRoute {
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"username": "tester", "id": 7})
+	}))
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	port := listenLocal(t)
+	// No --local-host given → the pre-flight probe must still pass against the
+	// loopback listener (default "localhost"), so we get PAST the probe to the
+	// (expected pre-GA) forbidden mint — never a "no local dev server" error.
+	_, _, err := run(t, "app", "dev-tunnel", "my-block", "--port", fmt.Sprint(port))
+	if err == nil {
+		t.Fatal("expected a forbidden mint error (flag dark)")
+	}
+	if strings.Contains(err.Error(), "no local dev server") {
+		t.Fatalf("default localhost probe must reach the loopback listener, got: %v", err)
+	}
+}
+
+// TestRunTunnelSessionLocalHostFlagPreflightUsesHost: an explicit --local-host that
+// points nowhere fails the pre-flight probe with a message naming the host + the
+// --local-host flag (so a wrong host is actionable), and NEVER mints.
+func TestRunTunnelSessionLocalHostFlagPreflightUsesHost(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+
+	// 192.0.2.1 is TEST-NET-1 (RFC 5737) — guaranteed unreachable, so the probe
+	// fails deterministically without minting. A short dial timeout keeps it fast
+	// (the production probe uses 2s).
+	_, _, err := run(t, "app", "dev-tunnel", "my-block", "--local-host", "192.0.2.1", "--port", "5186")
+	if err == nil {
+		t.Fatal("expected a pre-flight failure against an unreachable --local-host")
+	}
+	if !strings.Contains(err.Error(), "192.0.2.1") || !strings.Contains(err.Error(), "--local-host") {
+		t.Errorf("pre-flight error should name the host + --local-host: %v", err)
+	}
+}
+
+// TestLocalHopReachable: only the bad-gateway family (502/503/504) means the tunnel
+// is up but the local dev server is unreachable; every other status means the local
+// server responded (the hop works).
+func TestLocalHopReachable(t *testing.T) {
+	unreachable := []int{502, 503, 504}
+	reachable := []int{200, 201, 204, 301, 400, 401, 403, 404, 429, 500}
+	for _, c := range unreachable {
+		if localHopReachable(c) {
+			t.Errorf("status %d should mean LOCAL UNREACHABLE (bad gateway)", c)
+		}
+	}
+	for _, c := range reachable {
+		if !localHopReachable(c) {
+			t.Errorf("status %d should mean the local hop RESPONDED (reachable)", c)
+		}
+	}
+}
+
+// TestProbeLocalHopURLClassification: exercise probeLocalHopURL against a real
+// httptest server — 502/503/504 → not reachable, others → reachable — and assert
+// the subresource-shaped Sec-Fetch-Dest header is sent (so the gate forwards it to
+// the backend rather than demanding a token).
+func TestProbeLocalHopURLClassification(t *testing.T) {
+	cases := []struct {
+		code      int
+		reachable bool
+	}{
+		{200, true}, {404, true}, {401, true}, {403, true}, {500, true},
+		{502, false}, {503, false}, {504, false},
+	}
+	for _, tc := range cases {
+		t.Run(fmt.Sprintf("http_%d", tc.code), func(t *testing.T) {
+			var gotDest string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotDest = r.Header.Get("Sec-Fetch-Dest")
+				w.WriteHeader(tc.code)
+			}))
+			defer srv.Close()
+
+			reachable, detail, err := probeLocalHopURL(context.Background(), srv.Client(), srv.URL+"/")
+			if err != nil {
+				t.Fatalf("unexpected transport error for %d: %v", tc.code, err)
+			}
+			if reachable != tc.reachable {
+				t.Errorf("status %d: reachable=%v, want %v", tc.code, reachable, tc.reachable)
+			}
+			if want := fmt.Sprintf("http %d", tc.code); detail != want {
+				t.Errorf("detail = %q, want %q", detail, want)
+			}
+			// The gate forwards NON-entry Sec-Fetch-Dest to the backend; "image" is a
+			// subresource dest (NOT document/iframe/frame/nested-document/absent).
+			if gotDest != "image" {
+				t.Errorf("local-hop probe must send a subresource Sec-Fetch-Dest (image), got %q", gotDest)
+			}
+		})
+	}
+}
+
+// TestProbeLocalHopURLUnreachable: a transport error (closed port) is returned as
+// an error (not a false "reachable") so the wait treats it as inconclusive, not as
+// a local-server-down signal.
+func TestProbeLocalHopURLUnreachable(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	closedURL := srv.URL
+	srv.Close()
+
+	client := &http.Client{Timeout: time.Second}
+	reachable, _, err := probeLocalHopURL(context.Background(), client, closedURL+"/")
+	if err == nil {
+		t.Fatal("expected a transport error against a closed port")
+	}
+	if reachable {
+		t.Error("a transport error must not report the local hop as reachable")
+	}
+}
+
+// TestWaitForTunnelReachableReadyRequiresLocalHop: with a probeLocalHop wired, the
+// wait declares ready ONLY when the gate is reachable AND the local hop is not a
+// bad-gateway — the core fix (gate-only readiness masked a dead local server).
+func TestWaitForTunnelReachableReadyRequiresLocalHop(t *testing.T) {
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), make(chan os.Signal))
+	var errw syncBuffer
+	deps.errw = &errw
+	deps.readyPollInterval = time.Millisecond
+	deps.readyTimeout = 5 * time.Second
+	deps.localHost = "10.42.0.100"
+	deps.localHopNoticeInterval = time.Millisecond
+
+	// Gate is reachable from the first probe. The local hop 502s for the first few
+	// attempts (dev server not up), then responds — only THEN is the wait ready.
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		return true, "http 401", nil // gate always up
+	}
+	var mu sync.Mutex
+	localCalls := 0
+	deps.probeLocalHop = func(context.Context, string) (bool, string, error) {
+		mu.Lock()
+		localCalls++
+		n := localCalls
+		mu.Unlock()
+		if n < 3 {
+			return false, "http 502", nil // tunnel up, local server down
+		}
+		return true, "http 404", nil // local server now responds
+	}
+
+	ready, abort := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
+	if !ready || abort != "" {
+		t.Fatalf("want (true, \"\") once the local hop responds, got (%v, %q)", ready, abort)
+	}
+	mu.Lock()
+	got := localCalls
+	mu.Unlock()
+	if got < 3 {
+		t.Fatalf("expected the wait to re-probe the local hop until it responded, got %d local probes", got)
+	}
+	// The clear local-unreachable guidance was surfaced while the hop was 502-ing.
+	if !strings.Contains(errw.String(), "local dev server on 10.42.0.100:5186 is unreachable") {
+		t.Errorf("expected the clear local-unreachable notice naming host:port:\n%s", errw.String())
+	}
+	if !strings.Contains(errw.String(), "--local-host") {
+		t.Errorf("the notice must reference --local-host:\n%s", errw.String())
+	}
+}
+
+// TestWaitForTunnelReachableLocalHopDownKeepsWaiting: gate reachable but the local
+// hop 502s forever → the wait must NOT declare ready and must NOT return the
+// positive-cap (false, "") until the deadline; it keeps waiting, surfacing the
+// notice, until an abort. Proven by an indefinite wait that we abort by signal.
+func TestWaitForTunnelReachableLocalHopDownKeepsWaiting(t *testing.T) {
+	sigs := make(chan os.Signal, 1)
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), sigs)
+	var errw syncBuffer
+	deps.errw = &errw
+	deps.readyTimeout = 0 // indefinite
+	deps.readyPollInterval = time.Millisecond
+	deps.quietInterval = time.Hour
+	deps.localHopNoticeInterval = time.Millisecond
+	deps.localHost = "10.42.0.100"
+
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		return true, "http 401", nil // gate up
+	}
+	var mu sync.Mutex
+	localProbes := 0
+	deps.probeLocalHop = func(context.Context, string) (bool, string, error) {
+		mu.Lock()
+		localProbes++
+		mu.Unlock()
+		return false, "http 502", nil // local server never comes up
+	}
+
+	type res struct {
+		ready bool
+		abort string
+	}
+	resc := make(chan res, 1)
+	go func() {
+		r, a := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
+		resc <- res{r, a}
+	}()
+
+	// It must NOT return while the local hop is down.
+	select {
+	case got := <-resc:
+		t.Fatalf("wait returned while the local hop was still down: (%v, %q)", got.ready, got.abort)
+	case <-time.After(60 * time.Millisecond):
+	}
+	mu.Lock()
+	if localProbes < 2 {
+		t.Errorf("expected repeated local-hop probes, got %d", localProbes)
+	}
+	mu.Unlock()
+	// The clear notice was surfaced (persistent).
+	if !strings.Contains(errw.String(), "is unreachable through the tunnel") {
+		t.Errorf("expected the persistent local-unreachable notice:\n%s", errw.String())
+	}
+
+	// Abort proves it was still alive and responsive.
+	sigs <- os.Interrupt
+	select {
+	case got := <-resc:
+		if got.ready || got.abort != "interrupt" {
+			t.Fatalf("want (false, \"interrupt\"), got (%v, %q)", got.ready, got.abort)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("wait did not abort on signal while the local hop was down")
+	}
+}
+
+// TestWaitForTunnelReachableNilLocalHopIsGateOnly: a nil probeLocalHop preserves
+// the old gate-only readiness (so lifecycle tests that don't wire it are
+// unaffected) — gate reachable → ready immediately.
+func TestWaitForTunnelReachableNilLocalHopIsGateOnly(t *testing.T) {
+	deps := baseDeps(t, &fakeTunnelAPI{}, &fakeDialer{}, newFakeTimer(), make(chan os.Signal))
+	var errw syncBuffer
+	deps.errw = &errw
+	deps.readyPollInterval = time.Millisecond
+	deps.readyTimeout = 5 * time.Second
+	deps.probeLocalHop = nil // gate-only
+	deps.probePublic = func(context.Context, string) (bool, string, error) {
+		return true, "http 401", nil
+	}
+	ready, abort := waitForTunnelReachable(context.Background(), deps, newFakeTunnel(), testTunnelHost, testTunnelURL)
+	if !ready || abort != "" {
+		t.Fatalf("nil probeLocalHop should be gate-only ready, got (%v, %q)", ready, abort)
 	}
 }
 

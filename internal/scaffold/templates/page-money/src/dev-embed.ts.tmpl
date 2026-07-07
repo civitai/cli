@@ -32,15 +32,32 @@ export const DEV_ALLOWED_HOSTS: string[] = ['localhost', DEV_TUNNEL_HOST_SUFFIX]
 
 /**
  * Response headers that make the dev server iframe-embeddable from the prod
- * parent. We set a `frame-ancestors` CSP scoped to civitai.com (+ self for the
- * plain local harness) and, critically, DO NOT set `X-Frame-Options` — an
- * `X-Frame-Options: DENY/SAMEORIGIN` would block the cross-origin embed
- * regardless of the CSP. (Vite sets no XFO by default; this documents + asserts
- * that invariant.)
+ * parent. Two headers, both DEV-ONLY:
+ *
+ * 1. `frame-ancestors` CSP scoped to civitai.com (+ self for the plain local
+ *    harness) so civitai.com may EMBED the dev server. Critically we DO NOT set
+ *    `X-Frame-Options` — an `X-Frame-Options: DENY/SAMEORIGIN` would block the
+ *    cross-origin embed regardless of the CSP. (Vite sets no XFO by default;
+ *    this documents + asserts that invariant.)
+ *
+ * 2. `Access-Control-Allow-Origin: *` so the ES modules load. The dev-tunnel
+ *    embeds this server inside App Blocks' `PageBlockHost` iframe, which is
+ *    sandboxed with a NULL origin. When that null-origin document fetches the
+ *    dev server's ES modules (`/src/main.tsx`, `/@vite/client`, …) the browser
+ *    applies CORS; without an `Access-Control-Allow-Origin` header it blocks
+ *    every module script ("from origin 'null' has been blocked by CORS policy").
+ *    `*` matches how PRODUCTION app-blocks are served (their module scripts
+ *    carry `access-control-allow-origin: *`), so the tunneled dev build behaves
+ *    like prod. This is safe here: the dev server is reachable only through the
+ *    authenticated dev-tunnel gate and is a local dev server; module-script
+ *    fetches are non-credentialed, so `*` (not a specific origin) is correct.
+ *    Like all `server.*` options this applies only to `vite dev`, never to a
+ *    `vite build` production bundle.
  */
 export function devServerSecurityHeaders(): Record<string, string> {
   return {
     'Content-Security-Policy': `frame-ancestors 'self' ${PROD_PARENT_ORIGIN}`,
+    'Access-Control-Allow-Origin': '*',
   };
 }
 

@@ -193,6 +193,89 @@ func (fs *forwardServer) pushConnection(t *testing.T, sconn *ssh.ServerConn, hos
 	return ch
 }
 
+// pushConnectionWithOrigin is pushConnection with control over the OriginAddr /
+// OriginPort of the forwarded-tcpip payload. sish stamps OriginAddr with the
+// tunnel HOSTNAME (not an IP), which is exactly the shape x/crypto's built-in
+// client.Listen handler rejects (netip.ParseAddr fails → "cannot parse IP
+// address" → channel rejected → 502). This lets the regression test reproduce
+// that real-world channel and assert our handler proxies it anyway.
+func (fs *forwardServer) pushConnectionWithOrigin(t *testing.T, sconn *ssh.ServerConn, addr string, port uint32, originAddr string, originPort uint32) ssh.Channel {
+	t.Helper()
+	payload := ssh.Marshal(struct {
+		Addr       string
+		Port       uint32
+		OriginAddr string
+		OriginPort uint32
+	}{addr, port, originAddr, originPort})
+	ch, reqs, err := sconn.OpenChannel("forwarded-tcpip", payload)
+	if err != nil {
+		t.Fatalf("open forwarded-tcpip: %v", err)
+	}
+	go ssh.DiscardRequests(reqs)
+	return ch
+}
+
+// TestSSHDialerProxiesNonIPOriginAddr is the regression guard for the CONFIRMED
+// delivery bug: sish opens each forwarded-tcpip channel with OriginAddr set to
+// the tunnel HOSTNAME (`dev-<16hex>`, NOT an IP) — and, defensively, an Addr that
+// need not equal the exact `<label>:80` we registered. x/crypto's built-in
+// client.Listen handler runs netip.ParseAddr(OriginAddr) and REJECTS every such
+// channel ("cannot parse IP address"), so Accept() never fires and sish 502s
+// (verified live against the real sish: stock CLI → 502, this handler → 200).
+// Our dialer accepts ALL forwarded-tcpip channels regardless of Addr/Origin, so
+// the inbound connection must still round-trip to the local dev server.
+func TestSSHDialerProxiesNonIPOriginAddr(t *testing.T) {
+	localPort, stopEcho := echoServer(t)
+	defer stopEcho()
+
+	fs := newForwardServer(t)
+	defer fs.close()
+
+	key, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const host = "dev-0123456789abcdef.civit.ai"
+
+	d := NewSSHDialer(io.Discard)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tunnel, err := d.Dial(ctx, DialOptions{Endpoint: fs.addr(), RemoteHost: host, LocalPort: localPort, Signer: key.Signer, SSHHostPublicKey: fs.hostAuthorizedKey()})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer tunnel.Close()
+
+	sconn := <-fs.sconnCh
+	<-fs.forwardReady
+
+	// Reproduce EXACTLY what live sish sends: a non-IP OriginAddr (the tunnel
+	// hostname). Also stamp a MISMATCHED Addr (the full host, not the bound label)
+	// to prove we don't strict-match the address either. Both would make
+	// client.Listen reject the channel.
+	ch := fs.pushConnectionWithOrigin(t, sconn, host, uint32(remoteBindPort), subdomainLabel(host), uint32(remoteBindPort))
+	defer ch.Close()
+
+	msg := "GET /@vite/client HTTP/1.1\r\n\r\n"
+	if _, err := ch.Write([]byte(msg)); err != nil {
+		t.Fatalf("write to forwarded channel: %v", err)
+	}
+	buf := make([]byte, len(msg))
+	_ = ch.CloseWrite()
+	if _, err := io.ReadFull(ch, buf); err != nil {
+		t.Fatalf("read echo back through the tunnel (non-IP OriginAddr must still proxy): %v", err)
+	}
+	if got := string(buf); !strings.HasPrefix(got, "GET /@vite/client") {
+		t.Errorf("proxied round-trip mismatch for non-IP-origin channel: got %q", got)
+	}
+
+	select {
+	case <-tunnel.Activity():
+	case <-time.After(time.Second):
+		t.Error("expected an Activity signal for the inbound connection")
+	}
+}
+
 // TestSSHDialerReverseForwardProxies is the real dialer end-to-end against an
 // in-process SSH forward server + a local echo server: it proves Dial binds the
 // reverse forward, an inbound forwarded connection is proxied to the local dev
@@ -355,10 +438,14 @@ func TestSSHDialerLocalDevDown(t *testing.T) {
 	defer ch.Close()
 
 	// The proxy dial to the dead local port fails; the channel closes. Poll the
-	// log for the guidance line.
+	// log for the guidance line — it must name the port AND the --local-host so a
+	// wrong host is obvious (the silent-502 dogfood failure).
 	deadline := time.After(2 * time.Second)
 	for {
 		if strings.Contains(logbuf.String(), fmt.Sprintf("on port %d unreachable", deadPort)) {
+			if !strings.Contains(logbuf.String(), "--local-host") {
+				t.Errorf("unreachable notice must reference --local-host, got %q", logbuf.String())
+			}
 			return
 		}
 		select {
@@ -371,40 +458,148 @@ func TestSSHDialerLocalDevDown(t *testing.T) {
 	}
 }
 
+// TestSSHDialerProxyHonorsLocalHost proves the live proxy dials the configured
+// LocalHost (not just loopback): with an explicit LocalHost that points at the
+// echo server's address, an inbound forwarded connection round-trips. This is the
+// fix for the silent-502 dogfood failure — a dev server not on the CLI's loopback
+// (e.g. a container IP) is now reachable through the tunnel.
+func TestSSHDialerProxyHonorsLocalHost(t *testing.T) {
+	localPort, stopEcho := echoServer(t) // binds 127.0.0.1
+	defer stopEcho()
+
+	fs := newForwardServer(t)
+	defer fs.close()
+
+	key, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const host = "dev-0123456789abcdef.civit.ai"
+
+	d := NewSSHDialer(io.Discard)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	// Explicit LocalHost "127.0.0.1" — the non-loopback code path (exact single
+	// target), pointed at where the echo server actually listens.
+	tunnel, err := d.Dial(ctx, DialOptions{Endpoint: fs.addr(), RemoteHost: host, LocalPort: localPort, LocalHost: "127.0.0.1", Signer: key.Signer, SSHHostPublicKey: fs.hostAuthorizedKey()})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer tunnel.Close()
+
+	sconn := <-fs.sconnCh
+	<-fs.forwardReady
+	ch := fs.pushConnection(t, sconn, subdomainLabel(host), uint32(remoteBindPort))
+	defer ch.Close()
+
+	msg := "GET /apps/dev HTTP/1.1\r\n\r\n"
+	if _, err := ch.Write([]byte(msg)); err != nil {
+		t.Fatalf("write to forwarded channel: %v", err)
+	}
+	buf := make([]byte, len(msg))
+	_ = ch.CloseWrite()
+	if _, err := io.ReadFull(ch, buf); err != nil {
+		t.Fatalf("read echo back through the tunnel (explicit LocalHost): %v", err)
+	}
+	if got := string(buf); !strings.HasPrefix(got, "GET /apps/dev") {
+		t.Errorf("proxied round-trip via explicit LocalHost mismatch: got %q", got)
+	}
+}
+
+// TestSSHDialerProxyLocalHostUnreachableNamesHost proves a wrong/unreachable
+// LocalHost surfaces the host in the guidance line (so the dev sees WHICH host
+// the proxy tried and can correct --local-host).
+func TestSSHDialerProxyLocalHostUnreachableNamesHost(t *testing.T) {
+	// A closed port on an explicit loopback host.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadPort := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+
+	fs := newForwardServer(t)
+	defer fs.close()
+	key, _ := GenerateEphemeralKey()
+	const host = "dev-0123456789abcdef.civit.ai"
+
+	var logbuf syncBuffer
+	d := NewSSHDialer(&logbuf)
+	tunnel, err := d.Dial(context.Background(), DialOptions{Endpoint: fs.addr(), RemoteHost: host, LocalPort: deadPort, LocalHost: "127.0.0.1", Signer: key.Signer, SSHHostPublicKey: fs.hostAuthorizedKey()})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer tunnel.Close()
+
+	sconn := <-fs.sconnCh
+	<-fs.forwardReady
+	ch := fs.pushConnection(t, sconn, subdomainLabel(host), uint32(remoteBindPort))
+	defer ch.Close()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		got := logbuf.String()
+		if strings.Contains(got, fmt.Sprintf("on port %d unreachable", deadPort)) {
+			if !strings.Contains(got, "127.0.0.1") {
+				t.Errorf("unreachable notice must name the tried host 127.0.0.1, got %q", got)
+			}
+			return
+		}
+		select {
+		case <-deadline:
+			t.Errorf("expected an unreachable-local-dev log line naming the host, got %q", got)
+			return
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+}
+
 // TestDialLocalDevServerBothFamilies proves the loopback dialer reaches a dev
 // server bound to EITHER family. The IPv6-only case is the real regression: a
 // `--host localhost` dev server binds `::1` only on a dual-stack box, and the
 // old 127.0.0.1-hardcoded dialer/probe falsely reported it unreachable.
 func TestDialLocalDevServerBothFamilies(t *testing.T) {
-	t.Run("ipv4", func(t *testing.T) {
-		ln, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
+	// The loopback-default cases run for BOTH host values that select loopback
+	// behavior: "" (unset) and "localhost". Both must try both families.
+	for _, loopbackHost := range []string{"", "localhost"} {
+		loopbackHost := loopbackHost
+		name := "host-empty"
+		if loopbackHost != "" {
+			name = "host-" + loopbackHost
 		}
-		defer ln.Close()
-		port := ln.Addr().(*net.TCPAddr).Port
-		conn, err := DialLocalDevServer(port, 2*time.Second)
-		if err != nil {
-			t.Fatalf("expected to reach the IPv4 dev server on port %d: %v", port, err)
-		}
-		_ = conn.Close()
-	})
+		t.Run(name, func(t *testing.T) {
+			t.Run("ipv4", func(t *testing.T) {
+				ln, err := net.Listen("tcp", "127.0.0.1:0")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer ln.Close()
+				port := ln.Addr().(*net.TCPAddr).Port
+				conn, err := DialLocalDevServer(loopbackHost, port, 2*time.Second)
+				if err != nil {
+					t.Fatalf("expected to reach the IPv4 dev server on port %d: %v", port, err)
+				}
+				_ = conn.Close()
+			})
 
-	t.Run("ipv6", func(t *testing.T) {
-		ln, err := net.Listen("tcp", "[::1]:0")
-		if err != nil {
-			t.Skipf("IPv6 loopback unavailable on this host: %v", err)
-		}
-		defer ln.Close()
-		port := ln.Addr().(*net.TCPAddr).Port
-		// Regression guard: on the old code this returned "connection refused"
-		// because it only ever dialed 127.0.0.1.
-		conn, err := DialLocalDevServer(port, 2*time.Second)
-		if err != nil {
-			t.Fatalf("expected to reach the IPv6-only dev server on port %d (this is the localhost→::1 fix): %v", port, err)
-		}
-		_ = conn.Close()
-	})
+			t.Run("ipv6", func(t *testing.T) {
+				ln, err := net.Listen("tcp", "[::1]:0")
+				if err != nil {
+					t.Skipf("IPv6 loopback unavailable on this host: %v", err)
+				}
+				defer ln.Close()
+				port := ln.Addr().(*net.TCPAddr).Port
+				// Regression guard: on the old code this returned "connection refused"
+				// because it only ever dialed 127.0.0.1.
+				conn, err := DialLocalDevServer(loopbackHost, port, 2*time.Second)
+				if err != nil {
+					t.Fatalf("expected to reach the IPv6-only dev server on port %d (this is the localhost→::1 fix): %v", port, err)
+				}
+				_ = conn.Close()
+			})
+		})
+	}
 
 	t.Run("nothing-listening", func(t *testing.T) {
 		// A port that is (almost certainly) closed: bind then immediately free.
@@ -414,9 +609,60 @@ func TestDialLocalDevServerBothFamilies(t *testing.T) {
 		}
 		deadPort := ln.Addr().(*net.TCPAddr).Port
 		_ = ln.Close()
-		if conn, err := DialLocalDevServer(deadPort, 500*time.Millisecond); err == nil {
+		if conn, err := DialLocalDevServer("localhost", deadPort, 500*time.Millisecond); err == nil {
 			_ = conn.Close()
 			t.Fatalf("expected an error dialing the closed port %d", deadPort)
+		}
+	})
+}
+
+// TestDialLocalDevServerSpecificHost proves the non-loopback path: a specific
+// host (the container/pod-netns / VM / bound-interface case, e.g. 10.42.0.100)
+// is dialed EXACTLY as given — reaching a server bound to 127.0.0.1 ONLY when the
+// caller asks for 127.0.0.1, and erroring when nothing listens there.
+func TestDialLocalDevServerSpecificHost(t *testing.T) {
+	t.Run("reaches-explicit-127.0.0.1", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ln.Close()
+		port := ln.Addr().(*net.TCPAddr).Port
+		conn, err := DialLocalDevServer("127.0.0.1", port, 2*time.Second)
+		if err != nil {
+			t.Fatalf("expected to reach the explicit-host dev server on 127.0.0.1:%d: %v", port, err)
+		}
+		_ = conn.Close()
+	})
+
+	t.Run("explicit-ipv4-does-not-fall-back-to-ipv6", func(t *testing.T) {
+		// Bind ONLY ::1, then ask for 127.0.0.1 explicitly. Unlike the loopback
+		// default (which tries both families), an explicit 127.0.0.1 must NOT reach
+		// an IPv6-only server — it is a single, exact target.
+		ln, err := net.Listen("tcp", "[::1]:0")
+		if err != nil {
+			t.Skipf("IPv6 loopback unavailable on this host: %v", err)
+		}
+		defer ln.Close()
+		port := ln.Addr().(*net.TCPAddr).Port
+		if conn, err := DialLocalDevServer("127.0.0.1", port, 500*time.Millisecond); err == nil {
+			_ = conn.Close()
+			t.Fatalf("explicit 127.0.0.1 must NOT reach an IPv6-only server on port %d", port)
+		}
+	})
+
+	t.Run("unreachable-host-errors", func(t *testing.T) {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		deadPort := ln.Addr().(*net.TCPAddr).Port
+		_ = ln.Close()
+		// A specific host with nothing listening is a hard error (no both-families
+		// masking).
+		if conn, err := DialLocalDevServer("127.0.0.1", deadPort, 500*time.Millisecond); err == nil {
+			_ = conn.Close()
+			t.Fatalf("expected an error dialing the closed 127.0.0.1:%d", deadPort)
 		}
 	})
 }
