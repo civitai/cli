@@ -60,21 +60,28 @@ func TestAppCreateDefaultsToPageMoney(t *testing.T) {
 	if !strings.Contains(stdout, "1. cd ") || !strings.Contains(stdout, "npm install") {
 		t.Errorf("create should print a numbered cd+install step:\n%s", stdout)
 	}
-	// Harness-aware next steps (page-money needs the mock host).
-	if !strings.Contains(stdout, "dev:harness") {
-		t.Errorf("create should print dev:harness next step:\n%s", stdout)
+	// The DEV TUNNEL is the highlighted prod-fidelity preview path.
+	if !strings.Contains(stdout, "civitai app dev-tunnel") {
+		t.Errorf("create should highlight the dev-tunnel preview step:\n%s", stdout)
 	}
-	// The mock-vs-live clarification must survive (a placeholder Generate
-	// result is the mock, not a bug).
-	if !strings.Contains(stdout, "MOCK") {
-		t.Errorf("create should flag dev:harness as a MOCK host:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "dev:live") {
-		t.Errorf("create should point at dev:live for a real generation:\n%s", stdout)
-	}
-	// Validate is folded into the submit step.
-	if !strings.Contains(stdout, "civitai app submit") {
+	// submit must precede the tunnel (the tunnel resolves the app server-side, so
+	// it must be registered first).
+	iSubmit := strings.Index(stdout, "civitai app submit")
+	iTunnel := strings.Index(stdout, "civitai app dev-tunnel")
+	if iSubmit < 0 {
 		t.Errorf("create should print the submit next step:\n%s", stdout)
+	}
+	if iSubmit >= 0 && iTunnel >= 0 && iSubmit > iTunnel {
+		t.Errorf("submit must be sequenced BEFORE the dev-tunnel step (register first):\n%s", stdout)
+	}
+	// The harness remains as the single-line offline/mock fallback tip.
+	if !strings.Contains(stdout, "dev:harness") {
+		t.Errorf("create should keep the dev:harness fallback tip:\n%s", stdout)
+	}
+	// The trimmed message drops the old multi-line Buzz/OAuth/personal-key
+	// paragraph (dev:live now lives in dev-token/README, not the scaffold banner).
+	if strings.Contains(stdout, "dev:live") {
+		t.Errorf("create next steps should NOT re-bloat with the dev:live Buzz paragraph:\n%s", stdout)
 	}
 
 	assertScaffoldValid(t, dest)

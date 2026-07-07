@@ -188,17 +188,19 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	fmt.Fprintln(out, "\n"+ui.Bold("Next steps:"))
 	switch {
 	case tmpl.NeedsHarness():
-		// SDK/page-money apps render blank under plain `dev` (no host) — the
-		// dev loop needs the mock host via `dev:harness`. Keep the mock-vs-live
-		// distinction as a clearly-separate tip so a placeholder "Generate"
-		// result isn't mistaken for a broken real generation.
+		// SDK/page-money apps preview best via the DEV TUNNEL — your LOCAL code
+		// rendered INSIDE the real Civitai host (real session/Buzz/pickers),
+		// prod-fidelity. The tunnel resolves the app server-side, so it must be
+		// registered first: `civitai app submit` creates the (pending) app row that
+		// `civitai app dev-tunnel` then resolves — hence submit precedes the tunnel.
+		// dev-tunnel is cohort-gated, so the harness tip is the offline/mock
+		// fallback for quick iteration (or authors not yet in the cohort).
 		fmt.Fprintf(out, "  1. cd %s && npm install\n", destDir)
-		fmt.Fprintln(out, "  2. npm run dev:harness      # preview locally — MOCK host, no real Buzz")
-		fmt.Fprintln(out, "  3. civitai app submit       # validate + submit for review")
+		fmt.Fprintln(out, "  2. civitai app submit      # validate + register (required before a dev tunnel)")
+		fmt.Fprintln(out, "  3. npm run dev:tunnel      # in another terminal: serve your app for the tunnel")
+		fmt.Fprintln(out, "  4. civitai app dev-tunnel  # preview your LOCAL app INSIDE the real Civitai host — prod-fidelity")
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, "  Real generation (spends real Buzz)? npm run dev:live needs a full-scope personal API")
-		fmt.Fprintln(out, "  key: create at https://civitai.com/user/account, then `civitai login --token <key>`.")
-		fmt.Fprintln(out, "  An OAuth `civitai login` can submit/withdraw but cannot spend Buzz (check `civitai whoami`).")
+		fmt.Fprintln(out, "  Quick offline iteration, or not in the tunnel cohort? npm run dev:harness (mock host, no Buzz).")
 	case tmpl == scaffold.PageVite:
 		fmt.Fprintf(out, "  1. cd %s && npm install\n", destDir)
 		fmt.Fprintln(out, "  2. npm run dev              # preview locally")
