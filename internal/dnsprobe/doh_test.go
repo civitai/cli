@@ -189,3 +189,134 @@ func TestDialClientFallsBackOnTransientDoHFailure(t *testing.T) {
 		t.Fatalf("fallback status = %d, want 200", resp.StatusCode)
 	}
 }
+
+// TestDoHResolverANODATAWithAAAATransientIsTransient: when A returns a CLEAN
+// NODATA (NOERROR, no A records — not NXDOMAIN) and the AAAA follow-up fails
+// TRANSIENTLY, Resolve must propagate the transient error, NOT conclude
+// ErrNotPublished. Only a clean NODATA/NXDOMAIN on BOTH families is authoritative.
+func TestDoHResolverANODATAWithAAAATransientIsTransient(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("type") {
+		case "A":
+			// Clean NOERROR / NODATA — the name exists but has no A record (yet).
+			w.Header().Set("Content-Type", "application/dns-json")
+			fmt.Fprint(w, `{"Status":0,"Answer":[]}`)
+		default: // AAAA
+			// Transient failure (e.g. Cloudflare 502).
+			w.WriteHeader(http.StatusBadGateway)
+		}
+	}))
+	defer srv.Close()
+
+	r := &DoHResolver{Endpoint: srv.URL, Client: srv.Client()}
+	_, err := r.Resolve(context.Background(), "dev-0123456789abcdef.civit.ai")
+	if err == nil {
+		t.Fatal("expected a transient error when the AAAA follow-up fails")
+	}
+	if errors.Is(err, ErrNotPublished) {
+		t.Fatalf("A-NODATA + transient-AAAA must NOT be authoritative not-published: %v", err)
+	}
+}
+
+// scriptedResolver returns queued results in order (one per Resolve call) and
+// counts calls — so a test can model "first attempt transient, second succeeds".
+type scriptedResolver struct {
+	steps []struct {
+		addrs []netip.Addr
+		err   error
+	}
+	calls int
+}
+
+func (s *scriptedResolver) Resolve(context.Context, string) ([]netip.Addr, error) {
+	i := s.calls
+	s.calls++
+	if i >= len(s.steps) {
+		i = len(s.steps) - 1 // repeat the last step for any extra calls
+	}
+	return s.steps[i].addrs, s.steps[i].err
+}
+
+// TestDialClientRetriesTransientThenSucceeds: a lone transient DoH hiccup must NOT
+// trigger the OS-resolver fallback (which would re-poison the negative cache) — one
+// retry is attempted, and when it succeeds DialClient returns a PINNED client
+// (dials the resolved IP; a fallback client would fail to OS-resolve tunnel.example).
+func TestDialClientRetriesTransientThenSucceeds(t *testing.T) {
+	var gotHost string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHost = r.Host
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	port := u.Port()
+
+	r := &scriptedResolver{steps: []struct {
+		addrs []netip.Addr
+		err   error
+	}{
+		{nil, errors.New("doh timeout")},                      // first attempt: transient
+		{[]netip.Addr{netip.MustParseAddr("127.0.0.1")}, nil}, // retry: success
+	}}
+
+	client, err := DialClient(context.Background(), r, "tunnel.example", 3*time.Second)
+	if err != nil {
+		t.Fatalf("DialClient error: %v", err)
+	}
+	if r.calls != 2 {
+		t.Fatalf("expected exactly one retry (2 resolve calls), got %d", r.calls)
+	}
+	resp, gerr := client.Get(fmt.Sprintf("http://tunnel.example:%s/", port))
+	if gerr != nil {
+		t.Fatalf("GET via pinned client failed (should be pinned, not OS-fallback): %v", gerr)
+	}
+	resp.Body.Close()
+	if want := "tunnel.example:" + port; gotHost != want {
+		t.Fatalf("server saw Host %q, want %q — client was not pinned to the resolved IP", gotHost, want)
+	}
+}
+
+// TestDialClientRetriesThenFallsBack: when BOTH the first attempt and the retry
+// fail transiently, DialClient falls back to the OS resolver (last resort) — and
+// it retried exactly once (2 resolve calls) before doing so.
+func TestDialClientRetriesThenFallsBack(t *testing.T) {
+	r := &scriptedResolver{steps: []struct {
+		addrs []netip.Addr
+		err   error
+	}{
+		{nil, errors.New("doh timeout #1")},
+		{nil, errors.New("doh timeout #2")},
+	}}
+
+	client, err := DialClient(context.Background(), r, "tunnel.example", time.Second)
+	if err != nil {
+		t.Fatalf("persistent transient failure must fall back, not error; got %v", err)
+	}
+	if client == nil {
+		t.Fatal("want a fallback (OS-resolver) client, got nil")
+	}
+	if r.calls != 2 {
+		t.Fatalf("expected exactly one retry before fallback (2 resolve calls), got %d", r.calls)
+	}
+}
+
+// TestDialClientNotPublishedIsNotRetried: an authoritative NXDOMAIN must be
+// returned immediately (no retry, no fallback) — the whole point of the fix.
+func TestDialClientNotPublishedIsNotRetried(t *testing.T) {
+	r := &scriptedResolver{steps: []struct {
+		addrs []netip.Addr
+		err   error
+	}{
+		{nil, fmt.Errorf("x: %w", ErrNotPublished)},
+	}}
+	client, err := DialClient(context.Background(), r, "tunnel.example", time.Second)
+	if !errors.Is(err, ErrNotPublished) {
+		t.Fatalf("want ErrNotPublished, got err=%v", err)
+	}
+	if client != nil {
+		t.Fatalf("want nil client (no fallback) on authoritative NXDOMAIN, got %v", client)
+	}
+	if r.calls != 1 {
+		t.Fatalf("ErrNotPublished must NOT be retried; got %d resolve calls", r.calls)
+	}
+}

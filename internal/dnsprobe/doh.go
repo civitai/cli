@@ -115,12 +115,19 @@ func (r *DoHResolver) Resolve(ctx context.Context, host string) ([]netip.Addr, e
 	// definitively doesn't exist, so skip the extra round-trip.
 	if !nxA {
 		aaaa, _, aerr := r.query(ctx, host, "AAAA")
-		if aerr == nil && len(aaaa) > 0 {
+		if aerr != nil {
+			// A returned clean NODATA but the AAAA follow-up failed TRANSIENTLY — we
+			// can't authoritatively conclude "not published" (there might be an AAAA we
+			// couldn't fetch). Propagate the transient error so the caller takes the
+			// fallback path rather than mis-classifying a blip as authoritative NXDOMAIN.
+			return nil, aerr
+		}
+		if len(aaaa) > 0 {
 			return aaaa, nil
 		}
 	}
-	// Name is NXDOMAIN, or NOERROR/NODATA with no address record yet → not
-	// published (from the readiness probe's point of view).
+	// Clean NXDOMAIN, or clean NOERROR/NODATA on BOTH A and AAAA with no address
+	// record yet → authoritatively not published (from the readiness probe's POV).
 	return nil, fmt.Errorf("%s: %w", host, ErrNotPublished)
 }
 
@@ -200,7 +207,7 @@ func DialClient(ctx context.Context, r Resolver, host string, timeout time.Durat
 	if r == nil {
 		r = DefaultResolver
 	}
-	addrs, err := r.Resolve(ctx, host)
+	addrs, err := resolveWithRetry(ctx, r, host)
 	if err != nil {
 		if errors.Is(err, ErrNotPublished) {
 			// Authoritative NXDOMAIN/no-answer — surface it so the probe can report
@@ -208,14 +215,42 @@ func DialClient(ctx context.Context, r Resolver, host string, timeout time.Durat
 			// resolver, so its negative cache stays clean for the browser).
 			return nil, err
 		}
-		// Transient DoH failure (443 blocked, timeout, bad body): fall back to the OS
-		// resolver so the probe still works — never worse than before this change.
+		// A transient DoH failure PERSISTED across the retry (443 blocked, timeout,
+		// bad body): fall back to the OS resolver so the probe still works — never
+		// worse than before this change. This is the LAST resort.
 		return osResolverClient(timeout), nil
 	}
 	if len(addrs) == 0 {
 		return nil, fmt.Errorf("%s: %w", host, ErrNotPublished)
 	}
 	return pinnedClient(host, addrs, timeout), nil
+}
+
+// dohRetryBackoff is the short pause between the first DoH resolve and its single
+// retry (bounded by the caller's ctx). Kept small so a lone hiccup on
+// cloudflare-dns.com is smoothed over without materially slowing a readiness poll.
+const dohRetryBackoff = 150 * time.Millisecond
+
+// resolveWithRetry resolves host, retrying ONCE on a TRANSIENT failure before
+// giving up. A transient blip on cloudflare-dns.com must NOT immediately trigger
+// the OS-resolver fallback — that fallback re-poisons the OS negative cache for
+// the unpublished host, the exact failure this package prevents. An authoritative
+// ErrNotPublished is returned immediately and NEVER retried (a real NXDOMAIN must
+// not fall back). A canceled ctx aborts the backoff promptly.
+func resolveWithRetry(ctx context.Context, r Resolver, host string) ([]netip.Addr, error) {
+	addrs, err := r.Resolve(ctx, host)
+	if err == nil || errors.Is(err, ErrNotPublished) {
+		return addrs, err
+	}
+	// First attempt failed transiently — pause briefly (interruptibly) then retry once.
+	timer := time.NewTimer(dohRetryBackoff)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, err // keep the original transient error; caller falls back
+	case <-timer.C:
+	}
+	return r.Resolve(ctx, host)
 }
 
 // osResolverClient is a plain client that resolves via the OS resolver (the
