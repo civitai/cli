@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/civitai/cli/internal/ui"
 	"github.com/minio/selfupdate"
 	"github.com/spf13/cobra"
 )
@@ -171,7 +172,7 @@ func runUpgrade(out io.Writer, force, noUpdateCheck bool) error {
 
 	// Already up to date? (current >= latest). --force overrides.
 	if !force && compareVersions(version, latest) >= 0 && isParseableVersion(version) {
-		fmt.Fprintf(out, "civitai is already up to date (%s).\n", version)
+		fmt.Fprintln(out, ui.Success(fmt.Sprintf("civitai is already up to date (%s).", version)))
 		return nil
 	}
 
@@ -188,8 +189,8 @@ func runUpgrade(out io.Writer, force, noUpdateCheck bool) error {
 
 	// Homebrew delegation (unless --force).
 	if !force && isHomebrewPath(resolved) {
-		fmt.Fprintln(out, "civitai was installed via Homebrew. Upgrade with:")
-		fmt.Fprintln(out, "  brew upgrade civitai/tap/civitai")
+		fmt.Fprintln(out, ui.Info("civitai was installed via Homebrew. Upgrade with:"))
+		fmt.Fprintf(out, "  %s\n", ui.Code("brew upgrade civitai/tap/civitai"))
 		return nil
 	}
 
@@ -258,7 +259,7 @@ func runUpgrade(out io.Writer, force, noUpdateCheck bool) error {
 		return fmt.Errorf("install update: %w", err)
 	}
 
-	fmt.Fprintf(out, "Upgraded civitai %s → %s.\n", version, latest)
+	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Upgraded civitai %s → %s.", version, latest)))
 	return nil
 }
 

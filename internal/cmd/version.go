@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -76,8 +77,8 @@ token. Skip it with --no-update-check or by setting CIVITAI_NO_UPDATE_CHECK.`,
 			// tagged go-install): release/Homebrew builds (or being online)
 			// carry the full commit + date.
 			if rCommit == "none" || rDate == "unknown" {
-				fmt.Fprintln(out, "  note:   build metadata is unavailable for this build;")
-				fmt.Fprintln(out, "          release/Homebrew builds (or running a tagged install online) carry the full commit + date.")
+				fmt.Fprintln(out, ui.Dim("  note:   build metadata is unavailable for this build;"))
+				fmt.Fprintln(out, ui.Dim("          release/Homebrew builds (or running a tagged install online) carry the full commit + date."))
 			}
 
 			if !disabled {

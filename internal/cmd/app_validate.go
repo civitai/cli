@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/civitai/cli/internal/ui"
 	"github.com/civitai/cli/internal/validate"
 	"github.com/spf13/cobra"
 )
@@ -81,9 +82,10 @@ Defaults to the current directory.`,
 				return nil
 			}
 
-			// Hard errors always fail.
+			// Hard errors always fail. Style the header against stderr (per-stream
+			// color) so a colored stderr while stdout is piped still works.
 			if !res.OK() {
-				fmt.Fprintf(errw, "%d validation error(s) in %s:\n", len(res.Errors), dir)
+				fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("%d validation error(s) in %s:", len(res.Errors), dir)))
 				for _, e := range res.Errors {
 					fmt.Fprintf(errw, "  - %s\n", e)
 				}
@@ -98,11 +100,11 @@ Defaults to the current directory.`,
 				if strict {
 					return fmt.Errorf("validation failed: %d warning(s) with --strict", len(res.Warnings))
 				}
-				fmt.Fprintf(out, "OK (with %d warning(s)) — %s is valid\n", len(res.Warnings), dir)
+				fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s is valid (with %d warning(s))", dir, len(res.Warnings))))
 				return nil
 			}
 
-			fmt.Fprintf(out, "OK — %s is valid\n", dir)
+			fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s is valid", dir)))
 			return nil
 		},
 	}
@@ -146,8 +148,8 @@ func printWarnings(w io.Writer, res validate.Result) {
 	if !res.HasWarnings() {
 		return
 	}
-	fmt.Fprintf(w, "%d warning(s):\n", len(res.Warnings))
+	fmt.Fprintln(w, ui.For(w).Warn(fmt.Sprintf("%d warning(s):", len(res.Warnings))))
 	for _, warn := range res.Warnings {
-		fmt.Fprintf(w, "  ! %s\n", warn)
+		fmt.Fprintf(w, "  - %s\n", warn)
 	}
 }

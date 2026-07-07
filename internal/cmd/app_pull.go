@@ -11,6 +11,7 @@ import (
 	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -160,15 +161,15 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, app string, args []s
 		if err := gitRunner("", "-C", dir, "merge", "--ff-only", "FETCH_HEAD"); err != nil {
 			return fmt.Errorf("git merge --ff-only failed: %w", err)
 		}
-		fmt.Fprintf(out, "Synced %s.\n", info.Slug)
+		fmt.Fprintln(out, ui.Success(fmt.Sprintf("Synced %s.", info.Slug)))
 		// On the sync path the tokened URL is passed explicitly to `git fetch` and is
 		// NOT written to .git/config — so there's nothing to scrub from disk. The only
 		// exposure is the transient one: the token appeared in the git fetch child
 		// process's arguments while the fetch ran.
-		fmt.Fprintln(errOut,
-			"\n⚠  The fetch URL embedded your access token in the git command line — it was "+
+		fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn(
+			"The fetch URL embedded your access token in the git command line — it was "+
 				"briefly visible to other local processes (via `ps` / /proc/<pid>/cmdline) "+
-				"while syncing. It was NOT persisted to .git/config.")
+				"while syncing. It was NOT persisted to .git/config."))
 		return nil
 	}
 
@@ -178,11 +179,11 @@ func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, app string, args []s
 	if err := gitRunner("", "clone", "--", info.CloneURL, dir); err != nil {
 		return fmt.Errorf("git clone failed: %w", err)
 	}
-	fmt.Fprintf(out, "Cloned %s into %s.\n", info.Slug, dir)
+	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Cloned %s into %s.", info.Slug, dir)))
 	// On the clone path git persists the tokened remote URL to .git/config, so the
 	// token now lives on disk. Surface the config-persistence caveat + the remedy.
-	fmt.Fprintln(errOut,
-		"\n⚠  The clone URL embeds your access token. git stored it in .git/config — "+
-			"do not commit or share it. To drop it: `git -C "+dir+" remote set-url origin "+info.HTTPURL+"`.")
+	fmt.Fprintf(errOut, "\n%s\n", ui.For(errOut).Warn(
+		"The clone URL embeds your access token. git stored it in .git/config — "+
+			"do not commit or share it. To drop it: `git -C "+dir+" remote set-url origin "+info.HTTPURL+"`."))
 	return nil
 }
