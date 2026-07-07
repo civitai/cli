@@ -153,7 +153,7 @@ func TestStartDevTunnelErrorMapping(t *testing.T) {
 		want   string
 	}{
 		{http.StatusForbidden, "not available"},
-		{http.StatusNotFound, "app not registered"},
+		{http.StatusNotFound, "can't tunnel this app"},
 		{http.StatusUnauthorized, "not logged in"},
 		{http.StatusServiceUnavailable, "unavailable (503)"},
 	}
@@ -202,10 +202,12 @@ func TestStartDevTunnel401DropsServerMessage(t *testing.T) {
 	}
 }
 
-// TestStartDevTunnel404MentionsRegister: a 404 is the common new-app case (an
-// app just `civitai app create`d has no server-side row yet), so the error must
-// lead the user to register it with `civitai app submit`.
-func TestStartDevTunnel404MentionsRegister(t *testing.T) {
+// TestStartDevTunnel404SlugTakenOrInvalid: with the ephemeral pre-submit
+// resolver deployed (civitai #2983/#2984), a new own app tunnels without
+// submitting, so a 404 now means the slug is taken by another account or isn't
+// a valid slug. The error must reflect that — NOT tell the user to submit
+// first — and still point at `civitai app status`.
+func TestStartDevTunnel404SlugTakenOrInvalid(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -218,11 +220,17 @@ func TestStartDevTunnel404MentionsRegister(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error on 404")
 	}
-	if !strings.Contains(err.Error(), "civitai app submit") {
-		t.Errorf("404 error %q should mention `civitai app submit`", err.Error())
+	if strings.Contains(err.Error(), "civitai app submit") {
+		t.Errorf("404 error %q should no longer tell the user to submit first (pre-submit tunneling shipped)", err.Error())
+	}
+	if !strings.Contains(err.Error(), "registered to a different account") {
+		t.Errorf("404 error %q should say the slug is registered to a different account", err.Error())
+	}
+	if !strings.Contains(err.Error(), "isn't a valid app slug") {
+		t.Errorf("404 error %q should say the slug may be invalid", err.Error())
 	}
 	if !strings.Contains(err.Error(), "civitai app status") {
-		t.Errorf("404 error %q should still mention `civitai app status` for the not-yours case", err.Error())
+		t.Errorf("404 error %q should still point at `civitai app status`", err.Error())
 	}
 }
 
