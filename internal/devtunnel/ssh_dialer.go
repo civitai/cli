@@ -61,21 +61,40 @@ const localDialTimeout = 3 * time.Second
 // IPv4 is tried first (still the common bind), IPv6 second.
 var loopbackHosts = []string{"127.0.0.1", "::1"}
 
-// DialLocalDevServer connects to the developer's local dev server on `port`,
-// trying each loopback family in turn with a per-attempt timeout, and returns
-// the first successful connection. Shared by the pre-flight probe (which closes
-// the returned conn) and the live tunnel proxy (which uses it) so the two always
-// agree on whether the dev server is reachable.
-func DialLocalDevServer(port int, timeout time.Duration) (net.Conn, error) {
-	var lastErr error
-	for _, host := range loopbackHosts {
-		conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), timeout)
-		if err == nil {
-			return conn, nil
+// isLoopbackHost reports whether `host` should use the both-loopback-families
+// behavior: an empty host or the literal "localhost" (the scaffold's
+// `dev:tunnel` binds `localhost`). Any explicit address/hostname is dialed as-is.
+func isLoopbackHost(host string) bool {
+	h := strings.TrimSpace(host)
+	return h == "" || strings.EqualFold(h, "localhost")
+}
+
+// DialLocalDevServer connects to the developer's local dev server on `host:port`.
+//
+//   - host "" or "localhost" (the SAFE default) → the loopback behavior: try each
+//     family in turn (127.0.0.1 then ::1) with a per-attempt timeout and return
+//     the first successful connection. A `--host localhost` dev server binds only
+//     ONE family (`::1` on a dual-stack box), so both must be tried.
+//   - any other host (e.g. a container/pod-netns IP like 10.42.0.100, a VM, or a
+//     specific bound interface) → dial EXACTLY that host:port (single target; the
+//     both-families logic is loopback-specific).
+//
+// Shared by the pre-flight probe (which closes the returned conn) and the live
+// tunnel proxy (which uses it) so the two always agree on whether the dev server
+// is reachable.
+func DialLocalDevServer(host string, port int, timeout time.Duration) (net.Conn, error) {
+	if isLoopbackHost(host) {
+		var lastErr error
+		for _, lh := range loopbackHosts {
+			conn, err := net.DialTimeout("tcp", net.JoinHostPort(lh, strconv.Itoa(port)), timeout)
+			if err == nil {
+				return conn, nil
+			}
+			lastErr = err
 		}
-		lastErr = err
+		return nil, lastErr
 	}
-	return nil, lastErr
+	return net.DialTimeout("tcp", net.JoinHostPort(host, strconv.Itoa(port)), timeout)
 }
 
 // sshDialer is the production Dialer: an in-process `ssh -R` via
@@ -166,6 +185,7 @@ func (d *sshDialer) Dial(ctx context.Context, opts DialOptions) (Tunnel, error) 
 		done:      make(chan struct{}),
 		activity:  make(chan struct{}, 1),
 		log:       d.log,
+		localHost: opts.LocalHost,
 		localPort: opts.LocalPort,
 	}
 	go t.serve()
@@ -180,9 +200,22 @@ type sshTunnel struct {
 	done      chan struct{}
 	activity  chan struct{}
 	log       io.Writer
+	localHost string
 	localPort int
 	closeOnce sync.Once
+
+	// localErrMu guards lastLocalErr so the per-connection proxy path can
+	// rate-limit the "local dev server unreachable" notice: a broken local server
+	// makes the browser retry many subresources, which would otherwise flood the
+	// log and scroll the guidance off-screen. We emit it at most once per
+	// localErrLogEvery.
+	localErrMu   sync.Mutex
+	lastLocalErr time.Time
 }
+
+// localErrLogEvery rate-limits the proxy's local-unreachable notice (see
+// localErrMu) so a retrying browser doesn't flood stderr.
+const localErrLogEvery = 5 * time.Second
 
 func (t *sshTunnel) Done() <-chan struct{}     { return t.done }
 func (t *sshTunnel) Activity() <-chan struct{} { return t.activity }
@@ -216,12 +249,13 @@ func (t *sshTunnel) serve() {
 }
 
 // proxy bridges one forwarded connection to the local dev server on
-// 127.0.0.1/::1:<localPort> (whichever loopback family it is bound to).
+// <localHost>:<localPort> (loopback both-families when localHost is
+// empty/"localhost", else the exact host).
 func (t *sshTunnel) proxy(remote net.Conn) {
 	defer remote.Close()
-	local, err := DialLocalDevServer(t.localPort, localDialTimeout)
+	local, err := DialLocalDevServer(t.localHost, t.localPort, localDialTimeout)
 	if err != nil {
-		t.logf("  tunnel: local dev server on port %d unreachable (%v) — is your dev server running (`npm run dev:tunnel`)?\n", t.localPort, err)
+		t.logLocalUnreachable(err)
 		return
 	}
 	defer local.Close()
@@ -231,6 +265,39 @@ func (t *sshTunnel) proxy(remote net.Conn) {
 	go func() { defer wg.Done(); _, _ = io.Copy(local, remote); _ = closeWrite(local) }()
 	go func() { defer wg.Done(); _, _ = io.Copy(remote, local); _ = closeWrite(remote) }()
 	wg.Wait()
+}
+
+// displayLocalHost renders the local host for user-facing messages: an
+// empty/"localhost" host is shown as "localhost" (the loopback default).
+func displayLocalHost(host string) string {
+	if isLoopbackHost(host) {
+		return "localhost"
+	}
+	return host
+}
+
+// logLocalUnreachable emits the prominent, rate-limited notice that the tunnel is
+// up but the local dev server can't be reached. It names the resolved
+// --local-host so a wrong host (the silent-502 dogfood failure: dev server on a
+// container IP, not loopback) is obvious. Rate-limited via localErrMu so a
+// retrying browser doesn't scroll it off-screen.
+func (t *sshTunnel) logLocalUnreachable(err error) {
+	if t.log == nil {
+		return
+	}
+	t.localErrMu.Lock()
+	now := time.Now()
+	if !t.lastLocalErr.IsZero() && now.Sub(t.lastLocalErr) < localErrLogEvery {
+		t.localErrMu.Unlock()
+		return
+	}
+	t.lastLocalErr = now
+	t.localErrMu.Unlock()
+
+	host := displayLocalHost(t.localHost)
+	t.logf("\n  ⚠ tunnel: local dev server on port %d unreachable at %s:%d (%v)\n"+
+		"    → is your dev server running (`npm run dev:tunnel`), and is --local-host %q correct?\n\n",
+		t.localPort, host, t.localPort, err, host)
 }
 
 // closeWrite half-closes the write side when supported (TCP), so the peer sees

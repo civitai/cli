@@ -71,6 +71,13 @@ const (
 	// probePublicTimeout bounds a single unauthenticated public-host GET so a hung
 	// connection (SYN blackhole during propagation) can't stall a poll iteration.
 	probePublicTimeout = 8 * time.Second
+	// defaultLocalHost is the local dev-server host the tunnel reaches by default:
+	// "localhost" = loopback (127.0.0.1/::1), which PRESERVES the pre-flag behavior.
+	// The scaffold's `dev:tunnel` binds localhost, so most users need nothing.
+	defaultLocalHost = "localhost"
+	// defaultLocalHopNoticeInterval rate-limits the readiness wait's "tunnel up but
+	// local dev server unreachable" notice.
+	defaultLocalHopNoticeInterval = 15 * time.Second
 )
 
 // spinnerFrames is the braille animation cycle for the TTY readiness indicator.
@@ -93,11 +100,11 @@ type tunnelAPI interface {
 type tunnelSessionDeps struct {
 	api tunnelAPI
 	// probeLocal pre-flight-checks that the developer's local dev server is
-	// actually listening on 127.0.0.1:<port> BEFORE anything is minted server-side.
-	// A non-nil error aborts the session before keygen/StartDevTunnel, so a
-	// not-running dev server fails fast with clear guidance instead of minting a
-	// rate-limited/reaper-tracked session that would only serve connection-refused.
-	probeLocal func(port int) error
+	// actually listening on <localHost>:<port> BEFORE anything is minted
+	// server-side. A non-nil error aborts the session before keygen/StartDevTunnel,
+	// so a not-running dev server fails fast with clear guidance instead of minting
+	// a rate-limited/reaper-tracked session that would only serve connection-refused.
+	probeLocal func(host string, port int) error
 	// probePublic checks whether the PUBLIC tunnel host is serving yet: it does an
 	// unauthenticated GET of https://<host>/ and reports ready per the classification
 	// in probePublicTunnel (HTTP 200/401/403 = the whole server path works — a naked
@@ -105,11 +112,25 @@ type tunnelSessionDeps struct {
 	// DNS→Traefik-router→gate are all up; 404/5xx/52x/DNS/refused = not up yet). Wired
 	// to probePublicTunnel in production; injected in tests. Nil disables the wait.
 	probePublic func(ctx context.Context, host string) (ready bool, detail string, err error)
-	keygen      func() (*devtunnel.EphemeralKey, error)
-	dialer      devtunnel.Dialer
-	blockID     string
-	port        int
-	endpoint    string
+	// probeLocalHop checks whether a request can actually TRAVERSE the tunnel to the
+	// local dev server — the gate-only probePublic can't (a naked GET is denied 401
+	// by the forwardAuth gate before it ever reaches the backend). It sends a GET to
+	// the public host with a NON-entry Sec-Fetch-Dest, which the gate treats as a
+	// SUBRESOURCE and forwards to sish → the local server; a 502/503/504 means the
+	// tunnel is up but the local server is unreachable (returns false), any other
+	// status means the local hop works (returns true). Wired to probeLocalHopTunnel
+	// in production; injected in tests. Nil skips the local-hop check (gate-only
+	// readiness — used by lifecycle tests that don't exercise it).
+	probeLocalHop func(ctx context.Context, host string) (localReachable bool, detail string, err error)
+	keygen        func() (*devtunnel.EphemeralKey, error)
+	dialer        devtunnel.Dialer
+	blockID       string
+	port          int
+	// localHost is the resolved host the developer's dev server is bound to
+	// ("localhost" by default = loopback; e.g. 10.42.0.100 for a container). Used
+	// by BOTH the pre-flight probe and the live tunnel proxy so the two agree.
+	localHost string
+	endpoint  string
 	// baseURL is the configured Civitai origin; the mint response's URL must be
 	// same-origin as this (defense-in-depth against an attacker-influenced URL).
 	baseURL string
@@ -129,15 +150,21 @@ type tunnelSessionDeps struct {
 	nudgeAfter        time.Duration
 	spinnerInterval   time.Duration
 	quietInterval     time.Duration
-	newTimer          func(d time.Duration) devtunnel.Timer
-	signals           <-chan os.Signal
-	out               io.Writer
-	errw              io.Writer
+	// localHopNoticeInterval rate-limits the "tunnel up but local dev server
+	// unreachable" notice during the readiness wait (default
+	// defaultLocalHopNoticeInterval), so a stuck local hop is surfaced clearly and
+	// repeatedly without spamming a line per poll. Injectable so tests drive it fast.
+	localHopNoticeInterval time.Duration
+	newTimer               func(d time.Duration) devtunnel.Timer
+	signals                <-chan os.Signal
+	out                    io.Writer
+	errw                   io.Writer
 }
 
 func newAppDevTunnelCmd() *cobra.Command {
 	var blockFlag string
 	var port int
+	var localHost string
 	var endpoint string
 	var idle time.Duration
 	var readyTimeout time.Duration
@@ -177,6 +204,8 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
   civitai app dev-tunnel                 # blockId from block.manifest.json in the CWD
   civitai app dev-tunnel my-block
   civitai app dev-tunnel my-block --port 5173
+  # Dev server NOT on the CLI's loopback (a container/pod, VM, or bound interface):
+  civitai app dev-tunnel my-block --local-host 10.42.0.100
   civitai app dev-tunnel --block my-block --idle-timeout 15m`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -211,6 +240,12 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 			if port < 1 || port > 65535 {
 				return fmt.Errorf("invalid --port %d (must be 1-65535)", port)
 			}
+			// Resolve the local host: empty falls back to the loopback default so a
+			// `--local-host ""` can't accidentally break dialing.
+			lh := strings.TrimSpace(localHost)
+			if lh == "" {
+				lh = defaultLocalHost
+			}
 			if idle <= 0 {
 				return fmt.Errorf("--idle-timeout must be positive (got %s)", idle)
 			}
@@ -242,32 +277,36 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 			defer signal.Stop(sigCh)
 
 			return runTunnelSession(context.Background(), tunnelSessionDeps{
-				api:               client,
-				probeLocal:        probeLocalDevServer,
-				probePublic:       probePublicTunnel,
-				keygen:            devtunnel.GenerateEphemeralKey,
-				dialer:            devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
-				blockID:           blockID,
-				port:              port,
-				endpoint:          ep,
-				baseURL:           cfg.BaseURL(),
-				idle:              idle,
-				readyTimeout:      readyTimeout,
-				readyPollInterval: defaultReadyPollInterval,
-				noWait:            noWait,
-				nudgeAfter:        defaultNudgeAfter,
-				spinnerInterval:   defaultSpinnerInterval,
-				quietInterval:     defaultQuietInterval,
-				newTimer:          devtunnel.NewRealTimer,
-				signals:           sigCh,
-				out:               cmd.OutOrStdout(),
-				errw:              cmd.ErrOrStderr(),
+				api:                    client,
+				probeLocal:             probeLocalDevServer,
+				probePublic:            probePublicTunnel,
+				probeLocalHop:          probeLocalHopTunnel,
+				keygen:                 devtunnel.GenerateEphemeralKey,
+				dialer:                 devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
+				blockID:                blockID,
+				port:                   port,
+				localHost:              lh,
+				endpoint:               ep,
+				baseURL:                cfg.BaseURL(),
+				idle:                   idle,
+				readyTimeout:           readyTimeout,
+				readyPollInterval:      defaultReadyPollInterval,
+				noWait:                 noWait,
+				nudgeAfter:             defaultNudgeAfter,
+				spinnerInterval:        defaultSpinnerInterval,
+				quietInterval:          defaultQuietInterval,
+				localHopNoticeInterval: defaultLocalHopNoticeInterval,
+				newTimer:               devtunnel.NewRealTimer,
+				signals:                sigCh,
+				out:                    cmd.OutOrStdout(),
+				errw:                   cmd.ErrOrStderr(),
 			})
 		},
 	}
 
 	cmd.Flags().StringVar(&blockFlag, "block", "", "the blockId (app slug) to tunnel (or pass it positionally; defaults to the blockId in "+manifest.Filename+" in the CWD)")
 	cmd.Flags().IntVar(&port, "port", defaultDevTunnelPort, "local dev-server port to tunnel (matches the scaffold's dev:tunnel)")
+	cmd.Flags().StringVar(&localHost, "local-host", defaultLocalHost, "host your local dev server is bound to. Default `localhost` (loopback) — the scaffold's `dev:tunnel` binds localhost, so most users need nothing. Set this for a dev server NOT on the CLI's loopback: a container/pod (e.g. --local-host 10.42.0.100), a VM, or a specific bound interface")
 	cmd.Flags().StringVar(&endpoint, "tunnel-endpoint", "", "sish SSH endpoint host:port (default "+defaultDevTunnelEndpoint+", or $"+devTunnelEndpointEnv+")")
 	cmd.Flags().DurationVar(&idle, "idle-timeout", defaultDevTunnelIdle, "tear the tunnel down after this much inactivity")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultReadyTimeout, "cap the wait for the public host to start serving (0 = wait indefinitely until ready or Ctrl-C; a positive value warns + prints the URL anyway on expiry)")
@@ -285,7 +324,7 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	// Pre-flight FIRST: fail fast if the local dev server isn't listening, BEFORE
 	// minting anything server-side. Nothing to tear down yet — return directly.
 	if d.probeLocal != nil {
-		if err := d.probeLocal(d.port); err != nil {
+		if err := d.probeLocal(d.localHost, d.port); err != nil {
 			return err
 		}
 	}
@@ -331,6 +370,7 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		Endpoint:         d.endpoint,
 		RemoteHost:       sess.Host,
 		LocalPort:        d.port,
+		LocalHost:        d.localHost,
 		Signer:           key.Signer,
 		SSHHostPublicKey: sess.SSHHostPublicKey,
 	})
@@ -347,9 +387,9 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	// open it, so they don't hit NXDOMAIN/404/502 on a too-early click. --no-wait
 	// skips this and prints the URL immediately (old behavior).
 	if d.noWait {
-		printTunnelReady(d.out, sess, d.port)
+		printTunnelReady(d.out, sess, d.localHost, d.port)
 	} else {
-		fmt.Fprintf(d.errw, "\nDev tunnel established — serving 127.0.0.1:%d as %s. Waiting for it to become reachable…\n", d.port, sess.Host)
+		fmt.Fprintf(d.errw, "\nDev tunnel established — serving %s:%d as %s. Waiting for it to become reachable…\n", localHostForDisplay(d.localHost), d.port, sess.Host)
 		ready, abortReason := waitForTunnelReachable(ctx, d, tunnel, sess.Host, sess.URL)
 		if abortReason != "" {
 			// The dev aborted (Ctrl-C / ctx) or the tunnel dropped DURING the wait —
@@ -359,12 +399,12 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 			return nil
 		}
 		if ready {
-			printTunnelReadyConfirmed(d.out, sess, d.port)
+			printTunnelReadyConfirmed(d.out, sess, d.localHost, d.port)
 		} else {
 			// A POSITIVE --ready-timeout cap elapsed (the default is indefinite, which
 			// never lands here). NON-fatal: the host may still come up shortly, so keep
 			// the tunnel and print the URL with a clear "not up yet" warning.
-			printTunnelReadyTimeout(d.out, sess, d.port, d.readyTimeout)
+			printTunnelReadyTimeout(d.out, sess, d.localHost, d.port, d.readyTimeout)
 		}
 	}
 
@@ -441,42 +481,62 @@ func enrichDevTunnelAuthError(ctx context.Context, d tunnelSessionDeps, err erro
 // actionable guidance. Run BEFORE the mint so a not-running dev server never
 // burns a rate-limited/reaper-tracked server session (which would only serve the
 // browser connection-refused).
-func probeLocalDevServer(port int) error {
-	conn, err := devtunnel.DialLocalDevServer(port, 2*time.Second)
+func probeLocalDevServer(host string, port int) error {
+	conn, err := devtunnel.DialLocalDevServer(host, port, 2*time.Second)
 	if err != nil {
-		return fmt.Errorf("no local dev server is listening on port %d (tried 127.0.0.1 and ::1) — start it first (e.g. `npm run dev:tunnel`), then re-run. (override the port with --port)", port)
+		return fmt.Errorf("no local dev server is listening on %s:%d (%s) — start it first (e.g. `npm run dev:tunnel`), then re-run. (override the port with --port, or the host with --local-host)",
+			localHostForDisplay(host), port, localDialTargets(host))
 	}
 	_ = conn.Close()
 	return nil
 }
 
+// localHostForDisplay renders the local host for user-facing messages: an
+// empty/"localhost" host shows as "localhost" (the loopback default).
+func localHostForDisplay(host string) string {
+	h := strings.TrimSpace(host)
+	if h == "" || strings.EqualFold(h, "localhost") {
+		return "localhost"
+	}
+	return h
+}
+
+// localDialTargets describes, for an error message, exactly what the dialer
+// tried: both loopback families for the loopback default, else the single host.
+func localDialTargets(host string) string {
+	if h := strings.TrimSpace(host); h == "" || strings.EqualFold(h, "localhost") {
+		return "tried 127.0.0.1 and ::1"
+	}
+	return "tried " + strings.TrimSpace(host)
+}
+
 // printTunnelReady prints the actionable "tunnel is up" block, with the
 // /apps/dev URL made prominent (it is the one thing the developer must open).
-func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, port int) {
-	fmt.Fprintf(out, "\nDev tunnel ready — serving 127.0.0.1:%d as %s\n\n", port, sess.Host)
+func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, localHost string, port int) {
+	fmt.Fprintf(out, "\nDev tunnel ready — serving %s:%d as %s\n\n", localHostForDisplay(localHost), port, sess.Host)
 	fmt.Fprintf(out, "  ▶ Open this in your browser (you must be logged in):\n\n")
 	fmt.Fprintf(out, "      %s\n\n", sess.URL)
-	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on port %d.\n", port)
+	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on %s:%d.\n", localHostForDisplay(localHost), port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
 }
 
 // printTunnelReadyConfirmed is the ready path: the public host answered healthy,
 // so lead with a ✓ confirmation then the standard "open this" block.
-func printTunnelReadyConfirmed(out io.Writer, sess *api.DevTunnelSession, port int) {
-	fmt.Fprintf(out, "\n✓ Ready — %s is reachable.\n", sess.Host)
-	printTunnelReady(out, sess, port)
+func printTunnelReadyConfirmed(out io.Writer, sess *api.DevTunnelSession, localHost string, port int) {
+	fmt.Fprintf(out, "\n✓ Ready — %s is reachable (local hop verified).\n", sess.Host)
+	printTunnelReady(out, sess, localHost, port)
 }
 
 // printTunnelReadyTimeout is the readiness-timeout path: the host did not answer
 // healthy within the deadline, but that is NON-fatal — DNS/Cloudflare/Traefik
 // propagation can still land shortly. Print the URL with a clear warning so the
 // dev knows to retry the browser in a moment rather than assume it's broken.
-func printTunnelReadyTimeout(out io.Writer, sess *api.DevTunnelSession, port int, waited time.Duration) {
+func printTunnelReadyTimeout(out io.Writer, sess *api.DevTunnelSession, localHost string, port int, waited time.Duration) {
 	fmt.Fprintf(out, "\n⚠ %s isn't resolving/serving yet (waited %s).\n", sess.Host, waited)
 	fmt.Fprintf(out, "  This is usually just DNS + Cloudflare + route propagation — it can take a minute.\n")
 	fmt.Fprintf(out, "  The tunnel is UP; open the URL and retry in a bit if it NXDOMAINs / 404s / 502s:\n\n")
 	fmt.Fprintf(out, "      %s\n\n", sess.URL)
-	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on port %d.\n", port)
+	fmt.Fprintf(out, "  Make sure your dev server is running (`npm run dev:tunnel`) on %s:%d.\n", localHostForDisplay(localHost), port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
 }
 
@@ -511,6 +571,13 @@ func resolveQuietInterval(d tunnelSessionDeps) time.Duration {
 		return d.quietInterval
 	}
 	return defaultQuietInterval
+}
+
+func resolveLocalHopNoticeInterval(d tunnelSessionDeps) time.Duration {
+	if d.localHopNoticeInterval > 0 {
+		return d.localHopNoticeInterval
+	}
+	return defaultLocalHopNoticeInterval
 }
 
 // writerIsTTY reports whether w is a terminal we can animate on — true only when
@@ -570,10 +637,22 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 	// A single reusable probe goroutine + buffered result channel. Only one probe is
 	// ever outstanding, so a cap-1 channel means the goroutine never blocks on send
 	// after we've returned (no goroutine leak).
+	//
+	// Each probe first checks the GATE (probePublic). If the gate is reachable AND a
+	// probeLocalHop is wired, it then checks the LOCAL HOP (a subresource-shaped
+	// request that the forwardAuth gate forwards to sish → the local dev server):
+	//   - gateReady=false                 → propagation not done; keep waiting.
+	//   - gateReady + localHopDone+localOK → the FULL path works → ready.
+	//   - gateReady + localHopDone+!localOK→ tunnel up but LOCAL server unreachable
+	//     (502/503/504): surface the clear notice, keep waiting (NOT ready).
+	//   - gateReady + !localHopDone        → local-hop probe errored transiently
+	//     (or no probeLocalHop wired → treated as OK): re-probe.
 	type probeResult struct {
-		ready  bool
-		detail string
-		err    error
+		gateReady    bool
+		localHopDone bool // the local-hop probe returned a definitive status (err==nil)
+		localOK      bool // the local hop responded non-bad-gateway
+		detail       string
+		err          error
 	}
 	resultCh := make(chan probeResult, 1)
 	var probeCancel context.CancelFunc
@@ -581,8 +660,19 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 		pctx, cancel := context.WithCancel(ctx)
 		probeCancel = cancel
 		go func() {
-			ready, detail, err := d.probePublic(pctx, host)
-			resultCh <- probeResult{ready, detail, err}
+			gateReady, detail, err := d.probePublic(pctx, host)
+			res := probeResult{gateReady: gateReady, detail: detail, err: err}
+			if gateReady && d.probeLocalHop != nil {
+				ok, ldetail, lerr := d.probeLocalHop(pctx, host)
+				if lerr == nil {
+					res.localHopDone = true
+					res.localOK = ok
+					res.detail = ldetail
+				}
+				// A local-hop transport error (lerr != nil) is left inconclusive
+				// (localHopDone=false) → re-probed, not reported as local-unreachable.
+			}
+			resultCh <- res
 		}()
 	}
 	cancelProbe := func() {
@@ -593,14 +683,25 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 	}
 
 	// Progress-indicator state (TTY only tracks lastLen so it can clear its line).
+	// localHopDown is set once the gate is reachable but the local hop 502s, so the
+	// indicator switches from "waiting for the host" to "waiting for your local dev
+	// server" — the actionable state.
 	frame := 0
 	lastLen := 0
+	localHopDown := false
+	localTarget := fmt.Sprintf("%s:%d", localHostForDisplay(d.localHost), d.port)
 	renderSpinner := func() {
 		if !tty {
 			return
 		}
-		line := fmt.Sprintf("%c Waiting for %s to come up… %s elapsed",
-			spinnerFrames[frame%len(spinnerFrames)], host, fmtMMSS(time.Since(start)))
+		var line string
+		if localHopDown {
+			line = fmt.Sprintf("%c Tunnel up — waiting for your local dev server on %s… %s elapsed",
+				spinnerFrames[frame%len(spinnerFrames)], localTarget, fmtMMSS(time.Since(start)))
+		} else {
+			line = fmt.Sprintf("%c Waiting for %s to come up… %s elapsed",
+				spinnerFrames[frame%len(spinnerFrames)], host, fmtMMSS(time.Since(start)))
+		}
 		fmt.Fprintf(d.errw, "\r%s", line)
 		lastLen = utf8.RuneCountInString(line)
 	}
@@ -608,6 +709,26 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 		if tty && lastLen > 0 {
 			fmt.Fprintf(d.errw, "\r%s\r", strings.Repeat(" ", lastLen))
 			lastLen = 0
+		}
+	}
+
+	// localUnreachableNotice prints the CLEAR, persistent "tunnel up but local dev
+	// server unreachable" guidance, rate-limited to at most every
+	// localHopNoticeInterval so a stuck local hop is surfaced repeatedly without
+	// one line per poll. On a TTY it clears the spinner line first, then repaints.
+	lastLocalNotice := time.Time{}
+	localNoticeEvery := resolveLocalHopNoticeInterval(d)
+	localUnreachableNotice := func() {
+		now := time.Now()
+		if !lastLocalNotice.IsZero() && now.Sub(lastLocalNotice) < localNoticeEvery {
+			return
+		}
+		lastLocalNotice = now
+		clearLine()
+		fmt.Fprintf(d.errw, "⚠ Tunnel is up, but your local dev server on %s is unreachable through the tunnel\n", localTarget)
+		fmt.Fprintf(d.errw, "  — is it running, and is --local-host correct? (currently %q)\n", localHostForDisplay(d.localHost))
+		if tty {
+			renderSpinner()
 		}
 	}
 
@@ -673,6 +794,8 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 			if tty {
 				frame++
 				renderSpinner()
+			} else if localHopDown {
+				fmt.Fprintf(d.errw, "  … tunnel up; still waiting for your local dev server on %s (%s)\n", localTarget, fmtMMSS(time.Since(start)))
 			} else {
 				fmt.Fprintf(d.errw, "  … still waiting for %s (%s)\n", host, fmtMMSS(time.Since(start)))
 			}
@@ -682,9 +805,24 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 			// on the completed ctx today, but leak-safe if a cancelable parent is ever
 			// threaded through runTunnelSession).
 			cancelProbe()
-			if res.ready {
+			// FULLY ready only when the gate is reachable AND the local hop is not a
+			// bad-gateway (or no local-hop probe is wired). This is the fix: gate-only
+			// readiness (200/401/403) declared "ready" while the local dev server was
+			// dead behind sish → the browser silently 502'd.
+			if res.gateReady && (d.probeLocalHop == nil || res.localOK) {
 				clearLine()
 				return true, ""
+			}
+			if res.gateReady && res.localHopDone && !res.localOK {
+				// Tunnel/gate up, but the local hop 502s — the local dev server is
+				// unreachable through the tunnel. Surface the clear, persistent notice
+				// and KEEP waiting (don't declare ready, don't hang silently).
+				localHopDown = true
+				localUnreachableNotice()
+			} else {
+				// Gate not up yet (or the local-hop probe was inconclusive) — back to
+				// the plain "waiting for the host" indicator.
+				localHopDown = false
 			}
 			// Not ready — re-probe after the poll interval. (The detail/err is folded
 			// into the indicator, not spammed per-attempt.)
@@ -729,6 +867,58 @@ func probePublicURL(ctx context.Context, client *http.Client, rawURL string) (bo
 	// Drain a little so the connection can be reused / closed cleanly.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
 	return classifyReadyStatus(resp.StatusCode), fmt.Sprintf("http %d", resp.StatusCode), nil
+}
+
+// probeLocalHopTunnel is the production probeLocalHop: it verifies a request can
+// actually TRAVERSE the tunnel to the local dev server, which the gate-only
+// probePublicTunnel cannot (a naked GET is denied 401 by the forwardAuth gate
+// BEFORE it reaches the backend — so gate-reachable ≠ local-server-reachable, the
+// silent-502 dogfood failure).
+//
+// HOW: it GETs https://<host>/ with a NON-entry Sec-Fetch-Dest ("image"). The
+// forwardAuth gate (dev-tunnel-gate.ts) classifies ENTRY dests
+// (document/iframe/frame/nested-document, or ABSENT) as token-required → 401, and
+// treats ANY OTHER Sec-Fetch-Dest as a SUBRESOURCE → allowed through to the
+// backend (sish → the local dev server). So the response status reflects the
+// LOCAL hop: 502/503/504 = tunnel up but local server unreachable (not ready);
+// any other status (200/404/…) = the local server responded (ready).
+func probeLocalHopTunnel(ctx context.Context, host string) (bool, string, error) {
+	client := &http.Client{Timeout: probePublicTimeout}
+	return probeLocalHopURL(ctx, client, "https://"+host+"/")
+}
+
+// probeLocalHopURL is the testable core of probeLocalHopTunnel: GET rawURL with a
+// subresource-shaped Sec-Fetch-Dest and classify per localHopReachable. Split out
+// so tests can point it at an httptest server (real statuses) without a real host.
+func probeLocalHopURL(ctx context.Context, client *http.Client, rawURL string) (bool, string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	if err != nil {
+		return false, "bad-url", err
+	}
+	// A non-entry Sec-Fetch-Dest makes the forwardAuth gate forward this to the
+	// backend as a SUBRESOURCE (no token needed) — so the status reflects the local
+	// hop, not the gate. Also mark it fetch-mode so it never looks like a navigation.
+	req.Header.Set("Sec-Fetch-Dest", "image")
+	req.Header.Set("Sec-Fetch-Mode", "no-cors")
+	resp, err := client.Do(req)
+	if err != nil {
+		return false, classifyProbeErr(err), err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return localHopReachable(resp.StatusCode), fmt.Sprintf("http %d", resp.StatusCode), nil
+}
+
+// localHopReachable classifies a SUBRESOURCE-probe status: only the bad-gateway
+// family (502/503/504) means the tunnel is up but the local dev server is
+// unreachable; ANY other status means the local server responded (the hop works).
+func localHopReachable(code int) bool {
+	switch code {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return false
+	default:
+		return true
+	}
 }
 
 // classifyReadyStatus maps an HTTP status to readiness: only 200/401/403 mean the
