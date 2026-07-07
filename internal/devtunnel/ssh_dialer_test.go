@@ -193,6 +193,89 @@ func (fs *forwardServer) pushConnection(t *testing.T, sconn *ssh.ServerConn, hos
 	return ch
 }
 
+// pushConnectionWithOrigin is pushConnection with control over the OriginAddr /
+// OriginPort of the forwarded-tcpip payload. sish stamps OriginAddr with the
+// tunnel HOSTNAME (not an IP), which is exactly the shape x/crypto's built-in
+// client.Listen handler rejects (netip.ParseAddr fails → "cannot parse IP
+// address" → channel rejected → 502). This lets the regression test reproduce
+// that real-world channel and assert our handler proxies it anyway.
+func (fs *forwardServer) pushConnectionWithOrigin(t *testing.T, sconn *ssh.ServerConn, addr string, port uint32, originAddr string, originPort uint32) ssh.Channel {
+	t.Helper()
+	payload := ssh.Marshal(struct {
+		Addr       string
+		Port       uint32
+		OriginAddr string
+		OriginPort uint32
+	}{addr, port, originAddr, originPort})
+	ch, reqs, err := sconn.OpenChannel("forwarded-tcpip", payload)
+	if err != nil {
+		t.Fatalf("open forwarded-tcpip: %v", err)
+	}
+	go ssh.DiscardRequests(reqs)
+	return ch
+}
+
+// TestSSHDialerProxiesNonIPOriginAddr is the regression guard for the CONFIRMED
+// delivery bug: sish opens each forwarded-tcpip channel with OriginAddr set to
+// the tunnel HOSTNAME (`dev-<16hex>`, NOT an IP) — and, defensively, an Addr that
+// need not equal the exact `<label>:80` we registered. x/crypto's built-in
+// client.Listen handler runs netip.ParseAddr(OriginAddr) and REJECTS every such
+// channel ("cannot parse IP address"), so Accept() never fires and sish 502s
+// (verified live against the real sish: stock CLI → 502, this handler → 200).
+// Our dialer accepts ALL forwarded-tcpip channels regardless of Addr/Origin, so
+// the inbound connection must still round-trip to the local dev server.
+func TestSSHDialerProxiesNonIPOriginAddr(t *testing.T) {
+	localPort, stopEcho := echoServer(t)
+	defer stopEcho()
+
+	fs := newForwardServer(t)
+	defer fs.close()
+
+	key, err := GenerateEphemeralKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const host = "dev-0123456789abcdef.civit.ai"
+
+	d := NewSSHDialer(io.Discard)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tunnel, err := d.Dial(ctx, DialOptions{Endpoint: fs.addr(), RemoteHost: host, LocalPort: localPort, Signer: key.Signer, SSHHostPublicKey: fs.hostAuthorizedKey()})
+	if err != nil {
+		t.Fatalf("Dial: %v", err)
+	}
+	defer tunnel.Close()
+
+	sconn := <-fs.sconnCh
+	<-fs.forwardReady
+
+	// Reproduce EXACTLY what live sish sends: a non-IP OriginAddr (the tunnel
+	// hostname). Also stamp a MISMATCHED Addr (the full host, not the bound label)
+	// to prove we don't strict-match the address either. Both would make
+	// client.Listen reject the channel.
+	ch := fs.pushConnectionWithOrigin(t, sconn, host, uint32(remoteBindPort), subdomainLabel(host), uint32(remoteBindPort))
+	defer ch.Close()
+
+	msg := "GET /@vite/client HTTP/1.1\r\n\r\n"
+	if _, err := ch.Write([]byte(msg)); err != nil {
+		t.Fatalf("write to forwarded channel: %v", err)
+	}
+	buf := make([]byte, len(msg))
+	_ = ch.CloseWrite()
+	if _, err := io.ReadFull(ch, buf); err != nil {
+		t.Fatalf("read echo back through the tunnel (non-IP OriginAddr must still proxy): %v", err)
+	}
+	if got := string(buf); !strings.HasPrefix(got, "GET /@vite/client") {
+		t.Errorf("proxied round-trip mismatch for non-IP-origin channel: got %q", got)
+	}
+
+	select {
+	case <-tunnel.Activity():
+	case <-time.After(time.Second):
+		t.Error("expected an Activity signal for the inbound connection")
+	}
+}
+
 // TestSSHDialerReverseForwardProxies is the real dialer end-to-end against an
 // in-process SSH forward server + a local echo server: it proves Dial binds the
 // reverse forward, an inbound forwarded connection is proxied to the local dev
