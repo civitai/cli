@@ -20,6 +20,7 @@ import (
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/devtunnel"
+	"github.com/civitai/cli/internal/dnsprobe"
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -78,6 +79,13 @@ const (
 	// defaultLocalHopNoticeInterval rate-limits the readiness wait's "tunnel up but
 	// local dev server unreachable" notice.
 	defaultLocalHopNoticeInterval = 15 * time.Second
+	// defaultDNSPendingGrace is how long the readiness wait shows the generic
+	// "waiting for the host" indicator before switching to the DNS-specific
+	// "waiting for DNS to publish for <host>…" line, once DoH reports the record
+	// isn't published yet. A short grace avoids flipping the message on the very
+	// first probe (the record is expected to be missing for the first second or
+	// two right after mint).
+	defaultDNSPendingGrace = 5 * time.Second
 )
 
 // spinnerFrames is the braille animation cycle for the TTY readiness indicator.
@@ -155,10 +163,15 @@ type tunnelSessionDeps struct {
 	// defaultLocalHopNoticeInterval), so a stuck local hop is surfaced clearly and
 	// repeatedly without spamming a line per poll. Injectable so tests drive it fast.
 	localHopNoticeInterval time.Duration
-	newTimer               func(d time.Duration) devtunnel.Timer
-	signals                <-chan os.Signal
-	out                    io.Writer
-	errw                   io.Writer
+	// dnsPendingGrace is how long the wait shows the generic indicator before
+	// switching to the "waiting for DNS to publish" line once DoH reports the host
+	// isn't published yet (default defaultDNSPendingGrace). Injectable so tests
+	// drive it fast.
+	dnsPendingGrace time.Duration
+	newTimer        func(d time.Duration) devtunnel.Timer
+	signals         <-chan os.Signal
+	out             io.Writer
+	errw            io.Writer
 }
 
 func newAppDevTunnelCmd() *cobra.Command {
@@ -296,6 +309,7 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				spinnerInterval:        defaultSpinnerInterval,
 				quietInterval:          defaultQuietInterval,
 				localHopNoticeInterval: defaultLocalHopNoticeInterval,
+				dnsPendingGrace:        defaultDNSPendingGrace,
 				newTimer:               devtunnel.NewRealTimer,
 				signals:                sigCh,
 				out:                    cmd.OutOrStdout(),
@@ -580,6 +594,13 @@ func resolveLocalHopNoticeInterval(d tunnelSessionDeps) time.Duration {
 	return defaultLocalHopNoticeInterval
 }
 
+func resolveDNSPendingGrace(d tunnelSessionDeps) time.Duration {
+	if d.dnsPendingGrace > 0 {
+		return d.dnsPendingGrace
+	}
+	return defaultDNSPendingGrace
+}
+
 // writerIsTTY reports whether w is a terminal we can animate on — true only when
 // w is an *os.File whose fd is a TTY. A bytes.Buffer / syncBuffer (tests) or a
 // pipe (CI) is NOT a TTY, so it takes the quiet non-animated path.
@@ -689,16 +710,28 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 	frame := 0
 	lastLen := 0
 	localHopDown := false
+	// dnsPending is set once DoH AUTHORITATIVELY reports the tunnel host isn't
+	// published yet (external-dns + Cloudflare haven't propagated the record). It
+	// switches the indicator to the DNS-specific line — but only after a short
+	// grace period, so a single first-probe NXDOMAIN doesn't flip the message
+	// instantly.
+	dnsPending := false
+	dnsGrace := resolveDNSPendingGrace(d)
+	showDNSPending := func() bool { return dnsPending && time.Since(start) >= dnsGrace }
 	localTarget := fmt.Sprintf("%s:%d", localHostForDisplay(d.localHost), d.port)
 	renderSpinner := func() {
 		if !tty {
 			return
 		}
 		var line string
-		if localHopDown {
+		switch {
+		case localHopDown:
 			line = fmt.Sprintf("%c Tunnel up — waiting for your local dev server on %s… %s elapsed",
 				spinnerFrames[frame%len(spinnerFrames)], localTarget, fmtMMSS(time.Since(start)))
-		} else {
+		case showDNSPending():
+			line = fmt.Sprintf("%c Waiting for DNS to publish for %s (external-dns + Cloudflare, usually <1 min)… %s elapsed",
+				spinnerFrames[frame%len(spinnerFrames)], host, fmtMMSS(time.Since(start)))
+		default:
 			line = fmt.Sprintf("%c Waiting for %s to come up… %s elapsed",
 				spinnerFrames[frame%len(spinnerFrames)], host, fmtMMSS(time.Since(start)))
 		}
@@ -791,12 +824,15 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 			fmt.Fprintf(d.errw, "      %s\n\n", tunnelURL)
 			renderSpinner()
 		case <-ui.C:
-			if tty {
+			switch {
+			case tty:
 				frame++
 				renderSpinner()
-			} else if localHopDown {
+			case localHopDown:
 				fmt.Fprintf(d.errw, "  … tunnel up; still waiting for your local dev server on %s (%s)\n", localTarget, fmtMMSS(time.Since(start)))
-			} else {
+			case showDNSPending():
+				fmt.Fprintf(d.errw, "  … waiting for DNS to publish for %s (external-dns + Cloudflare, usually <1 min) (%s)\n", host, fmtMMSS(time.Since(start)))
+			default:
 				fmt.Fprintf(d.errw, "  … still waiting for %s (%s)\n", host, fmtMMSS(time.Since(start)))
 			}
 		case res := <-resultCh:
@@ -818,11 +854,15 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 				// unreachable through the tunnel. Surface the clear, persistent notice
 				// and KEEP waiting (don't declare ready, don't hang silently).
 				localHopDown = true
+				dnsPending = false
 				localUnreachableNotice()
 			} else {
 				// Gate not up yet (or the local-hop probe was inconclusive) — back to
-				// the plain "waiting for the host" indicator.
+				// the plain "waiting for the host" indicator. If DoH reports the record
+				// isn't published yet, switch to the DNS-specific indicator (after the
+				// grace period) so "DNS not up" reads differently from "route not built".
 				localHopDown = false
+				dnsPending = isDNSPending(res.detail, res.err)
 			}
 			// Not ready — re-probe after the poll interval. (The detail/err is folded
 			// into the indicator, not spammed per-attempt.)
@@ -833,9 +873,37 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 	}
 }
 
+// devTunnelResolver is the DoH resolver the readiness probes use to resolve the
+// ephemeral tunnel host. It is a package var so tests can inject a fake DoH
+// endpoint; production uses Cloudflare DoH JSON.
+var devTunnelResolver dnsprobe.Resolver = dnsprobe.DefaultResolver
+
+// dnsPendingDetail is the probe `detail` reported when DoH AUTHORITATIVELY says
+// the tunnel host is not published yet (NXDOMAIN / no address answer) — DISTINCT
+// from a transient "dns" transport error. The readiness wait keys off this (or the
+// dnsprobe.ErrNotPublished sentinel) to show the "waiting for DNS to publish" line
+// instead of the generic "still waiting".
+const dnsPendingDetail = "dns-pending"
+
+// probeHTTPClientForHost builds the probe HTTP client for host, resolving host via
+// DNS-over-HTTPS to Cloudflare (NOT the OS resolver). This is the crux of the fix:
+// a premature GET of the just-minted `dev-<16hex>.civit.ai` used to resolve via the
+// OS resolver, which NXDOMAIN-negative-caches the not-yet-published record for up to
+// the civit.ai SOA minimum TTL (1800s, CF-unlowerable) — hanging the CLI for ~30 min
+// AND poisoning the OS cache so the browser can't later resolve the now-live host.
+// Resolving over DoH sees the record the moment CF has it and NEVER poisons the OS
+// negative cache. On an authoritative not-published result it returns
+// dnsprobe.ErrNotPublished; if DoH itself fails it falls back to the OS resolver so
+// behavior is never worse than before.
+func probeHTTPClientForHost(ctx context.Context, host string) (*http.Client, error) {
+	return dnsprobe.DialClient(ctx, devTunnelResolver, host, probePublicTimeout)
+}
+
 // probePublicTunnel is the production probePublic: an UNAUTHENTICATED GET of
 // https://<host>/ (a fresh client that does NOT carry the CLI's credential), with
-// the response classified by classifyReadyStatus.
+// the response classified by classifyReadyStatus. The host is resolved via DoH
+// (see probeHTTPClientForHost) so the OS resolver is never queried for the
+// not-yet-published host.
 //
 // WHY 401/403 mean healthy: a naked (un-embedded, no-token) request to the tunnel
 // host is DENIED by the forwardAuth gate with 401/403 precisely WHEN the whole
@@ -844,9 +912,18 @@ func waitForTunnelReachable(ctx context.Context, d tunnelSessionDeps, tunnel dev
 // path isn't up yet: 404 (Traefik has no route), 502/503/504 (backend/gate down),
 // Cloudflare origin errors 520–526, or a DNS/connection error.
 func probePublicTunnel(ctx context.Context, host string) (bool, string, error) {
-	// A dedicated client with NO auth transport — this is a public probe; it must
-	// not reuse the CLI credential. Redirect-following is fine (default).
-	client := &http.Client{Timeout: probePublicTimeout}
+	client, err := probeHTTPClientForHost(ctx, host)
+	if err != nil {
+		if errors.Is(err, dnsprobe.ErrNotPublished) {
+			// DoH says the record isn't published yet — the expected state right after
+			// mint. Report the DISTINCT dns-pending signal (not a hard error) so the
+			// wait keeps polling and shows the DNS-specific message.
+			return false, dnsPendingDetail, err
+		}
+		// Should not happen (DialClient falls back to the OS resolver on transient DoH
+		// failure), but be defensive: treat an unexpected resolver error as not-ready.
+		return false, "dns", err
+	}
 	return probePublicURL(ctx, client, "https://"+host+"/")
 }
 
@@ -883,7 +960,16 @@ func probePublicURL(ctx context.Context, client *http.Client, rawURL string) (bo
 // LOCAL hop: 502/503/504 = tunnel up but local server unreachable (not ready);
 // any other status (200/404/…) = the local server responded (ready).
 func probeLocalHopTunnel(ctx context.Context, host string) (bool, string, error) {
-	client := &http.Client{Timeout: probePublicTimeout}
+	// Resolve via DoH too (the gate probe already proved the host resolves, but
+	// keeping the local-hop probe off the OS resolver means NEITHER probe can poison
+	// the OS negative cache). A transient DoH failure falls back to the OS resolver.
+	client, err := probeHTTPClientForHost(ctx, host)
+	if err != nil {
+		// Inconclusive (e.g. a transient not-published between gate-ready and this
+		// probe) — report not-reachable-yet so the caller re-probes rather than
+		// declaring the local hop down.
+		return false, classifyProbeErr(err), err
+	}
 	return probeLocalHopURL(ctx, client, "https://"+host+"/")
 }
 
@@ -931,6 +1017,14 @@ func classifyReadyStatus(code int) bool {
 	default:
 		return false
 	}
+}
+
+// isDNSPending reports whether a probe result means "DNS isn't published yet"
+// (DoH returned NXDOMAIN / no address answer) as opposed to any other not-ready
+// reason. It accepts EITHER the dnsPendingDetail marker (so injected test probes
+// need not import the sentinel) OR the dnsprobe.ErrNotPublished sentinel.
+func isDNSPending(detail string, err error) bool {
+	return detail == dnsPendingDetail || errors.Is(err, dnsprobe.ErrNotPublished)
 }
 
 // classifyProbeErr gives a short human tag for a transport-level probe failure,
