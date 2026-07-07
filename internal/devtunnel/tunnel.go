@@ -16,6 +16,14 @@ type DialOptions struct {
 	RemoteHost string
 	// LocalPort is the developer's running dev server port on 127.0.0.1.
 	LocalPort int
+	// LocalHost is the host the developer's dev server is bound to. Empty or
+	// "localhost" means loopback (the SAFE default: try 127.0.0.1 then ::1); any
+	// other value (e.g. a container/VPN IP like 10.42.0.100, or a specific bound
+	// interface) is dialed EXACTLY as given. This lets the tunnel reach a dev
+	// server that is NOT on the CLI's loopback (a container/pod netns, a VM, a
+	// specific interface) — the silent-502 case where sish has the tunnel but the
+	// proxy can't reach the local server.
+	LocalHost string
 	// Signer is the ephemeral private key authenticating the `ssh -R` bind.
 	Signer ssh.Signer
 	// SSHHostPublicKey is the sish endpoint's OpenSSH host public-key line
