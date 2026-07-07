@@ -415,7 +415,7 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	if d.noWait {
 		printTunnelReady(d.out, sess, d.localHost, d.port)
 	} else {
-		fmt.Fprintf(d.errw, "\nDev tunnel established — serving %s:%d as %s. Waiting for it to become reachable…\n", localHostForDisplay(d.localHost), d.port, sess.Host)
+		fmt.Fprintf(d.errw, "\nDev tunnel established — serving %s:%d as %s. Waiting for %s…\n", localHostForDisplay(d.localHost), d.port, sess.Host, sess.Host)
 		ready, abortReason := waitForTunnelReachable(ctx, d, tunnel, sess.Host, sess.URL)
 		if abortReason != "" {
 			// The dev aborted (Ctrl-C / ctx) or the tunnel dropped DURING the wait —
@@ -1000,7 +1000,7 @@ func (m *tunnelWaitModel) View() string {
 	case m.dnsPending && time.Since(m.start) >= m.dnsGrace:
 		return fmt.Sprintf("%s Waiting for DNS to publish for %s (external-dns + Cloudflare, usually <1 min)… %s elapsed", m.sp.View(), m.host, elapsed)
 	default:
-		return fmt.Sprintf("%s Waiting for %s to come up… %s elapsed", m.sp.View(), m.host, elapsed)
+		return fmt.Sprintf("%s Waiting for %s… %s elapsed", m.sp.View(), m.host, elapsed)
 	}
 }
 
