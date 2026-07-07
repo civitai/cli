@@ -143,9 +143,13 @@ func TestAppInitPageMoneyTemplate(t *testing.T) {
 			t.Errorf("page-money should scaffold %s: %v", f, err)
 		}
 	}
-	// Next steps must use dev:harness (plain `dev` renders blank without a host).
+	// Next steps center the dev-tunnel (prod-fidelity preview) and keep dev:harness
+	// as the offline/mock fallback tip. Plain `dev` renders blank without a host.
+	if !strings.Contains(out, "civitai app dev-tunnel") {
+		t.Errorf("page-money next steps should highlight the dev-tunnel: %s", out)
+	}
 	if !strings.Contains(out, "npm run dev:harness") {
-		t.Errorf("page-money next steps should mention dev:harness: %s", out)
+		t.Errorf("page-money next steps should keep the dev:harness fallback: %s", out)
 	}
 	if strings.Contains(out, "npm run dev\n") {
 		t.Errorf("page-money next steps should NOT suggest plain `npm run dev`: %s", out)

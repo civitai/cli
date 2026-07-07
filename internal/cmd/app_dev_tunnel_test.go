@@ -1119,6 +1119,16 @@ func TestRunTunnelSessionReadyPrintsConfirmedURL(t *testing.T) {
 	if !strings.Contains(errw.String(), "Waiting for it to become reachable") {
 		t.Errorf("expected the 'established, waiting' status on stderr:\n%s", errw.String())
 	}
+	// Change 2: the immediate startup status fills the previously-silent mint+dial
+	// window (printed BEFORE keygen/mint, so the terminal never looks hung).
+	if !strings.Contains(errw.String(), "Establishing dev tunnel for my-block") {
+		t.Errorf("expected the immediate 'establishing' status on stderr:\n%s", errw.String())
+	}
+	// Change 3: the redundant "Make sure your dev server is running" line is gone —
+	// probeLocal already guaranteed the dev server was listening before the mint.
+	if strings.Contains(out.String(), "Make sure your dev server is running") {
+		t.Errorf("ready block must NOT print the redundant dev-server-running noise:\n%s", out.String())
+	}
 }
 
 // TestRunTunnelSessionReadinessTimeoutNonFatal: when the host never becomes
@@ -1151,6 +1161,10 @@ func TestRunTunnelSessionReadinessTimeoutNonFatal(t *testing.T) {
 	if !strings.Contains(out.String(), "isn't resolving/serving yet") {
 		t.Errorf("timeout path must print the warning:\n%s", out.String())
 	}
+	// Change 3: the timeout block also drops the redundant dev-server-running noise.
+	if strings.Contains(out.String(), "Make sure your dev server is running") {
+		t.Errorf("timeout block must NOT print the redundant dev-server-running noise:\n%s", out.String())
+	}
 	// The readiness timeout is non-fatal: nothing torn down, session still alive.
 	if apiStub.stopCount() != 0 {
 		t.Errorf("readiness timeout must NOT tear the tunnel down; stop calls=%d", apiStub.stopCount())
@@ -1178,9 +1192,10 @@ func TestRunTunnelSessionNoWaitSkipsProbe(t *testing.T) {
 	dialer := &fakeDialer{tunnel: tunnel}
 	timer := newFakeTimer()
 	sigs := make(chan os.Signal, 1)
-	var out syncBuffer
+	var out, errw syncBuffer
 	deps := baseDeps(t, apiStub, dialer, timer, sigs)
 	deps.out = &out
+	deps.errw = &errw
 	deps.noWait = true
 	deps.probePublic = func(context.Context, string) (bool, string, error) {
 		t.Error("probePublic must NOT be called when --no-wait is set")
@@ -1202,6 +1217,15 @@ func TestRunTunnelSessionNoWaitSkipsProbe(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "✓ Ready") || strings.Contains(out.String(), "isn't resolving") {
 		t.Errorf("--no-wait must use the plain ready block (no wait outcome):\n%s", out.String())
+	}
+	// Change 2: even on --no-wait (which pre-probes then skips the reachability
+	// wait), the immediate startup status still fills the mint+dial window.
+	if !strings.Contains(errw.String(), "Establishing dev tunnel for my-block") {
+		t.Errorf("--no-wait must still print the immediate 'establishing' status:\n%s", errw.String())
+	}
+	// Change 3: the plain ready block drops the redundant dev-server-running noise.
+	if strings.Contains(out.String(), "Make sure your dev server is running") {
+		t.Errorf("--no-wait ready block must NOT print the redundant dev-server-running noise:\n%s", out.String())
 	}
 }
 

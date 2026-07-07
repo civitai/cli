@@ -343,6 +343,18 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		}
 	}
 
+	// Immediate feedback: the mint round-trip + SSH dial below take a few seconds
+	// with NOTHING printed otherwise, so the terminal looks hung. Emit a status line
+	// the instant the session starts. Written to errw (status stream) as a single
+	// plain line so the TTY and non-TTY paths are identical + greppable — we
+	// deliberately do NOT wrap the mint+dial in an animated bubbletea spinner here:
+	// runTunnelSession has an active signal.Notify(d.signals), and a default
+	// bubbletea program (without WithoutSignalHandler) would race that handler for
+	// the SIGINT/SIGTERM during this pre-serving phase. The reachability wait below
+	// already animates the longer wait (waitTunnelTTY) with the signal-safe watcher
+	// design.
+	fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Establishing dev tunnel for %s… (minting session + opening SSH tunnel)", d.blockID)))
+
 	key, err := d.keygen()
 	if err != nil {
 		return fmt.Errorf("generate ephemeral tunnel key: %w", err)
@@ -530,7 +542,6 @@ func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, localHost strin
 	fmt.Fprintf(out, "\nDev tunnel ready — serving %s:%d as %s\n\n", localHostForDisplay(localHost), port, ui.Bold(sess.Host))
 	fmt.Fprintf(out, "  ▶ Open this in your browser (you must be logged in):\n\n")
 	fmt.Fprintf(out, "      %s\n\n", ui.URL(sess.URL))
-	fmt.Fprintf(out, "  Make sure your dev server is running (%s) on %s:%d.\n", ui.Code("npm run dev:tunnel"), localHostForDisplay(localHost), port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
 }
 
@@ -550,7 +561,6 @@ func printTunnelReadyTimeout(out io.Writer, sess *api.DevTunnelSession, localHos
 	fmt.Fprintf(out, "  This is usually just DNS + Cloudflare + route propagation — it can take a minute.\n")
 	fmt.Fprintf(out, "  The tunnel is UP; open the URL and retry in a bit if it NXDOMAINs / 404s / 502s:\n\n")
 	fmt.Fprintf(out, "      %s\n\n", ui.URL(sess.URL))
-	fmt.Fprintf(out, "  Make sure your dev server is running (%s) on %s:%d.\n", ui.Code("npm run dev:tunnel"), localHostForDisplay(localHost), port)
 	fmt.Fprintf(out, "  Press Ctrl-C to tear the tunnel down.\n\n")
 }
 
