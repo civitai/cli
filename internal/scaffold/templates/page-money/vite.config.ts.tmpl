@@ -21,6 +21,21 @@ export default defineConfig(({ mode }) => {
   const hostKey = env.CIVITAI_HOST_KEY;
   const proxyTarget = env.VITE_LIVE_HOST_ORIGIN || 'https://civitai.com';
 
+  // `civitai app dev-tunnel` runs `dev:tunnel`, which sets CIVITAI_DEV_TUNNEL_HMR=1
+  // (see package.json). When tunneling, Vite's injected `@vite/client` must open
+  // its HMR socket over the PUBLIC tunnel host (`wss://dev-<16hex>.civit.ai:443`),
+  // NOT the dev server's own `ws://localhost:5186` — which the browser INSIDE the
+  // `dev-<hex>.civit.ai` iframe cannot reach (that's why HMR silently fails on the
+  // tunnel while a manual hard-reload still works). Setting `clientPort: 443` +
+  // `protocol: 'wss'` while LEAVING `hmr.host` UNSET makes the client derive the
+  // host from `location.hostname` — which, inside the tunneled iframe, IS the
+  // `dev-<hex>.civit.ai` host, and is minted at runtime AFTER Vite starts so it
+  // can't be hardcoded here. For plain `dev` / `dev:harness` / `dev:live` (flag
+  // unset) HMR stays at its DEFAULT local ws — forcing wss:443 there would BREAK
+  // local live-reload. Deterministic env gate, not a host heuristic.
+  const tunnelHmr =
+    env.CIVITAI_DEV_TUNNEL_HMR === '1' || env.CIVITAI_DEV_TUNNEL_HMR === 'true';
+
   return {
   base: '/',
   // civitaiSetupPlugin is `apply: 'serve'` (dev-only) — it powers the dev:live
@@ -48,6 +63,9 @@ export default defineConfig(({ mode }) => {
     // See src/dev-embed.ts (single source of truth + tests).
     allowedHosts: DEV_ALLOWED_HOSTS,
     headers: devServerSecurityHeaders(),
+    // Route HMR over the tunnel ONLY when `dev:tunnel` set the gate flag (see
+    // `tunnelHmr` above). Spread-in so plain dev leaves `server.hmr` at default.
+    ...(tunnelHmr ? { hmr: { clientPort: 443, protocol: 'wss' } } : {}),
     // dev:live backend proxy. In live mode the SDK's createLiveHost fetches
     // /api/... with `backendBaseUrl: ''` (see src/dev-transport.ts) so the
     // browser hits THIS dev server SAME-ORIGIN — no cross-origin preflight (N1).

@@ -26,6 +26,16 @@ describe('dev-tunnel embeddability', () => {
     expect(headers['Access-Control-Allow-Origin']).toBe('*');
   });
 
+  it('does NOT restrict connect-src, so the tunnel HMR wss socket is allowed', () => {
+    // `civitai app dev-tunnel` routes Vite HMR over `wss://<tunnel-host>/`. A
+    // `connect-src` CSP directive on the dev server would block that socket; the
+    // dev CSP is frame-ancestors-only. This guards a future CSP tightening from
+    // silently breaking tunnel live-reload.
+    const csp = devServerSecurityHeaders()['Content-Security-Policy'];
+    expect(csp).not.toContain('connect-src');
+    expect(csp).not.toContain('default-src');
+  });
+
   it('does NOT set X-Frame-Options (would block the cross-origin embed)', () => {
     const headers = devServerSecurityHeaders();
     const keys = Object.keys(headers).map((k) => k.toLowerCase());
