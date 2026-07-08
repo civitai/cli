@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -441,6 +442,66 @@ func TestRunTunnelSessionNoScopesNoDeclaration(t *testing.T) {
 	}
 	if strings.Contains(errw.String(), "Declaring scopes") {
 		t.Errorf("no scopes must NOT print a declaration line:\n%s", errw.String())
+	}
+}
+
+// TestBoundDeclaredScopes: the client-side bound mirrors the server's zod input
+// (z.array(z.string().min(1).max(64)).max(32)) so an oversized/garbage manifest
+// degrades to the valid subset instead of 400ing the mint.
+func TestBoundDeclaredScopes(t *testing.T) {
+	long := strings.Repeat("a", maxDeclaredScopeLen+1) // > limit → dropped
+	ok64 := strings.Repeat("b", maxDeclaredScopeLen)   // exactly the limit → kept
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"empty slice", []string{}, nil},
+		{"drops empty and whitespace-only", []string{"ai:write:budgeted", "", "   ", "\t"}, []string{"ai:write:budgeted"}},
+		{"drops over-long, keeps exactly-64", []string{long, ok64}, []string{ok64}},
+		{"dedupes preserving first-seen order", []string{"a", "b", "a", "c", "b"}, []string{"a", "b", "c"}},
+		{"all invalid degrades to nil", []string{"", "   ", long}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := boundDeclaredScopes(tc.in); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("boundDeclaredScopes(%#v) = %#v, want %#v", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	// Over-count degrades to the FIRST maxDeclaredScopes, in order.
+	over := make([]string, maxDeclaredScopes+5)
+	for i := range over {
+		over[i] = fmt.Sprintf("scope-%d", i)
+	}
+	got := boundDeclaredScopes(over)
+	if len(got) != maxDeclaredScopes {
+		t.Fatalf("over-count should cap at %d, got %d", maxDeclaredScopes, len(got))
+	}
+	if got[0] != "scope-0" || got[maxDeclaredScopes-1] != fmt.Sprintf("scope-%d", maxDeclaredScopes-1) {
+		t.Errorf("cap should keep the first %d in order, got %q…%q", maxDeclaredScopes, got[0], got[len(got)-1])
+	}
+}
+
+// TestSanitizeScopeForDisplay: control/ANSI sequences are stripped from the
+// terminal echo (a crafted manifest can't inject escapes into the dev's session),
+// while ordinary printable scope characters survive untouched.
+func TestSanitizeScopeForDisplay(t *testing.T) {
+	// An embedded ESC[31m ANSI sequence + a bare control char.
+	in := "ai:\x1b[31mwrite\x1b[0m:budg\x07eted"
+	got := sanitizeScopeForDisplay(in)
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x07') {
+		t.Errorf("control chars must be stripped, got %q", got)
+	}
+	// The printable payload (minus the control bytes) is preserved.
+	if got != "ai:[31mwrite[0m:budgeted" {
+		t.Errorf("printable characters must survive, got %q", got)
+	}
+	// A clean scope is unchanged.
+	if s := "ai:write:budgeted"; sanitizeScopeForDisplay(s) != s {
+		t.Errorf("clean scope should be unchanged, got %q", sanitizeScopeForDisplay(s))
 	}
 }
 

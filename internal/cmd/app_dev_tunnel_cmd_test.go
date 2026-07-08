@@ -161,6 +161,92 @@ func TestAppDevTunnelDeclaresManifestScopes(t *testing.T) {
 	}
 }
 
+// TestAppDevTunnelBoundsOversizedManifestScopes: a manifest whose scopes exceed
+// the server's zod bound (>32 entries, a duplicate, and a >64-char garbage entry)
+// must NOT 400 the tunnel — the CLI bounds them client-side and degrades to the
+// valid subset (the tunnel still starts). Guards the "a malformed manifest never
+// blocks tunneling" promise.
+func TestAppDevTunnelBoundsOversizedManifestScopes(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == startDevTunnelRoute {
+			raw, _ := io.ReadAll(r.Body)
+			gotBody = string(raw)
+			w.WriteHeader(http.StatusForbidden)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{"json": map[string]any{"message": "Dev tunnels are not available"}},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"username": "tester", "id": 7})
+	}))
+	defer srv.Close()
+
+	// 34 distinct valid scopes (> the 32 cap) + a duplicate of the first + one
+	// >64-char garbage entry.
+	valid := make([]string, 34)
+	for i := range valid {
+		valid[i] = fmt.Sprintf("scope:%02d", i)
+	}
+	scopes := append([]string{}, valid...)
+	scopes = append(scopes, valid[0])                 // duplicate
+	scopes = append(scopes, strings.Repeat("x", 100)) // > 64 chars
+	scopesJSON, err := json.Marshal(scopes)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	dir := t.TempDir()
+	m := fmt.Sprintf(`{
+  "$schema": "https://civitai.com/schemas/app-block/v1.json",
+  "blockId": "demo",
+  "version": "0.1.0",
+  "name": "Demo",
+  "type": "block",
+  "scopes": %s,
+  "page": { "path": "/", "title": "Demo" }
+}`, scopesJSON)
+	if err := os.WriteFile(filepath.Join(dir, "block.manifest.json"), []byte(m), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	port := listenLocal(t)
+	_, _, runErr := run(t, "app", "dev-tunnel", "--port", fmt.Sprint(port))
+	// The oversized manifest must not block the tunnel — the only failure is the
+	// (expected, dark) forbidden mint, never a validation abort.
+	if runErr != nil && strings.Contains(runErr.Error(), "blockId is required") {
+		t.Fatalf("oversized scopes must not block the tunnel: %v", runErr)
+	}
+
+	var wire struct {
+		JSON struct {
+			DeclaredScopes []string `json:"declaredScopes"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal([]byte(gotBody), &wire); err != nil {
+		t.Fatalf("request body not {json:...}: %v (%s)", err, gotBody)
+	}
+	sent := wire.JSON.DeclaredScopes
+	if len(sent) != 32 {
+		t.Errorf("declaredScopes should be capped at 32, got %d: %v", len(sent), sent)
+	}
+	seen := map[string]bool{}
+	for _, s := range sent {
+		if len(s) > 64 {
+			t.Errorf("an over-64-char scope leaked through: %q", s)
+		}
+		if seen[s] {
+			t.Errorf("a duplicate scope leaked through: %q", s)
+		}
+		seen[s] = true
+	}
+}
+
 // TestAppDevTunnelNoManifestScopesOmitsField: an explicit blockId with NO
 // manifest in the CWD is non-fatal (the tunnel still works) and the request
 // omits declaredScopes entirely — read-only, and wire-identical to an old client.

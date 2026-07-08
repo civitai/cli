@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -178,6 +179,59 @@ type tunnelSessionDeps struct {
 	errw            io.Writer
 }
 
+// maxDeclaredScopes / maxDeclaredScopeLen mirror the server's zod bound on
+// blocks.startDevTunnel's declaredScopes input
+// (z.array(z.string().min(1).max(64)).max(32)). Enforcing them CLIENT-side means
+// an oversized/garbage local manifest degrades to the valid subset instead of
+// being rejected with an opaque BAD_REQUEST — preserving the CLI's promise that a
+// malformed manifest never blocks tunneling.
+const (
+	maxDeclaredScopes   = 32
+	maxDeclaredScopeLen = 64
+)
+
+// boundDeclaredScopes filters the local manifest scopes down to what the server
+// will accept: drop empty/whitespace-only entries and any over maxDeclaredScopeLen
+// chars, dedupe (preserving first-seen order), and cap at maxDeclaredScopes. Returns
+// nil when nothing valid remains so the request omits declaredScopes entirely.
+func boundDeclaredScopes(scopes []string) []string {
+	if len(scopes) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(scopes))
+	out := make([]string, 0, len(scopes))
+	for _, s := range scopes {
+		if strings.TrimSpace(s) == "" || len(s) > maxDeclaredScopeLen {
+			continue // empty/whitespace-only or too long → the server would reject it
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+		if len(out) == maxDeclaredScopes {
+			break // at the cap — extras are silently dropped, not sent
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// sanitizeScopeForDisplay strips non-printable/control runes from a scope before
+// it is echoed to the dev's terminal, so a crafted manifest can't inject ANSI /
+// control sequences into their session. Display-only — the value SENT to the
+// server is unchanged (the server sanitizes independently).
+func sanitizeScopeForDisplay(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return -1
+	}, s)
+}
+
 func newAppDevTunnelCmd() *cobra.Command {
 	var blockFlag string
 	var port int
@@ -295,8 +349,11 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 			// unreadable/malformed manifest (or one with no scopes) sends nothing — the
 			// tunnel still works, just read-only for spend. This is NON-fatal even when
 			// the blockId was given explicitly (flag/positional), so a bare directory
-			// never blocks tunneling.
-			declaredScopes := manifest.LoadScopes(".")
+			// never blocks tunneling. boundDeclaredScopes enforces the server's zod
+			// bound CLIENT-side so an oversized/garbage scopes array degrades to the
+			// valid subset instead of 400ing the mint (keeping that "never blocks"
+			// promise).
+			declaredScopes := boundDeclaredScopes(manifest.LoadScopes("."))
 
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
@@ -372,9 +429,15 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	// Transparency: surface exactly which scopes the tunnel is requesting (a
 	// spend-consent signal, and it catches manifest typos before a click). Only
 	// when the local manifest declares any — an empty set is read-only and needs
-	// no notice.
+	// no notice. Sanitize for DISPLAY so a crafted manifest can't inject ANSI/
+	// control sequences into the dev's terminal (the value SENT to the server is
+	// unchanged — the server sanitizes independently).
 	if len(d.declaredScopes) > 0 {
-		fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Declaring scopes: %s", strings.Join(d.declaredScopes, ", "))))
+		display := make([]string, len(d.declaredScopes))
+		for i, s := range d.declaredScopes {
+			display[i] = sanitizeScopeForDisplay(s)
+		}
+		fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Declaring scopes: %s", strings.Join(display, ", "))))
 	}
 
 	key, err := d.keygen()
