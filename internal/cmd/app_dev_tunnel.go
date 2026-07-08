@@ -94,7 +94,7 @@ const (
 // tunnelAPI is the subset of the API client the session core needs (seam for a
 // mock in tests).
 type tunnelAPI interface {
-	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string) (*api.DevTunnelSession, error)
+	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string) (*api.DevTunnelSession, error)
 	StopDevTunnel(ctx context.Context, sessionID, blockID string) (bool, error)
 	// WhoAmI resolves the signed-in identity — used to enrich a 403 mint refusal
 	// with which account the CLI is authenticated as (the usual cause is being
@@ -133,7 +133,11 @@ type tunnelSessionDeps struct {
 	keygen        func() (*devtunnel.EphemeralKey, error)
 	dialer        devtunnel.Dialer
 	blockID       string
-	port          int
+	// declaredScopes are the LOCAL manifest's `scopes`, forwarded to
+	// StartDevTunnel so the server can grant them to an UNSUBMITTED app's tunnel
+	// token. Empty/nil = read-only (no spend) — never fatal.
+	declaredScopes []string
+	port           int
 	// localHost is the resolved host the developer's dev server is bound to
 	// ("localhost" by default = loopback; e.g. 10.42.0.100 for a container). Used
 	// by BOTH the pre-flight probe and the live tunnel proxy so the two agree.
@@ -285,6 +289,15 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 
 			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 
+			// Read the LOCAL manifest scopes (from the CWD — the dev runs this from
+			// their App project dir) so the server can grant them to the tunnel token
+			// of an UNSUBMITTED app (no submit needed). Degrade gracefully: a missing/
+			// unreadable/malformed manifest (or one with no scopes) sends nothing — the
+			// tunnel still works, just read-only for spend. This is NON-fatal even when
+			// the blockId was given explicitly (flag/positional), so a bare directory
+			// never blocks tunneling.
+			declaredScopes := manifest.LoadScopes(".")
+
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 			defer signal.Stop(sigCh)
@@ -297,6 +310,7 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				keygen:                 devtunnel.GenerateEphemeralKey,
 				dialer:                 devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
 				blockID:                blockID,
+				declaredScopes:         declaredScopes,
 				port:                   port,
 				localHost:              lh,
 				endpoint:               ep,
@@ -355,12 +369,20 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	// design.
 	fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Establishing dev tunnel for %s… (minting session + opening SSH tunnel)", d.blockID)))
 
+	// Transparency: surface exactly which scopes the tunnel is requesting (a
+	// spend-consent signal, and it catches manifest typos before a click). Only
+	// when the local manifest declares any — an empty set is read-only and needs
+	// no notice.
+	if len(d.declaredScopes) > 0 {
+		fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Declaring scopes: %s", strings.Join(d.declaredScopes, ", "))))
+	}
+
 	key, err := d.keygen()
 	if err != nil {
 		return fmt.Errorf("generate ephemeral tunnel key: %w", err)
 	}
 
-	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey)
+	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey, d.declaredScopes)
 	if err != nil {
 		// A 403 mint refusal is the common "wrong account" case — enrich it with
 		// the signed-in identity + how to switch accounts. This runs on the

@@ -45,7 +45,10 @@ type fakeTunnelAPI struct {
 
 	startResult *api.DevTunnelSession
 	startErr    error
-	startCalls  []struct{ blockID, pubKey string }
+	startCalls  []struct {
+		blockID, pubKey string
+		declaredScopes  []string
+	}
 
 	stopErr   error
 	stopCalls []struct{ sessionID, blockID string }
@@ -74,10 +77,13 @@ func (f *fakeTunnelAPI) whoamiCount() int {
 	return f.whoamiCall
 }
 
-func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string) (*api.DevTunnelSession, error) {
+func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string, declaredScopes []string) (*api.DevTunnelSession, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.startCalls = append(f.startCalls, struct{ blockID, pubKey string }{blockID, pubKey})
+	f.startCalls = append(f.startCalls, struct {
+		blockID, pubKey string
+		declaredScopes  []string
+	}{blockID, pubKey, declaredScopes})
 	if f.startErr != nil {
 		return nil, f.startErr
 	}
@@ -364,6 +370,77 @@ func TestRunTunnelSessionSignalTeardown(t *testing.T) {
 	// The /apps/dev URL was printed prominently.
 	if !strings.Contains(out.String(), "https://civitai.com/apps/dev/my-block") {
 		t.Errorf("stdout should print the /apps/dev URL:\n%s", out.String())
+	}
+}
+
+// TestRunTunnelSessionForwardsDeclaredScopes: the local manifest scopes carried
+// on deps are (a) forwarded verbatim to StartDevTunnel — so the server can grant
+// them to an unsubmitted app's token — and (b) surfaced to the dev as a
+// transparency line before the tunnel starts.
+func TestRunTunnelSessionForwardsDeclaredScopes(t *testing.T) {
+	apiStub := &fakeTunnelAPI{startResult: sampleSession()}
+	tunnel := newFakeTunnel()
+	dialer := &fakeDialer{tunnel: tunnel}
+	sigs := make(chan os.Signal, 1)
+
+	var errw strings.Builder
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), sigs)
+	deps.errw = &errw
+	deps.declaredScopes = []string{"ai:write:budgeted", "user:read:self"}
+
+	errc := runInBackground(deps)
+	sigs <- os.Interrupt
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("runTunnelSession: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runTunnelSession did not return after signal")
+	}
+
+	if len(apiStub.startCalls) != 1 {
+		t.Fatalf("start calls = %+v", apiStub.startCalls)
+	}
+	got := apiStub.startCalls[0].declaredScopes
+	if len(got) != 2 || got[0] != "ai:write:budgeted" || got[1] != "user:read:self" {
+		t.Errorf("StartDevTunnel declaredScopes = %#v, want the manifest scopes", got)
+	}
+	// The transparency line names the scopes so the dev sees what's requested.
+	if !strings.Contains(errw.String(), "Declaring scopes: ai:write:budgeted, user:read:self") {
+		t.Errorf("expected a 'Declaring scopes' transparency line on stderr:\n%s", errw.String())
+	}
+}
+
+// TestRunTunnelSessionNoScopesNoDeclaration: with no manifest scopes, nothing is
+// forwarded (nil/empty) and no transparency line is printed — the read-only path.
+func TestRunTunnelSessionNoScopesNoDeclaration(t *testing.T) {
+	apiStub := &fakeTunnelAPI{startResult: sampleSession()}
+	tunnel := newFakeTunnel()
+	dialer := &fakeDialer{tunnel: tunnel}
+	sigs := make(chan os.Signal, 1)
+
+	var errw strings.Builder
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), sigs)
+	deps.errw = &errw
+	// declaredScopes intentionally unset (nil).
+
+	errc := runInBackground(deps)
+	sigs <- os.Interrupt
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("runTunnelSession: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runTunnelSession did not return after signal")
+	}
+
+	if len(apiStub.startCalls) != 1 || len(apiStub.startCalls[0].declaredScopes) != 0 {
+		t.Errorf("no manifest scopes → StartDevTunnel must get empty scopes, got %+v", apiStub.startCalls)
+	}
+	if strings.Contains(errw.String(), "Declaring scopes") {
+		t.Errorf("no scopes must NOT print a declaration line:\n%s", errw.String())
 	}
 }
 

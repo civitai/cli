@@ -930,7 +930,7 @@ func devTokenError(status int, raw []byte) error {
 // The `civitai app dev-tunnel` command drives three tRPC procedures on the
 // `blocks` router (civitai/civitai src/server/routers/blocks.router.ts):
 //
-//   - blocks.startDevTunnel  (mutation) input  { blockId, sshPublicKey }
+//   - blocks.startDevTunnel  (mutation) input  { blockId, sshPublicKey, declaredScopes? }
 //                                      result { sessionId, host, url, expiresAt, spendCapBuzz }
 //   - blocks.stopDevTunnel   (mutation) input  { sessionId? , blockId? } (one required)
 //                                      result { ok, stopped }
@@ -981,18 +981,24 @@ type DevTunnelSession struct {
 // so the command layer is testable without a live server.
 type DevTunnelController interface {
 	// StartDevTunnel mints a tunnel credential + host for blockId, binding it to
-	// the caller's ephemeral SSH public key. Returns the assigned host + the
-	// /apps/dev URL the developer opens.
-	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string) (*DevTunnelSession, error)
+	// the caller's ephemeral SSH public key. declaredScopes carries the LOCAL
+	// manifest's `scopes` so the server can grant them to an UNSUBMITTED app's
+	// tunnel token (empty = read-only). Returns the assigned host + the /apps/dev
+	// URL the developer opens.
+	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string) (*DevTunnelSession, error)
 	// StopDevTunnel revokes the caller's tunnel by sessionId (preferred) or, when
 	// sessionId is empty, by blockId. Returns whether a session was torn down.
 	StopDevTunnel(ctx context.Context, sessionID, blockID string) (bool, error)
 }
 
-// startDevTunnelInput mirrors the blocks.startDevTunnel zod input.
+// startDevTunnelInput mirrors the blocks.startDevTunnel zod input. DeclaredScopes
+// is `omitempty` so an empty/absent local manifest sends nothing — matching the
+// server's `.optional()` and keeping the request identical to the pre-scopes
+// shape (an old server ignores the extra field).
 type startDevTunnelInput struct {
-	BlockID      string `json:"blockId"`
-	SSHPublicKey string `json:"sshPublicKey"`
+	BlockID        string   `json:"blockId"`
+	SSHPublicKey   string   `json:"sshPublicKey"`
+	DeclaredScopes []string `json:"declaredScopes,omitempty"`
 }
 
 // stopDevTunnelInput mirrors the blocks.stopDevTunnel zod input (one of the two
@@ -1004,8 +1010,8 @@ type stopDevTunnelInput struct {
 
 // StartDevTunnel POSTs blocks.startDevTunnel and returns the minted session. The
 // OAuth access token is refreshed transparently on a 401.
-func (c *Client) StartDevTunnel(ctx context.Context, blockID, sshPublicKey string) (*DevTunnelSession, error) {
-	body, err := json.Marshal(map[string]any{"json": startDevTunnelInput{BlockID: blockID, SSHPublicKey: sshPublicKey}})
+func (c *Client) StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string) (*DevTunnelSession, error) {
+	body, err := json.Marshal(map[string]any{"json": startDevTunnelInput{BlockID: blockID, SSHPublicKey: sshPublicKey, DeclaredScopes: declaredScopes}})
 	if err != nil {
 		return nil, err
 	}
