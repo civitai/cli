@@ -34,10 +34,10 @@ type Manifest struct {
 
 // LoadScopes reads the `scopes` array from the manifest in dir, degrading
 // gracefully: a missing manifest, an unreadable file, or malformed JSON all
-// return nil (no scopes) with no error. This is used by `civitai app dev-token`
-// to send the dev's LOCAL manifest scopes for the server's no-row mint path —
-// the slug arg still identifies a registered app even when the manifest is
-// absent, so a read failure must never block minting.
+// return nil (no scopes) with no error. It is used by `civitai app dev-tunnel`
+// (and `civitai app dev-token`) to send the dev's LOCAL manifest scopes for the
+// server's no-row mint path — the slug arg still identifies a registered app even
+// when the manifest is absent, so a read failure must never block minting.
 func LoadScopes(dir string) []string {
 	raw, err := os.ReadFile(Path(dir))
 	if err != nil {

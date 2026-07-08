@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +46,10 @@ type fakeTunnelAPI struct {
 
 	startResult *api.DevTunnelSession
 	startErr    error
-	startCalls  []struct{ blockID, pubKey string }
+	startCalls  []struct {
+		blockID, pubKey string
+		declaredScopes  []string
+	}
 
 	stopErr   error
 	stopCalls []struct{ sessionID, blockID string }
@@ -74,10 +78,13 @@ func (f *fakeTunnelAPI) whoamiCount() int {
 	return f.whoamiCall
 }
 
-func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string) (*api.DevTunnelSession, error) {
+func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string, declaredScopes []string) (*api.DevTunnelSession, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.startCalls = append(f.startCalls, struct{ blockID, pubKey string }{blockID, pubKey})
+	f.startCalls = append(f.startCalls, struct {
+		blockID, pubKey string
+		declaredScopes  []string
+	}{blockID, pubKey, declaredScopes})
 	if f.startErr != nil {
 		return nil, f.startErr
 	}
@@ -364,6 +371,137 @@ func TestRunTunnelSessionSignalTeardown(t *testing.T) {
 	// The /apps/dev URL was printed prominently.
 	if !strings.Contains(out.String(), "https://civitai.com/apps/dev/my-block") {
 		t.Errorf("stdout should print the /apps/dev URL:\n%s", out.String())
+	}
+}
+
+// TestRunTunnelSessionForwardsDeclaredScopes: the local manifest scopes carried
+// on deps are (a) forwarded verbatim to StartDevTunnel — so the server can grant
+// them to an unsubmitted app's token — and (b) surfaced to the dev as a
+// transparency line before the tunnel starts.
+func TestRunTunnelSessionForwardsDeclaredScopes(t *testing.T) {
+	apiStub := &fakeTunnelAPI{startResult: sampleSession()}
+	tunnel := newFakeTunnel()
+	dialer := &fakeDialer{tunnel: tunnel}
+	sigs := make(chan os.Signal, 1)
+
+	var errw strings.Builder
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), sigs)
+	deps.errw = &errw
+	deps.declaredScopes = []string{"ai:write:budgeted", "user:read:self"}
+
+	errc := runInBackground(deps)
+	sigs <- os.Interrupt
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("runTunnelSession: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runTunnelSession did not return after signal")
+	}
+
+	if len(apiStub.startCalls) != 1 {
+		t.Fatalf("start calls = %+v", apiStub.startCalls)
+	}
+	got := apiStub.startCalls[0].declaredScopes
+	if len(got) != 2 || got[0] != "ai:write:budgeted" || got[1] != "user:read:self" {
+		t.Errorf("StartDevTunnel declaredScopes = %#v, want the manifest scopes", got)
+	}
+	// The transparency line names the scopes so the dev sees what's requested.
+	if !strings.Contains(errw.String(), "Declaring scopes: ai:write:budgeted, user:read:self") {
+		t.Errorf("expected a 'Declaring scopes' transparency line on stderr:\n%s", errw.String())
+	}
+}
+
+// TestRunTunnelSessionNoScopesNoDeclaration: with no manifest scopes, nothing is
+// forwarded (nil/empty) and no transparency line is printed — the read-only path.
+func TestRunTunnelSessionNoScopesNoDeclaration(t *testing.T) {
+	apiStub := &fakeTunnelAPI{startResult: sampleSession()}
+	tunnel := newFakeTunnel()
+	dialer := &fakeDialer{tunnel: tunnel}
+	sigs := make(chan os.Signal, 1)
+
+	var errw strings.Builder
+	deps := baseDeps(t, apiStub, dialer, newFakeTimer(), sigs)
+	deps.errw = &errw
+	// declaredScopes intentionally unset (nil).
+
+	errc := runInBackground(deps)
+	sigs <- os.Interrupt
+	select {
+	case err := <-errc:
+		if err != nil {
+			t.Fatalf("runTunnelSession: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runTunnelSession did not return after signal")
+	}
+
+	if len(apiStub.startCalls) != 1 || len(apiStub.startCalls[0].declaredScopes) != 0 {
+		t.Errorf("no manifest scopes → StartDevTunnel must get empty scopes, got %+v", apiStub.startCalls)
+	}
+	if strings.Contains(errw.String(), "Declaring scopes") {
+		t.Errorf("no scopes must NOT print a declaration line:\n%s", errw.String())
+	}
+}
+
+// TestBoundDeclaredScopes: the client-side bound mirrors the server's zod input
+// (z.array(z.string().min(1).max(64)).max(32)) so an oversized/garbage manifest
+// degrades to the valid subset instead of 400ing the mint.
+func TestBoundDeclaredScopes(t *testing.T) {
+	long := strings.Repeat("a", maxDeclaredScopeLen+1) // > limit → dropped
+	ok64 := strings.Repeat("b", maxDeclaredScopeLen)   // exactly the limit → kept
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"empty slice", []string{}, nil},
+		{"drops empty and whitespace-only", []string{"ai:write:budgeted", "", "   ", "\t"}, []string{"ai:write:budgeted"}},
+		{"drops over-long, keeps exactly-64", []string{long, ok64}, []string{ok64}},
+		{"dedupes preserving first-seen order", []string{"a", "b", "a", "c", "b"}, []string{"a", "b", "c"}},
+		{"all invalid degrades to nil", []string{"", "   ", long}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := boundDeclaredScopes(tc.in); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("boundDeclaredScopes(%#v) = %#v, want %#v", tc.in, got, tc.want)
+			}
+		})
+	}
+
+	// Over-count degrades to the FIRST maxDeclaredScopes, in order.
+	over := make([]string, maxDeclaredScopes+5)
+	for i := range over {
+		over[i] = fmt.Sprintf("scope-%d", i)
+	}
+	got := boundDeclaredScopes(over)
+	if len(got) != maxDeclaredScopes {
+		t.Fatalf("over-count should cap at %d, got %d", maxDeclaredScopes, len(got))
+	}
+	if got[0] != "scope-0" || got[maxDeclaredScopes-1] != fmt.Sprintf("scope-%d", maxDeclaredScopes-1) {
+		t.Errorf("cap should keep the first %d in order, got %q…%q", maxDeclaredScopes, got[0], got[len(got)-1])
+	}
+}
+
+// TestSanitizeScopeForDisplay: control/ANSI sequences are stripped from the
+// terminal echo (a crafted manifest can't inject escapes into the dev's session),
+// while ordinary printable scope characters survive untouched.
+func TestSanitizeScopeForDisplay(t *testing.T) {
+	// An embedded ESC[31m ANSI sequence + a bare control char.
+	in := "ai:\x1b[31mwrite\x1b[0m:budg\x07eted"
+	got := sanitizeScopeForDisplay(in)
+	if strings.ContainsRune(got, '\x1b') || strings.ContainsRune(got, '\x07') {
+		t.Errorf("control chars must be stripped, got %q", got)
+	}
+	// The printable payload (minus the control bytes) is preserved.
+	if got != "ai:[31mwrite[0m:budgeted" {
+		t.Errorf("printable characters must survive, got %q", got)
+	}
+	// A clean scope is unchanged.
+	if s := "ai:write:budgeted"; sanitizeScopeForDisplay(s) != s {
+		t.Errorf("clean scope should be unchanged, got %q", sanitizeScopeForDisplay(s))
 	}
 }
 

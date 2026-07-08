@@ -15,6 +15,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -94,7 +95,7 @@ const (
 // tunnelAPI is the subset of the API client the session core needs (seam for a
 // mock in tests).
 type tunnelAPI interface {
-	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string) (*api.DevTunnelSession, error)
+	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string) (*api.DevTunnelSession, error)
 	StopDevTunnel(ctx context.Context, sessionID, blockID string) (bool, error)
 	// WhoAmI resolves the signed-in identity — used to enrich a 403 mint refusal
 	// with which account the CLI is authenticated as (the usual cause is being
@@ -133,7 +134,11 @@ type tunnelSessionDeps struct {
 	keygen        func() (*devtunnel.EphemeralKey, error)
 	dialer        devtunnel.Dialer
 	blockID       string
-	port          int
+	// declaredScopes are the LOCAL manifest's `scopes`, forwarded to
+	// StartDevTunnel so the server can grant them to an UNSUBMITTED app's tunnel
+	// token. Empty/nil = read-only (no spend) — never fatal.
+	declaredScopes []string
+	port           int
 	// localHost is the resolved host the developer's dev server is bound to
 	// ("localhost" by default = loopback; e.g. 10.42.0.100 for a container). Used
 	// by BOTH the pre-flight probe and the live tunnel proxy so the two agree.
@@ -172,6 +177,59 @@ type tunnelSessionDeps struct {
 	signals         <-chan os.Signal
 	out             io.Writer
 	errw            io.Writer
+}
+
+// maxDeclaredScopes / maxDeclaredScopeLen mirror the server's zod bound on
+// blocks.startDevTunnel's declaredScopes input
+// (z.array(z.string().min(1).max(64)).max(32)). Enforcing them CLIENT-side means
+// an oversized/garbage local manifest degrades to the valid subset instead of
+// being rejected with an opaque BAD_REQUEST — preserving the CLI's promise that a
+// malformed manifest never blocks tunneling.
+const (
+	maxDeclaredScopes   = 32
+	maxDeclaredScopeLen = 64
+)
+
+// boundDeclaredScopes filters the local manifest scopes down to what the server
+// will accept: drop empty/whitespace-only entries and any over maxDeclaredScopeLen
+// chars, dedupe (preserving first-seen order), and cap at maxDeclaredScopes. Returns
+// nil when nothing valid remains so the request omits declaredScopes entirely.
+func boundDeclaredScopes(scopes []string) []string {
+	if len(scopes) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(scopes))
+	out := make([]string, 0, len(scopes))
+	for _, s := range scopes {
+		if strings.TrimSpace(s) == "" || len(s) > maxDeclaredScopeLen {
+			continue // empty/whitespace-only or too long → the server would reject it
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+		if len(out) == maxDeclaredScopes {
+			break // at the cap — extras are silently dropped, not sent
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// sanitizeScopeForDisplay strips non-printable/control runes from a scope before
+// it is echoed to the dev's terminal, so a crafted manifest can't inject ANSI /
+// control sequences into their session. Display-only — the value SENT to the
+// server is unchanged (the server sanitizes independently).
+func sanitizeScopeForDisplay(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return -1
+	}, s)
 }
 
 func newAppDevTunnelCmd() *cobra.Command {
@@ -285,6 +343,18 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 
 			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 
+			// Read the LOCAL manifest scopes (from the CWD — the dev runs this from
+			// their App project dir) so the server can grant them to the tunnel token
+			// of an UNSUBMITTED app (no submit needed). Degrade gracefully: a missing/
+			// unreadable/malformed manifest (or one with no scopes) sends nothing — the
+			// tunnel still works, just read-only for spend. This is NON-fatal even when
+			// the blockId was given explicitly (flag/positional), so a bare directory
+			// never blocks tunneling. boundDeclaredScopes enforces the server's zod
+			// bound CLIENT-side so an oversized/garbage scopes array degrades to the
+			// valid subset instead of 400ing the mint (keeping that "never blocks"
+			// promise).
+			declaredScopes := boundDeclaredScopes(manifest.LoadScopes("."))
+
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 			defer signal.Stop(sigCh)
@@ -297,6 +367,7 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				keygen:                 devtunnel.GenerateEphemeralKey,
 				dialer:                 devtunnel.NewSSHDialer(cmd.ErrOrStderr()),
 				blockID:                blockID,
+				declaredScopes:         declaredScopes,
 				port:                   port,
 				localHost:              lh,
 				endpoint:               ep,
@@ -355,12 +426,26 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	// design.
 	fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Establishing dev tunnel for %s… (minting session + opening SSH tunnel)", d.blockID)))
 
+	// Transparency: surface exactly which scopes the tunnel is requesting (a
+	// spend-consent signal, and it catches manifest typos before a click). Only
+	// when the local manifest declares any — an empty set is read-only and needs
+	// no notice. Sanitize for DISPLAY so a crafted manifest can't inject ANSI/
+	// control sequences into the dev's terminal (the value SENT to the server is
+	// unchanged — the server sanitizes independently).
+	if len(d.declaredScopes) > 0 {
+		display := make([]string, len(d.declaredScopes))
+		for i, s := range d.declaredScopes {
+			display[i] = sanitizeScopeForDisplay(s)
+		}
+		fmt.Fprintf(d.errw, "%s\n", ui.Dim(fmt.Sprintf("Declaring scopes: %s", strings.Join(display, ", "))))
+	}
+
 	key, err := d.keygen()
 	if err != nil {
 		return fmt.Errorf("generate ephemeral tunnel key: %w", err)
 	}
 
-	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey)
+	sess, err := d.api.StartDevTunnel(ctx, d.blockID, key.AuthorizedKey, d.declaredScopes)
 	if err != nil {
 		// A 403 mint refusal is the common "wrong account" case — enrich it with
 		// the signed-in identity + how to switch accounts. This runs on the

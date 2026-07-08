@@ -36,7 +36,7 @@ func TestStartDevTunnelRequestResponse(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok-1", "")
-	sess, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 AAAAKEY")
+	sess, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 AAAAKEY", nil)
 	if err != nil {
 		t.Fatalf("StartDevTunnel: %v", err)
 	}
@@ -60,6 +60,11 @@ func TestStartDevTunnelRequestResponse(t *testing.T) {
 	if wire.JSON.BlockID != "my-block" || wire.JSON.SSHPublicKey != "ssh-ed25519 AAAAKEY" {
 		t.Errorf("input = %+v, want blockId=my-block + the pubkey", wire.JSON)
 	}
+	// No scopes passed → declaredScopes is OMITTED entirely (omitempty), keeping
+	// the wire shape identical to the pre-scopes request an old server expects.
+	if strings.Contains(gotBody, "declaredScopes") {
+		t.Errorf("empty scopes must omit the declaredScopes key: %s", gotBody)
+	}
 	// Decoded result.
 	if sess.SessionID != "bki_abc" || sess.Host != "dev-0123456789abcdef.civit.ai" {
 		t.Errorf("session = %+v", sess)
@@ -73,6 +78,49 @@ func TestStartDevTunnelRequestResponse(t *testing.T) {
 	// R1: the sish host public key the CLI pins is decoded from the mint response.
 	if sess.SSHHostPublicKey != "ssh-ed25519 AAAAHOSTKEY" {
 		t.Errorf("sshHostPublicKey = %q, want the pinned host key line", sess.SSHHostPublicKey)
+	}
+}
+
+// TestStartDevTunnelDeclaredScopes: when the caller passes the local manifest's
+// scopes they are serialized as a `declaredScopes` string array under the tRPC
+// `json` key — this is what lets the server grant them to an UNSUBMITTED app's
+// tunnel token.
+func TestStartDevTunnelDeclaredScopes(t *testing.T) {
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		gotBody = string(raw)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": map[string]any{"data": map[string]any{"json": map[string]any{
+				"sessionId":        "bki_abc",
+				"host":             "dev-0123456789abcdef.civit.ai",
+				"url":              "https://civitai.com/apps/dev/my-block",
+				"expiresAt":        1893456000,
+				"sshHostPublicKey": "ssh-ed25519 AAAAHOSTKEY",
+			}}},
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok-1", "")
+	scopes := []string{"ai:write:budgeted", "user:read:self"}
+	if _, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 AAAAKEY", scopes); err != nil {
+		t.Fatalf("StartDevTunnel: %v", err)
+	}
+	var wire struct {
+		JSON startDevTunnelInput `json:"json"`
+	}
+	if err := json.Unmarshal([]byte(gotBody), &wire); err != nil {
+		t.Fatalf("request body not {json:...}: %v (%s)", err, gotBody)
+	}
+	if len(wire.JSON.DeclaredScopes) != 2 ||
+		wire.JSON.DeclaredScopes[0] != "ai:write:budgeted" ||
+		wire.JSON.DeclaredScopes[1] != "user:read:self" {
+		t.Errorf("declaredScopes = %#v, want the two manifest scopes in order", wire.JSON.DeclaredScopes)
+	}
+	// It rides under the tRPC `json` envelope (not top-level).
+	if !strings.Contains(gotBody, `"declaredScopes":["ai:write:budgeted","user:read:self"]`) {
+		t.Errorf("declaredScopes should serialize as a string array under json: %s", gotBody)
 	}
 }
 
@@ -165,7 +213,7 @@ func TestStartDevTunnelErrorMapping(t *testing.T) {
 			})
 		}))
 		c := New(srv.URL, "tok", "")
-		_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K")
+		_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil)
 		srv.Close()
 		if err == nil {
 			t.Fatalf("status %d: expected error", tc.status)
@@ -190,7 +238,7 @@ func TestStartDevTunnel401DropsServerMessage(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, "tok", "")
-	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K")
+	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil)
 	if err == nil {
 		t.Fatal("expected error on 401")
 	}
@@ -216,7 +264,7 @@ func TestStartDevTunnel404SlugTakenOrInvalid(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, "tok", "")
-	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K")
+	_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil)
 	if err == nil {
 		t.Fatal("expected error on 404")
 	}
@@ -258,7 +306,7 @@ func TestStartDevTunnelForbiddenClassifiesScope(t *testing.T) {
 			}))
 			defer srv.Close()
 			c := New(srv.URL, "tok", "")
-			_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K")
+			_, err := c.StartDevTunnel(context.Background(), "my-block", "ssh-ed25519 K", nil)
 			var forbidden *DevTunnelForbiddenError
 			if !errors.As(err, &forbidden) {
 				t.Fatalf("403 should map to *DevTunnelForbiddenError, got %v", err)
