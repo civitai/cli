@@ -28,9 +28,13 @@ jobs:
       - name: Ensure npm supports OIDC trusted publishing (>= 11.5.1)
         # The npm bundled with Node 22 (npm 10.x) predates OIDC trusted
         # publishing. npm auto-detects the OIDC env and uses it before any
-        # token, but only on 11.5.1+. Pin the floor and print it for the log.
+        # token, but only on 11.5.1+, so we install a newer npm.
+        # PIN the version — do NOT use npm@latest: on 2026-07-09 a floating
+        # latest regressed `npm publish --provenance` with
+        # "Cannot find module 'sigstore'" and failed the v0.1.59 publish.
+        # 11.18.0 is the version that successfully published v0.1.58.
         run: |
-          npm install -g npm@latest
+          npm install -g npm@11.18.0
           npm --version
       - name: Resolve version
         id: v
