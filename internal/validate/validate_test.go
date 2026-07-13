@@ -117,6 +117,37 @@ func TestValidateRejectsBadScope(t *testing.T) {
 	}`, "scopes")
 }
 
+// --- marketplace category (optional; enforced by the vendored schema enum,
+// mirroring the server's BlockManifestValidator category check ~L312) ---
+
+func TestValidateAcceptsValidCategory(t *testing.T) {
+	// A manifest declaring a known marketplace category validates.
+	mustAccept(t, "valid category", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [], "category": "generation",
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`)
+}
+
+func TestValidateRejectsUnknownCategory(t *testing.T) {
+	// An out-of-taxonomy category fails with a clear, field-keyed error.
+	mustReject(t, "unknown category", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [], "category": "bananas",
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`, "category")
+}
+
+func TestValidateAcceptsMissingCategory(t *testing.T) {
+	// category is optional — a manifest omitting it validates (baseGood has none).
+	res := validateManifest(t, baseGood)
+	if !res.OK() {
+		t.Fatalf("manifest without category should validate, got: %v", res.Errors)
+	}
+}
+
 func TestValidateRejectsBadContentRating(t *testing.T) {
 	mustReject(t, "bad contentRating", `{
 		"blockId": "ok-block", "version": "0.1.0", "name": "X",
