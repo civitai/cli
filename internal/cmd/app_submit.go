@@ -180,12 +180,18 @@ func printMoneyPathNote(out io.Writer, m *manifest.Manifest) {
 
 func printManualNextSteps(cmd *cobra.Command, cfg *config.Config, m *manifest.Manifest, zipPath string) {
 	out := cmd.OutOrStdout()
-	fmt.Fprintln(out, "\nNo token configured, so the bundle was written but not uploaded.")
+	base := strings.TrimRight(cfg.BaseURL(), "/")
+	// Lead with an unmistakable NOT-submitted banner: no token means the bundle
+	// was written locally but never reached the server, so no review started.
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, ui.Warn("NOT SUBMITTED — no token configured, so the bundle was written locally but never uploaded to Civitai."))
+	fmt.Fprintln(out, "No moderator review has started. To actually submit it, do ONE of:")
 	fmt.Fprintln(out, "\n  1) Authenticate, then re-run to upload directly:")
 	fmt.Fprintln(out, "     civitai login          # browser device login")
 	fmt.Fprintln(out, "     civitai app submit")
+	fmt.Fprintf(out, "     %s/apps/my-submissions   # your submissions appear here once uploaded\n", base)
 	fmt.Fprintf(out, "\n  2) Or upload %s via the web UI:\n", filepath.Base(zipPath))
-	fmt.Fprintf(out, "     %s/apps/submit\n", cfg.BaseURL())
+	fmt.Fprintf(out, "     %s/apps/submit\n", base)
 	fmt.Fprintln(out, "     (requires an invite while Apps is in invite-only beta).")
 	printMoneyPathNote(out, m)
 }
