@@ -65,11 +65,22 @@ func TestAppSubmitFallbackPrintsManualSteps(t *testing.T) {
 	if err != nil {
 		t.Fatalf("submit fallback: %v\n%s", err, stdout)
 	}
-	if !strings.Contains(stdout, "No token configured") || !strings.Contains(stdout, "/apps/submit") {
-		t.Errorf("fallback should print manual next steps: %s", stdout)
+	if !strings.Contains(stdout, "NOT SUBMITTED") || !strings.Contains(stdout, "never uploaded") {
+		t.Errorf("fallback must clearly read as not-submitted: %s", stdout)
+	}
+	if !strings.Contains(stdout, "/apps/submit") {
+		t.Errorf("fallback should keep the web-UI upload option: %s", stdout)
 	}
 	if !strings.Contains(stdout, "civitai login") {
 		t.Errorf("fallback should point at `civitai login`: %s", stdout)
+	}
+	// The dev believed they'd submitted with no token; point them at where a
+	// successful submit will actually show up (mirrors the happy path's link).
+	if !strings.Contains(stdout, "/apps/my-submissions") {
+		t.Errorf("fallback should point at /apps/my-submissions: %s", stdout)
+	}
+	if !strings.Contains(stdout, "invite-only beta") {
+		t.Errorf("fallback should keep the invite-only beta note: %s", stdout)
 	}
 }
 
