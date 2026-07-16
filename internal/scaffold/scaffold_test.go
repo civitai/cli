@@ -118,12 +118,14 @@ func TestRenderPageMoney(t *testing.T) {
 	pkg := readFile(t, filepath.Join(dest, "package.json"))
 	mustContain(t, pkg, `"@civitai/blocks-react"`)
 	// Per-account Buzz (useBuzzBalance / body.accountType / snapshot.spentAccountType)
-	// needs @civitai/blocks-react@0.18.0 (createMockHost now answers GET_BUZZ_BALANCE
+	// needs @civitai/blocks-react@0.18.0+ (createMockHost answers GET_BUZZ_BALANCE
 	// from the `buzzBalance` option AND stamps spentAccountType on succeeded
 	// snapshots natively — so the scaffold no longer ships a mock balance shim) +
-	// @civitai/app-sdk@0.14.0.
-	mustContain(t, pkg, `"@civitai/blocks-react": "^0.18.0"`)
-	mustContain(t, pkg, `"@civitai/app-sdk": "^0.14.0"`)
+	// @civitai/app-sdk@0.14.0+. The pins track the CURRENT published minors — the
+	// pins-vs-published guard (TestScaffoldPinsSatisfyPublished) fails CI if they
+	// fall behind npm, so bump BOTH assertions here in lockstep with the .tmpl.
+	mustContain(t, pkg, `"@civitai/blocks-react": "^0.29.0"`)
+	mustContain(t, pkg, `"@civitai/app-sdk": "^0.24.0"`)
 	mustContain(t, pkg, `"@civitai/app-sdk"`)
 	mustContain(t, pkg, `"dev:harness"`)
 	mustContain(t, pkg, `"build"`)
