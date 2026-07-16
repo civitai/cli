@@ -22,6 +22,7 @@ package scaffold
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -32,6 +33,11 @@ import (
 	"testing"
 	"time"
 )
+
+// errPkgNotFound is returned by fetchNpmLatest when npm answers 404/410 — the
+// package genuinely does not exist (vs a transient/connectivity failure). The
+// guard hard-fails on this and skips on everything else.
+var errPkgNotFound = errors.New("package not found on npm")
 
 // civitaiPinRe extracts `"@civitai/<pkg>": "<pin>"` pairs from a rendered or raw
 // package.json(.tmpl). The pin lines carry no template placeholders, so a raw
@@ -50,18 +56,39 @@ func TestScaffoldPinsSatisfyPublished(t *testing.T) {
 
 	// De-dupe the published lookups across templates.
 	latest := map[string]string{}
+	notFound := map[string]bool{} // packages npm returned 404/410 for
 	for _, p := range pins {
-		if _, ok := latest[p.pkg]; ok {
+		if _, ok := latest[p.pkg]; ok || notFound[p.pkg] {
 			continue
 		}
 		v, err := fetchNpmLatest(p.pkg)
-		if err != nil {
+		switch {
+		case errors.Is(err, errPkgNotFound):
+			// The package genuinely does not exist on npm — a renamed/
+			// unpublished/typo'd pin. This is a REAL drift, not "can't tell
+			// right now", so fail loud (don't skip).
+			notFound[p.pkg] = true
+			t.Errorf(
+				"NONEXISTENT PACKAGE — a template pins a package npm does not publish.\n"+
+					"  template: %s\n"+
+					"  package:  %s   (not found on npm — renamed, unpublished, or a typo in the pin?)\n"+
+					"  fix:      correct the @civitai/* package name in the template's package.json.tmpl",
+				p.file, p.pkg,
+			)
+		case err != nil:
+			// Transient/connectivity failure (DNS/timeout/connection-refused,
+			// or a 5xx / 429 rate-limit) — we can't tell right now, so skip
+			// rather than false-fail.
 			t.Skipf("npm unreachable for %s (%v) — skipping, not failing", p.pkg, err)
+		default:
+			latest[p.pkg] = v
 		}
-		latest[p.pkg] = v
 	}
 
 	for _, p := range pins {
+		if notFound[p.pkg] {
+			continue // already reported as a nonexistent package
+		}
 		published := latest[p.pkg]
 		ok, err := caretAdmits(p.pin, published)
 		if err != nil {
@@ -123,6 +150,12 @@ func fetchNpmLatest(pkg string) (string, error) {
 		return "", err
 	}
 	defer resp.Body.Close()
+	// 404/410 = the package genuinely doesn't exist → a real drift/typo the
+	// guard must fail on. Any other non-200 (5xx, 429 rate-limit, …) is a
+	// "can't tell right now" that the caller skips on.
+	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
+		return "", fmt.Errorf("GET %s: %s: %w", url, resp.Status, errPkgNotFound)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("GET %s: %s", url, resp.Status)
 	}
@@ -179,6 +212,9 @@ func caretAdmits(pin, published string) (bool, error) {
 	return cmpSemver(pubMaj, pubMin, pubPat, hi0, hi1, hi2) < 0, nil
 }
 
+// parseSemver parses a concrete X.Y.Z. Only caret (`^X.Y.Z`) and exact pins are
+// supported (all the templates use); a `~`/`>=`/`x` operator will fail loud
+// here, which is the right behavior — a red CI prompting a guard update.
 func parseSemver(v string) (int, int, int, error) {
 	// Drop any prerelease/build metadata; `latest` is stable but be defensive.
 	if i := strings.IndexAny(v, "-+"); i >= 0 {
