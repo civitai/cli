@@ -129,8 +129,15 @@ jobs:
   #       + @civitai/blocks-react (not the pinned caret npm resolves to) and
   #       re-typecheck + re-build. pins-vs-published catches "the pin can't admit
   #       latest"; THIS catches "the template code breaks against latest" (a
-  #       removed/renamed SDK export). Network-dependent — a transient npm outage
-  #       can false-fail; re-run.
+  #       removed/renamed SDK export). Network-dependent, so it mirrors the
+  #       pins-vs-published SKIP-on-unreachable contract: a reachability PROBE
+  #       gates the install/typecheck/build steps — an npm outage (network / DNS /
+  #       5xx / 429) SKIPS them (job stays green, indistinguishable-from-real is
+  #       avoided) while a reachable registry runs them and FAILS on a genuine
+  #       code-breaks-against-latest signal. (A peer-dep incompat where the pin
+  #       can't admit latest is already caught by pins-vs-published, so treating an
+  #       install failure under a REACHABLE registry as real is correct.) The
+  #       offline anti-pattern scan is hermetic and always runs.
   scaffold-currency:
     runs-on: ubuntu-latest
     steps:
@@ -155,18 +162,41 @@ jobs:
         run: go test ./internal/antipattern -run TestScanDirFromEnv -count=1 -v
 
       # (b) Build against the LATEST published SDK, not just the pinned caret.
+      #     Probe npm first; if the registry is unreachable (network/DNS/5xx/429)
+      #     the build steps SKIP so a transient outage can't red the job (mirrors
+      #     the pins-vs-published skip-on-unreachable contract). A 200 on the
+      #     /latest metadata means "reachable" — a real SDK break then fails at
+      #     typecheck/build, not here.
+      - name: probe npm reachability
+        id: npmprobe
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+            https://registry.npmjs.org/@civitai/app-sdk/latest 2>/dev/null) || code=000
+          [ -z "$code" ] && code=000
+          if [ "$code" = "200" ]; then
+            echo "reachable=true" >> "$GITHUB_OUTPUT"
+            echo "npm registry reachable (HTTP $code) — running the latest-SDK build check"
+          else
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=scaffold-currency::skipped latest-SDK build check — npm registry unreachable (HTTP $code); not a real failure, re-run later"
+          fi
+
       - name: install (pinned)
+        if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm install --no-audit --no-fund
 
       - name: install @latest SDK
+        if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm install --no-audit --no-fund @civitai/app-sdk@latest @civitai/blocks-react@latest
 
       - name: typecheck against latest SDK
+        if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm run typecheck
 
       - name: build against latest SDK
+        if: steps.npmprobe.outputs.reachable == 'true'
         working-directory: ./_ci-currency
         run: npm run build

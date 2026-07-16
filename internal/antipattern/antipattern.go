@@ -96,10 +96,13 @@ func Rules() []Rule {
 		{
 			// DEPRECATED tool. The npm `@civitai/blocks-cli` package is retired in
 			// favour of this Go CLI; a scaffold that references it teaches authors
-			// a dead workflow.
+			// a dead workflow. The trailing boundary keeps this to the EXACT
+			// package name — a version suffix (`@1.2.3`), a subpath (`/bin`), a
+			// quote, or end-of-line terminates it — so a hypothetical sibling like
+			// `@civitai/blocks-client` is NOT false-flagged.
 			ID:          "deprecated-blocks-cli",
 			What:        "reference to the deprecated @civitai/blocks-cli npm package",
-			Pattern:     regexp.MustCompile("@civitai/blocks-cli"),
+			Pattern:     regexp.MustCompile("@civitai/blocks-cli(?:[@/'\"\\x60\\s),;]|$)"),
 			Replacement: "use the Go civitai CLI (`civitai app <init|dev|submit>`); the @civitai/blocks-cli npm package is deprecated",
 		},
 	}

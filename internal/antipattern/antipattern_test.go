@@ -123,6 +123,42 @@ func TestLegitRoutesNeverMatchAnyRule(t *testing.T) {
 	}
 }
 
+// TestBlocksCliBoundary guards the deprecated-blocks-cli rule against matching a
+// wider package name: `@civitai/blocks-cli` (and a versioned/subpath form) must
+// fire, but a hypothetical sibling `@civitai/blocks-client` must NOT.
+func TestBlocksCliBoundary(t *testing.T) {
+	var rule Rule
+	for _, r := range Rules() {
+		if r.ID == "deprecated-blocks-cli" {
+			rule = r
+		}
+	}
+	if rule.Pattern == nil {
+		t.Fatal("deprecated-blocks-cli rule not found")
+	}
+
+	cases := []struct {
+		line string
+		want bool
+	}{
+		{`import x from '@civitai/blocks-cli';`, true},
+		{`npx @civitai/blocks-cli submit`, true},
+		{`"@civitai/blocks-cli": "^1.2.3"`, true},
+		{`npm i @civitai/blocks-cli@1.2.3`, true},
+		{`require('@civitai/blocks-cli/bin')`, true},
+		{`@civitai/blocks-cli`, true}, // bare, end-of-line
+		// Must NOT false-flag a wider package name.
+		{`import x from '@civitai/blocks-client';`, false},
+		{`"@civitai/blocks-client": "^1.0.0"`, false},
+		{`@civitai/blocks-client-utils`, false},
+	}
+	for _, c := range cases {
+		if got := rule.Pattern.MatchString(c.line); got != c.want {
+			t.Errorf("match(%q) = %v, want %v (pattern %s)", c.line, got, c.want, rule.Pattern)
+		}
+	}
+}
+
 // TestScanDirFromEnv is the CI entrypoint. The scaffold-currency job scaffolds a
 // template to disk, sets CIVITAI_ANTIPATTERN_SCAN_DIR to it, and runs this test;
 // any finding fails the job. It SKIPS when the env var is unset so the default
