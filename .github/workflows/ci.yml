@@ -110,3 +110,98 @@ jobs:
       - name: validate
         working-directory: ./_ci-page-money
         run: go run ../cmd/civitai app validate
+
+  # Scaffold-currency guard — the "born-broken app" gate. Two rot-classes that
+  # pins-vs-published + template-page-money both MISS:
+  #
+  #   (a) ANTI-PATTERN gate — scaffold the SDK template, then scan the generated
+  #       source for a curated denylist of dead/superseded platform surfaces
+  #       (the REMOVED /api/v1/blocks/buzz route, the superseded shared-storage
+  #       REST route, the deprecated @civitai/blocks-cli). A scaffold can compile
+  #       and pass the pins guard yet still fetch a route that 404s at runtime —
+  #       exactly how playable-collections shipped 3 broken features. The denylist
+  #       is precise: it does NOT flag legitimately-REST unbridged endpoints
+  #       (catalog /models, /images; the /me viewer read; the /dev-token mint).
+  #       Logic + fixtures live in internal/antipattern (offline table test); this
+  #       runs it against the real `civitai app init` output.
+  #
+  #   (b) LATEST-SDK build — install the ACTUAL newest published @civitai/app-sdk
+  #       + @civitai/blocks-react (not the pinned caret npm resolves to) and
+  #       re-typecheck + re-build. pins-vs-published catches "the pin can't admit
+  #       latest"; THIS catches "the template code breaks against latest" (a
+  #       removed/renamed SDK export). Network-dependent, so it mirrors the
+  #       pins-vs-published SKIP-on-unreachable contract: a reachability PROBE
+  #       gates the install/typecheck/build steps — an npm outage (network / DNS /
+  #       5xx / 429) SKIPS them (job stays green, indistinguishable-from-real is
+  #       avoided) while a reachable registry runs them and FAILS on a genuine
+  #       code-breaks-against-latest signal. (A peer-dep incompat where the pin
+  #       can't admit latest is already caught by pins-vs-published, so treating an
+  #       install failure under a REACHABLE registry as real is correct.) The
+  #       offline anti-pattern scan is hermetic and always runs.
+  scaffold-currency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: scaffold page-money
+        run: go run ./cmd/civitai app init "CI Currency Block" --dir "$GITHUB_WORKSPACE/_ci-currency" --template page-money
+
+      # (a) Anti-pattern gate on the scaffolded app.
+      #     CIVITAI_ANTIPATTERN_SCAN_DIR MUST be ABSOLUTE: `go test` runs the test
+      #     binary with its CWD set to the package dir (internal/antipattern), not
+      #     the repo root, so a relative `./_ci-currency` would resolve under the
+      #     package dir and lstat-fail. github.workspace anchors it to where the
+      #     scaffold step wrote the app.
+      - name: anti-pattern scan (scaffolded app)
+        env:
+          CIVITAI_ANTIPATTERN_SCAN_DIR: ${{ github.workspace }}/_ci-currency
+        run: go test ./internal/antipattern -run TestScanDirFromEnv -count=1 -v
+
+      # (b) Build against the LATEST published SDK, not just the pinned caret.
+      #     Probe npm first; if the registry is unreachable (network/DNS/5xx/429)
+      #     the build steps SKIP so a transient outage can't red the job (mirrors
+      #     the pins-vs-published skip-on-unreachable contract). A 200 on the
+      #     /latest metadata means "reachable" — a real SDK break then fails at
+      #     typecheck/build, not here.
+      - name: probe npm reachability
+        id: npmprobe
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 \
+            https://registry.npmjs.org/@civitai/app-sdk/latest 2>/dev/null) || code=000
+          [ -z "$code" ] && code=000
+          if [ "$code" = "200" ]; then
+            echo "reachable=true" >> "$GITHUB_OUTPUT"
+            echo "npm registry reachable (HTTP $code) — running the latest-SDK build check"
+          else
+            echo "reachable=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=scaffold-currency::skipped latest-SDK build check — npm registry unreachable (HTTP $code); not a real failure, re-run later"
+          fi
+
+      - name: install (pinned)
+        if: steps.npmprobe.outputs.reachable == 'true'
+        working-directory: ./_ci-currency
+        run: npm install --no-audit --no-fund
+
+      - name: install @latest SDK
+        if: steps.npmprobe.outputs.reachable == 'true'
+        working-directory: ./_ci-currency
+        run: npm install --no-audit --no-fund @civitai/app-sdk@latest @civitai/blocks-react@latest
+
+      - name: typecheck against latest SDK
+        if: steps.npmprobe.outputs.reachable == 'true'
+        working-directory: ./_ci-currency
+        run: npm run typecheck
+
+      - name: build against latest SDK
+        if: steps.npmprobe.outputs.reachable == 'true'
+        working-directory: ./_ci-currency
+        run: npm run build
