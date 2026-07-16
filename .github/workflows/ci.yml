@@ -153,12 +153,17 @@ jobs:
           node-version: "22"
 
       - name: scaffold page-money
-        run: go run ./cmd/civitai app init "CI Currency Block" --dir ./_ci-currency --template page-money
+        run: go run ./cmd/civitai app init "CI Currency Block" --dir "$GITHUB_WORKSPACE/_ci-currency" --template page-money
 
       # (a) Anti-pattern gate on the scaffolded app.
+      #     CIVITAI_ANTIPATTERN_SCAN_DIR MUST be ABSOLUTE: `go test` runs the test
+      #     binary with its CWD set to the package dir (internal/antipattern), not
+      #     the repo root, so a relative `./_ci-currency` would resolve under the
+      #     package dir and lstat-fail. github.workspace anchors it to where the
+      #     scaffold step wrote the app.
       - name: anti-pattern scan (scaffolded app)
         env:
-          CIVITAI_ANTIPATTERN_SCAN_DIR: ./_ci-currency
+          CIVITAI_ANTIPATTERN_SCAN_DIR: ${{ github.workspace }}/_ci-currency
         run: go test ./internal/antipattern -run TestScanDirFromEnv -count=1 -v
 
       # (b) Build against the LATEST published SDK, not just the pinned caret.
