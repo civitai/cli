@@ -110,3 +110,63 @@ jobs:
       - name: validate
         working-directory: ./_ci-page-money
         run: go run ../cmd/civitai app validate
+
+  # Scaffold-currency guard — the "born-broken app" gate. Two rot-classes that
+  # pins-vs-published + template-page-money both MISS:
+  #
+  #   (a) ANTI-PATTERN gate — scaffold the SDK template, then scan the generated
+  #       source for a curated denylist of dead/superseded platform surfaces
+  #       (the REMOVED /api/v1/blocks/buzz route, the superseded shared-storage
+  #       REST route, the deprecated @civitai/blocks-cli). A scaffold can compile
+  #       and pass the pins guard yet still fetch a route that 404s at runtime —
+  #       exactly how playable-collections shipped 3 broken features. The denylist
+  #       is precise: it does NOT flag legitimately-REST unbridged endpoints
+  #       (catalog /models, /images; the /me viewer read; the /dev-token mint).
+  #       Logic + fixtures live in internal/antipattern (offline table test); this
+  #       runs it against the real `civitai app init` output.
+  #
+  #   (b) LATEST-SDK build — install the ACTUAL newest published @civitai/app-sdk
+  #       + @civitai/blocks-react (not the pinned caret npm resolves to) and
+  #       re-typecheck + re-build. pins-vs-published catches "the pin can't admit
+  #       latest"; THIS catches "the template code breaks against latest" (a
+  #       removed/renamed SDK export). Network-dependent — a transient npm outage
+  #       can false-fail; re-run.
+  scaffold-currency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: scaffold page-money
+        run: go run ./cmd/civitai app init "CI Currency Block" --dir ./_ci-currency --template page-money
+
+      # (a) Anti-pattern gate on the scaffolded app.
+      - name: anti-pattern scan (scaffolded app)
+        env:
+          CIVITAI_ANTIPATTERN_SCAN_DIR: ./_ci-currency
+        run: go test ./internal/antipattern -run TestScanDirFromEnv -count=1 -v
+
+      # (b) Build against the LATEST published SDK, not just the pinned caret.
+      - name: install (pinned)
+        working-directory: ./_ci-currency
+        run: npm install --no-audit --no-fund
+
+      - name: install @latest SDK
+        working-directory: ./_ci-currency
+        run: npm install --no-audit --no-fund @civitai/app-sdk@latest @civitai/blocks-react@latest
+
+      - name: typecheck against latest SDK
+        working-directory: ./_ci-currency
+        run: npm run typecheck
+
+      - name: build against latest SDK
+        working-directory: ./_ci-currency
+        run: npm run build
