@@ -149,6 +149,30 @@ func TestValidateAcceptsMissingCategory(t *testing.T) {
 	}
 }
 
+func TestValidateRejectsUnknownScopeJustificationKey(t *testing.T) {
+	// End-to-end through the semantic path: an otherwise-valid manifest that
+	// justifies a scope it does not declare must be rejected, matching the
+	// server rule that justifications for un-requested scopes are rejected.
+	mustReject(t, "unknown scopeJustifications key", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": ["user:read:self"],
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"},
+		"scopeJustifications": {"buzz:read:self": "I would like buzz"}
+	}`, `scopeJustifications key "buzz:read:self"`)
+}
+
+func TestValidateAcceptsDeclaredScopeJustification(t *testing.T) {
+	// Control: justifying a scope that IS declared passes end-to-end.
+	mustAccept(t, "declared scopeJustifications key", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": ["user:read:self"],
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"},
+		"scopeJustifications": {"user:read:self": "needed to greet the signed-in user"}
+	}`)
+}
+
 func TestValidateRejectsBadContentRating(t *testing.T) {
 	mustReject(t, "bad contentRating", `{
 		"blockId": "ok-block", "version": "0.1.0", "name": "X",
