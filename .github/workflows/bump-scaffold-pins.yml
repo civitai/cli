@@ -86,6 +86,11 @@ jobs:
         if: steps.changed.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
+          # Scoped fine-grained token (Contents + Pull requests: RW on this repo
+          # only). The civitai org disallows the default GITHUB_TOKEN from
+          # creating PRs, and — bonus — a PR opened with this token DOES trigger
+          # the repo's normal CI (which a GITHUB_TOKEN PR would not).
+          token: ${{ secrets.BUMP_SCAFFOLD_PINS_TOKEN }}
           branch: automation/bump-scaffold-pins
           delete-branch: true
           commit-message: "chore(scaffold): bump @civitai/* pins to published latest"
@@ -106,14 +111,13 @@ jobs:
             the guard reads the raw `^X.Y.Z` bytes out of the `.tmpl`, so
             templating the value would blind it.
 
-            **⚠️ CI note:** a PR opened by this workflow uses the default
-            `GITHUB_TOKEN`, which by GitHub design does **not** trigger the
-            repo's other workflows — so `pins-vs-published` / `scaffold-currency`
-            will **not** auto-run on this PR. Correctness was instead validated
-            **inside the bump job**: the network guard
-            (`CIVITAI_CHECK_PUBLISHED_PINS=1 go test -run
-            TestScaffoldPinsSatisfyPublished`), the full offline scaffold suite,
-            AND a fresh `civitai app init` scaffold that installs + typechecks +
-            **builds** against the bumped SDK (catching a removed/renamed export)
-            all passed there. A maintainer can still re-run checks manually, or
-            the repo can wire a PAT if it wants this PR's own CI to fire.
+            **CI note:** this PR is opened with a scoped fine-grained token
+            (`secrets.BUMP_SCAFFOLD_PINS_TOKEN`, Contents + Pull requests RW on
+            this repo only), not the default `GITHUB_TOKEN` — so the repo's
+            normal checks (`pins-vs-published` / `scaffold-currency`) DO run on
+            it. As defense-in-depth the bump job also validates BEFORE opening
+            the PR: the network guard (`CIVITAI_CHECK_PUBLISHED_PINS=1 go test
+            -run TestScaffoldPinsSatisfyPublished`), the full offline scaffold
+            suite, AND a fresh `civitai app init` scaffold that installs +
+            typechecks + **builds** against the bumped SDK (catching a
+            removed/renamed export).
