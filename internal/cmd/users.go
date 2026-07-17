@@ -66,15 +66,27 @@ is selected when present).`,
 			if len(res.Items) == 0 {
 				return fmt.Errorf("no user found for %q", arg)
 			}
-			// Prefer an exact username match for a name query; otherwise the first
-			// result (a numeric id lookup returns exactly the requested user).
+			// A numeric id lookup returns exactly the requested user. A NAME query
+			// hits the search endpoint, which returns ≤5 FUZZY neighbours — so we
+			// require an exact (case-insensitive) username match and refuse to
+			// present a fuzzy top-hit as "the" user. Otherwise a typo'd or
+			// non-existent name (which still returns plausible neighbours) would
+			// confidently print the WRONG person.
 			match := res.Items[0]
 			if !numeric {
+				found := false
 				for _, u := range res.Items {
 					if strings.EqualFold(u.Username, arg) {
-						match = u
+						match, found = u, true
 						break
 					}
+				}
+				if !found {
+					names := make([]string, 0, len(res.Items))
+					for _, u := range res.Items {
+						names = append(names, orDash(u.Username))
+					}
+					return fmt.Errorf("no user found with exact username %q; closest matches: %s (use the numeric id for an exact lookup)", arg, strings.Join(names, ", "))
 				}
 			}
 			printUser(cmd, match)

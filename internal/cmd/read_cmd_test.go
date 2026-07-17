@@ -137,6 +137,27 @@ func TestUsersGetNumericUsesIds(t *testing.T) {
 	}
 }
 
+func TestUsersGetNoExactMatchErrors(t *testing.T) {
+	// A name query returning only FUZZY neighbours (no exact username) must
+	// ERROR, not confidently print the top fuzzy hit as "the" user.
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[{"id":5,"username":"bob"},{"id":6,"username":"bobby"}]}`))
+	})
+	out, _, err := run(t, "users", "get", "bo")
+	if err == nil {
+		t.Fatalf("expected an error for a name with no exact match; got output:\n%s", out)
+	}
+	if !strings.Contains(err.Error(), "no user found with exact username") {
+		t.Errorf("error should explain no-exact-match, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "bob") {
+		t.Errorf("error should list the closest candidates, got: %v", err)
+	}
+	if strings.Contains(out, "id 5") {
+		t.Errorf("must NOT print a fuzzy user as the answer:\n%s", out)
+	}
+}
+
 func TestTagsSearchWiring(t *testing.T) {
 	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/tags" {
