@@ -5,11 +5,57 @@ import (
 	"net/url"
 )
 
-// ModelVersionFile is the subset of a model-version file the CLI lists.
+// FileHashes is the per-file hash set the API returns under `files[].hashes`.
+// The keys are UPPER-cased algorithm names on the wire (AutoV1, AutoV2, SHA256,
+// CRC32, BLAKE3); SHA256 is the one `download` verifies against.
+type FileHashes struct {
+	AutoV1 string `json:"AutoV1,omitempty"`
+	AutoV2 string `json:"AutoV2,omitempty"`
+	SHA256 string `json:"SHA256,omitempty"`
+	CRC32  string `json:"CRC32,omitempty"`
+	BLAKE3 string `json:"BLAKE3,omitempty"`
+}
+
+// ModelVersionFile is the subset of a model-version `files[]` entry the CLI
+// lists and downloads. ID/Primary/DownloadURL/Hashes are carried (beyond the
+// display-only Name/Type/SizeKB) because `download` selects + fetches + verifies
+// individual files. Field names track the live API EXACTLY (verified against
+// GET /api/v1/model-versions/{id}: id, name, type, sizeKB, primary, downloadUrl,
+// hashes{SHA256,…}).
 type ModelVersionFile struct {
-	Name   string  `json:"name"`
-	Type   string  `json:"type"`
-	SizeKB float64 `json:"sizeKB"`
+	ID          int        `json:"id"`
+	Name        string     `json:"name"`
+	Type        string     `json:"type"`
+	SizeKB      float64    `json:"sizeKB"`
+	Primary     bool       `json:"primary"`
+	DownloadURL string     `json:"downloadUrl"`
+	Hashes      FileHashes `json:"hashes"`
+}
+
+// ModelFileType is the `type` value of the main model-weights file. A file whose
+// type is anything else (e.g. "Training Data", "Config", "VAE") is NOT the
+// downloadable weights — the on-site-generation / component-file trap `download`
+// guards against by default.
+const ModelFileType = "Model"
+
+// IsModelWeights reports whether the file is the main model-weights file
+// (type == "Model"), as opposed to training data / config / a component file.
+func (f *ModelVersionFile) IsModelWeights() bool { return f.Type == ModelFileType }
+
+// PrimaryFile returns the primary file of a version's file list (the one flagged
+// `primary: true`), falling back to the first file when none is flagged. Returns
+// nil for an empty list. This is the file `download` fetches by default and the
+// one the list/detail renderers inspect for the on-site-gen marker.
+func PrimaryFile(files []ModelVersionFile) *ModelVersionFile {
+	if len(files) == 0 {
+		return nil
+	}
+	for i := range files {
+		if files[i].Primary {
+			return &files[i]
+		}
+	}
+	return &files[0]
 }
 
 // ModelVersionModel is the embedded parent-model summary on a version detail.

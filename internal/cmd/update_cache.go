@@ -118,6 +118,15 @@ func decideNotice(c updateCache, current string, now time.Time) noticeDecision {
 	if !isParseableVersion(current) {
 		return d
 	}
+	// Guard against a STALE cache pinning an older "latest" than what we're
+	// actually running (the draft-window artifact: /releases/latest briefly
+	// returned the prior tag, so a fresh install cached a "latest" OLDER than
+	// itself). If we're ahead of the cached latest, the cache is definitionally
+	// stale — force a refresh now instead of waiting out the TTL. Never show a
+	// notice in this case (compareVersions != -1 already suppresses it below).
+	if compareVersions(current, c.LatestVersion) == 1 {
+		d.refresh = true
+	}
 	if compareVersions(current, c.LatestVersion) != -1 {
 		return d // up to date or ahead.
 	}

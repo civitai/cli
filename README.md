@@ -256,10 +256,11 @@ also takes `--json` to print the **raw API JSON response** for scripting.
 
 | Command | What it does | Notable flags |
 | --- | --- | --- |
-| `civitai models search` | Search models (`GET /api/v1/models`) | `--query`, `--tag`, `--username`, `--type`, `--sort`, `--period`, `--nsfw`; paging `--limit` (≤100), `--page`, `--cursor` |
+| `civitai models search` | Search models (`GET /api/v1/models`) | `--query`, `--tag`, `--username`, `--type`, `--base-model` (repeatable), `--sort`, `--period`, `--nsfw`; paging `--limit` (≤100), `--page`, `--cursor` |
 | `civitai models get <id>` | Get one model by id | `--json`, `--anon` |
 | `civitai model-versions get <id>` | Get a model version by id (alias `mv`) | `--json`, `--anon` |
 | `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
+| `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--no-verify`, `--force`, `--allow-nonmodel`, `--anon` |
 | `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--sort`, `--period`, `--nsfw`; paging `--limit` (≤200), `--page`, `--cursor` |
 | `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
@@ -283,6 +284,48 @@ civitai model-versions by-hash 5D8D26E2A6
 civitai articles get 32680
 civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSON for scripting
 ```
+
+**Filtering by base model.** `--base-model` is repeatable and maps to the REST
+`baseModels` filter (an OR across the values). It's the key discovery filter for
+things `--type` can't separate — e.g. video checkpoints all share
+`--type Checkpoint` and are distinguished only by base model:
+
+```bash
+civitai models search --type Checkpoint --base-model "Wan Video 2.2 T2V-A14B"
+civitai models search --base-model Pony --base-model Illustrious --limit 20
+```
+
+**On-site-generation marker.** In the human (non-`--json`) output of
+`models get` and `model-versions get`, a version whose **primary file is not
+model weights** (`type != "Model"` — e.g. an on-site-generation registration that
+ships a training-data ZIP instead of the weights) is tagged
+`[training data — no downloadable weights]` so you can spot the trap before
+trying to download it. `--json` output is an unchanged raw passthrough.
+
+## Download model files
+
+`civitai download` fetches the file(s) of a model **version**. Identify the
+version deterministically by its numeric **version id**, or resolve a model's
+default (primary/latest) published version with `--model`:
+
+```bash
+civitai download 128713                       # the version's primary file → ./<server-name>
+civitai download --model 4384                 # resolve model 4384's default version, then download it
+civitai download 128713 --out ./dreamshaper.safetensors
+civitai download 128713 --file vae --out-dir ./models   # pick a file; write into a dir
+civitai download 128713 --all --out-dir ./models        # every file in the version
+```
+
+Behavior:
+
+- **Identifier** — exactly one of the positional `<version-id>` or `--model <model-id>` is required (no numeric-ambiguity guessing).
+- **File selection** — defaults to the version's **primary** file. `--file <name>` selects one file (exact name, else a unique case-insensitive substring; ambiguous/none errors and lists the files). `--all` downloads every file.
+- **Output** — `--out <path>` sets an exact target path (single file only). `--out-dir <dir>` writes server-named files into a directory (works with `--all`). Parent directories are created as needed. Default is the server-provided filename in the current directory.
+- **Streaming + atomicity** — the body streams to `<target>.part` and is renamed into place only on success, so an interrupted run never leaves a truncated final file. Large files (10+ GB) are never buffered in memory. TTY-aware progress is printed to **stderr**. The Civitai download URL 302-redirects to signed storage; the CLI follows it.
+- **Auth** — your stored login token (`civitai login`) or `CIVITAI_API_KEY` is used automatically; gated / early-access files need it (a 401/403 gives an actionable message). Public files download anonymously (`--anon` forces no token).
+- **Integrity (default on)** — the streamed bytes are verified against the file's `SHA256`; a mismatch deletes the `.part` and fails. `--no-verify` skips it; a file with no published SHA256 downloads with a warning (not a hard failure).
+- **Idempotency** — an already-present target (that verifies, or with `--no-verify`) is skipped with a note; `--force` re-downloads.
+- **On-site-generation guard** — a version whose selected file is **not model weights** (`type != "Model"`, e.g. a training-data ZIP) is **refused by default**; pass `--allow-nonmodel` to download it anyway.
 
 ## Validate fidelity
 

@@ -1,0 +1,456 @@
+package cmd
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/internal/ui"
+	"github.com/spf13/cobra"
+)
+
+// downloadOpts holds the resolved flag values for `civitai download`.
+type downloadOpts struct {
+	modelID       string // --model (mutually exclusive with the positional version id)
+	file          string // --file: select one file by name (exact | unique substring)
+	all           bool   // --all: download every file in the version
+	out           string // --out: target path (single-file only)
+	outDir        string // --out-dir: directory for server-named files
+	noVerify      bool   // --no-verify: skip SHA256 verification
+	force         bool   // --force: re-download even if the target already exists
+	allowNonModel bool   // --allow-nonmodel: permit non-"Model" files (training data, etc.)
+	anon          bool   // --anon: force an anonymous request
+}
+
+func newDownloadCmd() *cobra.Command {
+	o := &downloadOpts{}
+	cmd := &cobra.Command{
+		Use:   "download [version-id]",
+		Short: "Download a model version's file(s)",
+		Long: `Download the file(s) of a model VERSION from Civitai.
+
+Identify the version deterministically by its numeric version id:
+
+  civitai download 128713
+
+…or resolve a model's default (primary/latest) published version with --model:
+
+  civitai download --model 4384
+
+By default the version's PRIMARY file is downloaded into the current directory
+under its server-provided name. Use --file to pick a specific file, or --all to
+download every file. Downloads stream to "<target>.part" and are renamed into
+place only on success, so an interrupted run never leaves a truncated final file.
+
+Authentication: your stored login token (civitai login) or CIVITAI_API_KEY is
+used automatically; gated / early-access files need it. Public files download
+anonymously.
+
+Integrity: the streamed bytes are verified against the file's SHA256 by default
+(--no-verify to skip; a file with no published SHA256 is downloaded with a
+warning). A hash mismatch deletes the partial file and fails.
+
+On-site-generation guard: a version whose selected file is not model weights
+(type != "Model", e.g. a training-data ZIP) is refused by default — pass
+--allow-nonmodel to download it anyway.`,
+		Example: `  civitai download 128713
+  civitai download --model 4384 --out ./dreamshaper.safetensors
+  civitai download 128713 --file vae --out-dir ./models
+  civitai download 128713 --all --out-dir ./models`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runDownload(cmd, args, o)
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&o.modelID, "model", "", "resolve+download a MODEL's default (primary/latest) version instead of a version id")
+	f.StringVar(&o.file, "file", "", "select a specific file by name (exact match, else a unique case-insensitive substring)")
+	f.BoolVar(&o.all, "all", false, "download every file in the version")
+	f.StringVar(&o.out, "out", "", "target file path (single-file only; mutually exclusive with --all/--out-dir)")
+	f.StringVar(&o.outDir, "out-dir", "", "directory to write server-named file(s) into (created if needed)")
+	f.BoolVar(&o.noVerify, "no-verify", false, "skip SHA256 verification of the downloaded bytes")
+	f.BoolVar(&o.force, "force", false, "re-download even if the target file already exists")
+	f.BoolVar(&o.allowNonModel, "allow-nonmodel", false, "allow downloading a non-\"Model\" file (training data, config, etc.)")
+	f.BoolVar(&o.anon, "anon", false, "force an anonymous request (ignore any stored login token)")
+	return cmd
+}
+
+func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
+	// ── resolve the target version id (exactly one of positional / --model) ──
+	var positional string
+	if len(args) == 1 {
+		positional = strings.TrimSpace(args[0])
+	}
+	if positional != "" && o.modelID != "" {
+		return fmt.Errorf("provide EITHER a version id or --model <model-id>, not both")
+	}
+	if positional == "" && o.modelID == "" {
+		return fmt.Errorf("provide a model-version id (civitai download <version-id>) or --model <model-id>")
+	}
+
+	// ── validate flag combinations up front ──
+	if o.all && o.file != "" {
+		return fmt.Errorf("--all and --file are mutually exclusive")
+	}
+	if o.out != "" && o.outDir != "" {
+		return fmt.Errorf("--out (a file path) and --out-dir (a directory) are mutually exclusive")
+	}
+	if o.out != "" && o.all {
+		return fmt.Errorf("--out sets a single file path and can't be combined with --all — use --out-dir")
+	}
+
+	client, _, err := newReader(&readOpts{anon: o.anon})
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	versionID, err := resolveVersionID(ctx, client, positional, o.modelID)
+	if err != nil {
+		return err
+	}
+
+	v, _, err := client.GetModelVersion(ctx, versionID)
+	if err != nil {
+		return err
+	}
+
+	selected, err := selectFiles(v.Files, o)
+	if err != nil {
+		return err
+	}
+
+	out := cmd.OutOrStdout()
+	errW := cmd.ErrOrStderr()
+
+	downloaded := 0
+	for i := range selected {
+		f := selected[i]
+		// on-site-gen / component-file guard.
+		if !f.IsModelWeights() && !o.allowNonModel {
+			if o.all {
+				// In --all mode, don't abort the whole run for a bundled
+				// non-weights file — skip it with a clear note.
+				fmt.Fprintln(errW, ui.For(errW).Warn(fmt.Sprintf(
+					"skipping %q (type %q, not model weights) — pass --allow-nonmodel to include it", f.Name, f.Type)))
+				continue
+			}
+			return fmt.Errorf("%q is %q, not model weights — this is likely an on-site-generation / training-data registration, not downloadable weights.\n"+
+				"Re-run with --allow-nonmodel if you really want this file", f.Name, f.Type)
+		}
+
+		target := targetPath(f, o)
+		skipped, err := downloadOne(ctx, client, out, errW, f, target, o)
+		if err != nil {
+			return err
+		}
+		if !skipped {
+			downloaded++
+		}
+	}
+
+	if downloaded == 0 && o.all {
+		// Everything was skipped (all files non-weights, or all already present).
+		fmt.Fprintln(errW, ui.For(errW).Warn("no model-weights files were downloaded (all files were non-model or already present)"))
+	}
+	return nil
+}
+
+// resolveVersionID returns the version id to download: the positional id verbatim
+// (validated numeric), or the primary/latest published version of --model.
+func resolveVersionID(ctx context.Context, client api.Reader, positional, modelID string) (string, error) {
+	if positional != "" {
+		if _, err := strconv.Atoi(positional); err != nil {
+			return "", fmt.Errorf("model-version id must be an integer, got %q", positional)
+		}
+		return positional, nil
+	}
+	if _, err := strconv.Atoi(modelID); err != nil {
+		return "", fmt.Errorf("--model id must be an integer, got %q", modelID)
+	}
+	m, _, err := client.GetModel(ctx, modelID)
+	if err != nil {
+		return "", err
+	}
+	if len(m.ModelVersions) == 0 {
+		return "", fmt.Errorf("model %s has no published versions to download", modelID)
+	}
+	// The API returns modelVersions with the default/latest first.
+	return strconv.Itoa(m.ModelVersions[0].ID), nil
+}
+
+// selectFiles resolves which file(s) of a version to download from the flags:
+// --all → every file; --file → one file by exact name or a unique
+// case-insensitive substring; default → the primary file (or the first file when
+// none is flagged primary).
+func selectFiles(files []api.ModelVersionFile, o *downloadOpts) ([]api.ModelVersionFile, error) {
+	if len(files) == 0 {
+		return nil, fmt.Errorf("this version has no downloadable files")
+	}
+	if o.all {
+		return files, nil
+	}
+	if o.file != "" {
+		return selectOneFile(files, o.file)
+	}
+	primary := api.PrimaryFile(files)
+	return []api.ModelVersionFile{*primary}, nil
+}
+
+// selectOneFile picks a single file by name: an exact (case-insensitive) name
+// match wins; otherwise a UNIQUE case-insensitive substring match; ambiguous or
+// no match is an error that lists the available files.
+func selectOneFile(files []api.ModelVersionFile, want string) ([]api.ModelVersionFile, error) {
+	// Exact (case-insensitive) name match first.
+	for i := range files {
+		if strings.EqualFold(files[i].Name, want) {
+			return []api.ModelVersionFile{files[i]}, nil
+		}
+	}
+	// Unique case-insensitive substring match.
+	var matches []api.ModelVersionFile
+	lw := strings.ToLower(want)
+	for i := range files {
+		if strings.Contains(strings.ToLower(files[i].Name), lw) {
+			matches = append(matches, files[i])
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[:1], nil
+	case 0:
+		return nil, fmt.Errorf("no file matches %q. Available files:\n%s", want, formatFileList(files))
+	default:
+		return nil, fmt.Errorf("%q is ambiguous — it matches %d files. Be more specific:\n%s", want, len(matches), formatFileList(matches))
+	}
+}
+
+// formatFileList renders a compact "  - name (type, size)" list for errors.
+func formatFileList(files []api.ModelVersionFile) string {
+	var b strings.Builder
+	for i := range files {
+		f := files[i]
+		fmt.Fprintf(&b, "  - %s (%s, %s)\n", f.Name, f.Type, humanBytes(int64(f.SizeKB*1024)))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// targetPath computes the on-disk destination for a file given the flags:
+// --out (verbatim path), else --out-dir/<server-name>, else ./<server-name>.
+func targetPath(f api.ModelVersionFile, o *downloadOpts) string {
+	if o.out != "" {
+		return o.out
+	}
+	if o.outDir != "" {
+		return filepath.Join(o.outDir, f.Name)
+	}
+	return f.Name
+}
+
+// downloadOne downloads a single file to target, streaming to "<target>.part"
+// and renaming on success. Returns skipped=true when an already-present target
+// satisfied the idempotency check. Verification (SHA256, default on) deletes the
+// partial file and errors on mismatch.
+func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f api.ModelVersionFile, target string, o *downloadOpts) (skipped bool, err error) {
+	sha := strings.TrimSpace(f.Hashes.SHA256)
+	verify := !o.noVerify && sha != ""
+	if !o.noVerify && sha == "" {
+		fmt.Fprintln(errW, ui.For(errW).Warn(fmt.Sprintf("%s: no SHA256 published — skipping integrity verification", f.Name)))
+	}
+
+	// Idempotency: skip an already-present target unless --force. When verifying
+	// and a hash is known, only skip on a confirmed match; without a hash (or
+	// --no-verify) a present file is trusted.
+	if !o.force {
+		if info, statErr := os.Stat(target); statErr == nil && !info.IsDir() {
+			if !verify {
+				fmt.Fprintf(out, "already present: %s\n", target)
+				return true, nil
+			}
+			match, verr := fileSHA256Matches(target, sha)
+			if verr == nil && match {
+				fmt.Fprintf(out, "already present (SHA256 verified): %s\n", target)
+				return true, nil
+			}
+			// Present but wrong/unverifiable → re-download.
+		}
+	}
+
+	if dir := filepath.Dir(target); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return false, fmt.Errorf("create output directory %s: %w", dir, err)
+		}
+	}
+
+	resp, err := dl.DownloadFile(ctx, f.DownloadURL)
+	if err != nil {
+		return false, fmt.Errorf("download %s: %w", f.Name, err)
+	}
+	defer resp.Body.Close()
+
+	if err := downloadStatusError(resp.StatusCode, f.Name); err != nil {
+		return false, err
+	}
+
+	partPath := target + ".part"
+	partFile, err := os.Create(partPath)
+	if err != nil {
+		return false, fmt.Errorf("create %s: %w", partPath, err)
+	}
+	// Best-effort cleanup of the partial file on any failure before rename.
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = partFile.Close()
+			_ = os.Remove(partPath)
+		}
+	}()
+
+	total := resp.ContentLength
+	if total <= 0 && f.SizeKB > 0 {
+		total = int64(f.SizeKB * 1024)
+	}
+	pw := newProgressWriter(errW, f.Name, total)
+
+	hasher := sha256.New()
+	writers := []io.Writer{partFile, pw}
+	if verify {
+		writers = append(writers, hasher)
+	}
+	if _, err := io.Copy(io.MultiWriter(writers...), resp.Body); err != nil {
+		return false, fmt.Errorf("streaming %s: %w", f.Name, err)
+	}
+	pw.done()
+	if err := partFile.Close(); err != nil {
+		return false, fmt.Errorf("finalize %s: %w", partPath, err)
+	}
+
+	if verify {
+		got := hex.EncodeToString(hasher.Sum(nil))
+		if !strings.EqualFold(got, sha) {
+			// Delete the corrupt partial; the defer would also remove it, but be
+			// explicit so the failure message is honest about the state on disk.
+			_ = os.Remove(partPath)
+			cleanup = false
+			return false, fmt.Errorf("SHA256 mismatch for %s — expected %s, got %s (deleted the partial download)", f.Name, strings.ToLower(sha), got)
+		}
+	}
+
+	if err := os.Rename(partPath, target); err != nil {
+		return false, fmt.Errorf("install %s: %w", target, err)
+	}
+	cleanup = false
+
+	note := ""
+	if verify {
+		note = "  (SHA256 verified)"
+	}
+	fmt.Fprintf(out, "Saved %s (%s)%s\n", target, humanBytes(pw.written), note)
+	return false, nil
+}
+
+// downloadStatusError maps a non-2xx download response to an actionable error.
+func downloadStatusError(status int, name string) error {
+	switch {
+	case status >= 200 && status < 300:
+		return nil
+	case status == http.StatusUnauthorized:
+		return fmt.Errorf("downloading %s requires authentication (401) — run `civitai login` (or set CIVITAI_API_KEY)", name)
+	case status == http.StatusForbidden:
+		return fmt.Errorf("access to %s is forbidden (403) — it may be early-access or otherwise gated for your account", name)
+	case status == http.StatusNotFound:
+		return fmt.Errorf("download URL for %s returned 404 — the file may have been removed", name)
+	default:
+		return fmt.Errorf("download of %s failed (HTTP %d)", name, status)
+	}
+}
+
+// fileSHA256Matches streams path and reports whether its SHA256 equals want
+// (case-insensitive).
+func fileSHA256Matches(path, want string) (bool, error) {
+	fh, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer fh.Close()
+	h := sha256.New()
+	if _, err := io.Copy(h, fh); err != nil {
+		return false, err
+	}
+	return strings.EqualFold(hex.EncodeToString(h.Sum(nil)), want), nil
+}
+
+// ── progress ─────────────────────────────────────────────────────────────────
+
+// progressWriter counts streamed bytes and renders progress to a writer
+// (stderr). On a TTY it draws a throttled, carriage-return-updated line; off a
+// TTY it prints an occasional plain line so long downloads still show life
+// without flooding a log.
+type progressWriter struct {
+	w         io.Writer
+	name      string
+	total     int64 // expected size; 0 = unknown
+	written   int64
+	tty       bool
+	start     time.Time
+	lastPrint time.Time
+}
+
+func newProgressWriter(w io.Writer, name string, total int64) *progressWriter {
+	return &progressWriter{w: w, name: name, total: total, tty: ui.IsTTY(w), start: time.Now()}
+}
+
+func (p *progressWriter) Write(b []byte) (int, error) {
+	n := len(b)
+	p.written += int64(n)
+	now := time.Now()
+	if p.tty {
+		if now.Sub(p.lastPrint) >= 100*time.Millisecond {
+			p.lastPrint = now
+			fmt.Fprint(p.w, "\r"+p.line())
+		}
+	} else if now.Sub(p.lastPrint) >= 5*time.Second {
+		p.lastPrint = now
+		fmt.Fprintln(p.w, p.line())
+	}
+	return n, nil
+}
+
+// done finishes the progress display (clears/terminates the TTY line).
+func (p *progressWriter) done() {
+	if p.tty {
+		fmt.Fprint(p.w, "\r"+p.line()+"\n")
+	}
+}
+
+func (p *progressWriter) line() string {
+	if p.total > 0 {
+		pct := float64(p.written) / float64(p.total) * 100
+		return fmt.Sprintf("  %s  %s / %s (%.0f%%)", p.name, humanBytes(p.written), humanBytes(p.total), pct)
+	}
+	return fmt.Sprintf("  %s  %s", p.name, humanBytes(p.written))
+}
+
+// humanBytes renders a byte count in binary units (KiB/MiB/GiB…), abbreviated
+// as KB/MB/GB for brevity.
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for x := n / unit; x >= unit; x /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+}

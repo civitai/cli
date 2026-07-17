@@ -252,6 +252,7 @@ Get started:
 	// Read subcommands — public REST API (`/api/v1/**`) browsing.
 	root.AddCommand(newModelsCmd())
 	root.AddCommand(newModelVersionsCmd())
+	root.AddCommand(newDownloadCmd())
 	root.AddCommand(newImagesCmd())
 	root.AddCommand(newTagsCmd())
 	root.AddCommand(newCreatorsCmd())

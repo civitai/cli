@@ -85,7 +85,11 @@ func newModelVersionsByHashCmd() *cobra.Command {
 
 func printModelVersionDetail(cmd *cobra.Command, v *api.ModelVersionDetail) {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "%s (version id %d, model id %d)\n", v.Name, v.ID, v.ModelID)
+	header := fmt.Sprintf("%s (version id %d, model id %d)", v.Name, v.ID, v.ModelID)
+	if mk := nonModelFileMarker(v.Files); mk != "" {
+		header += " " + mk
+	}
+	fmt.Fprintln(out, header)
 	if v.Model != nil {
 		fmt.Fprintf(out, "  model:     %s (%s)\n", v.Model.Name, v.Model.Type)
 	}
