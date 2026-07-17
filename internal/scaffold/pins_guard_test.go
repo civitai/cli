@@ -19,30 +19,17 @@ package scaffold
 // It is network-gated: it only runs when CIVITAI_CHECK_PUBLISHED_PINS=1 (a
 // dedicated CI job sets it), so the default `go test ./...` stays offline. When
 // enabled but npm is unreachable it SKIPS (never a false failure).
+//
+// The shared pin logic (CivitaiPinRe / FetchNpmLatest / CaretAdmits /
+// ErrPkgNotFound) lives in pins.go — production code the bump-pins command
+// reuses so the guard and the bumper agree by construction.
 
 import (
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io/fs"
-	"net/http"
 	"os"
-	"regexp"
-	"strconv"
-	"strings"
 	"testing"
-	"time"
 )
-
-// errPkgNotFound is returned by fetchNpmLatest when npm answers 404/410 — the
-// package genuinely does not exist (vs a transient/connectivity failure). The
-// guard hard-fails on this and skips on everything else.
-var errPkgNotFound = errors.New("package not found on npm")
-
-// civitaiPinRe extracts `"@civitai/<pkg>": "<pin>"` pairs from a rendered or raw
-// package.json(.tmpl). The pin lines carry no template placeholders, so a raw
-// scan of the .tmpl is exact.
-var civitaiPinRe = regexp.MustCompile(`"(@civitai/[a-z0-9-]+)"\s*:\s*"([^"]+)"`)
 
 func TestScaffoldPinsSatisfyPublished(t *testing.T) {
 	if os.Getenv("CIVITAI_CHECK_PUBLISHED_PINS") != "1" {
@@ -61,9 +48,9 @@ func TestScaffoldPinsSatisfyPublished(t *testing.T) {
 		if _, ok := latest[p.pkg]; ok || notFound[p.pkg] {
 			continue
 		}
-		v, err := fetchNpmLatest(p.pkg)
+		v, err := FetchNpmLatest(p.pkg)
 		switch {
-		case errors.Is(err, errPkgNotFound):
+		case errors.Is(err, ErrPkgNotFound):
 			// The package genuinely does not exist on npm — a renamed/
 			// unpublished/typo'd pin. This is a REAL drift, not "can't tell
 			// right now", so fail loud (don't skip).
@@ -90,7 +77,7 @@ func TestScaffoldPinsSatisfyPublished(t *testing.T) {
 			continue // already reported as a nonexistent package
 		}
 		published := latest[p.pkg]
-		ok, err := caretAdmits(p.pin, published)
+		ok, err := CaretAdmits(p.pin, published)
 		if err != nil {
 			t.Fatalf("%s: cannot evaluate pin %q against published %q: %v", p.file, p.pin, published, err)
 		}
@@ -101,7 +88,7 @@ func TestScaffoldPinsSatisfyPublished(t *testing.T) {
 					"  package:  %s\n"+
 					"  pinned:   %s   (does NOT admit the published version — pre-1.0 caret locks the minor)\n"+
 					"  published:%s   (npmjs.org/%s latest)\n"+
-					"  fix:      set the pin to \"^%s\" and update the matching assertion in scaffold_test.go",
+					"  fix:      run `go run ./internal/scaffold/cmd/bump-pins` (or set the pin to \"^%s\" and update the matching assertion in scaffold_test.go)",
 				p.file, p.pkg, p.pin, published, p.pkg, published,
 			)
 		}
@@ -130,7 +117,7 @@ func collectCivitaiPins(t *testing.T) []civitaiPin {
 		if err != nil {
 			return err
 		}
-		for _, m := range civitaiPinRe.FindAllStringSubmatch(string(raw), -1) {
+		for _, m := range CivitaiPinRe.FindAllStringSubmatch(string(raw), -1) {
 			out = append(out, civitaiPin{file: p, pkg: m[1], pin: m[2]})
 		}
 		return nil
@@ -139,108 +126,4 @@ func collectCivitaiPins(t *testing.T) []civitaiPin {
 		t.Fatalf("walking templates: %v", err)
 	}
 	return out
-}
-
-// fetchNpmLatest returns the `version` npm publishes as `latest` for pkg.
-func fetchNpmLatest(pkg string) (string, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	url := "https://registry.npmjs.org/" + pkg + "/latest"
-	resp, err := client.Get(url)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	// 404/410 = the package genuinely doesn't exist → a real drift/typo the
-	// guard must fail on. Any other non-200 (5xx, 429 rate-limit, …) is a
-	// "can't tell right now" that the caller skips on.
-	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone {
-		return "", fmt.Errorf("GET %s: %s: %w", url, resp.Status, errPkgNotFound)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s: %s", url, resp.Status)
-	}
-	var body struct {
-		Version string `json:"version"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return "", err
-	}
-	if body.Version == "" {
-		return "", fmt.Errorf("GET %s: empty version", url)
-	}
-	return body.Version, nil
-}
-
-// caretAdmits reports whether a caret range `^X.Y.Z` admits the concrete
-// version `published` (stable X.Y.Z), following npm's pre-1.0 semantics:
-//   - ^X.Y.Z, X>0    → [X.Y.Z, (X+1).0.0)
-//   - ^0.Y.Z, Y>0    → [0.Y.Z, 0.(Y+1).0)
-//   - ^0.0.Z         → [0.0.Z, 0.0.(Z+1))
-//
-// A bare (caret-less) pin must equal the published version.
-func caretAdmits(pin, published string) (bool, error) {
-	pubMaj, pubMin, pubPat, err := parseSemver(published)
-	if err != nil {
-		return false, fmt.Errorf("published %q: %w", published, err)
-	}
-
-	caret := strings.HasPrefix(pin, "^")
-	base := strings.TrimPrefix(pin, "^")
-	lo0, lo1, lo2, err := parseSemver(base)
-	if err != nil {
-		return false, fmt.Errorf("pin %q: %w", pin, err)
-	}
-
-	if !caret {
-		return lo0 == pubMaj && lo1 == pubMin && lo2 == pubPat, nil
-	}
-
-	// published must be >= lower bound.
-	if cmpSemver(pubMaj, pubMin, pubPat, lo0, lo1, lo2) < 0 {
-		return false, nil
-	}
-	// and < the caret's upper bound.
-	var hi0, hi1, hi2 int
-	switch {
-	case lo0 > 0:
-		hi0, hi1, hi2 = lo0+1, 0, 0
-	case lo1 > 0:
-		hi0, hi1, hi2 = 0, lo1+1, 0
-	default:
-		hi0, hi1, hi2 = 0, 0, lo2+1
-	}
-	return cmpSemver(pubMaj, pubMin, pubPat, hi0, hi1, hi2) < 0, nil
-}
-
-// parseSemver parses a concrete X.Y.Z. Only caret (`^X.Y.Z`) and exact pins are
-// supported (all the templates use); a `~`/`>=`/`x` operator will fail loud
-// here, which is the right behavior — a red CI prompting a guard update.
-func parseSemver(v string) (int, int, int, error) {
-	// Drop any prerelease/build metadata; `latest` is stable but be defensive.
-	if i := strings.IndexAny(v, "-+"); i >= 0 {
-		v = v[:i]
-	}
-	parts := strings.Split(v, ".")
-	if len(parts) != 3 {
-		return 0, 0, 0, fmt.Errorf("not X.Y.Z: %q", v)
-	}
-	nums := make([]int, 3)
-	for i, p := range parts {
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return 0, 0, 0, fmt.Errorf("non-numeric component in %q: %w", v, err)
-		}
-		nums[i] = n
-	}
-	return nums[0], nums[1], nums[2], nil
-}
-
-func cmpSemver(a0, a1, a2, b0, b1, b2 int) int {
-	if a0 != b0 {
-		return a0 - b0
-	}
-	if a1 != b1 {
-		return a1 - b1
-	}
-	return a2 - b2
 }
