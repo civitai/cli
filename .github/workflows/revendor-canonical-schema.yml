@@ -1,0 +1,93 @@
+# Auto-re-vendor the go:embedded block-manifest schema from the canonical one
+# published at https://civitai.com/schemas/app-block/v1.json.
+#
+# The CLI embeds a mirror of the platform's canonical schema for offline
+# `civitai app validate`. Every canonical change (a new field, a tightened rule)
+# turns `check-canonical-schema` red until a human re-vendors the mirror. This
+# job runs the re-vendor script, validates the result IN THIS JOB, and opens a
+# PR when the schema changed — so the hand-resync never recurs. Sibling of the
+# `bump-scaffold-pins` workflow (the pin-drift automation).
+name: revendor-canonical-schema
+
+on:
+  schedule:
+    # Weekly, Mondays 07:37 UTC — offset from bump-scaffold-pins (07:17) so the
+    # two automations don't open PRs in the same minute. Cron literal quoted so
+    # the `*` isn't parsed as a YAML alias.
+    - cron: "37 7 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  revendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: re-vendor embedded schema from the live canonical
+        run: ./scripts/revendor-canonical-schema.sh
+
+      # Only validate + open a PR when the re-vendor actually changed the file —
+      # a no-op run (already in sync) skips everything downstream.
+      - name: detect changes
+        id: changed
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "embedded schema already current — nothing to do"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Prove the re-vendored schema compiles under the CLI's jsonschema engine
+      # AND the bundled example manifests still validate against it. An added
+      # REQUIRED field or an otherwise-breaking change fails here → no PR opens
+      # (a human handles the incompatible change); an additive/optional change
+      # validates cleanly → the PR opens.
+      - name: validate — schema compiles + examples validate
+        if: steps.changed.outputs.changed == 'true'
+        # Full suite so the ROOT-package examples test (examples_test.go —
+        # `TestExampleManifestsValidateClean`, which validates the shipped
+        # examples/*.block.manifest.json) runs too, not just internal/validate.
+        run: go test ./...
+
+      - name: open PR if schema changed
+        if: steps.changed.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
+        with:
+          # Shared scoped automation token (Contents + Pull requests: RW on this
+          # repo only) — the same secret bump-scaffold-pins uses, because the
+          # civitai org disallows the default GITHUB_TOKEN from creating PRs.
+          # A PR opened with it also triggers the repo's normal CI.
+          token: ${{ secrets.BUMP_SCAFFOLD_PINS_TOKEN }}
+          branch: automation/revendor-canonical-schema
+          delete-branch: true
+          commit-message: "chore(schema): re-vendor embedded manifest schema from canonical"
+          title: "chore(schema): re-vendor embedded manifest schema from canonical"
+          body: |
+            Automated by the `revendor-canonical-schema` workflow
+            (`scripts/revendor-canonical-schema.sh`).
+
+            The canonical block-manifest schema published at
+            https://civitai.com/schemas/app-block/v1.json changed, so the CLI's
+            go:embedded mirror (`schema/app-block.manifest.schema.json`) drifted
+            and `check-canonical-schema` would go red. This PR re-vendors the
+            embedded copy from the canonical.
+
+            Validated in the job before opening: the re-vendored schema compiles
+            under the CLI's jsonschema engine and the bundled example manifests
+            still validate against it (`go test ./...`).
+
+            **Reviewer heads-up:** this bot only re-vendors the schema *bytes*.
+            If the canonical change added a field with author-facing semantics
+            (e.g. a new manifest key), consider whether `internal/validate/` (the
+            Go semantic checks / friendly messages) should track it too — that
+            part is a deliberate human call.
