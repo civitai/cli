@@ -1,0 +1,180 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"strconv"
+	"strings"
+	"text/tabwriter"
+
+	"github.com/civitai/cli/internal/api"
+	"github.com/spf13/cobra"
+)
+
+const modelsLimitMax = 100
+
+func newModelsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "models",
+		Short: "Search and inspect models on Civitai",
+		Long: `Read-only access to Civitai models via the public REST API
+(GET /api/v1/models). These commands work anonymously; if you are logged in
+(civitai login) your token is sent automatically.`,
+		Example: `  civitai models search --query "pony" --limit 5
+  civitai models get 4384`,
+	}
+	cmd.AddCommand(newModelsSearchCmd())
+	cmd.AddCommand(newModelsGetCmd())
+	return cmd
+}
+
+func newModelsSearchCmd() *cobra.Command {
+	var (
+		query, tag, username, typ, sort, period, cursor string
+		nsfw                                            bool
+		limit, page                                     int
+	)
+	cmd := &cobra.Command{
+		Use:   "search",
+		Short: "Search models (GET /api/v1/models)",
+		Long: `Search models via GET /api/v1/models.
+
+Pagination: use --page for shallow paging, or --cursor for deep paging (the API
+caps page*limit at 1000 and otherwise returns 429 — prefer --cursor). The next
+cursor is printed after the results.`,
+		Example: `  civitai models search --query "pony" --limit 5
+  civitai models search --type LORA --sort "Most Downloaded" --period Month
+  civitai models search --username some-creator --cursor <cursor>`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkLimit(limit, modelsLimitMax); err != nil {
+				return err
+			}
+			o := readFlags(cmd)
+			q := url.Values{}
+			addIfSet(q, "query", query)
+			addIfSet(q, "tag", tag)
+			addIfSet(q, "username", username)
+			addIfSet(q, "types", typ) // API query param is `types`
+			addIfSet(q, "sort", sort)
+			addIfSet(q, "period", period)
+			addIfSet(q, "cursor", cursor)
+			addIfPositive(q, "limit", limit)
+			addIfPositive(q, "page", page)
+			if cmd.Flags().Changed("nsfw") {
+				q.Set("nsfw", strconv.FormatBool(nsfw))
+			}
+
+			client, _, err := newReader(o)
+			if err != nil {
+				return err
+			}
+			res, err := client.SearchModels(context.Background(), q)
+			if err != nil {
+				return err
+			}
+			if o.json {
+				return emitJSON(cmd, res.Raw)
+			}
+			printModelList(cmd, res.Items)
+			printPageFooter(cmd, "civitai models search", res.Metadata)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&query, "query", "", "text search query")
+	cmd.Flags().StringVar(&tag, "tag", "", "filter by tag name")
+	cmd.Flags().StringVar(&username, "username", "", "filter by creator username")
+	cmd.Flags().StringVar(&typ, "type", "", "filter by model type (e.g. Checkpoint, LORA, TextualInversion)")
+	cmd.Flags().StringVar(&sort, "sort", "", "sort order (e.g. \"Highest Rated\", \"Most Downloaded\", Newest)")
+	cmd.Flags().StringVar(&period, "period", "", "time period (AllTime, Year, Month, Week, Day)")
+	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
+	cmd.Flags().IntVar(&limit, "limit", 0, "results per page (1-100)")
+	cmd.Flags().IntVar(&page, "page", 0, "page number (shallow paging; prefer --cursor for deep paging)")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "pagination cursor from a previous response")
+	bindReadFlags(cmd)
+	return cmd
+}
+
+func newModelsGetCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "get <id>",
+		Short: "Get a model by id (GET /api/v1/models/{id})",
+		Example: `  civitai models get 4384
+  civitai models get 4384 --json`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			o := readFlags(cmd)
+			if _, err := strconv.Atoi(args[0]); err != nil {
+				return fmt.Errorf("model id must be a positive integer, got %q", args[0])
+			}
+			client, _, err := newReader(o)
+			if err != nil {
+				return err
+			}
+			m, raw, err := client.GetModel(context.Background(), args[0])
+			if err != nil {
+				return err
+			}
+			if o.json {
+				return emitJSON(cmd, raw)
+			}
+			printModelDetail(cmd, m)
+			return nil
+		},
+	}
+	bindReadFlags(cmd)
+	return cmd
+}
+
+func printModelList(cmd *cobra.Command, items []api.ModelListItem) {
+	out := cmd.OutOrStdout()
+	if len(items) == 0 {
+		fmt.Fprintln(out, "No models found.")
+		return
+	}
+	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tNAME\tTYPE\tCREATOR\tDOWNLOADS\tTHUMBSUP")
+	for _, m := range items {
+		creator := "-"
+		if m.Creator != nil && m.Creator.Username != "" {
+			creator = m.Creator.Username
+		}
+		name := m.Name
+		if m.NSFW {
+			name += " [nsfw]"
+		}
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\n", m.ID, name, m.Type, creator, m.Stats.DownloadCount, m.Stats.ThumbsUpCount)
+	}
+	_ = tw.Flush()
+}
+
+func printModelDetail(cmd *cobra.Command, m *api.ModelDetail) {
+	out := cmd.OutOrStdout()
+	creator := "-"
+	if m.Creator != nil && m.Creator.Username != "" {
+		creator = m.Creator.Username
+	}
+	fmt.Fprintf(out, "%s (id %d)\n", m.Name, m.ID)
+	fmt.Fprintf(out, "  type:      %s\n", m.Type)
+	fmt.Fprintf(out, "  creator:   %s\n", creator)
+	fmt.Fprintf(out, "  nsfw:      %t\n", m.NSFW)
+	fmt.Fprintf(out, "  downloads: %d   thumbsUp: %d   comments: %d\n", m.Stats.DownloadCount, m.Stats.ThumbsUpCount, m.Stats.CommentCount)
+	if len(m.Tags) > 0 {
+		fmt.Fprintf(out, "  tags:      %s\n", joinTags(m.Tags))
+	}
+	fmt.Fprintf(out, "  versions (%d):\n", len(m.ModelVersions))
+	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	for _, v := range m.ModelVersions {
+		fmt.Fprintf(tw, "    %d\t%s\t%s\n", v.ID, v.Name, v.BaseModel)
+	}
+	_ = tw.Flush()
+}
+
+func joinTags(tags []string) string {
+	const max = 12
+	if len(tags) <= max {
+		return strings.Join(tags, ", ")
+	}
+	return strings.Join(tags[:max], ", ") + fmt.Sprintf(", … (+%d)", len(tags)-max)
+}

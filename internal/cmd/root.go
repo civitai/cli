@@ -249,5 +249,13 @@ Get started:
 	root.AddCommand(newCompletionCmd())
 	root.AddCommand(newUpdateCheckCmd())
 
+	// Read subcommands — public REST API (`/api/v1/**`) browsing.
+	root.AddCommand(newModelsCmd())
+	root.AddCommand(newModelVersionsCmd())
+	root.AddCommand(newImagesCmd())
+	root.AddCommand(newTagsCmd())
+	root.AddCommand(newCreatorsCmd())
+	root.AddCommand(newUsersCmd())
+
 	return root
 }

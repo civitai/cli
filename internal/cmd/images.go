@@ -1,0 +1,116 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"net/url"
+	"strconv"
+	"text/tabwriter"
+
+	"github.com/civitai/cli/internal/api"
+	"github.com/spf13/cobra"
+)
+
+const imagesLimitMax = 200
+
+func newImagesCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "images",
+		Short: "Search images on Civitai",
+		Long: `Read-only access to Civitai images via the public REST API
+(GET /api/v1/images). Works anonymously.`,
+		Example: `  civitai images search --limit 5
+  civitai images search --model-id 4384 --sort "Most Reactions"`,
+	}
+	cmd.AddCommand(newImagesSearchCmd())
+	return cmd
+}
+
+func newImagesSearchCmd() *cobra.Command {
+	var (
+		username, sort, period, cursor               string
+		postID, modelID, modelVersionID, limit, page int
+		nsfw                                         bool
+	)
+	cmd := &cobra.Command{
+		Use:   "search",
+		Short: "Search images (GET /api/v1/images)",
+		Long: `Search images via GET /api/v1/images.
+
+Pagination: use --page for shallow paging or --cursor for deep paging (the API
+caps page*limit at 1000). The next cursor is printed after the results.`,
+		Example: `  civitai images search --limit 5
+  civitai images search --model-version-id 128713 --sort Newest
+  civitai images search --username some-user --cursor <cursor>`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkLimit(limit, imagesLimitMax); err != nil {
+				return err
+			}
+			o := readFlags(cmd)
+			q := url.Values{}
+			addIfSet(q, "username", username)
+			addIfSet(q, "sort", sort)
+			addIfSet(q, "period", period)
+			addIfSet(q, "cursor", cursor)
+			addIfPositive(q, "postId", postID)
+			addIfPositive(q, "modelId", modelID)
+			addIfPositive(q, "modelVersionId", modelVersionID)
+			addIfPositive(q, "limit", limit)
+			addIfPositive(q, "page", page)
+			if cmd.Flags().Changed("nsfw") {
+				q.Set("nsfw", strconv.FormatBool(nsfw))
+			}
+
+			client, _, err := newReader(o)
+			if err != nil {
+				return err
+			}
+			res, err := client.SearchImages(context.Background(), q)
+			if err != nil {
+				return err
+			}
+			if o.json {
+				return emitJSON(cmd, res.Raw)
+			}
+			printImageList(cmd, res.Items)
+			printPageFooter(cmd, "civitai images search", res.Metadata)
+			return nil
+		},
+	}
+	cmd.Flags().IntVar(&limit, "limit", 0, "results per page (1-200)")
+	cmd.Flags().IntVar(&page, "page", 0, "page number (shallow paging; prefer --cursor)")
+	cmd.Flags().StringVar(&cursor, "cursor", "", "pagination cursor from a previous response")
+	cmd.Flags().IntVar(&postID, "post-id", 0, "filter by post id")
+	cmd.Flags().IntVar(&modelID, "model-id", 0, "filter by model id")
+	cmd.Flags().IntVar(&modelVersionID, "model-version-id", 0, "filter by model version id")
+	cmd.Flags().StringVar(&username, "username", "", "filter by uploader username")
+	cmd.Flags().StringVar(&period, "period", "", "time period (AllTime, Year, Month, Week, Day)")
+	cmd.Flags().StringVar(&sort, "sort", "", "sort order (\"Most Reactions\", \"Most Comments\", Newest)")
+	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
+	bindReadFlags(cmd)
+	return cmd
+}
+
+func printImageList(cmd *cobra.Command, items []api.ImageItem) {
+	out := cmd.OutOrStdout()
+	if len(items) == 0 {
+		fmt.Fprintln(out, "No images found.")
+		return
+	}
+	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
+	fmt.Fprintln(tw, "ID\tUPLOADER\tSIZE\tNSFW\tHEARTS\tCOMMENTS\tURL")
+	for _, im := range items {
+		fmt.Fprintf(tw, "%d\t%s\t%dx%d\t%s\t%d\t%d\t%s\n",
+			im.ID, orDash(im.Username), im.Width, im.Height, orDash(im.NSFWLevel),
+			im.Stats.HeartCount, im.Stats.CommentCount, im.URL)
+	}
+	_ = tw.Flush()
+}
+
+func orDash(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
+}
