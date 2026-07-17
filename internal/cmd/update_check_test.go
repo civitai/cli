@@ -202,14 +202,19 @@ func TestPrintUpdateNotice_CurrentAhead(t *testing.T) {
 	if strings.Contains(out, "newer version is available") {
 		t.Errorf("should not prompt upgrade when current is ahead: %s", out)
 	}
-	// When ahead (a dev/pre-release build newer than the latest release), we must
-	// NOT claim "You're on the latest version." — that would be a false claim.
+	// When ahead (a dev/pre-release build newer than the latest release, OR the
+	// draft-window artifact where /releases/latest momentarily returns the prior
+	// tag), we must NOT claim "You're on the latest version." AND must NOT print
+	// a misleading "Latest release: <older>" line that reads like the user is
+	// behind. current >= latest ⇒ NO notice at all.
 	if strings.Contains(out, "You're on the latest version") {
 		t.Errorf("should not claim 'on the latest version' when current is ahead: %s", out)
 	}
-	// Instead it surfaces the latest release informationally and honestly.
-	if !strings.Contains(out, "Latest release: v0.1.9") {
-		t.Errorf("ahead build should surface the latest release informationally: %s", out)
+	if strings.Contains(out, "Latest release") {
+		t.Errorf("ahead build must not surface an older 'Latest release' line (reads as behind): %s", out)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("current >= latest should produce NO update notice, got: %s", out)
 	}
 }
 

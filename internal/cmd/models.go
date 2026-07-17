@@ -32,6 +32,7 @@ func newModelsCmd() *cobra.Command {
 func newModelsSearchCmd() *cobra.Command {
 	var (
 		query, tag, username, typ, sort, period, cursor string
+		baseModels                                      []string
 		nsfw                                            bool
 		limit, page                                     int
 	)
@@ -57,6 +58,14 @@ cursor is printed after the results.`,
 			addIfSet(q, "tag", tag)
 			addIfSet(q, "username", username)
 			addIfSet(q, "types", typ) // API query param is `types`
+			// baseModels is a repeatable filter → repeated `baseModels=` query
+			// keys, which the API's zod union (string | string[]) parses as an
+			// array (baseModel IN (...), i.e. OR across the given values).
+			for _, bm := range baseModels {
+				if bm != "" {
+					q.Add("baseModels", bm)
+				}
+			}
 			addIfSet(q, "sort", sort)
 			addIfSet(q, "period", period)
 			addIfSet(q, "cursor", cursor)
@@ -86,6 +95,7 @@ cursor is printed after the results.`,
 	cmd.Flags().StringVar(&tag, "tag", "", "filter by tag name")
 	cmd.Flags().StringVar(&username, "username", "", "filter by creator username")
 	cmd.Flags().StringVar(&typ, "type", "", "filter by model type (e.g. Checkpoint, LORA, TextualInversion)")
+	cmd.Flags().StringSliceVar(&baseModels, "base-model", nil, "filter by base model; repeatable (e.g. --base-model Pony --base-model \"Illustrious\"). Distinguishes video checkpoints (\"Wan Video 2.2 T2V-A14B\") that all share --type Checkpoint")
 	cmd.Flags().StringVar(&sort, "sort", "", "sort order (e.g. \"Highest Rated\", \"Most Downloaded\", Newest)")
 	cmd.Flags().StringVar(&period, "period", "", "time period (AllTime, Year, Month, Week, Day)")
 	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
@@ -166,7 +176,11 @@ func printModelDetail(cmd *cobra.Command, m *api.ModelDetail) {
 	fmt.Fprintf(out, "  versions (%d):\n", len(m.ModelVersions))
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	for _, v := range m.ModelVersions {
-		fmt.Fprintf(tw, "    %d\t%s\t%s\n", v.ID, v.Name, v.BaseModel)
+		marker := nonModelFileMarker(v.Files)
+		if marker != "" {
+			marker = "  " + marker
+		}
+		fmt.Fprintf(tw, "    %d\t%s\t%s%s\n", v.ID, v.Name, v.BaseModel, marker)
 	}
 	_ = tw.Flush()
 }

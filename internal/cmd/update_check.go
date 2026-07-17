@@ -79,10 +79,15 @@ func printUpdateNotice(w io.Writer, current string) {
 		// ONLY path that may honestly claim the user is up to date.
 		fmt.Fprintln(w, "\nYou're on the latest version.")
 	default:
-		// current > latest (dev/pre-release build ahead of the newest release):
-		// don't claim "on the latest version" — say nothing actionable, just
-		// surface the latest release informationally and honestly.
-		fmt.Fprintf(w, "\nLatest release: %s — https://github.com/civitai/cli/releases/latest\n", latest)
+		// current > latest: we are AT OR AHEAD of the newest published release,
+		// so there is nothing to update to — show NO notice. This is exactly the
+		// symptom the dogfood hit: right after v0.1.62 was cut, GitHub's
+		// /releases/latest (which EXCLUDES drafts) still returned v0.1.61, so a
+		// v0.1.62 machine compared as "ahead" and the old code printed a
+		// misleading "Latest release: v0.1.61" line that read like the user was
+		// behind. When current >= latest we stay silent (never a false "behind"
+		// nag, never a false "on the latest" claim for a dev build ahead).
+		return
 	}
 }
 
