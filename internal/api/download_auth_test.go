@@ -33,7 +33,7 @@ func TestIsTrustedDownloadHost(t *testing.T) {
 		{"https://signed-storage.example.com/blob?sig=abc", base, false},
 		// Same-origin as the configured API endpoint is trusted (self-host / test).
 		{"http://127.0.0.1:8080/dl", "http://127.0.0.1:8080", true},
-		{"http://127.0.0.1:8080/dl", "http://127.0.0.1:9999", false}, // different port
+		{"http://127.0.0.1:8080/dl", "http://127.0.0.1:9999", false},  // different port
 		{"http://127.0.0.1:8080/dl", "https://127.0.0.1:8080", false}, // different scheme
 		// Garbage.
 		{"://nope", base, false},
