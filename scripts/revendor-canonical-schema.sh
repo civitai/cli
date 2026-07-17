@@ -38,8 +38,11 @@ case "$code" in
     ;;
 esac
 
-if ! jq empty "$tmp" >/dev/null 2>&1; then
-  echo "ERROR: canonical schema at $CANONICAL_URL is not valid JSON — skipping" >&2
+# Reject an empty/whitespace or non-object 200 body BEFORE the cp — `jq empty`
+# alone exits 0 on a 0-byte file, which would overwrite the embedded schema with
+# an empty file (a CDN/edge quirk shouldn't be able to blank the mirror).
+if [ ! -s "$tmp" ] || ! jq -e 'type == "object"' "$tmp" >/dev/null 2>&1; then
+  echo "ERROR: canonical schema at $CANONICAL_URL is empty or not a JSON object — refusing to re-vendor" >&2
   exit 1
 fi
 

@@ -54,7 +54,10 @@ jobs:
       # validates cleanly → the PR opens.
       - name: validate — schema compiles + examples validate
         if: steps.changed.outputs.changed == 'true'
-        run: go test ./internal/validate/...
+        # Full suite so the ROOT-package examples test (examples_test.go —
+        # `TestExampleManifestsValidateClean`, which validates the shipped
+        # examples/*.block.manifest.json) runs too, not just internal/validate.
+        run: go test ./...
 
       - name: open PR if schema changed
         if: steps.changed.outputs.changed == 'true'
@@ -81,7 +84,7 @@ jobs:
 
             Validated in the job before opening: the re-vendored schema compiles
             under the CLI's jsonschema engine and the bundled example manifests
-            still validate against it (`go test ./internal/validate/...`).
+            still validate against it (`go test ./...`).
 
             **Reviewer heads-up:** this bot only re-vendors the schema *bytes*.
             If the canonical change added a field with author-facing semantics
