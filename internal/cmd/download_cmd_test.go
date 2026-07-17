@@ -435,4 +435,35 @@ func TestDownload401ActionableError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "requires authentication") {
 		t.Fatalf("expected actionable 401 error, got %v", err)
 	}
+	if !strings.Contains(err.Error(), "civitai login") {
+		t.Errorf("401 error should point at `civitai login`: %v", err)
+	}
+}
+
+// A 403 while authenticated means the file is gated (early-access / subscriber /
+// not shared), NOT a login problem — the message must say so and must NOT tell
+// the user to log in again.
+func TestDownload403GatedError(t *testing.T) {
+	var base string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/model-versions/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"id":128713,"modelId":4384,"name":"v","baseModel":"SD 1.5","files":[{"id":1,"name":"gated.safetensors","type":"Model","primary":true,"sizeKB":1,"downloadUrl":"%s/dl/gated"}]}`, base)
+	})
+	mux.HandleFunc("/dl/", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusForbidden) })
+	srv := httptest.NewServer(mux)
+	base = srv.URL
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "a-valid-token") // authed, but the file is gated
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	chdir(t, t.TempDir())
+
+	_, _, err := run(t, "download", "128713")
+	if err == nil || !strings.Contains(err.Error(), "gated") {
+		t.Fatalf("expected a gated/forbidden 403 error, got %v", err)
+	}
+	if strings.Contains(err.Error(), "civitai login") {
+		t.Errorf("a 403 (authed but forbidden) must NOT tell the user to run login: %v", err)
+	}
 }

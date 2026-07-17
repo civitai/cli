@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -200,11 +201,16 @@ func TestReadErrorSurfacesBody(t *testing.T) {
 		body   string
 		want   string
 	}{
+		// Terminal statuses map through readError.
 		{http.StatusNotFound, `{"error":"No model with id 999"}`, "not found (404): No model with id 999"},
 		{http.StatusUnauthorized, `{"error":"Unauthorized"}`, "unauthorized (401)"},
-		{http.StatusTooManyRequests, `{"error":"too many pages"}`, "rate limited (429)"},
-		{http.StatusServiceUnavailable, `{"error":"overloaded"}`, "service unavailable (503)"},
 		{http.StatusBadRequest, `{"message":"bad param"}`, "server returned 400: bad param"},
+		// A 429 without Retry-After is terminal (deep-paging limit): readError's
+		// 429 branch surfaces the --cursor guidance, no retry-exhaustion message.
+		{http.StatusTooManyRequests, `{"error":"too many pages"}`, "rate limited (429): too many pages — for deep paging use --cursor instead of --page"},
+		// A persistently-503 status is retried and surfaces the exhaustion error
+		// naming the status + attempt count.
+		{http.StatusServiceUnavailable, `{"error":"overloaded"}`, "HTTP 503 after 4 attempts"},
 	}
 	for _, tc := range cases {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -212,6 +218,8 @@ func TestReadErrorSurfacesBody(t *testing.T) {
 			_, _ = w.Write([]byte(tc.body))
 		}))
 		c := New(srv.URL, "", "")
+		c.RetryBackoffBase = zeroBackoff() // instant retries for the retriable rows
+		c.Stderr = &bytes.Buffer{}         // swallow the retry notices
 		_, _, err := c.GetModel(context.Background(), "999")
 		srv.Close()
 		if err == nil {

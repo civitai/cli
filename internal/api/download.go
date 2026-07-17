@@ -107,6 +107,16 @@ func (c *Client) doDownload(ctx context.Context, hc *http.Client, fileURL, token
 	return hc.Do(req)
 }
 
+// DownloadNeedsAuth reports whether a bearer token would be attached when
+// downloading fileURL (i.e. it targets a trusted Civitai/base host, so the CLI
+// authenticates the request). It backs the `download --dry-run` plan's
+// "authentication" line. An off-domain signed-storage redirect target reports
+// false — it needs no token — but the initial Civitai download route reports
+// true, which is what the user sees before the transfer.
+func DownloadNeedsAuth(fileURL, baseURL string) bool {
+	return isTrustedDownloadHost(fileURL, baseURL)
+}
+
 // isTrustedDownloadHost reports whether the bearer token may be attached to a GET
 // for fileURL. The token is attached only when EITHER:
 //   - fileURL is https AND its host is civitai.com or a *.civitai.com subdomain
