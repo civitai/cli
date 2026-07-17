@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -112,7 +113,12 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	// Cancel the whole download on Ctrl-C (SIGINT): the signal-bound context is
+	// threaded into every request + io.Copy, so an interrupted transfer unblocks
+	// with a cancellation error and downloadOne's cleanup defer removes the
+	// partial ".part" file rather than leaving it behind.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 
 	versionID, err := resolveVersionID(ctx, client, positional, o.modelID)
 	if err != nil {
@@ -148,7 +154,10 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 				"Re-run with --allow-nonmodel if you really want this file", f.Name, f.Type)
 		}
 
-		target := targetPath(f, o)
+		target, err := targetPath(f, o)
+		if err != nil {
+			return err
+		}
 		skipped, err := downloadOne(ctx, client, out, errW, f, target, o)
 		if err != nil {
 			return err
@@ -246,14 +255,27 @@ func formatFileList(files []api.ModelVersionFile) string {
 
 // targetPath computes the on-disk destination for a file given the flags:
 // --out (verbatim path), else --out-dir/<server-name>, else ./<server-name>.
-func targetPath(f api.ModelVersionFile, o *downloadOpts) string {
+//
+// For the two server-named cases (default and --out-dir) the API-supplied
+// f.Name is reduced to its bare basename with filepath.Base BEFORE joining, so a
+// hostile name like "/home/user/.bashrc" or "../../etc/foo" can never write
+// outside the current directory / outside --out-dir (path-traversal / arbitrary
+// write). --out is the user's OWN explicit target and is used verbatim (they may
+// legitimately pass a relative or absolute path). A basename that degenerates to
+// ".", "/", or ".." (empty or all-slashes server name) is unusable and errors
+// rather than writing to a junk path.
+func targetPath(f api.ModelVersionFile, o *downloadOpts) (string, error) {
 	if o.out != "" {
-		return o.out
+		return o.out, nil
+	}
+	base := filepath.Base(f.Name)
+	if base == "." || base == ".." || base == string(filepath.Separator) || base == "/" {
+		return "", fmt.Errorf("server returned an unusable filename %q; pass --out to set the output path", f.Name)
 	}
 	if o.outDir != "" {
-		return filepath.Join(o.outDir, f.Name)
+		return filepath.Join(o.outDir, base), nil
 	}
-	return f.Name
+	return base, nil
 }
 
 // downloadOne downloads a single file to target, streaming to "<target>.part"
@@ -302,6 +324,12 @@ func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f 
 	}
 
 	partPath := target + ".part"
+	// Self-heal a stale ".part" left by a previously aborted run: we don't resume,
+	// so remove it before starting a fresh transfer (os.Create truncates too, but
+	// be explicit).
+	if _, statErr := os.Stat(partPath); statErr == nil {
+		_ = os.Remove(partPath)
+	}
 	partFile, err := os.Create(partPath)
 	if err != nil {
 		return false, fmt.Errorf("create %s: %w", partPath, err)
