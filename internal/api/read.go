@@ -25,6 +25,10 @@ type Reader interface {
 	SearchTags(ctx context.Context, q url.Values) (*TagSearchResult, error)
 	SearchCreators(ctx context.Context, q url.Values) (*CreatorSearchResult, error)
 	SearchUsers(ctx context.Context, q url.Values) (*UserSearchResult, error)
+	SearchArticles(ctx context.Context, q url.Values) (*ArticleSearchResult, error)
+	GetArticle(ctx context.Context, id string) (*ArticleDetail, []byte, error)
+	SearchCollections(ctx context.Context, q url.Values) (*CollectionSearchResult, error)
+	GetCollection(ctx context.Context, id string) (*CollectionDetail, []byte, error)
 }
 
 // Metadata is the pagination envelope the list endpoints return under

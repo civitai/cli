@@ -256,6 +256,8 @@ Get started:
 	root.AddCommand(newTagsCmd())
 	root.AddCommand(newCreatorsCmd())
 	root.AddCommand(newUsersCmd())
+	root.AddCommand(newArticlesCmd())
+	root.AddCommand(newCollectionsCmd())
 
 	return root
 }
