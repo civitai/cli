@@ -51,11 +51,13 @@ func countingServer(t *testing.T, failStatus, failTimes int, retryAfter, okBody 
 }
 
 func TestReadRetriesTransientThenSucceeds(t *testing.T) {
+	// 429 is intentionally excluded here: without a Retry-After header it is
+	// terminal (deep-paging limit), covered separately below. A 429 WITH
+	// Retry-After is retried — see TestReadHonorsRetryAfterOn429.
 	for _, status := range []int{
 		http.StatusBadGateway,         // 502
 		http.StatusServiceUnavailable, // 503
 		http.StatusGatewayTimeout,     // 504
-		http.StatusTooManyRequests,    // 429
 	} {
 		t.Run(strconv.Itoa(status), func(t *testing.T) {
 			// Fail twice, then succeed on the 3rd try.
@@ -136,6 +138,98 @@ func TestReadHonorsRetryAfterOn429(t *testing.T) {
 	}
 	if *hits != 2 {
 		t.Errorf("expected 2 requests (1 x 429 + 1 ok), got %d", *hits)
+	}
+}
+
+// A 429 WITHOUT a Retry-After header is Civitai's deterministic deep-paging
+// limit, not a transient throttle: it must NOT be retried (exactly 1 request)
+// and must surface the actionable --cursor guidance from readError's 429 branch
+// — not the generic "temporarily unavailable" exhaustion message.
+func TestRead429WithoutRetryAfterIsTerminalWithCursorHint(t *testing.T) {
+	srv, hits := countingServer(t, http.StatusTooManyRequests, 99, "", `{"error":"You've paged too deep"}`)
+	c, errBuf := retryClient(srv)
+
+	_, _, err := c.GetModel(context.Background(), "42")
+	if err == nil {
+		t.Fatal("a Retry-After-less 429 should surface a terminal error")
+	}
+	if *hits != 1 {
+		t.Errorf("a deterministic 429 must make exactly 1 request, got %d", *hits)
+	}
+	if !strings.Contains(err.Error(), "--cursor") {
+		t.Errorf("error should preserve the --cursor guidance, got %v", err)
+	}
+	if strings.Contains(err.Error(), "temporarily unavailable") {
+		t.Errorf("terminal 429 must NOT surface the retry-exhaustion message, got %v", err)
+	}
+	if strings.Contains(errBuf.String(), "retrying") {
+		t.Errorf("a terminal 429 must not emit a retry notice, got %q", errBuf.String())
+	}
+}
+
+// A 429 that KEEPS returning Retry-After is a genuine throttle: it is retried up
+// to the cap and, if it never clears, exhausts with the generic message.
+func TestRead429WithRetryAfterExhaustsGeneric(t *testing.T) {
+	srv, hits := countingServer(t, http.StatusTooManyRequests, 99, "0", "")
+	c, _ := retryClient(srv)
+
+	_, _, err := c.GetModel(context.Background(), "42")
+	if err == nil {
+		t.Fatal("a persistent 429+Retry-After should exhaust with an error")
+	}
+	if *hits != readMaxAttempts {
+		t.Errorf("expected %d requests, got %d", readMaxAttempts, *hits)
+	}
+	if !strings.Contains(err.Error(), "HTTP 429 after 4 attempts") {
+		t.Errorf("exhaustion should name status + attempts, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "temporarily unavailable") {
+		t.Errorf("persistent throttle should surface the generic message, got %v", err)
+	}
+}
+
+// The exhaustion error must not emit a dangling ": " separator when the response
+// body is empty.
+func TestRetryExhaustedNoTrailingColonOnEmptyBody(t *testing.T) {
+	// Always 503 with an EMPTY body → exhaust, empty snippet.
+	var hits int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(srv.Close)
+	c, _ := retryClient(srv)
+
+	_, _, err := c.GetModel(context.Background(), "42")
+	if err == nil {
+		t.Fatal("expected an exhaustion error")
+	}
+	if strings.HasSuffix(err.Error(), ": ") || strings.Contains(err.Error(), "shortly: ") {
+		t.Errorf("empty body must not leave a dangling %q separator, got %q", ": ", err.Error())
+	}
+}
+
+// backoffFor: a zero base yields exactly 0 (tests stay instant + deterministic);
+// a positive base yields a jittered delay that always stays within [0, cap].
+func TestBackoffForJitterBounds(t *testing.T) {
+	// base == 0 → always 0, across all attempts.
+	zeroC := &Client{RetryBackoffBase: zeroBackoff()}
+	for attempt := 0; attempt < 5; attempt++ {
+		if d := zeroC.backoffFor(attempt, nil); d != 0 {
+			t.Fatalf("base=0 attempt=%d: got %v, want 0", attempt, d)
+		}
+	}
+
+	// base > 0 → jittered, but always within [0, retryBackoffMax].
+	base := 250 * time.Millisecond
+	c := &Client{RetryBackoffBase: &base}
+	for attempt := 0; attempt < 8; attempt++ {
+		for i := 0; i < 200; i++ {
+			d := c.backoffFor(attempt, nil)
+			if d < 0 || d > retryBackoffMax {
+				t.Fatalf("attempt=%d: jittered delay %v out of [0,%v]", attempt, d, retryBackoffMax)
+			}
+		}
 	}
 }
 

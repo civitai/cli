@@ -205,9 +205,11 @@ func TestReadErrorSurfacesBody(t *testing.T) {
 		{http.StatusNotFound, `{"error":"No model with id 999"}`, "not found (404): No model with id 999"},
 		{http.StatusUnauthorized, `{"error":"Unauthorized"}`, "unauthorized (401)"},
 		{http.StatusBadRequest, `{"message":"bad param"}`, "server returned 400: bad param"},
-		// Retriable statuses are retried and, when they persist, surface the
-		// exhaustion error naming the status + attempt count.
-		{http.StatusTooManyRequests, `{"error":"too many pages"}`, "HTTP 429 after 4 attempts"},
+		// A 429 without Retry-After is terminal (deep-paging limit): readError's
+		// 429 branch surfaces the --cursor guidance, no retry-exhaustion message.
+		{http.StatusTooManyRequests, `{"error":"too many pages"}`, "rate limited (429): too many pages — for deep paging use --cursor instead of --page"},
+		// A persistently-503 status is retried and surfaces the exhaustion error
+		// naming the status + attempt count.
 		{http.StatusServiceUnavailable, `{"error":"overloaded"}`, "HTTP 503 after 4 attempts"},
 	}
 	for _, tc := range cases {

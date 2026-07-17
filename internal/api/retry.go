@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"os"
@@ -37,10 +38,13 @@ const (
 	retryAfterCap = 5 * time.Second
 )
 
-// isRetriableStatus reports whether an HTTP status is a TRANSIENT server-side
-// condition worth retrying on an idempotent GET: 429 (rate limited) and the
-// 502/503/504 gateway/overload family. Other 4xx (400/401/403/404) are terminal
-// — a retry can't change them — and 401 already has its own refresh path.
+// isRetriableStatus reports whether an HTTP status is CANDIDATE for a retry on
+// an idempotent GET: 429 (rate limited) and the 502/503/504 gateway/overload
+// family. Note 429 is only CONDITIONALLY retried — the retry loop further gates
+// it on the presence of a Retry-After header (a Retry-After-less 429 is
+// Civitai's deterministic deep-paging limit, terminal for reads). Other 4xx
+// (400/401/403/404) are terminal — a retry can't change them — and 401 already
+// has its own refresh path.
 func isRetriableStatus(status int) bool {
 	switch status {
 	case http.StatusTooManyRequests, // 429
@@ -76,36 +80,38 @@ func isTransientNetErr(err error) bool {
 // retryAfterDelay parses a Retry-After header (delta-seconds or an HTTP-date)
 // into a delay, clamped to [0, cap]. The bool reports whether a usable value was
 // present.
-func retryAfterDelay(h http.Header, cap time.Duration) (time.Duration, bool) {
+func retryAfterDelay(h http.Header, capDelay time.Duration) (time.Duration, bool) {
 	v := strings.TrimSpace(h.Get("Retry-After"))
 	if v == "" {
 		return 0, false
 	}
 	if secs, err := strconv.Atoi(v); err == nil {
-		return clampDelay(time.Duration(secs)*time.Second, cap), true
+		return clampDelay(time.Duration(secs)*time.Second, capDelay), true
 	}
 	if t, err := http.ParseTime(v); err == nil {
-		return clampDelay(time.Until(t), cap), true
+		return clampDelay(time.Until(t), capDelay), true
 	}
 	return 0, false
 }
 
-// clampDelay bounds d to [0, cap].
-func clampDelay(d, cap time.Duration) time.Duration {
+// clampDelay bounds d to [0, capDelay].
+func clampDelay(d, capDelay time.Duration) time.Duration {
 	if d < 0 {
 		return 0
 	}
-	if d > cap {
-		return cap
+	if d > capDelay {
+		return capDelay
 	}
 	return d
 }
 
 // backoffFor returns the delay before the retry following a 0-indexed failed
-// attempt. A non-nil override (a 429's Retry-After) wins; otherwise it is an
-// exponential base·2^attempt capped at retryBackoffMax. The base defaults to
+// attempt. A non-nil override (a 429's Retry-After) wins verbatim (server-
+// signalled — not jittered); otherwise it is an exponential base·2^attempt with
+// ±20% randomized jitter, capped at retryBackoffMax. The base defaults to
 // defaultRetryBackoff and is overridden by Client.RetryBackoffBase (tests set it
-// to 0 for instant, sleepless retries).
+// to 0 for instant, sleepless, deterministic retries — jitter is gated on
+// base>0, so a 0 base yields exactly 0).
 func (c *Client) backoffFor(attempt int, override *time.Duration) time.Duration {
 	if override != nil {
 		return clampDelay(*override, retryBackoffMax)
@@ -119,7 +125,15 @@ func (c *Client) backoffFor(attempt int, override *time.Duration) time.Duration 
 	}
 	d := base << attempt
 	if d <= 0 { // overflow guard
-		return retryBackoffMax
+		d = retryBackoffMax
+	}
+	d = clampDelay(d, retryBackoffMax)
+	// ±20% jitter de-correlates a retry herd: without it, a fleet-wide 503 storm
+	// re-fires in synchronized waves on the fixed 250ms/500ms/1s schedule. Uses
+	// math/rand's top-level source (auto-seeded, concurrency-safe on Go 1.20+).
+	// Cap is re-applied AFTER jitter so +20% can't exceed retryBackoffMax.
+	if delta := d / 5; delta > 0 {
+		d += time.Duration(rand.Int63n(int64(2*delta)+1)) - delta
 	}
 	return clampDelay(d, retryBackoffMax)
 }
@@ -135,15 +149,19 @@ func (c *Client) retryStderr() io.Writer {
 // retryNote renders the one-line, once-per-retry stderr notice. attempt is the
 // 0-indexed attempt that just failed, so the human-facing try number is
 // attempt+2 (the initial try is 1).
-func retryNote(reason string, attempt, max int) string {
-	return fmt.Sprintf("%s from Civitai, retrying (%d/%d)…", reason, attempt+2, max)
+func retryNote(reason string, attempt, maxN int) string {
+	return fmt.Sprintf("%s from Civitai, retrying (%d/%d)…", reason, attempt+2, maxN)
 }
 
 // retryExhaustedError is returned when a retriable status persisted through all
 // attempts; it names the status and the attempt count so the failure is
 // unambiguous.
 func retryExhaustedError(status, attempts int, raw []byte) error {
-	return fmt.Errorf("Civitai returned HTTP %d after %d attempts — the service is temporarily unavailable, try again shortly: %s", status, attempts, snippet(raw))
+	msg := fmt.Sprintf("Civitai returned HTTP %d after %d attempts — the service is temporarily unavailable, try again shortly", status, attempts)
+	if s := snippet(raw); s != "" {
+		msg += ": " + s
+	}
+	return errors.New(msg)
 }
 
 // sleepCtx waits for d or until ctx is cancelled, returning ctx.Err() on
@@ -165,8 +183,9 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // getWithRetry issues the read GET built by build, retrying transient failures
 // (retriable statuses + transient network errors) with bounded exponential
 // backoff. It reuses authedDoHdr so the existing single 401-refresh still
-// happens inside each try. Terminal statuses (incl. 400/401/403/404) return on
-// the first try, so a non-transient read makes exactly one request.
+// happens inside each try. Terminal statuses (incl. 400/401/403/404, and a 429
+// WITHOUT a Retry-After header — Civitai's deterministic deep-paging limit)
+// return on the first try, so a non-transient read makes exactly one request.
 func (c *Client) getWithRetry(ctx context.Context, path string, build func() (*http.Request, error)) (int, []byte, error) {
 	for attempt := 0; ; attempt++ {
 		status, hdr, raw, err := c.authedDoHdr(ctx, build)
@@ -182,14 +201,24 @@ func (c *Client) getWithRetry(ctx context.Context, path string, build func() (*h
 		case err != nil:
 			return 0, nil, err
 		case isRetriableStatus(status):
-			if attempt >= readMaxAttempts-1 {
-				return status, raw, retryExhaustedError(status, readMaxAttempts, raw)
-			}
+			// A 429 is retriable ONLY when it carries a Retry-After header (a
+			// genuine, server-signalled throttle we can honor). Civitai also
+			// returns 429 DETERMINISTICALLY on deep --page offsets — a
+			// paging-depth limit, not a transient outage — and those responses
+			// carry NO Retry-After. Retrying them is futile and buries the
+			// actionable hint, so a Retry-After-less 429 is terminal for reads:
+			// return the body/status cleanly so readError's 429 branch surfaces
+			// the "use --cursor for deep paging" guidance.
 			var override *time.Duration
 			if status == http.StatusTooManyRequests {
 				if d, ok := retryAfterDelay(hdr, retryAfterCap); ok {
 					override = &d
+				} else {
+					return status, raw, nil
 				}
+			}
+			if attempt >= readMaxAttempts-1 {
+				return status, raw, retryExhaustedError(status, readMaxAttempts, raw)
 			}
 			fmt.Fprintln(c.retryStderr(), retryNote(fmt.Sprintf("transient %d", status), attempt, readMaxAttempts))
 			if serr := sleepCtx(ctx, c.backoffFor(attempt, override)); serr != nil {
