@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -15,6 +16,18 @@ import (
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 )
+
+// buildCommandRe is the allowlist of permitted build invocations, kept in
+// lockstep with BUILD_COMMAND_RE in the server's block-manifest-validator
+// (src/server/services/block-manifest-validator.service.ts). It admits only
+// "npm/pnpm/yarn run <script>", "vite build", and "npx vite build" — a
+// defense-in-depth guard against shell injection via buildCommand. The vendored
+// JSON Schema carries the same `pattern`; this Go copy exists only to emit a
+// clear, actionable message instead of a raw regex-mismatch error.
+var buildCommandRe = regexp.MustCompile(`^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$`)
+
+// buildCommandMaxLength mirrors BUILD_COMMAND_MAX_LENGTH on the server.
+const buildCommandMaxLength = 128
 
 // printer renders jsonschema ErrorKind messages. It must be non-nil — the
 // library's LocalizedString implementations dereference it.
@@ -140,9 +153,23 @@ func serverOwnedFieldChecks(generic any) []string {
 
 func buildCoherence(dir string, m *manifest.Manifest) []string {
 	var errs []string
-	hasBuild := strings.TrimSpace(m.BuildCommand) != ""
+	build := strings.TrimSpace(m.BuildCommand)
+	hasBuild := build != ""
 	out := strings.TrimSpace(m.OutputDir)
 	hasOut := out != ""
+
+	// buildCommand must be one of the allowlisted invocations (defense in depth
+	// against shell injection). The vendored JSON Schema also enforces the same
+	// pattern + max length, but its error ("does not match pattern ^(?:...)$")
+	// is opaque — emit a clear, actionable message instead. Mirrors the server's
+	// BUILD_COMMAND_RE / BUILD_COMMAND_MAX_LENGTH exactly.
+	if hasBuild {
+		if len(build) > buildCommandMaxLength {
+			errs = append(errs, fmt.Sprintf("buildCommand is too long (%d chars) — it must be at most %d characters", len(build), buildCommandMaxLength))
+		} else if !buildCommandRe.MatchString(build) {
+			errs = append(errs, fmt.Sprintf("buildCommand %q is not an allowed build invocation — use \"npm run <script>\", \"pnpm run <script>\", \"yarn run <script>\", \"vite build\", or \"npx vite build\"", build))
+		}
+	}
 
 	switch {
 	case hasBuild && !hasOut:
