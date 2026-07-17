@@ -246,6 +246,44 @@ shipping `civitai-block-*` apps) — a good reference for a correct manifest:
 
 Both validate clean (`examples_test.go` asserts this so the claim stays true).
 
+## Browse the public API
+
+Beyond authoring Apps, the CLI is a thin client for Civitai's **public read REST
+API** (`GET /api/v1/**`). These subcommands **work anonymously** — no `login`
+needed, because the data is public — but when you're logged in your stored token
+is sent automatically (pass `--anon` to force a no-auth request). Every command
+also takes `--json` to print the **raw API JSON response** for scripting.
+
+| Command | What it does | Notable flags |
+| --- | --- | --- |
+| `civitai models search` | Search models (`GET /api/v1/models`) | `--query`, `--tag`, `--username`, `--type`, `--sort`, `--period`, `--nsfw`; paging `--limit` (≤100), `--page`, `--cursor` |
+| `civitai models get <id>` | Get one model by id | `--json`, `--anon` |
+| `civitai model-versions get <id>` | Get a model version by id (alias `mv`) | `--json`, `--anon` |
+| `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
+| `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--sort`, `--period`, `--nsfw`; paging `--limit` (≤200), `--page`, `--cursor` |
+| `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
+| `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
+| `civitai users get <username-or-id>` | Look up a user via public search (a number = exact id; a name = exact-username match, else it lists close matches) | `--json`, `--anon` |
+| `civitai articles search` | Search articles (`GET /api/v1/articles`) | `--query`, `--tags`, `--username`, `--sort`, `--nsfw`; paging `--limit` (≤100), `--cursor` |
+| `civitai articles get <id>` | Get one article by id | `--json`, `--anon` |
+| `civitai collections search` | Search public collections (`GET /api/v1/collections`) | `--query`, `--sort`, `--nsfw`; paging `--limit` (≤100), `--cursor` |
+| `civitai collections get <id>` | Get one collection by id | `--json`, `--anon` |
+
+**Pagination.** List commands print a compact footer with the next-page hint.
+`models`/`images` support both shallow `--page` and deep `--cursor` paging (the
+API caps `page*limit` at 1000 and 429s beyond it — prefer `--cursor` for deep
+paging); `articles`/`collections` are **cursor-only** (keyset feed — no
+`--page`); `tags`/`creators` are `--page`-only. Each endpoint caps `--limit`
+(models/articles/collections 100; images/tags/creators 200).
+
+```bash
+civitai models search --query "pony" --limit 5
+civitai models get 4384
+civitai model-versions by-hash 5D8D26E2A6
+civitai articles get 32680
+civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSON for scripting
+```
+
 ## Validate fidelity
 
 `civitai app validate` is a **best-effort LOCAL mirror** of the platform's
