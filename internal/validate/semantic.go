@@ -2,6 +2,7 @@ package validate
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -85,6 +86,44 @@ func semanticChecks(generic any) []string {
 		errs = append(errs, sandboxChecks(iframe)...)
 	}
 
+	// scopeJustifications keys must be a subset of the declared scopes
+	// (validator: justifications for scopes the block doesn't request are
+	// rejected). The JSON Schema type-gates the map + its values but cannot
+	// express the keys⊆scopes cross-field rule.
+	errs = append(errs, scopeJustificationChecks(m)...)
+
+	return errs
+}
+
+// scopeJustificationChecks enforces that every key in scopeJustifications is a
+// scope the manifest actually declares in scopes[] — mirroring the server, which
+// rejects justifications for scopes the block doesn't request. The vendored JSON
+// Schema already covers the value shape (non-empty string ≤500 chars); this adds
+// ONLY the keys⊆scopes rule the schema cannot express. Absent map or empty map
+// yields no error (backward-compatible). Scope names are canonical lowercase, so
+// the comparison is an exact match with no case-folding (mirroring the server).
+func scopeJustificationChecks(generic map[string]any) []string {
+	just, ok := generic["scopeJustifications"].(map[string]any)
+	if !ok || len(just) == 0 {
+		// Absent, wrong-typed (schema-handled), or empty → nothing to check.
+		return nil
+	}
+	scopes := stringSet(generic["scopes"])
+
+	// Iterate sorted keys so error order is deterministic.
+	keys := make([]string, 0, len(just))
+	for k := range just {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var errs []string
+	for _, key := range keys {
+		if _, declared := scopes[key]; !declared {
+			errs = append(errs, fmt.Sprintf(
+				"scopeJustifications key %q is not one of the manifest's declared scopes", key))
+		}
+	}
 	return errs
 }
 
