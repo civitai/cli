@@ -21,7 +21,7 @@ func TestDesiredPin(t *testing.T) {
 		{"0.25.0", "^0.25.0", false},
 		{"1.4.0", "^1.4.0", false},
 		{"1.4.9", "^1.4.0", false},
-		{"0.0.7", "^0.0.0", false},
+		{"0.0.7", "^0.0.7", false}, // 0.0.z: caret locks the PATCH, so pin the patch (self-consistent with CaretAdmits)
 		{"", "", true},
 		{"1.2", "", true},
 		{"vNope", "", true},

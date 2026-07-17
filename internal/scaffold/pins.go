@@ -73,13 +73,19 @@ func FetchNpmLatest(pkg string) (string, error) {
 }
 
 // DesiredPin is the caret pin a template SHOULD carry for a published version.
-// It pins the minor (`^<major>.<minor>.0`) so a scaffolded app tracks the whole
-// current minor line — matching the guard's one-line fix and npm caret
-// semantics. e.g. published 0.25.3 → "^0.25.0", 1.4.0 → "^1.4.0".
+// It pins the leftmost non-zero component so a scaffolded app tracks the current
+// line while still admitting `published`, matching npm's pre-1.0 caret semantics
+// (and CaretAdmits / the guard). For X>0 or Y>0 that's `^<major>.<minor>.0`
+// (pins the minor); for a `0.0.Z` package the caret locks the PATCH, so it must
+// be `^0.0.<patch>` — `^0.0.0` would admit ONLY 0.0.0, i.e. a pin the guard then
+// rejects for any 0.0.Z>0. e.g. 0.25.3 → "^0.25.0", 1.4.0 → "^1.4.0", 0.0.7 → "^0.0.7".
 func DesiredPin(published string) (string, error) {
-	maj, min, _, err := parseSemver(published)
+	maj, min, patch, err := parseSemver(published)
 	if err != nil {
 		return "", fmt.Errorf("published %q: %w", published, err)
+	}
+	if maj == 0 && min == 0 {
+		return fmt.Sprintf("^0.0.%d", patch), nil
 	}
 	return fmt.Sprintf("^%d.%d.0", maj, min), nil
 }

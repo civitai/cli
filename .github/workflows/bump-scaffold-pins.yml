@@ -33,21 +33,57 @@ jobs:
       - name: bump stale @civitai/* scaffold pins
         run: go run ./internal/scaffold/cmd/bump-pins
 
+      # Only validate + open a PR when the bumper actually rewrote something — a
+      # no-op run (pins already current) skips everything downstream.
+      - name: detect changes
+        id: changed
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "pins already current — nothing to do"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
       # Prove correctness INSIDE this job. A PR opened below with the default
       # GITHUB_TOKEN does NOT trigger this repo's other workflows (GitHub's
-      # loop-guard), so `pins-vs-published` will NOT auto-run on the bump PR.
-      # Validate here instead: the network guard confirms the new pins admit
-      # npm's published latest, and the offline suite confirms nothing else
-      # regressed (incl. the scaffold_test.go pin assertions the bumper rewrote).
+      # loop-guard), so `pins-vs-published`/`scaffold-currency` will NOT auto-run
+      # on the bump PR. Validate here instead: the network guard confirms the new
+      # pins admit npm's published latest, and the offline suite confirms nothing
+      # else regressed (incl. the scaffold_test.go pin assertions the bumper
+      # rewrote).
       - name: validate — pins now satisfy published (network guard)
+        if: steps.changed.outputs.changed == 'true'
         env:
           CIVITAI_CHECK_PUBLISHED_PINS: "1"
         run: go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -v
 
       - name: validate — full scaffold suite (offline)
+        if: steps.changed.outputs.changed == 'true'
         run: go test ./internal/scaffold/...
 
+      # Prove the scaffolded app still BUILDS against the newly-pinned SDK — the
+      # pins guard only proves the pin ADMITS the published minor, NOT that the
+      # template code still compiles against it (a removed/renamed SDK export
+      # would slip through otherwise, since this PR won't auto-run scaffold-
+      # currency). Mirrors the template-page-money CI job. Scaffold into
+      # RUNNER_TEMP so the generated app never pollutes the auto-PR diff.
+      - uses: actions/setup-node@v4
+        if: steps.changed.outputs.changed == 'true'
+        with:
+          node-version: "22"
+
+      - name: validate — scaffold builds against the bumped SDK
+        if: steps.changed.outputs.changed == 'true'
+        run: |
+          go run ./cmd/civitai app init "Bump Validation" --dir "$RUNNER_TEMP/bump-validate" --template page-money
+          cd "$RUNNER_TEMP/bump-validate"
+          npm install --no-audit --no-fund
+          npm run typecheck
+          npm run build
+
       - name: open PR if pins changed
+        if: steps.changed.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
           branch: automation/bump-scaffold-pins
@@ -72,10 +108,12 @@ jobs:
 
             **⚠️ CI note:** a PR opened by this workflow uses the default
             `GITHUB_TOKEN`, which by GitHub design does **not** trigger the
-            repo's other workflows — so `pins-vs-published` will **not**
-            auto-run on this PR. Correctness was instead validated **inside the
-            bump job**: the network guard (`CIVITAI_CHECK_PUBLISHED_PINS=1 go
-            test -run TestScaffoldPinsSatisfyPublished`) plus the full offline
-            scaffold suite both passed there. A maintainer can re-run checks
-            manually, or the repo can wire a PAT if it wants this PR's own CI to
-            fire.
+            repo's other workflows — so `pins-vs-published` / `scaffold-currency`
+            will **not** auto-run on this PR. Correctness was instead validated
+            **inside the bump job**: the network guard
+            (`CIVITAI_CHECK_PUBLISHED_PINS=1 go test -run
+            TestScaffoldPinsSatisfyPublished`), the full offline scaffold suite,
+            AND a fresh `civitai app init` scaffold that installs + typechecks +
+            **builds** against the bumped SDK (catching a removed/renamed export)
+            all passed there. A maintainer can still re-run checks manually, or
+            the repo can wire a PAT if it wants this PR's own CI to fire.
