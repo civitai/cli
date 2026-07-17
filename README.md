@@ -310,7 +310,8 @@ default (primary/latest) published version with `--model`:
 
 ```bash
 civitai download 128713                       # the version's primary file → ./<server-name>
-civitai download --model 4384                 # resolve model 4384's default version, then download it
+civitai download --model 4384                 # resolve model 4384's default weights version, then download it
+civitai download --model 4384 --dry-run       # print the plan (files, sizes, hashes, targets) — download nothing
 civitai download 128713 --out ./dreamshaper.safetensors
 civitai download 128713 --file vae --out-dir ./models   # pick a file; write into a dir
 civitai download 128713 --all --out-dir ./models        # every file in the version
@@ -319,10 +320,13 @@ civitai download 128713 --all --out-dir ./models        # every file in the vers
 Behavior:
 
 - **Identifier** — exactly one of the positional `<version-id>` or `--model <model-id>` is required (no numeric-ambiguity guessing).
+- **`--model` picks downloadable weights** — a model's default (latest) version can be a training-data / on-site-generation registration whose primary file is **not** model weights. `--model` skips those and resolves to the newest version whose primary file **is** downloadable weights (noting the skip on stderr); if no version has weights it errors clearly. Naming a non-weights version by its explicit `<version-id>` is unchanged — it still hits the `--allow-nonmodel` guard.
+- **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, and `--out-dir`. A non-weights file shows as *would be refused* in the plan rather than aborting it.
 - **File selection** — defaults to the version's **primary** file. `--file <name>` selects one file (exact name, else a unique case-insensitive substring; ambiguous/none errors and lists the files). `--all` downloads every file.
 - **Output** — `--out <path>` sets an exact target path (single file only). `--out-dir <dir>` writes server-named files into a directory (works with `--all`). Parent directories are created as needed. Default is the server-provided filename in the current directory.
 - **Streaming + atomicity** — the body streams to `<target>.part` and is renamed into place only on success, so an interrupted run never leaves a truncated final file. Large files (10+ GB) are never buffered in memory. TTY-aware progress is printed to **stderr**. The Civitai download URL 302-redirects to signed storage; the CLI follows it.
-- **Auth** — your stored login token (`civitai login`) or `CIVITAI_API_KEY` is used automatically; gated / early-access files need it (a 401/403 gives an actionable message). Public files download anonymously (`--anon` forces no token).
+- **Auth** — your stored login token (`civitai login`) or `CIVITAI_API_KEY` is used automatically; **Civitai requires a token to download any model file, even public ones**, so an anonymous download gets an actionable 401 (`401` → run `civitai login`; `403` → the file is gated for your account). `--anon` forces no token.
+- **Transient-failure retry (reads)** — the read endpoints (search / model / version / images / tags / creators / users / articles / collections) retry a transient `429`/`502`/`503`/`504` or network error a few times with exponential backoff (honoring `Retry-After` on a 429), noting each retry on stderr. The download **stream** is not retried mid-transfer.
 - **Integrity (default on)** — the streamed bytes are verified against the file's `SHA256`; a mismatch deletes the `.part` and fails. `--no-verify` skips it; a file with no published SHA256 downloads with a warning (not a hard failure).
 - **Idempotency** — an already-present target (that verifies, or with `--no-verify`) is skipped with a note; `--force` re-downloads.
 - **On-site-generation guard** — a version whose selected file is **not model weights** (`type != "Model"`, e.g. a training-data ZIP) is **refused by default**; pass `--allow-nonmodel` to download it anyway.

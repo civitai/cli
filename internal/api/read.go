@@ -65,10 +65,12 @@ func (m Metadata) CursorString() string {
 }
 
 // getRaw performs a public GET against path with the query q, returning the
-// status code and raw body. The token (if any) is attached by authedDo and a
+// status code and raw body. The token (if any) is attached by authedDoHdr and a
 // non-empty token is refreshed once on a 401; an empty token sends no
-// Authorization header (anonymous). A non-2xx status is turned into a clear
-// error by the caller via readError.
+// Authorization header (anonymous). Transient failures (429/502/503/504 and
+// transient network errors) are retried with bounded backoff via getWithRetry —
+// this is an idempotent read, safe to replay. A non-2xx status is turned into a
+// clear error by the caller via readError.
 func (c *Client) getRaw(ctx context.Context, path string, q url.Values) (int, []byte, error) {
 	full := c.BaseURL + path
 	if enc := q.Encode(); enc != "" {
@@ -77,7 +79,7 @@ func (c *Client) getRaw(ctx context.Context, path string, q url.Values) (int, []
 	build := func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
 	}
-	return c.authedDo(ctx, build)
+	return c.getWithRetry(ctx, path, build)
 }
 
 // getInto GETs path+q, and on a 2xx unmarshals the body into out (when non-nil)

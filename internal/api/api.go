@@ -333,6 +333,13 @@ type Client struct {
 	// recovery poll when set (>= 0 with the zero value meaning "use the
 	// default"); tests set it to 0 to avoid sleeping.
 	SubmitPollDelay *time.Duration
+	// RetryBackoffBase overrides the base delay of the transient-failure retry
+	// on read GETs (see retry.go). A nil pointer means "use defaultRetryBackoff";
+	// tests set it to a pointer-to-0 for instant, sleepless retries.
+	RetryBackoffBase *time.Duration
+	// Stderr receives the one-line transient-retry notices on read GETs; nil
+	// defaults to os.Stderr. Tests point it at a buffer to assert the notice.
+	Stderr io.Writer
 }
 
 // New builds a Client with sane defaults from a static token (personal API key
