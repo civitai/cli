@@ -3,6 +3,7 @@ package validate
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -384,4 +385,48 @@ func TestValidateRejectsOutputDirTraversal(t *testing.T) {
 		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts"},
 		"buildCommand": "npm run build", "outputDir": "../../escape"
 	}`, "path traversal")
+}
+
+// --- 🔴 buildCommand allowlist (mirrors server BUILD_COMMAND_RE /
+// BUILD_COMMAND_MAX_LENGTH; a friendly Go message on top of the schema pattern) ---
+
+// buildManifest wraps a buildCommand + valid outputDir (buildCommand requires
+// outputDir) in an otherwise-good manifest.
+func buildManifest(buildCommand string) string {
+	return `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [],
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts"},
+		"buildCommand": ` + strconv.Quote(buildCommand) + `, "outputDir": "dist"
+	}`
+}
+
+func TestValidateAcceptsAllowlistedBuildCommands(t *testing.T) {
+	for _, bc := range []string{
+		"npm run build",
+		"pnpm run build",
+		"yarn run test:e2e",
+		"vite build",
+		"npx vite build",
+	} {
+		mustAccept(t, "buildCommand "+bc, buildManifest(bc))
+	}
+}
+
+func TestValidateRejectsNonAllowlistedBuildCommands(t *testing.T) {
+	for _, bc := range []string{
+		"make all",
+		"npm run build && rm -rf /",
+		"bash -c x",
+		"vite build --watch",
+	} {
+		mustReject(t, "buildCommand "+bc, buildManifest(bc), "not an allowed build invocation")
+	}
+}
+
+func TestValidateRejectsOverlongBuildCommand(t *testing.T) {
+	// A valid-shaped but >128-char buildCommand (long script name) is rejected
+	// with the length message, mirroring the server's max length.
+	long := "npm run " + strings.Repeat("a", 130)
+	mustReject(t, "overlong buildCommand", buildManifest(long), "too long")
 }
