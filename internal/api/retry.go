@@ -266,6 +266,9 @@ func (c *Client) doOnceHdr(build func() (*http.Request, error), token string) (i
 		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := c.readBody(resp.Body)
+	if err != nil {
+		return resp.StatusCode, resp.Header, raw, err
+	}
 	return resp.StatusCode, resp.Header, raw, nil
 }

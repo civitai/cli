@@ -340,6 +340,11 @@ type Client struct {
 	// Stderr receives the one-line transient-retry notices on read GETs; nil
 	// defaults to os.Stderr. Tests point it at a buffer to assert the notice.
 	Stderr io.Writer
+	// MaxResponseBody overrides the per-response body read cap (see
+	// maxResponseBody) when > 0. It bounds memory against a pathological body;
+	// a real civitai JSON page is far below the default. Tests set a small value
+	// to exercise the over-cap guard without allocating 64 MiB.
+	MaxResponseBody int64
 }
 
 // New builds a Client with sane defaults from a static token (personal API key
@@ -406,7 +411,10 @@ func (c *Client) doOnceWith(httpClient *http.Client, build func() (*http.Request
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := c.readBody(resp.Body)
+	if err != nil {
+		return resp.StatusCode, raw, err
+	}
 	return resp.StatusCode, raw, nil
 }
 
