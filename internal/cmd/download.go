@@ -125,40 +125,14 @@ the CLI notes this on stderr. Only download models from creators you trust.`,
 }
 
 func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
-	// ── resolve the target version id (exactly one of positional / --model) ──
-	var positional string
-	if len(args) == 1 {
-		positional = strings.TrimSpace(args[0])
+	// Resolve the target version id (exactly one of positional / --model) and
+	// validate the flag combinations up front, before any network work.
+	positional, err := resolveDownloadTarget(args, o)
+	if err != nil {
+		return err
 	}
-	if positional != "" && o.modelID != "" {
-		return fmt.Errorf("provide EITHER a version id or --model <model-id>, not both")
-	}
-	if positional == "" && o.modelID == "" {
-		return fmt.Errorf("provide a model-version id (civitai download <version-id>) or --model <model-id>")
-	}
-
-	// ── validate flag combinations up front ──
-	if o.all && o.file != "" {
-		return fmt.Errorf("--all and --file are mutually exclusive")
-	}
-	if o.out != "" && o.outDir != "" {
-		return fmt.Errorf("--out (a file path) and --out-dir (a directory) are mutually exclusive")
-	}
-	if o.out != "" && o.all {
-		return fmt.Errorf("--out sets a single file path and can't be combined with --all — use --out-dir")
-	}
-	if o.layout != "" {
-		if !validLayout(o.layout) {
-			return fmt.Errorf("--layout must be one of %s, got %q", strings.Join(knownLayouts, "|"), o.layout)
-		}
-		if o.out != "" {
-			return fmt.Errorf("--layout routes files into type folders and can't be combined with --out (an explicit single path)")
-		}
-		if o.outDir != "" {
-			return fmt.Errorf("--layout routes files under --root and can't be combined with --out-dir")
-		}
-	} else if o.root != "" {
-		return fmt.Errorf("--root only applies with --layout")
+	if err := validateDownloadFlags(o); err != nil {
+		return err
 	}
 
 	client, baseURL, err := newReader(&readOpts{anon: o.anon})
@@ -167,8 +141,8 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	}
 	// Cancel the whole download on Ctrl-C (SIGINT): the signal-bound context is
 	// threaded into every request + io.Copy, so an interrupted transfer unblocks
-	// with a cancellation error and downloadOne's cleanup defer removes the
-	// partial ".part" file rather than leaving it behind.
+	// with a cancellation error and downloadOne's cleanup removes the partial
+	// ".part" file rather than leaving it behind.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
@@ -207,12 +181,7 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 
 	// Always surface the version's base model, and (with --for-base) warn on a
 	// confident cross-family mismatch before any bytes move.
-	fmt.Fprintf(out, "base model: %s\n", dashIfEmpty(safeTerm(v.BaseModel)))
-	if o.forBase != "" {
-		if w := baseModelWarning(v.BaseModel, o.forBase); w != "" {
-			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(w)))
-		}
-	}
+	reportBaseModel(out, errW, v.BaseModel, o.forBase)
 
 	// --dry-run: print the resolved plan and exit 0, transferring nothing and
 	// creating no file (not even a ".part").
@@ -222,36 +191,109 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 
 	// Without --layout, warn when `--all` would mis-file differing types into one
 	// directory (the footgun --layout exists to fix).
-	if o.all && o.layout == "" {
-		if w := mixedTypeWarning(fileTypeInfos(selected, o.modelType)); w != "" {
-			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(w)))
-		}
-	}
+	warnMixedTypes(errW, selected, o)
 
-	downloaded := 0
-	for i := range selected {
-		f := selected[i]
-		target, note, err := targetPath(f, o)
-		if err != nil {
-			return err
-		}
-		if note != "" {
-			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(note)))
-		}
-		skipped, err := downloadOne(ctx, client, out, errW, f, target, o)
-		if err != nil {
-			return err
-		}
-		if !skipped {
-			downloaded++
-		}
+	downloaded, err := downloadSelected(ctx, client, out, errW, selected, o)
+	if err != nil {
+		return err
 	}
-
 	if downloaded == 0 && o.all {
 		// Everything was already present on disk.
 		fmt.Fprintln(errW, ui.For(errW).Warn("no files were downloaded (all were already present)"))
 	}
 	return nil
+}
+
+// resolveDownloadTarget returns the positional version id from args after
+// enforcing that EXACTLY one of the positional id / --model is supplied.
+func resolveDownloadTarget(args []string, o *downloadOpts) (string, error) {
+	var positional string
+	if len(args) == 1 {
+		positional = strings.TrimSpace(args[0])
+	}
+	if positional != "" && o.modelID != "" {
+		return "", fmt.Errorf("provide EITHER a version id or --model <model-id>, not both")
+	}
+	if positional == "" && o.modelID == "" {
+		return "", fmt.Errorf("provide a model-version id (civitai download <version-id>) or --model <model-id>")
+	}
+	return positional, nil
+}
+
+// validateDownloadFlags rejects incompatible flag combinations before any
+// network work: --all/--file, --out/--out-dir, --out/--all, and the --layout
+// exclusions (a valid layout, no --out, no --out-dir; --root only with --layout).
+func validateDownloadFlags(o *downloadOpts) error {
+	if o.all && o.file != "" {
+		return fmt.Errorf("--all and --file are mutually exclusive")
+	}
+	if o.out != "" && o.outDir != "" {
+		return fmt.Errorf("--out (a file path) and --out-dir (a directory) are mutually exclusive")
+	}
+	if o.out != "" && o.all {
+		return fmt.Errorf("--out sets a single file path and can't be combined with --all — use --out-dir")
+	}
+	if o.layout != "" {
+		if !validLayout(o.layout) {
+			return fmt.Errorf("--layout must be one of %s, got %q", strings.Join(knownLayouts, "|"), o.layout)
+		}
+		if o.out != "" {
+			return fmt.Errorf("--layout routes files into type folders and can't be combined with --out (an explicit single path)")
+		}
+		if o.outDir != "" {
+			return fmt.Errorf("--layout routes files under --root and can't be combined with --out-dir")
+		}
+	} else if o.root != "" {
+		return fmt.Errorf("--root only applies with --layout")
+	}
+	return nil
+}
+
+// reportBaseModel prints the version's base model and, with --for-base set,
+// warns on stderr about a confident cross-family mismatch.
+func reportBaseModel(out, errW io.Writer, baseModel, forBase string) {
+	fmt.Fprintf(out, "base model: %s\n", dashIfEmpty(safeTerm(baseModel)))
+	if forBase != "" {
+		if w := baseModelWarning(baseModel, forBase); w != "" {
+			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(w)))
+		}
+	}
+}
+
+// warnMixedTypes warns (stderr) when --all without --layout would mis-file
+// differing file types into a single directory.
+func warnMixedTypes(errW io.Writer, selected []api.ModelVersionFile, o *downloadOpts) {
+	if o.all && o.layout == "" {
+		if w := mixedTypeWarning(fileTypeInfos(selected, o.modelType)); w != "" {
+			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(w)))
+		}
+	}
+}
+
+// downloadSelected downloads each selected file — resolving its per-file target
+// (surfacing any routing note on stderr) then transferring it — and returns how
+// many files were actually transferred (an already-present, skipped file does
+// not count). It stops at the first error.
+func downloadSelected(ctx context.Context, dl api.Downloader, out, errW io.Writer, selected []api.ModelVersionFile, o *downloadOpts) (int, error) {
+	downloaded := 0
+	for i := range selected {
+		f := selected[i]
+		target, note, err := targetPath(f, o)
+		if err != nil {
+			return downloaded, err
+		}
+		if note != "" {
+			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(note)))
+		}
+		skipped, err := downloadOne(ctx, dl, out, errW, f, target, o)
+		if err != nil {
+			return downloaded, err
+		}
+		if !skipped {
+			downloaded++
+		}
+	}
+	return downloaded, nil
 }
 
 // resolveVersionID returns the version id to download: the positional id verbatim
@@ -500,37 +542,11 @@ func fileTypeInfos(files []api.ModelVersionFile, modelType string) []fileTypeInf
 func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f api.ModelVersionFile, target string, o *downloadOpts) (skipped bool, err error) {
 	sha := strings.TrimSpace(f.Hashes.SHA256)
 	verify := !o.noVerify && sha != ""
-	if !o.noVerify && sha == "" {
-		fmt.Fprintln(errW, ui.For(errW).Warn(fmt.Sprintf("%s: no SHA256 published — skipping integrity verification", safeTerm(f.Name))))
-	}
-	// Surface the code-execution risk of pickle/archive formats (a .ckpt, .pt, or
-	// .zip lands in a folder ComfyUI/A1111 will auto-load), once per file.
-	if note := pickleArchiveNote(f.Name); note != "" {
-		fmt.Fprintln(errW, note)
-	}
-	// Point ControlNet downloads at the preprocessor/annotator dependency the CLI
-	// can't fetch (a separate ComfyUI custom node, not hosted on Civitai), once
-	// per file. Static hint — stderr only, so --json/pipes on stdout are unaffected.
-	if note := controlnetPreprocessorNote(o.modelType); note != "" {
-		fmt.Fprintln(errW, note)
-	}
+	emitPreDownloadNotes(errW, f.Name, o.modelType, o.noVerify, sha)
 
-	// Idempotency: skip an already-present target unless --force. When verifying
-	// and a hash is known, only skip on a confirmed match; without a hash (or
-	// --no-verify) a present file is trusted.
-	if !o.force {
-		if info, statErr := os.Stat(target); statErr == nil && !info.IsDir() {
-			if !verify {
-				fmt.Fprintf(out, "already present: %s\n", safeTerm(target))
-				return true, nil
-			}
-			match, verr := fileSHA256Matches(target, sha)
-			if verr == nil && match {
-				fmt.Fprintf(out, "already present (SHA256 verified): %s\n", safeTerm(target))
-				return true, nil
-			}
-			// Present but wrong/unverifiable → re-download.
-		}
+	// Idempotency: skip an already-present target unless --force.
+	if presentTargetSatisfies(out, target, sha, verify, o.force) {
+		return true, nil
 	}
 
 	if dir := filepath.Dir(target); dir != "" && dir != "." {
@@ -549,18 +565,103 @@ func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f 
 		return false, err
 	}
 
+	total := resp.ContentLength
+	if total <= 0 && f.SizeKB > 0 {
+		total = int64(f.SizeKB * 1024)
+	}
+
 	partPath := target + ".part"
-	// Self-heal a stale ".part" left by a previously aborted run: we don't resume,
-	// so remove it before starting a fresh transfer (os.Create truncates too, but
-	// be explicit).
+	written, got, err := writePart(resp.Body, partPath, errW, f.Name, total, verify)
+	if err != nil {
+		return false, err
+	}
+
+	if verify && !strings.EqualFold(got, sha) {
+		// Delete the corrupt partial so the failure message is honest about the
+		// state on disk.
+		_ = os.Remove(partPath)
+		return false, fmt.Errorf("SHA256 mismatch for %s — expected %s, got %s (deleted the partial download)", f.Name, strings.ToLower(sha), got)
+	}
+
+	if err := os.Rename(partPath, target); err != nil {
+		// The .part is finished but couldn't be installed; don't leave it behind.
+		_ = os.Remove(partPath)
+		return false, fmt.Errorf("install %s: %w", target, err)
+	}
+
+	note := ""
+	if verify {
+		note = "  (SHA256 verified)"
+	}
+	fmt.Fprintf(out, "Saved %s (%s)%s\n", safeTerm(target), humanBytes(written), note)
+	return false, nil
+}
+
+// emitPreDownloadNotes prints the once-per-file stderr notes for a download: the
+// missing-hash verification-skip warning, the pickle/archive code-execution
+// warning, and the ControlNet preprocessor-dependency hint. Notes go to stderr
+// only, so --json / pipes on stdout are unaffected.
+func emitPreDownloadNotes(errW io.Writer, name, modelType string, noVerify bool, sha string) {
+	if !noVerify && sha == "" {
+		fmt.Fprintln(errW, ui.For(errW).Warn(fmt.Sprintf("%s: no SHA256 published — skipping integrity verification", safeTerm(name))))
+	}
+	// Surface the code-execution risk of pickle/archive formats (a .ckpt, .pt, or
+	// .zip lands in a folder ComfyUI/A1111 will auto-load).
+	if note := pickleArchiveNote(name); note != "" {
+		fmt.Fprintln(errW, note)
+	}
+	// Point ControlNet downloads at the preprocessor/annotator dependency the CLI
+	// can't fetch (a separate ComfyUI custom node, not hosted on Civitai).
+	if note := controlnetPreprocessorNote(modelType); note != "" {
+		fmt.Fprintln(errW, note)
+	}
+}
+
+// presentTargetSatisfies reports whether an already-present target lets the
+// download be skipped (idempotency), printing the "already present" line it
+// decides on. With --force it never skips. Otherwise a non-directory file at
+// target is trusted when not verifying (or no hash is known); when verifying it
+// is skipped only on a confirmed SHA256 match. A present-but-wrong/unverifiable
+// file returns false → re-download.
+func presentTargetSatisfies(out io.Writer, target, sha string, verify, force bool) bool {
+	if force {
+		return false
+	}
+	info, statErr := os.Stat(target)
+	if statErr != nil || info.IsDir() {
+		return false
+	}
+	if !verify {
+		fmt.Fprintf(out, "already present: %s\n", safeTerm(target))
+		return true
+	}
+	if match, verr := fileSHA256Matches(target, sha); verr == nil && match {
+		fmt.Fprintf(out, "already present (SHA256 verified): %s\n", safeTerm(target))
+		return true
+	}
+	return false
+}
+
+// writePart streams body into "<target>.part" while updating the progress
+// display and (when verify) a SHA256 hasher. Any stale ".part" from a previous
+// aborted run is removed first (there is no resume). On ANY failure it closes
+// and removes the partial file before returning, so an interrupted or failed
+// transfer never leaves a truncated ".part" behind. On success it returns the
+// byte count written and, when verify is set, the lowercase-hex SHA256 of the
+// streamed bytes; the caller then owns the finished (closed) ".part" file and is
+// responsible for verifying / renaming / removing it.
+func writePart(body io.Reader, partPath string, errW io.Writer, name string, total int64, verify bool) (written int64, gotHash string, err error) {
+	// Self-heal a stale ".part": remove it before a fresh transfer (os.Create
+	// truncates too, but be explicit).
 	if _, statErr := os.Stat(partPath); statErr == nil {
 		_ = os.Remove(partPath)
 	}
 	partFile, err := os.Create(partPath)
 	if err != nil {
-		return false, fmt.Errorf("create %s: %w", partPath, err)
+		return 0, "", fmt.Errorf("create %s: %w", partPath, err)
 	}
-	// Best-effort cleanup of the partial file on any failure before rename.
+	// Best-effort cleanup of the partial file on any failure before we hand a
+	// finished file back to the caller.
 	cleanup := true
 	defer func() {
 		if cleanup {
@@ -569,47 +670,25 @@ func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f 
 		}
 	}()
 
-	total := resp.ContentLength
-	if total <= 0 && f.SizeKB > 0 {
-		total = int64(f.SizeKB * 1024)
-	}
-	pw := newProgressWriter(errW, f.Name, total)
-
+	pw := newProgressWriter(errW, name, total)
 	hasher := sha256.New()
 	writers := []io.Writer{partFile, pw}
 	if verify {
 		writers = append(writers, hasher)
 	}
-	if _, err := io.Copy(io.MultiWriter(writers...), resp.Body); err != nil {
-		return false, fmt.Errorf("streaming %s: %w", f.Name, err)
+	if _, err := io.Copy(io.MultiWriter(writers...), body); err != nil {
+		return 0, "", fmt.Errorf("streaming %s: %w", name, err)
 	}
 	pw.done()
 	if err := partFile.Close(); err != nil {
-		return false, fmt.Errorf("finalize %s: %w", partPath, err)
-	}
-
-	if verify {
-		got := hex.EncodeToString(hasher.Sum(nil))
-		if !strings.EqualFold(got, sha) {
-			// Delete the corrupt partial; the defer would also remove it, but be
-			// explicit so the failure message is honest about the state on disk.
-			_ = os.Remove(partPath)
-			cleanup = false
-			return false, fmt.Errorf("SHA256 mismatch for %s — expected %s, got %s (deleted the partial download)", f.Name, strings.ToLower(sha), got)
-		}
-	}
-
-	if err := os.Rename(partPath, target); err != nil {
-		return false, fmt.Errorf("install %s: %w", target, err)
+		return 0, "", fmt.Errorf("finalize %s: %w", partPath, err)
 	}
 	cleanup = false
 
-	note := ""
 	if verify {
-		note = "  (SHA256 verified)"
+		gotHash = hex.EncodeToString(hasher.Sum(nil))
 	}
-	fmt.Fprintf(out, "Saved %s (%s)%s\n", safeTerm(target), humanBytes(pw.written), note)
-	return false, nil
+	return pw.written, gotHash, nil
 }
 
 // pickleExts / archiveExts name the downloaded-file extensions that warrant a
