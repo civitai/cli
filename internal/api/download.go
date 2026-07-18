@@ -129,16 +129,25 @@ func guardedDownloadDialContext() func(ctx context.Context, network, addr string
 	return d.DialContext
 }
 
+// cgnatBlock is RFC 6598 shared address space (100.64.0.0/10) — reachable
+// internal-ish space that stdlib's IsPrivate does NOT cover, so block it as an
+// SSRF target explicitly.
+var cgnatBlock = func() *net.IPNet { _, n, _ := net.ParseCIDR("100.64.0.0/10"); return n }()
+
 // isBlockedDownloadIP reports whether ip is an internal address the download
-// client must never connect to: loopback (127.0.0.0/8, ::1), link-local
-// (169.254.0.0/16, fe80::/10 — incl. the cloud metadata address 169.254.169.254),
-// private (10/8, 172.16/12, 192.168/16), and IPv6 ULA (fc00::/7). Public IPs
-// (a normal signed-storage host) pass.
+// client must never connect to: loopback (127.0.0.0/8, ::1), the unspecified
+// address (0.0.0.0, :: — 0.0.0.0 routes to loopback on Linux, a classic
+// SSRF-filter bypass), link-local (169.254.0.0/16, fe80::/10 — incl. the cloud
+// metadata address 169.254.169.254), private (10/8, 172.16/12, 192.168/16),
+// IPv6 ULA (fc00::/7), and CGNAT (100.64.0.0/10). Public IPs (a normal
+// signed-storage host) pass.
 func isBlockedDownloadIP(ip net.IP) bool {
 	return ip.IsLoopback() ||
+		ip.IsUnspecified() || // 0.0.0.0 / :: — routes to loopback
 		ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() ||
-		ip.IsPrivate() // RFC1918 + RFC4193 (fc00::/7)
+		ip.IsPrivate() || // RFC1918 + RFC4193 (fc00::/7)
+		cgnatBlock.Contains(ip) // RFC6598 100.64.0.0/10
 }
 
 // blockedDownloadAddrError is returned by the dial guard when a download would

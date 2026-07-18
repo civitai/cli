@@ -29,6 +29,12 @@ func TestIsBlockedDownloadIP(t *testing.T) {
 		{"192.168.1.1", true},           // private 192.168/16
 		{"fc00::1", true},               // IPv6 ULA
 		{"fd12:3456::1", true},          // IPv6 ULA
+		{"0.0.0.0", true},               // unspecified — routes to loopback on Linux
+		{"::", true},                    // IPv6 unspecified
+		{"100.64.0.1", true},            // CGNAT (RFC6598) 100.64/10
+		{"100.127.255.255", true},       // CGNAT upper
+		{"100.63.255.255", false},       // just below CGNAT (public)
+		{"100.128.0.0", false},          // just above CGNAT (public)
 		{"8.8.8.8", false},              // public
 		{"1.1.1.1", false},              // public
 		{"172.32.0.1", false},           // just outside 172.16/12
