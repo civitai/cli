@@ -114,13 +114,20 @@ type Submission struct {
 // key. Absent when auth is cookie/session (not applicable to the CLI).
 type Subject struct {
 	Type string `json:"type"`
-	ID   string `json:"id"`
+	// ID is the credential's identifier. Its JSON shape is server-owned and
+	// varies by credential kind — a numeric api-key id (e.g. 96633526) or a
+	// string oauth subject — so it is kept as RawMessage to tolerate either
+	// shape. whoami does not render it; only Type drives CredentialType/IsOAuth.
+	ID json.RawMessage `json:"id,omitempty"`
 }
 
-// Identity is the authenticated-user view `whoami` reports. TokenScope,
-// BuzzLimit, and Subject are pointers because GET /api/v1/me omits them for some
-// auth kinds (e.g. cookie/session), and a nil TokenScope must degrade to
-// "scopes unknown" rather than decode as "no capabilities".
+// Identity is the authenticated-user view `whoami` reports. TokenScope and
+// Subject are pointers because GET /api/v1/me omits them for some auth kinds
+// (e.g. cookie/session), and a nil TokenScope must degrade to "scopes unknown"
+// rather than decode as "no capabilities". The volatile, unrendered fields
+// (BuzzLimit, Subject.ID) are json.RawMessage so a server-side type change to a
+// peripheral field can never break the parse of the core identity whoami prints
+// (see WhoAmI's core-identity fallback for the belt-and-suspenders guarantee).
 type Identity struct {
 	Username string `json:"username"`
 	ID       int    `json:"id"`
@@ -130,9 +137,12 @@ type Identity struct {
 	// typically has neither AIServicesWrite nor BuzzRead. nil ⇒ unknown (absent
 	// from the response, e.g. cookie auth).
 	TokenScope *int `json:"tokenScope,omitempty"`
-	// BuzzLimit is the credential's per-window spend cap, when the server reports
-	// one. nil ⇒ absent/unknown.
-	BuzzLimit *int64 `json:"buzzLimit,omitempty"`
+	// BuzzLimit is the credential's raw per-window spend-cap payload as returned
+	// by the server. Its shape is server-owned and has changed over time (a bare
+	// number in older responses, an array of {type,limit,window,unit} windows in
+	// current ones), so it is kept as RawMessage: whoami does not render it, and
+	// it must never break the parse of the core identity. nil ⇒ absent/unknown.
+	BuzzLimit json.RawMessage `json:"buzzLimit,omitempty"`
 	// Subject identifies the credential (OAuth login vs personal API key). nil ⇒
 	// cookie/session auth (not applicable to the CLI).
 	Subject *Subject `json:"subject,omitempty"`
@@ -609,10 +619,42 @@ func (c *Client) WhoAmI(ctx context.Context) (*Identity, error) {
 		return nil, serverError(status, raw)
 	}
 	var id Identity
-	if err := json.Unmarshal(raw, &id); err != nil {
-		return nil, fmt.Errorf("unexpected /api/v1/me response: %s", string(raw))
+	if err := json.Unmarshal(raw, &id); err == nil {
+		return &id, nil
 	}
-	return &id, nil
+	// The full parse failed — almost always because a peripheral, server-owned
+	// field (buzzLimit, subject.id, …) drifted its JSON type. Don't hard-fail the
+	// whole command over a field whoami never renders: fall back to the core
+	// identity (the exact fields whoami prints) so a valid /me body still works.
+	if core, cerr := parseCoreIdentity(raw); cerr == nil {
+		return core, nil
+	}
+	return nil, fmt.Errorf("unexpected /api/v1/me response: %s", string(raw))
+}
+
+// parseCoreIdentity unmarshals only the fields whoami actually renders (id,
+// username, tokenScope, and subject.type) from a /api/v1/me body, ignoring every
+// peripheral field. It is the resilience fallback for WhoAmI: even if a future
+// server change breaks the strict Identity parse, the core identity still
+// surfaces. It errors only when the body is not a JSON object or a core field
+// itself has an incompatible type.
+func parseCoreIdentity(raw []byte) (*Identity, error) {
+	var core struct {
+		Username   string `json:"username"`
+		ID         int    `json:"id"`
+		TokenScope *int   `json:"tokenScope"`
+		Subject    *struct {
+			Type string `json:"type"`
+		} `json:"subject"`
+	}
+	if err := json.Unmarshal(raw, &core); err != nil {
+		return nil, err
+	}
+	id := &Identity{Username: core.Username, ID: core.ID, TokenScope: core.TokenScope}
+	if core.Subject != nil {
+		id.Subject = &Subject{Type: core.Subject.Type}
+	}
+	return id, nil
 }
 
 // GetBuzzAccount reads the caller's spendable Buzz balance via the

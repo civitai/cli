@@ -218,11 +218,11 @@ func TestDecodeScopes(t *testing.T) {
 
 // TestCredentialType maps subject.type to a human label.
 func TestCredentialType(t *testing.T) {
-	oauth := &Identity{Subject: &Subject{Type: "oauth", ID: "1"}}
+	oauth := &Identity{Subject: &Subject{Type: "oauth", ID: json.RawMessage(`"1"`)}}
 	if oauth.CredentialType() != "OAuth login" || !oauth.IsOAuth() {
 		t.Errorf("oauth subject: type=%q isOAuth=%v", oauth.CredentialType(), oauth.IsOAuth())
 	}
-	key := &Identity{Subject: &Subject{Type: "apiKey", ID: "1"}}
+	key := &Identity{Subject: &Subject{Type: "apiKey", ID: json.RawMessage("96633526")}}
 	if key.CredentialType() != "personal API key" || key.IsOAuth() {
 		t.Errorf("apiKey subject: type=%q isOAuth=%v", key.CredentialType(), key.IsOAuth())
 	}
@@ -232,24 +232,116 @@ func TestCredentialType(t *testing.T) {
 	}
 }
 
-// TestWhoAmIParsesSubjectAndBuzzLimit confirms the extended /api/v1/me fields
-// (subject + buzzLimit) parse.
-func TestWhoAmIParsesSubjectAndBuzzLimit(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"username":"zach","id":42,"tokenScope":98305,"buzzLimit":5000,"subject":{"type":"oauth","id":"abc"}}`))
+// liveMeBody is the EXACT GET /api/v1/me response that hard-failed `civitai
+// whoami` in production: buzzLimit is now an array of window objects (was a bare
+// number) and subject.id is a number (the struct typed it as a string). Both
+// broke json.Unmarshal into the stale Identity struct. Kept verbatim as the
+// regression fixture.
+const liveMeBody = `{"id":8753561,"username":"zachlowdenzx","tier":"silver","status":"active","isMember":true,"subscriptions":["yellow"],"email":"zachlowden1@gmail.com","emailVerified":true,"tokenScope":33554431,"buzzLimit":[{"type":"sliding","limit":5000,"window":"day","unit":1}],"subject":{"type":"apiKey","id":96633526}}`
+
+func meServer(t *testing.T, body string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
 	}))
+}
+
+// TestWhoAmIParsesLiveMeBody is the primary regression: the exact live /me body
+// (array buzzLimit + numeric subject.id) must parse with NO error and surface
+// the core identity — id 8753561, username zachlowdenzx, the apiKey subject.
+func TestWhoAmIParsesLiveMeBody(t *testing.T) {
+	srv := meServer(t, liveMeBody)
 	defer srv.Close()
 
-	c := New(srv.URL, "tok", "")
-	id, err := c.WhoAmI(context.Background())
+	id, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
 	if err != nil {
-		t.Fatalf("WhoAmI: %v", err)
+		t.Fatalf("WhoAmI on the live /me body must not error: %v", err)
 	}
-	if !id.IsOAuth() {
-		t.Errorf("subject.type oauth should set IsOAuth: %+v", id.Subject)
+	if id.ID != 8753561 {
+		t.Errorf("id = %d, want 8753561", id.ID)
 	}
-	if id.BuzzLimit == nil || *id.BuzzLimit != 5000 {
-		t.Errorf("buzzLimit = %v, want 5000", id.BuzzLimit)
+	if id.Username != "zachlowdenzx" {
+		t.Errorf("username = %q, want zachlowdenzx", id.Username)
+	}
+	if id.Subject == nil || id.Subject.Type != "apiKey" {
+		t.Fatalf("subject = %+v, want type apiKey", id.Subject)
+	}
+	if id.CredentialType() != "personal API key" || id.IsOAuth() {
+		t.Errorf("credentialType = %q isOAuth=%v, want personal API key / false", id.CredentialType(), id.IsOAuth())
+	}
+	if id.TokenScope == nil || *id.TokenScope != 33554431 {
+		t.Errorf("tokenScope = %v, want 33554431", id.TokenScope)
+	}
+	// Full-scope personal key can spend + read Buzz.
+	if !id.CanSpendBuzz() || !id.CanReadBuzz() {
+		t.Errorf("full-scope key should spend+read Buzz: spend=%v read=%v", id.CanSpendBuzz(), id.CanReadBuzz())
+	}
+	// buzzLimit is retained raw (the array), never decoded — but must not break parse.
+	if len(id.BuzzLimit) == 0 || id.BuzzLimit[0] != '[' {
+		t.Errorf("buzzLimit should be retained as the raw array, got %s", string(id.BuzzLimit))
+	}
+}
+
+// TestWhoAmIResilientToPeripheralDrift covers future non-essential field drift:
+// an unknown extra field, and a peripheral field (buzzLimit) with an unexpected
+// type must all still yield the core identity rather than hard-failing.
+func TestWhoAmIResilientToPeripheralDrift(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "unknown extra field",
+			body: `{"id":7,"username":"carol","tokenScope":1,"subject":{"type":"apiKey","id":42},"somethingNew":{"a":1},"tier":"gold"}`,
+		},
+		{
+			name: "buzzLimit unexpected type (object)",
+			body: `{"id":7,"username":"carol","tokenScope":1,"buzzLimit":{"limit":10},"subject":{"type":"oauth","id":"abc"}}`,
+		},
+		{
+			name: "buzzLimit unexpected type (string)",
+			body: `{"id":7,"username":"carol","tokenScope":1,"buzzLimit":"unlimited","subject":{"type":"apiKey","id":42}}`,
+		},
+		{
+			name: "subject.id string (legacy shape) still fine",
+			body: `{"id":7,"username":"carol","tokenScope":1,"subject":{"type":"oauth","id":"legacy-oauth-sub"}}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := meServer(t, tc.body)
+			defer srv.Close()
+
+			id, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
+			if err != nil {
+				t.Fatalf("WhoAmI must not hard-fail on peripheral drift: %v", err)
+			}
+			if id.ID != 7 || id.Username != "carol" {
+				t.Errorf("core identity lost: id=%d user=%q", id.ID, id.Username)
+			}
+			if id.Subject == nil || id.Subject.Type == "" {
+				t.Errorf("subject.type should survive: %+v", id.Subject)
+			}
+			if id.TokenScope == nil || *id.TokenScope != 1 {
+				t.Errorf("tokenScope should survive: %v", id.TokenScope)
+			}
+		})
+	}
+}
+
+// TestWhoAmIRejectsNonObjectBody confirms a genuinely malformed body (not a JSON
+// object) still surfaces the actionable "unexpected /api/v1/me response" error
+// rather than silently succeeding.
+func TestWhoAmIRejectsNonObjectBody(t *testing.T) {
+	srv := meServer(t, `[1,2,3]`)
+	defer srv.Close()
+
+	_, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
+	if err == nil {
+		t.Fatal("a non-object /me body should still error")
+	}
+	if !strings.Contains(err.Error(), "unexpected /api/v1/me response") {
+		t.Errorf("error should be the actionable parse error, got: %v", err)
 	}
 }
 
