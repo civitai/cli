@@ -439,6 +439,87 @@ Behavior:
 - **Idempotency** — an already-present target (that verifies, or with `--no-verify`) is skipped with a note; `--force` re-downloads.
 - **Any file type downloads** — the selected/primary file is downloaded whatever its `type` (`Model` weights, a `type: Workflows` model's `Archive`, training data, or other artifacts). The human `models get` / `model-versions get` output tags a non-weights primary file with its type (e.g. `[Archive]`) purely for information; it never blocks a download.
 
+## Scripting with `--json`
+
+Every read subcommand takes `--json`, which prints the **raw `/api/v1/...` REST
+response** — a stable passthrough, not a CLI-invented shape. So the field schema
+is exactly the public Site API's; keep the
+[REST field reference](https://developer.civitai.com/site/reference/) open
+(e.g. [models](https://developer.civitai.com/site/reference/models),
+[model-versions](https://developer.civitai.com/site/reference/model-versions))
+rather than reverse-engineering fields with `jq keys`.
+
+Two properties make the output safe to pipe:
+
+- **`--json` stdout is pure JSON** — nothing else is written to stdout, so
+  `... --json | jq -e .` always parses.
+- **Errors go to stderr with a non-zero exit** — a failed call writes the error
+  to **stderr**, exits non-zero, and prints **nothing to stdout**, so `jq` never
+  sees error prose. For example `civitai model-versions get 999999999 --json`
+  exits `1` with `Error: not found (404): Model not found` on stderr and an empty
+  stdout.
+
+### Cursor pagination loop
+
+For deep paging use `--cursor` (**not** `--page` — the API caps `page*limit` at
+1000 and 429s beyond it). Read `.metadata.nextCursor` from each response and feed
+it back via `--cursor`; stop when it's absent/null:
+
+```bash
+export CIVITAI_NO_UPDATE_CHECK=1
+cursor=""
+while :; do
+  page=$(civitai models search --type LORA --base-model Illustrious \
+           --sort "Most Downloaded" --limit 5 ${cursor:+--cursor "$cursor"} --json) || break
+  echo "$page" | jq -r '.items[].id'                 # do your work here
+  cursor=$(echo "$page" | jq -r '.metadata.nextCursor // empty')
+  [ -z "$cursor" ] && break                          # no more pages
+done
+```
+
+### Clean output for pipelines
+
+The CLI runs a background check for a newer release and prints a nag to
+**stderr**. In scripts, silence it with `CIVITAI_NO_UPDATE_CHECK=1` (env) or
+`--no-update-check` (flag). Either way stdout stays pure JSON — the nag never
+touches stdout — but suppressing it keeps stderr clean for logs.
+
+### Gotchas
+
+- **SHA256 is UPPER-case** in the API/`--json` (e.g.
+  `42BA94DF20CC0F4E6DF46E3C294587A2F8CF133BF0134185884EE1C9C5E108C4`), while
+  `sha256sum` emits lowercase. Case-fold before comparing if you roll your own
+  verify (`civitai download`'s built-in check is already case-insensitive):
+  `[ "$(echo "$api_sha" | tr A-Z a-z)" = "$(sha256sum file | cut -d' ' -f1)" ]`.
+- **`models search` already embeds `.modelVersions[]`** — each item carries its
+  full versions, including `files[].hashes.SHA256` and `trainedWords`. If you're
+  iterating search results you usually **don't** need a follow-up
+  `model-versions get` per version.
+- **Creator + model-level download counts live only in the search response.**
+  `model-versions get <id>` returns a **version**, whose `.model` is just
+  `{name, type, nsfw, poi}` — no `creator`, no model `stats.downloadCount`. If
+  you started from a version and need those, fetch them from `models search`
+  / `models get` and join on the model id (`.modelId` on the version).
+
+### Worked example — top LoRAs for a base model, then plan a download
+
+Search → pick versions with `jq` → hand each version id to `download` with app
+folder routing. `--dry-run` prints the plan (files, sizes, hashes, target paths)
+without transferring, so this snippet is safe to copy-paste:
+
+```bash
+export CIVITAI_NO_UPDATE_CHECK=1
+civitai models search --type LORA --base-model Illustrious \
+    --sort "Most Downloaded" --limit 3 --json |
+  jq -r '.items[].modelVersions[0].id' |
+  while read -r vid; do
+    civitai download "$vid" --layout comfyui --root ~/ComfyUI --dry-run
+  done
+```
+
+Drop `--dry-run` (and `civitai login` first) to actually fetch the files —
+`--layout comfyui` routes each into its ComfyUI type folder.
+
 ## Validate fidelity
 
 `civitai app validate` is a **best-effort LOCAL mirror** of the platform's
