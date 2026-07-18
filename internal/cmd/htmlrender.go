@@ -35,16 +35,36 @@ type listState struct {
 	index   int
 }
 
+// emphMark records an open emphasis marker and where it was written on the line,
+// so its close can find the span's inner text (to drop empty spans) and coalesce
+// with an immediately-adjacent same-kind span (to avoid stray "****"/"*****").
+//
+// mergePrev / prevMk / prevAt snapshot the merge state AT OPEN TIME so that
+// nested emphasis (e.g. an empty <em> inside a <strong>) can't clobber the outer
+// span's eligibility to coalesce with its preceding same-kind sibling.
+type emphMark struct {
+	marker    string
+	pos       int  // index in r.line where this open marker begins
+	mergePrev bool // opened exactly where a matching close ended (adjacent sibling)
+	prevMk    string
+	prevAt    int
+}
+
 type htmlRenderer struct {
 	out    strings.Builder // finished block-level lines
 	line   strings.Builder // the current in-progress line (inline content)
 	lists  []listState     // open list stack (for nesting + ordered numbering)
+	inItem bool            // currently between <li> and </li> (item text accumulates on line)
 	quote  int             // blockquote nesting depth
 	inPre  bool            // inside <pre> (preserve/monospace-fence)
 	preBuf strings.Builder // buffered <pre> content
 	href   string          // href of an open <a>, emitted as [text](href) on close
 	aStart int             // len(line) when <a> opened, to wrap its text
 	skip   int             // >0 while inside a <script>/<style> subtree (drop content)
+
+	emph        []emphMark // open emphasis markers (**, *, `), innermost last
+	lastCloseMk string     // marker of the most recently emitted close, "" if none/invalidated
+	lastCloseAt int        // len(line) right after that close marker was written
 }
 
 // run drives the html tokenizer over body and dispatches text/tags. On EOF (or a
@@ -145,11 +165,21 @@ func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfCl
 		r.flushLine()
 		r.block("---")
 	case "p", "div":
+		if r.inItem {
+			// Inside a list item, TipTap wraps the item's text in a <p>. Don't flush
+			// it as a standalone paragraph (that dropped the list marker — bug #1);
+			// keep the text on the item's line and separate stacked <p>s with a space.
+			if r.line.Len() > 0 && !strings.HasSuffix(r.line.String(), " ") {
+				r.line.WriteString(" ")
+			}
+			return
+		}
 		r.flushLine()
 	case "h1", "h2", "h3", "h4", "h5", "h6":
 		if closing {
 			text := strings.TrimSpace(r.line.String())
 			r.line.Reset()
+			r.lastCloseMk = ""
 			level := int(name[1] - '0')
 			r.block(strings.Repeat("#", level) + " " + text)
 		} else {
@@ -164,7 +194,13 @@ func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfCl
 				r.flushLine()
 			}
 		} else {
-			r.flushLine()
+			if r.inItem {
+				// A nested list inside an <li>: flush the parent item's text (with its
+				// marker) before descending, so it isn't lost or glued to the children.
+				r.flushListItem()
+			} else {
+				r.flushLine()
+			}
 			r.lists = append(r.lists, listState{ordered: name == "ol"})
 		}
 	case "li":
@@ -173,6 +209,7 @@ func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfCl
 		} else {
 			r.flushLine()
 			r.startListItem()
+			r.inItem = true
 		}
 	case "a":
 		if closing {
@@ -180,6 +217,9 @@ func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfCl
 		} else {
 			r.href = attrs["href"]
 			r.aStart = r.line.Len()
+			// An anchor boundary must not coalesce emphasis across it (the anchor
+			// rewrites the line on close, which would invalidate merged positions).
+			r.lastCloseMk = ""
 		}
 	case "img":
 		alt := attrs["alt"]
@@ -191,12 +231,12 @@ func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfCl
 			r.line.WriteString(fmt.Sprintf("![%s](%s)", alt, src))
 		}
 	case "strong", "b":
-		r.emphasis("**")
+		r.emphasis("**", closing)
 	case "em", "i":
-		r.emphasis("*")
+		r.emphasis("*", closing)
 	case "code":
 		if !r.inPre { // inline code; a <code> inside <pre> is part of the block
-			r.emphasis("`")
+			r.emphasis("`", closing)
 		}
 	case "pre":
 		if closing {
@@ -221,10 +261,86 @@ func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfCl
 	}
 }
 
-// emphasis writes an emphasis marker; the tokenizer emits the open then the close
-// tag so the surrounding pair balances.
-func (r *htmlRenderer) emphasis(marker string) {
+// emphasis dispatches an emphasis tag (**, *, `) to its open/close handler.
+func (r *htmlRenderer) emphasis(marker string, closing bool) {
+	if closing {
+		r.closeEmphasis(marker)
+	} else {
+		r.openEmphasis(marker)
+	}
+}
+
+// openEmphasis writes an opening emphasis marker and remembers where it went so
+// its close can inspect the span's inner text. It snapshots the merge anchor so a
+// close can coalesce this span with an immediately-preceding same-kind span.
+func (r *htmlRenderer) openEmphasis(marker string) {
+	m := emphMark{
+		marker: marker,
+		pos:    r.line.Len(),
+		prevMk: r.lastCloseMk,
+		prevAt: r.lastCloseAt,
+	}
+	// Adjacent to a matching close (nothing but ignored tags between) → eligible to
+	// merge on close, coalescing "</b><b>" instead of emitting "****".
+	if r.lastCloseMk == marker && r.lastCloseAt == r.line.Len() {
+		m.mergePrev = true
+	}
+	r.emph = append(r.emph, m)
 	r.line.WriteString(marker)
+}
+
+// closeEmphasis finalises an emphasis span. It coalesces adjacent runs and drops
+// empty/whitespace-only spans so abutting or empty <strong>/<em> never produce a
+// malformed "****"/"*****" run (bug #2):
+//   - a span whose inner text is empty or all-whitespace emits NO markers (the
+//     bare whitespace, if any, is kept);
+//   - a span opening exactly where the previous same-kind span closed is merged
+//     into it, yielding one "**A B**" rather than "**A****B**".
+func (r *htmlRenderer) closeEmphasis(marker string) {
+	// Pop the matching open marker (emphasis nests, so it's the nearest one).
+	open, ok := emphMark{}, false
+	for i := len(r.emph) - 1; i >= 0; i-- {
+		if r.emph[i].marker == marker {
+			open = r.emph[i]
+			r.emph = append(r.emph[:i], r.emph[i+1:]...)
+			ok = true
+			break
+		}
+	}
+	if !ok {
+		// Unbalanced close with no matching open: drop it (never emit a lone marker).
+		return
+	}
+	line := r.line.String()
+	if open.pos+len(marker) > len(line) {
+		return
+	}
+	inner := line[open.pos+len(marker):]
+	if strings.TrimSpace(inner) == "" {
+		// Empty or whitespace-only span: strip the open marker, keep the whitespace,
+		// emit no close marker. The span contributed nothing, so RESTORE the merge
+		// anchor it saw at open time — a following same-kind sibling can still merge
+		// with the span that preceded this empty one.
+		r.line.Reset()
+		r.line.WriteString(line[:open.pos] + inner)
+		r.lastCloseMk = open.prevMk
+		r.lastCloseAt = open.prevAt
+		return
+	}
+	before := line[:open.pos]
+	if open.mergePrev && strings.HasSuffix(before, marker) {
+		// The previous same-kind span closed exactly where this one opened: merge the
+		// two into a single span instead of emitting "</b><b>" as "****".
+		merged := before[:len(before)-len(marker)] + inner + marker
+		r.line.Reset()
+		r.line.WriteString(merged)
+		r.lastCloseMk = marker
+		r.lastCloseAt = len(merged)
+		return
+	}
+	r.line.WriteString(marker)
+	r.lastCloseMk = marker
+	r.lastCloseAt = r.line.Len()
 }
 
 // closeAnchor rewrites the anchor's inner text into [text](href).
@@ -249,6 +365,7 @@ func (r *htmlRenderer) closeAnchor() {
 	}
 	r.href = ""
 	r.aStart = 0
+	r.lastCloseMk = "" // line was rewritten — invalidate any pending merge anchor
 }
 
 // startListItem begins a list item, incrementing the ordered counter.
@@ -264,6 +381,8 @@ func (r *htmlRenderer) startListItem() {
 func (r *htmlRenderer) flushListItem() {
 	text := strings.TrimSpace(r.line.String())
 	r.line.Reset()
+	r.inItem = false
+	r.lastCloseMk = "" // line reset — any pending merge anchor is now invalid
 	if text == "" {
 		return
 	}
@@ -310,6 +429,7 @@ func (r *htmlRenderer) flushOpen() {
 func (r *htmlRenderer) flushLine() {
 	text := strings.TrimRight(r.line.String(), " ")
 	r.line.Reset()
+	r.lastCloseMk = "" // line reset — any pending merge anchor is now invalid
 	if strings.TrimSpace(text) == "" {
 		return
 	}
