@@ -2,6 +2,8 @@ module github.com/civitai/cli
 
 go 1.25.0
 
+toolchain go1.25.12
+
 require (
 	github.com/charmbracelet/bubbles v1.0.0
 	github.com/charmbracelet/bubbletea v1.3.10
