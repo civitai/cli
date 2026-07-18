@@ -102,8 +102,8 @@ func printImageList(cmd *cobra.Command, items []api.ImageItem) {
 	fmt.Fprintln(tw, "ID\tUPLOADER\tSIZE\tNSFW\tHEARTS\tCOMMENTS\tURL")
 	for _, im := range items {
 		fmt.Fprintf(tw, "%d\t%s\t%dx%d\t%s\t%d\t%d\t%s\n",
-			im.ID, orDash(im.Username), im.Width, im.Height, orDash(im.NSFWLevel),
-			im.Stats.HeartCount, im.Stats.CommentCount, im.URL)
+			im.ID, orDash(safeTerm(im.Username)), im.Width, im.Height, orDash(safeTerm(im.NSFWLevel)),
+			im.Stats.HeartCount, im.Stats.CommentCount, safeTerm(im.URL))
 	}
 	_ = tw.Flush()
 }

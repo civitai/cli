@@ -345,6 +345,14 @@ type Client struct {
 	// a real civitai JSON page is far below the default. Tests set a small value
 	// to exercise the over-cap guard without allocating 64 MiB.
 	MaxResponseBody int64
+	// AllowPrivateDownloadHosts disables the download SSRF guard — the https-only
+	// requirement AND the internal-range dial block (loopback/link-local/private/
+	// ULA) enforced by downloadHTTPClient. It defaults to FALSE (production-safe):
+	// a server-supplied downloadUrl (or redirect) that is plain-http or resolves
+	// to a non-public IP is refused. ONLY the download tests set it true, because
+	// their httptest servers bind plain-http loopback (127.0.0.1), which the guard
+	// would otherwise block. Never set it in production code.
+	AllowPrivateDownloadHosts bool
 }
 
 // New builds a Client with sane defaults from a static token (personal API key

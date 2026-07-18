@@ -84,7 +84,7 @@ is selected when present).`,
 				if !found {
 					names := make([]string, 0, len(res.Items))
 					for _, u := range res.Items {
-						names = append(names, orDash(u.Username))
+						names = append(names, orDash(safeTerm(u.Username)))
 					}
 					return fmt.Errorf("no user found with exact username %q; closest matches: %s (use the numeric id for an exact lookup)", arg, strings.Join(names, ", "))
 				}
@@ -97,7 +97,7 @@ is selected when present).`,
 					if u.ID == match.ID {
 						continue
 					}
-					fmt.Fprintf(tw, "  %d\t%s\n", u.ID, orDash(u.Username))
+					fmt.Fprintf(tw, "  %d\t%s\n", u.ID, orDash(safeTerm(u.Username)))
 				}
 				_ = tw.Flush()
 			}
@@ -110,8 +110,8 @@ is selected when present).`,
 
 func printUser(cmd *cobra.Command, u api.UserItem) {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "%s (id %d)\n", orDash(u.Username), u.ID)
+	fmt.Fprintf(out, "%s (id %d)\n", orDash(safeTerm(u.Username)), u.ID)
 	if u.Image != "" {
-		fmt.Fprintf(out, "  image: %s\n", u.Image)
+		fmt.Fprintf(out, "  image: %s\n", safeTerm(u.Image))
 	}
 }

@@ -32,6 +32,14 @@ func readFlags(cmd *cobra.Command) *readOpts {
 	return &readOpts{json: j, anon: a}
 }
 
+// allowPrivateDownloadHostsForTest, when true, makes newReader build download
+// clients that skip the SSRF guard (https-only + internal-range dial block).
+// It exists ONLY so the download command tests — whose httptest servers bind
+// plain-http loopback (127.0.0.1) — can exercise the real download path. It is
+// unexported and never set outside the cmd test suite; production builds leave
+// it false so the guard is fully in force.
+var allowPrivateDownloadHostsForTest bool
+
 // newReader builds an api.Client for the public read endpoints. It sends the
 // stored login token when present (OAuth device-login or personal key, both
 // refreshed transparently) unless --anon is set, and works fully anonymously
@@ -41,10 +49,14 @@ func newReader(o *readOpts) (*api.Client, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
+	var client *api.Client
 	if o.anon {
-		return api.New(cfg.BaseURL(), "", ""), cfg.BaseURL(), nil
+		client = api.New(cfg.BaseURL(), "", "")
+	} else {
+		client = api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 	}
-	return api.NewWithSource(cfg.BaseURL(), auth.New(cfg), ""), cfg.BaseURL(), nil
+	client.AllowPrivateDownloadHosts = allowPrivateDownloadHostsForTest
+	return client, cfg.BaseURL(), nil
 }
 
 // emitJSON pretty-prints the raw API body (falling back to the raw bytes if it

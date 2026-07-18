@@ -97,11 +97,24 @@ func newDLServer(t *testing.T, redirect bool, files []dlFile) *dlServer {
 // token != "" configures CIVITAI_TOKEN so downloads authenticate.
 func setupDownloadEnv(t *testing.T, d *dlServer, token string) {
 	t.Helper()
+	allowPrivateDownloadHostsInTest(t)
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	t.Setenv("CIVITAI_TOKEN", token)
 	t.Setenv("CIVITAI_BASE_URL", d.srv.URL)
 	chdir(t, t.TempDir())
+}
+
+// allowPrivateDownloadHostsInTest flips the cmd-layer bypass so newReader builds
+// download clients that skip the SSRF guard (https-only + internal-range dial
+// block) — required because the download test servers bind plain-http loopback
+// (127.0.0.1). It restores the flag on test cleanup. The guard itself (default
+// on) is exercised at the api layer in download_ssrf_test.go.
+func allowPrivateDownloadHostsInTest(t *testing.T) {
+	t.Helper()
+	prev := allowPrivateDownloadHostsForTest
+	allowPrivateDownloadHostsForTest = true
+	t.Cleanup(func() { allowPrivateDownloadHostsForTest = prev })
 }
 
 func TestDownloadVersionIDPrimaryDefault(t *testing.T) {
@@ -439,6 +452,7 @@ func TestDownload401ActionableError(t *testing.T) {
 	base = srv.URL
 	defer srv.Close()
 
+	allowPrivateDownloadHostsInTest(t)
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	t.Setenv("CIVITAI_TOKEN", "")
@@ -468,6 +482,7 @@ func TestDownload403GatedError(t *testing.T) {
 	base = srv.URL
 	defer srv.Close()
 
+	allowPrivateDownloadHostsInTest(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("CIVITAI_TOKEN", "a-valid-token") // authed, but the file is gated
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)

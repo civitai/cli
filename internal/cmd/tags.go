@@ -76,7 +76,7 @@ func printTagList(cmd *cobra.Command, items []api.TagItem) {
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "NAME\tLINK")
 	for _, t := range items {
-		fmt.Fprintf(tw, "%s\t%s\n", t.Name, t.Link)
+		fmt.Fprintf(tw, "%s\t%s\n", safeTerm(t.Name), safeTerm(t.Link))
 	}
 	_ = tw.Flush()
 }

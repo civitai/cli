@@ -20,13 +20,13 @@ import (
 // panic or loop, entities decode correctly (once — the tokenizer decodes text),
 // and script/style bodies are not mistaken for renderable text.
 //
-// The final rendered string is passed through sanitizeControl so that no raw
-// terminal control bytes an author embedded in the article can reach the user's
-// terminal as ANSI escapes.
+// The final rendered string is passed through safeTerm (the shared terminal
+// control-character sanitizer) so that no raw terminal control bytes an author
+// embedded in the article can reach the user's terminal as ANSI/OSC escapes.
 func htmlToText(body string) string {
 	r := &htmlRenderer{}
 	r.run(body)
-	return sanitizeControl(r.result())
+	return safeTerm(r.result())
 }
 
 // listState tracks an open list's kind + item counter for nesting.
@@ -343,32 +343,3 @@ func (r *htmlRenderer) result() string {
 }
 
 var blankRunRe = regexp.MustCompile(`\n{3,}`)
-
-// sanitizeControl strips terminal control characters from the final rendered
-// output so a malicious article author cannot inject ANSI escape sequences into
-// the user's terminal. All C0 control bytes (0x00–0x1F) and DEL (0x7F) are
-// removed EXCEPT newline and tab, which are legitimate layout; a carriage return
-// is dropped (line structure is already expressed with \n).
-func sanitizeControl(s string) string {
-	if !strings.ContainsFunc(s, isStrippedControl) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, ch := range s {
-		if isStrippedControl(ch) {
-			continue
-		}
-		b.WriteRune(ch)
-	}
-	return b.String()
-}
-
-// isStrippedControl reports whether r is a control character we remove (any C0
-// control or DEL, other than newline and tab).
-func isStrippedControl(r rune) bool {
-	if r == '\n' || r == '\t' {
-		return false
-	}
-	return r < 0x20 || r == 0x7f
-}

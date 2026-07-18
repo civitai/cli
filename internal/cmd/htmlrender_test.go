@@ -215,7 +215,7 @@ func TestHTMLToTextStripsControlChars(t *testing.T) {
 		}
 	}
 	// Newlines (block structure) and tabs are preserved.
-	if got := sanitizeControl("keep\tthis\nand\rdrop\x1bthat"); got != "keep\tthis\nanddropthat" {
-		t.Errorf("sanitizeControl newline/tab/CR handling wrong: %q", got)
+	if got := safeTerm("keep\tthis\nand\rdrop\x1bthat"); got != "keep\tthis\nanddropthat" {
+		t.Errorf("safeTerm newline/tab/CR handling wrong: %q", got)
 	}
 }

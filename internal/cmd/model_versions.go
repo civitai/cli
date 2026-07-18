@@ -85,30 +85,30 @@ func newModelVersionsByHashCmd() *cobra.Command {
 
 func printModelVersionDetail(cmd *cobra.Command, v *api.ModelVersionDetail) {
 	out := cmd.OutOrStdout()
-	header := fmt.Sprintf("%s (version id %d, model id %d)", v.Name, v.ID, v.ModelID)
+	header := fmt.Sprintf("%s (version id %d, model id %d)", safeTerm(v.Name), v.ID, v.ModelID)
 	if mk := nonModelFileMarker(v.Files); mk != "" {
 		header += " " + mk
 	}
 	fmt.Fprintln(out, header)
 	if v.Model != nil {
-		fmt.Fprintf(out, "  model:     %s (%s)\n", v.Model.Name, v.Model.Type)
+		fmt.Fprintf(out, "  model:     %s (%s)\n", safeTerm(v.Model.Name), safeTerm(v.Model.Type))
 	}
-	fmt.Fprintf(out, "  baseModel: %s\n", v.BaseModel)
+	fmt.Fprintf(out, "  baseModel: %s\n", safeTerm(v.BaseModel))
 	if v.AIR != "" {
-		fmt.Fprintf(out, "  air:       %s\n", v.AIR)
+		fmt.Fprintf(out, "  air:       %s\n", safeTerm(v.AIR))
 	}
 	fmt.Fprintf(out, "  downloads: %d   thumbsUp: %d\n", v.Stats.DownloadCount, v.Stats.ThumbsUpCount)
 	if len(v.TrainedWords) > 0 {
 		fmt.Fprintf(out, "  triggers:  %s\n", joinTags(v.TrainedWords))
 	}
 	if v.DownloadURL != "" {
-		fmt.Fprintf(out, "  download:  %s\n", v.DownloadURL)
+		fmt.Fprintf(out, "  download:  %s\n", safeTerm(v.DownloadURL))
 	}
 	if len(v.Files) > 0 {
 		fmt.Fprintf(out, "  files (%d):\n", len(v.Files))
 		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 		for _, f := range v.Files {
-			fmt.Fprintf(tw, "    %s\t%s\t%.1f MB\n", f.Name, f.Type, f.SizeKB/1024)
+			fmt.Fprintf(tw, "    %s\t%s\t%.1f MB\n", safeTerm(f.Name), safeTerm(f.Type), f.SizeKB/1024)
 		}
 		_ = tw.Flush()
 	}

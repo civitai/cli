@@ -59,6 +59,7 @@ func newMVServer(t *testing.T, modelID int, versions []mvVer) *mvServer {
 
 func setupMVEnv(t *testing.T, m *mvServer) {
 	t.Helper()
+	allowPrivateDownloadHostsInTest(t)
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("CIVITAI_TOKEN", "")
 	t.Setenv("CIVITAI_BASE_URL", m.srv.URL)
