@@ -27,7 +27,7 @@ var (
 const (
 	exitOK          = 0 // success
 	exitGeneric     = 1 // generic / unknown / unclassified failure
-	exitUsage       = 2 // bad flags or malformed invocation (Cobra usage error)
+	exitUsage       = 2 // bad flags, bad flag value, or a request rejected as malformed (HTTP 400)
 	exitAuth        = 3 // authentication/authorization: login required, token invalid/expired, missing scope
 	exitNotFound    = 4 // the requested resource does not exist (HTTP 404)
 	exitNetwork     = 5 // network/transport failure or service unavailable (dial/timeout, HTTP 502/503/504)
@@ -53,10 +53,12 @@ func exitCode(err error) int {
 	case err == nil:
 		return exitOK
 
-	// Usage errors (bad flag / malformed invocation) are tagged by the root
-	// command's FlagErrorFunc. Checked first: a usage mistake is about the
-	// invocation, not the API.
-	case errors.Is(err, cmd.ErrUsage):
+	// Usage errors are about the invocation, not the API — checked first. This
+	// covers both client-side usage mistakes (bad flag / malformed invocation,
+	// tagged by the root command's FlagErrorFunc or asUsageError) and a request
+	// the server rejected as malformed (HTTP 400, api.ErrBadRequest — e.g. a bad
+	// enum value caught by the API's own validation).
+	case errors.Is(err, cmd.ErrUsage), errors.Is(err, api.ErrBadRequest):
 		return exitUsage
 
 	// Authentication / authorization: 401/403, the pre-flight "no token

@@ -19,6 +19,12 @@ var (
 	ErrUnauthorized = errors.New("authentication required")
 	// ErrNotFound marks a requested resource that does not exist (HTTP 404).
 	ErrNotFound = errors.New("not found")
+	// ErrBadRequest marks a request the server rejected as malformed — an invalid
+	// flag value or query parameter (HTTP 400, e.g. a bad enum caught by the
+	// server's zod validation). It is a USAGE-class failure (the invocation is
+	// wrong), so the entrypoint maps it to the same exit code as a client-side
+	// usage error.
+	ErrBadRequest = errors.New("bad request")
 	// ErrRateLimited marks a throttled request (HTTP 429).
 	ErrRateLimited = errors.New("rate limited")
 	// ErrNetwork marks a transport/service-availability failure — the gateway/
@@ -65,6 +71,8 @@ func statusKind(status int) error {
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return ErrUnauthorized
+	case http.StatusBadRequest:
+		return ErrBadRequest
 	case http.StatusNotFound:
 		return ErrNotFound
 	case http.StatusTooManyRequests:
