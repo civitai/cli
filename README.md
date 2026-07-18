@@ -46,6 +46,33 @@ npx @civitai/cli --help
 brew install civitai/tap/civitai
 ```
 
+### Nix flake
+
+This repo is a [Nix flake](https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake.html),
+so you can run or install `civitai` without a Go toolchain (works on
+`x86_64`/`aarch64` Linux and macOS):
+
+```bash
+# Run without installing:
+nix run github:civitai/cli -- models search "sdxl"
+
+# Install into your Nix profile:
+nix profile install github:civitai/cli
+```
+
+Pin it as an input in your own flake:
+
+```nix
+{
+  inputs.civitai-cli.url = "github:civitai/cli";
+
+  outputs = { self, nixpkgs, civitai-cli }: {
+    # e.g. add to a devShell / home-manager / systemPackages:
+    #   civitai-cli.packages.${system}.default
+  };
+}
+```
+
 ### Prebuilt binary
 
 Download a prebuilt binary for your OS/arch from the
