@@ -90,10 +90,19 @@ Pagination is cursor-based (the article feed uses a keyset cursor — there is n
 }
 
 func newArticlesGetCmd() *cobra.Command {
+	var content bool
 	cmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: "Get an article by id (GET /api/v1/articles/{id})",
+		Long: `Get one article by id (GET /api/v1/articles/{id}).
+
+By default it prints the article's metadata (title, author, stats, tags). Pass
+--content to also render the article BODY — the actual guide — as readable plain
+text / lightweight markdown (headings, paragraphs, lists, links, code blocks;
+HTML tags stripped and entities decoded). --json returns the raw API body
+(including the untouched HTML content) and takes precedence over --content.`,
 		Example: `  civitai articles get 1234
+  civitai articles get 1234 --content
   civitai articles get 1234 --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -110,14 +119,32 @@ func newArticlesGetCmd() *cobra.Command {
 				return err
 			}
 			if o.json {
+				// --json wins: emit the raw body untouched (--content is ignored).
 				return emitJSON(cmd, raw)
 			}
 			printArticleDetail(cmd, a)
+			if content {
+				printArticleContent(cmd, a)
+			}
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&content, "content", false, "also render the article body as readable text/markdown (ignored with --json, which returns raw)")
 	bindReadFlags(cmd)
 	return cmd
+}
+
+// printArticleContent renders the article body below the metadata block. An
+// empty body prints a clear note rather than nothing.
+func printArticleContent(cmd *cobra.Command, a *api.ArticleDetail) {
+	out := cmd.OutOrStdout()
+	fmt.Fprintln(out, "\n─── content ───")
+	text := htmlToText(a.Content)
+	if strings.TrimSpace(text) == "" {
+		fmt.Fprintln(out, "(this article has no rendered body — try --json for the raw payload)")
+		return
+	}
+	fmt.Fprintln(out, text)
 }
 
 func printArticleList(cmd *cobra.Command, items []api.ArticleListItem) {
