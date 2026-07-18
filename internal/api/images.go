@@ -25,6 +25,7 @@ type ImageItem struct {
 	Type      string     `json:"type"`
 	PostID    *int       `json:"postId"`
 	Username  string     `json:"username"`
+	BaseModel string     `json:"baseModel"`
 	Stats     ImageStats `json:"stats"`
 }
 

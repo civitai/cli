@@ -191,6 +191,7 @@ Get started:
 
   # Browse & download
   civitai models search --query "pony" --limit 5
+  civitai images search --sort "Most Reactions" --period Week
   civitai download 128713 --layout comfyui --root ~/ComfyUI
 
   # Build an App
@@ -199,6 +200,7 @@ Get started:
   civitai app submit               package + submit for review`,
 		Example: `  # Browse & download the public catalog (no account needed to read).
   civitai models search --query "dreamshaper" --limit 5
+  civitai images search --sort "Most Reactions" --period Week
   civitai download 128713 --layout comfyui --root ~/ComfyUI
 
   # Build & ship an App.

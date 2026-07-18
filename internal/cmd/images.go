@@ -29,7 +29,7 @@ func newImagesCmd() *cobra.Command {
 
 func newImagesSearchCmd() *cobra.Command {
 	var (
-		username, sort, period, cursor, typ, tags    string
+		username, sort, period, cursor, typ          string
 		baseModels                                   []string
 		postID, modelID, modelVersionID, limit, page int
 		nsfw                                         bool
@@ -51,11 +51,18 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 			if err := checkLimit(limit, imagesLimitMax); err != nil {
 				return err
 			}
+			// The API silently ignores `sort` when `modelId` is set (results come
+			// back in the API's default order regardless), so warn rather than
+			// let the user believe their --sort took effect. Note: --model-version-id
+			// does NOT share this quirk — it honours --sort — so it's excluded here.
+			if cmd.Flags().Changed("model-id") && cmd.Flags().Changed("sort") {
+				fmt.Fprintln(cmd.ErrOrStderr(),
+					"note: the API ignores --sort when --model-id is set; results are returned in the API's default order.")
+			}
 			o := readFlags(cmd)
 			q := url.Values{}
 			addIfSet(q, "username", username)
-			addIfSet(q, "type", typ)  // image | video | audio
-			addIfSet(q, "tags", tags) // comma-delimited tag ids
+			addIfSet(q, "type", typ) // image | video | audio
 			addIfSet(q, "sort", sort)
 			addIfSet(q, "period", period)
 			addIfSet(q, "cursor", cursor)
@@ -101,7 +108,6 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 	cmd.Flags().StringVar(&username, "username", "", "filter by uploader username")
 	cmd.Flags().StringSliceVar(&baseModels, "base-model", nil, "filter by base model; repeatable (e.g. --base-model \"Krea 2\" --base-model Flux). The API OR-combines the given values")
 	cmd.Flags().StringVar(&typ, "type", "", "filter by media type (image, video, audio)")
-	cmd.Flags().StringVar(&tags, "tags", "", "filter by tag ids (comma-separated, e.g. 4,111)")
 	cmd.Flags().StringVar(&period, "period", "", "time period (AllTime, Year, Month, Week, Day)")
 	cmd.Flags().StringVar(&sort, "sort", "", "sort order (\"Most Reactions\", \"Most Comments\", Newest)")
 	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
@@ -116,10 +122,11 @@ func printImageList(cmd *cobra.Command, items []api.ImageItem) {
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tUPLOADER\tSIZE\tNSFW\tHEARTS\tCOMMENTS\tURL")
+	fmt.Fprintln(tw, "ID\tUPLOADER\tBASE MODEL\tSIZE\tNSFW\tHEARTS\tCOMMENTS\tURL")
 	for _, im := range items {
-		fmt.Fprintf(tw, "%d\t%s\t%dx%d\t%s\t%d\t%d\t%s\n",
-			im.ID, orDash(safeTerm(im.Username)), im.Width, im.Height, orDash(safeTerm(im.NSFWLevel)),
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%dx%d\t%s\t%d\t%d\t%s\n",
+			im.ID, orDash(safeTerm(im.Username)), orDash(truncate(safeTerm(im.BaseModel), 24)),
+			im.Width, im.Height, orDash(safeTerm(im.NSFWLevel)),
 			im.Stats.HeartCount, im.Stats.CommentCount, safeTerm(im.URL))
 	}
 	_ = tw.Flush()

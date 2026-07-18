@@ -158,6 +158,141 @@ func TestUsersGetNoExactMatchErrors(t *testing.T) {
 	}
 }
 
+// TestImagesSearchBaseModelColumn asserts the human table surfaces a BASE MODEL
+// column, populated from the API's per-image `baseModel` string, with an empty
+// value rendered as `-`.
+func TestImagesSearchBaseModelColumn(t *testing.T) {
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[
+		  {"id":1,"url":"https://img/1","width":10,"height":20,"nsfwLevel":"None","username":"alice","baseModel":"Krea 2","stats":{}},
+		  {"id":2,"url":"https://img/2","width":30,"height":40,"nsfwLevel":"None","username":"bob","baseModel":"","stats":{}}
+		],"metadata":{}}`))
+	})
+	out, _, err := run(t, "images", "search")
+	if err != nil {
+		t.Fatalf("images search: %v", err)
+	}
+	if !strings.Contains(out, "BASE MODEL") {
+		t.Errorf("table should have a BASE MODEL header: %s", out)
+	}
+	if !strings.Contains(out, "Krea 2") {
+		t.Errorf("populated baseModel should render: %s", out)
+	}
+	// The empty-baseModel row (id 2) must show a dash for its base model.
+	var id2Line string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "2 ") {
+			id2Line = line
+		}
+	}
+	if id2Line == "" {
+		t.Fatalf("could not find the id-2 row: %s", out)
+	}
+	if !strings.Contains(id2Line, "-") {
+		t.Errorf("empty baseModel should render as '-': %q", id2Line)
+	}
+}
+
+// TestImagesSearchBaseModelSanitized asserts a server-controlled baseModel with
+// terminal control characters is routed through safeTerm before printing.
+func TestImagesSearchBaseModelSanitized(t *testing.T) {
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// A real ANSI escape (ESC 0x1b, JSON-escaped) in a server string; safeTerm strips it.
+		_, _ = w.Write([]byte(`{"items":[
+		  {"id":1,"url":"https://img/1","width":10,"height":20,"nsfwLevel":"None","username":"alice","baseModel":"Krea\u001b[31m2","stats":{}}
+		],"metadata":{}}`))
+	})
+	out, _, err := run(t, "images", "search")
+	if err != nil {
+		t.Fatalf("images search: %v", err)
+	}
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("baseModel escape byte should be stripped by safeTerm: %q", out)
+	}
+	// The visible text survives (only the ESC control byte is removed).
+	if !strings.Contains(out, "Krea") || !strings.Contains(out, "[31m2") {
+		t.Errorf("printable baseModel text should survive sanitizing: %q", out)
+	}
+}
+
+// TestImagesSearchJSONUnchangedByBaseModel asserts --json stays a raw
+// passthrough — the baseModel column rendering must not touch machine output.
+func TestImagesSearchJSONUnchangedByBaseModel(t *testing.T) {
+	const raw = `{"items":[{"id":1,"baseModel":"Krea 2","url":"u"}],"metadata":{}}`
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(raw))
+	})
+	out, _, err := run(t, "images", "search", "--json")
+	if err != nil {
+		t.Fatalf("images search --json: %v", err)
+	}
+	if strings.Contains(out, "BASE MODEL") {
+		t.Errorf("--json must not carry the human table header: %s", out)
+	}
+	if !strings.Contains(out, `"baseModel"`) {
+		t.Errorf("--json should pass the raw body through: %s", out)
+	}
+}
+
+// TestImagesSearchModelIDSortWarns asserts that combining --model-id with --sort
+// prints the "ignored sort" note on STDERR (not stdout, so --json/stdout stay
+// clean), while --model-id alone and --sort alone stay silent.
+func TestImagesSearchModelIDSortWarns(t *testing.T) {
+	handler := func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[],"metadata":{}}`))
+	}
+	const wantNote = "the API ignores --sort when --model-id is set"
+
+	// Both set → note on stderr, nothing on stdout.
+	setupReadServer(t, handler)
+	stdout, stderr, err := run(t, "images", "search", "--model-id", "123", "--sort", "Most Reactions")
+	if err != nil {
+		t.Fatalf("images search: %v", err)
+	}
+	if !strings.Contains(stderr, wantNote) {
+		t.Errorf("expected the sort-ignored note on stderr, got: %q", stderr)
+	}
+	if strings.Contains(stdout, wantNote) {
+		t.Errorf("the note must not pollute stdout: %q", stdout)
+	}
+
+	// --model-id alone → no note.
+	setupReadServer(t, handler)
+	if _, stderr, err := run(t, "images", "search", "--model-id", "123"); err != nil {
+		t.Fatalf("images search --model-id: %v", err)
+	} else if strings.Contains(stderr, wantNote) {
+		t.Errorf("--model-id alone must not warn: %q", stderr)
+	}
+
+	// --sort alone → no note.
+	setupReadServer(t, handler)
+	if _, stderr, err := run(t, "images", "search", "--sort", "Most Reactions"); err != nil {
+		t.Fatalf("images search --sort: %v", err)
+	} else if strings.Contains(stderr, wantNote) {
+		t.Errorf("--sort alone must not warn: %q", stderr)
+	}
+
+	// --model-version-id + --sort → no note (that combo honours sort).
+	setupReadServer(t, handler)
+	if _, stderr, err := run(t, "images", "search", "--model-version-id", "128713", "--sort", "Most Reactions"); err != nil {
+		t.Fatalf("images search --model-version-id --sort: %v", err)
+	} else if strings.Contains(stderr, wantNote) {
+		t.Errorf("--model-version-id honours --sort; must not warn: %q", stderr)
+	}
+}
+
+// TestRootHelpMentionsImagesSearch guards Fix 4: the top-level help's examples
+// surface image browsing as first-class.
+func TestRootHelpMentionsImagesSearch(t *testing.T) {
+	out, _, err := run(t, "--help")
+	if err != nil {
+		t.Fatalf("--help: %v", err)
+	}
+	if !strings.Contains(out, "images search") {
+		t.Errorf("root help should include an `images search` example: %s", out)
+	}
+}
+
 func TestTagsSearchWiring(t *testing.T) {
 	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/tags" {
