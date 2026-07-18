@@ -41,6 +41,11 @@ var ErrPkgNotFound = errors.New("package not found on npm")
 // scan of the .tmpl is exact.
 var CivitaiPinRe = regexp.MustCompile(`"(@civitai/[a-z0-9-]+)"\s*:\s*"([^"]+)"`)
 
+// npmRegistryBase is the registry root FetchNpmLatest queries. It is a package
+// var (not a const) purely so tests can point it at an httptest server; nothing
+// in production ever reassigns it.
+var npmRegistryBase = "https://registry.npmjs.org"
+
 // FetchNpmLatest returns the `version` npm publishes as `latest` for pkg.
 //
 // 404/410 = the package genuinely doesn't exist → a real drift/typo, returned as
@@ -48,7 +53,7 @@ var CivitaiPinRe = regexp.MustCompile(`"(@civitai/[a-z0-9-]+)"\s*:\s*"([^"]+)"`)
 // "can't tell right now" transient the caller skips on.
 func FetchNpmLatest(pkg string) (string, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	url := "https://registry.npmjs.org/" + pkg + "/latest"
+	url := npmRegistryBase + "/" + pkg + "/latest"
 	resp, err := client.Get(url)
 	if err != nil {
 		return "", err
