@@ -69,6 +69,87 @@ func TestDownloadPickleArchiveNotePrinted(t *testing.T) {
 	}
 }
 
+// TestControlnetPreprocessorNote unit-tests the model-type classifier: a
+// ControlNet parent model gets the preprocessor note (case-insensitively); every
+// other type (and an empty type) does not.
+func TestControlnetPreprocessorNote(t *testing.T) {
+	withNote := []string{"Controlnet", "controlnet", "CONTROLNET", "ControlNet", "  Controlnet  "}
+	for _, typ := range withNote {
+		note := controlnetPreprocessorNote(typ)
+		if note == "" {
+			t.Errorf("%q should emit a preprocessor note", typ)
+			continue
+		}
+		if !strings.Contains(note, "preprocessor") || !strings.Contains(note, "comfyui_controlnet_aux") {
+			t.Errorf("%q note should name the preprocessor dependency: %q", typ, note)
+		}
+	}
+	noNote := []string{"Checkpoint", "LORA", "TextualInversion", "VAE", "Controlnets", "control", ""}
+	for _, typ := range noNote {
+		if note := controlnetPreprocessorNote(typ); note != "" {
+			t.Errorf("%q should NOT emit a note, got %q", typ, note)
+		}
+	}
+}
+
+// newModelTypeDLServer wires a fake Civitai API whose version detail embeds a
+// parent model of the given type, serving a single downloadable file. It lets the
+// ControlNet-note test drive `ModelVersionDetail.Model.Type` end-to-end.
+func newModelTypeDLServer(t *testing.T, modelType, fileName string) *httptest.Server {
+	t.Helper()
+	var base string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/model-versions/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"id":128713,"modelId":4384,"name":"v","baseModel":"SD 1.5","model":{"name":"M","type":%s},"files":[{"id":1,"name":%s,"type":"Model","primary":true,"sizeKB":1,"downloadUrl":"%s/dl/x","hashes":{"SHA256":%s}}]}`,
+			jsonString(modelType), jsonString(fileName), base, jsonString(sha256hex("bytes")))
+	})
+	mux.HandleFunc("/dl/", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("bytes"))
+	})
+	srv := httptest.NewServer(mux)
+	base = srv.URL
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestDownloadControlnetPreprocessorNotePrinted proves the note is emitted to
+// stderr (never stdout) for a ControlNet-type download, and NOT for a Checkpoint
+// or LORA download — the type match is case-insensitive.
+func TestDownloadControlnetPreprocessorNotePrinted(t *testing.T) {
+	cases := []struct {
+		modelType string
+		wantNote  bool
+	}{
+		{"Controlnet", true},
+		{"controlnet", true}, // case-insensitive
+		{"Checkpoint", false},
+		{"LORA", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.modelType, func(t *testing.T) {
+			srv := newModelTypeDLServer(t, tc.modelType, "control.safetensors")
+			allowPrivateDownloadHostsInTest(t)
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+			t.Setenv("CIVITAI_TOKEN", "")
+			t.Setenv("CIVITAI_BASE_URL", srv.URL)
+			chdir(t, t.TempDir())
+
+			stdout, errOut, err := run(t, "download", "128713")
+			if err != nil {
+				t.Fatalf("download %s: %v", tc.modelType, err)
+			}
+			const marker = "matching preprocessor/annotator"
+			if got := strings.Contains(errOut, marker); got != tc.wantNote {
+				t.Errorf("%s: preprocessor note on stderr = %v, want %v\nstderr: %s", tc.modelType, got, tc.wantNote, errOut)
+			}
+			// The note must NEVER leak to stdout (keeps --json / pipes clean).
+			if strings.Contains(stdout, marker) {
+				t.Errorf("%s: preprocessor note leaked to stdout:\n%s", tc.modelType, stdout)
+			}
+		})
+	}
+}
+
 // TestDownloadPlanSanitizesControlChars proves the --dry-run plan strips terminal
 // control chars from the server-supplied file name (output forgery via the plan).
 func TestDownloadPlanSanitizesControlChars(t *testing.T) {
