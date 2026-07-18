@@ -327,7 +327,7 @@ also takes `--json` to print the **raw API JSON response** for scripting.
 | `civitai model-versions get <id>` | Get a model version by id (alias `mv`) | `--json`, `--anon` |
 | `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
 | `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--layout`, `--root`, `--for-base`, `--no-verify`, `--force`, `--anon` |
-| `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--base-model` (repeatable), `--type` (image/video/audio), `--sort`, `--period`, `--nsfw`; paging `--limit` (≤200), `--page`, `--cursor` |
+| `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--base-model` (repeatable), `--type` (image/video/audio), `--sort`, `--period`, `--nsfw`, `--meta` (include generation metadata); paging `--limit` (≤200), `--page`, `--cursor` |
 | `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai users get <username-or-id>` | Look up a user via public search (a number = exact id; a name = exact-username match, else it lists close matches) | `--json`, `--anon` |
@@ -364,6 +364,19 @@ civitai models search --base-model Pony --base-model Illustrious --limit 20
 # images too — find recent-popular images generated with a given base model:
 civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
 civitai images search --type video --sort "Most Reactions"   # videos only
+```
+
+**Generation metadata (`--meta`).** By default the image list is a compact table
+without generation data (matching the API, which omits `meta` unless asked). Add
+`--meta` to include each image's prompt, sampler, cfg, steps, seed, and model —
+rendered as an indented detail block per image (the table can't hold a prompt).
+Images whose uploader chose to hide their generation data show
+`meta: (hidden by uploader)`. With `--json`, `--meta` adds the raw `meta` object
+to each item.
+
+```bash
+civitai images search --nsfw --sort "Most Reactions" --period Month --meta
+civitai images search --model-version-id 128713 --meta --json | jq '.items[].meta'
 ```
 
 The human table includes a `BASE MODEL` column (the base model each image was

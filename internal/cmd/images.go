@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/civitai/cli/internal/api"
@@ -21,7 +22,8 @@ func newImagesCmd() *cobra.Command {
 (GET /api/v1/images). Works anonymously.`,
 		Example: `  civitai images search --limit 5
   civitai images search --model-id 4384 --sort "Most Reactions"
-  civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week`,
+  civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
+  civitai images search --nsfw --sort "Most Reactions" --period Month --meta`,
 	}
 	cmd.AddCommand(newImagesSearchCmd())
 	return cmd
@@ -32,7 +34,7 @@ func newImagesSearchCmd() *cobra.Command {
 		username, sort, period, cursor, typ          string
 		baseModels                                   []string
 		postID, modelID, modelVersionID, limit, page int
-		nsfw                                         bool
+		nsfw, meta                                   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "search",
@@ -45,6 +47,7 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
   civitai images search --model-version-id 128713 --sort Newest
   civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
   civitai images search --type video --sort "Most Reactions"
+  civitai images search --nsfw --sort "Most Reactions" --period Month --meta
   civitai images search --username some-user --cursor <cursor>`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -82,6 +85,13 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 			if cmd.Flags().Changed("nsfw") {
 				q.Set("nsfw", strconv.FormatBool(nsfw))
 			}
+			// meta is opt-in behind withMeta=true (the API omits it by default to
+			// keep payloads small). flatMeta=true forces the flat meta shape on
+			// every query route so the parser never has to branch on shape.
+			if meta {
+				q.Set("withMeta", "true")
+				q.Set("flatMeta", "true")
+			}
 
 			client, _, err := newReader(o)
 			if err != nil {
@@ -94,7 +104,11 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 			if o.json {
 				return emitJSON(cmd, res.Raw)
 			}
-			printImageList(cmd, res.Items)
+			if meta {
+				printImageListMeta(cmd, res.Items)
+			} else {
+				printImageList(cmd, res.Items)
+			}
 			printPageFooter(cmd, "civitai images search", res.Metadata)
 			return nil
 		},
@@ -111,6 +125,7 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 	cmd.Flags().StringVar(&period, "period", "", "time period (AllTime, Year, Month, Week, Day)")
 	cmd.Flags().StringVar(&sort, "sort", "", "sort order (\"Most Reactions\", \"Most Comments\", Newest)")
 	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
+	cmd.Flags().BoolVar(&meta, "meta", false, "include generation metadata (prompt, sampler, seed, etc.)")
 	bindReadFlags(cmd)
 	return cmd
 }
@@ -130,6 +145,38 @@ func printImageList(cmd *cobra.Command, items []api.ImageItem) {
 			im.Stats.HeartCount, im.Stats.CommentCount, safeTerm(im.URL))
 	}
 	_ = tw.Flush()
+}
+
+// printImageListMeta renders each image as an indented detail block instead of
+// the compact table, so it can carry the generation metadata (prompt, settings)
+// that --meta requests. Every server-origin string is routed through safeTerm —
+// prompts are attacker-controlled user text and can carry ANSI/control bytes.
+func printImageListMeta(cmd *cobra.Command, items []api.ImageItem) {
+	out := cmd.OutOrStdout()
+	if len(items) == 0 {
+		fmt.Fprintln(out, "No images found.")
+		return
+	}
+	for _, im := range items {
+		fmt.Fprintf(out, "%d  [%s]  %dx%d  by %s\n",
+			im.ID, orDash(safeTerm(im.NSFWLevel)), im.Width, im.Height, orDash(safeTerm(im.Username)))
+		if im.Meta == nil {
+			// meta: null — either the uploader hid their generation data, or the
+			// API had none for this image. Not an error.
+			fmt.Fprintln(out, "  meta: (hidden by uploader)")
+		} else {
+			m := im.Meta
+			fmt.Fprintf(out, "  model: %s   sampler: %s   cfg: %s   steps: %s   seed: %s\n",
+				orDash(safeTerm(m.Model)), orDash(safeTerm(m.Sampler)),
+				orDash(safeTerm(m.CfgScale.String())), orDash(safeTerm(m.Steps.String())),
+				orDash(safeTerm(m.Seed.String())))
+			fmt.Fprintf(out, "  prompt: %s\n", safeTerm(m.Prompt))
+			if strings.TrimSpace(m.NegativePrompt) != "" {
+				fmt.Fprintf(out, "  negative: %s\n", safeTerm(m.NegativePrompt))
+			}
+		}
+		fmt.Fprintf(out, "  url: %s\n", safeTerm(im.URL))
+	}
 }
 
 func orDash(s string) string {
