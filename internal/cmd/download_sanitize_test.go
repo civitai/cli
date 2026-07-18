@@ -111,6 +111,7 @@ func TestDownloadSanitizesHostileServerName(t *testing.T) {
 	base = srv.URL
 	defer srv.Close()
 
+	allowPrivateDownloadHostsInTest(t)
 	cfg := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", cfg)
 	t.Setenv("CIVITAI_TOKEN", "")

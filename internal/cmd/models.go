@@ -148,13 +148,13 @@ func printModelList(cmd *cobra.Command, items []api.ModelListItem) {
 	for _, m := range items {
 		creator := "-"
 		if m.Creator != nil && m.Creator.Username != "" {
-			creator = m.Creator.Username
+			creator = safeTerm(m.Creator.Username)
 		}
-		name := m.Name
+		name := safeTerm(m.Name)
 		if m.NSFW {
 			name += " [nsfw]"
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\n", m.ID, name, m.Type, creator, m.Stats.DownloadCount, m.Stats.ThumbsUpCount)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\n", m.ID, name, safeTerm(m.Type), creator, m.Stats.DownloadCount, m.Stats.ThumbsUpCount)
 	}
 	_ = tw.Flush()
 }
@@ -163,10 +163,10 @@ func printModelDetail(cmd *cobra.Command, m *api.ModelDetail) {
 	out := cmd.OutOrStdout()
 	creator := "-"
 	if m.Creator != nil && m.Creator.Username != "" {
-		creator = m.Creator.Username
+		creator = safeTerm(m.Creator.Username)
 	}
-	fmt.Fprintf(out, "%s (id %d)\n", m.Name, m.ID)
-	fmt.Fprintf(out, "  type:      %s\n", m.Type)
+	fmt.Fprintf(out, "%s (id %d)\n", safeTerm(m.Name), m.ID)
+	fmt.Fprintf(out, "  type:      %s\n", safeTerm(m.Type))
 	fmt.Fprintf(out, "  creator:   %s\n", creator)
 	fmt.Fprintf(out, "  nsfw:      %t\n", m.NSFW)
 	fmt.Fprintf(out, "  downloads: %d   thumbsUp: %d   comments: %d\n", m.Stats.DownloadCount, m.Stats.ThumbsUpCount, m.Stats.CommentCount)
@@ -180,15 +180,29 @@ func printModelDetail(cmd *cobra.Command, m *api.ModelDetail) {
 		if marker != "" {
 			marker = "  " + marker
 		}
-		fmt.Fprintf(tw, "    %d\t%s\t%s%s\n", v.ID, v.Name, v.BaseModel, marker)
+		fmt.Fprintf(tw, "    %d\t%s\t%s%s\n", v.ID, safeTerm(v.Name), safeTerm(v.BaseModel), marker)
 	}
 	_ = tw.Flush()
 }
 
+// joinTags renders a comma-separated tag / trained-word list, capped at 12, with
+// each element sanitized (safeTerm) since tags and trigger words are
+// server-controlled and printed to the terminal.
 func joinTags(tags []string) string {
 	const max = 12
-	if len(tags) <= max {
-		return strings.Join(tags, ", ")
+	shown := tags
+	overflow := 0
+	if len(tags) > max {
+		shown = tags[:max]
+		overflow = len(tags) - max
 	}
-	return strings.Join(tags[:max], ", ") + fmt.Sprintf(", … (+%d)", len(tags)-max)
+	parts := make([]string, len(shown))
+	for i, t := range shown {
+		parts[i] = safeTerm(t)
+	}
+	s := strings.Join(parts, ", ")
+	if overflow > 0 {
+		s += fmt.Sprintf(", … (+%d)", overflow)
+	}
+	return s
 }

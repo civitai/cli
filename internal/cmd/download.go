@@ -82,7 +82,12 @@ embedding for an SDXL model). The version's base model is always shown.
 
 Integrity: the streamed bytes are verified against the file's SHA256 by default
 (--no-verify to skip; a file with no published SHA256 is downloaded with a
-warning). A hash mismatch deletes the partial file and fails.`,
+warning). A hash mismatch deletes the partial file and fails. SHA256 verifies
+INTEGRITY (the bytes match what the API advertised), NOT authenticity — a
+compromised source that advertises a matching hash for malicious bytes can't be
+detected by the hash alone. Pickle/executable (.ckpt/.pt/.pth/.bin/.pickle/.pkl)
+and archive (.zip/.tar/.tar.gz/.tgz/.rar/.7z) files can execute code when loaded;
+the CLI notes this on stderr. Only download models from creators you trust.`,
 		Example: `  civitai download 128713
   civitai download --model 4384 --out ./dreamshaper.safetensors
   civitai download 128713 --file vae --out-dir ./models
@@ -183,10 +188,10 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 
 	// Always surface the version's base model, and (with --for-base) warn on a
 	// confident cross-family mismatch before any bytes move.
-	fmt.Fprintf(out, "base model: %s\n", dashIfEmpty(v.BaseModel))
+	fmt.Fprintf(out, "base model: %s\n", dashIfEmpty(safeTerm(v.BaseModel)))
 	if o.forBase != "" {
 		if w := baseModelWarning(v.BaseModel, o.forBase); w != "" {
-			fmt.Fprintln(errW, ui.For(errW).Warn(w))
+			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(w)))
 		}
 	}
 
@@ -200,7 +205,7 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	// directory (the footgun --layout exists to fix).
 	if o.all && o.layout == "" {
 		if w := mixedTypeWarning(fileTypeInfos(selected, o.modelType)); w != "" {
-			fmt.Fprintln(errW, ui.For(errW).Warn(w))
+			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(w)))
 		}
 	}
 
@@ -212,7 +217,7 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 			return err
 		}
 		if note != "" {
-			fmt.Fprintln(errW, ui.For(errW).Warn(note))
+			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(note)))
 		}
 		skipped, err := downloadOne(ctx, client, out, errW, f, target, o)
 		if err != nil {
@@ -265,24 +270,24 @@ func printDownloadPlan(out io.Writer, files []api.ModelVersionFile, o *downloadO
 	// Surface the mis-file warning in the plan too when it applies.
 	if o.all && o.layout == "" {
 		if w := mixedTypeWarning(fileTypeInfos(files, o.modelType)); w != "" {
-			fmt.Fprintf(out, "  note:   %s\n", w)
+			fmt.Fprintf(out, "  note:   %s\n", safeTerm(w))
 		}
 	}
 	for i := range files {
 		f := files[i]
-		fmt.Fprintf(out, "\n%s\n", f.Name)
+		fmt.Fprintf(out, "\n%s\n", safeTerm(f.Name))
 		fmt.Fprintf(out, "  size:   %s\n", humanBytes(int64(f.SizeKB*1024)))
 		sha := strings.TrimSpace(f.Hashes.SHA256)
 		if sha == "" {
 			sha = "(none published)"
 		}
-		fmt.Fprintf(out, "  sha256: %s\n", sha)
+		fmt.Fprintf(out, "  sha256: %s\n", safeTerm(sha))
 		if target, note, terr := targetPath(f, o); terr != nil {
 			fmt.Fprintf(out, "  target: (unresolved) — %v\n", terr)
 		} else {
-			fmt.Fprintf(out, "  target: %s\n", target)
+			fmt.Fprintf(out, "  target: %s\n", safeTerm(target))
 			if note != "" {
-				fmt.Fprintf(out, "  note:   %s\n", note)
+				fmt.Fprintf(out, "  note:   %s\n", safeTerm(note))
 			}
 		}
 		if api.DownloadNeedsAuth(f.DownloadURL, baseURL) {
@@ -346,7 +351,7 @@ func formatFileList(files []api.ModelVersionFile) string {
 	var b strings.Builder
 	for i := range files {
 		f := files[i]
-		fmt.Fprintf(&b, "  - %s (%s, %s)\n", f.Name, f.Type, humanBytes(int64(f.SizeKB*1024)))
+		fmt.Fprintf(&b, "  - %s (%s, %s)\n", safeTerm(f.Name), safeTerm(f.Type), humanBytes(int64(f.SizeKB*1024)))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -401,7 +406,12 @@ func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f 
 	sha := strings.TrimSpace(f.Hashes.SHA256)
 	verify := !o.noVerify && sha != ""
 	if !o.noVerify && sha == "" {
-		fmt.Fprintln(errW, ui.For(errW).Warn(fmt.Sprintf("%s: no SHA256 published — skipping integrity verification", f.Name)))
+		fmt.Fprintln(errW, ui.For(errW).Warn(fmt.Sprintf("%s: no SHA256 published — skipping integrity verification", safeTerm(f.Name))))
+	}
+	// Surface the code-execution risk of pickle/archive formats (a .ckpt, .pt, or
+	// .zip lands in a folder ComfyUI/A1111 will auto-load), once per file.
+	if note := pickleArchiveNote(f.Name); note != "" {
+		fmt.Fprintln(errW, note)
 	}
 
 	// Idempotency: skip an already-present target unless --force. When verifying
@@ -410,12 +420,12 @@ func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f 
 	if !o.force {
 		if info, statErr := os.Stat(target); statErr == nil && !info.IsDir() {
 			if !verify {
-				fmt.Fprintf(out, "already present: %s\n", target)
+				fmt.Fprintf(out, "already present: %s\n", safeTerm(target))
 				return true, nil
 			}
 			match, verr := fileSHA256Matches(target, sha)
 			if verr == nil && match {
-				fmt.Fprintf(out, "already present (SHA256 verified): %s\n", target)
+				fmt.Fprintf(out, "already present (SHA256 verified): %s\n", safeTerm(target))
 				return true, nil
 			}
 			// Present but wrong/unverifiable → re-download.
@@ -497,8 +507,33 @@ func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f 
 	if verify {
 		note = "  (SHA256 verified)"
 	}
-	fmt.Fprintf(out, "Saved %s (%s)%s\n", target, humanBytes(pw.written), note)
+	fmt.Fprintf(out, "Saved %s (%s)%s\n", safeTerm(target), humanBytes(pw.written), note)
 	return false, nil
+}
+
+// pickleExts / archiveExts name the downloaded-file extensions that warrant a
+// trust note: pickle/executable model formats (which can run arbitrary code when
+// deserialized by ComfyUI/A1111/torch.load) and archive formats (which unpack
+// into those same auto-loaded folders). Safetensors + images are safe and get no
+// note.
+var (
+	pickleExts  = map[string]bool{".ckpt": true, ".pt": true, ".pth": true, ".bin": true, ".pickle": true, ".pkl": true}
+	archiveExts = map[string]bool{".zip": true, ".tar": true, ".gz": true, ".tgz": true, ".rar": true, ".7z": true}
+)
+
+// pickleArchiveNote returns a one-line stderr note when name has a pickle/
+// executable or archive extension, warning that the file can execute code when
+// loaded and that SHA256 proves integrity (byte-match), not authenticity (a
+// trusted source). It returns "" for safetensors, images, and other inert types.
+// The returned string is safeTerm-sanitized (the file name is server-supplied).
+func pickleArchiveNote(name string) string {
+	base := strings.ToLower(filepath.Base(name))
+	ext := filepath.Ext(base)
+	// ".tar.gz"/".tgz" report ext ".gz"/".tgz"; both are archives.
+	if !pickleExts[ext] && !archiveExts[ext] {
+		return ""
+	}
+	return safeTerm(fmt.Sprintf("note: %s is a pickle/archive-format file — it can execute code when loaded; only load models from creators you trust.", filepath.Base(name)))
 }
 
 // downloadStatusError maps a non-2xx download response to an actionable error.

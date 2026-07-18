@@ -128,9 +128,9 @@ func printCollectionList(cmd *cobra.Command, items []api.CollectionListItem) {
 	for _, c := range items {
 		owner := "-"
 		if c.User != nil && c.User.Username != "" {
-			owner = c.User.Username
+			owner = safeTerm(c.User.Username)
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\n", c.ID, c.Name, dashIfEmpty(c.Type), owner, c.ItemCount)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\n", c.ID, safeTerm(c.Name), dashIfEmpty(safeTerm(c.Type)), owner, c.ItemCount)
 	}
 	_ = tw.Flush()
 }
@@ -139,15 +139,15 @@ func printCollectionDetail(cmd *cobra.Command, c *api.CollectionDetail) {
 	out := cmd.OutOrStdout()
 	owner := "-"
 	if c.User != nil && c.User.Username != "" {
-		owner = c.User.Username
+		owner = safeTerm(c.User.Username)
 	}
-	fmt.Fprintf(out, "%s (id %d)\n", c.Name, c.ID)
+	fmt.Fprintf(out, "%s (id %d)\n", safeTerm(c.Name), c.ID)
 	fmt.Fprintf(out, "  owner:  %s\n", owner)
-	fmt.Fprintf(out, "  type:   %s\n", dashIfEmpty(c.Type))
-	fmt.Fprintf(out, "  read:   %s\n", dashIfEmpty(c.Read))
+	fmt.Fprintf(out, "  type:   %s\n", dashIfEmpty(safeTerm(c.Type)))
+	fmt.Fprintf(out, "  read:   %s\n", dashIfEmpty(safeTerm(c.Read)))
 	fmt.Fprintf(out, "  public: %t\n", c.IsPublic)
 	if c.Description != "" {
-		fmt.Fprintf(out, "  about:  %s\n", truncate(c.Description, 200))
+		fmt.Fprintf(out, "  about:  %s\n", safeTerm(truncate(c.Description, 200)))
 	}
 	if len(c.Tags) > 0 {
 		fmt.Fprintf(out, "  tags:   %s\n", joinCollectionTags(c.Tags))
@@ -158,7 +158,7 @@ func joinCollectionTags(tags []api.CollectionTag) string {
 	const max = 12
 	names := make([]string, 0, len(tags))
 	for _, t := range tags {
-		names = append(names, t.Name)
+		names = append(names, safeTerm(t.Name))
 	}
 	if len(names) <= max {
 		return strings.Join(names, ", ")

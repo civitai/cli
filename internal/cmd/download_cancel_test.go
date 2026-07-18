@@ -36,6 +36,7 @@ func TestDownloadOneCancelCleansPart(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "m.safetensors")
 	dl := api.New(srv.URL, "", "")
+	dl.AllowPrivateDownloadHosts = true // httptest binds plain-http loopback
 	f := api.ModelVersionFile{Name: "m.safetensors", Type: "Model", DownloadURL: srv.URL + "/dl"}
 	o := &downloadOpts{noVerify: true}
 

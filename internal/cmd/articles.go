@@ -158,14 +158,14 @@ func printArticleList(cmd *cobra.Command, items []api.ArticleListItem) {
 	for _, a := range items {
 		author := "-"
 		if a.User != nil && a.User.Username != "" {
-			author = a.User.Username
+			author = safeTerm(a.User.Username)
 		}
-		title := a.Title
+		title := safeTerm(a.Title)
 		if a.NSFWLevel > 1 {
 			title += " [nsfw]"
 		}
 		reactions := a.Stats.LikeCount + a.Stats.FavoriteCount
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\n", a.ID, title, author, dashIfEmpty(shortDate(a.PublishedAt)), reactions, a.Stats.CommentCount)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\n", a.ID, title, author, dashIfEmpty(safeTerm(shortDate(a.PublishedAt))), reactions, a.Stats.CommentCount)
 	}
 	_ = tw.Flush()
 }
@@ -174,11 +174,11 @@ func printArticleDetail(cmd *cobra.Command, a *api.ArticleDetail) {
 	out := cmd.OutOrStdout()
 	author := "-"
 	if a.User != nil && a.User.Username != "" {
-		author = a.User.Username
+		author = safeTerm(a.User.Username)
 	}
-	fmt.Fprintf(out, "%s (id %d)\n", a.Title, a.ID)
+	fmt.Fprintf(out, "%s (id %d)\n", safeTerm(a.Title), a.ID)
 	fmt.Fprintf(out, "  author:    %s\n", author)
-	fmt.Fprintf(out, "  published: %s\n", dashIfEmpty(shortDate(a.PublishedAt)))
+	fmt.Fprintf(out, "  published: %s\n", dashIfEmpty(safeTerm(shortDate(a.PublishedAt))))
 	fmt.Fprintf(out, "  nsfwLevel: %d\n", a.NSFWLevel)
 	if a.Stats != nil {
 		fmt.Fprintf(out, "  views: %d   likes: %d   favorites: %d   comments: %d   collected: %d\n",
@@ -194,7 +194,7 @@ func joinArticleTags(tags []api.ArticleTag) string {
 	const max = 12
 	names := make([]string, 0, len(tags))
 	for _, t := range tags {
-		names = append(names, t.Name)
+		names = append(names, safeTerm(t.Name))
 	}
 	if len(names) <= max {
 		return strings.Join(names, ", ")
