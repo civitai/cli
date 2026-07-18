@@ -287,13 +287,13 @@ also takes `--json` to print the **raw API JSON response** for scripting.
 | `civitai models get <id>` | Get one model by id | `--json`, `--anon` |
 | `civitai model-versions get <id>` | Get a model version by id (alias `mv`) | `--json`, `--anon` |
 | `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
-| `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--no-verify`, `--force`, `--anon` |
+| `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--layout`, `--root`, `--for-base`, `--no-verify`, `--force`, `--anon` |
 | `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--sort`, `--period`, `--nsfw`; paging `--limit` (≤200), `--page`, `--cursor` |
 | `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai users get <username-or-id>` | Look up a user via public search (a number = exact id; a name = exact-username match, else it lists close matches) | `--json`, `--anon` |
 | `civitai articles search` | Search articles (`GET /api/v1/articles`) | `--query`, `--tags`, `--username`, `--sort`, `--nsfw`; paging `--limit` (≤100), `--cursor` |
-| `civitai articles get <id>` | Get one article by id | `--json`, `--anon` |
+| `civitai articles get <id>` | Get one article by id (`--content` renders the article body as readable text/markdown) | `--content`, `--json`, `--anon` |
 | `civitai collections search` | Search public collections (`GET /api/v1/collections`) | `--query`, `--sort`, `--nsfw`; paging `--limit` (≤100), `--cursor` |
 | `civitai collections get <id>` | Get one collection by id | `--json`, `--anon` |
 
@@ -309,6 +309,7 @@ civitai models search --query "pony" --limit 5
 civitai models get 4384
 civitai model-versions by-hash 5D8D26E2A6
 civitai articles get 32680
+civitai articles get 32680 --content   # render the article body (the guide) as readable text/markdown
 civitai images search --model-id 4384 --sort "Most Reactions" --json   # raw JSON for scripting
 ```
 
@@ -343,15 +344,37 @@ civitai download --model 4384 --dry-run       # print the plan (files, sizes, ha
 civitai download 128713 --out ./dreamshaper.safetensors
 civitai download 128713 --file vae --out-dir ./models   # pick a file; write into a dir
 civitai download 128713 --all --out-dir ./models        # every file in the version
+civitai download 128713 --all --layout comfyui --root ~/ComfyUI   # route each file to its type folder
+civitai download 128713 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout + base-model compat warning
 ```
+
+> **Downloads require authentication.** Every model-file download needs a token —
+> even a small public embedding 401s anonymously. Run `civitai login` first. The
+> read/search commands work anonymously; downloads do not. `--anon` is meaningful
+> for the read commands, not for `download`.
 
 Behavior:
 
 - **Identifier** — exactly one of the positional `<version-id>` or `--model <model-id>` is required (no numeric-ambiguity guessing).
 - **`--model` resolves the default version** — the model's default (first published) version; its primary file is downloaded regardless of file type. Any model type works, including a `type: Workflows` model whose deliverable is a downloadable `Archive`.
-- **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, and `--out-dir`.
+- **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, `--out-dir`, and `--layout`/`--root` (the plan shows the routed target paths).
 - **File selection** — defaults to the version's **primary** file. `--file <name>` selects one file (exact name, else a unique case-insensitive substring; ambiguous/none errors and lists the files). `--all` downloads every file.
 - **Output** — `--out <path>` sets an exact target path (single file only). `--out-dir <dir>` writes server-named files into a directory (works with `--all`). Parent directories are created as needed. Default is the server-provided filename in the current directory.
+- **Type-aware folder routing (`--layout`)** — `--layout <a1111|comfyui>` writes each file into the correct subfolder for that app, keyed by the file/model **type**, under `--root <dir>` (default `.`). This fixes the footgun where `--all --out-dir X` dumps a **bundled VAE into the checkpoint folder** and pollutes the model dropdown: with `--layout`, the checkpoint lands in the checkpoints folder and the VAE in the VAE folder. `--layout` is mutually exclusive with `--out`/`--out-dir`; `--root` only applies with `--layout`. An unmapped type (Poses, Wildcards, Archive, …) is written to `--root` with a stderr note rather than silently misplaced. The routed folder maps:
+
+  | Civitai type | A1111 / Forge | ComfyUI |
+  |---|---|---|
+  | Checkpoint | `models/Stable-diffusion` | `models/checkpoints` |
+  | VAE (standalone **or** bundled) | `models/VAE` | `models/vae` |
+  | LORA / LoCon / DoRA | `models/Lora` | `models/loras` |
+  | TextualInversion (embedding) | `embeddings` | `models/embeddings` |
+  | Hypernetwork | `models/hypernetworks` | `models/hypernetworks` |
+  | Controlnet | `models/ControlNet` | `models/controlnet` |
+  | Upscaler | `models/ESRGAN` | `models/upscale_models` |
+
+  (Sources: the [AUTOMATIC1111 wiki](https://github.com/AUTOMATIC1111/stable-diffusion-webui/wiki/Command-Line-Arguments-and-Settings) + the sd-webui-controlnet `models/ControlNet` default; the [ComfyUI models docs](https://docs.comfy.org/development/core-concepts/models).)
+- **Mis-file warning (without `--layout`)** — when `--all` would place files of **differing types** into one directory (the mis-file footgun), the CLI prints a one-line stderr warning naming the off-type file(s) and suggesting `--layout`. It's a warning, not an error; a single-type download stays quiet.
+- **Base model + compatibility (`--for-base`)** — the version's **base model** is always shown in the plan/output. `--for-base "<baseModel>"` warns on stderr when the version's base model is in a **confidently different family** than your target (e.g. an `SD 1.5` embedding like EasyNegative downloaded for an `SDXL 1.0` model → won't work; the wrong VAE → black images). The check is conservative — it groups the common bases into architecture families (SD1.x, SD2.x, the SDXL family [SDXL/Pony/Illustrious/NoobAI, treated loosely], SD3, Flux, video, …) and only warns on an architecture-level mismatch, never on near-neighbours (Pony vs Illustrious) or unclassifiable bases.
 - **Streaming + atomicity** — the body streams to `<target>.part` and is renamed into place only on success, so an interrupted run never leaves a truncated final file. Large files (10+ GB) are never buffered in memory. TTY-aware progress is printed to **stderr**. The Civitai download URL 302-redirects to signed storage; the CLI follows it.
 - **Auth** — your stored login token (`civitai login`) or `CIVITAI_API_KEY` is used automatically; **Civitai requires a token to download any model file, even public ones**, so an anonymous download gets an actionable 401 (`401` → run `civitai login`; `403` → the file is gated for your account). `--anon` forces no token.
 - **Transient-failure retry (reads)** — the read endpoints (search / model / version / images / tags / creators / users / articles / collections) retry a transient `502`/`503`/`504` or network error a few times with exponential backoff (with jitter), noting each retry on stderr. A `429` is retried **only** when it carries a `Retry-After` header (a genuine throttle, honored up to a cap); a `429` **without** `Retry-After` is Civitai's deterministic deep-paging limit and is surfaced immediately with the hint to use `--cursor` instead of `--page`. The download **stream** is not retried mid-transfer.

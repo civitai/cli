@@ -36,7 +36,7 @@ func TestTargetPathSanitizesServerName(t *testing.T) {
 		f := api.ModelVersionFile{Name: tc.name}
 
 		// Default mode: resolves to a bare basename in cwd.
-		got, err := targetPath(f, &downloadOpts{})
+		got, _, err := targetPath(f, &downloadOpts{})
 		if tc.wantErr {
 			if err == nil {
 				t.Errorf("default %q: expected an error, got path %q", tc.name, got)
@@ -54,7 +54,7 @@ func TestTargetPathSanitizesServerName(t *testing.T) {
 		}
 
 		// --out-dir mode: resolves strictly inside outDir.
-		gotDir, errDir := targetPath(f, &downloadOpts{outDir: outDir})
+		gotDir, _, errDir := targetPath(f, &downloadOpts{outDir: outDir})
 		if tc.wantErr {
 			if errDir == nil {
 				t.Errorf("out-dir %q: expected an error, got path %q", tc.name, gotDir)
@@ -85,7 +85,7 @@ func TestTargetPathOutIsVerbatim(t *testing.T) {
 		"/abs/target.safetensors",
 		"rel/name.safetensors",
 	} {
-		got, err := targetPath(f, &downloadOpts{out: out})
+		got, _, err := targetPath(f, &downloadOpts{out: out})
 		if err != nil {
 			t.Errorf("--out %q: unexpected error: %v", out, err)
 		}

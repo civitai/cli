@@ -67,6 +67,10 @@ type ArticleDetail struct {
 	User        *ArticleUser        `json:"user"`
 	Tags        []ArticleTag        `json:"tags"`
 	Stats       *ArticleDetailStats `json:"stats"`
+	// Content is the article body as sanitized HTML (the TipTap/ProseMirror
+	// output). `articles get --content` renders it to readable plain text /
+	// lightweight markdown; --json still returns the raw body untouched.
+	Content string `json:"content"`
 }
 
 // ArticleSearchResult bundles the parsed items + pagination metadata with the

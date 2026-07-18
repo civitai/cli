@@ -26,10 +26,17 @@ type downloadOpts struct {
 	all      bool   // --all: download every file in the version
 	out      string // --out: target path (single-file only)
 	outDir   string // --out-dir: directory for server-named files
+	layout   string // --layout: type-aware folder routing (a1111|comfyui)
+	root     string // --root: base dir for --layout routing (default ".")
+	forBase  string // --for-base: warn on a confident base-model family mismatch
 	noVerify bool   // --no-verify: skip SHA256 verification
 	force    bool   // --force: re-download even if the target already exists
 	anon     bool   // --anon: force an anonymous request
 	dryRun   bool   // --dry-run: print the resolved plan and exit without transferring
+
+	// modelType is the PARENT model type (Checkpoint, LORA, …), resolved from the
+	// version detail at runtime and used by --layout routing. Not a flag.
+	modelType string
 }
 
 func newDownloadCmd() *cobra.Command {
@@ -57,9 +64,21 @@ or other artifacts. Use --file to pick a specific file, or --all to download
 every file. Downloads stream to "<target>.part" and are renamed into place only
 on success, so an interrupted run never leaves a truncated final file.
 
-Authentication: your stored login token (civitai login) or CIVITAI_API_KEY is
-used automatically; gated / early-access files need it. Public files download
-anonymously.
+Authentication: downloading ANY model file requires authentication — run
+'civitai login' (Civitai requires a token even for public files; a 336 KB public
+embedding 401s just like a gated checkpoint). Your stored login token or
+CIVITAI_API_KEY is sent automatically. The read/search commands (models,
+model-versions, articles, images, …) work anonymously; downloads do not.
+
+Folder routing: pass --layout <a1111|comfyui> (with an optional --root <dir>,
+default ".") to write each file into the correct subfolder for that app, routed
+by the file/model type — so --all fans a bundled VAE into the VAE folder
+instead of polluting the checkpoint folder. --layout is mutually exclusive with
+--out/--out-dir.
+
+Compatibility: --for-base "<baseModel>" warns on stderr when the version's base
+model is in a confidently different family than your target (e.g. an SD 1.5
+embedding for an SDXL model). The version's base model is always shown.
 
 Integrity: the streamed bytes are verified against the file's SHA256 by default
 (--no-verify to skip; a file with no published SHA256 is downloaded with a
@@ -67,7 +86,9 @@ warning). A hash mismatch deletes the partial file and fails.`,
 		Example: `  civitai download 128713
   civitai download --model 4384 --out ./dreamshaper.safetensors
   civitai download 128713 --file vae --out-dir ./models
-  civitai download 128713 --all --out-dir ./models`,
+  civitai download 128713 --all --out-dir ./models
+  civitai download 128713 --all --layout comfyui --root ~/ComfyUI
+  civitai download 128713 --layout a1111 --for-base "SDXL 1.0"`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDownload(cmd, args, o)
@@ -79,9 +100,12 @@ warning). A hash mismatch deletes the partial file and fails.`,
 	f.BoolVar(&o.all, "all", false, "download every file in the version")
 	f.StringVar(&o.out, "out", "", "target file path (single-file only; mutually exclusive with --all/--out-dir)")
 	f.StringVar(&o.outDir, "out-dir", "", "directory to write server-named file(s) into (created if needed)")
+	f.StringVar(&o.layout, "layout", "", "route each file into its type's subfolder for an app (a1111|comfyui); mutually exclusive with --out/--out-dir")
+	f.StringVar(&o.root, "root", "", "base directory for --layout routing (default \".\"; only applies with --layout)")
+	f.StringVar(&o.forBase, "for-base", "", "warn if the version's base model is a confidently different family than this target (e.g. \"SDXL 1.0\")")
 	f.BoolVar(&o.noVerify, "no-verify", false, "skip SHA256 verification of the downloaded bytes")
 	f.BoolVar(&o.force, "force", false, "re-download even if the target file already exists")
-	f.BoolVar(&o.anon, "anon", false, "force an anonymous request (ignore any stored login token)")
+	f.BoolVar(&o.anon, "anon", false, "force an anonymous request (ignore any stored login token); NOTE: downloads still 401 without a token — --anon is meaningful for read commands, not downloads")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print the resolved download plan (files, sizes, hashes, targets) and exit without downloading anything")
 	return cmd
 }
@@ -109,6 +133,19 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	if o.out != "" && o.all {
 		return fmt.Errorf("--out sets a single file path and can't be combined with --all — use --out-dir")
 	}
+	if o.layout != "" {
+		if !validLayout(o.layout) {
+			return fmt.Errorf("--layout must be one of %s, got %q", strings.Join(knownLayouts, "|"), o.layout)
+		}
+		if o.out != "" {
+			return fmt.Errorf("--layout routes files into type folders and can't be combined with --out (an explicit single path)")
+		}
+		if o.outDir != "" {
+			return fmt.Errorf("--layout routes files under --root and can't be combined with --out-dir")
+		}
+	} else if o.root != "" {
+		return fmt.Errorf("--root only applies with --layout")
+	}
 
 	client, baseURL, err := newReader(&readOpts{anon: o.anon})
 	if err != nil {
@@ -133,10 +170,24 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	if err != nil {
 		return err
 	}
+	// Parent model type (Checkpoint, LORA, …) drives --layout routing of the
+	// weights file; the version detail embeds it under `model`.
+	if v.Model != nil {
+		o.modelType = v.Model.Type
+	}
 
 	selected, err := selectFiles(v.Files, o)
 	if err != nil {
 		return err
+	}
+
+	// Always surface the version's base model, and (with --for-base) warn on a
+	// confident cross-family mismatch before any bytes move.
+	fmt.Fprintf(out, "base model: %s\n", dashIfEmpty(v.BaseModel))
+	if o.forBase != "" {
+		if w := baseModelWarning(v.BaseModel, o.forBase); w != "" {
+			fmt.Fprintln(errW, ui.For(errW).Warn(w))
+		}
 	}
 
 	// --dry-run: print the resolved plan and exit 0, transferring nothing and
@@ -145,12 +196,23 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 		return printDownloadPlan(out, selected, o, baseURL)
 	}
 
+	// Without --layout, warn when `--all` would mis-file differing types into one
+	// directory (the footgun --layout exists to fix).
+	if o.all && o.layout == "" {
+		if w := mixedTypeWarning(fileTypeInfos(selected, o.modelType)); w != "" {
+			fmt.Fprintln(errW, ui.For(errW).Warn(w))
+		}
+	}
+
 	downloaded := 0
 	for i := range selected {
 		f := selected[i]
-		target, err := targetPath(f, o)
+		target, note, err := targetPath(f, o)
 		if err != nil {
 			return err
+		}
+		if note != "" {
+			fmt.Fprintln(errW, ui.For(errW).Warn(note))
 		}
 		skipped, err := downloadOne(ctx, client, out, errW, f, target, o)
 		if err != nil {
@@ -200,6 +262,12 @@ func resolveVersionID(ctx context.Context, client api.Reader, positional, modelI
 // required. It writes NOTHING to disk.
 func printDownloadPlan(out io.Writer, files []api.ModelVersionFile, o *downloadOpts, baseURL string) error {
 	fmt.Fprintf(out, "Dry run — planning %d file(s); nothing will be downloaded.\n", len(files))
+	// Surface the mis-file warning in the plan too when it applies.
+	if o.all && o.layout == "" {
+		if w := mixedTypeWarning(fileTypeInfos(files, o.modelType)); w != "" {
+			fmt.Fprintf(out, "  note:   %s\n", w)
+		}
+	}
 	for i := range files {
 		f := files[i]
 		fmt.Fprintf(out, "\n%s\n", f.Name)
@@ -209,10 +277,13 @@ func printDownloadPlan(out io.Writer, files []api.ModelVersionFile, o *downloadO
 			sha = "(none published)"
 		}
 		fmt.Fprintf(out, "  sha256: %s\n", sha)
-		if target, terr := targetPath(f, o); terr != nil {
+		if target, note, terr := targetPath(f, o); terr != nil {
 			fmt.Fprintf(out, "  target: (unresolved) — %v\n", terr)
 		} else {
 			fmt.Fprintf(out, "  target: %s\n", target)
+			if note != "" {
+				fmt.Fprintf(out, "  note:   %s\n", note)
+			}
 		}
 		if api.DownloadNeedsAuth(f.DownloadURL, baseURL) {
 			fmt.Fprintf(out, "  auth:   required\n")
@@ -281,28 +352,45 @@ func formatFileList(files []api.ModelVersionFile) string {
 }
 
 // targetPath computes the on-disk destination for a file given the flags:
-// --out (verbatim path), else --out-dir/<server-name>, else ./<server-name>.
+// --out (verbatim path), else --layout routes under --root/<type-folder>, else
+// --out-dir/<server-name>, else ./<server-name>. It also returns an optional
+// stderr note (non-empty only under --layout when the file's type is unmapped
+// and falls back to --root).
 //
-// For the two server-named cases (default and --out-dir) the API-supplied
+// For every server-named case (default, --out-dir, --layout) the API-supplied
 // f.Name is reduced to its bare basename with filepath.Base BEFORE joining, so a
 // hostile name like "/home/user/.bashrc" or "../../etc/foo" can never write
-// outside the current directory / outside --out-dir (path-traversal / arbitrary
-// write). --out is the user's OWN explicit target and is used verbatim (they may
-// legitimately pass a relative or absolute path). A basename that degenerates to
-// ".", "/", or ".." (empty or all-slashes server name) is unusable and errors
-// rather than writing to a junk path.
-func targetPath(f api.ModelVersionFile, o *downloadOpts) (string, error) {
+// outside the intended directory (path-traversal / arbitrary write). --out is
+// the user's OWN explicit target and is used verbatim (they may legitimately
+// pass a relative or absolute path). A basename that degenerates to ".", "/", or
+// ".." (empty or all-slashes server name) is unusable and errors rather than
+// writing to a junk path.
+func targetPath(f api.ModelVersionFile, o *downloadOpts) (string, string, error) {
 	if o.out != "" {
-		return o.out, nil
+		return o.out, "", nil
 	}
 	base := filepath.Base(f.Name)
 	if base == "." || base == ".." || base == string(filepath.Separator) || base == "/" {
-		return "", fmt.Errorf("server returned an unusable filename %q; pass --out to set the output path", f.Name)
+		return "", "", fmt.Errorf("server returned an unusable filename %q; pass --out to set the output path", f.Name)
+	}
+	if o.layout != "" {
+		dir, note := routeDir(o.layout, o.root, f.Type, o.modelType, base)
+		return filepath.Join(dir, base), note, nil
 	}
 	if o.outDir != "" {
-		return filepath.Join(o.outDir, base), nil
+		return filepath.Join(o.outDir, base), "", nil
 	}
-	return base, nil
+	return base, "", nil
+}
+
+// fileTypeInfos projects the selected files into the minimal view the mis-file
+// warning needs (name + file type + the shared parent model type).
+func fileTypeInfos(files []api.ModelVersionFile, modelType string) []fileTypeInfo {
+	infos := make([]fileTypeInfo, len(files))
+	for i := range files {
+		infos[i] = fileTypeInfo{name: files[i].Name, fileType: files[i].Type, modelType: modelType, primary: files[i].Primary}
+	}
+	return infos
 }
 
 // downloadOne downloads a single file to target, streaming to "<target>.part"
