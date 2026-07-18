@@ -75,24 +75,28 @@ func TestImagesSearchBaseModelSingle(t *testing.T) {
 	}
 }
 
-// TestImagesSearchTypeAndTagsWiring proves the confirmed --type (image|video|
-// audio enum) and --tags (comma-separated tag ids) filters map to the `type`
-// and `tags` query params.
-func TestImagesSearchTypeAndTagsWiring(t *testing.T) {
-	var gotType, gotTags string
+// TestImagesSearchTypeWiring proves the confirmed --type (image|video|audio
+// enum) filter maps to the `type` query param.
+func TestImagesSearchTypeWiring(t *testing.T) {
+	var gotType string
 	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
 		gotType = r.URL.Query().Get("type")
-		gotTags = r.URL.Query().Get("tags")
 		_, _ = w.Write([]byte(`{"items":[],"metadata":{}}`))
 	})
-	if _, _, err := run(t, "images", "search", "--type", "video", "--tags", "4,111"); err != nil {
-		t.Fatalf("images search --type --tags: %v", err)
+	if _, _, err := run(t, "images", "search", "--type", "video"); err != nil {
+		t.Fatalf("images search --type: %v", err)
 	}
 	if gotType != "video" {
 		t.Errorf("type query = %q, want video", gotType)
 	}
-	if gotTags != "4,111" {
-		t.Errorf("tags query = %q, want 4,111", gotTags)
+}
+
+// TestImagesSearchNoTagsFlag guards that the unusable --tags flag (needed
+// numeric tag ids the /api/v1/tags endpoint can't surface) is gone: it must be
+// unknown, and no `tags` query param is ever sent.
+func TestImagesSearchNoTagsFlag(t *testing.T) {
+	if _, _, err := run(t, "images", "search", "--tags", "4,111"); err == nil {
+		t.Fatal("--tags should be removed (unknown flag), got no error")
 	}
 }
 

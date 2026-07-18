@@ -327,7 +327,7 @@ also takes `--json` to print the **raw API JSON response** for scripting.
 | `civitai model-versions get <id>` | Get a model version by id (alias `mv`) | `--json`, `--anon` |
 | `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
 | `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--layout`, `--root`, `--for-base`, `--no-verify`, `--force`, `--anon` |
-| `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--base-model` (repeatable), `--type` (image/video/audio), `--tags` (tag ids), `--sort`, `--period`, `--nsfw`; paging `--limit` (≤200), `--page`, `--cursor` |
+| `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--base-model` (repeatable), `--type` (image/video/audio), `--sort`, `--period`, `--nsfw`; paging `--limit` (≤200), `--page`, `--cursor` |
 | `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai users get <username-or-id>` | Look up a user via public search (a number = exact id; a name = exact-username match, else it lists close matches) | `--json`, `--anon` |
@@ -365,6 +365,16 @@ civitai models search --base-model Pony --base-model Illustrious --limit 20
 civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
 civitai images search --type video --sort "Most Reactions"   # videos only
 ```
+
+The human table includes a `BASE MODEL` column (the base model each image was
+generated with, when the API reports one; `-` when it doesn't), so you can see
+the ecosystem at a glance without dropping to `--json`.
+
+**`--sort` is ignored with `--model-id`.** The REST API returns images for a
+given `modelId` in its own default order regardless of `sort`, so
+`images search --model-id <id> --sort …` prints a one-line note on stderr and the
+results are NOT re-sorted. (`--model-version-id` is unaffected — it honours
+`--sort`.)
 
 **Non-weights file marker.** In the human (non-`--json`) output of
 `models get` and `model-versions get`, a version whose **primary file is not
