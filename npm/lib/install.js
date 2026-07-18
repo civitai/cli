@@ -23,8 +23,10 @@ const BINARIES_DIR = path.join(__dirname, "binaries");
 const OS_MAP = { linux: "linux", darwin: "darwin", win32: "windows" };
 const ARCH_MAP = { x64: "amd64", arm64: "arm64" };
 
-// Combos GoReleaser does NOT build (see .goreleaser.yaml `ignore:`).
-const UNSUPPORTED = new Set(["windows/arm64"]);
+// Combos GoReleaser does NOT build (keep in sync with .goreleaser.yaml). All
+// OS_MAP×ARCH_MAP combos are now built (windows/arm64 enabled), so this is empty;
+// re-add an entry here if a target is ever dropped from the release matrix.
+const UNSUPPORTED = new Set([]);
 
 function target() {
   const goos = OS_MAP[process.platform];
