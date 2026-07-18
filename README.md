@@ -1,5 +1,10 @@
 # civitai CLI
 
+> **Browse and download Civitai models, images, and articles — and author,
+> validate, and submit App Blocks.** Two paths in one static binary: an
+> anonymous **read/download client** for the public API, and the toolchain for
+> shipping **Apps**.
+
 > ⚠️ **Apps is in a limited, invite-only beta (pre-GA).** You can install this
 > CLI, `login`, scaffold, validate, and run an app locally right now — but
 > **`civitai app submit` and `dev:live` require an invite**: submission and
@@ -11,7 +16,9 @@
 [![Request access](https://img.shields.io/badge/Request%20access-invite--only%20beta-3b82f6?style=for-the-badge&logo=github)](https://github.com/civitai/cli/issues/new?template=request-access.yml)
 
 The command-line interface for [Civitai](https://civitai.com) — a single static
-binary for authoring and shipping **Apps**.
+binary that does two things: it's a thin **read/download client** for Civitai's
+public API (browse and fetch models, images, and articles — no account needed to
+read), and it's the toolchain to **author, validate, and ship Apps**.
 
 An **App** is a small, sandboxed web app that runs inside Civitai
 surfaces (it's served in an iframe; the platform owns the build and the
@@ -93,7 +100,39 @@ go install github.com/civitai/cli/cmd/civitai@latest
 # installs the `civitai` binary into $(go env GOPATH)/bin
 ```
 
-## Quickstart
+## Quickstart: browse & download
+
+Reads are **anonymous** — no `login` needed. Every command takes `--json` to
+emit the raw API response for scripting.
+
+```bash
+# Search models — filter by base model, type, and sort:
+civitai models search --base-model Illustrious --type Checkpoint --sort "Most Downloaded"
+
+# --base-model works on any type, including embeddings (TextualInversion):
+civitai models search --type TextualInversion --base-model "SDXL 1.0"
+
+# Inspect a specific model or a specific model version:
+civitai models get 4384
+civitai model-versions get 128713
+
+# Download a version's file(s) — SHA256-verified, streamed atomically.
+# `--layout` routes each file into the right app subfolder (also `a1111`);
+# `--dry-run` prints the plan without transferring. Downloads require `civitai login`.
+civitai download 128713 --layout comfyui --root ~/ComfyUI
+civitai download 128713 --dry-run
+
+# Find and read articles (guides) right in the terminal:
+civitai articles search --query "comfyui workflow"
+civitai articles get 32680 --content
+```
+
+See [Browse the public API](#browse-the-public-api) and
+[Download model files](#download-model-files) below for the full command and
+flag reference (images, tags, creators, collections, pagination, folder routing,
+base-model compatibility checks, and more).
+
+## Quickstart: build an App Block
 
 ```bash
 # 1. Authenticate once (browser device login; or `civitai login --token <t>`).
