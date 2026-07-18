@@ -66,6 +66,15 @@ cursor is printed after the results.`,
 					q.Add("baseModels", bm)
 				}
 			}
+			// The API sorts by the given --period but only ever returns the
+			// all-time stats.downloadCount (there is no per-period download
+			// total), so the DOWNLOADS column can show a lower count on an
+			// earlier row — which reads as a broken sort. Warn so the number
+			// isn't misread as the period's count.
+			if cmd.Flags().Changed("period") {
+				fmt.Fprintln(cmd.ErrOrStderr(),
+					"note: the DL(all-time) column is the all-time download count; the API does not return per-period download totals, so it does not reflect --period.")
+			}
 			addIfSet(q, "sort", sort)
 			addIfSet(q, "period", period)
 			addIfSet(q, "cursor", cursor)
@@ -144,7 +153,11 @@ func printModelList(cmd *cobra.Command, items []api.ModelListItem) {
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
-	fmt.Fprintln(tw, "ID\tNAME\tTYPE\tCREATOR\tDOWNLOADS\tTHUMBSUP")
+	// The API returns only the all-time stats.downloadCount — there is no
+	// per-period download total — so label the column all-time to avoid the
+	// "row 2 has more downloads than row 1" read-as-broken-sort confusion when
+	// results are sorted by --period (e.g. --sort "Most Downloaded" --period Month).
+	fmt.Fprintln(tw, "ID\tNAME\tTYPE\tCREATOR\tDL(all-time)\tTHUMBSUP")
 	for _, m := range items {
 		creator := "-"
 		if m.Creator != nil && m.Creator.Username != "" {
