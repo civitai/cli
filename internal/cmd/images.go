@@ -160,17 +160,24 @@ func printImageListMeta(cmd *cobra.Command, items []api.ImageItem) {
 	for _, im := range items {
 		fmt.Fprintf(out, "%d  [%s]  %dx%d  by %s\n",
 			im.ID, orDash(safeTerm(im.NSFWLevel)), im.Width, im.Height, orDash(safeTerm(im.Username)))
-		if im.Meta == nil {
+		m, state := im.ParseMeta()
+		switch state {
+		case api.MetaAbsent:
 			// meta: null — either the uploader hid their generation data, or the
 			// API had none for this image. Not an error.
 			fmt.Fprintln(out, "  meta: (hidden by uploader)")
-		} else {
-			m := im.Meta
+		case api.MetaUnparseable:
+			// meta present but not the expected object shape — degrade rather than
+			// drop the whole image.
+			fmt.Fprintln(out, "  meta: (unrecognized format)")
+		default: // api.MetaOK
 			fmt.Fprintf(out, "  model: %s   sampler: %s   cfg: %s   steps: %s   seed: %s\n",
 				orDash(safeTerm(m.Model)), orDash(safeTerm(m.Sampler)),
-				orDash(safeTerm(m.CfgScale.String())), orDash(safeTerm(m.Steps.String())),
-				orDash(safeTerm(m.Seed.String())))
-			fmt.Fprintf(out, "  prompt: %s\n", safeTerm(m.Prompt))
+				orDash(safeTerm(m.CfgScaleString())), orDash(safeTerm(m.StepsString())),
+				orDash(safeTerm(m.SeedString())))
+			if strings.TrimSpace(m.Prompt) != "" {
+				fmt.Fprintf(out, "  prompt: %s\n", safeTerm(m.Prompt))
+			}
 			if strings.TrimSpace(m.NegativePrompt) != "" {
 				fmt.Fprintf(out, "  negative: %s\n", safeTerm(m.NegativePrompt))
 			}

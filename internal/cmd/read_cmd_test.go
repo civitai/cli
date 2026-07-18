@@ -390,6 +390,54 @@ func TestImagesSearchMetaJSONPassthrough(t *testing.T) {
 	}
 }
 
+// TestImagesSearchMetaMalformed asserts a single image with a malformed/oddly-
+// typed meta cannot fail the whole page: the human path degrades to a marker,
+// sibling images still render, and --meta --json still passes the raw body
+// through (the decode captures meta as raw bytes and never aborts on shape).
+func TestImagesSearchMetaMalformed(t *testing.T) {
+	// img 1: meta is an array (not an object) → unparseable.
+	// img 2: meta object with an empty-string cfgScale + non-numeric seed + a good
+	//        prompt → one bad field must not lose the item.
+	// img 3: meta:null → hidden.
+	body := `{"items":[
+	  {"id":1,"url":"https://img/1","width":1,"height":1,"nsfwLevel":"None","username":"a","meta":[1,2,3]},
+	  {"id":2,"url":"https://img/2","width":1,"height":1,"nsfwLevel":"None","username":"b",
+	   "meta":{"prompt":"still here","cfgScale":"","steps":20,"seed":"unknown","Model":"M"}},
+	  {"id":3,"url":"https://img/3","width":1,"height":1,"nsfwLevel":"None","username":"c","meta":null}
+	],"metadata":{}}`
+
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	})
+	out, _, err := run(t, "images", "search", "--meta")
+	if err != nil {
+		t.Fatalf("malformed meta must not fail the command: %v", err)
+	}
+	for _, want := range []string{
+		"meta: (unrecognized format)", // img 1 array meta degrades, page survives
+		"prompt: still here",          // img 2 survives despite empty cfgScale / string seed
+		"seed: unknown",               // non-numeric seed rendered verbatim, not dropped
+		"meta: (hidden by uploader)",  // img 3 null
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("malformed --meta output missing %q:\n%s", want, out)
+		}
+	}
+
+	// --meta --json must still pass the raw (malformed-meta) body through without
+	// erroring — the top-level decode captures meta as raw bytes.
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	})
+	jout, _, err := run(t, "images", "search", "--meta", "--json")
+	if err != nil {
+		t.Fatalf("malformed meta must not fail --json passthrough: %v", err)
+	}
+	if !strings.Contains(jout, "still here") {
+		t.Errorf("--json should pass the raw meta through despite a malformed sibling: %s", jout)
+	}
+}
+
 func TestTagsSearchWiring(t *testing.T) {
 	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/v1/tags" {
