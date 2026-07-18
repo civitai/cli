@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,6 +112,84 @@ func TestDownloadAllLayoutFansTypesToDifferentFolders(t *testing.T) {
 	// The VAE must NOT have landed in the checkpoint folder (the bug we fix).
 	if _, err := os.Stat(filepath.Join(root, "models", "Stable-diffusion", "dream.vae.pt")); err == nil {
 		t.Error("bundled VAE was mis-filed into the checkpoint folder")
+	}
+}
+
+// TestDownloadLayoutSanitizesHostileServerName is the Fix 4 assertion: under
+// --layout, a hostile server filename ("../../evil.txt") is still basename-
+// sanitized and lands INSIDE the routed type folder under --root, never outside
+// it. The traversal guard is shared with the default/--out-dir cases, but the
+// --layout branch (routeDir + filepath.Join) deserves its own end-to-end proof.
+func TestDownloadLayoutSanitizesHostileServerName(t *testing.T) {
+	const body = "pwned-weights"
+	// A hostile file name in the JSON, but the downloadUrl points at a CLEAN path
+	// (/dl/blob) so the transfer succeeds regardless of the name — the guard under
+	// test is that f.Name is basename-sanitized before it hits the filesystem.
+	var base string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/v1/model-versions/", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"id":128713,"modelId":4384,"name":"v","baseModel":"SDXL 1.0","model":{"name":"M","type":"Checkpoint"},"files":[{"id":1,"name":"../../evil.txt","type":"Model","primary":true,"sizeKB":1,"downloadUrl":"%s/dl/blob","hashes":{"SHA256":"%s"}}]}`, base, sha256hex(body))
+	})
+	mux.HandleFunc("/dl/", func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) })
+	srv := httptest.NewServer(mux)
+	base = srv.URL
+	defer srv.Close()
+
+	cfg := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfg)
+	t.Setenv("CIVITAI_TOKEN", "")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+	chdir(t, t.TempDir())
+	root := t.TempDir()
+
+	if _, _, err := run(t, "download", "128713", "--layout", "comfyui", "--root", root); err != nil {
+		t.Fatalf("download --layout hostile name: %v", err)
+	}
+
+	// Lands as <root>/models/checkpoints/evil.txt — basename only, inside the folder.
+	saved := filepath.Join(root, "models", "checkpoints", "evil.txt")
+	got, err := os.ReadFile(saved)
+	if err != nil {
+		t.Fatalf("sanitized file should be %s: %v", saved, err)
+	}
+	if string(got) != body {
+		t.Errorf("content = %q, want %q", got, body)
+	}
+	// Must NOT have escaped the routed folder (../../ up from models/checkpoints,
+	// nor up from --root itself).
+	for _, escaped := range []string{
+		filepath.Clean(filepath.Join(root, "models", "checkpoints", "..", "..", "evil.txt")),
+		filepath.Clean(filepath.Join(root, "..", "..", "evil.txt")),
+	} {
+		if escaped == saved {
+			continue
+		}
+		if _, err := os.Stat(escaped); err == nil {
+			t.Errorf("hostile name escaped the routed folder: %s exists", escaped)
+		}
+	}
+	// The resolved path must stay within --root.
+	clean := filepath.Clean(saved)
+	if !strings.HasPrefix(clean, filepath.Clean(root)+string(filepath.Separator)) {
+		t.Errorf("routed path %q escaped --root %q", clean, root)
+	}
+}
+
+// TestRouteDirWithHostileBasenameStaysInFolder is the unit-level guard for the
+// --layout branch: routeDir + join keeps a basename-sanitized name inside the
+// type folder (the caller passes the already-Base'd name, as targetPath does).
+func TestRouteDirWithHostileBasenameStaysInFolder(t *testing.T) {
+	root := t.TempDir()
+	// targetPath calls filepath.Base BEFORE routeDir; emulate that here.
+	base := filepath.Base("../../evil.txt")
+	dir, _ := routeDir("a1111", root, "Model", "Checkpoint", base)
+	full := filepath.Join(dir, base)
+	want := filepath.Join(root, "models", "Stable-diffusion", "evil.txt")
+	if full != want {
+		t.Errorf("routed path = %q, want %q", full, want)
+	}
+	if !strings.HasPrefix(filepath.Clean(full), filepath.Clean(root)+string(filepath.Separator)) {
+		t.Errorf("routed path %q escaped --root %q", full, root)
 	}
 }
 

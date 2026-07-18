@@ -2,48 +2,31 @@ package cmd
 
 import (
 	"fmt"
-	"html"
 	"regexp"
 	"strings"
+
+	"golang.org/x/net/html"
 )
 
 // htmlToText converts the sanitized article-body HTML (TipTap/ProseMirror
-// output) into readable plain text / lightweight markdown. It is a deliberately
-// small, dependency-free converter for the tags Civitai article content uses:
-// headings (h1–h6), paragraphs, line breaks, ordered/unordered lists, links,
-// images, inline/blocked code, blockquotes, horizontal rules, and bold/italic
-// emphasis. Any other tag is stripped but its text is kept; HTML entities are
-// decoded. It is NOT a general-purpose HTML parser — it targets the constrained
-// subset the API emits, and degrades gracefully (unknown tags → their text) on
-// anything else.
+// output) into readable plain text / lightweight markdown. It targets the tags
+// Civitai article content uses: headings (h1–h6), paragraphs, line breaks,
+// ordered/unordered lists, links, images, inline/blocked code, blockquotes,
+// horizontal rules, and bold/italic emphasis. Any other tag is stripped but its
+// text is kept; <script>/<style> content and HTML comments are dropped entirely.
+//
+// It parses HTML with the golang.org/x/net/html tokenizer rather than
+// hand-rolled regexes, so malformed / unclosed / deeply-nested markup can never
+// panic or loop, entities decode correctly (once — the tokenizer decodes text),
+// and script/style bodies are not mistaken for renderable text.
+//
+// The final rendered string is passed through sanitizeControl so that no raw
+// terminal control bytes an author embedded in the article can reach the user's
+// terminal as ANSI escapes.
 func htmlToText(body string) string {
 	r := &htmlRenderer{}
 	r.run(body)
-	return r.result()
-}
-
-// tokenizer splits HTML into text runs and tags. A tag token has name+attrs and
-// a closing flag; a text token carries decoded text.
-var tagRe = regexp.MustCompile(`(?s)<(/?)([a-zA-Z][a-zA-Z0-9]*)((?:[^<>"']|"[^"]*"|'[^']*')*?)(/?)>`)
-
-// hrefRe / srcRe pull an attribute value out of a tag's raw attribute string.
-var (
-	hrefRe = regexp.MustCompile(`(?i)\bhref\s*=\s*("([^"]*)"|'([^']*)'|(\S+))`)
-	srcRe  = regexp.MustCompile(`(?i)\bsrc\s*=\s*("([^"]*)"|'([^']*)'|(\S+))`)
-	altRe  = regexp.MustCompile(`(?i)\balt\s*=\s*("([^"]*)"|'([^']*)'|(\S+))`)
-)
-
-func attrValue(re *regexp.Regexp, attrs string) string {
-	m := re.FindStringSubmatch(attrs)
-	if m == nil {
-		return ""
-	}
-	for _, g := range m[2:] {
-		if g != "" {
-			return html.UnescapeString(g)
-		}
-	}
-	return ""
+	return sanitizeControl(r.result())
 }
 
 // listState tracks an open list's kind + item counter for nesting.
@@ -61,32 +44,78 @@ type htmlRenderer struct {
 	preBuf strings.Builder // buffered <pre> content
 	href   string          // href of an open <a>, emitted as [text](href) on close
 	aStart int             // len(line) when <a> opened, to wrap its text
+	skip   int             // >0 while inside a <script>/<style> subtree (drop content)
 }
 
-// run tokenizes body and dispatches text/tags.
+// run drives the html tokenizer over body and dispatches text/tags. On EOF (or a
+// read error) it flushes any open <pre>/list/paragraph so buffered content is
+// never silently dropped.
 func (r *htmlRenderer) run(body string) {
-	idx := tagRe.FindAllStringSubmatchIndex(body, -1)
-	pos := 0
-	for _, m := range idx {
-		if m[0] > pos {
-			r.text(body[pos:m[0]])
+	z := html.NewTokenizer(strings.NewReader(body))
+	for {
+		tt := z.Next()
+		switch tt {
+		case html.ErrorToken:
+			// EOF (or an unrecoverable read error): flush open state and stop.
+			r.flushOpen()
+			return
+		case html.TextToken:
+			if r.skip == 0 {
+				// z.Text() returns already-entity-decoded text — do NOT decode again.
+				r.text(string(z.Text()))
+			}
+		case html.StartTagToken, html.SelfClosingTagToken:
+			self := tt == html.SelfClosingTagToken
+			name, hasAttr := z.TagName()
+			n := string(name)
+			if n == "script" || n == "style" {
+				// Skip the entire raw-text subtree; a self-closing form has no body.
+				if !self {
+					r.skip++
+				}
+				continue
+			}
+			if r.skip > 0 {
+				continue
+			}
+			r.tag(n, r.readAttrs(z, hasAttr), false, self)
+		case html.EndTagToken:
+			name, _ := z.TagName()
+			n := string(name)
+			if n == "script" || n == "style" {
+				if r.skip > 0 {
+					r.skip--
+				}
+				continue
+			}
+			if r.skip > 0 {
+				continue
+			}
+			r.tag(n, nil, true, false)
+		case html.CommentToken, html.DoctypeToken:
+			// Dropped: never emit comment/doctype text.
 		}
-		closing := body[m[2]:m[3]] == "/"
-		name := strings.ToLower(body[m[4]:m[5]])
-		attrs := body[m[6]:m[7]]
-		selfClose := body[m[8]:m[9]] == "/"
-		r.tag(name, attrs, closing, selfClose)
-		pos = m[1]
 	}
-	if pos < len(body) {
-		r.text(body[pos:])
-	}
-	r.flushLine()
 }
 
-// text appends decoded text to the current line (or the <pre> buffer).
-func (r *htmlRenderer) text(s string) {
-	decoded := html.UnescapeString(s)
+// readAttrs collects a start tag's attributes into a lowercased-key map. The
+// tokenizer returns already-decoded attribute values.
+func (r *htmlRenderer) readAttrs(z *html.Tokenizer, hasAttr bool) map[string]string {
+	if !hasAttr {
+		return nil
+	}
+	m := map[string]string{}
+	for {
+		k, v, more := z.TagAttr()
+		m[strings.ToLower(string(k))] = string(v)
+		if !more {
+			return m
+		}
+	}
+}
+
+// text appends already-decoded text to the current line (or the <pre> buffer).
+func (r *htmlRenderer) text(decoded string) {
 	if r.inPre {
 		r.preBuf.WriteString(decoded)
 		return
@@ -108,7 +137,7 @@ func (r *htmlRenderer) text(s string) {
 
 var wsRe = regexp.MustCompile(`\s+`)
 
-func (r *htmlRenderer) tag(name, attrs string, closing, selfClose bool) {
+func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfClose bool) {
 	switch name {
 	case "br":
 		r.flushLine()
@@ -149,12 +178,12 @@ func (r *htmlRenderer) tag(name, attrs string, closing, selfClose bool) {
 		if closing {
 			r.closeAnchor()
 		} else {
-			r.href = attrValue(hrefRe, attrs)
+			r.href = attrs["href"]
 			r.aStart = r.line.Len()
 		}
 	case "img":
-		alt := attrValue(altRe, attrs)
-		src := attrValue(srcRe, attrs)
+		alt := attrs["alt"]
+		src := attrs["src"]
 		if src != "" {
 			if alt == "" {
 				alt = "image"
@@ -192,10 +221,9 @@ func (r *htmlRenderer) tag(name, attrs string, closing, selfClose bool) {
 	}
 }
 
-// emphasis wraps subsequent inline text with a marker on open and close by simply
-// writing the marker; the tokenizer emits open then close so the pair balances.
+// emphasis writes an emphasis marker; the tokenizer emits the open then the close
+// tag so the surrounding pair balances.
 func (r *htmlRenderer) emphasis(marker string) {
-	// Don't emphasize across an empty span.
 	r.line.WriteString(marker)
 }
 
@@ -263,8 +291,22 @@ func (r *htmlRenderer) closePre() {
 	r.block("```\n" + code + "\n```")
 }
 
-// emphasis/anchor markers may leave a hanging marker with no content when a span
-// is empty; flushLine trims trailing spaces and drops empty lines.
+// flushOpen flushes whatever block is in progress at EOF so unclosed markup never
+// silently drops content: an open <pre> is fenced, an open list item is emitted
+// with its marker, otherwise the in-progress paragraph line is flushed.
+func (r *htmlRenderer) flushOpen() {
+	switch {
+	case r.inPre:
+		r.closePre()
+	case len(r.lists) > 0:
+		r.flushListItem()
+	default:
+		r.flushLine()
+	}
+}
+
+// flushLine trims trailing spaces and drops empty lines; a hanging emphasis /
+// anchor marker on an otherwise-empty span is discarded.
 func (r *htmlRenderer) flushLine() {
 	text := strings.TrimRight(r.line.String(), " ")
 	r.line.Reset()
@@ -301,3 +343,32 @@ func (r *htmlRenderer) result() string {
 }
 
 var blankRunRe = regexp.MustCompile(`\n{3,}`)
+
+// sanitizeControl strips terminal control characters from the final rendered
+// output so a malicious article author cannot inject ANSI escape sequences into
+// the user's terminal. All C0 control bytes (0x00–0x1F) and DEL (0x7F) are
+// removed EXCEPT newline and tab, which are legitimate layout; a carriage return
+// is dropped (line structure is already expressed with \n).
+func sanitizeControl(s string) string {
+	if !strings.ContainsFunc(s, isStrippedControl) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, ch := range s {
+		if isStrippedControl(ch) {
+			continue
+		}
+		b.WriteRune(ch)
+	}
+	return b.String()
+}
+
+// isStrippedControl reports whether r is a control character we remove (any C0
+// control or DEL, other than newline and tab).
+func isStrippedControl(r rune) bool {
+	if r == '\n' || r == '\t' {
+		return false
+	}
+	return r < 0x20 || r == 0x7f
+}

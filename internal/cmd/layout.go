@@ -150,32 +150,48 @@ func routeDir(layout, root, fileType, modelType, fileName string) (dir, note str
 // mixedTypeWarning builds the one-line warning printed when `--all` (without
 // `--layout`) would place files of DIFFERING known types into one directory —
 // the mis-file footgun. It returns "" when the set is single-typed (≤1 distinct
-// known category) so a homogeneous download stays quiet. off-type files are
-// those whose known category differs from the reference (the primary/first
-// file's category, or the first known category when that is unknown).
+// known category) so a homogeneous download stays quiet.
+//
+// The REFERENCE category is the primary/weights category — never merely
+// files[0]'s. If an ancillary file (e.g. a bundled VAE) is listed first, using
+// files[0] as the reference would perversely name the actual weights file as the
+// "mis-filed" one. Instead the reference is: the weights category of the primary
+// file if one is known, else the most common known category (weights typically
+// dominate), with ties broken by first appearance. The off-type files named are
+// those whose known category differs from that reference.
 func mixedTypeWarning(files []fileTypeInfo) string {
-	// Collect distinct KNOWN categories; unknown types don't count as a mismatch
-	// (we can't confidently say where they'd go).
-	known := map[resourceCategory]bool{}
+	// Collect distinct KNOWN categories + their counts; unknown types don't count
+	// as a mismatch (we can't confidently say where they'd go).
+	counts := map[resourceCategory]int{}
+	order := []resourceCategory{}
 	for _, f := range files {
 		if c := fileCategory(f.fileType, f.modelType); c != catUnknown {
-			known[c] = true
+			if counts[c] == 0 {
+				order = append(order, c)
+			}
+			counts[c]++
 		}
 	}
-	if len(known) < 2 {
+	if len(counts) < 2 {
 		return ""
 	}
-	// Reference category = the primary/first file's category, else the first
-	// known category encountered.
+	// Reference category = the primary file's known category if any, else the
+	// most common known category (ties → first appearance).
 	ref := catUnknown
-	if len(files) > 0 {
-		ref = fileCategory(files[0].fileType, files[0].modelType)
-	}
-	if ref == catUnknown {
-		for _, f := range files {
+	for _, f := range files {
+		if f.primary {
 			if c := fileCategory(f.fileType, f.modelType); c != catUnknown {
 				ref = c
-				break
+			}
+			break
+		}
+	}
+	if ref == catUnknown {
+		best := 0
+		for _, c := range order { // order preserves first-appearance for tie-breaks
+			if counts[c] > best {
+				best = counts[c]
+				ref = c
 			}
 		}
 	}
@@ -197,4 +213,5 @@ type fileTypeInfo struct {
 	name      string
 	fileType  string
 	modelType string
+	primary   bool // the version's primary (weights) file — anchors the reference category
 }

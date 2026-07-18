@@ -86,6 +86,45 @@ func TestMixedTypeWarningFiresOnDifferingTypes(t *testing.T) {
 	}
 }
 
+// TestMixedTypeWarningNamesOffTypeWhenAncillaryFirst is the Fix 3 assertion: when
+// an ancillary file (a bundled VAE) is listed BEFORE the primary weights file,
+// the warning must still name the VAE (the off-type minority), never the
+// checkpoint — files[0] is not the reference; the primary/weights file is.
+func TestMixedTypeWarningNamesOffTypeWhenAncillaryFirst(t *testing.T) {
+	files := []fileTypeInfo{
+		{name: "bundled.vae.pt", fileType: "VAE", modelType: "Checkpoint", primary: false},
+		{name: "dream.safetensors", fileType: "Model", modelType: "Checkpoint", primary: true},
+	}
+	w := mixedTypeWarning(files)
+	if w == "" {
+		t.Fatal("expected a mixed-type warning for VAE-first + checkpoint")
+	}
+	if !strings.Contains(w, "bundled.vae.pt") {
+		t.Errorf("warning must name the off-type VAE: %q", w)
+	}
+	if strings.Contains(w, "dream.safetensors") {
+		t.Errorf("warning must NOT name the primary weights file: %q", w)
+	}
+}
+
+// TestMixedTypeWarningRefFallsBackToMostCommon proves that with no primary flag
+// set, the reference category is the MOST COMMON known category (weights usually
+// dominate) — so two checkpoints + one leading VAE still name the VAE.
+func TestMixedTypeWarningRefFallsBackToMostCommon(t *testing.T) {
+	files := []fileTypeInfo{
+		{name: "extra.vae.pt", fileType: "VAE", modelType: "Checkpoint"},
+		{name: "a.safetensors", fileType: "Model", modelType: "Checkpoint"},
+		{name: "b.safetensors", fileType: "Model", modelType: "Checkpoint"},
+	}
+	w := mixedTypeWarning(files)
+	if !strings.Contains(w, "extra.vae.pt") {
+		t.Errorf("most-common reference should name the minority VAE: %q", w)
+	}
+	if strings.Contains(w, "a.safetensors") || strings.Contains(w, "b.safetensors") {
+		t.Errorf("majority checkpoints must not be named: %q", w)
+	}
+}
+
 // TestMixedTypeWarningQuietForSingleType proves a homogeneous set (or one with
 // only unknown extras) stays quiet.
 func TestMixedTypeWarningQuietForSingleType(t *testing.T) {

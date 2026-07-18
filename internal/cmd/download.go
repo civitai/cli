@@ -388,7 +388,7 @@ func targetPath(f api.ModelVersionFile, o *downloadOpts) (string, string, error)
 func fileTypeInfos(files []api.ModelVersionFile, modelType string) []fileTypeInfo {
 	infos := make([]fileTypeInfo, len(files))
 	for i := range files {
-		infos[i] = fileTypeInfo{name: files[i].Name, fileType: files[i].Type, modelType: modelType}
+		infos[i] = fileTypeInfo{name: files[i].Name, fileType: files[i].Type, modelType: modelType, primary: files[i].Primary}
 	}
 	return infos
 }
