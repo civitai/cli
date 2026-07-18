@@ -1,0 +1,126 @@
+# Auto-bump the Nix flake's `vendorHash` when it drifts from go.mod/go.sum.
+#
+# `vendorHash` in flake.nix is a pinned fixed-output hash derived from go.sum.
+# It goes STALE whenever go.mod/go.sum change (a dep add/bump), which silently
+# breaks `nix run github:civitai/cli` until a human hand-recomputes it (it broke
+# for ~3 releases before it was caught). The `flake` CI job DETECTS this drift
+# (the build fails on a hash mismatch); this job REMEDIATES it — it recomputes
+# the correct hash and opens a PR — mirroring `bump-scaffold-pins` /
+# `revendor-canonical-schema`.
+#
+# Recompute trick (the `lib.fakeHash` dance, same as flake.nix's comment): force
+# a mismatch by writing a known-fake hash into flake.nix, run `nix build`, and
+# parse the real hash out of nix's `got: sha256-…` error line, then write it
+# back. On a run with no drift the recomputed hash equals the committed one, the
+# write-back is a no-op, `git status --porcelain` is empty, and NO PR is opened.
+#
+# Run manually anytime via the Actions tab → this workflow → "Run workflow"
+# (workflow_dispatch). It also runs weekly and on any push to main that touches
+# go.mod/go.sum/flake.nix/flake.lock (so a dep change gets a prompt fix, not
+# just the weekly sweep — minimizing the window `nix run` is broken).
+name: bump-flake-vendorhash
+
+on:
+  schedule:
+    # Weekly, Mondays 07:47 UTC — a distinct minute from the other drift-bots
+    # (bump-scaffold-pins 07:17, revendor-canonical-schema 07:37). Cron literal
+    # in YAML needs quoting so the `*` isn't parsed as a YAML alias.
+    - cron: "47 7 * * 1"
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths:
+      - go.mod
+      - go.sum
+      - flake.nix
+      - flake.lock
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v27
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      # Recompute the vendorHash via the lib.fakeHash dance: write a known-fake
+      # hash, let `nix build` fail with the real `got: sha256-…`, parse it, and
+      # write it back into flake.nix. On a no-drift run the parsed hash equals
+      # the committed one, so this leaves flake.nix byte-identical (no-op) and
+      # the detect-changes gate below opens no PR.
+      - name: recompute flake vendorHash
+        run: |
+          set -euo pipefail
+          FAKE='sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
+          sed -i "s#vendorHash = \"sha256-[^\"]*\";#vendorHash = \"$FAKE\";#" flake.nix
+          GOT="$(nix build .#default 2>&1 | grep -oE 'sha256-[A-Za-z0-9+/=]{40,}' | grep -v "$FAKE" | tail -1)"
+          if [ -z "$GOT" ]; then
+            echo "::error::failed to parse a recomputed vendorHash from the nix build output" >&2
+            exit 1
+          fi
+          echo "recomputed vendorHash = $GOT"
+          sed -i "s#vendorHash = \"sha256-[^\"]*\";#vendorHash = \"$GOT\";#" flake.nix
+
+      # Only validate + open a PR when the recompute actually rewrote the hash —
+      # a no-op run (hash already correct) skips everything downstream.
+      - name: detect changes
+        id: changed
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "vendorHash already current — nothing to do"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Prove correctness INSIDE this job. A PR opened below with the scoped
+      # token DOES trigger the repo's `flake` check, but validate here too as
+      # defense-in-depth: the recomputed hash must produce a flake that builds
+      # and yields a runnable binary.
+      - name: validate — flake builds with the new vendorHash
+        if: steps.changed.outputs.changed == 'true'
+        run: nix build .#default
+
+      - name: validate — the built binary runs
+        if: steps.changed.outputs.changed == 'true'
+        run: ./result/bin/civitai version
+
+      - name: open PR if vendorHash changed
+        if: steps.changed.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
+        with:
+          # Scoped fine-grained token (Contents + Pull requests: RW on this repo
+          # only). The civitai org disallows the default GITHUB_TOKEN from
+          # creating PRs, and — bonus — a PR opened with this token DOES trigger
+          # the repo's normal CI (the `flake` build check). Shared with the
+          # other drift-bots (bump-scaffold-pins / revendor-canonical-schema).
+          token: ${{ secrets.BUMP_SCAFFOLD_PINS_TOKEN }}
+          branch: automation/bump-flake-vendorhash
+          delete-branch: true
+          commit-message: "chore(nix): bump flake vendorHash to match go.sum"
+          title: "chore(nix): bump flake vendorHash to match go.sum"
+          body: |
+            Automated by the `bump-flake-vendorhash` workflow.
+
+            The Nix flake's `vendorHash` is a fixed-output hash derived from
+            `go.sum`. It drifted from the current `go.mod`/`go.sum` (a dep was
+            added or bumped), which makes the `flake` CI build fail and silently
+            breaks `nix run github:civitai/cli`. This PR recomputes the correct
+            hash via the `lib.fakeHash` dance (write a fake hash → `nix build` →
+            parse the real `got: sha256-…` → write it back) and updates
+            `flake.nix`.
+
+            **Validated in-job before opening this PR:** `nix build .#default`
+            succeeds with the new hash and `./result/bin/civitai version` runs.
+
+            **CI note:** this PR is opened with the scoped fine-grained token
+            (`secrets.BUMP_SCAFFOLD_PINS_TOKEN`, Contents + Pull requests RW on
+            this repo only), not the default `GITHUB_TOKEN` — so the repo's
+            `flake` check re-runs the build on it as an independent confirmation.
