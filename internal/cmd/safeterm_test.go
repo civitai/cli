@@ -20,10 +20,10 @@ func TestSafeTerm(t *testing.T) {
 		{"strips BEL", "a\x07b", "ab"},
 		{"strips NUL", "a\x00b", "ab"},
 		{"strips DEL", "a\x7fb", "ab"},
-		{"strips C1 CSI U+009B", "ab", "ab"},
-		{"strips C1 OSC U+009D", "ab", "ab"},
-		{"strips C1 low U+0080", "ab", "ab"},
-		{"strips C1 high U+009F", "ab", "ab"},
+		{"strips C1 CSI U+009B", "a\u009bb", "ab"},
+		{"strips C1 OSC U+009D", "a\u009db", "ab"},
+		{"strips C1 low U+0080", "a\u0080b", "ab"},
+		{"strips C1 high U+009F", "a\u009fb", "ab"},
 		{"keeps multibyte UTF-8 (accents/CJK/emoji)", "café — 日本語 🚀", "café — 日本語 🚀"},
 		{"keeps printable just above C1 (U+00A0 NBSP)", "a z", "a z"},
 	}
@@ -63,7 +63,7 @@ func TestSafeTermRemovesEveryControlRune(t *testing.T) {
 
 // controlBytes are the raw terminal-control byte sequences that must never
 // survive into human-renderer output.
-var controlBytes = []string{"\x1b", "", "\x07", "\x00", "\x7f"}
+var controlBytes = []string{"\x1b", "\u009b", "\x07", "\x00", "\x7f"}
 
 // assertNoControlBytes fails if s contains any raw terminal control sequence.
 func assertNoControlBytes(t *testing.T, label, s string) {

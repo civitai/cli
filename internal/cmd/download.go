@@ -490,7 +490,7 @@ func checkTargetCollisions(files []api.ModelVersionFile, o *downloadOpts) error 
 	if groups == 0 {
 		return nil
 	}
-	return fmt.Errorf("refusing to download: %d set(s) of files would be written to the same path and silently overwrite each other:\n%s\nPick ONE with --file <id> (the numeric file id shown above), or download them separately to distinct paths (e.g. one at a time with --out <path>).", groups, strings.TrimRight(b.String(), "\n"))
+	return fmt.Errorf("refusing to download: %d set(s) of files would be written to the same path and silently overwrite each other:\n%s\nPick ONE with --file <id> (the numeric file id shown above), or download them separately to distinct paths (e.g. one at a time with --out <path>)", groups, strings.TrimRight(b.String(), "\n"))
 }
 
 // targetPath computes the on-disk destination for a file given the flags:

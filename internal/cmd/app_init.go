@@ -79,7 +79,7 @@ server, which this CLI cannot do yet (no programmatic app-source endpoint).
 
 TODO(server): expose a read endpoint that returns a published app's canonical
 source tree by slug, then --from can scaffold from it. For now, run a plain
-init and copy the upstream files in manually.`)
+init and copy the upstream files in manually`)
 	}
 
 	name := ""

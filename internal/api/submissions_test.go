@@ -141,7 +141,7 @@ func TestSubmissionsErrorMapping(t *testing.T) {
 		want   string
 	}{
 		{http.StatusUnauthorized, map[string]string{"message": "Invalid API key"}, "civitai login"},
-		{http.StatusForbidden, map[string]string{"message": "restricted to the civitai team"}, "Apps access required — invite-only beta"},
+		{http.StatusForbidden, map[string]string{"message": "restricted to the civitai team"}, "apps access required — invite-only beta"},
 		{http.StatusNotFound, map[string]string{"message": "Submission not found"}, "no such submission"},
 		{http.StatusTooManyRequests, map[string]string{"message": "Rate limit exceeded"}, "rate limited"},
 		{http.StatusServiceUnavailable, map[string]string{"message": "Apps are not enabled"}, "not enabled"},
