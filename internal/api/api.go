@@ -986,7 +986,7 @@ func devTokenError(status int, raw []byte) (err error) {
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("Apps unavailable (503): %s", msg)
+		return fmt.Errorf("apps unavailable (503): %s", msg)
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
@@ -1247,7 +1247,7 @@ func withdrawError(status int, raw []byte) (err error) {
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("Apps unavailable (503): %s", msg)
+		return fmt.Errorf("apps unavailable (503): %s", msg)
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
@@ -1262,13 +1262,13 @@ func submissionsError(status int, raw []byte) (err error) {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login`", msg)
 	case http.StatusForbidden:
-		return fmt.Errorf("Apps access required — invite-only beta (403): %s", msg)
+		return fmt.Errorf("apps access required — invite-only beta (403): %s", msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("no such submission (404): %s", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited (429): %s — wait a moment and retry", msg)
 	case http.StatusServiceUnavailable:
-		return fmt.Errorf("Apps is not enabled (503): %s", msg)
+		return fmt.Errorf("apps is not enabled (503): %s", msg)
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}

@@ -109,13 +109,6 @@ type sshDialer struct {
 // status to log.
 func NewSSHDialer(log io.Writer) Dialer { return &sshDialer{log: log} }
 
-func (d *sshDialer) logf(format string, a ...any) {
-	if d.log == nil {
-		return
-	}
-	fmt.Fprintf(d.log, format, a...)
-}
-
 // pinnedHostKeyCallback builds a FixedHostKey callback from the mint-provided
 // OpenSSH host public-key line, PINNING the sish host key so an on-path attacker
 // impersonating the sish endpoint is rejected at the SSH handshake (a MITM there

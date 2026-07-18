@@ -21,14 +21,16 @@ test:
 vet:
 	go vet ./...
 
-# `lint` runs golangci-lint if installed, else falls back to vet.
+# `lint` runs the static-analysis gate. golangci-lint is REQUIRED (config in
+# .golangci.yml) — it is the same tool CI runs, so a local `make lint` mirrors
+# the PR gate. Install: https://golangci-lint.run/welcome/install/ (or, on Nix,
+# `nix-shell -p golangci-lint --run "golangci-lint run"`).
 lint:
-	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run; \
-	else \
-		echo "golangci-lint not found; running go vet instead"; \
-		go vet ./...; \
-	fi
+	@command -v golangci-lint >/dev/null 2>&1 || { \
+		echo "golangci-lint not found. Install it: https://golangci-lint.run/welcome/install/"; \
+		exit 1; \
+	}
+	golangci-lint run
 
 fmt:
 	gofmt -s -w .

@@ -37,6 +37,24 @@ jobs:
       - name: build
         run: go build ./...
 
+  # Static-analysis gate: golangci-lint over the whole module using the curated
+  # linter set in .golangci.yml (staticcheck / govet / ineffassign / unused /
+  # misspell + gofmt). Runs on every PR. `make lint` mirrors this locally.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: false # golangci-lint-action manages its own build/analysis cache
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.12.2
+
   # Drift-guard: the vendored block-manifest schema (go:embed'd for offline
   # `civitai app validate`) must stay identical to the canonical the platform
   # publishes at civitai.com/schemas/app-block/v1.json (the single source of

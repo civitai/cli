@@ -161,7 +161,7 @@ func TestAppDevTokenErrorMapping(t *testing.T) {
 		{http.StatusForbidden, map[string]any{"message": "mods only"}, "not authorized"},
 		{http.StatusUnauthorized, map[string]any{"message": "bad key"}, "not logged in"},
 		{http.StatusTooManyRequests, map[string]any{"message": "slow down"}, "rate limited"},
-		{http.StatusServiceUnavailable, map[string]any{"message": "flag off"}, "Apps unavailable (503)"},
+		{http.StatusServiceUnavailable, map[string]any{"message": "flag off"}, "apps unavailable (503)"},
 	}
 	for _, tc := range cases {
 		srv := devTokenServer(t, tc.body, tc.status, nil)
