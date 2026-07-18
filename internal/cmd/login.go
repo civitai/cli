@@ -16,6 +16,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// accountAPIKeysURL is where a user mints a personal API key (the "API Keys"
+// section of the Civitai account page). Single-sourced here for the
+// `login --token` (no value) deeplink.
+const accountAPIKeysURL = "https://civitai.com/user/account"
+
+// tokenFlagNoValue is the sentinel NoOptDefVal for --token. pflag only allows a
+// flag to be written with no argument (`login --token`) when its NoOptDefVal is
+// non-empty; without it, `--token` alone errors "flag needs an argument". We set
+// this sentinel so the no-value form parses, then detect it (or an explicitly
+// empty value) and print where to mint a key instead of attempting a login.
+const tokenFlagNoValue = "\x00civitai-token-no-value"
+
 func newLoginCmd() *cobra.Command {
 	var tokenFlag string
 	var noBrowser bool
@@ -31,7 +43,9 @@ URL and a code, you approve in your browser, and the CLI stores short-lived
 OAuth tokens that refresh automatically.
 
 Alternatively, pass --token to store a personal API key created at
-https://civitai.com/user/account (API Keys). Either way the credential is saved
+https://civitai.com/user/account (API Keys). Passing --token with NO value prints
+where to create that key and how to re-run (it does not log in). Either way the
+credential is saved
 to your config file (~/.config/civitai/config.yaml, owner-readable only). The
 CIVITAI_TOKEN environment variable still overrides the stored credential.
 
@@ -45,24 +59,67 @@ account with ` + "`civitai whoami`" + `.)`,
 		Example: `  civitai login                 # browser device login (recommended)
   civitai login --no-browser    # device login without auto-opening a browser
   civitai login --token <token> # store a personal API key instead
+  civitai login --token         # no value: print where to create a personal key
   civitai login                 # run again to SWITCH the active account (overwrites the stored credential)`,
-		Args: cobra.NoArgs,
+		// Setting --token's NoOptDefVal (so `login --token` needs no argument) makes
+		// pflag parse the space-separated form `login --token <value>` as a single
+		// positional arg. Accept exactly one positional ONLY when --token was given,
+		// to preserve that form; login otherwise takes no positional args.
+		Args: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed("token") && len(args) <= 1 {
+				return nil
+			}
+			return cobra.NoArgs(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
 				return err
 			}
 
-			// --token (or piped stdin to the prompt) keeps the personal-key path.
-			if strings.TrimSpace(tokenFlag) != "" {
-				return loginWithToken(cmd, cfg, tokenFlag)
+			// Resolve the token value across all three spellings:
+			//   login --token=<value>   → tokenFlag holds <value>
+			//   login --token <value>   → tokenFlag is the sentinel, <value> is args[0]
+			//   login --token / --token= → no value (mint-deeplink form)
+			tokenVal := tokenFlag
+			noValueForm := tokenVal == tokenFlagNoValue
+			if noValueForm {
+				tokenVal = ""
+				if len(args) == 1 {
+					tokenVal = args[0]
+				}
+			}
+			tokenVal = strings.TrimSpace(tokenVal)
+
+			// `--token` with NO value: the user wants a personal key but hasn't got
+			// one yet — point them at where to mint it rather than erroring or
+			// falling through to the device flow.
+			if cmd.Flags().Changed("token") && tokenVal == "" {
+				printMintTokenHelp(cmd.OutOrStdout())
+				return nil
+			}
+
+			// --token <value> keeps the personal-key path.
+			if tokenVal != "" {
+				return loginWithToken(cmd, cfg, tokenVal)
 			}
 			return loginWithDevice(cmd, cfg, noBrowser)
 		},
 	}
-	cmd.Flags().StringVar(&tokenFlag, "token", "", "store a personal API key instead of the browser device login")
+	cmd.Flags().StringVar(&tokenFlag, "token", "", "store a personal API key instead of the browser device login (pass with no value to print where to create one)")
+	// Allow `civitai login --token` with no argument; the sentinel is detected in RunE.
+	cmd.Flags().Lookup("token").NoOptDefVal = tokenFlagNoValue
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "do not attempt to open a browser for device login")
 	return cmd
+}
+
+// printMintTokenHelp tells the user where to create a personal API key and how to
+// re-run login with it. Printed when `civitai login --token` is passed with no
+// value; it performs no network login.
+func printMintTokenHelp(out io.Writer) {
+	fmt.Fprintf(out, "To use a personal API key, create one at %s (API Keys), then run:\n\n", accountAPIKeysURL)
+	fmt.Fprintf(out, "  %s\n\n", ui.Code("civitai login --token <key>"))
+	fmt.Fprintf(out, "Or run %s for browser sign-in.\n", ui.Code("civitai login"))
 }
 
 // loginWithToken stores a personal API key (manual, no refresh).
