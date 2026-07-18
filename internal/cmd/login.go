@@ -65,6 +65,14 @@ account with ` + "`civitai whoami`" + `.)`,
 		// pflag parse the space-separated form `login --token <value>` as a single
 		// positional arg. Accept exactly one positional ONLY when --token was given,
 		// to preserve that form; login otherwise takes no positional args.
+		//
+		// Combined with SetInterspersed(false) below, this is position-aware: a
+		// positional can ONLY be recovered as the token value when it FOLLOWS
+		// --token. A positional BEFORE --token (e.g. `login foo --token`) halts
+		// flag parsing, so --token is never marked Changed and this guard falls
+		// through to NoArgs, rejecting the stray positional — closing the footgun
+		// where `login foo --token` used to store `foo` as the token. See the
+		// SetInterspersed call for the full rationale.
 		Args: func(cmd *cobra.Command, args []string) error {
 			if cmd.Flags().Changed("token") && len(args) <= 1 {
 				return nil
@@ -109,6 +117,30 @@ account with ` + "`civitai whoami`" + `.)`,
 	cmd.Flags().StringVar(&tokenFlag, "token", "", "store a personal API key instead of the browser device login (pass with no value to print where to create one)")
 	// Allow `civitai login --token` with no argument; the sentinel is detected in RunE.
 	cmd.Flags().Lookup("token").NoOptDefVal = tokenFlagNoValue
+	// Non-interspersed parsing makes the positional-recovery of the space form
+	// (`login --token <key>`) POSITION-AWARE, which closes the audit footgun.
+	//
+	// The problem: with NoOptDefVal set, `login --token <key>` and
+	// `login <stray> --token` are otherwise INDISTINGUISHABLE after parsing —
+	// both leave --token marked Changed with a single positional, so the stray
+	// value would be stored as the token (overwriting a good credential with
+	// garbage). NoOptDefVal is nonetheless required: it's what lets bare
+	// `--token` mean "print the mint deeplink" AND what stops pflag from
+	// swallowing a following flag as the value (so `login --token --bogus`
+	// correctly errors "unknown flag" instead of storing "--bogus").
+	//
+	// With interspersed=false, pflag stops treating tokens as flags at the FIRST
+	// positional. So a positional BEFORE --token (`login foo --token`) halts
+	// parsing: --token is left as a positional, never marked Changed, and the
+	// Args guard rejects the stray arg via NoArgs — nothing is stored. A
+	// positional AFTER --token (`login --token key`) still parses as the one
+	// allowed positional and is recovered as the value in RunE. This makes the
+	// whole matrix unambiguous WITHOUT scanning raw os.Args. (Trade-off: global
+	// flags must precede the space-form value, e.g. `login --no-color --token
+	// key`, not `login --token key --no-color`; the `--token=key` form has no
+	// such constraint. Combining --token with the device-only --no-browser is
+	// nonsensical anyway.)
+	cmd.Flags().SetInterspersed(false)
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "do not attempt to open a browser for device login")
 	return cmd
 }
