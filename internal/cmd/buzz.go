@@ -54,7 +54,9 @@ how to switch to a personal key.`,
 					// fixable failure, not "balance is zero").
 					errw := cmd.ErrOrStderr()
 					fmt.Fprintln(errw, ui.For(errw).Warn(buzzScopeHint))
-					return fmt.Errorf("credential can't read Buzz balance")
+					// Re-tag so exitCode maps the lost-scope case to the auth exit
+					// code (3), not the generic fallback — the message is unchanged.
+					return api.Tag(api.ErrBuzzScope, fmt.Errorf("credential can't read Buzz balance"))
 				}
 				return err
 			}
