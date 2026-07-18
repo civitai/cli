@@ -731,7 +731,10 @@ func controlnetPreprocessorNote(modelType string) string {
 }
 
 // downloadStatusError maps a non-2xx download response to an actionable error.
-func downloadStatusError(status int, name string) error {
+func downloadStatusError(status int, name string) (err error) {
+	// Classify the returned error by status (401/403→auth, 404→not-found, …)
+	// without changing its message, so the process exit code reflects the kind.
+	defer func() { err = api.TagStatus(status, err) }()
 	switch {
 	case status >= 200 && status < 300:
 		return nil

@@ -135,7 +135,7 @@ never commit it; re-mint when it expires.`,
 				return err
 			}
 			if cfg.Token() == "" {
-				return fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)")
+				return api.Tag(api.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 
 			var slug string

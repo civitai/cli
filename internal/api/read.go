@@ -104,7 +104,10 @@ func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any
 // readError turns a non-2xx read response into a clear, actionable error,
 // surfacing the API's own error body ({"error": ...} or {"message": ...})
 // rather than a Go struct dump.
-func readError(status int, raw []byte) error {
+func readError(status int, raw []byte) (err error) {
+	// Attach the classification sentinel for status (401/404/429/503…) to the
+	// returned error without changing its user-visible message.
+	defer func() { err = tagStatus(status, err) }()
 	msg := strings.TrimSpace(string(raw))
 	var wrapped struct {
 		Error   json.RawMessage `json:"error"`

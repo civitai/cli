@@ -606,7 +606,7 @@ func (c *Client) WhoAmI(ctx context.Context) (*Identity, error) {
 		return nil, err
 	}
 	if tok == "" {
-		return nil, fmt.Errorf("no token configured — run `civitai login` first")
+		return nil, tag(ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` first"))
 	}
 	build := func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+"/api/v1/me", nil)
@@ -669,7 +669,7 @@ func (c *Client) GetBuzzAccount(ctx context.Context) (*BuzzAccount, error) {
 		return nil, err
 	}
 	if tok == "" {
-		return nil, fmt.Errorf("no token configured — run `civitai login` first")
+		return nil, tag(ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` first"))
 	}
 	build := func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+BuzzAccountPath, nil)
@@ -838,7 +838,7 @@ func (c *Client) GetForgejoCloneInfo(ctx context.Context, app string) (*ForgejoC
 		return nil, err
 	}
 	if tok == "" {
-		return nil, fmt.Errorf("no token configured — run `civitai login` first")
+		return nil, tag(ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` first"))
 	}
 
 	// tRPC query input: ?input={"json":{"slug":"<app>"}}. The server accepts the
@@ -878,7 +878,8 @@ func (c *Client) GetForgejoCloneInfo(ctx context.Context, app string) (*ForgejoC
 
 // cloneInfoError maps a non-200 from the clone-info tRPC query to an actionable
 // message. tRPC error bodies are {error:{json:{message,code,...}}}.
-func cloneInfoError(status int, raw []byte) error {
+func cloneInfoError(status int, raw []byte) (err error) {
+	defer func() { err = tagStatus(status, err) }()
 	var env struct {
 		Error struct {
 			JSON struct {
@@ -964,7 +965,8 @@ func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string)
 // not-found-or-not-yours, 403 not-invited-or-insufficient-scope, 429
 // rate-limited, 503 flag-off. The 403 message is the key DX case — a spend
 // token needs a full-scope personal API key (an OAuth login mints read-only).
-func devTokenError(status int, raw []byte) error {
+func devTokenError(status int, raw []byte) (err error) {
+	defer func() { err = tagStatus(status, err) }()
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusNotFound:
@@ -1184,7 +1186,8 @@ func isInsufficientScopeMsg(msg string) bool {
 // devTunnelError maps a non-200 dev-tunnel tRPC response to an actionable CLI
 // error. tRPC error bodies are {error:{json:{message,code,...}}}; the HTTP
 // status carries the mapped code (403 flag-off/not-author, 404 not-your-app).
-func devTunnelError(status int, raw []byte) error {
+func devTunnelError(status int, raw []byte) (err error) {
+	defer func() { err = tagStatus(status, err) }()
 	var env struct {
 		Error struct {
 			JSON struct {
@@ -1229,7 +1232,8 @@ func devTunnelError(status int, raw []byte) error {
 // 404 not-found-or-not-yours, 409 not-in-a-withdrawable-(pending)-state (the
 // server's message carries the reason), 401/403 auth, 429 rate-limited, 503
 // flag-off/rate-limiter-incident.
-func withdrawError(status int, raw []byte) error {
+func withdrawError(status int, raw []byte) (err error) {
+	defer func() { err = tagStatus(status, err) }()
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -1251,7 +1255,8 @@ func withdrawError(status int, raw []byte) error {
 
 // submissionsError maps a non-2xx submissions response to a clear, actionable
 // error, with Apps-specific guidance for 403/404/429/503.
-func submissionsError(status int, raw []byte) error {
+func submissionsError(status int, raw []byte) (err error) {
+	defer func() { err = tagStatus(status, err) }()
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:
@@ -1289,7 +1294,8 @@ func serverMessage(raw []byte) string {
 }
 
 // serverError turns a non-2xx response into a clear, actionable error.
-func serverError(status int, raw []byte) error {
+func serverError(status int, raw []byte) (err error) {
+	defer func() { err = tagStatus(status, err) }()
 	msg := serverMessage(raw)
 	switch status {
 	case http.StatusUnauthorized:

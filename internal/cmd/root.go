@@ -255,6 +255,13 @@ Get started:
 	_ = colorViper.BindEnv("no_color", "CIVITAI_NO_COLOR")
 	_ = colorViper.BindEnv("color", "CIVITAI_COLOR")
 
+	// Classify Cobra's own flag-parsing failures as usage errors (message left
+	// untouched) so the entrypoint can map them to a dedicated exit code. Applies
+	// to every subcommand via cobra's flag-error propagation.
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return asUsageError(err)
+	})
+
 	root.AddCommand(newAppCmd())
 	root.AddCommand(newLoginCmd())
 	root.AddCommand(newWhoAmICmd())

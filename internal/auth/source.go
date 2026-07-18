@@ -86,7 +86,7 @@ func (s *Source) Refresh(ctx context.Context) (string, error) {
 func (s *Source) refreshLocked(ctx context.Context) (string, error) {
 	rt := s.cfg.RefreshToken()
 	if rt == "" {
-		return "", fmt.Errorf("no refresh token stored — run `civitai login` again")
+		return "", api.Tag(api.ErrUnauthorized, fmt.Errorf("no refresh token stored — run `civitai login` again"))
 	}
 	tr, err := s.oc.Refresh(ctx, rt)
 	if err != nil {

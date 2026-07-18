@@ -36,7 +36,7 @@ Reads the token from config or CIVITAI_TOKEN.`,
 				return err
 			}
 			if cfg.Token() == "" {
-				return fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)")
+				return api.Tag(api.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 			id, err := client.WhoAmI(context.Background())
