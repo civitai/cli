@@ -3,6 +3,7 @@ package cmd
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -290,6 +291,150 @@ func TestRootHelpMentionsImagesSearch(t *testing.T) {
 	}
 	if !strings.Contains(out, "images search") {
 		t.Errorf("root help should include an `images search` example: %s", out)
+	}
+}
+
+// TestImagesSearchMetaQueryParams asserts the --meta flag toggles the API's
+// opt-in metadata params: with --meta both withMeta=true and flatMeta=true are
+// sent (flatMeta forces the uniform flat shape); without it, neither is present.
+func TestImagesSearchMetaQueryParams(t *testing.T) {
+	body := `{"items":[],"metadata":{}}`
+
+	// With --meta → both params set.
+	var gotWith url.Values
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotWith = r.URL.Query()
+		_, _ = w.Write([]byte(body))
+	})
+	if _, _, err := run(t, "images", "search", "--meta"); err != nil {
+		t.Fatalf("images search --meta: %v", err)
+	}
+	if gotWith.Get("withMeta") != "true" {
+		t.Errorf("--meta should set withMeta=true, got %q", gotWith.Get("withMeta"))
+	}
+	if gotWith.Get("flatMeta") != "true" {
+		t.Errorf("--meta should set flatMeta=true, got %q", gotWith.Get("flatMeta"))
+	}
+
+	// Without --meta → neither param present (unchanged default).
+	var gotWithout url.Values
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotWithout = r.URL.Query()
+		_, _ = w.Write([]byte(body))
+	})
+	if _, _, err := run(t, "images", "search"); err != nil {
+		t.Fatalf("images search: %v", err)
+	}
+	if gotWithout.Has("withMeta") {
+		t.Errorf("default search must not send withMeta: %v", gotWithout)
+	}
+	if gotWithout.Has("flatMeta") {
+		t.Errorf("default search must not send flatMeta: %v", gotWithout)
+	}
+}
+
+// TestImagesSearchMetaHumanOutput asserts --meta renders the generation-metadata
+// detail block, sanitizes attacker-controlled prompt text (safeTerm), and prints
+// "(hidden by uploader)" for a meta:null image instead of crashing.
+func TestImagesSearchMetaHumanOutput(t *testing.T) {
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		// One image with meta (prompt carries an ANSI escape), one with meta:null.
+		// Seed exceeds int32 to guard the tolerant numeric type.
+		_, _ = w.Write([]byte(`{"items":[
+		  {"id":1,"url":"https://img/1","width":512,"height":768,"nsfwLevel":"None","username":"alice",
+		   "meta":{"prompt":"a cat\u001b[31m sitting","negativePrompt":"blurry","sampler":"Euler a",
+		           "cfgScale":7.5,"steps":30,"seed":557589798350441,"Model":"SomeCheckpoint"}},
+		  {"id":2,"url":"https://img/2","width":10,"height":20,"nsfwLevel":"None","username":"bob","meta":null}
+		],"metadata":{}}`))
+	})
+	out, _, err := run(t, "images", "search", "--meta")
+	if err != nil {
+		t.Fatalf("images search --meta: %v", err)
+	}
+	for _, want := range []string{
+		"a cat[31m sitting", // prompt printed, ESC byte stripped
+		"negative: blurry",
+		"sampler: Euler a",
+		"seed: 557589798350441", // large seed survives tolerant numeric parse
+		"model: SomeCheckpoint",
+		"meta: (hidden by uploader)", // meta:null image handled gracefully
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--meta output missing %q:\n%s", want, out)
+		}
+	}
+	if strings.ContainsRune(out, 0x1b) {
+		t.Errorf("prompt ESC byte must be stripped by safeTerm: %q", out)
+	}
+}
+
+// TestImagesSearchMetaJSONPassthrough asserts --meta --json leaves the raw body
+// (including meta) untouched — no human detail block leaks into machine output.
+func TestImagesSearchMetaJSONPassthrough(t *testing.T) {
+	const raw = `{"items":[{"id":1,"url":"u","meta":{"prompt":"hi","seed":557589798350441}}],"metadata":{}}`
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("withMeta") != "true" {
+			t.Errorf("--meta --json should still request withMeta: %v", r.URL.Query())
+		}
+		_, _ = w.Write([]byte(raw))
+	})
+	out, _, err := run(t, "images", "search", "--meta", "--json")
+	if err != nil {
+		t.Fatalf("images search --meta --json: %v", err)
+	}
+	if strings.Contains(out, "prompt:") {
+		t.Errorf("--json must not carry the human detail block: %s", out)
+	}
+	if !strings.Contains(out, `"meta"`) || !strings.Contains(out, `"prompt"`) {
+		t.Errorf("--json should pass the raw meta through: %s", out)
+	}
+}
+
+// TestImagesSearchMetaMalformed asserts a single image with a malformed/oddly-
+// typed meta cannot fail the whole page: the human path degrades to a marker,
+// sibling images still render, and --meta --json still passes the raw body
+// through (the decode captures meta as raw bytes and never aborts on shape).
+func TestImagesSearchMetaMalformed(t *testing.T) {
+	// img 1: meta is an array (not an object) → unparseable.
+	// img 2: meta object with an empty-string cfgScale + non-numeric seed + a good
+	//        prompt → one bad field must not lose the item.
+	// img 3: meta:null → hidden.
+	body := `{"items":[
+	  {"id":1,"url":"https://img/1","width":1,"height":1,"nsfwLevel":"None","username":"a","meta":[1,2,3]},
+	  {"id":2,"url":"https://img/2","width":1,"height":1,"nsfwLevel":"None","username":"b",
+	   "meta":{"prompt":"still here","cfgScale":"","steps":20,"seed":"unknown","Model":"M"}},
+	  {"id":3,"url":"https://img/3","width":1,"height":1,"nsfwLevel":"None","username":"c","meta":null}
+	],"metadata":{}}`
+
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	})
+	out, _, err := run(t, "images", "search", "--meta")
+	if err != nil {
+		t.Fatalf("malformed meta must not fail the command: %v", err)
+	}
+	for _, want := range []string{
+		"meta: (unrecognized format)", // img 1 array meta degrades, page survives
+		"prompt: still here",          // img 2 survives despite empty cfgScale / string seed
+		"seed: unknown",               // non-numeric seed rendered verbatim, not dropped
+		"meta: (hidden by uploader)",  // img 3 null
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("malformed --meta output missing %q:\n%s", want, out)
+		}
+	}
+
+	// --meta --json must still pass the raw (malformed-meta) body through without
+	// erroring — the top-level decode captures meta as raw bytes.
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	})
+	jout, _, err := run(t, "images", "search", "--meta", "--json")
+	if err != nil {
+		t.Fatalf("malformed meta must not fail --json passthrough: %v", err)
+	}
+	if !strings.Contains(jout, "still here") {
+		t.Errorf("--json should pass the raw meta through despite a malformed sibling: %s", jout)
 	}
 }
 
