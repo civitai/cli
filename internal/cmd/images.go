@@ -20,7 +20,8 @@ func newImagesCmd() *cobra.Command {
 		Long: `Read-only access to Civitai images via the public REST API
 (GET /api/v1/images). Works anonymously.`,
 		Example: `  civitai images search --limit 5
-  civitai images search --model-id 4384 --sort "Most Reactions"`,
+  civitai images search --model-id 4384 --sort "Most Reactions"
+  civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week`,
 	}
 	cmd.AddCommand(newImagesSearchCmd())
 	return cmd
@@ -28,7 +29,8 @@ func newImagesCmd() *cobra.Command {
 
 func newImagesSearchCmd() *cobra.Command {
 	var (
-		username, sort, period, cursor               string
+		username, sort, period, cursor, typ, tags    string
+		baseModels                                   []string
 		postID, modelID, modelVersionID, limit, page int
 		nsfw                                         bool
 	)
@@ -41,6 +43,8 @@ Pagination: use --page for shallow paging or --cursor for deep paging (the API
 caps page*limit at 1000). The next cursor is printed after the results.`,
 		Example: `  civitai images search --limit 5
   civitai images search --model-version-id 128713 --sort Newest
+  civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
+  civitai images search --type video --sort "Most Reactions"
   civitai images search --username some-user --cursor <cursor>`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -50,9 +54,19 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 			o := readFlags(cmd)
 			q := url.Values{}
 			addIfSet(q, "username", username)
+			addIfSet(q, "type", typ)  // image | video | audio
+			addIfSet(q, "tags", tags) // comma-delimited tag ids
 			addIfSet(q, "sort", sort)
 			addIfSet(q, "period", period)
 			addIfSet(q, "cursor", cursor)
+			// baseModels is a repeatable filter → repeated `baseModels=` query
+			// keys, which the API's zod union (string | string[]) parses as an
+			// array (baseModel IN (...), i.e. OR across the given values).
+			for _, bm := range baseModels {
+				if bm != "" {
+					q.Add("baseModels", bm)
+				}
+			}
 			addIfPositive(q, "postId", postID)
 			addIfPositive(q, "modelId", modelID)
 			addIfPositive(q, "modelVersionId", modelVersionID)
@@ -85,6 +99,9 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 	cmd.Flags().IntVar(&modelID, "model-id", 0, "filter by model id")
 	cmd.Flags().IntVar(&modelVersionID, "model-version-id", 0, "filter by model version id")
 	cmd.Flags().StringVar(&username, "username", "", "filter by uploader username")
+	cmd.Flags().StringSliceVar(&baseModels, "base-model", nil, "filter by base model; repeatable (e.g. --base-model \"Krea 2\" --base-model Flux). The API OR-combines the given values")
+	cmd.Flags().StringVar(&typ, "type", "", "filter by media type (image, video, audio)")
+	cmd.Flags().StringVar(&tags, "tags", "", "filter by tag ids (comma-separated, e.g. 4,111)")
 	cmd.Flags().StringVar(&period, "period", "", "time period (AllTime, Year, Month, Week, Day)")
 	cmd.Flags().StringVar(&sort, "sort", "", "sort order (\"Most Reactions\", \"Most Comments\", Newest)")
 	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")

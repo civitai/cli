@@ -39,6 +39,63 @@ func TestModelsSearchBaseModelSingle(t *testing.T) {
 	}
 }
 
+// TestImagesSearchBaseModelRepeatedEncoding proves `images search --base-model`
+// is repeatable and encodes as repeated `baseModels=` query keys — the same
+// array form the /api/v1/images zod string|string[] union OR-combines.
+func TestImagesSearchBaseModelRepeatedEncoding(t *testing.T) {
+	var got []string
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/images" {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		got = r.URL.Query()["baseModels"]
+		_, _ = w.Write([]byte(`{"items":[],"metadata":{}}`))
+	})
+	if _, _, err := run(t, "images", "search", "--base-model", "Krea 2", "--base-model", "Flux.1 D"); err != nil {
+		t.Fatalf("images search --base-model: %v", err)
+	}
+	if len(got) != 2 || got[0] != "Krea 2" || got[1] != "Flux.1 D" {
+		t.Errorf("baseModels query = %v, want [Krea 2, Flux.1 D] as repeated keys", got)
+	}
+}
+
+// TestImagesSearchBaseModelSingle asserts a single spaced base model round-trips
+// intact as one `baseModels=` key.
+func TestImagesSearchBaseModelSingle(t *testing.T) {
+	var got []string
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()["baseModels"]
+		_, _ = w.Write([]byte(`{"items":[],"metadata":{}}`))
+	})
+	if _, _, err := run(t, "images", "search", "--base-model", "Krea 2"); err != nil {
+		t.Fatalf("images search --base-model: %v", err)
+	}
+	if len(got) != 1 || got[0] != "Krea 2" {
+		t.Errorf("baseModels = %v, want the single spaced value", got)
+	}
+}
+
+// TestImagesSearchTypeAndTagsWiring proves the confirmed --type (image|video|
+// audio enum) and --tags (comma-separated tag ids) filters map to the `type`
+// and `tags` query params.
+func TestImagesSearchTypeAndTagsWiring(t *testing.T) {
+	var gotType, gotTags string
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		gotType = r.URL.Query().Get("type")
+		gotTags = r.URL.Query().Get("tags")
+		_, _ = w.Write([]byte(`{"items":[],"metadata":{}}`))
+	})
+	if _, _, err := run(t, "images", "search", "--type", "video", "--tags", "4,111"); err != nil {
+		t.Fatalf("images search --type --tags: %v", err)
+	}
+	if gotType != "video" {
+		t.Errorf("type query = %q, want video", gotType)
+	}
+	if gotTags != "4,111" {
+		t.Errorf("tags query = %q, want 4,111", gotTags)
+	}
+}
+
 // TestModelVersionGetMarksNonWeightsType asserts the informational marker renders
 // the ACTUAL file type in the human `model-versions get` output when the primary
 // file is not weights — here an Archive (e.g. a "Workflows" model), tagged
