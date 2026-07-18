@@ -210,8 +210,8 @@ func (c *OAuthClient) resolveEndpoints(ctx context.Context) (*oauthEndpoints, er
 		return c.endpoints, nil
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode != http.StatusOK {
+	raw, err := readResponseBody(resp.Body, maxResponseBody)
+	if err != nil || resp.StatusCode != http.StatusOK {
 		c.endpoints = fallback()
 		return c.endpoints, nil
 	}
@@ -558,7 +558,10 @@ func (c *OAuthClient) postForm(ctx context.Context, rawURL string, form url.Valu
 		return 0, nil, err
 	}
 	defer resp.Body.Close()
-	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	raw, err := readResponseBody(resp.Body, maxResponseBody)
+	if err != nil {
+		return resp.StatusCode, raw, err
+	}
 	return resp.StatusCode, raw, nil
 }
 

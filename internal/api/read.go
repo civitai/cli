@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -135,6 +136,45 @@ func readError(status int, raw []byte) error {
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
+}
+
+// maxResponseBody bounds how many bytes of a single HTTP response body the
+// client reads into memory. It is deliberately far above any real Civitai JSON
+// page — a `models search --limit 100` page tops out at a few MB — so a genuine
+// API response is NEVER truncated, while a pathological/runaway body still can't
+// exhaust memory. The previous 1 MiB cap silently truncated any response over
+// ~1 MiB mid-JSON (e.g. `models search --limit 20`, ~1.04 MiB), so json.Unmarshal
+// failed with a misleading "unexpected response (status 200)".
+const maxResponseBody = 64 << 20 // 64 MiB
+
+// maxBody returns the effective per-response body cap: the Client override when
+// set (tests use a small value), else maxResponseBody.
+func (c *Client) maxBody() int64 {
+	if c.MaxResponseBody > 0 {
+		return c.MaxResponseBody
+	}
+	return maxResponseBody
+}
+
+// readBody reads an entire HTTP response body, bounded by the client's cap.
+func (c *Client) readBody(body io.Reader) ([]byte, error) {
+	return readResponseBody(body, c.maxBody())
+}
+
+// readResponseBody reads an entire HTTP response body, bounded by limit. It
+// reads one byte past the cap so it can DETECT an over-limit body and return a
+// clear error instead of silently handing truncated bytes to json.Unmarshal —
+// a silent truncation is exactly what caused the 1 MiB-cap bug. Under the cap it
+// returns the full body (never truncating a real response).
+func readResponseBody(body io.Reader, limit int64) ([]byte, error) {
+	raw, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return raw, err
+	}
+	if int64(len(raw)) > limit {
+		return raw[:limit], fmt.Errorf("response body exceeded %d MiB limit", limit>>20)
+	}
+	return raw, nil
 }
 
 // snippet bounds an error/body string so a huge response can't flood the
