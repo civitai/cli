@@ -64,6 +64,14 @@ or other artifacts. Use --file to pick a specific file, or --all to download
 every file. Downloads stream to "<target>.part" and are renamed into place only
 on success, so an interrupted run never leaves a truncated final file.
 
+Selecting one of two same-named files: a version can ship two files with the
+SAME name (e.g. an fp16 and an fp8 both named flux_dev.safetensors). --file
+accepts a numeric FILE ID (the version's files[].id) as well as a name, so you
+can pick exactly one — the ids are shown by --dry-run and in the error you get
+if a name is ambiguous. --all refuses to run when two selected files would
+resolve to the same on-disk path (which would silently overwrite one), listing
+the colliding files with their ids so you can --file <id> the one you want.
+
 Authentication: downloading ANY model file requires authentication — run
 'civitai login' (Civitai requires a token even for public files; a 336 KB public
 embedding 401s just like a gated checkpoint). Your stored login token or
@@ -91,6 +99,7 @@ the CLI notes this on stderr. Only download models from creators you trust.`,
 		Example: `  civitai download 128713
   civitai download --model 4384 --out ./dreamshaper.safetensors
   civitai download 128713 --file vae --out-dir ./models
+  civitai download 691639 --file 1234567          # pick one of two same-named files by id
   civitai download 128713 --all --out-dir ./models
   civitai download 128713 --all --layout comfyui --root ~/ComfyUI
   civitai download 128713 --layout a1111 --for-base "SDXL 1.0"`,
@@ -101,8 +110,8 @@ the CLI notes this on stderr. Only download models from creators you trust.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.modelID, "model", "", "resolve+download a MODEL's default (first published) version instead of a version id")
-	f.StringVar(&o.file, "file", "", "select a specific file by name (exact match, else a unique case-insensitive substring)")
-	f.BoolVar(&o.all, "all", false, "download every file in the version")
+	f.StringVar(&o.file, "file", "", "select one file by numeric file id, or by name (exact, else a unique case-insensitive substring); use the id to pick one of two same-named files")
+	f.BoolVar(&o.all, "all", false, "download every file in the version (refuses if two files would overwrite the same path — pick one with --file <id>)")
 	f.StringVar(&o.out, "out", "", "target file path (single-file only; mutually exclusive with --all/--out-dir)")
 	f.StringVar(&o.outDir, "out-dir", "", "directory to write server-named file(s) into (created if needed)")
 	f.StringVar(&o.layout, "layout", "", "route each file into its type's subfolder for an app (a1111|comfyui); mutually exclusive with --out/--out-dir")
@@ -184,6 +193,16 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	selected, err := selectFiles(v.Files, o)
 	if err != nil {
 		return err
+	}
+
+	// Guard against a silent same-target overwrite BEFORE any transfer (and before
+	// the --dry-run plan): when multiple files are selected, two resolving to the
+	// same on-disk path would clobber each other (data loss). Fail-safe here so no
+	// bytes ever move for an unsafe plan.
+	if len(selected) > 1 {
+		if err := checkTargetCollisions(selected, o); err != nil {
+			return err
+		}
 	}
 
 	// Always surface the version's base model, and (with --for-base) warn on a
@@ -318,17 +337,43 @@ func selectFiles(files []api.ModelVersionFile, o *downloadOpts) ([]api.ModelVers
 	return []api.ModelVersionFile{*primary}, nil
 }
 
-// selectOneFile picks a single file by name: an exact (case-insensitive) name
-// match wins; otherwise a UNIQUE case-insensitive substring match; ambiguous or
-// no match is an error that lists the available files.
+// selectOneFile picks a single file for --file. Resolution order:
+//
+//  1. Numeric file id — an all-digits `want` that equals a file's `id` selects
+//     exactly that file. This is the unambiguous way to pick ONE of two files
+//     that share a name (a version can ship, e.g., an fp16 and an fp8 both named
+//     flux_dev.safetensors): copy the numeric id shown in the collision error or
+//     the --dry-run plan. Tried first so an id always wins; a real filename is
+//     practically never bare digits.
+//  2. Exact (case-insensitive) name — one match wins. TWO+ files can legitimately
+//     share a name, so that's ambiguous: error and tell the user to pick by id.
+//  3. A UNIQUE case-insensitive substring match.
+//
+// Ambiguous or no match is an error that lists the candidate files with their ids.
 func selectOneFile(files []api.ModelVersionFile, want string) ([]api.ModelVersionFile, error) {
-	// Exact (case-insensitive) name match first.
-	for i := range files {
-		if strings.EqualFold(files[i].Name, want) {
-			return []api.ModelVersionFile{files[i]}, nil
+	// (1) Numeric file-id selection.
+	if id, err := strconv.Atoi(strings.TrimSpace(want)); err == nil {
+		for i := range files {
+			if files[i].ID == id {
+				return []api.ModelVersionFile{files[i]}, nil
+			}
 		}
 	}
-	// Unique case-insensitive substring match.
+	// (2) Exact (case-insensitive) name match — collect ALL, since a name can be
+	// shared by more than one file.
+	var exact []api.ModelVersionFile
+	for i := range files {
+		if strings.EqualFold(files[i].Name, want) {
+			exact = append(exact, files[i])
+		}
+	}
+	if len(exact) == 1 {
+		return exact[:1], nil
+	}
+	if len(exact) > 1 {
+		return nil, fmt.Errorf("%q matches %d files that share this name — select one by its numeric file id with --file <id>:\n%s", want, len(exact), formatFileList(exact))
+	}
+	// (3) Unique case-insensitive substring match.
 	var matches []api.ModelVersionFile
 	lw := strings.ToLower(want)
 	for i := range files {
@@ -342,18 +387,68 @@ func selectOneFile(files []api.ModelVersionFile, want string) ([]api.ModelVersio
 	case 0:
 		return nil, fmt.Errorf("no file matches %q. Available files:\n%s", want, formatFileList(files))
 	default:
-		return nil, fmt.Errorf("%q is ambiguous — it matches %d files. Be more specific:\n%s", want, len(matches), formatFileList(matches))
+		return nil, fmt.Errorf("%q is ambiguous — it matches %d files. Be more specific (or use --file <id>):\n%s", want, len(matches), formatFileList(matches))
 	}
 }
 
-// formatFileList renders a compact "  - name (type, size)" list for errors.
+// formatFileList renders a compact "  - [id N] name (type, size)" list for
+// errors. The id is included so the user can copy it into --file <id> to
+// disambiguate same-named files.
 func formatFileList(files []api.ModelVersionFile) string {
 	var b strings.Builder
 	for i := range files {
 		f := files[i]
-		fmt.Fprintf(&b, "  - %s (%s, %s)\n", safeTerm(f.Name), safeTerm(f.Type), humanBytes(int64(f.SizeKB*1024)))
+		fmt.Fprintf(&b, "  - [id %d] %s (%s, %s)\n", f.ID, safeTerm(f.Name), safeTerm(dashIfEmpty(f.Type)), humanBytes(int64(f.SizeKB*1024)))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+// checkTargetCollisions guards against a silent same-target overwrite: when more
+// than one file is selected (--all, or --layout/--out-dir routing several files),
+// two files that resolve to the SAME on-disk path would clobber each other —
+// the second download overwrites the first with no warning and one file is lost.
+// This bit Flux Dev version 691639, which ships an fp16 (22.2 GB) and an fp8
+// (15.9 GB) file BOTH named flux_dev.safetensors → --all planned both to
+// ./flux_dev.safetensors.
+//
+// It returns a fail-safe error listing every colliding group (with each file's
+// numeric id + size to distinguish them) BEFORE anything is transferred, so no
+// data is ever lost to a silent overwrite. Per-file targetPath errors are left
+// for the normal per-file path to surface.
+func checkTargetCollisions(files []api.ModelVersionFile, o *downloadOpts) error {
+	byTarget := make(map[string][]api.ModelVersionFile)
+	var order []string
+	for i := range files {
+		target, _, err := targetPath(files[i], o)
+		if err != nil {
+			// An unusable target for this file is reported later per-file; don't
+			// mask it with a collision error here.
+			continue
+		}
+		if _, seen := byTarget[target]; !seen {
+			order = append(order, target)
+		}
+		byTarget[target] = append(byTarget[target], files[i])
+	}
+
+	var b strings.Builder
+	groups := 0
+	for _, target := range order {
+		grp := byTarget[target]
+		if len(grp) < 2 {
+			continue
+		}
+		groups++
+		fmt.Fprintf(&b, "  %s  ← %d files:\n", target, len(grp))
+		for i := range grp {
+			f := grp[i]
+			fmt.Fprintf(&b, "      - [id %d] %s (%s, %s)\n", f.ID, f.Name, dashIfEmpty(f.Type), humanBytes(int64(f.SizeKB*1024)))
+		}
+	}
+	if groups == 0 {
+		return nil
+	}
+	return fmt.Errorf("refusing to download: %d set(s) of files would be written to the same path and silently overwrite each other:\n%s\nPick ONE with --file <id> (the numeric file id shown above), or download them separately to distinct paths (e.g. one at a time with --out <path>).", groups, strings.TrimRight(b.String(), "\n"))
 }
 
 // targetPath computes the on-disk destination for a file given the flags:

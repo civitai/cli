@@ -381,7 +381,8 @@ civitai download 128713                       # the version's primary file → .
 civitai download --model 4384                 # resolve model 4384's default version, then download its primary file
 civitai download --model 4384 --dry-run       # print the plan (files, sizes, hashes, targets) — download nothing
 civitai download 128713 --out ./dreamshaper.safetensors
-civitai download 128713 --file vae --out-dir ./models   # pick a file; write into a dir
+civitai download 128713 --file vae --out-dir ./models   # pick a file by name; write into a dir
+civitai download 691639 --file 1234567                  # pick one of two same-named files by its file id
 civitai download 128713 --all --out-dir ./models        # every file in the version
 civitai download 128713 --all --layout comfyui --root ~/ComfyUI   # route each file to its type folder
 civitai download 128713 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout + base-model compat warning
@@ -397,7 +398,8 @@ Behavior:
 - **Identifier** — exactly one of the positional `<version-id>` or `--model <model-id>` is required (no numeric-ambiguity guessing).
 - **`--model` resolves the default version** — the model's default (first published) version; its primary file is downloaded regardless of file type. Any model type works, including a `type: Workflows` model whose deliverable is a downloadable `Archive`.
 - **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, `--out-dir`, and `--layout`/`--root` (the plan shows the routed target paths).
-- **File selection** — defaults to the version's **primary** file. `--file <name>` selects one file (exact name, else a unique case-insensitive substring; ambiguous/none errors and lists the files). `--all` downloads every file.
+- **File selection** — defaults to the version's **primary** file. `--file` selects one file by **numeric file id** (the version's `files[].id`) or by **name** (exact, else a unique case-insensitive substring; ambiguous/none errors and lists the candidate files with their ids). `--all` downloads every file.
+- **Same-named files (no silent overwrite)** — a version can ship two files that share a name (e.g. Flux Dev's fp16 **and** fp8, both `flux_dev.safetensors`). Selecting that shared name with `--file` is **ambiguous** and errors, listing both files with their ids — pass the **numeric id** to pick exactly one (`--file 1234567`; the id is shown by `--dry-run` and in the error). `--all` **refuses** to run when two selected files would resolve to the **same on-disk path** (which would silently clobber one) — it fails *before* transferring anything, lists the colliding files with their ids/sizes, and tells you to pick one with `--file <id>` (or write them to separate paths). No download ever silently overwrites another.
 - **Output** — `--out <path>` sets an exact target path (single file only). `--out-dir <dir>` writes server-named files into a directory (works with `--all`). Parent directories are created as needed. Default is the server-provided filename in the current directory.
 - **Type-aware folder routing (`--layout`)** — `--layout <a1111|comfyui>` writes each file into the correct subfolder for that app, keyed by the file/model **type**, under `--root <dir>` (default `.`). This fixes the footgun where `--all --out-dir X` dumps a **bundled VAE into the checkpoint folder** and pollutes the model dropdown: with `--layout`, the checkpoint lands in the checkpoints folder and the VAE in the VAE folder. `--layout` is mutually exclusive with `--out`/`--out-dir`; `--root` only applies with `--layout`. An unmapped type (Poses, Wildcards, Archive, …) is written to `--root` with a stderr note rather than silently misplaced. The routed folder maps:
 
