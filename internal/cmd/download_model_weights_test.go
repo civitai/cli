@@ -65,30 +65,50 @@ func setupMVEnv(t *testing.T, m *mvServer) {
 	chdir(t, t.TempDir())
 }
 
-func TestModelResolvesSkipsNonWeightsDefault(t *testing.T) {
-	// Default (versions[0]) is training-data; a later version has weights.
+// --model resolves the model's DEFAULT (first) version regardless of file type —
+// even when that default's primary file is a non-"Model" Archive — and downloads
+// it with no skip and no error.
+func TestModelResolvesDefaultVersionEvenWhenNonWeights(t *testing.T) {
+	// Default (versions[0]) is a non-weights Archive; a later version has weights.
 	m := newMVServer(t, 4384, []mvVer{
-		{id: 900, name: "training-registration", ftype: "Training Data"},
+		{id: 900, name: "workflow-registration", ftype: "Archive"},
 		{id: 800, name: "v1.0-weights", ftype: "Model"},
 	})
 	setupMVEnv(t, m)
 
 	_, errOut, err := run(t, "download", "--model", "4384")
 	if err != nil {
-		t.Fatalf("download --model should resolve to the weights version: %v", err)
+		t.Fatalf("download --model should resolve the default version, got %v", err)
 	}
-	// It must have fetched version 800 (the weights one), not 900.
-	if !strings.HasSuffix(m.fetchedVerURL, "/800") {
-		t.Errorf("expected version 800 to be downloaded, fetched %q", m.fetchedVerURL)
+	// It must have fetched the DEFAULT version 900, not the later weights one.
+	if !strings.HasSuffix(m.fetchedVerURL, "/900") {
+		t.Errorf("expected the default version 900 to be downloaded, fetched %q", m.fetchedVerURL)
 	}
-	if !strings.Contains(errOut, "800") || !strings.Contains(errOut, "downloadable weights") {
-		t.Errorf("stderr should note the skip + chosen version: %s", errOut)
-	}
-	if !strings.Contains(errOut, "training data") {
-		t.Errorf("stderr note should name the default's type: %s", errOut)
+	if strings.Contains(errOut, "downloadable weights") {
+		t.Errorf("no weights-skip note should be printed anymore: %s", errOut)
 	}
 }
 
+// Repro (b): every version's primary file is non-"Model" — --model still resolves
+// the default version and downloads it, no error.
+func TestModelAllNonWeightsResolvesDefault(t *testing.T) {
+	m := newMVServer(t, 4384, []mvVer{
+		{id: 900, name: "workflows", ftype: "Archive"},
+		{id: 901, name: "training", ftype: "Training Data"},
+	})
+	setupMVEnv(t, m)
+
+	_, _, err := run(t, "download", "--model", "4384")
+	if err != nil {
+		t.Fatalf("--model with all-non-weights versions should resolve the default, got %v", err)
+	}
+	if !strings.HasSuffix(m.fetchedVerURL, "/900") {
+		t.Errorf("expected the default version 900 to be downloaded, fetched %q", m.fetchedVerURL)
+	}
+}
+
+// Repro (c): when the default version already IS weights, --model resolves it with
+// no note.
 func TestModelDefaultAlreadyWeightsNoNote(t *testing.T) {
 	m := newMVServer(t, 4384, []mvVer{
 		{id: 800, name: "v1.0-weights", ftype: "Model"},
@@ -108,31 +128,16 @@ func TestModelDefaultAlreadyWeightsNoNote(t *testing.T) {
 	}
 }
 
-func TestModelAllNonWeightsErrors(t *testing.T) {
-	m := newMVServer(t, 4384, []mvVer{
-		{id: 900, name: "training", ftype: "Training Data"},
-		{id: 901, name: "onsite-gen", ftype: "Archive"},
-	})
-	setupMVEnv(t, m)
-
-	_, _, err := run(t, "download", "--model", "4384")
-	if err == nil || !strings.Contains(err.Error(), "no version with downloadable weights") {
-		t.Fatalf("expected a clear no-weights error, got %v", err)
-	}
-}
-
-// The explicit positional non-weights path is unchanged: it still refuses via the
-// --allow-nonmodel guard (resolveVersionID does not touch it).
-func TestExplicitPositionalNonWeightsStillRefuses(t *testing.T) {
+// The explicit positional non-weights path now downloads the file (no refusal).
+func TestExplicitPositionalNonWeightsDownloads(t *testing.T) {
 	d := newDLServer(t, false, []dlFile{
 		{id: 1, name: "training.zip", typ: "Training Data", primary: true, body: "trainingdata"},
 	})
 	setupDownloadEnv(t, d, "")
-	_, _, err := run(t, "download", "128713")
-	if err == nil || !strings.Contains(err.Error(), "not model weights") {
-		t.Fatalf("explicit positional non-weights should still be refused, got %v", err)
+	if _, _, err := run(t, "download", "128713"); err != nil {
+		t.Fatalf("explicit positional non-weights should download, got %v", err)
 	}
-	if _, e := os.Stat("training.zip"); e == nil {
-		t.Error("refused positional download must not write the file")
+	if _, e := os.Stat("training.zip"); e != nil {
+		t.Errorf("positional non-weights download must write the file: %v", e)
 	}
 }

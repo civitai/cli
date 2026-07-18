@@ -30,9 +30,8 @@ type ModelListItem struct {
 }
 
 // ModelVersionSummary is the per-version summary shown under a model detail.
-// Files is carried so the detail renderer can flag a version whose primary file
-// is not model weights (the on-site-gen / training-data trap) and so `download
-// --model` can resolve + inspect the model's default version. The full
+// Files is carried so the detail renderer can tag a version whose primary file
+// is not model weights with its file type (an informational marker). The full
 // GET /api/v1/models/{id} response embeds each version's files[].
 type ModelVersionSummary struct {
 	ID        int                `json:"id"`

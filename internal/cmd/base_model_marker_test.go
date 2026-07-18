@@ -39,9 +39,30 @@ func TestModelsSearchBaseModelSingle(t *testing.T) {
 	}
 }
 
-// TestModelVersionGetMarksTrainingData asserts the on-site-gen marker renders in
-// the human `model-versions get` output when the primary file is not weights.
-func TestModelVersionGetMarksTrainingData(t *testing.T) {
+// TestModelVersionGetMarksNonWeightsType asserts the informational marker renders
+// the ACTUAL file type in the human `model-versions get` output when the primary
+// file is not weights — here an Archive (e.g. a "Workflows" model), tagged
+// [Archive] rather than any "no downloadable weights" claim.
+func TestModelVersionGetMarksNonWeightsType(t *testing.T) {
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"id":1,"modelId":2,"name":"clean-name","baseModel":"SD 1.5",
+		  "files":[{"id":9,"name":"workflow.zip","type":"Archive","primary":true,"sizeKB":18000}]}`))
+	})
+	out, _, err := run(t, "model-versions", "get", "1")
+	if err != nil {
+		t.Fatalf("model-versions get: %v", err)
+	}
+	if !strings.Contains(out, "[Archive]") {
+		t.Errorf("non-weights version should carry the accurate [Archive] marker: %s", out)
+	}
+	if strings.Contains(out, "no downloadable weights") {
+		t.Errorf("marker must NOT falsely claim there are no downloadable weights: %s", out)
+	}
+}
+
+// TestModelVersionGetMarksTrainingDataType asserts a Training Data primary file
+// is tagged with its verbatim type.
+func TestModelVersionGetMarksTrainingDataType(t *testing.T) {
 	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"id":1,"modelId":2,"name":"clean-name","baseModel":"SD 1.5",
 		  "files":[{"id":9,"name":"training.zip","type":"Training Data","primary":true,"sizeKB":18000}]}`))
@@ -50,8 +71,8 @@ func TestModelVersionGetMarksTrainingData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("model-versions get: %v", err)
 	}
-	if !strings.Contains(out, "training data — no downloadable weights") {
-		t.Errorf("training-data version should carry the marker: %s", out)
+	if !strings.Contains(out, "[Training Data]") {
+		t.Errorf("training-data version should carry the [Training Data] marker: %s", out)
 	}
 }
 
@@ -66,14 +87,14 @@ func TestModelVersionGetNoMarkerForWeights(t *testing.T) {
 	if err != nil {
 		t.Fatalf("model-versions get: %v", err)
 	}
-	if strings.Contains(out, "no downloadable weights") {
-		t.Errorf("a normal weights version must NOT be tagged: %s", out)
+	if strings.Contains(out, "[") {
+		t.Errorf("a normal weights version must NOT be tagged with a type marker: %s", out)
 	}
 }
 
-// TestModelGetMarksTrainingDataVersion asserts the marker also shows in the
-// `models get` version list.
-func TestModelGetMarksTrainingDataVersion(t *testing.T) {
+// TestModelGetMarksNonWeightsVersion asserts the marker also shows the accurate
+// type in the `models get` version list.
+func TestModelGetMarksNonWeightsVersion(t *testing.T) {
 	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"id":2,"name":"M","type":"Checkpoint",
 		  "modelVersions":[{"id":10,"name":"weights","baseModel":"SD 1.5","files":[{"id":1,"name":"m.safetensors","type":"Model","primary":true}]},
@@ -83,8 +104,8 @@ func TestModelGetMarksTrainingDataVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("models get: %v", err)
 	}
-	if !strings.Contains(out, "training data — no downloadable weights") {
-		t.Errorf("models get should tag the on-site-gen version: %s", out)
+	if !strings.Contains(out, "[Training Data]") {
+		t.Errorf("models get should tag the non-weights version with its type: %s", out)
 	}
 }
 
@@ -99,7 +120,7 @@ func TestModelVersionGetJSONUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("model-versions get --json: %v", err)
 	}
-	if strings.Contains(out, "no downloadable weights") {
+	if strings.Contains(out, "[Training Data]") {
 		t.Errorf("--json output must NOT carry the human marker: %s", out)
 	}
 	if !strings.Contains(out, `"Training Data"`) {

@@ -260,7 +260,7 @@ also takes `--json` to print the **raw API JSON response** for scripting.
 | `civitai models get <id>` | Get one model by id | `--json`, `--anon` |
 | `civitai model-versions get <id>` | Get a model version by id (alias `mv`) | `--json`, `--anon` |
 | `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
-| `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--no-verify`, `--force`, `--allow-nonmodel`, `--anon` |
+| `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--no-verify`, `--force`, `--anon` |
 | `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--sort`, `--period`, `--nsfw`; paging `--limit` (≤200), `--page`, `--cursor` |
 | `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
@@ -295,22 +295,23 @@ civitai models search --type Checkpoint --base-model "Wan Video 2.2 T2V-A14B"
 civitai models search --base-model Pony --base-model Illustrious --limit 20
 ```
 
-**On-site-generation marker.** In the human (non-`--json`) output of
+**Non-weights file marker.** In the human (non-`--json`) output of
 `models get` and `model-versions get`, a version whose **primary file is not
-model weights** (`type != "Model"` — e.g. an on-site-generation registration that
-ships a training-data ZIP instead of the weights) is tagged
-`[training data — no downloadable weights]` so you can spot the trap before
-trying to download it. `--json` output is an unchanged raw passthrough.
+model weights** (`type != "Model"`) is tagged with its actual file type — e.g.
+`[Archive]` (a "Workflows" model's downloadable deliverable), `[Training Data]`,
+or `[Other]` — so you can see at a glance that the version's file isn't weights.
+It's purely informational: any file type still downloads. `--json` output is an
+unchanged raw passthrough.
 
 ## Download model files
 
 `civitai download` fetches the file(s) of a model **version**. Identify the
 version deterministically by its numeric **version id**, or resolve a model's
-default (primary/latest) published version with `--model`:
+default (first) published version with `--model`:
 
 ```bash
 civitai download 128713                       # the version's primary file → ./<server-name>
-civitai download --model 4384                 # resolve model 4384's default weights version, then download it
+civitai download --model 4384                 # resolve model 4384's default version, then download its primary file
 civitai download --model 4384 --dry-run       # print the plan (files, sizes, hashes, targets) — download nothing
 civitai download 128713 --out ./dreamshaper.safetensors
 civitai download 128713 --file vae --out-dir ./models   # pick a file; write into a dir
@@ -320,8 +321,8 @@ civitai download 128713 --all --out-dir ./models        # every file in the vers
 Behavior:
 
 - **Identifier** — exactly one of the positional `<version-id>` or `--model <model-id>` is required (no numeric-ambiguity guessing).
-- **`--model` picks downloadable weights** — a model's default (latest) version can be a training-data / on-site-generation registration whose primary file is **not** model weights. `--model` skips those and resolves to the newest version whose primary file **is** downloadable weights (noting the skip on stderr); if no version has weights it errors clearly. Naming a non-weights version by its explicit `<version-id>` is unchanged — it still hits the `--allow-nonmodel` guard.
-- **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, and `--out-dir`. A non-weights file shows as *would be refused* in the plan rather than aborting it.
+- **`--model` resolves the default version** — the model's default (first published) version; its primary file is downloaded regardless of file type. Any model type works, including a `type: Workflows` model whose deliverable is a downloadable `Archive`.
+- **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, and `--out-dir`.
 - **File selection** — defaults to the version's **primary** file. `--file <name>` selects one file (exact name, else a unique case-insensitive substring; ambiguous/none errors and lists the files). `--all` downloads every file.
 - **Output** — `--out <path>` sets an exact target path (single file only). `--out-dir <dir>` writes server-named files into a directory (works with `--all`). Parent directories are created as needed. Default is the server-provided filename in the current directory.
 - **Streaming + atomicity** — the body streams to `<target>.part` and is renamed into place only on success, so an interrupted run never leaves a truncated final file. Large files (10+ GB) are never buffered in memory. TTY-aware progress is printed to **stderr**. The Civitai download URL 302-redirects to signed storage; the CLI follows it.
@@ -329,7 +330,7 @@ Behavior:
 - **Transient-failure retry (reads)** — the read endpoints (search / model / version / images / tags / creators / users / articles / collections) retry a transient `502`/`503`/`504` or network error a few times with exponential backoff (with jitter), noting each retry on stderr. A `429` is retried **only** when it carries a `Retry-After` header (a genuine throttle, honored up to a cap); a `429` **without** `Retry-After` is Civitai's deterministic deep-paging limit and is surfaced immediately with the hint to use `--cursor` instead of `--page`. The download **stream** is not retried mid-transfer.
 - **Integrity (default on)** — the streamed bytes are verified against the file's `SHA256`; a mismatch deletes the `.part` and fails. `--no-verify` skips it; a file with no published SHA256 downloads with a warning (not a hard failure).
 - **Idempotency** — an already-present target (that verifies, or with `--no-verify`) is skipped with a note; `--force` re-downloads.
-- **On-site-generation guard** — a version whose selected file is **not model weights** (`type != "Model"`, e.g. a training-data ZIP) is **refused by default**; pass `--allow-nonmodel` to download it anyway.
+- **Any file type downloads** — the selected/primary file is downloaded whatever its `type` (`Model` weights, a `type: Workflows` model's `Archive`, training data, or other artifacts). The human `models get` / `model-versions get` output tags a non-weights primary file with its type (e.g. `[Archive]`) purely for information; it never blocks a download.
 
 ## Validate fidelity
 
