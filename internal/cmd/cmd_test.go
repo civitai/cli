@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -435,6 +436,23 @@ func TestLoginDeviceStartFailureReturnsError(t *testing.T) {
 	// Nothing persisted on a failed login.
 	if _, statErr := os.Stat(filepath.Join(dir, "civitai", "config.yaml")); statErr == nil {
 		t.Error("no config should be written on a failed login")
+	}
+}
+
+// TestFlagErrorTaggedAsUsage exercises the REAL SetFlagErrorFunc → asUsageError
+// wiring on the root command (not a reimplemented stand-in): a bad flag must
+// yield an error that satisfies errors.Is(err, ErrUsage) — which the entrypoint
+// maps to exit code 2 — while the user-visible message stays Cobra's verbatim.
+func TestFlagErrorTaggedAsUsage(t *testing.T) {
+	_, _, err := run(t, "images", "search", "--nope")
+	if err == nil {
+		t.Fatal("expected a flag error")
+	}
+	if !errors.Is(err, ErrUsage) {
+		t.Errorf("flag error must be tagged ErrUsage (→ exit 2), got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("message should be Cobra's verbatim flag error, got: %v", err)
 	}
 }
 

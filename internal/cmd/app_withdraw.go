@@ -42,7 +42,7 @@ Pass the publish-request id as a positional argument or via --id (find it with
 				return err
 			}
 			if cfg.Token() == "" {
-				return fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)")
+				return api.Tag(api.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 
 			if idFlag != "" && len(args) == 1 {

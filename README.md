@@ -674,6 +674,34 @@ Not live yet — gen-matrix.civit.ai only serves after the app is approved and d
 Config lives at `~/.config/civitai/config.yaml` (honours `XDG_CONFIG_HOME`),
 written owner-readable only.
 
+## Exit codes
+
+`civitai` returns a differentiated exit code so scripts can branch on the *kind*
+of failure without parsing stderr. The human-readable error message is unchanged
+by this — only `echo $?` differs.
+
+| Code | Meaning |
+| --- | --- |
+| `0` | Success. |
+| `1` | Generic / unclassified error. |
+| `2` | Usage error — a bad flag or malformed invocation. |
+| `3` | Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured). |
+| `4` | Not found — the requested resource does not exist (HTTP 404). |
+| `5` | Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries. |
+| `6` | Rate limited — throttled by the API (HTTP 429). |
+
+```bash
+# Branch on failure kind
+if ! civitai models get "$id" >/dev/null 2>&1; then
+  case $? in
+    3) echo "log in first: civitai login" ;;
+    4) echo "no such model: $id" ;;
+    5|6) echo "transient — retry later" ;;
+    *) echo "failed" ;;
+  esac
+fi
+```
+
 ## Troubleshooting
 
 - **`no token configured`** — run `civitai login` (or set `CIVITAI_TOKEN`).

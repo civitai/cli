@@ -161,7 +161,9 @@ func retryExhaustedError(status, attempts int, raw []byte) error {
 	if s := snippet(raw); s != "" {
 		msg += ": " + s
 	}
-	return errors.New(msg)
+	// Exhausted transient retries against an overloaded backend is a
+	// service-availability failure; classify it so scripts can branch on it.
+	return tag(ErrNetwork, errors.New(msg))
 }
 
 // sleepCtx waits for d or until ctx is cancelled, returning ctx.Err() on
