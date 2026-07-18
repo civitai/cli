@@ -21,16 +21,15 @@ import (
 
 // downloadOpts holds the resolved flag values for `civitai download`.
 type downloadOpts struct {
-	modelID       string // --model (mutually exclusive with the positional version id)
-	file          string // --file: select one file by name (exact | unique substring)
-	all           bool   // --all: download every file in the version
-	out           string // --out: target path (single-file only)
-	outDir        string // --out-dir: directory for server-named files
-	noVerify      bool   // --no-verify: skip SHA256 verification
-	force         bool   // --force: re-download even if the target already exists
-	allowNonModel bool   // --allow-nonmodel: permit non-"Model" files (training data, etc.)
-	anon          bool   // --anon: force an anonymous request
-	dryRun        bool   // --dry-run: print the resolved plan and exit without transferring
+	modelID  string // --model (mutually exclusive with the positional version id)
+	file     string // --file: select one file by name (exact | unique substring)
+	all      bool   // --all: download every file in the version
+	out      string // --out: target path (single-file only)
+	outDir   string // --out-dir: directory for server-named files
+	noVerify bool   // --no-verify: skip SHA256 verification
+	force    bool   // --force: re-download even if the target already exists
+	anon     bool   // --anon: force an anonymous request
+	dryRun   bool   // --dry-run: print the resolved plan and exit without transferring
 }
 
 func newDownloadCmd() *cobra.Command {
@@ -44,9 +43,7 @@ Identify the version deterministically by its numeric version id:
 
   civitai download 128713
 
-…or resolve a model's default published version with --model (which skips
-non-weights registrations — training-data / on-site-generation versions — and
-picks the newest version with downloadable weights):
+…or resolve a model's default (first published) version with --model:
 
   civitai download --model 4384
 
@@ -54,9 +51,11 @@ Use --dry-run to print the resolved plan (files, sizes, SHA256, target paths,
 and whether auth is required) without transferring anything.
 
 By default the version's PRIMARY file is downloaded into the current directory
-under its server-provided name. Use --file to pick a specific file, or --all to
-download every file. Downloads stream to "<target>.part" and are renamed into
-place only on success, so an interrupted run never leaves a truncated final file.
+under its server-provided name. Any file type downloads — model weights, but
+also non-weights deliverables like a "Workflows" model's Archive, training data,
+or other artifacts. Use --file to pick a specific file, or --all to download
+every file. Downloads stream to "<target>.part" and are renamed into place only
+on success, so an interrupted run never leaves a truncated final file.
 
 Authentication: your stored login token (civitai login) or CIVITAI_API_KEY is
 used automatically; gated / early-access files need it. Public files download
@@ -64,11 +63,7 @@ anonymously.
 
 Integrity: the streamed bytes are verified against the file's SHA256 by default
 (--no-verify to skip; a file with no published SHA256 is downloaded with a
-warning). A hash mismatch deletes the partial file and fails.
-
-On-site-generation guard: a version whose selected file is not model weights
-(type != "Model", e.g. a training-data ZIP) is refused by default — pass
---allow-nonmodel to download it anyway.`,
+warning). A hash mismatch deletes the partial file and fails.`,
 		Example: `  civitai download 128713
   civitai download --model 4384 --out ./dreamshaper.safetensors
   civitai download 128713 --file vae --out-dir ./models
@@ -79,14 +74,13 @@ On-site-generation guard: a version whose selected file is not model weights
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&o.modelID, "model", "", "resolve+download a MODEL's default (primary/latest) version instead of a version id")
+	f.StringVar(&o.modelID, "model", "", "resolve+download a MODEL's default (first published) version instead of a version id")
 	f.StringVar(&o.file, "file", "", "select a specific file by name (exact match, else a unique case-insensitive substring)")
 	f.BoolVar(&o.all, "all", false, "download every file in the version")
 	f.StringVar(&o.out, "out", "", "target file path (single-file only; mutually exclusive with --all/--out-dir)")
 	f.StringVar(&o.outDir, "out-dir", "", "directory to write server-named file(s) into (created if needed)")
 	f.BoolVar(&o.noVerify, "no-verify", false, "skip SHA256 verification of the downloaded bytes")
 	f.BoolVar(&o.force, "force", false, "re-download even if the target file already exists")
-	f.BoolVar(&o.allowNonModel, "allow-nonmodel", false, "allow downloading a non-\"Model\" file (training data, config, etc.)")
 	f.BoolVar(&o.anon, "anon", false, "force an anonymous request (ignore any stored login token)")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print the resolved download plan (files, sizes, hashes, targets) and exit without downloading anything")
 	return cmd
@@ -130,7 +124,7 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	out := cmd.OutOrStdout()
 	errW := cmd.ErrOrStderr()
 
-	versionID, err := resolveVersionID(ctx, client, positional, o.modelID, errW)
+	versionID, err := resolveVersionID(ctx, client, positional, o.modelID)
 	if err != nil {
 		return err
 	}
@@ -146,8 +140,7 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	}
 
 	// --dry-run: print the resolved plan and exit 0, transferring nothing and
-	// creating no file (not even a ".part"). The non-weights refusal is shown in
-	// the plan rather than aborting it, so the whole plan is always visible.
+	// creating no file (not even a ".part").
 	if o.dryRun {
 		return printDownloadPlan(out, selected, o, baseURL)
 	}
@@ -155,19 +148,6 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	downloaded := 0
 	for i := range selected {
 		f := selected[i]
-		// on-site-gen / component-file guard.
-		if !f.IsModelWeights() && !o.allowNonModel {
-			if o.all {
-				// In --all mode, don't abort the whole run for a bundled
-				// non-weights file — skip it with a clear note.
-				fmt.Fprintln(errW, ui.For(errW).Warn(fmt.Sprintf(
-					"skipping %q (type %q, not model weights) — pass --allow-nonmodel to include it", f.Name, f.Type)))
-				continue
-			}
-			return fmt.Errorf("%q is %q, not model weights — this is likely an on-site-generation / training-data registration, not downloadable weights.\n"+
-				"Re-run with --allow-nonmodel if you really want this file", f.Name, f.Type)
-		}
-
 		target, err := targetPath(f, o)
 		if err != nil {
 			return err
@@ -182,25 +162,20 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	}
 
 	if downloaded == 0 && o.all {
-		// Everything was skipped (all files non-weights, or all already present).
-		fmt.Fprintln(errW, ui.For(errW).Warn("no model-weights files were downloaded (all files were non-model or already present)"))
+		// Everything was already present on disk.
+		fmt.Fprintln(errW, ui.For(errW).Warn("no files were downloaded (all were already present)"))
 	}
 	return nil
 }
 
 // resolveVersionID returns the version id to download: the positional id verbatim
-// (validated numeric), or a downloadable-weights version of --model.
+// (validated numeric), or the default (first published) version of --model.
 //
-// For --model, the API returns modelVersions default/latest-first, but that
-// default can be a training-data / on-site-generation registration whose primary
-// file is not model weights (downloading it errors on a ZIP). So instead of
-// blindly taking modelVersions[0], this picks the FIRST version whose primary
-// file IS downloadable weights, skipping non-weights versions and noting the skip
-// on stderr. If the models endpoint embeds no per-version file info at all, it
-// can't distinguish and falls back to the prior [0] behavior. Naming a non-weights
-// version by its explicit positional id is unchanged — it still hits the
-// --allow-nonmodel guard in the download loop.
-func resolveVersionID(ctx context.Context, client api.Reader, positional, modelID string, errW io.Writer) (string, error) {
+// For --model, the API returns modelVersions default/latest-first, so the model's
+// default version is modelVersions[0]. Its primary file is downloaded regardless
+// of file type — a "Workflows" model's Archive, training data, or plain weights
+// all download the same way.
+func resolveVersionID(ctx context.Context, client api.Reader, positional, modelID string) (string, error) {
 	if positional != "" {
 		if _, err := strconv.Atoi(positional); err != nil {
 			return "", fmt.Errorf("model-version id must be an integer, got %q", positional)
@@ -217,39 +192,12 @@ func resolveVersionID(ctx context.Context, client api.Reader, positional, modelI
 	if len(m.ModelVersions) == 0 {
 		return "", fmt.Errorf("model %s has no published versions to download", modelID)
 	}
-	// Pick the first version whose primary file is downloadable weights.
-	sawFiles := false
-	for i := range m.ModelVersions {
-		v := m.ModelVersions[i]
-		pf := api.PrimaryFile(v.Files)
-		if pf == nil {
-			continue
-		}
-		sawFiles = true
-		if pf.IsModelWeights() {
-			if i != 0 {
-				defType := "non-weights"
-				if dpf := api.PrimaryFile(m.ModelVersions[0].Files); dpf != nil && dpf.Type != "" {
-					defType = strings.ToLower(dpf.Type)
-				}
-				fmt.Fprintln(errW, ui.For(errW).Warn(fmt.Sprintf(
-					"model default is a %s registration; using version %d %q with downloadable weights", defType, v.ID, v.Name)))
-			}
-			return strconv.Itoa(v.ID), nil
-		}
-	}
-	if !sawFiles {
-		// No per-version file info embedded — can't distinguish; preserve the
-		// prior behavior of taking the default/latest version.
-		return strconv.Itoa(m.ModelVersions[0].ID), nil
-	}
-	return "", fmt.Errorf("model %s has no version with downloadable weights — every published version is a non-\"Model\" registration (e.g. training data / on-site generation). Inspect the versions with `civitai model %s` and pass a specific version id", modelID, modelID)
+	return strconv.Itoa(m.ModelVersions[0].ID), nil
 }
 
 // printDownloadPlan renders the --dry-run plan: for each selected file its name,
 // size, SHA256, resolved target path, and whether authentication will be
-// required — then whether it would be downloaded or refused as non-weights. It
-// writes NOTHING to disk.
+// required. It writes NOTHING to disk.
 func printDownloadPlan(out io.Writer, files []api.ModelVersionFile, o *downloadOpts, baseURL string) error {
 	fmt.Fprintf(out, "Dry run — planning %d file(s); nothing will be downloaded.\n", len(files))
 	for i := range files {
@@ -271,11 +219,7 @@ func printDownloadPlan(out io.Writer, files []api.ModelVersionFile, o *downloadO
 		} else {
 			fmt.Fprintf(out, "  auth:   not required\n")
 		}
-		if !f.IsModelWeights() && !o.allowNonModel {
-			fmt.Fprintf(out, "  status: WOULD BE REFUSED — %q, not model weights; pass --allow-nonmodel to include it\n", f.Type)
-		} else {
-			fmt.Fprintf(out, "  status: would download\n")
-		}
+		fmt.Fprintf(out, "  status: would download\n")
 	}
 	return nil
 }

@@ -172,17 +172,18 @@ func TestDownloadFileSelectExactAndSubstring(t *testing.T) {
 	// Exact (case-insensitive) name.
 	d := newDLServer(t, false, files)
 	setupDownloadEnv(t, d, "")
-	if _, _, err := run(t, "download", "128713", "--file", "MODEL.SAFETENSORS", "--allow-nonmodel"); err != nil {
+	if _, _, err := run(t, "download", "128713", "--file", "MODEL.SAFETENSORS"); err != nil {
 		t.Fatalf("exact --file: %v", err)
 	}
 	if _, err := os.Stat("model.safetensors"); err != nil {
 		t.Errorf("exact match should download model.safetensors: %v", err)
 	}
 
-	// Unique substring.
+	// Unique substring — selects the non-"Model" config file, which now downloads
+	// with no flag.
 	d2 := newDLServer(t, false, files)
 	setupDownloadEnv(t, d2, "")
-	if _, _, err := run(t, "download", "128713", "--file", "config", "--allow-nonmodel"); err != nil {
+	if _, _, err := run(t, "download", "128713", "--file", "config"); err != nil {
 		t.Fatalf("substring --file: %v", err)
 	}
 	if _, err := os.Stat("config.yaml"); err != nil {
@@ -221,7 +222,7 @@ func TestDownloadAll(t *testing.T) {
 	})
 	setupDownloadEnv(t, d, "")
 	dir := t.TempDir()
-	if _, _, err := run(t, "download", "128713", "--all", "--allow-nonmodel", "--out-dir", dir); err != nil {
+	if _, _, err := run(t, "download", "128713", "--all", "--out-dir", dir); err != nil {
 		t.Fatalf("download --all: %v", err)
 	}
 	for _, name := range []string{"model.safetensors", "vae.pt"} {
@@ -231,7 +232,9 @@ func TestDownloadAll(t *testing.T) {
 	}
 }
 
-func TestDownloadAllSkipsNonModelWithoutOverride(t *testing.T) {
+// --all now downloads EVERY file regardless of type — the weights AND the
+// non-"Model" file — with no skip and no override flag.
+func TestDownloadAllDownloadsEveryFileType(t *testing.T) {
 	d := newDLServer(t, false, []dlFile{
 		{id: 1, name: "model.safetensors", typ: "Model", primary: true, body: "weights", withSHA: true},
 		{id: 2, name: "training.zip", typ: "Training Data", body: "trainingdata"},
@@ -243,13 +246,13 @@ func TestDownloadAllSkipsNonModelWithoutOverride(t *testing.T) {
 		t.Fatalf("download --all: %v", err)
 	}
 	if _, e := os.Stat(filepath.Join(dir, "model.safetensors")); e != nil {
-		t.Errorf("--all should still fetch the weights: %v", e)
+		t.Errorf("--all should fetch the weights: %v", e)
 	}
-	if _, e := os.Stat(filepath.Join(dir, "training.zip")); e == nil {
-		t.Error("--all must skip the non-model training file without --allow-nonmodel")
+	if _, e := os.Stat(filepath.Join(dir, "training.zip")); e != nil {
+		t.Errorf("--all should now fetch the non-model training file too: %v", e)
 	}
-	if !strings.Contains(errOut, "skipping") {
-		t.Errorf("stderr should note the skipped non-model file: %s", errOut)
+	if strings.Contains(errOut, "not model weights") {
+		t.Errorf("stderr must NOT note a non-weights skip anymore: %s", errOut)
 	}
 }
 
@@ -304,30 +307,41 @@ func TestDownloadMissingHashWarnsAndSkipsVerify(t *testing.T) {
 	}
 }
 
-func TestDownloadNonModelRefusedByDefault(t *testing.T) {
+// Repro (a): a version whose PRIMARY file is a non-"Model" Archive — as a
+// "Workflows" model registers — downloads with NO flag and NO refusal.
+func TestDownloadArchivePrimaryDownloads(t *testing.T) {
+	const body = "WORKFLOW-ARCHIVE-BYTES"
 	d := newDLServer(t, false, []dlFile{
-		{id: 1, name: "training.zip", typ: "Training Data", primary: true, body: "trainingdata"},
+		{id: 1, name: "workflow.zip", typ: "Archive", primary: true, body: body, withSHA: true},
 	})
 	setupDownloadEnv(t, d, "")
-	_, _, err := run(t, "download", "128713")
-	if err == nil || !strings.Contains(err.Error(), "not model weights") {
-		t.Fatalf("expected on-site-gen refusal, got %v", err)
+	out, _, err := run(t, "download", "3083777")
+	if err != nil {
+		t.Fatalf("an Archive primary file should download with no flag, got %v", err)
 	}
-	if _, e := os.Stat("training.zip"); e == nil {
-		t.Error("refused download must not write the file")
+	got, rerr := os.ReadFile("workflow.zip")
+	if rerr != nil {
+		t.Fatalf("Archive file not written: %v", rerr)
+	}
+	if string(got) != body {
+		t.Errorf("content = %q, want %q", got, body)
+	}
+	if !strings.Contains(out, "Saved workflow.zip") {
+		t.Errorf("output should confirm the save: %s", out)
 	}
 }
 
-func TestDownloadNonModelAllowedWithOverride(t *testing.T) {
+// A non-"Model" Training Data primary file also downloads with no flag.
+func TestDownloadTrainingDataPrimaryDownloads(t *testing.T) {
 	d := newDLServer(t, false, []dlFile{
 		{id: 1, name: "training.zip", typ: "Training Data", primary: true, body: "trainingdata"},
 	})
 	setupDownloadEnv(t, d, "")
-	if _, _, err := run(t, "download", "128713", "--allow-nonmodel"); err != nil {
-		t.Fatalf("download --allow-nonmodel: %v", err)
+	if _, _, err := run(t, "download", "128713"); err != nil {
+		t.Fatalf("a Training Data file should download with no flag, got %v", err)
 	}
 	if _, e := os.Stat("training.zip"); e != nil {
-		t.Errorf("--allow-nonmodel should permit the download: %v", e)
+		t.Errorf("the training file should be written: %v", e)
 	}
 }
 

@@ -33,19 +33,20 @@ type ModelVersionFile struct {
 }
 
 // ModelFileType is the `type` value of the main model-weights file. A file whose
-// type is anything else (e.g. "Training Data", "Config", "VAE") is NOT the
-// downloadable weights — the on-site-generation / component-file trap `download`
-// guards against by default.
+// type is anything else (e.g. "Archive", "Training Data", "Config", "VAE") is not
+// weights but a different deliverable — the renderers tag it with an
+// informational type marker; `download` fetches any type regardless.
 const ModelFileType = "Model"
 
 // IsModelWeights reports whether the file is the main model-weights file
-// (type == "Model"), as opposed to training data / config / a component file.
+// (type == "Model"), as opposed to an archive / training data / config / a
+// component file. Used only for the informational non-weights marker.
 func (f *ModelVersionFile) IsModelWeights() bool { return f.Type == ModelFileType }
 
 // PrimaryFile returns the primary file of a version's file list (the one flagged
 // `primary: true`), falling back to the first file when none is flagged. Returns
 // nil for an empty list. This is the file `download` fetches by default and the
-// one the list/detail renderers inspect for the on-site-gen marker.
+// one the list/detail renderers inspect for the non-weights marker.
 func PrimaryFile(files []ModelVersionFile) *ModelVersionFile {
 	if len(files) == 0 {
 		return nil

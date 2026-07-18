@@ -45,7 +45,7 @@ func TestDownloadDryRunPrintsPlanWritesNothing(t *testing.T) {
 	}
 }
 
-func TestDownloadDryRunAllShowsRefusalWithoutError(t *testing.T) {
+func TestDownloadDryRunAllPlansEveryFileNoRefusal(t *testing.T) {
 	d := newDLServer(t, false, []dlFile{
 		{id: 1, name: "model.safetensors", typ: "Model", primary: true, body: "w", withSHA: true},
 		{id: 2, name: "training.zip", typ: "Training Data", body: "trainingdata"},
@@ -55,13 +55,17 @@ func TestDownloadDryRunAllShowsRefusalWithoutError(t *testing.T) {
 
 	out, _, err := run(t, "download", "128713", "--all", "--out-dir", dir, "--dry-run")
 	if err != nil {
-		t.Fatalf("dry-run --all should exit 0 even with a non-weights file, got %v", err)
+		t.Fatalf("dry-run --all should exit 0, got %v", err)
 	}
 	if !strings.Contains(out, "model.safetensors") || !strings.Contains(out, "training.zip") {
 		t.Errorf("plan should list every selected file:\n%s", out)
 	}
-	if !strings.Contains(out, "WOULD BE REFUSED") {
-		t.Errorf("the non-weights file should show as refused in the plan:\n%s", out)
+	// The non-weights file is no longer refused — every file plans as downloadable.
+	if strings.Contains(out, "WOULD BE REFUSED") {
+		t.Errorf("no file should be refused in the plan anymore:\n%s", out)
+	}
+	if strings.Count(out, "would download") != 2 {
+		t.Errorf("both files should plan as would-download:\n%s", out)
 	}
 	if !dirIsEmpty(t, dir) {
 		t.Error("dry-run --all must write nothing to the out-dir")
@@ -92,22 +96,25 @@ func TestDownloadDryRunModel(t *testing.T) {
 	}
 }
 
-func TestDownloadDryRunSingleNonWeightsShowsRefusalNotError(t *testing.T) {
-	// A single non-weights primary in dry-run: the plan shows the refusal but the
-	// command still exits 0 (it never claims it downloaded it).
+func TestDownloadDryRunArchivePlansDownloadNoRefusal(t *testing.T) {
+	// Repro (a), dry-run form: a single non-weights primary — a "Workflows" model's
+	// Archive — plans as a normal download with no refusal line, and writes nothing.
 	d := newDLServer(t, false, []dlFile{
-		{id: 1, name: "training.zip", typ: "Training Data", primary: true, body: "trainingdata"},
+		{id: 1, name: "workflow.zip", typ: "Archive", primary: true, body: "workflowbytes"},
 	})
 	setupDownloadEnv(t, d, "")
 
-	out, _, err := run(t, "download", "128713", "--dry-run")
+	out, _, err := run(t, "download", "3083777", "--dry-run")
 	if err != nil {
-		t.Fatalf("dry-run of a non-weights file should not error the plan, got %v", err)
+		t.Fatalf("dry-run of an Archive file should not error, got %v", err)
 	}
-	if !strings.Contains(out, "WOULD BE REFUSED") {
-		t.Errorf("plan should show the non-weights refusal:\n%s", out)
+	if strings.Contains(out, "WOULD BE REFUSED") {
+		t.Errorf("an Archive file must NOT be refused in the plan anymore:\n%s", out)
 	}
-	if _, e := os.Stat("training.zip"); e == nil {
+	if !strings.Contains(out, "would download") {
+		t.Errorf("the Archive file should plan as would-download:\n%s", out)
+	}
+	if _, e := os.Stat("workflow.zip"); e == nil {
 		t.Error("dry-run must not write the file")
 	}
 }

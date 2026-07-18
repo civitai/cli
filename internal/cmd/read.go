@@ -59,19 +59,22 @@ func emitJSON(cmd *cobra.Command, raw []byte) error {
 	return nil
 }
 
-// nonModelFileMarker returns a short human tag when a version's PRIMARY file is
-// not model weights (type != "Model") — the on-site-generation / training-data
-// trap where a clean-named version ships e.g. a training ZIP instead of
-// downloadable weights. Returns "" for a normal weights version (or no files).
+// nonModelFileMarker returns a short human tag naming a version's PRIMARY file
+// type when it is NOT model weights (type != "Model") — e.g. a "Workflows"
+// model's [Archive], a [Training Data] registration, or [Other]. It's purely
+// informational: any file type downloads, so this only flags "this version's
+// primary file isn't weights" without claiming it can't be downloaded. Returns
+// "" for a normal weights version (or no files).
 func nonModelFileMarker(files []api.ModelVersionFile) string {
 	pf := api.PrimaryFile(files)
 	if pf == nil || pf.IsModelWeights() {
 		return ""
 	}
-	if strings.EqualFold(pf.Type, "Training Data") {
-		return "[training data — no downloadable weights]"
+	typ := strings.TrimSpace(pf.Type)
+	if typ == "" {
+		typ = "Other"
 	}
-	return fmt.Sprintf("[%s — not model weights]", strings.ToLower(pf.Type))
+	return "[" + typ + "]"
 }
 
 // checkLimit validates a --limit against an endpoint's documented maximum. A
