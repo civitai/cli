@@ -508,6 +508,12 @@ func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f 
 	if note := pickleArchiveNote(f.Name); note != "" {
 		fmt.Fprintln(errW, note)
 	}
+	// Point ControlNet downloads at the preprocessor/annotator dependency the CLI
+	// can't fetch (a separate ComfyUI custom node, not hosted on Civitai), once
+	// per file. Static hint — stderr only, so --json/pipes on stdout are unaffected.
+	if note := controlnetPreprocessorNote(o.modelType); note != "" {
+		fmt.Fprintln(errW, note)
+	}
 
 	// Idempotency: skip an already-present target unless --force. When verifying
 	// and a hash is known, only skip on a confirmed match; without a hash (or
@@ -629,6 +635,20 @@ func pickleArchiveNote(name string) string {
 		return ""
 	}
 	return safeTerm(fmt.Sprintf("note: %s is a pickle/archive-format file — it can execute code when loaded; only load models from creators you trust.", filepath.Base(name)))
+}
+
+// controlnetPreprocessorNote returns a one-line stderr note when the parent model
+// is a ControlNet, pointing at the preprocessor/annotator dependency the CLI can't
+// fetch: a ControlNet model needs a matching preprocessor (e.g. the ComfyUI
+// `comfyui_controlnet_aux` custom node — OpenPose/Canny/Depth) to derive the
+// control image, and that lives outside Civitai. The match is case-insensitive on
+// the model type; it returns "" for every other type. The note is fully static
+// (no server-derived substring), so it needs no safeTerm sanitization.
+func controlnetPreprocessorNote(modelType string) string {
+	if !strings.EqualFold(strings.TrimSpace(modelType), "Controlnet") {
+		return ""
+	}
+	return "note: ControlNet models need a matching preprocessor/annotator to generate the control image (e.g. the ComfyUI 'comfyui_controlnet_aux' custom node — OpenPose/Canny/Depth). That preprocessor is a separate install, not available on Civitai."
 }
 
 // downloadStatusError maps a non-2xx download response to an actionable error.
