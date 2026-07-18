@@ -174,21 +174,34 @@ func NewRootCmd() *cobra.Command {
 	colorViper := viper.New()
 	root := &cobra.Command{
 		Use:   "civitai",
-		Short: "Civitai CLI — author and ship Apps",
+		Short: "Civitai CLI — browse & download models, and build Apps",
 		Long: `civitai is the command-line interface for Civitai (https://civitai.com).
 
-Its first feature group is Apps authoring — Apps are small,
-sandboxed web apps that run inside Civitai surfaces. The CLI scaffolds a
-correct project, validates it against the platform contract, and packages it
-for submission, so you don't have to hand-format a ZIP.
+It does two things from one static binary:
+
+  • Browse & download the public catalog — search models, list images and
+    articles, and fetch model files. Reading is anonymous; downloading a
+    model file needs a token (civitai login). --layout routes each file into
+    the right folder for ComfyUI / A1111.
+  • Build & submit Apps — small, sandboxed web apps that run inside Civitai
+    surfaces. Scaffold a correct project, validate it against the platform
+    contract, and package it for submission.
 
 Get started:
 
+  # Browse & download
+  civitai models search --query "pony" --limit 5
+  civitai download 128713 --layout comfyui --root ~/ComfyUI
+
+  # Build an App
   civitai login                    store your API token
   civitai app create my-app        scaffold a ready-to-build App
-  civitai app validate             check the manifest before you submit
   civitai app submit               package + submit for review`,
-		Example: `  # First time: authenticate, then scaffold and submit an app.
+		Example: `  # Browse & download the public catalog (no account needed to read).
+  civitai models search --query "dreamshaper" --limit 5
+  civitai download 128713 --layout comfyui --root ~/ComfyUI
+
+  # Build & ship an App.
   civitai login
   civitai app create my-first-app
   cd my-first-app
