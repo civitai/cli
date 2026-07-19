@@ -92,6 +92,13 @@ cursor is printed after the results.`,
 			if err != nil {
 				return err
 			}
+			// --base-model is matched literally by the API, so a typo silently
+			// yields zero results rather than an error. Nudge the user toward the
+			// likely cause. Empty results are not a failure, so exit stays 0.
+			if cmd.Flags().Changed("base-model") && len(res.Items) == 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(),
+					"note: 0 results — check --base-model spelling (it's matched literally).")
+			}
 			if o.json {
 				return emitJSON(cmd, res.Raw)
 			}
@@ -125,7 +132,10 @@ func newModelsGetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := readFlags(cmd)
 			if _, err := strconv.Atoi(args[0]); err != nil {
-				return fmt.Errorf("model id must be a positive integer, got %q", args[0])
+				// A non-integer positional arg is a client-side usage mistake, not
+				// an API failure — tag it so the entrypoint maps it to the usage
+				// exit code rather than the generic one.
+				return asUsageError(fmt.Errorf("model id must be a positive integer, got %q", args[0]))
 			}
 			client, _, err := newReader(o)
 			if err != nil {
