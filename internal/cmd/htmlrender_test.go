@@ -311,3 +311,37 @@ func TestHTMLToTextStripsControlChars(t *testing.T) {
 		t.Errorf("safeTerm newline/tab/CR handling wrong: %q", got)
 	}
 }
+
+// TestHTMLToTextSeparateBoldsStaySplit guards the highest-risk direction of the
+// emphasis-coalescing fix: bolds with any intervening text/space must NOT merge.
+func TestHTMLToTextSeparateBoldsStaySplit(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`<strong>A</strong> and <strong>B</strong>`, "**A** and **B**"},
+		{`<strong>bold</strong> word <strong>bold</strong>`, "**bold** word **bold**"},
+		{`<strong>A</strong> <strong>B</strong>`, "**A** **B**"},
+	} {
+		if out := htmlToText(tc.in); out != tc.want {
+			t.Errorf("separate bolds from %q: got %q, want %q", tc.in, out, tc.want)
+		}
+	}
+}
+
+// TestHTMLToTextMalformedListState covers the two robustness gaps a #159 audit
+// found: an <li> left open at list close must not leak `inItem` onto following
+// blocks, and a <br> inside a list item must not split off a mislabeled tail.
+func TestHTMLToTextMalformedListState(t *testing.T) {
+	// Missing </li>: content after the list must land on its own lines, not glue.
+	out := htmlToText(`<ul><li><p>x</p></ul><p>A</p><p>B</p>`)
+	for _, want := range []string{"- x", "A", "B"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing-</li> leak: %q absent:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "A B") {
+		t.Errorf("blocks after a malformed list must not glue onto one line:\n%s", out)
+	}
+	// <br> inside a list item keeps the item together (no bullet on the tail).
+	if got := htmlToText(`<ul><li><p>a<br>b</p></li></ul>`); got != "- a b" {
+		t.Errorf("<br> in <li>: got %q, want %q", got, "- a b")
+	}
+}

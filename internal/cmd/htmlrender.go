@@ -160,6 +160,14 @@ var wsRe = regexp.MustCompile(`\s+`)
 func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfClose bool) {
 	switch name {
 	case "br":
+		if r.inItem {
+			// Inside a list item, a <br> must not split the item into a plain line
+			// + a mislabeled remainder — keep the text on the item's line, like <p>.
+			if r.line.Len() > 0 && !strings.HasSuffix(r.line.String(), " ") {
+				r.line.WriteString(" ")
+			}
+			return
+		}
 		r.flushLine()
 	case "hr":
 		r.flushLine()
@@ -187,6 +195,12 @@ func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfCl
 		}
 	case "ul", "ol":
 		if closing {
+			if r.inItem {
+				// An <li> left open at list close (</li> is optional HTML and the
+				// tokenizer does no implicit close): emit its text with a marker and
+				// clear inItem, so later blocks don't glue onto the item's line.
+				r.flushListItem()
+			}
 			if len(r.lists) > 0 {
 				r.lists = r.lists[:len(r.lists)-1]
 			}
