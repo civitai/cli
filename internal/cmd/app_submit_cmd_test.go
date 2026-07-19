@@ -121,7 +121,8 @@ func TestAppSubmitUploadsWhenTokenAndPathConfigured(t *testing.T) {
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)
 	t.Setenv("CIVITAI_SUBMIT_PATH", "/api/blocks/submit-version")
 
-	stdout, _, err := run(t, "app", "submit", tmp)
+	// --yes bypasses the confirmation gate (non-TTY test shell would otherwise refuse).
+	stdout, _, err := run(t, "app", "submit", tmp, "--yes")
 	if err != nil {
 		t.Fatalf("submit upload: %v\n%s", err, stdout)
 	}
@@ -168,7 +169,8 @@ func TestAppSubmitUploadsToV1RouteByDefault(t *testing.T) {
 	// No CIVITAI_SUBMIT_PATH => must default to the v1 token route.
 	t.Setenv("CIVITAI_SUBMIT_PATH", "")
 
-	stdout, _, err := run(t, "app", "submit", tmp)
+	// --yes bypasses the confirmation gate (non-TTY test shell would otherwise refuse).
+	stdout, _, err := run(t, "app", "submit", tmp, "--yes")
 	if err != nil {
 		t.Fatalf("submit default upload: %v\n%s", err, stdout)
 	}
