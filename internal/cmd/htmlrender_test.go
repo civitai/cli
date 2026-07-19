@@ -143,6 +143,98 @@ func TestHTMLToTextFlushesUnclosedList(t *testing.T) {
 	}
 }
 
+// TestHTMLToTextListItemsWrappedInParagraphs is the regression for bug #1: TipTap
+// wraps each <li>'s text in a <p> (`<ul><li><p>…</p></li>…`). The inner <p> must
+// not be flushed as a standalone paragraph — that dropped the list marker so items
+// rendered as bare, run-together lines. Each item must keep its marker on its own
+// line, for both unordered and ordered lists.
+func TestHTMLToTextListItemsWrappedInParagraphs(t *testing.T) {
+	ul := htmlToText(`<ul><li><p>Text-to-Image</p></li><li><p>Simple latent upscale</p></li></ul>`)
+	if want := "- Text-to-Image\n- Simple latent upscale"; !strings.Contains(ul, want) {
+		t.Errorf("<ul><li><p> items not marked / not on own lines:\ngot:\n%s\nwant substring:\n%s", ul, want)
+	}
+	ol := htmlToText(`<ol><li><p>first</p></li><li><p>second</p></li><li><p>third</p></li></ol>`)
+	if want := "1. first\n2. second\n3. third"; !strings.Contains(ol, want) {
+		t.Errorf("<ol><li><p> items not numbered / not on own lines:\ngot:\n%s\nwant substring:\n%s", ol, want)
+	}
+	// A multi-paragraph <li> keeps its single marker and doesn't glue words together.
+	multi := htmlToText(`<ul><li><p>one</p><p>two</p></li></ul>`)
+	if !strings.Contains(multi, "- one two") {
+		t.Errorf("multi-paragraph <li> mishandled:\n%s", multi)
+	}
+}
+
+// TestHTMLToTextCoalescesAdjacentEmphasis is the regression for bug #2: abutting or
+// empty <strong>/<em> spans each emitted their own marker, producing malformed
+// "****" / "*****" runs that broke mid-word. Adjacent same-kind spans must coalesce
+// and empty / whitespace-only spans must emit no markers at all.
+func TestHTMLToTextCoalescesAdjacentEmphasis(t *testing.T) {
+	// No case may ever leave a "****" (or longer) run.
+	noStray := []string{
+		`<strong>A</strong><strong>B</strong>`,
+		`text<strong></strong>`,
+		`<strong></strong>text`,
+		`<strong>does not</strong><strong> </strong>do:`,
+		`<strong>We're up to </strong><strong>32 </strong><strong>LoRAs!</strong>`,
+		`<strong><em>If helpful, </em></strong><strong>consider donating<em> </em></strong>`,
+		`<em>a</em><em>b</em>`,
+	}
+	for _, body := range noStray {
+		if out := htmlToText(body); strings.Contains(out, "****") {
+			t.Errorf("stray '****' from %q:\n%s", body, out)
+		}
+	}
+
+	// Adjacent bold runs merge into one span.
+	if out := htmlToText(`<strong>A</strong><strong>B</strong>`); out != "**AB**" {
+		t.Errorf("adjacent bold: got %q, want %q", out, "**AB**")
+	}
+	// Three adjacent bolds (with an ignored <span> shape) coalesce.
+	if out := htmlToText(`<strong>We're up to </strong><strong>32 </strong><strong>LoRAs!</strong>`); out != "**We're up to 32 LoRAs!**" {
+		t.Errorf("three adjacent bolds: got %q, want %q", out, "**We're up to 32 LoRAs!**")
+	}
+	// A trailing empty <strong> drops entirely — no marker survives.
+	if out := htmlToText(`text<strong></strong>`); out != "text" {
+		t.Errorf("empty trailing <strong>: got %q, want %q", out, "text")
+	}
+	// A whitespace-only <strong> between spans: no marker, words stay separated.
+	if out := htmlToText(`<strong>does not</strong><strong> </strong>do:`); out != "**does not** do:" {
+		t.Errorf("whitespace-only <strong>: got %q, want %q", out, "**does not** do:")
+	}
+}
+
+// TestHTMLToTextNestedEmphasis proves nested emphasis renders correctly: <em>
+// inside <strong> becomes ***…***, and a real-article shape mixing nested and
+// empty emphasis never produces a stray "****"/"*****".
+func TestHTMLToTextNestedEmphasis(t *testing.T) {
+	if out := htmlToText(`<p><strong><em>bold italic</em></strong></p>`); out != "***bold italic***" {
+		t.Errorf("strong>em: got %q, want %q", out, "***bold italic***")
+	}
+	if out := htmlToText(`<p><em><strong>italic bold</strong></em></p>`); out != "***italic bold***" {
+		t.Errorf("em>strong: got %q, want %q", out, "***italic bold***")
+	}
+	// Real donation-line shape: nested + trailing whitespace-only emphasis.
+	body := `<strong><em>If helpful, </em></strong><strong>consider donating<em> </em></strong>`
+	if out := htmlToText(body); strings.Contains(out, "****") {
+		t.Errorf("nested+empty emphasis produced a stray run:\n%s", out)
+	}
+}
+
+// TestHTMLToTextWellFormedUnchanged is the golden: a clean, well-formed snippet
+// (heading, paragraph with a single bold/italic/link, a wrapped list) renders to
+// exactly the expected markdown — so the bug fixes don't regress good content.
+func TestHTMLToTextWellFormedUnchanged(t *testing.T) {
+	body := `<h2>Overview</h2>` +
+		`<p>This uses <strong>ComfyUI</strong> and a <em>custom</em> workflow. See the <a href="https://civitai.com/g">guide</a>.</p>` +
+		`<ul><li><p>step one</p></li><li><p>step two</p></li></ul>`
+	want := "## Overview\n\n" +
+		"This uses **ComfyUI** and a *custom* workflow. See the [guide](https://civitai.com/g).\n" +
+		"- step one\n- step two"
+	if out := htmlToText(body); out != want {
+		t.Errorf("well-formed render changed:\ngot:\n%q\nwant:\n%q", out, want)
+	}
+}
+
 // TestHTMLToTextFlushesUnclosedParagraph proves trailing text with no closing tag
 // is still emitted.
 func TestHTMLToTextFlushesUnclosedParagraph(t *testing.T) {
@@ -217,5 +309,39 @@ func TestHTMLToTextStripsControlChars(t *testing.T) {
 	// Newlines (block structure) and tabs are preserved.
 	if got := safeTerm("keep\tthis\nand\rdrop\x1bthat"); got != "keep\tthis\nanddropthat" {
 		t.Errorf("safeTerm newline/tab/CR handling wrong: %q", got)
+	}
+}
+
+// TestHTMLToTextSeparateBoldsStaySplit guards the highest-risk direction of the
+// emphasis-coalescing fix: bolds with any intervening text/space must NOT merge.
+func TestHTMLToTextSeparateBoldsStaySplit(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{`<strong>A</strong> and <strong>B</strong>`, "**A** and **B**"},
+		{`<strong>bold</strong> word <strong>bold</strong>`, "**bold** word **bold**"},
+		{`<strong>A</strong> <strong>B</strong>`, "**A** **B**"},
+	} {
+		if out := htmlToText(tc.in); out != tc.want {
+			t.Errorf("separate bolds from %q: got %q, want %q", tc.in, out, tc.want)
+		}
+	}
+}
+
+// TestHTMLToTextMalformedListState covers the two robustness gaps a #159 audit
+// found: an <li> left open at list close must not leak `inItem` onto following
+// blocks, and a <br> inside a list item must not split off a mislabeled tail.
+func TestHTMLToTextMalformedListState(t *testing.T) {
+	// Missing </li>: content after the list must land on its own lines, not glue.
+	out := htmlToText(`<ul><li><p>x</p></ul><p>A</p><p>B</p>`)
+	for _, want := range []string{"- x", "A", "B"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing-</li> leak: %q absent:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "A B") {
+		t.Errorf("blocks after a malformed list must not glue onto one line:\n%s", out)
+	}
+	// <br> inside a list item keeps the item together (no bullet on the tail).
+	if got := htmlToText(`<ul><li><p>a<br>b</p></li></ul>`); got != "- a b" {
+		t.Errorf("<br> in <li>: got %q, want %q", got, "- a b")
 	}
 }
