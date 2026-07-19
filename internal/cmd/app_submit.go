@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -22,6 +23,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var outFlag string
 	var packageOnly bool
 	var skipValidate bool
+	var assumeYes bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -43,9 +45,17 @@ Submission path:
 
   --package-only always just writes the .zip and stops.
 
+Submitting creates a real "pending moderator review" request (undone only with
+` + "`civitai app withdraw`" + `), so it is NOT fired blindly: before uploading you are
+shown the app@version and asked to confirm. Pass --yes/-y to skip the prompt
+(for scripts/CI). In a non-interactive shell (no TTY) submit REFUSES unless
+--yes is given, rather than hang or submit silently. --package-only is the safe
+preview — it never submits.
+
 Defaults to the current directory.`,
-		Example: `  civitai app submit                 # validate + package + submit (or print next steps)
-  civitai app submit --package-only  # just write the .zip
+		Example: `  civitai app submit                 # validate + package + confirm + submit
+  civitai app submit --yes           # skip the confirmation prompt (scripts/CI)
+  civitai app submit --package-only  # just write the .zip (safe preview, never submits)
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -95,6 +105,11 @@ Defaults to the current directory.`,
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
 			canUpload := !packageOnly && cfg.Token() != ""
 			if canUpload {
+				// Safety gate: submitting fires a REAL moderator-review request
+				// immediately. Confirm (or require --yes) before it goes out.
+				if err := confirmSubmit(cmd, m, cfg.BaseURL(), assumeYes); err != nil {
+					return err
+				}
 				client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
 				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL())
 			}
@@ -121,7 +136,42 @@ Defaults to the current directory.`,
 	cmd.Flags().StringVarP(&outFlag, "out", "o", "", "output .zip path (default: <blockId>-<version>.zip)")
 	cmd.Flags().BoolVar(&packageOnly, "package-only", false, "only write the .zip; do not attempt submission")
 	cmd.Flags().BoolVar(&skipValidate, "skip-validate", false, "skip manifest validation before packaging")
+	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the confirmation prompt and submit (for scripts/CI)")
 	return cmd
+}
+
+// confirmSubmit gates the actual moderator-review submission behind an explicit
+// confirmation, so a bare `civitai app submit` never fires an outward-facing,
+// hard-to-reverse publish request by accident.
+//
+//   - --yes/-y  → proceed without prompting.
+//   - non-TTY stdin (pipe/CI) without --yes → REFUSE (clear error, non-zero
+//     exit) rather than hang waiting on input or submit silently.
+//   - interactive TTY → print what will happen, prompt "Submit for review?
+//     [y/N]", and proceed only on an explicit yes.
+func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, assumeYes bool) error {
+	if assumeYes {
+		return nil
+	}
+	if !stdinIsTTY() {
+		return fmt.Errorf("refusing to submit without --yes in a non-interactive shell (submitting creates a real moderator-review request; pass --yes to confirm, or --package-only to just write the .zip)")
+	}
+
+	out := cmd.OutOrStdout()
+	base := strings.TrimRight(baseURL, "/")
+	fmt.Fprintf(out, "About to submit %s@%s for moderator review at %s.\n", m.BlockID, m.Version, base)
+	fmt.Fprintln(out, "This creates a real pending moderator-review request — reversible only via `civitai app withdraw`.")
+	fmt.Fprintln(out, "(Use --package-only to just write the .zip without submitting.)")
+	fmt.Fprint(out, "Submit for review? [y/N]: ")
+
+	r := bufio.NewReader(cmd.InOrStdin())
+	line, _ := r.ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return nil
+	default:
+		return fmt.Errorf("submission cancelled")
+	}
 }
 
 func doUpload(cmd *cobra.Command, client api.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string) error {
