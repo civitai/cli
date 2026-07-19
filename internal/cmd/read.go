@@ -19,10 +19,34 @@ type readOpts struct {
 	anon bool
 }
 
-// bindReadFlags attaches the shared --json / --anon flags to a read subcommand.
+// bindReadFlags attaches the shared --json / --anon flags to a read subcommand
+// and installs a PreRunE guard that rejects a non-positive EXPLICIT --limit.
+//
+// The lower-bound check lives here (not in checkLimit) because it needs the
+// flag's Changed state: every read command binds --limit with a default of 0
+// and passes that value to checkLimit unconditionally, so at the checkLimit
+// call site an explicit `--limit 0` and an unset limit (which means "use the
+// server default page") are the SAME int and indistinguishable. Here we can
+// see cmd.Flags().Changed("limit"), so we reject a caller who explicitly asked
+// for a page size < 1 while leaving the unset default untouched. The upper
+// bound (> endpoint max) stays in checkLimit, which knows the per-endpoint max.
 func bindReadFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("json", false, "print the raw API JSON response (for scripting)")
 	cmd.Flags().Bool("anon", false, "force an anonymous request (ignore any stored login token)")
+
+	prev := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if f := c.Flags().Lookup("limit"); f != nil && f.Changed {
+			if v, err := c.Flags().GetInt("limit"); err == nil && v < 1 {
+				return asUsageError(fmt.Errorf(
+					"--limit must be a positive integer (got %d); omit --limit to use the server default", v))
+			}
+		}
+		if prev != nil {
+			return prev(c, args)
+		}
+		return nil
+	}
 }
 
 // readFlags reads the shared --json / --anon flag values off cmd.
@@ -59,16 +83,84 @@ func newReader(o *readOpts) (*api.Client, string, error) {
 	return client, cfg.BaseURL(), nil
 }
 
-// emitJSON pretty-prints the raw API body (falling back to the raw bytes if it
-// is not valid JSON) and reports whether output was handled.
+// emitJSON pretty-prints the raw API body for scripting consumers. The whole
+// promise of --json is output that jq / JSON.parse / json.loads can read, so it
+// must be VALID JSON. The Civitai API intermittently returns bodies with raw,
+// unescaped C0 control characters (e.g. a literal 0x0D/0x0A inside a prompt
+// string) — which is invalid JSON — so before indenting we sanitize any such
+// control bytes that appear inside string literals into their proper escapes.
+// Already-valid input is passed through untouched (only json.Indent's
+// indentation is applied, exactly as before). If the body is invalid for some
+// reason sanitizing can't repair, we fall back to emitting the raw bytes.
 func emitJSON(cmd *cobra.Command, raw []byte) error {
+	src := raw
+	if !json.Valid(src) {
+		if fixed := escapeJSONStringControlChars(src); json.Valid(fixed) {
+			src = fixed
+		}
+	}
 	var buf bytes.Buffer
-	if err := json.Indent(&buf, raw, "", "  "); err != nil {
+	if err := json.Indent(&buf, src, "", "  "); err != nil {
 		buf.Reset()
-		buf.Write(raw)
+		buf.Write(src)
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), strings.TrimRight(buf.String(), "\n"))
 	return nil
+}
+
+// escapeJSONStringControlChars walks raw JSON bytes tracking in-string state
+// (respecting \\ and \") and replaces any raw C0 control byte (0x00–0x1F) that
+// appears INSIDE a string literal with its valid JSON escape (\b \f \n \r \t or
+// \u00xx). Control bytes outside strings (structural whitespace) and everything
+// already escaped are left byte-for-byte unchanged, so valid input round-trips
+// identically. This does not attempt to repair other kinds of malformed JSON;
+// callers should verify the result with json.Valid before relying on it.
+func escapeJSONStringControlChars(raw []byte) []byte {
+	var out bytes.Buffer
+	out.Grow(len(raw))
+	inString := false
+	escaped := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case !inString:
+			out.WriteByte(c)
+			if c == '"' {
+				inString = true
+			}
+		case escaped:
+			// Previous byte was a backslash; this byte is the escape's payload
+			// (", \\, /, b, f, n, r, t, or the u of a \uXXXX). Emit verbatim.
+			out.WriteByte(c)
+			escaped = false
+		case c == '\\':
+			out.WriteByte(c)
+			escaped = true
+		case c == '"':
+			out.WriteByte(c)
+			inString = false
+		case c < 0x20:
+			// Raw control character inside a string literal — invalid JSON.
+			// Rewrite it as the shortest valid escape.
+			switch c {
+			case '\b':
+				out.WriteString(`\b`)
+			case '\f':
+				out.WriteString(`\f`)
+			case '\n':
+				out.WriteString(`\n`)
+			case '\r':
+				out.WriteString(`\r`)
+			case '\t':
+				out.WriteString(`\t`)
+			default:
+				fmt.Fprintf(&out, `\u%04x`, c)
+			}
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.Bytes()
 }
 
 // nonModelFileMarker returns a short human tag naming a version's PRIMARY file
@@ -89,11 +181,15 @@ func nonModelFileMarker(files []api.ModelVersionFile) string {
 	return "[" + typ + "]"
 }
 
-// checkLimit validates a --limit against an endpoint's documented maximum. A
-// zero limit means "server default" and is always allowed. An out-of-range
-// value is a client-side USAGE error (a bad flag value), so it is tagged with
-// ErrUsage — every read subcommand that calls checkLimit thus exits with the
-// usage exit code, not the generic one.
+// checkLimit validates a --limit against an endpoint's documented maximum. It
+// is called with the raw flag value, where an unset limit is 0 and means "use
+// the server default page"; that 0 is allowed here. An EXPLICIT non-positive
+// --limit (e.g. `--limit 0`) is rejected earlier, in the bindReadFlags PreRunE,
+// which unlike this function can see the flag's Changed state and so can tell an
+// explicit 0 from an unset default. An out-of-range value is a client-side
+// USAGE error (a bad flag value), so it is tagged with ErrUsage — every read
+// subcommand that calls checkLimit thus exits with the usage exit code, not the
+// generic one.
 func checkLimit(limit, max int) error {
 	if limit < 0 || limit > max {
 		return asUsageError(fmt.Errorf("--limit must be between 1 and %d for this endpoint", max))
@@ -140,7 +236,10 @@ func printPageFooter(cmd *cobra.Command, cmdPath string, m api.Metadata) {
 	fmt.Fprintf(out, "\n%s\n", strings.Join(parts, "  ·  "))
 	switch {
 	case cursor != "":
-		fmt.Fprintf(out, "next page: %s --cursor %s\n", cmdPath, cursor)
+		// Cursors contain a space and a `|` (e.g. 2026-07-19 00:10:35.891|2788964),
+		// so the value must be single-quoted or a pasted hint word-splits on the
+		// space and pipes on the `|`.
+		fmt.Fprintf(out, "next page: %s --cursor '%s'\n", cmdPath, cursor)
 	case m.CurrentPage != nil && (m.TotalPages == nil || *m.CurrentPage < *m.TotalPages):
 		fmt.Fprintf(out, "next page: %s --page %d\n", cmdPath, *m.CurrentPage+1)
 	}
