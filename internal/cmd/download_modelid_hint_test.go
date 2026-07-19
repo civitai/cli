@@ -11,17 +11,22 @@ import (
 	"github.com/civitai/cli/internal/api"
 )
 
-// TestDownloadModelIDPassedAsVersionHints proves the model-id-vs-version-id
-// trap gives an ACTIONABLE hint: `civitai models search` shows MODEL ids, but
-// `civitai download <id>`'s positional is a model-VERSION id — so a user handing
-// a model id (4384) gets a 404 on the version lookup. When that id IS a valid
-// model id, the error must point at `civitai download --model <id>` instead of a
-// bare "not found", and be classified as a usage error.
-func TestDownloadModelIDPassedAsVersionHints(t *testing.T) {
-	// The version lookup 404s (the id is NOT a version), but the model lookup
-	// succeeds (the id IS a valid model). --dry-run so no bytes ever move.
+// TestDownloadModelIDPositionalAutoResolves proves the model-id-vs-version-id
+// trap now RESOLVES instead of hint-walling: `civitai models search` lists MODEL
+// ids, so a user handing a model id (4384) into the version-id positional — an id
+// that is a valid MODEL but NOT a valid version — has its default version
+// resolved + downloaded automatically, with a note saying it did. This turns the
+// common search→download flow into a success instead of an error.
+func TestDownloadModelIDPositionalAutoResolves(t *testing.T) {
+	// model-versions/4384 404s (4384 is NOT a version) but model-versions/128713
+	// (the model's default version) succeeds; models/4384 echoes the model with
+	// its default version 128713. --dry-run so no bytes ever move.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/v1/model-versions/", func(w http.ResponseWriter, r *http.Request) {
+		if lastPathSeg(r.URL.Path) == "128713" {
+			fmt.Fprint(w, `{"id":128713,"modelId":4384,"name":"v8","baseModel":"SD 1.5","model":{"name":"DreamShaper","type":"Checkpoint"},"files":[{"id":1,"name":"m.safetensors","type":"Model","primary":true,"sizeKB":1,"downloadUrl":"http://127.0.0.1:1/dl","hashes":{"SHA256":"`+strings.Repeat("a", 64)+`"}}]}`)
+			return
+		}
 		w.WriteHeader(http.StatusNotFound)
 		fmt.Fprint(w, `{"error":"Model not found"}`)
 	})
@@ -37,25 +42,20 @@ func TestDownloadModelIDPassedAsVersionHints(t *testing.T) {
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)
 	chdir(t, t.TempDir())
 
-	_, _, err := run(t, "download", "4384", "--dry-run")
-	if err == nil {
-		t.Fatal("a model id passed as a version id should error")
+	out, errOut, err := run(t, "download", "4384", "--dry-run")
+	if err != nil {
+		t.Fatalf("a model id positional should auto-resolve its default version, got: %v", err)
 	}
-	msg := err.Error()
-	// Actionable: names the mistake and the fix.
-	if !strings.Contains(msg, "is a model id") {
-		t.Errorf("error should say the id is a model id, got: %v", err)
+	// The plan is for the model's default version, and a note explains the resolve.
+	if !strings.Contains(out, "would download") {
+		t.Errorf("model-id positional should plan its default version:\n%s", out)
 	}
-	if !strings.Contains(msg, "--model 4384") {
-		t.Errorf("error should suggest `--model 4384`, got: %v", err)
+	if !strings.Contains(errOut, "4384 is a model id") || !strings.Contains(errOut, "default version 128713") {
+		t.Errorf("a note should say 4384 is a model id and name the resolved version 128713, got stderr:\n%s", errOut)
 	}
-	// Must NOT be the bare, misleading not-found message.
-	if strings.Contains(strings.ToLower(msg), "not found") {
-		t.Errorf("hint should replace the bare not-found message, got: %v", err)
-	}
-	// Classified as a usage error (exit code 2), not a not-found (4).
-	if !errors.Is(err, ErrUsage) {
-		t.Errorf("the hint should be tagged as a usage error, got: %v", err)
+	// It must NOT hint-wall with the old "--model" error.
+	if strings.Contains(out, "did you mean") || strings.Contains(errOut, "did you mean") {
+		t.Errorf("the old hint-wall must be gone; it should just resolve:\nstdout: %s\nstderr: %s", out, errOut)
 	}
 }
 
