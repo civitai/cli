@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -167,6 +168,9 @@ func TestGetImageNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no image found with id 999999999") {
 		t.Errorf("error should name the id: %v", err)
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Errorf("not-found error must be tagged ErrNotFound (→ exit 4), got %v", err)
 	}
 	if im != nil {
 		t.Errorf("item should be nil on not-found, got %+v", im)

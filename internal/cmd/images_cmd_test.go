@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/civitai/cli/internal/api"
 )
 
 // A meta payload with 7 resources (a checkpoint + 6 LoRAs) plus a name→hash map
@@ -241,6 +244,9 @@ func TestImagesGetSurfacesNotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no image found with id 999999999") {
 		t.Errorf("error should name the id: %v", err)
+	}
+	if !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("images get not-found must be tagged ErrNotFound (→ exit 4), got %v", err)
 	}
 }
 

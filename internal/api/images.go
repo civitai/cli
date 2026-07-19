@@ -236,7 +236,9 @@ func (c *Client) GetImage(ctx context.Context, id string) (*ImageItem, []byte, e
 		return nil, nil, err
 	}
 	if len(res.Items) == 0 {
-		return nil, res.Raw, fmt.Errorf("no image found with id %s", id)
+		// Tag as not-found so the entrypoint maps it to exit 4, matching the
+		// other `get` commands (whose 404 is classified by tagStatus).
+		return nil, res.Raw, tag(ErrNotFound, fmt.Errorf("no image found with id %s", id))
 	}
 	return &res.Items[0], res.Raw, nil
 }
