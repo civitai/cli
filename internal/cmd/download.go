@@ -23,6 +23,8 @@ import (
 // downloadOpts holds the resolved flag values for `civitai download`.
 type downloadOpts struct {
 	modelID  string // --model (mutually exclusive with the positional version id)
+	version  string // --version: explicit version id (skips the ambiguous model-id gate)
+	yes      bool   // --yes: proceed past the ambiguous model-id stop (download the version as typed)
 	file     string // --file: select one file by name (exact | unique substring)
 	all      bool   // --all: download every file in the version
 	out      string // --out: target path (single-file only)
@@ -58,7 +60,11 @@ Identify the version deterministically by its numeric version id:
 Note the positional id is a model-VERSION id, NOT a model id: 'civitai models
 search' and 'civitai models get' list MODEL ids, so pass one of those via
 --model. Handing a model id as the positional (e.g. 'civitai download 4384')
-errors with a hint to use --model.
+errors with a hint to use --model. When a pasted number is BOTH a valid model id
+and a valid version id (common for low/mid numbers), the CLI STOPS and asks you
+to disambiguate rather than silently downloading an unrelated model's version —
+re-run with --model <id> (the model's default version) or --version <id> (that
+version as-is). Use --version to name a version id explicitly and skip that stop.
 
 Use --dry-run to print the resolved plan (files, sizes, SHA256, target paths,
 and whether auth is required) without transferring anything.
@@ -78,11 +84,11 @@ if a name is ambiguous. --all refuses to run when two selected files would
 resolve to the same on-disk path (which would silently overwrite one), listing
 the colliding files with their ids so you can --file <id> the one you want.
 
-Authentication: downloading ANY model file requires authentication — run
-'civitai login' (Civitai requires a token even for public files; a 336 KB public
-embedding 401s just like a gated checkpoint). Your stored login token or
-CIVITAI_API_KEY is sent automatically. The read/search commands (models,
-model-versions, articles, images, …) work anonymously; downloads do not.
+Authentication: most model files require a token to download — a gated file
+requires authentication (it 401s without a token), but some public files
+download with no token at all. Run 'civitai login' if a download 401s. Your
+stored login token or CIVITAI_TOKEN is sent automatically. The read/search
+commands (models, model-versions, articles, images, …) always work anonymously.
 
 Folder routing: pass --layout <a1111|comfyui> (with an optional --root <dir>,
 default ".") to write each file into the correct subfolder for that app, routed
@@ -103,6 +109,7 @@ detected by the hash alone. Pickle/executable (.ckpt/.pt/.pth/.bin/.pickle/.pkl)
 and archive (.zip/.tar/.tar.gz/.tgz/.rar/.7z) files can execute code when loaded;
 the CLI notes this on stderr. Only download models from creators you trust.`,
 		Example: `  civitai download 128713
+  civitai download --version 128713                # force a version id (skips the ambiguous-id stop)
   civitai download --model 4384 --out ./dreamshaper.safetensors
   civitai download 128713 --file vae --out-dir ./models
   civitai download 691639 --file 1234567          # pick one of two same-named files by id
@@ -116,6 +123,8 @@ the CLI notes this on stderr. Only download models from creators you trust.`,
 	}
 	f := cmd.Flags()
 	f.StringVar(&o.modelID, "model", "", "resolve+download a MODEL's default (first published) version instead of a version id")
+	f.StringVar(&o.version, "version", "", "download this model-VERSION id explicitly (skips the ambiguous model-id safety stop the bare positional id triggers)")
+	f.BoolVar(&o.yes, "yes", false, "proceed past the ambiguous-id safety stop (a bare id that is BOTH a model id and a version id): download the version as typed")
 	f.StringVar(&o.file, "file", "", "select one file by numeric file id, or by name (exact, else a unique case-insensitive substring); use the id to pick one of two same-named files")
 	f.BoolVar(&o.all, "all", false, "download every file in the version (refuses if two files would overwrite the same path — pick one with --file <id>)")
 	f.StringVar(&o.out, "out", "", "target file path (single-file only; mutually exclusive with --all/--out-dir)")
@@ -155,7 +164,7 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	out := cmd.OutOrStdout()
 	errW := cmd.ErrOrStderr()
 
-	versionID, err := resolveVersionID(ctx, client, positional, o.modelID)
+	versionID, err := resolveVersionID(ctx, client, positional, o)
 	if err != nil {
 		return err
 	}
@@ -163,6 +172,13 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	v, _, err := client.GetModelVersion(ctx, versionID)
 	if err != nil {
 		return hintModelIDMistake(ctx, client, positional, o.modelID, err)
+	}
+	// Footgun guard: a bare positional id that is ALSO a valid MODEL id (common
+	// for low/mid numbers) resolves as a version with no 404, so without this the
+	// CLI would silently download an UNRELATED model's version and print a
+	// reassuring "SHA256 verified". Stop and require disambiguation instead.
+	if err := stopIfAmbiguousModelID(ctx, client, positional, o, v); err != nil {
+		return err
 	}
 	// Parent model type (Checkpoint, LORA, …) drives --layout routing of the
 	// weights file; the version detail embeds it under `model`.
@@ -211,17 +227,24 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 }
 
 // resolveDownloadTarget returns the positional version id from args after
-// enforcing that EXACTLY one of the positional id / --model is supplied.
+// enforcing that EXACTLY one of the positional id / --model / --version is
+// supplied. Its errors are invocation mistakes → tagged as usage errors (exit 2).
 func resolveDownloadTarget(args []string, o *downloadOpts) (string, error) {
 	var positional string
 	if len(args) == 1 {
 		positional = strings.TrimSpace(args[0])
 	}
-	if positional != "" && o.modelID != "" {
-		return "", fmt.Errorf("provide EITHER a version id or --model <model-id>, not both")
+	n := 0
+	for _, set := range []bool{positional != "", o.modelID != "", o.version != ""} {
+		if set {
+			n++
+		}
 	}
-	if positional == "" && o.modelID == "" {
-		return "", fmt.Errorf("provide a model-version id (civitai download <version-id>) or --model <model-id>")
+	if n > 1 {
+		return "", asUsageError(fmt.Errorf("provide exactly ONE of a positional version id, --model <model-id>, or --version <version-id> — not both/several"))
+	}
+	if n == 0 {
+		return "", asUsageError(fmt.Errorf("provide a model-version id (civitai download <version-id>), --model <model-id>, or --version <version-id>"))
 	}
 	return positional, nil
 }
@@ -229,28 +252,30 @@ func resolveDownloadTarget(args []string, o *downloadOpts) (string, error) {
 // validateDownloadFlags rejects incompatible flag combinations before any
 // network work: --all/--file, --out/--out-dir, --out/--all, and the --layout
 // exclusions (a valid layout, no --out, no --out-dir; --root only with --layout).
+// Every failure here is a local invocation mistake → tagged as a usage error
+// (exit 2), matching `model-versions get`.
 func validateDownloadFlags(o *downloadOpts) error {
 	if o.all && o.file != "" {
-		return fmt.Errorf("--all and --file are mutually exclusive")
+		return asUsageError(fmt.Errorf("--all and --file are mutually exclusive"))
 	}
 	if o.out != "" && o.outDir != "" {
-		return fmt.Errorf("--out (a file path) and --out-dir (a directory) are mutually exclusive")
+		return asUsageError(fmt.Errorf("--out (a file path) and --out-dir (a directory) are mutually exclusive"))
 	}
 	if o.out != "" && o.all {
-		return fmt.Errorf("--out sets a single file path and can't be combined with --all — use --out-dir")
+		return asUsageError(fmt.Errorf("--out sets a single file path and can't be combined with --all — use --out-dir"))
 	}
 	if o.layout != "" {
 		if !validLayout(o.layout) {
-			return fmt.Errorf("--layout must be one of %s, got %q", strings.Join(knownLayouts, "|"), o.layout)
+			return asUsageError(fmt.Errorf("--layout must be one of %s, got %q", strings.Join(knownLayouts, "|"), o.layout))
 		}
 		if o.out != "" {
-			return fmt.Errorf("--layout routes files into type folders and can't be combined with --out (an explicit single path)")
+			return asUsageError(fmt.Errorf("--layout routes files into type folders and can't be combined with --out (an explicit single path)"))
 		}
 		if o.outDir != "" {
-			return fmt.Errorf("--layout routes files under --root and can't be combined with --out-dir")
+			return asUsageError(fmt.Errorf("--layout routes files under --root and can't be combined with --out-dir"))
 		}
 	} else if o.root != "" {
-		return fmt.Errorf("--root only applies with --layout")
+		return asUsageError(fmt.Errorf("--root only applies with --layout"))
 	}
 	return nil
 }
@@ -309,24 +334,69 @@ func downloadSelected(ctx context.Context, dl api.Downloader, out, errW io.Write
 // default version is modelVersions[0]. Its primary file is downloaded regardless
 // of file type — a "Workflows" model's Archive, training data, or plain weights
 // all download the same way.
-func resolveVersionID(ctx context.Context, client api.Reader, positional, modelID string) (string, error) {
+func resolveVersionID(ctx context.Context, client api.Reader, positional string, o *downloadOpts) (string, error) {
+	if o.version != "" {
+		if _, err := strconv.Atoi(o.version); err != nil {
+			return "", asUsageError(fmt.Errorf("--version id must be an integer, got %q", o.version))
+		}
+		return o.version, nil
+	}
 	if positional != "" {
 		if _, err := strconv.Atoi(positional); err != nil {
-			return "", fmt.Errorf("model-version id must be an integer, got %q — pass a numeric model-version id, or find one with `civitai models search`", positional)
+			return "", asUsageError(fmt.Errorf("model-version id must be an integer, got %q — pass a numeric model-version id, or find one with `civitai models search`", positional))
 		}
 		return positional, nil
 	}
-	if _, err := strconv.Atoi(modelID); err != nil {
-		return "", fmt.Errorf("--model id must be an integer, got %q", modelID)
+	if _, err := strconv.Atoi(o.modelID); err != nil {
+		return "", asUsageError(fmt.Errorf("--model id must be an integer, got %q", o.modelID))
 	}
-	m, _, err := client.GetModel(ctx, modelID)
+	m, _, err := client.GetModel(ctx, o.modelID)
 	if err != nil {
 		return "", err
 	}
 	if len(m.ModelVersions) == 0 {
-		return "", fmt.Errorf("model %s has no published versions to download", modelID)
+		return "", fmt.Errorf("model %s has no published versions to download", o.modelID)
 	}
 	return strconv.Itoa(m.ModelVersions[0].ID), nil
+}
+
+// stopIfAmbiguousModelID is the core footgun guard. `civitai models search` lists
+// MODEL ids, so a user's natural `civitai download <model-id>` pastes a model id
+// into the version-id positional. When that number is NOT a valid version it 404s
+// and hintModelIDMistake catches it — but when the SAME number is ALSO a valid
+// version id (common for low/mid numbers), the version lookup succeeds and the CLI
+// would SILENTLY download an unrelated model's version, laundering it as
+// trustworthy with a "SHA256 verified" line. That is worse than a 404.
+//
+// So: for the bare-positional path only (not --model / --version / --yes), after
+// the version lookup already succeeded, check whether the same number resolves as
+// a MODEL id whose returned id MATCHES (the real REST API echoes back the queried
+// id — a mismatch means the lookup didn't actually resolve that id). If it is BOTH,
+// STOP with a usage error (exit 2) that spells out both interpretations and how to
+// pick one. Any model-lookup failure (404/network/…) means "not ambiguous" → the
+// download proceeds exactly as today.
+func stopIfAmbiguousModelID(ctx context.Context, client api.Reader, positional string, o *downloadOpts, v *api.ModelVersionDetail) error {
+	if positional == "" || o.modelID != "" || o.version != "" || o.yes {
+		return nil
+	}
+	n, err := strconv.Atoi(positional)
+	if err != nil {
+		return nil // non-numeric never reaches here, but stay safe.
+	}
+	m, _, err := client.GetModel(ctx, positional)
+	if err != nil || m == nil || m.ID != n {
+		// Not (confirmably) a model id → unambiguous version download, as today.
+		return nil
+	}
+	parent := ""
+	if v != nil && v.Model != nil {
+		parent = v.Model.Name
+	}
+	return asUsageError(fmt.Errorf(
+		"%s is ambiguous — it's both model %q and version %s (of model %q).\n"+
+			"To download the model's default version:  civitai download --model %s\n"+
+			"To download version %s as-is:             re-run with --version %s (or --yes)",
+		positional, safeTerm(m.Name), positional, safeTerm(dashIfEmpty(parent)), positional, positional, positional))
 }
 
 // hintModelIDMistake disambiguates the single most common `download` mistake:
@@ -413,7 +483,9 @@ func selectFiles(files []api.ModelVersionFile, o *downloadOpts) ([]api.ModelVers
 		return files, nil
 	}
 	if o.file != "" {
-		return selectOneFile(files, o.file)
+		// A bad --file value is an invocation mistake → usage error (exit 2).
+		sel, err := selectOneFile(files, o.file)
+		return sel, asUsageError(err)
 	}
 	primary := api.PrimaryFile(files)
 	return []api.ModelVersionFile{*primary}, nil
@@ -781,7 +853,7 @@ func downloadStatusError(status int, name string) (err error) {
 	case status == http.StatusUnauthorized:
 		// Civitai requires a token to download ANY model file — even public ones —
 		// so an anonymous download 401s. Point the user straight at login.
-		return fmt.Errorf("downloading %s requires authentication (401) — run `civitai login` (or set CIVITAI_API_KEY); Civitai needs a token to download any model file, even public ones", name)
+		return fmt.Errorf("downloading %s requires authentication (401) — run `civitai login` (or set CIVITAI_TOKEN); this file needs a token (most model files do; some public files don't)", name)
 	case status == http.StatusForbidden:
 		// Authenticated but refused: the file is gated, not a login problem.
 		return fmt.Errorf("downloading %s was forbidden (403) — your token is valid but this file is gated (early-access / subscriber-only / not shared with your account), so logging in again won't help", name)
