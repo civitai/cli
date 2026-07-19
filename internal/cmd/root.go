@@ -2,6 +2,8 @@
 package cmd
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"runtime/debug"
 	"time"
@@ -298,5 +300,95 @@ Exit codes:
 	root.AddCommand(newArticlesCmd())
 	root.AddCommand(newCollectionsCmd())
 
+	// Close the cobra-layer exit-code gaps: an unknown subcommand, an unknown
+	// top-level command, and a missing/bad-count positional must all classify as
+	// USAGE errors (exit 2) rather than leaking success (0) or the generic code
+	// (1). Done once here, over the fully-assembled tree.
+	enforceUsageExitCodes(root)
+
 	return root
+}
+
+// enforceUsageExitCodes walks the assembled command tree and routes cobra's own
+// argument- and subcommand-validation failures through the ErrUsage tag, so the
+// entrypoint maps them to the usage exit code (2). It closes two leaks that the
+// hand-written validators (which already tag their own errors) don't cover:
+//
+//  1. Cobra's built-in count validators (ExactArgs, MinimumNArgs, …) return
+//     plain errors ("accepts 1 arg(s), received 0") that map to the generic exit
+//     code (1). We wrap each command's existing Args validator so its failures
+//     are tagged ErrUsage too, unifying e.g. `civitai models get` (missing id)
+//     and `civitai model-versions by-hash` (missing hash) onto exit 2. Setting a
+//     (non-nil) Args on every command also disables cobra's Find-time legacyArgs
+//     fallback, so unknown-command handling flows through the single tagged path
+//     below rather than an untagged generic error.
+//  2. Unknown SUBCOMMAND on a group-only parent. A command that only groups
+//     subcommands (has children, defines no Run/RunE of its own) is treated by
+//     cobra as "not runnable", and cobra's execute() short-circuits a
+//     not-runnable command straight to printing help and returning nil — BEFORE
+//     argument validation runs. So `civitai models frobnicate` or the top-level
+//     `civitai nonsensecmd` prints help and exits 0, a silent success. We give
+//     each such parent a RunE: a bare `civitai <parent>` (no args) still prints
+//     help and exits 0, but any leftover argument becomes a usage-tagged
+//     "unknown command" error (exit 2). Defining RunE makes the parent runnable,
+//     so cobra runs it (and our Args) instead of the help short-circuit.
+//
+// It only reclassifies ARGUMENT/subcommand validation. A command's real RunE
+// failures — a 404 not-found, a network error, an auth failure — are never
+// touched, so their differentiated exit codes are preserved.
+func enforceUsageExitCodes(cmd *cobra.Command) {
+	for _, child := range cmd.Commands() {
+		enforceUsageExitCodes(child)
+	}
+
+	// (1) Tag the built-in count validators, and make Args non-nil everywhere so
+	// cobra's Find no longer synthesizes an untagged legacyArgs "unknown command".
+	existing := cmd.Args
+	cmd.Args = func(c *cobra.Command, args []string) error {
+		if existing != nil {
+			if err := existing(c, args); err != nil {
+				return asUsageError(err)
+			}
+		}
+		return nil
+	}
+
+	// (2) A group-only parent (subcommands, no direct action) must reject an
+	// unknown subcommand as a usage error instead of silently printing help.
+	// Runnable() reflects the ORIGINAL Run/RunE (the Args set above doesn't
+	// affect it), so this correctly targets only the pure command groups.
+	if cmd.HasSubCommands() && !cmd.Runnable() {
+		cmd.RunE = func(c *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				// Bare `civitai <parent>` — help, exit 0 (unchanged).
+				return c.Help()
+			}
+			return asUsageError(unknownSubcommandError(c, args[0]))
+		}
+	}
+}
+
+// unknownSubcommandError builds the error for an unrecognized subcommand on a
+// group-only parent, matching cobra's own "unknown command" wording (and its
+// Levenshtein "Did you mean this?" suggestions, via the exported SuggestionsFor)
+// so the message the user sees is unchanged from cobra's native root-level
+// handling — only the classification (and thus the exit code) differs.
+func unknownSubcommandError(c *cobra.Command, name string) error {
+	msg := fmt.Sprintf("unknown command %q for %q", name, c.CommandPath())
+	if !c.DisableSuggestions {
+		// Mirror cobra's own findSuggestions default: the exported SuggestionsFor
+		// reads SuggestionsMinimumDistance verbatim (0 → Levenshtein suggestions
+		// off), whereas cobra's native unknown-command path defaults it to 2.
+		if c.SuggestionsMinimumDistance <= 0 {
+			c.SuggestionsMinimumDistance = 2
+		}
+		if suggestions := c.SuggestionsFor(name); len(suggestions) > 0 {
+			msg += "\n\nDid you mean this?\n"
+			for _, s := range suggestions {
+				msg += fmt.Sprintf("\t%v\n", s)
+			}
+		}
+	}
+	msg += fmt.Sprintf("\nRun '%s --help' for the available subcommands.", c.CommandPath())
+	return errors.New(msg)
 }
