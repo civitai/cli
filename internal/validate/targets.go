@@ -1,6 +1,10 @@
 package validate
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+	"strings"
+)
 
 // targets.go ports the server's targets[].slotId registry check (validator
 // ~L426-460). Each target's slotId must be a KNOWN registered slot id, and a
@@ -33,6 +37,19 @@ var vendoredSlotIDs = map[string]bool{
 func isKnownSlotID(id string) bool { _, ok := vendoredSlotIDs[id]; return ok }
 func isPageSlotID(id string) bool  { return vendoredSlotIDs[id] }
 
+// knownSlotIDList renders the known slotIds as a stable, single-quoted,
+// comma-separated list — matching the JSON Schema enum error's phrasing
+// ("value must be one of 'a', 'b', …", single quotes via the jsonschema
+// library) so the slot error is self-documenting like the scope error.
+func knownSlotIDList() string {
+	ids := make([]string, 0, len(vendoredSlotIDs))
+	for id := range vendoredSlotIDs {
+		ids = append(ids, "'"+id+"'")
+	}
+	sort.Strings(ids)
+	return strings.Join(ids, ", ")
+}
+
 // targetChecks validates targets[].slotId against the vendored registry. Shape
 // (array of objects with a non-empty string slotId, ≤16 entries) is already
 // enforced by the JSON Schema; here we add the registry-membership + page-slot
@@ -63,7 +80,8 @@ func targetChecks(generic any) []string {
 			continue // shape handled by the schema.
 		}
 		if !isKnownSlotID(slotID) {
-			errs = append(errs, fmt.Sprintf("target slotId %q is not a known slot", slotID))
+			errs = append(errs, fmt.Sprintf(
+				"target slotId %q is not a known slot — value must be one of %s", slotID, knownSlotIDList()))
 			continue
 		}
 		if isPageSlotID(slotID) {

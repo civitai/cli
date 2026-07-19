@@ -86,14 +86,6 @@ Defaults to the current directory.`,
 				return err
 			}
 
-			// 2. Package the canonical source tree.
-			pkg, err := pkgzip.Build(dir)
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(out, "Packaged %d file(s) (%d bytes compressed, %d decompressed)\n",
-				len(pkg.Files), len(pkg.Zip), pkg.DecompressedBy)
-
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -102,14 +94,31 @@ Defaults to the current directory.`,
 			// The submit route defaults to the v1 token route; env overrides it.
 			submitPath := os.Getenv("CIVITAI_SUBMIT_PATH")
 
-			// 3a. Programmatic submit if we have a token (OAuth or personal key).
+			// 2. Confirmation gate BEFORE packaging. A programmatic submit fires a
+			// REAL moderator-review request immediately, so gate it first: a
+			// non-TTY shell without --yes must REFUSE before doing any packaging
+			// work (no wasted "Packaged …" line that momentarily reads as if it's
+			// proceeding). --yes proceeds silently; an interactive TTY prompts
+			// here, then packages + submits below. The --package-only / no-token
+			// fallback path never submits, so it skips the gate and just packages.
 			canUpload := !packageOnly && cfg.Token() != ""
 			if canUpload {
-				// Safety gate: submitting fires a REAL moderator-review request
-				// immediately. Confirm (or require --yes) before it goes out.
 				if err := confirmSubmit(cmd, m, cfg.BaseURL(), assumeYes); err != nil {
 					return err
 				}
+			}
+
+			// 3. Package the canonical source tree.
+			pkg, err := pkgzip.Build(dir)
+			if err != nil {
+				return err
+			}
+			fmt.Fprintf(out, "Packaged %d file(s) (%d bytes compressed, %d decompressed)\n",
+				len(pkg.Files), len(pkg.Zip), pkg.DecompressedBy)
+
+			// 3a. Programmatic submit if we have a token (OAuth or personal key).
+			// The gate above already confirmed (or --yes bypassed) it.
+			if canUpload {
 				client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
 				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL())
 			}

@@ -1,6 +1,9 @@
 package validate
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestToNumber(t *testing.T) {
 	cases := []struct {
@@ -30,6 +33,32 @@ func TestSemanticChecksNonMap(t *testing.T) {
 	}
 	if errs := targetChecks("not-a-map"); errs != nil {
 		t.Errorf("targetChecks on non-map should be nil, got %v", errs)
+	}
+}
+
+// TestUnknownSlotErrorEnumeratesKnownSlots asserts the unknown-slot error is
+// self-documenting like the sibling scope enum error — it must append the full
+// list of known slotIds so the developer sees the valid choices, phrased
+// "value must be one of '…', '…'" (single-quoted, matching the JSON Schema
+// enum error the scope check produces).
+func TestUnknownSlotErrorEnumeratesKnownSlots(t *testing.T) {
+	errs := targetChecks(map[string]any{
+		"targets": []any{
+			map[string]any{"slotId": "model.totally-made-up-slot"},
+		},
+	})
+	if len(errs) != 1 {
+		t.Fatalf("want exactly 1 error, got %d: %v", len(errs), errs)
+	}
+	got := errs[0]
+	if !strings.Contains(got, "value must be one of ") {
+		t.Errorf("error missing the enum phrasing: %q", got)
+	}
+	// Every known slotId must be enumerated, single-quoted.
+	for id := range vendoredSlotIDs {
+		if !strings.Contains(got, "'"+id+"'") {
+			t.Errorf("error does not enumerate known slot %q: %q", id, got)
+		}
 	}
 }
 
