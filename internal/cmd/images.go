@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -24,7 +25,6 @@ func newImagesCmd() *cobra.Command {
 		Example: `  civitai images search --limit 5
   civitai images search --model-id 4384 --period Month
   civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
-  civitai images search --collection-id 104 --limit 10
   civitai images search --nsfw --sort "Most Reactions" --period Month --meta
   civitai images get 136456589`,
 	}
@@ -35,10 +35,10 @@ func newImagesCmd() *cobra.Command {
 
 func newImagesSearchCmd() *cobra.Command {
 	var (
-		username, sort, period, cursor, typ                        string
-		baseModels                                                 []string
-		postID, modelID, modelVersionID, collectionID, limit, page int
-		nsfw, meta                                                 bool
+		username, sort, period, cursor, typ          string
+		baseModels                                   []string
+		postID, modelID, modelVersionID, limit, page int
+		nsfw, meta                                   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "search",
@@ -51,7 +51,6 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
   civitai images search --model-version-id 128713 --sort Newest
   civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
   civitai images search --type video --sort "Most Reactions"
-  civitai images search --collection-id 104 --limit 10
   civitai images search --nsfw --sort "Most Reactions" --period Month --meta
   civitai images search --username some-user --cursor <cursor>`,
 		Args: cobra.NoArgs,
@@ -85,7 +84,6 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 			addIfPositive(q, "postId", postID)
 			addIfPositive(q, "modelId", modelID)
 			addIfPositive(q, "modelVersionId", modelVersionID)
-			addIfPositive(q, "collectionId", collectionID)
 			addIfPositive(q, "limit", limit)
 			addIfPositive(q, "page", page)
 			if cmd.Flags().Changed("nsfw") {
@@ -107,6 +105,15 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 			if err != nil {
 				return err
 			}
+			// --base-model is matched literally (the API OR-matches the given
+			// values), so a typo just matches nothing and returns "No images
+			// found." at exit 0 with no signal. When --base-model was given and the
+			// page came back empty, hint that the spelling may be off. Not an error
+			// — zero results is a valid outcome — so this only adds a stderr note.
+			if cmd.Flags().Changed("base-model") && len(res.Items) == 0 {
+				fmt.Fprintln(cmd.ErrOrStderr(),
+					"note: 0 results — check --base-model spelling (it's matched literally).")
+			}
 			if o.json {
 				return emitJSON(cmd, res.Raw)
 			}
@@ -125,7 +132,6 @@ caps page*limit at 1000). The next cursor is printed after the results.`,
 	cmd.Flags().IntVar(&postID, "post-id", 0, "filter by post id")
 	cmd.Flags().IntVar(&modelID, "model-id", 0, "filter by model id")
 	cmd.Flags().IntVar(&modelVersionID, "model-version-id", 0, "filter by model version id")
-	cmd.Flags().IntVar(&collectionID, "collection-id", 0, "filter by collection id (browse a collection's images)")
 	cmd.Flags().StringVar(&username, "username", "", "filter by uploader username")
 	cmd.Flags().StringSliceVar(&baseModels, "base-model", nil, "filter by base model; repeatable (e.g. --base-model \"Krea 2\" --base-model Flux). The API OR-combines the given values")
 	cmd.Flags().StringVar(&typ, "type", "", "filter by media type (image, video, audio)")
@@ -150,8 +156,14 @@ implicitly.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := readFlags(cmd)
-			if n, err := strconv.Atoi(args[0]); err != nil || n <= 0 {
-				return fmt.Errorf("image id must be a positive integer, got %q", args[0])
+			// A bad positional id is a client-side usage mistake, not an API
+			// failure — tag it as a usage error (exit 2), mirroring
+			// `model-versions get`. A non-int, non-positive, or out-of-range id
+			// (image ids are 32-bit) is caught locally so an oversized id can't
+			// leak a host 500 (exit 1) instead of a clean usage error.
+			n, err := strconv.Atoi(args[0])
+			if err != nil || n <= 0 || n > math.MaxInt32 {
+				return asUsageError(fmt.Errorf("image id must be a positive integer, got %q", args[0]))
 			}
 			client, _, err := newReader(o)
 			if err != nil {

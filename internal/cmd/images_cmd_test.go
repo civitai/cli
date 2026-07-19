@@ -131,33 +131,6 @@ func TestImagesSearchMetaJSONUnchangedByResources(t *testing.T) {
 	}
 }
 
-// TestImagesSearchCollectionIDParam asserts --collection-id sets collectionId on
-// the query, and that omitting it sends no collectionId.
-func TestImagesSearchCollectionIDParam(t *testing.T) {
-	var got url.Values
-	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
-		got = r.URL.Query()
-		_, _ = w.Write([]byte(`{"items":[],"metadata":{}}`))
-	})
-	if _, _, err := run(t, "images", "search", "--collection-id", "104"); err != nil {
-		t.Fatalf("images search --collection-id: %v", err)
-	}
-	if got.Get("collectionId") != "104" {
-		t.Errorf("--collection-id should set collectionId=104, got %q", got.Get("collectionId"))
-	}
-
-	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
-		got = r.URL.Query()
-		_, _ = w.Write([]byte(`{"items":[],"metadata":{}}`))
-	})
-	if _, _, err := run(t, "images", "search"); err != nil {
-		t.Fatalf("images search: %v", err)
-	}
-	if got.Has("collectionId") {
-		t.Errorf("default search must not send collectionId: %v", got)
-	}
-}
-
 // TestImagesGetRegistered asserts the get subcommand shows up in help.
 func TestImagesGetRegistered(t *testing.T) {
 	out, _, err := run(t, "images", "--help")
