@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 )
@@ -35,6 +36,91 @@ type ImageMeta struct {
 	Steps          json.RawMessage `json:"steps"`
 	Seed           json.RawMessage `json:"seed"`
 	Model          string          `json:"Model"` // capitalized in the API payload
+	// Resources is the generation "recipe" — the checkpoint + LoRAs/embeddings
+	// used, each an ImageResource {type, name, weight?, hash?}. Hashes is the
+	// parallel name→hash map the generator emits. Both are kept as raw JSON (not
+	// decoded structs) so an odd shape on either can never fail the whole meta
+	// decode and drop the prompt/settings alongside it — they're decoded
+	// best-effort at render time via ParseResources / ParseHashes.
+	Resources json.RawMessage `json:"resources"`
+	Hashes    json.RawMessage `json:"hashes"`
+}
+
+// ImageResource is one generation resource named in an image's meta.resources
+// array — the reproduction recipe: a checkpoint ("model"), a LoRA ("lora"), an
+// embedding, etc. Weight is raw JSON because it is generator-supplied and
+// freeform (a float for LoRAs, absent for the base model); render it with
+// WeightString. Hash, when present inline, is the resource's model-file hash.
+type ImageResource struct {
+	Type   string          `json:"type"`
+	Name   string          `json:"name"`
+	Weight json.RawMessage `json:"weight"`
+	Hash   string          `json:"hash"`
+}
+
+// WeightString renders the LoRA/resource weight for display (empty when absent).
+func (r ImageResource) WeightString() string { return numString(r.Weight) }
+
+// ParseResources best-effort decodes meta.resources into an ordered slice. It
+// never errors: an absent, null, or unexpectedly-shaped value → nil, so a
+// malformed resources field can't drop the surrounding meta block.
+func (m ImageMeta) ParseResources() []ImageResource {
+	raw := bytes.TrimSpace(m.Resources)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var rs []ImageResource
+	if err := json.Unmarshal(raw, &rs); err != nil {
+		return nil
+	}
+	return rs
+}
+
+// ParseHashes best-effort decodes meta.hashes (a name→hash map). Never errors:
+// absent/null/odd shape → nil.
+func (m ImageMeta) ParseHashes() map[string]string {
+	raw := bytes.TrimSpace(m.Hashes)
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	var h map[string]string
+	if err := json.Unmarshal(raw, &h); err != nil {
+		return nil
+	}
+	return h
+}
+
+// ResolveHash returns the display hash for a resource: its inline hash when
+// present, otherwise a best-effort lookup in meta.hashes by resource name (the
+// map is keyed by bare name or "<type>:<name>", e.g. "lora:MyLora"). Returns ""
+// when nothing resolves.
+func (m ImageMeta) ResolveHash(r ImageResource) string {
+	if h := strings.TrimSpace(r.Hash); h != "" {
+		return h
+	}
+	hashes := m.ParseHashes()
+	if len(hashes) == 0 {
+		return ""
+	}
+	name := strings.TrimSpace(r.Name)
+	if name == "" {
+		return ""
+	}
+	if h, ok := hashes[name]; ok {
+		return h
+	}
+	// The map keys the composite form as "<type>:<name>", but the API is
+	// inconsistent about the type's case ("LORA:" vs "lora:"), so match the key
+	// case-insensitively rather than assuming one casing.
+	if typ := strings.TrimSpace(r.Type); typ != "" {
+		want := strings.ToLower(typ + ":" + name)
+		for k, v := range hashes {
+			if strings.ToLower(k) == want {
+				return v
+			}
+		}
+	}
+	return ""
 }
 
 // CfgScaleString renders the cfgScale for display (empty when absent).
@@ -133,4 +219,26 @@ func (c *Client) SearchImages(ctx context.Context, q url.Values) (*ImageSearchRe
 	}
 	res.Raw = raw
 	return &res, nil
+}
+
+// GetImage fetches a single image by its numeric id via the imageId filter on
+// GET /api/v1/images (there is no dedicated per-id route). Generation metadata
+// is requested implicitly (withMeta/flatMeta) so the caller can render the full
+// detail block. The raw {items,metadata} body is returned for --json passthrough;
+// a not-found id yields an error (the API returns an empty items array).
+func (c *Client) GetImage(ctx context.Context, id string) (*ImageItem, []byte, error) {
+	q := url.Values{}
+	q.Set("imageId", id)
+	q.Set("withMeta", "true")
+	q.Set("flatMeta", "true")
+	res, err := c.SearchImages(ctx, q)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(res.Items) == 0 {
+		// Tag as not-found so the entrypoint maps it to exit 4, matching the
+		// other `get` commands (whose 404 is classified by tagStatus).
+		return nil, res.Raw, tag(ErrNotFound, fmt.Errorf("no image found with id %s", id))
+	}
+	return &res.Items[0], res.Raw, nil
 }
