@@ -51,7 +51,7 @@ func newDownloadCmd() *cobra.Command {
 
 Identify the version deterministically by its numeric version id:
 
-  civitai download 128713
+  civitai download 691639
 
 …or resolve a model's default (first published) version with --model:
 
@@ -108,14 +108,14 @@ compromised source that advertises a matching hash for malicious bytes can't be
 detected by the hash alone. Pickle/executable (.ckpt/.pt/.pth/.bin/.pickle/.pkl)
 and archive (.zip/.tar/.tar.gz/.tgz/.rar/.7z) files can execute code when loaded;
 the CLI notes this on stderr. Only download models from creators you trust.`,
-		Example: `  civitai download 128713
+		Example: `  civitai download 691639
   civitai download --version 128713                # force a version id (skips the ambiguous-id stop)
   civitai download --model 4384 --out ./dreamshaper.safetensors
-  civitai download 128713 --file vae --out-dir ./models
+  civitai download 691639 --file vae --out-dir ./models
   civitai download 691639 --file 1234567          # pick one of two same-named files by id
-  civitai download 128713 --all --out-dir ./models
-  civitai download 128713 --all --layout comfyui --root ~/ComfyUI
-  civitai download 128713 --layout a1111 --for-base "SDXL 1.0"`,
+  civitai download 691639 --all --out-dir ./models
+  civitai download 691639 --all --layout comfyui --root ~/ComfyUI
+  civitai download 691639 --layout a1111 --for-base "SDXL 1.0"`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runDownload(cmd, args, o)
@@ -134,7 +134,7 @@ the CLI notes this on stderr. Only download models from creators you trust.`,
 	f.StringVar(&o.forBase, "for-base", "", "warn if the version's base model is a confidently different family than this target (e.g. \"SDXL 1.0\")")
 	f.BoolVar(&o.noVerify, "no-verify", false, "skip SHA256 verification of the downloaded bytes")
 	f.BoolVar(&o.force, "force", false, "re-download even if the target file already exists")
-	f.BoolVar(&o.anon, "anon", false, "force an anonymous request (ignore any stored login token); NOTE: downloads still 401 without a token — --anon is meaningful for read commands, not downloads")
+	f.BoolVar(&o.anon, "anon", false, "force an anonymous request (ignore any stored login token); NOTE: most downloads 401 without a token — --anon is meaningful for read commands, not downloads")
 	f.BoolVar(&o.dryRun, "dry-run", false, "print the resolved download plan (files, sizes, hashes, targets) and exit without downloading anything")
 	return cmd
 }
