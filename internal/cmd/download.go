@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -53,6 +54,11 @@ Identify the version deterministically by its numeric version id:
 …or resolve a model's default (first published) version with --model:
 
   civitai download --model 4384
+
+Note the positional id is a model-VERSION id, NOT a model id: 'civitai models
+search' and 'civitai models get' list MODEL ids, so pass one of those via
+--model. Handing a model id as the positional (e.g. 'civitai download 4384')
+errors with a hint to use --model.
 
 Use --dry-run to print the resolved plan (files, sizes, SHA256, target paths,
 and whether auth is required) without transferring anything.
@@ -156,7 +162,7 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 
 	v, _, err := client.GetModelVersion(ctx, versionID)
 	if err != nil {
-		return err
+		return hintModelIDMistake(ctx, client, positional, o.modelID, err)
 	}
 	// Parent model type (Checkpoint, LORA, …) drives --layout routing of the
 	// weights file; the version detail embeds it under `model`.
@@ -306,7 +312,7 @@ func downloadSelected(ctx context.Context, dl api.Downloader, out, errW io.Write
 func resolveVersionID(ctx context.Context, client api.Reader, positional, modelID string) (string, error) {
 	if positional != "" {
 		if _, err := strconv.Atoi(positional); err != nil {
-			return "", fmt.Errorf("model-version id must be an integer, got %q", positional)
+			return "", fmt.Errorf("model-version id must be an integer, got %q — pass a numeric model-version id, or find one with `civitai models search`", positional)
 		}
 		return positional, nil
 	}
@@ -321,6 +327,40 @@ func resolveVersionID(ctx context.Context, client api.Reader, positional, modelI
 		return "", fmt.Errorf("model %s has no published versions to download", modelID)
 	}
 	return strconv.Itoa(m.ModelVersions[0].ID), nil
+}
+
+// hintModelIDMistake disambiguates the single most common `download` mistake:
+// the positional argument is a model-VERSION id, but `civitai models search`
+// (and `models get`) list MODEL ids — so a user's natural next step,
+// `civitai download <model-id>`, 404s on the version lookup even though the id
+// is a perfectly valid MODEL id, and the bare "Model not found" is actively
+// misleading (the id IS a valid model).
+//
+// When the version lookup fails with a 404 on a POSITIONAL id (not a --model
+// resolution), this checks whether that same id resolves as a MODEL and, if so,
+// replaces the bare not-found with an actionable hint pointing at
+// `--model <id>` — tagged as a usage error so the exit code reflects the
+// invocation mistake rather than a missing resource. Any other failure (auth,
+// network, rate-limit, or a genuinely unknown id that is neither a version nor a
+// model) surfaces the original error unchanged.
+func hintModelIDMistake(ctx context.Context, client api.Reader, positional, modelID string, versionErr error) error {
+	// Only the positional-id path hits this trap, and only a genuine 404 is worth
+	// a second lookup — every other failure kind is the real problem and must
+	// pass through untouched (and unclassified-changed).
+	if positional == "" || modelID != "" || !errors.Is(versionErr, api.ErrNotFound) {
+		return versionErr
+	}
+	// Is the same id a valid MODEL id? If the model lookup fails for ANY reason,
+	// don't mask the original version-not-found error with a misleading hint —
+	// the id simply isn't a known version or model.
+	if _, _, err := client.GetModel(ctx, positional); err != nil {
+		return versionErr
+	}
+	return asUsageError(fmt.Errorf(
+		"%s is a model id, not a model-version id — did you mean: civitai download --model %s ?\n"+
+			"(`civitai download <id>` takes a model-VERSION id, but `civitai models search` / `civitai models get` list MODEL ids. "+
+			"Use --model to download the model's default version, or `civitai models get %s` to pick a specific version id.)",
+		positional, positional, positional))
 }
 
 // printDownloadPlan renders the --dry-run plan: for each selected file its name,
