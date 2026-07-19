@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -122,6 +123,39 @@ func TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall(t *testing.T) {
 	if !strings.Contains(err.Error(), "refusing to submit without --yes") {
 		t.Errorf("error should explain the refusal, got: %v", err)
 	}
+}
+
+// The non-TTY refusal must fire BEFORE any packaging work: no "Packaged …"
+// line is printed (it momentarily reads as if the submit is proceeding) and no
+// .zip is left on disk. Guards the gate-before-package ordering.
+func TestAppSubmit_NonTTYRefuseHappensBeforePackaging(t *testing.T) {
+	withStdinTTY(t, false)
+	tmp := t.TempDir()
+	writeStaticManifest(t, tmp)
+
+	cfgdir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", cfgdir)
+	t.Setenv("CIVITAI_TOKEN", "tok-should-not-be-used")
+	t.Setenv("CIVITAI_BASE_URL", "https://civitai.com")
+
+	stdout, stderr, err := run(t, "app", "submit", tmp)
+	if err == nil {
+		t.Fatalf("bare submit in non-TTY must fail; stdout:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "Packaged") {
+		t.Errorf("refusal must happen BEFORE packaging — stdout must not contain \"Packaged\", got:\n%s", stdout)
+	}
+	if !strings.Contains(err.Error(), "refusing to submit without --yes") {
+		t.Errorf("error should explain the refusal, got: %v", err)
+	}
+	// No bundle should have been written anywhere under the app dir.
+	entries, _ := os.ReadDir(tmp)
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".zip") {
+			t.Errorf("refusal wrote a .zip (%s) — packaging must not have run", e.Name())
+		}
+	}
+	_ = stderr
 }
 
 // With --yes, the same non-interactive submit proceeds and DOES reach the
