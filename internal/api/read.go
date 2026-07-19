@@ -106,9 +106,13 @@ func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any
 // surfacing the API's own error body ({"error": ...} or {"message": ...})
 // rather than a Go struct dump.
 func readError(status int, raw []byte) (err error) {
-	// Attach the classification sentinel for status (401/404/429/503…) to the
-	// returned error without changing its user-visible message.
-	defer func() { err = tagStatus(status, err) }()
+	// The classification sentinel attached to the returned error, without
+	// changing its user-visible message. Normally derived purely from the HTTP
+	// status (401/404/429/503…), but the 429 branch may override `kind` for a
+	// deep-paging cap (see below) — a structural, non-retryable rejection that
+	// masquerades as a 429.
+	kind := statusKind(status)
+	defer func() { err = tag(kind, err) }()
 	msg := strings.TrimSpace(string(raw))
 	var wrapped struct {
 		Error   json.RawMessage `json:"error"`
@@ -143,12 +147,36 @@ func readError(status int, raw []byte) (err error) {
 	case http.StatusNotFound:
 		return fmt.Errorf("not found (404): %s", msg)
 	case http.StatusTooManyRequests:
+		// A genuine 429 is throttling: transient, safe to back off and retry.
+		// But the API also returns 429 for a PERMANENT deep-paging cap — a
+		// `--page`/`--limit` product past the fixed offset ceiling (page*limit >
+		// 1000). That request is structurally doomed: retrying the same page
+		// loops forever. Detect the cap by its message and reclassify it as a
+		// usage error (ErrBadRequest → exit 2) so a scripter's generic 429
+		// backoff-and-retry loop doesn't spin on it, while a real throttle 429
+		// stays ErrRateLimited (exit 6). The visible message is unchanged.
+		if isDeepPagingCap(msg) {
+			kind = ErrBadRequest
+		}
 		return fmt.Errorf("rate limited (429): %s — for deep paging use --cursor instead of --page", msg)
 	case http.StatusServiceUnavailable:
 		return fmt.Errorf("service unavailable (503): %s — the search backend is briefly overloaded; retry shortly", msg)
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
+}
+
+// isDeepPagingCap reports whether a 429 error message is really the API's
+// PERMANENT deep-paging cap (page*limit past the fixed offset ceiling) rather
+// than transient throttling. The server phrases the cap as e.g. "You've
+// requested too many pages, please use cursors instead"; a genuine throttle
+// 429 carries none of these phrases. The match is deliberately narrow so a real
+// rate-limit 429 is never misclassified as a usage error.
+func isDeepPagingCap(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "too many pages") ||
+		strings.Contains(m, "use cursors") ||
+		strings.Contains(m, "deep paging")
 }
 
 // badRequestDetail extracts a concise, human-readable detail from a 400 response
