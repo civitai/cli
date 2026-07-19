@@ -43,7 +43,12 @@ func newCollectionsSearchCmd() *cobra.Command {
 
 Pagination is cursor-based (a keyset cursor on the collection id — there is no
 --page). The next cursor is printed after the results; pass it back via --cursor.
-Cursor paging is only supported for the default (Newest) sort.`,
+
+Cursor paging is only supported for the default (Newest) sort. This is a server
+constraint: for any other --sort (e.g. "Most Followers") the API returns a
+nextCursor that it then rejects — a dead cursor that yields no further pages. So
+for a non-Newest sort the CLI shows the first page only and does NOT print a
+next-page hint; deep paging requires --sort Newest.`,
 		Example: `  civitai collections search --query "anime" --limit 5
   civitai collections search --sort Newest --cursor <cursor>`,
 		Args: cobra.NoArgs,
@@ -69,11 +74,27 @@ Cursor paging is only supported for the default (Newest) sort.`,
 			if err != nil {
 				return err
 			}
+
+			// The collections endpoint only supports cursor pagination for the
+			// default (Newest) sort. For any other sort the server still returns a
+			// nextCursor, but feeding it back is rejected — a dead cursor. When the
+			// requested sort can't cursor-paginate yet the server handed us a
+			// cursor, emit a one-line note on STDERR (so --json stdout stays pure)
+			// and DON'T print the misleading next-page hint. Exit stays 0.
+			pageable := collectionsSortIsCursorPageable(sort)
+			if !pageable && res.Metadata.CursorString() != "" {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"note: cursor pagination isn't available for --sort %q (API limitation); "+
+						"showing the first page only — use --sort Newest for deep paging.\n", sort)
+			}
+
 			if o.json {
 				return emitJSON(cmd, res.Raw)
 			}
 			printCollectionList(cmd, res.Items)
-			printPageFooter(cmd, "civitai collections search", res.Metadata)
+			if pageable {
+				printPageFooter(cmd, "civitai collections search", res.Metadata)
+			}
 			return nil
 		},
 	}
@@ -118,6 +139,19 @@ func newCollectionsGetCmd() *cobra.Command {
 	}
 	bindReadFlags(cmd)
 	return cmd
+}
+
+// collectionsSortIsCursorPageable reports whether the Civitai collections
+// endpoint (GET /api/v1/collections) supports cursor pagination for the given
+// --sort value. Per the API, cursor paging works ONLY for the default (Newest)
+// sort; every other accepted sort (currently just "Most Followers") returns a
+// nextCursor that the server then rejects, so the CLI must not advertise a
+// next-page hint for it. An empty sort means "use the server default", which is
+// Newest — hence pageable. Deriving the rule from the documented "cursor =
+// Newest only" constraint (rather than a denylist) means a newly added
+// non-Newest sort is correctly treated as non-pageable by default.
+func collectionsSortIsCursorPageable(sort string) bool {
+	return sort == "" || sort == "Newest"
 }
 
 func printCollectionList(cmd *cobra.Command, items []api.CollectionListItem) {
