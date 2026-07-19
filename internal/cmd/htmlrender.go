@@ -411,7 +411,13 @@ func (r *htmlRenderer) closeAnchor() {
 	case text == "":
 		r.line.WriteString(r.href)
 	default:
-		r.line.WriteString(fmt.Sprintf("[%s](%s)", text, r.href))
+		if bare, ok := selfLinkBare(text, r.href); ok {
+			// Anchor text is just its own URL (bare link the editor auto-anchored).
+			// Emit a single bare URL instead of doubling it as "[U](U)".
+			r.line.WriteString(bare)
+		} else {
+			r.line.WriteString(fmt.Sprintf("[%s](%s)", text, r.href))
+		}
 	}
 	// Arm bare-URL dedup: if this link carried a URL, a bare "[<href>]" text
 	// token immediately after it is a duplicate to be dropped (see text()).
@@ -419,6 +425,40 @@ func (r *htmlRenderer) closeAnchor() {
 	r.href = ""
 	r.aStart = 0
 	r.lastCloseMk = "" // line was rewritten — invalidate any pending merge anchor
+}
+
+// selfLinkBare reports whether an anchor's visible text is just its own URL —
+// the extremely common case where an author pastes a bare link and the editor
+// auto-anchors it as <a href="U">U</a>. Rendering that as "[U](U)" doubles the
+// whole URL back-to-back, so on a match we collapse to a single bare href.
+//
+// The match tolerates (a) trailing sentence punctuation on the text (e.g. a
+// "." the author typed after the pasted link) and (b) a trivial "https://" vs
+// bare-host scheme difference. On a match it returns the href with the text's
+// trailing punctuation re-appended (so "<a href=U>U.</a>" → "U." once), and
+// reports false for a genuine "[text](url)" where the text differs from the URL.
+func selfLinkBare(text, href string) (string, bool) {
+	if href == "" || text == "" {
+		return "", false
+	}
+	core := strings.TrimRight(text, ".,;:!?")
+	trailer := text[len(core):]
+	if normalizeURL(core) != normalizeURL(href) {
+		return "", false
+	}
+	return href + trailer, true
+}
+
+// normalizeURL strips a leading http(s):// scheme and a trailing slash so two
+// spellings of the same URL compare equal (used only for the self-link check).
+func normalizeURL(u string) string {
+	u = strings.TrimSpace(u)
+	if rest, ok := strings.CutPrefix(u, "https://"); ok {
+		u = rest
+	} else if rest, ok := strings.CutPrefix(u, "http://"); ok {
+		u = rest
+	}
+	return strings.TrimRight(u, "/")
 }
 
 // startListItem begins a list item, incrementing the ordered counter.

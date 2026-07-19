@@ -373,13 +373,50 @@ func TestHTMLToTextDropsDuplicateBareURL(t *testing.T) {
 		t.Errorf("adjacent dup (no separator): got %q, want %q", out, "[T]("+u+")")
 	}
 
-	// A link whose visible text already IS the URL still renders once.
-	if out := htmlToText(`<p><a href="` + u + `">` + u + `</a><br />[` + u + `]</p>`); out != "["+u+"]("+u+")" {
-		t.Errorf("text==url dup: got %q, want %q", out, "["+u+"]("+u+")")
+	// A link whose visible text already IS the URL collapses to a single bare URL
+	// (not "[U](U)"), and the trailing bare-URL dup is still dropped.
+	if out := htmlToText(`<p><a href="` + u + `">` + u + `</a><br />[` + u + `]</p>`); out != u {
+		t.Errorf("text==url dup: got %q, want %q", out, u)
 	}
-	// …and the same link with no trailing bare URL is unchanged.
-	if out := htmlToText(`<p><a href="` + u + `">` + u + `</a></p>`); out != "["+u+"]("+u+")" {
-		t.Errorf("text==url no-dup: got %q, want %q", out, "["+u+"]("+u+")")
+	// …and the same link with no trailing bare URL also renders as a single URL.
+	if out := htmlToText(`<p><a href="` + u + `">` + u + `</a></p>`); out != u {
+		t.Errorf("text==url no-dup: got %q, want %q", out, u)
+	}
+}
+
+// TestHTMLToTextSelfLinkNotDoubled guards the fix for the self-link double-URL
+// bug: <a href="U">U</a> (a bare link the editor auto-anchored) must render as a
+// single bare "U", never "[U](U)". The match tolerates trailing sentence
+// punctuation and a trivial https:// vs bare-host scheme difference, while a
+// genuine [text](url) with text != url is left untouched.
+func TestHTMLToTextSelfLinkNotDoubled(t *testing.T) {
+	const u = "https://civitai.com/models/1234"
+
+	// text == href → single bare URL.
+	if out := htmlToText(`<a href="` + u + `">` + u + `</a>`); out != u {
+		t.Errorf("self-link doubled: got %q, want %q", out, u)
+	}
+	// Inside a heading the same collapse applies (no "[U](U)" in ## headings).
+	if out := htmlToText(`<h2><a href="` + u + `">` + u + `</a></h2>`); out != "## "+u {
+		t.Errorf("self-link in heading doubled: got %q, want %q", out, "## "+u)
+	}
+	// Trailing punctuation on the text is preserved once, appended to the URL.
+	const d = "https://discord.gg/B6BSCbdAJX"
+	if out := htmlToText(`<a href="` + d + `">` + d + `.</a>`); out != d+"." {
+		t.Errorf("self-link trailing punct: got %q, want %q", out, d+".")
+	}
+	// Trivial scheme difference (bare host vs https://) still counts as a self-link;
+	// the canonical href wins.
+	if out := htmlToText(`<a href="` + u + `">civitai.com/models/1234</a>`); out != u {
+		t.Errorf("self-link scheme diff: got %q, want %q", out, u)
+	}
+	// A genuine [text](url) where text != url is left as a proper markdown link.
+	if out := htmlToText(`<a href="` + u + `">click here</a>`); out != "[click here]("+u+")" {
+		t.Errorf("genuine link altered: got %q, want %q", out, "[click here]("+u+")")
+	}
+	// An image whose alt happens to equal its src is NOT collapsed (images untouched).
+	if out := htmlToText(`<img src="` + u + `" alt="` + u + `">`); out != "!["+u+"]("+u+")" {
+		t.Errorf("image collapsed: got %q, want %q", out, "!["+u+"]("+u+")")
 	}
 }
 
