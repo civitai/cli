@@ -51,8 +51,42 @@ func TestModelsSearchHumanOutput(t *testing.T) {
 	if !strings.Contains(out, "Pony") || !strings.Contains(out, "bob") {
 		t.Errorf("human output missing fields: %s", out)
 	}
+	// The downloads column is labelled all-time so a --period sort can't be
+	// misread as a broken sort (the API returns only all-time counts).
+	if !strings.Contains(out, "DL(all-time)") {
+		t.Errorf("downloads header should be labelled all-time: %s", out)
+	}
+	if strings.Contains(out, "DOWNLOADS\t") || strings.Contains(out, "\tDOWNLOADS") {
+		t.Errorf("bare DOWNLOADS header should be gone: %s", out)
+	}
 	if !strings.Contains(out, "next cursor: c1") {
 		t.Errorf("footer should show next cursor: %s", out)
+	}
+}
+
+func TestModelsSearchPeriodNote(t *testing.T) {
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[{"id":1,"name":"Pony","type":"Checkpoint",
+		  "creator":{"username":"bob"},"stats":{"downloadCount":10,"thumbsUpCount":3}}],
+		  "metadata":{}}`))
+	})
+	// With --period set, an all-time note must go to stderr so the count isn't
+	// misread as the period's total.
+	_, errOut, err := run(t, "models", "search", "--sort", "Most Downloaded", "--period", "Month", "--limit", "1")
+	if err != nil {
+		t.Fatalf("models search --period: %v", err)
+	}
+	if !strings.Contains(errOut, "all-time") || !strings.Contains(errOut, "--period") {
+		t.Errorf("stderr should note the all-time column when --period is set: %q", errOut)
+	}
+
+	// Without --period there should be no such note.
+	_, errOut2, err := run(t, "models", "search", "--limit", "1")
+	if err != nil {
+		t.Fatalf("models search: %v", err)
+	}
+	if strings.Contains(errOut2, "all-time") {
+		t.Errorf("no all-time note expected without --period: %q", errOut2)
 	}
 }
 
