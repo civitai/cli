@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -204,7 +205,12 @@ func TestReadErrorSurfacesBody(t *testing.T) {
 		// Terminal statuses map through readError.
 		{http.StatusNotFound, `{"error":"No model with id 999"}`, "not found (404): No model with id 999"},
 		{http.StatusUnauthorized, `{"error":"Unauthorized"}`, "unauthorized (401)"},
-		{http.StatusBadRequest, `{"message":"bad param"}`, "server returned 400: bad param"},
+		// A 400 is surfaced as a concise "invalid request parameter" message — the
+		// raw body is never dumped. A plain {"message":...} body carries through.
+		{http.StatusBadRequest, `{"message":"bad param"}`, "invalid request parameter (400): bad param"},
+		// A zod-validation 400 (the shape the API actually returns for a bad enum)
+		// is parsed down to the offending field + its message, NOT the raw blob.
+		{http.StatusBadRequest, `{"error":{"name":"ZodError","message":"[{\"code\":\"invalid_value\",\"path\":[\"period\"],\"message\":\"Invalid option: expected one of \\\"Day\\\"|\\\"Week\\\"\"}]"}}`, `invalid request parameter (400): period — Invalid option: expected one of "Day"|"Week"`},
 		// A 429 without Retry-After is terminal (deep-paging limit): readError's
 		// 429 branch surfaces the --cursor guidance, no retry-exhaustion message.
 		{http.StatusTooManyRequests, `{"error":"too many pages"}`, "rate limited (429): too many pages — for deep paging use --cursor instead of --page"},
@@ -229,6 +235,31 @@ func TestReadErrorSurfacesBody(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("status %d: error %q should contain %q", tc.status, err, tc.want)
 		}
+	}
+}
+
+// TestReadError400Classification asserts a 400 response is tagged with
+// ErrBadRequest (the usage-class sentinel) and that a ZodError body is rendered
+// concisely — naming the offending field — with no raw blob leaking through.
+func TestReadError400Classification(t *testing.T) {
+	const zodBody = `{"error":{"name":"ZodError","message":"[{\"code\":\"invalid_value\",\"path\":[\"period\"],\"message\":\"Invalid option: expected one of \\\"Day\\\"|\\\"Week\\\"\"}]"}}`
+	err := readError(http.StatusBadRequest, []byte(zodBody))
+	if err == nil {
+		t.Fatal("expected an error for a 400")
+	}
+	if !errors.Is(err, ErrBadRequest) {
+		t.Errorf("400 should be tagged ErrBadRequest, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "ZodError") {
+		t.Errorf("raw ZodError blob must not leak: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "invalid request parameter (400): period — ") {
+		t.Errorf("concise 400 message should name the field, got: %q", err.Error())
+	}
+
+	// A 400 with no parseable detail falls back to the clean generic message.
+	if got := readError(http.StatusBadRequest, []byte(`not json`)).Error(); got != "invalid request parameter (400)" {
+		t.Errorf("unparseable 400 = %q, want %q", got, "invalid request parameter (400)")
 	}
 }
 

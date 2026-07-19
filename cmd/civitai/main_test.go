@@ -42,6 +42,10 @@ func TestExitCode(t *testing.T) {
 
 		{"usage error", usageErr{errors.New("unknown flag: --nope")}, exitUsage, "unknown flag: --nope"},
 		{"usage sentinel", cmd.ErrUsage, exitUsage, ""},
+		{"bad request sentinel", api.ErrBadRequest, exitUsage, ""},
+		{"tagged 400 (real readError shape)", api.Tag(api.ErrBadRequest,
+			fmt.Errorf("invalid request parameter (400): period — Invalid option")), exitUsage,
+			"invalid request parameter (400): period — Invalid option"},
 
 		{"unauthorized sentinel", api.ErrUnauthorized, exitAuth, ""},
 		{"tagged 401 (real readError shape)", api.Tag(api.ErrUnauthorized,

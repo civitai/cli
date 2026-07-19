@@ -64,7 +64,11 @@ is selected when present).`,
 				return emitJSON(cmd, res.Raw)
 			}
 			if len(res.Items) == 0 {
-				return fmt.Errorf("no user found for %q", arg)
+				// "users get" resolves through the public user SEARCH (the per-id
+				// route is an internal webhook), so a missing user comes back as an
+				// empty 200, not an HTTP 404. Tag it as not-found so a scripted
+				// lookup still gets the not-found exit code, matching a real 404.
+				return api.Tag(api.ErrNotFound, fmt.Errorf("no user found for %q", arg))
 			}
 			// A numeric id lookup returns exactly the requested user. A NAME query
 			// hits the search endpoint, which returns ≤5 FUZZY neighbours — so we
@@ -86,7 +90,7 @@ is selected when present).`,
 					for _, u := range res.Items {
 						names = append(names, orDash(safeTerm(u.Username)))
 					}
-					return fmt.Errorf("no user found with exact username %q; closest matches: %s (use the numeric id for an exact lookup)", arg, strings.Join(names, ", "))
+					return api.Tag(api.ErrNotFound, fmt.Errorf("no user found with exact username %q; closest matches: %s (use the numeric id for an exact lookup)", arg, strings.Join(names, ", ")))
 				}
 			}
 			printUser(cmd, match)

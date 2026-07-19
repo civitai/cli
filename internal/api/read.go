@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -130,6 +131,15 @@ func readError(status int, raw []byte) (err error) {
 	switch status {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("unauthorized (401): %s — your token may be expired; run `civitai login` (these endpoints also work without a token)", msg)
+	case http.StatusBadRequest:
+		// A 400 is the server rejecting a bad flag value / query parameter (e.g.
+		// an invalid enum caught by zod). Surface a CONCISE, actionable message —
+		// naming the offending field/value when the body is a ZodError — instead
+		// of dumping the raw ZodError JSON blob at the user.
+		if d := badRequestDetail(raw); d != "" {
+			return fmt.Errorf("invalid request parameter (400): %s", d)
+		}
+		return errors.New("invalid request parameter (400)")
 	case http.StatusNotFound:
 		return fmt.Errorf("not found (404): %s", msg)
 	case http.StatusTooManyRequests:
@@ -139,6 +149,87 @@ func readError(status int, raw []byte) (err error) {
 	default:
 		return fmt.Errorf("server returned %d: %s", status, msg)
 	}
+}
+
+// badRequestDetail extracts a concise, human-readable detail from a 400 response
+// body. The Civitai API rejects a bad query parameter with a zod validation
+// error whose body is either `{"error":{"name":"ZodError","message":"<JSON
+// array of issues>"}}` or `{"error":[<issues>]}`; a simpler handler may return
+// `{"error":"..."}` or `{"message":"..."}`. It returns the first issue as
+// `field — message` (or just the message when there is no field path), or the
+// plain string body, or "" when nothing usable can be parsed.
+func badRequestDetail(raw []byte) string {
+	var wrapped struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+	}
+	if json.Unmarshal(raw, &wrapped) != nil {
+		return ""
+	}
+	if len(wrapped.Error) > 0 {
+		// error as a ZodError object: {"name":"ZodError","message":"<issues JSON>"}
+		var zerr struct {
+			Name    string `json:"name"`
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(wrapped.Error, &zerr) == nil && zerr.Name == "ZodError" {
+			if d := firstZodIssue([]byte(zerr.Message)); d != "" {
+				return snippet([]byte(d))
+			}
+		}
+		// error as a bare array of zod issues.
+		if d := firstZodIssue(wrapped.Error); d != "" {
+			return snippet([]byte(d))
+		}
+		// error as a plain string.
+		var s string
+		if json.Unmarshal(wrapped.Error, &s) == nil && s != "" {
+			return snippet([]byte(s))
+		}
+	}
+	if wrapped.Message != "" {
+		return snippet([]byte(wrapped.Message))
+	}
+	return ""
+}
+
+// firstZodIssue parses a JSON array of zod issues and renders the first one that
+// carries a message as `field — message` (or just the message when the issue
+// has no path). Returns "" when arr is not a parseable non-empty issue array.
+func firstZodIssue(arr []byte) string {
+	var issues []struct {
+		Path    []json.RawMessage `json:"path"`
+		Message string            `json:"message"`
+	}
+	if json.Unmarshal(arr, &issues) != nil {
+		return ""
+	}
+	for _, is := range issues {
+		if strings.TrimSpace(is.Message) == "" {
+			continue
+		}
+		if field := zodPath(is.Path); field != "" {
+			return field + " — " + is.Message
+		}
+		return is.Message
+	}
+	return ""
+}
+
+// zodPath renders a zod issue's path (a list of string keys and/or numeric
+// indices) as a dotted field name, e.g. ["sort"] -> "sort", ["items",0,"id"] ->
+// "items.0.id". Each element is a JSON string or number; strings are unquoted.
+func zodPath(path []json.RawMessage) string {
+	parts := make([]string, 0, len(path))
+	for _, p := range path {
+		var s string
+		if json.Unmarshal(p, &s) == nil {
+			parts = append(parts, s)
+			continue
+		}
+		parts = append(parts, strings.TrimSpace(string(p)))
+	}
+	return strings.Join(parts, ".")
 }
 
 // maxResponseBody bounds how many bytes of a single HTTP response body the

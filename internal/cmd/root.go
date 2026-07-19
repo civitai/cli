@@ -197,7 +197,23 @@ Get started:
   # Build an App
   civitai login                    store your API token
   civitai app create my-app        scaffold a ready-to-build App
-  civitai app submit               package + submit for review`,
+  civitai app submit               package + submit for review
+
+Exit codes:
+
+  Every command returns a differentiated exit code so scripts can branch on the
+  KIND of failure without parsing stderr (the error message itself is unchanged):
+
+    0  success
+    1  generic / unclassified error
+    2  usage error — a bad flag, a bad flag value, or a request the API rejected
+       as malformed (HTTP 400)
+    3  authentication/authorization — login required, token invalid/expired, or
+       the credential lacks the needed scope (HTTP 401/403)
+    4  not found — the requested resource does not exist (HTTP 404)
+    5  network/transport failure or service unavailable (dial/timeout, HTTP
+       502/503/504 after retries)
+    6  rate limited — throttled by the API (HTTP 429)`,
 		Example: `  # Browse & download the public catalog (no account needed to read).
   civitai models search --query "dreamshaper" --limit 5
   civitai images search --sort "Most Reactions" --period Week

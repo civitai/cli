@@ -90,10 +90,13 @@ func nonModelFileMarker(files []api.ModelVersionFile) string {
 }
 
 // checkLimit validates a --limit against an endpoint's documented maximum. A
-// zero limit means "server default" and is always allowed.
+// zero limit means "server default" and is always allowed. An out-of-range
+// value is a client-side USAGE error (a bad flag value), so it is tagged with
+// ErrUsage — every read subcommand that calls checkLimit thus exits with the
+// usage exit code, not the generic one.
 func checkLimit(limit, max int) error {
 	if limit < 0 || limit > max {
-		return fmt.Errorf("--limit must be between 1 and %d for this endpoint", max)
+		return asUsageError(fmt.Errorf("--limit must be between 1 and %d for this endpoint", max))
 	}
 	return nil
 }

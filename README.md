@@ -684,7 +684,7 @@ by this — only `echo $?` differs.
 | --- | --- |
 | `0` | Success. |
 | `1` | Generic / unclassified error. |
-| `2` | Usage error — a bad flag or malformed invocation. |
+| `2` | Usage error — a bad flag, a bad flag value (e.g. `--limit` out of range, a non-integer id), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum). |
 | `3` | Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured). |
 | `4` | Not found — the requested resource does not exist (HTTP 404). |
 | `5` | Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries. |

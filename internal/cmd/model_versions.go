@@ -34,7 +34,10 @@ func newModelVersionsGetCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := readFlags(cmd)
 			if _, err := strconv.Atoi(args[0]); err != nil {
-				return fmt.Errorf("model version id must be an integer, got %q", args[0])
+				// A non-integer positional arg is a client-side usage mistake, not
+				// an API failure — tag it so the entrypoint maps it to the usage
+				// exit code rather than the generic one.
+				return asUsageError(fmt.Errorf("model version id must be an integer, got %q", args[0]))
 			}
 			client, _, err := newReader(o)
 			if err != nil {
