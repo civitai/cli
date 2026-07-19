@@ -57,14 +57,16 @@ Identify the version deterministically by its numeric version id:
 
   civitai download --model 4384
 
-Note the positional id is a model-VERSION id, NOT a model id: 'civitai models
-search' and 'civitai models get' list MODEL ids, so pass one of those via
---model. Handing a model id as the positional (e.g. 'civitai download 4384')
-errors with a hint to use --model. When a pasted number is BOTH a valid model id
-and a valid version id (common for low/mid numbers), the CLI STOPS and asks you
-to disambiguate rather than silently downloading an unrelated model's version —
-re-run with --model <id> (the model's default version) or --version <id> (that
-version as-is). Use --version to name a version id explicitly and skip that stop.
+The positional id is normally a model-VERSION id, but 'civitai models search'
+and 'civitai models get' list MODEL ids — so handing a model id as the positional
+(e.g. 'civitai download 4384') just works: the CLI recognizes it's a model id and
+downloads that model's default version (printing a note that it did). When a
+pasted number is BOTH a valid model id and a valid version id (common for low/mid
+numbers), the CLI STOPS and asks you to disambiguate rather than silently
+downloading an unrelated model's version — re-run with --model <id> (the model's
+default version) or --version <id> (that version as-is). Use --version to name a
+version id explicitly and skip that stop; --yes proceeds on the version
+interpretation and echoes exactly which version it is downloading.
 
 Use --dry-run to print the resolved plan (files, sizes, SHA256, target paths,
 and whether auth is required) without transferring anything.
@@ -164,21 +166,15 @@ func runDownload(cmd *cobra.Command, args []string, o *downloadOpts) error {
 	out := cmd.OutOrStdout()
 	errW := cmd.ErrOrStderr()
 
-	versionID, err := resolveVersionID(ctx, client, positional, o)
+	// Resolve the version detail to download, handling the three bare-positional
+	// shapes (version-only / model-id auto-resolve / ambiguous stop). `note` is a
+	// user-facing stderr line describing any automatic resolution.
+	v, note, err := resolveDownloadVersion(ctx, client, positional, o)
 	if err != nil {
 		return err
 	}
-
-	v, _, err := client.GetModelVersion(ctx, versionID)
-	if err != nil {
-		return hintModelIDMistake(ctx, client, positional, o.modelID, err)
-	}
-	// Footgun guard: a bare positional id that is ALSO a valid MODEL id (common
-	// for low/mid numbers) resolves as a version with no 404, so without this the
-	// CLI would silently download an UNRELATED model's version and print a
-	// reassuring "SHA256 verified". Stop and require disambiguation instead.
-	if err := stopIfAmbiguousModelID(ctx, client, positional, o, v); err != nil {
-		return err
+	if note != "" {
+		fmt.Fprintln(errW, note)
 	}
 	// Parent model type (Checkpoint, LORA, …) drives --layout routing of the
 	// weights file; the version detail embeds it under `model`.
@@ -327,25 +323,40 @@ func downloadSelected(ctx context.Context, dl api.Downloader, out, errW io.Write
 	return downloaded, nil
 }
 
-// resolveVersionID returns the version id to download: the positional id verbatim
-// (validated numeric), or the default (first published) version of --model.
+// resolveDownloadVersion loads the model-version detail to download from the
+// resolved flags/positional, returning it plus an optional user-facing note
+// (stderr) describing any automatic resolution.
 //
-// For --model, the API returns modelVersions default/latest-first, so the model's
-// default version is modelVersions[0]. Its primary file is downloaded regardless
-// of file type — a "Workflows" model's Archive, training data, or plain weights
-// all download the same way.
-func resolveVersionID(ctx context.Context, client api.Reader, positional string, o *downloadOpts) (string, error) {
+//   - --version <id> / --model <id> resolve deterministically (a --model resolves
+//     the model's default (first published) version) — no ambiguity handling.
+//   - A bare positional id is classified by looking it up as BOTH a version and a
+//     model, then handled by resolveBarePositionalVersion.
+func resolveDownloadVersion(ctx context.Context, client api.Reader, positional string, o *downloadOpts) (*api.ModelVersionDetail, string, error) {
+	if o.version != "" || o.modelID != "" {
+		versionID, err := resolveExplicitVersionID(ctx, client, o)
+		if err != nil {
+			return nil, "", err
+		}
+		v, _, err := client.GetModelVersion(ctx, versionID)
+		if err != nil {
+			return nil, "", err
+		}
+		return v, "", nil
+	}
+	return resolveBarePositionalVersion(ctx, client, positional, o)
+}
+
+// resolveExplicitVersionID returns the version id for the explicit --version /
+// --model paths. For --model, the API returns modelVersions default/latest-first,
+// so the model's default version is modelVersions[0]; its primary file downloads
+// regardless of file type (a "Workflows" model's Archive, training data, or plain
+// weights all download the same way).
+func resolveExplicitVersionID(ctx context.Context, client api.Reader, o *downloadOpts) (string, error) {
 	if o.version != "" {
 		if _, err := strconv.Atoi(o.version); err != nil {
 			return "", asUsageError(fmt.Errorf("--version id must be an integer, got %q", o.version))
 		}
 		return o.version, nil
-	}
-	if positional != "" {
-		if _, err := strconv.Atoi(positional); err != nil {
-			return "", asUsageError(fmt.Errorf("model-version id must be an integer, got %q — pass a numeric model-version id, or find one with `civitai models search`", positional))
-		}
-		return positional, nil
 	}
 	if _, err := strconv.Atoi(o.modelID); err != nil {
 		return "", asUsageError(fmt.Errorf("--model id must be an integer, got %q", o.modelID))
@@ -360,34 +371,109 @@ func resolveVersionID(ctx context.Context, client api.Reader, positional string,
 	return strconv.Itoa(m.ModelVersions[0].ID), nil
 }
 
-// stopIfAmbiguousModelID is the core footgun guard. `civitai models search` lists
-// MODEL ids, so a user's natural `civitai download <model-id>` pastes a model id
-// into the version-id positional. When that number is NOT a valid version it 404s
-// and hintModelIDMistake catches it — but when the SAME number is ALSO a valid
-// version id (common for low/mid numbers), the version lookup succeeds and the CLI
-// would SILENTLY download an unrelated model's version, laundering it as
-// trustworthy with a "SHA256 verified" line. That is worse than a 404.
+// resolveBarePositionalVersion resolves a bare positional id into the version to
+// download. `civitai models search` lists MODEL ids, so a user's natural
+// `civitai download <id>` frequently pastes a MODEL id into the version-id
+// positional. Three shapes are distinguished by looking the id up as BOTH a
+// version and a model:
 //
-// So: for the bare-positional path only (not --model / --version / --yes), after
-// the version lookup already succeeded, check whether the same number resolves as
-// a MODEL id whose returned id MATCHES (the real REST API echoes back the queried
-// id — a mismatch means the lookup didn't actually resolve that id). If it is BOTH,
-// STOP with a usage error (exit 2) that spells out both interpretations and how to
-// pick one. Any model-lookup failure (404/network/…) means "not ambiguous" → the
-// download proceeds exactly as today.
-func stopIfAmbiguousModelID(ctx context.Context, client api.Reader, positional string, o *downloadOpts, v *api.ModelVersionDetail) error {
-	if positional == "" || o.modelID != "" || o.version != "" || o.yes {
-		return nil
-	}
+//   - version-only (valid version, NOT a model) → download that version, as today.
+//   - model-only (valid model, NOT a version) → auto-resolve + download the model's
+//     default version, with a note. This turns the common search→download flow into
+//     a success instead of a hint-wall.
+//   - ambiguous (BOTH a model AND a version) → STOP for disambiguation (exit 2), so
+//     the CLI never silently downloads an UNRELATED model's version and launders it
+//     with a reassuring "SHA256 verified". --yes proceeds (download the version as
+//     typed) but ECHOES exactly which interpretation it chose.
+//
+// A MODEL id is only "confirmable" when the model lookup echoes back the queried
+// id (the real REST API always echoes it — a mismatch means the lookup didn't
+// actually resolve that id).
+func resolveBarePositionalVersion(ctx context.Context, client api.Reader, positional string, o *downloadOpts) (*api.ModelVersionDetail, string, error) {
 	n, err := strconv.Atoi(positional)
 	if err != nil {
-		return nil // non-numeric never reaches here, but stay safe.
+		return nil, "", asUsageError(fmt.Errorf("model-version id must be an integer, got %q — pass a numeric model-version id, or find one with `civitai models search`", positional))
 	}
-	m, _, err := client.GetModel(ctx, positional)
+
+	v, _, verErr := client.GetModelVersion(ctx, positional)
+	if verErr != nil {
+		// Not a valid version. If it IS a confirmable MODEL id, auto-resolve its
+		// default version instead of dead-ending on the version 404 — the common
+		// `models search` → `download <model-id>` flow. Only a genuine 404 warrants
+		// the second lookup; any other failure (auth/network/rate-limit) is the real
+		// problem and passes through untouched.
+		if errors.Is(verErr, api.ErrNotFound) {
+			if dv, note, handled, aerr := autoResolveModelDefault(ctx, client, positional, n); handled {
+				return dv, note, aerr
+			}
+		}
+		return nil, "", verErr
+	}
+
+	// The id IS a valid version. Is it ALSO a confirmable model id? If so it's the
+	// ambiguity footgun.
+	m := lookupConfirmedModel(ctx, client, positional, n)
+	if m == nil {
+		return v, "", nil // version-only — unambiguous, download as today.
+	}
+	if o.yes {
+		// --yes bypasses the stop; echo EXACTLY which interpretation it chose so a
+		// reflexive --yes can't silently grab an unrelated model.
+		return v, ambiguousYesNote(positional, v, m), nil
+	}
+	return nil, "", ambiguousStopError(positional, v, m)
+}
+
+// lookupConfirmedModel returns the model for id only when it resolves as a model
+// whose returned id ECHOES the queried id (a mismatch means the lookup didn't
+// actually resolve that id). Any lookup failure or id mismatch returns nil ("not
+// a confirmable model id").
+func lookupConfirmedModel(ctx context.Context, client api.Reader, id string, n int) *api.ModelDetail {
+	m, _, err := client.GetModel(ctx, id)
 	if err != nil || m == nil || m.ID != n {
-		// Not (confirmably) a model id → unambiguous version download, as today.
 		return nil
 	}
+	return m
+}
+
+// autoResolveModelDefault handles a bare positional that is a valid MODEL id but
+// NOT a valid version id: it resolves the model's default (first published)
+// version and returns its detail plus a one-line note. handled=false means the id
+// is not a confirmable model id → the caller keeps the original version error.
+func autoResolveModelDefault(ctx context.Context, client api.Reader, id string, n int) (v *api.ModelVersionDetail, note string, handled bool, err error) {
+	m := lookupConfirmedModel(ctx, client, id, n)
+	if m == nil {
+		return nil, "", false, nil
+	}
+	if len(m.ModelVersions) == 0 {
+		return nil, "", true, fmt.Errorf("model %s has no published versions to download", id)
+	}
+	defVerID := strconv.Itoa(m.ModelVersions[0].ID)
+	dv, _, gerr := client.GetModelVersion(ctx, defVerID)
+	if gerr != nil {
+		return nil, "", true, gerr
+	}
+	return dv, fmt.Sprintf("note: %s is a model id — downloading its default version %s", id, defVerID), true, nil
+}
+
+// ambiguousYesNote is the --yes echo for an ambiguous id: it spells out EXACTLY
+// which interpretation was chosen (the VERSION, of its own parent model) and how
+// to get the OTHER one (the model whose id was pasted), so a reflexive --yes can't
+// silently grab an unrelated model.
+func ambiguousYesNote(id string, v *api.ModelVersionDetail, m *api.ModelDetail) string {
+	parent := ""
+	if v != nil && v.Model != nil {
+		parent = v.Model.Name
+	}
+	return fmt.Sprintf(
+		"--yes: downloading VERSION %s %q (use --model %s for the model %q instead)",
+		id, safeTerm(dashIfEmpty(parent)), id, safeTerm(dashIfEmpty(m.Name)))
+}
+
+// ambiguousStopError is the core footgun guard's usage error (exit 2): a bare
+// positional id that is BOTH a valid model id and a valid version id STOPs and
+// spells out both interpretations and how to pick one.
+func ambiguousStopError(id string, v *api.ModelVersionDetail, m *api.ModelDetail) error {
 	parent := ""
 	if v != nil && v.Model != nil {
 		parent = v.Model.Name
@@ -396,41 +482,7 @@ func stopIfAmbiguousModelID(ctx context.Context, client api.Reader, positional s
 		"%s is ambiguous — it's both model %q and version %s (of model %q).\n"+
 			"To download the model's default version:  civitai download --model %s\n"+
 			"To download version %s as-is:             re-run with --version %s (or --yes)",
-		positional, safeTerm(m.Name), positional, safeTerm(dashIfEmpty(parent)), positional, positional, positional))
-}
-
-// hintModelIDMistake disambiguates the single most common `download` mistake:
-// the positional argument is a model-VERSION id, but `civitai models search`
-// (and `models get`) list MODEL ids — so a user's natural next step,
-// `civitai download <model-id>`, 404s on the version lookup even though the id
-// is a perfectly valid MODEL id, and the bare "Model not found" is actively
-// misleading (the id IS a valid model).
-//
-// When the version lookup fails with a 404 on a POSITIONAL id (not a --model
-// resolution), this checks whether that same id resolves as a MODEL and, if so,
-// replaces the bare not-found with an actionable hint pointing at
-// `--model <id>` — tagged as a usage error so the exit code reflects the
-// invocation mistake rather than a missing resource. Any other failure (auth,
-// network, rate-limit, or a genuinely unknown id that is neither a version nor a
-// model) surfaces the original error unchanged.
-func hintModelIDMistake(ctx context.Context, client api.Reader, positional, modelID string, versionErr error) error {
-	// Only the positional-id path hits this trap, and only a genuine 404 is worth
-	// a second lookup — every other failure kind is the real problem and must
-	// pass through untouched (and unclassified-changed).
-	if positional == "" || modelID != "" || !errors.Is(versionErr, api.ErrNotFound) {
-		return versionErr
-	}
-	// Is the same id a valid MODEL id? If the model lookup fails for ANY reason,
-	// don't mask the original version-not-found error with a misleading hint —
-	// the id simply isn't a known version or model.
-	if _, _, err := client.GetModel(ctx, positional); err != nil {
-		return versionErr
-	}
-	return asUsageError(fmt.Errorf(
-		"%s is a model id, not a model-version id — did you mean: civitai download --model %s ?\n"+
-			"(`civitai download <id>` takes a model-VERSION id, but `civitai models search` / `civitai models get` list MODEL ids. "+
-			"Use --model to download the model's default version, or `civitai models get %s` to pick a specific version id.)",
-		positional, positional, positional))
+		id, safeTerm(m.Name), id, safeTerm(dashIfEmpty(parent)), id, id, id))
 }
 
 // printDownloadPlan renders the --dry-run plan: for each selected file its name,

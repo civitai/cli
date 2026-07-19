@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"text/tabwriter"
 
@@ -79,11 +80,28 @@ func newModelVersionsByHashCmd() *cobra.Command {
 				return emitJSON(cmd, raw)
 			}
 			printModelVersionDetail(cmd, v)
+			// A by-hash lookup is almost always the prelude to a download, so emit a
+			// ready-to-run command. It uses --version (never a bare positional id) so
+			// the printed command can never trip the download model-id/version-id
+			// ambiguity stop, and pairs it with --layout for type-routed placement.
+			printDownloadCommandHint(cmd.OutOrStdout(), v)
 			return nil
 		},
 	}
 	bindReadFlags(cmd)
 	return cmd
+}
+
+// printDownloadCommandHint prints a runnable, ambiguity-gate-immune download
+// command for a resolved version (empty/zero version → nothing). Using --version
+// keeps the suggested command from ever hitting the model-id/version-id ambiguity
+// stop; --layout comfyui is a sensible type-routed default the user can drop or
+// change (e.g. --layout a1111, or --out-dir).
+func printDownloadCommandHint(out io.Writer, v *api.ModelVersionDetail) {
+	if v == nil || v.ID == 0 {
+		return
+	}
+	fmt.Fprintf(out, "  ↳ download: civitai download --version %d --layout comfyui\n", v.ID)
 }
 
 func printModelVersionDetail(cmd *cobra.Command, v *api.ModelVersionDetail) {
