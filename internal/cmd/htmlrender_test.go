@@ -345,3 +345,63 @@ func TestHTMLToTextMalformedListState(t *testing.T) {
 		t.Errorf("<br> in <li>: got %q, want %q", got, "- a b")
 	}
 }
+
+// TestHTMLToTextDropsDuplicateBareURL guards the fix for the double-URL bug:
+// TipTap article bodies commonly emit <a href="U">T</a><br />[U], where the bare
+// [U] duplicates the link's URL. The link must render exactly once as [T](U) with
+// NO trailing [U] appended.
+func TestHTMLToTextDropsDuplicateBareURL(t *testing.T) {
+	const u = "https://medium.com/x-c88a8658beb7"
+
+	// The exact article-2054 shape: anchor, <br>, bare [url], all inside <li><p>.
+	got := htmlToText(`<li><p><a href="` + u + `">Part 1</a><br />[` + u + `]</p></li>`)
+	if want := "- [Part 1](" + u + ")"; got != want {
+		t.Fatalf("duplicate bare URL not dropped:\ngot:  %q\nwant: %q", got, want)
+	}
+	if strings.Contains(got, "["+u+"]") {
+		t.Errorf("bare [url] survived:\n%q", got)
+	}
+
+	// Plain paragraph form: <a>…</a> [U] with a space separator.
+	if out := htmlToText(`<p><a href="` + u + `">text</a> [` + u + `]</p>`); out != "[text]("+u+")" {
+		t.Errorf("space-separated dup: got %q, want %q", out, "[text]("+u+")")
+	}
+
+	// The exact-once assertion from the task: <a href="U">T</a> renders [T](U),
+	// never with a trailing " [U]".
+	if out := htmlToText(`<a href="` + u + `">T</a>[` + u + `]`); out != "[T]("+u+")" {
+		t.Errorf("adjacent dup (no separator): got %q, want %q", out, "[T]("+u+")")
+	}
+
+	// A link whose visible text already IS the URL still renders once.
+	if out := htmlToText(`<p><a href="` + u + `">` + u + `</a><br />[` + u + `]</p>`); out != "["+u+"]("+u+")" {
+		t.Errorf("text==url dup: got %q, want %q", out, "["+u+"]("+u+")")
+	}
+	// …and the same link with no trailing bare URL is unchanged.
+	if out := htmlToText(`<p><a href="` + u + `">` + u + `</a></p>`); out != "["+u+"]("+u+")" {
+		t.Errorf("text==url no-dup: got %q, want %q", out, "["+u+"]("+u+")")
+	}
+}
+
+// TestHTMLToTextDedupPreservesNonDuplicates proves the dedup is surgical: a link
+// NOT followed by its own bare URL, and following text that is not the duplicate,
+// are both left intact.
+func TestHTMLToTextDedupPreservesNonDuplicates(t *testing.T) {
+	// A normal link followed by ordinary prose keeps everything.
+	if out := htmlToText(`<p>See <a href="https://civitai.com/g">the guide</a> for details.</p>`); out != "See [the guide](https://civitai.com/g) for details." {
+		t.Errorf("normal link+prose altered:\n%q", out)
+	}
+	// A bare bracket that does NOT match the href must be preserved.
+	got := htmlToText(`<p><a href="https://a.example/1">link</a> [https://b.example/2]</p>`)
+	if !strings.Contains(got, "[link](https://a.example/1)") || !strings.Contains(got, "[https://b.example/2]") {
+		t.Errorf("non-matching bracket wrongly dropped:\n%q", got)
+	}
+	// Trailing text after the dropped duplicate survives with a clean separator.
+	if out := htmlToText(`<p><a href="https://x/y">t</a> [https://x/y] and more</p>`); out != "[t](https://x/y) and more" {
+		t.Errorf("trailing text after dup lost/glued: got %q, want %q", out, "[t](https://x/y) and more")
+	}
+	// An image link is unaffected by the dedup.
+	if out := htmlToText(`<p><img src="https://x/y.png" alt="diagram"></p>`); out != "![diagram](https://x/y.png)" {
+		t.Errorf("image render changed: %q", out)
+	}
+}

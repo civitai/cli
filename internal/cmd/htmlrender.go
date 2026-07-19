@@ -62,6 +62,13 @@ type htmlRenderer struct {
 	aStart int             // len(line) when <a> opened, to wrap its text
 	skip   int             // >0 while inside a <script>/<style> subtree (drop content)
 
+	// pendingAnchorHref holds the href of the just-closed <a>, so an
+	// immediately-following bare "[<href>]" text token (a common TipTap /
+	// markdown-conversion artifact that duplicates the link's URL) can be
+	// dropped instead of rendered a second time. One-shot: consumed by the next
+	// text token, and invalidated by any intervening tag other than <br>.
+	pendingAnchorHref string
+
 	emph        []emphMark // open emphasis markers (**, *, `), innermost last
 	lastCloseMk string     // marker of the most recently emitted close, "" if none/invalidated
 	lastCloseAt int        // len(line) right after that close marker was written
@@ -145,6 +152,29 @@ func (r *htmlRenderer) text(decoded string) {
 	if collapsed == "" {
 		return
 	}
+	// Drop a bare "[<href>]" that duplicates the URL of the link just closed
+	// (TipTap article bodies commonly emit <a href="U">T</a><br />[U], which
+	// would otherwise render as "[T](U) [U]"). Consume the one-shot flag first
+	// so a non-matching token clears it too.
+	if r.pendingAnchorHref != "" {
+		bare := "[" + r.pendingAnchorHref + "]"
+		r.pendingAnchorHref = ""
+		if rest, ok := strings.CutPrefix(strings.TrimLeft(collapsed, " "), bare); ok {
+			// Drop the separator space a <br>/whitespace inserted before the dup.
+			if cur := r.line.String(); strings.HasSuffix(cur, " ") {
+				r.line.Reset()
+				r.line.WriteString(strings.TrimRight(cur, " "))
+			}
+			rest = strings.TrimLeft(rest, " ")
+			if rest == "" {
+				return
+			}
+			if r.line.Len() > 0 {
+				rest = " " + rest
+			}
+			collapsed = rest
+		}
+	}
 	// Avoid a leading space at the very start of a fresh line.
 	if r.line.Len() == 0 {
 		collapsed = strings.TrimLeft(collapsed, " ")
@@ -158,6 +188,12 @@ func (r *htmlRenderer) text(decoded string) {
 var wsRe = regexp.MustCompile(`\s+`)
 
 func (r *htmlRenderer) tag(name string, attrs map[string]string, closing, selfClose bool) {
+	// A pending bare-URL dedup only survives an intervening <br> (TipTap emits
+	// <a>…</a><br />[url]); any other tag ends the anchor's immediate context.
+	// closeAnchor re-arms it below for the <a>-closing case.
+	if name != "br" {
+		r.pendingAnchorHref = ""
+	}
 	switch name {
 	case "br":
 		if r.inItem {
@@ -377,6 +413,9 @@ func (r *htmlRenderer) closeAnchor() {
 	default:
 		r.line.WriteString(fmt.Sprintf("[%s](%s)", text, r.href))
 	}
+	// Arm bare-URL dedup: if this link carried a URL, a bare "[<href>]" text
+	// token immediately after it is a duplicate to be dropped (see text()).
+	r.pendingAnchorHref = r.href
 	r.href = ""
 	r.aStart = 0
 	r.lastCloseMk = "" // line was rewritten — invalidate any pending merge anchor
