@@ -83,7 +83,7 @@ func TestRequireHTTPSDownload(t *testing.T) {
 // https per hop (a hostile 3xx to plain-http is refused) and re-imposes the
 // 10-hop cap.
 func TestCheckDownloadRedirectRejectsHTTP(t *testing.T) {
-	c := New("https://civitai.com", "", "") // guard on (default)
+	c := New("https://civitai.com", "") // guard on (default)
 
 	httpsReq, _ := http.NewRequest(http.MethodGet, "https://storage.example.com/blob", nil)
 	if err := c.checkDownloadRedirect(httpsReq, nil); err != nil {
@@ -103,7 +103,7 @@ func TestCheckDownloadRedirectRejectsHTTP(t *testing.T) {
 	}
 
 	// With the bypass on, the https re-assert is skipped (test http servers).
-	cBypass := New("https://civitai.com", "", "")
+	cBypass := New("https://civitai.com", "")
 	cBypass.AllowPrivateDownloadHosts = true
 	if err := cBypass.checkDownloadRedirect(httpReq, nil); err != nil {
 		t.Errorf("bypass should allow http redirect, got %v", err)
@@ -113,7 +113,7 @@ func TestCheckDownloadRedirectRejectsHTTP(t *testing.T) {
 // TestDownloadFileRefusesPlainHTTP is the end-to-end scheme guard at its default
 // (guard on): a plain-http downloadUrl is refused before any connection.
 func TestDownloadFileRefusesPlainHTTP(t *testing.T) {
-	c := New("https://civitai.com", "tok", "") // AllowPrivateDownloadHosts=false
+	c := New("https://civitai.com", "tok") // AllowPrivateDownloadHosts=false
 	_, err := c.DownloadFile(context.Background(), "http://169.254.169.254/latest/meta-data/iam/")
 	if err == nil {
 		t.Fatal("expected a plain-http download to be refused")
@@ -134,7 +134,7 @@ func TestDownloadFileRefusesLoopbackIP(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("https://civitai.com", "tok", "") // guard on
+	c := New("https://civitai.com", "tok") // guard on
 	_, err := c.DownloadFile(context.Background(), srv.URL+"/latest/meta-data/")
 	if err == nil {
 		t.Fatal("expected a loopback download to be refused by the dial guard")
@@ -155,7 +155,7 @@ func TestDownloadFileRedirectTargetSchemeChecked(t *testing.T) {
 	// though the dial guard would separately block an internal IP. Verified in
 	// TestCheckDownloadRedirectRejectsHTTP; here we assert the wiring: the client
 	// built by downloadHTTPClient carries our CheckRedirect.
-	c := New("https://civitai.com", "", "")
+	c := New("https://civitai.com", "")
 	hc := c.downloadHTTPClient()
 	if hc.CheckRedirect == nil {
 		t.Fatal("download client must install a redirect policy")

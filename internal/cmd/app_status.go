@@ -8,6 +8,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/ui"
@@ -55,7 +56,7 @@ and deployed (deployState 'live').`,
 				blockID = args[0]
 			}
 
-			client := civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+			client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 			ctx := context.Background()
 			out := cmd.OutOrStdout()
 
@@ -98,7 +99,7 @@ func writeJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-func printSubmissionTable(w io.Writer, subs []civitai.Submission) {
+func printSubmissionTable(w io.Writer, subs []appapi.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "BLOCK_ID\tVERSION\tSTATUS\tDEPLOY\tSUBMITTED\tURL")
 	for _, s := range subs {
@@ -114,7 +115,7 @@ func printSubmissionTable(w io.Writer, subs []civitai.Submission) {
 	_ = tw.Flush()
 }
 
-func printSubmissionDetail(w io.Writer, s *civitai.Submission) {
+func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "Block ID:\t%s\n", s.BlockID)
 	fmt.Fprintf(tw, "Version:\t%s\n", s.Version)

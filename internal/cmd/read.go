@@ -75,9 +75,9 @@ func newReader(o *readOpts) (*civitai.Client, string, error) {
 	}
 	var client *civitai.Client
 	if o.anon {
-		client = civitai.New(cfg.BaseURL(), "", "")
+		client = civitai.New(cfg.BaseURL(), "")
 	} else {
-		client = civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+		client = civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg))
 	}
 	client.AllowPrivateDownloadHosts = allowPrivateDownloadHostsForTest
 	return client, cfg.BaseURL(), nil

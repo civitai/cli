@@ -1,4 +1,4 @@
-package civitai
+package appapi
 
 import (
 	"context"

@@ -1,4 +1,4 @@
-package civitai
+package appapi
 
 import (
 	"encoding/json"

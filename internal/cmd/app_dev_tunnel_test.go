@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/devtunnel"
-	"github.com/civitai/cli/pkg/civitai"
 )
 
 // syncBuffer is a goroutine-safe io.Writer the concurrent runTunnelSession tests
@@ -44,7 +44,7 @@ func (s *syncBuffer) String() string {
 type fakeTunnelAPI struct {
 	mu sync.Mutex
 
-	startResult *civitai.DevTunnelSession
+	startResult *appapi.DevTunnelSession
 	startErr    error
 	startCalls  []struct {
 		blockID, pubKey string
@@ -57,12 +57,12 @@ type fakeTunnelAPI struct {
 	// whoami / whoamiErr are the canned WhoAmI result used to enrich a 403 mint
 	// refusal; whoamiCalls counts invocations so a test can assert WhoAmI is NOT
 	// called on a non-forbidden error.
-	whoami     *civitai.Identity
+	whoami     *appapi.Identity
 	whoamiErr  error
 	whoamiCall int
 }
 
-func (f *fakeTunnelAPI) WhoAmI(_ context.Context) (*civitai.Identity, error) {
+func (f *fakeTunnelAPI) WhoAmI(_ context.Context) (*appapi.Identity, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.whoamiCall++
@@ -78,7 +78,7 @@ func (f *fakeTunnelAPI) whoamiCount() int {
 	return f.whoamiCall
 }
 
-func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string, declaredScopes []string) (*civitai.DevTunnelSession, error) {
+func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string, declaredScopes []string) (*appapi.DevTunnelSession, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.startCalls = append(f.startCalls, struct {
@@ -195,8 +195,8 @@ var sampleHostKey = func() string {
 	return k.AuthorizedKey
 }()
 
-func sampleSession() *civitai.DevTunnelSession {
-	return &civitai.DevTunnelSession{
+func sampleSession() *appapi.DevTunnelSession {
+	return &appapi.DevTunnelSession{
 		SessionID:        "bki_test",
 		Host:             "dev-0123456789abcdef.civit.ai",
 		URL:              "https://civitai.com/apps/dev/my-block",
@@ -275,7 +275,7 @@ func TestValidateMintResponse(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateMintResponse(&civitai.DevTunnelSession{Host: tc.host, URL: tc.url, SSHHostPublicKey: tc.hostKey}, base)
+			err := validateMintResponse(&appapi.DevTunnelSession{Host: tc.host, URL: tc.url, SSHHostPublicKey: tc.hostKey}, base)
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("expected pass, got %v", err)
@@ -623,12 +623,12 @@ func TestRunTunnelSessionStartError(t *testing.T) {
 
 // TestRunTunnelSessionForbiddenEnrichedWithIdentity: a 403 mint refusal is
 // enriched with the signed-in account + account-switch guidance, still errors.As
-// to *civitai.DevTunnelForbiddenError, and NEVER dials/stops (it's on the mint-error
+// to *appapi.DevTunnelForbiddenError, and NEVER dials/stops (it's on the mint-error
 // path, before any tunnel dial).
 func TestRunTunnelSessionForbiddenEnrichedWithIdentity(t *testing.T) {
 	apiStub := &fakeTunnelAPI{
-		startErr: &civitai.DevTunnelForbiddenError{ServerMsg: "Dev tunnels are not available"},
-		whoami:   &civitai.Identity{Username: "zach", ID: 42},
+		startErr: &appapi.DevTunnelForbiddenError{ServerMsg: "Dev tunnels are not available"},
+		whoami:   &appapi.Identity{Username: "zach", ID: 42},
 	}
 	dialer := &fakeDialer{tunnel: newFakeTunnel()}
 
@@ -638,9 +638,9 @@ func TestRunTunnelSessionForbiddenEnrichedWithIdentity(t *testing.T) {
 		t.Fatal("expected the forbidden mint to error")
 	}
 	// (a) still unwraps to the typed forbidden error.
-	var forbidden *civitai.DevTunnelForbiddenError
+	var forbidden *appapi.DevTunnelForbiddenError
 	if !errors.As(err, &forbidden) {
-		t.Fatalf("enriched error must still errors.As to *civitai.DevTunnelForbiddenError, got %v", err)
+		t.Fatalf("enriched error must still errors.As to *appapi.DevTunnelForbiddenError, got %v", err)
 	}
 	// (b) names the account + carries the switch/check guidance.
 	msg := err.Error()
@@ -666,11 +666,11 @@ func TestRunTunnelSessionForbiddenEnrichedWithIdentity(t *testing.T) {
 // fine — the credential's scope is the problem).
 func TestRunTunnelSessionForbiddenScopeGuidance(t *testing.T) {
 	apiStub := &fakeTunnelAPI{
-		startErr: &civitai.DevTunnelForbiddenError{
+		startErr: &appapi.DevTunnelForbiddenError{
 			ServerMsg:         "Your API key does not have the required scope for this action",
 			InsufficientScope: true,
 		},
-		whoami: &civitai.Identity{Username: "zach", ID: 42},
+		whoami: &appapi.Identity{Username: "zach", ID: 42},
 	}
 	dialer := &fakeDialer{tunnel: newFakeTunnel()}
 
@@ -679,9 +679,9 @@ func TestRunTunnelSessionForbiddenScopeGuidance(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the forbidden mint to error")
 	}
-	var forbidden *civitai.DevTunnelForbiddenError
+	var forbidden *appapi.DevTunnelForbiddenError
 	if !errors.As(err, &forbidden) {
-		t.Fatalf("enriched error must still errors.As to *civitai.DevTunnelForbiddenError, got %v", err)
+		t.Fatalf("enriched error must still errors.As to *appapi.DevTunnelForbiddenError, got %v", err)
 	}
 	msg := err.Error()
 	// Scope-specific guidance — full-scope key + whoami, NOT account-switching.
@@ -706,7 +706,7 @@ func TestRunTunnelSessionForbiddenScopeGuidance(t *testing.T) {
 // carries the switch guidance but omits the account name (best effort).
 func TestRunTunnelSessionForbiddenWhoAmIFails(t *testing.T) {
 	apiStub := &fakeTunnelAPI{
-		startErr:  &civitai.DevTunnelForbiddenError{ServerMsg: "Dev tunnels are not available"},
+		startErr:  &appapi.DevTunnelForbiddenError{ServerMsg: "Dev tunnels are not available"},
 		whoamiErr: errors.New("token expired"),
 	}
 	dialer := &fakeDialer{tunnel: newFakeTunnel()}
@@ -733,7 +733,7 @@ func TestRunTunnelSessionForbiddenWhoAmIFails(t *testing.T) {
 func TestRunTunnelSessionNonForbiddenErrorPassesThrough(t *testing.T) {
 	apiStub := &fakeTunnelAPI{
 		startErr: errors.New("boom: transient server error"),
-		whoami:   &civitai.Identity{Username: "zach", ID: 42},
+		whoami:   &appapi.Identity{Username: "zach", ID: 42},
 	}
 	dialer := &fakeDialer{tunnel: newFakeTunnel()}
 

@@ -21,7 +21,7 @@ func zeroBackoff() *time.Duration { d := time.Duration(0); return &d }
 // retries and a captured stderr, so the transient-retry path runs deterministically.
 func retryClient(srv *httptest.Server) (*Client, *bytes.Buffer) {
 	var buf bytes.Buffer
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	c.RetryBackoffBase = zeroBackoff()
 	c.Stderr = &buf
 	return c, &buf
@@ -290,7 +290,7 @@ func TestReadRetriesTransientNetworkError(t *testing.T) {
 	defer srv.Close()
 
 	tr := &failFirstTransport{fails: 1, err: syscall.ECONNREFUSED, base: http.DefaultTransport}
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	c.RetryBackoffBase = zeroBackoff()
 	c.Stderr = &bytes.Buffer{}
 	c.HTTP = &http.Client{Transport: tr}

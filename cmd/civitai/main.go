@@ -9,6 +9,7 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/cmd"
 	"github.com/civitai/cli/pkg/civitai"
 )
@@ -65,7 +66,7 @@ func exitCode(err error) int {
 	// configured" guards, a lost-scope credential, and OAuth device-login
 	// failures.
 	case errors.Is(err, civitai.ErrUnauthorized),
-		errors.Is(err, civitai.ErrBuzzScope),
+		errors.Is(err, appapi.ErrBuzzScope),
 		isDeviceFlowErr(err):
 		return exitAuth
 
@@ -89,7 +90,7 @@ func exitCode(err error) int {
 // isDeviceFlowErr reports whether err is (or wraps) a terminal OAuth
 // device-login failure — an authentication problem.
 func isDeviceFlowErr(err error) bool {
-	var d *civitai.DeviceFlowError
+	var d *appapi.DeviceFlowError
 	return errors.As(err, &d)
 }
 

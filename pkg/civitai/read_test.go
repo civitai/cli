@@ -40,7 +40,7 @@ func TestSearchModelsBuildsRequestAndParses(t *testing.T) {
 	}`
 	srv, gotPath, gotQuery, gotAuth := newTestServer(t, body)
 
-	c := New(srv.URL, "tok-1", "")
+	c := New(srv.URL, "tok-1")
 	q := url.Values{}
 	q.Set("query", "pony")
 	q.Set("limit", "5")
@@ -75,7 +75,7 @@ func TestSearchModelsBuildsRequestAndParses(t *testing.T) {
 func TestSearchModelsAnonymousSendsNoAuthHeader(t *testing.T) {
 	srv, _, _, gotAuth := newTestServer(t, `{"items":[],"metadata":{}}`)
 	// Empty token => anonymous.
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	if _, err := c.SearchModels(context.Background(), url.Values{}); err != nil {
 		t.Fatalf("SearchModels: %v", err)
 	}
@@ -91,7 +91,7 @@ func TestGetModelParsesDetail(t *testing.T) {
 	  "modelVersions": [{"id": 100, "name": "v1", "baseModel": "SDXL 1.0"}]}`
 	srv, gotPath, _, _ := newTestServer(t, body)
 
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	m, raw, err := c.GetModel(context.Background(), "42")
 	if err != nil {
 		t.Fatalf("GetModel: %v", err)
@@ -112,7 +112,7 @@ func TestGetModelParsesDetail(t *testing.T) {
 
 func TestGetModelVersionByHashUppercasePath(t *testing.T) {
 	srv, gotPath, _, _ := newTestServer(t, `{"id": 7, "modelId": 3, "name": "v", "baseModel": "SD 1.5"}`)
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	v, _, err := c.GetModelVersionByHash(context.Background(), "abc123")
 	if err != nil {
 		t.Fatalf("GetModelVersionByHash: %v", err)
@@ -131,7 +131,7 @@ func TestSearchImagesPassesFiltersAndParses(t *testing.T) {
 	  "stats":{"likeCount":2,"heartCount":4,"commentCount":1}}],
 	  "metadata":{"nextCursor":123}}`
 	srv, gotPath, gotQuery, _ := newTestServer(t, body)
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	q := url.Values{}
 	q.Set("modelId", "4384")
 	q.Set("limit", "1")
@@ -156,7 +156,7 @@ func TestSearchImagesPassesFiltersAndParses(t *testing.T) {
 
 func TestSearchTagsAndCreators(t *testing.T) {
 	srvT, pathT, _, _ := newTestServer(t, `{"items":[{"name":"anime","link":"https://x/models?tag=anime"}],"metadata":{"totalItems":1}}`)
-	c := New(srvT.URL, "", "")
+	c := New(srvT.URL, "")
 	tags, err := c.SearchTags(context.Background(), url.Values{})
 	if err != nil {
 		t.Fatalf("SearchTags: %v", err)
@@ -169,7 +169,7 @@ func TestSearchTagsAndCreators(t *testing.T) {
 	}
 
 	srvC, pathC, _, _ := newTestServer(t, `{"items":[{"username":"artist","modelCount":12,"link":"l"}],"metadata":{}}`)
-	c2 := New(srvC.URL, "", "")
+	c2 := New(srvC.URL, "")
 	cr, err := c2.SearchCreators(context.Background(), url.Values{})
 	if err != nil {
 		t.Fatalf("SearchCreators: %v", err)
@@ -181,7 +181,7 @@ func TestSearchTagsAndCreators(t *testing.T) {
 
 func TestSearchUsersPath(t *testing.T) {
 	srv, gotPath, gotQuery, _ := newTestServer(t, `{"items":[{"id":5,"username":"bob","image":"i"}]}`)
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	q := url.Values{}
 	q.Set("query", "bob")
 	res, err := c.SearchUsers(context.Background(), q)
@@ -223,7 +223,7 @@ func TestReadErrorSurfacesBody(t *testing.T) {
 			w.WriteHeader(tc.status)
 			_, _ = w.Write([]byte(tc.body))
 		}))
-		c := New(srv.URL, "", "")
+		c := New(srv.URL, "")
 		c.RetryBackoffBase = zeroBackoff() // instant retries for the retriable rows
 		c.Stderr = &bytes.Buffer{}         // swallow the retry notices
 		_, _, err := c.GetModel(context.Background(), "999")

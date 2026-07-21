@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/ui"
-	"github.com/civitai/cli/pkg/civitai"
 )
 
 // makeJWT builds a syntactically-valid JWT whose payload carries the given
@@ -160,7 +160,7 @@ func TestAppDevTokenReadOnlyManifestCause(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/me") {
 			_ = json.NewEncoder(w).Encode(map[string]any{
-				"username": "m", "id": 7, "tokenScope": civitai.ScopeAIServicesWrite | civitai.ScopeUserRead,
+				"username": "m", "id": 7, "tokenScope": appapi.ScopeAIServicesWrite | appapi.ScopeUserRead,
 			})
 			return
 		}

@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/cmd"
 	"github.com/civitai/cli/pkg/civitai"
 )
@@ -51,9 +52,9 @@ func TestExitCode(t *testing.T) {
 		{"tagged 401 (real readError shape)", civitai.Tag(civitai.ErrUnauthorized,
 			fmt.Errorf("unauthorized (401): token expired — run `civitai login`")), exitAuth,
 			"unauthorized (401): token expired — run `civitai login`"},
-		{"buzz scope", civitai.ErrBuzzScope, exitAuth, ""},
-		{"device flow error", &civitai.DeviceFlowError{Code: "access_denied"}, exitAuth, ""},
-		{"wrapped device flow error", fmt.Errorf("login: %w", &civitai.DeviceFlowError{Code: "expired_token"}), exitAuth, ""},
+		{"buzz scope", appapi.ErrBuzzScope, exitAuth, ""},
+		{"device flow error", &appapi.DeviceFlowError{Code: "access_denied"}, exitAuth, ""},
+		{"wrapped device flow error", fmt.Errorf("login: %w", &appapi.DeviceFlowError{Code: "expired_token"}), exitAuth, ""},
 
 		{"not found sentinel", civitai.ErrNotFound, exitNotFound, ""},
 		{"tagged 404 (real readError shape)", civitai.Tag(civitai.ErrNotFound,

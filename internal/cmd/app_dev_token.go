@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/manifest"
@@ -154,7 +155,7 @@ never commit it; re-mint when it expires.`,
 			// govern when none are sent.
 			scopes := manifest.LoadScopes(".")
 
-			client := civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+			client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 			errOut := cmd.ErrOrStderr()
 			token, slug, err := mintDevTokenWithRename(context.Background(), client, errOut, ".", slug, scopes)
 			if err != nil {
@@ -195,7 +196,7 @@ never commit it; re-mint when it expires.`,
 }
 
 // mintDevTokenWithRename mints a dev token for slug, and on the anti-shadow
-// collision (civitai.ErrSlugRegisteredToOtherAccount — the slug is an approved app
+// collision (appapi.ErrSlugRegisteredToOtherAccount — the slug is an approved app
 // owned by another account) it appends a random suffix to the ORIGINAL slug,
 // PERMANENTLY rewrites block.manifest.json's blockId, notifies on errOut, and
 // retries — up to maxDevTokenRenameAttempts. It returns the token and the FINAL
@@ -204,14 +205,14 @@ never commit it; re-mint when it expires.`,
 // Renaming only applies when a local manifest exists in dir (nothing to rewrite
 // otherwise); any non-collision error, or a collision with no manifest, is
 // surfaced verbatim without a rename.
-func mintDevTokenWithRename(ctx context.Context, client *civitai.Client, errOut io.Writer, dir, slug string, scopes []string) (string, string, error) {
+func mintDevTokenWithRename(ctx context.Context, client *appapi.Client, errOut io.Writer, dir, slug string, scopes []string) (string, string, error) {
 	original := slug
 	for attempt := 0; ; attempt++ {
 		token, err := client.MintDevToken(ctx, slug, scopes)
 		if err == nil {
 			return token, slug, nil
 		}
-		if !errors.Is(err, civitai.ErrSlugRegisteredToOtherAccount) {
+		if !errors.Is(err, appapi.ErrSlugRegisteredToOtherAccount) {
 			return "", slug, err
 		}
 		// Auto-rename only makes sense when there's a local manifest to rewrite.

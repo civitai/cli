@@ -19,7 +19,7 @@ func TestDownloadFileSendsBearerAndStreams(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "tok-xyz", "")
+	c := New(srv.URL, "tok-xyz")
 	c.AllowPrivateDownloadHosts = true // httptest binds plain-http loopback
 	resp, err := c.DownloadFile(context.Background(), srv.URL+"/file")
 	if err != nil {
@@ -43,7 +43,7 @@ func TestDownloadFileAnonymousSendsNoAuth(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "", "") // empty token => anonymous
+	c := New(srv.URL, "") // empty token => anonymous
 	c.AllowPrivateDownloadHosts = true
 	resp, err := c.DownloadFile(context.Background(), srv.URL+"/file")
 	if err != nil {
@@ -66,7 +66,7 @@ func TestDownloadFileFollowsRedirect(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New(srv.URL, "tok", "")
+	c := New(srv.URL, "tok")
 	c.AllowPrivateDownloadHosts = true
 	resp, err := c.DownloadFile(context.Background(), srv.URL+"/api/download")
 	if err != nil {
@@ -111,7 +111,7 @@ func TestDownloadFileRefreshesOn401(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewWithSource(srv.URL, &refreshOnceSource{badTok: "bad", goodTok: "good"}, "")
+	c := NewWithSource(srv.URL, &refreshOnceSource{badTok: "bad", goodTok: "good"})
 	c.AllowPrivateDownloadHosts = true
 	resp, err := c.DownloadFile(context.Background(), srv.URL+"/file")
 	if err != nil {
@@ -135,7 +135,7 @@ func TestDownloadFileKeeps401WhenNotRefreshable(t *testing.T) {
 	defer srv.Close()
 
 	// StaticToken can't refresh → the 401 is returned to the caller.
-	c := New(srv.URL, "personal-key", "")
+	c := New(srv.URL, "personal-key")
 	c.AllowPrivateDownloadHosts = true
 	resp, err := c.DownloadFile(context.Background(), srv.URL+"/file")
 	if err != nil {

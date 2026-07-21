@@ -59,8 +59,8 @@ func TestDownloadFileSkipsAuthForUntrustedHost(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := New("https://civitai.com", "secret-token", "") // trusted API base, but...
-	c.AllowPrivateDownloadHosts = true                  // httptest binds plain-http loopback
+	c := New("https://civitai.com", "secret-token") // trusted API base, but...
+	c.AllowPrivateDownloadHosts = true              // httptest binds plain-http loopback
 	resp, err := c.DownloadFile(context.Background(), srv.URL+"/signed-blob")
 	if err != nil {
 		t.Fatalf("DownloadFile: %v", err)

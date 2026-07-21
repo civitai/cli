@@ -128,7 +128,7 @@ func TestGetImageSendsImageIdAndParses(t *testing.T) {
 	],"metadata":{}}`
 	srv, gotPath, gotQuery, _ := newTestServer(t, body)
 
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	im, raw, err := c.GetImage(context.Background(), "136456589")
 	if err != nil {
 		t.Fatalf("GetImage: %v", err)
@@ -161,7 +161,7 @@ func TestGetImageNotFound(t *testing.T) {
 		_, _ = w.Write([]byte(`{"items":[],"metadata":{}}`))
 	}))
 	defer srv.Close()
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	im, raw, err := c.GetImage(context.Background(), "999999999")
 	if err == nil {
 		t.Fatal("expected not-found error for empty items")

@@ -54,7 +54,7 @@ func TestExternalConsumer_ReaderWithNew(t *testing.T) {
 	// Personal-API-key constructor: an outside caller needs only the base URL and
 	// the key. The empty submitPath keeps the default (read-only consumers never
 	// hit it).
-	client := civitai.New(srv.URL, apiKey, "")
+	client := civitai.New(srv.URL, apiKey)
 
 	var _ civitai.Reader = client // the concrete client satisfies the public interface
 
@@ -102,7 +102,7 @@ func TestExternalConsumer_NewWithSource(t *testing.T) {
 	// NewWithSource with the public StaticToken TokenSource — the same seam an
 	// OAuth-backed consumer would use with its own TokenSource implementation.
 	var src civitai.TokenSource = civitai.StaticToken("key-from-source")
-	client := civitai.NewWithSource(srv.URL, src, "")
+	client := civitai.NewWithSource(srv.URL, src)
 
 	mv, _, err := client.GetModelVersion(context.Background(), "128713")
 	if err != nil {
@@ -136,7 +136,7 @@ func TestExternalConsumer_ErrNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := civitai.New(srv.URL, "", "") // anonymous is fine for a public read
+	client := civitai.New(srv.URL, "") // anonymous is fine for a public read
 	_, _, err := client.GetModel(context.Background(), "999999")
 	if err == nil {
 		t.Fatal("expected an error for a 404")
@@ -158,7 +158,7 @@ func TestExternalConsumer_Search(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := civitai.New(srv.URL, "", "")
+	client := civitai.New(srv.URL, "")
 	res, err := client.SearchModels(context.Background(), url.Values{"query": {"anime"}})
 	if err != nil {
 		t.Fatalf("SearchModels: %v", err)

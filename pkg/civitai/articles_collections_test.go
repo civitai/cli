@@ -21,7 +21,7 @@ func TestSearchArticlesBuildsRequestAndParses(t *testing.T) {
 	}`
 	srv, gotPath, gotQuery, gotAuth := newTestServer(t, body)
 
-	c := New(srv.URL, "tok-1", "")
+	c := New(srv.URL, "tok-1")
 	q := url.Values{}
 	q.Set("query", "workflow")
 	q.Set("limit", "5")
@@ -61,7 +61,7 @@ func TestSearchArticlesBuildsRequestAndParses(t *testing.T) {
 
 func TestSearchArticlesAnonymousSendsNoAuthHeader(t *testing.T) {
 	srv, _, _, gotAuth := newTestServer(t, `{"items":[],"metadata":{}}`)
-	c := New(srv.URL, "", "") // empty token => anonymous
+	c := New(srv.URL, "") // empty token => anonymous
 	if _, err := c.SearchArticles(context.Background(), url.Values{}); err != nil {
 		t.Fatalf("SearchArticles: %v", err)
 	}
@@ -80,7 +80,7 @@ func TestGetArticleParsesDetail(t *testing.T) {
 	            "heartCountAllTime": 5, "favoriteCountAllTime": 7, "collectedCountAllTime": 3}}`
 	srv, gotPath, _, _ := newTestServer(t, body)
 
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	a, raw, err := c.GetArticle(context.Background(), "42")
 	if err != nil {
 		t.Fatalf("GetArticle: %v", err)
@@ -114,7 +114,7 @@ func TestSearchCollectionsBuildsRequestAndParses(t *testing.T) {
 	}`
 	srv, gotPath, gotQuery, _ := newTestServer(t, body)
 
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	q := url.Values{}
 	q.Set("query", "fav")
 	q.Set("limit", "3")
@@ -151,7 +151,7 @@ func TestGetCollectionParsesDetail(t *testing.T) {
 	  "tags": [{"id": 2, "name": "anime"}, {"id": 4, "name": "style"}]}`
 	srv, gotPath, _, _ := newTestServer(t, body)
 
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	col, raw, err := c.GetCollection(context.Background(), "88")
 	if err != nil {
 		t.Fatalf("GetCollection: %v", err)
@@ -189,7 +189,7 @@ func TestArticlesCollectionsSurfaceReadErrors(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"No ` + tc.name + ` with id 999"}`))
 		}))
-		c := New(srv.URL, "", "")
+		c := New(srv.URL, "")
 		err := tc.call(c)
 		srv.Close()
 		if err == nil {

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/pkg/civitai"
 )
@@ -21,7 +22,7 @@ const expirySkew = 30 * time.Second
 // refresher is the subset of civitai.OAuthClient the source needs (injectable in
 // tests).
 type refresher interface {
-	Refresh(ctx context.Context, refreshToken string) (*civitai.TokenResponse, error)
+	Refresh(ctx context.Context, refreshToken string) (*appapi.TokenResponse, error)
 }
 
 // Source is an civitai.TokenSource backed by the on-disk config. For a personal-key
@@ -36,7 +37,7 @@ type Source struct {
 // New builds a Source for cfg. The refresher defaults to an civitai.OAuthClient
 // against the config's base URL.
 func New(cfg *config.Config) *Source {
-	return &Source{cfg: cfg, oc: civitai.NewOAuthClient(cfg.BaseURL())}
+	return &Source{cfg: cfg, oc: appapi.NewOAuthClient(cfg.BaseURL())}
 }
 
 // newWithRefresher is the test seam.

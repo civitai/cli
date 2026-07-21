@@ -55,7 +55,7 @@ func TestSearchModelsReadsBodyOver1MiB(t *testing.T) {
 	}
 	srv := serveBody(t, body)
 
-	c := New(srv.URL, "tok", "")
+	c := New(srv.URL, "tok")
 	res, err := c.SearchModels(context.Background(), url.Values{})
 	if err != nil {
 		t.Fatalf("SearchModels on a >1MiB body: %v", err)
@@ -86,7 +86,7 @@ func TestSearchModelsBoundaryAroundOneMiB(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body, want := buildModelsPayload(tc.minSize)
 			srv := serveBody(t, body)
-			c := New(srv.URL, "", "")
+			c := New(srv.URL, "")
 			res, err := c.SearchModels(context.Background(), url.Values{})
 			if err != nil {
 				t.Fatalf("SearchModels (%d bytes): %v", len(body), err)
@@ -107,7 +107,7 @@ func TestReadBodyOverCapReturnsError(t *testing.T) {
 	body, _ := buildModelsPayload(capBytes * 4) // comfortably over the cap
 	srv := serveBody(t, body)
 
-	c := New(srv.URL, "", "")
+	c := New(srv.URL, "")
 	c.MaxResponseBody = capBytes
 	_, err := c.SearchModels(context.Background(), url.Values{})
 	if err == nil {

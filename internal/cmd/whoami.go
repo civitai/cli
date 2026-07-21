@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/ui"
@@ -38,7 +39,7 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			if cfg.Token() == "" {
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
-			client := civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+			client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 			id, err := client.WhoAmI(context.Background())
 			if err != nil {
 				return err
