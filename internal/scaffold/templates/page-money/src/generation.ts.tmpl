@@ -134,24 +134,52 @@ export function isDisallowedAccountError(message: string | null | undefined): bo
 }
 
 /**
- * Sniff a workflow failure / error string for FEATURE-GATE language so a gated
- * sample (the Comfy Cloud recipe path) can degrade to a friendly "invite-only
- * beta" panel instead of a raw error. Civitai Comfy Cloud (customComfy) is
- * invite/GA-gated server-side, so a real submit by a non-tester fails fail-closed
- * with "...not enabled" / FORBIDDEN. Like the other sniffs there is no structured
- * error.code on the snapshot — this is a substring heuristic over the free-text
- * `error`. Its token set is disjoint from the insufficient-Buzz and
- * disallowed-account sniffs, and {@link phaseForError} checks it FIRST.
+ * The Comfy Cloud recipe id this sample sends. MIRRORED from comfy.ts's
+ * `STARTER_COMFY_RECIPE` (kept as a literal here to avoid a generation.ts ⇄
+ * comfy.ts import cycle) — the enum-rejection sniff below keys on it. If you
+ * change the recipe id in comfy.ts, change it here too.
+ */
+const STARTER_COMFY_RECIPE_ID = 'starter-comfy-txt2img';
+
+/**
+ * Sniff a submit/estimate ERROR string for the SPECIFIC Comfy-Cloud gate signals
+ * so — and ONLY so — the Comfy sample can degrade to a friendly "invite-only
+ * beta" panel instead of a raw error. This is deliberately NARROW (deterministic
+ * over heuristic): it matches only the three real server signals, verified
+ * against civitai/civitai `src/server/routers/blocks.router.ts` +
+ * `workflow.schema.ts`:
+ *
+ *   (a) the app-blocks flag gate — `assertAppBlocksEnabledForTokenUser` throws
+ *       UNAUTHORIZED `"Apps are not enabled"`.
+ *   (b) the author gate — `assertViewerIsAppDeveloper` throws FORBIDDEN
+ *       `"Apps authoring is not enabled for this account"`.
+ *   (c) the unknown-recipe rejection — before the recipe is registered server-side
+ *       (`REGISTERED_RECIPE_IDS = ['seamless-pano-360']`), a customComfy submit is
+ *       rejected at the Zod enum boundary with
+ *       `"Invalid enum value. Expected 'seamless-pano-360', received 'starter-comfy-txt2img'"`.
+ *
+ * It INTENTIONALLY no longer matches the broad tokens `forbidden` / `not allowed`
+ * / `restricted` / bare `invite`: those over-matched dev misconfig (a generic
+ * `FORBIDDEN` missing-scope / budget / page-only error), moderation rejections
+ * ("prompt is not allowed"), etc. — mislabelling a real error as "invite-only
+ * beta" and masking it. There is no structured `error.code` at this boundary, so
+ * this stays a substring match — but only over the specific phrases above.
+ *
+ * NOTE: (a) is SHARED with the txt2img path, so the CALLER scopes the resulting
+ * `'gated'` phase to COMFY MODE ONLY (see App.tsx) — the Comfy-specific copy is
+ * never shown for a txt2img failure.
  */
 export function isFeatureGated(message: string | null | undefined): boolean {
   if (!message) return false;
   const m = message.toLowerCase();
   return (
-    m.includes('not enabled') ||
-    m.includes('forbidden') ||
-    m.includes('invite') ||
-    m.includes('restricted') ||
-    m.includes('not allowed')
+    // (a) app-blocks flag gate — exact server string.
+    m.includes('apps are not enabled') ||
+    // (b) author gate — exact server string.
+    m.includes('apps authoring is not enabled') ||
+    // (c) unknown-recipe Zod enum rejection (pre-deploy) — the enum signature
+    //     AND the recipe id, so a *different* enum rejection can't match.
+    (m.includes('invalid enum value') && m.includes(STARTER_COMFY_RECIPE_ID))
   );
 }
 
@@ -248,15 +276,46 @@ export function isBusyPhase(phase: GenPhase): boolean {
 
 /**
  * Classify a submit/estimate ERROR string (the thrown-rejection path) into a
- * terminal phase. Order matters: a feature-gate ("not enabled") is neither a
- * balance nor an account problem, so it wins; then disallowed-account BEFORE
- * insufficient (the disallowed message contains "buzz").
+ * terminal phase. Order matters: disallowed-account BEFORE insufficient (the
+ * disallowed message contains "buzz").
+ *
+ * This does NOT itself produce `'gated'`: the Comfy-Cloud gate strings are shared
+ * with the txt2img path, so gating is decided at the CALL SITE (App.tsx) and
+ * scoped to comfy mode — `isFeatureGated(msg) ? 'gated' : phaseForError(msg)`,
+ * only when `mode === 'comfy'`. A txt2img failure therefore falls through here to
+ * `failed` / `insufficient` / `account-rejected` exactly as it did before the
+ * Comfy sample was added — no behaviour change, no Comfy-specific copy.
  */
 export function phaseForError(message: string | null | undefined): GenPhase {
-  if (isFeatureGated(message)) return 'gated';
   if (isDisallowedAccountError(message)) return 'account-rejected';
   if (isInsufficientBuzz(message)) return 'insufficient';
   return 'failed';
+}
+
+/**
+ * Classify a submit/estimate error into a terminal phase, with the `'gated'`
+ * (Comfy Cloud invite-only-beta) phase COMFY-MODE-SCOPED. This is the single seam
+ * finding 1b turns on: the gate strings {@link isFeatureGated} matches — the
+ * "Apps are not enabled" flag gate + the "Apps authoring is not enabled" author
+ * gate (BOTH shared with the txt2img path) and the pre-deploy unknown-recipe enum
+ * rejection — must only ever render the Comfy-specific copy for a COMFY submit.
+ *
+ *   isComfy  -> gate string ? 'gated' : phaseForError(message)
+ *   txt2img  -> phaseForError(message)  (failed / insufficient / account-rejected)
+ *
+ * So a txt2img failure is classified EXACTLY as it was before the Comfy sample
+ * existed — no behaviour change, no wrong copy.
+ *
+ * NOTE: this pins the classification seam as far as a unit test can. Whether the
+ * host actually RELAYS the raw server gate string into the block's submit
+ * rejection (vs. a generic "submit failed") is HOST-DEPENDENT and not testable
+ * locally — see the README's "honest state" note.
+ */
+export function phaseForSubmitError(
+  message: string | null | undefined,
+  isComfy: boolean,
+): GenPhase {
+  return isComfy && isFeatureGated(message) ? 'gated' : phaseForError(message);
 }
 
 /**

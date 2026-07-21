@@ -33,8 +33,8 @@ import {
   formatCost,
   hasBudgetedScope,
   isBusyPhase,
-  phaseForError,
   phaseForSnapshot,
+  phaseForSubmitError,
   spentAccountLabel,
   isTerminalStatus,
   type AccountChoice,
@@ -298,6 +298,17 @@ export function App() {
         ? buildComfyBody(prompt, account)
         : buildWorkflowBody(prompt, checkpoint, loras, account);
 
+    // Classify a submit/estimate error into a terminal phase. The `'gated'`
+    // (Comfy Cloud invite-only-beta) panel is COMFY-MODE-SCOPED via
+    // phaseForSubmitError: the real gate strings ("Apps are not enabled" flag
+    // gate, "Apps authoring is not enabled" author gate, and the pre-deploy
+    // unknown-recipe enum rejection) are SHARED with the txt2img path, so a
+    // txt2img failure must NEVER render the Comfy-specific copy — it falls through
+    // to the failed/insufficient/account-rejected classification, unchanged from
+    // before the Comfy sample.
+    const classifyError = (msg: string | null | undefined): GenPhase =>
+      phaseForSubmitError(msg, mode === 'comfy');
+
     // 1) Estimate (best-effort — a failed estimate doesn't block submit; the
     //    host re-prices at submit anyway). A gate / disallowed-account /
     //    insufficient estimate DOES short-circuit (submitting would fail-closed).
@@ -305,7 +316,7 @@ export function App() {
     try {
       const est = await estimate(body);
       if (est.status === 'failed' || est.error) {
-        const estPhase = phaseForError(est.error);
+        const estPhase = classifyError(est.error);
         if (estPhase === 'gated') {
           setPhase('gated');
           return;
@@ -335,7 +346,7 @@ export function App() {
       snap = await submit(body);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'submit failed';
-      const failPhase = phaseForError(msg);
+      const failPhase = classifyError(msg);
       setPhase(failPhase);
       if (failPhase === 'account-rejected') handleAccountRejected();
       else if (failPhase !== 'gated') setError(msg);
@@ -512,6 +523,11 @@ export function App() {
               <code>recipe</code> id (<code>{STARTER_COMFY_RECIPE}</code>) + a prompt; the server
               owns the graph and a hard per-job Buzz ceiling. Invite-only beta on live civitai.com —
               works end-to-end against the <strong>mock host</strong> (<code>npm run dev:harness</code>).
+              Request tester access at{' '}
+              <a href="https://github.com/civitai/cli/issues/new" target="_blank" rel="noreferrer">
+                github.com/civitai/cli
+              </a>
+              .
             </Alert>
           )}
 

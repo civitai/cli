@@ -17,6 +17,7 @@ import {
   isTerminalStatus,
   phaseForError,
   phaseForSnapshot,
+  phaseForSubmitError,
   spentAccountLabel,
 } from './generation.js';
 import { DEFAULT_CHECKPOINT, type LoraOption } from './models.js';
@@ -146,29 +147,117 @@ describe('isDisallowedAccountError', () => {
 });
 
 describe('isFeatureGated', () => {
-  it('catches invite/gate phrasings, false for unrelated + insufficient/disallowed text', () => {
-    expect(isFeatureGated('This feature is not enabled for your account')).toBe(true);
-    expect(isFeatureGated('FORBIDDEN')).toBe(true);
-    expect(isFeatureGated('Comfy Cloud is invite-only')).toBe(true);
-    expect(isFeatureGated('restricted to testers')).toBe(true);
-    expect(isFeatureGated('not allowed yet')).toBe(true);
+  // The sniff is deliberately NARROW — it matches ONLY the three real
+  // Comfy-Cloud gate signals (verified against civitai/civitai
+  // blocks.router.ts + workflow.schema.ts), never broad tokens. Its `'gated'`
+  // phase is separately COMFY-MODE-SCOPED at the App.tsx call site, so the
+  // strings shared with txt2img (a) never surface the Comfy copy there.
+  it('matches ONLY the three specific gate strings', () => {
+    // (a) app-blocks flag gate — assertAppBlocksEnabledForTokenUser.
+    expect(isFeatureGated('Apps are not enabled')).toBe(true);
+    expect(isFeatureGated('UNAUTHORIZED: Apps are not enabled')).toBe(true);
+    // (b) author gate — assertViewerIsAppDeveloper.
+    expect(isFeatureGated('Apps authoring is not enabled for this account')).toBe(true);
+    // (c) unknown-recipe Zod enum rejection (pre-deploy; recipe not yet registered).
+    expect(
+      isFeatureGated(
+        "Invalid enum value. Expected 'seamless-pano-360', received 'starter-comfy-txt2img'",
+      ),
+    ).toBe(true);
+  });
+
+  it('does NOT over-match dev-misconfig, moderation, budget, or account errors', () => {
+    // Dropped broad tokens must no longer catch these:
     expect(isFeatureGated('Insufficient Buzz')).toBe(false);
-    expect(isFeatureGated("buzz account 'yellow' is not spendable for this app's content rating")).toBe(
-      false,
-    );
+    expect(
+      isFeatureGated("buzz account 'yellow' is not spendable for this app's content rating"),
+    ).toBe(false);
+    // A generic scope FORBIDDEN (dev misconfig) — previously masked as "gated".
+    expect(isFeatureGated('block lacks ai:write:budgeted scope')).toBe(false);
+    expect(isFeatureGated('block token missing budget')).toBe(false);
+    // The page-only recipe guard — must surface as a real error, not "gated".
+    expect(isFeatureGated('customComfy recipes are page-only')).toBe(false);
+    // A moderation-style rejection — proves the dropped `not allowed` token no
+    // longer over-matches.
+    expect(isFeatureGated('prompt is not allowed')).toBe(false);
     expect(isFeatureGated('prompt rejected by audit')).toBe(false);
+    // A DIFFERENT enum rejection (not the recipe id) must not match (c).
+    expect(
+      isFeatureGated("Invalid enum value. Expected 'blue' | 'green' | 'yellow', received 'red'"),
+    ).toBe(false);
     expect(isFeatureGated(null)).toBe(false);
   });
 });
 
 describe('phaseForError', () => {
-  it('classifies feature-gate FIRST, then disallowed-account before insufficient', () => {
-    expect(phaseForError('This recipe is not enabled yet')).toBe('gated');
+  it('classifies disallowed-account before insufficient, otherwise failed', () => {
     expect(
       phaseForError("buzz account 'yellow' is not spendable for this app's content rating"),
     ).toBe('account-rejected');
     expect(phaseForError('Insufficient Buzz')).toBe('insufficient');
     expect(phaseForError('prompt rejected by audit')).toBe('failed');
+  });
+  it('does NOT itself return gated — a gate string falls through to failed here', () => {
+    // Gating is decided at the App.tsx call site, comfy-mode-scoped. phaseForError
+    // (the shared/txt2img classifier) never produces the Comfy-specific phase.
+    expect(phaseForError('Apps are not enabled')).toBe('failed');
+    expect(
+      phaseForError(
+        "Invalid enum value. Expected 'seamless-pano-360', received 'starter-comfy-txt2img'",
+      ),
+    ).toBe('failed');
+  });
+});
+
+describe('phaseForSubmitError (comfy-mode-scoped gating)', () => {
+  // The three real gate strings (verified against civitai/civitai).
+  const FLAG_GATE = 'Apps are not enabled';
+  const AUTHOR_GATE = 'Apps authoring is not enabled for this account';
+  const ENUM_REJECT =
+    "Invalid enum value. Expected 'seamless-pano-360', received 'starter-comfy-txt2img'";
+
+  it('COMFY mode: each gate string -> gated', () => {
+    expect(phaseForSubmitError(FLAG_GATE, true)).toBe('gated');
+    expect(phaseForSubmitError(AUTHOR_GATE, true)).toBe('gated');
+    expect(phaseForSubmitError(ENUM_REJECT, true)).toBe('gated');
+  });
+
+  it('TXT2IMG mode: the SAME gate strings are NOT gated (no cross-mode copy)', () => {
+    // Finding 1b: the flag gate ("Apps are not enabled") is shared with txt2img,
+    // so it must NOT render the Comfy-specific panel there — it's a plain failure.
+    expect(phaseForSubmitError(FLAG_GATE, false)).toBe('failed');
+    expect(phaseForSubmitError(AUTHOR_GATE, false)).toBe('failed');
+    expect(phaseForSubmitError(ENUM_REJECT, false)).toBe('failed');
+  });
+
+  it('is identical to phaseForError for non-gate errors, in BOTH modes', () => {
+    for (const isComfy of [true, false]) {
+      expect(phaseForSubmitError('Insufficient Buzz', isComfy)).toBe('insufficient');
+      expect(
+        phaseForSubmitError(
+          "buzz account 'yellow' is not spendable for this app's content rating",
+          isComfy,
+        ),
+      ).toBe('account-rejected');
+      expect(phaseForSubmitError('prompt rejected by audit', isComfy)).toBe('failed');
+    }
+  });
+
+  it('dev-misconfig + moderation are NEVER gated, even in comfy mode', () => {
+    // The point of the audit fix: these must not be MASKED as "invite-only beta".
+    // (Their exact non-gate phase is set by the pre-existing insufficient/failed
+    // sniffs — e.g. a scope error that mentions "budget" reads as insufficient —
+    // but the invariant that matters here is simply "not gated".)
+    for (const msg of [
+      'block lacks ai:write:budgeted scope',
+      'block token missing budget',
+      'customComfy recipes are page-only',
+      'prompt is not allowed',
+      'FORBIDDEN',
+    ]) {
+      expect(phaseForSubmitError(msg, true)).not.toBe('gated');
+      expect(phaseForSubmitError(msg, false)).not.toBe('gated');
+    }
   });
 });
 
@@ -204,10 +293,14 @@ describe('phaseForSnapshot', () => {
       ),
     ).toBe('account-rejected');
   });
-  it('maps a feature-gated failure to gated (the invite-only-beta state)', () => {
+  it('never returns gated — a gate is a submit-time rejection, not a snapshot', () => {
+    // A feature-gate fails the submit (thrown tRPC rejection) BEFORE a workflow
+    // exists, so it can never arrive as a terminal snapshot. A snapshot error
+    // therefore reduces via phaseForError -> failed (gating is comfy-scoped at
+    // the App.tsx submit-catch site, not in the snapshot path).
     expect(
-      phaseForSnapshot(snap({ status: 'failed', error: 'Comfy Cloud is not enabled for you' })),
-    ).toBe('gated');
+      phaseForSnapshot(snap({ status: 'failed', error: 'Apps are not enabled' })),
+    ).toBe('failed');
   });
   it('routes expired / canceled terminal statuses through the error classifier', () => {
     // Both non-success terminal states reduce via phaseForError: a plain reason

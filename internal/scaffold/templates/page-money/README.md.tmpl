@@ -104,6 +104,14 @@ reserve at least the recipe's ceiling (30) and also covers a cheap txt2img gen.
 The scope is unchanged — `customComfy` needs exactly `ai:write:budgeted`, already
 declared.
 
+> **One budget serves both modes.** A manifest declares a single
+> `page.buzzBudgetPerGen`, so **40** is the per-gen ceiling for the txt2img sample
+> too — higher than a cheap txt2img gen strictly needs. That's inherent to shipping
+> the Comfy sample default-on (the recipe needs ≥30); it isn't expressible
+> per-mode. If you drop the Comfy sample, you can lower this to whatever your
+> txt2img path needs. The server still re-prices + hard-caps every gen at the real
+> per-job ceiling — the budget is only the upper bound the block token may spend.
+
 **Requesting a new recipe.** Because recipes are server-registered + code-reviewed,
 you can't add one from the app. Request a new Comfy Cloud recipe via the CLI's
 issue form at <https://github.com/civitai/cli> (describe the graph + the intended
@@ -111,13 +119,31 @@ issue form at <https://github.com/civitai/cli> (describe the graph + the intende
 
 **Dev loop — honest state.** In `npm run dev:harness` (the **mock** host) the Comfy
 Cloud sample **works end-to-end** (estimate → submit → poll → succeeded with a mock
-image + cost), so you can build against it today. On **live** civitai.com,
-`customComfy` is **invite-only beta** and `starter-comfy-txt2img` must be deployed
-server-side — a non-tester submit fails fail-closed (`"...not enabled"` /
-FORBIDDEN), which the app catches (`isFeatureGated`) and degrades to a friendly
-**invite-only beta** panel instead of a raw error. So: mock works now; a real run
-needs the invite-only beta cohort (+ `civitai app dev-tunnel` in that cohort) and
-the deployed recipe.
+image + cost), so you can build against it today. That is the fully-working path.
+
+On **live** civitai.com the sample is **not runnable yet**, for two reasons, and
+its graceful panel is best-effort:
+
+- `customComfy` is **invite-only beta** — a submit by a non-tester is rejected by
+  the app-blocks gate (`"Apps are not enabled"` / `"Apps authoring is not enabled
+  for this account"`).
+- The recipe `starter-comfy-txt2img` is **not registered server-side yet** (the
+  registry currently holds only `seamless-pano-360`). Until it ships, a submit is
+  rejected even earlier — at the workflow-schema **enum** boundary
+  (`Invalid enum value … received 'starter-comfy-txt2img'`).
+
+The app tries to degrade both of these to a friendly **invite-only beta** panel:
+`isFeatureGated` matches those three specific strings and, **in Comfy mode only**,
+the App renders the beta panel instead of a raw error. **Caveat (honest):** this
+only works if the host relays the raw server message into the block's submit
+rejection — the host→block error relay is host-dependent and can't be verified
+locally, so **a live Comfy submit may still surface a raw error** rather than the
+panel until the recipe is registered + deployed. The persistent "invite-only beta"
+note above the prompt frames the sample honestly regardless. The txt2img path is
+unaffected — the gate strings are Comfy-scoped and never change its behaviour.
+
+So: **mock works now**; a real Comfy run needs the invite-only beta cohort (+
+`civitai app dev-tunnel` in that cohort) **and** the deployed recipe.
 
 ### Buzz balance + account picker (per-account spend)
 
