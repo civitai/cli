@@ -73,7 +73,7 @@ func printUpdateNotice(w io.Writer, current string) {
 		} else {
 			fmt.Fprintf(w, "\nLatest release: %s — https://github.com/civitai/cli/releases/latest\n", latest)
 		}
-		fmt.Fprintln(w, "Upgrade with: brew upgrade civitai")
+		fmt.Fprintln(w, "Upgrade with: civitai upgrade")
 	case 0:
 		// Verified equal: both current and latest parse and match. This is the
 		// ONLY path that may honestly claim the user is up to date.
