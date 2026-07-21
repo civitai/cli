@@ -17,7 +17,7 @@ import (
 // one is configured (a personal API key or an OAuth device-login access token,
 // refreshed transparently on a 401) but also work fully anonymously, since the
 // public read routes do not enforce scope. Build the Client with an empty token
-// (civitai.New(base, "", "")) to force anonymous requests.
+// (civitai.New(base, "")) to force anonymous requests.
 type Reader interface {
 	SearchModels(ctx context.Context, q url.Values) (*ModelSearchResult, error)
 	GetModel(ctx context.Context, id string) (*ModelDetail, []byte, error)

@@ -19,7 +19,7 @@ import (
 // in-flight request doesn't race the boundary.
 const expirySkew = 30 * time.Second
 
-// refresher is the subset of civitai.OAuthClient the source needs (injectable in
+// refresher is the subset of appapi.OAuthClient the source needs (injectable in
 // tests).
 type refresher interface {
 	Refresh(ctx context.Context, refreshToken string) (*appapi.TokenResponse, error)
@@ -34,7 +34,7 @@ type Source struct {
 	mu  sync.Mutex
 }
 
-// New builds a Source for cfg. The refresher defaults to an civitai.OAuthClient
+// New builds a Source for cfg. The refresher defaults to an appapi.OAuthClient
 // against the config's base URL.
 func New(cfg *config.Config) *Source {
 	return &Source{cfg: cfg, oc: appapi.NewOAuthClient(cfg.BaseURL())}
