@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // TestDownloadModelIDPositionalAutoResolves proves the model-id-vs-version-id
@@ -88,7 +88,7 @@ func TestDownloadUnknownVersionIDKeepsNotFound(t *testing.T) {
 	if strings.Contains(err.Error(), "is a model id") {
 		t.Errorf("no model-id hint when the id isn't a model either: %v", err)
 	}
-	if !errors.Is(err, api.ErrNotFound) {
+	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("an unknown id must stay classified as not-found (exit 4), got: %v", err)
 	}
 	if errors.Is(err, ErrUsage) {

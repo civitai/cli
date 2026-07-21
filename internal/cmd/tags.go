@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"text/tabwriter"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -67,7 +67,7 @@ func newTagsSearchCmd() *cobra.Command {
 	return cmd
 }
 
-func printTagList(cmd *cobra.Command, items []api.TagItem) {
+func printTagList(cmd *cobra.Command, items []civitai.TagItem) {
 	out := cmd.OutOrStdout()
 	if len(items) == 0 {
 		fmt.Fprintln(out, "No tags found.")

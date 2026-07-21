@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/manifest"
@@ -119,7 +119,7 @@ Defaults to the current directory.`,
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
 			// The gate above already confirmed (or --yes bypassed) it.
 			if canUpload {
-				client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
+				client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
 				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL())
 			}
 
@@ -183,7 +183,7 @@ func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, ass
 	}
 }
 
-func doUpload(cmd *cobra.Command, client api.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string) error {
+func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -193,7 +193,7 @@ func doUpload(cmd *cobra.Command, client api.Submitter, zipBytes []byte, m *mani
 	// Spin (on a TTY) while the bundle uploads — a real network wait. On a non-TTY
 	// (pipe/CI/tests) WithSpinner prints one plain "Submitting …" line and runs the
 	// upload inline, so scripted/captured output stays deterministic.
-	var r *api.SubmitResult
+	var r *appapi.SubmitResult
 	err := ui.WithSpinner(ctx, out, fmt.Sprintf("Submitting %s@%s", m.BlockID, m.Version),
 		func(ctx context.Context) error {
 			var e error

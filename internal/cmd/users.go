@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -68,7 +68,7 @@ is selected when present).`,
 				// route is an internal webhook), so a missing user comes back as an
 				// empty 200, not an HTTP 404. Tag it as not-found so a scripted
 				// lookup still gets the not-found exit code, matching a real 404.
-				return api.Tag(api.ErrNotFound, fmt.Errorf("no user found for %q", arg))
+				return civitai.Tag(civitai.ErrNotFound, fmt.Errorf("no user found for %q", arg))
 			}
 			// A numeric id lookup returns exactly the requested user. A NAME query
 			// hits the search endpoint, which returns ≤5 FUZZY neighbours — so we
@@ -90,7 +90,7 @@ is selected when present).`,
 					for _, u := range res.Items {
 						names = append(names, orDash(safeTerm(u.Username)))
 					}
-					return api.Tag(api.ErrNotFound, fmt.Errorf("no user found with exact username %q; closest matches: %s (use the numeric id for an exact lookup)", arg, strings.Join(names, ", ")))
+					return civitai.Tag(civitai.ErrNotFound, fmt.Errorf("no user found with exact username %q; closest matches: %s (use the numeric id for an exact lookup)", arg, strings.Join(names, ", ")))
 				}
 			}
 			printUser(cmd, match)
@@ -112,7 +112,7 @@ is selected when present).`,
 	return cmd
 }
 
-func printUser(cmd *cobra.Command, u api.UserItem) {
+func printUser(cmd *cobra.Command, u civitai.UserItem) {
 	out := cmd.OutOrStdout()
 	fmt.Fprintf(out, "%s (id %d)\n", orDash(safeTerm(u.Username)), u.ID)
 	if u.Image != "" {

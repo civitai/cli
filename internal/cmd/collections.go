@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -154,7 +154,7 @@ func collectionsSortIsCursorPageable(sort string) bool {
 	return sort == "" || sort == "Newest"
 }
 
-func printCollectionList(cmd *cobra.Command, items []api.CollectionListItem) {
+func printCollectionList(cmd *cobra.Command, items []civitai.CollectionListItem) {
 	out := cmd.OutOrStdout()
 	if len(items) == 0 {
 		fmt.Fprintln(out, "No collections found.")
@@ -172,7 +172,7 @@ func printCollectionList(cmd *cobra.Command, items []api.CollectionListItem) {
 	_ = tw.Flush()
 }
 
-func printCollectionDetail(cmd *cobra.Command, c *api.CollectionDetail) {
+func printCollectionDetail(cmd *cobra.Command, c *civitai.CollectionDetail) {
 	out := cmd.OutOrStdout()
 	owner := "-"
 	if c.User != nil && c.User.Username != "" {
@@ -191,7 +191,7 @@ func printCollectionDetail(cmd *cobra.Command, c *api.CollectionDetail) {
 	}
 }
 
-func joinCollectionTags(tags []api.CollectionTag) string {
+func joinCollectionTags(tags []civitai.CollectionTag) string {
 	const max = 12
 	names := make([]string, 0, len(tags))
 	for _, t := range tags {

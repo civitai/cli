@@ -8,16 +8,17 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/ui"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
 // cloneInfoFetcher is the seam the pull command calls to get the tokened clone
 // info. Defaulted to the real API client; tests swap it to avoid the network.
-type cloneInfoFetcher func(ctx context.Context, app string) (*api.ForgejoCloneInfo, error)
+type cloneInfoFetcher func(ctx context.Context, app string) (*appapi.ForgejoCloneInfo, error)
 
 // gitRunner runs a git subcommand in `dir` (empty = current dir). It's a package
 // var so tests can stub the exec without a real git/repo. Output is forwarded to
@@ -88,7 +89,7 @@ approved; before then the command tells you so instead of failing obscurely.`,
 				return err
 			}
 			if cfg.Token() == "" {
-				return api.Tag(api.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
+				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 
 			fetch := defaultCloneInfoFetcher(cfg)
@@ -102,7 +103,7 @@ approved; before then the command tells you so instead of failing obscurely.`,
 
 // defaultCloneInfoFetcher wires the real API client.
 func defaultCloneInfoFetcher(cfg *config.Config) cloneInfoFetcher {
-	client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+	client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 	return client.GetForgejoCloneInfo
 }
 

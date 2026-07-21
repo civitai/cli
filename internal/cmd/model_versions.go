@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"text/tabwriter"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -97,14 +97,14 @@ func newModelVersionsByHashCmd() *cobra.Command {
 // keeps the suggested command from ever hitting the model-id/version-id ambiguity
 // stop; --layout comfyui is a sensible type-routed default the user can drop or
 // change (e.g. --layout a1111, or --out-dir).
-func printDownloadCommandHint(out io.Writer, v *api.ModelVersionDetail) {
+func printDownloadCommandHint(out io.Writer, v *civitai.ModelVersionDetail) {
 	if v == nil || v.ID == 0 {
 		return
 	}
 	fmt.Fprintf(out, "  ↳ download: civitai download --version %d --layout comfyui\n", v.ID)
 }
 
-func printModelVersionDetail(cmd *cobra.Command, v *api.ModelVersionDetail) {
+func printModelVersionDetail(cmd *cobra.Command, v *civitai.ModelVersionDetail) {
 	out := cmd.OutOrStdout()
 	header := fmt.Sprintf("%s (version id %d, model id %d)", safeTerm(v.Name), v.ID, v.ModelID)
 	if mk := nonModelFileMarker(v.Files); mk != "" {

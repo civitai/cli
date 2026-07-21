@@ -9,8 +9,9 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/cmd"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // Build metadata, injected at release time via goreleaser ldflags
@@ -56,29 +57,29 @@ func exitCode(err error) int {
 	// Usage errors are about the invocation, not the API — checked first. This
 	// covers both client-side usage mistakes (bad flag / malformed invocation,
 	// tagged by the root command's FlagErrorFunc or asUsageError) and a request
-	// the server rejected as malformed (HTTP 400, api.ErrBadRequest — e.g. a bad
+	// the server rejected as malformed (HTTP 400, civitai.ErrBadRequest — e.g. a bad
 	// enum value caught by the API's own validation).
-	case errors.Is(err, cmd.ErrUsage), errors.Is(err, api.ErrBadRequest):
+	case errors.Is(err, cmd.ErrUsage), errors.Is(err, civitai.ErrBadRequest):
 		return exitUsage
 
 	// Authentication / authorization: 401/403, the pre-flight "no token
 	// configured" guards, a lost-scope credential, and OAuth device-login
 	// failures.
-	case errors.Is(err, api.ErrUnauthorized),
-		errors.Is(err, api.ErrBuzzScope),
+	case errors.Is(err, civitai.ErrUnauthorized),
+		errors.Is(err, appapi.ErrBuzzScope),
 		isDeviceFlowErr(err):
 		return exitAuth
 
-	case errors.Is(err, api.ErrNotFound):
+	case errors.Is(err, civitai.ErrNotFound):
 		return exitNotFound
 
-	case errors.Is(err, api.ErrRateLimited):
+	case errors.Is(err, civitai.ErrRateLimited):
 		return exitRateLimited
 
 	// Network/transport or service-availability failure: tagged 502/503/504 and
 	// exhausted retries, plus raw transport errors (dial refused/reset, timeout,
 	// deadline exceeded) that reach us unclassified.
-	case errors.Is(err, api.ErrNetwork), isNetworkErr(err):
+	case errors.Is(err, civitai.ErrNetwork), isNetworkErr(err):
 		return exitNetwork
 
 	default:
@@ -89,7 +90,7 @@ func exitCode(err error) int {
 // isDeviceFlowErr reports whether err is (or wraps) a terminal OAuth
 // device-login failure — an authentication problem.
 func isDeviceFlowErr(err error) bool {
-	var d *api.DeviceFlowError
+	var d *appapi.DeviceFlowError
 	return errors.As(err, &d)
 }
 

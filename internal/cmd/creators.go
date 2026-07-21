@@ -6,7 +6,7 @@ import (
 	"net/url"
 	"text/tabwriter"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -67,7 +67,7 @@ func newCreatorsSearchCmd() *cobra.Command {
 	return cmd
 }
 
-func printCreatorList(cmd *cobra.Command, items []api.CreatorItem) {
+func printCreatorList(cmd *cobra.Command, items []civitai.CreatorItem) {
 	out := cmd.OutOrStdout()
 	if len(items) == 0 {
 		fmt.Fprintln(out, "No creators found.")

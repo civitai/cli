@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // TestCheckLimitIsUsageTagged asserts an out-of-range --limit is classified as a
@@ -63,7 +63,7 @@ func TestUsersGetMissingIsNotFoundTagged(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a missing user")
 	}
-	if !errors.Is(err, api.ErrNotFound) {
+	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("missing user should classify as not-found, got: %v", err)
 	}
 }
@@ -78,7 +78,7 @@ func TestUsersGetNoExactMatchIsNotFoundTagged(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for a no-exact-match user query")
 	}
-	if !errors.Is(err, api.ErrNotFound) {
+	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("no-exact-match user should classify as not-found, got: %v", err)
 	}
 }
@@ -97,7 +97,7 @@ func TestImagesSearchBadEnumIsBadRequestTaggedAndClean(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for an invalid --period enum")
 	}
-	if !errors.Is(err, api.ErrBadRequest) {
+	if !errors.Is(err, civitai.ErrBadRequest) {
 		t.Errorf("400 should classify as bad-request (usage), got: %v", err)
 	}
 	if strings.Contains(err.Error(), "ZodError") {

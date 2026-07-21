@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -139,7 +139,7 @@ HTML tags stripped and entities decoded). --json returns the raw API body
 
 // printArticleContent renders the article body below the metadata block. An
 // empty body prints a clear note rather than nothing.
-func printArticleContent(cmd *cobra.Command, a *api.ArticleDetail) {
+func printArticleContent(cmd *cobra.Command, a *civitai.ArticleDetail) {
 	out := cmd.OutOrStdout()
 	fmt.Fprintln(out, "\n─── content ───")
 	text := htmlToText(a.Content)
@@ -150,7 +150,7 @@ func printArticleContent(cmd *cobra.Command, a *api.ArticleDetail) {
 	fmt.Fprintln(out, text)
 }
 
-func printArticleList(cmd *cobra.Command, items []api.ArticleListItem) {
+func printArticleList(cmd *cobra.Command, items []civitai.ArticleListItem) {
 	out := cmd.OutOrStdout()
 	if len(items) == 0 {
 		fmt.Fprintln(out, "No articles found.")
@@ -173,7 +173,7 @@ func printArticleList(cmd *cobra.Command, items []api.ArticleListItem) {
 	_ = tw.Flush()
 }
 
-func printArticleDetail(cmd *cobra.Command, a *api.ArticleDetail) {
+func printArticleDetail(cmd *cobra.Command, a *civitai.ArticleDetail) {
 	out := cmd.OutOrStdout()
 	author := "-"
 	if a.User != nil && a.User.Username != "" {
@@ -193,7 +193,7 @@ func printArticleDetail(cmd *cobra.Command, a *api.ArticleDetail) {
 	}
 }
 
-func joinArticleTags(tags []api.ArticleTag) string {
+func joinArticleTags(tags []civitai.ArticleTag) string {
 	const max = 12
 	names := make([]string, 0, len(tags))
 	for _, t := range tags {

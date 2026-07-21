@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/ui"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -289,7 +289,7 @@ func reportBaseModel(out, errW io.Writer, baseModel, forBase string) {
 
 // warnMixedTypes warns (stderr) when --all without --layout would mis-file
 // differing file types into a single directory.
-func warnMixedTypes(errW io.Writer, selected []api.ModelVersionFile, o *downloadOpts) {
+func warnMixedTypes(errW io.Writer, selected []civitai.ModelVersionFile, o *downloadOpts) {
 	if o.all && o.layout == "" {
 		if w := mixedTypeWarning(fileTypeInfos(selected, o.modelType)); w != "" {
 			fmt.Fprintln(errW, ui.For(errW).Warn(safeTerm(w)))
@@ -301,7 +301,7 @@ func warnMixedTypes(errW io.Writer, selected []api.ModelVersionFile, o *download
 // (surfacing any routing note on stderr) then transferring it — and returns how
 // many files were actually transferred (an already-present, skipped file does
 // not count). It stops at the first error.
-func downloadSelected(ctx context.Context, dl api.Downloader, out, errW io.Writer, selected []api.ModelVersionFile, o *downloadOpts) (int, error) {
+func downloadSelected(ctx context.Context, dl civitai.Downloader, out, errW io.Writer, selected []civitai.ModelVersionFile, o *downloadOpts) (int, error) {
 	downloaded := 0
 	for i := range selected {
 		f := selected[i]
@@ -331,7 +331,7 @@ func downloadSelected(ctx context.Context, dl api.Downloader, out, errW io.Write
 //     the model's default (first published) version) — no ambiguity handling.
 //   - A bare positional id is classified by looking it up as BOTH a version and a
 //     model, then handled by resolveBarePositionalVersion.
-func resolveDownloadVersion(ctx context.Context, client api.Reader, positional string, o *downloadOpts) (*api.ModelVersionDetail, string, error) {
+func resolveDownloadVersion(ctx context.Context, client civitai.Reader, positional string, o *downloadOpts) (*civitai.ModelVersionDetail, string, error) {
 	if o.version != "" || o.modelID != "" {
 		versionID, err := resolveExplicitVersionID(ctx, client, o)
 		if err != nil {
@@ -351,7 +351,7 @@ func resolveDownloadVersion(ctx context.Context, client api.Reader, positional s
 // so the model's default version is modelVersions[0]; its primary file downloads
 // regardless of file type (a "Workflows" model's Archive, training data, or plain
 // weights all download the same way).
-func resolveExplicitVersionID(ctx context.Context, client api.Reader, o *downloadOpts) (string, error) {
+func resolveExplicitVersionID(ctx context.Context, client civitai.Reader, o *downloadOpts) (string, error) {
 	if o.version != "" {
 		if _, err := strconv.Atoi(o.version); err != nil {
 			return "", asUsageError(fmt.Errorf("--version id must be an integer, got %q", o.version))
@@ -389,7 +389,7 @@ func resolveExplicitVersionID(ctx context.Context, client api.Reader, o *downloa
 // A MODEL id is only "confirmable" when the model lookup echoes back the queried
 // id (the real REST API always echoes it — a mismatch means the lookup didn't
 // actually resolve that id).
-func resolveBarePositionalVersion(ctx context.Context, client api.Reader, positional string, o *downloadOpts) (*api.ModelVersionDetail, string, error) {
+func resolveBarePositionalVersion(ctx context.Context, client civitai.Reader, positional string, o *downloadOpts) (*civitai.ModelVersionDetail, string, error) {
 	n, err := strconv.Atoi(positional)
 	if err != nil {
 		return nil, "", asUsageError(fmt.Errorf("model-version id must be an integer, got %q — pass a numeric model-version id, or find one with `civitai models search`", positional))
@@ -402,7 +402,7 @@ func resolveBarePositionalVersion(ctx context.Context, client api.Reader, positi
 		// `models search` → `download <model-id>` flow. Only a genuine 404 warrants
 		// the second lookup; any other failure (auth/network/rate-limit) is the real
 		// problem and passes through untouched.
-		if errors.Is(verErr, api.ErrNotFound) {
+		if errors.Is(verErr, civitai.ErrNotFound) {
 			if dv, note, handled, aerr := autoResolveModelDefault(ctx, client, positional, n); handled {
 				return dv, note, aerr
 			}
@@ -428,7 +428,7 @@ func resolveBarePositionalVersion(ctx context.Context, client api.Reader, positi
 // whose returned id ECHOES the queried id (a mismatch means the lookup didn't
 // actually resolve that id). Any lookup failure or id mismatch returns nil ("not
 // a confirmable model id").
-func lookupConfirmedModel(ctx context.Context, client api.Reader, id string, n int) *api.ModelDetail {
+func lookupConfirmedModel(ctx context.Context, client civitai.Reader, id string, n int) *civitai.ModelDetail {
 	m, _, err := client.GetModel(ctx, id)
 	if err != nil || m == nil || m.ID != n {
 		return nil
@@ -440,7 +440,7 @@ func lookupConfirmedModel(ctx context.Context, client api.Reader, id string, n i
 // NOT a valid version id: it resolves the model's default (first published)
 // version and returns its detail plus a one-line note. handled=false means the id
 // is not a confirmable model id → the caller keeps the original version error.
-func autoResolveModelDefault(ctx context.Context, client api.Reader, id string, n int) (v *api.ModelVersionDetail, note string, handled bool, err error) {
+func autoResolveModelDefault(ctx context.Context, client civitai.Reader, id string, n int) (v *civitai.ModelVersionDetail, note string, handled bool, err error) {
 	m := lookupConfirmedModel(ctx, client, id, n)
 	if m == nil {
 		return nil, "", false, nil
@@ -460,7 +460,7 @@ func autoResolveModelDefault(ctx context.Context, client api.Reader, id string, 
 // which interpretation was chosen (the VERSION, of its own parent model) and how
 // to get the OTHER one (the model whose id was pasted), so a reflexive --yes can't
 // silently grab an unrelated model.
-func ambiguousYesNote(id string, v *api.ModelVersionDetail, m *api.ModelDetail) string {
+func ambiguousYesNote(id string, v *civitai.ModelVersionDetail, m *civitai.ModelDetail) string {
 	parent := ""
 	if v != nil && v.Model != nil {
 		parent = v.Model.Name
@@ -473,7 +473,7 @@ func ambiguousYesNote(id string, v *api.ModelVersionDetail, m *api.ModelDetail) 
 // ambiguousStopError is the core footgun guard's usage error (exit 2): a bare
 // positional id that is BOTH a valid model id and a valid version id STOPs and
 // spells out both interpretations and how to pick one.
-func ambiguousStopError(id string, v *api.ModelVersionDetail, m *api.ModelDetail) error {
+func ambiguousStopError(id string, v *civitai.ModelVersionDetail, m *civitai.ModelDetail) error {
 	parent := ""
 	if v != nil && v.Model != nil {
 		parent = v.Model.Name
@@ -488,7 +488,7 @@ func ambiguousStopError(id string, v *api.ModelVersionDetail, m *api.ModelDetail
 // printDownloadPlan renders the --dry-run plan: for each selected file its name,
 // size, SHA256, resolved target path, and whether authentication will be
 // required. It writes NOTHING to disk.
-func printDownloadPlan(out io.Writer, files []api.ModelVersionFile, o *downloadOpts, baseURL string) error {
+func printDownloadPlan(out io.Writer, files []civitai.ModelVersionFile, o *downloadOpts, baseURL string) error {
 	fmt.Fprintf(out, "Dry run — planning %d file(s); nothing will be downloaded.\n", len(files))
 	// Surface the mis-file warning in the plan too when it applies.
 	if o.all && o.layout == "" {
@@ -513,7 +513,7 @@ func printDownloadPlan(out io.Writer, files []api.ModelVersionFile, o *downloadO
 				fmt.Fprintf(out, "  note:   %s\n", safeTerm(note))
 			}
 		}
-		if api.DownloadNeedsAuth(f.DownloadURL, baseURL) {
+		if civitai.DownloadNeedsAuth(f.DownloadURL, baseURL) {
 			fmt.Fprintf(out, "  auth:   required\n")
 		} else {
 			fmt.Fprintf(out, "  auth:   not required\n")
@@ -527,7 +527,7 @@ func printDownloadPlan(out io.Writer, files []api.ModelVersionFile, o *downloadO
 // --all → every file; --file → one file by exact name or a unique
 // case-insensitive substring; default → the primary file (or the first file when
 // none is flagged primary).
-func selectFiles(files []api.ModelVersionFile, o *downloadOpts) ([]api.ModelVersionFile, error) {
+func selectFiles(files []civitai.ModelVersionFile, o *downloadOpts) ([]civitai.ModelVersionFile, error) {
 	if len(files) == 0 {
 		return nil, fmt.Errorf("this version has no downloadable files")
 	}
@@ -539,8 +539,8 @@ func selectFiles(files []api.ModelVersionFile, o *downloadOpts) ([]api.ModelVers
 		sel, err := selectOneFile(files, o.file)
 		return sel, asUsageError(err)
 	}
-	primary := api.PrimaryFile(files)
-	return []api.ModelVersionFile{*primary}, nil
+	primary := civitai.PrimaryFile(files)
+	return []civitai.ModelVersionFile{*primary}, nil
 }
 
 // selectOneFile picks a single file for --file. Resolution order:
@@ -556,18 +556,18 @@ func selectFiles(files []api.ModelVersionFile, o *downloadOpts) ([]api.ModelVers
 //  3. A UNIQUE case-insensitive substring match.
 //
 // Ambiguous or no match is an error that lists the candidate files with their ids.
-func selectOneFile(files []api.ModelVersionFile, want string) ([]api.ModelVersionFile, error) {
+func selectOneFile(files []civitai.ModelVersionFile, want string) ([]civitai.ModelVersionFile, error) {
 	// (1) Numeric file-id selection.
 	if id, err := strconv.Atoi(strings.TrimSpace(want)); err == nil {
 		for i := range files {
 			if files[i].ID == id {
-				return []api.ModelVersionFile{files[i]}, nil
+				return []civitai.ModelVersionFile{files[i]}, nil
 			}
 		}
 	}
 	// (2) Exact (case-insensitive) name match — collect ALL, since a name can be
 	// shared by more than one file.
-	var exact []api.ModelVersionFile
+	var exact []civitai.ModelVersionFile
 	for i := range files {
 		if strings.EqualFold(files[i].Name, want) {
 			exact = append(exact, files[i])
@@ -580,7 +580,7 @@ func selectOneFile(files []api.ModelVersionFile, want string) ([]api.ModelVersio
 		return nil, fmt.Errorf("%q matches %d files that share this name — select one by its numeric file id with --file <id>:\n%s", want, len(exact), formatFileList(exact))
 	}
 	// (3) Unique case-insensitive substring match.
-	var matches []api.ModelVersionFile
+	var matches []civitai.ModelVersionFile
 	lw := strings.ToLower(want)
 	for i := range files {
 		if strings.Contains(strings.ToLower(files[i].Name), lw) {
@@ -600,7 +600,7 @@ func selectOneFile(files []api.ModelVersionFile, want string) ([]api.ModelVersio
 // formatFileList renders a compact "  - [id N] name (type, size)" list for
 // errors. The id is included so the user can copy it into --file <id> to
 // disambiguate same-named files.
-func formatFileList(files []api.ModelVersionFile) string {
+func formatFileList(files []civitai.ModelVersionFile) string {
 	var b strings.Builder
 	for i := range files {
 		f := files[i]
@@ -621,8 +621,8 @@ func formatFileList(files []api.ModelVersionFile) string {
 // numeric id + size to distinguish them) BEFORE anything is transferred, so no
 // data is ever lost to a silent overwrite. Per-file targetPath errors are left
 // for the normal per-file path to surface.
-func checkTargetCollisions(files []api.ModelVersionFile, o *downloadOpts) error {
-	byTarget := make(map[string][]api.ModelVersionFile)
+func checkTargetCollisions(files []civitai.ModelVersionFile, o *downloadOpts) error {
+	byTarget := make(map[string][]civitai.ModelVersionFile)
 	var order []string
 	for i := range files {
 		target, _, err := targetPath(files[i], o)
@@ -671,7 +671,7 @@ func checkTargetCollisions(files []api.ModelVersionFile, o *downloadOpts) error 
 // pass a relative or absolute path). A basename that degenerates to ".", "/", or
 // ".." (empty or all-slashes server name) is unusable and errors rather than
 // writing to a junk path.
-func targetPath(f api.ModelVersionFile, o *downloadOpts) (string, string, error) {
+func targetPath(f civitai.ModelVersionFile, o *downloadOpts) (string, string, error) {
 	if o.out != "" {
 		return o.out, "", nil
 	}
@@ -691,7 +691,7 @@ func targetPath(f api.ModelVersionFile, o *downloadOpts) (string, string, error)
 
 // fileTypeInfos projects the selected files into the minimal view the mis-file
 // warning needs (name + file type + the shared parent model type).
-func fileTypeInfos(files []api.ModelVersionFile, modelType string) []fileTypeInfo {
+func fileTypeInfos(files []civitai.ModelVersionFile, modelType string) []fileTypeInfo {
 	infos := make([]fileTypeInfo, len(files))
 	for i := range files {
 		infos[i] = fileTypeInfo{name: files[i].Name, fileType: files[i].Type, modelType: modelType, primary: files[i].Primary}
@@ -703,7 +703,7 @@ func fileTypeInfos(files []api.ModelVersionFile, modelType string) []fileTypeInf
 // and renaming on success. Returns skipped=true when an already-present target
 // satisfied the idempotency check. Verification (SHA256, default on) deletes the
 // partial file and errors on mismatch.
-func downloadOne(ctx context.Context, dl api.Downloader, out, errW io.Writer, f api.ModelVersionFile, target string, o *downloadOpts) (skipped bool, err error) {
+func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer, f civitai.ModelVersionFile, target string, o *downloadOpts) (skipped bool, err error) {
 	sha := strings.TrimSpace(f.Hashes.SHA256)
 	verify := !o.noVerify && sha != ""
 	emitPreDownloadNotes(errW, f.Name, o.modelType, o.noVerify, sha)
@@ -898,7 +898,7 @@ func controlnetPreprocessorNote(modelType string) string {
 func downloadStatusError(status int, name string) (err error) {
 	// Classify the returned error by status (401/403→auth, 404→not-found, …)
 	// without changing its message, so the process exit code reflects the kind.
-	defer func() { err = api.TagStatus(status, err) }()
+	defer func() { err = civitai.TagStatus(status, err) }()
 	switch {
 	case status >= 200 && status < 300:
 		return nil

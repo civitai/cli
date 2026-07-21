@@ -8,8 +8,9 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/cmd"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // fakeNetErr is a minimal net.Error for exercising the transport-error branch.
@@ -42,29 +43,29 @@ func TestExitCode(t *testing.T) {
 
 		{"usage error", usageErr{errors.New("unknown flag: --nope")}, exitUsage, "unknown flag: --nope"},
 		{"usage sentinel", cmd.ErrUsage, exitUsage, ""},
-		{"bad request sentinel", api.ErrBadRequest, exitUsage, ""},
-		{"tagged 400 (real readError shape)", api.Tag(api.ErrBadRequest,
+		{"bad request sentinel", civitai.ErrBadRequest, exitUsage, ""},
+		{"tagged 400 (real readError shape)", civitai.Tag(civitai.ErrBadRequest,
 			fmt.Errorf("invalid request parameter (400): period — Invalid option")), exitUsage,
 			"invalid request parameter (400): period — Invalid option"},
 
-		{"unauthorized sentinel", api.ErrUnauthorized, exitAuth, ""},
-		{"tagged 401 (real readError shape)", api.Tag(api.ErrUnauthorized,
+		{"unauthorized sentinel", civitai.ErrUnauthorized, exitAuth, ""},
+		{"tagged 401 (real readError shape)", civitai.Tag(civitai.ErrUnauthorized,
 			fmt.Errorf("unauthorized (401): token expired — run `civitai login`")), exitAuth,
 			"unauthorized (401): token expired — run `civitai login`"},
-		{"buzz scope", api.ErrBuzzScope, exitAuth, ""},
-		{"device flow error", &api.DeviceFlowError{Code: "access_denied"}, exitAuth, ""},
-		{"wrapped device flow error", fmt.Errorf("login: %w", &api.DeviceFlowError{Code: "expired_token"}), exitAuth, ""},
+		{"buzz scope", appapi.ErrBuzzScope, exitAuth, ""},
+		{"device flow error", &appapi.DeviceFlowError{Code: "access_denied"}, exitAuth, ""},
+		{"wrapped device flow error", fmt.Errorf("login: %w", &appapi.DeviceFlowError{Code: "expired_token"}), exitAuth, ""},
 
-		{"not found sentinel", api.ErrNotFound, exitNotFound, ""},
-		{"tagged 404 (real readError shape)", api.Tag(api.ErrNotFound,
+		{"not found sentinel", civitai.ErrNotFound, exitNotFound, ""},
+		{"tagged 404 (real readError shape)", civitai.Tag(civitai.ErrNotFound,
 			fmt.Errorf("not found (404): No model with id 999")), exitNotFound,
 			"not found (404): No model with id 999"},
 
-		{"rate limited sentinel", api.ErrRateLimited, exitRateLimited, ""},
-		{"tagged 429", api.Tag(api.ErrRateLimited, fmt.Errorf("rate limited (429): slow down")), exitRateLimited, "rate limited (429): slow down"},
+		{"rate limited sentinel", civitai.ErrRateLimited, exitRateLimited, ""},
+		{"tagged 429", civitai.Tag(civitai.ErrRateLimited, fmt.Errorf("rate limited (429): slow down")), exitRateLimited, "rate limited (429): slow down"},
 
-		{"network sentinel", api.ErrNetwork, exitNetwork, ""},
-		{"tagged 503", api.Tag(api.ErrNetwork, fmt.Errorf("service unavailable (503): retry shortly")), exitNetwork, "service unavailable (503): retry shortly"},
+		{"network sentinel", civitai.ErrNetwork, exitNetwork, ""},
+		{"tagged 503", civitai.Tag(civitai.ErrNetwork, fmt.Errorf("service unavailable (503): retry shortly")), exitNetwork, "service unavailable (503): retry shortly"},
 		{"net.Error timeout", fakeNetErr{timeout: true}, exitNetwork, ""},
 		{"wrapped dial refused", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), exitNetwork, ""},
 		{"deadline exceeded", fmt.Errorf("request: %w", context.DeadlineExceeded), exitNetwork, ""},
