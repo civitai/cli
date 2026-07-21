@@ -170,8 +170,8 @@ func TestPrintUpdateNotice_NewerAvailable(t *testing.T) {
 	if !strings.Contains(out, "you have v0.1.9") {
 		t.Errorf("notice should show current version: %s", out)
 	}
-	if !strings.Contains(out, "brew upgrade") {
-		t.Errorf("notice should include brew upgrade hint: %s", out)
+	if !strings.Contains(out, "civitai upgrade") {
+		t.Errorf("notice should include the civitai upgrade hint: %s", out)
 	}
 }
 

@@ -103,7 +103,7 @@ func Rules() []Rule {
 			ID:          "deprecated-blocks-cli",
 			What:        "reference to the deprecated @civitai/blocks-cli npm package",
 			Pattern:     regexp.MustCompile("@civitai/blocks-cli(?:[@/'\"\\x60\\s),;]|$)"),
-			Replacement: "use the Go civitai CLI (`civitai app <init|dev|submit>`); the @civitai/blocks-cli npm package is deprecated",
+			Replacement: "use the Go civitai CLI (`civitai app <init|submit>`); the @civitai/blocks-cli npm package is deprecated",
 		},
 	}
 }
