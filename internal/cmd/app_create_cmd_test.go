@@ -60,23 +60,42 @@ func TestAppCreateDefaultsToPageMoney(t *testing.T) {
 	if !strings.Contains(stdout, "1. cd ") || !strings.Contains(stdout, "npm install") {
 		t.Errorf("create should print a numbered cd+install step:\n%s", stdout)
 	}
-	// The DEV TUNNEL is the highlighted prod-fidelity preview path.
-	if !strings.Contains(stdout, "civitai app dev-tunnel") {
-		t.Errorf("create should highlight the dev-tunnel preview step:\n%s", stdout)
-	}
-	// submit must precede the tunnel (the tunnel resolves the app server-side, so
-	// it must be registered first).
+	// Onboarding must LEAD with the free, works-today path (`dev:harness`, mock
+	// host, no beta access) and DEMOTE the invite-only beta surfaces (`civitai app
+	// submit` + the dev tunnel) below it — a newcomer should hit the free path
+	// first, not the gated wall. Assert the RELATIVE ORDER, not just presence.
+	iHarness := strings.Index(stdout, "dev:harness")
 	iSubmit := strings.Index(stdout, "civitai app submit")
 	iTunnel := strings.Index(stdout, "civitai app dev-tunnel")
+	if iHarness < 0 {
+		t.Errorf("create should lead with the free dev:harness path:\n%s", stdout)
+	}
 	if iSubmit < 0 {
 		t.Errorf("create should print the submit next step:\n%s", stdout)
 	}
+	if iTunnel < 0 {
+		t.Errorf("create should print the dev-tunnel preview step:\n%s", stdout)
+	}
+	// dev:harness must come BEFORE submit AND before the dev tunnel.
+	if iHarness >= 0 && iSubmit >= 0 && iHarness > iSubmit {
+		t.Errorf("dev:harness (free path) must lead BEFORE civitai app submit (beta):\n%s", stdout)
+	}
+	if iHarness >= 0 && iTunnel >= 0 && iHarness > iTunnel {
+		t.Errorf("dev:harness (free path) must lead BEFORE the dev-tunnel step (beta):\n%s", stdout)
+	}
+	// Among the demoted beta surfaces, submit still precedes the tunnel (the
+	// tunnel resolves the app server-side, so it must be registered first).
 	if iSubmit >= 0 && iTunnel >= 0 && iSubmit > iTunnel {
 		t.Errorf("submit must be sequenced BEFORE the dev-tunnel step (register first):\n%s", stdout)
 	}
-	// The harness remains as the single-line offline/mock fallback tip.
-	if !strings.Contains(stdout, "dev:harness") {
-		t.Errorf("create should keep the dev:harness fallback tip:\n%s", stdout)
+	// The beta surfaces are gated behind an honest "beta access" heading.
+	if !strings.Contains(stdout, "beta access") {
+		t.Errorf("create should gate submit/dev-tunnel under a beta-access heading:\n%s", stdout)
+	}
+	// The Comfy Cloud (customComfy) sample is surfaced (finding #2: it was
+	// undiscoverable) — honestly flagged as invite-only beta.
+	if !strings.Contains(stdout, "Comfy Cloud") {
+		t.Errorf("create should surface the Comfy Cloud sample in the output:\n%s", stdout)
 	}
 	// The trimmed message drops the old multi-line Buzz/OAuth/personal-key
 	// paragraph (dev:live now lives in dev-token/README, not the scaffold banner).
@@ -99,6 +118,21 @@ func TestAppCreateDefaultsToPageMoney(t *testing.T) {
 	}
 	if !strings.Contains(string(manifest), "ai:write:budgeted") {
 		t.Errorf("page-money manifest missing the budgeted scope:\n%s", manifest)
+	}
+}
+
+// TestAppCreateHelpMentionsComfy guards finding #2: the Comfy Cloud sample must
+// be discoverable from `civitai app create --help` (it was previously described
+// as a txt2img-only app).
+func TestAppCreateHelpMentionsComfy(t *testing.T) {
+	out, _, err := run(t, "app", "create", "--help")
+	if err != nil {
+		t.Fatalf("app create --help: %v", err)
+	}
+	for _, want := range []string{"Comfy Cloud", "customComfy"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("app create help should mention %q (Comfy Cloud discoverability):\n%s", want, out)
+		}
 	}
 }
 

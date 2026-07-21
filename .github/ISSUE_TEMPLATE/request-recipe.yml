@@ -1,0 +1,54 @@
+name: Request a Comfy Cloud recipe
+description: Request a new Civitai Comfy Cloud (customComfy) recipe your App can invoke.
+title: "[Recipe request] "
+labels: ["recipe-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Comfy Cloud recipes are server-registered + code-reviewed** — an App can't ship its own graph. The iframe only picks a **recipe id** plus a small, per-recipe-validated `params` object; the Civitai server owns the ComfyUI graph, the resource allowlist, the checkpoint policy, and a hard per-job Buzz ceiling.
+
+        Use this form to request a NEW recipe. Describe the graph/workflow you want, the params your App needs to expose, and the use case. We'll review it and, if approved, register it as a recipe id you can invoke via `buildComfyBody({ recipe, params })` (see `src/comfy.ts` in the page-money scaffold).
+  - type: input
+    id: username
+    attributes:
+      label: Civitai username
+      description: The account you're building the App with.
+      placeholder: your-civitai-username
+    validations:
+      required: true
+  - type: textarea
+    id: graph
+    attributes:
+      label: Intended graph / workflow
+      description: Describe the ComfyUI graph or workflow this recipe should run. Link an exported workflow JSON or a screenshot if you have one.
+      placeholder: "e.g. a Z-Image txt2img graph with an upscale pass and a face-detailer node…"
+    validations:
+      required: true
+  - type: textarea
+    id: params
+    attributes:
+      label: Params the App needs to expose
+      description: Which inputs should the block be able to set per generation? Name each param, its type, and any bounds. Everything else is server-fixed.
+      placeholder: |
+        - prompt (string, required)
+        - steps (int, 10–40)
+        - upscale (bool)
+    validations:
+      required: true
+  - type: textarea
+    id: usecase
+    attributes:
+      label: Use case
+      description: What is the App for, and who will use it? Helps us prioritize and scope the recipe.
+      placeholder: "e.g. a one-click portrait upscaler for my model's landing page…"
+    validations:
+      required: true
+  - type: input
+    id: budget
+    attributes:
+      label: Rough per-job Buzz ceiling (optional)
+      description: An estimate of what one generation should cost. We set the authoritative ceiling server-side.
+      placeholder: "e.g. ~30"
+    validations:
+      required: false

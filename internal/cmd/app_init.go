@@ -185,22 +185,34 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	// One scannable line: name, template, where, and how many files — no tree.
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Created App %q (%s)  ·  %s/  ·  %d files", display, tmpl, destDir, len(written))))
 
+	// page-money ships TWO samples in the one app — a runnable txt2img money path
+	// and a Comfy Cloud (customComfy) sample. Surface it (honestly: invite-only
+	// beta) and point at the README's Comfy Cloud section rather than the raw
+	// file count.
+	if tmpl.NeedsHarness() {
+		fmt.Fprintln(out, ui.Dim("  Includes a txt2img sample + a Comfy Cloud (customComfy) sample (invite-only beta) — see the Comfy Cloud section in README.md."))
+	}
+
 	fmt.Fprintln(out, "\n"+ui.Bold("Next steps:"))
 	switch {
 	case tmpl.NeedsHarness():
-		// SDK/page-money apps preview best via the DEV TUNNEL — your LOCAL code
-		// rendered INSIDE the real Civitai host (real session/Buzz/pickers),
-		// prod-fidelity. The tunnel resolves the app server-side, so it must be
-		// registered first: `civitai app submit` creates the (pending) app row that
-		// `civitai app dev-tunnel` then resolves — hence submit precedes the tunnel.
-		// dev-tunnel is cohort-gated, so the harness tip is the offline/mock
-		// fallback for quick iteration (or authors not yet in the cohort).
+		// LEAD with the free, works-today path: `npm run dev:harness` mounts a
+		// MOCK host (no Buzz, no beta access, no network) so a newcomer can build
+		// and iterate immediately. The real-host surfaces — `civitai app submit`
+		// (register) + the DEV TUNNEL (your LOCAL code rendered INSIDE the real
+		// Civitai host, prod-fidelity) — are invite-only beta, so they're demoted
+		// under a "When you have beta access" heading rather than led with (they'd
+		// otherwise walk a first-time author straight into the gated wall). The
+		// tunnel resolves the app server-side, so submit (which creates the pending
+		// app row) still precedes it.
 		fmt.Fprintf(out, "  1. cd %s && npm install\n", destDir)
-		fmt.Fprintln(out, "  2. civitai app submit      # validate + register (required before a dev tunnel)")
-		fmt.Fprintln(out, "  3. npm run dev:tunnel      # in another terminal: serve your app for the tunnel")
-		fmt.Fprintln(out, "  4. civitai app dev-tunnel  # preview your LOCAL app INSIDE the real Civitai host — prod-fidelity")
+		fmt.Fprintln(out, "  2. npm run dev:harness     # mock host, no Buzz — works today")
+		fmt.Fprintln(out, "  3. edit src/App.tsx and iterate")
 		fmt.Fprintln(out)
-		fmt.Fprintln(out, "  Quick offline iteration, or not in the tunnel cohort? npm run dev:harness (mock host, no Buzz).")
+		fmt.Fprintln(out, "  When you have beta access (invite-only):")
+		fmt.Fprintln(out, "     civitai app submit      # validate + register (required before a dev tunnel)")
+		fmt.Fprintln(out, "     npm run dev:tunnel      # in another terminal: serve your app for the tunnel")
+		fmt.Fprintln(out, "     civitai app dev-tunnel  # preview your LOCAL app INSIDE the real Civitai host — prod-fidelity")
 	case tmpl == scaffold.PageVite:
 		fmt.Fprintf(out, "  1. cd %s && npm install\n", destDir)
 		fmt.Fprintln(out, "  2. npm run dev              # preview locally")
