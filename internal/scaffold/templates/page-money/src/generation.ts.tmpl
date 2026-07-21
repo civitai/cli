@@ -65,7 +65,7 @@ export function spentAccountLabel(spent: BuzzAccountType | undefined): string | 
  * this constant only drives the client-side "Top up · N" CTA amount and budget
  * copy. The real ceiling is enforced server-side.
  */
-export const PAGE_BUZZ_BUDGET = 10;
+export const PAGE_BUZZ_BUDGET = 40;
 
 /** The scope the page token must carry before a generation can be submitted. */
 export const BUDGETED_SCOPE = 'ai:write:budgeted';
@@ -131,6 +131,28 @@ export function isDisallowedAccountError(message: string | null | undefined): bo
   if (!message) return false;
   const m = message.toLowerCase();
   return m.includes('not spendable') || (m.includes('account') && m.includes('content rating'));
+}
+
+/**
+ * Sniff a workflow failure / error string for FEATURE-GATE language so a gated
+ * sample (the Comfy Cloud recipe path) can degrade to a friendly "invite-only
+ * beta" panel instead of a raw error. Civitai Comfy Cloud (customComfy) is
+ * invite/GA-gated server-side, so a real submit by a non-tester fails fail-closed
+ * with "...not enabled" / FORBIDDEN. Like the other sniffs there is no structured
+ * error.code on the snapshot — this is a substring heuristic over the free-text
+ * `error`. Its token set is disjoint from the insufficient-Buzz and
+ * disallowed-account sniffs, and {@link phaseForError} checks it FIRST.
+ */
+export function isFeatureGated(message: string | null | undefined): boolean {
+  if (!message) return false;
+  const m = message.toLowerCase();
+  return (
+    m.includes('not enabled') ||
+    m.includes('forbidden') ||
+    m.includes('invite') ||
+    m.includes('restricted') ||
+    m.includes('not allowed')
+  );
 }
 
 /** Format a Buzz cost for display, with thousands separators. `null` -> '—'. */
@@ -216,7 +238,8 @@ export type GenPhase =
   | 'succeeded'
   | 'failed'
   | 'insufficient'
-  | 'account-rejected';
+  | 'account-rejected'
+  | 'gated';
 
 /** Is a generation in flight (Generate should be disabled / show progress)? */
 export function isBusyPhase(phase: GenPhase): boolean {
@@ -225,10 +248,12 @@ export function isBusyPhase(phase: GenPhase): boolean {
 
 /**
  * Classify a submit/estimate ERROR string (the thrown-rejection path) into a
- * terminal phase. Order matters: disallowed-account BEFORE insufficient (the
- * disallowed message contains "buzz").
+ * terminal phase. Order matters: a feature-gate ("not enabled") is neither a
+ * balance nor an account problem, so it wins; then disallowed-account BEFORE
+ * insufficient (the disallowed message contains "buzz").
  */
 export function phaseForError(message: string | null | undefined): GenPhase {
+  if (isFeatureGated(message)) return 'gated';
   if (isDisallowedAccountError(message)) return 'account-rejected';
   if (isInsufficientBuzz(message)) return 'insufficient';
   return 'failed';

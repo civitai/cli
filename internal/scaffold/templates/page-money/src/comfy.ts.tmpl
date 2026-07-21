@@ -1,0 +1,60 @@
+// Pure logic for the {{ .Name }} page app's SECONDARY "Comfy Cloud (sample)"
+// path — a Civitai Comfy Cloud (customComfy) generation. No React, no DOM;
+// unit-tested in node (see comfy.test.ts). Mirrors generation.ts's style and
+// REUSES its shared helpers (clampPrompt / AccountChoice) so the two
+// body-builders differ only in the body they produce.
+//
+// The customComfy contract (server-owned, fail-closed):
+//   The iframe NEVER sends a Comfy graph. It sends a { kind: 'customComfy',
+//   recipe, params } body where `recipe` is a SERVER-registered, code-reviewed
+//   recipe id. The civitai server owns the graph, the resource allowlist, the
+//   checkpoint policy, and a hard per-job `maxBuzz` ceiling — the block can only
+//   pick the recipe + a small, per-recipe-validated `params` object.
+
+import type { WorkflowBodyCustomComfy } from '@civitai/app-sdk/blocks';
+
+import { clampPrompt, type AccountChoice } from './generation.js';
+
+/**
+ * The starter recipe this sample invokes: a cheap, minimal Z-Image txt2img
+ * recipe (per-job Buzz ceiling 30). It is SERVER-registered — an app cannot ship
+ * its own graph, so a new recipe must be added + code-reviewed server-side (see
+ * README "Comfy Cloud sample"). This id must exist in the server registry for a
+ * real run to resolve; an unknown id is rejected fail-closed.
+ */
+export const STARTER_COMFY_RECIPE = 'starter-comfy-txt2img';
+
+/**
+ * The params this sample sends — a subset of the recipe's `.strict()` server
+ * schema (only the fields this minimal txt2img recipe accepts). Extra fields are
+ * rejected server-side, so we keep it to prompt (+ optional seed/account).
+ */
+export type ComfyParams = WorkflowBodyCustomComfy['params'];
+
+/**
+ * Build the customComfy submit/estimate body for the starter recipe.
+ *
+ *  - `prompt` is trimmed + clamped to the server cap (reuses generation.ts).
+ *  - `accountType` (the shared account picker) is included only when a named
+ *    pool is chosen; `'auto'`/omitted lets the host choose the funding order.
+ *    NOTE: on a customComfy body it lives UNDER `params` (contrast textToImage,
+ *    where it is top-level) — that's the mock host's `preferredAccountType`
+ *    contract and the server's per-recipe param schema.
+ *  - `seed` is included only when a real number is given; `null`/omitted lets the
+ *    orchestrator pick.
+ */
+export function buildComfyBody(
+  prompt: string,
+  accountType?: AccountChoice,
+  seed?: number | null,
+): WorkflowBodyCustomComfy {
+  return {
+    kind: 'customComfy',
+    recipe: STARTER_COMFY_RECIPE,
+    params: {
+      prompt: clampPrompt(prompt.trim()),
+      ...(seed != null ? { seed } : {}),
+      ...(accountType && accountType !== 'auto' ? { accountType } : {}),
+    },
+  };
+}

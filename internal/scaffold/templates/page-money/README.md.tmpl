@@ -81,6 +81,44 @@ server is LoRA-only for additional resources and **re-validates** base-model
 compatibility + per-resource entitlement (early-access / Private) AND
 **re-prices** the whole body **before any Buzz spend**.
 
+### Comfy Cloud sample (customComfy)
+
+A **mode toggle** at the top switches between two samples that share the one
+estimate → consent → submit → poll driver + the account picker — only the body
+differs:
+
+- **Text to image** (primary, runnable today) — the checkpoint + LoRA path above.
+- **Comfy Cloud recipe** (secondary, invite-only beta) — runs a **Civitai Comfy
+  Cloud (`customComfy`)** generation via `buildComfyBody` in `src/comfy.ts`.
+
+**How customComfy works — server-owned graph, fail-closed.** The iframe **never
+sends a Comfy graph.** It sends `{ kind: 'customComfy', recipe, params }` where
+`recipe` is a **server-registered, code-reviewed recipe id** — the civitai server
+owns the graph, the resource allowlist, the checkpoint policy, and a hard per-job
+`maxBuzz` ceiling. An app **cannot ship its own graph**; the block can only pick
+the recipe + a small, per-recipe-validated `params` object (here just a prompt,
+plus the shared account picker — no checkpoint/LoRA axis). This sample invokes
+**`starter-comfy-txt2img`** — a cheap, minimal Z-Image txt2img starter recipe
+(per-job Buzz ceiling 30). That's why `page.buzzBudgetPerGen` is **40**: it must
+reserve at least the recipe's ceiling (30) and also covers a cheap txt2img gen.
+The scope is unchanged — `customComfy` needs exactly `ai:write:budgeted`, already
+declared.
+
+**Requesting a new recipe.** Because recipes are server-registered + code-reviewed,
+you can't add one from the app. Request a new Comfy Cloud recipe via the CLI's
+issue form at <https://github.com/civitai/cli> (describe the graph + the intended
+`params`). It ships as a registered id once reviewed.
+
+**Dev loop — honest state.** In `npm run dev:harness` (the **mock** host) the Comfy
+Cloud sample **works end-to-end** (estimate → submit → poll → succeeded with a mock
+image + cost), so you can build against it today. On **live** civitai.com,
+`customComfy` is **invite-only beta** and `starter-comfy-txt2img` must be deployed
+server-side — a non-tester submit fails fail-closed (`"...not enabled"` /
+FORBIDDEN), which the app catches (`isFeatureGated`) and degrades to a friendly
+**invite-only beta** panel instead of a raw error. So: mock works now; a real run
+needs the invite-only beta cohort (+ `civitai app dev-tunnel` in that cohort) and
+the deployed recipe.
+
 ### Buzz balance + account picker (per-account spend)
 
 Above the prompt, the app shows the viewer's **per-pool Buzz balance** —

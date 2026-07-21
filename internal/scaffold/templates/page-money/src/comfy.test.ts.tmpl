@@ -1,0 +1,44 @@
+import { describe, expect, it } from 'vitest';
+
+import { PROMPT_MAX } from './generation.js';
+import { STARTER_COMFY_RECIPE, buildComfyBody } from './comfy.js';
+
+// Pure-logic tests for the Comfy Cloud (customComfy) sample body-builder. Run
+// with `npm test`. These lock the FIXED customComfy contract: kind, the
+// server-registered recipe id, and the bounded params shape.
+
+describe('buildComfyBody', () => {
+  it('builds a customComfy body with the starter recipe + trimmed/clamped prompt', () => {
+    expect(buildComfyBody('  a cat  ')).toEqual({
+      kind: 'customComfy',
+      recipe: STARTER_COMFY_RECIPE,
+      params: { prompt: 'a cat' },
+    });
+    expect(STARTER_COMFY_RECIPE).toBe('starter-comfy-txt2img');
+  });
+
+  it('clamps the prompt to the server cap', () => {
+    const body = buildComfyBody('x'.repeat(PROMPT_MAX + 100));
+    expect(body.params.prompt.length).toBe(PROMPT_MAX);
+  });
+
+  it("omits accountType on 'auto' (or undefined), includes a named pool under params", () => {
+    expect(buildComfyBody('a cat', 'auto').params).not.toHaveProperty('accountType');
+    expect(buildComfyBody('a cat').params).not.toHaveProperty('accountType');
+    expect(buildComfyBody('a cat', 'blue').params.accountType).toBe('blue');
+  });
+
+  it('omits seed when null/undefined, includes a real number', () => {
+    expect(buildComfyBody('a cat', 'auto', null).params).not.toHaveProperty('seed');
+    expect(buildComfyBody('a cat', 'auto', undefined).params).not.toHaveProperty('seed');
+    expect(buildComfyBody('a cat', 'auto', 12345).params.seed).toBe(12345);
+  });
+
+  it('combines seed + account when both are given', () => {
+    expect(buildComfyBody('a cat', 'yellow', 7).params).toEqual({
+      prompt: 'a cat',
+      seed: 7,
+      accountType: 'yellow',
+    });
+  });
+});

@@ -12,6 +12,7 @@ import {
   hasBudgetedScope,
   isBusyPhase,
   isDisallowedAccountError,
+  isFeatureGated,
   isInsufficientBuzz,
   isTerminalStatus,
   phaseForError,
@@ -144,8 +145,25 @@ describe('isDisallowedAccountError', () => {
   });
 });
 
+describe('isFeatureGated', () => {
+  it('catches invite/gate phrasings, false for unrelated + insufficient/disallowed text', () => {
+    expect(isFeatureGated('This feature is not enabled for your account')).toBe(true);
+    expect(isFeatureGated('FORBIDDEN')).toBe(true);
+    expect(isFeatureGated('Comfy Cloud is invite-only')).toBe(true);
+    expect(isFeatureGated('restricted to testers')).toBe(true);
+    expect(isFeatureGated('not allowed yet')).toBe(true);
+    expect(isFeatureGated('Insufficient Buzz')).toBe(false);
+    expect(isFeatureGated("buzz account 'yellow' is not spendable for this app's content rating")).toBe(
+      false,
+    );
+    expect(isFeatureGated('prompt rejected by audit')).toBe(false);
+    expect(isFeatureGated(null)).toBe(false);
+  });
+});
+
 describe('phaseForError', () => {
-  it('classifies disallowed-account BEFORE insufficient (both contain "buzz")', () => {
+  it('classifies feature-gate FIRST, then disallowed-account before insufficient', () => {
+    expect(phaseForError('This recipe is not enabled yet')).toBe('gated');
     expect(
       phaseForError("buzz account 'yellow' is not spendable for this app's content rating"),
     ).toBe('account-rejected');
@@ -186,6 +204,11 @@ describe('phaseForSnapshot', () => {
       ),
     ).toBe('account-rejected');
   });
+  it('maps a feature-gated failure to gated (the invite-only-beta state)', () => {
+    expect(
+      phaseForSnapshot(snap({ status: 'failed', error: 'Comfy Cloud is not enabled for you' })),
+    ).toBe('gated');
+  });
   it('routes expired / canceled terminal statuses through the error classifier', () => {
     // Both non-success terminal states reduce via phaseForError: a plain reason
     // -> failed, an insufficient-Buzz reason -> insufficient.
@@ -209,6 +232,7 @@ describe('isBusyPhase', () => {
       'failed',
       'insufficient',
       'account-rejected',
+      'gated',
     ] as const) {
       expect(isBusyPhase(p)).toBe(false);
     }

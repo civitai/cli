@@ -81,7 +81,9 @@ func TestRenderPageMoney(t *testing.T) {
 		"src/main.tsx", "src/App.tsx", "src/Harness.tsx", "src/generation.ts",
 		"src/models.ts", "src/nav.ts", "src/setup-dev-live.ts",
 		"vite-plugin-civitai-setup.ts",
+		"src/comfy.ts",
 		"src/generation.test.ts", "src/models.test.ts", "src/nav.test.ts",
+		"src/comfy.test.ts",
 		"src/setup-dev-live.test.ts", "src/setup-plugin.test.ts",
 		"src/App.pollretry.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
@@ -99,10 +101,12 @@ func TestRenderPageMoney(t *testing.T) {
 		}
 	}
 
-	// Money-path manifest: budgeted scope + per-gen budget + build fields.
+	// Money-path manifest: budgeted scope + per-gen budget + build fields. The
+	// budget is 40 so it reserves the starter Comfy Cloud recipe's per-job ceiling
+	// (30) — see the Comfy Cloud (customComfy) sample below.
 	manifest := readFile(t, filepath.Join(dest, "block.manifest.json"))
 	mustContain(t, manifest, `"ai:write:budgeted"`)
-	mustContain(t, manifest, `"buzzBudgetPerGen": 10`)
+	mustContain(t, manifest, `"buzzBudgetPerGen": 40`)
 	mustContain(t, manifest, `"buildCommand": "npm run build"`)
 	mustContain(t, manifest, `"outputDir": "dist"`)
 	// Server-owned fields must NOT be set.
@@ -209,6 +213,18 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "pm-lora-add")
 	mustContain(t, app, "pm-lora-weight")
 	mustContain(t, app, "addLora")
+
+	// Comfy Cloud (customComfy) sample: a mode toggle swaps the body-builder to
+	// buildComfyBody (a server-registered recipe). The recipe id is FIXED +
+	// server-registered; comfy.ts never sends a graph, only { kind, recipe, params }.
+	comfy := readFile(t, filepath.Join(dest, "src", "comfy.ts"))
+	mustContain(t, comfy, "customComfy")
+	mustContain(t, comfy, "starter-comfy-txt2img")
+	mustContain(t, comfy, "buildComfyBody")
+	mustContain(t, app, "buildComfyBody(prompt, account)")
+	mustContain(t, app, "SegmentedControl")
+	mustContain(t, app, "pm-comfy-beta")
+	mustContain(t, app, "pm-gated")
 
 	// generation.ts threads the chosen checkpoint into modelId/modelVersionId
 	// instead of a hardcoded constant, AND emits the selected LoRAs as
