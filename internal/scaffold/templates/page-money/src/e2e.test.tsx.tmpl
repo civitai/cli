@@ -187,6 +187,48 @@ describe('App money path (e2e)', () => {
     expect(screen.queryByAltText(/generated result/i)).not.toBeInTheDocument();
   });
 
+  it('Comfy Cloud sample: switch mode -> customComfy submit -> succeeded (+cost)', async () => {
+    const user = userEvent.setup();
+    const submittedBodies: Array<{ kind?: string; recipe?: string }> = [];
+    uninstall = installMockMoneyHost({
+      viewer: { id: 2, username: 'dev', status: 'active' },
+      consentGranted: true,
+      cost: 25,
+      pollsUntilDone: 2,
+      onOutbound: (m) => {
+        if (m.type === 'SUBMIT_WORKFLOW') {
+          submittedBodies.push(
+            (m.payload as { body: { kind?: string; recipe?: string } }).body,
+          );
+        }
+      },
+    });
+
+    render(<App />);
+    await screen.findByTestId('pm-generate');
+
+    // Switch to the Comfy Cloud sample. The txt2img-only Model/LoRA controls go
+    // away; the beta note + the shared prompt/account picker stay.
+    await user.click(screen.getByRole('tab', { name: /comfy cloud recipe/i }));
+    expect(screen.getByTestId('pm-comfy-beta')).toBeInTheDocument();
+    expect(screen.queryByTestId('pm-change-model')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('pm-lora-add')).not.toBeInTheDocument();
+
+    // The mock host is fail-open for customComfy, so the sample runs end-to-end.
+    await user.type(screen.getByLabelText(/prompt/i), 'a seamless galaxy pattern');
+    await user.click(screen.getByTestId('pm-generate'));
+
+    const result = await screen.findByAltText(/generated result/i, {}, { timeout: 5000 });
+    expect(result).toBeInTheDocument();
+    expect(screen.getByTestId('pm-spent')).toHaveTextContent('25');
+
+    // The REAL proof: a customComfy recipe body flowed through the SDK transport
+    // to the host (not a textToImage body).
+    expect(submittedBodies.at(-1)?.kind).toBe('customComfy');
+    expect(submittedBodies.at(-1)?.recipe).toBe('starter-comfy-txt2img');
+    expect(screen.queryByText(/generation failed/i)).not.toBeInTheDocument();
+  });
+
   it('insufficient Buzz on submit -> warning Alert, no result image', async () => {
     const user = userEvent.setup();
     uninstall = installMockMoneyHost({

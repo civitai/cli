@@ -17,6 +17,7 @@ import {
   Button,
   Card,
   Group,
+  SegmentedControl,
   Stack,
   Textarea,
   injectBlocksStyles,
@@ -32,8 +33,8 @@ import {
   formatCost,
   hasBudgetedScope,
   isBusyPhase,
-  phaseForError,
   phaseForSnapshot,
+  phaseForSubmitError,
   spentAccountLabel,
   isTerminalStatus,
   type AccountChoice,
@@ -52,6 +53,18 @@ import {
   type CheckpointOption,
   type LoraOption,
 } from './models.js';
+import { STARTER_COMFY_RECIPE, buildComfyBody } from './comfy.js';
+
+/**
+ * Which sample the page is driving.
+ *  - `txt2img` — the PRIMARY, runnable-today path (hardcoded-default checkpoint +
+ *    host checkpoint/LoRA pickers).
+ *  - `comfy`  — the SECONDARY Civitai Comfy Cloud (customComfy) sample: a
+ *    server-registered, code-reviewed recipe (`starter-comfy-txt2img`). The app
+ *    can't ship a graph; it sends only the recipe id + a prompt. Invite-only beta
+ *    on live civitai.com (works end-to-end against the mock host).
+ */
+type GenMode = 'txt2img' | 'comfy';
 
 // Inject the W6 component pack's stylesheet at module init (before first paint)
 // to avoid the documented one-frame FOUC (the pack's components also call
@@ -121,6 +134,7 @@ export function App() {
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
 
+  const [mode, setMode] = useState<GenMode>('txt2img');
   const [prompt, setPrompt] = useState('');
   const [touched, setTouched] = useState(false);
   const [account, setAccount] = useState<AccountChoice>('auto');
@@ -275,16 +289,38 @@ export function App() {
     setImageUrl(null);
     setActualCost(null);
     setSpentAccount(null);
-    // Auto ('auto') threads NO accountType — today's default host funding order.
-    const body = buildWorkflowBody(prompt, checkpoint, loras, account);
+    // The ONLY difference between the two samples is the body: a textToImage body
+    // (checkpoint + LoRAs) vs a customComfy recipe body (server-owned graph).
+    // Everything downstream — estimate/consent/submit/poll — is shared. Auto
+    // ('auto') threads NO accountType — today's default host funding order.
+    const body =
+      mode === 'comfy'
+        ? buildComfyBody(prompt, account)
+        : buildWorkflowBody(prompt, checkpoint, loras, account);
+
+    // Classify a submit/estimate error into a terminal phase. The `'gated'`
+    // (Comfy Cloud invite-only-beta) panel is COMFY-MODE-SCOPED via
+    // phaseForSubmitError: the real gate strings ("Apps are not enabled" flag
+    // gate, "Apps authoring is not enabled" author gate, and the pre-deploy
+    // unknown-recipe enum rejection) are SHARED with the txt2img path, so a
+    // txt2img failure must NEVER render the Comfy-specific copy — it falls through
+    // to the failed/insufficient/account-rejected classification, unchanged from
+    // before the Comfy sample.
+    const classifyError = (msg: string | null | undefined): GenPhase =>
+      phaseForSubmitError(msg, mode === 'comfy');
 
     // 1) Estimate (best-effort — a failed estimate doesn't block submit; the
-    //    host re-prices at submit anyway).
+    //    host re-prices at submit anyway). A gate / disallowed-account /
+    //    insufficient estimate DOES short-circuit (submitting would fail-closed).
     setPhase('estimating');
     try {
       const est = await estimate(body);
       if (est.status === 'failed' || est.error) {
-        const estPhase = phaseForError(est.error);
+        const estPhase = classifyError(est.error);
+        if (estPhase === 'gated') {
+          setPhase('gated');
+          return;
+        }
         if (estPhase === 'account-rejected') {
           setPhase('account-rejected');
           handleAccountRejected();
@@ -310,10 +346,10 @@ export function App() {
       snap = await submit(body);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'submit failed';
-      const failPhase = phaseForError(msg);
+      const failPhase = classifyError(msg);
       setPhase(failPhase);
       if (failPhase === 'account-rejected') handleAccountRejected();
-      else setError(msg);
+      else if (failPhase !== 'gated') setError(msg);
       return;
     }
 
@@ -325,6 +361,7 @@ export function App() {
     setPhase('polling');
     if (snap.workflowId) runPollLoop(snap.workflowId);
   }, [
+    mode,
     prompt,
     checkpoint,
     loras,
@@ -365,6 +402,20 @@ export function App() {
       void runGeneration();
     }
   }, [granted, runGeneration]);
+
+  // Switch the sample being driven. Cancels any in-flight poll and clears the
+  // transient result state so the two samples never show each other's output.
+  const switchMode = useCallback((next: GenMode) => {
+    if (pollCancelRef.current) pollCancelRef.current.cancelled = true;
+    consentPendingRef.current = false;
+    setMode(next);
+    setPhase('idle');
+    setError(null);
+    setImageUrl(null);
+    setEstimatedCost(null);
+    setActualCost(null);
+    setSpentAccount(null);
+  }, []);
 
   // --- Host pickers (checkpoint + LoRA) ---
   //
@@ -415,6 +466,7 @@ export function App() {
   const promptError =
     touched && prompt.trim().length === 0 ? 'Enter a prompt to generate.' : undefined;
   const busy = isBusyPhase(phase);
+  const isComfy = mode === 'comfy';
 
   // ---- Render ----
 
@@ -449,6 +501,36 @@ export function App() {
         <Stack gap={16}>
           <strong style={titleStyle}>{{ .Name }}</strong>
 
+          {/* Mode toggle: txt2img (primary, runnable today) ⇄ Comfy Cloud
+              (secondary sample, invite-only beta). Switching swaps the input
+              controls + the body-builder while REUSING the one estimate ->
+              consent -> submit -> poll driver + the account picker below. */}
+          <SegmentedControl
+            fullWidth
+            aria-label="Generation sample"
+            value={mode}
+            onChange={(v) => switchMode(v as GenMode)}
+            disabled={busy}
+            data={[
+              { value: 'txt2img', label: 'Text to image' },
+              { value: 'comfy', label: 'Comfy Cloud recipe (sample · invite-only beta)' },
+            ]}
+          />
+
+          {isComfy && (
+            <Alert color="info" title="Comfy Cloud recipe (sample · invite-only beta)" data-testid="pm-comfy-beta">
+              A bounded, <strong>server-owned</strong> graph. The app only picks a registered{' '}
+              <code>recipe</code> id (<code>{STARTER_COMFY_RECIPE}</code>) + a prompt; the server
+              owns the graph and a hard per-job Buzz ceiling. Invite-only beta on live civitai.com —
+              works end-to-end against the <strong>mock host</strong> (<code>npm run dev:harness</code>).
+              Request tester access at{' '}
+              <a href="https://github.com/civitai/cli/issues/new" target="_blank" rel="noreferrer">
+                github.com/civitai/cli
+              </a>
+              .
+            </Alert>
+          )}
+
           {!anon && (
             <BalancePanel balance={balance} loading={balanceLoading} error={balanceError} />
           )}
@@ -466,47 +548,58 @@ export function App() {
             onBlur={() => setTouched(true)}
           />
 
-          {/* Model control. A page carries no host model context, so the app
-              starts on DEFAULT_CHECKPOINT and lets the user CHANGE it via the
-              HOST's checkpoint picker (useCheckpointPicker) — the block never
-              browses a catalog. Every pick is DISCOVERY ONLY: the server
-              re-validates + re-prices it at estimate/submit. */}
-          <div style={fieldStyle}>
-            <span style={fieldLabelStyle}>Model</span>
-            <span style={fieldDescStyle}>
-              The checkpoint to generate with. The server validates + prices every generation.
-            </span>
-            <Group justify="space-between" align="center" gap={8} wrap={false}>
-              <span style={currentModelStyle} title={checkpoint.label} data-testid="pm-model-label">
-                {checkpoint.label}
-                {checkpoint.baseModel ? ` (${checkpoint.baseModel})` : ''}
-              </span>
-              <Button
-                variant="light"
-                size="sm"
-                loading={pickerBusy}
-                onClick={() => void onChangeModel()}
-                data-testid="pm-change-model"
-              >
-                Change model
-              </Button>
-            </Group>
-          </div>
+          {/* Model + LoRA controls are the TXT2IMG sample's surface. The Comfy
+              Cloud sample sends a server-owned recipe (no client checkpoint/LoRA
+              axis), so these are hidden in comfy mode — just prompt + account. */}
+          {!isComfy && (
+            <>
+              {/* Model control. A page carries no host model context, so the app
+                  starts on DEFAULT_CHECKPOINT and lets the user CHANGE it via the
+                  HOST's checkpoint picker (useCheckpointPicker) — the block never
+                  browses a catalog. Every pick is DISCOVERY ONLY: the server
+                  re-validates + re-prices it at estimate/submit. */}
+              <div style={fieldStyle}>
+                <span style={fieldLabelStyle}>Model</span>
+                <span style={fieldDescStyle}>
+                  The checkpoint to generate with. The server validates + prices every generation.
+                </span>
+                <Group justify="space-between" align="center" gap={8} wrap={false}>
+                  <span
+                    style={currentModelStyle}
+                    title={checkpoint.label}
+                    data-testid="pm-model-label"
+                  >
+                    {checkpoint.label}
+                    {checkpoint.baseModel ? ` (${checkpoint.baseModel})` : ''}
+                  </span>
+                  <Button
+                    variant="light"
+                    size="sm"
+                    loading={pickerBusy}
+                    onClick={() => void onChangeModel()}
+                    data-testid="pm-change-model"
+                  >
+                    Change model
+                  </Button>
+                </Group>
+              </div>
 
-          {/* LoRA control. Add up to MAX_LORAS LoRAs on top of the checkpoint
-              via the HOST's resource picker (useResourcePicker, type=LORA), each
-              with an adjustable weight (a themed native range input — the W6 pack
-              ships no Slider). Every LoRA + weight is DISCOVERY ONLY: the server
-              re-validates (LoRA-only? base-model compatible? entitled?) +
-              re-prices the whole body at estimate/submit. */}
-          <LoraSelector
-            selected={loras}
-            capReached={loraCapReached}
-            pickerBusy={pickerBusy}
-            onAdd={() => void onAddLora()}
-            onRemove={onRemoveLora}
-            onWeight={onLoraWeight}
-          />
+              {/* LoRA control. Add up to MAX_LORAS LoRAs on top of the checkpoint
+                  via the HOST's resource picker (useResourcePicker, type=LORA),
+                  each with an adjustable weight (a themed native range input — the
+                  W6 pack ships no Slider). Every LoRA + weight is DISCOVERY ONLY:
+                  the server re-validates (LoRA-only? base-model compatible?
+                  entitled?) + re-prices the whole body at estimate/submit. */}
+              <LoraSelector
+                selected={loras}
+                capReached={loraCapReached}
+                pickerBusy={pickerBusy}
+                onAdd={() => void onAddLora()}
+                onRemove={onRemoveLora}
+                onWeight={onLoraWeight}
+              />
+            </>
+          )}
 
           {!anon && (
             <AccountPicker value={account} onChange={setAccount} balance={balance} disabled={busy} />
@@ -553,6 +646,17 @@ export function App() {
               data-testid="pm-account-rejected"
             >
               {error}
+            </Alert>
+          )}
+
+          {phase === 'gated' && (
+            <Alert color="info" title="Comfy Cloud recipes are in invite-only beta" data-testid="pm-gated">
+              Your account isn&apos;t in the tester cohort yet, so this recipe can&apos;t run on live
+              civitai.com. Request access at{' '}
+              <a href="https://github.com/civitai/cli" target="_blank" rel="noreferrer">
+                github.com/civitai/cli
+              </a>
+              . Meanwhile it works end-to-end in the mock harness (<code>npm run dev:harness</code>).
             </Alert>
           )}
 
