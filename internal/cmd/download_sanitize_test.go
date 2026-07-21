@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // TestTargetPathSanitizesServerName proves the API-supplied file name is reduced
@@ -33,7 +33,7 @@ func TestTargetPathSanitizesServerName(t *testing.T) {
 	}
 	const outDir = "/tmp/models"
 	for _, tc := range cases {
-		f := api.ModelVersionFile{Name: tc.name}
+		f := civitai.ModelVersionFile{Name: tc.name}
 
 		// Default mode: resolves to a bare basename in cwd.
 		got, _, err := targetPath(f, &downloadOpts{})
@@ -79,7 +79,7 @@ func TestTargetPathSanitizesServerName(t *testing.T) {
 // TestTargetPathOutIsVerbatim proves --out (the user's OWN explicit target) is
 // NOT sanitized — a relative or absolute path is honored as given.
 func TestTargetPathOutIsVerbatim(t *testing.T) {
-	f := api.ModelVersionFile{Name: "server-name.safetensors"}
+	f := civitai.ModelVersionFile{Name: "server-name.safetensors"}
 	for _, out := range []string{
 		"../../my/explicit/path.safetensors",
 		"/abs/target.safetensors",

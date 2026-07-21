@@ -19,13 +19,13 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/devtunnel"
 	"github.com/civitai/cli/internal/dnsprobe"
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/civitai/cli/internal/ui"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -95,12 +95,12 @@ const (
 // tunnelAPI is the subset of the API client the session core needs (seam for a
 // mock in tests).
 type tunnelAPI interface {
-	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string) (*api.DevTunnelSession, error)
+	StartDevTunnel(ctx context.Context, blockID, sshPublicKey string, declaredScopes []string) (*civitai.DevTunnelSession, error)
 	StopDevTunnel(ctx context.Context, sessionID, blockID string) (bool, error)
 	// WhoAmI resolves the signed-in identity — used to enrich a 403 mint refusal
 	// with which account the CLI is authenticated as (the usual cause is being
-	// logged in as the wrong account). The real *api.Client already implements it.
-	WhoAmI(ctx context.Context) (*api.Identity, error)
+	// logged in as the wrong account). The real *civitai.Client already implements it.
+	WhoAmI(ctx context.Context) (*civitai.Identity, error)
 }
 
 // tunnelSessionDeps are the injectable dependencies of runTunnelSession — every
@@ -338,10 +338,10 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				return err
 			}
 			if cfg.Token() == "" {
-				return api.Tag(api.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
+				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 
-			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+			client := civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 
 			// Read the LOCAL manifest scopes (from the CWD — the dev runs this from
 			// their App project dir) so the server can grant them to the tunnel token
@@ -565,7 +565,7 @@ loop:
 // signed in as + how to switch accounts (the usual cause is "wrong account"). Best
 // effort: a failed WhoAmI just omits the name. Non-forbidden errors pass through.
 func enrichDevTunnelAuthError(ctx context.Context, d tunnelSessionDeps, err error) error {
-	var forbidden *api.DevTunnelForbiddenError
+	var forbidden *civitai.DevTunnelForbiddenError
 	if !errors.As(err, &forbidden) {
 		return err
 	}
@@ -623,7 +623,7 @@ func localDialTargets(host string) string {
 
 // printTunnelReady prints the actionable "tunnel is up" block, with the
 // /apps/dev URL made prominent (it is the one thing the developer must open).
-func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, localHost string, port int) {
+func printTunnelReady(out io.Writer, sess *civitai.DevTunnelSession, localHost string, port int) {
 	fmt.Fprintf(out, "\nDev tunnel ready — serving %s:%d as %s\n\n", localHostForDisplay(localHost), port, ui.Bold(sess.Host))
 	fmt.Fprintf(out, "  ▶ Open this in your browser (you must be logged in):\n\n")
 	fmt.Fprintf(out, "      %s\n\n", ui.URL(sess.URL))
@@ -632,7 +632,7 @@ func printTunnelReady(out io.Writer, sess *api.DevTunnelSession, localHost strin
 
 // printTunnelReadyConfirmed is the ready path: the public host answered healthy,
 // so lead with a ✓ confirmation then the standard "open this" block.
-func printTunnelReadyConfirmed(out io.Writer, sess *api.DevTunnelSession, localHost string, port int) {
+func printTunnelReadyConfirmed(out io.Writer, sess *civitai.DevTunnelSession, localHost string, port int) {
 	fmt.Fprintf(out, "\n%s\n", ui.Success(fmt.Sprintf("Ready — %s is reachable (local hop verified).", sess.Host)))
 	printTunnelReady(out, sess, localHost, port)
 }
@@ -641,7 +641,7 @@ func printTunnelReadyConfirmed(out io.Writer, sess *api.DevTunnelSession, localH
 // healthy within the deadline, but that is NON-fatal — DNS/Cloudflare/Traefik
 // propagation can still land shortly. Print the URL with a clear warning so the
 // dev knows to retry the browser in a moment rather than assume it's broken.
-func printTunnelReadyTimeout(out io.Writer, sess *api.DevTunnelSession, localHost string, port int, waited time.Duration) {
+func printTunnelReadyTimeout(out io.Writer, sess *civitai.DevTunnelSession, localHost string, port int, waited time.Duration) {
 	fmt.Fprintf(out, "\n%s\n", ui.Warn(fmt.Sprintf("%s isn't resolving/serving yet (waited %s).", sess.Host, waited)))
 	fmt.Fprintf(out, "  This is usually just DNS + Cloudflare + route propagation — it can take a minute.\n")
 	fmt.Fprintf(out, "  The tunnel is UP; open the URL and retry in a bit if it NXDOMAINs / 404s / 502s:\n\n")
@@ -1365,7 +1365,7 @@ func classifyProbeErr(err error) string {
 // never dials without a pinned host key. The dialer independently fails closed
 // too (pinnedHostKeyCallback), so there is no reachable InsecureIgnoreHostKey
 // path from either layer.
-func validateMintResponse(sess *api.DevTunnelSession, baseURL string) error {
+func validateMintResponse(sess *civitai.DevTunnelSession, baseURL string) error {
 	if !devHostPrefixRE.MatchString(sess.Host) {
 		return fmt.Errorf("server returned an unexpected tunnel host %q (want dev-<16hex>.<domain>) — refusing to bind", sess.Host)
 	}

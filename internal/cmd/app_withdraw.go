@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/ui"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -42,7 +42,7 @@ Pass the publish-request id as a positional argument or via --id (find it with
 				return err
 			}
 			if cfg.Token() == "" {
-				return api.Tag(api.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
+				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 
 			if idFlag != "" && len(args) == 1 {
@@ -57,7 +57,7 @@ Pass the publish-request id as a positional argument or via --id (find it with
 				return fmt.Errorf("a publish-request id is required — pass it as an argument or with --id (find it via `civitai app status`)")
 			}
 
-			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+			client := civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 			ctx := context.Background()
 
 			if err := client.WithdrawRequest(ctx, id); err != nil {

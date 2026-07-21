@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -156,7 +156,7 @@ func newModelsGetCmd() *cobra.Command {
 	return cmd
 }
 
-func printModelList(cmd *cobra.Command, items []api.ModelListItem) {
+func printModelList(cmd *cobra.Command, items []civitai.ModelListItem) {
 	out := cmd.OutOrStdout()
 	if len(items) == 0 {
 		fmt.Fprintln(out, "No models found.")
@@ -182,7 +182,7 @@ func printModelList(cmd *cobra.Command, items []api.ModelListItem) {
 	_ = tw.Flush()
 }
 
-func printModelDetail(cmd *cobra.Command, m *api.ModelDetail) {
+func printModelDetail(cmd *cobra.Command, m *civitai.ModelDetail) {
 	out := cmd.OutOrStdout()
 	creator := "-"
 	if m.Creator != nil && m.Creator.Username != "" {

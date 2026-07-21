@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // TestGetCmdsBadIdIsUsageTagged asserts that a garbage (non-integer / non-positive)
@@ -55,7 +55,7 @@ func TestModelsGetRealNotFoundStaysNotFound(t *testing.T) {
 	if errors.Is(err, ErrUsage) {
 		t.Errorf("a real 404 must NOT be tagged as usage, got: %v", err)
 	}
-	if !errors.Is(err, api.ErrNotFound) {
+	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("a real 404 should classify as not-found (exit 4), got: %v", err)
 	}
 }

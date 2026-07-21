@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/ui"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -182,7 +182,7 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 		ctx = context.Background()
 	}
 
-	oc := api.NewOAuthClient(cfg.BaseURL())
+	oc := civitai.NewOAuthClient(cfg.BaseURL())
 	da, err := oc.StartDevice(ctx)
 	if err != nil {
 		return err
@@ -223,7 +223,7 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 
 // deviceVerificationURI returns the BARE verification URI (no code prefilled),
 // falling back to the base URL's device path when the server omits it.
-func deviceVerificationURI(da *api.DeviceAuth, baseURL string) string {
+func deviceVerificationURI(da *civitai.DeviceAuth, baseURL string) string {
 	if da.VerificationURI != "" {
 		return da.VerificationURI
 	}
@@ -235,7 +235,7 @@ func deviceVerificationURI(da *api.DeviceAuth, baseURL string) string {
 // prints a SINGLE actionable form — the code-prefilled complete URL when the
 // server supplies one, otherwise the bare URL + code — rather than both URLs up
 // front. Never prints the device_code (secret).
-func renderDeviceInstructions(out io.Writer, da *api.DeviceAuth, baseURL string) {
+func renderDeviceInstructions(out io.Writer, da *civitai.DeviceAuth, baseURL string) {
 	if da.VerificationURIComplete != "" {
 		fmt.Fprintln(out, "To authenticate, open this URL (your code is pre-filled):")
 		fmt.Fprintf(out, "\n  %s\n\n", da.VerificationURIComplete)

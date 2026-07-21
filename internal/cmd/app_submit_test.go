@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/manifest"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -16,11 +16,11 @@ type fakeSubmitter struct {
 	got        []byte
 	gotSlug    string
 	gotVersion string
-	result     *api.SubmitResult
+	result     *civitai.SubmitResult
 	err        error
 }
 
-func (f *fakeSubmitter) SubmitVersion(_ context.Context, zip []byte, slug, version string) (*api.SubmitResult, error) {
+func (f *fakeSubmitter) SubmitVersion(_ context.Context, zip []byte, slug, version string) (*civitai.SubmitResult, error) {
 	f.got = zip
 	f.gotSlug = slug
 	f.gotVersion = version
@@ -31,7 +31,7 @@ func (f *fakeSubmitter) SubmitVersion(_ context.Context, zip []byte, slug, versi
 }
 
 func TestDoUploadHandsBytesToSubmitter(t *testing.T) {
-	fs := &fakeSubmitter{result: &api.SubmitResult{
+	fs := &fakeSubmitter{result: &civitai.SubmitResult{
 		PublishRequestID: "pr_9", Slug: "demo", Version: "0.1.0", Status: "pending",
 	}}
 	var out bytes.Buffer
@@ -58,7 +58,7 @@ func TestDoUploadHandsBytesToSubmitter(t *testing.T) {
 // link — and must NOT carry the old, unrelated dev:live-Buzz "Tip" or the
 // doubled "pending — pending" phrasing.
 func TestDoUploadSuccessOutput(t *testing.T) {
-	fs := &fakeSubmitter{result: &api.SubmitResult{
+	fs := &fakeSubmitter{result: &civitai.SubmitResult{
 		PublishRequestID: "pubreq_abc", Slug: "my-block", Version: "0.2.0", Status: "pending",
 	}}
 	var out bytes.Buffer

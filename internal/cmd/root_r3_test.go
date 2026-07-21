@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // The R3 arc closes cobra-layer exit-code gaps: usage mistakes at the cobra
@@ -143,7 +143,7 @@ func TestRealNotFoundNotReclassified(t *testing.T) {
 	if errors.Is(err, ErrUsage) {
 		t.Errorf("a real 404 must NOT be reclassified as a usage error, got: %v", err)
 	}
-	if !errors.Is(err, api.ErrNotFound) {
+	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("a real 404 should stay not-found (exit 4), got %T: %v", err, err)
 	}
 }

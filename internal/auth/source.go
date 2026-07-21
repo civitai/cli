@@ -1,4 +1,4 @@
-// Package auth bridges the persisted config and the api.TokenSource contract:
+// Package auth bridges the persisted config and the civitai.TokenSource contract:
 // it yields a Bearer token for the api client, refreshing device-flow OAuth
 // tokens (and persisting the rotated refresh token) when they expire or after a
 // 401. A personal API key is served as-is and never refreshes.
@@ -10,21 +10,21 @@ import (
 	"sync"
 	"time"
 
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // expirySkew refreshes the access token slightly before its real expiry so an
 // in-flight request doesn't race the boundary.
 const expirySkew = 30 * time.Second
 
-// refresher is the subset of api.OAuthClient the source needs (injectable in
+// refresher is the subset of civitai.OAuthClient the source needs (injectable in
 // tests).
 type refresher interface {
-	Refresh(ctx context.Context, refreshToken string) (*api.TokenResponse, error)
+	Refresh(ctx context.Context, refreshToken string) (*civitai.TokenResponse, error)
 }
 
-// Source is an api.TokenSource backed by the on-disk config. For a personal-key
+// Source is an civitai.TokenSource backed by the on-disk config. For a personal-key
 // config it returns the key and never refreshes; for an OAuth config it
 // refreshes via the refresher and persists rotated tokens.
 type Source struct {
@@ -33,10 +33,10 @@ type Source struct {
 	mu  sync.Mutex
 }
 
-// New builds a Source for cfg. The refresher defaults to an api.OAuthClient
+// New builds a Source for cfg. The refresher defaults to an civitai.OAuthClient
 // against the config's base URL.
 func New(cfg *config.Config) *Source {
-	return &Source{cfg: cfg, oc: api.NewOAuthClient(cfg.BaseURL())}
+	return &Source{cfg: cfg, oc: civitai.NewOAuthClient(cfg.BaseURL())}
 }
 
 // newWithRefresher is the test seam.
@@ -63,13 +63,13 @@ func (s *Source) Token(ctx context.Context) (string, error) {
 }
 
 // Refresh forces a refresh (used by the api client on a 401). A personal-key
-// config returns api.ErrNoRefresh.
+// config returns civitai.ErrNoRefresh.
 func (s *Source) Refresh(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.cfg.AuthKind() != config.AuthKindOAuth {
-		return "", api.ErrNoRefresh
+		return "", civitai.ErrNoRefresh
 	}
 	return s.refreshLocked(ctx)
 }
@@ -86,7 +86,7 @@ func (s *Source) Refresh(ctx context.Context) (string, error) {
 func (s *Source) refreshLocked(ctx context.Context) (string, error) {
 	rt := s.cfg.RefreshToken()
 	if rt == "" {
-		return "", api.Tag(api.ErrUnauthorized, fmt.Errorf("no refresh token stored — run `civitai login` again"))
+		return "", civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no refresh token stored — run `civitai login` again"))
 	}
 	tr, err := s.oc.Refresh(ctx, rt)
 	if err != nil {

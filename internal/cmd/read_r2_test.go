@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -206,7 +206,7 @@ func TestCheckLimitExplicitZeroRejected(t *testing.T) {
 func TestPrintPageFooterQuotesCursor(t *testing.T) {
 	cursor := "2026-07-19 00:10:35.891|2788964"
 	nc, _ := json.Marshal(cursor) // JSON string value, as the API returns it
-	m := api.Metadata{NextCursor: json.RawMessage(nc)}
+	m := civitai.Metadata{NextCursor: json.RawMessage(nc)}
 
 	cmd := &cobra.Command{}
 	var out bytes.Buffer

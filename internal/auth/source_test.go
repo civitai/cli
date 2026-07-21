@@ -6,19 +6,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // stubRefresher returns a fixed response and records the refresh token it saw.
 type stubRefresher struct {
 	calls int
 	sawRT string
-	resp  *api.TokenResponse
+	resp  *civitai.TokenResponse
 	rerr  error
 }
 
-func (s *stubRefresher) Refresh(_ context.Context, rt string) (*api.TokenResponse, error) {
+func (s *stubRefresher) Refresh(_ context.Context, rt string) (*civitai.TokenResponse, error) {
 	s.calls++
 	s.sawRT = rt
 	if s.rerr != nil {
@@ -47,7 +47,7 @@ func TestSourceExpiredAccessTokenTriggersRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	ref := &stubRefresher{resp: &api.TokenResponse{
+	ref := &stubRefresher{resp: &civitai.TokenResponse{
 		AccessToken: "new-at", ExpiresIn: 3600, RefreshToken: "rotated-rt", Scope: "s",
 	}}
 	src := newWithRefresher(cfg, ref)
@@ -81,7 +81,7 @@ func TestSourceValidTokenSkipsRefresh(t *testing.T) {
 	if err := cfg.SetOAuthTokens("good-at", "rt", time.Now().Add(time.Hour), "s"); err != nil {
 		t.Fatal(err)
 	}
-	ref := &stubRefresher{resp: &api.TokenResponse{AccessToken: "nope"}}
+	ref := &stubRefresher{resp: &civitai.TokenResponse{AccessToken: "nope"}}
 	src := newWithRefresher(cfg, ref)
 
 	tok, err := src.Token(context.Background())
@@ -106,7 +106,7 @@ func TestSourceRefreshKeepsOldRefreshTokenWhenNotRotated(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Server returns no refresh_token (no rotation).
-	ref := &stubRefresher{resp: &api.TokenResponse{AccessToken: "new-at", ExpiresIn: 3600}}
+	ref := &stubRefresher{resp: &civitai.TokenResponse{AccessToken: "new-at", ExpiresIn: 3600}}
 	src := newWithRefresher(cfg, ref)
 
 	if _, err := src.Token(context.Background()); err != nil {
@@ -129,7 +129,7 @@ func TestSourceRefreshRejectsNonPositiveExpiresIn(t *testing.T) {
 	}
 	// A refresh that returns expires_in<=0 must be treated as an error, not
 	// persisted with an ~now expiry (which would refresh on every call).
-	ref := &stubRefresher{resp: &api.TokenResponse{AccessToken: "new-at", ExpiresIn: 0, RefreshToken: "new-rt"}}
+	ref := &stubRefresher{resp: &civitai.TokenResponse{AccessToken: "new-at", ExpiresIn: 0, RefreshToken: "new-rt"}}
 	src := newWithRefresher(cfg, ref)
 
 	if _, err := src.Token(context.Background()); err == nil {
@@ -153,7 +153,7 @@ func TestSourceRefreshPersistsArrayScope(t *testing.T) {
 	}
 	// Scope arriving as the array-normalized string (what the refresh route
 	// yields via the custom Scope unmarshaler) must round-trip into config.
-	ref := &stubRefresher{resp: &api.TokenResponse{
+	ref := &stubRefresher{resp: &civitai.TokenResponse{
 		AccessToken: "new-at", ExpiresIn: 3600, RefreshToken: "new-rt", Scope: "33554433",
 	}}
 	src := newWithRefresher(cfg, ref)
@@ -176,7 +176,7 @@ func TestSourcePersonalKeyNeverRefreshes(t *testing.T) {
 	if err := cfg.SetToken("personal-key"); err != nil {
 		t.Fatal(err)
 	}
-	ref := &stubRefresher{resp: &api.TokenResponse{AccessToken: "should-not-be-used"}}
+	ref := &stubRefresher{resp: &civitai.TokenResponse{AccessToken: "should-not-be-used"}}
 	src := newWithRefresher(cfg, ref)
 
 	tok, err := src.Token(context.Background())
@@ -186,7 +186,7 @@ func TestSourcePersonalKeyNeverRefreshes(t *testing.T) {
 	if tok != "personal-key" {
 		t.Errorf("Token() = %q, want personal-key", tok)
 	}
-	if _, err := src.Refresh(context.Background()); err != api.ErrNoRefresh {
+	if _, err := src.Refresh(context.Background()); err != civitai.ErrNoRefresh {
 		t.Errorf("personal-key Refresh err = %v, want ErrNoRefresh", err)
 	}
 	if ref.calls != 0 {

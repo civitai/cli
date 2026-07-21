@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // TestDownloadOneCancelCleansPart proves a context cancellation mid-transfer
@@ -35,9 +35,9 @@ func TestDownloadOneCancelCleansPart(t *testing.T) {
 
 	dir := t.TempDir()
 	target := filepath.Join(dir, "m.safetensors")
-	dl := api.New(srv.URL, "", "")
+	dl := civitai.New(srv.URL, "", "")
 	dl.AllowPrivateDownloadHosts = true // httptest binds plain-http loopback
-	f := api.ModelVersionFile{Name: "m.safetensors", Type: "Model", DownloadURL: srv.URL + "/dl"}
+	f := civitai.ModelVersionFile{Name: "m.safetensors", Type: "Model", DownloadURL: srv.URL + "/dl"}
 	o := &downloadOpts{noVerify: true}
 
 	ctx, cancel := context.WithCancel(context.Background())

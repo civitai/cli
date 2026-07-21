@@ -8,10 +8,10 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/ui"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -47,7 +47,7 @@ and deployed (deployState 'live').`,
 				return err
 			}
 			if cfg.Token() == "" {
-				return api.Tag(api.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
+				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 
 			var blockID string
@@ -55,7 +55,7 @@ and deployed (deployState 'live').`,
 				blockID = args[0]
 			}
 
-			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+			client := civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 			ctx := context.Background()
 			out := cmd.OutOrStdout()
 
@@ -98,7 +98,7 @@ func writeJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
-func printSubmissionTable(w io.Writer, subs []api.Submission) {
+func printSubmissionTable(w io.Writer, subs []civitai.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "BLOCK_ID\tVERSION\tSTATUS\tDEPLOY\tSUBMITTED\tURL")
 	for _, s := range subs {
@@ -114,7 +114,7 @@ func printSubmissionTable(w io.Writer, subs []api.Submission) {
 	_ = tw.Flush()
 }
 
-func printSubmissionDetail(w io.Writer, s *api.Submission) {
+func printSubmissionDetail(w io.Writer, s *civitai.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "Block ID:\t%s\n", s.BlockID)
 	fmt.Fprintf(tw, "Version:\t%s\n", s.Version)

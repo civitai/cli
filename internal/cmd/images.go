@@ -10,7 +10,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -184,7 +184,7 @@ implicitly.`,
 	return cmd
 }
 
-func printImageList(cmd *cobra.Command, items []api.ImageItem) {
+func printImageList(cmd *cobra.Command, items []civitai.ImageItem) {
 	out := cmd.OutOrStdout()
 	if len(items) == 0 {
 		fmt.Fprintln(out, "No images found.")
@@ -205,7 +205,7 @@ func printImageList(cmd *cobra.Command, items []api.ImageItem) {
 // the compact table, so it can carry the generation metadata (prompt, settings)
 // that --meta requests. Every server-origin string is routed through safeTerm —
 // prompts are attacker-controlled user text and can carry ANSI/control bytes.
-func printImageListMeta(cmd *cobra.Command, items []api.ImageItem) {
+func printImageListMeta(cmd *cobra.Command, items []civitai.ImageItem) {
 	out := cmd.OutOrStdout()
 	if len(items) == 0 {
 		fmt.Fprintln(out, "No images found.")
@@ -221,20 +221,20 @@ func printImageListMeta(cmd *cobra.Command, items []api.ImageItem) {
 // server-origin string is routed through safeTerm — prompts, resource names and
 // hashes are attacker-controlled user text that can carry ANSI/control bytes.
 // Shared by `images search --meta` and `images get`.
-func printImageMetaBlock(out io.Writer, im api.ImageItem) {
+func printImageMetaBlock(out io.Writer, im civitai.ImageItem) {
 	fmt.Fprintf(out, "%d  [%s]  %dx%d  by %s\n",
 		im.ID, orDash(safeTerm(im.NSFWLevel)), im.Width, im.Height, orDash(safeTerm(im.Username)))
 	m, state := im.ParseMeta()
 	switch state {
-	case api.MetaAbsent:
+	case civitai.MetaAbsent:
 		// meta: null — either the uploader hid their generation data, or the
 		// API had none for this image. Not an error.
 		fmt.Fprintln(out, "  meta: (hidden by uploader)")
-	case api.MetaUnparseable:
+	case civitai.MetaUnparseable:
 		// meta present but not the expected object shape — degrade rather than
 		// drop the whole image.
 		fmt.Fprintln(out, "  meta: (unrecognized format)")
-	default: // api.MetaOK
+	default: // civitai.MetaOK
 		fmt.Fprintf(out, "  model: %s   sampler: %s   cfg: %s   steps: %s   seed: %s\n",
 			orDash(safeTerm(m.Model)), orDash(safeTerm(m.Sampler)),
 			orDash(safeTerm(m.CfgScaleString())), orDash(safeTerm(m.StepsString())),
@@ -255,7 +255,7 @@ func printImageMetaBlock(out io.Writer, im api.ImageItem) {
 // generator supplied one) and hash (inline, else resolved from meta.hashes). The
 // section is omitted entirely when there are no resources, so images without a
 // recipe stay compact.
-func printImageResources(out io.Writer, m api.ImageMeta) {
+func printImageResources(out io.Writer, m civitai.ImageMeta) {
 	rs := m.ParseResources()
 	if len(rs) == 0 {
 		return

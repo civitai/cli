@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/civitai/cli/internal/api"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // TestRenderDeviceInstructionsComplete: renderDeviceInstructions is the MANUAL
@@ -14,7 +14,7 @@ import (
 // code-prefilled complete URL — and does NOT also print the bare URL:/Code:
 // form. The device_code (secret) is never printed.
 func TestRenderDeviceInstructionsComplete(t *testing.T) {
-	da := &api.DeviceAuth{
+	da := &civitai.DeviceAuth{
 		DeviceCode:              "dev-secret-code",
 		UserCode:                "ABCD-1234",
 		VerificationURI:         "https://civitai.com/login/oauth/device",
@@ -40,7 +40,7 @@ func TestRenderDeviceInstructionsComplete(t *testing.T) {
 // empty, the output falls back to the bare URL:/Code: form and contains no
 // ?code= prefilled link. The device_code is never printed.
 func TestRenderDeviceInstructionsNoComplete(t *testing.T) {
-	da := &api.DeviceAuth{
+	da := &civitai.DeviceAuth{
 		DeviceCode:      "dev-secret-code",
 		UserCode:        "ABCD-1234",
 		VerificationURI: "https://civitai.com/login/oauth/device",
@@ -67,7 +67,7 @@ func TestRenderDeviceInstructionsNoComplete(t *testing.T) {
 // the complete URI are empty, the bare URL falls back to baseURL + the device
 // path (preserving the existing behavior).
 func TestRenderDeviceInstructionsEmptyURIFallback(t *testing.T) {
-	da := &api.DeviceAuth{UserCode: "ABCD-1234"}
+	da := &civitai.DeviceAuth{UserCode: "ABCD-1234"}
 	var buf bytes.Buffer
 	renderDeviceInstructions(&buf, da, "https://civitai.com")
 	out := buf.String()
@@ -79,10 +79,10 @@ func TestRenderDeviceInstructionsEmptyURIFallback(t *testing.T) {
 
 // TestDeviceVerificationURIFallback covers the bare-URI helper's baseURL fallback.
 func TestDeviceVerificationURIFallback(t *testing.T) {
-	if got := deviceVerificationURI(&api.DeviceAuth{VerificationURI: "https://x/y"}, "https://b"); got != "https://x/y" {
+	if got := deviceVerificationURI(&civitai.DeviceAuth{VerificationURI: "https://x/y"}, "https://b"); got != "https://x/y" {
 		t.Errorf("expected the server-supplied URI, got %q", got)
 	}
-	if got := deviceVerificationURI(&api.DeviceAuth{}, "https://b"); got != "https://b/login/oauth/device" {
+	if got := deviceVerificationURI(&civitai.DeviceAuth{}, "https://b"); got != "https://b/login/oauth/device" {
 		t.Errorf("expected baseURL fallback, got %q", got)
 	}
 }

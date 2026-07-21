@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/internal/ui"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -43,20 +43,20 @@ how to switch to a personal key.`,
 				return err
 			}
 			if cfg.Token() == "" {
-				return api.Tag(api.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
+				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 
-			client := api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+			client := civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 			acct, err := client.GetBuzzAccount(context.Background())
 			if err != nil {
-				if errors.Is(err, api.ErrBuzzScope) {
+				if errors.Is(err, civitai.ErrBuzzScope) {
 					// Actionable guidance + a non-zero exit (a 403 is a real,
 					// fixable failure, not "balance is zero").
 					errw := cmd.ErrOrStderr()
 					fmt.Fprintln(errw, ui.For(errw).Warn(buzzScopeHint))
 					// Re-tag so exitCode maps the lost-scope case to the auth exit
 					// code (3), not the generic fallback — the message is unchanged.
-					return api.Tag(api.ErrBuzzScope, fmt.Errorf("credential can't read Buzz balance"))
+					return civitai.Tag(civitai.ErrBuzzScope, fmt.Errorf("credential can't read Buzz balance"))
 				}
 				return err
 			}

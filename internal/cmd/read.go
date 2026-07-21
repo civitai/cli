@@ -7,9 +7,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/civitai/cli/internal/api"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -64,20 +64,20 @@ func readFlags(cmd *cobra.Command) *readOpts {
 // it false so the guard is fully in force.
 var allowPrivateDownloadHostsForTest bool
 
-// newReader builds an api.Client for the public read endpoints. It sends the
+// newReader builds an civitai.Client for the public read endpoints. It sends the
 // stored login token when present (OAuth device-login or personal key, both
 // refreshed transparently) unless --anon is set, and works fully anonymously
 // when no token is configured — the public read routes don't require auth.
-func newReader(o *readOpts) (*api.Client, string, error) {
+func newReader(o *readOpts) (*civitai.Client, string, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return nil, "", err
 	}
-	var client *api.Client
+	var client *civitai.Client
 	if o.anon {
-		client = api.New(cfg.BaseURL(), "", "")
+		client = civitai.New(cfg.BaseURL(), "", "")
 	} else {
-		client = api.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+		client = civitai.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 	}
 	client.AllowPrivateDownloadHosts = allowPrivateDownloadHostsForTest
 	return client, cfg.BaseURL(), nil
@@ -169,8 +169,8 @@ func escapeJSONStringControlChars(raw []byte) []byte {
 // informational: any file type downloads, so this only flags "this version's
 // primary file isn't weights" without claiming it can't be downloaded. Returns
 // "" for a normal weights version (or no files).
-func nonModelFileMarker(files []api.ModelVersionFile) string {
-	pf := api.PrimaryFile(files)
+func nonModelFileMarker(files []civitai.ModelVersionFile) string {
+	pf := civitai.PrimaryFile(files)
 	if pf == nil || pf.IsModelWeights() {
 		return ""
 	}
@@ -213,7 +213,7 @@ func addIfSet(q interface{ Set(string, string) }, key, v string) {
 
 // printPageFooter prints a compact pagination footer + a hint for fetching the
 // next page, when the endpoint returned enough to page.
-func printPageFooter(cmd *cobra.Command, cmdPath string, m api.Metadata) {
+func printPageFooter(cmd *cobra.Command, cmdPath string, m civitai.Metadata) {
 	out := cmd.OutOrStdout()
 	var parts []string
 	if m.TotalItems != nil {
