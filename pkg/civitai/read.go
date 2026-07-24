@@ -23,6 +23,7 @@ type Reader interface {
 	GetModel(ctx context.Context, id string) (*ModelDetail, []byte, error)
 	GetModelVersion(ctx context.Context, id string) (*ModelVersionDetail, []byte, error)
 	GetModelVersionByHash(ctx context.Context, hash string) (*ModelVersionDetail, []byte, error)
+	GetModelVersionsByHashes(ctx context.Context, hashes []string) ([]HashMatch, error)
 	SearchImages(ctx context.Context, q url.Values) (*ImageSearchResult, error)
 	SearchTags(ctx context.Context, q url.Values) (*TagSearchResult, error)
 	SearchCreators(ctx context.Context, q url.Values) (*CreatorSearchResult, error)
