@@ -32,6 +32,8 @@ type Reader interface {
 	GetArticle(ctx context.Context, id string) (*ArticleDetail, []byte, error)
 	SearchCollections(ctx context.Context, q url.Values) (*CollectionSearchResult, error)
 	GetCollection(ctx context.Context, id string) (*CollectionDetail, []byte, error)
+	SearchApps(ctx context.Context, q url.Values) (*AppSearchResult, error)
+	GetApp(ctx context.Context, slug string) (*AppDetail, []byte, error)
 }
 
 // Metadata is the pagination envelope the list endpoints return under
