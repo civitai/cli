@@ -108,8 +108,13 @@ func TestAppListEmptyHint(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app list (empty): %v", err)
 	}
-	if !strings.Contains(out, "No apps found") {
+	// The empty-list hint explains the gating (mod/tester) + the filter angle,
+	// matching the wording in `app list --help`.
+	if !strings.Contains(out, "No apps visible for your account") {
 		t.Errorf("empty list should print a hint, got: %s", out)
+	}
+	if !strings.Contains(out, "moderator or app-dev-tester") {
+		t.Errorf("empty-list hint should explain the mod/tester gating, got: %s", out)
 	}
 }
 
@@ -170,6 +175,17 @@ func TestAppViewDetail(t *testing.T) {
 			t.Errorf("detail output missing %q:\n%s", want, out)
 		}
 	}
+	// Fix #3: the content rating is labeled `content:`, NOT a second `rating:`.
+	if !strings.Contains(out, "content:") {
+		t.Errorf("detail should label the content rating `content:`, got:\n%s", out)
+	}
+	if n := strings.Count(out, "rating:"); n != 1 {
+		t.Errorf("detail should print `rating:` exactly once (star rating), got %d:\n%s", n, out)
+	}
+	// The content-rating VALUE ("pg") must be on the `content:` line, not orphaned.
+	if !strings.Contains(out, "content:  pg") {
+		t.Errorf("content rating line malformed, got:\n%s", out)
+	}
 }
 
 // A 404 from the detail endpoint must render as a clean not-found message
@@ -202,6 +218,108 @@ func TestAppViewLoginGated(t *testing.T) {
 	}
 	if !errors.Is(err, civitai.ErrUnauthorized) {
 		t.Errorf("no-token error should classify as ErrUnauthorized, got: %v", err)
+	}
+}
+
+// Fix #4 (server-error surfacing): a bad --category round-trips to the server,
+// which returns a FLATTENED zod 400 ({"error":{"formErrors":...,"fieldErrors":
+// {"category":[...]}}}). The CLI must surface the field-specific message (naming
+// the bad field + constraint), NOT the bare generic "invalid request parameter".
+func TestAppListBadCategorySurfacesFieldError(t *testing.T) {
+	setupAuthedAppsServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"formErrors":[],"fieldErrors":{"category":["Invalid enum value. Expected 'generation' | 'games' | 'utility', received 'productivity'"]}}}`))
+	})
+	_, _, err := run(t, "app", "list", "--category", "productivity")
+	if err == nil {
+		t.Fatal("expected a 400 for an invalid --category")
+	}
+	if !errors.Is(err, civitai.ErrBadRequest) {
+		t.Errorf("400 should classify as ErrBadRequest, got %T: %v", err, err)
+	}
+	// The field name + constraint from the server body must be surfaced…
+	if !strings.Contains(err.Error(), "category") {
+		t.Errorf("error should name the bad field `category`, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Invalid enum value") {
+		t.Errorf("error should carry the server's constraint message, got: %v", err)
+	}
+	// …instead of the bare generic string.
+	if strings.TrimSpace(err.Error()) == "invalid request parameter (400)" {
+		t.Errorf("bare generic 400 should have been replaced by the field detail, got: %v", err)
+	}
+}
+
+// Fix #4 (client-side fixed-enum validation): a bad --kind / --sort fails FAST
+// and LOCALLY with an allowed-values message, without any HTTP call.
+func TestAppListBadFixedEnumValidatedLocally(t *testing.T) {
+	for _, tc := range []struct {
+		flag, value string
+		allowed     string
+	}{
+		{"kind", "bogus", "onsite"},
+		{"sort", "nonsense", "top-rated"},
+	} {
+		called := false
+		setupAuthedAppsServer(t, func(w http.ResponseWriter, r *http.Request) {
+			called = true
+			_, _ = w.Write([]byte(`{"items":[],"metadata":{}}`))
+		})
+		_, _, err := run(t, "app", "list", "--"+tc.flag, tc.value)
+		if err == nil {
+			t.Fatalf("--%s %s: expected a local validation error", tc.flag, tc.value)
+		}
+		if called {
+			t.Errorf("--%s %s: a bad fixed enum must NOT reach the network", tc.flag, tc.value)
+		}
+		if !errors.Is(err, ErrUsage) {
+			t.Errorf("--%s %s: bad enum should be a usage error, got: %v", tc.flag, tc.value, err)
+		}
+		if !strings.Contains(err.Error(), "must be one of") || !strings.Contains(err.Error(), tc.allowed) {
+			t.Errorf("--%s %s: error should list allowed values, got: %v", tc.flag, tc.value, err)
+		}
+	}
+}
+
+// Fix #1/#2 regression guards: the `app` group advertises BROWSING (not just
+// authoring), and the `list` help Example no longer uses the invalid
+// `--category productivity`.
+func TestAppHelpAdvertisesBrowsing(t *testing.T) {
+	out, _, err := run(t, "app", "--help")
+	if err != nil {
+		t.Fatalf("app --help: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(out), "browse") {
+		t.Errorf("app help should advertise browsing, got:\n%s", out)
+	}
+}
+
+func TestRootHelpAdvertisesAppBrowsing(t *testing.T) {
+	out, _, err := run(t, "--help")
+	if err != nil {
+		t.Fatalf("--help: %v", err)
+	}
+	if !strings.Contains(out, "civitai app list") {
+		t.Errorf("root help should surface `civitai app list`, got:\n%s", out)
+	}
+}
+
+func TestAppListHelpExampleUsesValidCategory(t *testing.T) {
+	out, _, err := run(t, "app", "list", "--help")
+	if err != nil {
+		t.Fatalf("app list --help: %v", err)
+	}
+	// The broken example (`--category productivity`, an invalid enum → 400) must
+	// be gone…
+	if strings.Contains(out, "--category productivity") {
+		t.Errorf("list help must not use the invalid `--category productivity`:\n%s", out)
+	}
+	// …replaced by a valid category, and the flag help must list the valid set.
+	if !strings.Contains(out, "--category generation") {
+		t.Errorf("list help example should use a valid category (generation):\n%s", out)
+	}
+	if !strings.Contains(out, "generation, games, utility") {
+		t.Errorf("--category flag help should list the valid categories:\n%s", out)
 	}
 }
 

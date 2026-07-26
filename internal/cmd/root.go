@@ -221,6 +221,10 @@ Exit codes:
   civitai images search --sort "Most Reactions" --period Week
   civitai download 128713 --layout comfyui --root ~/ComfyUI
 
+  # Browse the App store.
+  civitai app list
+  civitai app view <slug>
+
   # Build & ship an App.
   civitai login
   civitai app create my-first-app

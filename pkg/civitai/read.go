@@ -212,6 +212,14 @@ func badRequestDetail(raw []byte) string {
 		if d := firstZodIssue(wrapped.Error); d != "" {
 			return snippet([]byte(d))
 		}
+		// error as a FLATTENED zod error: {"formErrors":[...],"fieldErrors":{"<field>":["<msg>"]}}
+		// (the shape zod's .flatten() emits — what the apps store endpoint returns
+		// for a bad --kind/--sort/--category enum). Surface the field-specific
+		// message so it names the bad field + constraint, staying in sync with the
+		// backend enum (no client-side allowlist to drift).
+		if d := flattenedZodDetail(wrapped.Error); d != "" {
+			return snippet([]byte(d))
+		}
 		// error as a plain string.
 		var s string
 		if json.Unmarshal(wrapped.Error, &s) == nil && s != "" {
@@ -243,6 +251,56 @@ func firstZodIssue(arr []byte) string {
 			return field + " — " + is.Message
 		}
 		return is.Message
+	}
+	return ""
+}
+
+// flattenedZodDetail renders a concise detail from a FLATTENED zod error body —
+// the shape `zod`'s `.flatten()` produces and the apps-store endpoint returns:
+//
+//	{"formErrors":["..."],"fieldErrors":{"sort":["Invalid enum value..."]}}
+//
+// It prefers the first field-specific message, rendered as `field — message`
+// (matching firstZodIssue's format), so the user sees WHICH flag was wrong and
+// WHY; it falls back to the first top-level formError. Returns "" when err is
+// not this shape or carries no message. fieldErrors is decoded into an ordered
+// slice (not a map) so the reported field is DETERMINISTIC — Go map iteration
+// order is random, and a stable message keeps the field-mapping tests meaningful.
+func flattenedZodDetail(errBody []byte) string {
+	var flat struct {
+		FormErrors  []string        `json:"formErrors"`
+		FieldErrors json.RawMessage `json:"fieldErrors"`
+	}
+	if json.Unmarshal(errBody, &flat) != nil {
+		return ""
+	}
+	// fieldErrors as an ordered list of {field, [messages]} pairs.
+	dec := json.NewDecoder(strings.NewReader(string(flat.FieldErrors)))
+	if _, err := dec.Token(); err == nil { // consume the opening '{'
+		for dec.More() {
+			keyTok, err := dec.Token()
+			if err != nil {
+				break
+			}
+			field, _ := keyTok.(string)
+			var msgs []string
+			if err := dec.Decode(&msgs); err != nil {
+				break
+			}
+			for _, m := range msgs {
+				if strings.TrimSpace(m) != "" {
+					if field != "" {
+						return field + " — " + m
+					}
+					return m
+				}
+			}
+		}
+	}
+	for _, m := range flat.FormErrors {
+		if strings.TrimSpace(m) != "" {
+			return m
+		}
 	}
 	return ""
 }

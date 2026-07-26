@@ -17,6 +17,40 @@ import (
 // default 20). Kept in sync with the endpoint's zod bound.
 const appsLimitMax = 50
 
+// appKinds / appSorts are the FIXED enums the store's zod schema accepts for
+// --kind and --sort. They rarely change, so the CLI validates them client-side
+// for a fast, offline error (mirroring --limit's local check) instead of a
+// round-trip. --category is deliberately NOT hardcoded here: the marketplace
+// category set grows as the backend adds categories, so a client-side allowlist
+// would drift — an invalid --category is left to the server's 400, which the SDK
+// now surfaces with the offending field + allowed values (see badRequestDetail).
+var (
+	appKinds = []string{"all", "onsite", "offsite"}
+	appSorts = []string{"top-rated", "popular", "newest", "name"}
+	// appCategoriesHint documents the current marketplace category enum for the
+	// --category flag help. It mirrors the backend MARKETPLACE_CATEGORIES /
+	// listAppListingsSchema enum; it is NOT enforced client-side (see above), so a
+	// backend-added category still works even before this list is updated.
+	appCategoriesHint = "generation, games, utility, discovery, moderation, analytics, other"
+)
+
+// validateEnumFlag rejects an explicitly-set flag value that is not in the
+// allowed set, with a clear allowed-values message (a usage error, no HTTP
+// call). An empty value ("", the unset default) passes — it means "server
+// default", exactly like an unset --limit.
+func validateEnumFlag(name, value string, allowed []string) error {
+	if value == "" {
+		return nil
+	}
+	for _, a := range allowed {
+		if value == a {
+			return nil
+		}
+	}
+	return asUsageError(fmt.Errorf(
+		"invalid --%s %q; must be one of: %s", name, value, strings.Join(allowed, ", ")))
+}
+
 // newAppListCmd is `civitai app list` — discover published Apps in the store.
 //
 // This is FILTER-based discovery (kind/category/sort + keyset cursor), NOT
@@ -49,7 +83,7 @@ see apps if your account is a moderator or app-dev-tester; a normal login may ge
 an empty list. This command is useless until the backing API is deployed.`,
 		Example: `  civitai app list
   civitai app list --kind onsite --sort popular --limit 10
-  civitai app list --category productivity --json
+  civitai app list --category generation --json
   civitai app list --cursor '<next-cursor-from-a-previous-page>'`,
 		Args: cobra.NoArgs,
 		PreRunE: func(c *cobra.Command, args []string) error {
@@ -58,6 +92,14 @@ an empty list. This command is useless until the backing API is deployed.`,
 			if f := c.Flags().Lookup("limit"); f != nil && f.Changed && limit < 1 {
 				return asUsageError(fmt.Errorf(
 					"--limit must be a positive integer (got %d); omit --limit to use the server default", limit))
+			}
+			// Fast, offline validation of the FIXED enums (--category is left to the
+			// server's 400 — its allowed set drifts as the backend adds categories).
+			if err := validateEnumFlag("kind", kind, appKinds); err != nil {
+				return err
+			}
+			if err := validateEnumFlag("sort", sort, appSorts); err != nil {
+				return err
 			}
 			return nil
 		},
@@ -91,9 +133,9 @@ an empty list. This command is useless until the backing API is deployed.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&kind, "kind", "", "filter by kind (all, onsite, offsite)")
-	cmd.Flags().StringVar(&category, "category", "", "filter by marketplace category")
-	cmd.Flags().StringVar(&sort, "sort", "", "sort order (top-rated, popular, newest, name)")
+	cmd.Flags().StringVar(&kind, "kind", "", "filter by kind ("+strings.Join(appKinds, ", ")+")")
+	cmd.Flags().StringVar(&category, "category", "", "filter by marketplace category ("+appCategoriesHint+")")
+	cmd.Flags().StringVar(&sort, "sort", "", "sort order ("+strings.Join(appSorts, ", ")+")")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "pagination cursor from a previous response")
 	cmd.Flags().IntVar(&limit, "limit", 0, fmt.Sprintf("results per page (1-%d)", appsLimitMax))
 	cmd.Flags().Bool("json", false, "print the raw API JSON response (for scripting)")
@@ -177,8 +219,8 @@ func appCardAuthor(c *civitai.AppCard) string {
 func printAppList(cmd *cobra.Command, items []civitai.AppCard) {
 	out := cmd.OutOrStdout()
 	if len(items) == 0 {
-		fmt.Fprintln(out, "No apps found — the store may not be publicly launched yet, or no app matches these filters.")
-		fmt.Fprintln(out, "If you are a moderator or app-dev-tester, make sure you are logged in (`civitai login`).")
+		fmt.Fprintln(out, "No apps visible for your account — until the store opens publicly you only see apps if your account is a moderator or app-dev-tester, or nothing matches your filters.")
+		fmt.Fprintln(out, "Make sure you are logged in (`civitai login`), or relax --kind / --category / --sort.")
 		return
 	}
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
@@ -212,7 +254,7 @@ func printAppDetail(cmd *cobra.Command, d *civitai.AppDetail) {
 	fmt.Fprintf(out, "  category: %s\n", dashIfEmpty(safeTerm(d.Category)))
 	fmt.Fprintf(out, "  rating:   %s (%d review(s))\n", appRating(d.Recommend), d.ReviewCount)
 	if d.ContentRating != "" {
-		fmt.Fprintf(out, "  rating:   content %s\n", safeTerm(d.ContentRating))
+		fmt.Fprintf(out, "  content:  %s\n", safeTerm(d.ContentRating))
 	}
 	fmt.Fprintf(out, "  author:   %s\n", author)
 

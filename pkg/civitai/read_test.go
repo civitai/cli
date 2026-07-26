@@ -263,6 +263,47 @@ func TestReadError400Classification(t *testing.T) {
 	}
 }
 
+// TestReadError400FlattenedZod asserts the FLATTENED zod 400 shape (formErrors/
+// fieldErrors, what the apps-store endpoint returns for a bad enum) is surfaced
+// as `field — message`, not the bare generic string — so the user learns WHICH
+// field was wrong and WHY, staying in sync with the backend enum.
+func TestReadError400FlattenedZod(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			"fieldErrors",
+			`{"error":{"formErrors":[],"fieldErrors":{"sort":["Invalid enum value. Expected 'top-rated' | 'popular', received 'best'"]}}}`,
+			`invalid request parameter (400): sort — Invalid enum value. Expected 'top-rated' | 'popular', received 'best'`,
+		},
+		{
+			// formErrors-only (no field path) falls back to the top-level message.
+			"formErrors",
+			`{"error":{"formErrors":["Unrecognized key(s) in object: 'foo'"],"fieldErrors":{}}}`,
+			`invalid request parameter (400): Unrecognized key(s) in object: 'foo'`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := readError(http.StatusBadRequest, []byte(tc.body))
+			if err == nil {
+				t.Fatal("expected an error for a 400")
+			}
+			if !errors.Is(err, ErrBadRequest) {
+				t.Errorf("400 should be tagged ErrBadRequest, got: %v", err)
+			}
+			if err.Error() != tc.want {
+				t.Errorf("flattened-zod 400 = %q, want %q", err.Error(), tc.want)
+			}
+			if strings.Contains(err.Error(), "fieldErrors") || strings.Contains(err.Error(), "formErrors") {
+				t.Errorf("raw flatten keys must not leak: %q", err.Error())
+			}
+		})
+	}
+}
+
 func TestCursorStringEmpty(t *testing.T) {
 	var m Metadata
 	if got := m.CursorString(); got != "" {
