@@ -2,16 +2,19 @@ package cmd
 
 import "github.com/spf13/cobra"
 
-// newAppCmd is the `civitai app` command group for Apps authoring.
+// newAppCmd is the `civitai app` command group for browsing + authoring Apps.
 func newAppCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "app",
-		Short: "Author and ship Civitai Apps",
-		Long: `Author and ship Civitai Apps.
+		Short: "Browse, author, and ship Civitai Apps",
+		Long: `Browse, author, and ship Civitai Apps.
+
+Browse the published App store with "civitai app list" (filter-based discovery)
+and inspect one App with "civitai app view <slug>".
 
 An App is a sandboxed static web app served in an iframe. The platform
 owns the build and the runtime; the only mandatory file is block.manifest.json.
-The typical lifecycle is create -> validate -> submit.
+The typical authoring lifecycle is create -> validate -> submit.
 
 "civitai app create" is the friendly, batteries-included scaffolder (defaults to
 the rich page-money SDK template); "civitai app init" is the same scaffolder
