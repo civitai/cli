@@ -229,16 +229,19 @@ func TestLockfileOmittedBuildCommandWithPnpmLockIsFatal(t *testing.T) {
 
 func TestLockfileMissingEntirelyIsFatal(t *testing.T) {
 	cases := []struct {
-		name       string
-		build      string
-		wantLock   string
-		wantStrict string
+		name  string
+		build string
+		// want is the set of substrings the message must carry: the lockfile the
+		// recipe requires plus the strict install it will actually run.
+		want []string
 	}{
-		{"npm run build", "npm run build", "package-lock.json", "npm ci"},
-		{"pnpm run build", "pnpm run build", "pnpm-lock.yaml", "pnpm install --frozen-lockfile"},
-		{"yarn run build", "yarn run build", "yarn.lock", "yarn install --frozen-lockfile"},
-		{"vite build", "vite build", "package-lock.json", "npm ci"},
-		{"npx vite build", "npx vite build", "package-lock.json", "npm ci"},
+		{"npm run build", "npm run build", []string{"package-lock.json", "npm ci"}},
+		{"pnpm run build", "pnpm run build", []string{"pnpm-lock.yaml", "pnpm install --frozen-lockfile"}},
+		// The recipe's yarn branch is VERSION-AWARE — the message must not claim
+		// --frozen-lockfile is what yarn 2+ runs.
+		{"yarn run build", "yarn run build", []string{"yarn.lock", "yarn install --frozen-lockfile", "--immutable"}},
+		{"vite build", "vite build", []string{"package-lock.json", "npm ci"}},
+		{"npx vite build", "npx vite build", []string{"package-lock.json", "npm ci"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -248,9 +251,28 @@ func TestLockfileMissingEntirelyIsFatal(t *testing.T) {
 			if res.OK() {
 				t.Fatal("package.json with no lockfile must be a hard error")
 			}
-			wantLockError(t, res, "no lockfile is committed", tc.wantStrict, tc.wantLock)
+			wantLockError(t, res, append([]string{"no lockfile is committed"}, tc.want...)...)
 		})
 	}
+}
+
+// The remedy ("run <pm> install and commit the lockfile") is a dead end in a
+// pnpm/yarn WORKSPACE package: that command writes the lockfile at the workspace
+// ROOT, and pkgzip.Build walks only the manifest directory, so the root copy is
+// never bundled. The message must say where the lockfile has to live.
+func TestLockfileMissingEntirelyNamesTheBundleRoot(t *testing.T) {
+	res := project(t, lockManifest("pnpm run build"), map[string]string{
+		"package.json": `{"name":"lock-block","private":true}`,
+	})
+	if res.OK() {
+		t.Fatal("package.json with no lockfile must be a hard error")
+	}
+	wantLockError(t, res,
+		"no lockfile is committed",
+		"rooted at the manifest directory",
+		"beside block.manifest.json",
+		"workspace ROOT",
+	)
 }
 
 // With buildCommand omitted AND no lockfile, the message also has to offer the
@@ -295,6 +317,75 @@ func TestLockfileFreshScaffoldFailsDirButNotManifestOnly(t *testing.T) {
 				t.Fatalf("ManifestOnly must ignore install state, got: %v", mres.Errors)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The check must agree with the PACKAGER about what counts as a file.
+// ---------------------------------------------------------------------------
+
+// A SYMLINKED lockfile is not bundled: pkgzip.Build skips every non-regular
+// entry, so `app submit` would upload a bundle with no lockfile and the platform
+// build would hard-fail — the exact opaque failure this check exists to prevent,
+// with a green `validate` in front of it. So the check must treat a symlink as
+// absent (os.Lstat + IsRegular), matching the packager.
+func TestLockfileSymlinkedLockfileIsNotAccepted(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "block.manifest.json"), []byte(lockManifest("npm run build")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{"name":"lock-block","private":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A REAL lockfile outside the project, symlinked in — the shape that used to
+	// pass because os.Stat follows symlinks.
+	outside := filepath.Join(t.TempDir(), "package-lock.json")
+	if err := os.WriteFile(outside, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "package-lock.json")
+	if err := os.Symlink(outside, link); err != nil {
+		// Symlink creation is not available everywhere (e.g. Windows without
+		// developer mode) — skip rather than fail CI on an unrelated platform.
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+	// Sanity: the symlink resolves, so an os.Stat-based check WOULD accept it.
+	if _, err := os.Stat(link); err != nil {
+		t.Fatalf("symlink should resolve: %v", err)
+	}
+
+	res, err := Dir(dir)
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if res.OK() {
+		t.Fatal("a symlinked lockfile is dropped from the bundle, so it must NOT pass validation")
+	}
+	wantLockError(t, res, "no lockfile is committed", "package-lock.json", "npm ci")
+}
+
+// The same rule applied to package.json keeps validate and the bundle in
+// agreement the other way: a symlinked package.json is not bundled either, so
+// the uploaded app really is static and the check correctly stands down.
+func TestLockfileSymlinkedPackageJSONIsTreatedAsStatic(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "block.manifest.json"), []byte(lockManifest("")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "package.json")
+	if err := os.WriteFile(outside, []byte(`{"name":"lock-block","private":true}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "package.json")); err != nil {
+		t.Skipf("cannot create a symlink here: %v", err)
+	}
+
+	res, err := Dir(dir)
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if !res.OK() {
+		t.Fatalf("a symlinked package.json is not bundled, so the app is static: %v", res.Errors)
 	}
 }
 

@@ -59,7 +59,8 @@ type packageManager struct {
 	// lockfile is the file the recipe requires (and installs strictly from).
 	lockfile string
 	// installCmd is the strict install the recipe runs (flags trimmed to the
-	// part that matters to an author reading the message).
+	// part that matters to an author reading the message). For yarn the recipe
+	// is VERSION-AWARE, so this names both forms rather than misstating one.
 	installCmd string
 	// refreshCmd is what the author runs LOCALLY to (re)generate the lockfile.
 	refreshCmd string
@@ -71,7 +72,11 @@ type packageManager struct {
 var (
 	pmNpm  = packageManager{"npm", "package-lock.json", "npm ci", "npm install", "npm run build"}
 	pmPnpm = packageManager{"pnpm", "pnpm-lock.yaml", "pnpm install --frozen-lockfile", "pnpm install", "pnpm run build"}
-	pmYarn = packageManager{"yarn", "yarn.lock", "yarn install --frozen-lockfile", "yarn install", "yarn run build"}
+	// The yarn branch of the recipe dispatches on `yarn --version`:
+	//   1.*) yarn install --frozen-lockfile --ignore-scripts
+	//   *)   YARN_ENABLE_SCRIPTS=false yarn install --immutable
+	// so the message names both instead of claiming --frozen-lockfile always.
+	pmYarn = packageManager{"yarn", "yarn.lock", "yarn install --frozen-lockfile (yarn 1) / --immutable (yarn 2+)", "yarn install", "yarn run build"}
 )
 
 // packageManagers is the scan order for reporting which lockfiles are committed.
@@ -106,7 +111,7 @@ func lockfileChecks(dir string, m *manifest.Manifest) (errs []string, warns []st
 	// A block with no package.json is STATIC: the recipe's `if [ -f package.json ]`
 	// guard is false, it never installs anything, and the bundle is served as-is.
 	// Never flag it.
-	if !fileExists(filepath.Join(dir, "package.json")) {
+	if !regularFileExists(filepath.Join(dir, "package.json")) {
 		return nil, nil
 	}
 
@@ -123,7 +128,7 @@ func lockfileChecks(dir string, m *manifest.Manifest) (errs []string, warns []st
 	var committed, foreign []packageManager
 	haveWanted := false
 	for _, pm := range packageManagers {
-		if !fileExists(filepath.Join(dir, pm.lockfile)) {
+		if !regularFileExists(filepath.Join(dir, pm.lockfile)) {
 			continue
 		}
 		committed = append(committed, pm)
@@ -164,14 +169,27 @@ func pmClause(build string) string {
 // the other just walks the author into a second failure.
 const outputDirNote = `plus the "outputDir" the manifest schema requires alongside buildCommand`
 
+// workspaceNote covers the monorepo/workspace shape, where the remedy above is
+// otherwise a dead end: run inside a pnpm/yarn workspace PACKAGE, `pnpm install`
+// writes the lockfile at the workspace ROOT, not beside the manifest — and
+// pkgzip.Build walks only the manifest directory, so a parent-level lockfile is
+// never bundled. This shape used to build under the old `|| npm install`
+// fallback, so these authors are hitting a real platform behaviour change and
+// need to know WHERE the lockfile has to live.
+func workspaceNote(want packageManager) string {
+	return fmt.Sprintf(
+		"The submitted bundle is rooted at the manifest directory, so the %s must sit beside %s — in a workspace package `%s` writes it at the workspace ROOT, which is never bundled; generate one here instead.",
+		want.lockfile, manifest.Filename, want.refreshCmd)
+}
+
 func missingLockfileError(want packageManager, foreign []packageManager, build string) string {
 	switch len(foreign) {
 	case 0:
 		// No lockfile of any kind. Common right after `civitai app create`, before
 		// the first install — still fatal, because submitting it fails the build.
 		msg := fmt.Sprintf(
-			"package.json is present but no lockfile is committed — %s, so the platform build will run `%s`, which hard-fails without %s. Run `%s` and commit the %s it writes: the platform installs strictly from the committed lockfile so builds are reproducible.",
-			pmClause(build), want.installCmd, want.lockfile, want.refreshCmd, want.lockfile)
+			"package.json is present but no lockfile is committed — %s, so the platform build will run `%s`, which hard-fails without %s. Run `%s` and commit the %s it writes: the platform installs strictly from the committed lockfile so builds are reproducible. %s",
+			pmClause(build), want.installCmd, want.lockfile, want.refreshCmd, want.lockfile, workspaceNote(want))
 		if build == "" {
 			msg += fmt.Sprintf(
 				" If this app uses pnpm or yarn instead, set \"buildCommand\" to it (e.g. %q) — %s — and commit that lockfile instead.",
@@ -215,7 +233,18 @@ func joinLockfiles(pms []packageManager) string {
 	}
 }
 
-func fileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && !info.IsDir()
+// regularFileExists reports whether path is a REGULAR file — deliberately using
+// os.Lstat (which does NOT follow symlinks) plus an IsRegular test, so this
+// mirrors the packager exactly.
+//
+// pkgzip.Build walks the project with filepath.WalkDir and skips every
+// non-regular entry (`if !d.Type().IsRegular() { return nil }`), i.e. symlinks,
+// sockets and devices are never bundled. os.Stat would FOLLOW a symlink, so a
+// symlinked `package-lock.json` would look present here while being dropped
+// from the submitted bundle — a green `validate` in front of exactly the opaque
+// server-side "no lockfile" build failure this check exists to prevent. The two
+// must agree; if pkgzip's rule changes, change this with it.
+func regularFileExists(path string) bool {
+	info, err := os.Lstat(path)
+	return err == nil && info.Mode().IsRegular()
 }
