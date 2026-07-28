@@ -167,7 +167,13 @@ init and copy the upstream files in manually`)
 
 	// Sanity-check the scaffold we just produced is schema-valid. If it
 	// isn't, that's a bug in our own templates — fail loudly.
-	res, verr := validate.Dir(destDir)
+	//
+	// ManifestOnly, not Dir: the project-state checks describe the AUTHOR's
+	// working tree, not the template. A scaffold has no lockfile until the
+	// author's first `npm install` (next step 1), and reporting that as
+	// "internal error: scaffolded manifest failed validation" would be a lie.
+	// `civitai app validate` still flags it on the same directory.
+	res, verr := validate.ManifestOnly(destDir)
 	if verr != nil {
 		return verr
 	}
@@ -205,7 +211,7 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		// otherwise walk a first-time author straight into the gated wall). The
 		// tunnel resolves the app server-side, so submit (which creates the pending
 		// app row) still precedes it.
-		fmt.Fprintf(out, "  1. cd %s && npm install\n", destDir)
+		fmt.Fprintf(out, "  1. cd %s && npm install    # writes package-lock.json — COMMIT it\n", destDir)
 		fmt.Fprintln(out, "  2. npm run dev:harness     # mock host, no Buzz — works today")
 		fmt.Fprintln(out, "  3. edit src/App.tsx and iterate")
 		fmt.Fprintln(out)
@@ -214,12 +220,25 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		fmt.Fprintln(out, "     npm run dev:tunnel      # in another terminal: serve your app for the tunnel")
 		fmt.Fprintln(out, "     civitai app dev-tunnel  # preview your LOCAL app INSIDE the real Civitai host — prod-fidelity")
 	case tmpl == scaffold.PageVite:
-		fmt.Fprintf(out, "  1. cd %s && npm install\n", destDir)
+		fmt.Fprintf(out, "  1. cd %s && npm install    # writes package-lock.json — COMMIT it\n", destDir)
 		fmt.Fprintln(out, "  2. npm run dev              # preview locally")
 		fmt.Fprintln(out, "  3. civitai app submit       # validate + submit for review")
 	default:
 		fmt.Fprintf(out, "  1. cd %s              # then open index.html or serve the directory\n", destDir)
 		fmt.Fprintln(out, "  2. civitai app submit       # validate + submit for review")
+	}
+
+	// The lockfile is load-bearing, and the failure it causes is remote and
+	// opaque: the platform build installs STRICTLY from the committed lockfile
+	// (no registry re-resolve fallback), so a scaffold that is never `npm
+	// install`ed — or one installed with pnpm/yarn while buildCommand still says
+	// npm — fails the build with nothing wrong locally. `civitai app validate`
+	// catches both, but say it here too, at the moment the choice is made.
+	if tmpl.NeedsInstall() {
+		fmt.Fprintln(out, "\n"+ui.Dim("  Commit the lockfile. The platform build installs strictly from it (`npm ci`) and"))
+		fmt.Fprintln(out, ui.Dim("  will not build without it. If you install with pnpm or yarn instead, set"))
+		fmt.Fprintln(out, ui.Dim("  \"buildCommand\" to that package manager (and the \"outputDir\" the schema requires"))
+		fmt.Fprintln(out, ui.Dim("  alongside it) and commit THAT lockfile — a mismatch fails the build."))
 	}
 }
 

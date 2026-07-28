@@ -36,6 +36,12 @@ func AllTemplates() []Template { return []Template{Static, PageVite, PageMoney} 
 // rather than a plain `dev` (which renders blank without a host).
 func (t Template) NeedsHarness() bool { return t == PageMoney }
 
+// NeedsInstall reports whether the template scaffolds a package.json — i.e.
+// whether the platform build will run an install step for it, and therefore
+// whether the author MUST commit a lockfile. Static blocks are served as-is and
+// never install.
+func (t Template) NeedsInstall() bool { return t != Static }
+
 // ParseTemplate validates a template name.
 func ParseTemplate(s string) (Template, error) {
 	switch Template(s) {

@@ -10,11 +10,28 @@ import (
 	"github.com/civitai/cli/internal/scaffold"
 )
 
-func scaffoldGood(t *testing.T, tmpl scaffold.Template) string {
+// scaffoldRaw renders a template exactly as `civitai app create` leaves it — no
+// lockfile, because the author's first `npm install` writes that.
+func scaffoldRaw(t *testing.T, tmpl scaffold.Template) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "block")
 	if _, err := scaffold.Render(tmpl, dir, scaffold.Data{Slug: "good-block", Name: "Good Block"}); err != nil {
 		t.Fatalf("scaffold: %v", err)
+	}
+	return dir
+}
+
+// scaffoldGood renders a template in the state an author would actually SUBMIT:
+// scaffolded, then installed so the lockfile the platform build installs
+// strictly from is committed.
+func scaffoldGood(t *testing.T, tmpl scaffold.Template) string {
+	t.Helper()
+	dir := scaffoldRaw(t, tmpl)
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
+		// The npm templates declare `npm run build`; stand in for `npm install`.
+		if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{}\n"), 0o600); err != nil {
+			t.Fatalf("write package-lock.json: %v", err)
+		}
 	}
 	return dir
 }

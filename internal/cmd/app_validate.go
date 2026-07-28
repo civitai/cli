@@ -35,6 +35,12 @@ plus the ported semantic rules and structural checks:
   - renderMode inline/hybrid is rejected (requires a verified tier the platform
     only assigns post-submit)
   - targets[].slotId must be a known registered slot
+  - the committed LOCKFILE matches the package manager the platform build
+    derives from buildCommand (its first word): pnpm -> pnpm-lock.yaml,
+    yarn -> yarn.lock, and npm/vite/npx/unset -> package-lock.json. The
+    platform installs strictly from the lockfile, so a mismatch or a missing
+    lockfile is a guaranteed build failure. Only applies when package.json
+    exists — a static app never installs.
 
 It also emits non-fatal WARNINGS for money-path footguns the schema can't catch
 as hard errors (e.g. a budgeted page with no page.buzzBudgetPerGen). Warnings do
