@@ -73,8 +73,24 @@ func schema() (*jsonschema.Schema, error) {
 	return s, nil
 }
 
-// Dir validates the App project in dir.
-func Dir(dir string) (Result, error) {
+// Dir validates the App project in dir: the manifest checks PLUS the
+// project-state checks that depend on files the AUTHOR maintains (currently the
+// lockfile ↔ buildCommand consistency check — see lockfile.go).
+func Dir(dir string) (Result, error) { return validateDir(dir, true) }
+
+// ManifestOnly validates just the manifest of the project in dir, skipping the
+// project-state checks.
+//
+// `civitai app init` / `app create` use it to self-check the template they just
+// wrote. That self-check exists to catch a bug in OUR templates; a scaffold
+// legitimately has no lockfile yet (the author's first `npm install` writes it),
+// so failing there would turn an author-state issue into "internal error:
+// scaffolded manifest failed validation". `civitai app validate` on that same
+// directory still reports it — which is correct, because the app is not
+// submittable until the lockfile is committed.
+func ManifestOnly(dir string) (Result, error) { return validateDir(dir, false) }
+
+func validateDir(dir string, projectState bool) (Result, error) {
 	var res Result
 
 	// Structural: manifest must exist at the project root.
@@ -119,6 +135,17 @@ func Dir(dir string) (Result, error) {
 	// can express (the schema enforces "outputDir required when buildCommand
 	// set"; here we also check the directory is declared/exists sanely).
 	res.Errors = append(res.Errors, buildCoherence(dir, m)...)
+
+	// Project state: the committed lockfile must match the package manager the
+	// platform build derives from buildCommand. The build recipe installs
+	// STRICTLY from that lockfile (no registry re-resolve fallback), so a
+	// mismatch is a guaranteed build failure. Skipped for a freshly scaffolded
+	// project (see ManifestOnly) and, inside the check, for static blocks.
+	if projectState {
+		lockErrs, lockWarns := lockfileChecks(dir, m)
+		res.Errors = append(res.Errors, lockErrs...)
+		res.Warnings = append(res.Warnings, lockWarns...)
+	}
 
 	// Non-fatal advisories: real money-path footguns the schema can't catch as
 	// hard errors (see warnings.go). These never fail validation unless the

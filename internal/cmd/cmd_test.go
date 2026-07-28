@@ -155,7 +155,10 @@ func TestAppInitPageMoneyTemplate(t *testing.T) {
 	if strings.Contains(out, "npm run dev\n") {
 		t.Errorf("page-money next steps should NOT suggest plain `npm run dev`: %s", out)
 	}
-	// And it must validate clean (the scaffold sets a budget so no warnings).
+	// And it must validate clean (the scaffold sets a budget so no warnings)
+	// once the author has installed — `validate` requires the committed lockfile
+	// the platform build installs strictly from.
+	simulateInstall(t, filepath.Join(tmp, "money-app"))
 	if _, _, err := run(t, "app", "validate", filepath.Join(tmp, "money-app")); err != nil {
 		t.Errorf("scaffolded page-money should validate: %v", err)
 	}

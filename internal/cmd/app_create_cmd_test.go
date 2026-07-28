@@ -9,6 +9,21 @@ import (
 	"github.com/civitai/cli/internal/validate"
 )
 
+// simulateInstall writes the lockfile a scaffolded npm project gets from its
+// first `npm install` (next step 1). `validate` requires it because the platform
+// build installs strictly from the committed lockfile; the scaffold cannot ship
+// one (a checked-in lockfile would be stale on arrival), so a test that asserts
+// the FULL `validate` passes has to stand in for the author's install.
+func simulateInstall(t *testing.T, dir string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
+		return // static template: no install step, no lockfile
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{}\n"), 0o600); err != nil {
+		t.Fatalf("write package-lock.json: %v", err)
+	}
+}
+
 // assertScaffoldValid asserts the scaffolded dir is non-empty and passes the
 // same self-validation the scaffold commands run.
 func assertScaffoldValid(t *testing.T, dir string) {
@@ -23,6 +38,7 @@ func assertScaffoldValid(t *testing.T, dir string) {
 	if _, err := os.Stat(filepath.Join(dir, "block.manifest.json")); err != nil {
 		t.Errorf("block.manifest.json missing: %v", err)
 	}
+	simulateInstall(t, dir)
 	res, err := validate.Dir(dir)
 	if err != nil {
 		t.Fatalf("validate.Dir: %v", err)
