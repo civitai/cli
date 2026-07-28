@@ -1,7 +1,7 @@
 # civitai CLI
 
 > **Browse and download Civitai models, images, and articles — and author,
-> validate, and submit App Blocks.** Two paths in one static binary: an
+> validate, and submit Apps.** Two paths in one static binary: an
 > anonymous **read/download client** for the public API, and the toolchain for
 > shipping **Apps**.
 
