@@ -166,6 +166,95 @@ func TestValidateAcceptsMissingCategory(t *testing.T) {
 	}
 }
 
+// --- store tagline (optional; enforced by the vendored schema's minLength /
+// maxLength, mirroring the server's BlockManifestValidator tagline check) ---
+//
+// NOTE on a deliberate, SAFE asymmetry: the server checks the TRIMMED length
+// while JSON Schema's maxLength counts the RAW string. So a 140-char tagline
+// padded with trailing spaces is rejected here but accepted server-side — the
+// CLI is the stricter side, which fails locally rather than surprising the
+// author at submit. The schema is a shape hint; the server validator wins.
+
+func TestValidateAcceptsTagline(t *testing.T) {
+	mustAccept(t, "tagline", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [], "tagline": "The fastest way to remix a model",
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`)
+}
+
+func TestValidateAcceptsTaglineAtCap(t *testing.T) {
+	// Exactly 140 chars — the boundary must be inclusive.
+	mustAccept(t, "tagline at cap", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [], "tagline": "`+strings.Repeat("a", 140)+`",
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`)
+}
+
+func TestValidateRejectsOverLongTagline(t *testing.T) {
+	// One char over the 140 cap fails with a clear, field-keyed error.
+	mustReject(t, "over-long tagline", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [], "tagline": "`+strings.Repeat("a", 141)+`",
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`, "tagline")
+}
+
+func TestValidateRejectsWhitespaceOnlyTagline(t *testing.T) {
+	// The server TRIMS before measuring, so a whitespace-only tagline is a blank
+	// one. The schema's `\S` pattern is what keeps this rejection in lockstep —
+	// without it the schema would be MORE permissive than the server, which is
+	// the divergence direction that actually hurts (green locally, rejected at
+	// submit).
+	mustReject(t, "whitespace-only tagline", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [], "tagline": "   ",
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`, "tagline")
+}
+
+func TestValidateAcceptsPaddedTagline(t *testing.T) {
+	// Padding AROUND real content is fine — the server trims it off.
+	mustAccept(t, "padded tagline", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [], "tagline": "  A crisp one-liner  ",
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`)
+}
+
+func TestValidateRejectsEmptyTagline(t *testing.T) {
+	// An empty tagline is not "no tagline" — omit the field instead.
+	mustReject(t, "empty tagline", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [], "tagline": "",
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`, "tagline")
+}
+
+func TestValidateRejectsNonStringTagline(t *testing.T) {
+	mustReject(t, "non-string tagline", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": [], "tagline": 42,
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`, "tagline")
+}
+
+func TestValidateAcceptsMissingTagline(t *testing.T) {
+	// tagline is optional — a manifest omitting it validates (baseGood has none).
+	res := validateManifest(t, baseGood)
+	if !res.OK() {
+		t.Fatalf("manifest without tagline should validate, got: %v", res.Errors)
+	}
+}
+
 func TestValidateRejectsUnknownScopeJustificationKey(t *testing.T) {
 	// End-to-end through the semantic path: an otherwise-valid manifest that
 	// justifies a scope it does not declare must be rejected, matching the
