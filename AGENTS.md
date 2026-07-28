@@ -103,7 +103,7 @@ func newWhoAmICmd() *cobra.Command {
 
 ## Intentional decisions that look wrong (read before "fixing")
 
-Items 1–2 are deliberate mirrors of `civitai/civitai` (item 3 is a deliberate
+Items 1–3 are deliberate mirrors of the platform (item 4 is a deliberate
 *non*-mirror). The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
@@ -124,7 +124,19 @@ until that exists, vendoring is on purpose.
    hard-codes `vendoredSlotIDs` (4 entries) mirroring
    `civitai/civitai → src/shared/constants/slot-registry.ts`. Go can't import the
    TS registry; the set is small and historically stable, so vendoring is cheap.
-3. **The CLI does NOT vendor the server's token-scope bitmask — and shouldn't.**
+3. **The lockfile check in `internal/validate/lockfile.go` mirrors the PLATFORM
+   BUILD RECIPE, not `BlockManifestValidator`.** It is the one build-time rule
+   `validate` reproduces, because the platform build installs *strictly* from the
+   committed lockfile (no registry re-resolve fallback) and a mismatch surfaces
+   only as an opaque server-side "build failed". The recipe derives the package
+   manager from the **first word** of `buildCommand` and requires that manager's
+   lockfile; `npm`, `vite`, `npx` and an omitted `buildCommand` all take the npm
+   branch. Keep `packageManagerFor` in lockstep with the recipe if the recipe's
+   `case` arms ever change, and keep the remedy text mentioning `outputDir` — the
+   schema's `allOf` requires it whenever `buildCommand` is set, so a remedy that
+   omits it walks the author into a second failure. It fires only when
+   `package.json` exists; static blocks never install and must never be flagged.
+4. **The CLI does NOT vendor the server's token-scope bitmask — and shouldn't.**
    The `whoami` / `dev-token` "can spend Buzz" capability check decodes the JWT
    `scopes` (a **string array**) and looks for the `ai:write:budgeted` scope
    string (see `tokenCanSpend` in `internal/cmd/app_dev_token.go`). It does NOT

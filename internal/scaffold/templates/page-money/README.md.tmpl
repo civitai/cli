@@ -23,6 +23,15 @@ owns the build: it runs `npm ci` then the `buildCommand` from
 `block.manifest.json` (`npm run build`), serving the static output from
 `outputDir` (`dist/`). You do NOT commit `dist/` — the platform builds it.
 
+**Commit your lockfile.** The platform installs *strictly* from it — `npm ci`,
+with no registry re-resolve fallback — so builds are byte-reproducible. Without
+a committed `package-lock.json` the build hard-fails. If you prefer pnpm or
+yarn, set `"buildCommand"` to that package manager (plus the `"outputDir"` the
+manifest schema requires alongside it) and commit *that* lockfile instead:
+`"pnpm run build"` needs `pnpm-lock.yaml`, `"yarn run build"` needs `yarn.lock`.
+A lockfile that disagrees with `buildCommand` is the most common build failure
+there is — `civitai app validate` catches it before you submit.
+
 The money path uses the SDK hooks — never raw `window.parent.postMessage`:
 
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).

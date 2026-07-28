@@ -549,6 +549,17 @@ project checks. A few checks are necessarily approximate locally (the slot
 registry is vendored; per-app origin-binding/scope checks the CLI can't see are
 not reproduced).
 
+It also mirrors one **build-time** rule, because the failure it prevents is
+otherwise an opaque server-side "build failed": your committed **lockfile must
+match the package manager the platform derives from `buildCommand`**. The
+platform build installs *strictly* from the lockfile — no registry re-resolve
+fallback — so `"buildCommand": "pnpm run build"` needs `pnpm-lock.yaml`,
+`"yarn run build"` needs `yarn.lock`, and `npm run …` / `vite build` /
+`npx vite build` / an omitted `buildCommand` all need `package-lock.json`. A
+mismatch or a missing lockfile is a hard `validate` error; an *extra* unused
+lockfile is a warning. Apps with no `package.json` are static — the platform
+never installs for them and they are never flagged.
+
 The **durable fix** is a server-side `civitai app validate` endpoint that calls
 the real `BlockManifestValidator` (the faithful contract), with this schema
 published as the syntactic half. See [`AGENTS.md`](AGENTS.md) for the full
