@@ -196,12 +196,21 @@ func (id *Identity) CanSpendBuzz() bool { return id.hasScope(ScopeAIServicesWrit
 // An unknown scope is treated as false.
 func (id *Identity) CanReadBuzz() bool { return id.hasScope(ScopeBuzzRead) }
 
-// CanSubmitApps reports whether the identity's token carries the App-Blocks
-// submit scope (bit 25) — the capability `civitai app submit` needs. It is a
-// SEPARATE opt-in bit that even a full personal key lacks by default (ScopeFull
-// excludes it), so surfacing it in whoami saves an author a submit-time 403.
-// An unknown scope is treated as false.
-func (id *Identity) CanSubmitApps() bool { return id.hasScope(ScopeAppBlocksSubmit) }
+// CanSubmitApps reports whether the credential can clear `civitai app submit`'s
+// SCOPE gate. The backend scope-gates submit ONLY on OAuth tokens: an OAuth
+// device-login token must carry the opt-in AppBlocksSubmit bit (bit 25, excluded
+// from ScopeFull), whereas a personal API key is NOT scope-gated for submit at
+// all — submit-version runs the AppBlocksSubmit check only when
+// subject.type == "oauth", so any personal key clears it. (The remaining
+// author-cohort / not-banned gates are server-side and not visible here, so a
+// "yes" means the credential's SCOPE permits submit, not that the account is in
+// the author cohort.) An unknown/absent credential is treated as false.
+func (id *Identity) CanSubmitApps() bool {
+	if id.IsOAuth() {
+		return id.hasScope(ScopeAppBlocksSubmit)
+	}
+	return id.CredentialType() == "personal API key"
+}
 
 // DecodeScopes returns the names of every set scope bit (low → high). A nil
 // (unknown) mask returns nil.

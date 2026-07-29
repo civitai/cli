@@ -361,23 +361,33 @@ func TestWhoAmISuccess(t *testing.T) {
 }
 
 // TestWhoAmISubmitAppsCapability drives the "Submit Apps: yes/no" capability
-// line off the token-scope bitmask whoami already fetches. Bit 25
-// (ScopeAppBlocksSubmit = 1<<25 = 33554432) is the App-Blocks submit scope; a
-// token carrying it must report "yes", one lacking it "no".
+// line. Mirrors submit-version.ts's gate: the ScopeAppBlocksSubmit (bit 25 =
+// 33554432) requirement applies ONLY to OAuth tokens; a personal API key is not
+// scope-gated for submit and always reports "yes". An unknown/absent credential
+// reports "no" (conservative).
 func TestWhoAmISubmitAppsCapability(t *testing.T) {
-	const submitBit = 1 << 25 // ScopeAppBlocksSubmit
+	const submitBit = 1 << 25       // ScopeAppBlocksSubmit
+	const scopeFull = submitBit - 1 // ScopeFull = bits 0..24 (excludes bit 25)
 	cases := []struct {
-		name       string
-		tokenScope int
-		want       string
+		name        string
+		subjectType string // "oauth", "apiKey", or "" for absent/unknown
+		tokenScope  int
+		want        string
 	}{
-		{"has submit scope", submitBit | 1, "Submit Apps:              yes"},
-		{"lacks submit scope", 1, "Submit Apps:              no"},
+		{"oauth with submit scope", "oauth", submitBit | 1, "Submit Apps:              yes"},
+		{"oauth without submit scope (even full scope)", "oauth", scopeFull, "Submit Apps:              no"},
+		{"personal key, full scope, no submit bit", "apiKey", scopeFull, "Submit Apps:              yes"},
+		{"personal key, minimal scope", "apiKey", 1, "Submit Apps:              yes"},
+		{"unknown credential (no subject)", "", 1, "Submit Apps:              no"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				fmt.Fprintf(w, `{"username":"bob","id":99,"tokenScope":%d}`, tc.tokenScope)
+				if tc.subjectType == "" {
+					fmt.Fprintf(w, `{"username":"bob","id":99,"tokenScope":%d}`, tc.tokenScope)
+				} else {
+					fmt.Fprintf(w, `{"username":"bob","id":99,"tokenScope":%d,"subject":{"type":%q}}`, tc.tokenScope, tc.subjectType)
+				}
 			}))
 			defer srv.Close()
 
