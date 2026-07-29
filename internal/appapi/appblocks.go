@@ -196,6 +196,13 @@ func (id *Identity) CanSpendBuzz() bool { return id.hasScope(ScopeAIServicesWrit
 // An unknown scope is treated as false.
 func (id *Identity) CanReadBuzz() bool { return id.hasScope(ScopeBuzzRead) }
 
+// CanSubmitApps reports whether the identity's token carries the App-Blocks
+// submit scope (bit 25) — the capability `civitai app submit` needs. It is a
+// SEPARATE opt-in bit that even a full personal key lacks by default (ScopeFull
+// excludes it), so surfacing it in whoami saves an author a submit-time 403.
+// An unknown scope is treated as false.
+func (id *Identity) CanSubmitApps() bool { return id.hasScope(ScopeAppBlocksSubmit) }
+
 // DecodeScopes returns the names of every set scope bit (low → high). A nil
 // (unknown) mask returns nil.
 func (id *Identity) DecodeScopes() []string {

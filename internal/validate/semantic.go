@@ -92,7 +92,85 @@ func semanticChecks(generic any) []string {
 	// express the keys⊆scopes cross-field rule.
 	errs = append(errs, scopeJustificationChecks(m)...)
 
+	// Every declared SENSITIVE scope MUST carry a non-empty justification — the
+	// server now REJECTS a manifest that declares one without it at submit
+	// (block-manifest-validator: unjustifiedSensitiveScopes). Mirror it as a
+	// hard error so `civitai app validate` fails locally with the SAME message
+	// instead of eating a server 400 after a full package+submit round-trip.
+	errs = append(errs, sensitiveScopeJustificationChecks(m)...)
+
 	return errs
+}
+
+// SENSITIVE_BLOCK_SCOPES mirrors the server's single-sourced sensitive set
+// (civitai → src/shared/constants/block-scope.constants.ts SENSITIVE_BLOCK_SCOPES):
+// the scopes that can spend/read the viewer's Buzz, read their PRIVATE data, or
+// write data other users see. A declared scope in this set MUST carry a
+// non-empty scopeJustifications entry or the server rejects the manifest at
+// submit — so this Go mirror fails the same manifests LOCALLY. Keep it byte-in-
+// step with the server set; the sensitiveScopeJustificationError message is
+// mirrored verbatim so CLI and server agree.
+var SENSITIVE_BLOCK_SCOPES = map[string]struct{}{
+	"ai:write:budgeted":         {},
+	"social:tip:self":           {},
+	"buzz:read:self":            {},
+	"collections:read:private":  {},
+	"apps:storage:shared:write": {},
+}
+
+// isSensitiveBlockScope reports whether scope is in SENSITIVE_BLOCK_SCOPES.
+// Scope names are canonical lowercase, so the match is exact (no case-folding),
+// mirroring the server's isSensitiveBlockScope.
+func isSensitiveBlockScope(scope string) bool {
+	_, ok := SENSITIVE_BLOCK_SCOPES[scope]
+	return ok
+}
+
+// unjustifiedSensitiveScopes returns the DECLARED sensitive scopes that lack a
+// non-empty (trimmed) scopeJustifications entry, deduped and in DECLARATION
+// order — mirroring the server helper of the same name so the CLI names the
+// same offenders in the same order as the 400 the server would return. A
+// justification "counts" only when its value is a string with non-whitespace
+// content; an empty/whitespace value, a non-string value, or a missing key all
+// leave the sensitive scope unjustified. A non-array `scopes` yields nil.
+func unjustifiedSensitiveScopes(generic map[string]any) []string {
+	arr, ok := generic["scopes"].([]any)
+	if !ok {
+		return nil
+	}
+	just, _ := generic["scopeJustifications"].(map[string]any)
+
+	var out []string
+	seen := make(map[string]struct{}, len(arr))
+	for _, e := range arr {
+		scope, ok := e.(string)
+		if !ok || !isSensitiveBlockScope(scope) {
+			continue
+		}
+		if _, dup := seen[scope]; dup {
+			continue
+		}
+		seen[scope] = struct{}{}
+		if s, ok := just[scope].(string); ok && strings.TrimSpace(s) != "" {
+			continue // justified
+		}
+		out = append(out, scope)
+	}
+	return out
+}
+
+// sensitiveScopeJustificationChecks emits ONE hard error naming every declared
+// sensitive scope that lacks a non-empty justification, using the server's exact
+// message so the local failure is byte-identical to the submit-time 400.
+func sensitiveScopeJustificationChecks(generic map[string]any) []string {
+	unjustified := unjustifiedSensitiveScopes(generic)
+	if len(unjustified) == 0 {
+		return nil
+	}
+	return []string{
+		"sensitive scopes require a justification — add a non-empty scopeJustifications entry for: " +
+			strings.Join(unjustified, ", "),
+	}
 }
 
 // scopeJustificationChecks enforces that every key in scopeJustifications is a

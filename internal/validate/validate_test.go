@@ -135,6 +135,47 @@ func TestValidateRejectsBadScope(t *testing.T) {
 	}`, "scopes")
 }
 
+// --- current-scope enum + scopeJustifications shape (Part 1: re-vendored
+// schema). These scopes were MISSING from the pre-re-vendor stale schema, so
+// these manifests would have failed the old vendored enum. ---
+
+func TestValidateAcceptsCurrentStorageSharedReadScope(t *testing.T) {
+	// apps:storage:shared:read is a CURRENT, non-sensitive scope absent from the
+	// old stale enum. It must validate with no justification needed.
+	mustAccept(t, "apps:storage:shared:read", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": ["apps:storage:shared:read"],
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`)
+}
+
+func TestValidateAcceptsSensitiveScopeWithJustification(t *testing.T) {
+	// apps:storage:shared:write is a CURRENT, SENSITIVE scope. With a non-empty
+	// scopeJustifications entry the manifest validates end-to-end — exercising
+	// both the re-vendored enum AND the accepted scopeJustifications shape.
+	mustAccept(t, "sensitive scope + justification", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": ["apps:storage:shared:write"],
+		"scopeJustifications": {"apps:storage:shared:write": "persist the user's saved presets so they survive reloads"},
+		"page": {"path": "/", "title": "X"},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`)
+}
+
+// TestValidateRejectsSensitiveScopeWithoutJustification is the Part 2 end-to-end
+// mirror of the live backend enforcement: a declared sensitive scope with no
+// justification is a HARD error (validate fails, non-zero exit) carrying the
+// server's exact message — no server round-trip needed.
+func TestValidateRejectsSensitiveScopeWithoutJustification(t *testing.T) {
+	mustReject(t, "sensitive scope, no justification", `{
+		"blockId": "ok-block", "version": "0.1.0", "name": "X",
+		"contentRating": "g", "scopes": ["ai:write:budgeted"],
+		"page": {"path": "/", "title": "X", "buzzBudgetPerGen": 100},
+		"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts allow-forms"}
+	}`, "sensitive scopes require a justification — add a non-empty scopeJustifications entry for: ai:write:budgeted")
+}
+
 // --- marketplace category (optional; enforced by the vendored schema enum,
 // mirroring the server's BlockManifestValidator category check ~L312) ---
 

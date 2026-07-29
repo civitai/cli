@@ -55,6 +55,7 @@ Reads the token from config or CIVITAI_TOKEN.`,
 					"scopesKnown":    id.ScopeKnown(),
 					"canReadBalance": id.CanReadBuzz(),
 					"canSpend":       id.CanSpendBuzz(),
+					"canSubmitApps":  id.CanSubmitApps(),
 					"scopes":         id.DecodeScopes(),
 					// Back-compat: the nested capabilities object earlier releases emit.
 					"capabilities": map[string]bool{
@@ -78,6 +79,7 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			}
 			fmt.Fprintf(out, "  Read Buzz balance:        %s\n", yesNo(id.CanReadBuzz()))
 			fmt.Fprintf(out, "  Spend Buzz (AI Services): %s\n", yesNo(id.CanSpendBuzz()))
+			fmt.Fprintf(out, "  Submit Apps:              %s\n", yesNo(id.CanSubmitApps()))
 
 			if showScopes {
 				fmt.Fprintf(out, "\nScopes (%d): %s\n", len(id.DecodeScopes()), strings.Join(id.DecodeScopes(), ", "))
