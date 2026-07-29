@@ -24,6 +24,7 @@ func TestWarnBudgetedPageWithoutBudget(t *testing.T) {
   "name": "No Budget",
   "type": "block",
   "scopes": ["ai:write:budgeted"],
+  "scopeJustifications": { "ai:write:budgeted": "spends the page's per-gen Buzz budget to run generations" },
   "page": { "path": "/", "title": "No Budget" },
   "iframe": { "minHeight": 600, "resizable": true, "sandbox": "allow-scripts allow-forms" },
   "contentRating": "g",
@@ -48,6 +49,7 @@ func TestWarnBudgetedScopeWithoutPage(t *testing.T) {
   "name": "Money Static",
   "type": "block",
   "scopes": ["ai:write:budgeted"],
+  "scopeJustifications": { "ai:write:budgeted": "spends the page's per-gen Buzz budget to run generations" },
   "iframe": { "minHeight": 600, "resizable": true, "sandbox": "allow-scripts allow-forms" },
   "contentRating": "g"
 }`
@@ -93,6 +95,7 @@ func TestNoWarningsForBudgetedPageWithBudget(t *testing.T) {
   "name": "Good Money",
   "type": "block",
   "scopes": ["ai:write:budgeted"],
+  "scopeJustifications": { "ai:write:budgeted": "spends the page's per-gen Buzz budget to run generations" },
   "page": { "path": "/", "title": "Good Money", "buzzBudgetPerGen": 10 },
   "iframe": { "minHeight": 600, "resizable": true, "sandbox": "allow-scripts allow-forms" },
   "contentRating": "g",

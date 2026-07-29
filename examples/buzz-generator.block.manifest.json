@@ -5,6 +5,9 @@
   "name": "Buzz Generator",
   "type": "block",
   "scopes": ["ai:write:budgeted"],
+  "scopeJustifications": {
+    "ai:write:budgeted": "Runs image generations on the user's behalf, spending from the per-generation Buzz budget the page grants."
+  },
   "page": {
     "path": "/",
     "title": "Buzz Generator",

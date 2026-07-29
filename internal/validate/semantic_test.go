@@ -173,6 +173,135 @@ func TestScopeJustificationChecks(t *testing.T) {
 	}
 }
 
+// TestSensitiveScopeJustificationChecks mirrors the backend enforcement: a
+// declared SENSITIVE scope without a non-empty scopeJustifications entry is a
+// hard error naming every offender, byte-identical to the server's submit-time
+// 400 message. Compliant manifests (non-sensitive scopes, or sensitive-with-
+// justification) produce no error.
+func TestSensitiveScopeJustificationChecks(t *testing.T) {
+	const prefix = "sensitive scopes require a justification — add a non-empty scopeJustifications entry for: "
+	cases := []struct {
+		name    string
+		generic map[string]any
+		want    []string
+	}{
+		{
+			name: "sensitive scope, no justifications at all → hard error naming it",
+			generic: map[string]any{
+				"scopes": []any{"ai:write:budgeted"},
+			},
+			want: []string{prefix + "ai:write:budgeted"},
+		},
+		{
+			name: "sensitive scope, empty scopeJustifications map → hard error",
+			generic: map[string]any{
+				"scopes":              []any{"buzz:read:self"},
+				"scopeJustifications": map[string]any{},
+			},
+			want: []string{prefix + "buzz:read:self"},
+		},
+		{
+			name: "sensitive scope with a whitespace-only justification → still unjustified",
+			generic: map[string]any{
+				"scopes":              []any{"social:tip:self"},
+				"scopeJustifications": map[string]any{"social:tip:self": "   "},
+			},
+			want: []string{prefix + "social:tip:self"},
+		},
+		{
+			name: "sensitive scope with a non-string justification → still unjustified",
+			generic: map[string]any{
+				"scopes":              []any{"apps:storage:shared:write"},
+				"scopeJustifications": map[string]any{"apps:storage:shared:write": 123},
+			},
+			want: []string{prefix + "apps:storage:shared:write"},
+		},
+		{
+			name: "sensitive scope WITH a real justification → no error",
+			generic: map[string]any{
+				"scopes":              []any{"ai:write:budgeted"},
+				"scopeJustifications": map[string]any{"ai:write:budgeted": "needed to run generations for the user"},
+			},
+			want: nil,
+		},
+		{
+			name: "non-sensitive scope, no justification → no error",
+			generic: map[string]any{
+				"scopes": []any{"user:read:self", "apps:storage:shared:read"},
+			},
+			want: nil,
+		},
+		{
+			name: "multiple sensitive, some unjustified → lists all offenders in declaration order",
+			generic: map[string]any{
+				"scopes": []any{
+					"ai:write:budgeted", "user:read:self", "buzz:read:self",
+					"collections:read:private", "apps:storage:shared:write",
+				},
+				"scopeJustifications": map[string]any{
+					// buzz:read:self is justified; the other three are not.
+					"buzz:read:self": "read balance to show the user their spend",
+				},
+			},
+			want: []string{prefix + "ai:write:budgeted, collections:read:private, apps:storage:shared:write"},
+		},
+		{
+			name: "duplicate sensitive scope, unjustified → named once",
+			generic: map[string]any{
+				"scopes": []any{"ai:write:budgeted", "ai:write:budgeted"},
+			},
+			want: []string{prefix + "ai:write:budgeted"},
+		},
+		{
+			name:    "no scopes at all → no error",
+			generic: map[string]any{},
+			want:    nil,
+		},
+		{
+			name: "non-array scopes → no error (schema-handled)",
+			generic: map[string]any{
+				"scopes": "not-an-array",
+			},
+			want: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sensitiveScopeJustificationChecks(tc.generic)
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d errors %v, want %d %v", len(got), got, len(tc.want), tc.want)
+			}
+			for i := range tc.want {
+				if got[i] != tc.want[i] {
+					t.Errorf("error[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestIsSensitiveBlockScope pins the sensitive set to the server's 5 scopes.
+func TestIsSensitiveBlockScope(t *testing.T) {
+	sensitive := []string{
+		"ai:write:budgeted", "social:tip:self", "buzz:read:self",
+		"collections:read:private", "apps:storage:shared:write",
+	}
+	if len(SENSITIVE_BLOCK_SCOPES) != len(sensitive) {
+		t.Fatalf("SENSITIVE_BLOCK_SCOPES has %d entries, want %d", len(SENSITIVE_BLOCK_SCOPES), len(sensitive))
+	}
+	for _, s := range sensitive {
+		if !isSensitiveBlockScope(s) {
+			t.Errorf("isSensitiveBlockScope(%q) = false, want true", s)
+		}
+	}
+	for _, s := range []string{"user:read:self", "apps:storage:shared:read", "collections:read:self", "AI:WRITE:BUDGETED"} {
+		if isSensitiveBlockScope(s) {
+			t.Errorf("isSensitiveBlockScope(%q) = true, want false", s)
+		}
+	}
+}
+
 func TestSandboxChecksNonStringIgnored(t *testing.T) {
 	if errs := sandboxChecks(map[string]any{"sandbox": 123}); errs != nil {
 		t.Errorf("non-string sandbox is schema-handled, got %v", errs)

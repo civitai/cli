@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -359,6 +360,43 @@ func TestWhoAmISuccess(t *testing.T) {
 	}
 }
 
+// TestWhoAmISubmitAppsCapability drives the "Submit Apps: yes/no" capability
+// line off the token-scope bitmask whoami already fetches. Bit 25
+// (ScopeAppBlocksSubmit = 1<<25 = 33554432) is the App-Blocks submit scope; a
+// token carrying it must report "yes", one lacking it "no".
+func TestWhoAmISubmitAppsCapability(t *testing.T) {
+	const submitBit = 1 << 25 // ScopeAppBlocksSubmit
+	cases := []struct {
+		name       string
+		tokenScope int
+		want       string
+	}{
+		{"has submit scope", submitBit | 1, "Submit Apps:              yes"},
+		{"lacks submit scope", 1, "Submit Apps:              no"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"username":"bob","id":99,"tokenScope":%d}`, tc.tokenScope)
+			}))
+			defer srv.Close()
+
+			dir := t.TempDir()
+			t.Setenv("XDG_CONFIG_HOME", dir)
+			t.Setenv("CIVITAI_TOKEN", "tok-1")
+			t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+			out, _, err := run(t, "whoami")
+			if err != nil {
+				t.Fatalf("whoami: %v", err)
+			}
+			if !strings.Contains(out, tc.want) {
+				t.Errorf("whoami output should contain %q, got:\n%s", tc.want, out)
+			}
+		})
+	}
+}
+
 func TestLoginStoresToken(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", dir)
@@ -486,6 +524,7 @@ func writeBudgetedNoBudgetManifest(t *testing.T, dir string) {
   "name": "No Budget",
   "type": "block",
   "scopes": ["ai:write:budgeted"],
+  "scopeJustifications": { "ai:write:budgeted": "spends the page's per-gen Buzz budget to run generations" },
   "page": { "path": "/", "title": "No Budget" },
   "iframe": { "minHeight": 600, "resizable": true, "sandbox": "allow-scripts allow-forms" },
   "contentRating": "g",
