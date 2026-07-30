@@ -409,7 +409,7 @@ func listingError(status int, raw []byte, path string) (err error) {
 		}
 		return fmt.Errorf("not permitted for your account (403): %s — managing store listings needs Apps-author access (invite-only beta)", msg)
 	case http.StatusNotFound:
-		return fmt.Errorf("no store listing found for this app (404): %s — a listing is created when you submit the app; run `civitai app submit` first", msg)
+		return fmt.Errorf("no store listing found for this app (404): %s — your app is still pending review; its store listing is created once a moderator approves it, then these commands will work", msg)
 	case http.StatusBadRequest:
 		return fmt.Errorf("%s rejected the request (400): %s", name, msg)
 	case http.StatusTooManyRequests:

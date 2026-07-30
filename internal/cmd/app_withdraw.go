@@ -15,6 +15,7 @@ import (
 
 func newAppWithdrawCmd() *cobra.Command {
 	var idFlag string
+	var assumeYes bool
 
 	cmd := &cobra.Command{
 		Use:   "withdraw [pubreq-id]",
@@ -33,7 +34,10 @@ already-approved/rejected (or already-withdrawn) request cannot. Withdrawing is
 idempotent — withdrawing an already-withdrawn request still succeeds.
 
 Pass the publish-request id as a positional argument or via --id (find it with
-"civitai app status").`,
+"civitai app status").
+
+Withdraw is non-interactive (it never prompts); --yes/-y is accepted as a no-op
+for symmetry with "civitai app submit" so the same scripted flag works on both.`,
 		Example: `  civitai app withdraw pubreq_01H        # withdraw by publish-request id
   civitai app withdraw --id pubreq_01H   # same, via the flag`,
 		Args: cobra.MaximumNArgs(1),
@@ -69,5 +73,8 @@ Pass the publish-request id as a positional argument or via --id (find it with
 		},
 	}
 	cmd.Flags().StringVar(&idFlag, "id", "", "the publish-request id to withdraw (pubreq_...)")
+	// Accepted for symmetry with `app submit`; withdraw is non-interactive so this
+	// is a documented no-op (nothing to skip).
+	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "accepted for symmetry with 'app submit' (withdraw is non-interactive; no-op)")
 	return cmd
 }
