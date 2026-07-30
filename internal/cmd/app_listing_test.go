@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -14,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // writePNG writes a valid PNG of the given size to a temp file and returns its path.
@@ -318,10 +321,81 @@ func TestSubmitFloorHeadsUp(t *testing.T) {
 	var buf bytes.Buffer
 	printListingFloorHeadsUp(&buf)
 	got := buf.String()
-	for _, want := range []string{"won't publish", "set-icon", "set-cover", "listing status"} {
+	// The heads-up must convey the listing is created on APPROVAL, then media is
+	// added — not that the listing commands work at submit time.
+	for _, want := range []string{"APPROVED", "After approval", "set-icon", "set-cover", "listing status"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("heads-up missing %q: %q", want, got)
 		}
+	}
+	// Regression guard: it must NOT imply the media commands work while pending.
+	for _, gone := range []string{"won't publish until", "when you submit"} {
+		if strings.Contains(got, gone) {
+			t.Errorf("heads-up should not contain stale phrasing %q: %q", gone, got)
+		}
+	}
+}
+
+// TestAppListingPendingNoListingYet drives the pending-app path: the submission
+// exists but has no backing appBlockId yet (the store listing is created only on
+// moderator approval). The CLI must (a) say the app is still pending review and
+// the listing is created on approval — NOT "run `civitai app submit` first" — and
+// (b) tag the error ErrNotFound so the entrypoint maps it to exit 4.
+func TestAppListingPendingNoListingYet(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
+			// A pending submission with no appBlockId yet.
+			submissionRow(w, "my-app", "")
+		default:
+			t.Errorf("unexpected path %s — should short-circuit before the listing lookup", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	_, _, err := run(t, "app", "listing", "status", "--slug", "my-app")
+	if err == nil {
+		t.Fatal("expected a not-found error for a pending app with no listing yet")
+	}
+	if !errors.Is(err, civitai.ErrNotFound) {
+		t.Errorf("missing-listing error must be tagged ErrNotFound (→ exit 4), got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "pending review") || !strings.Contains(err.Error(), "approves") {
+		t.Errorf("error should explain the listing is created on approval: %v", err)
+	}
+	// Regression guard: it must NOT tell the author to submit again — they did.
+	if strings.Contains(err.Error(), "civitai app submit") {
+		t.Errorf("error should not tell the author to submit again: %v", err)
+	}
+}
+
+// TestAppListingHelpApprovalWording pins the corrected help text on the listing
+// command group and its status subcommand: it must convey the listing is created
+// on APPROVAL, and the old submit-time phrasing must be gone.
+func TestAppListingHelpApprovalWording(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"group help", []string{"app", "listing", "--help"}},
+		{"status help", []string{"app", "listing", "status", "--help"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, _, err := run(t, tc.args...)
+			if err != nil {
+				t.Fatalf("%v: %v", tc.args, err)
+			}
+			if !strings.Contains(out, "APPROVES") {
+				t.Errorf("help should say the listing is created when a moderator APPROVES the app:\n%s", out)
+			}
+			for _, gone := range []string{"exists only after you have submitted", "created when you submit"} {
+				if strings.Contains(out, gone) {
+					t.Errorf("help still contains stale submit-time phrasing %q:\n%s", gone, out)
+				}
+			}
+		})
 	}
 }
 

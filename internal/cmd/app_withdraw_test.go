@@ -68,6 +68,34 @@ func TestAppWithdrawSuccess(t *testing.T) {
 	}
 }
 
+// TestAppWithdrawYesFlagAccepted proves `withdraw <id> --yes` is accepted (no
+// "unknown flag") for symmetry with `app submit`. Withdraw is non-interactive, so
+// --yes is a no-op that must still parse and complete the withdraw cleanly.
+func TestAppWithdrawYesFlagAccepted(t *testing.T) {
+	var rec withdrawRec
+	srv := withdrawServer(t, map[string]any{"ok": true}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	for _, flag := range []string{"--yes", "-y"} {
+		t.Run(flag, func(t *testing.T) {
+			out, _, err := run(t, "app", "withdraw", "pubreq_01H", flag)
+			if err != nil {
+				t.Fatalf("app withdraw %s: %v", flag, err)
+			}
+			if rec.publishRequestID != "pubreq_01H" {
+				t.Errorf("publishRequestId body = %q, want pubreq_01H", rec.publishRequestID)
+			}
+			if !strings.Contains(out, "Withdrew") {
+				t.Errorf("success output missing the withdrew line: %q", out)
+			}
+		})
+	}
+}
+
 func TestAppWithdrawByIDFlag(t *testing.T) {
 	var rec withdrawRec
 	srv := withdrawServer(t, map[string]any{"ok": true}, http.StatusOK, &rec)

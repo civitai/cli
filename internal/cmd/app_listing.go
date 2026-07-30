@@ -54,8 +54,9 @@ that goes back to moderator review (the live listing is untouched until the
 revision is approved); pass --changelog to describe the change.
 
 The app is resolved from block.manifest.json in the current directory (or pass
---slug). A listing exists only after you have submitted the app for review
-(` + "`civitai app submit`" + `).`,
+--slug). Your store listing is created when a moderator APPROVES your app — not
+at submit time — after ` + "`civitai app submit`" + ` and the app deploys. Then use
+these commands to set its media and clear the publish floor before publishing.`,
 		Example: `  civitai app listing status
   civitai app listing set-icon ./assets/icon.png
   civitai app listing set-cover ./assets/cover.png
@@ -120,7 +121,7 @@ func resolveListing(ctx context.Context, client *appapi.Client, slug string) (*a
 		return nil, err
 	}
 	if sub.AppBlockID == nil || *sub.AppBlockID == "" {
-		return nil, fmt.Errorf("no store listing exists for %q yet — a listing is created when you submit the app for review. Run `civitai app submit` first", slug)
+		return nil, civitai.Tag(civitai.ErrNotFound, fmt.Errorf("no store listing exists for %q yet — your app is still pending review; its store listing is created once a moderator approves it. After it's approved, run this command again to set its media", slug))
 	}
 	return client.GetMyListingForApp(ctx, *sub.AppBlockID)
 }
@@ -136,6 +137,9 @@ func newAppListingStatusCmd() *cobra.Command {
 		Short: "Show attached media and what's missing vs the publish floor",
 		Long: `Show your store listing's attached media (icon, cover, screenshots) and what
 is still required before it can publish (an icon and a cover are mandatory).
+
+Your store listing is created when a moderator APPROVES your app — not when you
+submit it for review — so this reports nothing until then.
 
 Note: on a LIVE (approved) listing this opens an in-progress revision draft and
 reports ITS media (idempotent — it reuses any existing draft, and nothing is

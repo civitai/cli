@@ -3,11 +3,14 @@ package appapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // trpcOK writes a tRPC success envelope {result:{data:{json:<v>}}}.
@@ -238,6 +241,27 @@ func TestListingErrorMapping(t *testing.T) {
 		if tc.echoMsg && !strings.Contains(err.Error(), tc.msg) {
 			t.Errorf("status %d error %q should echo server msg %q", tc.status, err, tc.msg)
 		}
+	}
+}
+
+// TestListingError404IsNotFoundAndApprovalWorded pins the corrected 404 message
+// (the store listing is created on approval, the app is still pending — NOT "run
+// `civitai app submit` first") and confirms it stays tagged ErrNotFound so the
+// entrypoint maps it to exit 4.
+func TestListingError404IsNotFoundAndApprovalWorded(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{"error": map[string]any{"json": map[string]any{"message": "no listing found"}}})
+	err := listingError(http.StatusNotFound, body, trpcSetIcon)
+	if err == nil {
+		t.Fatal("expected an error for 404")
+	}
+	if !errors.Is(err, civitai.ErrNotFound) {
+		t.Errorf("404 listing error must be tagged ErrNotFound (→ exit 4), got %T: %v", err, err)
+	}
+	if !strings.Contains(err.Error(), "pending review") || !strings.Contains(err.Error(), "approves") {
+		t.Errorf("404 message should explain the listing is created on approval: %v", err)
+	}
+	if strings.Contains(err.Error(), "civitai app submit") {
+		t.Errorf("404 message should not tell the author to submit again: %v", err)
 	}
 }
 
