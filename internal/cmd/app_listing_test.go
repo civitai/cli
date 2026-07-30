@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"image"
 	"image/color"
 	"image/png"
@@ -15,8 +14,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/civitai/cli/pkg/civitai"
 )
 
 // writePNG writes a valid PNG of the given size to a temp file and returns its path.
@@ -321,59 +318,90 @@ func TestSubmitFloorHeadsUp(t *testing.T) {
 	var buf bytes.Buffer
 	printListingFloorHeadsUp(&buf)
 	got := buf.String()
-	// The heads-up must convey the listing is created on APPROVAL, then media is
-	// added — not that the listing commands work at submit time.
-	for _, want := range []string{"APPROVED", "After approval", "set-icon", "set-cover", "listing status"} {
+	// 🔴 INVERTED by draft-at-submit: THIS submit minted the store listing as a draft,
+	// so the heads-up must tell the author the media is settable NOW, while in review,
+	// and that it carries forward on approval.
+	for _, want := range []string{"NOW", "in review", "carry forward", "set-icon", "set-cover", "listing status"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("heads-up missing %q: %q", want, got)
 		}
 	}
-	// Regression guard: it must NOT imply the media commands work while pending.
-	for _, gone := range []string{"won't publish until", "when you submit"} {
+	// Regression guard on the OLD premise: it must no longer make the author wait for
+	// approval before touching listing media.
+	for _, gone := range []string{"After approval", "once your app is APPROVED", "after approval"} {
 		if strings.Contains(got, gone) {
-			t.Errorf("heads-up should not contain stale phrasing %q: %q", gone, got)
+			t.Errorf("heads-up should not contain stale wait-for-approval phrasing %q: %q", gone, got)
 		}
 	}
 }
 
-// TestAppListingPendingNoListingYet drives the pending-app path: the submission
-// exists but has no backing appBlockId yet (the store listing is created only on
-// moderator approval). The CLI must (a) say the app is still pending review and
-// the listing is created on approval — NOT "run `civitai app submit` first" — and
-// (b) tag the error ErrNotFound so the entrypoint maps it to exit 4.
-func TestAppListingPendingNoListingYet(t *testing.T) {
+// 🔴 TestAppListingPendingReachesDraftBySlug — the whole point of draft-at-submit.
+// A first-version app pending review has NO backing appBlockId, but `civitai app
+// submit` minted its store listing as a pre-approval DRAFT, resolvable ONLY BY SLUG.
+//
+// This INVERTS the old TestAppListingPendingNoListingYet, which asserted the CLI
+// short-circuits to a "listing is created on approval" error. That short-circuit is
+// now the bug: it would make the pending-media flow unreachable from the CLI even
+// though the server supports it. So this pins that the CLI (a) does NOT bail before
+// the lookup, (b) sends the SLUG (the only thing that can resolve a null-appBlockId
+// draft) and omits the empty appBlockId, and (c) renders the draft's media.
+func TestAppListingPendingReachesDraftBySlug(t *testing.T) {
+	var listingForAppInput string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
-			// A pending submission with no appBlockId yet.
+			// A pending submission with NO appBlockId — the app is still in review.
 			submissionRow(w, "my-app", "")
+		case strings.Contains(r.URL.Path, "getMyListingForApp"):
+			listingForAppInput = r.URL.Query().Get("input")
+			trpcData(w, map[string]any{
+				"appListingId": "apl_draft", "status": "draft",
+				"contentRating": "g", "hasPendingRevision": false,
+			})
+		case strings.Contains(r.URL.Path, "getMyListingForEdit"):
+			trpcData(w, map[string]any{
+				"parentId": "apl_draft", "slug": "my-app", "status": "draft",
+				"hasPendingRevision": false, "shadowId": nil,
+				"assets": map[string]any{
+					"icon":        map[string]any{"imageId": 11, "url": "http://x/i.png"},
+					"cover":       map[string]any{"imageId": nil, "url": nil},
+					"screenshots": []any{},
+				},
+			})
 		default:
-			t.Errorf("unexpected path %s — should short-circuit before the listing lookup", r.URL.Path)
+			t.Errorf("unexpected path %s", r.URL.Path)
 		}
 	}))
 	defer srv.Close()
 	listingEnv(t, srv.URL)
 
-	_, _, err := run(t, "app", "listing", "status", "--slug", "my-app")
-	if err == nil {
-		t.Fatal("expected a not-found error for a pending app with no listing yet")
+	out, _, err := run(t, "app", "listing", "status", "--slug", "my-app")
+	if err != nil {
+		t.Fatalf("a pending app's DRAFT listing must be reachable by slug, got: %v", err)
 	}
-	if !errors.Is(err, civitai.ErrNotFound) {
-		t.Errorf("missing-listing error must be tagged ErrNotFound (→ exit 4), got %T: %v", err, err)
+	if listingForAppInput == "" {
+		t.Fatal("getMyListingForApp was never called — the CLI short-circuited before the lookup")
 	}
-	if !strings.Contains(err.Error(), "pending review") || !strings.Contains(err.Error(), "approves") {
-		t.Errorf("error should explain the listing is created on approval: %v", err)
+	if !strings.Contains(listingForAppInput, `"slug":"my-app"`) {
+		t.Errorf("the pending lookup must carry the slug: %q", listingForAppInput)
 	}
-	// Regression guard: it must NOT tell the author to submit again — they did.
-	if strings.Contains(err.Error(), "civitai app submit") {
-		t.Errorf("error should not tell the author to submit again: %v", err)
+	// An empty appBlockId must be OMITTED, not sent as "" — the server's
+	// "either appBlockId or slug" schema would otherwise see a supplied-but-empty id.
+	if strings.Contains(listingForAppInput, "appBlockId") {
+		t.Errorf("an absent appBlockId must be omitted from the lookup: %q", listingForAppInput)
+	}
+	// The draft's media renders — the author can see what they've attached while pending.
+	if !strings.Contains(out, "icon") && !strings.Contains(out, "Icon") {
+		t.Errorf("status should render the pending draft's media: %q", out)
 	}
 }
 
-// TestAppListingHelpApprovalWording pins the corrected help text on the listing
-// command group and its status subcommand: it must convey the listing is created
-// on APPROVAL, and the old submit-time phrasing must be gone.
-func TestAppListingHelpApprovalWording(t *testing.T) {
+// 🔴 TestAppListingHelpPendingWording pins the INVERTED help text on the listing
+// command group and its status subcommand. Draft-at-submit means the listing exists
+// as a DRAFT from `civitai app submit`, so the help must tell the author the media is
+// settable WHILE PENDING — the previous "created when a moderator APPROVES your app"
+// wording is now false and actively discourages the flow the backend enables.
+func TestAppListingHelpPendingWording(t *testing.T) {
 	cases := []struct {
 		name string
 		args []string
@@ -387,12 +415,24 @@ func TestAppListingHelpApprovalWording(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%v: %v", tc.args, err)
 			}
-			if !strings.Contains(out, "APPROVES") {
-				t.Errorf("help should say the listing is created when a moderator APPROVES the app:\n%s", out)
+			if !strings.Contains(out, "DRAFT") {
+				t.Errorf("help should say the listing is created as a DRAFT at submit:\n%s", out)
 			}
-			for _, gone := range []string{"exists only after you have submitted", "created when you submit"} {
+			if !strings.Contains(out, "civitai app submit") {
+				t.Errorf("help should name `civitai app submit` as what creates the listing:\n%s", out)
+			}
+			if !strings.Contains(out, "pending review") {
+				t.Errorf("help should say media is settable while pending review:\n%s", out)
+			}
+			// Regression guard on the OLD, now-false premise.
+			for _, gone := range []string{
+				"created when a moderator APPROVES",
+				"not at submit time",
+				"not when you\nsubmit it",
+				"reports nothing until then",
+			} {
 				if strings.Contains(out, gone) {
-					t.Errorf("help still contains stale submit-time phrasing %q:\n%s", gone, out)
+					t.Errorf("help still contains the stale created-on-approval phrasing %q:\n%s", gone, out)
 				}
 			}
 		})

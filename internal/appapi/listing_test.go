@@ -43,7 +43,7 @@ func TestGetMyListingForApp(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok123", "")
-	ref, err := c.GetMyListingForApp(context.Background(), "block_9")
+	ref, err := c.GetMyListingForApp(context.Background(), "block_9", "my-app")
 	if err != nil {
 		t.Fatalf("GetMyListingForApp: %v", err)
 	}
@@ -53,8 +53,60 @@ func TestGetMyListingForApp(t *testing.T) {
 	if !strings.Contains(gotInput, `"appBlockId":"block_9"`) {
 		t.Errorf("input should carry appBlockId: %q", gotInput)
 	}
+	if !strings.Contains(gotInput, `"slug":"my-app"`) {
+		t.Errorf("input should carry the slug too: %q", gotInput)
+	}
 	if ref.AppListingID != "listing_1" || ref.Status != "draft" {
 		t.Errorf("ref = %+v", ref)
+	}
+}
+
+// 🔴 The PRE-APPROVAL DRAFT path: a first-version app pending review has NO backing
+// AppBlock, so its draft listing is resolvable ONLY by slug. If the request ever
+// carried an empty `appBlockId` key instead of omitting it, the server's
+// "either appBlockId or slug" schema would still see a supplied-but-empty id — so
+// pin that the key is OMITTED entirely and the slug is what's sent.
+func TestGetMyListingForAppBySlugOnlyOmitsAppBlockID(t *testing.T) {
+	var gotInput string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotInput = r.URL.Query().Get("input")
+		trpcOK(w, map[string]any{
+			"appListingId":       "apl_draft",
+			"status":             "draft",
+			"contentRating":      "g",
+			"hasPendingRevision": false,
+		})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok123", "")
+	ref, err := c.GetMyListingForApp(context.Background(), "", "my-app")
+	if err != nil {
+		t.Fatalf("GetMyListingForApp(slug-only): %v", err)
+	}
+	if strings.Contains(gotInput, "appBlockId") {
+		t.Errorf("an empty appBlockId must be OMITTED, not sent: %q", gotInput)
+	}
+	if !strings.Contains(gotInput, `"slug":"my-app"`) {
+		t.Errorf("input should carry the slug: %q", gotInput)
+	}
+	if ref.AppListingID != "apl_draft" || ref.Status != "draft" {
+		t.Errorf("ref = %+v", ref)
+	}
+}
+
+// Neither selector is a caller bug — fail locally rather than send an empty query
+// the server would reject with a confusing zod error.
+func TestGetMyListingForAppRequiresASelector(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("must not reach the server with neither selector")
+		trpcOK(w, map[string]any{})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok123", "")
+	if _, err := c.GetMyListingForApp(context.Background(), "", ""); err == nil {
+		t.Fatal("expected an error when neither appBlockId nor slug is given")
 	}
 }
 
@@ -257,11 +309,19 @@ func TestListingError404IsNotFoundAndApprovalWorded(t *testing.T) {
 	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("404 listing error must be tagged ErrNotFound (→ exit 4), got %T: %v", err, err)
 	}
-	if !strings.Contains(err.Error(), "pending review") || !strings.Contains(err.Error(), "approves") {
-		t.Errorf("404 message should explain the listing is created on approval: %v", err)
+	// The listing is now created AT SUBMIT (as a draft) and is settable while the app
+	// is pending — so a 404 means the app was never submitted (or predates
+	// draft-at-submit), and pointing at `civitai app submit` is the correct next step.
+	if !strings.Contains(err.Error(), "civitai app submit") {
+		t.Errorf("404 message should point at `civitai app submit`: %v", err)
 	}
-	if strings.Contains(err.Error(), "civitai app submit") {
-		t.Errorf("404 message should not tell the author to submit again: %v", err)
+	if !strings.Contains(err.Error(), "pending review") {
+		t.Errorf("404 message should say media is settable while pending review: %v", err)
+	}
+	// Regression guard on the INVERTED premise: it must no longer claim the listing
+	// only appears once a moderator approves the app.
+	if strings.Contains(err.Error(), "approves it") {
+		t.Errorf("404 message must not say the listing is created on approval: %v", err)
 	}
 }
 

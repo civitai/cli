@@ -54,9 +54,10 @@ that goes back to moderator review (the live listing is untouched until the
 revision is approved); pass --changelog to describe the change.
 
 The app is resolved from block.manifest.json in the current directory (or pass
---slug). Your store listing is created when a moderator APPROVES your app — not
-at submit time — after ` + "`civitai app submit`" + ` and the app deploys. Then use
-these commands to set its media and clear the publish floor before publishing.`,
+--slug). Your store listing is created as a DRAFT when you run ` + "`civitai app submit`" + `,
+so you can set its media WHILE your app is pending review — the media you attach
+carries forward when a moderator approves it. Set it early to clear the publish
+floor before you go live.`,
 		Example: `  civitai app listing status
   civitai app listing set-icon ./assets/icon.png
   civitai app listing set-cover ./assets/cover.png
@@ -112,18 +113,26 @@ func resolveListingSlug(lc listingCommon) (string, error) {
 	return m.BlockID, nil
 }
 
-// resolveListing resolves slug -> appBlockId (via the submission row) ->
-// listing ref. A submission with no appBlockId (never submitted / not yet an app
-// block) means no listing exists yet.
+// resolveListing resolves slug -> appBlockId (via the submission row) -> listing
+// ref.
+//
+// 🔴 A submission with NO appBlockId is a FIRST-version app still pending review. It
+// still has a store listing: `civitai app submit` mints one as a pre-approval DRAFT
+// so its media is settable while pending. That draft has `appBlockId = NULL` and is
+// resolvable ONLY BY SLUG, so we must still call through — short-circuiting to a
+// "no listing" error here would make the pending-media flow unreachable from the CLI
+// even though the server supports it. The slug is passed on BOTH paths (harmless when
+// the appBlockId resolves; load-bearing when it is absent).
 func resolveListing(ctx context.Context, client *appapi.Client, slug string) (*appapi.ListingRef, error) {
 	sub, err := client.GetSubmission(ctx, "", slug)
 	if err != nil {
 		return nil, err
 	}
-	if sub.AppBlockID == nil || *sub.AppBlockID == "" {
-		return nil, civitai.Tag(civitai.ErrNotFound, fmt.Errorf("no store listing exists for %q yet — your app is still pending review; its store listing is created once a moderator approves it. After it's approved, run this command again to set its media", slug))
+	appBlockID := ""
+	if sub.AppBlockID != nil {
+		appBlockID = *sub.AppBlockID
 	}
-	return client.GetMyListingForApp(ctx, *sub.AppBlockID)
+	return client.GetMyListingForApp(ctx, appBlockID, slug)
 }
 
 // ----------------------------------------------------------------------------
@@ -138,8 +147,8 @@ func newAppListingStatusCmd() *cobra.Command {
 		Long: `Show your store listing's attached media (icon, cover, screenshots) and what
 is still required before it can publish (an icon and a cover are mandatory).
 
-Your store listing is created when a moderator APPROVES your app — not when you
-submit it for review — so this reports nothing until then.
+Your store listing exists as a DRAFT from the moment you run ` + "`civitai app submit`" + `,
+so this works while your app is still pending review.
 
 Note: on a LIVE (approved) listing this opens an in-progress revision draft and
 reports ITS media (idempotent — it reuses any existing draft, and nothing is
