@@ -180,12 +180,30 @@ func decodeTRPCData(raw []byte, out any, path string) error {
 	return nil
 }
 
-// GetMyListingForApp resolves the caller's own listing (by its backing appBlockId)
-// to an AppListing id + lifecycle status. NOT_FOUND (404) means no listing row
-// exists for the app yet.
-func (c *Client) GetMyListingForApp(ctx context.Context, appBlockID string) (*ListingRef, error) {
+// GetMyListingForApp resolves the caller's own listing to an AppListing id +
+// lifecycle status, by its backing appBlockId and/or its slug. At least one must
+// be non-empty (the server enforces the same rule) — pass BOTH when known.
+//
+// 🔴 The SLUG path is what reaches a PRE-APPROVAL DRAFT. A first-version app has no
+// backing AppBlock while it is pending review, so its draft listing (minted at
+// `civitai app submit`) has `appBlockId = NULL` and is resolvable ONLY by slug. That
+// is the whole reason listing media is settable while pending — resolving by
+// appBlockId alone can never see it.
+//
+// NOT_FOUND (404) means no listing row exists for the app at all.
+func (c *Client) GetMyListingForApp(ctx context.Context, appBlockID, slug string) (*ListingRef, error) {
+	in := map[string]string{}
+	if appBlockID != "" {
+		in["appBlockId"] = appBlockID
+	}
+	if slug != "" {
+		in["slug"] = slug
+	}
+	if len(in) == 0 {
+		return nil, fmt.Errorf("getMyListingForApp needs an appBlockId or a slug")
+	}
 	var out ListingRef
-	if err := c.trpcQuery(ctx, trpcGetMyListingForApp, map[string]string{"appBlockId": appBlockID}, &out); err != nil {
+	if err := c.trpcQuery(ctx, trpcGetMyListingForApp, in, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil
@@ -409,7 +427,7 @@ func listingError(status int, raw []byte, path string) (err error) {
 		}
 		return fmt.Errorf("not permitted for your account (403): %s — managing store listings needs Apps-author access (invite-only beta)", msg)
 	case http.StatusNotFound:
-		return fmt.Errorf("no store listing found for this app (404): %s — your app is still pending review; its store listing is created once a moderator approves it, then these commands will work", msg)
+		return fmt.Errorf("no store listing found for this app (404): %s — a store listing is created when you run `civitai app submit` and is settable while the app is pending review; submit the app first, then these commands will work", msg)
 	case http.StatusBadRequest:
 		return fmt.Errorf("%s rejected the request (400): %s", name, msg)
 	case http.StatusTooManyRequests:
