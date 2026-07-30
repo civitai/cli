@@ -137,8 +137,9 @@ func newAppListingStatusCmd() *cobra.Command {
 		Long: `Show your store listing's attached media (icon, cover, screenshots) and what
 is still required before it can publish (an icon and a cover are mandatory).
 
-For a LIVE (approved) listing this reads the in-progress revision draft, so it
-reflects media you have staged for the next moderator review.`,
+Note: on a LIVE (approved) listing this opens an in-progress revision draft and
+reports ITS media (idempotent — it reuses any existing draft, and nothing is
+submitted for moderator review until you run a set-/add- command and confirm).`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, err := newListingClient()
@@ -379,7 +380,10 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 		if err != nil {
 			return err
 		}
-		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s staged on a revision — submitted for moderator review (%s).", capitalize(string(kind)), rev.PublishRequestID)))
+		// submitListingRevision is idempotent: a shadow that already had a pending
+		// request returns THAT request rather than opening a second. The response
+		// carries no fresh-vs-existing flag, so phrase it neutrally.
+		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s staged on a revision — pending moderator review (%s).", capitalize(string(kind)), rev.PublishRequestID)))
 		fmt.Fprintln(out, "Your live listing is unchanged until a moderator approves the revision.")
 	} else {
 		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s set ✓", capitalize(string(kind)))))

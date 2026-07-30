@@ -111,7 +111,7 @@ func TestAppListingSetIconDraft(t *testing.T) {
 			trpcData(w, map[string]any{"appListingId": "listing_1", "status": "draft", "contentRating": "g"})
 		case strings.Contains(r.URL.Path, "ingestAssetFromDataUri"):
 			ingestCalled = true
-			trpcData(w, 4242)
+			trpcData(w, map[string]any{"imageId": 4242})
 		case strings.Contains(r.URL.Path, "getAssetScanStatuses"):
 			// First poll pending, then scanned.
 			n := atomic.AddInt32(&scanCalls, 1)
@@ -173,7 +173,7 @@ func TestAppListingSetIconLiveOpensRevision(t *testing.T) {
 		case strings.Contains(r.URL.Path, "getMyListingForApp"):
 			trpcData(w, map[string]any{"appListingId": "listing_1", "status": "approved", "contentRating": "g"})
 		case strings.Contains(r.URL.Path, "ingestAssetFromDataUri"):
-			trpcData(w, 5)
+			trpcData(w, map[string]any{"imageId": 5})
 		case strings.Contains(r.URL.Path, "getAssetScanStatuses"):
 			trpcData(w, map[string]any{"statuses": []map[string]any{{"imageId": 5, "status": "scanned"}}})
 		case strings.Contains(r.URL.Path, "beginListingRevision"):
@@ -230,7 +230,7 @@ func TestAppListingSetIconBlockedNoAttach(t *testing.T) {
 		case strings.Contains(r.URL.Path, "getMyListingForApp"):
 			trpcData(w, map[string]any{"appListingId": "listing_1", "status": "draft"})
 		case strings.Contains(r.URL.Path, "ingestAssetFromDataUri"):
-			trpcData(w, 66)
+			trpcData(w, map[string]any{"imageId": 66})
 		case strings.Contains(r.URL.Path, "getAssetScanStatuses"):
 			trpcData(w, map[string]any{"statuses": []map[string]any{{"imageId": 66, "status": "blocked"}}})
 		case strings.Contains(r.URL.Path, "setIcon"):

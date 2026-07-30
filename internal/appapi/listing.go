@@ -219,11 +219,15 @@ func (c *Client) GetAssetScanStatuses(ctx context.Context, imageIDs []int) ([]Sc
 // "icon" — the proc's schema only accepts icons on this path.
 func (c *Client) IngestAssetFromDataURI(ctx context.Context, data []byte, mimeType string) (int, error) {
 	dataURI := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
-	var out int
+	// The proc returns `{ imageId: number }` (listing-meta.service.ts) — an OBJECT,
+	// not a bare number.
+	var out struct {
+		ImageID int `json:"imageId"`
+	}
 	if err := c.trpcMutation(ctx, trpcIngestAssetFromDataURI, map[string]any{"dataUri": dataURI, "kind": "icon"}, &out); err != nil {
 		return 0, err
 	}
-	return out, nil
+	return out.ImageID, nil
 }
 
 // MintImageUpload mints a presigned PUT URL for a full-resolution asset upload.
@@ -284,7 +288,6 @@ func (c *Client) IngestAssetFullRes(ctx context.Context, data []byte, info Image
 	if err := c.putPresigned(ctx, uploadURL, data); err != nil {
 		return 0, err
 	}
-	var imageID int
 	in := map[string]any{
 		"url":       id,
 		"width":     info.Width,
@@ -292,10 +295,15 @@ func (c *Client) IngestAssetFullRes(ctx context.Context, data []byte, info Image
 		"mimeType":  info.MimeType,
 		"sizeBytes": len(data),
 	}
-	if err := c.trpcMutation(ctx, trpcPersistAssetImage, in, &imageID); err != nil {
+	// persistListingAssetImage returns `{ imageId: number }` (offsite-listing.service.ts)
+	// — an OBJECT, not a bare number.
+	var out struct {
+		ImageID int `json:"imageId"`
+	}
+	if err := c.trpcMutation(ctx, trpcPersistAssetImage, in, &out); err != nil {
 		return 0, err
 	}
-	return imageID, nil
+	return out.ImageID, nil
 }
 
 // SetIcon attaches an ingested (icon) image to the listing.

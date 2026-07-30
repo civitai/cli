@@ -60,7 +60,10 @@ func TestIngestAssetFromDataURI(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(raw, &gotBody)
-		trpcOK(w, 4242)
+		// The backend returns { imageId: N } — an OBJECT, not a bare number. A
+		// bare-int fake here would mask the decode bug (both-wrong-blind), so
+		// encode the REAL shape; the corrected object→struct decode must handle it.
+		trpcOK(w, map[string]any{"imageId": 4242})
 	}))
 	defer srv.Close()
 
@@ -105,7 +108,9 @@ func TestIngestAssetFullRes(t *testing.T) {
 			persisted = true
 			raw, _ := io.ReadAll(r.Body)
 			_ = json.Unmarshal(raw, &persistBody)
-			trpcOK(w, 777)
+			// Real shape { imageId: N } (not a bare number) so the struct decode is
+			// actually exercised.
+			trpcOK(w, map[string]any{"imageId": 777})
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
