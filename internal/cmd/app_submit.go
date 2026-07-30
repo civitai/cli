@@ -209,8 +209,19 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 	fmt.Fprintln(out, "\nTrack it:")
 	fmt.Fprintf(out, "  %s                          # review + deploy status\n", ui.Code("civitai app status"))
 	fmt.Fprintf(out, "  %s/apps/my-submissions               # your submissions\n", base)
+	printListingFloorHeadsUp(out)
 	printMoneyPathNote(out, m)
 	return nil
+}
+
+// printListingFloorHeadsUp is a non-fatal reminder (issue #186 point 4) that a
+// store listing won't publish without an icon + cover, with the exact commands
+// to add them. Kept static (no server call) so it works even pre-first-listing.
+func printListingFloorHeadsUp(out io.Writer) {
+	fmt.Fprintln(out, "\nStore listing: your app won't publish until it has an icon AND a cover.")
+	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-icon <file>"))
+	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-cover <file>"))
+	fmt.Fprintf(out, "  %s   # what's attached vs. required\n", ui.Code("civitai app listing status"))
 }
 
 // manifestNeedsSpend reports whether the manifest declares a Buzz-spend scope

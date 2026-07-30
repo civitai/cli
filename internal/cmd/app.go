@@ -39,5 +39,6 @@ with a no-build static default (back-compat alias).`,
 	cmd.AddCommand(newAppDevTokenCmd())
 	cmd.AddCommand(newAppDevTunnelCmd())
 	cmd.AddCommand(newAppPullCmd())
+	cmd.AddCommand(newAppListingCmd())
 	return cmd
 }
