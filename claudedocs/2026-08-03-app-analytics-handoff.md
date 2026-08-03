@@ -247,13 +247,44 @@ Ranked. #6 above (**ClickHouse `blockRenders` has zero readers**) remains the bi
 *product* gap; the two items below are infrastructure this session uncovered and are
 cheaper.
 
-1. 🔴 **CI does not run the `component` (browser) project at all.** Three PRs merged today
-   ship browser tests — #3574's 7, #3581's 3, plus #3557's existing panel tests — that have
-   **never executed on a canonical browser**. They ran only against a nixpkgs
-   `playwright-chromium-headless-shell` (Chrome for Testing 149) shimmed in via a scratch
-   `PLAYWRIGHT_BROWSERS_PATH`, because Playwright's vendored `chrome-headless-shell` is a
-   generic-linux binary NixOS refuses to exec. As things stand those guards would catch
-   nothing in CI. This is the single largest verification gap the session exposed.
+1. 🔴 **`preview / component-tests` is RED on some PRs, and #3574 may have regressed it.**
+   ⚠️ An earlier draft of this section asserted "CI does not run the `component` project at
+   all". **That was FALSE** — the `preview / component-tests` external check runs it. The
+   error is worth recording because of how it happened: every status query written during
+   the session filtered for `Unit tests|Typecheck|ESLint|event-engine`, so the check was
+   never in a result set, and its absence was read as evidence it did not exist. Selecting
+   the evidence and then concluding from the selection.
+
+   What the check actually says on #3574, which shipped 7 browser tests:
+
+   | commit | `preview / component-tests` |
+   |---|---|
+   | `075519d380` — before the audit-fix round | success |
+   | `8e75826616` — first fix round | **failure** |
+   | `928273e4dd` — second fix round | **failure** |
+
+   It is REPORT-ONLY (`"Component suite failed (report-only, not blocking)"`), which is why
+   the merge was not stopped. Against that: **PR 3591 passes `component-tests` on a base
+   that CONTAINS the #3574 merge**, and PR 3594 fails on the same base — so the tier is
+   green for some PRs and red for others, which points at flakiness or content-dependence
+   rather than a defect #3574 introduced. Unresolved either way.
+
+   🔴 **This cannot be settled from a NixOS host.** The full-project component run does not
+   complete locally with OR without the #3574 merge — it crashes with "Browser connection
+   was closed" on one and times out at 25 minutes on the other. Single-file runs pass fine
+   (cold cache included). So local runs can validate one file but say nothing about the
+   suite; the preview pipeline's own logs are the only authority. Whoever picks this up
+   needs those logs, not a local repro.
+
+   Related and still true: the browser tests in #3574/#3581/#3557 have only ever run
+   locally against a nixpkgs `playwright-chromium-headless-shell` (Chrome for Testing 149)
+   shimmed in via `PLAYWRIGHT_BROWSERS_PATH`, because Playwright's vendored binary is a
+   generic-linux build NixOS refuses to exec.
+
+   Also stale, and worth fixing while in there: `lint.yml`'s `unit` job comment excludes
+   browser tests because they "carry the cold-optimizeDeps flake documented at
+   vitest.config.mts:98-124". That section documents the **fix**, not an open flake, and a
+   cold-cache single-file run passes — so the stated reason no longer holds.
 
 2. 🟡 **A stale `node_modules` silently removes ~1,126 tests.** A worktree installed before
    main gained the `@civitai/db-queries` workspace package fails at
