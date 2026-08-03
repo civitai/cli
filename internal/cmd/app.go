@@ -25,6 +25,7 @@ with a no-build static default (back-compat alias).`,
   civitai app validate ./my-block
   civitai app submit ./my-block
   civitai app status
+  civitai app metrics my-block
   civitai app withdraw pubreq_01H
   civitai app dev-token my-block`,
 	}
@@ -35,6 +36,7 @@ with a no-build static default (back-compat alias).`,
 	cmd.AddCommand(newAppValidateCmd())
 	cmd.AddCommand(newAppSubmitCmd())
 	cmd.AddCommand(newAppStatusCmd())
+	cmd.AddCommand(newAppMetricsCmd())
 	cmd.AddCommand(newAppWithdrawCmd())
 	cmd.AddCommand(newAppDevTokenCmd())
 	cmd.AddCommand(newAppDevTunnelCmd())

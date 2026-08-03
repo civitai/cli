@@ -212,6 +212,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message`) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
+| `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
@@ -672,6 +673,83 @@ Not live yet — gen-matrix.civit.ai only serves after the app is approved and d
 
 `--json` emits the raw response for scripting. An empty list prints a friendly
 "run `civitai app submit`" hint; with no token it points you at `civitai login`.
+
+## App metrics
+
+`civitai app metrics <slug>` shows the owner-only analytics for one of **your**
+App Blocks. The slug is resolved to its `appBlockId` through your own
+submissions, so analytics exist only once a version has been **approved** — an
+app still in review reports that instead of an empty dashboard.
+
+```text
+$ civitai app metrics gen-matrix --from 2026-05-01 --to 2026-08-03
+App:          gen-matrix
+Window:       2026-05-01 00:00 UTC → 2026-08-03 00:00 UTC
+Granularity:  week
+
+Installs
+  Total   12
+  Active  9
+
+Runs
+  Count       20
+  Buzz spent  65
+
+Buzz purchased
+  Purchases  3
+  Buzz       15000
+  Gross      $14.97
+
+Engagement
+  API calls     26
+  Active users  2
+  Error rate    3.8%
+
+  Top scopes:
+    ai:write:budgeted  20
+
+  Top endpoints:
+    /api/v1/blocks/me  4
+```
+
+Three things are worth knowing, because each one otherwise produces a
+believable-but-wrong reading:
+
+- **The window is always printed, and it comes from the server.** The API
+  defaults to the last **30 days** and clamps any request to **366 days**, so a
+  real app with 20 runs in mid-June reads `0` under the default window. The
+  window shown is the one the server actually served — if it clamped your
+  `--from`, the printed range says so. Widen it with `--from` / `--to`, which
+  accept a plain `YYYY-MM-DD` (midnight UTC) or a full RFC3339 timestamp; a
+  malformed value or an inverted window is a usage error (exit `2`) caught
+  before any request.
+- **"Not entitled" is not "zero".** When the caller doesn't own the app (or
+  lacks Apps-author access) the API answers **HTTP 200 with every counter
+  zeroed**, flagged only by a `notOwned` field. The CLI refuses to render a
+  dashboard in that case and tells you to check `civitai whoami` /
+  `civitai app status <slug>` instead — a silently-empty dashboard that looks
+  like real data is the failure mode this command is built to avoid.
+- **It needs a personal API key.** The query is full-scope, so an OAuth
+  `civitai login` token gets a 403; the error names the fix
+  (`civitai login --token <key>`).
+
+One data caveat: **engagement counts only authenticated, scope-gated API
+calls**. An app that ships no scoped API surface shows real installs and revenue
+with a flat engagement section — that is expected, not a bug. `Error rate` is the
+share of those calls that failed, and the human view renders it as a percentage
+(the server sends it as a `0`–`1` ratio, which `--json` passes through unchanged).
+Only a genuine zero prints `0.0%`: a real but tiny rate — a high-traffic app with
+a handful of failures — reads `<0.1%` rather than rounding away to look
+error-free.
+
+`--json` emits the raw analytics payload (the server's own object, including
+`notOwned` and the per-bucket `series` arrays the human view omits) for
+scripting. Note that **`--json` does not refuse a not-entitled read the way the
+human view does**: a `notOwned: true` payload is passed through with every
+counter zeroed and the command still exits `0`, so
+`civitai app metrics <slug> --json | jq .runs.count` returns `0` for an app you
+can't see. A script must branch on the `notOwned` field rather than trusting the
+counts.
 
 ## Configuration
 
