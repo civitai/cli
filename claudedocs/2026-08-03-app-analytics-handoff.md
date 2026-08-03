@@ -24,7 +24,29 @@ called it. Building that call surfaced two real platform defects.
 | [#3557](https://github.com/civitai/civitai/pull/3557) | civitai | dark-flag fabricated-zero fix | 8 files, audited (8/8 mutants), `MERGEABLE` |
 | [#3561](https://github.com/civitai/civitai/pull/3561) | civitai | endpoint cardinality fix | 10 files, audited, `CLEAN` |
 
-**Agreed merge order: #3561 → #3557 → cli#190.** Not a correctness constraint
+### Docs PRs (separate, from the session-lessons pass)
+
+| PR | repo | file |
+|---|---|---|
+| [devrc#313](https://github.com/innovation-upstream/devrc/pull/313) | devrc | `claude/RULES.md` + `RULES-ARCHIVE.md` |
+| [#3567](https://github.com/civitai/civitai/pull/3567) | civitai | `CLAUDE.md` (Git Worktrees section) |
+| [cli#191](https://github.com/civitai/cli/pull/191) | cli | `AGENTS.md` (items 5–7) |
+
+🔴 **cli#191 MUST merge after cli#190.** It documents `internal/cmd/app_metrics.go`
+and `internal/appapi/analytics.go`, which only exist on #190's branch. Merging
+#191 first leaves `AGENTS.md` describing a command the tree does not have.
+
+⚠️ **devrc#313 is inert until a `home-manager switch`.** `~/.claude/RULES.md`
+resolves to `/nix/store/…-hm_RULES.md`, a read-only copy. Not run this session.
+
+Note on devrc#313: `RULES.md` is under a **deterministic byte ceiling**
+(`scripts/tests/test_rules_size.py`, 34,500 B hard / 900 B required headroom) and
+had only 495 B free. Rather than ratchet the limit — it exists as an anti-regrowth
+gate — ~1.4 KB of *evidence* was evicted to `RULES-ARCHIVE.md` under five new
+anchors. No rule lost its imperative, triggers, scope, or procedure. Final 33,507 B,
+993 B headroom. The size gate was mutation-tested before its green was trusted.
+
+**Agreed merge order: #3561 → #3557 → cli#190 → cli#191.** Not a correctness constraint
 (the regions are disjoint) — #3561 first because it is behind main and its
 browser tests had never run against main's `component-setup.tsx` change until the
 gate; cli#190 last because its `notOwned` guard only becomes meaningful once
