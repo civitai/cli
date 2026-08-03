@@ -286,14 +286,33 @@ func utcStamp(ts string) string {
 // pctFromRatio renders the engagement error rate as a percentage. The unit is
 // settled server-side — civitai/civitai
 // src/server/services/blocks/app-analytics.service.ts computes
-// `errorRate = apiCalls > 0 ? errorCount / apiCalls : 0`, i.e. a 0–1 ratio — so
-// printing it verbatim shows an unlabelled `0.02040816326530612` where the
-// reader wants `2.0%`. One decimal place keeps a real rate legible without
-// implying precision the sample size can't support, and an exact zero reads
-// `0.0%` rather than a bare `0`. Only the human view is rescaled: `--json` still
-// passes the server's raw ratio through untouched.
+// `errorRate = apiCalls > 0 ? errorCount / apiCalls : 0` (line 276), i.e. a 0–1
+// ratio — so printing it verbatim shows an unlabelled `0.02040816326530612`
+// where the reader wants `2.0%`. One decimal place keeps a real rate legible
+// without implying precision the sample size can't support. Only the human view
+// is rescaled: `--json` still passes the server's raw ratio through untouched.
+//
+// SMALL-BUT-NONZERO: one decimal place alone collapses every ratio below 0.0005
+// to `0.0%`, which is byte-identical to a genuine zero — so a healthy app with
+// 5,000 calls and 2 errors (0.0004) would read as having no errors at all. That
+// is exactly the quietly-wrong number this command exists to avoid, so anything
+// that is nonzero yet rounds away is rendered `<0.1%` instead. Only an exact
+// zero prints `0.0%`.
+//
+// INPUT PRECONDITION [0,1]: `errorCount` counts a SUBSET of the rows `apiCalls`
+// counts — the same `block_scope_invocations` filter plus `statusCode >= 400`
+// (service lines 241-256) — and the divide is guarded by `apiCalls > 0`. The
+// ratio is therefore structurally in [0,1]; negative, >1, NaN and Inf inputs are
+// not producible by this server, so this function does not defend against them
+// (a negative would fall through to the plain `-x.y%` form).
 func pctFromRatio(r float64) string {
-	return strconv.FormatFloat(r*100, 'f', 1, 64) + "%"
+	pct := strconv.FormatFloat(r*100, 'f', 1, 64)
+	// Decided on the RENDERED value, not on a hard-coded 0.0005 threshold, so
+	// the two can never drift apart at the float64 boundary.
+	if r > 0 && pct == "0.0" {
+		return "<0.1%"
+	}
+	return pct + "%"
 }
 
 // usdFromCents renders integer USD cents as dollars.

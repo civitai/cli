@@ -738,6 +738,9 @@ calls**. An app that ships no scoped API surface shows real installs and revenue
 with a flat engagement section — that is expected, not a bug. `Error rate` is the
 share of those calls that failed, and the human view renders it as a percentage
 (the server sends it as a `0`–`1` ratio, which `--json` passes through unchanged).
+Only a genuine zero prints `0.0%`: a real but tiny rate — a high-traffic app with
+a handful of failures — reads `<0.1%` rather than rounding away to look
+error-free.
 
 `--json` emits the raw analytics payload (the server's own object, including
 `notOwned` and the per-bucket `series` arrays the human view omits) for

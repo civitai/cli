@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -551,19 +552,91 @@ func TestAppMetricsErrorRateRendersAsPercent(t *testing.T) {
 
 func TestPctFromRatio(t *testing.T) {
 	cases := []struct {
+		name  string
 		ratio float64
 		want  string
 	}{
-		{0, "0.0%"},
-		{0.02040816326530612, "2.0%"},
-		{0.25, "25.0%"},
-		{0.005, "0.5%"},
-		{1, "100.0%"},
+		{"exact zero stays 0.0%", 0, "0.0%"},
+		{"observed live rate", 0.02040816326530612, "2.0%"},
+		{"quarter", 0.25, "25.0%"},
+		{"half a percent", 0.005, "0.5%"},
+		{"everything", 1, "100.0%"},
+		// The sub-0.0005 band: one decimal place alone renders all of these
+		// "0.0%", which is indistinguishable from a genuine zero.
+		{"5000 calls, 2 errors", 0.0004, "<0.1%"},
+		{"one in a hundred thousand", 1e-5, "<0.1%"},
+		{"smallest representable positive", math.SmallestNonzeroFloat64, "<0.1%"},
+		// Boundary, both sides. 0.0005 is the first ratio that rounds UP to
+		// 0.1%, so the largest float64 strictly below it is the last member of
+		// the small-but-nonzero band.
+		{"just below the 0.0005 boundary", math.Nextafter(0.0005, 0), "<0.1%"},
+		{"exactly the 0.0005 boundary", 0.0005, "0.1%"},
 	}
 	for _, tc := range cases {
-		if got := pctFromRatio(tc.ratio); got != tc.want {
-			t.Errorf("pctFromRatio(%v) = %q, want %q", tc.ratio, got, tc.want)
+		t.Run(tc.name, func(t *testing.T) {
+			if got := pctFromRatio(tc.ratio); got != tc.want {
+				t.Errorf("pctFromRatio(%v) = %q, want %q", tc.ratio, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPctFromRatioTinyRateIsNotZero is the discriminating test: it does not care
+// what the small-but-nonzero rendering IS, only that a real error rate can never
+// print the same string as no errors at all. Reverting to a bare
+// FormatFloat(r*100, 'f', 1, 64) makes every case here fail.
+func TestPctFromRatioTinyRateIsNotZero(t *testing.T) {
+	zero := pctFromRatio(0)
+	if zero != "0.0%" {
+		t.Fatalf("an exact zero must render 0.0%%, got %q", zero)
+	}
+	// 5,000 API calls with 2 errors — a healthy, high-traffic app, i.e. exactly
+	// the population that lands in this band.
+	for _, r := range []float64{0.0004, 1e-5, math.Nextafter(0.0005, 0), math.SmallestNonzeroFloat64} {
+		got := pctFromRatio(r)
+		if got == zero {
+			t.Errorf("pctFromRatio(%v) = %q — a nonzero error rate must not render identically to zero (%q)", r, got, zero)
 		}
+	}
+}
+
+// TestAppMetricsTinyErrorRateRendersDistinctly walks the same regression through
+// the whole command: the dashboard must show the app HAS errors, while --json
+// keeps passing the server's raw ratio through.
+func TestAppMetricsTinyErrorRateRendersDistinctly(t *testing.T) {
+	// 5,000 authenticated calls, 2 of them 4xx/5xx → errorRate 0.0004.
+	payload := `{"range":{"from":"2026-05-01T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"week"},
+	  "notOwned":false,
+	  "installs":{"total":0,"active":0,"series":[]},
+	  "runs":{"count":0,"buzzSpent":0,"series":[]},
+	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
+	  "engagement":{"apiCalls":5000,"activeUsers":40,"errorRate":0.0004,"topScopes":[],"topEndpoints":[]}}`
+	srv := metricsServer(t,
+		submissionsBody("busy-app", strPtr("apb_busy")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "busy-app")
+	if err != nil {
+		t.Fatalf("app metrics: %v", err)
+	}
+	if !strings.Contains(out, "Error rate") || !strings.Contains(out, "<0.1%") {
+		t.Errorf("errorRate 0.0004 should render as <0.1%%:\n%s", out)
+	}
+	if strings.Contains(out, "Error rate    0.0%") || regexp.MustCompile(`Error rate\s+0\.0%`).MatchString(out) {
+		t.Errorf("an app WITH errors must not read 0.0%%:\n%s", out)
+	}
+
+	jsonOut, _, err := run(t, "app", "metrics", "busy-app", "--json")
+	if err != nil {
+		t.Fatalf("app metrics --json: %v", err)
+	}
+	if !strings.Contains(jsonOut, "0.0004") {
+		t.Errorf("--json must pass the server's raw errorRate through:\n%s", jsonOut)
+	}
+	if strings.Contains(jsonOut, "0.1%") || strings.Contains(jsonOut, "<") {
+		t.Errorf("--json must not apply the human small-rate rendering:\n%s", jsonOut)
 	}
 }
 
