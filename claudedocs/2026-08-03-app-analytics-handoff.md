@@ -1,8 +1,57 @@
-# Handoff — App analytics: CLI command + two platform fixes
+# Handoff — App analytics: CLI command + platform fixes
 
-**Session date:** 2026-08-02 → 2026-08-03
+**Session dates:** 2026-08-02 → 2026-08-03 (two sessions)
 **Repos touched:** `civitai/cli`, `civitai/civitai`, `devrc`
-**Status at handoff:** 3 PRs open and audited, 1 re-gate in flight, nothing merged.
+
+> ## ✅ RESOLVED — everything below shipped, plus follow-ups #1, #2 and #4
+>
+> This doc is kept as the record of how the work was found and reasoned about, not as a
+> to-do list. **Read the "Still open" section at the bottom first** — the rest is history.
+>
+> | PR | what | state |
+> |---|---|---|
+> | [civitai#3561](https://github.com/civitai/civitai/pull/3561) | endpoint cardinality fix | merged |
+> | [civitai#3557](https://github.com/civitai/civitai/pull/3557) | dark-flag fabricated-zero fix | merged |
+> | [civitai#3572](https://github.com/civitai/civitai/pull/3572) | follow-up #1 — scope-gate `getMyAppAnalytics` **and** `getMyForgejoCloneInfo` | merged |
+> | [civitai#3574](https://github.com/civitai/civitai/pull/3574) | follow-up #2 — humanise both analytics top-N cards | merged |
+> | [civitai#3581](https://github.com/civitai/civitai/pull/3581) | follow-up #4 — `getMyRevenue` undiscriminated zero | merged |
+> | [cli#190](https://github.com/civitai/cli/pull/190) | `civitai app metrics <slug>` | merged |
+> | [cli#191](https://github.com/civitai/cli/pull/191) | AGENTS.md items 5–7 | merged |
+> | [cli#192](https://github.com/civitai/cli/pull/192) | AGENTS.md item 8 — the CLI/web label divergence | merged |
+>
+> The original merge-order and stale-gate blockers are all discharged. #3561 had to be
+> rebased first: `#3566` landed on main mid-session and edited the same `detail: {}` object,
+> turning it `CONFLICTING` after the recorded gate. That is the whole reason the
+> "re-check how far behind main you are immediately before merging" rule earned its place.
+
+---
+
+## The two decisions that were open, and what the evidence said
+
+**Follow-up #1's scope choice was NOT a coin flip.** `TokenScope.AppBlocksSubmit`, not the
+`stopDevTunnel` precedent. Decided on two pieces of evidence, then confirmed in prod:
+
+- `civitai app metrics` already calls `GET /api/v1/blocks/submissions`, which requires that
+  exact bit — so any other choice makes one command's two hops need different scopes.
+- `app-listings.router.cli-scope.test.ts` fixed the identical bug class (cli#186) with the
+  identical bit.
+- **Prod confirmed it afterwards**: `OauthClient.allowedScopes` for `civitai-cli` is
+  `100663297`, and of the 331 live tokens the fix unblocks, **30 carry `33554433`
+  (`UserRead|AppBlocksSubmit`) and lack bit 26** — so copying `AppBlocksDevTunnel` would
+  have left those 30 still 403ing. `UserRead` would have been actively wrong: it is inside
+  `Full`, i.e. what every third-party "log in with Civitai" client requests.
+- Also measured: **0 credentials** out of 6.68M `ApiKey` rows are in the allow→deny flip
+  class (a strict superset of `Full` lacking bit 25). Beware the naive predicate
+  `(mask & Full) = Full` — it is also true when `mask == Full` and reports 145 false hits;
+  the strict form needs `AND mask <> Full`.
+
+**Follow-up #2's suggested fix was wrong.** This doc originally said to reuse
+`humaniseScopeEndpoint`. Don't — measured against the real function, it returns
+`'(no workflow id)'` for `workflow:submit` and `''` (a blank cell) for
+`user-settings:write`, because it is the per-ROW labeller and an aggregate bucket has no
+`detail`. The actual near-duplicate is `humaniseScopeInvocation`, which is also unsuitable
+but for different reasons (wrong register for a count; no arm for REST paths). Hence a
+separate `analytics-bucket-labels.ts`.
 
 ---
 
@@ -105,8 +154,13 @@ lines, and all three endpoint sites survive in current main at `:4449`, `:6328`,
 rewrite *non-vacuously*. A re-gate against `dd888989fb` was dispatched and had
 not reported at handoff. Its worktree: `/home/zach/workspace/civit/civitai-regate`.
 
-**Do not merge until that re-gate reports.** If #3561's assertions were hollowed
-out, that is a rebase-and-re-verify on #3561 before anything lands.
+~~**Do not merge until that re-gate reports.**~~ **HISTORICAL — do not act on this.** The
+re-gate reported clean, and #3561 has since merged. It did need the rebase-and-re-verify
+this paragraph anticipated, though for a different reason: `#3566` landed later still and
+edited the same `detail: {}` object, which turned #3561 `CONFLICTING`. The non-vacuity was
+then re-proven by mutation against the new base (reverting the three router sites → exactly
+5 red on this guard's own error; deleting the `detail.workflowId` spreads → exactly 4, with
+the `:pending` test correctly staying green because it asserts absence).
 
 ---
 
@@ -143,31 +197,31 @@ Submission state: 16 apps with a live deploy, 100 submissions (2026-06-17 →
 
 ---
 
-## Follow-ups not done (ranked)
+## Follow-ups (ranked) — #1, #2 and #4 are DONE; the rest are still open
 
-1. **`getMyAppAnalytics` has no `.meta({ requiredScope })`** → defaults to
-   `TokenScope.Full`, so a personal API key works but a `civitai login` OAuth
-   token **403s**. Since `login` with no flags is the default auth path, most
-   users cannot use the command. Precedent: `stopDevTunnel`
-   (`blocks.router.ts:1375`). *Decide which scope is right — do not copy blindly;
-   the proc exposes installs, Buzz spend, endpoint names, active-user counts.*
-   This was explicitly deferred as the one item where the right answer was not
-   already determined by evidence.
-2. **`topEndpoints` renders raw in `AppAnalyticsPanel.tsx:343-348`.** A
-   cross-PR interaction only the merged tree shows: after #3561 the bounded
-   `workflow:submit` / `storage:set` tokens collapse into single top-ranked
-   buckets, so the panel will now *prominently* display raw internal tokens.
-   `AppActivityPanel` has `humaniseScopeEndpoint`; `AppAnalyticsPanel` has no
-   humaniser. Cosmetic.
+~~1. `getMyAppAnalytics` has no `.meta({ requiredScope })`~~ — **DONE, civitai#3572.**
+   Fixed with `AppBlocksSubmit`; see "the two decisions" above for why, and note the PR
+   also caught a **second** proc with the identical live defect that this list missed:
+   `getMyForgejoCloneInfo`, which `civitai app pull` drives. Worth remembering that a
+   ranked follow-up list is not a survey — the sibling was found by an audit, not by
+   this doc.
+~~2. `topEndpoints` renders raw~~ — **DONE, civitai#3574.** Both cards, not just
+   endpoints: `topScopes` next to it had rendered raw `ai:write:budgeted` and the
+   middleware's literal `(any-token)` placeholder all along. The suggested fix in this
+   doc was wrong — see "the two decisions" above.
 3. **Owns-zero-apps returns unflagged all-zero counters**
    (`app-analytics.service.ts:187-188`). Flagged independently by two agents. Web
    only — unreachable from the CLI, which always sends a concrete `appBlockId`
    (`metrics <slug>`, `cobra.ExactArgs(1)`). Defensible (an aggregate over an
-   empty set genuinely is zero) but wants a recorded decision.
-4. **`getMyRevenue` has the identical undiscriminated-zero bug**
-   (`blocks.router.ts:5152` → `emptyRevenue()`, no discriminator at all).
-   `/apps/revenue` renders both panels, so that page still shows one fabricated
-   zero surface.
+   empty set genuinely is zero) but wants a recorded decision. **Still open** — and
+   note #3581 established the shape of the answer for its sibling: one discriminator
+   value, not two, because `getRevenueForOwner` never *computes* ownership.
+~~4. `getMyRevenue` has the identical undiscriminated-zero bug~~ — **DONE, civitai#3581.**
+   One discriminator value (`notEntitled`), deliberately not two: the service scopes by
+   `appOwnerUserId` in the WHERE clause, so a not-owned request yields a *truthful*
+   zero-row aggregate and `notOwned` is unproducible. Declaring it would have created the
+   "declared but never satisfied" trap this doc warns about. The PR also consolidated
+   **two** unguarded revenue readers into one shared `RevenuePanel`.
 5. **`normalizeEndpoint` still writes unbounded values**
    (`block-scope.middleware.ts:930`) — templates only `^\d+$`→`:id` and ULIDs;
    a slug or UUID segment passes through verbatim, and the row is written from
@@ -186,6 +240,68 @@ Submission state: 16 apps with a live deploy, 100 submissions (2026-06-17 →
    back-quote trap still live at `app_dev_tunnel.go:395`.
 
 ---
+
+## Still open — start here
+
+Ranked. #6 above (**ClickHouse `blockRenders` has zero readers**) remains the biggest
+*product* gap; the two items below are infrastructure this session uncovered and are
+cheaper.
+
+1. 🔴 **CI does not run the `component` (browser) project at all.** Three PRs merged today
+   ship browser tests — #3574's 7, #3581's 3, plus #3557's existing panel tests — that have
+   **never executed on a canonical browser**. They ran only against a nixpkgs
+   `playwright-chromium-headless-shell` (Chrome for Testing 149) shimmed in via a scratch
+   `PLAYWRIGHT_BROWSERS_PATH`, because Playwright's vendored `chrome-headless-shell` is a
+   generic-linux binary NixOS refuses to exec. As things stand those guards would catch
+   nothing in CI. This is the single largest verification gap the session exposed.
+
+2. 🟡 **A stale `node_modules` silently removes ~1,126 tests.** A worktree installed before
+   main gained the `@civitai/db-queries` workspace package fails at
+   `src/server/db/kyselyDb.ts` module load, so 89 files' tests are never collected and the
+   runner still prints a plausible total (10,131 passed vs 11,257 after `pnpm install`).
+   It cost one agent a full verification pass and produced a mutation matrix measured
+   against a suite missing 10% of itself. Filed on
+   [civitai#3579](https://github.com/civitai/civitai/issues/3579) alongside the related
+   wholesale-mock bug; a lockfile-vs-installed preflight check would close the family.
+
+3. 🟡 **`addCollaborator` may downgrade a write grant — UNVERIFIED.** It is a
+   `PUT …/collaborators/<user>` that *sets* permission, so `civitai app pull` (which grants
+   `read`) on an app where the web `AuthorViaGit` flow already granted `write` could
+   downgrade it and break a later push. Pre-existing, but #3572 made it reachable by the
+   CLI's **default** credential. Nobody has checked Forgejo's live PUT semantics; this rests
+   on the repo's own comment. Cheap to settle, unpleasant if true.
+
+4. 🟡 **`installs: 0` is still unverified, not measured** (as the data section above already
+   says). Uniform across all 16 apps, and no positive control was ever obtained proving the
+   counter can move. Given that this session found false zeros in four separate places —
+   fabricated dashboards, a false `tsc` 0 from an OOM, a prettier "all clean" that matched
+   zero files, and 1,126 tests silently not running — a uniform zero with no positive
+   control should be assumed broken until one exists.
+
+## What actually caught the bugs
+
+Recorded because it is the most transferable thing here. Across 8 PRs and 12 adversarial
+audit rounds, **every fix round found a defect in the previous fix**, and the mechanical
+gate caught none of them — the suite and typecheck were green at every single tip,
+including tips where a comment falsely described the mechanism protecting a scope gate.
+Three consecutive rounds on #3572 found the same class: a comment asserting something the
+code does not implement.
+
+The audits' recurring finds, in rough order of frequency:
+
+- **a comment or docstring asserting a mechanism the code does not implement** (5+ times);
+- **a test that pins the author's belief rather than the contract** — including one that
+  *certified a known-wrong label as intended*, and a "completeness" test that hardcoded the
+  same four strings it was meant to be checking;
+- **a claim broader than its evidence** — "both cards fixed" when two live scopes still
+  rendered raw; a uniqueness regex whose docblock claimed to pin every reader while matching
+  one call form;
+- **an unreachable guard counted as coverage** (one survived mutation and is now labelled as
+  untested rather than quietly kept).
+
+The cheap habits that found them: mutation-test every guard and **verify the mutation
+actually applied** before reading its result; positive-control every harness that can
+report a zero; and count tests rather than reading an exit code.
 
 ## Session learnings (a doc-update PR set was dispatched for these)
 
