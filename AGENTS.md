@@ -103,8 +103,8 @@ func newWhoAmICmd() *cobra.Command {
 
 ## Intentional decisions that look wrong (read before "fixing")
 
-Items 1–3 are deliberate mirrors of the platform (item 4 is a deliberate
-*non*-mirror); items 5–7 cover `civitai app metrics`, the CLI's only analytics
+Items 1–3 are deliberate mirrors of the platform (items 4 and 8 are deliberate
+*non*-mirrors); items 5–8 cover `civitai app metrics`, the CLI's only analytics
 read path. The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
@@ -174,6 +174,26 @@ until that exists, vendoring is on purpose.
    `civitai.ErrNotFound` / `cmd.ErrUsage` (note: usage lives in `internal/cmd`,
    the HTTP kinds in `pkg/civitai`). This applies to **every** command that
    claims an exit code, not just `metrics`.
+8. **`app metrics` prints RAW endpoint/scope tokens, and the web deliberately does
+   not — this divergence is on purpose.** The web analytics panel humanises the
+   two "top N" rollups (`civitai/civitai → src/components/AppBlocks/`
+   `analytics-bucket-labels.ts`), so the same data reads as `Generations` /
+   `AI workflow submits` there and as `workflow:submit` / `ai:write:budgeted`
+   here (`app_metrics.go`, the `Top endpoints` / `Top scopes` sections). That was
+   a **deliberate non-mirror**, decided when the web labels landed: reproducing
+   them would add a THIRD vendored mapping to keep in lockstep with the server
+   (alongside `schema/` and the slot registry), and unlike those two it buys no
+   correctness — a raw token is accurate, just terse, and the values are already
+   bounded so they aggregate readably. The raw form is arguably *better* for the
+   CLI's scripting audience, and `--json` must keep emitting raw tokens
+   regardless.
+   Cost to know about: an author reading the same range on both surfaces sees two
+   vocabularies, and a legacy pre-bounding row shows here as
+   `workflow:submit:<id>` where the web shows `Generations (<id>)`. If you decide
+   to close the gap, mirror `analytics-bucket-labels.ts` wholesale rather than
+   hand-rolling labels, add a drift check against the server's
+   `recordScopeInvocation` call sites, and note that `pending` is a "no id
+   captured" sentinel — **not** a status.
 
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync
