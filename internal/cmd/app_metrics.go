@@ -93,7 +93,13 @@ engagement section — that is expected, not a bug.`,
 	}
 	cmd.Flags().StringVar(&fromFlag, "from", "", "window start: YYYY-MM-DD (midnight UTC) or RFC3339 (default: 30 days ago, server-side)")
 	cmd.Flags().StringVar(&toFlag, "to", "", "window end: YYYY-MM-DD (midnight UTC) or RFC3339 (default: now, server-side)")
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit the raw analytics payload (scriptable)")
+	// NOTE: no back-quotes in this usage string — cobra/pflag's UnquoteUsage
+	// treats the first back-quoted span as the flag's VALUE NAME, so a stray
+	// `notOwned: true` renders the boolean as "--json notOwned: true".
+	cmd.Flags().BoolVar(&jsonOut, "json", false,
+		"emit the raw analytics payload (scriptable). Unlike the human view, --json does NOT refuse a not-entitled read: "+
+			"a notOwned:true payload is passed through with every counter zeroed and still exits 0, so a script MUST "+
+			"branch on the notOwned field rather than trusting the counts")
 	return cmd
 }
 
@@ -239,9 +245,7 @@ func printAppMetrics(w io.Writer, slug string, a *appapi.AppAnalytics) {
 	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "  API calls\t%d\n", a.Engagement.APICalls)
 	fmt.Fprintf(tw, "  Active users\t%d\n", a.Engagement.ActiveUsers)
-	// Rendered verbatim: the server owns this figure's unit, so the CLI does not
-	// rescale it into a percentage it cannot verify.
-	fmt.Fprintf(tw, "  Error rate\t%s\n", strconv.FormatFloat(a.Engagement.ErrorRate, 'g', -1, 64))
+	fmt.Fprintf(tw, "  Error rate\t%s\n", pctFromRatio(a.Engagement.ErrorRate))
 	_ = tw.Flush()
 
 	if len(a.Engagement.TopScopes) > 0 {
@@ -277,6 +281,19 @@ func utcStamp(ts string) string {
 		return ts
 	}
 	return t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+// pctFromRatio renders the engagement error rate as a percentage. The unit is
+// settled server-side — civitai/civitai
+// src/server/services/blocks/app-analytics.service.ts computes
+// `errorRate = apiCalls > 0 ? errorCount / apiCalls : 0`, i.e. a 0–1 ratio — so
+// printing it verbatim shows an unlabelled `0.02040816326530612` where the
+// reader wants `2.0%`. One decimal place keeps a real rate legible without
+// implying precision the sample size can't support, and an exact zero reads
+// `0.0%` rather than a bare `0`. Only the human view is rescaled: `--json` still
+// passes the server's raw ratio through untouched.
+func pctFromRatio(r float64) string {
+	return strconv.FormatFloat(r*100, 'f', 1, 64) + "%"
 }
 
 // usdFromCents renders integer USD cents as dollars.

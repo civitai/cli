@@ -5,10 +5,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/civitai/cli/internal/appapi"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // verifiedAnalyticsPayload is the real shape observed from
@@ -129,7 +131,9 @@ func TestAppMetricsRendersVerifiedPayload(t *testing.T) {
 		"Installs", "Total", "3", "Active", "2",
 		"Runs", "Count", "20", "Buzz spent", "65",
 		"Buzz purchased", "Purchases", "1", "500", "$4.99",
-		"Engagement", "API calls", "26", "Active users", "Error rate", "0",
+		// errorRate is a 0–1 ratio server-side; an exact zero must read "0.0%",
+		// never a bare "0" or a long float.
+		"Engagement", "API calls", "26", "Active users", "Error rate", "0.0%",
 		"Top scopes", "ai:write:budgeted",
 		"Top endpoints", "/api/v1/blocks/me", "4",
 	} {
@@ -282,8 +286,12 @@ func TestAppMetricsClampedRangeEchoesResponseNotFlags(t *testing.T) {
 	if strings.Contains(out, "2020-01-01") {
 		t.Errorf("printed window must not echo the requested (unclamped) start:\n%s", out)
 	}
-	if !strings.Contains(out, "0.25") {
-		t.Errorf("error rate should be rendered verbatim:\n%s", out)
+	// errorRate is a ratio (errorCount/apiCalls) server-side, so 0.25 is 25%.
+	if !strings.Contains(out, "25.0%") {
+		t.Errorf("error rate 0.25 should render as 25.0%%:\n%s", out)
+	}
+	if strings.Contains(out, "0.25") {
+		t.Errorf("the human view must not print the raw ratio:\n%s", out)
 	}
 }
 
@@ -411,6 +419,12 @@ func TestAppMetricsUnauthorizedPointsAtLogin(t *testing.T) {
 	if !strings.Contains(err.Error(), "not logged in (401)") || !strings.Contains(err.Error(), "civitai login") {
 		t.Errorf("401 should point at login, got: %v", err)
 	}
+	// exit 3 (root's taxonomy maps ErrUnauthorized → exitAuth). Pinned
+	// separately from the message: an unclassified error keeps the same text
+	// while silently degrading the exit code to 1.
+	if !errors.Is(err, civitai.ErrUnauthorized) {
+		t.Errorf("a 401 must classify as ErrUnauthorized (exit 3), got %T: %v", err, err)
+	}
 }
 
 func TestAppMetricsForbiddenAsksForPersonalAPIKey(t *testing.T) {
@@ -431,6 +445,12 @@ func TestAppMetricsForbiddenAsksForPersonalAPIKey(t *testing.T) {
 			t.Errorf("403 error should contain %q, got: %v", want, err)
 		}
 	}
+	// exit 3 (root's taxonomy maps ErrUnauthorized → exitAuth). Dropping the
+	// classification leaves every character of the message above intact, so
+	// nothing but this assertion notices.
+	if !errors.Is(err, civitai.ErrUnauthorized) {
+		t.Errorf("a 403 must classify as ErrUnauthorized (exit 3), got %T: %v", err, err)
+	}
 }
 
 func TestAppMetricsUnknownSlugIsActionableNotFound(t *testing.T) {
@@ -450,8 +470,100 @@ func TestAppMetricsUnknownSlugIsActionableNotFound(t *testing.T) {
 			t.Errorf("unknown-slug error should contain %q, got: %v", want, err)
 		}
 	}
+	// exit 4 (root's taxonomy maps ErrNotFound → exitNotFound). The message is
+	// unchanged by dropping the tag, so only this pins the contract.
+	if !errors.Is(err, civitai.ErrNotFound) {
+		t.Errorf("an unknown slug must classify as ErrNotFound (exit 4), got %T: %v", err, err)
+	}
 	if rec.trpcReached {
 		t.Error("an unresolvable slug must not reach the analytics query")
+	}
+}
+
+// TestAppMetricsServer404ClassifiesNotFound covers the OTHER not-found path: the
+// analytics query itself answering 404 after the slug resolved. That one is
+// tagged by analyticsError's TagStatus deferral rather than an explicit Tag, so
+// it needs its own pin.
+func TestAppMetricsServer404ClassifiesNotFound(t *testing.T) {
+	srv := metricsServer(t,
+		submissionsBody("my-block", strPtr("apb_123")), http.StatusOK,
+		`{"error":{"json":{"message":"No such app block"}}}`, http.StatusNotFound, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	_, _, err := run(t, "app", "metrics", "my-block")
+	if err == nil {
+		t.Fatal("expected an error on 404")
+	}
+	if !strings.Contains(err.Error(), "no such app for your account (404)") ||
+		!strings.Contains(err.Error(), "civitai app status") {
+		t.Errorf("404 should name the next command, got: %v", err)
+	}
+	if !errors.Is(err, civitai.ErrNotFound) {
+		t.Errorf("a 404 must classify as ErrNotFound (exit 4), got %T: %v", err, err)
+	}
+}
+
+// TestAppMetricsErrorRateRendersAsPercent pins the unit of engagement.errorRate.
+// The server computes it as errorCount/apiCalls — a 0–1 ratio — so the human
+// view must rescale it while --json keeps passing the raw ratio through. The
+// value here is the one observed live for playable-collections (5 errors in 245
+// calls).
+func TestAppMetricsErrorRateRendersAsPercent(t *testing.T) {
+	payload := `{"range":{"from":"2026-05-01T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"week"},
+	  "notOwned":false,
+	  "installs":{"total":0,"active":0,"series":[]},
+	  "runs":{"count":20,"buzzSpent":65,"series":[]},
+	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
+	  "engagement":{"apiCalls":245,"activeUsers":3,"errorRate":0.02040816326530612,
+	    "topScopes":[{"scope":"collections:read:self","count":170}],
+	    "topEndpoints":[{"endpoint":"/api/v1/blocks/collections/:id","count":113}]}}`
+	srv := metricsServer(t,
+		submissionsBody("playable-collections", strPtr("apb_pc")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "playable-collections")
+	if err != nil {
+		t.Fatalf("app metrics: %v", err)
+	}
+	if !strings.Contains(out, "Error rate") || !strings.Contains(out, "2.0%") {
+		t.Errorf("errorRate 0.02040816326530612 should render as 2.0%%:\n%s", out)
+	}
+	// The raw ratio is unreadable in a dashboard — it must not leak through.
+	if strings.Contains(out, "0.02040816326530612") {
+		t.Errorf("the human view must not print the raw ratio:\n%s", out)
+	}
+
+	// --json is a verbatim passthrough: the server's own ratio, not a percentage.
+	jsonOut, _, err := run(t, "app", "metrics", "playable-collections", "--json")
+	if err != nil {
+		t.Fatalf("app metrics --json: %v", err)
+	}
+	if !strings.Contains(jsonOut, "0.02040816326530612") {
+		t.Errorf("--json must pass the server's raw errorRate through:\n%s", jsonOut)
+	}
+	if strings.Contains(jsonOut, "%") {
+		t.Errorf("--json must not rescale errorRate into a percentage:\n%s", jsonOut)
+	}
+}
+
+func TestPctFromRatio(t *testing.T) {
+	cases := []struct {
+		ratio float64
+		want  string
+	}{
+		{0, "0.0%"},
+		{0.02040816326530612, "2.0%"},
+		{0.25, "25.0%"},
+		{0.005, "0.5%"},
+		{1, "100.0%"},
+	}
+	for _, tc := range cases {
+		if got := pctFromRatio(tc.ratio); got != tc.want {
+			t.Errorf("pctFromRatio(%v) = %q, want %q", tc.ratio, got, tc.want)
+		}
 	}
 }
 
@@ -570,10 +682,33 @@ func TestAppMetricsHelpDocumentsTheCaveats(t *testing.T) {
 	}
 	lower := strings.ToLower(out)
 	for _, want := range []string{"--from", "--to", "--json",
-		"authenticated", "scope-gated", "personal api key"} {
+		"authenticated", "scope-gated", "personal api key",
+		// --json deliberately fails OPEN on a not-entitled read (raw passthrough,
+		// exit 0), so the help has to say scripts must branch on notOwned.
+		"notowned"} {
 		if !strings.Contains(lower, want) {
 			t.Errorf("metrics help missing %q:\n%s", want, out)
 		}
+	}
+}
+
+// TestAppMetricsJSONFlagRendersAsABoolean guards a real trap hit while writing
+// the notOwned caveat: pflag's UnquoteUsage lifts the first BACK-QUOTED span out
+// of a usage string and uses it as the flag's value name, so a usage string
+// mentioning a `notOwned: true` payload renders the boolean as
+// "--json notOwned: true" — i.e. the help tells you to pass an argument to a
+// flag that takes none.
+func TestAppMetricsJSONFlagRendersAsABoolean(t *testing.T) {
+	out, _, err := run(t, "app", "metrics", "--help")
+	if err != nil {
+		t.Fatalf("app metrics --help: %v", err)
+	}
+	// A boolean flag's help line is "--json" then padding then the description.
+	if !regexp.MustCompile(`--json\s{2,}emit`).MatchString(out) {
+		t.Errorf("--json should render as a valueless boolean flag:\n%s", out)
+	}
+	if regexp.MustCompile(`--json\s+notOwned`).MatchString(out) {
+		t.Errorf("--json picked up a value name from a back-quoted usage span:\n%s", out)
 	}
 }
 

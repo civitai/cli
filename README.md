@@ -703,7 +703,7 @@ Buzz purchased
 Engagement
   API calls     26
   Active users  2
-  Error rate    0
+  Error rate    3.8%
 
   Top scopes:
     ai:write:budgeted  20
@@ -735,11 +735,18 @@ believable-but-wrong reading:
 
 One data caveat: **engagement counts only authenticated, scope-gated API
 calls**. An app that ships no scoped API surface shows real installs and revenue
-with a flat engagement section — that is expected, not a bug.
+with a flat engagement section — that is expected, not a bug. `Error rate` is the
+share of those calls that failed, and the human view renders it as a percentage
+(the server sends it as a `0`–`1` ratio, which `--json` passes through unchanged).
 
 `--json` emits the raw analytics payload (the server's own object, including
 `notOwned` and the per-bucket `series` arrays the human view omits) for
-scripting.
+scripting. Note that **`--json` does not refuse a not-entitled read the way the
+human view does**: a `notOwned: true` payload is passed through with every
+counter zeroed and the command still exits `0`, so
+`civitai app metrics <slug> --json | jq .runs.count` returns `0` for an app you
+can't see. A script must branch on the `notOwned` field rather than trusting the
+counts.
 
 ## Configuration
 
