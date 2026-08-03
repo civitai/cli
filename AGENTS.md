@@ -104,7 +104,8 @@ func newWhoAmICmd() *cobra.Command {
 ## Intentional decisions that look wrong (read before "fixing")
 
 Items 1–3 are deliberate mirrors of the platform (item 4 is a deliberate
-*non*-mirror). The durable fix for the mirroring is a server-side
+*non*-mirror); items 5–7 cover `civitai app metrics`, the CLI's only analytics
+read path. The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
 
@@ -143,6 +144,36 @@ until that exists, vendoring is on purpose.
    reproduce the server's numeric scope bit positions — all bit/scope authority
    stays server-side. Don't "helpfully" add a vendored bitmask; the string check
    is deliberate.
+5. **`civitai app metrics` calls tRPC, not REST — because there is no REST route
+   to call.** Owner analytics exist only as `blocks.getMyAppAnalytics`
+   (`civitai/civitai → src/server/routers/blocks.router.ts`); there is no
+   `/api/v1` equivalent. So `internal/cmd/app_metrics.go` resolves `<slug>` →
+   `appBlockId` through the *existing REST* route `GET /api/v1/blocks/submissions`
+   and then issues the non-batched tRPC GET in `internal/appapi/analytics.go`
+   (input rides in `?input={"json":{…}}`, success unwraps `result.data.json`),
+   reusing the `authedDo` + envelope-unwrap pattern `GetForgejoCloneInfo` already
+   established. The two-hop shape is deliberate, not an oversight — don't "fix"
+   the tRPC call into a REST call that does not exist.
+6. **`notOwned` is a cross-repo contract, and the human view MUST keep branching
+   on it.** The proc sits behind the `appBlocksAuthor` feature flag and answers a
+   caller who is not entitled — or does not own the app — with **HTTP 200 and
+   every counter zeroed**, not an error. A renderer that ignores the field
+   therefore prints a plausible, fully-populated-looking empty dashboard for what
+   is really a permission failure, so `runAppMetrics` refuses to render when
+   `notOwned` is true. Whoever changes that payload server-side has to keep the
+   field. `--json` deliberately passes the payload through **and still exits 0**,
+   so a script must branch on `notOwned` itself rather than trust the counts.
+7. **The exit-code contract is pinned by `errors.Is`, never by message text.**
+   The classification sentinels carry no visible text — `civitai.Tag`/`TagStatus`
+   attach them while `Error()` stays byte-for-byte unchanged (see
+   `pkg/civitai/errkind.go`) — so a test that asserts on the message says nothing
+   about the exit code. Measured on the `metrics` PR: stripping the
+   classification while leaving every message identical left the **entire suite
+   green**, and the README's 403 → exit 3 / not-found → exit 4 promise was
+   unpinned. Assert `errors.Is(err, civitai.ErrUnauthorized)` /
+   `civitai.ErrNotFound` / `cmd.ErrUsage` (note: usage lives in `internal/cmd`,
+   the HTTP kinds in `pkg/civitai`). This applies to **every** command that
+   claims an exit code, not just `metrics`.
 
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync
