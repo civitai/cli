@@ -30,7 +30,39 @@ browser tests had never run against main's `component-setup.tsx` change until th
 gate; cli#190 last because its `notOwned` guard only becomes meaningful once
 #3557 deploys.
 
-### BLOCKER: the integration gate went stale
+### RESOLVED — the re-gate came back clean
+
+**The blocker below is cleared; it is kept for context.** A re-gate ran against
+`main@dd888989fb` and, when main advanced again mid-run, re-ran the whole thing
+against `fdf8e13bed`. Both bases give identical results: merged tree **752 files
+/ 10896 passed / 1 skipped / 0 failed**, typecheck **0 errors** (validated with
+an injected type error proving tsc reports exactly 1), and
+`blocks.router.workflow.test.ts` collects **311** tests. The +10 delta lands in
+exactly 5 PR-owned files — nothing stopped collecting.
+
+**#3561's endpoint assertions survive main's rewrite intact and non-vacuously**,
+proven by two discriminating mutations rather than asserted: reverting the three
+router sites turns exactly 5 tests red on *this* guard's own error
+(`expected 'workflow:submit:pending' to be 'workflow:submit'`); deleting the
+`detail.workflowId` spread turns exactly 4 red, with the `:pending` test
+correctly staying green because it asserts absence.
+
+One real blocker surfaced and was fixed: #3557 failed `prettier --check` on a
+file it created (`AppAnalyticsPanel.browser.test.tsx:48-51`). Fixed in
+`b77f849e9f` — pure line-wrap, no behaviour change. The 9 other prettier
+failures on that tree are pre-existing on main. **#3557's CI needs to re-green
+after that push before merging.**
+
+Caveats carried forward: the component-suite numbers came from a
+**non-canonical browser build** — Playwright's vendored `chrome-headless-shell`
+is a generic-linux binary NixOS refuses to exec, so the gate shimmed nixpkgs
+chromium 1228 into the `-1200` names. Unit results are unaffected and are the
+stronger evidence. The gate also ran prettier only, not ESLint proper.
+
+Gate worktrees left in place: `/home/zach/workspace/civit/civitai-regate` and
+`civitai-regate-ctl`.
+
+### Original blocker (historical — resolved above)
 
 A gate merged #3557 + #3561 off `main@ed6e17ac7d` and **passed** (751 files /
 10852 passed / 1 skipped / 0 failed, typecheck 0 with a positive control).
