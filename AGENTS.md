@@ -195,9 +195,10 @@ until that exists, vendoring is on purpose.
    `recordScopeInvocation` call sites, and note that `pending` is a "no id
    captured" sentinel — **not** a status.
 9. **`views.unavailable` is a SECOND unavailability discriminator, and it is not
-   redundant with `notOwned`.** The `Views` section of `app metrics` is the only
-   part of the payload the server reads from **ClickHouse** (`blockRenders`)
-   rather than Postgres, so its store can be unconfigured or down while every
+   redundant with `notOwned`.** The `App loads` section of `app metrics` is the
+   only part of the payload the server reads from **ClickHouse** (`blockRenders`)
+   rather than Postgres, so its store can be unconfigured, SLOW (the server-side
+   read is time-bounded and a timeout degrades to this flag) or down while every
    other counter in the same response is genuinely measured. That is why the
    flag is per-SECTION: flagging the whole payload would discard good data, and
    dropping the flag would recreate the fabricated zero that item 6 exists to
@@ -222,6 +223,13 @@ until that exists, vendoring is on purpose.
    across 27 distinct apps) — so deduping on it would report ~1 viewer per app.
    Anonymous rows all carry `userId = 0`, so the server sums distinct authed
    `userId` with distinct anon `ip`.
+   Two more things the label has to keep straight, both of which read wrong if
+   you shorten them: `AnonCount` is signed-out **LOADS**, not viewers, and is
+   NOT a subset of `UniqueViewers` — one anonymous visitor reloading ten times
+   is 10 there and 1 unique viewer, so it can legitimately be the larger number.
+   And the section is called **App loads**, not Views, because the server writes
+   a row even when a mount FAILS (a failed launch's only beacon) and the table
+   has no status column — so a permanently-broken app still reports loads.
 
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync

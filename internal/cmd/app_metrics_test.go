@@ -828,7 +828,7 @@ func TestAppMetricsRendersViews(t *testing.T) {
 	  "runs":{"count":7,"buzzSpent":7000,"series":[]},
 	  "buzzPurchased":{"count":2,"buzzAmount":5000,"grossCents":999},
 	  "engagement":{"apiCalls":100,"activeUsers":4,"errorRate":0.1,"topScopes":[],"topEndpoints":[]},
-	  "views":{"count":124,"uniqueViewers":12,"anonCount":4,"series":[]}}`
+	  "views":{"count":124,"uniqueViewers":12,"anonCount":40}}`
 	srv := metricsServer(t,
 		submissionsBody("seen-app", strPtr("apb_seen")), http.StatusOK,
 		trpcEnvelope(payload), http.StatusOK, nil)
@@ -844,15 +844,15 @@ func TestAppMetricsRendersViews(t *testing.T) {
 	// fixture values are pairwise distinct precisely so a line-level check can
 	// tell them apart.
 	for label, want := range map[string]string{
-		"Impressions":    "124",
-		"Unique viewers": "12",
-		"Signed-out":     "4",
+		"Impressions":      "124",
+		"Unique viewers":   "12",
+		"Signed-out loads": "40",
 	} {
 		if got := valueOnLine(out, label); got != want {
 			t.Errorf("line %q should carry value %q, got %q:\n%s", label, want, got, out)
 		}
 	}
-	if !strings.Contains(out, "Views") {
+	if !strings.Contains(out, "App loads") {
 		t.Errorf("views output missing the section heading:\n%s", out)
 	}
 	if strings.Contains(out, "unavailable") {
@@ -871,7 +871,7 @@ func TestAppMetricsViewsUnavailableNeverPrintsZero(t *testing.T) {
 	  "runs":{"count":7,"buzzSpent":7000,"series":[]},
 	  "buzzPurchased":{"count":2,"buzzAmount":5000,"grossCents":999},
 	  "engagement":{"apiCalls":100,"activeUsers":4,"errorRate":0.1,"topScopes":[],"topEndpoints":[]},
-	  "views":{"count":0,"uniqueViewers":0,"anonCount":0,"series":[],"unavailable":true}}`
+	  "views":{"count":0,"uniqueViewers":0,"anonCount":0,"unavailable":true}}`
 	srv := metricsServer(t,
 		submissionsBody("dark-app", strPtr("apb_dark")), http.StatusOK,
 		trpcEnvelope(payload), http.StatusOK, nil)
@@ -885,7 +885,7 @@ func TestAppMetricsViewsUnavailableNeverPrintsZero(t *testing.T) {
 	if !strings.Contains(out, "unavailable") {
 		t.Errorf("an unreadable impression store must say so:\n%s", out)
 	}
-	if !strings.Contains(out, "NOT a report of zero views") {
+	if !strings.Contains(out, "NOT a report of zero loads") {
 		t.Errorf("the caveat must spell out that this is not a measured zero:\n%s", out)
 	}
 	// The defect this pins: printing the placeholder 0 next to "Impressions".
@@ -908,7 +908,7 @@ func TestAppMetricsViewsMeasuredZeroIsNotUnavailable(t *testing.T) {
 	  "runs":{"count":0,"buzzSpent":0,"series":[]},
 	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
 	  "engagement":{"apiCalls":0,"activeUsers":0,"errorRate":0,"topScopes":[],"topEndpoints":[]},
-	  "views":{"count":0,"uniqueViewers":0,"anonCount":0,"series":[]}}`
+	  "views":{"count":0,"uniqueViewers":0,"anonCount":0}}`
 	srv := metricsServer(t,
 		submissionsBody("quiet-app", strPtr("apb_quiet")), http.StatusOK,
 		trpcEnvelope(payload), http.StatusOK, nil)
@@ -919,13 +919,13 @@ func TestAppMetricsViewsMeasuredZeroIsNotUnavailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app metrics: %v", err)
 	}
-	if !strings.Contains(out, "Views") {
-		t.Errorf("a measured zero still renders the Views section:\n%s", out)
+	if !strings.Contains(out, "App loads") {
+		t.Errorf("a measured zero still renders the App loads section:\n%s", out)
 	}
 	if strings.Contains(out, "unavailable") {
 		t.Errorf("a measured zero must NOT be reported as unavailable:\n%s", out)
 	}
-	if strings.Contains(out, "NOT a report of zero views") {
+	if strings.Contains(out, "NOT a report of zero loads") {
 		t.Errorf("the outage caveat must not appear for a genuine zero:\n%s", out)
 	}
 }
@@ -941,7 +941,7 @@ func TestAppMetricsJSONPassesViewsThroughRaw(t *testing.T) {
 	  "runs":{"count":0,"buzzSpent":0,"series":[]},
 	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
 	  "engagement":{"apiCalls":0,"activeUsers":0,"errorRate":0,"topScopes":[],"topEndpoints":[]},
-	  "views":{"count":0,"uniqueViewers":0,"anonCount":0,"series":[],"unavailable":true}}`
+	  "views":{"count":0,"uniqueViewers":0,"anonCount":0,"unavailable":true}}`
 	srv := metricsServer(t,
 		submissionsBody("dark-app", strPtr("apb_dark")), http.StatusOK,
 		trpcEnvelope(payload), http.StatusOK, nil)
@@ -994,10 +994,10 @@ func TestAppMetricsLegacyServerWithoutViewsIsNotAZero(t *testing.T) {
 	if got := valueOnLine(out, "Unique viewers"); got != "unavailable" {
 		t.Errorf("an absent views section must render as unavailable, got %q:\n%s", got, out)
 	}
-	if !strings.Contains(out, "did not report impressions") {
+	if !strings.Contains(out, "did not report app loads") {
 		t.Errorf("the absent-section caveat should name the real cause:\n%s", out)
 	}
-	if !strings.Contains(out, "NOT a report of zero views") {
+	if !strings.Contains(out, "NOT a report of zero loads") {
 		t.Errorf("the caveat must spell out that this is not a measured zero:\n%s", out)
 	}
 	// Everything the old server DID send is genuinely measured and must render.

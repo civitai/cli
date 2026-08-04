@@ -700,10 +700,10 @@ Buzz purchased
   Buzz       15000
   Gross      $14.97
 
-Views
-  Impressions     124
-  Unique viewers  12
-  Signed-out      4
+App loads
+  Impressions       124
+  Unique viewers    12
+  Signed-out loads  40
 
 Engagement
   API calls     26
@@ -742,11 +742,15 @@ Two data caveats.
 
 **Engagement counts only authenticated, scope-gated API
 calls.** An app that ships no scoped API surface shows real installs and revenue
-with a flat engagement section — that is expected, not a bug. **Views is the
+with a flat engagement section — that is expected, not a bug. **App loads is the
 exception**: it is measured on every load, so it counts signed-out visitors and
 static blocks that engagement structurally cannot see. `Unique viewers` counts
 signed-in people once each and approximates signed-out ones by network address,
-so read it as reach rather than an identity count. `Error rate` is the
+so read it as reach rather than an identity count, and `Signed-out loads` is a
+count of LOADS (one anonymous visitor reloading ten times is 10 there and 1
+unique viewer), so it can legitimately exceed `Unique viewers`. Note also that
+these are mount ATTEMPTS: a load that FAILED still counts, because a failed
+mount's only beacon is the same event and it carries no status. `Error rate` is the
 share of those calls that failed, and the human view renders it as a percentage
 (the server sends it as a `0`–`1` ratio, which `--json` passes through unchanged).
 Only a genuine zero prints `0.0%`: a real but tiny rate — a high-traffic app with
@@ -762,17 +766,18 @@ counter zeroed and the command still exits `0`, so
 can't see. A script must branch on the `notOwned` field rather than trusting the
 counts.
 
-**Views has a SECOND, section-local unavailability flag** — `views.unavailable`,
-independent of `notOwned`. Views is the one section the server reads from a
-different store, which can be unreadable while every other counter in the same
-response is genuinely measured. When that happens the human view prints
-`unavailable` and says so explicitly rather than printing a `0` you would read
-as "nobody looked at my app". `--json` passes the flag through and still exits
-`0`, so a script must branch on `views.unavailable` too — `jq .views.count`
-alone cannot tell an outage from a real zero. A server old enough to predate
-impressions omits the `views` key entirely; the human view reports that as
-unavailable as well (naming the different cause), and a script should treat a
-missing `.views` the same way.
+**App loads has a SECOND, section-local unavailability flag** — `views.unavailable`,
+independent of `notOwned`. It is the one section the server reads from a
+different store, which can be unreadable — or merely too slow, the read is
+time-bounded server-side — while every other counter in the same response is
+genuinely measured. When that happens the human view prints `unavailable` and
+says so explicitly rather than printing a `0` you would read as "nobody opened
+my app". `--json` passes the flag through and still exits `0`, so a script must
+branch on `views.unavailable` too — `jq .views.count` alone cannot tell an
+outage from a real zero. A server old enough to predate this section omits the
+`views` key entirely; the human view reports that as unavailable as well
+(naming the different cause), and a script should treat a missing `.views` the
+same way.
 
 ## Configuration
 
