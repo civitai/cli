@@ -37,7 +37,9 @@ The money path uses the SDK hooks — never raw `window.parent.postMessage`:
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).
 - `useBuzzBalance()` — the viewer's per-pool balance (`{ blue, green, yellow }`),
   read host-side via the `GET_BUZZ_BALANCE` bridge — **no `buzz:read:self` scope
-  needed** (the host resolves the viewer from the block token).
+  needed** (the host resolves the viewer from the block token). Use it to *reason*
+  about spend (which account can fund this?), **not** to re-display the balance —
+  the Civitai chrome around your app already shows it.
 - `useCheckpointPicker()` / `useResourcePicker()` — open the HOST's native
   resource picker for the checkpoint + LoRAs (the app never browses a catalog).
 - `useRequestConsent()` — lazy, on first Generate: `ai:write:budgeted` is
@@ -90,15 +92,15 @@ server is LoRA-only for additional resources and **re-validates** base-model
 compatibility + per-resource entitlement (early-access / Private) AND
 **re-prices** the whole body **before any Buzz spend**.
 
-### Comfy Cloud sample (customComfy)
+### Comfy on Civitai sample (customComfy)
 
 A **mode toggle** at the top switches between two samples that share the one
 estimate → consent → submit → poll driver + the account picker — only the body
 differs:
 
 - **Text to image** (primary, runnable today) — the checkpoint + LoRA path above.
-- **Comfy Cloud recipe** (secondary, invite-only beta) — runs a **Civitai Comfy
-  Cloud (`customComfy`)** generation via `buildComfyBody` in `src/comfy.ts`.
+- **Comfy on Civitai recipe** (secondary, invite-only beta) — runs a **Comfy on
+  Civitai (`customComfy`)** generation via `buildComfyBody` in `src/comfy.ts`.
 
 **How customComfy works — server-owned graph, fail-closed.** The iframe **never
 sends a Comfy graph.** It sends `{ kind: 'customComfy', recipe, params }` where
@@ -122,15 +124,16 @@ declared.
 > per-job ceiling — the budget is only the upper bound the block token may spend.
 
 **Requesting a new recipe.** Because recipes are server-registered + code-reviewed,
-you can't add one from the app. Request a new Comfy Cloud recipe via the CLI's
+you can't add one from the app. Request a new Comfy on Civitai recipe via the CLI's
 issue form at
 <https://github.com/civitai/cli/issues/new?template=request-recipe.yml> (describe
 the graph + the intended `params` + the use case). It ships as a registered id
 once reviewed.
 
-**Dev loop — honest state.** In `npm run dev:harness` (the **mock** host) the Comfy
-Cloud sample **works end-to-end** (estimate → submit → poll → succeeded with a mock
-image + cost), so you can build against it today. That is the fully-working path.
+**Dev loop — honest state.** In `npm run dev:harness` (the **mock** host) the
+Comfy on Civitai sample **works end-to-end** (estimate → submit → poll →
+succeeded with a mock image + cost), so you can build against it today. That is
+the fully-working path.
 
 On **live** civitai.com the sample is **not runnable yet**, for two reasons, and
 its graceful panel is best-effort:
@@ -158,11 +161,18 @@ So: **mock works now**; a real Comfy run needs the invite-only beta cohort (+
 
 ### Buzz balance + account picker (per-account spend)
 
-Above the prompt, the app shows the viewer's **per-pool Buzz balance** —
-**blue** (free / earned), **green** (creator-earned / tips), **yellow**
-(purchased) — plus a total, read via `useBuzzBalance()`. It's purely
-informational and additive: if the balance is loading, errored, or unavailable it
-degrades quietly (a small line) and **never blocks generation**.
+🔴 **Don't render a Buzz balance readout in your app.** Your app runs inside the
+Civitai chrome, which **already shows the viewer's balance** — a second copy
+inside the iframe is redundant, and it competes with the real one whenever the
+two are momentarily out of sync. This scaffold deliberately ships **no** balance
+panel; if you're tempted to add one, that's the signal you want a *host* surface,
+not an app surface.
+
+The app still *reads* the balance via `useBuzzBalance()` — for exactly one
+purpose: annotating **which account can actually fund this generation** in the
+picker below. That's app-specific context the chrome can't provide, so it earns
+its place. It's additive: if the balance is loading, errored, or unavailable the
+annotation just doesn't render and generation is **never blocked**.
 
 Below the LoRA selector, a **"Spend from"** picker lets the viewer choose which
 pool funds the generation:
@@ -336,11 +346,12 @@ The two reads use **different credentials** — by design, and security-critical
 > `useResourcePicker` work in `dev:live`. It does **not** support
 > `SET_USER_CHECKPOINT` persistence, the App-Storage KV protocol, in-band Buzz
 > purchase, or the `GET_BUZZ_BALANCE` read (`useBuzzBalance`) — those reply "not
-> supported in live v1" (use mock mode for them). So in `dev:live` the in-app
-> 3-pool balance panel shows **"Buzz balance unavailable"** (the host nav's total,
-> read via your personal key through the proxy, still works). The panel populates
-> in **`dev:harness`** (synthetic, wired to the `balance` scenario) and on the
-> **real platform** (the civitai host answers `GET_BUZZ_BALANCE` natively).
+> supported in live v1" (use mock mode for them). So in `dev:live` the balance
+> reads as unavailable and the "Spend from" picker simply drops its 0-Buzz
+> annotations — nothing else changes, and the host nav's own balance total (read
+> via your personal key through the proxy) still works. The balance resolves in
+> **`dev:harness`** (synthetic, wired to the `balance` scenario) and on the **real
+> platform** (the civitai host answers `GET_BUZZ_BALANCE` natively).
 
 ### Scenarios (exercise the money / error / storage UX for free)
 

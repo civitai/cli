@@ -134,7 +134,7 @@ export function isDisallowedAccountError(message: string | null | undefined): bo
 }
 
 /**
- * The Comfy Cloud recipe id this sample sends. MIRRORED from comfy.ts's
+ * The Comfy on Civitai recipe id this sample sends. MIRRORED from comfy.ts's
  * `STARTER_COMFY_RECIPE` (kept as a literal here to avoid a generation.ts ⇄
  * comfy.ts import cycle) — the enum-rejection sniff below keys on it. If you
  * change the recipe id in comfy.ts, change it here too.
@@ -142,7 +142,7 @@ export function isDisallowedAccountError(message: string | null | undefined): bo
 const STARTER_COMFY_RECIPE_ID = 'starter-comfy-txt2img';
 
 /**
- * Sniff a submit/estimate ERROR string for the SPECIFIC Comfy-Cloud gate signals
+ * Sniff a submit/estimate ERROR string for the SPECIFIC Comfy-on-Civitai gate signals
  * so — and ONLY so — the Comfy sample can degrade to a friendly "invite-only
  * beta" panel instead of a raw error. This is deliberately NARROW (deterministic
  * over heuristic): it matches only the three real server signals, verified
@@ -279,7 +279,7 @@ export function isBusyPhase(phase: GenPhase): boolean {
  * terminal phase. Order matters: disallowed-account BEFORE insufficient (the
  * disallowed message contains "buzz").
  *
- * This does NOT itself produce `'gated'`: the Comfy-Cloud gate strings are shared
+ * This does NOT itself produce `'gated'`: the Comfy-on-Civitai gate strings are shared
  * with the txt2img path, so gating is decided at the CALL SITE (App.tsx) and
  * scoped to comfy mode — `isFeatureGated(msg) ? 'gated' : phaseForError(msg)`,
  * only when `mode === 'comfy'`. A txt2img failure therefore falls through here to
@@ -294,7 +294,7 @@ export function phaseForError(message: string | null | undefined): GenPhase {
 
 /**
  * Classify a submit/estimate error into a terminal phase, with the `'gated'`
- * (Comfy Cloud invite-only-beta) phase COMFY-MODE-SCOPED. This is the single seam
+ * (Comfy on Civitai invite-only-beta) phase COMFY-MODE-SCOPED. This is the single seam
  * finding 1b turns on: the gate strings {@link isFeatureGated} matches — the
  * "Apps are not enabled" flag gate + the "Apps authoring is not enabled" author
  * gate (BOTH shared with the txt2img path) and the pre-deploy unknown-recipe enum

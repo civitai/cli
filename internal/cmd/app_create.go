@@ -29,17 +29,17 @@ immediately runnable (npm install && npm run dev:harness), test-green, and
 validates clean.
 
 The default scaffold ships TWO samples in the one app: a runnable txt2img money
-path AND a Comfy Cloud (customComfy) sample that runs a server-registered recipe
+path AND a Comfy on Civitai (customComfy) sample that runs a server-registered recipe
 (invite-only beta) — both share the estimate -> consent -> submit -> poll driver,
 switched by an on-screen mode toggle. Both work end-to-end in "npm run
-dev:harness" (mock host); see the generated README's "Comfy Cloud sample" section.
+dev:harness" (mock host); see the generated README's "Comfy on Civitai sample" section.
 
 Templates (override with --template):
   static      a no-build page app (index.html + a tiny JS, no build step)
   page-vite   a vite + React page app (config-as-code build: buildCommand + outputDir)
   page-money  a vite + React + TS full-page (W10) money-path app wired to the
               published App SDK (estimate -> consent -> submit -> poll -> Buzz
-              spend); includes a txt2img + a Comfy Cloud (customComfy) sample
+              spend); includes a txt2img + a Comfy on Civitai (customComfy) sample
               [default for create]
 
 The display name can be free-form ("My Cool Block"); it is slugified for the

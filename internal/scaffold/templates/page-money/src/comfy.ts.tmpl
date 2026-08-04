@@ -1,5 +1,5 @@
-// Pure logic for the {{ .Name }} page app's SECONDARY "Comfy Cloud (sample)"
-// path — a Civitai Comfy Cloud (customComfy) generation. No React, no DOM;
+// Pure logic for the {{ .Name }} page app's SECONDARY "Comfy on Civitai (sample)"
+// path — a Comfy on Civitai (customComfy) generation. No React, no DOM;
 // unit-tested in node (see comfy.test.ts). Mirrors generation.ts's style and
 // REUSES its shared helpers (clampPrompt / AccountChoice) so the two
 // body-builders differ only in the body they produce.
@@ -19,7 +19,7 @@ import { clampPrompt, type AccountChoice } from './generation.js';
  * The starter recipe this sample invokes: a cheap, minimal Z-Image txt2img
  * recipe (per-job Buzz ceiling 30). It is SERVER-registered — an app cannot ship
  * its own graph, so a new recipe must be added + code-reviewed server-side (see
- * README "Comfy Cloud sample"). This id must exist in the server registry for a
+ * README "Comfy on Civitai sample"). This id must exist in the server registry for a
  * real run to resolve; an unknown id is rejected fail-closed.
  */
 export const STARTER_COMFY_RECIPE = 'starter-comfy-txt2img';

@@ -148,7 +148,7 @@ describe('isDisallowedAccountError', () => {
 
 describe('isFeatureGated', () => {
   // The sniff is deliberately NARROW — it matches ONLY the three real
-  // Comfy-Cloud gate signals (verified against civitai/civitai
+  // Comfy-on-Civitai gate signals (verified against civitai/civitai
   // blocks.router.ts + workflow.schema.ts), never broad tokens. Its `'gated'`
   // phase is separately COMFY-MODE-SCOPED at the App.tsx call site, so the
   // strings shared with txt2img (a) never surface the Comfy copy there.

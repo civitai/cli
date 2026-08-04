@@ -102,8 +102,8 @@ func TestRenderPageMoney(t *testing.T) {
 	}
 
 	// Money-path manifest: budgeted scope + per-gen budget + build fields. The
-	// budget is 40 so it reserves the starter Comfy Cloud recipe's per-job ceiling
-	// (30) — see the Comfy Cloud (customComfy) sample below.
+	// budget is 40 so it reserves the starter Comfy on Civitai recipe's per-job ceiling
+	// (30) — see the Comfy on Civitai (customComfy) sample below.
 	manifest := readFile(t, filepath.Join(dest, "block.manifest.json"))
 	mustContain(t, manifest, `"ai:write:budgeted"`)
 	mustContain(t, manifest, `"buzzBudgetPerGen": 40`)
@@ -201,7 +201,17 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "AccountPicker")
 	mustContain(t, app, "spentAccountType")
 	mustContain(t, app, "pm-account-") // the picker radios' testid prefix
-	mustContain(t, app, "pm-balance")
+
+	// ...but the scaffold renders NO balance readout of its own: an App runs
+	// inside the Civitai chrome, which already shows the viewer's balance, and
+	// agents copy whatever the default template does. The balance is read ONLY to
+	// annotate which account can fund the generation (the AccountPicker above).
+	// Guarding the component + style symbols too, so re-adding a readout under a
+	// different testid still trips this.
+	mustNotContain(t, app, "pm-balance")
+	mustNotContain(t, app, "BalancePanel")
+	mustNotContain(t, app, "PoolChip")
+	mustNotContain(t, app, "POOL_COLORS")
 
 	// LoRA selector (the main feature): the user adds up to MAX_LORAS LoRAs on top
 	// of the checkpoint via the HOST resource picker (type=LORA), each with a
@@ -214,7 +224,7 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "pm-lora-weight")
 	mustContain(t, app, "addLora")
 
-	// Comfy Cloud (customComfy) sample: a mode toggle swaps the body-builder to
+	// Comfy on Civitai (customComfy) sample: a mode toggle swaps the body-builder to
 	// buildComfyBody (a server-registered recipe). The recipe id is FIXED +
 	// server-registered; comfy.ts never sends a graph, only { kind, recipe, params }.
 	comfy := readFile(t, filepath.Join(dest, "src", "comfy.ts"))
