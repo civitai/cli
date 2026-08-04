@@ -700,6 +700,11 @@ Buzz purchased
   Buzz       15000
   Gross      $14.97
 
+Views
+  Impressions     124
+  Unique viewers  12
+  Signed-out      4
+
 Engagement
   API calls     26
   Active users  2
@@ -733,9 +738,15 @@ believable-but-wrong reading:
   `civitai login` token gets a 403; the error names the fix
   (`civitai login --token <key>`).
 
-One data caveat: **engagement counts only authenticated, scope-gated API
-calls**. An app that ships no scoped API surface shows real installs and revenue
-with a flat engagement section — that is expected, not a bug. `Error rate` is the
+Two data caveats.
+
+**Engagement counts only authenticated, scope-gated API
+calls.** An app that ships no scoped API surface shows real installs and revenue
+with a flat engagement section — that is expected, not a bug. **Views is the
+exception**: it is measured on every load, so it counts signed-out visitors and
+static blocks that engagement structurally cannot see. `Unique viewers` counts
+signed-in people once each and approximates signed-out ones by network address,
+so read it as reach rather than an identity count. `Error rate` is the
 share of those calls that failed, and the human view renders it as a percentage
 (the server sends it as a `0`–`1` ratio, which `--json` passes through unchanged).
 Only a genuine zero prints `0.0%`: a real but tiny rate — a high-traffic app with
@@ -750,6 +761,15 @@ counter zeroed and the command still exits `0`, so
 `civitai app metrics <slug> --json | jq .runs.count` returns `0` for an app you
 can't see. A script must branch on the `notOwned` field rather than trusting the
 counts.
+
+**Views has a SECOND, section-local unavailability flag** — `views.unavailable`,
+independent of `notOwned`. Views is the one section the server reads from a
+different store, which can be unreadable while every other counter in the same
+response is genuinely measured. When that happens the human view prints
+`unavailable` and says so explicitly rather than printing a `0` you would read
+as "nobody looked at my app". `--json` passes the flag through and still exits
+`0`, so a script must branch on `views.unavailable` too — `jq .views.count`
+alone cannot tell an outage from a real zero.
 
 ## Configuration
 

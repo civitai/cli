@@ -87,6 +87,29 @@ type AnalyticsEngagement struct {
 	TopEndpoints []AnalyticsEndpointCount `json:"topEndpoints"`
 }
 
+// AnalyticsViews is the impression rollup, read server-side from the
+// `blockRenders` ClickHouse table. It is the ONLY section that covers viewers
+// AnalyticsEngagement structurally cannot see — anonymous visitors, and static
+// blocks that never make a scoped API call.
+//
+// 🔴 Unavailable is a SECOND, section-local unavailability signal, distinct
+// from AppAnalytics.NotOwned. This is the one section not derived from
+// Postgres, so its store can be unconfigured or down while every other counter
+// in the same response is genuinely measured. When it is true the counters
+// below are PLACEHOLDERS, not a report of zero views — render them as unknown,
+// never as 0. `--json` passes the field through untouched, so a script must
+// branch on it exactly as it already must branch on NotOwned.
+type AnalyticsViews struct {
+	Count int64 `json:"count"`
+	// UniqueViewers counts signed-in viewers once each and approximates
+	// signed-out ones by network address, so it is a reach indicator rather
+	// than an identity count.
+	UniqueViewers int64            `json:"uniqueViewers"`
+	AnonCount     int64            `json:"anonCount"`
+	Series        []AnalyticsPoint `json:"series"`
+	Unavailable   bool             `json:"unavailable,omitempty"`
+}
+
 // AppAnalytics mirrors the blocks.getMyAppAnalytics result. Field names + JSON
 // casing track the server EXACTLY.
 type AppAnalytics struct {
@@ -102,6 +125,7 @@ type AppAnalytics struct {
 	Runs          AnalyticsRuns          `json:"runs"`
 	BuzzPurchased AnalyticsBuzzPurchased `json:"buzzPurchased"`
 	Engagement    AnalyticsEngagement    `json:"engagement"`
+	Views         AnalyticsViews         `json:"views"`
 }
 
 // AppAnalyticsReader reads the caller's own App Block analytics.

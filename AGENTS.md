@@ -194,6 +194,26 @@ until that exists, vendoring is on purpose.
    hand-rolling labels, add a drift check against the server's
    `recordScopeInvocation` call sites, and note that `pending` is a "no id
    captured" sentinel — **not** a status.
+9. **`views.unavailable` is a SECOND unavailability discriminator, and it is not
+   redundant with `notOwned`.** The `Views` section of `app metrics` is the only
+   part of the payload the server reads from **ClickHouse** (`blockRenders`)
+   rather than Postgres, so its store can be unconfigured or down while every
+   other counter in the same response is genuinely measured. That is why the
+   flag is per-SECTION: flagging the whole payload would discard good data, and
+   dropping the flag would recreate the fabricated zero that item 6 exists to
+   prevent — an author reading `Impressions 0` as "nobody looked at my app"
+   when the truth is "we could not ask". `printAppMetrics` therefore prints
+   `unavailable` plus an explicit caveat instead of any number, and `--json`
+   passes the field through while **still exiting 0**, so a script must branch
+   on `views.unavailable` exactly as it must already branch on `notOwned`.
+   Whoever changes the server payload has to keep the field
+   (`civitai/civitai → src/server/services/blocks/app-views.service.ts`).
+   Related gotcha worth not rediscovering: unique viewers deliberately do **not**
+   dedup on `blockInstanceId`. Despite the name it is not per-mount — it is
+   `page_apb_<ULID>`, roughly one per app (measured on prod: 28 distinct ids
+   across 27 distinct apps) — so deduping on it would report ~1 viewer per app.
+   Anonymous rows all carry `userId = 0`, so the server sums distinct authed
+   `userId` with distinct anon `ip`.
 
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync
