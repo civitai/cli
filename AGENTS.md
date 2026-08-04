@@ -208,6 +208,14 @@ until that exists, vendoring is on purpose.
    on `views.unavailable` exactly as it must already branch on `notOwned`.
    Whoever changes the server payload has to keep the field
    (`civitai/civitai → src/server/services/blocks/app-views.service.ts`).
+   🔴 `AppAnalytics.Views` is a **pointer** for the same reason, and must stay
+   one: there are THREE states, not two — measured, unavailable, and *absent*
+   (a server predating the impressions reader omits the key). A value type
+   collapses "absent" into "measured zero", because `encoding/json` simply
+   leaves the zero value in place and the renderer then prints
+   `Impressions 0`. That was **measured, not theorised** — the value-typed
+   version rendered exactly `Impressions     0` for a payload with no `views`
+   key. So `nil` means unknown and renders like `unavailable`, never as `0`.
    Related gotcha worth not rediscovering: unique viewers deliberately do **not**
    dedup on `blockInstanceId`. Despite the name it is not per-mount — it is
    `page_apb_<ULID>`, roughly one per app (measured on prod: 28 distinct ids

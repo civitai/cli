@@ -769,7 +769,10 @@ response is genuinely measured. When that happens the human view prints
 `unavailable` and says so explicitly rather than printing a `0` you would read
 as "nobody looked at my app". `--json` passes the flag through and still exits
 `0`, so a script must branch on `views.unavailable` too — `jq .views.count`
-alone cannot tell an outage from a real zero.
+alone cannot tell an outage from a real zero. A server old enough to predate
+impressions omits the `views` key entirely; the human view reports that as
+unavailable as well (naming the different cause), and a script should treat a
+missing `.views` the same way.
 
 ## Configuration
 

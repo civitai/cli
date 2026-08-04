@@ -247,17 +247,24 @@ func printAppMetrics(w io.Writer, slug string, a *appapi.AppAnalytics) {
 	// the coverage caveat below then makes sense in.
 	fmt.Fprintf(w, "\n%s\n", ui.For(w).Bold("Views"))
 	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	if a.Views.Unavailable {
-		// 🔴 Never print 0 here. The impression store is the one section not
-		// derived from Postgres, so it can be unreadable while every counter
-		// above is genuinely measured — and a printed 0 is indistinguishable
-		// from "nobody looked", which is the fabricated-zero defect the server
-		// added this flag to prevent.
+	// 🔴 Never print 0 in either unknown case. The impression store is the one
+	// section not derived from Postgres, so it can be unreadable while every
+	// counter above is genuinely measured — and a printed 0 is
+	// indistinguishable from "nobody looked", the fabricated-zero defect this
+	// flag exists to prevent. `a.Views == nil` is the SECOND way to not know:
+	// a server predating the impressions reader omits the section entirely,
+	// and a value type would have silently turned that into a measured zero.
+	if a.Views == nil || a.Views.Unavailable {
 		fmt.Fprintf(tw, "  Impressions\t%s\n", "unavailable")
 		fmt.Fprintf(tw, "  Unique viewers\t%s\n", "unavailable")
 		_ = tw.Flush()
-		fmt.Fprintf(w, "\n%s\n", ui.For(w).Dim(
-			"The impression store could not be read — this is NOT a report of zero views. Every other metric above is unaffected."))
+		if a.Views == nil {
+			fmt.Fprintf(w, "\n%s\n", ui.For(w).Dim(
+				"This server did not report impressions — this is NOT a report of zero views. Upgrade the server, or ignore this section."))
+		} else {
+			fmt.Fprintf(w, "\n%s\n", ui.For(w).Dim(
+				"The impression store could not be read — this is NOT a report of zero views. Every other metric above is unaffected."))
+		}
 	} else {
 		fmt.Fprintf(tw, "  Impressions\t%d\n", a.Views.Count)
 		fmt.Fprintf(tw, "  Unique viewers\t%d\n", a.Views.UniqueViewers)

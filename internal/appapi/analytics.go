@@ -125,7 +125,15 @@ type AppAnalytics struct {
 	Runs          AnalyticsRuns          `json:"runs"`
 	BuzzPurchased AnalyticsBuzzPurchased `json:"buzzPurchased"`
 	Engagement    AnalyticsEngagement    `json:"engagement"`
-	Views         AnalyticsViews         `json:"views"`
+	// Views is a POINTER so that "the server did not send this section at all"
+	// stays distinguishable from "the server sent measured zeros". A value type
+	// collapses those two: an older server that predates the impressions reader
+	// omits the key, Go fills in the zero value, and the CLI confidently prints
+	// `Impressions 0` — a fabricated zero, which is the exact defect this
+	// section's Unavailable flag exists to prevent. Measured before this was a
+	// pointer: a payload with no `views` key rendered "Impressions     0".
+	// nil therefore means UNKNOWN and must render like Unavailable, never as 0.
+	Views *AnalyticsViews `json:"views"`
 }
 
 // AppAnalyticsReader reads the caller's own App Block analytics.

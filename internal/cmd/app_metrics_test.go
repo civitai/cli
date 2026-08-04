@@ -965,6 +965,49 @@ func TestAppMetricsJSONPassesViewsThroughRaw(t *testing.T) {
 	}
 }
 
+func TestAppMetricsLegacyServerWithoutViewsIsNotAZero(t *testing.T) {
+	// A server predating the impressions reader omits `views` ENTIRELY. That is
+	// a third "we don't know" — distinct from both a measured zero and an
+	// outage — and the one a value-typed field would silently swallow:
+	// encoding/json leaves the zero value in place and the CLI prints
+	// `Impressions 0`. Measured before AnalyticsViews became a pointer, this
+	// payload rendered exactly "Impressions     0".
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":20,"active":12,"series":[]},
+	  "runs":{"count":7,"buzzSpent":7000,"series":[]},
+	  "buzzPurchased":{"count":2,"buzzAmount":5000,"grossCents":999},
+	  "engagement":{"apiCalls":100,"activeUsers":4,"errorRate":0.1,"topScopes":[],"topEndpoints":[]}}`
+	srv := metricsServer(t,
+		submissionsBody("old-app", strPtr("apb_old")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "old-app")
+	if err != nil {
+		t.Fatalf("a server without the views section is still a successful read: %v", err)
+	}
+	if got := valueOnLine(out, "Impressions"); got != "unavailable" {
+		t.Errorf("an absent views section must render as unavailable, got %q:\n%s", got, out)
+	}
+	if got := valueOnLine(out, "Unique viewers"); got != "unavailable" {
+		t.Errorf("an absent views section must render as unavailable, got %q:\n%s", got, out)
+	}
+	if !strings.Contains(out, "did not report impressions") {
+		t.Errorf("the absent-section caveat should name the real cause:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT a report of zero views") {
+		t.Errorf("the caveat must spell out that this is not a measured zero:\n%s", out)
+	}
+	// Everything the old server DID send is genuinely measured and must render.
+	for _, want := range []string{"Installs", "20", "Runs", "7000", "Engagement", "100"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("an absent views section must not disturb the rest, missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // valueOnLine returns the last whitespace-separated field of the first line
 // whose text (after indentation) begins with label. Returns "" when no such
 // line exists, so a missing row fails loudly rather than quietly matching "".
