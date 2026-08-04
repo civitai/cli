@@ -38,6 +38,55 @@ nothing), `go test ./...`, `go build ./...` on every push to `main` and every
 PR. Run the binary you built with `./bin/civitai <cmd>`; per-package coverage is
 `go test ./... -cover`.
 
+## Shell & CI gotchas
+
+These produce **clean exits and reassuring output while doing nothing** — the
+expensive class. Read the tool's *output*, not just its exit code.
+
+- **`cmd | head; echo rc=$?`** reports `head`'s status, not `cmd`'s. Capture
+  before piping, or use `set -o pipefail`.
+- **`gofmt -s -l .` checking zero files** prints nothing and exits 0 — same as
+  "all clean". If a path is misquoted or the working tree is wrong, the clean
+  verdict says nothing about the code. Verify you're in the right directory and
+  the tool found files.
+- **Build/test/tool not on PATH exits `127`; OOM exits `134`** — both are
+  non-zero but a script reading `rc != 0` as "N errors found" reports a plausible
+  wrong count. Prefer `make ci` (which already handles this) over hand-rolled
+  invocations, and assert a **minimum expected count** (≥1 package tested, ≥1
+  file checked) as a positive control.
+- **`go test ./...` with a broken import in `_test.go`** can compile to 0 tests
+  and pass. If a package you expect tests for is silent, check explicitly:
+  `go test -v -count=1 ./path/to/pkg | head`.
+- **`date -u -d "3 days ago 16:30"` vs `date -u -d "today -3 day"`** — the
+  latter silently returns the wrong day on some boxes. Build windows from epoch
+  math (`END=$(date -u +%s); START=$((END - 3*86400))`) for reliability.
+- **`gh pr checks` / `gh pr view --json statusCheckRollup` pitfalls:**
+  - `.conclusion` is `null` for commit statuses (only check-runs populate it) —
+    poll `.state` instead.
+  - Checks go through `QUEUED` → `IN_PROGRESS` → conclusion. A poll matching
+    only `PENDING` declares "settled" while checks are still running.
+  - A freshly-created check has an **empty** conclusion — matches no busy keyword,
+    so a grep-for-busy loop prints "ALL SETTLED" before anything started.
+  - Fix: require every check to hold a **terminal** conclusion
+    (`SUCCESS|FAILURE|CANCELLED|TIMED_OUT|NEUTRAL|SKIPPED`) and assert a
+    minimum expected check count.
+
+## Git rules
+
+These go beyond the global defaults because this repo's release pipeline
+(goreleaser → Homebrew tap) makes certain mistakes costly.
+
+- **Never use stacked PRs.** Base every PR directly on `main`. Stacked PRs
+  silently mis-merge: a squash-merged parent doesn't retarget the child, so the
+  child lands on the orphaned branch and its changes go missing. If a change
+  depends on an unmerged PR, wait for it to merge or fold both into one PR.
+- **Always fetch before branching.** `git fetch origin` before creating a branch
+  to avoid basing work on a stale local ref. `git checkout -b feat origin/main`
+  (not `git checkout -b feat main`) pins the remote tip.
+- **Feature branches only — never work on `main`.** Commit before risky
+  operations for rollback. The one exception is `homelab-talos` (its own
+  CLAUDE.md declares trunk = deploy); that does not apply here.
+
 ## Layout (the non-obvious parts only)
 
 - `cmd/civitai/main.go` — binary entrypoint; injects build version/commit/date.
