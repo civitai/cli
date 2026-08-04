@@ -192,11 +192,11 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Created App %q (%s)  ·  %s/  ·  %d files", display, tmpl, destDir, len(written))))
 
 	// page-money ships TWO samples in the one app — a runnable txt2img money path
-	// and a Comfy Cloud (customComfy) sample. Surface it (honestly: invite-only
-	// beta) and point at the README's Comfy Cloud section rather than the raw
+	// and a Comfy on Civitai (customComfy) sample. Surface it (honestly: invite-only
+	// beta) and point at the README's Comfy on Civitai section rather than the raw
 	// file count.
 	if tmpl.NeedsHarness() {
-		fmt.Fprintln(out, ui.Dim("  Includes a txt2img sample + a Comfy Cloud (customComfy) sample (invite-only beta) — see the Comfy Cloud section in README.md."))
+		fmt.Fprintln(out, ui.Dim("  Includes a txt2img sample + a Comfy on Civitai (customComfy) sample (invite-only beta) — see the Comfy on Civitai section in README.md."))
 	}
 
 	fmt.Fprintln(out, "\n"+ui.Bold("Next steps:"))

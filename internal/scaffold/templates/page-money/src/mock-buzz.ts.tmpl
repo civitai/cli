@@ -12,7 +12,8 @@
 // TWO per-account behaviours the 0.18 mock host still does NOT model remain here —
 // both test-only, both layered on `createMockHost` via `installMockMoneyHost`:
 //
-//   1. GET_BUZZ_BALANCE returning an ERROR (the "balance unavailable" UI). The
+//   1. GET_BUZZ_BALANCE returning an ERROR (so you can prove the app degrades
+//      silently — the account picker just drops its 0-Buzz annotations). The
 //      mock host always answers with a balance; there is no error mode. We answer
 //      SYNCHRONOUSLY from `onOutbound` (which 0.18 invokes BEFORE its own
 //      GET_BUZZ_BALANCE handler), so the error settles the read first.

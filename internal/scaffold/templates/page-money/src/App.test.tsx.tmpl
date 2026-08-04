@@ -29,16 +29,18 @@ describe('App (component)', () => {
     expect(screen.getByText(/loading/i)).toBeInTheDocument();
   });
 
-  it('anon viewer -> renders the sign-in affordance (no Generate button / balance / picker)', async () => {
+  it('anon viewer -> renders the sign-in affordance (no Generate button / picker)', async () => {
     uninstall = installMockMoneyHost({ viewer: null });
     render(<App />);
 
     // Once BLOCK_INIT arrives with viewer=null, the App swaps the loading state
-    // for the sign-in CTA. The balance panel + account picker are viewer-only.
+    // for the sign-in CTA. The account picker is viewer-only. (No `pm-balance`
+    // assertion here — the app renders no balance readout for ANY viewer, so it
+    // would pass regardless and prove nothing about the anon path. The readout's
+    // absence is guarded by its own test below.)
     const signIn = await screen.findByTestId('pm-signin');
     expect(signIn).toHaveTextContent(/sign in to generate/i);
     expect(screen.queryByTestId('pm-generate')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('pm-balance')).not.toBeInTheDocument();
     expect(screen.queryByTestId('pm-account-auto')).not.toBeInTheDocument();
   });
 
@@ -56,19 +58,45 @@ describe('App (component)', () => {
     expect(screen.getByTestId('pm-lora-add')).toBeInTheDocument();
   });
 
-  it('renders the 3-pool Buzz balance (blue/green/yellow + total) from useBuzzBalance', async () => {
+  it('does NOT render a Buzz balance readout — the Civitai chrome already shows it', async () => {
     // A simulated wallet of 100 splits to yellow 80 / blue 20 / green 0 (mock-buzz),
     // handed to 0.18's native `buzzBalance` option (what useBuzzBalance reads).
+    // The balance IS read (see the next test — it annotates the account picker),
+    // but the app deliberately renders no balance panel/chips/total of its own.
     uninstall = installMockMoneyHost({
       viewer: { id: 2, username: 'dev', status: 'active' },
       buzzBalance: mockBuzzBalance(100),
     });
     render(<App />);
 
-    expect(await screen.findByTestId('pm-balance-blue')).toHaveTextContent(/20/);
-    expect(screen.getByTestId('pm-balance-yellow')).toHaveTextContent(/80/);
-    expect(screen.getByTestId('pm-balance-green')).toHaveTextContent(/0/);
-    expect(screen.getByTestId('pm-balance-total')).toHaveTextContent(/100/);
+    // Wait for a post-BLOCK_INIT frame so this isn't vacuously green pre-render.
+    expect(await screen.findByTestId('pm-generate')).toBeInTheDocument();
+    for (const id of ['pm-balance', 'pm-balance-blue', 'pm-balance-green', 'pm-balance-yellow', 'pm-balance-total']) {
+      expect(screen.queryByTestId(id)).not.toBeInTheDocument();
+    }
+    // No stray balance-readout prose either (the panel's old copy).
+    expect(screen.queryByText(/total .* buzz/i)).not.toBeInTheDocument();
+  });
+
+  it('the balance IS consumed: the account picker annotates a 0-Buzz pool', async () => {
+    // The one legitimate consumer of useBuzzBalance in this scaffold — which
+    // account can fund this generation. yellow 80 / blue 20 / green 0, so ONLY
+    // green is annotated. (This is also the positive control proving the balance
+    // still reaches the app after the readout was removed.)
+    uninstall = installMockMoneyHost({
+      viewer: { id: 2, username: 'dev', status: 'active' },
+      buzzBalance: mockBuzzBalance(100),
+    });
+    render(<App />);
+
+    // findByTitle waits for the balance to land, so this can't pass on the
+    // pre-balance frame.
+    const green = await screen.findByTitle(/0 Buzz in this account/i);
+    expect(green).toBe(screen.getByTestId('pm-account-green'));
+    expect(green).toHaveTextContent(/·\s*0/);
+    // The funded pools are NOT annotated.
+    expect(screen.getByTestId('pm-account-yellow')).not.toHaveAttribute('title');
+    expect(screen.getByTestId('pm-account-blue')).not.toHaveAttribute('title');
   });
 
   it('account picker defaults to Auto and offers all three pools', async () => {
@@ -82,15 +110,22 @@ describe('App (component)', () => {
     }
   });
 
-  it('gracefully shows "unavailable" when the balance read errors (never crashes)', async () => {
+  it('a failed balance read degrades silently — app still generates, picker unannotated', async () => {
     uninstall = installMockMoneyHost({
       viewer: { id: 2, username: 'dev', status: 'active' },
       balanceError: true,
     });
     render(<App />);
 
-    // The app still works — Generate is present; the balance panel degrades.
+    // The app still works — Generate + the full picker are present. With no
+    // balance there is nothing to annotate, and (since the readout is gone) the
+    // error surfaces NO user-visible balance chrome at all.
     expect(await screen.findByTestId('pm-generate')).toBeInTheDocument();
-    expect(await screen.findByText(/balance unavailable/i)).toBeInTheDocument();
+    expect(screen.getByTestId('pm-account-auto')).toBeInTheDocument();
+    for (const pool of ['blue', 'green', 'yellow'] as const) {
+      expect(screen.getByTestId(`pm-account-${pool}`)).not.toHaveAttribute('title');
+    }
+    expect(screen.queryByTestId('pm-balance')).not.toBeInTheDocument();
+    expect(screen.queryByText(/balance unavailable/i)).not.toBeInTheDocument();
   });
 });
