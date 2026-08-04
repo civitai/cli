@@ -280,6 +280,38 @@ until that exists, vendoring is on purpose.
    a row even when a mount FAILS (a failed launch's only beacon) and the table
    has no status column — so a permanently-broken app still reports loads.
 
+10. **The `dev-tunnel` embeddability preflight WARNS and never blocks, and its
+    two halves have deliberately different evidentiary strength.**
+    `internal/devtunnel/embedcheck.go` catches the failure mode where the tunnel
+    is perfectly healthy but the browser refuses to run the app — the host
+    iframes the dev server sandboxed (`allow-scripts allow-forms`, no
+    `allow-same-origin`), so it runs at an opaque `null` origin.
+    `CheckEmbeddable` is **evidence**: it GETs `/@vite/client` with
+    `Origin: null` through the same `DialLocalDevServer` the proxy uses, and
+    reads real response headers. `CheckParentOrigins` is a **heuristic** —
+    `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` is inlined into the bundle at transform
+    time and cannot be observed over HTTP, so it is a **third vendored mirror**
+    (alongside `schema/` and the slot registry): `resolveViteEnv` reproduces
+    Vite's dev env resolution, where `.env.<mode>` beats `.env` and a REAL
+    process env var beats every file (dotenv does not overwrite existing vars).
+    Getting that last rule backwards warns at authors who exported the value in
+    their shell. It is gated to dirs holding a manifest AND a package.json
+    depending on `@civitai/app-sdk`, because `dev-tunnel` takes an explicit
+    blockId and runs from anywhere. Neither check is ever fatal: one HTTP
+    response cannot rule out a proxy, a non-Vite dev server, or a deliberately
+    exotic setup, and hard-failing would regress flows that work today — so a
+    check that cannot observe returns NO findings rather than manufacturing
+    advice. Measured facts behind it, on Vite **6.4.3 and 8.2.0 alike**: a stock
+    dev server answers a null-origin module fetch `200` with **no**
+    `Access-Control-Allow-Origin`, and 403s a `dev-*.civit.ai` Host. Two traps
+    if you touch it: the probe's baseline `Host` MUST be the real `host:port`
+    (a placeholder authority trips Vite's own DNS-rebinding check and
+    manufactures findings for a healthy server), and the CLI predicate is pinned
+    to the page-money template by the seam guards in
+    `internal/scaffold/dev_embed_contract_test.go` — they render the real
+    template, extract the values it emits, and require the CLI's own check to
+    accept them, so drift on EITHER side fails loudly.
+
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync
 with the server, and update `examples_test.go` (asserts shipped examples

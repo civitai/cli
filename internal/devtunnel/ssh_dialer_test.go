@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -639,12 +640,38 @@ func TestDialLocalDevServerSpecificHost(t *testing.T) {
 		// Bind ONLY ::1, then ask for 127.0.0.1 explicitly. Unlike the loopback
 		// default (which tries both families), an explicit 127.0.0.1 must NOT reach
 		// an IPv6-only server — it is a single, exact target.
-		ln, err := net.Listen("tcp", "[::1]:0")
-		if err != nil {
-			t.Skipf("IPv6 loopback unavailable on this host: %v", err)
+		//
+		// Binding [::1]:0 does NOT reserve the same port number on IPv4: the two
+		// families share one ephemeral range, so an unrelated `127.0.0.1:0` listener
+		// elsewhere in this test binary can already hold it. That made this case fail
+		// for the WRONG reason (the dial succeeded — against somebody else's server),
+		// observed once after the embeddability tests added many loopback listeners.
+		// So: keep picking ports until we have one that is genuinely IPv4-free.
+		var ln net.Listener
+		var port int
+		for attempt := 0; attempt < 20; attempt++ {
+			candidate, err := net.Listen("tcp", "[::1]:0")
+			if err != nil {
+				t.Skipf("IPv6 loopback unavailable on this host: %v", err)
+			}
+			p := candidate.Addr().(*net.TCPAddr).Port
+			// If we can bind the same port on IPv4, nothing else holds it. Release it
+			// immediately — the assertion below needs it EMPTY, not listening.
+			probe, perr := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
+			if perr != nil {
+				// Occupied on IPv4 by another test's server; this port is unusable here.
+				_ = candidate.Close()
+				continue
+			}
+			_ = probe.Close()
+			ln, port = candidate, p
+			break
+		}
+		if ln == nil {
+			t.Skip("could not find a port free on IPv4 while bound on IPv6")
 		}
 		defer ln.Close()
-		port := ln.Addr().(*net.TCPAddr).Port
+
 		if conn, err := DialLocalDevServer("127.0.0.1", port, 500*time.Millisecond); err == nil {
 			_ = conn.Close()
 			t.Fatalf("explicit 127.0.0.1 must NOT reach an IPv6-only server on port %d", port)
