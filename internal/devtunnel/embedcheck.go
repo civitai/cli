@@ -152,9 +152,21 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 			},
 			DisableKeepAlives: true,
 		},
-		// A dev server may redirect /; judge the first response we get.
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
+		// FOLLOW a same-host redirect, up to a small bound, and judge the FINAL
+		// response. Refusing to follow (the original behaviour) combined with the
+		// 2xx gate below made a real, un-embeddable server report CLEAN: a Vite
+		// dev server with a `base` path 404s /@vite/client and 302s /, so the
+		// gate saw a 302 and stayed silent. The browser follows that redirect, so
+		// the redirect target IS the app and its headers are the interpretable
+		// ones. A CROSS-host redirect is not followed: the transport always dials
+		// the local dev server regardless of the URL, so chasing an external
+		// Location would send someone else's Host to this server and prove
+		// nothing.
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= maxProbeRedirects || !strings.EqualFold(req.URL.Host, probeAuthority(host, port)) {
+				return http.ErrUseLastResponse
+			}
+			return nil
 		},
 	}
 
@@ -173,17 +185,29 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 	// module, so this is the faithful reproduction of what the sandboxed iframe
 	// does — and its presence doubles as Vite detection, which decides whether we
 	// can offer a vite.config.ts snippet or only generic advice.
-	resp, err := getWithOrigin(client, authority, "/@vite/client", "")
+	resp, err := getWithOrigin(client, authority, viteClientPath, "")
 	if err != nil {
 		return nil
 	}
 	isVite := resp.StatusCode == http.StatusOK
+	probed := viteClientPath
 	if !isVite {
-		// Not Vite (or Vite not serving that path) — fall back to the app root so
-		// the header checks still run against something meaningful.
-		resp, err = getWithOrigin(client, authority, "/", "")
-		if err != nil {
+		// Not Vite at the root, or Vite serving under a `base` path — fall back to
+		// the app root so the header checks still run against something meaningful.
+		rootResp, rerr := getWithOrigin(client, authority, "/", "")
+		if rerr != nil {
 			return nil
+		}
+		// If the root redirected into a base path, Vite serves its client module
+		// THERE. Retrying under that base recovers Vite detection (and with it the
+		// vite.config.ts remediation) for a `base: '/app/'` project.
+		if base := basePrefix(rootResp); base != "/" {
+			if r2, e2 := getWithOrigin(client, authority, base+"@vite/client", ""); e2 == nil && r2.StatusCode == http.StatusOK {
+				isVite, resp, probed = true, r2, base+"@vite/client"
+			}
+		}
+		if !isVite {
+			resp, probed = rootResp, finalPath(rootResp)
 		}
 	}
 
@@ -210,7 +234,6 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 	}
 
 	var findings []Finding
-	probed := probedPath(isVite)
 
 	if f := checkCORS(resp, probed, serverDesc, fix); f != nil {
 		findings = append(findings, *f)
@@ -218,15 +241,35 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 	if f := checkFraming(resp, probed, fix); f != nil {
 		findings = append(findings, *f)
 	}
-	if f := checkAllowedHosts(client, authority, isVite, fix); f != nil {
+	if f := checkAllowedHosts(client, authority, probed, fix); f != nil {
 		findings = append(findings, *f)
 	}
 	return findings
 }
 
-func probedPath(isVite bool) string {
-	if isVite {
-		return "/@vite/client"
+// viteClientPath is the module every Vite dev server serves; fetching it is both
+// the faithful reproduction of a sandboxed module fetch and the Vite probe.
+const viteClientPath = "/@vite/client"
+
+// maxProbeRedirects bounds redirect following. A dev server that bounces more
+// than this is not a shape we can reason about.
+const maxProbeRedirects = 5
+
+// finalPath is the path actually answered, after any redirects were followed —
+// so the evidence line names what was really fetched, not what was asked for.
+func finalPath(resp *http.Response) string {
+	if resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Path != "" {
+		return resp.Request.URL.Path
+	}
+	return "/"
+}
+
+// basePrefix reports the directory prefix the root request ended at, which for a
+// Vite project configured with `base` is that base (e.g. "/app/").
+func basePrefix(resp *http.Response) string {
+	p := finalPath(resp)
+	if i := strings.LastIndexByte(p, '/'); i >= 0 {
+		return p[:i+1]
 	}
 	return "/"
 }
@@ -279,6 +322,25 @@ func checkCORS(resp *http.Response, probed, serverDesc string, fix []string) *Fi
 	// serialised origin byte-for-byte, so `NULL` does not match the `null` origin
 	// and the browser blocks the fetch. Accepting it case-insensitively would call
 	// a genuinely broken server clean.
+	//
+	// All values are read, not just the first: MULTIPLE Access-Control-Allow-Origin
+	// headers are a CORS failure in the browser regardless of what they say, so
+	// reading only the first would report a blocked server as fine.
+	values := resp.Header.Values("Access-Control-Allow-Origin")
+	if len(values) > 1 {
+		return &Finding{
+			Kind:    FindingCORS,
+			Summary: fmt.Sprintf("%s sends duplicate CORS headers, which browsers reject outright.", serverDesc),
+			Evidence: []string{
+				fmt.Sprintf("  GET %s  (Origin: null)  →  %d, %d Access-Control-Allow-Origin headers (%s)",
+					probed, resp.StatusCode, len(values), strings.Join(values, ", ")),
+				"",
+				"  A response may carry at most ONE such header; more than one is a CORS",
+				"  failure whatever the values are, so every module fetch is blocked.",
+			},
+			Fix: fix,
+		}
+	}
 	acao := strings.TrimSpace(resp.Header.Get("Access-Control-Allow-Origin"))
 	if acao == "*" || acao == "null" {
 		return nil
@@ -440,9 +502,18 @@ func hostSourceAllows(source, origin string) bool {
 // out must not read as a different host. (An http:// source is accepted for an
 // https origin because CSP3 upgrades http sources to their https equivalent.)
 func stripScheme(v string) string {
-	v = strings.TrimPrefix(strings.TrimPrefix(v, "https://"), "http://")
-	v = strings.TrimSuffix(v, ":443")
-	return strings.TrimSuffix(v, ":80")
+	// Strip only the DEFAULT port for the source's own scheme: `:443` is the
+	// default for https and `:80` for http, so `https://example.com:80` names a
+	// genuinely different origin and must not collapse onto the bare host. A
+	// scheme-less source is treated as https, the scheme of the parent origin.
+	port := ":443"
+	switch {
+	case strings.HasPrefix(v, "https://"):
+		v = strings.TrimPrefix(v, "https://")
+	case strings.HasPrefix(v, "http://"):
+		v, port = strings.TrimPrefix(v, "http://"), ":80"
+	}
+	return strings.TrimSuffix(v, port)
 }
 
 // checkAllowedHosts reports a dev server that rejects the tunneled Host outright.
@@ -450,8 +521,8 @@ func stripScheme(v string) string {
 // request reaches the app, so the browser gets an error page rather than the
 // bundle. Only a 403 counts: any other status means the host check passed (or
 // the server has none), and a transport error means we could not observe.
-func checkAllowedHosts(client *http.Client, authority string, isVite bool, fix []string) *Finding {
-	resp, err := getWithOrigin(client, authority, probedPath(isVite), probeHostname)
+func checkAllowedHosts(client *http.Client, authority, probed string, fix []string) *Finding {
+	resp, err := getWithOrigin(client, authority, probed, probeHostname)
 	if err != nil || resp.StatusCode != http.StatusForbidden {
 		return nil
 	}
@@ -459,7 +530,7 @@ func checkAllowedHosts(client *http.Client, authority string, isVite bool, fix [
 		Kind:    FindingAllowedHosts,
 		Summary: "Your dev server rejects the tunnel's hostname, so requests never reach your app.",
 		Evidence: []string{
-			fmt.Sprintf("  GET %s  (Host: %s)  →  403", probedPath(isVite), probeHostname),
+			fmt.Sprintf("  GET %s  (Host: %s)  →  403", probed, probeHostname),
 			"",
 			fmt.Sprintf("  The tunnel serves your dev server as a %s subdomain. Vite's", tunnelHostSuffix),
 			"  DNS-rebinding host check 403s any hostname not in `server.allowedHosts`,",
@@ -545,44 +616,52 @@ var viteEnvFiles = []string{".env", ".env.local", ".env.development", ".env.deve
 // resolveViteEnv mirrors how Vite resolves a VITE_-prefixed variable in dev.
 //
 // This is a deliberate VENDORED MIRROR of another project's behaviour (see
-// AGENTS.md). Two rules matter and both are load-bearing: `.env.<mode>` beats
-// plain `.env`, and a REAL process environment variable beats every file —
-// dotenv does not overwrite variables that already exist. Getting the second one
-// backwards would warn at an author who exported the value in their shell.
+// AGENTS.md), and it is verified DIFFERENTIALLY against Vite's own `loadEnv`
+// rather than against assumptions — every rule below was measured, and several
+// were wrong in earlier drafts in the direction that warns at a HEALTHY project.
+//
+// Two structural rules matter. A REAL process environment variable beats every
+// file (dotenv does not overwrite variables that already exist), and the files
+// are MERGED FIRST and expanded ONCE — `.env` may define a value that
+// `.env.development` interpolates, and expanding each file in isolation resolved
+// that cross-file reference to nothing.
 func resolveViteEnv(dir, key string) (string, bool) {
 	if v, ok := os.LookupEnv(key); ok {
 		return v, true
 	}
-	value := ""
+	merged := map[string]string{}
 	found := false
 	for _, name := range viteEnvFiles {
-		vars, err := parseDotEnv(filepath.Join(dir, name))
+		vars, err := parseDotEnvRaw(filepath.Join(dir, name))
 		if err != nil {
 			continue
 		}
-		if v, ok := vars[key]; ok {
-			value, found = v, true
+		for k, v := range vars {
+			merged[k] = v
+		}
+		if _, ok := vars[key]; ok {
+			found = true
 		}
 	}
-	return value, found
+	if !found {
+		return "", false
+	}
+	return expandKey(merged, key), true
 }
 
-// parseDotEnv reads the dotenv syntax Vite actually accepts. Each rule below was
-// verified against real `dotenv` (17.4.2) rather than assumed — the first draft
-// got four of them wrong, and every one produced a FALSE WARNING at a correctly
-// configured project, which is the worst failure mode for advisory output:
+// parseDotEnvRaw reads the dotenv syntax Vite actually accepts, WITHOUT
+// interpolation (see expandKey). Each rule was verified against Vite's loadEnv:
 //
-//   - `KEY=value`. NOT `KEY: value` — measured against Vite's own loadEnv, the
-//     colon form resolves to NOTHING, so honouring it would make this checker
-//     find a value the app will never see and stay silent on a broken project;
+//   - `KEY=value`. NOT `KEY: value` — the colon form resolves to NOTHING in
+//     Vite, so honouring it would find a value the app never sees and stay
+//     silent on a broken project;
 //   - an optional `export ` prefix;
-//   - single, double AND BACKTICK quoted values (backticks are dotenv ≥16);
-//   - for UNQUOTED values, `#` starts a comment ANYWHERE, not only after a space
-//     (dotenv's capture is `[^#\r\n]+`); inside quotes a `#` is literal.
-//
-// `${VAR}` interpolation is applied separately by expandDotEnv — Vite runs
-// dotenv-expand over the parsed result.
-func parseDotEnv(path string) (map[string]string, error) {
+//   - single, double AND BACKTICK quoted values (backticks are dotenv >=16);
+//   - a quoted value ends at its CLOSING quote — trailing text such as
+//     `KEY="v" # note` is discarded rather than kept as part of the value;
+//   - for UNQUOTED values, `#` starts a comment ANYWHERE, not only after a
+//     space (dotenv's capture is `[^#\r\n]+`).
+func parseDotEnvRaw(path string) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -597,7 +676,6 @@ func parseDotEnv(path string) (map[string]string, error) {
 			continue
 		}
 		line = strings.TrimPrefix(line, "export ")
-
 		key, rest, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
@@ -610,15 +688,17 @@ func parseDotEnv(path string) (map[string]string, error) {
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
-	return expandDotEnv(out), nil
+	return out, nil
 }
 
 func unquoteEnvValue(v string) string {
 	if len(v) >= 2 {
-		q := v[0]
-		if (q == '"' || q == '\'' || q == '`') && v[len(v)-1] == q {
-			// Quoted: the value is literal, `#` included.
-			return v[1 : len(v)-1]
+		if q := v[0]; q == '"' || q == '\'' || q == '`' {
+			// A quoted value ends at its closing quote; anything after it (a
+			// trailing ` # comment`) is not part of the value.
+			if end := strings.IndexByte(v[1:], q); end >= 0 {
+				return v[1 : 1+end]
+			}
 		}
 	}
 	// Unquoted: `#` begins a comment wherever it appears.
@@ -628,74 +708,79 @@ func unquoteEnvValue(v string) string {
 	return strings.TrimSpace(v)
 }
 
-// expandDotEnv applies the `${VAR}` / `$VAR` interpolation dotenv-expand performs
-// (Vite runs it over every parsed env file), resolving against the file's own
-// values first and the process environment second. Bounded to a few passes so a
-// self-referential file cannot loop; an unresolvable reference expands to the
-// empty string, matching dotenv-expand.
-func expandDotEnv(vars map[string]string) map[string]string {
-	lookup := func(name string) (string, bool) {
-		if v, ok := vars[name]; ok {
-			return v, true
-		}
-		return os.LookupEnv(name)
-	}
-	for pass := 0; pass < 8; pass++ {
-		changed := false
-		for k, v := range vars {
-			expanded := expandEnvRefs(v, lookup)
-			if expanded != v {
-				vars[k] = expanded
-				changed = true
-			}
-		}
-		if !changed {
-			break
-		}
-	}
-	return vars
+// expandKey resolves `${NAME}` / `$NAME` / `${NAME:-default}` references in
+// vars[key], the way dotenv-expand does for Vite. Resolution order per reference
+// is PROCESS ENV first, then the merged file values — measured, and the opposite
+// of what the file-only intuition suggests. A reference that participates in a
+// cycle (including a self-reference like `A=${A}x`, which is idiomatic) resolves
+// to the process value or empty, which is what makes that case terminate AND
+// match Vite; the `seen` set is the termination argument, not a pass counter.
+func expandKey(vars map[string]string, key string) string {
+	return expandValue(vars, vars[key], map[string]bool{key: true})
 }
 
-// expandEnvRefs substitutes `${NAME}` and `$NAME` references using lookup.
-func expandEnvRefs(v string, lookup func(string) (string, bool)) string {
+func expandValue(vars map[string]string, v string, seen map[string]bool) string {
 	var b strings.Builder
 	for i := 0; i < len(v); {
+		// `\$` escapes the sigil: the backslash is consumed and the `$` is literal.
+		if v[i] == '\\' && i+1 < len(v) && v[i+1] == '$' {
+			b.WriteByte('$')
+			i += 2
+			continue
+		}
 		if v[i] != '$' {
 			b.WriteByte(v[i])
 			i++
 			continue
 		}
-		// `\$` escapes the sigil.
-		if i > 0 && v[i-1] == '\\' {
-			b.WriteByte(v[i])
-			i++
+		name, def, hasDef, next, ok := readEnvRef(v, i)
+		if !ok || name == "" {
+			// Not a reference (a bare `$`, or a literal `${}`) — copy it through.
+			b.WriteString(v[i:max(next, i+1)])
+			i = max(next, i+1)
 			continue
 		}
-		name, next, ok := readEnvRef(v, i)
-		if !ok {
-			b.WriteByte(v[i])
-			i++
-			continue
-		}
-		// An UNRESOLVED reference expands to the empty string, not to its own text
-		// — measured against Vite's loadEnv, which resolves `${NOPE}` to "".
-		if val, found := lookup(name); found {
-			b.WriteString(val)
-		}
+		b.WriteString(resolveRef(vars, name, def, hasDef, seen))
 		i = next
 	}
 	return b.String()
 }
 
-// readEnvRef reads a `${NAME}` or `$NAME` reference starting at v[i] == '$'.
-func readEnvRef(v string, i int) (name string, next int, ok bool) {
+func resolveRef(vars map[string]string, name, def string, hasDef bool, seen map[string]bool) string {
+	if v, ok := os.LookupEnv(name); ok {
+		return v
+	}
+	if raw, ok := vars[name]; ok && !seen[name] {
+		seen[name] = true
+		out := expandValue(vars, raw, seen)
+		delete(seen, name)
+		if out != "" || !hasDef {
+			return out
+		}
+		return def
+	}
+	if hasDef {
+		return def
+	}
+	// An unresolvable reference expands to the EMPTY string, not to its own text.
+	return ""
+}
+
+// readEnvRef reads a `${NAME}`, `${NAME:-default}` or `$NAME` reference starting
+// at v[i] == '$'. next is the index just past the reference.
+func readEnvRef(v string, i int) (name, def string, hasDef bool, next int, ok bool) {
 	j := i + 1
 	if j < len(v) && v[j] == '{' {
 		end := strings.IndexByte(v[j:], '}')
 		if end < 0 {
-			return "", 0, false
+			return "", "", false, 0, false
 		}
-		return v[j+1 : j+end], j + end + 1, true
+		body := v[j+1 : j+end]
+		next = j + end + 1
+		if n, d, found := strings.Cut(body, ":-"); found {
+			return n, d, true, next, true
+		}
+		return body, "", false, next, true
 	}
 	start := j
 	for j < len(v) && (v[j] == '_' ||
@@ -704,9 +789,9 @@ func readEnvRef(v string, i int) (name string, next int, ok bool) {
 		j++
 	}
 	if j == start {
-		return "", 0, false
+		return "", "", false, 0, false
 	}
-	return v[start:j], j, true
+	return v[start:j], "", false, j, true
 }
 
 // originsInclude reports whether a comma-separated origin allowlist contains

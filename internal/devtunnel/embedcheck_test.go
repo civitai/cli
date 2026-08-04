@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -634,6 +635,173 @@ func TestFindingEvidenceNamesTheProbe(t *testing.T) {
 		ev := strings.Join(ah.Evidence, "\n")
 		if !strings.Contains(ev, probeHostname) || !strings.Contains(ev, "403") {
 			t.Errorf("evidence must name the Host it sent and the status:\n%s", ev)
+		}
+	})
+}
+
+// ── regressions from the PR #198 DELTA re-audit ──────────────────────────────
+
+// TestCheckEmbeddableFollowsRedirect: a Vite project with a `base` path 404s
+// /@vite/client and redirects /, so refusing to follow redirects made the 2xx
+// gate report a genuinely un-embeddable server as CLEAN — the gate over-
+// corrected into silence. The browser follows the redirect, so the target is the
+// app and its headers are the interpretable ones.
+func TestCheckEmbeddableFollowsRedirect(t *testing.T) {
+	basePathHandler := func(w http.ResponseWriter, r *http.Request) {
+		if hostOnly(r.Host) != "127.0.0.1" && hostOnly(r.Host) != "localhost" {
+			w.WriteHeader(http.StatusForbidden) // real allowedHosts behaviour
+			return
+		}
+		switch r.URL.Path {
+		case "/app/", "/app/@vite/client":
+			w.WriteHeader(http.StatusOK) // real content, NO ACAO
+		case "/":
+			w.Header().Set("Location", "/app/")
+			w.WriteHeader(http.StatusFound)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}
+
+	t.Run("the broken server behind a redirect is still reported", func(t *testing.T) {
+		host, port := startProbeServer(t, http.HandlerFunc(basePathHandler))
+		got := CheckEmbeddable(host, port, probeTimeout)
+		if !hasKind(got, FindingCORS) || !hasKind(got, FindingAllowedHosts) {
+			t.Fatalf("want cors + allowed-hosts through the redirect, got %v", kinds(got))
+		}
+	})
+
+	t.Run("vite is still detected under a base path", func(t *testing.T) {
+		host, port := startProbeServer(t, http.HandlerFunc(basePathHandler))
+		got := CheckEmbeddable(host, port, probeTimeout)
+		if len(got) == 0 {
+			t.Fatal("expected findings")
+		}
+		joined := strings.Join(got[0].Fix, "\n")
+		if !strings.Contains(joined, "vite.config.ts") {
+			t.Errorf("a base-path Vite project must still get the vite remediation:\n%s", joined)
+		}
+	})
+
+	// Control: a HEALTHY server behind a redirect must stay clean, so the redirect
+	// following cannot be passing the case above by warning indiscriminately.
+	t.Run("a healthy server behind a redirect stays clean", func(t *testing.T) {
+		host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" {
+				w.Header().Set("Location", "/app/")
+				w.WriteHeader(http.StatusFound)
+				return
+			}
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Security-Policy", "frame-ancestors 'self' "+ProdParentOrigin)
+			w.WriteHeader(http.StatusOK)
+		}))
+		if got := CheckEmbeddable(host, port, probeTimeout); len(got) != 0 {
+			t.Fatalf("a correctly configured server behind a redirect must be clean, got %v", kinds(got))
+		}
+	})
+
+	// A redirect LOOP must terminate and stay silent rather than hang: the
+	// transport always dials the local server, so an unbounded chase would spin.
+	t.Run("a redirect loop terminates without findings", func(t *testing.T) {
+		host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", "/loop")
+			w.WriteHeader(http.StatusFound)
+		}))
+		done := make(chan []Finding, 1)
+		go func() { done <- CheckEmbeddable(host, port, probeTimeout) }()
+		select {
+		case got := <-done:
+			if len(got) != 0 {
+				t.Fatalf("an endless redirect is not interpretable; got %v", kinds(got))
+			}
+		case <-time.After(15 * time.Second):
+			t.Fatal("CheckEmbeddable did not terminate on a redirect loop")
+		}
+	})
+}
+
+// TestCheckEmbeddableDuplicateCORSHeaders: more than one
+// Access-Control-Allow-Origin is a CORS failure in the browser whatever the
+// values say, so reading only the first reported a blocked server as fine.
+func TestCheckEmbeddableDuplicateCORSHeaders(t *testing.T) {
+	host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Add("Access-Control-Allow-Origin", "*")
+		w.Header().Add("Access-Control-Allow-Origin", "*")
+		w.WriteHeader(http.StatusOK)
+	}))
+	got := CheckEmbeddable(host, port, probeTimeout)
+	if !hasKind(got, FindingCORS) {
+		t.Fatalf("duplicate ACAO headers must be reported, got %v", kinds(got))
+	}
+}
+
+// TestHostSourceAllowsDefaultPorts: only the default port for the source's OWN
+// scheme may be dropped — `https://civitai.com:80` is a different origin.
+func TestHostSourceAllowsDefaultPorts(t *testing.T) {
+	tests := []struct {
+		source string
+		want   bool
+	}{
+		{source: "https://civitai.com:443", want: true},
+		{source: "http://civitai.com:80", want: true},
+		{source: "civitai.com:443", want: true},
+		{source: "https://civitai.com:80", want: false},
+		{source: "http://civitai.com:443", want: false},
+		{source: "https://civitai.com:8443", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.source, func(t *testing.T) {
+			if got := hostSourceAllows(tc.source, ProdParentOrigin); got != tc.want {
+				t.Fatalf("hostSourceAllows(%q) = %v want %v", tc.source, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestCheckEmbeddableRedirectSafety pins the two limits on redirect following.
+// Both were unpinned when redirect following was introduced: a mutant removing
+// the hop bound and a mutant following cross-host redirects each survived.
+func TestCheckEmbeddableRedirectSafety(t *testing.T) {
+	t.Run("cross-host redirects are not followed", func(t *testing.T) {
+		var sawForeignHost bool
+		host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if hostOnly(r.Host) == "elsewhere.example" {
+				sawForeignHost = true
+			}
+			w.Header().Set("Location", "http://elsewhere.example/somewhere")
+			w.WriteHeader(http.StatusFound)
+		}))
+		CheckEmbeddable(host, port, probeTimeout)
+		// The transport ALWAYS dials the local dev server whatever the URL says, so
+		// chasing an external Location would send a foreign Host to this server and
+		// prove nothing about it.
+		if sawForeignHost {
+			t.Fatal("a cross-host redirect must not be followed — the probe would send a foreign Host to the local server")
+		}
+	})
+
+	t.Run("redirect hops are bounded", func(t *testing.T) {
+		var mu sync.Mutex
+		hops := 0
+		host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			hops++
+			n := hops
+			mu.Unlock()
+			w.Header().Set("Location", fmt.Sprintf("/hop%d", n))
+			w.WriteHeader(http.StatusFound)
+		}))
+		CheckEmbeddable(host, port, probeTimeout)
+		mu.Lock()
+		defer mu.Unlock()
+		// Two probe requests may each redirect up to the bound; anything far above
+		// that means the bound is not being applied.
+		if max := 4 * (maxProbeRedirects + 1); hops > max {
+			t.Fatalf("redirect following is unbounded: %d hops (bound implies <= %d)", hops, max)
+		}
+		if hops == 0 {
+			t.Fatal("no requests reached the server — the harness is not observing anything")
 		}
 	})
 }

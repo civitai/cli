@@ -252,9 +252,9 @@ func TestParseDotEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := parseDotEnv(path)
+	got, err := parseDotEnvRaw(path)
 	if err != nil {
-		t.Fatalf("parseDotEnv: %v", err)
+		t.Fatalf("parseDotEnvRaw: %v", err)
 	}
 	want := map[string]string{
 		"PLAIN":       "value",
@@ -283,7 +283,7 @@ func TestParseDotEnv(t *testing.T) {
 }
 
 func TestParseDotEnvMissingFile(t *testing.T) {
-	if _, err := parseDotEnv(filepath.Join(t.TempDir(), "nope")); err == nil {
+	if _, err := parseDotEnvRaw(filepath.Join(t.TempDir(), "nope")); err == nil {
 		t.Fatal("want an error for a missing file")
 	}
 }
@@ -329,19 +329,31 @@ func TestParseDotEnvMatchesVite(t *testing.T) {
 		{name: "spaces around the equals", body: "K   =   https://civitai.com   ", want: "https://civitai.com"},
 		{name: "crlf line ending", body: "K=https://civitai.com\r\n", want: "https://civitai.com"},
 		{name: "later line wins", body: "K=first\nK=https://civitai.com", want: "https://civitai.com"},
+		// Cases added after the delta re-audit found each of them diverging from
+		// Vite in the direction that WARNS at a healthy project.
+		{name: "quoted value then a trailing comment", body: `K="https://civitai.com" # prod`, want: "https://civitai.com"},
+		{name: "single-quoted then a trailing comment", body: "K='https://civitai.com' # prod", want: "https://civitai.com"},
+		// A quote INSIDE the trailing comment: taking the LAST quote instead of the
+		// closing one silently swallows the comment into the value.
+		{name: "quote inside the trailing comment", body: `K="https://civitai.com" # say "hi"`, want: "https://civitai.com"},
+		{name: "default when the reference is unset", body: "K=${NOPE:-https://civitai.com}", want: "https://civitai.com"},
+		{name: "empty default", body: "K=${NOPE:-}", want: ""},
+		{name: "default unused when the reference resolves", body: "BASE=https://civitai.com\nK=${BASE:-fallback}", want: "https://civitai.com"},
+		{name: "escaped sigil is literal", body: `K=\${A}`, want: "${A}"},
+		{name: "empty braces are literal", body: "K=a${}b", want: "a${}b"},
+		{name: "self-reference resolves to empty", body: "K=${K}x", want: "x"},
+		{name: "unterminated brace is literal", body: "K=${NOPE", want: "${NOPE"},
+		{name: "bare dollar at end", body: "K=abc$", want: "abc$"},
+		{name: "dollar not starting a name", body: "K=a$-b", want: "a$-b"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
+			clearEnvKeys(t, "K", "BASE", "PARENT", "NOPE")
 			dir := t.TempDir()
-			p := filepath.Join(dir, ".env")
-			if err := os.WriteFile(p, []byte(tc.body), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(dir, ".env"), []byte(tc.body), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			vars, err := parseDotEnv(p)
-			if err != nil {
-				t.Fatalf("parseDotEnv: %v", err)
-			}
-			got, ok := vars["K"]
+			got, ok := resolveViteEnv(dir, "K")
 			if tc.want == "\x00" {
 				if ok {
 					t.Fatalf("K must be absent, got %q", got)
@@ -358,14 +370,86 @@ func TestParseDotEnvMatchesVite(t *testing.T) {
 	}
 }
 
-// TestExpandDotEnvTerminates: a self-referential file must not spin.
-func TestExpandDotEnvTerminates(t *testing.T) {
-	done := make(chan map[string]string, 1)
-	go func() { done <- expandDotEnv(map[string]string{"A": "${B}", "B": "${A}"}) }()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("expandDotEnv did not terminate on a reference cycle")
+// TestExpandKeyCycles: a reference cycle must terminate AND resolve the way Vite
+// does — a self-reference falls back to the process value (or empty), which is
+// why `A=${A}x` is `x` and not an ever-growing string. Termination here comes
+// from the visited set, not from any pass counter.
+func TestExpandKeyCycles(t *testing.T) {
+	clearEnvKeys(t, "A", "B")
+	cases := []struct {
+		name string
+		vars map[string]string
+		key  string
+		want string
+	}{
+		{name: "mutual cycle", vars: map[string]string{"A": "${B}", "B": "${A}"}, key: "A", want: ""},
+		{name: "self reference", vars: map[string]string{"A": "${A}x"}, key: "A", want: "x"},
+		{name: "self reference twice", vars: map[string]string{"A": "${A}${A}x"}, key: "A", want: "x"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			done := make(chan string, 1)
+			go func() { done <- expandKey(tc.vars, tc.key) }()
+			select {
+			case got := <-done:
+				if got != tc.want {
+					t.Fatalf("got %q want %q", got, tc.want)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("expandKey did not terminate on a reference cycle")
+			}
+		})
+	}
+}
+
+// clearEnvKeys guarantees the named variables are ABSENT from the process
+// environment, so a value in the developer's shell cannot decide a test.
+func clearEnvKeys(t *testing.T, keys ...string) {
+	t.Helper()
+	for _, k := range keys {
+		if v, ok := os.LookupEnv(k); ok {
+			t.Setenv(k, v)
+			_ = os.Unsetenv(k)
+		}
+	}
+}
+
+// TestResolveViteEnvCrossFile: `.env` may DEFINE a value that `.env.development`
+// interpolates. Expanding each file in isolation resolved that to nothing and
+// warned at a project Vite resolves correctly, so the files must be merged
+// before expansion.
+func TestResolveViteEnvCrossFile(t *testing.T) {
+	clearEnvKeys(t, "K", "PARENT")
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(".env", "PARENT=https://civitai.com\n")
+	write(".env.development", "K=http://localhost:5186,${PARENT}\n")
+
+	got, ok := resolveViteEnv(dir, "K")
+	if !ok {
+		t.Fatal("K should resolve")
+	}
+	if want := "http://localhost:5186,https://civitai.com"; got != want {
+		t.Fatalf("cross-file expansion: got %q want %q", got, want)
+	}
+}
+
+// TestResolveViteEnvProcessEnvWinsInsideExpansion: a reference resolves against
+// the PROCESS environment before the file values — measured against Vite.
+func TestResolveViteEnvProcessEnvWinsInsideExpansion(t *testing.T) {
+	clearEnvKeys(t, "K")
+	t.Setenv("PARENT", "https://from-process.example")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("PARENT=https://from-file.example\nK=${PARENT}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := resolveViteEnv(dir, "K")
+	if got != "https://from-process.example" {
+		t.Fatalf("process env must win inside expansion; got %q", got)
 	}
 }
 

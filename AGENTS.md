@@ -333,7 +333,19 @@ until that exists, vendoring is on purpose.
     comment ANYWHERE, not only after a space. If you change the parser, re-run
     that differential — a same-process dotenv harness silently CONTAMINATES
     itself, because dotenv-expand writes resolved values into `process.env` and
-    later cases then read the earlier answer.
+    later cases then read the earlier answer. The mirror also MERGES every env
+    file before expanding once (`.env` may define what `.env.development`
+    interpolates; expanding per file resolved that to nothing), a reference
+    resolves against the PROCESS env before the file values, `${X:-default}` is
+    supported, and a self-reference (`K=${K}x`) resolves to the process value or
+    empty — which is what makes it terminate.
+    (e) The 2xx gate must NOT be reached by refusing redirects. A Vite project
+    with a `base` path 404s `/@vite/client` and 302s `/`, so "don't follow
+    redirects" plus "only 2xx is interpretable" made a genuinely un-embeddable
+    server report CLEAN — the over-strict correction to (b). Same-host redirects
+    are followed (bounded) and the FINAL response is judged; a cross-host
+    Location is never followed, because the transport always dials the local dev
+    server and would just send someone else's Host to it.
 
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync
