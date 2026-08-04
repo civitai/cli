@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -475,6 +477,20 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, readme, "Submission lifecycle")
 	mustContain(t, readme, "civitai app withdraw")
 	mustContain(t, readme, "pending")
+
+	// SEAM (writer 3 of 3): the README is the THIRD writer of the budget number,
+	// and the ONLY one with a drift history — when the manifest moved 40 -> 300 it
+	// was the README that kept saying 40, while the manifest <-> generation.ts pair
+	// stayed in sync on its own. A guard over only that pair would have stayed
+	// green straight through the failure it exists to catch, so assert the README
+	// too, against the value the RENDERED manifest actually emitted (never a
+	// literal — a literal just relocates the drift into the test).
+	//
+	// Scope of this assertion: it catches the README naming a budget the manifest
+	// does not emit. It does NOT police how the README explains the number; the
+	// recipe's own per-job ceiling (30) is a different quantity and legitimately
+	// appears alongside it.
+	assertBudgetDocumented(t, readme, budget)
 }
 
 func TestPageMoneyNeedsHarness(t *testing.T) {
@@ -581,6 +597,36 @@ func assertSameSet(t *testing.T, want, got []string) {
 			t.Errorf("missing expected file %q (got %v)", w, got)
 		}
 	}
+}
+
+// assertBudgetDocumented requires the rendered README to name the budget the
+// manifest emitted. Matched on a word boundary so "300" cannot be satisfied by a
+// substring of an unrelated number (4000, 3000, 1300), and reported with the
+// numbers the README DOES carry so a failure is diagnosable without re-running.
+func assertBudgetDocumented(t *testing.T, readme string, budget int) {
+	t.Helper()
+	want := strconv.Itoa(budget)
+	if regexp.MustCompile(`\b` + want + `\b`).MatchString(readme) {
+		return
+	}
+	t.Errorf("README does not document the manifest's buzzBudgetPerGen (%d) — "+
+		"the manifest and the README disagree about the budget. "+
+		"Standalone integers found in the README: %v",
+		budget, uniqueInts(readme))
+}
+
+// uniqueInts lists the distinct standalone integers in a document, so a budget
+// mismatch names the stale value instead of just saying "not found".
+func uniqueInts(s string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, m := range regexp.MustCompile(`\b\d{2,}\b`).FindAllString(s, -1) {
+		if !seen[m] {
+			seen[m] = true
+			out = append(out, m)
+		}
+	}
+	return out
 }
 
 // budgetFromManifest parses page.buzzBudgetPerGen out of a RENDERED manifest, so
