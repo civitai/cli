@@ -44,10 +44,20 @@ and **all five `template-page-money` CI steps reproduced locally** against the a
 can break the template. All 10 checks green on #194.
 Nothing else uncommitted anywhere.
 
-⚠️ **This will recur** — it is a scheduled-rot check, not a one-time defect. Any PR can be
-blocked by it the moment npm publishes a new `@civitai/*` minor, regardless of that PR's
-content. The fix is always the same one command. (There is a `bump-scaffold-pins.yml` workflow;
-worth checking why it did not open the bump PR itself before the check went red.)
+⚠️ **This will recur, and the automation cannot prevent it** — measured, not assumed. The
+`bump-scaffold-pins.yml` workflow is NOT broken: it ran on schedule Mon 2026-08-03 at
+**10:51 UTC** and correctly no-op'd, because both packages published *later that same day* —
+`blocks-react` 0.38.0 at **20:15 UTC**, `app-sdk` 0.30.0 at **22:13 UTC** (npm registry `time`
+field). It is a **weekly cron** (`17 7 * * 1`), so any `@civitai/*` minor publish leaves
+`pins-vs-published` — a REQUIRED check — red on `main` and on every open PR for up to ~7 days
+regardless of that PR's content. We happened to catch this one ~1 day in.
+
+Two things follow: (a) when a PR is blocked by `pins-vs-published`, the fix is always
+`go run ./internal/scaffold/cmd/bump-pins` + a PR — don't re-diagnose it; you can also just
+`gh workflow run bump-scaffold-pins.yml` (someone already did exactly that on 2026-07-29,
+49s after the 0.28.0 publish). (b) If the ~7-day window is judged too wide, the lever is cron
+frequency (daily) — not the bumper, which works. ⚠️ `.github/workflows/*` is ask-first per
+`AGENTS.md`, so that is a decision to raise, not to make.
 
 Minor, left alone deliberately: the bumper also rewrites a README prose line to read
 "`accountType` / … require `@civitai/app-sdk@^0.30.0`", but those APIs arrived in the *older*
