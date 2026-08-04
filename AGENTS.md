@@ -311,6 +311,29 @@ until that exists, vendoring is on purpose.
     `internal/scaffold/dev_embed_contract_test.go` — they render the real
     template, extract the values it emits, and require the CLI's own check to
     accept them, so drift on EITHER side fails loudly.
+    Four rules here are counter-intuitive and were each measured after a first
+    draft got them wrong — every one produced a FALSE WARNING at a correctly
+    configured project, which is the worst outcome for advisory output because it
+    teaches authors to ignore it:
+    (a) **`frame-ancestors` OBSOLETES `X-Frame-Options`** (CSP L3) — when both are
+    present browsers enforce frame-ancestors and IGNORE XFO, so XFO is only
+    consulted when NO frame-ancestors directive is present. (b) **Only a 2xx
+    baseline is interpretable**: a 401/403/302/5xx response came from something
+    other than the app (auth proxy, deny gate, login redirect), so its headers say
+    nothing — reading CORS off one blamed healthy servers, and reading the
+    follow-up 403 blamed `allowedHosts` for a proxy that refuses everything
+    identically. (c) **`'none'` is decisive only as the SOLE source**, and every
+    `Content-Security-Policy` header must be evaluated (`Header.Values`, not
+    `Get`) because policies combine restrictively. (d) The **dotenv mirror is
+    verified DIFFERENTIALLY against Vite's own `loadEnv`**, not against
+    assumptions: `KEY: value` resolves to NOTHING in Vite (do not accept a colon
+    separator — it would find a value the app never sees and stay silent on a
+    broken project), an unresolved `${NOPE}` expands to the EMPTY string rather
+    than its own text, backtick quoting is supported, and an unquoted `#` starts a
+    comment ANYWHERE, not only after a space. If you change the parser, re-run
+    that differential — a same-process dotenv harness silently CONTAMINATES
+    itself, because dotenv-expand writes resolved values into `process.env` and
+    later cases then read the earlier answer.
 
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync

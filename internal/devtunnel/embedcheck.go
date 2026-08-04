@@ -159,10 +159,14 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 	}
 
 	// The baseline Host must be one the dev server ACCEPTS, or its own host check
-	// 403s every probe and we misread that as broken CORS. It is exactly the
-	// authority the tunnel proxy connects to. (An early draft used a placeholder
-	// hostname here; against a real Vite server that tripped the DNS-rebinding
-	// check on every request and manufactured findings for a healthy server.)
+	// 403s every probe and we misread that as broken CORS. (An early draft used a
+	// placeholder hostname here; against a real Vite server that tripped the
+	// DNS-rebinding check on every request and manufactured findings for a healthy
+	// server.) It is the authority the CLI dials — NOT the Host the tunnel later
+	// forwards, which is the `dev-<hex>.civit.ai` name checkAllowedHosts probes
+	// with. A dev server whose allowlist admits neither (a hostname --local-host
+	// such as a compose service name) answers 403 here, which the 2xx gate below
+	// turns into silence rather than into invented advice.
 	authority := probeAuthority(host, port)
 
 	// `/@vite/client` is always served by a Vite dev server and is a real ES
@@ -181,10 +185,20 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 		if err != nil {
 			return nil
 		}
-		if resp.StatusCode >= 500 {
-			// The server is answering but broken; header advice would be noise.
-			return nil
-		}
+	}
+
+	// ONLY a 2xx baseline is interpretable. Anything else means the response we
+	// are holding was produced by something OTHER than the app — an authenticating
+	// proxy (401), a blanket-deny gate or a host check we already failed (403), a
+	// redirect to a login page (302), a broken server (5xx) — and its headers say
+	// nothing about how the app would be served. Reading CORS off such a response
+	// reported "your modules are CORS-blocked" at servers whose CORS was fine, and
+	// reading the follow-up 403 as a host-check failure blamed `allowedHosts` for
+	// an authenticating proxy that rejects every request identically. Staying
+	// silent is the correct failure mode here: this check exists to end a silent
+	// failure, and it would be self-defeating to replace it with confident noise.
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil
 	}
 
 	// Capitalised: serverDesc opens a sentence in the finding summary.
@@ -261,8 +275,12 @@ func getWithOrigin(client *http.Client, authority, path, hostHeader string) (*ht
 // (typically Vite's default localhost-only policy, which sends NO header at all
 // to a null origin) blocks every module script.
 func checkCORS(resp *http.Response, probed, serverDesc string, fix []string) *Finding {
+	// Case-SENSITIVE on purpose: CORS compares the header against the request's
+	// serialised origin byte-for-byte, so `NULL` does not match the `null` origin
+	// and the browser blocks the fetch. Accepting it case-insensitively would call
+	// a genuinely broken server clean.
 	acao := strings.TrimSpace(resp.Header.Get("Access-Control-Allow-Origin"))
-	if acao == "*" || strings.EqualFold(acao, "null") {
+	if acao == "*" || acao == "null" {
 		return nil
 	}
 	observed := "no Access-Control-Allow-Origin header"
@@ -285,11 +303,49 @@ func checkCORS(resp *http.Response, probed, serverDesc string, fix []string) *Fi
 }
 
 // checkFraming reports headers that forbid civitai.com framing the dev server.
-// An ABSENT CSP is fine (no CSP means no framing restriction), so this warns
+// An ABSENT CSP is fine — no CSP means no framing restriction — so this warns
 // only when a frame-ancestors directive is present AND excludes the parent.
-// Any X-Frame-Options is a problem: it has no origin allowlist that admits a
-// cross-origin parent, and it overrides frame-ancestors in older browsers.
+//
+// Order matters and is NOT interchangeable: CSP Level 3 says frame-ancestors
+// OBSOLETES X-Frame-Options, and that when a resource carries both, browsers
+// enforce frame-ancestors and IGNORE X-Frame-Options. So a permissive
+// frame-ancestors makes any XFO irrelevant, and reporting XFO anyway warns at a
+// server that embeds perfectly well. XFO is therefore only consulted when NO
+// frame-ancestors directive is present at all.
+//
+// Every Content-Security-Policy header is evaluated, not just the first: a
+// response may carry several, they combine RESTRICTIVELY, and Header.Get would
+// see only one — so a second policy saying `frame-ancestors 'none'` used to be
+// reported clean.
 func checkFraming(resp *http.Response, probed string, fix []string) *Finding {
+	sawFrameAncestors := false
+	for _, csp := range resp.Header.Values("Content-Security-Policy") {
+		ancestors, present := frameAncestors(csp)
+		if !present {
+			continue
+		}
+		sawFrameAncestors = true
+		if frameAncestorsAllow(ancestors) {
+			continue
+		}
+		return &Finding{
+			Kind:    FindingFrameAncestors,
+			Summary: "Your dev server's CSP forbids the Civitai host from framing it.",
+			Evidence: []string{
+				fmt.Sprintf("  GET %s  →  Content-Security-Policy: frame-ancestors %s", probed, strings.Join(ancestors, " ")),
+				"",
+				fmt.Sprintf("  That directive does not admit %s, so the browser refuses to render", ProdParentOrigin),
+				"  the iframe at all.",
+			},
+			Fix: fix,
+		}
+	}
+	if sawFrameAncestors {
+		// A frame-ancestors that admits the parent is the enforced policy; any XFO
+		// alongside it is ignored by the browser, so there is nothing to report.
+		return nil
+	}
+
 	if xfo := strings.TrimSpace(resp.Header.Get("X-Frame-Options")); xfo != "" {
 		return &Finding{
 			Kind:    FindingXFrameOptions,
@@ -297,29 +353,13 @@ func checkFraming(resp *http.Response, probed string, fix []string) *Finding {
 			Evidence: []string{
 				fmt.Sprintf("  GET %s  →  X-Frame-Options: %s", probed, xfo),
 				"",
-				"  X-Frame-Options cannot express a cross-origin allowlist. Remove it in",
-				"  development and express the policy with a frame-ancestors CSP instead.",
+				"  X-Frame-Options cannot express a cross-origin allowlist, and this",
+				"  response sets no frame-ancestors policy to supersede it.",
 			},
 			Fix: fix,
 		}
 	}
-
-	csp := resp.Header.Get("Content-Security-Policy")
-	ancestors, present := frameAncestors(csp)
-	if !present || frameAncestorsAllow(ancestors) {
-		return nil
-	}
-	return &Finding{
-		Kind:    FindingFrameAncestors,
-		Summary: "Your dev server's CSP forbids the Civitai host from framing it.",
-		Evidence: []string{
-			fmt.Sprintf("  GET %s  →  Content-Security-Policy: frame-ancestors %s", probed, strings.Join(ancestors, " ")),
-			"",
-			fmt.Sprintf("  That directive does not admit %s, so the browser refuses to render", ProdParentOrigin),
-			"  the iframe at all.",
-		},
-		Fix: fix,
-	}
+	return nil
 }
 
 // frameAncestors extracts the frame-ancestors source list from a CSP header,
@@ -345,18 +385,25 @@ func frameAncestors(csp string) (sources []string, present bool) {
 // than a missed one (the browser console still shows a real violation). A
 // `'none'` list is the one unambiguous rejection.
 func frameAncestorsAllow(sources []string) bool {
-	if len(sources) == 0 {
-		// `frame-ancestors` with no sources is equivalent to 'none'.
+	nonEmpty := make([]string, 0, len(sources))
+	for _, src := range sources {
+		if s := strings.TrimSpace(src); s != "" {
+			nonEmpty = append(nonEmpty, s)
+		}
+	}
+	if len(nonEmpty) == 0 {
+		// `frame-ancestors` with no sources matches nothing — equivalent to 'none'.
 		return false
 	}
-	for _, src := range sources {
-		s := strings.TrimSpace(src)
-		switch {
-		case s == "":
-			continue
-		case strings.EqualFold(s, "'none'"):
-			return false
-		case s == "*", strings.EqualFold(s, "https:"):
+	// `'none'` is decisive ONLY as the sole source. The CSP grammar does not admit
+	// it alongside other sources, so a browser parsing `'none' https://civitai.com`
+	// ignores the invalid `'none'` and honours the rest — treating it as decisive
+	// there would warn at a policy that actually permits the embed.
+	if len(nonEmpty) == 1 && strings.EqualFold(nonEmpty[0], "'none'") {
+		return false
+	}
+	for _, s := range nonEmpty {
+		if s == "*" || strings.EqualFold(s, "https:") {
 			return true
 		}
 		if hostSourceAllows(s, ProdParentOrigin) {
@@ -387,9 +434,15 @@ func hostSourceAllows(source, origin string) bool {
 	return false
 }
 
-// stripScheme removes an http(s):// prefix from an already-lowercased value.
+// stripScheme removes an http(s):// prefix from an already-lowercased value, then
+// drops an explicit DEFAULT port. `https://civitai.com:443` and
+// `https://civitai.com` denote the same origin, so a source spelling the port
+// out must not read as a different host. (An http:// source is accepted for an
+// https origin because CSP3 upgrades http sources to their https equivalent.)
 func stripScheme(v string) string {
-	return strings.TrimPrefix(strings.TrimPrefix(v, "https://"), "http://")
+	v = strings.TrimPrefix(strings.TrimPrefix(v, "https://"), "http://")
+	v = strings.TrimSuffix(v, ":443")
+	return strings.TrimSuffix(v, ":80")
 }
 
 // checkAllowedHosts reports a dev server that rejects the tunneled Host outright.
@@ -514,10 +567,21 @@ func resolveViteEnv(dir, key string) (string, bool) {
 	return value, found
 }
 
-// parseDotEnv reads the subset of dotenv syntax that appears in real .env files:
-// `KEY=VALUE`, an optional `export ` prefix, `#` comments, and single/double
-// quoted values. An inline `#` is a comment only for UNQUOTED values, matching
-// dotenv.
+// parseDotEnv reads the dotenv syntax Vite actually accepts. Each rule below was
+// verified against real `dotenv` (17.4.2) rather than assumed — the first draft
+// got four of them wrong, and every one produced a FALSE WARNING at a correctly
+// configured project, which is the worst failure mode for advisory output:
+//
+//   - `KEY=value`. NOT `KEY: value` — measured against Vite's own loadEnv, the
+//     colon form resolves to NOTHING, so honouring it would make this checker
+//     find a value the app will never see and stay silent on a broken project;
+//   - an optional `export ` prefix;
+//   - single, double AND BACKTICK quoted values (backticks are dotenv ≥16);
+//   - for UNQUOTED values, `#` starts a comment ANYWHERE, not only after a space
+//     (dotenv's capture is `[^#\r\n]+`); inside quotes a `#` is literal.
+//
+// `${VAR}` interpolation is applied separately by expandDotEnv — Vite runs
+// dotenv-expand over the parsed result.
 func parseDotEnv(path string) (map[string]string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -533,12 +597,12 @@ func parseDotEnv(path string) (map[string]string, error) {
 			continue
 		}
 		line = strings.TrimPrefix(line, "export ")
+
 		key, rest, ok := strings.Cut(line, "=")
 		if !ok {
 			continue
 		}
-		key = strings.TrimSpace(key)
-		if key == "" {
+		if key = strings.TrimSpace(key); key == "" {
 			continue
 		}
 		out[key] = unquoteEnvValue(strings.TrimSpace(rest))
@@ -546,21 +610,103 @@ func parseDotEnv(path string) (map[string]string, error) {
 	if err := sc.Err(); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return expandDotEnv(out), nil
 }
 
 func unquoteEnvValue(v string) string {
 	if len(v) >= 2 {
-		if (v[0] == '"' && v[len(v)-1] == '"') || (v[0] == '\'' && v[len(v)-1] == '\'') {
+		q := v[0]
+		if (q == '"' || q == '\'' || q == '`') && v[len(v)-1] == q {
+			// Quoted: the value is literal, `#` included.
 			return v[1 : len(v)-1]
 		}
 	}
-	// Unquoted: strip an inline comment, which dotenv treats as a comment only
-	// when it follows whitespace.
-	if i := strings.Index(v, " #"); i >= 0 {
+	// Unquoted: `#` begins a comment wherever it appears.
+	if i := strings.IndexByte(v, '#'); i >= 0 {
 		v = v[:i]
 	}
 	return strings.TrimSpace(v)
+}
+
+// expandDotEnv applies the `${VAR}` / `$VAR` interpolation dotenv-expand performs
+// (Vite runs it over every parsed env file), resolving against the file's own
+// values first and the process environment second. Bounded to a few passes so a
+// self-referential file cannot loop; an unresolvable reference expands to the
+// empty string, matching dotenv-expand.
+func expandDotEnv(vars map[string]string) map[string]string {
+	lookup := func(name string) (string, bool) {
+		if v, ok := vars[name]; ok {
+			return v, true
+		}
+		return os.LookupEnv(name)
+	}
+	for pass := 0; pass < 8; pass++ {
+		changed := false
+		for k, v := range vars {
+			expanded := expandEnvRefs(v, lookup)
+			if expanded != v {
+				vars[k] = expanded
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	return vars
+}
+
+// expandEnvRefs substitutes `${NAME}` and `$NAME` references using lookup.
+func expandEnvRefs(v string, lookup func(string) (string, bool)) string {
+	var b strings.Builder
+	for i := 0; i < len(v); {
+		if v[i] != '$' {
+			b.WriteByte(v[i])
+			i++
+			continue
+		}
+		// `\$` escapes the sigil.
+		if i > 0 && v[i-1] == '\\' {
+			b.WriteByte(v[i])
+			i++
+			continue
+		}
+		name, next, ok := readEnvRef(v, i)
+		if !ok {
+			b.WriteByte(v[i])
+			i++
+			continue
+		}
+		// An UNRESOLVED reference expands to the empty string, not to its own text
+		// — measured against Vite's loadEnv, which resolves `${NOPE}` to "".
+		if val, found := lookup(name); found {
+			b.WriteString(val)
+		}
+		i = next
+	}
+	return b.String()
+}
+
+// readEnvRef reads a `${NAME}` or `$NAME` reference starting at v[i] == '$'.
+func readEnvRef(v string, i int) (name string, next int, ok bool) {
+	j := i + 1
+	if j < len(v) && v[j] == '{' {
+		end := strings.IndexByte(v[j:], '}')
+		if end < 0 {
+			return "", 0, false
+		}
+		return v[j+1 : j+end], j + end + 1, true
+	}
+	start := j
+	for j < len(v) && (v[j] == '_' ||
+		(v[j] >= 'A' && v[j] <= 'Z') || (v[j] >= 'a' && v[j] <= 'z') ||
+		(j > start && v[j] >= '0' && v[j] <= '9')) {
+		j++
+	}
+	if j == start {
+		return "", 0, false
+	}
+	return v[start:j], j, true
 }
 
 // originsInclude reports whether a comma-separated origin allowlist contains

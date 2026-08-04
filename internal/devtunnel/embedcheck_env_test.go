@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // clearParentOrigins guarantees the variable is ABSENT from the process
@@ -284,5 +285,101 @@ func TestParseDotEnv(t *testing.T) {
 func TestParseDotEnvMissingFile(t *testing.T) {
 	if _, err := parseDotEnv(filepath.Join(t.TempDir(), "nope")); err == nil {
 		t.Fatal("want an error for a missing file")
+	}
+}
+
+// TestParseDotEnvMatchesVite pins the dotenv semantics that were VERIFIED
+// differentially against Vite's own loadEnv (26 fixtures, all matching). Four of
+// these were wrong in the first implementation and every one produced a FALSE
+// WARNING at a correctly configured project — the worst failure mode for
+// advisory output, since it teaches authors to ignore it.
+func TestParseDotEnvMatchesVite(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string // "\x00" = key absent
+	}{
+		{name: "plain", body: "K=https://civitai.com", want: "https://civitai.com"},
+		{name: "export prefix", body: "export K=https://civitai.com", want: "https://civitai.com"},
+		{name: "single quoted", body: "K='https://civitai.com'", want: "https://civitai.com"},
+		{name: "double quoted", body: `K="https://civitai.com"`, want: "https://civitai.com"},
+		// dotenv >=16 accepts backticks; treating them as literal produced a value
+		// that never matched the parent origin.
+		{name: "backtick quoted", body: "K=`https://civitai.com`", want: "https://civitai.com"},
+		// An unquoted `#` starts a comment ANYWHERE, not only after a space.
+		{name: "hash without a leading space", body: "K=https://civitai.com#x", want: "https://civitai.com"},
+		{name: "hash after a space", body: "K=https://civitai.com # c", want: "https://civitai.com"},
+		// Inside quotes a `#` is literal.
+		{name: "hash inside double quotes", body: `K="https://civitai.com#f"`, want: "https://civitai.com#f"},
+		{name: "hash inside single quotes", body: "K='https://civitai.com#f'", want: "https://civitai.com#f"},
+		// Vite runs dotenv-expand over the parsed file.
+		{name: "braced expansion", body: "BASE=https://civitai.com\nK=${BASE}", want: "https://civitai.com"},
+		{name: "bare expansion", body: "BASE=https://civitai.com\nK=$BASE", want: "https://civitai.com"},
+		{name: "partial expansion", body: "BASE=https://civitai.com\nK=${BASE},http://localhost:5186", want: "https://civitai.com,http://localhost:5186"},
+		// An unresolvable reference expands to EMPTY, not to its own text.
+		{name: "unresolved expansion", body: "K=${NOPE}", want: ""},
+		// A colon is NOT a separator for Vite — honouring it would resolve a value
+		// the app never sees, and stay silent on a project that is actually broken.
+		{name: "colon is not a separator", body: "K: https://civitai.com", want: "\x00"},
+		{name: "value containing a colon", body: "K=http://localhost:5186", want: "http://localhost:5186"},
+		{name: "value with colon and comma", body: "K=http://localhost:5186,https://civitai.com", want: "http://localhost:5186,https://civitai.com"},
+		{name: "full-line comment", body: "# K=https://civitai.com", want: "\x00"},
+		{name: "no separator", body: "K", want: "\x00"},
+		{name: "empty value", body: "K=", want: ""},
+		{name: "spaces around the equals", body: "K   =   https://civitai.com   ", want: "https://civitai.com"},
+		{name: "crlf line ending", body: "K=https://civitai.com\r\n", want: "https://civitai.com"},
+		{name: "later line wins", body: "K=first\nK=https://civitai.com", want: "https://civitai.com"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, ".env")
+			if err := os.WriteFile(p, []byte(tc.body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			vars, err := parseDotEnv(p)
+			if err != nil {
+				t.Fatalf("parseDotEnv: %v", err)
+			}
+			got, ok := vars["K"]
+			if tc.want == "\x00" {
+				if ok {
+					t.Fatalf("K must be absent, got %q", got)
+				}
+				return
+			}
+			if !ok {
+				t.Fatalf("K missing; want %q", tc.want)
+			}
+			if got != tc.want {
+				t.Fatalf("got %q want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestExpandDotEnvTerminates: a self-referential file must not spin.
+func TestExpandDotEnvTerminates(t *testing.T) {
+	done := make(chan map[string]string, 1)
+	go func() { done <- expandDotEnv(map[string]string{"A": "${B}", "B": "${A}"}) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("expandDotEnv did not terminate on a reference cycle")
+	}
+}
+
+// TestCheckParentOriginsExpandedValue drives the whole check through an expanded
+// value, so the expansion is pinned at the level the user actually experiences.
+func TestCheckParentOriginsExpandedValue(t *testing.T) {
+	clearParentOrigins(t)
+	dir := writeAppDir(t, appDirOpts{
+		manifest: true, pkg: sdkPkg,
+		envFiles: map[string]string{
+			".env.development": "PARENT=https://civitai.com\nVITE_BLOCK_ALLOWED_PARENT_ORIGINS=http://localhost:5186,${PARENT}\n",
+		},
+	})
+	if got := CheckParentOrigins(dir); len(got) != 0 {
+		t.Fatalf("an expanded ${PARENT} must satisfy the check, got %v", kinds(got))
 	}
 }

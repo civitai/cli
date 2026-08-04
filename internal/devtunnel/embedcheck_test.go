@@ -176,7 +176,9 @@ func TestCheckEmbeddableCORS(t *testing.T) {
 		{name: "absent header blocks the null origin", acao: "", wantCORS: true},
 		{name: "wildcard allows it", acao: "*", wantCORS: false},
 		{name: "explicit null echo allows it", acao: "null", wantCORS: false},
-		{name: "uppercase NULL echo allows it", acao: "NULL", wantCORS: false},
+		// CORS compares the header against the serialised origin byte-for-byte, so
+		// `NULL` does NOT match `null` and the browser blocks the fetch.
+		{name: "uppercase NULL echo does NOT allow it", acao: "NULL", wantCORS: true},
 		{name: "specific localhost origin does not", acao: "http://localhost:5186", wantCORS: true},
 		{name: "the prod parent origin does not help a null-origin fetch", acao: ProdParentOrigin, wantCORS: true},
 	}
@@ -221,12 +223,30 @@ func TestCheckEmbeddableFraming(t *testing.T) {
 		{name: "empty source list is none", csp: "default-src 'self'; frame-ancestors", wantKind: FindingFrameAncestors},
 		{name: "XFO DENY blocks the embed", xfo: "DENY", wantKind: FindingXFrameOptions},
 		{name: "XFO SAMEORIGIN blocks the embed", xfo: "SAMEORIGIN", wantKind: FindingXFrameOptions},
+		// CSP L3: frame-ancestors OBSOLETES X-Frame-Options. When both are present
+		// browsers enforce frame-ancestors and ignore XFO, so a permissive
+		// frame-ancestors means the embed works and there is nothing to report.
+		// This case previously asserted the opposite and pinned a false positive.
 		{
-			name:     "XFO wins over an otherwise-fine CSP",
-			csp:      "frame-ancestors " + ProdParentOrigin,
+			name: "a permissive frame-ancestors supersedes XFO",
+			csp:  "frame-ancestors " + ProdParentOrigin,
+			xfo:  "DENY",
+		},
+		{
+			name:     "XFO still reported when no frame-ancestors is present",
+			csp:      "default-src 'self'",
 			xfo:      "DENY",
 			wantKind: FindingXFrameOptions,
 		},
+		{
+			// Both bad: frame-ancestors is the enforced one, so report THAT.
+			name:     "a restrictive frame-ancestors is reported over XFO",
+			csp:      "frame-ancestors 'self'",
+			xfo:      "DENY",
+			wantKind: FindingFrameAncestors,
+		},
+		{name: "explicit default port matches", csp: "frame-ancestors https://civitai.com:443"},
+		{name: "http source matches an https origin (CSP3 upgrade)", csp: "frame-ancestors http://civitai.com"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -401,8 +421,12 @@ func TestFrameAncestors(t *testing.T) {
 		{csp: "frame-ancestors *.civitai.com", wantPresent: true, wantAllow: false},
 		{csp: "default-src 'self'; frame-ancestors " + ProdParentOrigin, wantPresent: true, wantAllow: true},
 		{csp: "frame-ancestors https://evil.com; default-src 'self'", wantPresent: true, wantAllow: false},
-		// A 'none' anywhere in the list is decisive even alongside a matching source.
-		{csp: "frame-ancestors 'none' " + ProdParentOrigin, wantPresent: true, wantAllow: false},
+		// `'none'` is decisive only as the SOLE source: the CSP grammar does not
+		// admit it beside others, so a browser ignores the invalid `'none'` and
+		// honours the rest.
+		{csp: "frame-ancestors 'none' " + ProdParentOrigin, wantPresent: true, wantAllow: true},
+		{csp: "frame-ancestors https://civitai.com:443", wantPresent: true, wantAllow: true},
+		{csp: "frame-ancestors http://civitai.com", wantPresent: true, wantAllow: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.csp, func(t *testing.T) {
@@ -471,4 +495,145 @@ func TestOriginsInclude(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ── regressions from the PR #198 audit ───────────────────────────────────────
+
+// TestCheckEmbeddableNonInterpretableBaseline: the probe may reach something
+// that is NOT the app — an authenticating proxy, a blanket-deny gate, a redirect
+// to a login page. Its headers say nothing about how the app would be served, so
+// reading CORS off them reported "your modules are CORS-blocked" at servers whose
+// CORS was fine, and reading the follow-up 403 blamed `allowedHosts` for a proxy
+// that rejects every request identically.
+func TestCheckEmbeddableNonInterpretableBaseline(t *testing.T) {
+	for _, status := range []int{
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusFound,
+		http.StatusNotFound,
+		http.StatusBadGateway,
+		http.StatusInternalServerError,
+	} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.WriteHeader(status)
+			}))
+			if got := CheckEmbeddable(host, port, probeTimeout); len(got) != 0 {
+				t.Fatalf("a uniform %d must produce no findings, got %v", status, kinds(got))
+			}
+		})
+	}
+}
+
+// TestCheckEmbeddableHostCheckStillCaught is the counterpart control: the 2xx
+// gate above must NOT swallow the real allowedHosts case, where the baseline
+// succeeds and only the tunnel-shaped Host is refused.
+func TestCheckEmbeddableHostCheckStillCaught(t *testing.T) {
+	host, port := startProbeServer(t, stockViteHandler())
+	got := CheckEmbeddable(host, port, probeTimeout)
+	if !hasKind(got, FindingAllowedHosts) {
+		t.Fatalf("a host-specific 403 must still be reported, got %v", kinds(got))
+	}
+}
+
+// TestCheckEmbeddableAllCSPHeaders: policies combine restrictively and a response
+// may carry several. Header.Get sees only the first, so a second policy saying
+// frame-ancestors 'none' used to be reported clean.
+func TestCheckEmbeddableAllCSPHeaders(t *testing.T) {
+	host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Add("Content-Security-Policy", "frame-ancestors "+ProdParentOrigin)
+		w.Header().Add("Content-Security-Policy", "frame-ancestors 'none'")
+		w.WriteHeader(http.StatusOK)
+	}))
+	if got := CheckEmbeddable(host, port, probeTimeout); !hasKind(got, FindingFrameAncestors) {
+		t.Fatalf("every CSP header must be evaluated, got %v", kinds(got))
+	}
+}
+
+// TestFindingEvidenceNamesTheProbe pins the user-visible evidence strings. Every
+// other test drives handlers that behave identically on all paths and asserts
+// only on Kind, so mutating the probed path or leaking the directive name into
+// the evidence survived the whole suite.
+func TestFindingEvidenceNamesTheProbe(t *testing.T) {
+	t.Run("cors evidence names the vite module path and the null origin", func(t *testing.T) {
+		host, port := startProbeServer(t, stockViteHandler())
+		got := CheckEmbeddable(host, port, probeTimeout)
+		var cors *Finding
+		for i := range got {
+			if got[i].Kind == FindingCORS {
+				cors = &got[i]
+			}
+		}
+		if cors == nil {
+			t.Fatalf("expected a cors finding, got %v", kinds(got))
+		}
+		ev := strings.Join(cors.Evidence, "\n")
+		if !strings.Contains(ev, "GET /@vite/client") {
+			t.Errorf("evidence must name the probed path:\n%s", ev)
+		}
+		if !strings.Contains(ev, "Origin: null") {
+			t.Errorf("evidence must name the origin it sent:\n%s", ev)
+		}
+	})
+
+	t.Run("non-vite evidence names the root path", func(t *testing.T) {
+		host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/@vite/client" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK) // 200 baseline, no ACAO
+		}))
+		got := CheckEmbeddable(host, port, probeTimeout)
+		if len(got) == 0 {
+			t.Fatal("expected findings")
+		}
+		ev := strings.Join(got[0].Evidence, "\n")
+		if !strings.Contains(ev, "GET /  ") {
+			t.Errorf("non-Vite evidence must name the root path, not the vite one:\n%s", ev)
+		}
+		if strings.Contains(ev, "@vite/client") {
+			t.Errorf("non-Vite evidence must not name the vite path:\n%s", ev)
+		}
+	})
+
+	t.Run("frame-ancestors evidence lists only the sources", func(t *testing.T) {
+		host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Content-Security-Policy", "frame-ancestors 'self'")
+			w.WriteHeader(http.StatusOK)
+		}))
+		got := CheckEmbeddable(host, port, probeTimeout)
+		if len(got) == 0 {
+			t.Fatal("expected a frame-ancestors finding")
+		}
+		ev := strings.Join(got[0].Evidence, "\n")
+		// The rendered line is "…: frame-ancestors 'self'" — the directive name is
+		// printed by the format string, so it must NOT also appear in the sources.
+		if strings.Contains(ev, "frame-ancestors frame-ancestors") {
+			t.Errorf("the directive name leaked into the source list:\n%s", ev)
+		}
+		if !strings.Contains(ev, "frame-ancestors 'self'") {
+			t.Errorf("evidence must show the observed source list:\n%s", ev)
+		}
+	})
+
+	t.Run("allowed-hosts evidence names the tunnel host", func(t *testing.T) {
+		host, port := startProbeServer(t, stockViteHandler())
+		got := CheckEmbeddable(host, port, probeTimeout)
+		var ah *Finding
+		for i := range got {
+			if got[i].Kind == FindingAllowedHosts {
+				ah = &got[i]
+			}
+		}
+		if ah == nil {
+			t.Fatalf("expected an allowed-hosts finding, got %v", kinds(got))
+		}
+		ev := strings.Join(ah.Evidence, "\n")
+		if !strings.Contains(ev, probeHostname) || !strings.Contains(ev, "403") {
+			t.Errorf("evidence must name the Host it sent and the status:\n%s", ev)
+		}
+	})
 }
