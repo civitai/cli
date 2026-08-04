@@ -1,0 +1,371 @@
+# Handoff — App analytics: CLI command + platform fixes
+
+**Session dates:** 2026-08-02 → 2026-08-03 (two sessions)
+**Repos touched:** `civitai/cli`, `civitai/civitai`, `devrc`
+
+> ## ✅ RESOLVED — everything below shipped, plus follow-ups #1, #2 and #4
+>
+> This doc is kept as the record of how the work was found and reasoned about, not as a
+> to-do list. **Read the "Still open" section at the bottom first** — the rest is history.
+>
+> | PR | what | state |
+> |---|---|---|
+> | [civitai#3561](https://github.com/civitai/civitai/pull/3561) | endpoint cardinality fix | merged |
+> | [civitai#3557](https://github.com/civitai/civitai/pull/3557) | dark-flag fabricated-zero fix | merged |
+> | [civitai#3572](https://github.com/civitai/civitai/pull/3572) | follow-up #1 — scope-gate `getMyAppAnalytics` **and** `getMyForgejoCloneInfo` | merged |
+> | [civitai#3574](https://github.com/civitai/civitai/pull/3574) | follow-up #2 — humanise both analytics top-N cards | merged |
+> | [civitai#3581](https://github.com/civitai/civitai/pull/3581) | follow-up #4 — `getMyRevenue` undiscriminated zero | merged |
+> | [cli#190](https://github.com/civitai/cli/pull/190) | `civitai app metrics <slug>` | merged |
+> | [cli#191](https://github.com/civitai/cli/pull/191) | AGENTS.md items 5–7 | merged |
+> | [cli#192](https://github.com/civitai/cli/pull/192) | AGENTS.md item 8 — the CLI/web label divergence | merged |
+>
+> The original merge-order and stale-gate blockers are all discharged. #3561 had to be
+> rebased first: `#3566` landed on main mid-session and edited the same `detail: {}` object,
+> turning it `CONFLICTING` after the recorded gate. That is the whole reason the
+> "re-check how far behind main you are immediately before merging" rule earned its place.
+
+---
+
+## The two decisions that were open, and what the evidence said
+
+**Follow-up #1's scope choice was NOT a coin flip.** `TokenScope.AppBlocksSubmit`, not the
+`stopDevTunnel` precedent. Decided on two pieces of evidence, then confirmed in prod:
+
+- `civitai app metrics` already calls `GET /api/v1/blocks/submissions`, which requires that
+  exact bit — so any other choice makes one command's two hops need different scopes.
+- `app-listings.router.cli-scope.test.ts` fixed the identical bug class (cli#186) with the
+  identical bit.
+- **Prod confirmed it afterwards**: `OauthClient.allowedScopes` for `civitai-cli` is
+  `100663297`, and of the 331 live tokens the fix unblocks, **30 carry `33554433`
+  (`UserRead|AppBlocksSubmit`) and lack bit 26** — so copying `AppBlocksDevTunnel` would
+  have left those 30 still 403ing. `UserRead` would have been actively wrong: it is inside
+  `Full`, i.e. what every third-party "log in with Civitai" client requests.
+- Also measured: **0 credentials** out of 6.68M `ApiKey` rows are in the allow→deny flip
+  class (a strict superset of `Full` lacking bit 25). Beware the naive predicate
+  `(mask & Full) = Full` — it is also true when `mask == Full` and reports 145 false hits;
+  the strict form needs `AND mask <> Full`.
+
+**Follow-up #2's suggested fix was wrong.** This doc originally said to reuse
+`humaniseScopeEndpoint`. Don't — measured against the real function, it returns
+`'(no workflow id)'` for `workflow:submit` and `''` (a blank cell) for
+`user-settings:write`, because it is the per-ROW labeller and an aggregate bucket has no
+`detail`. The actual near-duplicate is `humaniseScopeInvocation`, which is also unsuitable
+but for different reasons (wrong register for a count; no arm for REST paths). Hence a
+separate `analytics-bucket-labels.ts`.
+
+---
+
+## What this was
+
+Started as "tell me about the CLI", became: *can I see analytics for my published
+Apps?* The answer turned out to be **yes on the platform, no from the CLI** — a
+complete owner-scoped analytics service (`blocks.getMyAppAnalytics`, shipped
+2026-06-21) existed behind tRPC with a web UI panel, and the CLI simply never
+called it. Building that call surfaced two real platform defects.
+
+---
+
+## Open PRs — none merged
+
+| PR | repo | what | state |
+|---|---|---|---|
+| [#190](https://github.com/civitai/cli/pull/190) | cli | `civitai app metrics <slug>` | 3 commits, CI green, audited ×2, **verified live** |
+| [#3557](https://github.com/civitai/civitai/pull/3557) | civitai | dark-flag fabricated-zero fix | 8 files, audited (8/8 mutants), `MERGEABLE` |
+| [#3561](https://github.com/civitai/civitai/pull/3561) | civitai | endpoint cardinality fix | 10 files, audited, `CLEAN` |
+
+### Docs PRs (separate, from the session-lessons pass)
+
+| PR | repo | file |
+|---|---|---|
+| [devrc#313](https://github.com/innovation-upstream/devrc/pull/313) | devrc | `claude/RULES.md` + `RULES-ARCHIVE.md` |
+| [#3567](https://github.com/civitai/civitai/pull/3567) | civitai | `CLAUDE.md` (Git Worktrees section) |
+| [cli#191](https://github.com/civitai/cli/pull/191) | cli | `AGENTS.md` (items 5–7) |
+
+🔴 **cli#191 MUST merge after cli#190.** It documents `internal/cmd/app_metrics.go`
+and `internal/appapi/analytics.go`, which only exist on #190's branch. Merging
+#191 first leaves `AGENTS.md` describing a command the tree does not have.
+
+⚠️ **devrc#313 is inert until a `home-manager switch`.** `~/.claude/RULES.md`
+resolves to `/nix/store/…-hm_RULES.md`, a read-only copy. Not run this session.
+
+Note on devrc#313: `RULES.md` is under a **deterministic byte ceiling**
+(`scripts/tests/test_rules_size.py`, 34,500 B hard / 900 B required headroom) and
+had only 495 B free. Rather than ratchet the limit — it exists as an anti-regrowth
+gate — ~1.4 KB of *evidence* was evicted to `RULES-ARCHIVE.md` under five new
+anchors. No rule lost its imperative, triggers, scope, or procedure. Final 33,507 B,
+993 B headroom. The size gate was mutation-tested before its green was trusted.
+
+**Agreed merge order: #3561 → #3557 → cli#190 → cli#191.** Not a correctness constraint
+(the regions are disjoint) — #3561 first because it is behind main and its
+browser tests had never run against main's `component-setup.tsx` change until the
+gate; cli#190 last because its `notOwned` guard only becomes meaningful once
+#3557 deploys.
+
+### RESOLVED — the re-gate came back clean
+
+**The blocker below is cleared; it is kept for context.** A re-gate ran against
+`main@dd888989fb` and, when main advanced again mid-run, re-ran the whole thing
+against `fdf8e13bed`. Both bases give identical results: merged tree **752 files
+/ 10896 passed / 1 skipped / 0 failed**, typecheck **0 errors** (validated with
+an injected type error proving tsc reports exactly 1), and
+`blocks.router.workflow.test.ts` collects **311** tests. The +10 delta lands in
+exactly 5 PR-owned files — nothing stopped collecting.
+
+**#3561's endpoint assertions survive main's rewrite intact and non-vacuously**,
+proven by two discriminating mutations rather than asserted: reverting the three
+router sites turns exactly 5 tests red on *this* guard's own error
+(`expected 'workflow:submit:pending' to be 'workflow:submit'`); deleting the
+`detail.workflowId` spread turns exactly 4 red, with the `:pending` test
+correctly staying green because it asserts absence.
+
+One real blocker surfaced and was fixed: #3557 failed `prettier --check` on a
+file it created (`AppAnalyticsPanel.browser.test.tsx:48-51`). Fixed in
+`b77f849e9f` — pure line-wrap, no behaviour change. The 9 other prettier
+failures on that tree are pre-existing on main. **#3557's CI needs to re-green
+after that push before merging.**
+
+Caveats carried forward: the component-suite numbers came from a
+**non-canonical browser build** — Playwright's vendored `chrome-headless-shell`
+is a generic-linux binary NixOS refuses to exec, so the gate shimmed nixpkgs
+chromium 1228 into the `-1200` names. Unit results are unaffected and are the
+stronger evidence. The gate also ran prettier only, not ESLint proper.
+
+Gate worktrees left in place: `/home/zach/workspace/civit/civitai-regate` and
+`civitai-regate-ctl`.
+
+### Original blocker (historical — resolved above)
+
+A gate merged #3557 + #3561 off `main@ed6e17ac7d` and **passed** (751 files /
+10852 passed / 1 skipped / 0 failed, typecheck 0 with a positive control).
+
+Then `main` advanced 3 commits to `dd888989fb`. One of them —
+`dd720a8078` *"feat(app-blocks): tie a step's moderation posture to its
+orchestrator $type (#3554)"* — rewrote **779 lines of
+`src/server/routers/blocks.router.ts`** and **483 lines of
+`src/server/routers/__tests__/blocks.router.workflow.test.ts`**. That is the file
+both PRs touch and the test file #3561 edits.
+
+GitHub still reports both `MERGEABLE` — no *textual* conflict. Verified:
+`dd720a8078` does **not** touch the `workflow:submit` / `recordScopeInvocation`
+lines, and all three endpoint sites survive in current main at `:4449`, `:6328`,
+`:7107`. So source-level risk is low.
+
+**Unresolved:** whether #3561's endpoint assertions survive main's test-file
+rewrite *non-vacuously*. A re-gate against `dd888989fb` was dispatched and had
+not reported at handoff. Its worktree: `/home/zach/workspace/civit/civitai-regate`.
+
+~~**Do not merge until that re-gate reports.**~~ **HISTORICAL — do not act on this.** The
+re-gate reported clean, and #3561 has since merged. It did need the rebase-and-re-verify
+this paragraph anticipated, though for a different reason: `#3566` landed later still and
+edited the same `detail: {}` object, which turned #3561 `CONFLICTING`. The non-vacuity was
+then re-proven by mutation against the new base (reverting the three router sites → exactly
+5 red on this guard's own error; deleting the `detail.workflowId` spreads → exactly 4, with
+the `:pending` test correctly staying green because it asserts absence).
+
+---
+
+## The measured data (owner's own apps, 2026-05-01 → 2026-08-03)
+
+Reachable via `blocks.getMyAppAnalytics`. Totals: **62 runs · 1,819 Buzz spent ·
+343 API calls · 0 installs · 0 Buzz purchased**, max 3 active users.
+
+| app | runs | Buzz | API calls | err |
+|---|---:|---:|---:|---:|
+| gen-matrix | 20 | 65 | 26 | 0% |
+| dogfood-manual | 11 | 35 | 17 | 0% |
+| panorama-360 | 9 | 0 | 9 | 0% |
+| custom-generators | 8 | **1,672** | 19 | 0% |
+| seed-explorer | 6 | 18 | 8 | 0% |
+| model-benchmarking | 5 | 20 | 5 | 0% |
+| w6-ui-dogfood | 2 | 6 | 5 | 0% |
+| buzz-generator | 1 | 3 | 5 | 0% |
+| playable-collections | 0 | 0 | **245** | 2% |
+| app-requests | 0 | 0 | 4 | 0% |
+| 6 others | 0 | 0 | 0 | — |
+
+Dark: `continuous-gen`, `df-qwen-canvas`, `lora-weight-lab`, `model-notes`,
+`notepad`, `prompt-library`.
+
+**`custom-generators` is unexplained and worth a look** — 1,672 Buzz over 8 runs
+is ~209/run against ~3/run everywhere else, i.e. 92% of all spend.
+
+**Treat `installs: 0` as unverified, not measured.** Uniform across all 16 apps;
+no positive control was ever obtained proving that counter can move.
+
+Submission state: 16 apps with a live deploy, 100 submissions (2026-06-17 →
+2026-08-01), 79 approved / 18 withdrawn / 2 rejected / 1 pending (`sensei`).
+
+---
+
+## Follow-ups (ranked) — #1, #2 and #4 are DONE; the rest are still open
+
+~~1. `getMyAppAnalytics` has no `.meta({ requiredScope })`~~ — **DONE, civitai#3572.**
+   Fixed with `AppBlocksSubmit`; see "the two decisions" above for why, and note the PR
+   also caught a **second** proc with the identical live defect that this list missed:
+   `getMyForgejoCloneInfo`, which `civitai app pull` drives. Worth remembering that a
+   ranked follow-up list is not a survey — the sibling was found by an audit, not by
+   this doc.
+~~2. `topEndpoints` renders raw~~ — **DONE, civitai#3574.** Both cards, not just
+   endpoints: `topScopes` next to it had rendered raw `ai:write:budgeted` and the
+   middleware's literal `(any-token)` placeholder all along. The suggested fix in this
+   doc was wrong — see "the two decisions" above.
+3. **Owns-zero-apps returns unflagged all-zero counters**
+   (`app-analytics.service.ts:187-188`). Flagged independently by two agents. Web
+   only — unreachable from the CLI, which always sends a concrete `appBlockId`
+   (`metrics <slug>`, `cobra.ExactArgs(1)`). Defensible (an aggregate over an
+   empty set genuinely is zero) but wants a recorded decision. **Still open** — and
+   note #3581 established the shape of the answer for its sibling: one discriminator
+   value, not two, because `getRevenueForOwner` never *computes* ownership.
+~~4. `getMyRevenue` has the identical undiscriminated-zero bug~~ — **DONE, civitai#3581.**
+   One discriminator value (`notEntitled`), deliberately not two: the service scopes by
+   `appOwnerUserId` in the WHERE clause, so a not-owned request yields a *truthful*
+   zero-row aggregate and `notOwned` is unproducible. Declaring it would have created the
+   "declared but never satisfied" trap this doc warns about. The PR also consolidated
+   **two** unguarded revenue readers into one shared `RevenuePanel`.
+5. **`normalizeEndpoint` still writes unbounded values**
+   (`block-scope.middleware.ts:930`) — templates only `^\d+$`→`:id` and ULIDs;
+   a slug or UUID segment passes through verbatim, and the row is written from
+   `res.on('finish')` registered *before* the handler, so a 400 still logs.
+6. **ClickHouse `blockRenders` has zero readers.** Written since 2026-06-22
+   (`Tracker.blockRender()` → `/api/track/block-render`), carries `appBlockId`,
+   `slotId`, `isAnon`. It is the **only** signal covering anonymous viewers and
+   static/no-scope blocks — exactly where the Postgres engagement metrics go
+   flat. Biggest remaining product gap; per-mount, so unique views need
+   query-side dedup.
+7. Minor: `deployDetail: 'Build None'` gave zero diagnostic when `gen-matrix`
+   0.7.2 failed to build · `GET /api/v1/blocks/submissions` caps at
+   `MAX_ROWS = 100` with no cursor (owner is already at exactly 100, so history
+   before 2026-06-17 is unreachable) · five structurally dead `AppListingMetric`
+   columns (`openCount`/`visitCount`/`connectCount`/`tipped*`) · pflag
+   back-quote trap still live at `app_dev_tunnel.go:395`.
+
+---
+
+## Still open — start here
+
+Ranked. #6 above (**ClickHouse `blockRenders` has zero readers**) remains the biggest
+*product* gap; the two items below are infrastructure this session uncovered and are
+cheaper.
+
+1. 🔴 **`preview / component-tests` is RED on some PRs, and #3574 may have regressed it.**
+   ⚠️ An earlier draft of this section asserted "CI does not run the `component` project at
+   all". **That was FALSE** — the `preview / component-tests` external check runs it. The
+   error is worth recording because of how it happened: every status query written during
+   the session filtered for `Unit tests|Typecheck|ESLint|event-engine`, so the check was
+   never in a result set, and its absence was read as evidence it did not exist. Selecting
+   the evidence and then concluding from the selection.
+
+   What the check actually says on #3574, which shipped 7 browser tests:
+
+   | commit | `preview / component-tests` |
+   |---|---|
+   | `075519d380` — before the audit-fix round | success |
+   | `8e75826616` — first fix round | **failure** |
+   | `928273e4dd` — second fix round | **failure** |
+
+   It is REPORT-ONLY (`"Component suite failed (report-only, not blocking)"`), which is why
+   the merge was not stopped. Against that: **PR 3591 passes `component-tests` on a base
+   that CONTAINS the #3574 merge**, and PR 3594 fails on the same base — so the tier is
+   green for some PRs and red for others, which points at flakiness or content-dependence
+   rather than a defect #3574 introduced. Unresolved either way.
+
+   🔴 **This cannot be settled from a NixOS host.** The full-project component run does not
+   complete locally with OR without the #3574 merge — it crashes with "Browser connection
+   was closed" on one and times out at 25 minutes on the other. Single-file runs pass fine
+   (cold cache included). So local runs can validate one file but say nothing about the
+   suite; the preview pipeline's own logs are the only authority. Whoever picks this up
+   needs those logs, not a local repro.
+
+   Related and still true: the browser tests in #3574/#3581/#3557 have only ever run
+   locally against a nixpkgs `playwright-chromium-headless-shell` (Chrome for Testing 149)
+   shimmed in via `PLAYWRIGHT_BROWSERS_PATH`, because Playwright's vendored binary is a
+   generic-linux build NixOS refuses to exec.
+
+   Also stale, and worth fixing while in there: `lint.yml`'s `unit` job comment excludes
+   browser tests because they "carry the cold-optimizeDeps flake documented at
+   vitest.config.mts:98-124". That section documents the **fix**, not an open flake, and a
+   cold-cache single-file run passes — so the stated reason no longer holds.
+
+2. 🟡 **A stale `node_modules` silently removes ~1,126 tests.** A worktree installed before
+   main gained the `@civitai/db-queries` workspace package fails at
+   `src/server/db/kyselyDb.ts` module load, so 89 files' tests are never collected and the
+   runner still prints a plausible total (10,131 passed vs 11,257 after `pnpm install`).
+   It cost one agent a full verification pass and produced a mutation matrix measured
+   against a suite missing 10% of itself. Filed on
+   [civitai#3579](https://github.com/civitai/civitai/issues/3579) alongside the related
+   wholesale-mock bug; a lockfile-vs-installed preflight check would close the family.
+
+3. 🟡 **`addCollaborator` may downgrade a write grant — UNVERIFIED.** It is a
+   `PUT …/collaborators/<user>` that *sets* permission, so `civitai app pull` (which grants
+   `read`) on an app where the web `AuthorViaGit` flow already granted `write` could
+   downgrade it and break a later push. Pre-existing, but #3572 made it reachable by the
+   CLI's **default** credential. Nobody has checked Forgejo's live PUT semantics; this rests
+   on the repo's own comment. Cheap to settle, unpleasant if true.
+
+4. 🟡 **`installs: 0` is still unverified, not measured** (as the data section above already
+   says). Uniform across all 16 apps, and no positive control was ever obtained proving the
+   counter can move. Given that this session found false zeros in four separate places —
+   fabricated dashboards, a false `tsc` 0 from an OOM, a prettier "all clean" that matched
+   zero files, and 1,126 tests silently not running — a uniform zero with no positive
+   control should be assumed broken until one exists.
+
+## What actually caught the bugs
+
+Recorded because it is the most transferable thing here. Across 8 PRs and 12 adversarial
+audit rounds, **every fix round found a defect in the previous fix**, and the mechanical
+gate caught none of them — the suite and typecheck were green at every single tip,
+including tips where a comment falsely described the mechanism protecting a scope gate.
+Three consecutive rounds on #3572 found the same class: a comment asserting something the
+code does not implement.
+
+The audits' recurring finds, in rough order of frequency:
+
+- **a comment or docstring asserting a mechanism the code does not implement** (5+ times);
+- **a test that pins the author's belief rather than the contract** — including one that
+  *certified a known-wrong label as intended*, and a "completeness" test that hardcoded the
+  same four strings it was meant to be checking;
+- **a claim broader than its evidence** — "both cards fixed" when two live scopes still
+  rendered raw; a uniqueness regex whose docblock claimed to pin every reader while matching
+  one call form;
+- **an unreachable guard counted as coverage** (one survived mutation and is now labelled as
+  untested rather than quietly kept).
+
+The cheap habits that found them: mutation-test every guard and **verify the mutation
+actually applied** before reading its result; positive-control every harness that can
+report a zero; and count tests rather than reading an exit code.
+
+## Session learnings (a doc-update PR set was dispatched for these)
+
+- **`isolation: "worktree"` binds to the CURRENT repo**, not the target. Two
+  agents aimed at the monorepo got worktrees of the Go repo. Cross-repo dispatch
+  must create its own worktree explicitly.
+- **Scope process kills by `/proc/<pid>/cwd` when agents run in parallel.** A
+  system-wide `chrome-headless-shell|vitest|steam-run` kill took out ~15 PIDs
+  including a sibling's in-flight gate.
+- **A gate is evidence about the base it ran on.** Re-check how far behind main
+  you are immediately before merging.
+- **Submodule missing → `blocks.router.workflow.test.ts` collects 0 tests** and
+  reads as a pass. Validate every worktree run against a nonzero collect count.
+- **The `.envrc` trap fired twice more:** system Node 26.5.0 vs flake 22.22.2
+  (7 spurious failures), and a wrong cwd that let **77 tests silently not run**
+  while the output looked normal.
+- **`prettier --check --stdin-filepath` prints `(stdin)`**, not the path — a
+  grep for the path gave a false CLEAN.
+- **A DTO field that is never branched on is not a guard.** `notOwned` was
+  declared in the panel's type and never read; the not-owned case had been
+  fabricating zeros on the web all along.
+- **Every audit round found something real** — three rounds on #190, and the fix
+  round introduced its own regression (a genuinely nonzero error rate rendering
+  as `0.0%`).
+
+---
+
+## Verification notes
+
+- cli#190 was exercised against the **live** API with a personal key: `2.0%` /
+  `0.0%` error rates matching independent `curl`, exit 4 / 2 / 0, `--json` raw
+  passthrough intact. The `<0.1%` band is fake-server + mutation only — no app of
+  the owner's has a tiny-nonzero error rate to point at.
+- The re-gate's harness must self-validate: nonzero collect on
+  `blocks.router.workflow.test.ts`, and an injected type error proving `tsc` can
+  see one before trusting a `0`.
