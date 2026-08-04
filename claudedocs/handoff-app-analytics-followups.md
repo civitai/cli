@@ -43,7 +43,7 @@ Query via: `KUBECONFIG=$KC_DPPROD kubectl exec -n cnpg-database $(kubectl get cl
 
 ## Open investigations — live diagnosis state
 
-### `preview / component-tests` is RED on #3574 — ROOT CAUSE FOUND, fix not yet written
+### ~~`preview / component-tests` is RED on #3574~~ — RESOLVED, fixed in civitai#3606
 
 - **Symptom + exact repro:** the external `preview / component-tests` check went
   **success → failure** exactly at my audit-fix round on #3574, and stayed failed through
@@ -88,7 +88,27 @@ Query via: `KUBECONFIG=$KC_DPPROD kubectl exec -n cnpg-database $(kubectl get cl
   matcher timeout → suite red. This is exactly #3593's defect class, introduced by my
   vocabulary rename, at exactly the commit where the check turned red.
 
-- **Next probe / fix (apply verbatim):** mirror #3593's fix in
+- **FIXED — civitai#3606 (merged 2026-08-04).** Anchored with `{ exact: true }`, plus a
+  regression guard that REPRODUCES the breaking state (hovers the tooltip's real target) so
+  reverting the anchor fails a test rather than contradicting a comment.
+
+  🔴 **The trap when reproducing this class:** the tooltip target is the 14px
+  `IconInfoCircle`, NOT the label. Hovering the "Runs (range)" text does **not** mount it —
+  measured `tooltip_mounted=false`. My first attempt hovered the label, saw the old assertion
+  pass, and would have shipped an unproven fix; a positive control on the PROBE is what caught
+  it. Hovering the icon gives `before=1 after=2 tooltip_mounted=true`.
+
+  Proof matrix (all mutations checksum-verified, file restored byte-identical): old assertion
+  + icon hovered → FAILS with `strict mode violation: getByText('Generations') resolved to 2
+  elements`; new assertion + icon hovered → passes; drop the anchor from the new guard →
+  FAILS; hover a non-mounting target → the guard's POSITIVE CONTROL fails, so it cannot pass
+  vacuously.
+
+  ⚠️ **Still unconfirmed by the authority:** `preview / component-tests` had not reported on
+  #3606 at merge time (preview deploy was pending). **Read that check on the next PR** to
+  confirm the suite is green — the local full-project run cannot do it (see below).
+
+- ~~Next probe / fix (apply verbatim):~~ historical — mirror #3593's fix in
   `src/components/AppBlocks/AppAnalyticsPanel.browser.test.tsx`:
   1. anchor the ambiguous assertions with `{ exact: true }` —
      `page.getByText('Generations', { exact: true })` at line 105 (and audit lines 129/130/144
