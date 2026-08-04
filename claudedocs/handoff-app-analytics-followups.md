@@ -2,9 +2,9 @@
 
 ## Goal
 
-Finish the App-analytics follow-up stream. The feature work is **done and merged**; what
-remains is one self-inflicted broken test (diagnosed below, fix is known), and the
-lower-priority follow-ups #3/#5/#6/#7 from the original handoff.
+Finish the App-analytics follow-up stream. The feature work is **done and merged**, and the
+one self-inflicted broken test is **fixed and merged** (civitai#3606). What remains is the
+lower-priority follow-ups #3/#5/#6/#7 from the original handoff, plus one unblocking chore.
 
 Predecessor doc (history + the original ranked list):
 `claudedocs/2026-08-03-app-analytics-handoff.md` — same branch, same PR.
@@ -25,12 +25,22 @@ Predecessor doc (history + the original ranked list):
 | civitai#3581 | `getMyRevenue` undiscriminated zero + extract shared `RevenuePanel` |
 | cli#190 | `civitai app metrics <slug>` |
 | cli#191 / cli#192 | `AGENTS.md` items 5–7 / item 8 (CLI-vs-web label divergence) |
+| civitai#3606 | anchor the `Generations` locator — fixes the component-suite oscillation this stream caused |
 
-**IN FLIGHT:** cli#193 only (two docs). Nothing else uncommitted anywhere.
+**IN FLIGHT:** cli#193 only (these two docs). Auto-merge is ENABLED; it is `BLOCKED` solely by
+a red required check that is **red on `main` too** — `pins-vs-published` fails because npm has
+published past the scaffold pins (`@civitai/blocks-react` pinned `^0.37.0`, published `0.38.0`;
+`@civitai/app-sdk` `^0.28.0` vs `0.30.0`). Nothing to do with these docs (the PR changes two
+`.md` files). Fix: `go run ./internal/scaffold/cmd/bump-pins` in the cli repo, then update the
+matching assertions in `scaffold_test.go`. That unblocks #193 automatically and fixes a real
+defect — the check's own message is "every app created from this template is born stale".
+Nothing else uncommitted anywhere.
 
-**Deploy/verify status:** all merged to `civitai/main` and `civitai-cli/main`. Verified at
-the unit tier and via prod SQL (below). **NOT verified** at the component/browser tier —
-see the open investigation; that tier is report-only and currently red on #3574.
+**Deploy/verify status:** all merged to `civitai/main` and `civitai-cli/main`. Verified at the
+unit tier and via prod SQL (below). Component/browser tier: the ambiguity that made it
+oscillate is fixed in #3606, but `preview / component-tests` had **not reported on #3606 at
+merge time** — read that check on the next PR to confirm the suite is actually green. It
+cannot be confirmed locally (see the investigation block).
 
 **Prod facts established (don't re-query):** `OauthClient.allowedScopes` for `civitai-cli`
 = `100663297` (bit 25 live, so #3572 takes effect). Of 6,685,302 `ApiKey` rows: **0** are a
