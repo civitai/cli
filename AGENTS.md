@@ -318,17 +318,19 @@ until that exists, vendoring is on purpose.
     (a) **`frame-ancestors` OBSOLETES `X-Frame-Options`** (CSP L3) — when both are
     present browsers enforce frame-ancestors and IGNORE XFO, so XFO is only
     consulted when NO frame-ancestors directive is present. (b) **Only a 2xx
-    baseline is interpretable**: a 401/403/302/5xx response came from something
-    other than the app (auth proxy, deny gate, login redirect), so its headers say
-    nothing — reading CORS off one blamed healthy servers, and reading the
-    follow-up 403 blamed `allowedHosts` for a proxy that refuses everything
-    identically. (c) **`'none'` is decisive only as the SOLE source**, and every
+    baseline is interpretable**: a 401/403/5xx response came from something other
+    than the app (auth proxy, deny gate), so its headers say nothing — reading
+    CORS off one blamed healthy servers, and reading the follow-up 403 blamed
+    `allowedHosts` for a proxy that refuses everything identically. A 3xx is NOT
+    in that list: see (e). (c) **`'none'` is decisive only as the SOLE source**, and every
     `Content-Security-Policy` header must be evaluated (`Header.Values`, not
     `Get`) because policies combine restrictively. (d) The **dotenv mirror is
     verified DIFFERENTIALLY against Vite's own `loadEnv`**, not against
-    assumptions: `KEY: value` resolves to NOTHING in Vite (do not accept a colon
-    separator — it would find a value the app never sees and stay silent on a
-    broken project), an unresolved `${NOPE}` expands to the EMPTY string rather
+    assumptions: `KEY: value` is VERSION-DEPENDENT — Vite 8 (dotenv 17) resolves it
+    to nothing while Vite 6 (dotenv 16) accepts it — and the mirror deliberately
+    does not accept it, matching the `vite ^8` that page-money pins; page-vite
+    pins `vite ^6` but carries no SDK, so the parent-origins check is gated off
+    there and the divergence is unreachable, an unresolved `${NOPE}` expands to the EMPTY string rather
     than its own text, backtick quoting is supported, and an unquoted `#` starts a
     comment ANYWHERE, not only after a space. If you change the parser, re-run
     that differential — a same-process dotenv harness silently CONTAMINATES
@@ -345,7 +347,13 @@ until that exists, vendoring is on purpose.
     server report CLEAN — the over-strict correction to (b). Same-host redirects
     are followed (bounded) and the FINAL response is judged; a cross-host
     Location is never followed, because the transport always dials the local dev
-    server and would just send someone else's Host to it.
+    server and would just send someone else's Host to it. Two consequences that
+    are easy to get wrong: a 200 reached VIA a redirect is not evidence about the
+    path you asked for (`isVite` must re-check `finalPath`, or an SPA dev server
+    that bounces unknown paths to an index gets classified Vite and handed
+    vite.config.ts advice), and `net/http` DROPS a custom `Request.Host` across an
+    absolute redirect, which silently turns the tunnel-Host probe into an ordinary
+    loopback request unless it is re-applied.
 
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync

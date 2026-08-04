@@ -1,6 +1,7 @@
 package devtunnel
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -338,6 +339,9 @@ func TestParseDotEnvMatchesVite(t *testing.T) {
 		{name: "quote inside the trailing comment", body: `K="https://civitai.com" # say "hi"`, want: "https://civitai.com"},
 		{name: "default when the reference is unset", body: "K=${NOPE:-https://civitai.com}", want: "https://civitai.com"},
 		{name: "empty default", body: "K=${NOPE:-}", want: ""},
+		{name: "nested reference inside a default", body: "BASE=https://civitai.com\nK=${NOPE:-${BASE}}", want: "https://civitai.com"},
+		{name: "doubly nested default", body: "BASE=https://civitai.com\nK=${NOPE:-${ALSO:-${BASE}}}", want: "https://civitai.com"},
+		{name: "default containing a colon", body: "K=${NOPE:-http://localhost:5186}", want: "http://localhost:5186"},
 		{name: "default unused when the reference resolves", body: "BASE=https://civitai.com\nK=${BASE:-fallback}", want: "https://civitai.com"},
 		{name: "escaped sigil is literal", body: `K=\${A}`, want: "${A}"},
 		{name: "empty braces are literal", body: "K=a${}b", want: "a${}b"},
@@ -465,5 +469,75 @@ func TestCheckParentOriginsExpandedValue(t *testing.T) {
 	})
 	if got := CheckParentOrigins(dir); len(got) != 0 {
 		t.Fatalf("an expanded ${PARENT} must satisfy the check, got %v", kinds(got))
+	}
+}
+
+// TestExpandKeySiblingReferences: the visited set must be a DFS PATH set, not a
+// permanent one — the same name referenced twice in one value is not a cycle.
+// Failing to un-mark it yields "x-" where Vite yields "x-x".
+func TestExpandKeySiblingReferences(t *testing.T) {
+	clearEnvKeys(t, "A", "K")
+	vars := map[string]string{"A": "x", "K": "${A}-${A}"}
+	if got := expandKey(vars, "K"); got != "x-x" {
+		t.Fatalf("sibling references: got %q want %q", got, "x-x")
+	}
+}
+
+// TestParseDotEnvLongUnrelatedLine: bufio.Scanner's default 64 KiB line cap made
+// the WHOLE file unreadable, so one long unrelated line next to a correct value
+// produced a false warning.
+func TestParseDotEnvLongUnrelatedLine(t *testing.T) {
+	clearEnvKeys(t, ParentOriginsEnvVar)
+	dir := writeAppDir(t, appDirOpts{
+		manifest: true, pkg: sdkPkg,
+		envFiles: map[string]string{
+			".env.development": "VITE_BLOB=" + strings.Repeat("a", 70*1024) + "\n" +
+				ParentOriginsEnvVar + "=https://civitai.com\n",
+		},
+	})
+	if got := CheckParentOrigins(dir); len(got) != 0 {
+		t.Fatalf("a long unrelated line must not hide a correct value; got %v", kinds(got))
+	}
+}
+
+// TestExpandKeyBounded: the visited set stops cycles but not SHARING — a chain of
+// `A_i=${A_i+1}${A_i+1}` doubles per level and can expand a tiny file to
+// gigabytes, hanging dev-tunnel before it prints anything.
+func TestExpandKeyBounded(t *testing.T) {
+	clearEnvKeys(t, "K")
+	// 24 levels of doubling is ~16 MiB unbounded — comfortably above the 4 MiB
+	// assertion below, which 20 levels (~1 MiB) was NOT, so the guard survived.
+	const levels = 24
+	vars := map[string]string{fmt.Sprintf("A%d", levels): "x"}
+	for i := levels - 1; i >= 0; i-- {
+		vars[fmt.Sprintf("A%d", i)] = fmt.Sprintf("${A%d}${A%d}", i+1, i+1)
+	}
+	vars["K"] = "${A0}"
+
+	done := make(chan string, 1)
+	go func() { done <- expandKey(vars, "K") }()
+	select {
+	case got := <-done:
+		if len(got) > 4*maxExpandedBytes {
+			t.Fatalf("expansion is unbounded: produced %d bytes", len(got))
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("expandKey did not terminate on an exponentially sharing chain")
+	}
+}
+
+// TestResolveViteEnvEmptyProcessVarTakesDefault: `:-` means "unset OR empty", so
+// an exported-but-empty variable still takes the default. Returning the empty
+// value warned at a project whose default resolves perfectly well.
+func TestResolveViteEnvEmptyProcessVarTakesDefault(t *testing.T) {
+	clearEnvKeys(t, "K")
+	t.Setenv("MAYBE", "")
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("K=${MAYBE:-https://civitai.com}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := resolveViteEnv(dir, "K")
+	if got != "https://civitai.com" {
+		t.Fatalf("an empty exported value must take the default; got %q", got)
 	}
 }

@@ -764,20 +764,33 @@ func TestHostSourceAllowsDefaultPorts(t *testing.T) {
 // the hop bound and a mutant following cross-host redirects each survived.
 func TestCheckEmbeddableRedirectSafety(t *testing.T) {
 	t.Run("cross-host redirects are not followed", func(t *testing.T) {
-		var sawForeignHost bool
+		// Observable is the PATH, not the Host: the redirect-following code forces
+		// Request.Host back to the original authority, so a foreign Host never
+		// reaches the server even when the cross-host guard is defeated. Asserting
+		// on Host therefore could not detect the guard being removed.
+		var mu sync.Mutex
+		var paths []string
 		host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if hostOnly(r.Host) == "elsewhere.example" {
-				sawForeignHost = true
-			}
+			mu.Lock()
+			paths = append(paths, r.URL.Path)
+			mu.Unlock()
 			w.Header().Set("Location", "http://elsewhere.example/somewhere")
 			w.WriteHeader(http.StatusFound)
 		}))
 		CheckEmbeddable(host, port, probeTimeout)
-		// The transport ALWAYS dials the local dev server whatever the URL says, so
-		// chasing an external Location would send a foreign Host to this server and
-		// prove nothing about it.
-		if sawForeignHost {
-			t.Fatal("a cross-host redirect must not be followed — the probe would send a foreign Host to the local server")
+
+		mu.Lock()
+		defer mu.Unlock()
+		if len(paths) == 0 {
+			t.Fatal("no request reached the server — the harness observes nothing")
+		}
+		for _, p := range paths {
+			// The transport ALWAYS dials the local dev server whatever the URL says,
+			// so chasing an external Location just probes THIS server at someone
+			// else's path and proves nothing about it.
+			if p == "/somewhere" {
+				t.Fatalf("a cross-host redirect must not be followed; requested %v", paths)
+			}
 		}
 	})
 
@@ -804,4 +817,113 @@ func TestCheckEmbeddableRedirectSafety(t *testing.T) {
 			t.Fatal("no requests reached the server — the harness is not observing anything")
 		}
 	})
+}
+
+// ── regressions from the PR #198 round-3 delta re-audit ──────────────────────
+
+// TestCheckEmbeddableRedirectedProbeIsNotVite: following redirects made a 200
+// reached via a redirect look like a 200 from the path we asked for. Any server
+// that bounces unknown paths to an index (an auth gate, an SPA dev server) was
+// then classified Vite and handed vite.config.ts advice, and the evidence line
+// asserted that /@vite/client returned 200 when it returned a redirect.
+func TestCheckEmbeddableRedirectedProbeIsNotVite(t *testing.T) {
+	host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/login" {
+			w.WriteHeader(http.StatusOK) // 200, no ACAO
+			return
+		}
+		w.Header().Set("Location", "/login")
+		w.WriteHeader(http.StatusFound)
+	}))
+	got := CheckEmbeddable(host, port, probeTimeout)
+	if !hasKind(got, FindingCORS) {
+		t.Fatalf("the server is still un-embeddable and must be reported; got %v", kinds(got))
+	}
+	for _, f := range got {
+		ev := strings.Join(f.Evidence, "\n")
+		if strings.Contains(ev, "GET "+viteClientPath) {
+			t.Errorf("evidence must name the path actually answered, not the one requested:\n%s", ev)
+		}
+		if strings.Contains(strings.Join(f.Fix, "\n"), "vite.config.ts") {
+			t.Errorf("a non-Vite server must not get vite.config.ts remediation:\n%s", strings.Join(f.Fix, "\n"))
+		}
+	}
+}
+
+// TestCheckAllowedHostsKeepsHostAcrossAbsoluteRedirect: net/http carries a custom
+// Request.Host across a RELATIVE redirect but drops it for an absolute one, which
+// silently turned the tunnel-Host probe into an ordinary loopback request.
+func TestCheckAllowedHostsKeepsHostAcrossAbsoluteRedirect(t *testing.T) {
+	// The baseline must land on /@vite/client directly (so `probed` is that path),
+	// and ONLY the tunnel-Host request may be redirected — otherwise the host probe
+	// never traverses a redirect and this guard is unreachable.
+	var srvURL string
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tunnelHost := strings.HasSuffix(hostOnly(r.Host), tunnelHostSuffix)
+		switch {
+		case r.URL.Path == "/gate":
+			// The gate denies a tunnel Host and admits anything else. Reaching it
+			// with the Host dropped silently turns a 403 into a 200.
+			if tunnelHost {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		case tunnelHost:
+			w.Header().Set("Location", srvURL+"/gate") // ABSOLUTE, same host
+			w.WriteHeader(http.StatusFound)
+		default:
+			w.WriteHeader(http.StatusOK) // baseline: 200, no ACAO
+		}
+	})
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	srvURL = srv.URL
+
+	h, p, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := CheckEmbeddable(h, port, probeTimeout); !hasKind(got, FindingAllowedHosts) {
+		t.Fatalf("the tunnel Host must survive an absolute redirect; got %v", kinds(got))
+	}
+}
+
+// TestCheckAllowedHostsProbesTheAnsweringPath: the host check must exercise the
+// path the baseline actually came from. A handler that refuses a foreign Host at
+// EVERY path cannot observe which path is probed, which is why this needs its own
+// case rather than riding on the base-path test.
+func TestCheckAllowedHostsProbesTheAnsweringPath(t *testing.T) {
+	var tunnelHostPaths []string
+	var mu sync.Mutex
+	host, port := startProbeServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(hostOnly(r.Host), tunnelHostSuffix) {
+			mu.Lock()
+			tunnelHostPaths = append(tunnelHostPaths, r.URL.Path)
+			mu.Unlock()
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if r.URL.Path == viteClientPath {
+			w.WriteHeader(http.StatusNotFound) // not Vite
+			return
+		}
+		w.WriteHeader(http.StatusOK) // "/" is the answering path, no ACAO
+	}))
+	CheckEmbeddable(host, port, probeTimeout)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(tunnelHostPaths) == 0 {
+		t.Fatal("no tunnel-Host request reached the server — the harness observes nothing")
+	}
+	for _, p := range tunnelHostPaths {
+		if p == viteClientPath {
+			t.Errorf("host check probed %s, but the baseline was answered at /", viteClientPath)
+		}
+	}
 }

@@ -166,6 +166,13 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 			if len(via) >= maxProbeRedirects || !strings.EqualFold(req.URL.Host, probeAuthority(host, port)) {
 				return http.ErrUseLastResponse
 			}
+			// net/http carries a custom Request.Host across a RELATIVE redirect but
+			// drops it for an absolute one. checkAllowedHosts exists to measure how
+			// the server answers a tunnel-shaped Host, so losing it mid-chain would
+			// silently turn that probe into an ordinary loopback request.
+			if len(via) > 0 && via[0].Host != "" {
+				req.Host = via[0].Host
+			}
 			return nil
 		},
 	}
@@ -189,7 +196,12 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 	if err != nil {
 		return nil
 	}
-	isVite := resp.StatusCode == http.StatusOK
+	// isVite requires the 200 to have come from the path we ASKED for. Now that
+	// redirects are followed, a server that bounces unknown paths to a 200 index
+	// (an auth gate, any SPA dev server) would otherwise be classified Vite and
+	// handed vite.config.ts advice — and the evidence line would state that
+	// /@vite/client returned 200 when it returned a redirect.
+	isVite := resp.StatusCode == http.StatusOK && finalPath(resp) == viteClientPath
 	probed := viteClientPath
 	if !isVite {
 		// Not Vite at the root, or Vite serving under a `base` path — fall back to
@@ -214,8 +226,11 @@ func CheckEmbeddable(host string, port int, timeout time.Duration) []Finding {
 	// ONLY a 2xx baseline is interpretable. Anything else means the response we
 	// are holding was produced by something OTHER than the app — an authenticating
 	// proxy (401), a blanket-deny gate or a host check we already failed (403), a
-	// redirect to a login page (302), a broken server (5xx) — and its headers say
-	// nothing about how the app would be served. Reading CORS off such a response
+	// broken server (5xx) — and its headers say nothing about how the app would be
+	// served. A 3xx no longer reaches here: same-host redirects are FOLLOWED above
+	// and the final response is what gets judged, because the browser follows them
+	// too. (Refusing to follow, combined with this gate, once reported a genuinely
+	// un-embeddable base-path project as clean.) Reading CORS off such a response
 	// reported "your modules are CORS-blocked" at servers whose CORS was fine, and
 	// reading the follow-up 403 as a host-check failure blamed `allowedHosts` for
 	// an authenticating proxy that rejects every request identically. Staying
@@ -258,8 +273,14 @@ const maxProbeRedirects = 5
 // finalPath is the path actually answered, after any redirects were followed —
 // so the evidence line names what was really fetched, not what was asked for.
 func finalPath(resp *http.Response) string {
-	if resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Path != "" {
-		return resp.Request.URL.Path
+	// EscapedPath, not Path: Path is DECODED, and this value is concatenated back
+	// into a URL string for the follow-up probes — a decoded `#` or `?` would then
+	// re-parse as a fragment or query and silently probe a different path than the
+	// evidence line claims.
+	if resp.Request != nil && resp.Request.URL != nil {
+		if p := resp.Request.URL.EscapedPath(); p != "" {
+			return p
+		}
 	}
 	return "/"
 }
@@ -670,6 +691,10 @@ func parseDotEnvRaw(path string) (map[string]string, error) {
 
 	out := map[string]string{}
 	sc := bufio.NewScanner(f)
+	// A default Scanner gives up at 64 KiB per line and returns an error, which
+	// discards the ENTIRE file — so one long unrelated line (a base64 blob, an
+	// inlined JSON key) next to a correct origins value produced a false warning.
+	sc.Buffer(make([]byte, 0, 64*1024), maxEnvLineBytes)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {
@@ -716,10 +741,22 @@ func unquoteEnvValue(v string) string {
 // to the process value or empty, which is what makes that case terminate AND
 // match Vite; the `seen` set is the termination argument, not a pass counter.
 func expandKey(vars map[string]string, key string) string {
-	return expandValue(vars, vars[key], map[string]bool{key: true})
+	budget := maxExpandedBytes
+	return expandValue(vars, vars[key], map[string]bool{key: true}, &budget)
 }
 
-func expandValue(vars map[string]string, v string, seen map[string]bool) string {
+// maxEnvLineBytes caps a single .env line. Well above any real value, and far
+// below "read an arbitrarily large file into memory".
+const maxEnvLineBytes = 1 << 20
+
+// maxExpandedBytes caps the total output of one expansion. The visited set stops
+// CYCLES but not sharing: `A=${B}${B}` over a chain doubles per level, so a small
+// file can expand to gigabytes and hang `dev-tunnel` before it prints anything.
+// The file is author-controlled, so this is a self-inflicted-hang guard, not a
+// security boundary.
+const maxExpandedBytes = 1 << 20
+
+func expandValue(vars map[string]string, v string, seen map[string]bool, budget *int) string {
 	var b strings.Builder
 	for i := 0; i < len(v); {
 		// `\$` escapes the sigil: the backslash is consumed and the `$` is literal.
@@ -740,30 +777,58 @@ func expandValue(vars map[string]string, v string, seen map[string]bool) string 
 			i = max(next, i+1)
 			continue
 		}
-		b.WriteString(resolveRef(vars, name, def, hasDef, seen))
+		b.WriteString(resolveRef(vars, name, def, hasDef, seen, budget))
 		i = next
 	}
 	return b.String()
 }
 
-func resolveRef(vars map[string]string, name, def string, hasDef bool, seen map[string]bool) string {
+func resolveRef(vars map[string]string, name, def string, hasDef bool, seen map[string]bool, budget *int) string {
+	if *budget <= 0 {
+		return ""
+	}
 	if v, ok := os.LookupEnv(name); ok {
+		// `:-` means "unset OR empty", so an exported-but-empty variable still
+		// takes the default. Returning the empty value here warned at a project
+		// whose default resolves perfectly well.
+		if v == "" && hasDef {
+			return expandValue(vars, def, seen, budget)
+		}
 		return v
 	}
 	if raw, ok := vars[name]; ok && !seen[name] {
 		seen[name] = true
-		out := expandValue(vars, raw, seen)
+		out := expandValue(vars, raw, seen, budget)
+		*budget -= len(out)
 		delete(seen, name)
 		if out != "" || !hasDef {
 			return out
 		}
-		return def
+		return expandValue(vars, def, seen, budget)
 	}
 	if hasDef {
-		return def
+		// The default is itself a value: it may contain further `${...}` refs.
+		return expandValue(vars, def, seen, budget)
 	}
 	// An unresolvable reference expands to the EMPTY string, not to its own text.
 	return ""
+}
+
+// matchBrace returns the index of the `}` closing the `{` at v[open], honouring
+// nested `${...}` so a default containing a reference is not truncated.
+func matchBrace(v string, open int) int {
+	depth := 0
+	for i := open; i < len(v); i++ {
+		switch v[i] {
+		case '{':
+			depth++
+		case '}':
+			if depth--; depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 // readEnvRef reads a `${NAME}`, `${NAME:-default}` or `$NAME` reference starting
@@ -771,14 +836,19 @@ func resolveRef(vars map[string]string, name, def string, hasDef bool, seen map[
 func readEnvRef(v string, i int) (name, def string, hasDef bool, next int, ok bool) {
 	j := i + 1
 	if j < len(v) && v[j] == '{' {
-		end := strings.IndexByte(v[j:], '}')
+		end := matchBrace(v, j)
 		if end < 0 {
 			return "", "", false, 0, false
 		}
-		body := v[j+1 : j+end]
-		next = j + end + 1
-		if n, d, found := strings.Cut(body, ":-"); found {
-			return n, d, true, next, true
+		body := v[j+1 : end]
+		next = end + 1
+		// Split at the FIRST top-level `:-`; one inside a nested reference belongs
+		// to that reference, not to this one.
+		// The first `:-` is necessarily the top-level one: a reference NAME cannot
+		// itself contain `${`, so any nested separator lies inside the DEFAULT,
+		// after this one.
+		if k := strings.Index(body, ":-"); k >= 0 {
+			return body[:k], body[k+2:], true, next, true
 		}
 		return body, "", false, next, true
 	}
