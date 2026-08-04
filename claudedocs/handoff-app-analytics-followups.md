@@ -27,14 +27,32 @@ Predecessor doc (history + the original ranked list):
 | cli#191 / cli#192 | `AGENTS.md` items 5–7 / item 8 (CLI-vs-web label divergence) |
 | civitai#3606 | anchor the `Generations` locator — fixes the component-suite oscillation this stream caused |
 
-**IN FLIGHT:** cli#193 only (these two docs). Auto-merge is ENABLED; it is `BLOCKED` solely by
-a red required check that is **red on `main` too** — `pins-vs-published` fails because npm has
-published past the scaffold pins (`@civitai/blocks-react` pinned `^0.37.0`, published `0.38.0`;
-`@civitai/app-sdk` `^0.28.0` vs `0.30.0`). Nothing to do with these docs (the PR changes two
-`.md` files). Fix: `go run ./internal/scaffold/cmd/bump-pins` in the cli repo, then update the
-matching assertions in `scaffold_test.go`. That unblocks #193 automatically and fixes a real
-defect — the check's own message is "every app created from this template is born stale".
+**IN FLIGHT:** cli#193 only (these two docs). Auto-merge is ENABLED. It *was* `BLOCKED` solely
+by `pins-vs-published`, a required check that was red on `main` too — npm had published past
+both scaffold pins (`@civitai/blocks-react` pinned `^0.37.0` vs published `0.38.0`;
+`@civitai/app-sdk` `^0.28.0` vs `0.30.0`), and the pre-1.0 caret locks the minor, so the
+check's own words applied: "every app created from this template is born stale". Nothing to do
+with these docs (the PR changes two `.md` files).
+
+**FIXED — cli#194 (merged 2026-08-04, `189d5a4`).** `go run ./internal/scaffold/cmd/bump-pins`
+rewrites all three literal pin sites in lockstep (`package.json.tmpl`, the `README.md.tmpl`
+prose, and the `scaffold_test.go` `mustContain` assertions) — the handoff's "then update the
+matching assertions by hand" step is already automated; don't do it manually. Verified red at
+`6bdab0e` → green on the branch (live npm query both times), `--check` idempotent afterwards,
+and **all five `template-page-money` CI steps reproduced locally** against the actual published
+0.30.0/0.38.0 (install → typecheck → 137 tests → build → `app validate`) because a minor bump
+can break the template. All 10 checks green on #194.
 Nothing else uncommitted anywhere.
+
+⚠️ **This will recur** — it is a scheduled-rot check, not a one-time defect. Any PR can be
+blocked by it the moment npm publishes a new `@civitai/*` minor, regardless of that PR's
+content. The fix is always the same one command. (There is a `bump-scaffold-pins.yml` workflow;
+worth checking why it did not open the bump PR itself before the check went red.)
+
+Minor, left alone deliberately: the bumper also rewrites a README prose line to read
+"`accountType` / … require `@civitai/app-sdk@^0.30.0`", but those APIs arrived in the *older*
+version — post-bump the sentence overstates the minimum. Over-strict, not harmful; rewriting
+that site is the bumper's documented design. Flagged on cli#194, not changed.
 
 **Deploy/verify status:** all merged to `civitai/main` and `civitai-cli/main`. Verified at the
 unit tier and via prod SQL (below). Component/browser tier: the ambiguity that made it
@@ -137,23 +155,23 @@ Query via: `KUBECONFIG=$KC_DPPROD kubectl exec -n cnpg-database $(kubectl get cl
 
 ## Next steps (ranked)
 
-1. **Fix the `getByText('Generations')` ambiguity** (above) and open a small PR. Self-inflicted,
-   diagnosed, ~5 lines. Do this first.
-2. **Merge cli#193** (this doc + the updated predecessor). Docs-only.
-3. **Fix `lint.yml`'s stale unit-job comment** and consider adding the component project to
+1. ~~**Fix the `getByText('Generations')` ambiguity**~~ — DONE, civitai#3606.
+2. ~~**Unblock cli#193** by bumping the stale scaffold pins~~ — DONE, cli#194 (`189d5a4`).
+3. **Merge cli#193** (this doc + the updated predecessor). Docs-only; auto-merge enabled.
+4. **Fix `lint.yml`'s stale unit-job comment** and consider adding the component project to
    GitHub Actions as `continue-on-error: true` — the same report-only posture the unit job
    uses, and the only way to get canonical-browser signal. ⚠️ `.github/workflows/*` is
    ask-first per `AGENTS.md`. Do NOT frame this as "adding a missing tier" — the tier exists
    (`preview / component-tests`); this is about a second, GH-native runner.
-4. **Follow-up #6 — ClickHouse `blockRenders` has zero readers.** The real remaining product
+5. **Follow-up #6 — ClickHouse `blockRenders` has zero readers.** The real remaining product
    gap: written since 2026-06-22, carries `appBlockId`/`slotId`/`isAnon`, and is the only
    signal covering anonymous viewers and static blocks. Per-mount, so unique views need
    query-side dedup.
-5. **Follow-up #5 — `normalizeEndpoint` still writes unbounded values**
+6. **Follow-up #5 — `normalizeEndpoint` still writes unbounded values**
    (`block-scope.middleware.ts`): templates only `^\d+$` and ULIDs, so a slug/UUID segment
    passes through verbatim into `topEndpoints`.
-6. **Follow-up #3** (owns-zero-apps unflagged all-zero; web-only) and **#7** (minor grab-bag).
-7. **Two unverified leads:** `addCollaborator` is a PUT that *sets* permission, so
+7. **Follow-up #3** (owns-zero-apps unflagged all-zero; web-only) and **#7** (minor grab-bag).
+8. **Two unverified leads:** `addCollaborator` is a PUT that *sets* permission, so
    `civitai app pull` granting `read` where the web flow granted `write` may downgrade it and
    break a later push (#3572 made it reachable by the CLI's default credential; nobody checked
    Forgejo's live PUT semantics). And `installs: 0` remains **unverified, not measured** — no
