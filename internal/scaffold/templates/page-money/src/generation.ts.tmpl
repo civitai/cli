@@ -60,12 +60,13 @@ export function spentAccountLabel(spent: BuzzAccountType | undefined): string | 
 }
 
 /**
- * Manifest budget (page.buzzBudgetPerGen). Keep in sync with block.manifest.json
- * — the SERVER reads the manifest value at mint and clamps to the per-gen cap;
- * this constant only drives the client-side "Top up · N" CTA amount and budget
- * copy. The real ceiling is enforced server-side.
+ * Mirror of the manifest's `page.buzzBudgetPerGen`. MUST be kept in sync with
+ * block.manifest.json — the SERVER reads the MANIFEST value at mint (and clamps
+ * it to the platform per-gen cap); this constant is exported for your own copy
+ * and is not read by the scaffold's UI. The real ceiling is enforced
+ * server-side, so changing this constant alone changes nothing about spend.
  */
-export const PAGE_BUZZ_BUDGET = 40;
+export const PAGE_BUZZ_BUDGET = 300;
 
 /** The scope the page token must carry before a generation can be submitted. */
 export const BUDGETED_SCOPE = 'ai:write:budgeted';

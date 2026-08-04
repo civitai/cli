@@ -2,6 +2,7 @@ package scaffold
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,12 +102,23 @@ func TestRenderPageMoney(t *testing.T) {
 		}
 	}
 
-	// Money-path manifest: budgeted scope + per-gen budget + build fields. The
-	// budget is 40 so it reserves the starter Comfy on Civitai recipe's per-job ceiling
-	// (30) — see the Comfy on Civitai (customComfy) sample below.
+	// Money-path manifest: budgeted scope + per-gen budget + build fields.
+	//
+	// buzzBudgetPerGen is a SAFETY CEILING — the most a malicious or exploited
+	// app could spend per generation — NOT a forecast of what a generation costs.
+	// It must sit far ABOVE expected spend: an over-budget generation is refused
+	// at a pre-submit gate (nothing runs, nothing is charged) but the app is then
+	// broken for every user until a new manifest version ships AND is re-approved.
+	// Headroom, by contrast, is never actually spent — the server re-prices and
+	// hard-caps every generation at the real per-job ceiling.
+	//
+	// 300 = 10x the scaffold's worst case (30, the starter Comfy on Civitai
+	// recipe's hard per-job ceiling; the txt2img sample is cheaper). The old 40
+	// was worst-case+10, which read as an estimate and taught authors to size it
+	// like one. Keep this in sync with PAGE_BUZZ_BUDGET in src/generation.ts.
 	manifest := readFile(t, filepath.Join(dest, "block.manifest.json"))
 	mustContain(t, manifest, `"ai:write:budgeted"`)
-	mustContain(t, manifest, `"buzzBudgetPerGen": 40`)
+	mustContain(t, manifest, `"buzzBudgetPerGen": 300`)
 	mustContain(t, manifest, `"buildCommand": "npm run build"`)
 	mustContain(t, manifest, `"outputDir": "dist"`)
 	// Server-owned fields must NOT be set.
@@ -242,6 +254,18 @@ func TestRenderPageMoney(t *testing.T) {
 	gen := readFile(t, filepath.Join(dest, "src", "generation.ts"))
 	mustNotContain(t, gen, "GEN_MODEL")
 	mustContain(t, gen, "checkpoint: CheckpointOption")
+
+	// SEAM: the budget lives in TWO files — the manifest (authoritative; the
+	// server reads it at mint) and PAGE_BUZZ_BUDGET here (the app's own mirror).
+	// Nothing at runtime reconciles them, so a drifted mirror silently misinforms
+	// the author. Pin the RELATIONSHIP, not just each value: parse the number the
+	// manifest actually emitted and require the constant to equal it, so raising
+	// one alone fails.
+	budget := budgetFromManifest(t, manifest)
+	if budget != 300 {
+		t.Errorf("manifest buzzBudgetPerGen = %d, want 300 (safety ceiling, not an estimate)", budget)
+	}
+	mustContain(t, gen, fmt.Sprintf("export const PAGE_BUZZ_BUDGET = %d;", budget))
 	mustContain(t, gen, "modelVersionId: checkpoint.versionId")
 	mustContain(t, gen, "loras: readonly LoraOption[]")
 	mustContain(t, gen, "body.additionalResources = loras.map")
@@ -557,6 +581,25 @@ func assertSameSet(t *testing.T, want, got []string) {
 			t.Errorf("missing expected file %q (got %v)", w, got)
 		}
 	}
+}
+
+// budgetFromManifest parses page.buzzBudgetPerGen out of a RENDERED manifest, so
+// the seam guard compares the value the scaffold actually emitted rather than a
+// string the test happens to spell the same way.
+func budgetFromManifest(t *testing.T, manifest string) int {
+	t.Helper()
+	var m struct {
+		Page struct {
+			BuzzBudgetPerGen *int `json:"buzzBudgetPerGen"`
+		} `json:"page"`
+	}
+	if err := json.Unmarshal([]byte(manifest), &m); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v", err)
+	}
+	if m.Page.BuzzBudgetPerGen == nil {
+		t.Fatal("manifest has no page.buzzBudgetPerGen")
+	}
+	return *m.Page.BuzzBudgetPerGen
 }
 
 func readFile(t *testing.T, p string) string {
