@@ -809,3 +809,219 @@ func TestUTCStamp(t *testing.T) {
 		t.Errorf("utcStamp(\"\") = %q, want %q", got, "-")
 	}
 }
+
+// --- Views (blockRenders impressions) -------------------------------------
+//
+// Views is the one section the server reads from ClickHouse rather than
+// Postgres, so it carries its OWN `unavailable` flag, independent of
+// `notOwned`. That store can be unconfigured or down while every other counter
+// in the same response is genuinely measured — so the renderer must be able to
+// say "unavailable" for this section alone, and must never print a 0 that an
+// author would read as "nobody looked at my app".
+
+func TestAppMetricsRendersViews(t *testing.T) {
+	// Pairwise-distinct counters: a renderer that printed the wrong field
+	// would still have to print a wrong NUMBER.
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":20,"active":12,"series":[]},
+	  "runs":{"count":7,"buzzSpent":7000,"series":[]},
+	  "buzzPurchased":{"count":2,"buzzAmount":5000,"grossCents":999},
+	  "engagement":{"apiCalls":100,"activeUsers":4,"errorRate":0.1,"topScopes":[],"topEndpoints":[]},
+	  "views":{"count":124,"uniqueViewers":12,"anonCount":40}}`
+	srv := metricsServer(t,
+		submissionsBody("seen-app", strPtr("apb_seen")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "seen-app")
+	if err != nil {
+		t.Fatalf("app metrics: %v", err)
+	}
+	// Assert each label WITH its value on the same line. Checking for "12" and
+	// "4" independently would pass even if the two fields were swapped — the
+	// fixture values are pairwise distinct precisely so a line-level check can
+	// tell them apart.
+	for label, want := range map[string]string{
+		"Impressions":      "124",
+		"Unique viewers":   "12",
+		"Signed-out loads": "40",
+	} {
+		if got := valueOnLine(out, label); got != want {
+			t.Errorf("line %q should carry value %q, got %q:\n%s", label, want, got, out)
+		}
+	}
+	if !strings.Contains(out, "App loads") {
+		t.Errorf("views output missing the section heading:\n%s", out)
+	}
+	if strings.Contains(out, "unavailable") {
+		t.Errorf("a measured views result must not claim to be unavailable:\n%s", out)
+	}
+}
+
+func TestAppMetricsViewsUnavailableNeverPrintsZero(t *testing.T) {
+	// Byte-identical to a genuine all-zero views result EXCEPT for the flag —
+	// which is the entire contract. Note the sibling counters are non-zero and
+	// must survive untouched: a ClickHouse outage degrades one section, it does
+	// not invalidate the response.
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":20,"active":12,"series":[]},
+	  "runs":{"count":7,"buzzSpent":7000,"series":[]},
+	  "buzzPurchased":{"count":2,"buzzAmount":5000,"grossCents":999},
+	  "engagement":{"apiCalls":100,"activeUsers":4,"errorRate":0.1,"topScopes":[],"topEndpoints":[]},
+	  "views":{"count":0,"uniqueViewers":0,"anonCount":0,"unavailable":true}}`
+	srv := metricsServer(t,
+		submissionsBody("dark-app", strPtr("apb_dark")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "dark-app")
+	if err != nil {
+		t.Fatalf("an unavailable views section is still a successful read: %v", err)
+	}
+	if !strings.Contains(out, "unavailable") {
+		t.Errorf("an unreadable impression store must say so:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT a report of zero loads") {
+		t.Errorf("the caveat must spell out that this is not a measured zero:\n%s", out)
+	}
+	// The defect this pins: printing the placeholder 0 next to "Impressions".
+	if strings.Contains(out, "Impressions  0") || strings.Contains(out, "Unique viewers  0") {
+		t.Errorf("unavailable views must never render a fabricated 0:\n%s", out)
+	}
+	// The rest of the dashboard is genuinely measured and must be intact.
+	for _, want := range []string{"Installs", "20", "Runs", "7000", "Engagement", "100"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("a views outage must not disturb the other sections, missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAppMetricsViewsMeasuredZeroIsNotUnavailable(t *testing.T) {
+	// The discriminator from the other side: a real "nobody looked yet".
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":0,"active":0,"series":[]},
+	  "runs":{"count":0,"buzzSpent":0,"series":[]},
+	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
+	  "engagement":{"apiCalls":0,"activeUsers":0,"errorRate":0,"topScopes":[],"topEndpoints":[]},
+	  "views":{"count":0,"uniqueViewers":0,"anonCount":0}}`
+	srv := metricsServer(t,
+		submissionsBody("quiet-app", strPtr("apb_quiet")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "quiet-app")
+	if err != nil {
+		t.Fatalf("app metrics: %v", err)
+	}
+	if !strings.Contains(out, "App loads") {
+		t.Errorf("a measured zero still renders the App loads section:\n%s", out)
+	}
+	if strings.Contains(out, "unavailable") {
+		t.Errorf("a measured zero must NOT be reported as unavailable:\n%s", out)
+	}
+	if strings.Contains(out, "NOT a report of zero loads") {
+		t.Errorf("the outage caveat must not appear for a genuine zero:\n%s", out)
+	}
+}
+
+func TestAppMetricsJSONPassesViewsThroughRaw(t *testing.T) {
+	// --json is a passthrough and still exits 0, so a script must be able to
+	// branch on views.unavailable itself — exactly as it already must for
+	// notOwned. Dropping the field would silently turn an outage into a zero
+	// for every scripted consumer.
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":0,"active":0,"series":[]},
+	  "runs":{"count":0,"buzzSpent":0,"series":[]},
+	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
+	  "engagement":{"apiCalls":0,"activeUsers":0,"errorRate":0,"topScopes":[],"topEndpoints":[]},
+	  "views":{"count":0,"uniqueViewers":0,"anonCount":0,"unavailable":true}}`
+	srv := metricsServer(t,
+		submissionsBody("dark-app", strPtr("apb_dark")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	jsonOut, _, err := run(t, "app", "metrics", "dark-app", "--json")
+	if err != nil {
+		t.Fatalf("app metrics --json: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(jsonOut), &got); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v\n%s", err, jsonOut)
+	}
+	views, ok := got["views"].(map[string]any)
+	if !ok {
+		t.Fatalf("--json must pass the views section through:\n%s", jsonOut)
+	}
+	if views["unavailable"] != true {
+		t.Errorf("--json must surface views.unavailable for scripts:\n%s", jsonOut)
+	}
+}
+
+func TestAppMetricsLegacyServerWithoutViewsIsNotAZero(t *testing.T) {
+	// A server predating the impressions reader omits `views` ENTIRELY. That is
+	// a third "we don't know" — distinct from both a measured zero and an
+	// outage — and the one a value-typed field would silently swallow:
+	// encoding/json leaves the zero value in place and the CLI prints
+	// `Impressions 0`. Measured before AnalyticsViews became a pointer, this
+	// payload rendered exactly "Impressions     0".
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":20,"active":12,"series":[]},
+	  "runs":{"count":7,"buzzSpent":7000,"series":[]},
+	  "buzzPurchased":{"count":2,"buzzAmount":5000,"grossCents":999},
+	  "engagement":{"apiCalls":100,"activeUsers":4,"errorRate":0.1,"topScopes":[],"topEndpoints":[]}}`
+	srv := metricsServer(t,
+		submissionsBody("old-app", strPtr("apb_old")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "old-app")
+	if err != nil {
+		t.Fatalf("a server without the views section is still a successful read: %v", err)
+	}
+	if got := valueOnLine(out, "Impressions"); got != "unavailable" {
+		t.Errorf("an absent views section must render as unavailable, got %q:\n%s", got, out)
+	}
+	if got := valueOnLine(out, "Unique viewers"); got != "unavailable" {
+		t.Errorf("an absent views section must render as unavailable, got %q:\n%s", got, out)
+	}
+	if !strings.Contains(out, "did not report app loads") {
+		t.Errorf("the absent-section caveat should name the real cause:\n%s", out)
+	}
+	if !strings.Contains(out, "NOT a report of zero loads") {
+		t.Errorf("the caveat must spell out that this is not a measured zero:\n%s", out)
+	}
+	// Everything the old server DID send is genuinely measured and must render.
+	for _, want := range []string{"Installs", "20", "Runs", "7000", "Engagement", "100"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("an absent views section must not disturb the rest, missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// valueOnLine returns the last whitespace-separated field of the first line
+// whose text (after indentation) begins with label. Returns "" when no such
+// line exists, so a missing row fails loudly rather than quietly matching "".
+func valueOnLine(out, label string) string {
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, label) {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) == 0 {
+			return ""
+		}
+		return fields[len(fields)-1]
+	}
+	return ""
+}

@@ -87,6 +87,37 @@ type AnalyticsEngagement struct {
 	TopEndpoints []AnalyticsEndpointCount `json:"topEndpoints"`
 }
 
+// AnalyticsViews is the app-load rollup, read server-side from the
+// `blockRenders` ClickHouse table. It is the ONLY section that covers viewers
+// AnalyticsEngagement structurally cannot see — anonymous visitors, and static
+// blocks that never make a scoped API call.
+//
+// 🔴 Unavailable is a SECOND, section-local unavailability signal, distinct
+// from AppAnalytics.NotOwned. This is the one section not derived from
+// Postgres, so its store can be unconfigured, SLOW or down while every other
+// counter in the same response is genuinely measured. When it is true the
+// counters below are PLACEHOLDERS, not a report of zero loads — render them as
+// unknown, never as 0. `--json` passes the field through untouched, so a script
+// must branch on it exactly as it already must branch on NotOwned.
+//
+// COVERAGE CAVEAT: these are mount ATTEMPTS, not successful sessions. The
+// server writes a row even when the app fails to launch (a failed mount's only
+// beacon) and the table carries no status column, so a failing app still
+// reports loads. Hence "App loads" rather than "Views".
+type AnalyticsViews struct {
+	Count int64 `json:"count"`
+	// UniqueViewers counts signed-in viewers once each and approximates
+	// signed-out ones by network address, so it is a reach indicator rather
+	// than an identity count.
+	UniqueViewers int64 `json:"uniqueViewers"`
+	// AnonCount is signed-out LOADS — an impression count, NOT a viewer count
+	// and NOT a subset of UniqueViewers. One anonymous visitor reloading ten
+	// times contributes 10 here and 1 to UniqueViewers, so this can exceed
+	// UniqueViewers. Label it as loads wherever it sits beside a viewer figure.
+	AnonCount   int64 `json:"anonCount"`
+	Unavailable bool  `json:"unavailable,omitempty"`
+}
+
 // AppAnalytics mirrors the blocks.getMyAppAnalytics result. Field names + JSON
 // casing track the server EXACTLY.
 type AppAnalytics struct {
@@ -102,6 +133,15 @@ type AppAnalytics struct {
 	Runs          AnalyticsRuns          `json:"runs"`
 	BuzzPurchased AnalyticsBuzzPurchased `json:"buzzPurchased"`
 	Engagement    AnalyticsEngagement    `json:"engagement"`
+	// Views is a POINTER so that "the server did not send this section at all"
+	// stays distinguishable from "the server sent measured zeros". A value type
+	// collapses those two: an older server that predates the impressions reader
+	// omits the key, Go fills in the zero value, and the CLI confidently prints
+	// `Impressions 0` — a fabricated zero, which is the exact defect this
+	// section's Unavailable flag exists to prevent. Measured before this was a
+	// pointer: a payload with no `views` key rendered "Impressions     0".
+	// nil therefore means UNKNOWN and must render like Unavailable, never as 0.
+	Views *AnalyticsViews `json:"views"`
 }
 
 // AppAnalyticsReader reads the caller's own App Block analytics.

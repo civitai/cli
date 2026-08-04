@@ -241,6 +241,37 @@ func printAppMetrics(w io.Writer, slug string, a *appapi.AppAnalytics) {
 	fmt.Fprintf(tw, "  Gross\t%s\n", usdFromCents(a.BuzzPurchased.GrossCents))
 	_ = tw.Flush()
 
+	// VIEWS sits before Engagement on purpose: it is the broader number (every
+	// load, including signed-out ones), so an author reads the wide measure
+	// first and the authenticated-only subset second — which is also the order
+	// the coverage caveat below then makes sense in.
+	fmt.Fprintf(w, "\n%s\n", ui.For(w).Bold("App loads"))
+	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	// 🔴 Never print 0 in either unknown case. The impression store is the one
+	// section not derived from Postgres, so it can be unreadable while every
+	// counter above is genuinely measured — and a printed 0 is
+	// indistinguishable from "nobody looked", the fabricated-zero defect this
+	// flag exists to prevent. `a.Views == nil` is the SECOND way to not know:
+	// a server predating the impressions reader omits the section entirely,
+	// and a value type would have silently turned that into a measured zero.
+	if a.Views == nil || a.Views.Unavailable {
+		fmt.Fprintf(tw, "  Impressions\t%s\n", "unavailable")
+		fmt.Fprintf(tw, "  Unique viewers\t%s\n", "unavailable")
+		_ = tw.Flush()
+		if a.Views == nil {
+			fmt.Fprintf(w, "\n%s\n", ui.For(w).Dim(
+				"This server did not report app loads — this is NOT a report of zero loads. Upgrade the server, or ignore this section."))
+		} else {
+			fmt.Fprintf(w, "\n%s\n", ui.For(w).Dim(
+				"The impression store could not be read — this is NOT a report of zero loads. Every other metric above is unaffected."))
+		}
+	} else {
+		fmt.Fprintf(tw, "  Impressions\t%d\n", a.Views.Count)
+		fmt.Fprintf(tw, "  Unique viewers\t%d\n", a.Views.UniqueViewers)
+		fmt.Fprintf(tw, "  Signed-out loads\t%d\n", a.Views.AnonCount)
+		_ = tw.Flush()
+	}
+
 	fmt.Fprintf(w, "\n%s\n", ui.For(w).Bold("Engagement"))
 	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "  API calls\t%d\n", a.Engagement.APICalls)
@@ -266,7 +297,7 @@ func printAppMetrics(w io.Writer, slug string, a *appapi.AppAnalytics) {
 	}
 	if a.Engagement.APICalls == 0 {
 		fmt.Fprintf(w, "\n%s\n", ui.For(w).Dim(
-			"Engagement counts only authenticated, scope-gated API calls — an app with no scoped API surface reads flat here."))
+			"Engagement counts only authenticated, scope-gated API calls — an app with no scoped API surface reads flat here. App loads is measured on every load, so it still counts those visitors."))
 	}
 }
 
