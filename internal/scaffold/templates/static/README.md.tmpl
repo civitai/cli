@@ -8,6 +8,26 @@ A sandboxed static web app served in an iframe by the Civitai host. The only
 mandatory file is `block.manifest.json`. There is no build step — the platform
 serves these files as-is.
 
+## The host handshake (`civitai-host.js`) — don't delete it
+
+This app declares a `page` surface, so the Civitai host mounts it full-viewport
+and **waits for it to say hello before revealing it**. That hello is a single
+`BLOCK_READY` message, and it is the only thing that flips the host into its
+ready state. An app that never sends it is replaced by a failure card once the
+host's bounded retries run out — even though the app itself works perfectly.
+
+`civitai-host.js` does exactly that and nothing else. `index.html` loads it
+before `app.js`; leave both in place.
+
+Two details worth knowing, because they apply to every message you add later:
+
+- **Every block → host message is an envelope:** `{ type, payload }`. The host
+  reads `event.data.payload`, so fields put at the top level
+  (`{ type: 'X', height: 0 }`) arrive as `payload: undefined`.
+- **Answer, don't announce.** The ack is sent in *response* to the host's
+  `BLOCK_INIT`, which is what supplies the host's real origin — so it is
+  addressed at that origin rather than broadcast to `'*'`.
+
 ## Develop
 
 Open `index.html` in a browser, or serve the directory:
@@ -15,6 +35,10 @@ Open `index.html` in a browser, or serve the directory:
 ```bash
 python3 -m http.server 8080   # then open http://localhost:8080
 ```
+
+**There is no host locally**, so nothing sends `BLOCK_INIT` and
+`civitai-host.js` stays silent — expected, not a bug. You are looking at your
+own UI; the handshake is exercised for real once the app runs on Civitai.
 
 Edit `app.js` / `style.css` / `index.html`. Talk to the host via
 `window.postMessage` (see the App SDK docs for the message protocol and scopes).

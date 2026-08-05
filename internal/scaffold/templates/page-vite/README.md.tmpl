@@ -18,12 +18,43 @@ manifest schema requires alongside it) and commit *that* lockfile instead:
 A lockfile that disagrees with `buildCommand` is the most common build failure
 there is — `civitai app validate` catches it before you submit.
 
+## The host handshake (`src/civitai-host.js`) — don't delete it
+
+This app declares a `page` surface, so the Civitai host mounts it full-viewport
+and **waits for it to say hello before revealing it**. That hello is a single
+`BLOCK_READY` message, and it is the only thing that flips the host into its
+ready state. An app that never sends it is replaced by a failure card once the
+host's bounded retries run out — even though the app itself works perfectly.
+
+`src/civitai-host.js` does exactly that and nothing else. `src/main.jsx`
+imports it first, for its side effect; leave both in place.
+
+Two details worth knowing, because they apply to every message you add later:
+
+- **Every block → host message is an envelope:** `{ type, payload }`. The host
+  reads `event.data.payload`, so fields put at the top level
+  (`{ type: 'X', height: 0 }`) arrive as `payload: undefined`.
+- **Answer, don't announce.** The ack is sent in *response* to the host's
+  `BLOCK_INIT`, which is what supplies the host's real origin — so it is
+  addressed at that origin rather than broadcast to `'*'`.
+
+If you outgrow raw `postMessage`, `@civitai/blocks-react` covers all of this
+(and the rest of the protocol): its transport performs this same handshake
+internally, and `src/civitai-host.js` can then be deleted.
+
 ## Develop
 
 ```bash
 npm install
 npm run dev      # http://localhost:5173
 ```
+
+**There is no host behind `npm run dev`**, so nothing sends `BLOCK_INIT` and
+`src/civitai-host.js` stays silent — expected, not a bug. You are looking at
+your own UI; the handshake is exercised for real once the app runs on Civitai.
+(If you want to drive the protocol locally, the `page-money` template ships a
+mock host: `civitai app init "…" --template page-money`, then
+`npm run dev:harness`.)
 
 Build locally to sanity-check what the platform will produce:
 

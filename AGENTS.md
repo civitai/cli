@@ -152,9 +152,9 @@ func newWhoAmICmd() *cobra.Command {
 
 ## Intentional decisions that look wrong (read before "fixing")
 
-Items 1–3 are deliberate mirrors of the platform (items 4 and 8 are deliberate
-*non*-mirrors); items 5–8 cover `civitai app metrics`, the CLI's only analytics
-read path. The durable fix for the mirroring is a server-side
+Items 1–3, 10 and 11 are deliberate mirrors of the platform (items 4 and 8 are
+deliberate *non*-mirrors); items 5–9 cover `civitai app metrics`, the CLI's only
+analytics read path. The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
 
@@ -290,8 +290,9 @@ until that exists, vendoring is on purpose.
     `Origin: null` through the same `DialLocalDevServer` the proxy uses, and
     reads real response headers. `CheckParentOrigins` is a **heuristic** —
     `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` is inlined into the bundle at transform
-    time and cannot be observed over HTTP, so it is a **third vendored mirror**
-    (alongside `schema/` and the slot registry): `resolveViteEnv` reproduces
+    time and cannot be observed over HTTP, so it is a **vendored mirror**
+    (one of four — `schema/`, the slot registry, this, and the ready-ack
+    emitter of item 11): `resolveViteEnv` reproduces
     Vite's dev env resolution, where `.env.<mode>` beats `.env` and a REAL
     process env var beats every file (dotenv does not overwrite existing vars).
     Getting that last rule backwards warns at authors who exported the value in
@@ -354,6 +355,64 @@ until that exists, vendoring is on purpose.
     vite.config.ts advice), and `net/http` DROPS a custom `Request.Host` across an
     absolute redirect, which silently turns the tunnel-Host probe into an ordinary
     loopback request unless it is re-applied.
+
+11. **The scaffold VENDORS the block→host ready-ack (`internal/blockproto/`),
+    and it is the FOURTH vendored mirror.** A `page` app is not shown by the
+    host until it posts `BLOCK_READY`; that handler
+    (`civitai/civitai → src/components/AppBlocks/PageBlockHost.tsx`) is the
+    only transition into `ready`. `page-money` gets this free —
+    `@civitai/blocks-react`'s `IframeTransport` acks from its validated-
+    `BLOCK_INIT` branch — but `static` and `page-vite` are deliberately
+    SDK-free, so they have to say hello themselves. They didn't, and issue #206
+    was the result: measured against the real `PageBlockHost` in Chromium, both
+    templates rendered fine and NEVER reached ready, ending at a visible
+    failure card after ~37s of bounded auto-retry (`MAX_AUTO_RETRIES = 2`,
+    backoff `[2000, 5000]`). This was an original omission, not a regression.
+    - **One authority, copied — not templated.** `ready-ack.js` is `go:embed`ed
+      in `internal/blockproto` and written VERBATIM by `scaffold.Render` (no
+      `text/template` pass) into the path `Template.ReadyAckPath()` names. Do
+      NOT add a per-template `.tmpl` copy: two hand-maintained copies drift, and
+      drift is invisible locally — the app renders and dies only inside the
+      real host.
+    - **Ack on `BLOCK_INIT`, never on load** — and on INIT *only*. Not because
+      on-load is broken: an on-load poster was **measured working** (ready in
+      178–265 ms) in the same harness. On-INIT is chosen for robustness. The
+      host registers its `BLOCK_READY` subscriber inside an effect and
+      **silently drops** a message whose type has no subscriber yet, with no
+      retry (`usePostMessage.ts`), while it re-posts `BLOCK_INIT` every ~400 ms
+      until acked (`iframeInitController.ts`) — so answering INIT removes the
+      race. It also hands over `event.origin`, so nothing posts to `'*'`; it is
+      late enough not to reveal an empty interactive frame (the host fades its
+      launch overlay and enables `pointerEvents` on ready); and it is what the
+      SDK's own transport does. Repeats must stay a no-op: the host's inbound
+      channel is rate-limited across ALL types, so re-acking every retry can
+      starve `BLOCK_ERROR`.
+    - **The envelope is `{ type, payload }`.** The host dispatches
+      `data.payload` to subscribers, so top-level fields arrive as
+      `payload: undefined`. The host happens to ignore the `BLOCK_READY`
+      payload, so a wrong envelope would not break *this* message — it teaches
+      the wrong shape for every message the author adds next. That is why the
+      guards assert the envelope even though the ack would work without it.
+    - **`RESIZE_IFRAME` is deliberately ABSENT from the page templates.** Both
+      raw templates used to demo it; `hostHandlerParity.ts` marks it **N/A for
+      `PageBlockHost`** (a page block fills the surface and does not size to
+      content), so it was inert advice that also modelled the wrong envelope.
+      Don't reintroduce it as a "minimal example". Note `iframe.resizable` in
+      the vendored `schema/` still describes itself in size-to-content terms;
+      that is a schema-side wording issue, not a licence to re-add the message.
+    - **Two guards, and neither subsumes the other.**
+      `ready_ack_contract_test.go` (Guard A, runs in `make ci`) enumerates
+      `AllTemplates()`, decides subject-hood from the RENDERED manifest and
+      package.json — never a hardcoded list — and asserts byte-equality with
+      `blockproto.ReadyAckSource()` plus that the entry point actually reaches
+      it, with a count floor so a guard wired to nothing can't report a serene
+      pass. It **cannot prove the ack fires**: an inverted source check passes
+      every static assertion. `ready_ack_runtime_test.go` (Guard B) executes the
+      emitter in node against a fake host and reads the outbound message; it is
+      env-gated (`CIVITAI_CHECK_SCAFFOLD_RUNTIME=1`) with the daily
+      `bump-scaffold-pins` workflow as its scheduled runner. If you add a
+      template, add nothing — Guard A picks it up automatically and fails until
+      `ReadyAckPath()` is set.
 
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync

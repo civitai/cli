@@ -234,6 +234,36 @@ full details and examples.
   parent-origin config, and a unit-test stub. Run `npm run dev:harness` (plain
   `npm run dev` renders blank without a host).
 
+### The host handshake (`BLOCK_READY`)
+
+Every template declares a `page` surface, and the host **will not reveal a page
+app until the app posts `BLOCK_READY`** — that handler is the only transition
+into the host's ready state. An app that never sends it is replaced by a visible
+failure card once the host's bounded retries run out, even though the app itself
+renders perfectly. Nothing you can run locally reproduces that.
+
+`page-money` gets the handshake for free: `@civitai/blocks-react`'s iframe
+transport acks internally, which is why the SDK templates never touch raw
+`postMessage`. The two **SDK-free** templates (`static`, `page-vite`) therefore
+ship a small vendored emitter, **`civitai-host.js`**, loaded from the entry
+point. Leave it in place; if you later adopt `@civitai/blocks-react`, delete it
+(the SDK takes over).
+
+Two rules it encodes, which apply to every message you add afterwards:
+
+- **The envelope is `{ type, payload }`.** The host dispatches
+  `event.data.payload` to its subscribers, so fields put at the top level
+  (`{ type: 'X', height: 0 }`) arrive as `payload: undefined`.
+- **Answer, don't announce.** The ack goes out in *response* to the host's
+  `BLOCK_INIT` — which is what supplies the host's real origin, so the message
+  is addressed at that origin rather than broadcast to `'*'`. It is also why
+  nothing is posted when you preview locally: there is no host to send
+  `BLOCK_INIT`, so the emitter stays silent by design.
+
+`RESIZE_IFRAME` is **not** part of a page app's protocol: the host renders a
+page block full-viewport and it does not size to content. (`useBlockResize` in
+the SDK is for the non-page block surfaces.)
+
 ### Local dev loop (harness: mock vs live)
 
 A scaffolded App is a sandboxed iframe — `npm run dev` alone shows a blank
