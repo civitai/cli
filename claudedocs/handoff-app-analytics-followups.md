@@ -57,8 +57,17 @@ frequency (daily) — not the bumper, which works. ⚠️ `.github/workflows/*` 
 
 🔴 **It recurred within a day, exactly as predicted.** cli#194 bumped to app-sdk `0.30.0` /
 blocks-react `0.38.0` on 2026-08-04; by 2026-08-05 `main` carries **cli#203**, bumping the same
-two pins again to `0.31.0` / `0.39.0`. Treat the ~7-day red window as a standing property of
-this repo, not an incident — and do not spend time diagnosing it a third time.
+two pins again to `0.31.0` / `0.39.0`.
+
+✅ **RESOLVED — the (b) lever was raised and approved, and the cron is now DAILY** (`17 7 * * *`,
+cli#205, 2026-08-05). The window is bounded at ~24h instead of ~168h. The publish cadence that
+justified it, measured off the npm registry `time` field: app-sdk 0.26.0 Jul 17 → 0.27.0 Jul 28
+→ 0.28.0 Jul 29 → 0.29.0 Aug 3 20:15 → 0.30.0 Aug 3 22:13 → 0.31.0 Aug 5 03:54, i.e. six minors
+in 19 days (~3.6-day mean) against a 7-day sweep — upstream published faster than the bot swept.
+**Do not re-raise this as an open decision.** Point (a) still stands unchanged: a blocked PR is
+still fixed by `go run ./internal/scaffold/cmd/bump-pins` + a PR, or by
+`gh workflow run bump-scaffold-pins.yml` — daily narrows the window, it does not close it, so
+pin drift remains a standing property of this repo rather than an incident to diagnose.
 
 Minor, left alone deliberately: the bumper also rewrites a README prose line to read
 "`accountType` / … require `@civitai/app-sdk@^0.30.0`", but those APIs arrived in the *older*
