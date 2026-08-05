@@ -72,7 +72,7 @@
     // host re-posts `BLOCK_INIT` until it sees the ack, and its inbound
     // messages are rate-limited, so answering every retry would burn budget
     // other messages need.
-    if (acked || event.source !== window.parent) return;
+    if (acked || event.source === window.parent) return;
     var data = event.data;
     if (!data || typeof data !== 'object' || data.type !== 'BLOCK_INIT') return;
 
