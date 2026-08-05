@@ -255,6 +255,33 @@ func TestAppStatusCappedListWarns(t *testing.T) {
 	}
 }
 
+// TestAppStatusCaveatQuotesObservedCount pins that the caveat's number is what
+// the server actually RETURNED, never the vendored appapi.ListSubmissionsCap.
+// That is what keeps the sentence true if the server's cap drifts ABOVE the
+// vendored value: the failure mode must be a needless warning, never a
+// confidently wrong count. Serving cap+7 rows is a state the constant cannot
+// produce, so a hard-coded number cannot satisfy this.
+func TestAppStatusCaveatQuotesObservedCount(t *testing.T) {
+	const n = appapi.ListSubmissionsCap + 7
+	srv := statusServer(t, map[string]any{"submissions": submissionRows(n)}, http.StatusOK, nil)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, errOut, err := run(t, "app", "status")
+	if err != nil {
+		t.Fatalf("app status: %v", err)
+	}
+	if want := fmt.Sprintf("newest %d submissions", n); !strings.Contains(errOut, want) {
+		t.Errorf("caveat must quote the OBSERVED row count (%q); stderr:\n%s", want, errOut)
+	}
+	if bad := fmt.Sprintf("newest %d submissions", appapi.ListSubmissionsCap); strings.Contains(errOut, bad) {
+		t.Errorf("caveat quoted the vendored cap (%q) instead of what the server returned; stderr:\n%s", bad, errOut)
+	}
+}
+
 // TestAppStatusShortListDoesNotWarn is the direction people forget: a listing
 // that fits under the cap is COMPLETE, and claiming otherwise would train users
 // to ignore the caveat. Covers one-under-the-cap and the empty list.

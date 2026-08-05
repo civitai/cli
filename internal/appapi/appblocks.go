@@ -306,7 +306,28 @@ const SubmissionsPath = "/api/v1/blocks/submissions"
 // than this many submissions of its own to be truncated. Don't add a caveat
 // there.
 //
-// Keep in lockstep with MAX_ROWS if the server's page size ever changes.
+// KNOWN LIMITATION — this is a vendored mirror, and it can drift SILENTLY in
+// two directions with different severities. Stating them precisely, because a
+// vague "keep in lockstep" comment is exactly what lets both happen unnoticed:
+//
+//	Server RAISES MAX_ROWS (say to 250) — callers holding between 100 and 250
+//	rows get the caveat when nothing is missing. The user-visible text stays
+//	TRUE: it quotes the OBSERVED row count, never this constant, and says older
+//	submissions "may" exist (pinned by TestAppStatusCaveatQuotesObservedCount).
+//	So the failure is a false warning, not a false statement.
+//
+//	Server LOWERS MAX_ROWS (say to 50) — the response carries 50 rows, the
+//	`n >= 100` predicate is false, and NO caveat fires: the silent-truncation
+//	bug this constant exists to prevent comes straight back, and no offline
+//	test can notice. This is the serious direction.
+//
+// Neither direction is detectable from a single response — it carries no total
+// and no cursor, the same gap that makes the truncation itself invisible. So
+// TestSubmissionsCapDriftAgainstLiveAPI (cap_drift_test.go) closes it with a
+// live, credentialed cross-check that catches BOTH directions; that is why that
+// test exists and why a comment alone would not be enough. The durable fix is
+// server-side: a `hasMore` flag (or a cursor) on the listing deletes this
+// constant outright.
 const ListSubmissionsCap = 100
 
 // WithdrawPath is the token-authenticated, self-scoped withdraw route
