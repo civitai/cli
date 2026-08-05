@@ -60,6 +60,11 @@ type fakeTunnelAPI struct {
 	whoami     *appapi.Identity
 	whoamiErr  error
 	whoamiCall int
+
+	// onStart, when set, fires inside StartDevTunnel (under the mutex) so a test
+	// can record WHERE the mint falls relative to other injected callbacks —
+	// used to pin that the embeddability checks run before anything is minted.
+	onStart func()
 }
 
 func (f *fakeTunnelAPI) WhoAmI(_ context.Context) (*appapi.Identity, error) {
@@ -85,6 +90,9 @@ func (f *fakeTunnelAPI) StartDevTunnel(_ context.Context, blockID, pubKey string
 		blockID, pubKey string
 		declaredScopes  []string
 	}{blockID, pubKey, declaredScopes})
+	if f.onStart != nil {
+		f.onStart()
+	}
 	if f.startErr != nil {
 		return nil, f.startErr
 	}

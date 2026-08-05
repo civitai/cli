@@ -280,6 +280,81 @@ until that exists, vendoring is on purpose.
    a row even when a mount FAILS (a failed launch's only beacon) and the table
    has no status column — so a permanently-broken app still reports loads.
 
+10. **The `dev-tunnel` embeddability preflight WARNS and never blocks, and its
+    two halves have deliberately different evidentiary strength.**
+    `internal/devtunnel/embedcheck.go` catches the failure mode where the tunnel
+    is perfectly healthy but the browser refuses to run the app — the host
+    iframes the dev server sandboxed (`allow-scripts allow-forms`, no
+    `allow-same-origin`), so it runs at an opaque `null` origin.
+    `CheckEmbeddable` is **evidence**: it GETs `/@vite/client` with
+    `Origin: null` through the same `DialLocalDevServer` the proxy uses, and
+    reads real response headers. `CheckParentOrigins` is a **heuristic** —
+    `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` is inlined into the bundle at transform
+    time and cannot be observed over HTTP, so it is a **third vendored mirror**
+    (alongside `schema/` and the slot registry): `resolveViteEnv` reproduces
+    Vite's dev env resolution, where `.env.<mode>` beats `.env` and a REAL
+    process env var beats every file (dotenv does not overwrite existing vars).
+    Getting that last rule backwards warns at authors who exported the value in
+    their shell. It is gated to dirs holding a manifest AND a package.json
+    depending on `@civitai/app-sdk`, because `dev-tunnel` takes an explicit
+    blockId and runs from anywhere. Neither check is ever fatal: one HTTP
+    response cannot rule out a proxy, a non-Vite dev server, or a deliberately
+    exotic setup, and hard-failing would regress flows that work today — so a
+    check that cannot observe returns NO findings rather than manufacturing
+    advice. Measured facts behind it, on Vite **6.4.3 and 8.2.0 alike**: a stock
+    dev server answers a null-origin module fetch `200` with **no**
+    `Access-Control-Allow-Origin`, and 403s a `dev-*.civit.ai` Host. Two traps
+    if you touch it: the probe's baseline `Host` MUST be the real `host:port`
+    (a placeholder authority trips Vite's own DNS-rebinding check and
+    manufactures findings for a healthy server), and the CLI predicate is pinned
+    to the page-money template by the seam guards in
+    `internal/scaffold/dev_embed_contract_test.go` — they render the real
+    template, extract the values it emits, and require the CLI's own check to
+    accept them, so drift on EITHER side fails loudly.
+    Four rules here are counter-intuitive and were each measured after a first
+    draft got them wrong — every one produced a FALSE WARNING at a correctly
+    configured project, which is the worst outcome for advisory output because it
+    teaches authors to ignore it:
+    (a) **`frame-ancestors` OBSOLETES `X-Frame-Options`** (CSP L3) — when both are
+    present browsers enforce frame-ancestors and IGNORE XFO, so XFO is only
+    consulted when NO frame-ancestors directive is present. (b) **Only a 2xx
+    baseline is interpretable**: a 401/403/5xx response came from something other
+    than the app (auth proxy, deny gate), so its headers say nothing — reading
+    CORS off one blamed healthy servers, and reading the follow-up 403 blamed
+    `allowedHosts` for a proxy that refuses everything identically. A 3xx is NOT
+    in that list: see (e). (c) **`'none'` is decisive only as the SOLE source**, and every
+    `Content-Security-Policy` header must be evaluated (`Header.Values`, not
+    `Get`) because policies combine restrictively. (d) The **dotenv mirror is
+    verified DIFFERENTIALLY against Vite's own `loadEnv`**, not against
+    assumptions: `KEY: value` is VERSION-DEPENDENT — Vite 8 (dotenv 17) resolves it
+    to nothing while Vite 6 (dotenv 16) accepts it — and the mirror deliberately
+    does not accept it, matching the `vite ^8` that page-money pins; page-vite
+    pins `vite ^6` but carries no SDK, so the parent-origins check is gated off
+    there and the divergence is unreachable, an unresolved `${NOPE}` expands to the EMPTY string rather
+    than its own text, backtick quoting is supported, and an unquoted `#` starts a
+    comment ANYWHERE, not only after a space. If you change the parser, re-run
+    that differential — a same-process dotenv harness silently CONTAMINATES
+    itself, because dotenv-expand writes resolved values into `process.env` and
+    later cases then read the earlier answer. The mirror also MERGES every env
+    file before expanding once (`.env` may define what `.env.development`
+    interpolates; expanding per file resolved that to nothing), a reference
+    resolves against the PROCESS env before the file values, `${X:-default}` is
+    supported, and a self-reference (`K=${K}x`) resolves to the process value or
+    empty — which is what makes it terminate.
+    (e) The 2xx gate must NOT be reached by refusing redirects. A Vite project
+    with a `base` path 404s `/@vite/client` and 302s `/`, so "don't follow
+    redirects" plus "only 2xx is interpretable" made a genuinely un-embeddable
+    server report CLEAN — the over-strict correction to (b). Same-host redirects
+    are followed (bounded) and the FINAL response is judged; a cross-host
+    Location is never followed, because the transport always dials the local dev
+    server and would just send someone else's Host to it. Two consequences that
+    are easy to get wrong: a 200 reached VIA a redirect is not evidence about the
+    path you asked for (`isVite` must re-check `finalPath`, or an SPA dev server
+    that bounces unknown paths to an index gets classified Vite and handed
+    vite.config.ts advice), and `net/http` DROPS a custom `Request.Host` across an
+    absolute redirect, which silently turns the tunnel-Host probe into an ordinary
+    loopback request unless it is re-applied.
+
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync
 with the server, and update `examples_test.go` (asserts shipped examples

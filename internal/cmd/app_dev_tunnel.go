@@ -115,6 +115,21 @@ type tunnelSessionDeps struct {
 	// so a not-running dev server fails fast with clear guidance instead of minting
 	// a rate-limited/reaper-tracked session that would only serve connection-refused.
 	probeLocal func(host string, port int) error
+	// probeEmbeddable inspects the local dev server's RESPONSE HEADERS to catch the
+	// failures that leave a perfectly healthy tunnel serving an app the browser
+	// refuses to run: no wildcard CORS (so the sandboxed null-origin iframe can't
+	// fetch a single ES module), a framing header that forbids civitai.com, or a
+	// host check that 403s the tunneled *.civit.ai Host. These are pure WARNINGS —
+	// unlike probeLocal they never abort the session, because one HTTP response
+	// can't rule out a proxy or an exotic-but-working setup. Nil skips the check.
+	probeEmbeddable func(host string, port int) []devtunnel.Finding
+	// checkParentOrigins reports a missing VITE_BLOCK_ALLOWED_PARENT_ORIGINS in the
+	// project dir, which makes the SDK's IframeTransport ignore the host's
+	// BLOCK_INIT — an error the app's error boundary swallows, so it is invisible
+	// both in the browser and here. Unlike probeEmbeddable this is a STATIC read of
+	// the project (Vite inlines the value at transform time, so it cannot be
+	// observed over HTTP) and is gated to SDK app dirs. Nil skips the check.
+	checkParentOrigins func(dir string) []devtunnel.Finding
 	// probePublic checks whether the PUBLIC tunnel host is serving yet: it does an
 	// unauthenticated GET of https://<host>/ and reports ready per the classification
 	// in probePublicTunnel (HTTP 200/401/403 = the whole server path works — a naked
@@ -363,6 +378,8 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 			return runTunnelSession(context.Background(), tunnelSessionDeps{
 				api:                    client,
 				probeLocal:             probeLocalDevServer,
+				probeEmbeddable:        probeEmbeddableDevServer,
+				checkParentOrigins:     devtunnel.CheckParentOrigins,
 				probePublic:            probePublicTunnel,
 				probeLocalHop:          probeLocalHopTunnel,
 				keygen:                 devtunnel.GenerateEphemeralKey,
@@ -413,6 +430,21 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 		if err := d.probeLocal(d.localHost, d.port); err != nil {
 			return err
 		}
+	}
+
+	// Embeddability checks run HERE — after probeLocal has established the server
+	// is up (so a transport error means "can't observe", not "not running"), and
+	// before the mint, so they cost nothing on the failure path. The findings are
+	// deliberately NOT printed yet: they are rendered immediately before the
+	// "open this URL" block below, because that is the moment the dev acts on
+	// them. Printed here they would scroll away behind the readiness wait — the
+	// silent-failure this whole check exists to end.
+	var embedFindings []devtunnel.Finding
+	if d.probeEmbeddable != nil {
+		embedFindings = append(embedFindings, d.probeEmbeddable(d.localHost, d.port)...)
+	}
+	if d.checkParentOrigins != nil {
+		embedFindings = append(embedFindings, d.checkParentOrigins(".")...)
 	}
 
 	// Immediate feedback: the mint round-trip + SSH dial below take a few seconds
@@ -499,6 +531,7 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	// open it, so they don't hit NXDOMAIN/404/502 on a too-early click. --no-wait
 	// skips this and prints the URL immediately (old behavior).
 	if d.noWait {
+		printEmbedWarnings(d.out, embedFindings)
 		printTunnelReady(d.out, sess, d.localHost, d.port)
 	} else {
 		fmt.Fprintf(d.errw, "\nDev tunnel established — serving %s:%d as %s. Waiting for %s…\n", localHostForDisplay(d.localHost), d.port, sess.Host, sess.Host)
@@ -511,11 +544,13 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 			return nil
 		}
 		if ready {
+			printEmbedWarnings(d.out, embedFindings)
 			printTunnelReadyConfirmed(d.out, sess, d.localHost, d.port)
 		} else {
 			// A POSITIVE --ready-timeout cap elapsed (the default is indefinite, which
 			// never lands here). NON-fatal: the host may still come up shortly, so keep
 			// the tunnel and print the URL with a clear "not up yet" warning.
+			printEmbedWarnings(d.out, embedFindings)
 			printTunnelReadyTimeout(d.out, sess, d.localHost, d.port, d.readyTimeout)
 		}
 	}
@@ -601,6 +636,45 @@ func probeLocalDevServer(host string, port int) error {
 	}
 	_ = conn.Close()
 	return nil
+}
+
+// probeEmbeddableDevServer is the production probeEmbeddable: inspect the local
+// dev server's response headers for the conditions that make the browser refuse
+// to run the app even though the tunnel is healthy. Warn-only by construction —
+// CheckEmbeddable returns no findings when it cannot observe.
+func probeEmbeddableDevServer(host string, port int) []devtunnel.Finding {
+	return devtunnel.CheckEmbeddable(host, port, embedProbeTimeout)
+}
+
+// embedProbeTimeout caps the embeddability probe. Matches probeLocalDevServer's
+// dial timeout: this runs against loopback right after that dial succeeded, so a
+// slow answer means something is wrong, not far away.
+const embedProbeTimeout = 2 * time.Second
+
+// printEmbedWarnings renders embeddability findings immediately before the
+// "open this URL" block. Placement is the point: `dev-tunnel` reporting "Ready"
+// while the app never appears is the exact failure this ends, so the LAST thing
+// on screen before the URL must be the reason it won't work.
+func printEmbedWarnings(out io.Writer, findings []devtunnel.Finding) {
+	for _, f := range findings {
+		fmt.Fprintf(out, "\n%s\n", ui.Warn(f.Summary))
+		for _, line := range f.Evidence {
+			fmt.Fprintf(out, "%s\n", line)
+		}
+	}
+	// One vite.config.ts block fixes CORS, framing and allowedHosts together, so
+	// the findings usually SHARE a remediation. Print each DISTINCT fix once,
+	// after all the evidence — repeating an eight-line snippet per finding buries
+	// the evidence and reads like three unrelated problems.
+	seen := make(map[string]bool, len(findings))
+	for _, f := range findings {
+		fix := strings.Join(f.Fix, "\n")
+		if fix == "" || seen[fix] {
+			continue
+		}
+		seen[fix] = true
+		fmt.Fprintf(out, "\n%s\n", fix)
+	}
 }
 
 // localHostForDisplay renders the local host for user-facing messages: an
