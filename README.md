@@ -306,7 +306,7 @@ scaffolded project's own `README.md` and `.env.example` — see
 ### Examples
 
 Two real example manifests live under [`examples/`](examples/) (copied from the
-shipping `civitai-block-*` apps). Read them for manifest **shape** — between them
+`civitai-block-*` dogfood apps). Read them for manifest **shape** — between them
 they cover the required fields, `$schema` wiring, the `page`/`iframe` blocks, and
 scope declarations with justifications:
 
