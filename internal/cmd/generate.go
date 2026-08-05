@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
@@ -79,6 +82,18 @@ type generateDeps struct {
 	resolveVersion func(ctx context.Context, id int) (*genapi.ResolvedVersion, error)
 	// buzzBalance reads the spendable balance for the cost-vs-balance check.
 	buzzBalance func(ctx context.Context) (int64, error)
+	// getWorkflow reads a workflow back. It is the POLL seam, and it spends
+	// nothing.
+	getWorkflow getWorkflowFn
+	// downloadBlob fetches one presigned output URL WITHOUT a credential (see
+	// blobFetcher).
+	downloadBlob blobFetcher
+	// pendingDir is where the pre-submit crash-recovery record is written. A
+	// test points it at a t.TempDir(); empty means the real config dir.
+	pendingDir string
+	// poll carries the poll cadence + the injected clock/sleep. Zero values fall
+	// back to the documented defaults (see pollConfig.resolved).
+	poll pollConfig
 }
 
 // generateOpts is the parsed invocation. The *Set fields record whether a flag
@@ -100,6 +115,20 @@ type generateOpts struct {
 	maxCost        int
 	maxCostSet     bool
 	baseURL        string
+
+	// noWait prints the workflow id and exits instead of waiting.
+	noWait bool
+	// timeout bounds the WAIT, never the job and never the charge.
+	timeout time.Duration
+	// outDir is the directory outputs are written into.
+	outDir string
+	// noDownload waits for the result but writes no files.
+	noDownload bool
+	// force overwrites existing output files.
+	force bool
+	// externalID overrides the minted idempotency key, which is how a lost
+	// submit is re-attached rather than re-charged.
+	externalID string
 }
 
 func newGenerateCmd() *cobra.Command {
@@ -140,8 +169,22 @@ the public model-version API BEFORE submitting, so a bad id is a hard local
 error instead of a wrong charge, and it echoes the resolved model NAME in the
 confirmation so you approve a name rather than an integer.
 
-This release submits the job and prints its workflow id; it does not yet wait
-for completion or download the results.`,
+WAITING AND DOWNLOADING: by default the command waits for the job to finish and
+writes every deliverable output into --out-dir as <workflow-id>-<n>.<ext>. Pass
+--no-wait to print the workflow id and exit immediately, and pick the results up
+later with ` + "`civitai workflows get <workflow-id>`" + `. Output URLs are PRESIGNED AND
+EXPIRE, so download promptly; re-read the workflow for fresh links.
+
+🔴 --timeout STOPS WAITING. IT DOES NOT STOP PAYING. The generation keeps
+running server-side after the CLI gives up, and the charge stands — there is no
+cancel-for-refund, and a mid-run cancel bills the accrued cost anyway. The same
+is true of Ctrl-C. Both print the workflow id and the exact command to re-attach.
+
+CRASH SAFETY: the idempotency key is written to a local file BEFORE the request
+is sent, because the money moves server-side even if this process dies mid-POST.
+If a submit's reply never arrives, re-run with --external-id <the recorded key>:
+the orchestrator dedupes on it and returns the PRE-EXISTING workflow instead of
+charging a second time.`,
 		Example: `  # Preview the price — spends nothing
   civitai generate "a cat wearing sunglasses" --dry-run
 
@@ -153,6 +196,13 @@ for completion or download the results.`,
 
   # A specific checkpoint plus a LoRA at 0.8 strength
   civitai generate "a cat" --checkpoint 128713 --lora 250712:0.8
+
+  # Wait, and write the images into ./out
+  civitai generate "a cat" --yes --out-dir ./out
+
+  # Fire and forget; collect the results later
+  civitai generate "a cat" --yes --no-wait
+  civitai workflows get <workflow-id>
 
   # Non-interactive (CI): --yes is required, or the run is refused
   civitai generate "a cat" --yes --max-cost 20`,
@@ -184,10 +234,18 @@ for completion or download the results.`,
 			src := auth.New(cfg)
 			gen := genapi.NewWithSource(cfg.BaseURL(), src)
 			buzz := appapi.NewWithSource(cfg.BaseURL(), src, "")
+			// 🔴 The blob fetcher is DownloadPresigned, never DownloadFile:
+			// output URLs are presigned and are served from a *.civitai.com
+			// host, which the download layer's trusted-host predicate would
+			// match — so DownloadFile would hand a full-scope personal API key
+			// to a request that needs no credential at all.
+			reader := civitai.NewWithSource(cfg.BaseURL(), src)
 			deps := generateDeps{
 				whatIf:         gen.WhatIfFromGraph,
 				submit:         gen.GenerateFromGraph,
 				resolveVersion: gen.ResolveModelVersion,
+				getWorkflow:    gen.GetWorkflow,
+				downloadBlob:   reader.DownloadPresigned,
 				buzzBalance: func(ctx context.Context) (int64, error) {
 					acct, err := buzz.GetBuzzAccount(ctx)
 					if err != nil {
@@ -196,6 +254,14 @@ for completion or download the results.`,
 					return acct.Total(), nil
 				},
 			}
+			// Bind SIGINT for the whole run: the poll loop, the sleep between
+			// polls and every blob transfer all take this context, so Ctrl-C
+			// unblocks promptly, writePart's defer removes any partial file,
+			// and runGenerate's recovery path prints the re-attach command for
+			// the job that was already paid for.
+			ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
+			defer stop()
+			cmd.SetContext(ctx)
 			return runGenerate(cmd, deps, o)
 		},
 	}
@@ -220,6 +286,28 @@ for completion or download the results.`,
 	cmd.Flags().IntVar(&o.maxCost, "max-cost", 0,
 		"refuse to submit if the ESTIMATE exceeds this many Buzz. This is an estimate check, NOT a spending cap: "+
 			"the estimate is not binding, the server enforces no ceiling, and the realized charge can be higher with no refund")
+
+	// NOTE: no back-quotes in ANY usage string here — pflag's UnquoteUsage
+	// treats the first back-quoted span as the flag's VALUE NAME. Quoting a
+	// command in this bool flag's usage rendered it in --help as a flag that
+	// takes a value called "civitai workflows get <id>" (measured, then fixed).
+	// Use single quotes. Pinned by TestGenerateFlagUsageHasNoBackquotes.
+	cmd.Flags().BoolVar(&o.noWait, "no-wait", false,
+		"submit, print the workflow id and exit without waiting; collect the results later with 'civitai workflows get <id>'")
+	// 🔴 The wording here is load-bearing. --timeout bounds the CLI's WAIT. The
+	// job keeps running and the charge stands, so any phrasing that hints at
+	// "stop the generation" or "cap the spend" is a lie the user pays for.
+	cmd.Flags().DurationVar(&o.timeout, "timeout", defaultWaitTimeout,
+		"how long to WAIT for the generation to finish (e.g. 5m, 0 waits indefinitely). This stops the CLI waiting; "+
+			"it does NOT stop the generation and does NOT stop the charge — the job continues server-side and is not refunded")
+	cmd.Flags().StringVar(&o.outDir, "out-dir", ".",
+		"directory to write the generated files into (created if needed); named <workflow-id>-<n>.<ext>")
+	cmd.Flags().BoolVar(&o.noDownload, "no-download", false,
+		"wait for the result and print the output URLs, but write no files")
+	cmd.Flags().BoolVar(&o.force, "force", false, "overwrite existing output files instead of refusing")
+	cmd.Flags().StringVar(&o.externalID, "external-id", "",
+		"re-attach to an earlier submit by reusing its idempotency key (the orchestrator dedupes on it and returns the "+
+			"PRE-EXISTING workflow rather than charging again). Use the key recorded before the lost submit")
 	return cmd
 }
 
@@ -249,6 +337,21 @@ func validateGenerateOpts(o *generateOpts) error {
 		// Say so up front rather than at the prompt.
 		return asUsageError(errors.New(
 			"--json without --dry-run submits and spends Buzz — pass --yes to confirm non-interactively, or --dry-run to only estimate"))
+	}
+	if o.timeout < 0 {
+		return asUsageError(fmt.Errorf("--timeout must not be negative, got %s (use 0 to wait indefinitely)", o.timeout))
+	}
+	if o.noWait && o.noDownload {
+		// --no-wait already downloads nothing; accepting both would imply the
+		// two do different things.
+		return asUsageError(errors.New("--no-wait already exits before any result exists — drop --no-download"))
+	}
+	if strings.TrimSpace(o.outDir) == "" {
+		// The flag default is ".", so an empty value can only come from a
+		// programmatic construction (or `--out-dir ""`). Resolve it to the
+		// documented default rather than erroring: an empty path would silently
+		// become a relative write anyway.
+		o.outDir = "."
 	}
 	for _, raw := range o.loras {
 		if _, err := parseLoraFlag(raw); err != nil {
@@ -442,16 +545,211 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		return err
 	}
 
-	result, externalID, rawSubmit, err := deps.submit(ctx, built.graph, genapi.SubmitOptions{})
+	// 🔴 The idempotency key is minted HERE, not inside the submit, so it can be
+	// RECORDED BEFORE the request leaves. The charge happens server-side the
+	// moment the orchestrator accepts the workflow; a process that dies during
+	// the POST has already spent the money and, without this record, has no
+	// handle to what it bought.
+	externalID := strings.TrimSpace(o.externalID)
+	if externalID == "" {
+		var mintErr error
+		if externalID, mintErr = genapi.NewExternalID(); mintErr != nil {
+			return mintErr
+		}
+	}
+	statePath, stateErr := writeSubmitRecord(deps, o, built.graph, externalID)
+	if stateErr != nil {
+		// Never fatal — a user who can generate must not be blocked by a config
+		// directory problem. But say it BEFORE the spend, because the crash-
+		// recovery net is what is missing, not a cosmetic feature.
+		fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf(
+			"could not write the crash-recovery record (%v) — if this run is interrupted mid-submit you will have to find the job at %s/generate. Your idempotency key is %s",
+			stateErr, strings.TrimRight(o.baseURL, "/"), externalID)))
+	}
+
+	result, externalID, rawSubmit, err := deps.submit(ctx, built.graph, genapi.SubmitOptions{ExternalID: externalID})
 	if err != nil {
+		if genapi.StatusOf(err) == 0 {
+			// No HTTP status means no interpretable reply: the request may well
+			// have reached the orchestrator and been charged. Never let this
+			// read as "nothing happened".
+			fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf(
+				"the submit got no answer from the server — it MAY still have been accepted and charged. Do NOT simply re-run it; re-attach with:\n    civitai generate %q --external-id %s",
+				o.prompt, externalID)))
+		}
 		return classifyGenerateError(err)
 	}
 
-	if o.jsonOut {
-		return writeRawJSON(out, rawSubmit)
+	workflowID := ""
+	if result != nil {
+		workflowID = result.ID
 	}
-	printSubmitResult(out, errw, result, externalID, o.baseURL)
+	if statePath != "" && workflowID != "" {
+		// Best-effort: the id is about to be printed anyway.
+		_ = recordPendingWorkflowID(statePath, workflowID)
+	}
+
+	if o.noWait || workflowID == "" {
+		// Nothing more can be done without a handle to poll, so the record has
+		// served its purpose the moment the id reaches the user.
+		if workflowID != "" {
+			clearSubmitRecord(statePath)
+		}
+		if o.jsonOut {
+			return writeRawJSON(out, rawSubmit)
+		}
+		printSubmitResult(out, errw, result, externalID, o.baseURL, o.noWait)
+		return nil
+	}
+
+	printSubmitted(errw, workflowID, externalID, o.baseURL)
+	return waitAndCollect(ctx, cmd, deps, o, workflowID, externalID, statePath)
+}
+
+// writeSubmitRecord writes the pre-submit crash-recovery record and returns its
+// path. It resolves the directory from deps (a test points it at a t.TempDir()).
+func writeSubmitRecord(deps generateDeps, o generateOpts, g genapi.Graph, externalID string) (string, error) {
+	dir := deps.pendingDir
+	if dir == "" {
+		var err error
+		if dir, err = pendingDir(); err != nil {
+			return "", err
+		}
+	}
+	return writePendingGeneration(dir, pendingGeneration{
+		ExternalID:  externalID,
+		SubmittedAt: nowRFC3339(),
+		PayloadHash: graphPayloadHash(g),
+		BaseURL:     o.baseURL,
+	})
+}
+
+// clearSubmitRecord removes a record whose workflow id has been reported to the
+// user — from that point the workflow id IS the handle, and keeping the file
+// would just accumulate clutter that looks like unfinished work.
+func clearSubmitRecord(path string) {
+	if path != "" {
+		_ = os.Remove(path)
+	}
+}
+
+// waitAndCollect polls the submitted workflow to a terminal status, then reports
+// and (unless --no-download) downloads its deliverable outputs.
+//
+// Every early exit here — timeout, Ctrl-C, a failed workflow — is an ERROR
+// return, never a success: the user paid, and a zero exit code would tell a
+// script the images are on disk.
+func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, o generateOpts, workflowID, externalID, statePath string) error {
+	out, errw := cmd.OutOrStdout(), cmd.ErrOrStderr()
+
+	cfg := deps.poll
+	cfg.timeout = o.timeout
+	rep := newPollReporter(errw, cfg.now, cfg.heartbeat)
+
+	wf, rawWF, err := pollWorkflow(ctx, deps.getWorkflow, workflowID, cfg, rep)
+	if err != nil {
+		switch {
+		case errors.Is(err, errWaitTimeout):
+			printReattach(errw, o, workflowID, externalID, statusOrUnknown(wf),
+				fmt.Sprintf("Stopped waiting after %s.", o.timeout))
+			return fmt.Errorf("%w after %s — the generation is still running and has already been charged; it was not cancelled", errWaitTimeout, o.timeout)
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			printReattach(errw, o, workflowID, externalID, statusOrUnknown(wf),
+				"Interrupted.")
+			return fmt.Errorf("interrupted while waiting — the generation is still running and has already been charged; it was not cancelled")
+		}
+		return classifyGenerateError(err)
+	}
+
+	// The workflow id is now the durable handle and has been printed; the
+	// pre-submit record is no longer load-bearing.
+	clearSubmitRecord(statePath)
+
+	if !strings.EqualFold(wf.Status, genapi.StatusSucceeded) {
+		// failed / expired / canceled. Say plainly that it was still charged —
+		// the orchestrator does not refund a job that ran and failed.
+		return fmt.Errorf("the generation finished with status %q — it was charged and produced no usable result; inspect it with `civitai workflows get %s`",
+			safeTerm(wf.Status), safeTerm(workflowID))
+	}
+
+	kept, excluded := genapi.PartitionOutputs(wf)
+	reportExcludedOutputs(errw, excluded)
+	requested := 0
+	if o.quantitySet {
+		requested = o.quantity
+		if requested > serverQuantityClamp {
+			// The server clamps silently, so the honest expectation is the
+			// clamped number, not what was typed.
+			requested = serverQuantityClamp
+		}
+	}
+	reportOutputCountMismatch(errw, requested, len(kept))
+
+	if len(kept) == 0 {
+		return fmt.Errorf("the generation succeeded but produced no deliverable outputs — it was charged; inspect it with `civitai workflows get %s`", safeTerm(workflowID))
+	}
+
+	if o.noDownload {
+		printOutputURLs(out, errw, kept)
+	} else {
+		// With --json the machine-readable payload owns stdout, so the "Saved …"
+		// lines move to stderr rather than corrupting it.
+		saveW := out
+		if o.jsonOut {
+			saveW = errw
+		}
+		paths, derr := downloadOutputs(ctx, deps.downloadBlob, saveW, errw, workflowID, kept, o.outDir, o.force)
+		if derr != nil {
+			if len(paths) > 0 {
+				fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf("%d of %d output(s) were saved before this failed", len(paths), len(kept))))
+			}
+			fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
+				"Output URLs expire — re-read the workflow for fresh links: civitai workflows get %s", workflowID)))
+			return derr
+		}
+	}
+
+	if o.jsonOut {
+		return writeRawJSON(out, rawWF)
+	}
 	return nil
+}
+
+// printOutputURLs renders the --no-download listing.
+func printOutputURLs(out, errw io.Writer, kept []genapi.Output) {
+	for i, o := range kept {
+		if o.URL != nil {
+			fmt.Fprintf(out, "%d\t%s\n", i+1, safeTerm(*o.URL))
+		}
+	}
+	fmt.Fprintln(errw, ui.For(errw).Dim(
+		"These URLs are presigned and expire — fetch them promptly, or re-read the workflow for fresh links."))
+}
+
+// printSubmitted is the one-line "it is running" notice, on stderr so a --json
+// stdout stays machine-clean.
+func printSubmitted(errw io.Writer, workflowID, externalID, baseURL string) {
+	st := ui.For(errw)
+	fmt.Fprintln(errw, st.Success(fmt.Sprintf("Generation submitted — workflow %s", safeTerm(workflowID))))
+	fmt.Fprintln(errw, st.Dim(fmt.Sprintf(
+		"External ID %s · watch it at %s/generate · re-attach any time with `civitai workflows get %s`",
+		externalID, strings.TrimRight(baseURL, "/"), safeTerm(workflowID))))
+}
+
+// printReattach is the recovery block for a wait that ended without a result.
+//
+// 🔴 It must never suggest the job stopped. The CLI gave up WAITING; the
+// orchestrator kept generating and the Buzz is gone either way. Everything here
+// exists so the user can get to what they already paid for.
+func printReattach(errw io.Writer, o generateOpts, workflowID, externalID, status, lead string) {
+	st := ui.For(errw)
+	fmt.Fprintln(errw, st.Warn(fmt.Sprintf(
+		"%s The generation was NOT cancelled — it is still running server-side and has already been charged.", lead)))
+	fmt.Fprintf(errw, "  Workflow ID: %s\n", safeTerm(workflowID))
+	fmt.Fprintf(errw, "  External ID: %s\n", externalID)
+	fmt.Fprintf(errw, "  Last status: %s\n", safeTerm(status))
+	fmt.Fprintf(errw, "  Re-attach:   civitai workflows get %s\n", safeTerm(workflowID))
+	fmt.Fprintln(errw, st.Dim(fmt.Sprintf("Or watch it at %s/generate", strings.TrimRight(o.baseURL, "/"))))
 }
 
 // confirmGenerate gates the spend. It mirrors confirmSubmit, with a stronger
@@ -573,12 +871,14 @@ func printCostMap(w io.Writer, label string, m map[string]float64) {
 // handle to a job that has already been paid for, so if the server's reply does
 // not carry one, say so loudly and print the idempotency key instead of leaving
 // the user with nothing.
-func printSubmitResult(out, errw io.Writer, r *genapi.SubmitResult, externalID, baseURL string) {
+func printSubmitResult(out, errw io.Writer, r *genapi.SubmitResult, externalID, baseURL string, noWait bool) {
 	if r == nil || r.ID == "" {
 		fmt.Fprintln(errw, ui.For(errw).Warn(
 			"The generation was submitted but the server's reply carried no workflow id. It has been CHARGED — do not resubmit."))
 		fmt.Fprintf(out, "External ID: %s\n", externalID)
-		fmt.Fprintf(errw, "Find the job at %s/generate\n", strings.TrimRight(baseURL, "/"))
+		fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
+			"Find the job at %s/generate. To re-attach without paying again, re-run with --external-id %s — the orchestrator dedupes on it and returns the SAME workflow.",
+			strings.TrimRight(baseURL, "/"), externalID)))
 		return
 	}
 	fmt.Fprintln(out, ui.For(out).Success("Generation submitted"))
@@ -592,8 +892,11 @@ func printSubmitResult(out, errw io.Writer, r *genapi.SubmitResult, externalID, 
 	}
 	fmt.Fprintf(tw, "  External ID:\t%s\n", externalID)
 	_ = tw.Flush()
-	fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
-		"Not waiting for the result — this release submits only. Watch it at %s/generate", strings.TrimRight(baseURL, "/"))))
+	if noWait {
+		fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
+			"Not waiting (--no-wait). Collect the results with `civitai workflows get %s`, or watch it at %s/generate",
+			safeTerm(r.ID), strings.TrimRight(baseURL, "/"))))
+	}
 }
 
 // buzzAmount renders a Buzz figure: whole numbers without a decimal tail, and a

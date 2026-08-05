@@ -33,6 +33,9 @@ type genSeams struct {
 	// lastGraph is the graph handed to whatIf — captured so a test can assert on
 	// the payload that would go over the wire.
 	lastGraph genapi.Graph
+	// lastExternalID is the idempotency key the submit seam was handed. It must
+	// be non-empty: the CLI mints it BEFORE the POST so it can be recorded.
+	lastExternalID string
 
 	whatIf      func(ctx context.Context, g genapi.Graph) (*genapi.WhatIfResult, json.RawMessage, error)
 	resolve     func(ctx context.Context, id int) (*genapi.ResolvedVersion, error)
@@ -40,11 +43,36 @@ type genSeams struct {
 	submitErr   error
 	submitReply *genapi.SubmitResult
 	submitRaw   json.RawMessage
+
+	// getWorkflow is the poll seam; nil leaves it unwired (fine for every test
+	// that stops at --no-wait or never reaches a submit).
+	getWorkflow getWorkflowFn
+	// downloadBlob is the credential-free blob fetcher.
+	downloadBlob blobFetcher
+	// poll overrides the poll cadence (a test must never really sleep).
+	poll pollConfig
+	// pendingDirOverride pins the crash-recovery record's directory. Left empty
+	// deps() points it at a t.TempDir(): a unit test must NEVER write into the
+	// developer's real ~/.config/civitai.
+	pendingDirOverride string
+	// submitObserver runs INSIDE the submit seam, which is what makes the
+	// "state file written BEFORE the POST" claim an ordering assertion rather
+	// than an existence one.
+	submitObserver func()
 }
 
 // deps wires the seams into the struct runGenerate consumes.
-func (s *genSeams) deps() generateDeps {
+func (s *genSeams) deps(t *testing.T) generateDeps {
+	t.Helper()
+	dir := s.pendingDirOverride
+	if dir == "" {
+		dir = t.TempDir()
+	}
 	return generateDeps{
+		getWorkflow:  s.getWorkflow,
+		downloadBlob: s.downloadBlob,
+		pendingDir:   dir,
+		poll:         s.poll,
 		whatIf: func(ctx context.Context, g genapi.Graph) (*genapi.WhatIfResult, json.RawMessage, error) {
 			s.whatIfCalls++
 			s.lastGraph = g
@@ -55,8 +83,12 @@ func (s *genSeams) deps() generateDeps {
 		},
 		submit: func(ctx context.Context, g genapi.Graph, opts genapi.SubmitOptions) (*genapi.SubmitResult, string, json.RawMessage, error) {
 			s.submitCalls++
+			s.lastExternalID = opts.ExternalID
+			if s.submitObserver != nil {
+				s.submitObserver()
+			}
 			if s.submitErr != nil {
-				return nil, "ext-1", nil, s.submitErr
+				return nil, opts.ExternalID, nil, s.submitErr
 			}
 			r := s.submitReply
 			if r == nil {
@@ -66,7 +98,7 @@ func (s *genSeams) deps() generateDeps {
 			if raw == nil {
 				raw = json.RawMessage(`{"id":"wf_123","status":"queued"}`)
 			}
-			return r, "ext-1", raw, nil
+			return r, opts.ExternalID, raw, nil
 		},
 		resolveVersion: func(ctx context.Context, id int) (*genapi.ResolvedVersion, error) {
 			s.resolveCalls++
@@ -105,8 +137,19 @@ func genCmd(stdin string) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 }
 
 // baseOpts is a valid, minimal invocation.
+//
+// It sets --no-wait because these cases are about the SPEND GATE — what reaches
+// the submit seam and what does not. The wait/poll/download half has its own
+// tests (generate_wait_test.go, generate_output_test.go) which wire the poll
+// seam explicitly. Leaving noWait off here would make every spend-gate case
+// depend on an unrelated poll seam.
 func baseOpts() generateOpts {
-	return generateOpts{prompt: "a cat wearing sunglasses", baseURL: "https://civitai.com"}
+	return generateOpts{
+		prompt:  "a cat wearing sunglasses",
+		baseURL: "https://civitai.com",
+		noWait:  true,
+		outDir:  ".",
+	}
 }
 
 // --- the spend gate ----------------------------------------------------------
@@ -123,7 +166,7 @@ func TestGenerate_NonTTYWithoutYesRefusesAndNeverSubmits(t *testing.T) {
 	// (A) negative: no --yes on a non-TTY.
 	var refuse genSeams
 	c, _, errb := genCmd("")
-	err := runGenerate(c, refuse.deps(), baseOpts())
+	err := runGenerate(c, refuse.deps(t), baseOpts())
 	if err == nil {
 		t.Fatal("non-TTY without --yes: want a refusal, got nil")
 	}
@@ -145,7 +188,7 @@ func TestGenerate_NonTTYWithoutYesRefusesAndNeverSubmits(t *testing.T) {
 	o := baseOpts()
 	o.assumeYes = true
 	c2, _, _ := genCmd("")
-	if err := runGenerate(c2, proceed.deps(), o); err != nil {
+	if err := runGenerate(c2, proceed.deps(t), o); err != nil {
 		t.Fatalf("positive control (--yes): %v", err)
 	}
 	if proceed.submitCalls != 1 {
@@ -159,7 +202,7 @@ func TestGenerate_TTYDeclineCancels(t *testing.T) {
 	withStdinTTY(t, true)
 	var s genSeams
 	c, out, errb := genCmd("n\n")
-	err := runGenerate(c, s.deps(), baseOpts())
+	err := runGenerate(c, s.deps(t), baseOpts())
 	if err == nil || !strings.Contains(err.Error(), "cancelled") {
 		t.Fatalf("declined prompt: err = %v, want a cancellation", err)
 	}
@@ -179,7 +222,7 @@ func TestGenerate_TTYAcceptSubmits(t *testing.T) {
 	withStdinTTY(t, true)
 	var s genSeams
 	c, out, _ := genCmd("y\n")
-	if err := runGenerate(c, s.deps(), baseOpts()); err != nil {
+	if err := runGenerate(c, s.deps(t), baseOpts()); err != nil {
 		t.Fatalf("accepted prompt: %v", err)
 	}
 	if s.submitCalls != 1 {
@@ -198,7 +241,7 @@ func TestGenerate_MaxCostRefusesBelowEstimate(t *testing.T) {
 	o := baseOpts()
 	o.maxCost, o.maxCostSet = 5, true
 	c, _, _ := genCmd("y\n")
-	err := runGenerate(c, s.deps(), o)
+	err := runGenerate(c, s.deps(t), o)
 	if err == nil {
 		t.Fatal("--max-cost below the estimate: want a refusal, got nil")
 	}
@@ -217,7 +260,7 @@ func TestGenerate_MaxCostAllowsAtOrAboveEstimate(t *testing.T) {
 	o := baseOpts()
 	o.maxCost, o.maxCostSet, o.assumeYes = 12, true, true
 	c, _, _ := genCmd("")
-	if err := runGenerate(c, s.deps(), o); err != nil {
+	if err := runGenerate(c, s.deps(t), o); err != nil {
 		t.Fatalf("--max-cost == estimate: %v", err)
 	}
 	if s.submitCalls != 1 {
@@ -233,7 +276,7 @@ func TestGenerate_InsufficientBalanceStopsEarly(t *testing.T) {
 	o := baseOpts()
 	o.assumeYes = true
 	c, _, _ := genCmd("")
-	err := runGenerate(c, s.deps(), o)
+	err := runGenerate(c, s.deps(t), o)
 	if !errors.Is(err, ErrInsufficientBuzz) {
 		t.Fatalf("cost > balance: want ErrInsufficientBuzz, got %v", err)
 	}
@@ -253,7 +296,7 @@ func TestGenerate_UnreadableBalanceWarnsAndContinues(t *testing.T) {
 	o := baseOpts()
 	o.assumeYes = true
 	c, _, errb := genCmd("")
-	if err := runGenerate(c, s.deps(), o); err != nil {
+	if err := runGenerate(c, s.deps(t), o); err != nil {
 		t.Fatalf("unreadable balance: %v", err)
 	}
 	if s.submitCalls != 1 {
@@ -272,7 +315,7 @@ func TestGenerate_DryRunNeverSubmits(t *testing.T) {
 	o := baseOpts()
 	o.dryRun = true
 	c, out, _ := genCmd("y\n")
-	if err := runGenerate(c, s.deps(), o); err != nil {
+	if err := runGenerate(c, s.deps(t), o); err != nil {
 		t.Fatalf("--dry-run: %v", err)
 	}
 	if s.submitCalls != 0 {
@@ -295,7 +338,7 @@ func TestGenerate_DryRunJSONEmitsRawPayloadOnStdout(t *testing.T) {
 	o := baseOpts()
 	o.dryRun, o.jsonOut = true, true
 	c, out, _ := genCmd("")
-	if err := runGenerate(c, s.deps(), o); err != nil {
+	if err := runGenerate(c, s.deps(t), o); err != nil {
 		t.Fatalf("--dry-run --json: %v", err)
 	}
 	if s.submitCalls != 0 {
@@ -320,7 +363,7 @@ func TestGenerate_UnsetFlagsAreAbsentFromThePayload(t *testing.T) {
 	o := baseOpts()
 	o.assumeYes = true
 	c, _, _ := genCmd("")
-	if err := runGenerate(c, s.deps(), o); err != nil {
+	if err := runGenerate(c, s.deps(t), o); err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}
 	raw, err := json.Marshal(s.lastGraph)
@@ -364,7 +407,7 @@ func TestGenerate_SetFlagsArePresent(t *testing.T) {
 	o.checkpoint, o.checkpointSet = 128713, true
 	o.loras = []string{"250712:0.8"}
 	c, _, _ := genCmd("")
-	if err := runGenerate(c, s.deps(), o); err != nil {
+	if err := runGenerate(c, s.deps(t), o); err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}
 	raw, _ := json.Marshal(s.lastGraph)
@@ -447,7 +490,7 @@ func TestGenerate_NonexistentVersionIDFailsBeforeAnySubmit(t *testing.T) {
 	o.assumeYes = true
 	o.checkpoint, o.checkpointSet = 999999, true
 	c, _, _ := genCmd("")
-	err := runGenerate(c, s.deps(), o)
+	err := runGenerate(c, s.deps(t), o)
 	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Fatalf("nonexistent checkpoint: want ErrNotFound (exit 4), got %v", err)
 	}
@@ -478,7 +521,7 @@ func TestGenerate_UsageErrors(t *testing.T) {
 			o := baseOpts()
 			tc.mut(&o)
 			c, _, _ := genCmd("")
-			err := runGenerate(c, s.deps(), o)
+			err := runGenerate(c, s.deps(t), o)
 			if !errors.Is(err, ErrUsage) {
 				t.Fatalf("want ErrUsage (exit 2), got %v", err)
 			}
@@ -498,7 +541,7 @@ func TestGenerate_OverClampQuantityWarnsButProceeds(t *testing.T) {
 	o.assumeYes = true
 	o.quantity, o.quantitySet = 40, true
 	c, _, errb := genCmd("")
-	if err := runGenerate(c, s.deps(), o); err != nil {
+	if err := runGenerate(c, s.deps(t), o); err != nil {
 		t.Fatalf("over-clamp quantity: %v", err)
 	}
 	if s.submitCalls != 1 {
@@ -520,7 +563,7 @@ func TestGenerate_NotReadyRefuses(t *testing.T) {
 	o := baseOpts()
 	o.assumeYes = true
 	c, _, _ := genCmd("")
-	err := runGenerate(c, s.deps(), o)
+	err := runGenerate(c, s.deps(t), o)
 	if !errors.Is(err, civitai.ErrBadRequest) {
 		t.Fatalf("ready:false: want ErrBadRequest, got %v", err)
 	}
@@ -538,7 +581,7 @@ func TestGenerate_MissingCostRefuses(t *testing.T) {
 	o := baseOpts()
 	o.assumeYes = true
 	c, _, _ := genCmd("")
-	if err := runGenerate(c, s.deps(), o); err == nil {
+	if err := runGenerate(c, s.deps(t), o); err == nil {
 		t.Fatal("cost-less estimate: want a refusal, got nil")
 	}
 	if s.submitCalls != 0 {
@@ -655,7 +698,7 @@ func TestGenerate_ErrorRowsClassification(t *testing.T) {
 			o.assumeYes = true
 			o.baseURL = srv.URL
 			c, _, _ := genCmd("")
-			err := runGenerate(c, s.deps(), o)
+			err := runGenerate(c, s.deps(t), o)
 			if err == nil {
 				t.Fatalf("%s: want an error, got nil", tc.name)
 			}
@@ -682,7 +725,7 @@ func TestGenerate_SubmitErrorIsClassifiedToo(t *testing.T) {
 
 	var s genSeams
 	s.submitErr = nil
-	deps := s.deps()
+	deps := s.deps(t)
 	// Point ONLY the submit seam at the failing server; the estimate succeeds.
 	deps.submit = client.GenerateFromGraph
 
@@ -807,7 +850,7 @@ func TestGenerate_SanitisesServerStrings(t *testing.T) {
 	o.dryRun = true
 	o.checkpoint, o.checkpointSet = 1, true
 	c, out, _ := genCmd("")
-	if err := runGenerate(c, s.deps(), o); err != nil {
+	if err := runGenerate(c, s.deps(t), o); err != nil {
 		t.Fatalf("--dry-run: %v", err)
 	}
 	if strings.Contains(out.String(), "\x1b") {

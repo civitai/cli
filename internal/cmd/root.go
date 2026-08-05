@@ -301,6 +301,11 @@ Exit codes:
 	// would be swallowed as the positional PROMPT and billed.
 	root.AddCommand(newGenerateCmd())
 
+	// The read side of generation. A GROUP (no Run/RunE of its own) so
+	// enforceUsageExitCodes below installs the unknown-subcommand guard on it —
+	// the guard `generate` deliberately cannot have.
+	root.AddCommand(newWorkflowsCmd())
+
 	// Read subcommands — public REST API (`/api/v1/**`) browsing.
 	root.AddCommand(newModelsCmd())
 	root.AddCommand(newModelVersionsCmd())
