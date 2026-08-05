@@ -292,6 +292,23 @@ const submitTimeout = 120 * time.Second
 // route (GET; civitai/civitai src/pages/api/v1/blocks/submissions.ts).
 const SubmissionsPath = "/api/v1/blocks/submissions"
 
+// ListSubmissionsCap mirrors MAX_ROWS in that route: the UNFILTERED listing is
+// `take: MAX_ROWS` (submissions.ts) with NO cursor, NO offset and NO total count
+// in the response — its zod query schema accepts ONLY `id` and `blockId`, so
+// there is nothing to page with and nothing to compare a length against.
+// A full-length page is therefore the ONLY evidence available that rows were
+// dropped, and it is INFERENCE, not a signal: a caller holding exactly this many
+// submissions is indistinguishable from one holding more. Callers must present it
+// as "may be incomplete", never as a complete answer and never as a hard fact.
+//
+// A `?blockId=<slug>` (or `?id=`) lookup is NOT affected: the server puts
+// `where.slug` into the query BEFORE `take`, so a single app would need more
+// than this many submissions of its own to be truncated. Don't add a caveat
+// there.
+//
+// Keep in lockstep with MAX_ROWS if the server's page size ever changes.
+const ListSubmissionsCap = 100
+
 // WithdrawPath is the token-authenticated, self-scoped withdraw route
 // (POST {"publishRequestId": ...}; civitai/civitai
 // src/pages/api/v1/blocks/withdraw.ts). 200 on success (incl. an idempotent

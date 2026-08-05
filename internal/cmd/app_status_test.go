@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/civitai/cli/internal/appapi"
 )
 
 // statusServer stands up an httptest server emulating GET
@@ -179,6 +182,158 @@ func TestAppStatusJSONPassthrough(t *testing.T) {
 	}
 	if len(parsed.Submissions) != 1 || parsed.Submissions[0]["blockId"] != "alpha" {
 		t.Errorf("unexpected --json payload: %s", out)
+	}
+}
+
+// truncationNote is the distinguishing core of the cap caveat. Tests assert on
+// this exact phrase so a generic word ("note:", "submissions") from some other
+// message can't satisfy them.
+const truncationNote = "the API caps this listing and offers no way to page"
+
+// submissionRows builds n plausible listing rows, newest first.
+func submissionRows(n int) []map[string]any {
+	rows := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
+		rows = append(rows, map[string]any{
+			"id": fmt.Sprintf("pubreq_%03d", n-i), "blockId": fmt.Sprintf("app-%03d", n-i),
+			"version": "0.1.0", "status": "approved", "deployState": "live",
+			"submittedAt": "2026-06-17T08:00:00.000Z", "liveUrl": nil,
+		})
+	}
+	return rows
+}
+
+// TestSubmissionsListTruncatedBoundary pins the cap predicate at BOTH sides of
+// the boundary plus the empty case. A `>` or `==` mutation flips one of these.
+func TestSubmissionsListTruncatedBoundary(t *testing.T) {
+	cases := []struct {
+		n    int
+		want bool
+	}{
+		{0, false},
+		{1, false},
+		{appapi.ListSubmissionsCap - 1, false},
+		{appapi.ListSubmissionsCap, true},
+		{appapi.ListSubmissionsCap + 1, true},
+	}
+	for _, tc := range cases {
+		if got := submissionsListTruncated(tc.n); got != tc.want {
+			t.Errorf("submissionsListTruncated(%d) = %v, want %v", tc.n, got, tc.want)
+		}
+	}
+}
+
+// TestAppStatusCappedListWarns: a full-length page is the only evidence rows were
+// dropped, so the CLI must say the list may be incomplete — on stderr, leaving
+// the stdout table clean.
+func TestAppStatusCappedListWarns(t *testing.T) {
+	rows := submissionRows(appapi.ListSubmissionsCap)
+	srv := statusServer(t, map[string]any{"submissions": rows}, http.StatusOK, nil)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, errOut, err := run(t, "app", "status")
+	if err != nil {
+		t.Fatalf("app status: %v", err)
+	}
+	if !strings.Contains(errOut, truncationNote) {
+		t.Errorf("a %d-row (at-cap) listing must warn that it may be truncated; stderr:\n%s",
+			appapi.ListSubmissionsCap, errOut)
+	}
+	if !strings.Contains(errOut, "civitai app status <blockId>") {
+		t.Errorf("the caveat must name the remedy (a per-app lookup); stderr:\n%s", errOut)
+	}
+	// The note is advisory, not a failure, and must not pollute the table.
+	if strings.Contains(out, truncationNote) {
+		t.Errorf("the caveat belongs on stderr, not in the stdout table:\n%s", out)
+	}
+	if !strings.Contains(out, "BLOCK_ID") || !strings.Contains(out, "app-001") {
+		t.Errorf("the table must still render in full:\n%s", out)
+	}
+}
+
+// TestAppStatusShortListDoesNotWarn is the direction people forget: a listing
+// that fits under the cap is COMPLETE, and claiming otherwise would train users
+// to ignore the caveat. Covers one-under-the-cap and the empty list.
+func TestAppStatusShortListDoesNotWarn(t *testing.T) {
+	for _, n := range []int{0, 1, appapi.ListSubmissionsCap - 1} {
+		srv := statusServer(t, map[string]any{"submissions": submissionRows(n)}, http.StatusOK, nil)
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv("CIVITAI_TOKEN", "tok")
+		t.Setenv("CIVITAI_BASE_URL", srv.URL)
+		out, errOut, err := run(t, "app", "status")
+		srv.Close()
+		if err != nil {
+			t.Fatalf("%d rows: app status: %v", n, err)
+		}
+		if strings.Contains(errOut, truncationNote) {
+			t.Errorf("%d rows is under the cap — must NOT warn; stderr:\n%s", n, errOut)
+		}
+		if strings.Contains(out, truncationNote) {
+			t.Errorf("%d rows is under the cap — must NOT warn; stdout:\n%s", n, out)
+		}
+	}
+}
+
+// TestAppStatusCappedListJSONStaysPure: --json is the scripted path, so the
+// caveat must not enter stdout — the payload has to stay parseable — while the
+// human running the pipe still sees the warning on stderr.
+func TestAppStatusCappedListJSONStaysPure(t *testing.T) {
+	rows := submissionRows(appapi.ListSubmissionsCap)
+	srv := statusServer(t, map[string]any{"submissions": rows}, http.StatusOK, nil)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, errOut, err := run(t, "app", "status", "--json")
+	if err != nil {
+		t.Fatalf("app status --json: %v", err)
+	}
+	var parsed struct {
+		Submissions []map[string]any `json:"submissions"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("--json stdout must stay parseable JSON: %v\n%s", err, out)
+	}
+	if len(parsed.Submissions) != appapi.ListSubmissionsCap {
+		t.Errorf("--json payload = %d submissions, want %d", len(parsed.Submissions), appapi.ListSubmissionsCap)
+	}
+	if strings.Contains(out, "note:") {
+		t.Errorf("--json stdout must carry no prose:\n%s", out)
+	}
+	if !strings.Contains(errOut, truncationNote) {
+		t.Errorf("--json must still warn on stderr; stderr:\n%s", errOut)
+	}
+}
+
+// TestAppStatusDetailNeverWarns pins the scope correction: the server applies
+// `where.slug` BEFORE the row cap, so a per-app lookup is not affected and must
+// not carry the caveat — even when the account is at the cap overall.
+func TestAppStatusDetailNeverWarns(t *testing.T) {
+	body := map[string]any{
+		"submissions": []map[string]any{
+			{"id": "pubreq_1", "blockId": "alpha", "version": "0.1.0", "status": "pending",
+				"deployState": nil, "submittedAt": "2026-06-17T08:00:00.000Z", "liveUrl": nil},
+		},
+	}
+	srv := statusServer(t, body, http.StatusOK, nil)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, errOut, err := run(t, "app", "status", "alpha")
+	if err != nil {
+		t.Fatalf("app status alpha: %v", err)
+	}
+	if strings.Contains(errOut, truncationNote) || strings.Contains(out, truncationNote) {
+		t.Errorf("a per-app lookup is narrowed server-side before the cap — no caveat.\nstdout:\n%s\nstderr:\n%s", out, errOut)
 	}
 }
 

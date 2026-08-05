@@ -77,6 +77,17 @@ and deployed (deployState 'live').`,
 			if err != nil {
 				return err
 			}
+			// The route caps the unfiltered listing and returns no cursor and no
+			// total, so a full-length page is the only hint that older rows were
+			// dropped. Say so instead of presenting a truncated list as the whole
+			// truth. STDERR (like the other API-limitation notes in this CLI) so
+			// --json stdout stays pure; exit stays 0.
+			if submissionsListTruncated(len(subs)) {
+				fmt.Fprintf(cmd.ErrOrStderr(),
+					"note: showing the newest %d submissions — the API caps this listing and offers no way to page, "+
+						"so older submissions may exist but are not listed. "+
+						"Look up a specific app with `civitai app status <blockId>`.\n", len(subs))
+			}
 			if jsonOut {
 				return writeJSON(out, map[string]any{"submissions": subs})
 			}
@@ -92,6 +103,19 @@ and deployed (deployState 'live').`,
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON (scriptable)")
 	return cmd
 }
+
+// submissionsListTruncated reports whether an UNFILTERED submissions listing of
+// n rows may have been cut off by the server's row cap
+// (appapi.ListSubmissionsCap — see its doc comment for why this can only ever be
+// an inference). The comparison is `>=`, not `==`: at or beyond the cap we know
+// about, this CLI cannot claim the listing is complete. A caller holding exactly
+// the cap gets the caveat while nothing is actually missing — accepted, because
+// the alternative failure (silently reporting a truncated list as complete) is
+// the bug this exists to fix, and the wording says "may exist", not "exist".
+//
+// Only the unfiltered list goes through here: a slug/id lookup is narrowed
+// server-side before the cap applies.
+func submissionsListTruncated(n int) bool { return n >= appapi.ListSubmissionsCap }
 
 func writeJSON(w io.Writer, v any) error {
 	enc := json.NewEncoder(w)
