@@ -181,8 +181,8 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 ## SDK packages
 
 This CLI scaffolds, validates, and submits — but the code your app actually
-imports lives in two published npm packages (the `page-money` / `page-vite`
-templates wire them for you):
+imports lives in two published npm packages (the `page-money` template wires
+them for you; `static` and `page-vite` are deliberately dependency-free):
 
 | Package | What it is |
 | --- | --- |
@@ -266,11 +266,11 @@ the SDK is for the non-page block surfaces.)
 
 ### Local dev loop (harness: mock vs live)
 
-A scaffolded App is a sandboxed iframe — `npm run dev` alone shows a blank
-screen because there's no host to send `BLOCK_INIT`. The `page-money` /
-`page-vite` templates ship a dev **harness** (the SDK's
+A scaffolded App is a sandboxed iframe, and locally there is no host to send
+`BLOCK_INIT` — so `npm run dev` shows you your own UI and nothing of the
+protocol. The **`page-money`** template ships a dev **harness** (the SDK's
 [`@civitai/blocks-react/testing`](https://www.npmjs.com/package/@civitai/blocks-react)
-hosts) with two modes:
+hosts) to close that gap, with two modes:
 
 | Command | Mode | What it does |
 |---|---|---|
