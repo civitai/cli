@@ -109,7 +109,15 @@ cutting it from v1. **Both were wrong.**
 **CLI-side retry, for completeness:** `authedDo` (`appblocks.go:322-340`) *would* re-send a
 POST body on 401, but the branch is gated on a successful refresh, and a personal key
 returns `ErrNoRefresh` (`auth/source.go:72-74`) — so it cannot fire in a personal-key-only
-v1. **The phase-3 OAuth migration arms it.** `pkg/civitai/retry.go` is GET-only by
+v1.
+
+✅ **CORRECTED in phase 0 — this hazard is closed NOW, not deferred to the OAuth
+migration.** The unconditional `externalId` already neutralises it: `externalID` is minted
+once *before* the body is marshalled and the retry closure captures the finished bytes
+(`genapi/generate.go:202-217`), so a 401 replay re-sends a byte-identical body and the
+orchestrator dedupes on `(userId, externalId)`. Pinned by an assertion that the replayed
+submit's `externalId` equals the first attempt's. Do not "re-close" it later by disabling
+the replay. `pkg/civitai/retry.go` is GET-only by
 *convention, not enforcement* (`:18-24`); its predicates are method-agnostic and
 `isTransientNetErr` returns true for a timeout *after* the server received the POST. Add a
 guard test pinning that no mutation path reaches `getWithRetry`.
@@ -442,14 +450,30 @@ re-attach command. A duplicate `externalId` returns **200 with the pre-existing 
 
 v1 specified §7 entirely in message text — the exact failure AGENTS.md item 7 documents.
 🔴 **`errkind.go:72-74` maps both 401 AND 403 to `ErrUnauthorized` → exit 3**, documented as
-"login required / credential lacks scope". Insufficient Buzz arrives as a **403**, so a
-script that runs out of Buzz would be told to re-run `civitai login`, forever.
+"login required / credential lacks scope".
+
+⚠️ **CORRECTED during phase 1 — the v2 table below was wrong on two rows.** Insufficient
+Buzz does **not** reach the CLI as a 403: the orchestrator's 403 is caught and re-thrown by
+`throwInsufficientFundsError` as tRPC `BAD_REQUEST` (`workflows.ts:385` →
+`errorHandling.ts:218`), so it arrives as a **400**. "Generation disabled" is likewise
+`BAD_REQUEST` → **400** (`orchestrator.router.ts:379-390`). tRPC derives the HTTP status
+from the TRPCError *code*, so no upstream 403 survives to the wire on those paths. The
+genuine 403 misclassification victims are a **muted account** (`trpc.ts:392-396`) and
+**incomplete onboarding** (`trpc.ts:423-435`) — both bare `FORBIDDEN`, byte-identical to a
+missing scope. **Verified by reading the server source, not inferred.**
+
+🔴 **Constraint discovered in phase 1: do NOT "fix" this by changing `statusKind`** — it is
+shared by every command, so a new 403 mapping would silently alter exit codes CLI-wide.
+Discriminate at the genapi/cmd layer instead, on the server's `message`, and **fail soft**
+(an unrecognised message keeps its status-derived kind, so a server-side rewording degrades
+to today's behaviour rather than to a wrong one).
 
 | Cause | Server | Kind / exit | Note |
 |---|---|---|---|
 | OAuth token / missing scope | `FORBIDDEN` (`enforce-token-scope.ts:84`) | `ErrUnauthorized` (3) ✅ | name the **AI Services** preset |
-| Insufficient Buzz | orchestrator 403 | 🔴 **must NOT be 3** — untagged (1) or a new sentinel | show cost vs balance |
-| Generation globally disabled | `:379-390` | 🔴 **must NOT be 3** | not the user's fault |
+| Insufficient Buzz | ⚠️ **400**, not 403 | `ErrInsufficientBuzz` (1) — matched **status-agnostically** | show cost vs balance |
+| Generation globally disabled | ⚠️ **400**, not 403 | `ErrGenerationDisabled` (1) | not the user's fault; a custom server message falls through to the 400 default |
+| **Muted / onboarding incomplete** | **403** — the real victims | `ErrAccountRestricted` (1) | `civitai login` will NOT help |
 | Onboarding incomplete / **muted** | bare `FORBIDDEN` (`trpc.ts:423-435`, `:479`) | distinct | reads identical to a scope error |
 | Prompt blocked | audit throw | distinct, **never retry** | retry loops can auto-mute (§4.1) |
 | Unknown ecosystem | **500** (`ecosystems/index.ts:536`) | 🔴 map to usage (2) | a bare `Error`; a user typo would otherwise log at **error** severity to the platform's Axiom with the full payload (`orchestrator.router.ts:485-510`) |
