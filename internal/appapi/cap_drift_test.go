@@ -392,10 +392,27 @@ func TestCapProbeRespectsBudget(t *testing.T) {
 // Feasibility, stated plainly: this needs an account that (a) has Apps access
 // and (b) holds more submissions than the server's cap, with at least one app
 // whose older rows fall off the page. That is a real developer account, not a
-// CI fixture — so the guard is useful to a maintainer on demand, and running it
-// in CI would need a dedicated credential secret. Wiring that job touches
-// .github/workflows/*, which is ask-first, so it is PROPOSED in the PR, not
-// wired here.
+// CI fixture.
+//
+// 🔴 IT IS DELIBERATELY NOT WIRED INTO CI, and that is settled, not pending.
+// Observing the cap needs a full-scope civitai personal API key (this route
+// rejects OAuth tokens), and civitai/cli is a PUBLIC repo. Adding a production
+// credential as a repo secret to guard one vendored integer costs more than the
+// drift it catches. `pins-vs-published` is wired only because npm needs no
+// credential — that asymmetry is the whole reason, not an inconsistency.
+//
+// And a credential-free job would be actively harmful: it would hit the skip
+// below on every run, report green forever, and read as protection. A guard
+// that cannot fail is worse than an absent one.
+//
+// So: this is a MAINTAINER-ON-DEMAND tool. Run it when you touch
+// ListSubmissionsCap, or when `app status` behaves oddly near the cap:
+//
+//	CIVITAI_CHECK_SUBMISSIONS_CAP=1 CIVITAI_TOKEN=… \
+//	  go test ./internal/appapi/ -run CapDrift -v
+//
+// If you want this checked continuously, ask for a server-side `hasMore` flag
+// instead — it deletes the constant, the inference and this test together.
 func TestSubmissionsCapDriftAgainstLiveAPI(t *testing.T) {
 	if os.Getenv("CIVITAI_CHECK_SUBMISSIONS_CAP") != "1" {
 		t.Skip("live guard; set CIVITAI_CHECK_SUBMISSIONS_CAP=1 (plus CIVITAI_TOKEN) to run")

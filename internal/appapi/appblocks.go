@@ -322,12 +322,26 @@ const SubmissionsPath = "/api/v1/blocks/submissions"
 //	test can notice. This is the serious direction.
 //
 // Neither direction is detectable from a single response — it carries no total
-// and no cursor, the same gap that makes the truncation itself invisible. So
-// TestSubmissionsCapDriftAgainstLiveAPI (cap_drift_test.go) closes it with a
-// live, credentialed cross-check that catches BOTH directions; that is why that
-// test exists and why a comment alone would not be enough. The durable fix is
-// server-side: a `hasMore` flag (or a cursor) on the listing deletes this
-// constant outright.
+// and no cursor, the same gap that makes the truncation itself invisible.
+//
+// 🔴 NOTHING CHECKS THIS AUTOMATICALLY. TestSubmissionsCapDriftAgainstLiveAPI
+// (cap_drift_test.go) CAN detect both directions, but it is opt-in — gated on
+// CIVITAI_CHECK_SUBMISSIONS_CAP=1 plus a credential — and NO CI job sets either.
+// It runs only when a maintainer runs it. Do not read its existence as
+// protection; until someone runs it, this constant rests on having read
+// submissions.ts, not on a measurement.
+//
+// That was a DECISION, not an oversight: observing the cap needs a full-scope
+// civitai personal API key on an account holding more than the cap, and this
+// repo is PUBLIC. Putting a production credential in its CI to guard one
+// integer is a worse trade than the drift it prevents. (`pins-vs-published` can
+// be wired precisely because npm needs no credential.) A credential-free job
+// would be worse than none — it would always skip, always report green, and
+// look like a guard.
+//
+// The durable fix removes the question instead of guarding it: a `hasMore` flag
+// (or a cursor) on the listing response deletes this constant, the inference,
+// and that whole test. Ask for it before investing further here.
 const ListSubmissionsCap = 100
 
 // WithdrawPath is the token-authenticated, self-scoped withdraw route
