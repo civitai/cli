@@ -32,9 +32,15 @@ import (
 //
 // It needs node, so it is env-gated exactly like the network guard in
 // pins_guard_test.go: `make ci` / `go test ./...` stays Go-only and offline.
-// Its scheduled runner is the daily `bump-scaffold-pins` workflow
-// (.github/workflows/bump-scaffold-pins.yml, job `scaffold-ready-ack-runtime`)
-// — an env-gated test nothing ever runs is not a guard.
+// It has TWO runners, and the per-PR one is the load-bearing half:
+//   - .github/workflows/ci.yml, job `ready-ack-runtime` — runs on every pull
+//     request, so a regression BLOCKS the merge. The first version of this
+//     guard had only the scheduled runner below, which meant the very failure
+//     the PR advertised it caught (inverting the `event.source` check) would
+//     have merged green and been reported up to 24h later, with nothing gated
+//     on the result.
+//   - .github/workflows/bump-scaffold-pins.yml, job `ready-ack-runtime` — the
+//     daily sweep, which catches drift on `main` between PRs.
 //
 // WHAT IT STILL DOES NOT PROVE: that the REAL host accepts the ack. The stub
 // is this repo's reading of the contract, not the contract. The end-to-end
@@ -60,7 +66,11 @@ type driverResult struct {
 		} `json:"message"`
 		TargetOrigin string `json:"targetOrigin"`
 	} `json:"posted"`
-	Steps []struct {
+	Threw []struct {
+		TargetOrigin string `json:"targetOrigin"`
+	} `json:"threw"`
+	ListenerErrors []string `json:"listenerErrors"`
+	Steps          []struct {
 		Label string `json:"label"`
 		Posts int    `json:"posts"`
 	} `json:"steps"`
@@ -147,8 +157,13 @@ func handshakeProblems(r driverResult) []string {
 
 func runReadyAckDriver(t *testing.T, node, emitter string) driverResult {
 	t.Helper()
+	return runReadyAckDriverArgs(t, node, emitter)
+}
+
+func runReadyAckDriverArgs(t *testing.T, node, emitter string, extra ...string) driverResult {
+	t.Helper()
 	driver := filepath.Join("testdata", "readyack", "driver.mjs")
-	cmd := exec.Command(node, driver, emitter)
+	cmd := exec.Command(node, append([]string{driver, emitter}, extra...)...)
 	// Capture stdout and stderr SEPARATELY: a node warning on stderr must not
 	// corrupt the JSON, and a decode failure must be able to show the stderr.
 	var stdout, stderr strings.Builder
@@ -232,7 +247,8 @@ func TestScaffoldedReadyAckActuallyFires(t *testing.T) {
 		examined++
 
 		t.Run(string(tmpl), func(t *testing.T) {
-			res := runReadyAckDriver(t, node, filepath.Join(dest, filepath.FromSlash(rel)))
+			emitter := filepath.Join(dest, filepath.FromSlash(rel))
+			res := runReadyAckDriver(t, node, emitter)
 			for _, p := range handshakeProblems(res) {
 				t.Errorf("%s's shipped %s: %s", tmpl, rel, p)
 			}
@@ -244,6 +260,32 @@ func TestScaffoldedReadyAckActuallyFires(t *testing.T) {
 					}
 					return res.Posted[0].TargetOrigin
 				}())
+
+			// The "already acked" flag must latch AFTER a successful post, not
+			// before. A browser throws SyntaxError when targetOrigin cannot be
+			// parsed as a URL, and `event.origin` is the string "null" whenever
+			// the sender sits at an opaque origin — an emitter that latched
+			// first would be permanently silent from then on, with the host
+			// still retrying at a listener that has given up.
+			//
+			// Not reachable through today's PageBlockHost (it is not at an
+			// opaque origin), so this pins a property, not a live bug.
+			t.Run("recovers when the first post throws", func(t *testing.T) {
+				res := runReadyAckDriverArgs(t, node, emitter, "--throw-first-post")
+				if len(res.Threw) == 0 {
+					t.Fatal("the driver was asked to make the first post throw and nothing threw — " +
+						"the control did not fire, so this sub-test proves nothing")
+				}
+				if n, _ := res.postsAt("after-first-init"); n != 0 {
+					t.Fatalf("expected the first ack to be lost to the throw, saw %d post(s)", n)
+				}
+				n, _ := res.postsAt("after-second-init")
+				if n != 1 {
+					t.Errorf("after a throwing first post, the host's NEXT BLOCK_INIT produced %d ack(s), want 1 — "+
+						"the emitter latched its acked flag before posting, so a throw silences it forever", n)
+				}
+				t.Logf("%s: first post threw (%d), recovered on the retry (%d post(s))", tmpl, len(res.Threw), n)
+			})
 		})
 	}
 

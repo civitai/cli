@@ -6,25 +6,43 @@
 // (internal/scaffold/ready_ack_runtime_test.go), so this file cannot decide it
 // is happy with itself.
 //
-// Usage: node driver.mjs <path-to-emitter.js>
+// Usage: node driver.mjs <path-to-emitter.js> [--throw-first-post]
+//
+// `--throw-first-post` makes the FIRST outbound postMessage throw, the way a
+// browser does when `targetOrigin` cannot be parsed as a URL (MEASURED in
+// Chromium 1228: `postMessage(msg, 'null')` throws
+// `SyntaxError: Invalid target origin 'null'`, and `event.origin` is the string
+// "null" whenever the sender is itself at an opaque origin). An emitter that
+// latches its "already acked" flag BEFORE posting goes permanently silent in
+// that case; one that latches after can still answer the host's next retry.
 import { readFileSync } from 'node:fs';
 
 const emitterPath = process.argv[2];
 if (!emitterPath) {
-  console.error('usage: driver.mjs <path-to-emitter.js>');
+  console.error('usage: driver.mjs <path-to-emitter.js> [--throw-first-post]');
   process.exit(2);
 }
+const throwFirstPost = process.argv.includes('--throw-first-post');
 
 export const HOST_ORIGIN = 'https://host.civitai.example';
 const FOREIGN_ORIGIN = 'https://not-the-host.example';
 
 /** Every outbound postMessage, in order. */
 const posted = [];
+/** Posts that threw, in order — an attempt the emitter made and lost. */
+const threw = [];
 /** Listener registrations, by event type, as the emitter made them. */
 const listeners = Object.create(null);
 
 const parentWindow = {
   postMessage(message, targetOrigin) {
+    if (throwFirstPost && threw.length === 0) {
+      threw.push({ message, targetOrigin });
+      // Same constructor and shape a browser raises for an unparseable target.
+      throw new SyntaxError(
+        `Failed to execute 'postMessage' on 'Window': Invalid target origin '${targetOrigin}' in a call to 'postMessage'.`
+      );
+    }
     posted.push({ window: 'parent', message, targetOrigin });
   },
 };
@@ -77,8 +95,21 @@ try {
 
 const flush = () => new Promise((resolve) => setTimeout(resolve, 25));
 
+/** Exceptions thrown out of a listener, in order. */
+const listenerErrors = [];
+
 function deliver(event) {
-  for (const fn of [...(listeners.message ?? [])]) fn(event);
+  for (const fn of [...(listeners.message ?? [])]) {
+    // A browser isolates each listener invocation: an exception becomes an
+    // uncaught error and does NOT abort the other listeners or the page. Model
+    // that, or a throwing emitter would kill this driver instead of being
+    // observed.
+    try {
+      fn(event);
+    } catch (err) {
+      listenerErrors.push(String(err && err.message ? err.message : err));
+    }
+  }
 }
 
 const steps = [];
@@ -128,11 +159,14 @@ process.stdout.write(
   JSON.stringify(
     {
       emitterPath,
+      throwFirstPost,
       loadError,
       hostOrigin: HOST_ORIGIN,
       windowMessageListeners: (listeners.message ?? []).length,
       registeredTypes: Object.keys(listeners).sort(),
       posted,
+      threw,
+      listenerErrors,
       steps,
     },
     null,

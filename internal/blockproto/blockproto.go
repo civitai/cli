@@ -11,8 +11,9 @@
 // renders locally and dies only inside the real host.
 //
 // This is a VENDORED MIRROR of a server-side contract (civitai/civitai ->
-// src/components/AppBlocks/PageBlockHost.tsx and src/hooks/usePostMessage.ts),
-// in the same sense as `schema/`, the slot registry in
+// src/components/AppBlocks/PageBlockHost.tsx and
+// src/components/AppBlocks/usePostMessage.ts, read at civitai@35a9598dc9), in
+// the same sense as `schema/`, the slot registry in
 // `internal/validate/targets.go`, and the dev-embed mirror in
 // `internal/devtunnel`. When the platform changes the handshake, this file
 // changes with it. See AGENTS.md, "Intentional decisions that look wrong".

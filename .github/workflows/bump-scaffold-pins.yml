@@ -49,11 +49,14 @@ jobs:
   # in node against a fake host and asserts a single correctly-addressed
   # `{type:'BLOCK_READY',payload:{height:0}}` goes out.
   #
-  # It rides this workflow because this is the repo's DAILY scheduled runner and
-  # the test is env-gated (`CIVITAI_CHECK_SCAFFOLD_RUNTIME=1`) so `make ci` stays
-  # Go-only and offline. A gated test with no runner is a green that means
-  # nothing. It is deliberately independent of the `bump` job below: it must run
-  # on every sweep, including the (usual) no-op ones where the pins are current.
+  # 🔴 This is the DRIFT runner, NOT the gate. The gate is the identically-named
+  # job in ci.yml, which runs on every pull request. A daily job cannot block a
+  # merge — a regression would land green and surface up to 24h later, on a
+  # workflow with no dependent job — so this copy alone would be a guard that
+  # gates nothing. It exists to catch drift on `main` between PRs (a merged-tree
+  # interaction, a node bump, an npm-side change), and is deliberately
+  # independent of the `bump` job below so it runs on every sweep, including the
+  # usual no-op ones where the pins are already current.
   ready-ack-runtime:
     runs-on: ubuntu-latest
     permissions:
