@@ -246,8 +246,16 @@ renders perfectly. Nothing you can run locally reproduces that.
 transport acks internally, which is why the SDK templates never touch raw
 `postMessage`. The two **SDK-free** templates (`static`, `page-vite`) therefore
 ship a small vendored emitter, **`civitai-host.js`**, loaded from the entry
-point. Leave it in place; if you later adopt `@civitai/blocks-react`, delete it
-(the SDK takes over).
+point. Leave it in place.
+
+> ⚠️ **If you adopt `@civitai/blocks-react`, delete `civitai-host.js` in the
+> same change.** This is the one situation where removing it is correct, and
+> running both is worse than running neither: whichever handshake answers the
+> host's *first* `BLOCK_INIT` cancels the host's retry loop **and** its
+> readiness timeout. If the vendored emitter wins that race, the SDK transport
+> can be left never having seen an init — its `waitForInit` rejects after 10s
+> and the host sits "ready", showing an app that never started, with no retry
+> and no error card.
 
 Two rules it encodes, which apply to every message you add afterwards:
 
@@ -255,14 +263,26 @@ Two rules it encodes, which apply to every message you add afterwards:
   `event.data.payload` to its subscribers, so fields put at the top level
   (`{ type: 'X', height: 0 }`) arrive as `payload: undefined`.
 - **Answer, don't announce.** The ack goes out in *response* to the host's
-  `BLOCK_INIT` — which is what supplies the host's real origin, so the message
-  is addressed at that origin rather than broadcast to `'*'`. It is also why
-  nothing is posted when you preview locally: there is no host to send
-  `BLOCK_INIT`, so the emitter stays silent by design.
+  `BLOCK_INIT`, addressed at the origin that init arrived from rather than
+  broadcast to `'*'`. It is also why nothing is posted when you preview locally:
+  there is no host to send `BLOCK_INIT`, so the emitter stays silent by design.
+
+> 🔒 **The emitter checks the sender *window*, not the sender's *identity*.** It
+> answers `window.parent` — whoever framed you — which is sound for this one
+> message because the ack carries no data. It is **not** sufficient for anything
+> you add next. The moment you handle an inbound message carrying a token, a
+> viewer, storage or a result, check `event.origin` against an allowlist of
+> origins you trust, or any page that frames your app can feed it whatever it
+> likes. The emitter deliberately does not vendor that allowlist — the real list
+> (production, preview subdomains, dev tunnels) is platform state that moves
+> without notice, and `@civitai/blocks-react` already maintains it from
+> `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. Adopt the SDK before you handle data.
 
 `RESIZE_IFRAME` is **not** part of a page app's protocol: the host renders a
-page block full-viewport and it does not size to content. (`useBlockResize` in
-the SDK is for the non-page block surfaces.)
+page block full-viewport, so it does not size to content and ignores the
+message. (`useBlockResize` is surface-agnostic and page-money still calls it —
+on a page surface it is simply a no-op, which is why the SDK templates can share
+component code across surfaces.)
 
 ### Local dev loop (harness: mock vs live)
 

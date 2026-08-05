@@ -25,8 +25,27 @@ Two details worth knowing, because they apply to every message you add later:
   reads `event.data.payload`, so fields put at the top level
   (`{ type: 'X', height: 0 }`) arrive as `payload: undefined`.
 - **Answer, don't announce.** The ack is sent in *response* to the host's
-  `BLOCK_INIT`, which is what supplies the host's real origin — so it is
-  addressed at that origin rather than broadcast to `'*'`.
+  `BLOCK_INIT`, addressed at the origin that init arrived from rather than
+  broadcast to `'*'`.
+
+> 🔒 **Before you handle any message that carries data, add an origin
+> allowlist.** `civitai-host.js` answers `window.parent` — whoever framed you.
+> That is fine for the ack, which carries no data and discloses nothing a
+> framing page doesn't already know. It is *not* fine for a token, a viewer,
+> storage, or a generation result: check `event.origin` against origins you
+> trust first, or any page that frames your app can feed it anything. The
+> emitter deliberately ships no allowlist — the real list (production, preview
+> subdomains, dev tunnels) is platform state that moves without notice, and
+> `@civitai/blocks-react` already maintains it from
+> `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. Adopt the SDK before you handle data.
+
+> ⚠️ **The one time deleting this file is correct: when you adopt
+> `@civitai/blocks-react` — and then it must go in the SAME change.** Running
+> both is worse than running neither. Whichever handshake answers the host's
+> *first* `BLOCK_INIT` cancels the host's retry loop **and** its readiness
+> timeout, so if this file wins the race the SDK's transport can be left never
+> having seen an init: it gives up after 10s while the host sits "ready",
+> showing an app that never started, with no retry and no error card.
 
 ## Develop
 
