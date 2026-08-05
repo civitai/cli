@@ -10,9 +10,30 @@ name: bump-scaffold-pins
 
 on:
   schedule:
-    # Weekly, Mondays 07:17 UTC (off the top-of-hour rush). Cron literal in YAML
-    # needs quoting so the `*` isn't parsed as a YAML alias.
-    - cron: "17 7 * * 1"
+    # DAILY at 07:17 UTC (off the top-of-hour rush; the minute is offset from the
+    # sibling drift-bots — revendor-canonical-schema 07:37, bump-flake-vendorhash
+    # 07:47). Cron literal in YAML needs quoting so the `*` isn't parsed as a
+    # YAML alias.
+    #
+    # This was weekly (`17 7 * * 1`) and that cadence was measurably too slow.
+    # `pins-vs-published` is a REQUIRED check on `main` and it reads npm's
+    # published latest, so from the moment a `@civitai/*` minor lands until this
+    # job bumps the pins, EVERY open PR is blocked regardless of its content.
+    # (The sibling `scaffold-currency` is required too but is NOT affected: it
+    # installs `@latest` explicitly, overriding the template pins, so it reds on
+    # a broken SDK export rather than on a stale caret.)
+    #
+    # Publishes measured off the npm registry `time` field: app-sdk 0.26.0
+    # Jul 17, 0.27.0 Jul 28, 0.28.0 Jul 29, 0.29.0 Aug 3 20:15, 0.30.0 Aug 3
+    # 22:13, 0.31.0 Aug 5 03:54 (2026) — six minors in 19 days, a ~3.6-day mean
+    # interval against a 7-day sweep. Upstream published faster than the bot
+    # swept, so a large fraction of each week sat red and the pins had to be
+    # hand-bumped twice in two days (#194, #203).
+    #
+    # Daily bounds that window at ~24h instead of ~168h. A no-op run is cheap:
+    # `detect changes` gates every downstream step, so an already-current sweep
+    # is just checkout + setup-go + the bumper's npm metadata reads.
+    - cron: "17 7 * * *"
   workflow_dispatch: {}
 
 permissions:
