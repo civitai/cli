@@ -289,13 +289,20 @@ blocked by CORS preflight and rejected by civitai's tRPC origin gate. The
 same-origin proxy + Origin rewrite fixes both. `VITE_LIVE_HOST_ORIGIN` overrides
 the proxy target (default `https://civitai.com`).
 
-**Which credential can spend?** Only a full-scope **personal API key** can run a
-real `dev:live` generation — the default OAuth login can't:
+**Which credential can spend?** Only a full-scope **personal API key** can spend
+Buzz — whether that is a real `dev:live` generation in your app or a
+[`civitai generate`](#generate) run from the terminal. The default OAuth login
+can't do either:
 
-| Credential | Real `dev:live` generation? | How to get it |
+| Credential | Can spend Buzz? (`dev:live`, `civitai generate`) | How to get it |
 |---|---|---|
 | **Personal API key** (full scope) | ✅ **Yes** — estimate → submit → generation → real Buzz | create it **in the web UI** at `civitai.com/user/account`, then `civitai login --token <key>` (a personal key carries AI Services) |
-| **`civitai login`** (OAuth, default) | ❌ No — viewer + catalog + app storage only | the `civitai-cli` client has no AI Services scope, so the server strips the spend scope — fine for read/identity `dev:live`, not generation |
+| **`civitai login`** (OAuth, default) | ❌ No — viewer + catalog + app storage only | the `civitai-cli` client has no AI Services scope, so the server strips the spend scope — fine for read/identity `dev:live`, not for generation |
+
+This is the single most common blocker for `civitai generate`: an OAuth login
+looks perfectly valid, and the refusal is a scope problem, not a login problem —
+re-running `civitai login` will not fix it. `civitai whoami` shows the capability
+as **Spend Buzz (AI Services)**.
 
 You can't mint a personal key over OAuth or the CLI (`apiKey.add` returns 403
 without a full-scope session) — create it in the web UI. The dev token always grants
@@ -486,6 +493,11 @@ Two properties make the output safe to pipe:
   exits `4` with `Error: not found (404): Model not found` on stderr and an empty
   stdout.
 
+Both properties hold for `civitai generate` and `civitai workflows …` too, but
+their payloads are **not** Site API REST shapes — generation has no REST route,
+so those commands pass through the raw *orchestrator* reply. Read
+[Generation `--json`](#generation---json) before scripting against them.
+
 ### Cursor pagination loop
 
 For deep paging use `--cursor` (**not** `--page` — the API caps `page*limit` at
@@ -510,6 +522,35 @@ The CLI runs a background check for a newer release and prints a nag to
 **stderr**. In scripts, silence it with `CIVITAI_NO_UPDATE_CHECK=1` (env) or
 `--no-update-check` (flag). Either way stdout stays pure JSON — the nag never
 touches stdout — but suppressing it keeps stderr clean for logs.
+
+### Generation `--json`
+
+`civitai generate --dry-run --json`, `civitai workflows list --json` and
+`civitai workflows get <id> --json` emit the raw orchestrator payload. Two
+caveats have bitten people, and neither shows up as an error:
+
+- **Output URLs are presigned and EXPIRE.** The links in a workflow payload are
+  short-lived signatures, not durable addresses. A pipeline that stores them and
+  fetches later gets a 401/403 from the storage host that no credential can fix
+  — re-run `civitai workflows get <id>` for fresh links instead of caching the
+  old ones. (Fetch them with **no** `Authorization` header; they are already
+  authorized, and the CLI deliberately attaches nothing to them.)
+- **`--json` still exits `0` when the job is not generatable.**
+  `--dry-run --json` prints the estimate and exits `0` even when the payload
+  says `"ready": false`, which means the server has already decided it cannot
+  serve this job (an unavailable or unsupported resource). A human `--dry-run`
+  prints a warning and a real submit refuses outright, but a script reading only
+  the exit code sees success. **Branch on the field**, exactly as `app metrics`
+  requires branching on `notOwned`:
+
+  ```bash
+  q=$(civitai generate "a cat" --checkpoint 128713 --dry-run --json) || exit $?
+  [ "$(echo "$q" | jq -r .ready)" = "true" ] || { echo "not generatable" >&2; exit 1; }
+  echo "$q" | jq -r .cost.total
+  ```
+
+  Cost keys (`cost.factors`, `cost.fixed`) are server-owned and passed through
+  **verbatim**, so treat them as an open map rather than a fixed set.
 
 ### Gotchas
 
@@ -1041,21 +1082,32 @@ deliberate refinement. The API answers several very different failures with the
 same HTTP status, and the generic mapping would send a script down the wrong
 path — in particular a caller who is out of Buzz, muted, or hitting a
 server-side outage must **never** be told to re-run `civitai login`. Those cases
-therefore exit `1` (generic), not `3` (auth):
+therefore exit `1` (generic), not `3` (auth) or `2` (usage):
+
+🔴 **An exit code does not tell you whether you were charged.** Every failure
+above the divider happens *before* anything is submitted, so nothing was spent.
+Every failure below it happens *after* the submit, and **the Buzz is gone** —
+including a `--timeout`, a Ctrl-C, and a workflow that ends `failed`. Do not
+write a retry loop that branches on the exit code alone; re-attach with
+`civitai workflows get <workflow-id>` instead of re-submitting.
 
 | Failure | Exit |
 | --- | --- |
+| *— nothing submitted, nothing spent —* | |
 | Missing AI Services scope / no token / not authenticated | `3` |
 | Not enough Buzz (caught locally against your balance, or reported by the server) | `1` |
 | Account muted, or onboarding incomplete | `1` |
 | Generation disabled server-side | `1` |
 | Prompt refused by content moderation — 🔴 **never retry**, repeated blocked prompts get the account muted | `1` |
-| Estimate above `--max-cost`, unknown ecosystem, or a resource that resolved but is not generatable | `2` |
+| The server priced the job but reports `ready: false` (a selected resource is not currently generatable) | `2` |
+| Estimate above `--max-cost`, an unknown ecosystem, or a resource that resolved fine but is "not enabled for generation" (the ids exist; the *combination* is not runnable — distinct from exit `4`, which means "no such id") | `2` |
 | `--input` that is malformed, declares a non-txt2img workflow, carries an envelope key (`civitaiTip`, …), or is combined with a content flag | `2` |
 | No such `--checkpoint` / `--lora` version id | `4` |
-| `--timeout` expired, Ctrl-C while waiting, or the workflow finished `failed`/`expired`/`canceled` — **all of these were still charged** | `1` |
+| `civitai workflows get` / `workflows cancel` on an unknown workflow id (a read; spends nothing) | `4` |
+| *— 🔴 submitted: the Buzz is already spent —* | |
+| `--timeout` expired, or Ctrl-C while waiting — the job **keeps running** server-side and was **not** cancelled | `1` |
+| The workflow finished `failed` / `expired` / `canceled` | `1` |
 | The workflow succeeded but every output was filtered out (blocked / unavailable / hidden) | `1` |
-| `civitai workflows get` / `workflows cancel` on an unknown workflow id | `4` |
 
 ## Configuration
 
@@ -1080,7 +1132,7 @@ by this — only `echo $?` differs.
 | `0` | Success. |
 | `1` | Generic / unclassified error. |
 | `2` | Usage error — a bad flag, a bad flag value (e.g. `--limit` out of range, a non-integer id), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum). |
-| `3` | Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured). **`civitai generate` refines this**: several of its failures also arrive as a 403 but are *not* credential problems (out of Buzz, muted account, generation disabled) and exit `1` instead, so a script never loops on `civitai login` — see [Generate](#exit-codes-specific-to-generate). |
+| `3` | Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured). **`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as "bad flags". See [Generate](#exit-codes-specific-to-generate). |
 | `4` | Not found — the requested resource does not exist (HTTP 404). |
 | `5` | Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries. |
 | `6` | Rate limited — throttled by the API (HTTP 429). |

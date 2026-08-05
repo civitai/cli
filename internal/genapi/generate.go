@@ -74,13 +74,17 @@ type WhatIfResult struct {
 
 // SubmitResult is the generateFromGraph reply — one normalized workflow.
 //
-// ⚠️ UNVERIFIED AGAINST A LIVE CALL. Every other shape in this package was
-// measured; this one cannot be, because calling the mutation spends real money.
-// It is derived by reading the server's `NormalizedWorkflow` interface
+// ✅ VERIFIED against a live submit (one SDXL-default txt2img, quantity 1:
+// estimated 8 Buzz, charged exactly 8). The field names below were originally
+// derived by reading the server's `NormalizedWorkflow` interface
 // (civitai/civitai -> src/server/services/orchestrator/
-// orchestration-new.service.ts). Only the fields a caller needs to poll and
-// report are modelled; the raw payload is returned alongside so nothing is
-// lost. Verify these field names against a real reply before rendering them.
+// orchestration-new.service.ts) and carried an UNVERIFIED warning, because
+// exercising the mutation spends real money; that warning is now discharged.
+//
+// Only the fields a caller needs to poll and report are modelled; the raw
+// payload is returned alongside so nothing is lost. Note this is the NORMALIZED
+// shape — `orchestrator.getWorkflow` returns the RAW orchestrator workflow, a
+// different shape again (see status.go). Do not share a struct between them.
 type SubmitResult struct {
 	// ID is the workflow id — the handle for polling and for re-attaching after
 	// an interrupt.
