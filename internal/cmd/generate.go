@@ -740,6 +740,18 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 
 	result, externalID, rawSubmit, err := deps.submit(ctx, built.graph, genapi.SubmitOptions{ExternalID: externalID})
 	if err != nil {
+		// 🔴 A CANCELLED CONTEXT BEATS THE no-status CHECK, and the order here is
+		// the whole point. StatusOf(err)==0 means "no interpretable HTTP reply",
+		// which conflates two very different things: the request went out and the
+		// answer was lost (money may have moved), versus the request never left
+		// this process at all (it cannot have). Ctrl-C and an expired --timeout
+		// produce the SECOND, and warning "you MAY have been charged" there sends
+		// the user to re-attach with an externalId no workflow exists behind —
+		// which submits a NEW job and charges them for real. Same guard the poll
+		// loop already applies at generate_wait.go:190.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return classifyGenerateError(err)
+		}
 		if genapi.StatusOf(err) == 0 {
 			// No HTTP status means no interpretable reply: the request may well
 			// have reached the orchestrator and been charged. Never let this
@@ -773,7 +785,11 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		return nil
 	}
 
-	printSubmitted(errw, workflowID, externalID, o.baseURL)
+	var submitCost *genapi.WorkflowCost
+	if result != nil {
+		submitCost = result.Cost
+	}
+	printSubmitted(errw, workflowID, externalID, o.baseURL, submitCost)
 	return waitAndCollect(ctx, cmd, deps, o, workflowID, externalID, statePath)
 }
 
@@ -899,9 +915,20 @@ func printOutputURLs(out, errw io.Writer, kept []genapi.Output) {
 
 // printSubmitted is the one-line "it is running" notice, on stderr so a --json
 // stdout stays machine-clean.
-func printSubmitted(errw io.Writer, workflowID, externalID, baseURL string) {
+// printSubmitted announces a submitted job on the DEFAULT (waiting) path.
+//
+// 🔴 It must print the REALIZED charge whenever the server reported one. The
+// user approved an ESTIMATE, and this command's whole spend story is that the
+// realized cost can exceed it with no refund (AGENTS.md items 11-16) — so the
+// one number that settles what actually happened cannot be visible only on the
+// --no-wait branch. `cost` is nil when the server sent none; say nothing then
+// rather than printing a fabricated 0.
+func printSubmitted(errw io.Writer, workflowID, externalID, baseURL string, cost *genapi.WorkflowCost) {
 	st := ui.For(errw)
 	fmt.Fprintln(errw, st.Success(fmt.Sprintf("Generation submitted — workflow %s", safeTerm(workflowID))))
+	if cost != nil {
+		fmt.Fprintln(errw, st.Info(fmt.Sprintf("Charged %s Buzz", buzzAmount(cost.Total))))
+	}
 	fmt.Fprintln(errw, st.Dim(fmt.Sprintf(
 		"External ID %s · watch it at %s/generate · re-attach any time with `civitai workflows get %s`",
 		externalID, strings.TrimRight(baseURL, "/"), safeTerm(workflowID))))
