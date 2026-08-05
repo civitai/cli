@@ -59,7 +59,7 @@ import { STARTER_COMFY_RECIPE, buildComfyBody } from './comfy.js';
  * Which sample the page is driving.
  *  - `txt2img` — the PRIMARY, runnable-today path (hardcoded-default checkpoint +
  *    host checkpoint/LoRA pickers).
- *  - `comfy`  — the SECONDARY Civitai Comfy Cloud (customComfy) sample: a
+ *  - `comfy`  — the SECONDARY Comfy on Civitai (customComfy) sample: a
  *    server-registered, code-reviewed recipe (`starter-comfy-txt2img`). The app
  *    can't ship a graph; it sends only the recipe id + a prompt. Invite-only beta
  *    on live civitai.com (works end-to-end against the mock host).
@@ -85,8 +85,11 @@ injectBlocksStyles();
  *  - scopes = ['ai:write:budgeted'] ONLY. The viewer's per-pool balance is read
  *    via the host-mediated `useBuzzBalance()` bridge (GET_BUZZ_BALANCE) — the
  *    host resolves the viewer from the block token, so NO `buzz:read:self` scope
- *    is needed and the block never touches the balance API directly. (Insufficient
- *    Buzz is still ALSO surfaced from a `failed` snapshot, as a backstop.)
+ *    is needed and the block never touches the balance API directly. The app does
+ *    NOT render a balance readout: your app runs inside the Civitai chrome, which
+ *    already shows the viewer's balance — duplicating it is noise. The balance is
+ *    read only to annotate the "Spend from" account picker. (Insufficient Buzz is
+ *    still ALSO surfaced from a `failed` snapshot, as a backstop.)
  *  - budget comes from manifest `page.buzzBudgetPerGen`; a page is stateless.
  *  - a page has no HOST model context (entity=none), so the app ships a curated
  *    default checkpoint (DEFAULT_CHECKPOINT) and lets the user change it via the
@@ -122,11 +125,13 @@ export function App() {
   // overlay), and on the real platform. A pick is DISCOVERY ONLY.
   const { open: openCheckpointPicker } = useCheckpointPicker();
   const { open: openResourcePicker } = useResourcePicker();
-  // The viewer's per-pool Buzz balance, read host-side (no scope needed). Purely
-  // informational + additive — it NEVER blocks generation (a missing/errored
+  // The viewer's per-pool Buzz balance, read host-side (no scope needed). NOT
+  // rendered as a balance readout — the surrounding Civitai chrome already shows
+  // the viewer's balance, so an in-app copy is redundant. It is read for ONE
+  // purpose: annotating which account can actually fund a generation in the
+  // "Spend from" picker below. It NEVER blocks generation (a missing/errored
   // balance still lets the user generate; the server is the real gate).
-  const { balance, loading: balanceLoading, error: balanceError, refetch: refetchBalance } =
-    useBuzzBalance();
+  const { balance, refetch: refetchBalance } = useBuzzBalance();
 
   const anon = ready && !viewer;
   const granted = hasBudgetedScope(token.scopes);
@@ -299,7 +304,7 @@ export function App() {
         : buildWorkflowBody(prompt, checkpoint, loras, account);
 
     // Classify a submit/estimate error into a terminal phase. The `'gated'`
-    // (Comfy Cloud invite-only-beta) panel is COMFY-MODE-SCOPED via
+    // (Comfy on Civitai invite-only-beta) panel is COMFY-MODE-SCOPED via
     // phaseForSubmitError: the real gate strings ("Apps are not enabled" flag
     // gate, "Apps authoring is not enabled" author gate, and the pre-deploy
     // unknown-recipe enum rejection) are SHARED with the txt2img path, so a
@@ -501,7 +506,7 @@ export function App() {
         <Stack gap={16}>
           <strong style={titleStyle}>{{ .Name }}</strong>
 
-          {/* Mode toggle: txt2img (primary, runnable today) ⇄ Comfy Cloud
+          {/* Mode toggle: txt2img (primary, runnable today) ⇄ Comfy on Civitai
               (secondary sample, invite-only beta). Switching swaps the input
               controls + the body-builder while REUSING the one estimate ->
               consent -> submit -> poll driver + the account picker below. */}
@@ -513,12 +518,12 @@ export function App() {
             disabled={busy}
             data={[
               { value: 'txt2img', label: 'Text to image' },
-              { value: 'comfy', label: 'Comfy Cloud recipe (sample · invite-only beta)' },
+              { value: 'comfy', label: 'Comfy on Civitai recipe (sample · invite-only beta)' },
             ]}
           />
 
           {isComfy && (
-            <Alert color="info" title="Comfy Cloud recipe (sample · invite-only beta)" data-testid="pm-comfy-beta">
+            <Alert color="info" title="Comfy on Civitai recipe (sample · invite-only beta)" data-testid="pm-comfy-beta">
               A bounded, <strong>server-owned</strong> graph. The app only picks a registered{' '}
               <code>recipe</code> id (<code>{STARTER_COMFY_RECIPE}</code>) + a prompt; the server
               owns the graph and a hard per-job Buzz ceiling. Invite-only beta on live civitai.com —
@@ -529,10 +534,6 @@ export function App() {
               </a>
               .
             </Alert>
-          )}
-
-          {!anon && (
-            <BalancePanel balance={balance} loading={balanceLoading} error={balanceError} />
           )}
 
           <Textarea
@@ -549,8 +550,9 @@ export function App() {
           />
 
           {/* Model + LoRA controls are the TXT2IMG sample's surface. The Comfy
-              Cloud sample sends a server-owned recipe (no client checkpoint/LoRA
-              axis), so these are hidden in comfy mode — just prompt + account. */}
+              on Civitai sample sends a server-owned recipe (no client
+              checkpoint/LoRA axis), so these are hidden in comfy mode — just
+              prompt + account. */}
           {!isComfy && (
             <>
               {/* Model control. A page carries no host model context, so the app
@@ -650,7 +652,7 @@ export function App() {
           )}
 
           {phase === 'gated' && (
-            <Alert color="info" title="Comfy Cloud recipes are in invite-only beta" data-testid="pm-gated">
+            <Alert color="info" title="Comfy on Civitai recipes are in invite-only beta" data-testid="pm-gated">
               Your account isn&apos;t in the tester cohort yet, so this recipe can&apos;t run on live
               civitai.com. Request access at{' '}
               <a href="https://github.com/civitai/cli" target="_blank" rel="noreferrer">
@@ -779,81 +781,6 @@ function LoraSelector({
 }
 
 /**
- * The viewer's per-pool Buzz balance ({ blue, green, yellow } + total), read via
- * the host-mediated `useBuzzBalance()`. Purely INFORMATIONAL and additive — it
- * NEVER blocks generation. Graceful when the balance is loading, errored, or
- * unavailable (`null`): a quiet line, never a crash.
- */
-function BalancePanel({
-  balance,
-  loading,
-  error,
-}: {
-  balance: { blue: number; green: number; yellow: number } | null;
-  loading: boolean;
-  error: Error | null;
-}) {
-  if (!balance) {
-    if (loading) {
-      return (
-        <div style={balancePanelStyle} data-testid="pm-balance">
-          <span style={fieldDescStyle}>Loading your Buzz balance…</span>
-        </div>
-      );
-    }
-    if (error) {
-      return (
-        <div style={balancePanelStyle} data-testid="pm-balance">
-          <span style={fieldDescStyle}>Buzz balance unavailable.</span>
-        </div>
-      );
-    }
-    return null;
-  }
-  const total = balance.blue + balance.green + balance.yellow;
-  return (
-    <div style={balancePanelStyle} data-testid="pm-balance">
-      <PoolChip label="Blue" value={balance.blue} color={POOL_COLORS.blue} testid="pm-balance-blue" />
-      <PoolChip
-        label="Green"
-        value={balance.green}
-        color={POOL_COLORS.green}
-        testid="pm-balance-green"
-      />
-      <PoolChip
-        label="Yellow"
-        value={balance.yellow}
-        color={POOL_COLORS.yellow}
-        testid="pm-balance-yellow"
-      />
-      <span style={balanceTotalStyle} data-testid="pm-balance-total">
-        Total <strong>{formatCost(total)}</strong> Buzz
-      </span>
-    </div>
-  );
-}
-
-function PoolChip({
-  label,
-  value,
-  color,
-  testid,
-}: {
-  label: string;
-  value: number;
-  color: string;
-  testid: string;
-}) {
-  return (
-    <span style={poolChipStyle} data-testid={testid}>
-      <span style={poolDotStyle(color)} aria-hidden />
-      <span style={fieldDescStyle}>{label}</span>{' '}
-      <strong style={poolValueStyle}>{formatCost(value)}</strong>
-    </span>
-  );
-}
-
-/**
  * Choose which Buzz pool funds the generation. Auto (default) omits `accountType`
  * from the submit body entirely — today's host-chosen behavior. Pools with a 0
  * balance are annotated but stay selectable (the server still preferred-first
@@ -963,39 +890,8 @@ const currentModelStyle: React.CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
-// Buzz-pool identity colors (semantic, not theme-derived) for the balance chips.
-const POOL_COLORS = { blue: '#4dabf7', green: '#51cf66', yellow: '#ffd43b' } as const;
-
-// The balance panel + account-picker chrome read the same pack CSS vars as the
-// Model/LoRA controls so they match the surface across themes.
-const balancePanelStyle: React.CSSProperties = {
-  display: 'flex',
-  flexWrap: 'wrap',
-  alignItems: 'center',
-  gap: 12,
-  padding: '8px 12px',
-  borderRadius: 8,
-  border: '1px solid var(--ci-color-border)',
-  background: 'var(--ci-color-surface)',
-  fontSize: 13,
-};
-const balanceTotalStyle: React.CSSProperties = {
-  marginLeft: 'auto',
-  color: 'var(--ci-color-text)',
-  fontVariantNumeric: 'tabular-nums',
-};
-const poolChipStyle: React.CSSProperties = {
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 4,
-  fontVariantNumeric: 'tabular-nums',
-};
-// A function returning the merged style (rather than an inline object-literal
-// style prop) so the scaffold template renderer can process this file cleanly.
-function poolDotStyle(color: string): React.CSSProperties {
-  return { width: 8, height: 8, borderRadius: '50%', display: 'inline-block', background: color };
-}
-const poolValueStyle: React.CSSProperties = { color: 'var(--ci-color-text)' };
+// The account-picker chrome reads the same pack CSS vars as the Model/LoRA
+// controls so it matches the surface across themes.
 const pickerRowStyle: React.CSSProperties = {
   display: 'flex',
   flexWrap: 'wrap',

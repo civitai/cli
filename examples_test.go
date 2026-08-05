@@ -16,6 +16,13 @@ import (
 // clean" TRUE rather than aspirational. If a future server-validator change
 // makes one of these stricter, this test fails and forces a reconciliation
 // (fix the example, or fix the ported check, and document it).
+//
+// SCOPE — this checks schema/structural conformance ONLY. It says nothing about
+// whether any VALUE in an example is well-chosen: page.buzzBudgetPerGen: 10
+// satisfies `exclusiveMinimum: 0` no matter how it was sized. Sizing guidance is
+// prose (README + the canonical schema's field description), deliberately not a
+// test — any threshold here would have to guess at correct sizing per app and
+// would fire on legitimately cheap ones.
 func TestExampleManifestsValidateClean(t *testing.T) {
 	entries, err := cli.ExamplesFS.ReadDir("examples")
 	if err != nil {

@@ -108,10 +108,10 @@ func TestAppCreateDefaultsToPageMoney(t *testing.T) {
 	if !strings.Contains(stdout, "beta access") {
 		t.Errorf("create should gate submit/dev-tunnel under a beta-access heading:\n%s", stdout)
 	}
-	// The Comfy Cloud (customComfy) sample is surfaced (finding #2: it was
+	// The Comfy on Civitai (customComfy) sample is surfaced (finding #2: it was
 	// undiscoverable) — honestly flagged as invite-only beta.
-	if !strings.Contains(stdout, "Comfy Cloud") {
-		t.Errorf("create should surface the Comfy Cloud sample in the output:\n%s", stdout)
+	if !strings.Contains(stdout, "Comfy on Civitai") {
+		t.Errorf("create should surface the Comfy on Civitai sample in the output:\n%s", stdout)
 	}
 	// The trimmed message drops the old multi-line Buzz/OAuth/personal-key
 	// paragraph (dev:live now lives in dev-token/README, not the scaffold banner).
@@ -137,7 +137,7 @@ func TestAppCreateDefaultsToPageMoney(t *testing.T) {
 	}
 }
 
-// TestAppCreateHelpMentionsComfy guards finding #2: the Comfy Cloud sample must
+// TestAppCreateHelpMentionsComfy guards finding #2: the Comfy on Civitai sample must
 // be discoverable from `civitai app create --help` (it was previously described
 // as a txt2img-only app).
 func TestAppCreateHelpMentionsComfy(t *testing.T) {
@@ -145,9 +145,9 @@ func TestAppCreateHelpMentionsComfy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app create --help: %v", err)
 	}
-	for _, want := range []string{"Comfy Cloud", "customComfy"} {
+	for _, want := range []string{"Comfy on Civitai", "customComfy"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("app create help should mention %q (Comfy Cloud discoverability):\n%s", want, out)
+			t.Errorf("app create help should mention %q (Comfy on Civitai discoverability):\n%s", want, out)
 		}
 	}
 }

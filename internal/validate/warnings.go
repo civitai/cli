@@ -10,8 +10,24 @@ package validate
 //
 // The budgeted-page-without-budget case is the headline one the page-money
 // dogfood surfaced: a page declaring `ai:write:budgeted` but no
-// `page.buzzBudgetPerGen` mints budget-less tokens, so every generation fails
-// insufficient-budget at the orchestrator — a silent, confusing dead end.
+// `page.buzzBudgetPerGen` is minted with the platform's 10-Buzz fallback budget,
+// which is below almost any real generation, so every submit is rejected
+// insufficient-budget before it runs — a silent, confusing dead end.
+//
+// SIZING — `page.buzzBudgetPerGen` is a SAFETY CEILING, not a forecast. It caps
+// what ONE generation the app requests may cost, so a bug or a compromised
+// bundle can't drain the viewer's Buzz. The server re-prices every submit and
+// charges the REAL price, so headroom is free; a budget sized to an ESTIMATE
+// breaks the app outright (hard `insufficient buzz budget` reject, nothing
+// charged, nothing delivered) the moment real cost drifts up. Advice here must
+// therefore always push budgets UP, never down.
+//
+// DELIBERATELY NOT CHECKED: "this value looks small". The CLI cannot price a
+// generation (that is a server-side whatIf against live model pricing), so any
+// threshold would be arbitrary — and a manifest sized correctly for a cheap
+// single-recipe app is byte-identical to one sized from a per-run estimate. A
+// magnitude warning would also have to fire above this CLI's own page-money
+// scaffold value (40), and `--strict` promotes warnings to hard failures.
 
 const budgetedScope = "ai:write:budgeted"
 
@@ -28,15 +44,19 @@ func warningChecks(generic any) []string {
 	_, hasBudgeted := scopes[budgetedScope]
 	_, hasTargets := m["targets"].([]any)
 
-	// (1) Budgeted scope but no per-gen budget on the page. A page mints
-	//     budget-less ai:write:budgeted tokens → every spend fails at the
-	//     orchestrator. The headline footgun the dogfood found.
+	// (1) Budgeted scope but no per-gen budget on the page. The page's tokens
+	//     fall back to the platform's 10-Buzz default → every submit is rejected
+	//     before it runs. The headline footgun the dogfood found.
 	if hasBudgeted && hasPage {
 		if _, hasBudget := page["buzzBudgetPerGen"]; !hasBudget {
 			warns = append(warns,
 				"scopes include \"ai:write:budgeted\" but page.buzzBudgetPerGen is not set — "+
-					"a page mints budget-less tokens, so every generation will fail with "+
-					"insufficient budget; set page.buzzBudgetPerGen (server-clamped to the per-gen cap)")
+					"tokens fall back to a 10 Buzz budget, below almost any real generation, so "+
+					"every submit is rejected with insufficient budget before it runs. Set "+
+					"page.buzzBudgetPerGen: it is a SAFETY CEILING on what one generation may "+
+					"cost, not a cost estimate — size it several times your worst-case run "+
+					"(headroom is free; you are charged the real price, and the server clamps "+
+					"the budget at the per-gen cap)")
 		}
 	}
 

@@ -306,12 +306,21 @@ scaffolded project's own `README.md` and `.env.example` — see
 ### Examples
 
 Two real example manifests live under [`examples/`](examples/) (copied from the
-shipping `civitai-block-*` apps) — a good reference for a correct manifest:
+`civitai-block-*` dogfood apps). Read them for manifest **shape** — between them
+they cover the required fields, `$schema` wiring, the `page`/`iframe` blocks, and
+scope declarations with justifications:
 
 - [`examples/buzz-generator.block.manifest.json`](examples/buzz-generator.block.manifest.json)
 - [`examples/notepad.block.manifest.json`](examples/notepad.block.manifest.json)
 
-Both validate clean (`examples_test.go` asserts this so the claim stays true).
+The *values* are those apps' own choices, not recommendations. In particular don't
+copy `buzz-generator`'s `page.buzzBudgetPerGen` — it is a safety ceiling against a
+malicious or compromised app, not an estimate of one run, so size your own from the
+field's description in the [canonical schema](https://civitai.com/schemas/app-block/v1.json)
+(`notepad` doesn't take the budgeted scope, so it has no budget at all).
+
+Both validate clean (`examples_test.go` asserts this so the claim stays true) —
+schema conformance only, which says nothing about whether a value is well-sized.
 
 ## Browse the public API
 

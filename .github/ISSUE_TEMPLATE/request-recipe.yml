@@ -1,12 +1,12 @@
-name: Request a Comfy Cloud recipe
-description: Request a new Civitai Comfy Cloud (customComfy) recipe your App can invoke.
+name: Request a Comfy on Civitai recipe
+description: Request a new Comfy on Civitai (customComfy) recipe your App can invoke.
 title: "[Recipe request] "
 labels: ["recipe-request"]
 body:
   - type: markdown
     attributes:
       value: |
-        **Comfy Cloud recipes are server-registered + code-reviewed** — an App can't ship its own graph. The iframe only picks a **recipe id** plus a small, per-recipe-validated `params` object; the Civitai server owns the ComfyUI graph, the resource allowlist, the checkpoint policy, and a hard per-job Buzz ceiling.
+        **Comfy on Civitai recipes are server-registered + code-reviewed** — an App can't ship its own graph. The iframe only picks a **recipe id** plus a small, per-recipe-validated `params` object; the Civitai server owns the ComfyUI graph, the resource allowlist, the checkpoint policy, and a hard per-job Buzz ceiling.
 
         Use this form to request a NEW recipe. Describe the graph/workflow you want, the params your App needs to expose, and the use case. We'll review it and, if approved, register it as a recipe id you can invoke via `buildComfyBody({ recipe, params })` (see `src/comfy.ts` in the page-money scaffold).
   - type: input

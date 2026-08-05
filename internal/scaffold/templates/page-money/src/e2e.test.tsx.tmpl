@@ -187,7 +187,7 @@ describe('App money path (e2e)', () => {
     expect(screen.queryByAltText(/generated result/i)).not.toBeInTheDocument();
   });
 
-  it('Comfy Cloud sample: switch mode -> customComfy submit -> succeeded (+cost)', async () => {
+  it('Comfy on Civitai sample: switch mode -> customComfy submit -> succeeded (+cost)', async () => {
     const user = userEvent.setup();
     const submittedBodies: Array<{ kind?: string; recipe?: string }> = [];
     uninstall = installMockMoneyHost({
@@ -207,9 +207,9 @@ describe('App money path (e2e)', () => {
     render(<App />);
     await screen.findByTestId('pm-generate');
 
-    // Switch to the Comfy Cloud sample. The txt2img-only Model/LoRA controls go
+    // Switch to the Comfy on Civitai sample. The txt2img-only Model/LoRA controls go
     // away; the beta note + the shared prompt/account picker stay.
-    await user.click(screen.getByRole('tab', { name: /comfy cloud recipe/i }));
+    await user.click(screen.getByRole('tab', { name: /comfy on civitai recipe/i }));
     expect(screen.getByTestId('pm-comfy-beta')).toBeInTheDocument();
     expect(screen.queryByTestId('pm-change-model')).not.toBeInTheDocument();
     expect(screen.queryByTestId('pm-lora-add')).not.toBeInTheDocument();

@@ -37,7 +37,9 @@ The money path uses the SDK hooks — never raw `window.parent.postMessage`:
 - `useBuzzWorkflow()` — `estimate` / `submit` / `poll` (the spend).
 - `useBuzzBalance()` — the viewer's per-pool balance (`{ blue, green, yellow }`),
   read host-side via the `GET_BUZZ_BALANCE` bridge — **no `buzz:read:self` scope
-  needed** (the host resolves the viewer from the block token).
+  needed** (the host resolves the viewer from the block token). Use it to *reason*
+  about spend (which account can fund this?), **not** to re-display the balance —
+  the Civitai chrome around your app already shows it.
 - `useCheckpointPicker()` / `useResourcePicker()` — open the HOST's native
   resource picker for the checkpoint + LoRAs (the app never browses a catalog).
 - `useRequestConsent()` — lazy, on first Generate: `ai:write:budgeted` is
@@ -90,15 +92,15 @@ server is LoRA-only for additional resources and **re-validates** base-model
 compatibility + per-resource entitlement (early-access / Private) AND
 **re-prices** the whole body **before any Buzz spend**.
 
-### Comfy Cloud sample (customComfy)
+### Comfy on Civitai sample (customComfy)
 
 A **mode toggle** at the top switches between two samples that share the one
 estimate → consent → submit → poll driver + the account picker — only the body
 differs:
 
 - **Text to image** (primary, runnable today) — the checkpoint + LoRA path above.
-- **Comfy Cloud recipe** (secondary, invite-only beta) — runs a **Civitai Comfy
-  Cloud (`customComfy`)** generation via `buildComfyBody` in `src/comfy.ts`.
+- **Comfy on Civitai recipe** (secondary, invite-only beta) — runs a **Comfy on
+  Civitai (`customComfy`)** generation via `buildComfyBody` in `src/comfy.ts`.
 
 **How customComfy works — server-owned graph, fail-closed.** The iframe **never
 sends a Comfy graph.** It sends `{ kind: 'customComfy', recipe, params }` where
@@ -108,29 +110,59 @@ owns the graph, the resource allowlist, the checkpoint policy, and a hard per-jo
 the recipe + a small, per-recipe-validated `params` object (here just a prompt,
 plus the shared account picker — no checkpoint/LoRA axis). This sample invokes
 **`starter-comfy-txt2img`** — a cheap, minimal Z-Image txt2img starter recipe
-(per-job Buzz ceiling 30). That's why `page.buzzBudgetPerGen` is **40**: it must
-reserve at least the recipe's ceiling (30) and also covers a cheap txt2img gen.
-The scope is unchanged — `customComfy` needs exactly `ai:write:budgeted`, already
-declared.
+(per-job Buzz ceiling 30). The scope is unchanged — `customComfy` needs exactly
+`ai:write:budgeted`, already declared.
 
-> **One budget serves both modes.** A manifest declares a single
-> `page.buzzBudgetPerGen`, so **40** is the per-gen ceiling for the txt2img sample
-> too — higher than a cheap txt2img gen strictly needs. That's inherent to shipping
-> the Comfy sample default-on (the recipe needs ≥30); it isn't expressible
-> per-mode. If you drop the Comfy sample, you can lower this to whatever your
-> txt2img path needs. The server still re-prices + hard-caps every gen at the real
-> per-job ceiling — the budget is only the upper bound the block token may spend.
+**Two different numbers, and they are not the same quantity.** It is easy to
+read one off the other; don't.
+
+- A recipe's **`maxBuzz` ceiling** (30 here) is what the *server* enforces on a
+  single job. The step runs under a timeout that physically bounds GPU-seconds,
+  so the job cannot accrue more than that no matter what the graph does — and
+  you settle down to the *real* runtime cost anyway. You don't choose this
+  number; the recipe registry does.
+- **`page.buzzBudgetPerGen`** is what *you* choose: the largest single generation
+  your app is permitted to request **at all**. It is a blast-radius limit — the
+  bound on what one generation could cost if your app were exploited or its
+  bundle compromised.
+
+The ceiling constrains the budget in exactly one direction: a submit is rejected
+when the recipe's ceiling exceeds the token budget, so 30 is a hard **floor**
+here. A floor is not a sizing method. "Ceiling plus a margin" pegs your blast
+radius to whatever the cheapest recipe you currently call happens to cost, which
+is an estimate wearing a safety hat — and it re-breaks the app the moment you
+call something pricier. Size the budget from how much damage you are willing to
+absorb, then check it clears the floor. The scaffold ships **300**, ~10× its own
+worst case.
+
+> **One budget serves both modes, and it is a CEILING — not an estimate.**
+> `page.buzzBudgetPerGen` is the safety ceiling on what a SINGLE generation your
+> app requests may cost. It exists so a bug, or a compromised bundle, can't drain
+> the viewer's Buzz — not to predict your bill. A manifest declares one value, so
+> **300** is the per-gen ceiling for the txt2img sample too.
+>
+> **Raise it; don't lower it.** Headroom is free: the server re-prices every
+> submit and charges the REAL price, so a generous ceiling never costs anyone
+> more. Sizing it to what you expect a run to cost is the classic mistake — a
+> submit priced ABOVE the budget is rejected outright with `insufficient buzz
+> budget`. Nothing is charged, but the user gets nothing, and it stays broken for
+> every user until you ship a new manifest version and it is re-approved. Any
+> upward drift does that: more steps, a bigger resolution, a pricier model or
+> recipe. Pick several times your worst case (the server clamps at 1000 anyway),
+> and note that cumulative spend is separately capped per viewer per day — a high
+> per-gen ceiling does not widen total exposure.
 
 **Requesting a new recipe.** Because recipes are server-registered + code-reviewed,
-you can't add one from the app. Request a new Comfy Cloud recipe via the CLI's
+you can't add one from the app. Request a new Comfy on Civitai recipe via the CLI's
 issue form at
 <https://github.com/civitai/cli/issues/new?template=request-recipe.yml> (describe
 the graph + the intended `params` + the use case). It ships as a registered id
 once reviewed.
 
-**Dev loop — honest state.** In `npm run dev:harness` (the **mock** host) the Comfy
-Cloud sample **works end-to-end** (estimate → submit → poll → succeeded with a mock
-image + cost), so you can build against it today. That is the fully-working path.
+**Dev loop — honest state.** In `npm run dev:harness` (the **mock** host) the
+Comfy on Civitai sample **works end-to-end** (estimate → submit → poll →
+succeeded with a mock image + cost), so you can build against it today. That is
+the fully-working path.
 
 On **live** civitai.com the sample is **not runnable yet**, for two reasons, and
 its graceful panel is best-effort:
@@ -158,11 +190,18 @@ So: **mock works now**; a real Comfy run needs the invite-only beta cohort (+
 
 ### Buzz balance + account picker (per-account spend)
 
-Above the prompt, the app shows the viewer's **per-pool Buzz balance** —
-**blue** (free / earned), **green** (creator-earned / tips), **yellow**
-(purchased) — plus a total, read via `useBuzzBalance()`. It's purely
-informational and additive: if the balance is loading, errored, or unavailable it
-degrades quietly (a small line) and **never blocks generation**.
+🔴 **Don't render a Buzz balance readout in your app.** Your app runs inside the
+Civitai chrome, which **already shows the viewer's balance** — a second copy
+inside the iframe is redundant, and it competes with the real one whenever the
+two are momentarily out of sync. This scaffold deliberately ships **no** balance
+panel; if you're tempted to add one, that's the signal you want a *host* surface,
+not an app surface.
+
+The app still *reads* the balance via `useBuzzBalance()` — for exactly one
+purpose: annotating **which account can actually fund this generation** in the
+picker below. That's app-specific context the chrome can't provide, so it earns
+its place. It's additive: if the balance is loading, errored, or unavailable the
+annotation just doesn't render and generation is **never blocked**.
 
 Below the LoRA selector, a **"Spend from"** picker lets the viewer choose which
 pool funds the generation:
@@ -336,11 +375,12 @@ The two reads use **different credentials** — by design, and security-critical
 > `useResourcePicker` work in `dev:live`. It does **not** support
 > `SET_USER_CHECKPOINT` persistence, the App-Storage KV protocol, in-band Buzz
 > purchase, or the `GET_BUZZ_BALANCE` read (`useBuzzBalance`) — those reply "not
-> supported in live v1" (use mock mode for them). So in `dev:live` the in-app
-> 3-pool balance panel shows **"Buzz balance unavailable"** (the host nav's total,
-> read via your personal key through the proxy, still works). The panel populates
-> in **`dev:harness`** (synthetic, wired to the `balance` scenario) and on the
-> **real platform** (the civitai host answers `GET_BUZZ_BALANCE` natively).
+> supported in live v1" (use mock mode for them). So in `dev:live` the balance
+> reads as unavailable and the "Spend from" picker simply drops its 0-Buzz
+> annotations — nothing else changes, and the host nav's own balance total (read
+> via your personal key through the proxy) still works. The balance resolves in
+> **`dev:harness`** (synthetic, wired to the `balance` scenario) and on the **real
+> platform** (the civitai host answers `GET_BUZZ_BALANCE` natively).
 
 ### Scenarios (exercise the money / error / storage UX for free)
 
