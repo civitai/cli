@@ -680,8 +680,24 @@ Rejection reason:
 Not live yet — gen-matrix.civit.ai only serves after the app is approved and deployed (deployState 'live').
 ```
 
+The unfiltered listing is **capped server-side at 100 rows**, and the API returns
+no cursor and no total — so there is no way to page and no way to know how many
+were dropped. When a full-length page comes back the CLI says so on **stderr**
+rather than presenting it as your complete history:
+
+```text
+note: showing the newest 100 submissions — the API caps this listing and offers no way to page, so older submissions may exist but are not listed. Look up a specific app with `civitai app status <blockId>`.
+```
+
+That is an inference (a page that is exactly full is indistinguishable from one
+that was cut off), so it says *may*. A per-app lookup — `civitai app status
+<blockId>` — is **not** affected: the server narrows to the slug before applying
+the cap.
+
 `--json` emits the raw response for scripting. An empty list prints a friendly
 "run `civitai app submit`" hint; with no token it points you at `civitai login`.
+Notes like the cap caveat go to stderr, so `--json` stdout stays pure and the
+exit code stays 0.
 
 ## App metrics
 

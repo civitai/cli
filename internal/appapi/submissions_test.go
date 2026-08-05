@@ -163,3 +163,16 @@ func TestSubmissionsErrorMapping(t *testing.T) {
 		srv.Close()
 	}
 }
+
+// TestListSubmissionsCapMirrorsServer pins the VENDORED value, not the predicate
+// that reads it: ListSubmissionsCap mirrors MAX_ROWS in civitai/civitai
+// src/pages/api/v1/blocks/submissions.ts, and every other test is written in
+// terms of the constant, so it would happily follow the constant if someone
+// edited it. The literal is the contract. If the server's page size genuinely
+// changed, update BOTH this literal and the constant in the same change.
+func TestListSubmissionsCapMirrorsServer(t *testing.T) {
+	if ListSubmissionsCap != 100 {
+		t.Errorf("ListSubmissionsCap = %d, want 100 (MAX_ROWS in submissions.ts) — "+
+			"if the server page size really changed, update this literal too", ListSubmissionsCap)
+	}
+}
