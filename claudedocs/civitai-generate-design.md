@@ -403,12 +403,38 @@ generation. Verify before shipping.)*
 **Decision:** reuse the downloader, pass the blob fetch through a path that does **not**
 attach the token.
 
-**Also handle output state.** Every normalized output carries `{available, urlExpiresAt,
-nsfwLevel, blockedReason, hidden}` (`orchestration-new.service.ts:2142-2149`) and the web
-filters on three of them (`workflow-data.ts:222`). A `succeeded` workflow can contain
-moderation-blocked or not-yet-available outputs. Without this, `generate` reports success
-and silently writes fewer files than `--quantity` asked for. Name files
-`<workflowId>-<n>.<ext>`; add `--force` for collisions.
+**Also handle output state.** A `succeeded` workflow can contain moderation-blocked or
+not-yet-available outputs. Without filtering, `generate` reports success and silently
+writes fewer files than `--quantity` asked for. Name files `<workflowId>-<n>.<ext>`; add
+`--force` for collisions.
+
+⚠️ **CORRECTED in phase 2 — the shape above is the WRONG one for the endpoint §6.3
+mandates.** `{available, blockedReason, hidden}` as *blob* fields
+(`orchestration-new.service.ts:2142-2149`, `workflow-data.ts:222`) belong to the
+**normalized** path (`statusUpdate` / `queryGeneratedImages`). But `orchestrator.getWorkflow`
+returns the **RAW orchestrator workflow** — the router hands `getWorkflow`'s result straight
+back with no `formatGenerationResponse2` step (`orchestrator.router.ts:203-207`). On the raw
+shape:
+
+- `hidden` is **not** a blob field — it is `step.metadata.output[<blobId>].hidden`, with a
+  **legacy `step.metadata.images[<blobId>]` fallback**. A reader built to the normalized
+  shape misses it entirely and reports every deleted output as visible.
+- `seed` is `step.metadata.params.seed + index`, not a blob field. `width`/`height` *are* on
+  the blob.
+- Outputs live in **three different containers** keyed by step `$type`: `output.images`
+  (textToImage/imageGen), `output.blobs` (comfy), `output.blob` (upscaler/preprocess).
+  Reading only one silently yields zero outputs for the others.
+- There is **no `pending` status**. The enum is
+  `unassigned|preparing|scheduled|processing|succeeded|failed|expired|canceled`; treat an
+  unrecognised value as "keep waiting".
+
+⚠️ **And `queryGeneratedImages` (used by `workflows list`) returns the NORMALIZED shape** —
+i.e. a *different* shape again from `getWorkflow`. This doc previously treated "a workflow"
+as one type. Reusing one struct for both reads fabricated zeros. They need separate types.
+
+⚠️ **`cancelWorkflow` returns `undefined`** — its success reply has no `result.data.json` at
+all (`workflows.ts:532-539`), so routing it through the standard tRPC unwrap turns *every
+successful cancel* into "unexpected response". HTTP 200 is the success signal.
 
 ### 6.3 Polling — v1's justification was wrong
 
@@ -576,3 +602,18 @@ paragraph already says "both vendored mirrors" while items 2 and 10 track three.
 | `externalId` as a nice-to-have `--external-id` flag | ❌ **Mandatory + unconditional** (§2.2) |
 | Add a "Generate" row to `whoami` | ❌ **Already exists** (`whoami.go:81`) |
 | `analytics.go:240-245`, `stable-diffusion.handler.ts:186-210`, `token-scope.ts` path | ⚠️ Citations off by a few lines / file moved to `packages/civitai-auth/` |
+| §7: insufficient Buzz / generation-disabled arrive as **403** | ❌ **Both are 400** — the orchestrator 403 is re-thrown as tRPC `BAD_REQUEST`. The real 403 victims are muted + onboarding (§7) |
+| §2.2: the `authedDo` POST-replay hazard is armed by the OAuth migration | ❌ **Closed now** by the unconditional `externalId` (§2.2) |
+| §6.2: outputs carry `{available, blockedReason, hidden}` as blob fields | ❌ **That is the NORMALIZED shape**; `getWorkflow` returns the RAW one (§6.2) |
+| Treating "a workflow" as one shape across endpoints | ❌ `getWorkflow` is raw, `queryGeneratedImages` is normalized — two types (§6.2) |
+| §4: "whitelist the generate envelope" (siblings unenumerated) | ⚠️ There are **9** envelope siblings, not the 5 named: + `sourceMetadata`, `sourceMetadataMap`, `remixOfId`, and a top-level `input` |
+| §9: `workflows list\|cancel` belong in v3 with the OAuth migration | ⚠️ No OAuth dependency; they shipped in phase 3 |
+| §6.4: "print the exact re-attach command" | ⚠️ Unsatisfiable if the submit reply is lost — needs `--external-id` to be executable |
+
+### Verified live at the phase-2 gate (first real generation)
+
+One SDXL-default txt2img, quantity 1, workflow `8753561-20260805192923707`:
+**estimated 8 Buzz, charged exactly 8 Buzz** (blue 1,339,760 → 1,339,752), 1024×1024 JPEG
+downloaded with **no credential attached**, `workflows get` re-attach confirmed. The submit
+response shape (previously `⚠️ UNVERIFIED`) is now verified. One data point — it does **not**
+disprove §4's finding that realized cost *can* exceed the quote without refund.
