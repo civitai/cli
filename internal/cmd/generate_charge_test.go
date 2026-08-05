@@ -64,21 +64,26 @@ func TestPrintSubmitted_NilCostPrintsNoChargeLine(t *testing.T) {
 	}
 }
 
-// A CANCELLED context must NOT produce "you MAY have been charged".
+// A cancelled context still warns — it just says "interrupted".
 //
-// Audit finding 🟡#2 on PR #210: StatusOf(err)==0 conflates "the request went out
-// and the answer was lost" (money may have moved) with "the request never left
-// this process" (it cannot have). Warning on the second sends the user to
-// re-attach with an externalId no workflow exists behind — which submits a NEW
-// job and charges them for real.
-func TestGenerate_CancelledContextDoesNotClaimAPossibleCharge(t *testing.T) {
+// 🔴 This test previously asserted the OPPOSITE (that a cancelled context must
+// stay silent), and that revision was a money-safety regression: ctx.Err()
+// cannot tell "cancelled before the POST" from "cancelled mid-flight", so
+// suppressing on cancellation went silent in the window where the charge is
+// real. See TestGenerate_CancelDuringSubmitStillWarnsAboutAPossibleCharge.
+//
+// The uncertainty belongs in the MESSAGE, not in the control flow: we cannot
+// observe whether the request bytes were written, so we always warn, and the
+// wording acknowledges the interruption instead of claiming the server was
+// silent.
+func TestGenerate_CancelledContextWarnsAsInterrupted(t *testing.T) {
 	withStdinTTY(t, false)
 	s := genSeams{submitErr: errors.New("context canceled")}
 	o := baseOpts()
 	o.assumeYes = true
 
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // cancelled BEFORE the submit — nothing can have reached the server
+	cancel() // cancelled before the submit
 
 	c, _, errOut := genCmd("")
 	c.SetContext(ctx)
@@ -86,11 +91,34 @@ func TestGenerate_CancelledContextDoesNotClaimAPossibleCharge(t *testing.T) {
 	if err == nil {
 		t.Fatal("cancelled context: want an error, got nil")
 	}
-	if strings.Contains(errOut.String(), "MAY still have been accepted") {
-		t.Errorf("cancelled context must NOT claim a possible charge — nothing was sent.\nstderr:\n%s", errOut.String())
+	if !strings.Contains(errOut.String(), "MAY still have been accepted") {
+		t.Errorf("a cancelled submit must still warn about a possible charge — silence strands the user.\nstderr:\n%s", errOut.String())
 	}
-	if strings.Contains(errOut.String(), "--external-id") {
-		t.Errorf("cancelled context must NOT send the user to re-attach: that externalId has no workflow, so re-attaching submits a NEW job.\nstderr:\n%s", errOut.String())
+	if !strings.Contains(errOut.String(), "interrupted") {
+		t.Errorf("a cancelled submit should be worded as interrupted, not as server silence.\nstderr:\n%s", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "--external-id") {
+		t.Errorf("the externalId must be handed back — this is the only surface that does.\nstderr:\n%s", errOut.String())
+	}
+}
+
+// CONTRAST: a lost reply on a LIVE context uses the "no answer" wording, not the
+// interrupted wording. Pins that the two cases are distinguishable in the text.
+func TestGenerate_LostReplyOnLiveContextSaysNoAnswer(t *testing.T) {
+	withStdinTTY(t, false)
+	s := genSeams{submitErr: errors.New("EOF")}
+	o := baseOpts()
+	o.assumeYes = true
+
+	c, _, errOut := genCmd("")
+	if err := runGenerate(c, s.deps(t), o); err == nil {
+		t.Fatal("lost reply: want an error, got nil")
+	}
+	if !strings.Contains(errOut.String(), "got no answer from the server") {
+		t.Errorf("a live-context lost reply should say the server gave no answer.\nstderr:\n%s", errOut.String())
+	}
+	if strings.Contains(errOut.String(), "interrupted") {
+		t.Errorf("a live-context lost reply must not claim interruption.\nstderr:\n%s", errOut.String())
 	}
 }
 

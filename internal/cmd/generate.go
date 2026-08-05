@@ -740,25 +740,35 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 
 	result, externalID, rawSubmit, err := deps.submit(ctx, built.graph, genapi.SubmitOptions{ExternalID: externalID})
 	if err != nil {
-		// 🔴 A CANCELLED CONTEXT BEATS THE no-status CHECK, and the order here is
-		// the whole point. StatusOf(err)==0 means "no interpretable HTTP reply",
-		// which conflates two very different things: the request went out and the
-		// answer was lost (money may have moved), versus the request never left
-		// this process at all (it cannot have). Ctrl-C and an expired --timeout
-		// produce the SECOND, and warning "you MAY have been charged" there sends
-		// the user to re-attach with an externalId no workflow exists behind —
-		// which submits a NEW job and charges them for real. Same guard the poll
-		// loop already applies at generate_wait.go:190.
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return classifyGenerateError(err)
-		}
 		if genapi.StatusOf(err) == 0 {
 			// No HTTP status means no interpretable reply: the request may well
 			// have reached the orchestrator and been charged. Never let this
 			// read as "nothing happened".
+			//
+			// 🔴 THIS WARNING MUST NEVER BE SUPPRESSED, and a cancelled context is
+			// NOT grounds to suppress it. An earlier revision returned early on
+			// ctx.Err() != nil, reasoning that a cancel means the request never
+			// left the process. That is true only for the microseconds before the
+			// POST; Ctrl-C during the round trip cancels the SAME context, and
+			// that window is up to submitTimeout (see genapi.Client.submitClient)
+			// — a slow orchestrator hop being exactly why a user reaches for
+			// Ctrl-C. So the guard traded a harmless false warning in a
+			// microsecond window for SILENCE in a two-minute window where the
+			// charge is real, and silence here strands the user: this is the only
+			// surface that hands back the externalId, and nothing reads the
+			// crash-recovery record. Compare generate_wait.go's cancel path, which
+			// routes to printReattach and says the job "has already been charged"
+			// — the precedent points the other way.
+			//
+			// We cannot observe whether the bytes were written, so the message
+			// carries the uncertainty instead of the control flow resolving it.
+			lead := "the submit got no answer from the server"
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				lead = "the submit was interrupted before any answer arrived"
+			}
 			fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf(
-				"the submit got no answer from the server — it MAY still have been accepted and charged. Do NOT simply re-run it; re-attach with:\n    civitai generate %s --external-id %s",
-				reattachInvocation(o), externalID)))
+				"%s — it MAY still have been accepted and charged. Do NOT simply re-run it; re-attach with:\n    civitai generate %s --external-id %s",
+				lead, reattachInvocation(o), externalID)))
 		}
 		return classifyGenerateError(err)
 	}
@@ -913,9 +923,8 @@ func printOutputURLs(out, errw io.Writer, kept []genapi.Output) {
 		"These URLs are presigned and expire — fetch them promptly, or re-read the workflow for fresh links."))
 }
 
-// printSubmitted is the one-line "it is running" notice, on stderr so a --json
-// stdout stays machine-clean.
-// printSubmitted announces a submitted job on the DEFAULT (waiting) path.
+// printSubmitted announces a submitted job on the DEFAULT (waiting) path. It
+// writes to stderr so a --json stdout stays machine-clean.
 //
 // 🔴 It must print the REALIZED charge whenever the server reported one. The
 // user approved an ESTIMATE, and this command's whole spend story is that the
