@@ -1,20 +1,23 @@
-# Handoff: app-analytics-followups — 2026-08-04
+# Handoff: app-analytics-followups — updated 2026-08-05
 
 ## Goal
 
-Finish the App-analytics follow-up stream. The feature work is **done and merged**, and the
-one self-inflicted broken test is **fixed and merged** (civitai#3606). What remains is the
-lower-priority follow-ups #3/#5/#6/#7 from the original handoff, plus one unblocking chore.
+Finish the App-analytics follow-up stream.
+
+**Status: the stream is essentially closed.** Every ranked item that was actionable has
+shipped — including the one called "the real remaining product gap" (#6) and the last
+data-quality gap (#5). What remains is a grab-bag of web-only polish, two leads nobody has
+ever measured, and one decision that is `.github`-gated and therefore not an agent's to make.
+See **Next steps**.
 
 Predecessor doc (history + the original ranked list):
-`claudedocs/2026-08-03-app-analytics-handoff.md` — same branch, same PR.
+`claudedocs/2026-08-03-app-analytics-handoff.md`.
 
 ## State now
 
-- **Branch / PR:** `zach/handoff-app-analytics` → [cli#193](https://github.com/civitai/cli/pull/193) (OPEN, `MERGEABLE`/`BLOCKED` on checks). This doc rides on it.
-- **Worktree for it:** `/home/zach/workspace/civit/cli-handoff-analytics`
+This doc now lives on `main`; there is no branch or worktree behind it.
 
-**DONE — merged this stream (8 PRs):**
+**DONE — merged this stream (15 PRs):**
 
 | PR | what |
 |---|---|
@@ -26,23 +29,16 @@ Predecessor doc (history + the original ranked list):
 | cli#190 | `civitai app metrics <slug>` |
 | cli#191 / cli#192 | `AGENTS.md` items 5–7 / item 8 (CLI-vs-web label divergence) |
 | civitai#3606 | anchor the `Generations` locator — fixes the component-suite oscillation this stream caused |
+| cli#194 | bump the stale scaffold pins (unblocked cli#193; see the recurrence note below) |
+| cli#193 | land both handoff docs on `main` |
+| civitai#3613 | **follow-up #6** — `blockRenders`' first reader + the "App loads" card |
+| cli#195 | the matching `App loads` section in `civitai app metrics` |
+| civitai#3626 | **follow-up #5** — bound the REST half of `block_scope_invocations.endpoint` |
+| civitai#3627 | record App loads as untrusted input + unknown-app detection (no ingest change) |
 
-**IN FLIGHT:** cli#193 only (these two docs). Auto-merge is ENABLED. It *was* `BLOCKED` solely
-by `pins-vs-published`, a required check that was red on `main` too — npm had published past
-both scaffold pins (`@civitai/blocks-react` pinned `^0.37.0` vs published `0.38.0`;
-`@civitai/app-sdk` `^0.28.0` vs `0.30.0`), and the pre-1.0 caret locks the minor, so the
-check's own words applied: "every app created from this template is born stale". Nothing to do
-with these docs (the PR changes two `.md` files).
-
-**FIXED — cli#194 (merged 2026-08-04, `189d5a4`).** `go run ./internal/scaffold/cmd/bump-pins`
-rewrites all three literal pin sites in lockstep (`package.json.tmpl`, the `README.md.tmpl`
-prose, and the `scaffold_test.go` `mustContain` assertions) — the handoff's "then update the
-matching assertions by hand" step is already automated; don't do it manually. Verified red at
-`6bdab0e` → green on the branch (live npm query both times), `--check` idempotent afterwards,
-and **all five `template-page-money` CI steps reproduced locally** against the actual published
-0.30.0/0.38.0 (install → typecheck → 137 tests → build → `app validate`) because a minor bump
-can break the template. All 10 checks green on #194.
-Nothing else uncommitted anywhere.
+**IN FLIGHT: nothing.** All PRs above are merged; no branch or worktree from this stream is
+outstanding. Historical detail on the cli#193/#194 unblock is in git history — the operative
+lesson is the recurrence note immediately below.
 
 ⚠️ **This will recur, and the automation cannot prevent it** — measured, not assumed. The
 `bump-scaffold-pins.yml` workflow is NOT broken: it ran on schedule Mon 2026-08-03 at
@@ -59,16 +55,30 @@ Two things follow: (a) when a PR is blocked by `pins-vs-published`, the fix is a
 frequency (daily) — not the bumper, which works. ⚠️ `.github/workflows/*` is ask-first per
 `AGENTS.md`, so that is a decision to raise, not to make.
 
+🔴 **It recurred within a day, exactly as predicted.** cli#194 bumped to app-sdk `0.30.0` /
+blocks-react `0.38.0` on 2026-08-04; by 2026-08-05 `main` carries **cli#203**, bumping the same
+two pins again to `0.31.0` / `0.39.0`. Treat the ~7-day red window as a standing property of
+this repo, not an incident — and do not spend time diagnosing it a third time.
+
 Minor, left alone deliberately: the bumper also rewrites a README prose line to read
 "`accountType` / … require `@civitai/app-sdk@^0.30.0`", but those APIs arrived in the *older*
 version — post-bump the sentence overstates the minimum. Over-strict, not harmful; rewriting
 that site is the bumper's documented design. Flagged on cli#194, not changed.
 
-**Deploy/verify status:** all merged to `civitai/main` and `civitai-cli/main`. Verified at the
-unit tier and via prod SQL (below). Component/browser tier: the ambiguity that made it
-oscillate is fixed in #3606, but `preview / component-tests` had **not reported on #3606 at
-merge time** — read that check on the next PR to confirm the suite is actually green. It
-cannot be confirmed locally (see the investigation block).
+**Deploy/verify status: CONFIRMED at every tier, including in production.**
+
+- `preview / component-tests` — the open question in the previous revision — reported
+  **success** on #3606 and on every subsequent PR in this stream (1259/1259). #3606's anchor
+  fix holds. The mechanism was checked directly, not inferred: PRs still carrying the bare
+  `getByText('Generations')` failed, PRs carrying `{ exact: true }` passed.
+- **Verified live in prod, not just deployed.** `civitai app metrics gen-matrix --from
+  2026-06-01` printed `App loads — Impressions 7 · Unique viewers 4 · Signed-out loads 0`.
+  Cross-checked two ways: a hand-written ClickHouse query reproduced 7/4/0 for that app id
+  exactly, and the reader's own query appears in `system.query_log` at **20ms** against its
+  10s bound. The prod image tag was confirmed to carry the merge commit first.
+- One caveat worth keeping: that 20ms was against ~125 rows in a single partition, so it
+  proves the query is correct and fast **today** — it does not prove the `createdDate`
+  partition pruning works at scale.
 
 **Prod facts established (don't re-query):** `OauthClient.allowedScopes` for `civitai-cli`
 = `100663297` (bit 25 live, so #3572 takes effect). Of 6,685,302 `ApiKey` rows: **0** are a
@@ -142,9 +152,11 @@ Query via: `KUBECONFIG=$KC_DPPROD kubectl exec -n cnpg-database $(kubectl get cl
   FAILS; hover a non-mounting target → the guard's POSITIVE CONTROL fails, so it cannot pass
   vacuously.
 
-  ⚠️ **Still unconfirmed by the authority:** `preview / component-tests` had not reported on
-  #3606 at merge time (preview deploy was pending). **Read that check on the next PR** to
-  confirm the suite is green — the local full-project run cannot do it (see below).
+  ✅ **CONFIRMED by the authority (2026-08-04).** `preview / component-tests` reported
+  **success** on #3606's head and on every subsequent PR in this stream (1259/1259). The
+  mechanism was verified directly rather than inferred: reading
+  `AppAnalyticsPanel.browser.test.tsx` at each open PR's head SHA, the ones still carrying the
+  bare `getByText('Generations')` failed and the ones carrying `{ exact: true }` passed.
 
 - ~~Next probe / fix (apply verbatim):~~ historical — mirror #3593's fix in
   `src/components/AppBlocks/AppAnalyticsPanel.browser.test.tsx`:
@@ -158,34 +170,63 @@ Query via: `KUBECONFIG=$KC_DPPROD kubectl exec -n cnpg-database $(kubectl get cl
      into a false failure. `AppAnalyticsPanel.tsx` has no such copy today (grepped), so it is
      latent, not live.
 
-  Then get the preview pipeline's component log for a post-fix commit to confirm; that log is
-  the only authority and I could not reach it.
+  The preview component log IS reachable, and this is the durable trick: the `preview / *`
+  GitHub statuses point at the deployed environment, not at logs — the output lives in the
+  Tekton taskrun. `KUBECONFIG=$KC_DPPROD kubectl logs -n tekton-builds -l
+  tekton.dev/taskRun=pr-preview-<PR>-<id>-component-tests --tail=60 --all-containers`. Note
+  the taskrun reports `Succeeded` even when the suite fails, because the step is report-only —
+  read the log's test counts, never the taskrun status.
 
 ---
 
 ## Next steps (ranked)
 
-1. ~~**Fix the `getByText('Generations')` ambiguity**~~ — DONE, civitai#3606.
-2. ~~**Unblock cli#193** by bumping the stale scaffold pins~~ — DONE, cli#194 (`189d5a4`).
-3. **Merge cli#193** (this doc + the updated predecessor). Docs-only; auto-merge enabled.
-4. **Fix `lint.yml`'s stale unit-job comment** and consider adding the component project to
-   GitHub Actions as `continue-on-error: true` — the same report-only posture the unit job
-   uses, and the only way to get canonical-browser signal. ⚠️ `.github/workflows/*` is
-   ask-first per `AGENTS.md`. Do NOT frame this as "adding a missing tier" — the tier exists
-   (`preview / component-tests`); this is about a second, GH-native runner.
-5. **Follow-up #6 — ClickHouse `blockRenders` has zero readers.** The real remaining product
-   gap: written since 2026-06-22, carries `appBlockId`/`slotId`/`isAnon`, and is the only
-   signal covering anonymous viewers and static blocks. Per-mount, so unique views need
-   query-side dedup.
-6. **Follow-up #5 — `normalizeEndpoint` still writes unbounded values**
-   (`block-scope.middleware.ts`): templates only `^\d+$` and ULIDs, so a slug/UUID segment
-   passes through verbatim into `topEndpoints`.
-7. **Follow-up #3** (owns-zero-apps unflagged all-zero; web-only) and **#7** (minor grab-bag).
-8. **Two unverified leads:** `addCollaborator` is a PUT that *sets* permission, so
-   `civitai app pull` granting `read` where the web flow granted `write` may downgrade it and
-   break a later push (#3572 made it reachable by the CLI's default credential; nobody checked
-   Forgejo's live PUT semantics). And `installs: 0` remains **unverified, not measured** — no
-   positive control has ever shown that counter move.
+Everything actionable has shipped. What is left, honestly ranked:
+
+1. ~~Fix the `getByText('Generations')` ambiguity~~ — DONE, civitai#3606.
+2. ~~Unblock cli#193 by bumping the stale scaffold pins~~ — DONE, cli#194.
+3. ~~Merge cli#193~~ — DONE.
+4. ~~**Follow-up #6 — `blockRenders` has zero readers**~~ — DONE, civitai#3613 + cli#195.
+   🔴 **The dedup advice this doc used to give was WRONG, and would have shipped a broken
+   metric.** It said "per-mount, so unique views need query-side dedup". `blockInstanceId` is
+   NOT per-mount — it is `page_apb_<ULID>`, roughly one per PLACEMENT. Measured on prod: 124
+   rows carried 28 distinct `blockInstanceId` across 27 distinct `appBlockId`, ~1:1 with the
+   app, so deduping on it reports **~1 unique viewer per app**. The correct identity is
+   `userId`, and anonymous rows all carry `userId = 0`, so they need `ip` instead — hence
+   `uniqExactIf(userId, isAnon=0) + uniqExactIf(ip, isAnon=1)`. Querying prod BEFORE building
+   is what caught this.
+5. ~~**Follow-up #5 — `normalizeEndpoint` writes unbounded values**~~ — DONE, civitai#3626.
+   Note the fix is allowlist-first, not shape-based: the static route vocabulary is itself
+   slug-shaped (`generation-resources`, `tip-allowance`), so any heuristic that templates
+   `my-cool-collection` also templates those. A drift test walks `src/pages/api` so a new
+   wrapped route fails CI rather than silently recording `:seg`.
+6. **Follow-up #3** (owns-zero-apps unflagged all-zero; web-only) and **#7** (minor grab-bag).
+   The only genuinely open feature work, and it is polish.
+7. **`lint.yml`'s stale unit-job comment**, and possibly a GH-native component runner as
+   `continue-on-error: true`. ⚠️ `.github/workflows/*` is ask-first per `AGENTS.md` — raise it,
+   don't do it. Do NOT frame it as "adding a missing tier": the tier exists
+   (`preview / component-tests`) and is now proven reliable.
+8. **Two leads that have never been measured** — unchanged, and still worth a measurement
+   before any code:
+   - `addCollaborator` is a PUT that *sets* permission, so `civitai app pull` granting `read`
+     where the web flow granted `write` may downgrade it and break a later push. #3572 made it
+     reachable by the CLI's default credential; nobody has checked Forgejo's live PUT
+     semantics.
+   - `installs: 0` remains **unverified, not measured** — no positive control has ever shown
+     that counter move.
+9. **A latent flake worth someone's attention, not mine to fix:**
+   `AppListingsMarketplaceBody.browser.test.tsx` → "the search box does NOT write the URL per
+   keystroke" races two `await fill()` calls against a **300ms** debounce. Measured locally at
+   **338ms** for the case — the margin is thinner than the test's own comment assumes. It
+   failed once on civitai#3627's preview run and passed on the sibling PR ten minutes earlier;
+   driving the debounce with fake timers would remove the timing dependency outright.
+
+**Security:** a finding touching this stream was reported privately to security@civitai.com
+per `SECURITY.md` (which forbids public issues, and PRs that demonstrate the issue). The
+mechanism is deliberately **not** recorded in this repo or in code comments. `app-views.service.ts`
+carries the operational consequence — treat App loads / unique viewers as untrusted input, and
+do not build payouts, ranking, discovery, or leaderboards on them — and points maintainers at
+that report before changing the ingest path.
 
 ---
 
