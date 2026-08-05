@@ -1,24 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 // {{ .Name }} — Civitai App (vite + React page template).
 //
 // The host serves this bundle in a sandboxed iframe and communicates over
-// window.postMessage. The example below reports the document height to the
-// host so the iframe resizes. See the App SDK for the full protocol + scopes.
+// window.postMessage. Every block -> host message is an envelope:
+// `{ type: 'SOME_TYPE', payload: { … } }` — the host reads `event.data.payload`,
+// so fields put at the top level are dropped.
+//
+// The ONE message a page app must send is `BLOCK_READY`; without it the host
+// never reveals the app. `src/civitai-host.js` (imported by `src/main.jsx`)
+// already does that. See the App SDK for the rest of the protocol and scopes.
 export default function App() {
   const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    function reportHeight() {
-      window.parent.postMessage(
-        { type: 'RESIZE_IFRAME', height: document.documentElement.scrollHeight },
-        '*'
-      );
-    }
-    reportHeight();
-    window.addEventListener('resize', reportHeight);
-    return () => window.removeEventListener('resize', reportHeight);
-  });
 
   return (
     <main className="app">

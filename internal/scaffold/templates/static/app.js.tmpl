@@ -3,28 +3,26 @@
 // An app is a sandboxed static web app served in an iframe by the Civitai
 // host. The host owns the build and the runtime; this file is served as-is.
 //
-// The host and the app talk over window.postMessage. The minimal useful
-// thing an app can do is tell the host how tall it is so the iframe resizes.
-// See the App SDK for the full message protocol and the available scopes.
+// The host and the app talk over window.postMessage, and every block -> host
+// message is an envelope: `{ type: 'SOME_TYPE', payload: { … } }`. Fields put
+// at the top level are dropped — the host reads `event.data.payload`.
+//
+// The ONE message a page app must send is `BLOCK_READY`; without it the host
+// never reveals the app. That is already handled for you in `civitai-host.js`,
+// which `index.html` loads before this file. Don't duplicate it here.
+//
+// See the App SDK for the rest of the protocol and the available scopes.
 
 (function () {
   'use strict';
 
-  function reportHeight() {
-    var height = document.documentElement.scrollHeight;
-    // RESIZE_IFRAME is honoured when manifest iframe.resizable is true and the
-    // value is within [minHeight, maxHeight].
-    window.parent.postMessage(
-      { type: 'RESIZE_IFRAME', height: height },
-      '*'
-    );
-  }
-
   document.addEventListener('DOMContentLoaded', function () {
-    reportHeight();
     var btn = document.getElementById('ping');
-    if (btn) {
-      btn.addEventListener('click', reportHeight);
-    }
+    if (!btn) return;
+    var clicks = 0;
+    btn.addEventListener('click', function () {
+      clicks += 1;
+      btn.textContent = 'Clicked ' + clicks + (clicks === 1 ? ' time' : ' times');
+    });
   });
 })();
