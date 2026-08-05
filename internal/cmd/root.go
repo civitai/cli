@@ -179,7 +179,7 @@ func NewRootCmd() *cobra.Command {
 		Short: "Civitai CLI — browse & download models, and build Apps",
 		Long: `civitai is the command-line interface for Civitai (https://civitai.com).
 
-It does two things from one static binary:
+It does three things from one static binary:
 
   • Browse & download the public catalog — search models, list images and
     articles, and fetch model files. Reading is anonymous; downloading a
@@ -188,6 +188,8 @@ It does two things from one static binary:
   • Build & submit Apps — small, sandboxed web apps that run inside Civitai
     surfaces. Scaffold a correct project, validate it against the platform
     contract, and package it for submission.
+  • Generate images — civitai generate "<prompt>". This SPENDS REAL BUZZ and
+    needs a personal API key; price a job with --dry-run first.
 
 Get started:
 
@@ -292,6 +294,12 @@ Exit codes:
 	root.AddCommand(newUpgradeCmd())
 	root.AddCommand(newCompletionCmd())
 	root.AddCommand(newUpdateCheckCmd())
+
+	// 🔴 A money-spending command, and deliberately a LEAF: it must never grow
+	// subcommands. enforceUsageExitCodes only installs the unknown-subcommand
+	// guard on non-runnable parents, so on a runnable one a typo'd subcommand
+	// would be swallowed as the positional PROMPT and billed.
+	root.AddCommand(newGenerateCmd())
 
 	// Read subcommands — public REST API (`/api/v1/**`) browsing.
 	root.AddCommand(newModelsCmd())
