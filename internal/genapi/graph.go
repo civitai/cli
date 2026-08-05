@@ -1,5 +1,13 @@
 package genapi
 
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"reflect"
+	"strings"
+)
+
 // Graph is the generation-graph payload — the ONE payload struct both
 // orchestrator procedures carry. The two procedures wrap it in DIFFERENT
 // envelopes (see generate.go); the graph itself is identical.
@@ -60,6 +68,43 @@ type Graph struct {
 	CfgScale *float64 `json:"cfgScale,omitempty"`
 	Sampler  string   `json:"sampler,omitempty"`
 	Seed     *int     `json:"seed,omitempty"`
+
+	// Raw, when non-nil, IS the graph: MarshalJSON emits it VERBATIM and every
+	// typed field above is ignored. It is the `--input` passthrough.
+	//
+	// 🔴 It exists so a caller-supplied graph reaches the server UNCHANGED. The
+	// whole point of a raw-graph surface is that the CLI carries no per-engine
+	// code for the platform's ~51 ecosystem graphs; round-tripping such a file
+	// through the typed struct above would silently DELETE every key this struct
+	// does not model, which is worse than the server's own silent-drop behaviour
+	// because it happens before the request is even sent.
+	//
+	// It is `json:"-"` so the typed path can never emit it as a field, and it is
+	// deliberately NOT settable from a decoded server payload — nothing in this
+	// package unmarshals into a Graph.
+	Raw json.RawMessage `json:"-"`
+}
+
+// MarshalJSON emits Raw verbatim when it is set, and the typed fields otherwise.
+//
+// Raw is passed through json.Compact rather than returned as-is: Compact both
+// VALIDATES it (encoding/json does not check what a MarshalJSON implementation
+// returns beyond re-scanning it, and a malformed byte slice would corrupt the
+// whole envelope) and normalises the whitespace of a hand-edited file.
+//
+// The `graphAlias` indirection is what stops this from recursing: a named type
+// with the same fields has no methods, so json.Marshal falls back to the
+// reflect-based encoder for it.
+func (g Graph) MarshalJSON() ([]byte, error) {
+	if g.Raw != nil {
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, g.Raw); err != nil {
+			return nil, fmt.Errorf("raw graph is not valid JSON: %w", err)
+		}
+		return buf.Bytes(), nil
+	}
+	type graphAlias Graph
+	return json.Marshal(graphAlias(g))
 }
 
 // Resource is one graph resource reference (a checkpoint or an additional
@@ -95,10 +140,63 @@ type ResourceModel struct {
 //
 // It returns a copy: the caller's Graph must be unchanged, because the SAME
 // Graph is submitted afterwards and it needs its prompt.
+//
+// A RAW graph (--input) is stripped the same way, by deleting the two keys from
+// the decoded object rather than by re-marshalling a typed struct — every other
+// key, including ones this package does not model, must survive untouched. A raw
+// graph that does not decode as a JSON object is passed through unchanged: it is
+// the server's business to reject it, and inventing a local parse error here
+// would be a validation rule this CLI has no authority to enforce.
 func whatIfGraph(g Graph) Graph {
 	out := g
+	if g.Raw != nil {
+		out.Raw = stripPromptKeys(g.Raw)
+		return out
+	}
 	out.Prompt = ""
 	out.NegativePrompt = ""
+	return out
+}
+
+// stripPromptKeys removes `prompt`/`negativePrompt` from a raw graph object,
+// leaving every other key byte-identical. It returns the input unchanged when it
+// is not a JSON object.
+func stripPromptKeys(raw json.RawMessage) json.RawMessage {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return raw
+	}
+	delete(obj, "prompt")
+	delete(obj, "negativePrompt")
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return raw
+	}
+	return out
+}
+
+// KnownGraphKeys returns the set of top-level JSON keys this CLI's Graph models.
+//
+// 🔴 It is derived by REFLECTION over the struct tags, never hand-listed. A
+// second hand-maintained list would drift from the struct the moment a field is
+// added, and the only consumer is a warning about keys the CLI does not
+// recognise — a warning built from a stale list warns about the wrong things.
+//
+// This is emphatically NOT a mirror of the server's node registry, and must
+// never become one: it answers "does the CLI model this key?", not "does the
+// server accept it?". The server owns ~51 ecosystem graphs whose node sets this
+// package deliberately does not vendor.
+func KnownGraphKeys() map[string]bool {
+	out := make(map[string]bool)
+	t := reflect.TypeOf(Graph{})
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("json")
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		out[name] = true
+	}
 	return out
 }
 

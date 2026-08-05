@@ -25,23 +25,28 @@ import (
 // see root.go.
 //
 // The naming is deliberate too: these are orchestrator WORKFLOWS, not
-// "generations". `list` and `cancel` belong here when they land.
+// "generations".
 func newWorkflowsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "workflows",
-		Short: "Inspect generation workflows",
-		Long: `Inspect the generation workflows your account has submitted.
+		Short: "List, inspect and cancel generation workflows",
+		Long: `Work with the generation workflows your account has submitted.
 
 A workflow is one submitted generation job. ` + "`civitai generate`" + ` prints a
-workflow id; this is how you look one up afterwards — which is what makes
-` + "`--no-wait`" + `, a --timeout expiry and a Ctrl-C recoverable rather than a dead
-end.
+workflow id; ` + "`list`" + ` and ` + "`get`" + ` are how you find one afterwards — which is what
+makes ` + "`--no-wait`" + `, a --timeout expiry and a Ctrl-C recoverable rather than a
+dead end.
 
-Reading a workflow SPENDS NOTHING.`,
-		Example: `  civitai workflows get 01JABCXYZ
-  civitai workflows get 01JABCXYZ --json`,
+` + "`list`" + ` and ` + "`get`" + ` are reads and SPEND NOTHING. 🔴 ` + "`cancel`" + ` stops a job but does
+NOT refund it — a mid-run cancel bills the accrued cost, non-refundably.`,
+		Example: `  civitai workflows list
+  civitai workflows get 01JABCXYZ
+  civitai workflows get 01JABCXYZ --json
+  civitai workflows cancel 01JABCXYZ`,
 	}
+	cmd.AddCommand(newWorkflowsListCmd())
 	cmd.AddCommand(newWorkflowsGetCmd())
+	cmd.AddCommand(newWorkflowsCancelCmd())
 	return cmd
 }
 

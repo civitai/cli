@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -129,6 +130,12 @@ type generateOpts struct {
 	// externalID overrides the minted idempotency key, which is how a lost
 	// submit is re-attached rather than re-charged.
 	externalID string
+
+	// inputPath is the `--input` graph file ("-" reads stdin). When set, the
+	// graph is a raw passthrough and every content flag above is REFUSED.
+	inputPath string
+	// printInput dumps the assembled graph and exits without submitting.
+	printInput bool
 }
 
 func newGenerateCmd() *cobra.Command {
@@ -184,7 +191,27 @@ CRASH SAFETY: the idempotency key is written to a local file BEFORE the request
 is sent, because the money moves server-side even if this process dies mid-POST.
 If a submit's reply never arrives, re-run with --external-id <the recorded key>:
 the orchestrator dedupes on it and returns the PRE-EXISTING workflow instead of
-charging a second time.`,
+charging a second time.
+
+RAW GRAPHS: --input <file> (or --input -) sends a generation-graph JSON document
+exactly as written, instead of building one from the flags above. It is how you
+reach graph parameters this CLI has no flag for. Get a valid starting point with
+--print-input, which assembles the graph, prints it, and exits without
+submitting or even pricing anything.
+
+--input is txt2img only in this release. It cannot be combined with the content
+flags (--negative-prompt, --quantity, --aspect-ratio, --checkpoint, --lora) or
+with a prompt argument; the execution flags all still apply. Keys that belong to
+the request ENVELOPE rather than the graph — civitaiTip, creatorTip, buzzType,
+tags, externalId — are REFUSED in an input file: they are this CLI's to set, and
+a tip in particular is real Buzz that --dry-run structurally cannot see. Keys
+this CLI does not recognise are passed through with a warning, because the
+server silently drops what it does not declare rather than reporting an error.
+
+🔴 --input DOES NOT get the model-id safety net. --checkpoint and --lora are
+resolved against the public API before submitting, so a bad id fails locally
+instead of being billed with a substituted model; a raw graph is not
+interpreted, so nothing in it is checked before you pay for it.`,
 		Example: `  # Preview the price — spends nothing
   civitai generate "a cat wearing sunglasses" --dry-run
 
@@ -205,7 +232,15 @@ charging a second time.`,
   civitai workflows get <workflow-id>
 
   # Non-interactive (CI): --yes is required, or the run is refused
-  civitai generate "a cat" --yes --max-cost 20`,
+  civitai generate "a cat" --yes --max-cost 20
+
+  # Graduate from flags to a raw graph: print, edit, send back
+  civitai generate "a cat" --quantity 2 --print-input > graph.json
+  civitai generate --input graph.json --dry-run
+  civitai generate --input graph.json --yes
+
+  # …or pipe it straight through
+  jq '.prompt = "a dog"' graph.json | civitai generate --input - --dry-run`,
 		// MaximumNArgs(1), not ExactArgs(1): a later release adds a prompt-less
 		// mode (--input). Today a missing prompt is a usage error, raised in
 		// validateGenerateOpts. 🔴 This command deliberately has NO subcommands —
@@ -308,16 +343,65 @@ charging a second time.`,
 	cmd.Flags().StringVar(&o.externalID, "external-id", "",
 		"re-attach to an earlier submit by reusing its idempotency key (the orchestrator dedupes on it and returns the "+
 			"PRE-EXISTING workflow rather than charging again). Use the key recorded before the lost submit")
+
+	// NOTE: no back-quotes in these usage strings either — see the note above.
+	cmd.Flags().StringVar(&o.inputPath, "input", "",
+		"read the generation graph from a JSON file ('-' for stdin) and send it as-is, instead of building one from flags. "+
+			"txt2img only. Cannot be combined with the content flags above")
+	cmd.Flags().BoolVar(&o.printInput, "print-input", false,
+		"print the exact generation graph that would be sent and exit without submitting. Redirect it to a file, edit it, "+
+			"and feed it back with --input")
 	return cmd
+}
+
+// graphInputFlags are the content flags --input replaces. They are listed here
+// so the mutual-exclusion error can name exactly which one the user passed,
+// following validateDownloadFlags: reject the combination rather than invent a
+// merge rule. (What would --lora mean against a file that already declares
+// `resources`? Append, or replace? There is no answer the user can predict, and
+// guessing wrong costs them a generation.)
+func graphInputFlags(o generateOpts) []string {
+	var used []string
+	if strings.TrimSpace(o.prompt) != "" {
+		used = append(used, "a prompt argument")
+	}
+	if o.negativePrompt != "" {
+		used = append(used, "--negative-prompt")
+	}
+	if o.quantitySet {
+		used = append(used, "--quantity")
+	}
+	if o.aspectRatio != "" {
+		used = append(used, "--aspect-ratio")
+	}
+	if o.checkpointSet {
+		used = append(used, "--checkpoint")
+	}
+	if len(o.loras) > 0 {
+		used = append(used, "--lora")
+	}
+	return used
 }
 
 // validateGenerateOpts rejects impossible invocations BEFORE any network call,
 // the way validateDownloadFlags does — every failure here is a local mistake, so
 // it is a usage error (exit 2).
 func validateGenerateOpts(o *generateOpts) error {
-	if strings.TrimSpace(o.prompt) == "" {
+	usingInput := strings.TrimSpace(o.inputPath) != ""
+	if usingInput {
+		// Mutual exclusion, not a merge. Execution flags (--dry-run, --yes,
+		// --max-cost, --out-dir, --timeout, --no-wait, --json, --force,
+		// --external-id) stay valid: they govern HOW the request is made and
+		// what happens to the result, and none of them writes to the graph.
+		if used := graphInputFlags(*o); len(used) > 0 {
+			return asUsageError(fmt.Errorf(
+				"--input cannot be combined with %s — --input sends the graph in the file exactly as written, so a flag that would also set graph content has no defined meaning against it. "+
+					"Either drop %s, or edit the file (start from `civitai generate \"a cat\" --print-input`)",
+				strings.Join(used, ", "), plural(len(used), "it", "them")))
+		}
+	} else if strings.TrimSpace(o.prompt) == "" {
 		return asUsageError(errors.New(
-			"a prompt is required — quote it as one argument: civitai generate \"a cat wearing sunglasses\""))
+			"a prompt is required — quote it as one argument: civitai generate \"a cat wearing sunglasses\" (or pass a graph with --input <file>)"))
 	}
 	if o.quantitySet && o.quantity < 1 {
 		// The server would CLAMP this to 1 without saying so. Refuse instead: a
@@ -408,6 +492,40 @@ type resolvedGraph struct {
 	graph      genapi.Graph
 	checkpoint string
 	loras      []string
+	// inputPath is set when the graph came from --input, so the confirmation can
+	// name the FILE the user is about to be charged for rather than a prompt it
+	// deliberately did not parse out of it.
+	inputPath string
+}
+
+// buildInputGraph loads, validates and wraps a `--input` graph.
+//
+// It performs NO network calls: the graph is passed through verbatim, so there
+// are no model-version ids for the CLI to resolve — and resolving them would
+// require parsing a structure the CLI has deliberately declined to interpret.
+//
+// 🔴 The cost of that: the --checkpoint/--lora path's protection against a
+// nonexistent id (accepted with HTTP 200, ecosystem default silently
+// substituted, billed) does NOT extend to --input. That is inherent to a
+// passthrough, not an oversight, and the warning below says so out loud rather
+// than letting the flag look as safe as the flags it replaces.
+func buildInputGraph(cmd *cobra.Command, o generateOpts) (*resolvedGraph, error) {
+	data, err := readGraphInput(cmd.InOrStdin(), o.inputPath)
+	if err != nil {
+		return nil, err
+	}
+	parsed, err := parseGraphInput(data)
+	if err != nil {
+		return nil, err
+	}
+	errw := cmd.ErrOrStderr()
+	if w := unknownKeyWarning(parsed.unknownKeys); w != "" {
+		fmt.Fprintln(errw, ui.For(errw).Warn(w))
+	}
+	return &resolvedGraph{
+		graph:     genapi.Graph{Raw: parsed.raw},
+		inputPath: o.inputPath,
+	}, nil
 }
 
 // buildGenerateGraph resolves every model-version id and assembles the graph.
@@ -451,6 +569,37 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 	return out, nil
 }
 
+// buildGraphForRun picks the graph source: a `--input` passthrough, or the five
+// content flags. validateGenerateOpts has already proved the two were not
+// combined.
+func buildGraphForRun(ctx context.Context, cmd *cobra.Command, deps generateDeps, o generateOpts) (*resolvedGraph, error) {
+	if strings.TrimSpace(o.inputPath) != "" {
+		return buildInputGraph(cmd, o)
+	}
+	return buildGenerateGraph(ctx, deps, o)
+}
+
+// printAssembledGraph writes the graph that WOULD be sent, indented, to stdout.
+//
+// It prints the graph and nothing else — not the tRPC envelope. The envelope's
+// siblings (externalId, tips, tags) are CLI-owned and are refused on the way
+// back in (see envelopeOnlyKeys), so printing them would emit a document that
+// `--input` then rejects. What comes out of --print-input must be a valid
+// --input; that round-trip is the feature.
+func printAssembledGraph(out io.Writer, g genapi.Graph) error {
+	raw, err := json.Marshal(g)
+	if err != nil {
+		return err
+	}
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, raw, "", "  "); err != nil {
+		return err
+	}
+	buf.WriteByte('\n')
+	_, err = out.Write(buf.Bytes())
+	return err
+}
+
 // describeVersion renders a resolved version for human output. The name is
 // server-origin text, so it goes through safeTerm.
 func describeVersion(rv *genapi.ResolvedVersion, strength *float64) string {
@@ -485,9 +634,31 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 			o.quantity, serverQuantityClamp, serverQuantityClamp)))
 	}
 
-	built, err := buildGenerateGraph(ctx, deps, o)
+	built, err := buildGraphForRun(ctx, cmd, deps, o)
 	if err != nil {
 		return err
+	}
+
+	if o.printInput {
+		// 🔴 Exit here, BEFORE the estimator and long before the submit. This is
+		// the documented way to graduate from flags to a file
+		// (`--print-input > g.json` → edit → `--input g.json`), and it replaces
+		// the `--set` path-expression surface that was cut: a wrong type in a
+		// hand-written --set expression is accepted silently by the server and
+		// billed, whereas editing a printed file is inspectable before it is
+		// sent.
+		//
+		// One honest caveat on "no network call": it reaches NO money seam —
+		// not the submit, not the estimator, not the balance read. But the graph
+		// is printed AFTER buildGraphForRun, so `--checkpoint`/`--lora` still
+		// perform their public model-version READ (free, unauthenticated-capable,
+		// spends nothing). That is deliberate: the resolution supplies
+		// `model.type`, which graph `resources[]` REQUIRE — a bare `{id}` is
+		// rejected 400 "expected object, received undefined". Skipping it would
+		// make --print-input emit a document that --input then cannot submit,
+		// destroying the round-trip that is the whole feature. With no
+		// --checkpoint/--lora there is no request of any kind.
+		return printAssembledGraph(out, built.graph)
 	}
 
 	quote, rawQuote, err := deps.whatIf(ctx, built.graph)
@@ -574,8 +745,8 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 			// have reached the orchestrator and been charged. Never let this
 			// read as "nothing happened".
 			fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf(
-				"the submit got no answer from the server — it MAY still have been accepted and charged. Do NOT simply re-run it; re-attach with:\n    civitai generate %q --external-id %s",
-				o.prompt, externalID)))
+				"the submit got no answer from the server — it MAY still have been accepted and charged. Do NOT simply re-run it; re-attach with:\n    civitai generate %s --external-id %s",
+				reattachInvocation(o), externalID)))
 		}
 		return classifyGenerateError(err)
 	}
@@ -774,7 +945,14 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 	errw := cmd.ErrOrStderr()
 	st := ui.For(errw)
 	fmt.Fprintf(errw, "About to generate with %s at %s.\n", generateWorkflow, strings.TrimRight(o.baseURL, "/"))
-	fmt.Fprintf(errw, "  Prompt:     %s\n", safeTerm(o.prompt))
+	if built.inputPath != "" {
+		// With --input the CLI has deliberately not interpreted the graph, so it
+		// names the file rather than echoing fields it did not parse. Printing a
+		// partial summary would imply the CLI had checked the rest.
+		fmt.Fprintf(errw, "  Graph:      %s (sent as-is; this CLI did not interpret it)\n", safeTerm(built.inputPath))
+	} else {
+		fmt.Fprintf(errw, "  Prompt:     %s\n", safeTerm(o.prompt))
+	}
 	if o.negativePrompt != "" {
 		fmt.Fprintf(errw, "  Negative:   %s\n", safeTerm(o.negativePrompt))
 	}
@@ -812,7 +990,11 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpts, q *genapi.WhatIfResult) {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "Workflow:\t%s\n", generateWorkflow)
-	fmt.Fprintf(tw, "Prompt:\t%s\n", safeTerm(o.prompt))
+	if built.inputPath != "" {
+		fmt.Fprintf(tw, "Graph:\t%s (sent as-is)\n", safeTerm(built.inputPath))
+	} else {
+		fmt.Fprintf(tw, "Prompt:\t%s\n", safeTerm(o.prompt))
+	}
 	if o.negativePrompt != "" {
 		fmt.Fprintf(tw, "Negative prompt:\t%s\n", safeTerm(o.negativePrompt))
 	}
@@ -897,6 +1079,17 @@ func printSubmitResult(out, errw io.Writer, r *genapi.SubmitResult, externalID, 
 			"Not waiting (--no-wait). Collect the results with `civitai workflows get %s`, or watch it at %s/generate",
 			safeTerm(r.ID), strings.TrimRight(baseURL, "/"))))
 	}
+}
+
+// reattachInvocation renders the argument the user must repeat to re-attach to a
+// submit whose reply was lost. It has to reflect how the graph was BUILT: a
+// --input run has no prompt to quote, and printing an empty one would hand the
+// user a command that re-submits a different (and rejected) job.
+func reattachInvocation(o generateOpts) string {
+	if p := strings.TrimSpace(o.inputPath); p != "" {
+		return fmt.Sprintf("--input %s", p)
+	}
+	return fmt.Sprintf("%q", o.prompt)
 }
 
 // buzzAmount renders a Buzz figure: whole numbers without a decimal tail, and a
