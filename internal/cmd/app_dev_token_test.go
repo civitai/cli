@@ -17,6 +17,10 @@ type devTokenRec struct {
 	auth, method, path, contentType, slug string
 	scopes                                []string
 	hasScopesKey                          bool
+	// rawBody is the request body EXACTLY as it went on the wire. Assertions
+	// about which keys the CLI sends (or omits) have to read this, not a decoded
+	// struct — a struct field is indistinguishable between "absent" and "zero".
+	rawBody []byte
 }
 
 // devTokenServer stands up an httptest server emulating
@@ -37,6 +41,7 @@ func devTokenServer(t *testing.T, body any, status int, rec *devTokenRec) *httpt
 			rec.path = r.URL.Path
 			rec.contentType = r.Header.Get("Content-Type")
 			raw, _ := io.ReadAll(r.Body)
+			rec.rawBody = raw
 			var parsed struct {
 				Slug   string   `json:"slug"`
 				Scopes []string `json:"scopes"`

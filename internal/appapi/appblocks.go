@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -879,32 +880,88 @@ func cloneInfoError(status int, raw []byte) (err error) {
 	}
 }
 
+// Vendored dev-token Buzz-budget bounds. Both mirror
+// civitai/civitai src/server/services/blocks/dev-scoped-mint.service.ts:
+//
+//	export const DEV_BUZZ_BUDGET_CAP = 250;
+//	export const DEV_BUZZ_BUDGET_DEFAULT = 50;
+//
+// which that file's resolveDevBuzzBudget composes as
+//
+//	Math.min(requestedBudget ?? manifestDefaultBudget ?? DEFAULT, CAP)
+//
+// gated on the minted token retaining `ai:write:budgeted` (without the spend
+// scope the claim is dropped entirely and no budget is issued, however large the
+// request).
+//
+// The two bounds fail DIFFERENTLY server-side, which is why the CLI checks both
+// itself rather than deferring:
+//   - Below 1 the route's zod schema (`z.number().int().positive()`) answers 400.
+//   - ABOVE the cap there is no schema bound at all — the request succeeds and
+//     `Math.min` silently clamps. A developer who asks for 400 gets a 250-budget
+//     token and no indication the number moved, which is the more expensive
+//     failure of the two and cannot be detected after the fact from the CLI.
+//
+// Neither constant is observable from a minted token (the JWT's budget claim
+// reflects the RESOLVED value, so a clamped 250 and a requested 250 are
+// byte-identical), so there is no sound live drift probe to write here — unlike
+// ListSubmissionsCap above, whose truncation asymmetry makes one possible. These
+// are pinned by TestDevBuzzBudgetBoundsMirrorServer and by the comment above;
+// re-read the server file when touching them.
+const (
+	// DevBuzzBudgetCap is the largest per-generation Buzz budget the dev-token
+	// route will issue. A larger request is clamped, not refused.
+	DevBuzzBudgetCap = 250
+	// DevBuzzBudgetMin is the smallest budget the route's schema accepts.
+	DevBuzzBudgetMin = 1
+	// DevBuzzBudgetDefault is what the server resolves to when NEITHER the
+	// request nor the app's stored manifest names a budget.
+	DevBuzzBudgetDefault = 50
+)
+
 // DevTokenMinter mints a short-lived dev block token for `npm run dev:live`.
 type DevTokenMinter interface {
 	// MintDevToken mints a dev block token for the given app slug and returns
 	// the JWT. scopes carries the caller's LOCAL block.manifest.json scopes for
 	// the server's no-row mint path (clamped server-side); pass nil/empty when
-	// no manifest is available. A non-2xx is mapped by devTokenError.
-	MintDevToken(ctx context.Context, slug string, scopes []string) (string, error)
+	// no manifest is available. buzzBudget is the optional per-generation Buzz
+	// budget — nil means "not requested", leaving the server's own resolution
+	// intact. A non-2xx is mapped by devTokenError.
+	MintDevToken(ctx context.Context, slug string, scopes []string, buzzBudget *int) (string, error)
 }
 
 // devTokenBody is the POST /api/v1/blocks/dev-token request body. Scopes is the
 // caller's LOCAL manifest scopes; it is omitted (not sent) when empty so a
 // registered app's server-side scopes still govern.
+//
+// BuzzBudget is a POINTER, and that is load-bearing rather than stylistic: the
+// server resolves an ABSENT `buzzBudget` differently from a present one, so a
+// plain `int` would make the CLI send `0` (or a CLI-chosen default) on every
+// mint and permanently shadow the server's own resolution. Only nil is omitted
+// by `omitempty` on a pointer, so nil is the one encoding that reproduces
+// today's wire shape exactly.
 type devTokenBody struct {
-	Slug   string   `json:"slug"`
-	Scopes []string `json:"scopes,omitempty"`
+	Slug       string   `json:"slug"`
+	Scopes     []string `json:"scopes,omitempty"`
+	BuzzBudget *int     `json:"buzzBudget,omitempty"`
 }
 
 // MintDevToken mints a short-lived dev block token for the given app slug,
 // returning the JWT from the response's .token field. scopes carries the
 // caller's local manifest scopes for the server's no-row (no app registered
 // yet) mint path; they are clamped server-side and omitted from the body when
-// empty/nil (registered-app and read-only paths are unaffected). The OAuth
-// access token is refreshed transparently on a 401. A non-2xx is mapped by
-// devTokenError.
-func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string) (string, error) {
-	body, err := json.Marshal(devTokenBody{Slug: slug, Scopes: scopes})
+// empty/nil (registered-app and read-only paths are unaffected).
+//
+// buzzBudget is the optional per-generation Buzz budget the token should carry.
+// Pass nil to request nothing — the key is then absent from the body and the
+// server resolves the budget itself (see the DevBuzzBudget* constants). Callers
+// are expected to have range-checked a non-nil value; this method sends what it
+// is given so that a bound the server changes still reaches it.
+//
+// The OAuth access token is refreshed transparently on a 401. A non-2xx is
+// mapped by devTokenError.
+func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string, buzzBudget *int) (string, error) {
+	body, err := json.Marshal(devTokenBody{Slug: slug, Scopes: scopes, BuzzBudget: buzzBudget})
 	if err != nil {
 		return "", err
 	}
@@ -935,15 +992,62 @@ func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string)
 	return out.Token, nil
 }
 
+// devTokenValidationDetail renders the per-field detail the dev-token route
+// attaches to a 400. The route answers a schema violation with
+//
+//	{"message":"Invalid request body","details":{"formErrors":[],"fieldErrors":{"buzzBudget":["Too small: expected number to be >0"]}}}
+//
+// i.e. zod's flatten(). The top-level message is the same generic sentence for
+// EVERY malformed field, so without the field detail a rejected `--budget` is
+// indistinguishable from a rejected slug — the caller learns that something was
+// wrong and nothing about what. Field names are sorted so the text is stable.
+//
+// Returns "" when the body carries no recognizable detail, so the caller falls
+// back to the plain message rather than printing an empty parenthetical.
+func devTokenValidationDetail(raw []byte) string {
+	var env struct {
+		Details struct {
+			FormErrors  []string            `json:"formErrors"`
+			FieldErrors map[string][]string `json:"fieldErrors"`
+		} `json:"details"`
+	}
+	if json.Unmarshal(raw, &env) != nil {
+		return ""
+	}
+	fields := make([]string, 0, len(env.Details.FieldErrors))
+	for f := range env.Details.FieldErrors {
+		fields = append(fields, f)
+	}
+	sort.Strings(fields)
+	parts := make([]string, 0, len(fields)+len(env.Details.FormErrors))
+	for _, f := range fields {
+		if msgs := env.Details.FieldErrors[f]; len(msgs) > 0 {
+			parts = append(parts, f+": "+strings.Join(msgs, "; "))
+		}
+	}
+	parts = append(parts, env.Details.FormErrors...)
+	return strings.Join(parts, " | ")
+}
+
 // devTokenError maps a non-2xx dev-token response to a clear, actionable CLI
-// error. The route returns {"message": ...} on every error status: 404
-// not-found-or-not-yours, 403 not-invited-or-insufficient-scope, 429
-// rate-limited, 503 flag-off. The 403 message is the key DX case — a spend
-// token needs a full-scope personal API key (an OAuth login mints read-only).
+// error. The route returns {"message": ...} on every error status: 400
+// schema-rejected (with per-field details), 404 not-found-or-not-yours, 403
+// not-invited-or-insufficient-scope, 429 rate-limited, 503 flag-off. The 403
+// message is the key DX case — a spend token needs a full-scope personal API key
+// (an OAuth login mints read-only).
 func devTokenError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
 	msg := serverMessage(raw)
 	switch status {
+	case http.StatusBadRequest:
+		// Report the server's OWN verdict rather than re-deriving one: the CLI
+		// range-checks --budget before sending, so reaching here means the
+		// server's rules and the CLI's understanding of them have diverged, and
+		// that divergence is exactly what has to reach the developer intact.
+		if detail := devTokenValidationDetail(raw); detail != "" {
+			return fmt.Errorf("the server rejected the request (400): %s — %s", msg, detail)
+		}
+		return fmt.Errorf("the server rejected the request (400): %s", msg)
 	case http.StatusNotFound:
 		// Two 404 shapes: the anti-shadow guard returns a bare "App not found"
 		// when the slug is an approved app owned by another account (the no-row
