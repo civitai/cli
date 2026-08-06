@@ -29,6 +29,21 @@ type genSeams struct {
 	submitCalls  int
 	resolveCalls int
 	balanceCalls int
+	// uploadCalls counts reference-image uploads. Like submitCalls it exists so
+	// "no upload happened" is a MEASURED zero: every test asserting
+	// uploadCalls==0 has a sibling in generate_img2img_test.go driving this same
+	// counter above zero (see TestGenerateImage_PositiveControl_UploadCounterMoves).
+	uploadCalls int
+
+	// lastUploadContentType / lastUploadBody record the last upload, so a test
+	// can pin that the content type came from the DECODED format rather than the
+	// filename extension.
+	lastUploadContentType string
+	lastUploadBody        []byte
+	// uploadReplyURL is the blob URL the fake upload returns; empty means a
+	// deterministic default. uploadErr makes the upload fail.
+	uploadReplyURL string
+	uploadErr      error
 
 	// lastGraph is the graph handed to whatIf — captured so a test can assert on
 	// the payload that would go over the wire.
@@ -106,6 +121,18 @@ func (s *genSeams) deps(t *testing.T) generateDeps {
 				return s.resolve(ctx, id)
 			}
 			return &genapi.ResolvedVersion{VersionID: id, ModelName: "DreamShaper", VersionName: "v8", ModelType: "Checkpoint"}, nil
+		},
+		uploadImage: func(ctx context.Context, contentType string, body []byte) (string, error) {
+			s.uploadCalls++
+			s.lastUploadContentType = contentType
+			s.lastUploadBody = body
+			if s.uploadErr != nil {
+				return "", s.uploadErr
+			}
+			if s.uploadReplyURL != "" {
+				return s.uploadReplyURL, nil
+			}
+			return "https://orchestration.civitai.com/v2/consumer/blobs/TESTBLOB.png", nil
 		},
 		buzzBalance: func(ctx context.Context) (int64, error) {
 			s.balanceCalls++

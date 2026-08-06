@@ -109,16 +109,26 @@ func (c *Client) checkDownloadRedirect(req *http.Request, via []*http.Request) e
 // plain-http endpoint (e.g. a cloud metadata service); legitimate signed
 // object-storage URLs are always https, so this never breaks the normal path.
 func requireHTTPSDownload(rawURL string) error {
+	return requireHTTPSTransfer(rawURL, "download", "downloads")
+}
+
+// requireHTTPSTransfer is the ONE https-scheme predicate for every transfer this
+// package performs — the download path and the presigned UPLOAD path
+// (upload.go) alike. The verb/plural are message-only: a second copy of this
+// check worded for uploads is exactly the duplicated security logic item 17 of
+// AGENTS.md exists to prevent, so callers parameterise the wording rather than
+// re-implement the decision.
+func requireHTTPSTransfer(rawURL, verb, plural string) error {
 	u, err := url.Parse(rawURL)
 	if err != nil {
-		return fmt.Errorf("invalid download URL %q: %w", rawURL, err)
+		return fmt.Errorf("invalid %s URL %q: %w", verb, rawURL, err)
 	}
 	if !strings.EqualFold(u.Scheme, "https") {
 		scheme := u.Scheme
 		if scheme == "" {
 			scheme = "(none)"
 		}
-		return fmt.Errorf("refusing to download over %s — downloads must use https (got %q)", scheme, rawURL)
+		return fmt.Errorf("refusing to %s over %s — %s must use https (got %q)", verb, scheme, plural, rawURL)
 	}
 	return nil
 }
