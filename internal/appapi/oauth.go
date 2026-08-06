@@ -63,12 +63,21 @@ const (
 	// package can produce must be a subset of the LIVE allowedScopes column:
 	//   - DeviceScope (100663297) needs the AppBlocksDevTunnel widening — live.
 	//   - DeviceScope|ScopeSetGenerate (100777985) needs the AIServicesRead |
-	//     AIServicesWrite | BuzzRead widening — NOT yet applied to production as of
-	//     2026-08-06 (civitai/civitai#3681). Until that migration is confirmed
-	//     applied, `civitai login --scopes generate` 400s; StartDevice maps that to
-	//     an actionable message (see InvalidScopeError) and plain `civitai login`
-	//     keeps working. Do NOT release a version that DEFAULTS to the wider mask
-	//     ahead of the civitai server change.
+	//     AIServicesWrite | BuzzRead widening — LIVE in production since
+	//     civitai/civitai#3699 merged. Probed against auth.civitai.com on
+	//     2026-08-06: scope=100777985 -> 200 with a device code, scope=100663297
+	//     -> 200, and scope=100777987 (ONE bit outside) -> 400 invalid_scope.
+	//     civitai-cli's allowedScopes is exactly 100777985.
+	//
+	// 100777985 is therefore a CEILING, not a floor: a new deviceScopeSets entry
+	// whose bits fall outside it breaks EVERY login that names the set, so widen
+	// allowedScopes server-side FIRST. The default (`civitai login`) must also stay
+	// at 100663297 — that is the product decision above, not a server limit.
+	//
+	// An older release or a self-hosted server that predates the widening still
+	// answers invalid_scope for `--scopes generate`; StartDevice maps that to an
+	// actionable message (see InvalidScopeError) and plain `civitai login` keeps
+	// working there.
 	//
 	// What a login token can do:
 	//   - DEFAULT (`civitai login`, 100663297): identity/whoami, `app submit`,
@@ -194,6 +203,19 @@ func ResolveDeviceScope(sets []string) (string, error) {
 			}
 		}
 		if !found {
+			// A FLAG-SHAPED name is not a typo, it is a swallowed flag: --scopes
+			// takes a value and has no NoOptDefVal, so `login --scopes --no-browser`
+			// hands "--no-browser" here as the set name. Reporting that as an
+			// unknown SET sends the user hunting for a name they never typed, so
+			// name the real mistake instead. (It already fails SAFE — the login is
+			// refused, nothing is stored — this is purely the message.)
+			if trimmed := strings.TrimSpace(raw); strings.HasPrefix(trimmed, "-") {
+				return "", fmt.Errorf(
+					"--scopes consumed %q as its VALUE, not as a flag — it always takes the next argument. "+
+						"Write the set name immediately after it (e.g. `--scopes %s %s`); "+
+						"valid scope sets: %s",
+					trimmed, ScopeSetGenerate, trimmed, strings.Join(DeviceScopeSetNames(), ", "))
+			}
 			return "", fmt.Errorf("unknown login scope set %q — valid scope sets: %s",
 				strings.TrimSpace(raw), strings.Join(DeviceScopeSetNames(), ", "))
 		}
@@ -412,8 +434,13 @@ func (c *OAuthClient) RequestedScope() string {
 // InvalidScopeError is the device-init `invalid_scope` rejection, rendered as
 // something a user can act on. The server's scope validation is ALL-OR-NOTHING:
 // one bit outside the civitai-cli client's allowedScopes rejects the entire
-// login, so this is what a CLI running ahead of the server's scope-widening
-// migration sees. The message names the concrete fallback (plain `civitai
+// login.
+//
+// civitai.com production permits 100777985 (see DeviceScope), so on production
+// this error means a set was added client-side ahead of an allowedScopes
+// widening. Against ANY OTHER auth origin — a self-hosted deployment, an older
+// release, a non-default CIVITAI_BASE_URL — it means that server predates the
+// widening. Either way the message names the concrete fallback (plain `civitai
 // login`) rather than echoing an OAuth code.
 type InvalidScopeError struct {
 	// Requested is the scope mask the CLI put on the wire.
@@ -433,9 +460,11 @@ func (e *InvalidScopeError) Error() string {
 		// TODAY and why the wide one may not.
 		b.WriteString(fmt.Sprintf(
 			".\nThis login asked for extra scopes (requested %s; the default login requests %s), "+
-				"and this server does not permit them for the %s client yet.\n"+
-				"Run `civitai login` (no --scopes) — it still works — and retry `civitai login --scopes %s` "+
-				"once the server-side scope widening is live.",
+				"and this server does not permit them for the %s client.\n"+
+				"civitai.com does permit them, so check CIVITAI_BASE_URL — a self-hosted or older "+
+				"auth server predates that widening.\n"+
+				"Run `civitai login` (no --scopes) — it still works — and use `civitai login --scopes %s` "+
+				"against civitai.com when you need Buzz-spend.",
 			e.Requested, DeviceScope, ClientID, ScopeSetGenerate))
 	} else {
 		b.WriteString(fmt.Sprintf(

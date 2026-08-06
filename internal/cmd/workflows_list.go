@@ -53,8 +53,8 @@ workflow you were charged for can legitimately have fewer usable results than it
 produced, and collapsing the two numbers would hide that. Use
 ` + "`civitai workflows get <id>`" + ` for the per-output reasons and the URLs.
 
-Reading SPENDS NOTHING. It needs the same personal API key with the AI Services
-scopes that ` + "`civitai generate`" + ` needs.`,
+Reading SPENDS NOTHING. It needs the same AI Services scopes that
+` + "`civitai generate`" + ` needs: ` + spendCredentialRoutes + `.`,
 		Example: `  civitai workflows list
   civitai workflows list --limit 5
   civitai workflows list --limit 50 --cursor <next-cursor>
@@ -68,7 +68,8 @@ scopes that ` + "`civitai generate`" + ` needs.`,
 			}
 			if cfg.Token() == "" {
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf(
-					"no token configured — listing workflows needs a personal API key: run `civitai login --token <key>` (or set CIVITAI_TOKEN)"))
+					"no token configured — listing workflows needs a credential with the AI Services scopes: "+
+						spendCredentialRoutes+". Or set CIVITAI_TOKEN"))
 			}
 			o.baseURL = cfg.BaseURL()
 			gen := genapi.NewWithSource(cfg.BaseURL(), auth.New(cfg))

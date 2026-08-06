@@ -184,9 +184,14 @@ func TestAppDevTokenErrorMapping(t *testing.T) {
 	}
 }
 
-// TestAppDevTokenForbiddenNamesPersonalKey asserts the 403 guidance steers the
-// user to a full-scope personal API key + whoami (the key DX dead-end).
-func TestAppDevTokenForbiddenNamesPersonalKey(t *testing.T) {
+// TestAppDevTokenForbiddenNamesBothSpendRoutes asserts the 403 guidance steers
+// the user to a spend-capable credential + whoami (the key DX dead-end).
+//
+// It requires BOTH routes to be named. Asserting only "personal API key" is what
+// let the message keep saying a personal key was the ONLY way long after
+// `civitai login --scopes generate` shipped: the assertion was still true, and
+// the guidance was still wrong.
+func TestAppDevTokenForbiddenNamesBothSpendRoutes(t *testing.T) {
 	srv := devTokenServer(t, map[string]any{"message": "insufficient scope"}, http.StatusForbidden, nil)
 	defer srv.Close()
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -196,7 +201,7 @@ func TestAppDevTokenForbiddenNamesPersonalKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for 403")
 	}
-	for _, want := range []string{"personal API key", "civitai whoami", "OAuth"} {
+	for _, want := range []string{"personal API key", "civitai login --scopes generate", "civitai whoami", "OAuth"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("403 error %q should mention %q", err.Error(), want)
 		}

@@ -65,9 +65,11 @@ type Client struct {
 	MaxResponseBody int64
 }
 
-// New builds a Client from a static token (personal API key). Generation is
-// personal-key-only today: the `civitai login` OAuth client does not carry the
-// AI Services scopes the orchestrator procedures require.
+// New builds a Client from a static token (personal API key). Generation is NOT
+// personal-key-only: an OAuth login that opted in via `civitai login --scopes
+// generate` carries the AI Services scopes the orchestrator procedures require.
+// Only a DEFAULT `civitai login` lacks them. Prefer NewWithSource so an OAuth
+// token can refresh; this constructor is for a fixed token (e.g. CIVITAI_TOKEN).
 func New(baseURL, token string) *Client {
 	return NewWithSource(baseURL, civitai.StaticToken(token))
 }
@@ -143,7 +145,7 @@ func (c *Client) token(ctx context.Context) (string, error) {
 	}
 	if tok == "" {
 		return "", civitai.Tag(civitai.ErrUnauthorized,
-			fmt.Errorf("no token configured — run `civitai login --token <personal API key>` (or set CIVITAI_TOKEN)"))
+			fmt.Errorf("no token configured — run `civitai login --scopes generate` (a browser login that opts into generation) or `civitai login --token <personal API key>` (or set CIVITAI_TOKEN)"))
 	}
 	return tok, nil
 }

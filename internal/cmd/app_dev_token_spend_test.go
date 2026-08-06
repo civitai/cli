@@ -78,11 +78,29 @@ func TestDevTokenRequestScopes(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Copy the input so an aliasing bug in the implementation is visible.
-			in := append([]string(nil), tc.manifest...)
-			if tc.manifest == nil {
-				in = nil
+			//
+			// 🔴 SPARE CAPACITY IS LOAD-BEARING. `append([]string(nil), …)` yields
+			// cap == len, so an in-place `append(manifestScopes, budgetedScope)`
+			// would REALLOCATE and the caller's array would be untouched — the
+			// "Fresh slice: never append into the caller's backing array" guard in
+			// devTokenRequestScopes would be unobservable, and the DeepEqual on `in`
+			// below cannot see it either (len never changes). Hand the function a
+			// slice with room to spare and a sentinel sitting in the first spare
+			// slot: an in-place append overwrites the sentinel.
+			const sentinel = "SENTINEL-must-not-be-overwritten"
+			var in []string
+			backing := make([]string, len(tc.manifest)+1, len(tc.manifest)+2)
+			copy(backing, tc.manifest)
+			backing[len(tc.manifest)] = sentinel
+			if tc.manifest != nil {
+				in = backing[:len(tc.manifest)]
 			}
 			got := devTokenRequestScopes(in, tc.spend)
+			if backing[len(tc.manifest)] != sentinel {
+				t.Errorf("devTokenRequestScopes appended into the CALLER's backing array "+
+					"(spare slot went %q -> %q) — it must build a fresh slice",
+					sentinel, backing[len(tc.manifest)])
+			}
 			if tc.wantIsNil && got != nil {
 				t.Fatalf("want nil (so the key is OMITTED from the body), got %#v", got)
 			}
@@ -323,8 +341,19 @@ func TestWhoAmISpendGuidanceForOAuth(t *testing.T) {
 	if !strings.Contains(out, "Spend Buzz (AI Services): no") {
 		t.Fatalf("precondition: this credential must read as non-spending:\n%s", out)
 	}
-	if !strings.Contains(out, "civitai login --scopes generate") {
-		t.Errorf("OAuth guidance must offer --scopes generate:\n%s", out)
+	// 🔴 ORDER, not mere presence. Contains(out, "--scopes generate") alone was
+	// TRUE IN BOTH BRANCHES of whoami's if/else — both list both routes — so it
+	// survived swapping the two Fprintln calls, i.e. it did not pin "lead with
+	// the fix that matches THIS credential", which is the whole point of the
+	// branch. Mirror the personal-key sibling and pin the ordering.
+	idxScopes := strings.Index(out, "civitai login --scopes generate")
+	idxKey := strings.Index(out, "civitai login --token")
+	if idxScopes < 0 || idxKey < 0 {
+		t.Fatalf("both routes should be offered (scopes=%d, key=%d):\n%s", idxScopes, idxKey, out)
+	}
+	if idxScopes > idxKey {
+		t.Errorf("for a re-runnable OAuth login the --scopes generate route must be listed FIRST "+
+			"(scopes at %d, key at %d):\n%s", idxScopes, idxKey, out)
 	}
 	// The old text asserted a personal key was the ONLY way. It must be gone.
 	if strings.Contains(out, "needs a\nfull-scope personal API key") {

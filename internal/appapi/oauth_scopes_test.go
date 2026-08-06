@@ -234,10 +234,12 @@ func TestStartDeviceSendsResolvedScope(t *testing.T) {
 	}
 }
 
-// TestStartDeviceMapsInvalidScopeForWidenedRequest: the ordering trap. Running
-// `--scopes generate` against a server whose allowedScopes has NOT been widened
-// yields `invalid_scope`; the user must get an actionable message, not a raw
-// OAuth code.
+// TestStartDeviceMapsInvalidScopeForWidenedRequest: Running `--scopes generate`
+// against a server whose allowedScopes has NOT been widened yields
+// `invalid_scope`; the user must get an actionable message, not a raw OAuth
+// code. civitai.com production HAS been widened (civitai/civitai#3699), so this
+// now covers a self-hosted/older auth server — and any future set whose bits
+// land outside allowedScopes.
 func TestStartDeviceMapsInvalidScopeForWidenedRequest(t *testing.T) {
 	var form url.Values
 	srv := startDeviceServer(t, &form, http.StatusBadRequest, map[string]string{"error": "invalid_scope"})

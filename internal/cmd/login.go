@@ -21,6 +21,19 @@ import (
 // `login --token` (no value) deeplink.
 const accountAPIKeysURL = "https://civitai.com/user/account"
 
+// spendCredentialRoutes names BOTH credentials that carry the AI-Services
+// (Buzz-spend) scope.
+//
+// ONE RULE, ONE PLACE. This sentence used to be open-coded in `login`, `app
+// create`, `generate` and the three `workflows` commands, each asserting that a
+// personal API key was the ONLY route. Adding `login --scopes generate` made
+// every copy false and they had to be corrected one at a time — which is exactly
+// how several were missed. Commands in other packages (genapi, appapi) cannot
+// import this constant, so their wording is corrected in place; keep it in step.
+const spendCredentialRoutes = "`civitai login --scopes generate` (a browser login that opts into " +
+	"generation), or a full-scope personal API key (`civitai login --token <key>`, created at " +
+	accountAPIKeysURL + ")"
+
 // tokenFlagNoValue is the sentinel NoOptDefVal for --token. pflag only allows a
 // flag to be written with no argument (`login --token`) when its NoOptDefVal is
 // non-empty; without it, `--token` alone errors "flag needs an argument". We set
@@ -86,8 +99,22 @@ account with ` + "`civitai whoami`" + `.)`,
 		// where `login foo --token` used to store `foo` as the token. See the
 		// SetInterspersed call for the full rationale.
 		Args: func(cmd *cobra.Command, args []string) error {
-			if cmd.Flags().Changed("token") && len(args) <= 1 {
-				return nil
+			if cmd.Flags().Changed("token") {
+				if len(args) <= 1 {
+					return nil
+				}
+				// 🔴 CREDENTIAL REDACTION. Reaching here means --token was given AND
+				// there is more than one positional, so args[0] IS the token value
+				// (position-aware recovery, above). cobra.NoArgs would render
+				// `unknown command "<args[0]>" for "civitai login"` — i.e. print the
+				// user's personal API key to stderr, where it lands in scrollback, CI
+				// logs and pasted bug reports. Describe the SHAPE of the mistake and
+				// echo nothing.
+				return asUsageError(fmt.Errorf(
+					"unexpected argument(s) after the `--token <key>` value (not echoed here: the first one " +
+						"is your API key). Flag parsing stops at that value, so anything after it is a stray " +
+						"argument. Put other flags BEFORE it (e.g. `civitai login --no-color --token <key>`), " +
+						"or use `civitai login --token=<key>`. Nothing was stored"))
 			}
 			return cobra.NoArgs(cmd, args)
 		},
@@ -111,24 +138,33 @@ account with ` + "`civitai whoami`" + `.)`,
 			}
 			tokenVal = strings.TrimSpace(tokenVal)
 
+			// --scopes is a DEVICE-FLOW concept: it is the `scope` parameter of the
+			// device-authorization request. A personal API key's scopes are fixed
+			// when it is minted in the web UI, so `--token <key> --scopes generate`
+			// cannot do what it says. Reject it loudly rather than storing the key
+			// and silently dropping the scope request.
+			//
+			// 🔴 THIS MUST PRECEDE THE bare-`--token` MINT-HELP RETURN BELOW. It used
+			// to sit after it, which made the guard partial in exactly the two
+			// spellings where --token carries NO value: `login --token --scopes
+			// generate` and `login --scopes generate --token` both took the early
+			// return, printed the mint help and exited 0 with --scopes silently
+			// dropped — while the two value-carrying spellings were rejected. A guard
+			// that fires for some spellings of the same mistake is worse than none,
+			// because the exit-0 ones read as acceptance.
+			if cmd.Flags().Changed("scopes") && cmd.Flags().Changed("token") {
+				return asUsageError(fmt.Errorf(
+					"--scopes applies only to the browser device login and cannot be combined with --token: " +
+						"a personal API key's scopes are fixed when you create it at " + accountAPIKeysURL +
+						". Run `civitai login --scopes generate` on its own, or drop --scopes"))
+			}
+
 			// `--token` with NO value: the user wants a personal key but hasn't got
 			// one yet — point them at where to mint it rather than erroring or
 			// falling through to the device flow.
 			if cmd.Flags().Changed("token") && tokenVal == "" {
 				printMintTokenHelp(cmd.OutOrStdout())
 				return nil
-			}
-
-			// --scopes is a DEVICE-FLOW concept: it is the `scope` parameter of the
-			// device-authorization request. A personal API key's scopes are fixed
-			// when it is minted in the web UI, so `--token <key> --scopes generate`
-			// cannot do what it says. Reject it loudly rather than storing the key
-			// and silently dropping the scope request.
-			if cmd.Flags().Changed("scopes") && cmd.Flags().Changed("token") {
-				return asUsageError(fmt.Errorf(
-					"--scopes applies only to the browser device login and cannot be combined with --token: " +
-						"a personal API key's scopes are fixed when you create it at " + accountAPIKeysURL +
-						". Run `civitai login --scopes generate` on its own, or drop --scopes"))
 			}
 
 			// Resolve the requested scope BEFORE any network call so a typo'd set
@@ -187,6 +223,14 @@ account with ` + "`civitai whoami`" + `.)`,
 	// parsing, so --scopes is left as a stray positional and the Args guard
 	// rejects the whole invocation rather than silently ignoring it. Put --scopes
 	// FIRST (or use `--token=<key>`).
+	//
+	// The cost of having no NoOptDefVal is the mirror image of --token's: pflag
+	// DOES swallow a following flag as this flag's value, so `login --scopes
+	// --no-browser` arrives at ResolveDeviceScope as the set name "--no-browser".
+	// It fails safe (the login is refused, nothing stored) and ResolveDeviceScope
+	// detects the leading dash and says the flag was swallowed rather than
+	// reporting an unknown set. Giving --scopes a NoOptDefVal would fix the
+	// swallow but reopen the positional ambiguity above, which is the worse bug.
 	cmd.Flags().StringSliceVar(&scopeSets, "scopes", nil, fmt.Sprintf(
 		"extra scope sets to request on a browser device login, additive on top of the default (valid: %s). "+
 			"--scopes generate grants generation AND Buzz-SPEND authority; omit it and this login cannot spend your Buzz. "+
@@ -296,14 +340,22 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool, sco
 // asking for, and what each one authorizes. It prints NOTHING for a default
 // login (no --scopes), so existing output is unchanged. Unknown names never
 // reach here — ResolveDeviceScope rejects them before any network call.
+//
+// DEDUPED to match ResolveDeviceScope: the mask is an OR, so `--scopes
+// generate,generate` (or a repeated --scopes flag) requests exactly the same
+// authority as one mention. Printing the Buzz-spend warning twice for one grant
+// misrepresents what is being asked for.
 func printRequestedScopeSets(out io.Writer, scopeSets []string) {
+	seen := make(map[string]bool, len(scopeSets))
 	for _, raw := range scopeSets {
+		name := strings.ToLower(strings.TrimSpace(raw))
 		summary, ok := appapi.DeviceScopeSetSummary(raw)
-		if !ok {
+		if !ok || seen[name] {
 			continue
 		}
+		seen[name] = true
 		fmt.Fprintf(out, "%s\n", ui.Warn(fmt.Sprintf(
-			"Requesting the %q scope set: %s.", strings.ToLower(strings.TrimSpace(raw)), summary)))
+			"Requesting the %q scope set: %s.", name, summary)))
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/civitai/cli/internal/appapi"
 	"gopkg.in/yaml.v3"
 )
 
@@ -164,10 +165,11 @@ func TestLoginUnknownScopeSetFailsBeforeAnyNetworkCall(t *testing.T) {
 	}
 }
 
-// TestLoginInvalidScopeFromServerIsActionable is the ORDERING TRAP, end to end:
-// `--scopes generate` against a server whose civitai-cli allowedScopes has not
-// been widened yet answers invalid_scope, and the user must be told that plain
-// `civitai login` still works.
+// TestLoginInvalidScopeFromServerIsActionable, end to end: `--scopes generate`
+// against a server whose civitai-cli allowedScopes has not been widened answers
+// invalid_scope, and the user must be told that plain `civitai login` still
+// works. Production is widened (civitai/civitai#3699), so the live case is a
+// self-hosted or older auth server — or a future set added ahead of the server.
 func TestLoginInvalidScopeFromServerIsActionable(t *testing.T) {
 	srv := newLoginScopeSrv(t, http.StatusBadRequest, map[string]string{"error": "invalid_scope"})
 	dir := loginEnv(t, srv.URL)
@@ -199,9 +201,17 @@ func TestLoginInvalidScopeFromServerIsActionable(t *testing.T) {
 //     confused with the `--token <value>` positional-recovery form.
 //   - anything that halts flag parsing before --scopes is REJECTED, not silently
 //     run with the default scope.
-//   - --scopes with --token is rejected outright (a personal key's scopes are
-//     fixed at creation).
+//   - --scopes with --token is rejected outright, in ALL FOUR spellings — the
+//     two where --token carries a value AND the two where it does not. The
+//     no-value spellings used to hit the mint-help early return and exit 0 with
+//     --scopes silently dropped; that ordering is now inverted in login.go and
+//     these rows are what hold it there.
+//   - a rejected invocation never echoes the token VALUE (it is a credential).
 func TestLoginScopesFlagParsingMatrix(t *testing.T) {
+	// theKey is deliberately secret-shaped: any case that rejects an invocation
+	// containing it must not put it in the error text.
+	const theKey = "7f3c9a21b8e04d5fa1c2e6d90b4a8f13"
+
 	cases := []struct {
 		name string
 		args []string
@@ -209,6 +219,8 @@ func TestLoginScopesFlagParsingMatrix(t *testing.T) {
 		wantErr bool
 		// wantErrHas: substring the error must contain (when wantErr).
 		wantErrHas string
+		// wantErrLacks: substring the error must NOT contain (when wantErr).
+		wantErrLacks string
 		// wantScope: the scope that must reach the wire (when !wantErr).
 		wantScope string
 		// wantStoredToken: the personal key that must be stored (empty = none).
@@ -247,19 +259,45 @@ func TestLoginScopesFlagParsingMatrix(t *testing.T) {
 			wantErr: true, wantErrHas: "cannot be combined with --token",
 		},
 		{
-			// THE FOOTGUN CASE. `k` is a positional, which halts flag parsing under
-			// SetInterspersed(false) — so `--scopes generate` arrive as extra
+			// THE FOOTGUN CASE. The key is a positional, which halts flag parsing
+			// under SetInterspersed(false) — so `--scopes generate` arrive as extra
 			// positionals, --scopes is never Changed, and the Args guard rejects the
-			// lot. It must NOT quietly store `k` while dropping the scope request.
-			name:    "--token <value> then --scopes → rejected, nothing stored",
-			args:    []string{"login", "--token", "k", "--scopes", "generate"},
-			wantErr: true,
+			// lot. It must NOT quietly store the key while dropping the scope
+			// request, AND it must not echo the key: cobra.NoArgs would render
+			// `unknown command "<key>"`, printing a live credential to stderr.
+			name:    "--token <value> then --scopes → rejected, nothing stored, key not echoed",
+			args:    []string{"login", "--token", theKey, "--scopes", "generate"},
+			wantErr: true, wantErrHas: "unexpected argument(s) after the `--token <key>` value",
+			wantErrLacks: theKey,
+		},
+		{
+			// BARE --token (NoOptDefVal sentinel, no value) FIRST. Both --token and
+			// --scopes are Changed and no positional is produced, so this reaches
+			// RunE — where the conflict guard must win over the mint-help early
+			// return. Before the reorder this printed the mint help and exited 0.
+			name:    "bare --token then --scopes → rejected as a combination",
+			args:    []string{"login", "--token", "--scopes", "generate"},
+			wantErr: true, wantErrHas: "cannot be combined with --token",
+		},
+		{
+			// The same hole, other order.
+			name:    "--scopes then bare --token → rejected as a combination",
+			args:    []string{"login", "--scopes", "generate", "--token"},
+			wantErr: true, wantErrHas: "cannot be combined with --token",
+		},
+		{
+			// --scopes takes a value and has no NoOptDefVal, so pflag hands it the
+			// FOLLOWING FLAG as the set name. It must fail safe AND say what really
+			// happened rather than reporting a set name the user never typed.
+			name:    "--scopes swallows a following flag → named as a swallow, not a typo",
+			args:    []string{"login", "--scopes", "--no-browser"},
+			wantErr: true, wantErrHas: "consumed \"--no-browser\" as its VALUE",
 		},
 		{
 			// A stray positional BEFORE --scopes halts parsing the same way.
 			name:    "stray positional then --scopes → rejected",
 			args:    []string{"login", "stray", "--scopes", "generate"},
-			wantErr: true,
+			wantErr: true, wantErrHas: "unknown command",
 		},
 	}
 
@@ -275,6 +313,10 @@ func TestLoginScopesFlagParsingMatrix(t *testing.T) {
 				}
 				if tc.wantErrHas != "" && !strings.Contains(err.Error(), tc.wantErrHas) {
 					t.Errorf("args %v: error %q missing %q", tc.args, err, tc.wantErrHas)
+				}
+				if tc.wantErrLacks != "" && strings.Contains(err.Error(), tc.wantErrLacks) {
+					t.Errorf("args %v: error echoed a credential (%q) into its message: %v",
+						tc.args, tc.wantErrLacks, err)
 				}
 				// A rejected invocation must never have stored a credential.
 				raw, _ := os.ReadFile(filepath.Join(dir, "civitai", "config.yaml"))
@@ -296,19 +338,104 @@ func TestLoginScopesFlagParsingMatrix(t *testing.T) {
 // TestLoginHelpDocumentsScopeSets: `civitai login --help` must let a user learn
 // (a) that the set exists, and (b) that it grants Buzz-SPEND authority. Help
 // text IS the surface where this decision is made.
+//
+// 🔴 The set assertions are STRUCTURAL, not spelled. The previous version of
+// this test checked Contains(out, "--scopes"/"generate"/"SPEND") — and stayed
+// GREEN with deviceScopeSetHelp() deleted from login.go's Long text entirely,
+// because pflag's AUTO-GENERATED usage line for --scopes already spells all
+// three words. It therefore pinned nothing about the single-sourced help block,
+// nor about login.go's claim that a new registry set "shows up in `civitai
+// login --help` without editing this file".
+//
+// What is pinned instead: for EVERY set in the appapi registry, --help contains
+// a line whose trimmed content is exactly `--scopes <name>`, immediately
+// followed by a MORE-INDENTED line carrying that set's registry Summary
+// verbatim. Only deviceScopeSetHelp() renders that shape, and it is driven by
+// the registry, so adding a set here without touching login.go keeps it green
+// while deleting/reordering/mis-binding the renderer turns it red.
 func TestLoginHelpDocumentsScopeSets(t *testing.T) {
 	out, _, err := run(t, "login", "--help")
 	if err != nil {
 		t.Fatalf("login --help: %v", err)
 	}
-	for _, want := range []string{"--scopes", "generate", "SPEND"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("login --help missing %q:\n%s", want, out)
+
+	names := appapi.DeviceScopeSetNames()
+	if len(names) == 0 {
+		t.Fatal("the scope-set registry is empty — this test would be vacuously green")
+	}
+	lines := strings.Split(out, "\n")
+	indentOf := func(s string) int { return len(s) - len(strings.TrimLeft(s, " \t")) }
+
+	for _, name := range names {
+		summary, ok := appapi.DeviceScopeSetSummary(name)
+		if !ok || strings.TrimSpace(summary) == "" {
+			t.Fatalf("registry set %q has no summary — nothing to pin", name)
 		}
+		hdr := -1
+		for i, l := range lines {
+			if strings.TrimSpace(l) == "--scopes "+name {
+				hdr = i
+				break
+			}
+		}
+		if hdr < 0 {
+			t.Errorf("login --help has no rendered entry line for the %q set "+
+				"(want a line that is exactly `--scopes %s`; the auto-generated flag usage does NOT count):\n%s",
+				name, name, out)
+			continue
+		}
+		if hdr+1 >= len(lines) {
+			t.Errorf("the `--scopes %s` entry line is the last line — its summary is missing", name)
+			continue
+		}
+		if got := strings.TrimSpace(lines[hdr+1]); got != summary {
+			t.Errorf("the line after `--scopes %s` must be that set's registry summary.\n got: %q\nwant: %q",
+				name, got, summary)
+			continue
+		}
+		if indentOf(lines[hdr+1]) <= indentOf(lines[hdr]) {
+			t.Errorf("the summary for %q must be indented UNDER its `--scopes %s` line "+
+				"(name indent %d, summary indent %d) — a flat/inverted rendering means the "+
+				"name and summary were bound the wrong way round",
+				name, name, indentOf(lines[hdr]), indentOf(lines[hdr+1]))
+		}
+	}
+
+	// The consequence must be shouted somewhere in --help (the registry summary
+	// carries it today; this stays a whole-output check on purpose).
+	if !strings.Contains(strings.ToUpper(out), "SPEND") {
+		t.Errorf("login --help must say a scope set grants Buzz SPEND authority:\n%s", out)
 	}
 	// The default's guarantee must be stated too, or a reader can't tell that
 	// omitting the flag is the safe choice.
 	if !strings.Contains(out, "NOT Buzz-spend") {
 		t.Errorf("login --help should state that the DEFAULT grants no Buzz-spend:\n%s", out)
+	}
+}
+
+// TestLoginRepeatedScopeSetWarnsOnce: the requested mask is an OR, so naming a
+// set twice (`--scopes generate,generate`, or a repeated --scopes flag) asks for
+// exactly the same authority as naming it once. Printing the Buzz-spend warning
+// twice for one grant overstates what is being requested.
+func TestLoginRepeatedScopeSetWarnsOnce(t *testing.T) {
+	for _, args := range [][]string{
+		{"login", "--scopes", "generate,generate", "--no-browser"},
+		{"login", "--scopes", "generate", "--scopes", "Generate", "--no-browser"},
+	} {
+		t.Run(strings.Join(args[1:], " "), func(t *testing.T) {
+			srv := newLoginScopeSrv(t, 0, nil)
+			loginEnv(t, srv.URL)
+
+			out, _, err := run(t, args...)
+			if err != nil {
+				t.Fatalf("%v: %v", args, err)
+			}
+			if got := srv.initForm.Get("scope"); got != wantGenerateScope {
+				t.Fatalf("%v: sent scope=%q, want %q (a repeat must not change the mask)", args, got, wantGenerateScope)
+			}
+			if n := strings.Count(out, "scope set:"); n != 1 {
+				t.Errorf("%v: announced the scope set %d times, want exactly 1:\n%s", args, n, out)
+			}
+		})
 	}
 }

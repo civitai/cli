@@ -361,8 +361,9 @@ const WithdrawPath = "/api/v1/blocks/withdraw"
 // submit step. Error bodies are {message}: 404 slug registered to a different
 // account / genuinely not found, 403 not-invited/insufficient-scope, 429
 // rate-limited, 503 flag-off. The minted token's CAPABILITIES depend on the
-// bearer: a full-scope personal API key mints a spend-capable token; an OAuth
-// (`civitai login`) credential mints a read-only one.
+// bearer's AIServicesWrite bit: a full-scope personal API key — or an OAuth
+// credential from `civitai login --scopes generate` — mints a spend-capable
+// token; a DEFAULT `civitai login` credential mints a read-only one.
 const DevTokenPath = "/api/v1/blocks/dev-token"
 
 func (c *Client) authedDo(ctx context.Context, build func() (*http.Request, error)) (int, []byte, error) {
@@ -1033,8 +1034,10 @@ func devTokenValidationDetail(raw []byte) string {
 // error. The route returns {"message": ...} on every error status: 400
 // schema-rejected (with per-field details), 404 not-found-or-not-yours, 403
 // not-invited-or-insufficient-scope, 429 rate-limited, 503 flag-off. The 403
-// message is the key DX case — a spend token needs a full-scope personal API key
-// (an OAuth login mints read-only).
+// message is the key DX case — a spend token needs a bearer carrying
+// AIServicesWrite, i.e. a full-scope personal API key OR an OAuth login that
+// opted in via `civitai login --scopes generate`. A DEFAULT `civitai login`
+// mints read-only.
 func devTokenError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
 	msg := serverMessage(raw)
@@ -1061,7 +1064,7 @@ func devTokenError(status int, raw []byte) (err error) {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
 	case http.StatusForbidden:
-		return fmt.Errorf("not authorized (403): %s — minting needs an invite (invite-only beta) AND a full-scope personal API key; an OAuth `civitai login` token can't mint a spend token (check with `civitai whoami`)", msg)
+		return fmt.Errorf("not authorized (403): %s — minting needs an invite (invite-only beta) AND a credential carrying the AI Services scopes: `civitai login --scopes generate` or a full-scope personal API key. A DEFAULT OAuth `civitai login` token can't mint a spend token (check with `civitai whoami`)", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:

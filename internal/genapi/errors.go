@@ -107,7 +107,7 @@ func generateError(proc string, status int, raw []byte) (err error) {
 	}()
 	switch status {
 	case http.StatusUnauthorized:
-		return fmt.Errorf("not authenticated for %s (401): %s — generation needs a personal API key with the AI Services scopes; create one at https://civitai.com/user/account, then run `civitai login --token <key>`", proc, msg)
+		return fmt.Errorf("not authenticated for %s (401): %s — generation needs a credential with the AI Services scopes: run `civitai login --scopes generate` (a browser login that opts into generation), or create a full-scope personal API key at https://civitai.com/user/account and run `civitai login --token <key>`", proc, msg)
 	case http.StatusForbidden:
 		return fmt.Errorf("refused by the server for %s (403): %s — this can be a missing AI Services scope, insufficient Buzz, a muted account, or generation being disabled; check your credential with `civitai whoami`", proc, msg)
 	case http.StatusBadRequest:

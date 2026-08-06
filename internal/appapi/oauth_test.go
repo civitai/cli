@@ -83,7 +83,9 @@ func TestStartDeviceParsesResponse(t *testing.T) {
 // (a) identify the user, (b) MINT an App-Blocks dev token (read/estimate; the mint
 // strips ai:write:budgeted without AIServicesWrite), (c) submit via the
 // AppBlocksSubmit-gated routes, and (d) open an on-site dev tunnel
-// (AppBlocksDevTunnel). Real-Buzz dev:live needs a personal API key.
+// (AppBlocksDevTunnel). Real-Buzz dev:live needs AIServicesWrite, which comes
+// from `login --scopes generate` (see ResolveDeviceScope) or a personal API key —
+// never from this DEFAULT mask.
 func TestDeviceScopeCarriesRequiredBits(t *testing.T) {
 	const (
 		userRead           = 1 << 0  // 1
