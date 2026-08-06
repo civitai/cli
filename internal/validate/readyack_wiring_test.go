@@ -239,6 +239,110 @@ func TestHTMLSrcIsAURLNotAModuleSpecifier(t *testing.T) {
 	})
 }
 
+// TestAttributeNameBoundary is the end-to-end guard for a regression the fix
+// round introduced in the class it had just closed: `\b` is not an HTML
+// attribute-name boundary, so `data-src=` was read as `src=`.
+//
+// 🔴 Every case is a CORRECT `static` scaffold. The failure was a false warning
+// with `--strict` rc=1, from the STRONG tier — `Complete` stayed true because a
+// reference really was found, just the wrong one, so no disclosure engaged.
+// `data-src` on a `<script>` is a real consent-manager / lazy-load pattern.
+func TestAttributeNameBoundary(t *testing.T) {
+	for _, c := range []struct{ name, old, new string }{
+		{"data-src before src", `<script src="./civitai-host.js">`,
+			`<script data-src="./app.js" src="./civitai-host.js">`},
+		{"x-src before src", `<script src="./civitai-host.js">`,
+			`<script x-src="./app.js" src="./civitai-host.js">`},
+		{"a <script-loader> custom element alongside", `<script src="./civitai-host.js">`,
+			`<script-loader src="./app.js"></script-loader><script src="./civitai-host.js">`},
+	} {
+		t.Run("silent: "+c.name, func(t *testing.T) {
+			dir := renderTemplate(t, scaffold.Static)
+			wantAckKind(t, dir, "") // positive control on the untouched scaffold
+			editFile(t, dir, "index.html", c.old, c.new)
+			wantAckKind(t, dir, "")
+		})
+	}
+
+	// The inverse control: a `data-src` carrying the ONLY reference to the
+	// emitter loads nothing, so the defect must still be reported. Without this,
+	// "ignore data-src" is indistinguishable from "ignore every src".
+	t.Run("warns: the emitter is referenced only by data-src", func(t *testing.T) {
+		dir := renderTemplate(t, scaffold.Static)
+		editFile(t, dir, "index.html", `<script src="./civitai-host.js">`, `<script data-src="./civitai-host.js">`)
+		wantAckKind(t, dir, "unwired")
+	})
+}
+
+// TestDiamondAtTheDepthBoundStillWarns is the end-to-end guard for the other
+// round-2 regression: the truncation gap OVER-fired.
+//
+// 🔴 At the depth bound the walk gapped for any non-package specifier without
+// asking whether the target was ALREADY IN THE GRAPH. A diamond — the normal
+// shape of any real module graph — therefore produced a gap whose message was
+// literally false, dropped the project to the presence tier, and let an orphaned
+// emitter pass with rc=0: the exact defect this PR exists to catch, silenced by
+// the fix for a different one.
+func TestDiamondAtTheDepthBoundStillWarns(t *testing.T) {
+	const depth = blockproto.DefaultEntryMaxDepth
+	build := func(t *testing.T, deepest string) string {
+		t.Helper()
+		dir := renderTemplate(t, scaffold.Static)
+		// Orphan the emitter: present in the tree, referenced by nothing.
+		editFile(t, dir, "index.html", `<script src="./civitai-host.js"></script>`, "")
+		editFile(t, dir, "index.html", `<script src="./app.js"></script>`,
+			`<script type="module" src="./m0.js"></script>`)
+		if err := os.WriteFile(filepath.Join(dir, "shared.js"), []byte("export const s = 1;\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < depth; i++ {
+			body := ""
+			if i == 0 {
+				body = "import './shared.js';\n"
+			}
+			if i < depth-1 {
+				body += fmt.Sprintf("import './m%d.js';\n", i+1)
+			} else {
+				body += deepest
+			}
+			if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("m%d.js", i)), []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// The emitter really is still there — otherwise `unwired` below would be
+		// the wrong verdict for the right-looking reason.
+		if _, err := os.Stat(filepath.Join(dir, blockproto.ReadyAckFilename)); err != nil {
+			t.Fatalf("fixture lost the orphan emitter: %v", err)
+		}
+		return dir
+	}
+
+	t.Run("diamond: the deepest module re-imports an already-walked file", func(t *testing.T) {
+		wantAckKind(t, build(t, "import './shared.js';\n"), "unwired")
+	})
+	t.Run("self-cycle at the bound", func(t *testing.T) {
+		wantAckKind(t, build(t, fmt.Sprintf("import './m%d.js';\n", depth-1)), "unwired")
+	})
+	t.Run("control: the deepest module imports nothing", func(t *testing.T) {
+		// This one has genuinely nothing below the bound, so it must ALSO warn —
+		// proving the two above are not green merely because the fixture warns
+		// unconditionally.
+		wantAckKind(t, build(t, ""), "unwired")
+	})
+	t.Run("negative control: a real truncation still gaps", func(t *testing.T) {
+		// And something genuinely unseen below the bound must STILL drop to the
+		// presence tier, or the dedupe check has simply disabled the gap.
+		dir := build(t, "import './deeper.js';\n")
+		if err := os.WriteFile(filepath.Join(dir, "deeper.js"), []byte("export const d = 1;\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		g, _ := resolveLoadedFiles(dir, nil)
+		if g.Complete {
+			t.Fatalf("a genuinely unwalked module below the bound must still be a gap; gaps=%v", g.Gaps)
+		}
+	})
+}
+
 // TestAckBelowTheDepthBoundIsAGapNotAFinding pins the third root-cause bug: the
 // depth bound truncated the walk WITHOUT clearing Complete, so a correct project
 // whose emitter sits below it got the strong tier's warning and `--strict` rc=1.

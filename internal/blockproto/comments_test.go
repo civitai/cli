@@ -75,6 +75,17 @@ func TestStripJSComments(t *testing.T) {
 			want: "a;/* oops\nBLOCK_READY;",
 		},
 		{
+			// 🟢 The TERMINATOR is `*/`, two characters. Widening it to `*`
+			// ends the comment at the first star, so the tail of the comment
+			// becomes "code" — a commented-out mention turns into evidence and
+			// the check goes quiet at a broken app. Only a distant test in
+			// internal/validate caught this; the HTML half had a dedicated case
+			// and the JS half did not.
+			name: "a star inside a block comment does not terminate it",
+			src:  "a;/* 2 * 3 BLOCK_READY */b;",
+			want: "a;b;",
+		},
+		{
 			// The string branch: a URL is not a comment. The ack is on the SAME
 			// LINE on purpose — with quote handling defeated the `//` in
 			// `https://` swallows everything after it.

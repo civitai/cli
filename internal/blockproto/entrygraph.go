@@ -52,9 +52,17 @@ package blockproto
 // CORRECT project whose ack sat below the bound got the STRONG tier's warning
 // and `--strict` rc=1 — a false warning built on a graph we had stopped walking,
 // while three separate comments claimed an exhausted budget made the graph
-// incomplete. Measured at depth 10 before the fix. Only imports that are NOT
-// declared packages count as truncated: a leaf importing `react` and nothing
-// else has nothing left to see.
+// incomplete. Measured at depth 10 before the fix.
+//
+// 🔴 BUT ONLY IF SOMETHING WAS ACTUALLY TRUNCATED — see `truncatedBelow`. A
+// declared PACKAGE was never going to be followed, and a target ALREADY IN THE
+// GRAPH was read by another route. Missing that second half made the gap
+// OVER-fire and silence the very defect this check exists to catch: a DIAMOND
+// (the normal shape of any real module graph) whose deepest module re-imports an
+// already-walked file produced a gap whose message was literally false, dropped
+// the project to the presence tier, and let an orphaned emitter pass with rc=0.
+// A gap that over-fires is not "conservative"; it is the false pass wearing a
+// different hat.
 //
 // WHAT IT DELIBERATELY DOES NOT MODEL. `resolve.alias` / `tsconfig` path
 // mapping, glob imports, dynamic `import(expr)` with a computed specifier,
@@ -107,13 +115,28 @@ type EntryGraphOptions struct {
 	// Inspect, when non-nil, is called for every file the walk reads, with that
 	// file's comment-stripped contents WHILE THEY ARE IN HAND.
 	//
-	// 🔴 This is why EntryFile carries no `Code` field. Retaining every graph
-	// file's contents peaked 410 MB RSS on a 200-module graph entirely INSIDE
-	// the file-count and file-size budgets (measured; ~17 MB before the graph
-	// existed) — a check whose own caps exist because `validate` must not become
-	// a memory event, exceeding the very figure those caps were sized against.
-	// The tree scan next door deliberately holds one file at a time; so does
-	// this.
+	// 🔴 This is why EntryFile carries no `Code` field — but dropping that field
+	// was only HALF the fix, and the first version of this comment claimed a
+	// property the binary did not have. A Go substring shares its parent's
+	// backing array, so an un-cloned import specifier pins its whole file; see
+	// `strings.Clone` in the import loop. Both halves are needed.
+	//
+	// Measured on a 200-module graph entirely INSIDE the file-count and size
+	// budgets, where every module is ~2 MiB of REAL (non-comment) code AND
+	// carries an import — the shape both hazards need, and the one a fixture
+	// padded with comments or with import-less leaves silently fails to
+	// exercise:
+	//
+	//	e800129, before the graph existed   26.4 - 27.8 MB
+	//	retaining Code                       421 - 439 MB   (independently measured)
+	//	Code dropped, specifiers aliased     558 - 628 MB
+	//	both fixed                          31.4 - 33.3 MB
+	//
+	// The residual ~5 MB over the tree scan is the graph reading its files at
+	// all; the point is that it is O(one file), not O(graph). These caps exist
+	// because `validate` must not become a memory event, and the un-fixed
+	// numbers blow past the 316 MB incident that sized them. `app submit` pays
+	// this too.
 	Inspect func(f EntryFile, code string)
 }
 
@@ -255,7 +278,7 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			continue
 		}
 		g.ScriptRefs++
-		queue = append(queue, pending{spec: src, from: dir, via: 0, depth: 1,
+		queue = append(queue, pending{spec: strings.Clone(src), from: dir, via: 0, depth: 1,
 			what: "index.html <script src>", syn: syntaxURL})
 	}
 	// Inline `<script>` blocks execute too, and a module one can import the
@@ -269,7 +292,7 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			continue // external: already queued above
 		}
 		for _, im := range reJSImport.FindAllStringSubmatch(StripJSComments(m[2]), -1) {
-			queue = append(queue, pending{spec: im[1], from: dir, via: 0, depth: 1,
+			queue = append(queue, pending{spec: strings.Clone(im[1]), from: dir, via: 0, depth: 1,
 				what: "inline <script> in index.html", syn: syntaxModule})
 		}
 	}
@@ -329,15 +352,33 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			continue
 		}
 		for _, im := range reJSImport.FindAllStringSubmatch(code, -1) {
-			spec := im[1]
+			// 🔴 strings.Clone IS LOAD-BEARING, NOT TIDINESS. A Go substring
+			// shares its parent's backing array, so an un-cloned specifier pins
+			// this file's ENTIRE comment-stripped contents — and it is stored
+			// both in the BFS queue and in EntryFile.Spec, i.e. for the whole
+			// walk. Measured on a 200-module graph inside both caps where every
+			// module is large AND carries an import: 558-628 MB peak RSS
+			// un-cloned, against 28 MB for the same tree at e800129. Dropping
+			// EntryFile.Code fixed only the other half of this.
+			spec := strings.Clone(im[1])
 			if p.depth+1 > opts.MaxDepth {
-				// 🔴 TRUNCATION IS A GAP. A package specifier is not truncated
-				// content — it was never going to be followed — so only a
-				// reference naming something in this project counts.
-				if _, k := resolveProjectRef(dir, filepath.Dir(file), spec, opts.Dependencies, syntaxModule); k != refPackage {
-					g.gap("stopped at import depth %d: %s imports %q, which this check did not follow",
-						opts.MaxDepth, f.Rel, spec)
+				// 🔴 TRUNCATION IS A GAP — BUT ONLY IF SOMETHING WAS ACTUALLY
+				// TRUNCATED. Two things are not: a package specifier (never
+				// going to be followed) and a target ALREADY IN THE GRAPH.
+				//
+				// Missing the second check made the fix silence the very defect
+				// it exists to catch. A DIAMOND — the normal shape of any real
+				// module graph — where the deepest module re-imports a file the
+				// walk already read produced a gap whose message was literally
+				// false ("…which this check did not follow", about a file in
+				// g.Files), dropped the project to the presence tier, and an
+				// orphaned emitter went SILENT with rc=0. Measured; a
+				// self-cycle at the bound did the same.
+				if !truncatedBelow(g, dir, file, spec, opts.Dependencies) {
+					continue
 				}
+				g.gap("stopped at import depth %d: %s imports %q, which this check did not follow",
+					opts.MaxDepth, f.Rel, spec)
 				continue
 			}
 			queue = append(queue, pending{
@@ -347,6 +388,29 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 		}
 	}
 	return g
+}
+
+// truncatedBelow reports whether an import sitting at the depth bound really
+// leaves something unseen.
+//
+// It answers "no" for a declared PACKAGE (never followed at any depth) and for a
+// target ALREADY IN THE GRAPH — a diamond or a cycle, where the walk read the
+// file by another route, so nothing is missing. It answers "yes" for anything
+// else, including a reference resolving to a file that is not there, which is
+// the same model disagreement the normal path treats as a gap.
+func truncatedBelow(g *EntryGraph, root, fromFile, spec string, deps map[string]bool) bool {
+	resolved, kind := resolveProjectRef(root, filepath.Dir(fromFile), spec, deps, syntaxModule)
+	switch kind {
+	case refPackage:
+		return false
+	case refUnresolved:
+		return true
+	}
+	target, err := resolveRefPath(resolved, syntaxModule)
+	if err != nil {
+		return true
+	}
+	return g.FileAt(target) < 0
 }
 
 func (g *EntryGraph) note(what, spec, resolved string, kind refKind) {
@@ -470,6 +534,12 @@ func resolveProjectRef(projectDir, fromDir, spec string, deps map[string]bool, s
 	// Vite allows query/hash suffixes (`?raw`, `?url`); a URL has a real query
 	// and fragment. Neither is part of the path, and an emitter referenced as
 	// `./civitai-host.js?url` is still the emitter.
+	//
+	// The ORDER of this strip and the scheme check above is NOT load-bearing —
+	// two independent mutation sweeps swapped them and nothing failed, because
+	// a specifier that is scheme-qualified stays scheme-qualified after its
+	// query is removed. Only the `^` ANCHOR on reURLScheme matters. An earlier
+	// comment here claimed the order was the reason; it was not.
 	if i := strings.IndexAny(spec, "?#"); i >= 0 {
 		spec = spec[:i]
 	}
@@ -549,14 +619,27 @@ func srcAttrValue(attrs string) (string, bool) {
 }
 
 var (
+	// 🔴 `\b` IS NOT AN HTML NAME BOUNDARY, AND USING IT HERE PRODUCED A FALSE
+	// WARNING AT A CORRECT PROJECT — TWICE OVER. `\b` matches between `-` and
+	// `s`, so `\bsrc\s*=` reads `data-src=` and `x-src=` as `src=`, and
+	// `<script\b` reads `<script-loader>` as `<script>`. Measured: a fresh
+	// `static` scaffold with `<script data-src="./app.js" src="./civitai-host.js">`
+	// — `data-src` on a script is a real consent-manager / lazy-load pattern —
+	// resolved the WRONG reference, kept `Complete` true, and produced the
+	// STRONG tier's warning with `--strict` rc=1. HTML name characters include
+	// `-`, so a name boundary is start-of-attributes, whitespace, or `/`; RE2
+	// has no lookahead, so the tag boundary is expressed by requiring the
+	// character after `<script` to be whitespace, `/` or `>`.
+	//
 	// reScriptOpen captures a `<script …>` open tag's attribute list.
-	reScriptOpen = regexp.MustCompile(`(?is)<script\b([^>]*)>`)
+	reScriptOpen = regexp.MustCompile(`(?is)<script([\s/][^>]*)?>`)
 	// reScriptBlock captures a whole `<script …>…</script>` so an INLINE
 	// module's imports can be read. Group 1 is the attribute list, group 2 the
 	// body.
-	reScriptBlock = regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script>`)
-	// reSrcAttr captures a src value in any of HTML's three quoting forms.
-	reSrcAttr = regexp.MustCompile(`(?is)\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'` + "`" + `=<>]+))`)
+	reScriptBlock = regexp.MustCompile(`(?is)<script([\s/][^>]*)?>(.*?)</script\s*>`)
+	// reSrcAttr captures a src value in any of HTML's three quoting forms. The
+	// leading `(?:^|[\s/])` is the attribute-name boundary `\b` could not be.
+	reSrcAttr = regexp.MustCompile(`(?is)(?:^|[\s/])src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'` + "`" + `=<>]+))`)
 	// reJSImport captures the SPECIFIER of an import / re-export / require, so
 	// it can be resolved. Matching a basename inside the specifier is what let
 	// `import '../nonexistent/civitai-host.js'` through.

@@ -221,14 +221,17 @@ func readyAckChecks(dir string, generic any) []string {
 // resolveLoadedFiles walks the entry graph and reports whether any file the
 // BROWSER LOADS mentions the message outside a comment.
 //
-// 🔴 The answer is accumulated through `Inspect`, not read off a retained field.
-// The graph hands each file's contents over while they are in hand and keeps
-// none of them, so this costs ONE file of memory — the same discipline the tree
-// scan above follows. The first version stored every graph file's stripped
-// contents on the EntryFile and peaked 410 MB RSS on a 200-module graph entirely
-// INSIDE these budgets, against ~17 MB before the graph existed: a check whose
-// caps exist precisely so `validate` cannot become a memory event, exceeding the
-// 316 MB figure those caps were sized against. `app submit` pays this too.
+// 🔴 The answer is accumulated through `Inspect`, not read off a retained field,
+// so this costs O(one file) rather than O(graph) — the same discipline the tree
+// scan above follows. Getting there took TWO fixes, and the intermediate state
+// is why this comment now carries numbers instead of an adjective: storing every
+// file's stripped contents on EntryFile peaked 421-439 MB on a 200-module graph
+// entirely INSIDE these budgets, and dropping that field still left 558-628 MB
+// because an un-cloned import specifier pins its whole file's backing array.
+// Both fixed: 31.4-33.3 MB, against 26.4-27.8 MB at e800129 before the graph
+// existed. See blockproto's Inspect doc for the fixture — a tree padded with
+// COMMENTS, or whose leaves carry no imports, does not exercise either hazard.
+// `app submit` pays this too.
 func resolveLoadedFiles(dir string, deps map[string]bool) (*blockproto.EntryGraph, bool) {
 	found := false
 	g := blockproto.ResolveEntryGraph(dir, blockproto.EntryGraphOptions{

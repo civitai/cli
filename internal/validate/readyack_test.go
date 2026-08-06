@@ -907,6 +907,32 @@ func TestReadyAckAdvisoriesStateTheirOwnStrength(t *testing.T) {
 		}},
 	}
 
+	// 🔴 THE SHARED OPENING DIAGNOSIS, and the reason this test needed a second
+	// round. `own` literals can only pin a tier that has something UNIQUE to
+	// say — and the presence tier's three unique literals ALL live in its
+	// trailing disclosure, so replacing its OPENING ("…but nothing in this
+	// project's source posts BLOCK_READY") with vague prose survived everything
+	// below. That is the identical half-vacuous shape this test's own header
+	// records catching last round, one tier over.
+	//
+	// The sentence is shared with the `missing` tier by design — both report an
+	// absence — so it is asserted as SET MEMBERSHIP: present in exactly those
+	// two, absent from the tier that fires because the message IS present.
+	const foundNothing = "nothing in this project's source posts "
+	for _, tier := range perTier {
+		wantShared := tier.name != "unwired"
+		if got := strings.Contains(tier.advice, foundNothing); got != wantShared {
+			if wantShared {
+				t.Errorf("the %s advisory no longer opens by saying WHAT WAS FOUND (%q) — every other literal "+
+					"this test pins for it lives in the trailing disclosure, so the diagnosis itself was "+
+					"unguarded:\n%s", tier.name, foundNothing, tier.advice)
+			} else {
+				t.Errorf("the unwired advisory says nothing in the source posts the message, but that tier "+
+					"fires precisely because something DOES:\n%s", tier.advice)
+			}
+		}
+	}
+
 	for _, tier := range perTier {
 		for _, lit := range tier.own {
 			if !strings.Contains(tier.advice, lit) {

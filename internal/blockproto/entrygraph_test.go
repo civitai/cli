@@ -264,12 +264,96 @@ func TestReadyAckWiringPredicate(t *testing.T) {
 			wantErr: "not a path in this project",
 		},
 		{
-			// 🔴 The scheme regex is ANCHORED, and the anchor is load-bearing:
-			// the scheme check runs BEFORE the `?`/`#` strip, so an unanchored
-			// pattern matches a `https:` sitting in a QUERY STRING and throws
-			// away a perfectly ordinary local reference. Dropping the `^`
-			// survived the previous sweep. A cache-busting or proxy query with a
-			// URL in it is ordinary.
+			// 🔴 `\b` IS NOT AN HTML ATTRIBUTE-NAME BOUNDARY. It matches between
+			// `-` and `s`, so `data-src=` was read as `src=` and the WRONG
+			// reference resolved — with `Complete` still true, so the STRONG
+			// tier fired. Measured on a correct `static` scaffold: `--strict`
+			// rc=1. `data-src` on a `<script>` is a real consent-manager /
+			// lazy-load pattern, not a contrivance.
+			name: "accept: data-src before the real src does not hijack it",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script data-src="./app.js" src="./civitai-host.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantAccept: true,
+		},
+		{
+			name: "accept: x-src before the real src does not hijack it",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script x-src="./app.js" src="./civitai-host.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantAccept: true,
+		},
+		{
+			// The inverse control: a tag carrying ONLY `data-src` has no src at
+			// all, so it loads nothing and cannot satisfy the wiring check.
+			// Without this, "do not match data-src" is indistinguishable from
+			// "match any attribute whose name ends in src".
+			name: "reject: data-src alone is not a load",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script data-src="./civitai-host.js"></script><script src="./app.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantErr: "no <script src> in index.html resolves to it",
+		},
+		{
+			// 🔴 The same `\b` on the TAG name: `<script-loader>` is a custom
+			// element, not a script, and a browser executes nothing in it.
+			name: "reject: a <script-loader> custom element is not a script tag",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script-loader src="./civitai-host.js"></script-loader><script src="./app.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantErr: "no <script src> in index.html resolves to it",
+		},
+		{
+			// 🟢 `srcAttrValue` reports an EMPTY src as PRESENT, which makes the
+			// tag EXTERNAL rather than inline. A browser ignores the body of an
+			// element that has a `src` attribute, so the import below must NOT
+			// count. Flipping that `return "", true` reproduces verbatim the
+			// hazard its own comment documents.
+			name: "reject: a body import inside a tag that has an (empty) src",
+			ack:  ackRel,
+			files: []gfile{
+				{"index.html", "<script src=\"\">import './src/civitai-host.js';</script>\n<script src=\"./app.js\"></script>"},
+				{"app.js", "// app"},
+			},
+			wantErr: "no <script src> in index.html resolves to it",
+		},
+		{
+			// 🟢 The scheme class must accept a SINGLE-letter and an UPPERCASE
+			// scheme, or an off-project URL resolves as a project file.
+			name: "reject: a single-letter scheme is still a URL",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script src="c:/elsewhere/civitai-host.js"></script><script src="./app.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantErr: "not a path in this project",
+		},
+		{
+			name: "reject: an uppercase scheme is still a URL",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script src="HTTPS://cdn.example.com/civitai-host.js"></script><script src="./app.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantErr: "not a path in this project",
+		},
+		{
+			// 🔴 The scheme regex is ANCHORED, and THE ANCHOR is what is
+			// load-bearing here: an unanchored pattern matches a `https:`
+			// sitting in a QUERY STRING and throws away a perfectly ordinary
+			// local reference. Dropping the `^` survived the previous sweep.
+			// (An earlier comment credited the ORDER of the scheme check and
+			// the `?`/`#` strip. It does not: two independent sweeps swapped
+			// them and nothing failed, because a scheme-qualified specifier
+			// stays scheme-qualified once its query is removed.)
 			name: "accept: a local src whose query string contains a URL",
 			ack:  "civitai-host.js",
 			files: []gfile{
@@ -496,6 +580,42 @@ func TestEntryGraphCompleteness(t *testing.T) {
 			wantGap:      "stopped at import depth 2",
 		},
 		{
+			// 🔴 A DIAMOND AT THE BOUND IS NOT TRUNCATION, AND CALLING IT ONE
+			// SILENCED THE DEFECT THIS CHECK EXISTS FOR. The deepest module
+			// re-imports a file the walk ALREADY READ, so nothing is unseen —
+			// but the first version gapped anyway, with a message that was
+			// literally false about a file sitting in g.Files, and dropped the
+			// project to the presence tier. Measured end-to-end: an orphaned
+			// emitter went from `unwired`/rc=1 to SILENT/rc=0. A diamond is the
+			// normal shape of any real module graph, so this is not an edge
+			// case. A gap that over-fires is the false pass wearing a hat.
+			name: "a diamond at the depth bound is not truncation",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/a.js"></script>`},
+				{"a.js", "import './shared.js';\nimport './b.js';"},
+				{"b.js", "import './shared.js';"},
+				{"shared.js", "export const s = 1;"},
+			},
+			deps:         deps,
+			opts:         &EntryGraphOptions{MaxDepth: 2},
+			wantComplete: true,
+			wantFiles:    []string{"index.html", "a.js", "shared.js", "b.js"},
+		},
+		{
+			// The same rule for a self-cycle: `b.js` importing itself at the
+			// bound leaves nothing unseen either.
+			name: "a self-cycle at the depth bound is not truncation",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/a.js"></script>`},
+				{"a.js", "import './b.js';"},
+				{"b.js", "import './b.js';"},
+			},
+			deps:         deps,
+			opts:         &EntryGraphOptions{MaxDepth: 2},
+			wantComplete: true,
+			wantFiles:    []string{"index.html", "a.js", "b.js"},
+		},
+		{
 			// The counterpart: a leaf at the bound that imports only a declared
 			// PACKAGE has nothing left to see, so it is NOT a gap. Without this
 			// the rule above degenerates into "any project as deep as the bound
@@ -686,14 +806,19 @@ func TestEntryGraphInspectSeesEveryFile(t *testing.T) {
 	}
 }
 
-// TestEntryGraphRetainsNoContents pins the memory contract STRUCTURALLY.
+// TestEntryGraphRetainsNoContents pins ONE HALF of the memory contract.
 //
-// 🔴 The first version stored every graph file's stripped contents on EntryFile
-// and peaked 410 MB RSS on a 200-module graph entirely INSIDE the file-count and
-// size budgets — against ~17 MB before the graph existed, and past the 316 MB
-// event those budgets were sized against in the first place. A benchmark would
-// drift; this asserts the type itself cannot hold contents, which is the
-// property that made the regression possible.
+// It asserts no graph field holds a file's contents — the property whose absence
+// let a 200-module graph inside both budgets peak 421-439 MB.
+//
+// 🔴 WHAT IT CANNOT SEE, STATED BECAUSE IT WAS ONCE CITED AS IF IT COULD: the
+// ALIASING half. A Go substring shares its parent's backing array, so an
+// un-cloned import specifier pins its whole file (measured: 558-628 MB with
+// `Code` already gone). `strings.Contains` below reads the LOGICAL string, so it
+// passes identically at 558 MB and at 33 MB. Only `strings.Clone` in the walk
+// prevents that, and only a live RSS measurement on a fixture whose modules are
+// large AND carry imports can observe it — see the table in
+// EntryGraphOptions.Inspect. Do not read a green here as "memory is fine".
 func TestEntryGraphRetainsNoContents(t *testing.T) {
 	dir := writeTree(t, []gfile{
 		{"index.html", `<script src="./app.js"></script>`},
@@ -710,6 +835,49 @@ func TestEntryGraphRetainsNoContents(t *testing.T) {
 					"bytes at a time, like the tree scan", f.Rel, field)
 			}
 		}
+	}
+}
+
+// TestEntryGraphRootContainment pins BOTH arms of the containment check.
+//
+// 🟢 Dropping only the `rel == ".."` arm admits a file OUTSIDE the project with
+// `Complete` still true — the project's own emitter would then be "satisfied" by
+// a same-named file in a sibling checkout. It is reachable through directory-
+// index resolution: `import '..'` resolves to the parent DIRECTORY, and the
+// module resolver will happily take `<parent>/index.js`.
+func TestEntryGraphRootContainment(t *testing.T) {
+	base := t.TempDir()
+	// A file that exists OUTSIDE the project root, reachable only by escaping it.
+	if err := os.WriteFile(filepath.Join(base, "index.js"), []byte("// outside\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(base, "proj")
+	for _, f := range []gfile{
+		{"index.html", `<script type="module" src="/src/main.js"></script>`},
+		{"src/main.js", "import '../..';"},
+	} {
+		p := filepath.Join(root, filepath.FromSlash(f.path))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(f.body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Positive control: the escape target really is resolvable, so a green below
+	// cannot mean "there was nothing to admit".
+	if _, err := os.Stat(filepath.Join(base, "index.js")); err != nil {
+		t.Fatalf("fixture missing its off-project target: %v", err)
+	}
+	g := ResolveEntryGraph(root, EntryGraphOptions{})
+	for _, f := range g.Files {
+		if !strings.HasPrefix(f.Path, root) {
+			t.Fatalf("the graph admitted %s, which is OUTSIDE the project root %s — a same-named file in a "+
+				"sibling checkout would satisfy this project's wiring check", f.Path, root)
+		}
+	}
+	if g.Complete {
+		t.Fatal("a reference escaping the project root must be a GAP: we stopped modelling there")
 	}
 }
 

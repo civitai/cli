@@ -1002,9 +1002,21 @@ neither one's.
       scheme-qualified or protocol-relative is DOCUMENT-RELATIVE, there are no
       bare specifiers, and there is no extension or directory-index guessing.
       Under module syntax a bare specifier is a package and a bundler's
-      extension resolution applies. The scheme regex is ANCHORED (`^`) because
-      the scheme check runs BEFORE the `?`/`#` strip, so an unanchored pattern
-      throws away `./x.js?from=https://cdn`. Do not re-merge these paths.
+      extension resolution applies. The scheme regex is ANCHORED (`^`), or an
+      unanchored pattern matches a `https:` in a QUERY STRING and throws away
+      `./x.js?from=https://cdn`. (An earlier revision of this item credited the
+      ORDER of the scheme check and the `?`/`#` strip. It does not matter — two
+      independent sweeps swapped them with nothing failing. Only the anchor is
+      load-bearing.) Do not re-merge these paths.
+      🔴 **And the boundaries are HTML boundaries, not `\b`.** `\b` matches
+      between `-` and `s`, so `\bsrc\s*=` read `data-src=` as `src=` and
+      `<script\b` read `<script-loader>` as a script. Measured on a CORRECT
+      `static` scaffold with `data-src` — a real consent-manager / lazy-load
+      pattern — the wrong reference resolved, `Complete` stayed true, and the
+      STRONG tier warned with `--strict` rc=1: the same false-warning class the
+      unquoted-`src` fix had just closed, reintroduced by the fix itself. RE2
+      has no lookahead, so the tag boundary is spelled as "the character after
+      `<script` is whitespace, `/` or `>`".
     - **THE DECIDABILITY BOUNDARY IS COMPLETENESS, NOT PROJECT TYPE.** The first
       draft drew it at "does the manifest declare a `buildCommand`" — bundled
       means undecidable — and that is wrong in both directions: an ordinary Vite
@@ -1026,21 +1038,43 @@ neither one's.
       three separate comments — this item included — claimed an exhausted budget
       made the graph incomplete. Measured: a CORRECT project whose ack sits ten
       imports below index.html got the STRONG tier's warning and `--strict`
-      rc=1, on a graph we had stopped walking. Only imports that are NOT
-      declared packages count as truncated: a leaf importing `react` and nothing
-      else has nothing left to see, and counting it would make every project as
-      deep as the bound unobservable.
-    - 🔴 **THE GRAPH RETAINS NO FILE CONTENTS, and `EntryFile` must not grow a
-      `Code` field again.** It had one, and a 200-module graph entirely INSIDE
-      the file-count and size budgets peaked **410 MB RSS**, against ~40 MB for
-      the same tree before the graph existed — a check whose caps exist
-      precisely so `validate` cannot become a memory event, blowing past the
-      316 MB figure those caps were sized against, with `app submit` paying it
-      too. Contents now go to `EntryGraphOptions.Inspect` while they are in
-      hand, so the walk holds ONE file at a time exactly like the tree scan.
-      After the fix: 39.5 MB, matching the pre-graph baseline on that fixture.
-      `TestEntryGraphRetainsNoContents` pins it structurally rather than by
-      benchmark.
+      rc=1, on a graph we had stopped walking.
+      🔴 **But the gap must fire ONLY when something was actually truncated, and
+      getting that wrong silenced the defect this whole PR exists to catch.** A
+      declared package was never going to be followed, and a target ALREADY IN
+      THE GRAPH was read by another route. The first version checked only the
+      first, so a DIAMOND — the normal shape of any real module graph — whose
+      deepest module re-imports an already-walked file produced a gap whose
+      message was literally false about a file sitting in `g.Files`, dropped the
+      project to the presence tier, and let an orphaned emitter pass with rc=0.
+      Measured; a self-cycle at the bound did the same. A gap that over-fires is
+      not "conservative", it is the false pass wearing a different hat. See
+      `truncatedBelow`.
+    - 🔴 **THE GRAPH MUST STAY O(ONE FILE), AND THAT TOOK TWO FIXES — THE FIRST
+      ONE ALONE WAS CLAIMED AS COMPLETE AND WAS NOT.** `EntryFile` must not grow
+      a `Code` field again, AND every import specifier must be `strings.Clone`d:
+      a Go substring shares its parent's backing array, so an un-cloned
+      specifier pins its whole file, and it is held in both the BFS queue and
+      `EntryFile.Spec`. Measured on a 200-module graph entirely INSIDE the
+      file-count and size budgets, where every module is ~2 MiB of REAL
+      (non-comment) code AND carries an import:
+
+      | build | peak RSS (3 runs) |
+      |---|---|
+      | `e800129`, before the graph existed | 26.4 – 27.8 MB |
+      | retaining `Code` | 421 – 439 MB |
+      | `Code` dropped, specifiers aliased | 558 – 628 MB |
+      | both fixed | 31.4 – 33.3 MB |
+
+      🔴 **THE FIXTURE SHAPE IS THE MEASUREMENT.** A tree padded with COMMENTS
+      leaves almost nothing after stripping, and a tree whose leaves carry no
+      imports has no specifier to alias — both report a reassuring number while
+      exercising neither hazard. That is exactly how the first round certified
+      "39.5 MB, one file at a time" from a fixture the depth bound truncated to
+      ten files. State the fixture with the number.
+      `TestEntryGraphRetainsNoContents` pins the `Code` half structurally, and
+      says in its own body that it CANNOT see the aliasing half —
+      `strings.Contains` reads the logical string, not the backing array.
     - 🔴 **A reference to a file that is NOT THERE is a GAP, not a decided
       absence.** It is tempting to read it as "the browser 404s that, so it
       cannot be the ack" — but a project that presumably builds having an
