@@ -99,14 +99,40 @@ func TestAppCreateDefaultsToPageMoney(t *testing.T) {
 	if iHarness >= 0 && iTunnel >= 0 && iHarness > iTunnel {
 		t.Errorf("dev:harness (free path) must lead BEFORE the dev-tunnel step (beta):\n%s", stdout)
 	}
-	// Among the demoted beta surfaces, submit still precedes the tunnel (the
-	// tunnel resolves the app server-side, so it must be registered first).
+	// Among the demoted beta surfaces, submit is still printed before the tunnel.
+	// 🔴 This is a PRESENTATIONAL grouping (publish path, then preview path), NOT
+	// a dependency — submit is not required before a dev tunnel. The previous
+	// version of this comment said "it must be registered first", which is false
+	// and is exactly the claim the banner assertion below now guards against.
 	if iSubmit >= 0 && iTunnel >= 0 && iSubmit > iTunnel {
-		t.Errorf("submit must be sequenced BEFORE the dev-tunnel step (register first):\n%s", stdout)
+		t.Errorf("submit is printed BEFORE the dev-tunnel step (presentational order):\n%s", stdout)
 	}
 	// The beta surfaces are gated behind an honest "beta access" heading.
 	if !strings.Contains(stdout, "beta access") {
 		t.Errorf("create should gate submit/dev-tunnel under a beta-access heading:\n%s", stdout)
+	}
+	// 🔴 The banner must NOT claim submit is a prerequisite for the dev tunnel.
+	// It is not: the mint accepts a brand-new slug with no app row and grants
+	// scopes from the LOCAL manifest (app_dev_tunnel.go's "UNSUBMITTED app (no
+	// submit needed)" path). What the tunnel needs is an Apps-author invite AND
+	// the dev-tunnel flag; an unenrolled account gets a 403 at mint time. A
+	// dogfooding developer opened a working tunnel having never submitted.
+	//
+	// Two halves, because either alone is weak: a NEGATIVE check that the old
+	// phrasing is gone (spelled — it cannot catch a reworded restatement), and a
+	// POSITIVE check that the banner affirmatively says no submit is needed, so
+	// deleting the correction outright also goes red.
+	for _, stale := range []string{
+		"required before a dev tunnel",
+		"required before the dev tunnel",
+		"register first",
+	} {
+		if strings.Contains(stdout, stale) {
+			t.Errorf("create banner must not claim submit gates the dev tunnel (found %q):\n%s", stale, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "no submit needed") {
+		t.Errorf("create banner should say the dev tunnel needs no submit:\n%s", stdout)
 	}
 	// The Comfy on Civitai (customComfy) sample is surfaced (finding #2: it was
 	// undiscoverable) — honestly flagged as invite-only beta.
