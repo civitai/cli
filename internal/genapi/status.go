@@ -177,6 +177,27 @@ type Workflow struct {
 	// Transactions is the orchestrator's own money record, passed through
 	// untyped: its shape is orchestrator-owned and the CLI must not relabel it.
 	Transactions json.RawMessage `json:"transactions,omitempty"`
+	// RawMetadata is the workflow's own metadata, captured raw. It is the ONLY
+	// carrier of `modelSubstitutions` on a later read: the submit persists the
+	// record there precisely so a caller that polls, re-attaches or lists its
+	// history still learns it was billed for model A and given model B, and no
+	// later reply carries a top-level copy.
+	//
+	// 🔴 Raw, not a typed struct, so a metadata blob the CLI cannot interpret can
+	// never fail the whole read of a workflow the user has ALREADY PAID FOR.
+	RawMetadata json.RawMessage `json:"metadata,omitempty"`
+}
+
+// ModelSubstitutions reports the silent checkpoint swaps recorded against this
+// workflow at submit time (civitai#3665). Empty is the common case.
+//
+// 🔴 Absence is AMBIGUOUS: it means "no substitution" OR "submitted by a server
+// that predates the field". Never render it as a guarantee that none happened.
+func (w *Workflow) ModelSubstitutions() []ModelSubstitution {
+	if w == nil {
+		return nil
+	}
+	return substitutionsFromMetadata(w.RawMetadata)
 }
 
 // Output is one workflow output with the two step-derived fields folded in.

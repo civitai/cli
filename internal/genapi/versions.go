@@ -62,8 +62,24 @@ func (r *ResolvedVersion) Resource(strength *float64) Resource {
 //     into a hard local 404. Measured: on one ecosystem the correct model id
 //     priced at 160, while a nonexistent id, a foreign-ecosystem id, and no
 //     model at all ALL priced at 60 — the server substitutes the ecosystem
-//     default, and that correction is surfaced on-site but is invisible through
-//     a non-browser path.
+//     default and bills for it.
+//
+// 🔴 THE SUBSTITUTION IS NO LONGER INVISIBLE — an earlier revision of this
+// comment said the correction "is surfaced on-site but is invisible through a
+// non-browser path", and that has been FALSE since civitai#3665 (PRs #3692 /
+// #3673). The server now reports every swap as `modelSubstitutions`; see
+// substitution.go for the three read sites. That does NOT make this lookup
+// redundant, and the reasons are worth keeping straight:
+//
+//   - The report is post-hoc on the submit and only advisory on the whatIf,
+//     while this turns a bad id into a LOCAL error before any spend at all.
+//   - `ModelType` still has to come from somewhere, and no reply carries it.
+//   - Absence of the field is ambiguous — "no substitution" and "a server
+//     predating the field" are indistinguishable on the wire.
+//
+// The two are complements: this stops a NONEXISTENT id, and the server's signal
+// catches the case it structurally cannot — a REAL id that is wrong for the
+// chosen ecosystem or workflow.
 //
 // This is a live round-trip, NOT a vendored table, so it carries no drift cost
 // against the platform — the distinction that makes it the right fix under this

@@ -1095,6 +1095,41 @@ echoes the resolved **model name** so you approve a name rather than an integer.
 `--model` is deliberately absent: `civitai download --model` takes a *model* id,
 while this takes a *version* id.
 
+### Silent model substitutions
+
+That id check catches an id that **does not exist**. It cannot catch a **real**
+id that is wrong for the ecosystem you named — on a model-locked ecosystem the
+generator swaps it for the ecosystem default, returns HTTP 200, and bills you.
+
+The server now **reports** that swap, and this CLI surfaces it:
+
+```
+⚠ The server SUBSTITUTED a different checkpoint — the estimate below prices the
+  model it would actually run, not the one you asked for.
+  Requested:  DreamShaper — v8 (Checkpoint, id 128713)
+  Ran:        SDXL 1.0 (Checkpoint, id 999001)
+  Reason:     unrecognized — that version is in none of this ecosystem's lists …
+```
+
+It appears on **every** surface that precedes or reports a spend — `--dry-run`
+(including `--dry-run --json`), the confirmation prompt, `--yes`, the output
+after a submit, and `civitai workflows get <id>` for a job you collected later.
+Ids are resolved to model names where possible; a failed lookup shows the ids
+and never suppresses the warning. Everything goes to **stderr**, so a `--json`
+stdout stays machine-clean while still carrying the raw `modelSubstitutions`
+field.
+
+It **warns and does not refuse.** Substitution is legitimate on some
+ecosystems — it is what keeps a job pinned to a since-retired version running
+instead of failing — so blocking it would break flows that work today. Use
+`--dry-run` to see it before you spend, or branch on `modelSubstitutions` in the
+`--dry-run --json` payload if you want a script to stop.
+
+Two things absence does **not** tell you: no field means "nothing was
+substituted" *or* "this server predates the feature" — the two are
+indistinguishable — and the CLI therefore never prints a "no substitutions"
+reassurance.
+
 ### Raw graphs: `--print-input` and `--input`
 
 The five flags cover the common job. Everything else the generator understands

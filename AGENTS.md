@@ -589,12 +589,84 @@ neither one's.
     **nonexistent** checkpoint id is otherwise accepted with HTTP 200, the
     ecosystem default silently substituted, and **billed** (measured on one
     ecosystem: the correct id priced 160, while a nonexistent id, a
-    foreign-ecosystem id, and no model at all ALL priced 60 — the server's own
-    comment says this correction is visible on-site and invisible through a
-    non-browser path). And `Graph.Resources` entries **require** `model:{type}`,
+    foreign-ecosystem id, and no model at all ALL priced 60). And
+    `Graph.Resources` entries **require** `model:{type}`,
     which is not derivable from a version id — a bare id and `{id}` alone are
     both 400s, while a *wrong* type is silently accepted. The type must come
     from the lookup, never a guess.
+    🔴 **CORRECTION: the substitution is no longer invisible.** An earlier
+    revision of this item said the server's own comment calls the correction
+    "visible on-site and invisible through a non-browser path". That was true
+    when written and has been **FALSE since civitai#3665** (PRs **#3692** and
+    **#3673**). The server now REPORTS every silent checkpoint swap as
+    `modelSubstitutions`, an array of
+    `{requested, applied, reason}` (`PersistedModelSubstitution` in
+    `civitai/civitai → src/shared/data-graph/generation/model-substitution.ts`;
+    `reason` ∈ `wrong-workflow` | `unrecognized` | `gated`). This **strengthens**
+    item 13 rather than contradicting it: it is a **live server signal**, not a
+    vendored table, so it is the same category as `ResolveModelVersion` — the
+    thing this item says IS allowed — and it closes the one gap that lookup
+    structurally cannot, a **real** id that is wrong for the chosen ecosystem or
+    workflow.
+    🔴 **THERE ARE THREE READ SITES AND THEY DO NOT AGREE, so the CLI reads BOTH
+    carriers.** Per the reply-contract comment on `NormalizedWorkflowMetadata`
+    (`civitai/civitai → src/server/services/orchestrator/orchestration-new.service.ts`,
+    ~line 1940-1968):
+    - `whatIfFromGraph` → **top-level `modelSubstitutions` only**. Nothing is
+      persisted on that path, so the reply is the sole carrier — and it is the
+      most valuable one, because it is the only place a caller learns *before*
+      spending, and the only signal for a SAME-PRICE swap.
+    - `generateFromGraph` → **both** top-level (authoritative for the validation
+      just performed, and present even when the graph produced no workflow
+      metadata to round-trip) **and** under `metadata`.
+    - any later read (`getWorkflow` poll / re-attach / `queryGeneratedImages`)
+      → **`metadata` only**; the top-level copy is gone.
+    A client reading only the top level sees substitutions on the submit and
+    never again; one reading only `metadata` misses the whatIf entirely.
+    `internal/genapi/substitution.go` reads both and merges, deduping exact
+    records so a two-carrier submit reply is reported once. The metadata key is
+    the literal `modelSubstitutions`
+    (`WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY`), the same on the raw
+    orchestrator workflow `getWorkflow` returns and on the normalized shape.
+    Three consequences that are easy to get wrong:
+    (a) **Every carrier is a `json.RawMessage`, parsed leniently.** A typed slice
+    would let a malformed advisory field fail the whole `json.Unmarshal` of the
+    **submit reply** — the message that hands back the workflow id for a job the
+    user has ALREADY BEEN CHARGED for. A warning we cannot parse must never cost
+    them the handle. Bad entries are skipped, mirroring the server's
+    `readModelSubstitutionsFromMetadata`.
+    (b) **`reason` is deliberately NOT narrowed against the server's union.**
+    The server narrows it because the value doubles as a bounded Prometheus
+    label; the CLI has the opposite incentive — vendoring the union means a
+    reason added server-side is DROPPED, turning a real billed substitution back
+    into the silence this closes. Unknown reasons render verbatim; the
+    `substitutionReasonGloss` table in `internal/cmd/generate_substitution.go` is
+    advisory only and **must never gate the warning**.
+    (c) **Absence is AMBIGUOUS** — "no substitution" and "a server predating
+    #3665" are indistinguishable on the wire. Never render absence as a
+    guarantee, and never print a "no substitutions" line.
+    🔴 **It WARNS and never REFUSES**, decided rather than defaulted, and the
+    same fail-soft shape as `serverQuantityClamp` above. Substitution on a
+    `modelLocked` ecosystem is legitimate graceful degradation — it keeps an app
+    pinned to a since-retired version generating instead of hard-failing — and
+    the platform has explicitly **deferred** the rejection decision ("deciding
+    whether any case should REJECT is a later phase, gated on what the counter
+    measures"), so a CLI that refused first would be vendoring a policy the
+    server has not made. A refusal would also be unenforceable, per (c), and two
+    of the four surfaces are post-spend where it buys nothing.
+    The warning must reach **every** surface that precedes or reports a spend:
+    `--dry-run` (human *and* `--json`), the TTY confirmation, `--yes`, the
+    post-submit output, and `workflows get`. It is emitted from **one call site**
+    in `runGenerate`, before every branch, precisely so none can be forgotten —
+    that is the lesson of the img2img caveat, which printed only on the
+    interactive path and so missed `--yes` (mandatory in CI) and `--dry-run`.
+    Everything goes to **stderr**, including under `--json`, where the machine
+    payload owns stdout and already carries the raw field.
+    Two deliberate NON-surfaces: `workflows list` (a paged feed — a warning block
+    per row would be noise, and `workflows get <id>` is the per-job read that
+    carries it), and the poll loop inside a waiting `generate` run, which would
+    just repeat what the submit reply already said one screen earlier. Both would
+    be cheap to add if the incidence ever justifies it; neither is an oversight.
 
 14. **Unset flags must be ABSENT from the payload, never Go zero values.** Every
     optional field on `genapi.Graph` is a pointer or carries `omitempty`. This

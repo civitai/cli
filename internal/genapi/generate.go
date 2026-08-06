@@ -70,6 +70,28 @@ type WhatIfResult struct {
 	AllowMatureContent *bool         `json:"allowMatureContent,omitempty"`
 	// Transactions is passed through untyped; its shape is orchestrator-owned.
 	Transactions json.RawMessage `json:"transactions,omitempty"`
+	// RawModelSubstitutions is the reply's TOP-LEVEL `modelSubstitutions` array,
+	// captured raw (see parseModelSubstitutions for why every carrier is raw).
+	//
+	// 🔴 THE WHATIF IS THE ONLY CARRIER ON THIS PATH, and the most valuable one:
+	// a whatIf spends nothing and persists no workflow, so this is where a caller
+	// can learn BEFORE committing Buzz that the model it named is not the model
+	// that will run. It is also the only signal for a SAME-PRICE substitution —
+	// cost divergence only helps if you already knew the expected price.
+	RawModelSubstitutions json.RawMessage `json:"modelSubstitutions,omitempty"`
+}
+
+// ModelSubstitutions reports the silent checkpoint swaps the server performed
+// while pricing this estimate. Empty is the overwhelmingly common case.
+//
+// 🔴 Absence is AMBIGUOUS and must not be reported as a guarantee: it means "no
+// substitution" OR "a server that predates the field" (civitai#3665). Nothing on
+// the wire distinguishes the two.
+func (r *WhatIfResult) ModelSubstitutions() []ModelSubstitution {
+	if r == nil {
+		return nil
+	}
+	return parseModelSubstitutions(r.RawModelSubstitutions)
 }
 
 // SubmitResult is the generateFromGraph reply — one normalized workflow.
@@ -92,6 +114,29 @@ type SubmitResult struct {
 	Status string        `json:"status"`
 	Cost   *WorkflowCost `json:"cost"`
 	Tags   []string      `json:"tags,omitempty"`
+	// RawModelSubstitutions is the TOP-LEVEL `modelSubstitutions` array.
+	RawModelSubstitutions json.RawMessage `json:"modelSubstitutions,omitempty"`
+	// RawMetadata is the normalized workflow metadata, which carries the SECOND
+	// copy of the same records under WorkflowMetadataModelSubstitutionsKey.
+	RawMetadata json.RawMessage `json:"metadata,omitempty"`
+}
+
+// ModelSubstitutions reports the silent checkpoint swaps the server performed
+// for the generation that was just SUBMITTED AND CHARGED.
+//
+// 🔴 It reads BOTH carriers and unions them. `generateFromGraph` writes the same
+// records twice — top-level (authoritative for the validation it just performed,
+// and present even when the graph produced no workflow metadata to round-trip)
+// and under `metadata` (which is what survives to every later read). Reading one
+// alone misses cases; the merge is what stops the user hearing it twice.
+func (r *SubmitResult) ModelSubstitutions() []ModelSubstitution {
+	if r == nil {
+		return nil
+	}
+	return mergeModelSubstitutions(
+		parseModelSubstitutions(r.RawModelSubstitutions),
+		substitutionsFromMetadata(r.RawMetadata),
+	)
 }
 
 // SubmitOptions carries the ENVELOPE siblings of the graph — the fields that

@@ -186,6 +186,16 @@ the public model-version API BEFORE submitting, so a bad id is a hard local
 error instead of a wrong charge, and it echoes the resolved model NAME in the
 confirmation so you approve a name rather than an integer.
 
+That check catches an id that does not EXIST. A real id that is wrong for the
+--ecosystem you named is swapped for the ecosystem default just as silently —
+and the server now reports that swap. When it happens, this command says so on
+every surface before and after the spend (--dry-run, the confirmation, --yes,
+the submit output, and ` + "`civitai workflows get`" + `), naming the version you
+asked for, the version that actually ran, and the server's reason. It WARNS and does
+not refuse: substitution is legitimate on some ecosystems. Note the reverse is
+not a guarantee — no report means "nothing was substituted" OR "this server
+predates the feature".
+
 WAITING AND DOWNLOADING: by default the command waits for the job to finish and
 writes every deliverable output into --out-dir as <workflow-id>-<n>.<ext>. Pass
 --no-wait to print the workflow id and exit immediately, and pick the results up
@@ -819,6 +829,16 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		return fmt.Errorf("the server returned no cost estimate — refusing to submit a generation whose price is unknown")
 	}
 
+	// 🔴 ONE CALL SITE, DELIBERATELY PLACED BEFORE EVERY BRANCH BELOW. The
+	// surfaces that must show this are --dry-run (human AND --json), the TTY
+	// confirmation and --yes; emitting here means none of them can be forgotten,
+	// because there is no path from a successful estimate to a spend decision
+	// that does not pass through this line. printImageDisclosure learned the
+	// other lesson the hard way — it was called from the interactive path only,
+	// so `--yes` (mandatory in CI) and `--dry-run` never showed it. Do not move
+	// this into confirmGenerate.
+	printModelSubstitutions(ctx, errw, quote.ModelSubstitutions(), deps.resolveVersion, substitutionPhaseEstimate)
+
 	if o.dryRun {
 		if o.jsonOut {
 			// Raw passthrough: a script sees every field, including ones this CLI
@@ -921,6 +941,13 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		}
 		return classifyGenerateError(err)
 	}
+
+	// 🔴 AGAIN AFTER THE SUBMIT, and not only before it. The estimate and the
+	// submit are two separate validations: a version can be gated, retired or
+	// re-scoped between them, and only this reply describes the generation that
+	// was actually CHARGED. Placed before the --no-wait branch so the fire-and-
+	// forget path reports it too — that is the path with no later output at all.
+	printModelSubstitutions(ctx, errw, result.ModelSubstitutions(), deps.resolveVersion, substitutionPhaseCharged)
 
 	workflowID := ""
 	if result != nil {

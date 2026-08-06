@@ -60,6 +60,10 @@ type workflowsGetOpts struct {
 // every error path are testable against httptest with no live server.
 type workflowsGetDeps struct {
 	getWorkflow getWorkflowFn
+	// resolveVersion turns a model-version id into a display name for the
+	// model-substitution warning. It is ADVISORY: a nil resolver, or one that
+	// fails, renders ids instead of names and never suppresses the warning.
+	resolveVersion versionResolver
 }
 
 func newWorkflowsGetCmd() *cobra.Command {
@@ -81,6 +85,11 @@ the reason rather than omitted — a finished workflow can legitimately contain
 fewer usable results than it was charged for, and silently dropping them would
 make that invisible.
 
+If the generator silently ran a DIFFERENT checkpoint than the one the job asked
+for, that is reported here too — this is the only place to find it for a job you
+did not wait for. It names the version requested, the version that ran, and the
+server's reason.
+
 Reading a workflow SPENDS NOTHING. This needs the same personal API key with the
 AI Services scopes that ` + "`civitai generate`" + ` needs.`,
 		Example: `  civitai workflows get 01JABCXYZ
@@ -97,7 +106,10 @@ AI Services scopes that ` + "`civitai generate`" + ` needs.`,
 			}
 			o.baseURL = cfg.BaseURL()
 			gen := genapi.NewWithSource(cfg.BaseURL(), auth.New(cfg))
-			return runWorkflowsGet(cmd, workflowsGetDeps{getWorkflow: gen.GetWorkflow}, o, args[0])
+			return runWorkflowsGet(cmd, workflowsGetDeps{
+				getWorkflow:    gen.GetWorkflow,
+				resolveVersion: gen.ResolveModelVersion,
+			}, o, args[0])
 		},
 	}
 	cmd.Flags().BoolVar(&o.jsonOut, "json", false, "emit the raw server payload on stdout (scriptable)")
@@ -118,6 +130,13 @@ func runWorkflowsGet(cmd *cobra.Command, deps workflowsGetDeps, o workflowsGetOp
 	if err != nil {
 		return classifyGenerateError(err)
 	}
+	// 🔴 BEFORE the --json branch, and on stderr, so a silent substitution is
+	// reported on BOTH surfaces. This is the ONLY place a substitution shows up
+	// for a job the CLI did not submit itself — a `--no-wait` run collected
+	// later, a re-attach after Ctrl-C or a --timeout, or a workflow generated on
+	// the website. The submit reply's top-level copy is long gone by then; the
+	// record survives only on the workflow's own metadata.
+	printModelSubstitutions(ctx, cmd.ErrOrStderr(), wf.ModelSubstitutions(), deps.resolveVersion, substitutionPhaseCharged)
 	if o.jsonOut {
 		// Raw passthrough: a script sees every server field, including ones the
 		// CLI does not model. It must branch on the payload itself.
