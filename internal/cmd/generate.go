@@ -256,7 +256,7 @@ interpreted, so nothing in it is checked before you pay for it.`,
   civitai generate "a cat" --checkpoint 128713 --lora 250712:0.8
 
   # Image-to-image from a local file — --ecosystem is required
-  civitai generate "make it winter" --ecosystem Qwen --image ./cat.png --dry-run
+  civitai generate "make it winter" --ecosystem Flux1Kontext --image ./cat.png --dry-run
 
   # …or from a public URL, with two reference images
   civitai generate "combine these" --ecosystem Seedream \
@@ -541,7 +541,7 @@ func validateImageOpts(o *generateOpts) error {
 		return asUsageError(errors.New(
 			"--image requires --ecosystem — the server only turns a job into image-to-image when the request names an ecosystem. " +
 				"Without one it silently ignores the images, generates from the prompt alone and charges you for it. " +
-				"Pass an ecosystem that supports image editing, e.g. --ecosystem Qwen or --ecosystem Flux1Kontext"))
+				"Pass an ecosystem that supports image editing, e.g. --ecosystem Flux1Kontext or --ecosystem NanoBanana"))
 	}
 	if len(o.images) > maxReferenceImages {
 		return asUsageError(fmt.Errorf(
@@ -688,8 +688,17 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 		return nil, err
 	}
 	out.graph.Images = imgs
-	for _, img := range imgs {
-		out.images = append(out.images, fmt.Sprintf("%dx%d %s", img.Width, img.Height, safeTerm(img.URL)))
+	// Label each image with the SOURCE the user typed, not just the blob URL it
+	// became: after upload every entry is an opaque orchestration.civitai.com
+	// blob, so a confirmation listing only those cannot be matched back to the
+	// files on disk — which is the whole point of showing them before a spend.
+	// resolveImages preserves order, so imgs[i] is o.images[i].
+	for i, img := range imgs {
+		src := ""
+		if i < len(o.images) {
+			src = safeTerm(o.images[i]) + " "
+		}
+		out.images = append(out.images, fmt.Sprintf("%s(%dx%d) → %s", src, img.Width, img.Height, safeTerm(img.URL)))
 	}
 	return out, nil
 }
@@ -1107,8 +1116,36 @@ func printReattach(errw io.Writer, o generateOpts, workflowID, externalID, statu
 //   - interactive TTY     → show cost + balance, prompt, proceed only on "y".
 //
 // Everything it prints goes to STDERR so a `--json` stdout stays machine-clean.
+// printImageDisclosure states what the cost estimate structurally cannot.
+//
+// 🔴 It must reach EVERY surface that precedes a spend decision — the TTY
+// prompt, `--yes`, and `--dry-run` alike. An ecosystem with no images node
+// drops the array silently and bills a plain txt2img, and nothing in the whatIf
+// reply distinguishes that from a real edit job (measured: Flux1Kontext,
+// NanoBanana and Seedream all price identically with and without images, so a
+// price comparison cannot discriminate). An earlier revision printed this only
+// on the interactive path, which is exactly backwards: `--yes` is MANDATORY
+// non-interactively, and `--dry-run` is the documented price-check-first
+// workflow, so the two surfaces that most need the caveat were the two that
+// never showed it.
+func printImageDisclosure(errw io.Writer, o generateOpts, built *resolvedGraph) {
+	if o.ecosystem != "" {
+		fmt.Fprintf(errw, "  Ecosystem:  %s\n", safeTerm(o.ecosystem))
+	}
+	for _, img := range built.images {
+		fmt.Fprintf(errw, "  Image:      %s\n", img)
+	}
+	if len(built.images) > 0 {
+		fmt.Fprintln(errw, ui.For(errw).Dim(
+			"If this ecosystem does not support image editing, the server IGNORES the images above, generates from the prompt alone and still charges — the estimate cannot show the difference."))
+	}
+}
+
 func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, cost float64, balance int64, balanceKnown bool) error {
 	if o.assumeYes {
+		// --yes skips the PROMPT, never the disclosure: a CI run is precisely
+		// where nobody is watching for a silently-dropped image.
+		printImageDisclosure(cmd.ErrOrStderr(), o, built)
 		return nil
 	}
 	if !stdinIsTTY() {
@@ -1140,21 +1177,7 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 	for _, l := range built.loras {
 		fmt.Fprintf(errw, "  LoRA:       %s\n", l)
 	}
-	if o.ecosystem != "" {
-		fmt.Fprintf(errw, "  Ecosystem:  %s\n", safeTerm(o.ecosystem))
-	}
-	for _, img := range built.images {
-		fmt.Fprintf(errw, "  Image:      %s\n", img)
-	}
-	if len(built.images) > 0 {
-		// 🔴 The one thing the estimate cannot tell them. An ecosystem with no
-		// images node drops the array silently and bills a plain txt2img, and
-		// nothing in the whatIf reply distinguishes that from a real edit job
-		// (measured: Flux1Kontext, NanoBanana and Seedream all price identically
-		// with and without images, so a price comparison cannot discriminate).
-		fmt.Fprintln(errw, st.Dim(
-			"If this ecosystem does not support image editing, the server IGNORES the images above, generates from the prompt alone and still charges — the estimate cannot show the difference."))
-	}
+	printImageDisclosure(errw, o, built)
 	if balanceKnown {
 		fmt.Fprintf(errw, "Cost: %s Buzz (balance %d).\n", buzzAmount(cost), balance)
 	} else {
@@ -1178,6 +1201,12 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 // printed VERBATIM — they are server-owned, and inventing friendlier labels is
 // how a vendored mapping starts.
 func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpts, q *genapi.WhatIfResult) {
+	// The img2img disclosure goes to STDERR so a `--dry-run --json` stdout stays
+	// machine-clean, but it must still appear: --dry-run is the documented
+	// price-check-first workflow, and it is where a silently-dropped image is
+	// cheapest to catch.
+	printImageDisclosure(errw, o, built)
+
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "Workflow:\t%s\n", generateWorkflow)
 	if built.inputPath != "" {

@@ -19,10 +19,10 @@ func imgOpts(ecosystem string, images ...string) generateOpts {
 }
 
 // runImg drives the real runGenerate with injected seams and captured streams.
-func runImg(t *testing.T, s *genSeams, o generateOpts) (error, *bytes.Buffer, *bytes.Buffer) {
+func runImg(t *testing.T, s *genSeams, o generateOpts) (*bytes.Buffer, *bytes.Buffer, error) {
 	t.Helper()
 	cmd, out, errb := genCmd("")
-	return runGenerate(cmd, s.deps(t), o), out, errb
+	return out, errb, runGenerate(cmd, s.deps(t), o)
 }
 
 // --- flag validation ---------------------------------------------------------
@@ -35,7 +35,7 @@ func TestGenerateImage_RequiresEcosystem(t *testing.T) {
 	o := baseOpts()
 	o.images = []string{"./cat.png"}
 	o.dryRun = true
-	err, _, _ := runImg(t, s, o)
+	_, _, err := runImg(t, s, o)
 	if err == nil {
 		t.Fatal("--image without --ecosystem must be refused")
 	}
@@ -64,7 +64,7 @@ func TestGenerateImage_OverCapRefusesWithoutUploadingOrSubmitting(t *testing.T) 
 	s := &genSeams{}
 	o := imgOpts("Qwen", paths...)
 	o.assumeYes = true
-	err, _, _ := runImg(t, s, o)
+	_, _, err := runImg(t, s, o)
 	if err == nil {
 		t.Fatal("more than the cap must be refused")
 	}
@@ -100,7 +100,7 @@ func TestGenerateImage_PositiveControl_UploadCounterMoves(t *testing.T) {
 	s := &genSeams{}
 	o := imgOpts("Qwen", paths...)
 	o.assumeYes = true
-	if err, _, _ := runImg(t, s, o); err != nil {
+	if _, _, err := runImg(t, s, o); err != nil {
 		t.Fatalf("positive control FAILED: exactly %d images was refused: %v", maxReferenceImages, err)
 	}
 	if s.uploadCalls != maxReferenceImages {
@@ -134,7 +134,7 @@ func TestGenerateImage_MutuallyExclusiveWithInput(t *testing.T) {
 			o.images = tc.images
 			o.ecosystem = tc.eco
 			o.dryRun = true
-			err, _, _ := runImg(t, s, o)
+			_, _, err := runImg(t, s, o)
 			if err == nil {
 				t.Fatal("--input combined with a content flag must be refused")
 			}
@@ -163,7 +163,7 @@ func TestGenerateImage_GraphShape(t *testing.T) {
 	s := &genSeams{uploadReplyURL: "https://orchestration.civitai.com/v2/consumer/blobs/UP.png"}
 	o := imgOpts("Qwen", local)
 	o.dryRun = true
-	if err, _, _ := runImg(t, s, o); err != nil {
+	if _, _, err := runImg(t, s, o); err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}
 
@@ -218,7 +218,7 @@ func TestGenerateImage_AbsentWhenNoImageFlag(t *testing.T) {
 	s := &genSeams{}
 	o := baseOpts()
 	o.dryRun = true
-	if err, _, _ := runImg(t, s, o); err != nil {
+	if _, _, err := runImg(t, s, o); err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}
 	raw, _ := json.Marshal(s.lastGraph)
@@ -245,7 +245,7 @@ func TestGenerateImage_RemoteURLIsPassedThrough(t *testing.T) {
 	s := &genSeams{downloadBlob: fetch}
 	o := imgOpts("Seedream", url)
 	o.dryRun = true
-	if err, _, _ := runImg(t, s, o); err != nil {
+	if _, _, err := runImg(t, s, o); err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}
 	if len(s.lastGraph.Images) != 1 {
@@ -273,7 +273,7 @@ func TestGenerateImage_DryRunUploadsButNeverSubmits(t *testing.T) {
 	s := &genSeams{}
 	o := imgOpts("Qwen", local)
 	o.dryRun = true
-	if err, _, _ := runImg(t, s, o); err != nil {
+	if _, _, err := runImg(t, s, o); err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}
 	if s.uploadCalls != 1 {
@@ -299,7 +299,7 @@ func TestGenerateImage_PrintInputEmitsUploadedBlobURLs(t *testing.T) {
 	s := &genSeams{uploadReplyURL: "https://orchestration.civitai.com/v2/consumer/blobs/PI.png"}
 	o := imgOpts("Qwen", local)
 	o.printInput = true
-	err, out, _ := runImg(t, s, o)
+	out, _, err := runImg(t, s, o)
 	if err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}
@@ -334,7 +334,7 @@ func TestGenerateImage_MultipleImagesWarnAboutSilentTruncation(t *testing.T) {
 	s := &genSeams{}
 	o := imgOpts("Qwen", a, b)
 	o.dryRun = true
-	err, _, errBuf := runImg(t, s, o)
+	_, errBuf, err := runImg(t, s, o)
 	if err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}
@@ -358,7 +358,7 @@ func TestGenerateImage_SingleImageDoesNotWarn(t *testing.T) {
 	s := &genSeams{}
 	o := imgOpts("Qwen", a)
 	o.dryRun = true
-	err, _, errBuf := runImg(t, s, o)
+	_, errBuf, err := runImg(t, s, o)
 	if err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}

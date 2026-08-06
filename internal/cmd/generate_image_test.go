@@ -13,7 +13,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/civitai/cli/pkg/civitai"
 )
@@ -462,25 +464,45 @@ func TestResolveRemoteImage_Rejections(t *testing.T) {
 
 // Only a bounded prefix is read from a remote image — the CLI must not stream a
 // whole file to learn two integers.
+//
+// 🔴 The bound is the memory guard on an UNAUTHENTICATED fetch of a
+// user-supplied URL (`--image https://…`), so it has to be pinned by a
+// measurement, not by this comment. An earlier revision accumulated `sent` and
+// then never asserted on it, which left both
+// `imageHeaderProbeBytes = 64<<10 → 64<<20` and dropping the `io.LimitReader`
+// entirely alive: the test passed on dimensions alone, which decode from the
+// first few hundred bytes either way.
 func TestResolveRemoteImage_ReadsOnlyABoundedPrefix(t *testing.T) {
 	header := pngBytes(t, 200, 100)
+	const tailChunks, chunkSize = 64, 32 << 10 // 2 MiB of tail
+	var mu sync.Mutex
 	sent := 0
+	completed := false
+	done := make(chan struct{})
+
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(done)
 		w.WriteHeader(200)
-		_, _ = w.Write(header)
-		sent += len(header)
-		// Then a long tail. The CLI must stop reading well before the end.
-		chunk := make([]byte, 32<<10)
-		for i := 0; i < 64; i++ { // 2 MiB of tail
+		n, _ := w.Write(header)
+		mu.Lock()
+		sent += n
+		mu.Unlock()
+		chunk := make([]byte, chunkSize)
+		for i := 0; i < tailChunks; i++ {
 			n, err := w.Write(chunk)
+			mu.Lock()
 			sent += n
+			mu.Unlock()
 			if err != nil {
-				return
+				return // the client hung up: the bound did its job
 			}
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
 		}
+		mu.Lock()
+		completed = true
+		mu.Unlock()
 	}))
 	defer srv.Close()
 
@@ -491,6 +513,29 @@ func TestResolveRemoteImage_ReadsOnlyABoundedPrefix(t *testing.T) {
 	}
 	if imgs[0].Width != 200 || imgs[0].Height != 100 {
 		t.Errorf("dimensions = %dx%d, want 200x100", imgs[0].Width, imgs[0].Height)
+	}
+
+	// Wait for the handler to observe the client's disconnect before reading the
+	// counters, so this is a measurement rather than a race.
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("handler did not finish")
+	}
+	mu.Lock()
+	gotSent, gotCompleted := sent, completed
+	mu.Unlock()
+
+	// POSITIVE CONTROL: the server really did try to push far more than the
+	// bound, so "the client stopped early" is a fact about the client.
+	if want := len(header) + tailChunks*chunkSize; want < 1<<20 {
+		t.Fatalf("POSITIVE CONTROL FAILED: the fixture only offers %d bytes, too few to distinguish a bounded read", want)
+	}
+	if gotCompleted {
+		t.Errorf("the server streamed its ENTIRE 2 MiB tail — the client read past the %d-byte bound", imageHeaderProbeBytes)
+	}
+	if gotSent >= 1<<20 {
+		t.Errorf("server pushed %d bytes before the client hung up; a bounded read must not consume ~1 MiB", gotSent)
 	}
 }
 
