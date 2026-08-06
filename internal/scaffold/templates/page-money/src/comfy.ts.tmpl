@@ -1,35 +1,60 @@
-// Pure logic for the {{ .Name }} page app's SECONDARY "Comfy on Civitai (sample)"
-// path — a Comfy on Civitai (customComfy) generation. No React, no DOM;
-// unit-tested in node (see comfy.test.ts). Mirrors generation.ts's style and
-// REUSES its shared helpers (clampPrompt / AccountChoice) so the two
-// body-builders differ only in the body they produce.
+// Pure logic for the {{ .Name }} page app's TWO "Comfy on Civitai" sample paths.
+// No React, no DOM; unit-tested in node (see comfy.test.ts). Mirrors
+// generation.ts's style and REUSES its shared helpers (clampPrompt /
+// AccountChoice) so every body-builder differs only in the body it produces.
 //
-// The customComfy contract (server-owned, fail-closed):
-//   The iframe NEVER sends a Comfy graph. It sends a { kind: 'customComfy',
-//   recipe, params } body where `recipe` is a SERVER-registered, code-reviewed
-//   recipe id. The civitai server owns the graph, the resource allowlist, the
-//   checkpoint policy, and a hard per-job `maxBuzz` ceiling — the block can only
-//   pick the recipe + a small, per-recipe-validated `params` object.
+// THE customComfy CONTRACT HAS TWO ARMS, selected by `mode`:
+//
+//   recipe  (`mode` omitted, or 'recipe') — the app names a SERVER-registered,
+//           code-reviewed recipe id. The civitai server owns the graph, the
+//           resource allowlist, the checkpoint policy and the Buzz ceiling; the
+//           app supplies only a small, per-recipe-validated `params` object.
+//
+//   inline  (`mode: 'inline'`) — the app ships THE COMFYUI GRAPH ITSELF, plus a
+//           declared manifest of every resource it needs and a `maxBuzz`
+//           ceiling. This is how you run a workflow the recipe registry does not
+//           contain.
+//
+// Both are live. Earlier revisions of this file stated flatly that an app could
+// not ship its own graph. That was true once and is not any more — it predates
+// the inline arm. It is called out because a developer reading that stale
+// sentence believed it over a working feature and gave up.
+//
+// This file wires the RECIPE arm into App.tsx's mode toggle and provides a
+// complete, unit-tested builder for the INLINE arm. Inline is not on the toggle
+// yet only because the mock host in the pinned @civitai/blocks-react crashes on
+// a body with no `params`; see the README's "Why inline is not on the toggle
+// yet". The arm itself is live on civitai.com for an app-developer account.
 
 import type { WorkflowBodyCustomComfy } from '@civitai/app-sdk/blocks';
 
 import { clampPrompt, type AccountChoice } from './generation.js';
 
 /**
- * The starter recipe this sample invokes: a cheap, minimal Z-Image txt2img
- * recipe (per-job Buzz ceiling 30). It is SERVER-registered — an app cannot ship
- * its own graph, so a new recipe must be added + code-reviewed server-side (see
- * README "Comfy on Civitai sample"). This id must exist in the server registry for a
- * real run to resolve; an unknown id is rejected fail-closed.
+ * The RECIPE arm of `WorkflowBodyCustomComfy`, narrowed out of the SDK type.
+ *
+ * Written as an `Extract` rather than imported by name so it resolves on BOTH
+ * sides of the SDK minor that turned `WorkflowBodyCustomComfy` into a union: on
+ * the older SDK the whole type matches, on the newer one it selects the recipe
+ * arm. Same answer either way.
  */
-export const STARTER_COMFY_RECIPE = 'starter-comfy-txt2img';
+export type ComfyRecipeBody = Extract<WorkflowBodyCustomComfy, { recipe: string }>;
 
 /**
  * The params this sample sends — a subset of the recipe's `.strict()` server
  * schema (only the fields this minimal txt2img recipe accepts). Extra fields are
  * rejected server-side, so we keep it to prompt (+ optional seed/account).
  */
-export type ComfyParams = WorkflowBodyCustomComfy['params'];
+export type ComfyParams = ComfyRecipeBody['params'];
+
+/**
+ * The starter recipe the RECIPE sample invokes: a cheap, minimal Z-Image txt2img
+ * recipe (per-job Buzz ceiling 30). It is SERVER-registered — a recipe id must
+ * exist in the server registry for a real run to resolve, and an unknown id is
+ * rejected fail-closed at the schema enum. To run a graph that is NOT in the
+ * registry, use the inline arm below instead of waiting for a review.
+ */
+export const STARTER_COMFY_RECIPE = 'starter-comfy-txt2img';
 
 /**
  * Build the customComfy submit/estimate body for the starter recipe.
@@ -37,17 +62,22 @@ export type ComfyParams = WorkflowBodyCustomComfy['params'];
  *  - `prompt` is trimmed + clamped to the server cap (reuses generation.ts).
  *  - `accountType` (the shared account picker) is included only when a named
  *    pool is chosen; `'auto'`/omitted lets the host choose the funding order.
- *    NOTE: on a customComfy body it lives UNDER `params` (contrast textToImage,
- *    where it is top-level) — that's the mock host's `preferredAccountType`
- *    contract and the server's per-recipe param schema.
+ *    NOTE: on a customComfy RECIPE body it lives UNDER `params` (contrast
+ *    textToImage, where it is top-level) — that's the mock host's
+ *    `preferredAccountType` contract and the server's per-recipe param schema.
+ *    An INLINE body has no account pick at all; the host funds it as Auto.
  *  - `seed` is included only when a real number is given; `null`/omitted lets the
  *    orchestrator pick.
+ *
+ * `mode` is deliberately NOT set. The server declares it an OPTIONAL `'recipe'`
+ * literal, so omitting the key is the canonical recipe body and stays compatible
+ * with every host.
  */
 export function buildComfyBody(
   prompt: string,
   accountType?: AccountChoice,
   seed?: number | null,
-): WorkflowBodyCustomComfy {
+): ComfyRecipeBody {
   return {
     kind: 'customComfy',
     recipe: STARTER_COMFY_RECIPE,
@@ -56,5 +86,181 @@ export function buildComfyBody(
       ...(seed != null ? { seed } : {}),
       ...(accountType && accountType !== 'auto' ? { accountType } : {}),
     },
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// INLINE ARM — the app ships the ComfyUI graph itself.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One node of a ComfyUI `/prompt` graph on the wire: `class_type` + `inputs`,
+ * and NOTHING else — the server's node schema is `.strict()`. A raw "Save (API
+ * Format)" export from ComfyUI often carries a `_meta` key per node; strip it,
+ * or the whole body is rejected rather than the key dropped.
+ *
+ * An `inputs` value is either a literal or a `[nodeId, outputIndex]` pair wiring
+ * this input to another node's output.
+ */
+export type InlineComfyNode = {
+  class_type: string;
+  inputs: Record<string, unknown>;
+};
+
+/**
+ * The INLINE arm's body shape, declared locally.
+ *
+ * It mirrors the server's `.strict()` `blockInlineComfyBodySchema` field-for-
+ * field. Declared here rather than imported because the scaffold pins an SDK
+ * minor that may predate the exported `WorkflowBodyCustomComfyInline`; once the
+ * pin moves past it, delete this and import the SDK type instead — the shapes
+ * are identical by construction.
+ */
+export type InlineComfyBody = {
+  kind: 'customComfy';
+  mode: 'inline';
+  workflow: Record<string, InlineComfyNode>;
+  resources: string[];
+  prompt?: string;
+  negativePrompt?: string;
+  maxBuzz: number;
+};
+
+/**
+ * The checkpoint this sample's graph loads, as an AIR URN.
+ *
+ * SWAP THIS for whatever your graph actually loads. The rules that matter:
+ *  - a `civitai`-sourced AIR MUST carry a model VERSION id
+ *    (`…:civitai:<modelId>@<versionId>`) — without one there is no version to
+ *    check entitlement against and the submit is rejected;
+ *  - entitlement is re-checked server-side against the VIEWER, and it is
+ *    stricter here than on-site: a resource the site would quietly swap for a
+ *    sibling version is REJECTED instead, because your graph names this exact
+ *    string and nothing rewrites it.
+ *
+ * This one is SDXL 1.0 (VAE fix) — public, and enough to make the sample a real
+ * graph rather than a shape sketch.
+ */
+export const STARTER_INLINE_CHECKPOINT_AIR =
+  'urn:air:sdxl:checkpoint:civitai:101055@128078';
+
+/**
+ * How many Buzz — AND how many SECONDS — an inline job may take.
+ *
+ * 🔴 IT IS ONE NUMBER SERVING BOTH ROLES. The server stamps
+ * `stepTimeoutSeconds = maxBuzz`, which is exactly what makes the ceiling
+ * physically enforceable instead of merely promised. So this is NOT a price dial:
+ * lowering it to save Buzz does not buy a cheaper generation, it buys a job that
+ * is KILLED after that many seconds and comes back `expired`.
+ *
+ * You are billed the REAL cost — post-paid against measured GPU seconds,
+ * settling to actual and refunding the unused remainder — so headroom is free.
+ * Size it to the wall-clock time your graph needs. 90s is comfortable for this
+ * 20-step SDXL graph; the server's hard maximum is 250.
+ */
+export const STARTER_INLINE_MAX_BUZZ = 90;
+
+/**
+ * A minimal, real SDXL text-to-image graph in ComfyUI API format.
+ *
+ * Every AIR that appears anywhere in here must ALSO appear in the body's
+ * `resources` array — see `buildInlineComfyBody`. That containment check is what
+ * makes gating that one array sufficient, so it is enforced, not advisory: an
+ * AIR in the graph that is missing from `resources` rejects the submit.
+ *
+ * The prompt is injected as a leaf value into node `'2'` rather than templated
+ * into a string, which is the same discipline the server-side recipes use.
+ */
+export function buildInlineComfyGraph(
+  prompt: string,
+  negativePrompt: string,
+  seed: number,
+): Record<string, InlineComfyNode> {
+  return {
+    '1': {
+      class_type: 'CheckpointLoaderSimple',
+      inputs: { ckpt_name: STARTER_INLINE_CHECKPOINT_AIR },
+    },
+    '2': {
+      class_type: 'CLIPTextEncode',
+      inputs: { text: prompt, clip: ['1', 1] },
+    },
+    '3': {
+      class_type: 'CLIPTextEncode',
+      inputs: { text: negativePrompt, clip: ['1', 1] },
+    },
+    '4': {
+      class_type: 'EmptyLatentImage',
+      inputs: { width: 1024, height: 1024, batch_size: 1 },
+    },
+    '5': {
+      class_type: 'KSampler',
+      inputs: {
+        seed,
+        steps: 20,
+        cfg: 7,
+        sampler_name: 'euler',
+        scheduler: 'normal',
+        denoise: 1,
+        model: ['1', 0],
+        positive: ['2', 0],
+        negative: ['3', 0],
+        latent_image: ['4', 0],
+      },
+    },
+    '6': {
+      class_type: 'VAEDecode',
+      inputs: { samples: ['5', 0], vae: ['1', 2] },
+    },
+    '7': {
+      class_type: 'SaveImage',
+      inputs: { images: ['6', 0], filename_prefix: 'civitai' },
+    },
+  };
+}
+
+/**
+ * Build an INLINE customComfy body — the app's own graph, submitted directly.
+ *
+ * The four things a first-time author gets wrong, all handled here:
+ *
+ *  1. `mode: 'inline'` is REQUIRED. Including a `workflow` key is not enough to
+ *     select this arm — a body without `mode` routes to the RECIPE arm and is
+ *     then rejected for a missing `recipe`.
+ *  2. `resources` is a DECLARED MANIFEST, not something the server infers from
+ *     your graph. Every AIR the graph names must be listed, or the submit is
+ *     rejected; at most 24 entries.
+ *  3. `maxBuzz` is the step TIMEOUT in seconds as well as the Buzz ceiling — see
+ *     {@link STARTER_INLINE_MAX_BUZZ}.
+ *  4. The declared `prompt` is what gets SURFACED and audited alongside the
+ *     graph, but the text that actually generates is whatever the graph's
+ *     `CLIPTextEncode` node carries. We pass the same string to both so they
+ *     cannot disagree. (Moderation sweeps every string in the graph regardless,
+ *     so a clean declared prompt cannot launder a graph prompt.)
+ *
+ * The graph is also bounded server-side: at least 1 node, at most 300, at most
+ * 256 KB serialized, at most 128 levels of nesting. This sample is 7 nodes.
+ *
+ * NOTE ON WHO CAN RUN IT: the inline arm is APP-DEVELOPER-ONLY and PAGE-TOKEN-
+ * only on live civitai.com — the host runs a developer check on every
+ * customComfy estimate and submit. It runs end-to-end against the mock host in
+ * `npm run dev:harness`. Treat inline as a build-and-iterate primitive; to serve
+ * a graph to every viewer, get it registered as a recipe.
+ */
+export function buildInlineComfyBody(
+  prompt: string,
+  seed = 0,
+  negativePrompt = '',
+): InlineComfyBody {
+  const clamped = clampPrompt(prompt.trim());
+  return {
+    kind: 'customComfy',
+    mode: 'inline',
+    workflow: buildInlineComfyGraph(clamped, negativePrompt, seed),
+    // Declared manifest — must contain every AIR the graph above names.
+    resources: [STARTER_INLINE_CHECKPOINT_AIR],
+    prompt: clamped,
+    ...(negativePrompt ? { negativePrompt } : {}),
+    maxBuzz: STARTER_INLINE_MAX_BUZZ,
   };
 }

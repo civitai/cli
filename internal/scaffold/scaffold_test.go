@@ -241,9 +241,10 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "pm-lora-weight")
 	mustContain(t, app, "addLora")
 
-	// Comfy on Civitai (customComfy) sample: a mode toggle swaps the body-builder to
-	// buildComfyBody (a server-registered recipe). The recipe id is FIXED +
-	// server-registered; comfy.ts never sends a graph, only { kind, recipe, params }.
+	// Comfy on Civitai (customComfy) samples: a mode toggle swaps the body-builder
+	// to buildComfyBody (a server-registered recipe) or buildInlineComfyBody (the
+	// app's own graph). BOTH arms must be present — a scaffold that ships only
+	// the recipe arm is how a developer concludes inline graphs don't exist.
 	comfy := readFile(t, filepath.Join(dest, "src", "comfy.ts"))
 	mustContain(t, comfy, "customComfy")
 	mustContain(t, comfy, "starter-comfy-txt2img")
@@ -252,6 +253,49 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "SegmentedControl")
 	mustContain(t, app, "pm-comfy-beta")
 	mustContain(t, app, "pm-gated")
+
+	// The INLINE arm — the app ships its own ComfyUI graph. These are presence
+	// checks for DISCOVERABILITY (the dogfood failure was a developer guessing at
+	// key names because no sample showed them), NOT behavioural guards: this is a
+	// substring match over a rendered template, so a comment or a type declaration
+	// satisfies it just as well as the builder does. It was mutation-tested and it
+	// DOES survive deleting `mode: 'inline'` from the builder body.
+	//
+	// The behavioural guard lives in the generated project itself — comfy.test.ts
+	// asserts the built body, and `npm run typecheck` fails outright on a body
+	// missing `mode` (verified: `Property 'mode' is missing in type … but required
+	// in type 'InlineComfyBody'`). CI runs both against a freshly scaffolded app.
+	mustContain(t, comfy, "buildInlineComfyBody")
+	mustContain(t, comfy, "mode: 'inline'")
+	mustContain(t, comfy, "resources:")
+	mustContain(t, comfy, "maxBuzz")
+	mustContain(t, comfy, "urn:air:")
+	mustContain(t, comfy, "class_type")
+	// The generated unit test must actually exercise the inline builder — an
+	// unreferenced sample rots.
+	comfyTest := readFile(t, filepath.Join(dest, "src", "comfy.test.ts"))
+	mustContain(t, comfyTest, "buildInlineComfyBody")
+
+	// The false invariant this scaffold used to assert. It is not enough to add
+	// the inline sample: the sentence that told a dogfooding developer the
+	// feature could not exist must be GONE from every generated surface.
+	//
+	// NOTE this is a SPELLED guard, not a structural one — it matches phrasings,
+	// so it cannot tell an assertion from a retraction, and it will fire on prose
+	// that merely QUOTES the old claim while correcting it (it did, on the first
+	// draft of the README rewrite). That is the intended bias: describe the old
+	// claim, do not restate it verbatim. It also cannot catch a NEW way of
+	// spelling the same falsehood, so it is a floor, not a proof.
+	comfyReadme := readFile(t, filepath.Join(dest, "README.md"))
+	for _, stale := range []string{
+		"never sends a Comfy graph",
+		"never ships a ComfyUI graph",
+		"cannot ship its own graph",
+	} {
+		mustNotContain(t, comfy, stale)
+		mustNotContain(t, app, stale)
+		mustNotContain(t, comfyReadme, stale)
+	}
 
 	// generation.ts threads the chosen checkpoint into modelId/modelVersionId
 	// instead of a hardcoded constant, AND emits the selected LoRAs as

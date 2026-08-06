@@ -191,12 +191,13 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	// One scannable line: name, template, where, and how many files — no tree.
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Created App %q (%s)  ·  %s/  ·  %d files", display, tmpl, destDir, len(written))))
 
-	// page-money ships TWO samples in the one app — a runnable txt2img money path
-	// and a Comfy on Civitai (customComfy) sample. Surface it (honestly: invite-only
-	// beta) and point at the README's Comfy on Civitai section rather than the raw
-	// file count.
+	// page-money ships a runnable txt2img money path and a Comfy on Civitai
+	// (customComfy) sample, with body builders for BOTH customComfy arms — the
+	// server-registered recipe, and an inline graph the app ships itself. Surface
+	// both honestly (each has its own access gate) and point at the README's
+	// Comfy on Civitai section rather than the raw file count.
 	if tmpl.NeedsHarness() {
-		fmt.Fprintln(out, ui.Dim("  Includes a txt2img sample + a Comfy on Civitai (customComfy) sample (invite-only beta) — see the Comfy on Civitai section in README.md."))
+		fmt.Fprintln(out, ui.Dim("  Includes a txt2img sample + a Comfy on Civitai (customComfy) sample (invite-only beta), with body builders for BOTH arms: a server-registered recipe and an inline ComfyUI graph your own app ships (app developers) — see the Comfy on Civitai section in README.md."))
 	}
 
 	fmt.Fprintln(out, "\n"+ui.Bold("Next steps:"))
@@ -208,17 +209,30 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		// (register) + the DEV TUNNEL (your LOCAL code rendered INSIDE the real
 		// Civitai host, prod-fidelity) — are invite-only beta, so they're demoted
 		// under a "When you have beta access" heading rather than led with (they'd
-		// otherwise walk a first-time author straight into the gated wall). The
-		// tunnel resolves the app server-side, so submit (which creates the pending
-		// app row) still precedes it.
+		// otherwise walk a first-time author straight into the gated wall).
+		//
+		// 🔴 SUBMIT IS *NOT* A PREREQUISITE FOR THE TUNNEL, AND THIS BANNER USED TO
+		// SAY IT WAS — "(required before a dev tunnel)". It is not: the mint accepts
+		// a brand-new slug with NO app row and grants scopes from the LOCAL manifest
+		// (see the "UNSUBMITTED app (no submit needed)" path in app_dev_tunnel.go,
+		// and the same statement in the generated README's live-mode section, which
+		// this line contradicted). What the tunnel actually needs is an Apps-author
+		// invite AND the dev-tunnel flag — an unenrolled account gets a 403 at mint
+		// time saying exactly that (DevTunnelForbiddenError). Submission is
+		// orthogonal. A dogfooding developer opened a working tunnel having never
+		// submitted, which is what surfaced this.
+		//
+		// The two beta surfaces are still listed submit-first, but that is a
+		// PRESENTATIONAL grouping (publish path, then preview path) — not a
+		// dependency. Do not re-derive an ordering requirement from it.
 		fmt.Fprintf(out, "  1. cd %s && npm install    # writes package-lock.json — COMMIT it\n", destDir)
 		fmt.Fprintln(out, "  2. npm run dev:harness     # mock host, no Buzz — works today")
 		fmt.Fprintln(out, "  3. edit src/App.tsx and iterate")
 		fmt.Fprintln(out)
 		fmt.Fprintln(out, "  When you have beta access (invite-only):")
-		fmt.Fprintln(out, "     civitai app submit      # validate + register (required before a dev tunnel)")
+		fmt.Fprintln(out, "     civitai app submit      # validate + register — when you're ready to publish")
 		fmt.Fprintln(out, "     npm run dev:tunnel      # in another terminal: serve your app for the tunnel")
-		fmt.Fprintln(out, "     civitai app dev-tunnel  # preview your LOCAL app INSIDE the real Civitai host — prod-fidelity")
+		fmt.Fprintln(out, "     civitai app dev-tunnel  # your LOCAL app INSIDE the real host, prod-fidelity — no submit needed")
 	case tmpl == scaffold.PageVite:
 		fmt.Fprintf(out, "  1. cd %s && npm install    # writes package-lock.json — COMMIT it\n", destDir)
 		fmt.Fprintln(out, "  2. npm run dev              # preview locally (your UI only — see below)")
