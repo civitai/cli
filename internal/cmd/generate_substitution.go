@@ -127,7 +127,8 @@ func reportModelSubstitutions(errw io.Writer, subs []genapi.ModelSubstitution, p
 // site fail, because the assertion moves with the phase instead of matching a
 // word another line can also spell.
 //
-// A phase with no case returns "", which substitutionLeadsAreDistinct rejects —
+// A phase with no case returns "", which
+// TestSubstitutionLead_AllPhasesNonEmptyAndPairwiseDistinct rejects —
 // an empty lead would make every Contains() check pass vacuously.
 func substitutionLead(phase substitutionPhase) string {
 	switch phase {

@@ -5,6 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -135,19 +143,45 @@ func TestSubstitutionLead_AllPhasesNonEmptyAndPairwiseDistinct(t *testing.T) {
 		seen[lead] = name
 	}
 
-	// ...and each must make the RIGHT claim about whether money already moved.
-	if !strings.Contains(substitutionLead(substitutionAtEstimate), "Nothing has been submitted or charged yet") {
-		t.Errorf("the estimate lead must state that nothing has been charged; got:\n%s", substitutionLead(substitutionAtEstimate))
+}
+
+// 🔴 EACH PHASE'S LEAD IS PINNED AS AN EXACT LITERAL, NOT BY KEYWORD.
+//
+// A keyword anchor cannot express a MONEY claim, because the same keyword occurs
+// in the sentence and in its inverse. The previous version of this check required
+// post-spend leads to `Contains("CHARGED")` and to omit the pre-spend phrase, and
+// a re-audit walked straight through it:
+//
+//	onRead   -> "…and NOTHING was CHARGED — the run is free."   SURVIVED
+//	estimate -> pre-spend phrase kept, "Your card HAS BEEN CHARGED." appended
+//	                                                            SURVIVED
+//
+// The first would tell someone reading an already-billed workflow that the run
+// was free. `assertPhase` cannot catch this by construction either — it proves
+// WHICH lead was selected, never what that lead SAYS.
+//
+// So the whole sentence is the contract. Any edit to user-facing money wording
+// has to come here and be read, which is the point: these three sentences are the
+// only place the CLI states whether the caller's money has already moved.
+func TestSubstitutionLead_ExactTextPerPhase(t *testing.T) {
+	want := map[substitutionPhase]string{
+		substitutionAtEstimate: "The server will NOT use the checkpoint you asked for. It has substituted a different model, " +
+			"and the estimate below prices the SUBSTITUTE. Nothing has been submitted or charged yet.",
+		substitutionAfterSubmit: "The server did NOT use the checkpoint you asked for. It substituted a different model and " +
+			"this generation HAS BEEN CHARGED for the model that actually ran.",
+		substitutionOnRead: "The server did not use the checkpoint that was requested for this workflow. It substituted a " +
+			"different model, and it was CHARGED for the model that actually ran.",
 	}
-	for _, p := range []substitutionPhase{substitutionAfterSubmit, substitutionOnRead} {
-		lead := substitutionLead(p)
-		if !strings.Contains(lead, "CHARGED") {
-			t.Errorf("phase %d describes an already-billed generation and must say so; got:\n%s", p, lead)
-		}
-		// 🔴 The specific inversion the audit found: post-spend phases must NOT
-		// carry the pre-spend reassurance.
-		if strings.Contains(lead, "Nothing has been submitted or charged yet") {
-			t.Errorf("phase %d is post-spend but claims nothing was charged; got:\n%s", p, lead)
+	names := map[substitutionPhase]string{
+		substitutionAtEstimate:  "atEstimate",
+		substitutionAfterSubmit: "afterSubmit",
+		substitutionOnRead:      "onRead",
+	}
+	for p, w := range want {
+		if got := substitutionLead(p); got != w {
+			t.Errorf("phase %s lead changed. These sentences are the CLI's only statement about whether the\n"+
+				"caller's money has already moved — re-read it against the phase before updating this literal.\n  want: %s\n  got:  %s",
+				names[p], w, got)
 		}
 	}
 }
@@ -552,11 +586,26 @@ func TestFailOnSubstitutionFlag_HelpStatesItIsNotAGuarantee(t *testing.T) {
 	}
 }
 
-// 🔴 THE INERTNESS ITSELF, DRIVEN. Against a reply with no record the flag must
-// NOT refuse — the run proceeds and is charged. This is the documented
-// limitation, pinned so it cannot be mistaken for a bug later, and so the help
-// text above is describing real behaviour rather than a guess.
-func TestGenerate_FailOnSubstitutionIsInertAgainstAnOldServer(t *testing.T) {
+// The flag must not fire when the reply carries NO REPORTED SUBSTITUTION: the run
+// proceeds, submits and is charged. Otherwise the flag would break every ordinary
+// run.
+//
+// 🔴 WHAT THIS DOES **NOT** PROVE, stated plainly because an earlier version of
+// this file claimed it did. There was a second test here called
+// `…IsInertAgainstAnOldServer` whose comment read "🔴 THE INERTNESS ITSELF,
+// DRIVEN" — and its fixture was BYTE-IDENTICAL to this one. It could not have
+// been otherwise: per internal/genapi/substitution.go, "an older server omitted
+// the key" and "this server substituted nothing" are THE SAME BYTES, so no
+// fixture can distinguish them and no test can drive old-server behaviour
+// specifically. Two tests asserting one property, one of them advertising a
+// stronger claim than any fixture could support, is worse than one honest test.
+//
+// So: this pins "no reported substitution => no refusal, and nothing printed".
+// Old-server inertness is a CONSEQUENCE of that plus the omitted key — it is
+// documented (README, AGENTS.md 20, and the flag's own usage string, which
+// TestFailOnSubstitutionFlag_HelpStatesItIsNotAGuarantee pins) and is not, and
+// cannot be, independently tested here.
+func TestGenerate_FailOnSubstitutionIsInertWithoutAReportedSubstitution(t *testing.T) {
 	withStdinTTY(t, false)
 	var s genSeams // default quote: no modelSubstitutions key at all
 	o := baseOpts()
@@ -565,31 +614,13 @@ func TestGenerate_FailOnSubstitutionIsInertAgainstAnOldServer(t *testing.T) {
 
 	c, _, errb := genCmd("")
 	if err := runGenerate(c, s.deps(t), o); err != nil {
-		t.Fatalf("an older server must not trip the flag: %v", err)
+		t.Fatalf("no reported substitution must not trip the flag: %v", err)
 	}
 	if s.submitCalls != 1 {
 		t.Errorf("the run must proceed and be charged; got %d submits", s.submitCalls)
 	}
 	if strings.Contains(errb.String(), "requested version") {
 		t.Errorf("nothing may be reported when the server sent no record; got:\n%s", errb.String())
-	}
-}
-
-// The flag must not fire when there is no substitution — otherwise it would
-// break every ordinary run, including against a server that omits the field.
-func TestGenerate_FailOnSubstitutionIsInertWithoutASubstitution(t *testing.T) {
-	withStdinTTY(t, false)
-	var s genSeams // no substitutions
-	o := baseOpts()
-	o.assumeYes = true
-	o.failOnSubstitution = true
-
-	c, _, _ := genCmd("")
-	if err := runGenerate(c, s.deps(t), o); err != nil {
-		t.Fatalf("no substitution must not trip the flag: %v", err)
-	}
-	if s.submitCalls != 1 {
-		t.Errorf("expected the run to proceed; got %d submits", s.submitCalls)
 	}
 }
 
@@ -643,6 +674,127 @@ func TestPrintWorkflow_NoSubstitutionIsSilent(t *testing.T) {
 	printWorkflow(&out, &errb, &genapi.Workflow{ID: "wf_1", Status: "succeeded"})
 	if strings.Contains(errb.String(), "requested version") {
 		t.Errorf("no substitution must print nothing; got:\n%s", errb.String())
+	}
+}
+
+// --- every record must be rendered, not just the first ------------------------
+
+// 🔴 THE RENDERER WAS ONLY EVER EXERCISED WITH ONE RECORD, so `range subs[:1]`
+// survived the whole suite — a renderer that silently drops every substitution
+// after the first was untested. On a graph with several bad ids that is the
+// original defect in miniature: the user is told about one swap and billed for
+// three.
+//
+// The fixture is pairwise distinct on every field so no record can be mistaken
+// for another, and each one's ids, reason token AND advice must all appear.
+func TestReportModelSubstitutions_RendersEveryRecord(t *testing.T) {
+	subs := []genapi.ModelSubstitution{
+		{Requested: 111, Applied: 222, Reason: genapi.SubstitutionUnrecognized},
+		{Requested: 333, Applied: 444, Reason: genapi.SubstitutionGated},
+		{Requested: 555, Applied: 666, Reason: genapi.SubstitutionWrongWorkflow},
+	}
+	var buf bytes.Buffer
+	reportModelSubstitutions(&buf, subs, substitutionAfterSubmit)
+	got := buf.String()
+
+	for _, s := range subs {
+		line := fmt.Sprintf("requested version %d -> ran version %d  (reason: %s)", s.Requested, s.Applied, s.Reason)
+		if !strings.Contains(got, line) {
+			t.Errorf("record %+v was not rendered; want line %q in:\n%s", s, line, got)
+		}
+		if advice := substitutionAdvice(s.Reason); !strings.Contains(got, advice) {
+			t.Errorf("record %+v rendered without its advice; got:\n%s", s, got)
+		}
+	}
+
+	// One id line per record — no more, no fewer.
+	if n := strings.Count(got, "requested version "); n != len(subs) {
+		t.Errorf("expected %d id lines, got %d:\n%s", len(subs), n, got)
+	}
+}
+
+// The same, on the path a user is most likely to be deciding from: a multi-record
+// estimate must show every swap BEFORE the money moves.
+func TestGenerate_EstimateReportsEveryRecord(t *testing.T) {
+	withStdinTTY(t, false)
+	var s genSeams
+	q := okQuote(12)
+	q.ModelSubstitutions = []genapi.ModelSubstitution{
+		{Requested: 111, Applied: 222, Reason: genapi.SubstitutionUnrecognized},
+		{Requested: 333, Applied: 444, Reason: genapi.SubstitutionGated},
+	}
+	withQuote(&s, q, okQuoteRaw(12))
+	o := baseOpts()
+	o.dryRun = true
+
+	c, _, errb := genCmd("")
+	if err := runGenerate(c, s.deps(t), o); err != nil {
+		t.Fatalf("dry run: %v", err)
+	}
+	got := errb.String()
+	for _, id := range []string{"111", "222", "333", "444"} {
+		if !strings.Contains(got, id) {
+			t.Errorf("version id %s missing from the estimate report; got:\n%s", id, got)
+		}
+	}
+	if n := strings.Count(got, "requested version "); n != 2 {
+		t.Errorf("expected 2 id lines on the estimate, got %d:\n%s", n, got)
+	}
+}
+
+// --- the README transcript must be real output --------------------------------
+
+// 🔴 THE DOCUMENTED TRANSCRIPT IS A CLAIM ABOUT OUTPUT, AND NOTHING CHECKED IT.
+//
+// README.md shows a `--dry-run` console block. When the id line's verb became
+// phase-tensed, the code started emitting "will run version N" on the estimate
+// while the README still showed "ran version N" — under a lead saying "Nothing
+// has been submitted or charged yet". So the README displayed, verbatim, the
+// self-contradiction the code change existed to remove, and the whole suite was
+// green: no test compared a documented console block to real output.
+//
+// This renders the DOCUMENTED fixture through the REAL renderer at the phase the
+// transcript claims (`--dry-run` => substitutionAtEstimate) and requires the
+// resulting id line to appear in the README byte for byte.
+func TestREADME_DryRunTranscriptMatchesRealOutput(t *testing.T) {
+	const readmePath = "../../README.md"
+	raw, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatalf("read README: %v", err)
+	}
+	readme := string(raw)
+
+	// The exact fixture the README's transcript uses.
+	var buf bytes.Buffer
+	reportModelSubstitutions(&buf, []genapi.ModelSubstitution{
+		{Requested: 999999999, Applied: 2436219, Reason: genapi.SubstitutionUnrecognized},
+	}, substitutionAtEstimate)
+
+	// The id line is the one that rotted: it carries the ids, the tense and the
+	// reason token, and it is emitted with fixed indentation, so it can be
+	// compared literally.
+	var idLine string
+	for _, ln := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(ln, "requested version") {
+			idLine = ln
+			break
+		}
+	}
+	if idLine == "" {
+		t.Fatal("POSITIVE CONTROL FAILED: the renderer produced no id line, so this test could not detect drift")
+	}
+
+	if !strings.Contains(readme, idLine) {
+		t.Errorf("README's --dry-run transcript does not match real output.\n"+
+			"  renderer emits: %q\n"+
+			"  README does not contain that line — update the transcript in README.md", idLine)
+	}
+
+	// 🔴 And the stale form must be GONE, not merely joined by the correct one.
+	// A README that shows both would still be teaching the wrong thing.
+	if strings.Contains(readme, "-> ran version 2436219") {
+		t.Errorf("README still shows the pre-tense-fix estimate line (`-> ran version 2436219`), " +
+			"which contradicts the lead above it saying nothing has been charged yet")
 	}
 }
 
@@ -721,6 +873,87 @@ func TestSubstitutionAdvice_NamesARealCommand(t *testing.T) {
 	// ...and the advice the user actually sees must contain it.
 	if !strings.Contains(substitutionAdvice(genapi.SubstitutionUnrecognized), substitutionInspectCmd) {
 		t.Errorf("the unrecognized advice no longer names the inspect command")
+	}
+}
+
+// --- comments must not name guards that do not exist --------------------------
+
+// 🔴 A COMMENT NAMING A TEST IS A CLAIM, AND IT ROTS SILENTLY. This file's doc
+// comments point readers at the guard that enforces each rule ("… which
+// TestFoo rejects"). One of them named `substitutionLeadsAreDistinct`, which
+// existed nowhere in the tree — so a reader chasing the guarantee found nothing,
+// and could reasonably conclude it was unguarded and delete the behaviour.
+//
+// This is the same doc-rot class as the `civitai models versions` bug caught
+// earlier, applied to test identifiers instead of CLI commands: an unverifiable
+// pointer in guidance a maintainer is meant to trust.
+// 🔴 NOT SCOPED TO `Test*` NAMES. The real bug had NO Test prefix
+// (`substitutionLeadsAreDistinct`), and a first version of this guard keyed on
+// `\bTest[A-Za-z0-9_]+` — which the actual mutation walked straight past,
+// because replacing the correct name with a non-Test identifier removes the
+// only thing that guard could see. So this matches any Go-shaped identifier
+// (camelCase or Test*) and requires it to exist as REAL CODE somewhere in the
+// repo: an *ast.Ident, or a token inside a string literal (which is how struct
+// tags carry wire names like `modelSubstitutions`).
+func TestSourceComments_NameOnlyIdentifiersThatExist(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "generate_substitution.go", nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parse source: %v", err)
+	}
+
+	// Go-shaped identifiers mentioned in this file's COMMENTS.
+	shape := regexp.MustCompile(`\b(Test[A-Za-z0-9_]+|[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*)\b`)
+	mentioned := map[string]bool{}
+	for _, cg := range f.Comments {
+		for _, m := range shape.FindAllString(cg.Text(), -1) {
+			mentioned[m] = true
+		}
+	}
+	if len(mentioned) == 0 {
+		t.Fatal("POSITIVE CONTROL FAILED: no identifiers found in comments, so this test cannot detect a stale name")
+	}
+
+	// Everything that exists as real code anywhere in the repo.
+	exists := map[string]bool{}
+	word := regexp.MustCompile(`[A-Za-z0-9_]+`)
+	err = filepath.WalkDir("../..", func(path string, d fs.DirEntry, werr error) error {
+		if werr != nil || d.IsDir() || !strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		af, perr := parser.ParseFile(token.NewFileSet(), path, nil, 0) // no comments
+		if perr != nil {
+			return nil // unparseable (e.g. a testdata fixture) — skip, don't fail
+		}
+		ast.Inspect(af, func(n ast.Node) bool {
+			switch v := n.(type) {
+			case *ast.Ident:
+				exists[v.Name] = true
+			case *ast.BasicLit:
+				if v.Kind == token.STRING {
+					for _, w := range word.FindAllString(v.Value, -1) {
+						exists[w] = true
+					}
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk: %v", err)
+	}
+	// POSITIVE CONTROL: a symbol this file certainly declares must be found, or
+	// the scanner read nothing and every check below passes vacuously.
+	if !exists["substitutionLead"] {
+		t.Fatal("POSITIVE CONTROL FAILED: the code scanner found no identifiers, so it cannot detect a stale name")
+	}
+
+	for n := range mentioned {
+		if !exists[n] {
+			t.Errorf("generate_substitution.go's comments name %q, which exists nowhere in the repo's Go code "+
+				"— a comment pointing at a guard or symbol that does not exist", n)
+		}
 	}
 }
 
