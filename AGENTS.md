@@ -158,6 +158,16 @@ analytics read path. The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
 
+**Maintaining this list:** items are append-only and numbered by arrival — a PR
+adding items takes the next free numbers, and when two PRs collide the one
+merging **second** renumbers **its own** new items. Never renumber an existing
+item: other items, the Layout section, and code comments all cross-reference
+them by number. After any renumber, re-grep every `item N` / `items N–M` in this
+file and confirm each still points at what it means — the range clauses in the
+paragraph above are the first thing to break, and both sides of a collision tend
+to have edited them differently, so the correct merged sentence is usually
+neither one's.
+
 1. **`civitai app validate` is a best-effort LOCAL mirror, not the authority.**
    The server-side `BlockManifestValidator`
    (`civitai/civitai → src/server/services/block-manifest-validator.service.ts`)
