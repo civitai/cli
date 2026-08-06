@@ -32,15 +32,24 @@ import (
 //
 // It needs node, so it is env-gated exactly like the network guard in
 // pins_guard_test.go: `make ci` / `go test ./...` stays Go-only and offline.
-// It has TWO runners, and the per-PR one is the load-bearing half:
-//   - .github/workflows/ci.yml, job `ready-ack-runtime` — runs on every pull
-//     request, so a regression BLOCKS the merge. The first version of this
-//     guard had only the scheduled runner below, which meant the very failure
-//     the PR advertised it caught (inverting the `event.source` check) would
-//     have merged green and been reported up to 24h later, with nothing gated
-//     on the result.
+// It has TWO runners:
+//   - .github/workflows/ci.yml, job `ready-ack-runtime` — runs and REPORTS on
+//     every pull request. The first version had only the scheduled runner
+//     below, so the failure this guard exists to catch (inverting the
+//     `event.source` check) would have surfaced up to 24h after a merge, on a
+//     workflow nobody watches.
 //   - .github/workflows/bump-scaffold-pins.yml, job `ready-ack-runtime` — the
 //     daily sweep, which catches drift on `main` between PRs.
+//
+// 🔴 REPORTING IS NOT GATING — this job does NOT currently block a merge.
+// Measured, not assumed: `gh api repos/civitai/cli/branches/main/protection`
+// lists exactly two required contexts, `pins-vs-published` and
+// `scaffold-currency`, with no rulesets. `ready-ack-runtime` is not among them
+// — and neither is `build-test` — so a red run here is visible on the PR and
+// stops nothing. Adding it to the required contexts is the outstanding step
+// that would turn reporting into gating; that is a repo-policy change
+// affecting every PR, so it is the maintainer's call and has not been taken
+// here. Until it is, do not describe this job as a gate.
 //
 // WHAT IT STILL DOES NOT PROVE: that the REAL host accepts the ack. The stub
 // is this repo's reading of the contract, not the contract. The end-to-end
@@ -148,7 +157,7 @@ func handshakeProblems(r driverResult) []string {
 		p = append(p, "BLOCK_READY puts `height` at the TOP LEVEL — it belongs inside `payload`")
 	}
 	if m.TargetOrigin == "*" {
-		p = append(p, "BLOCK_READY was broadcast to '*' — BLOCK_INIT hands over the real host origin, use it")
+		p = append(p, "BLOCK_READY was broadcast to '*' — BLOCK_INIT carries the sender's origin, use it")
 	} else if m.TargetOrigin != r.HostOrigin {
 		p = append(p, "BLOCK_READY was addressed at "+m.TargetOrigin+", want the host origin "+r.HostOrigin)
 	}

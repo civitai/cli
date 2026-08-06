@@ -454,16 +454,27 @@ until that exists, vendoring is on purpose.
       check passes every static assertion.
       `ready_ack_runtime_test.go` (Guard B) executes the emitter in node against
       a fake host and reads the outbound message. It is env-gated
-      (`CIVITAI_CHECK_SCAFFOLD_RUNTIME=1`) and has TWO runners, of which only
-      the first gates: the `ready-ack-runtime` job in **`ci.yml`** (every PR)
-      and the same-named job in `bump-scaffold-pins.yml` (daily drift). Shipping
-      only the daily one — as the first version did — means the very failure
-      Guard B exists to catch merges green and is reported up to 24h later, on a
-      workflow nothing depends on.
+      (`CIVITAI_CHECK_SCAFFOLD_RUNTIME=1`) and has TWO runners: the
+      `ready-ack-runtime` job in **`ci.yml`** (every PR) and the same-named job
+      in `bump-scaffold-pins.yml` (daily drift). Shipping only the daily one —
+      as the first version did — means the failure Guard B exists to catch is
+      reported up to 24h AFTER a merge, on a workflow nobody watches.
       The `template-page-vite` job in `ci.yml` is the third: it is the only
       thing that BUILDS an SDK-free template, and it asserts the ack survives
       bundling (Guard A pins the source tree; Vite output is what the platform
       serves).
+      🔴 **REPORTING IS NOT GATING — no ready-ack check currently blocks a
+      merge.** Measured, not assumed, via
+      `gh api repos/civitai/cli/branches/main/protection`: the required contexts
+      are exactly `pins-vs-published` and `scaffold-currency`, with no rulesets.
+      So `ready-ack-runtime`, `template-page-vite` and even `build-test` all
+      report and stop nothing. **Outstanding step:** adding `ready-ack-runtime`
+      (and arguably `build-test`) to the required contexts is what converts
+      reporting into gating. That is a repo-policy change touching every open
+      PR, so it is the maintainer's call and was deliberately not taken by the
+      agent that wrote this. Until it is, do not describe any of these jobs as a
+      gate — an earlier revision of this item, and of
+      `ready_ack_runtime_test.go`, claimed one "BLOCKS the merge". It was false.
       If you add a template, add nothing — Guard A picks it up automatically and
       fails until `ReadyAckPath()` is set.
     - **`BLOCK_HELLO` now exists host-side, and the emitter deliberately does

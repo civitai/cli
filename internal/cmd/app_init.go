@@ -235,6 +235,18 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	// moment the author is about to preview, or its silence reads as a bug and
 	// the file looks deletable. (The NeedsHarness branch above already covers
 	// this in its own words.)
+	//
+	// BOTH conjuncts are load-bearing even though they are coextensive across
+	// today's three templates (page-money is the only harness template and the
+	// only one with no emitter). Neither should be dropped as redundant:
+	//   - `ReadyAckPath() != ""` stops the sentence printing with an EMPTY
+	//     filename for a template that ships no emitter. Not hypothetical:
+	//     forcing this condition true is exactly what produced
+	//     "   performs the host handshake — keep it. …" during the audit.
+	//   - `!NeedsHarness()` keeps the WORDING honest — "there's no host to send
+	//     BLOCK_INIT" is false for a template whose `dev:harness` mounts one.
+	// A future template shipping an emitter AND a harness needs both halves
+	// reconsidered, not either conjunct deleted.
 	if !tmpl.NeedsHarness() && tmpl.ReadyAckPath() != "" {
 		fmt.Fprintln(out, "\n"+ui.Dim(fmt.Sprintf("  %s performs the host handshake — keep it. Previewing locally shows your", tmpl.ReadyAckPath())))
 		fmt.Fprintln(out, ui.Dim("  UI only: there's no host to send BLOCK_INIT, so it stays quiet by design."))

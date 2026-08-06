@@ -89,7 +89,7 @@ var readyAckRules = []readyAckRule{
 		name: "no-wildcard-origin",
 		re:   regexp.MustCompile(`['"]\*['"]`),
 		want: false,
-		why:  "the ack must never be broadcast to `'*'` — BLOCK_INIT hands us the real host origin",
+		why:  "the ack must never be broadcast to `'*'` — BLOCK_INIT carries the sender's origin, use it",
 	},
 }
 
@@ -202,6 +202,10 @@ func TestReadyAckWiringPredicate(t *testing.T) {
 		ack        string // where the emitter really is
 		files      []file
 		wantAccept bool
+		// wantErr, when set, must appear in the rejection message. It pins WHICH
+		// branch rejected — without it a case can be green because some other
+		// check happened to reject first.
+		wantErr string
 	}{
 		{
 			name: "accept: index.html loads it directly (the static shape)",
@@ -271,17 +275,50 @@ func TestReadyAckWiringPredicate(t *testing.T) {
 			},
 		},
 		{
-			name:  "reject: no script tags at all",
-			ack:   "civitai-host.js",
-			files: []file{{"index.html", "<h1>hi</h1>"}},
+			// Pins the errNoScriptTags EARLY RETURN specifically. Without the
+			// wantErr the case passes either way — the fallthrough at the end
+			// also returns an error — so deleting that early return would go
+			// unnoticed.
+			name:    "reject: no script tags at all",
+			ack:     "civitai-host.js",
+			files:   []file{{"index.html", "<h1>hi</h1>"}},
+			wantErr: "no <script src> at all",
 		},
 		{
+			// Rejected by the FALLTHROUGH (an absolute URL fails the
+			// relative/root-relative switch), not by a URL-specific guard —
+			// stated so the case doesn't look like it exercises one.
 			name: "reject: loaded from a CDN URL that merely ends in the name",
 			ack:  "civitai-host.js",
 			files: []file{
 				{"index.html", `<script src="https://cdn.example.com/civitai-host.js"></script><script src="./app.js"></script>`},
 				{"app.js", "// app"},
 			},
+			wantErr: "not a path in this project",
+		},
+		{
+			// 🔴 Pins the `//` half of the URL guard, which IS load-bearing:
+			// without it the leading slash is stripped, filepath.Join cleans the
+			// `..`, and this resolves to EXACTLY the emitter's path — an
+			// off-project URL would be accepted as the emitter.
+			name: "reject: protocol-relative URL that cleans back to the emitter path",
+			ack:  "civitai-host.js",
+			files: []file{
+				{"index.html", `<script src="//evil.example.com/../civitai-host.js"></script><script src="./app.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantErr: "not a path in this project",
+		},
+		{
+			// Pins the `?`/`#` suffix stripping: Vite's `?url` / `?raw` suffixes
+			// are not part of the path, and the emitter is still the emitter.
+			name: "accept: entry module imports it with a Vite ?url suffix",
+			ack:  ackRel,
+			files: []file{
+				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
+				{"src/main.jsx", "import './civitai-host.js?url';"},
+			},
+			wantAccept: true,
 		},
 	}
 
@@ -312,6 +349,11 @@ func TestReadyAckWiringPredicate(t *testing.T) {
 			if err == nil {
 				t.Fatalf("wiring check ACCEPTED a project the browser cannot load the emitter in: %q\n"+
 					"this is the basename-matching class — the reference must RESOLVE to the emitter's real path", chain)
+			}
+			if c.wantErr != "" && !strings.Contains(err.Error(), c.wantErr) {
+				t.Fatalf("rejected for the wrong reason — want an error mentioning %q, got:\n%v\n"+
+					"a rejection from a different branch would leave the one this case exists to pin untested",
+					c.wantErr, err)
 			}
 			t.Logf("rejected: %v", err)
 		})
@@ -595,11 +637,23 @@ func readyAckWiring(dir, ackRel string) (string, error) {
 // makes `import 'civitai-host.js'` (a bare specifier that would resolve to a
 // PACKAGE, not this file) a rejection rather than a match.
 func resolveProjectRef(projectDir, fromDir, spec string) (string, bool) {
-	if strings.Contains(spec, "://") || strings.HasPrefix(spec, "//") {
+	// A protocol-relative URL only LOOKS root-relative. Without this, the `/`
+	// case below strips one slash and `filepath.Join` cleans the rest, so
+	// `//evil.example.com/../civitai-host.js` resolves to EXACTLY the emitter's
+	// path and is accepted — measured. This half is load-bearing and pinned by
+	// the "protocol-relative URL that cleans back" corpus case.
+	//
+	// There is deliberately no `strings.Contains(spec, "://")` companion: an
+	// `https://…` specifier already fails the switch below and returns the
+	// identical `("", false)`, so that half decided nothing for any input. It
+	// was removed rather than left as a branch no mutation can reach — the
+	// CDN-URL corpus case is rejected by the fallthrough, and says so.
+	if strings.HasPrefix(spec, "//") {
 		return "", false
 	}
 	// Vite allows query/hash suffixes (`?raw`, `?url`); they are not part of
-	// the path.
+	// the path, and an emitter imported as `./civitai-host.js?url` is still the
+	// emitter. Pinned by the "?url suffix" accept case.
 	if i := strings.IndexAny(spec, "?#"); i >= 0 {
 		spec = spec[:i]
 	}
