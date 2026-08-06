@@ -688,9 +688,10 @@ correct project.
 > fetches a file nothing references, so the emitter has to be *loaded* too — a
 > `<script src="./civitai-host.js"></script>` in `index.html`, or an
 > `import './civitai-host.js';` at the top of the entry module `index.html`
-> loads. Until v0.1.90 this check looked only for the *text* `BLOCK_READY`
-> anywhere in your tree, so an unreferenced copy silenced it and a still-broken
-> app validated clean. It now resolves what your `index.html` actually loads.
+> loads. Earlier releases of this check looked only for the *text*
+> `BLOCK_READY` anywhere in your tree, so an unreferenced copy silenced it and a
+> still-broken app validated clean. It now resolves what your `index.html`
+> actually loads.
 
 Four things follow:
 
@@ -700,7 +701,8 @@ Four things follow:
   resolution is complete you get a precise finding — including "you have an
   emitter, but nothing loads it". When it *isn't* — no `index.html` at your
   project root, a bundler alias (`import '@/…'`), a reference to a file that
-  isn't there — it falls back to scanning your whole tree for the text, and the
+  isn't there, an import chain deeper than it follows — it falls back to
+  scanning your whole tree for the text, and the
   warning **says so in as many words**: *"it did NOT check that the file is
   loaded"*. Read that sentence as it is written; in that mode, adding the emitter
   without referencing it will silence the warning and leave the app broken.

@@ -199,13 +199,9 @@ func readyAckChecks(dir string, generic any) []string {
 		return nil
 	}
 
-	graph := blockproto.ResolveEntryGraph(dir, blockproto.EntryGraphOptions{
-		MaxFiles:     maxAckGraphFiles,
-		MaxFileBytes: maxAckFileBytes,
-		Dependencies: deps,
-	})
+	graph, loadedPostsAck := resolveLoadedFiles(dir, deps)
 	if graph.Complete {
-		if graphPostsReadyAck(graph) {
+		if loadedPostsAck {
 			return nil
 		}
 		// Reachability tier: nothing the browser loads posts the message.
@@ -222,19 +218,36 @@ func readyAckChecks(dir string, generic any) []string {
 	return []string{readyAckAdvicePresenceOnly}
 }
 
-// graphPostsReadyAck reports whether any file the browser loads mentions the
-// message outside a comment. blockproto has already stripped comments per
-// extension; readyAckSourceExts decides what counts as code.
-func graphPostsReadyAck(g *blockproto.EntryGraph) bool {
-	for _, f := range g.Files {
-		if !readyAckSourceExts[strings.ToLower(filepath.Ext(f.Rel))] {
-			continue
-		}
-		if strings.Contains(f.Code, readyAckType) {
-			return true
-		}
-	}
-	return false
+// resolveLoadedFiles walks the entry graph and reports whether any file the
+// BROWSER LOADS mentions the message outside a comment.
+//
+// 🔴 The answer is accumulated through `Inspect`, not read off a retained field.
+// The graph hands each file's contents over while they are in hand and keeps
+// none of them, so this costs ONE file of memory — the same discipline the tree
+// scan above follows. The first version stored every graph file's stripped
+// contents on the EntryFile and peaked 410 MB RSS on a 200-module graph entirely
+// INSIDE these budgets, against ~17 MB before the graph existed: a check whose
+// caps exist precisely so `validate` cannot become a memory event, exceeding the
+// 316 MB figure those caps were sized against. `app submit` pays this too.
+func resolveLoadedFiles(dir string, deps map[string]bool) (*blockproto.EntryGraph, bool) {
+	found := false
+	g := blockproto.ResolveEntryGraph(dir, blockproto.EntryGraphOptions{
+		MaxFiles:     maxAckGraphFiles,
+		MaxFileBytes: maxAckFileBytes,
+		Dependencies: deps,
+		Inspect: func(f blockproto.EntryFile, code string) {
+			// readyAckSourceExts gates BOTH tiers: a `.css` an entry module
+			// imports really is loaded by the browser and really cannot
+			// implement a handshake, so it is in the graph but is not evidence.
+			if !readyAckSourceExts[strings.ToLower(filepath.Ext(f.Rel))] {
+				return
+			}
+			if strings.Contains(code, readyAckType) {
+				found = true
+			}
+		},
+	})
+	return g, found
 }
 
 // declaresPage reports whether the manifest declares a non-null `page` surface.

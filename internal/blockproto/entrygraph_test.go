@@ -188,6 +188,118 @@ func TestReadyAckWiringPredicate(t *testing.T) {
 			wantAccept: true,
 		},
 		{
+			// 🔴 THE HEADLINE DEFECT'S SECOND LIFE. `<script src="app.js">` — no
+			// `./` — is entirely ordinary HTML and names the same file. Running
+			// it through MODULE rules made it a "bare specifier", so it resolved
+			// to nothing, the graph went incomplete, and validate fell to the
+			// presence tier: the shipped false pass, intact, one character away.
+			// Measured before the fix.
+			name: "accept: a document-relative src with no leading ./",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script src="civitai-host.js"></script><script src="app.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantAccept: true,
+		},
+		{
+			// 🔴 UNQUOTED ATTRIBUTE VALUES ARE LEGAL HTML. The src regex required
+			// quotes, so the tag was dropped, then re-classified as an INLINE
+			// script with an empty body — the reference vanished with `Complete`
+			// still true, and a correct `static` scaffold got the strong tier's
+			// warning plus --strict rc=1. A false warning at a correct project.
+			name: "accept: an unquoted src attribute",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script src=./civitai-host.js></script><script src=app.js></script>`},
+				{"app.js", "// app"},
+			},
+			wantAccept: true,
+		},
+		{
+			name: "accept: a single-quoted src attribute",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script src='./civitai-host.js'></script>`},
+			},
+			wantAccept: true,
+		},
+		{
+			// 🔴 A URL IS FETCHED LITERALLY. Extension guessing belongs to a
+			// bundler resolving a MODULE specifier, never to an HTML src: on the
+			// no-build `static` template the browser asks for `/civitai-host`
+			// and gets a 404. This was REJECTED at e800129 and accepted by the
+			// first version of this resolver — the exact "ships a 404" shape
+			// wiring.go claims to reject.
+			name: "reject: an extensionless src is a 404, not an extension to guess",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script src="./civitai-host"></script><script src="./app.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantErr: "no <script src> in index.html resolves to it",
+		},
+		{
+			// The counterpart: extension resolution IS correct for a module
+			// specifier, because a bundler does exactly that. Without this pair
+			// "no guessing" and "guess everywhere" are indistinguishable.
+			name: "accept: an extensionless MODULE import still resolves",
+			ack:  ackRel,
+			files: []gfile{
+				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
+				{"src/main.jsx", "import './civitai-host';"},
+			},
+			wantAccept: true,
+		},
+		{
+			// A scheme-qualified src is a URL even without `//`. Under URL rules
+			// the default branch is document-relative, so without the scheme
+			// check `foo:bar` would resolve to a path inside the project.
+			name: "reject: a scheme-qualified src is a URL, not a relative path",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script src="data:text/javascript,0"></script><script src="./app.js"></script>`},
+				{"app.js", "// app"},
+			},
+			wantErr: "not a path in this project",
+		},
+		{
+			// 🔴 The scheme regex is ANCHORED, and the anchor is load-bearing:
+			// the scheme check runs BEFORE the `?`/`#` strip, so an unanchored
+			// pattern matches a `https:` sitting in a QUERY STRING and throws
+			// away a perfectly ordinary local reference. Dropping the `^`
+			// survived the previous sweep. A cache-busting or proxy query with a
+			// URL in it is ordinary.
+			name: "accept: a local src whose query string contains a URL",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script src="./civitai-host.js?from=https://cdn.example.com"></script>`},
+			},
+			wantAccept: true,
+		},
+		{
+			// The `../` arm of the module resolver, which nothing pinned: an
+			// emitter one directory ABOVE the importing module is still inside
+			// the project and must resolve.
+			name: "accept: the entry module imports the emitter from a parent directory",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
+				{"src/main.jsx", "import '../civitai-host.js';"},
+			},
+			wantAccept: true,
+		},
+		{
+			// Dynamic import with a literal specifier is a real load.
+			name: "accept: a dynamic import() with a literal specifier",
+			ack:  ackRel,
+			files: []gfile{
+				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
+				{"src/main.jsx", "if (x) { import('./civitai-host.js'); }"},
+			},
+			wantAccept: true,
+		},
+		{
 			// NEW: pins readyAckWiringDepth. Found by a SURVIVING mutant —
 			// widening Guard A's bound from 2 to 99 passed the entire suite, so
 			// nothing was holding the "one level of imports" contract at all. A
@@ -262,6 +374,7 @@ func TestEntryGraphCompleteness(t *testing.T) {
 		name         string
 		files        []gfile
 		deps         map[string]bool
+		opts         *EntryGraphOptions
 		wantComplete bool
 		wantFiles    []string // Rel paths that must be in the graph
 		wantGap      string   // substring of the reason, when incomplete
@@ -339,6 +452,82 @@ func TestEntryGraphCompleteness(t *testing.T) {
 			wantGap:      "could not resolve",
 		},
 		{
+			// 🔴 A dependency name is matched at a PATH SEPARATOR, never at a
+			// character offset. `reactive-ui` starts with `react` and is a
+			// different package; accepting it would classify a real project file
+			// as a dependency, turning a gap into a confident wrong finding. The
+			// audit's finer-grained prefix mutant survived the old corpus.
+			name: "a bare specifier that merely starts like a dependency is still a gap",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
+				{"src/main.jsx", "import 'reactive-ui';"},
+			},
+			deps:         deps,
+			wantComplete: false,
+			wantGap:      "bundler alias",
+		},
+		{
+			// The positive control for the boundary: a real SUBPATH of a
+			// declared dependency is accounted for.
+			name: "a subpath of a declared dependency is accounted for",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
+				{"src/main.jsx", "import 'react-dom/client';\nimport '@civitai/blocks-react/dist/x.js';"},
+			},
+			deps:         deps,
+			wantComplete: true,
+			wantFiles:    []string{"index.html", "src/main.jsx"},
+		},
+		{
+			// 🔴 TRUNCATION IS A GAP. Before this, `continue`-ing at MaxDepth
+			// left Complete TRUE, so a CORRECT project whose ack sat below the
+			// bound got the strong tier's warning and --strict rc=1 — a finding
+			// built on a graph we had stopped walking. Measured at depth 10.
+			name: "an import below MaxDepth is a gap, not an absence",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/a.js"></script>`},
+				{"a.js", "import './b.js';"},
+				{"b.js", "import './c.js';"},
+				{"c.js", "// end"},
+			},
+			deps:         deps,
+			opts:         &EntryGraphOptions{MaxDepth: 2},
+			wantComplete: false,
+			wantGap:      "stopped at import depth 2",
+		},
+		{
+			// The counterpart: a leaf at the bound that imports only a declared
+			// PACKAGE has nothing left to see, so it is NOT a gap. Without this
+			// the rule above degenerates into "any project as deep as the bound
+			// is unobservable".
+			name: "a package import at the depth bound is not truncated content",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/a.js"></script>`},
+				{"a.js", "import './b.js';"},
+				{"b.js", "import 'react';"},
+			},
+			deps:         deps,
+			opts:         &EntryGraphOptions{MaxDepth: 2},
+			wantComplete: true,
+			wantFiles:    []string{"index.html", "a.js", "b.js"},
+		},
+		{
+			// 🔴 `entryModuleExts` decides what can PULL files into the graph. A
+			// browser never follows imports out of a stylesheet, so widening this
+			// set would let a `.css` add reachable files — and silence the check
+			// on the strength of something that is never executed.
+			name: "a stylesheet's imports are not followed",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/src/main.js"></script>`},
+				{"src/main.js", "import './theme.css';"},
+				{"src/theme.css", "/* x */ import './civitai-host.js';"},
+				{"src/civitai-host.js", "// emitter"},
+			},
+			deps:         deps,
+			wantComplete: true,
+			wantFiles:    []string{"index.html", "src/main.js", "src/theme.css"},
+		},
+		{
 			// An index.html with nothing to load is a COMPLETE graph of one file.
 			// It is the shape a `validate` finding is allowed to rest on, so it
 			// must not be confused with "we could not look".
@@ -352,7 +541,12 @@ func TestEntryGraphCompleteness(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			g := ResolveEntryGraph(writeTree(t, c.files), EntryGraphOptions{Dependencies: c.deps})
+			o := EntryGraphOptions{}
+			if c.opts != nil {
+				o = *c.opts
+			}
+			o.Dependencies = c.deps
+			g := ResolveEntryGraph(writeTree(t, c.files), o)
 			if g.Complete != c.wantComplete {
 				t.Fatalf("Complete = %v, want %v (gaps: %v)\ntrace:\n  %s",
 					g.Complete, c.wantComplete, g.Gaps, strings.Join(g.Trace, "\n  "))
@@ -436,23 +630,86 @@ func TestEntryGraphBudgetsAreGaps(t *testing.T) {
 	})
 }
 
-// TestEntryGraphCommentsAreStripped pins that the graph's Code carries no
-// comments — the check built on it asks whether a file MENTIONS a token, and a
-// comment naming it is not an implementation of it.
+// inspectAll collects every file the walk read, keyed by Rel, using the same
+// Inspect callback production uses. There is no retained `Code` field to read —
+// see TestEntryGraphRetainsNoContents.
+func inspectAll(t *testing.T, dir string, opts EntryGraphOptions) (*EntryGraph, map[string]string) {
+	t.Helper()
+	seen := map[string]string{}
+	opts.Inspect = func(f EntryFile, code string) { seen[f.Rel] = code }
+	return ResolveEntryGraph(dir, opts), seen
+}
+
+// TestEntryGraphCommentsAreStripped pins that the code handed to Inspect carries
+// no comments — the check built on it asks whether a file MENTIONS a token, and
+// a comment naming it is not an implementation of it.
 func TestEntryGraphCommentsAreStripped(t *testing.T) {
 	dir := writeTree(t, []gfile{
 		{"index.html", "<!-- BLOCK_READY lives in app.js -->\n<script src=\"./app.js\"></script>"},
 		{"app.js", "// TODO: post BLOCK_READY\nvar marker = 'KEPT_IN_A_STRING';\n"},
 	})
-	g := ResolveEntryGraph(dir, EntryGraphOptions{})
-	for _, f := range g.Files {
-		if strings.Contains(f.Code, "BLOCK_READY") {
-			t.Fatalf("%s kept a commented-out mention: %q", f.Rel, f.Code)
+	_, code := inspectAll(t, dir, EntryGraphOptions{})
+	for rel, c := range code {
+		if strings.Contains(c, "BLOCK_READY") {
+			t.Fatalf("%s kept a commented-out mention: %q", rel, c)
 		}
 	}
-	i := g.FileAt(filepath.Join(dir, "app.js"))
-	if i < 0 || !strings.Contains(g.Files[i].Code, "KEPT_IN_A_STRING") {
+	if !strings.Contains(code["app.js"], "KEPT_IN_A_STRING") {
 		t.Fatal("the strip ate code outside a comment — string literals must survive")
+	}
+}
+
+// TestEntryGraphInspectSeesEveryFile is Inspect's POSITIVE CONTROL. Every
+// assertion built on Inspect reports a NEGATIVE ("no file mentions the token"),
+// and a zero from a callback wired to nothing is indistinguishable from a zero
+// that means something. This asserts the callback fires once per graph file, in
+// a shape where the count must be non-zero.
+func TestEntryGraphInspectSeesEveryFile(t *testing.T) {
+	dir := writeTree(t, []gfile{
+		{"index.html", `<script type="module" src="/src/main.js"></script>`},
+		{"src/main.js", "import './a.js';\nimport './style.css';"},
+		{"src/a.js", "var a = 1;"},
+		{"src/style.css", "body{}"},
+	})
+	g, code := inspectAll(t, dir, EntryGraphOptions{})
+	if !g.Complete {
+		t.Fatalf("fixture should resolve completely: %v", g.Gaps)
+	}
+	want := []string{"index.html", "src/main.js", "src/a.js", "src/style.css"}
+	if len(code) != len(want) {
+		t.Fatalf("Inspect fired for %v, want exactly %v", graphRels(g), want)
+	}
+	for _, rel := range want {
+		if _, ok := code[rel]; !ok {
+			t.Fatalf("Inspect never saw %s — a callback that misses files reports a silent false negative", rel)
+		}
+	}
+}
+
+// TestEntryGraphRetainsNoContents pins the memory contract STRUCTURALLY.
+//
+// 🔴 The first version stored every graph file's stripped contents on EntryFile
+// and peaked 410 MB RSS on a 200-module graph entirely INSIDE the file-count and
+// size budgets — against ~17 MB before the graph existed, and past the 316 MB
+// event those budgets were sized against in the first place. A benchmark would
+// drift; this asserts the type itself cannot hold contents, which is the
+// property that made the regression possible.
+func TestEntryGraphRetainsNoContents(t *testing.T) {
+	dir := writeTree(t, []gfile{
+		{"index.html", `<script src="./app.js"></script>`},
+		{"app.js", "var UNIQUE_TOKEN_NOT_IN_ANY_FIELD = 1;"},
+	})
+	g, code := inspectAll(t, dir, EntryGraphOptions{})
+	if !strings.Contains(code["app.js"], "UNIQUE_TOKEN_NOT_IN_ANY_FIELD") {
+		t.Fatal("positive control failed: Inspect did not receive the file's contents")
+	}
+	for _, f := range g.Files {
+		for _, field := range []string{f.Path, f.Rel, f.Spec} {
+			if strings.Contains(field, "UNIQUE_TOKEN_NOT_IN_ANY_FIELD") {
+				t.Fatalf("%s retains file CONTENTS in a graph field (%q) — the graph must hold one file's "+
+					"bytes at a time, like the tree scan", f.Rel, field)
+			}
+		}
 	}
 }
 

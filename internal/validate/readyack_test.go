@@ -753,9 +753,44 @@ func TestReadyAckSymlinkCycleTerminates(t *testing.T) {
 	}
 }
 
+// TestReadyAckCapValues pins the caps INDEPENDENTLY of the code under test.
+//
+// 🔴 TestReadyAckCapsAreUnobservable below sizes its fixtures FROM these
+// constants, so a mutant that raises one does not fail — it just allocates. An
+// audit mutant setting maxAckFileBytes to 1<<40 hung the suite twice instead of
+// going red. A literal here is the only thing that can see that, and it is also
+// the only record that these numbers are a deliberate cost decision rather than
+// whatever the code happens to say.
+func TestReadyAckCapValues(t *testing.T) {
+	if maxAckFileBytes != 2<<20 {
+		t.Errorf("maxAckFileBytes = %d, want %d (2 MiB) — these caps exist because `validate` must not "+
+			"become a memory event; raising one silently makes every cap fixture allocate instead of fail",
+			maxAckFileBytes, 2<<20)
+	}
+	if maxAckScanFiles != 5000 {
+		t.Errorf("maxAckScanFiles = %d, want 5000", maxAckScanFiles)
+	}
+	if maxAckGraphFiles != 200 {
+		t.Errorf("maxAckGraphFiles = %d, want 200", maxAckGraphFiles)
+	}
+}
+
 // TestReadyAckCapsAreUnobservable pins that hitting a cap stays SILENT. A scan
 // that stopped early has a gap in it, and a gap is not evidence of absence.
+//
+// It sizes its fixtures from the constants on purpose (a hardcoded 2 MiB would
+// silently stop exercising the branch if the cap moved); TestReadyAckCapValues
+// is what makes that safe.
 func TestReadyAckCapsAreUnobservable(t *testing.T) {
+	// 🔴 Sizing a fixture from the constant under test turns a raised cap into an
+	// ALLOCATION rather than a failure: a 1<<40 mutant hung this suite twice
+	// instead of going red. TestReadyAckCapValues is the real guard; this bound
+	// makes the hang a fast, readable failure instead.
+	if maxAckFileBytes > 8<<20 || maxAckScanFiles > 20000 {
+		t.Fatalf("the caps are too large to exercise (maxAckFileBytes=%d, maxAckScanFiles=%d) — this test "+
+			"builds fixtures from them, so it would allocate instead of testing. See TestReadyAckCapValues.",
+			maxAckFileBytes, maxAckScanFiles)
+	}
 	t.Run("a file over the size cap silences the check", func(t *testing.T) {
 		dir := ackProject(t, ackManifest(false), map[string]string{
 			"index.html": `<!doctype html><script src="./app.js"></script>`,
@@ -833,24 +868,65 @@ func TestReadyAckAdviceIsActionable(t *testing.T) {
 // the reachability tier tells an author their app is checked when it is not —
 // which is how "copy the emitter in" became a green check for a broken app. So
 // each tier must name what it did, and the weak one must name what it did not.
+// 🔴 AN EARLIER VERSION OF THIS TEST WAS HALF VACUOUS, and an audit mutant
+// proved it. It asserted the two strong advisories contain "index.html loads" —
+// but that phrase comes from the SHARED `readyAckRemedy` fragment, which EVERY
+// advisory carries, including the weak one. So replacing the unwired advisory's
+// entire headline with "but something is off" PASSED. That is the spelled-guard
+// class: a check satisfied by a different feature's text.
+//
+// Every literal below appears in exactly ONE tier's own diagnosis, and each is
+// paired with an INVERSE assertion that no other tier carries it — so a rewrite
+// that blurs two tiers together fails in both directions.
 func TestReadyAckAdvisoriesStateTheirOwnStrength(t *testing.T) {
-	if !strings.Contains(readyAckAdvicePresenceOnly, "did NOT check that the file is loaded") {
-		t.Errorf("the presence-only advisory does not disclose that it cannot see wiring — an author who "+
-			"reads it as the reachability tier will copy the emitter in, be silenced, and stay broken:\n%s",
-			readyAckAdvicePresenceOnly)
+	const disclosure = "did NOT check that the file is loaded"
+	// The operative half of the weak tier's disclosure: without this sentence an
+	// author reads "add the emitter", stops, and stays broken — which is the
+	// defect. Deleting it was a surviving mutant.
+	const operative = "will silence this warning"
+
+	perTier := []struct {
+		name   string
+		advice string
+		// own are literals this tier's DIAGNOSIS must carry, and which no other
+		// tier may carry.
+		own []string
+	}{
+		{"unwired", readyAckAdviceUnwired, []string{
+			"DOES contain",                        // it found the message…
+			"nothing index.html loads reaches it", // …and nothing loads it
+			"orphan",                              // named for what it is
+		}},
+		{"missing", readyAckAdviceMissing, []string{
+			"nothing index.html loads posts it either", // resolved, and absent
+		}},
+		{"presence-only", readyAckAdvicePresenceOnly, []string{
+			disclosure,
+			operative,
+			"could not resolve the files your",
+		}},
 	}
-	// And the two reachability advisories must NOT carry that disclaimer: they
-	// really did resolve the entry graph, and disclaiming it would train authors
-	// to ignore the one message that is strong.
-	for name, advice := range map[string]string{
-		"unwired": readyAckAdviceUnwired,
-		"missing": readyAckAdviceMissing,
-	} {
-		if strings.Contains(advice, "did NOT check that the file is loaded") {
-			t.Errorf("the %s advisory (reachability tier) disclaims a check it DID perform:\n%s", name, advice)
-		}
-		if !strings.Contains(advice, "index.html loads") {
-			t.Errorf("the %s advisory does not say it resolved what index.html loads:\n%s", name, advice)
+
+	for _, tier := range perTier {
+		for _, lit := range tier.own {
+			if !strings.Contains(tier.advice, lit) {
+				t.Errorf("the %s advisory no longer says %q — that literal is this tier's whole diagnosis, "+
+					"and without it the message does not tell an author WHAT WAS FOUND:\n%s",
+					tier.name, lit, tier.advice)
+			}
+			// The inverse control: no OTHER tier may claim it. This is what
+			// makes the assertion above a statement about THIS tier rather than
+			// about the shared remedy fragment every advisory carries.
+			for _, other := range perTier {
+				if other.name == tier.name {
+					continue
+				}
+				if strings.Contains(other.advice, lit) {
+					t.Errorf("the %s advisory carries %q, which belongs to the %s tier — the tiers are no "+
+						"longer distinguishable by their text, so a reader cannot tell which check ran:\n%s",
+						other.name, lit, tier.name, other.advice)
+				}
+			}
 		}
 	}
 }

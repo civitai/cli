@@ -77,11 +77,19 @@ func StripJSComments(src string) string {
 				i++
 			}
 		case c == '/' && i+1 < len(src) && src[i+1] == '*':
-			i += 2
-			for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
-				i++
+			// 🔴 UNTERMINATED — the same rule StripHTMLComments carries, for the
+			// same reason, which used to be documented only on that half. An
+			// unclosed `/*` swallowed the rest of the file: lossy in the
+			// EXPENSIVE direction, because everything below it disappears —
+			// including an emitter — and the author gets a warning about a
+			// correct project. Text after an unclosed marker is not evidence of
+			// a comment, it is evidence the file is not what we assumed.
+			end := strings.Index(src[i+2:], "*/")
+			if end < 0 {
+				b.WriteString(src[i:])
+				return b.String()
 			}
-			i = min(i+2, len(src))
+			i += 2 + end + 2
 		case c == '\'' || c == '"' || c == '`':
 			quote := c
 			b.WriteByte(c)

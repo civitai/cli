@@ -485,8 +485,16 @@ neither one's.
       question answered for an AUTHOR's project and had answered it with a
       whole-tree grep instead — see item 20 for the false pass that produced.
       Guard A now calls `blockproto.ReadyAckWiring`; its control corpus moved
-      with the predicate, into `internal/blockproto/entrygraph_test.go`. Nothing
-      about Guard A's strength changed, and the depth bound it relies on
+      with the predicate, into `internal/blockproto/entrygraph_test.go`.
+      🔴 **Guard A's REJECTION set is unchanged, but its ACCEPTANCE set moved —
+      state both, because "nothing changed" was the claim an audit falsified.**
+      It now also accepts an emitter imported by an INLINE
+      `<script type="module">` in index.html (a real browser load it used to
+      miss, and missing it manufactured a finding at a correct project), and the
+      unquoted / no-`./` HTML spellings a browser resolves identically. It also
+      briefly accepted an extensionless `src="./civitai-host"`, which was a BUG
+      rather than a widening — a 404 on a no-build template — and is reverted;
+      see item 20. The depth bound it relies on
       (`readyAckWiringDepth = 2`: index.html's `<script src>` entries plus their
       DIRECT imports) is now pinned by a corpus case — widening it to 99 was a
       SURVIVING mutant, i.e. the "one level deep on purpose" contract was
@@ -976,20 +984,63 @@ neither one's.
       project shapes is exactly how the false pass above shipped, so the
       strength is part of the output, not an implementation detail.
       `TestReadyAckAdvisoriesStateTheirOwnStrength` pins both directions.
+    - 🔴 **AN HTML `src` IS A URL; A JS SPECIFIER IS A MODULE SPECIFIER. THE
+      FIRST VERSION CONFLATED THEM, AND THAT ONE MISTAKE PRODUCED THREE BUGS,
+      TWO OF THEM OPPOSITES.** Measured, each on a project one character from a
+      shipped template. `<script src="app.js">` — no `./`, entirely ordinary
+      HTML — was read as a BARE specifier, resolved to nothing, made the graph
+      incomplete, and left the headline defect SILENT: the fix did not cover the
+      projects it was written for. `<script src="./civitai-host">` was
+      extension-guessed to `.js` and ACCEPTED on the no-build `static` template,
+      where the browser fetches the literal path and 404s — the exact "ships a
+      404" shape `wiring.go` claims to reject. And an unquoted
+      `src=./civitai-host.js`, also legal HTML, was dropped by a quotes-only
+      regex and then re-classified as an *inline* script with an empty body: the
+      reference vanished with `Complete` still TRUE, so a CORRECT scaffold got
+      the strong tier's warning and `--strict` rc=1.
+      `refSyntax` now splits the two. Under URL syntax a specifier that is not
+      scheme-qualified or protocol-relative is DOCUMENT-RELATIVE, there are no
+      bare specifiers, and there is no extension or directory-index guessing.
+      Under module syntax a bare specifier is a package and a bundler's
+      extension resolution applies. The scheme regex is ANCHORED (`^`) because
+      the scheme check runs BEFORE the `?`/`#` strip, so an unanchored pattern
+      throws away `./x.js?from=https://cdn`. Do not re-merge these paths.
     - **THE DECIDABILITY BOUNDARY IS COMPLETENESS, NOT PROJECT TYPE.** The first
       draft drew it at "does the manifest declare a `buildCommand`" — bundled
       means undecidable — and that is wrong in both directions: an ordinary Vite
       project resolves perfectly (index.html IS Vite's entry), while a
       *no-build* project can still carry a specifier we cannot follow. So the
       resolver reports `Complete`, and ANY reference it cannot account for
-      clears it: a bundler alias or other bare specifier that is not a declared
-      dependency, an off-project or protocol-relative URL, a path escaping the
-      project root, a reference resolving to a file that is not there, an
-      unreadable file, an exhausted budget. **A bare specifier naming a declared
-      npm dependency is ACCOUNTED FOR** — it is a package, not a file in this
+      clears it: a bundler alias or other bare MODULE specifier that is not a
+      declared dependency, an off-project or protocol-relative URL, a path
+      escaping the project root, a reference resolving to a file that is not
+      there, an unreadable file, an exhausted file/size budget, **and an import
+      below the depth bound**. **A bare MODULE specifier naming a declared npm
+      dependency is ACCOUNTED FOR** — it is a package, not a file in this
       project — which is the only reason a React app resolves at all; that is
       why `packageDeps` returns the dependency NAMES alongside the ack verdict
-      from one read of package.json.
+      from one read of package.json. The name matches at a PATH SEPARATOR, never
+      a character offset: `reactive-ui` is not `react`.
+    - 🔴 **THE DEPTH BOUND IS A BUDGET LIKE ANY OTHER, AND TRUNCATING IT IS A
+      GAP.** It was not: `continue`-ing at `MaxDepth` left `Complete` true while
+      three separate comments — this item included — claimed an exhausted budget
+      made the graph incomplete. Measured: a CORRECT project whose ack sits ten
+      imports below index.html got the STRONG tier's warning and `--strict`
+      rc=1, on a graph we had stopped walking. Only imports that are NOT
+      declared packages count as truncated: a leaf importing `react` and nothing
+      else has nothing left to see, and counting it would make every project as
+      deep as the bound unobservable.
+    - 🔴 **THE GRAPH RETAINS NO FILE CONTENTS, and `EntryFile` must not grow a
+      `Code` field again.** It had one, and a 200-module graph entirely INSIDE
+      the file-count and size budgets peaked **410 MB RSS**, against ~40 MB for
+      the same tree before the graph existed — a check whose caps exist
+      precisely so `validate` cannot become a memory event, blowing past the
+      316 MB figure those caps were sized against, with `app submit` paying it
+      too. Contents now go to `EntryGraphOptions.Inspect` while they are in
+      hand, so the walk holds ONE file at a time exactly like the tree scan.
+      After the fix: 39.5 MB, matching the pre-graph baseline on that fixture.
+      `TestEntryGraphRetainsNoContents` pins it structurally rather than by
+      benchmark.
     - 🔴 **A reference to a file that is NOT THERE is a GAP, not a decided
       absence.** It is tempting to read it as "the browser 404s that, so it
       cannot be the ack" — but a project that presumably builds having an

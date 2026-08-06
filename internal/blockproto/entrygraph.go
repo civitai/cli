@@ -14,16 +14,47 @@ package blockproto
 // Guard A had before it was rewritten, regenerated at a second call site, which
 // is precisely the shape `PackageAcksReady` was consolidated here to avoid.
 //
+// 🔴 AN HTML `src` IS A URL. A JS SPECIFIER IS A MODULE SPECIFIER. THEY ARE
+// RESOLVED BY DIFFERENT RULES, AND CONFLATING THEM PRODUCED THREE SEPARATE BUGS.
+// The first version of this file ran every reference through one resolver
+// written for module specifiers. Measured consequences, each on a project one
+// character away from a shipped template:
+//
+//	<script src="app.js">         read as a BARE specifier -> "not a path in
+//	                              this project" -> gap -> presence tier -> the
+//	                              headline defect SILENT again, at ordinary HTML
+//	<script src="./civitai-host"> extension-guessed to civitai-host.js and
+//	                              ACCEPTED, on a no-build template where the
+//	                              browser fetches the literal path and 404s —
+//	                              the exact "ships a 404" shape wiring.go claims
+//	                              this resolver rejects
+//
+// So there are now two syntaxes (`refSyntax`). Under URL syntax a specifier that
+// is not scheme-qualified or protocol-relative is DOCUMENT-RELATIVE — `app.js`,
+// `./app.js` and `/app.js` all name a file in this project — and there is no
+// extension or directory-index guessing, because a browser fetches the literal
+// path. Under module syntax a bare specifier is a package, and extension/index
+// resolution applies, because a bundler does that.
+//
 // 🔴 IT IS A MODEL OF A BROWSER, NOT A BUNDLER, AND IT SAYS SO.
 // The graph carries a `Complete` flag, and every caller must branch on it. A
 // reference this resolver cannot account for — a bundler alias, a bare
 // specifier that is not a declared dependency, a CDN URL, a path that resolves
-// to a file that is not there, a file it could not read, a budget it exhausted —
-// sets `Complete = false` and records why in `Gaps`. An INCOMPLETE graph is
-// evidence about NOTHING: the emitter may well be reached through the part we
-// could not follow. Callers that would report a finding must go quiet (or fall
-// back to a weaker check that discloses itself), never treat "we did not see it"
-// as "it is not there".
+// to a file that is not there, a file it could not read, a budget it exhausted,
+// AN IMPORT BELOW ITS DEPTH BOUND — sets `Complete = false` and records why in
+// `Gaps`. An INCOMPLETE graph is evidence about NOTHING: the emitter may well be
+// reached through the part we could not follow. Callers that would report a
+// finding must go quiet (or fall back to a weaker check that discloses itself),
+// never treat "we did not see it" as "it is not there".
+//
+// 🔴 THE DEPTH BOUND IS A BUDGET LIKE ANY OTHER, AND TRUNCATING IT IS A GAP.
+// It did not used to be: `continue`-ing at MaxDepth left `Complete` true, so a
+// CORRECT project whose ack sat below the bound got the STRONG tier's warning
+// and `--strict` rc=1 — a false warning built on a graph we had stopped walking,
+// while three separate comments claimed an exhausted budget made the graph
+// incomplete. Measured at depth 10 before the fix. Only imports that are NOT
+// declared packages count as truncated: a leaf importing `react` and nothing
+// else has nothing left to see.
 //
 // WHAT IT DELIBERATELY DOES NOT MODEL. `resolve.alias` / `tsconfig` path
 // mapping, glob imports, dynamic `import(expr)` with a computed specifier,
@@ -56,7 +87,7 @@ type EntryGraphOptions struct {
 	// imports. Guard A passes 2 — index.html's scripts and their direct
 	// imports — because a template's emitter is meant to be loaded by the entry
 	// itself and a deeper chain is a template smell. `validate` passes the
-	// default, because an author's own module layout is none of our business.
+	// default, because an author's module layout is none of our business.
 	MaxDepth int
 	// MaxFiles bounds files read. Exhausting it is a Gap.
 	MaxFiles int
@@ -64,12 +95,26 @@ type EntryGraphOptions struct {
 	// the file, so we do not know what is in it.
 	MaxFileBytes int64
 	// Dependencies are the npm package names the project declares. A BARE
-	// specifier naming one is ACCOUNTED FOR (it is a package, so it is not a
-	// file in this project) and does not make the graph incomplete. A bare
-	// specifier that is NOT a declared dependency is the alias case, and DOES —
-	// `import '@/civitai-host.js'` is a real file behind a bundler alias we
-	// cannot follow. Leave nil to treat every bare specifier as a gap.
+	// MODULE specifier naming one is ACCOUNTED FOR (it is a package, so it is
+	// not a file in this project) and does not make the graph incomplete. A
+	// bare module specifier that is NOT a declared dependency is the alias
+	// case, and DOES — `import '@/civitai-host.js'` is a real file behind a
+	// bundler alias we cannot follow. Leave nil to treat every bare module
+	// specifier as a gap.
+	//
+	// It does NOT apply to an HTML `src`, which has no bare specifiers at all.
 	Dependencies map[string]bool
+	// Inspect, when non-nil, is called for every file the walk reads, with that
+	// file's comment-stripped contents WHILE THEY ARE IN HAND.
+	//
+	// 🔴 This is why EntryFile carries no `Code` field. Retaining every graph
+	// file's contents peaked 410 MB RSS on a 200-module graph entirely INSIDE
+	// the file-count and file-size budgets (measured; ~17 MB before the graph
+	// existed) — a check whose own caps exist because `validate` must not become
+	// a memory event, exceeding the very figure those caps were sized against.
+	// The tree scan next door deliberately holds one file at a time; so does
+	// this.
+	Inspect func(f EntryFile, code string)
 }
 
 func (o EntryGraphOptions) withDefaults() EntryGraphOptions {
@@ -85,15 +130,12 @@ func (o EntryGraphOptions) withDefaults() EntryGraphOptions {
 	return o
 }
 
-// EntryFile is one file the browser loads, with its comments already stripped.
+// EntryFile is one file the browser loads. Its CONTENTS are not retained — see
+// EntryGraphOptions.Inspect.
 type EntryFile struct {
 	// Path is absolute and cleaned; Rel is slash-separated, relative to Root.
 	Path string
 	Rel  string
-	// Code is the file's contents with comments stripped per its extension
-	// (see StripCommentsForExt). A mention inside a comment is not a load and
-	// not an implementation.
-	Code string
 	// Depth is 0 for index.html, 1 for a file index.html references, and so on.
 	Depth int
 	// Spec is the specifier that pulled this file in ("" for index.html);
@@ -155,6 +197,28 @@ func (g *EntryGraph) gap(format string, a ...any) {
 	g.Gaps = append(g.Gaps, fmt.Sprintf(format, a...))
 }
 
+// refSyntax picks the resolution rules. The distinction is not cosmetic — see
+// the file header for the three bugs conflating them produced.
+type refSyntax int
+
+const (
+	// syntaxURL is an HTML attribute value: a URL resolved against the
+	// document. There are NO bare specifiers, and no extension guessing.
+	syntaxURL refSyntax = iota
+	// syntaxModule is a JS/TS import specifier: bare means a package, and a
+	// bundler applies extension and directory-index resolution.
+	syntaxModule
+)
+
+type pending struct {
+	spec  string
+	from  string // directory the specifier resolves against
+	via   int
+	depth int
+	what  string
+	syn   refSyntax
+}
+
 // ResolveEntryGraph walks the project in dir the way a browser does, starting
 // at index.html. It never returns nil.
 //
@@ -175,36 +239,38 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 		return g
 	}
 	html := StripHTMLComments(string(raw))
-	g.add(EntryFile{
-		Path: indexPath, Rel: "index.html", Depth: 0, Via: -1,
-		Code: StripCommentsForExt(string(raw), ".html"),
-	})
-
-	type pending struct {
-		spec  string
-		from  string // directory the specifier resolves against
-		via   int
-		depth int
-		what  string
+	index := EntryFile{Path: indexPath, Rel: "index.html", Depth: 0, Via: -1}
+	g.Files = append(g.Files, index)
+	if opts.Inspect != nil {
+		opts.Inspect(index, StripCommentsForExt(string(raw), ".html"))
 	}
+
 	var queue []pending
 
-	// `<script src=…>` resolves against the document, which sits at the root.
-	for _, m := range reScriptSrc.FindAllStringSubmatch(html, -1) {
+	// `<script src=…>` is a URL resolved against the document, which sits at
+	// the project root.
+	for _, attrs := range reScriptOpen.FindAllStringSubmatch(html, -1) {
+		src, ok := srcAttrValue(attrs[1])
+		if !ok {
+			continue
+		}
 		g.ScriptRefs++
-		queue = append(queue, pending{spec: m[1], from: dir, via: 0, depth: 1, what: "index.html <script src>"})
+		queue = append(queue, pending{spec: src, from: dir, via: 0, depth: 1,
+			what: "index.html <script src>", syn: syntaxURL})
 	}
 	// Inline `<script>` blocks execute too, and a module one can import the
 	// emitter. Without this a project whose index.html carries
 	// `<script type="module">import './civitai-host.js'</script>` would resolve
 	// to a graph that "completely" misses the emitter — a false finding at a
-	// correct project.
+	// correct project. Their specifiers are MODULE syntax, resolved against the
+	// document's directory (the project root).
 	for _, m := range reScriptBlock.FindAllStringSubmatch(html, -1) {
-		if reSrcAttr.MatchString(m[1]) {
+		if _, ok := srcAttrValue(m[1]); ok {
 			continue // external: already queued above
 		}
 		for _, im := range reJSImport.FindAllStringSubmatch(StripJSComments(m[2]), -1) {
-			queue = append(queue, pending{spec: im[1], from: dir, via: 0, depth: 1, what: "inline <script> in index.html"})
+			queue = append(queue, pending{spec: im[1], from: dir, via: 0, depth: 1,
+				what: "inline <script> in index.html", syn: syntaxModule})
 		}
 	}
 
@@ -212,7 +278,7 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 		p := queue[0]
 		queue = queue[1:]
 
-		resolved, kind := resolveProjectRef(dir, p.from, p.spec, opts.Dependencies)
+		resolved, kind := resolveProjectRef(dir, p.from, p.spec, opts.Dependencies, p.syn)
 		g.note(p.what, p.spec, resolved, kind)
 		switch kind {
 		case refPackage:
@@ -221,10 +287,14 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			// package.json — so this is accounted for, not a gap.
 			continue
 		case refUnresolved:
-			g.gap("could not resolve %s %q — a bundler alias, a bare specifier that is not a declared dependency, or an off-project URL", p.what, p.spec)
+			if p.syn == syntaxURL {
+				g.gap("could not resolve %s %q — an off-project URL, or a path outside this project", p.what, p.spec)
+			} else {
+				g.gap("could not resolve %s %q — a bundler alias, a bare specifier that is not a declared dependency, or an off-project URL", p.what, p.spec)
+			}
 			continue
 		}
-		file, err := resolveModulePath(resolved)
+		file, err := resolveRefPath(resolved, p.syn)
 		if err != nil {
 			// A reference that points at nothing means this resolver disagrees
 			// with a project that presumably builds — our model is wrong, not
@@ -248,25 +318,36 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(file))
+		code := StripCommentsForExt(string(body), ext)
 		idx := len(g.Files)
-		g.add(EntryFile{
-			Path: file, Rel: relTo(dir, file), Depth: p.depth, Spec: p.spec, Via: p.via,
-			Code: StripCommentsForExt(string(body), ext),
-		})
-		if p.depth >= opts.MaxDepth || !entryModuleExts[ext] {
+		f := EntryFile{Path: file, Rel: relTo(dir, file), Depth: p.depth, Spec: p.spec, Via: p.via}
+		g.Files = append(g.Files, f)
+		if opts.Inspect != nil {
+			opts.Inspect(f, code)
+		}
+		if !entryModuleExts[ext] {
 			continue
 		}
-		for _, im := range reJSImport.FindAllStringSubmatch(g.Files[idx].Code, -1) {
+		for _, im := range reJSImport.FindAllStringSubmatch(code, -1) {
+			spec := im[1]
+			if p.depth+1 > opts.MaxDepth {
+				// 🔴 TRUNCATION IS A GAP. A package specifier is not truncated
+				// content — it was never going to be followed — so only a
+				// reference naming something in this project counts.
+				if _, k := resolveProjectRef(dir, filepath.Dir(file), spec, opts.Dependencies, syntaxModule); k != refPackage {
+					g.gap("stopped at import depth %d: %s imports %q, which this check did not follow",
+						opts.MaxDepth, f.Rel, spec)
+				}
+				continue
+			}
 			queue = append(queue, pending{
-				spec: im[1], from: filepath.Dir(file), via: idx, depth: p.depth + 1,
-				what: "import in " + g.Files[idx].Rel,
+				spec: spec, from: filepath.Dir(file), via: idx, depth: p.depth + 1,
+				what: "import in " + f.Rel, syn: syntaxModule,
 			})
 		}
 	}
 	return g
 }
-
-func (g *EntryGraph) add(f EntryFile) { g.Files = append(g.Files, f) }
 
 func (g *EntryGraph) note(what, spec, resolved string, kind refKind) {
 	switch kind {
@@ -307,23 +388,30 @@ func readCapped(path string, max int64) ([]byte, error) {
 
 // entryModuleExts are the extensions whose imports are followed. A `.css` a
 // module imports is still part of the graph (it is added to Files) but has no
-// imports worth chasing.
+// imports worth chasing — and widening this set would let a stylesheet pull
+// files into the graph, which no browser does.
 var entryModuleExts = map[string]bool{
 	".js": true, ".jsx": true, ".mjs": true, ".cjs": true,
 	".ts": true, ".tsx": true, ".mts": true, ".cts": true,
 	".vue": true, ".svelte": true, ".astro": true,
 }
 
-// entryResolveExts are appended to an extensionless specifier, in the order a
-// bundler tries them.
+// entryResolveExts are appended to an extensionless MODULE specifier, in the
+// order a bundler tries them. They are never applied to a URL.
 var entryResolveExts = []string{".js", ".mjs", ".cjs", ".jsx", ".ts", ".tsx", ".mts", ".cts", ".vue", ".svelte", ".astro"}
 
-// resolveModulePath turns a resolved reference into a file that exists,
-// applying the extension and directory-index resolution a bundler does. It
-// returns an error when nothing exists there.
-func resolveModulePath(p string) (string, error) {
+// resolveRefPath turns a resolved reference into a file that exists.
+//
+// 🔴 URL syntax gets NO extension or directory-index guessing. A browser fetches
+// the literal path: `<script src="./civitai-host">` on a no-build template is a
+// 404, and guessing `.js` for it accepted exactly the "ships a 404" shape this
+// resolver exists to reject.
+func resolveRefPath(p string, syn refSyntax) (string, error) {
 	if info, err := os.Stat(p); err == nil && !info.IsDir() {
 		return filepath.Clean(p), nil
+	}
+	if syn == syntaxURL {
+		return "", os.ErrNotExist
 	}
 	for _, ext := range entryResolveExts {
 		if info, err := os.Stat(p + ext); err == nil && !info.IsDir() {
@@ -346,34 +434,42 @@ const (
 	refUnresolved refKind = iota
 	// refProject: a path inside the project.
 	refProject
-	// refPackage: a bare specifier naming a declared npm dependency.
+	// refPackage: a bare MODULE specifier naming a declared npm dependency.
 	refPackage
 )
 
-// resolveProjectRef resolves a `<script src>` or an import specifier.
+// reURLScheme matches an RFC 3986 scheme prefix. A browser treats
+// `<script src="foo:bar">` as an absolute URL rather than a relative path, so
+// this is how an HTML `src` is told apart from a document-relative one.
+var reURLScheme = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9+.\-]*:`)
+
+// resolveProjectRef resolves a `<script src>` (syntaxURL) or an import
+// specifier (syntaxModule).
 //
-// A root-relative ref resolves against the project root, a relative one against
-// fromDir. A bare specifier is a PACKAGE when the project declares it as a
-// dependency and unresolvable otherwise — which is what makes
+// Under MODULE syntax a bare specifier is a PACKAGE when the project declares
+// it as a dependency and unresolvable otherwise — which is what makes
 // `import 'civitai-host.js'` (a bare specifier that resolves to a package, not
 // to this file) a non-match rather than a hit.
-func resolveProjectRef(projectDir, fromDir, spec string, deps map[string]bool) (string, refKind) {
+//
+// Under URL syntax there are no bare specifiers at all: `app.js` is
+// document-relative and names a file in this project, exactly as `./app.js`
+// does. Reading it as a bare specifier is what left the headline defect intact
+// for every project whose index.html omits `./`.
+func resolveProjectRef(projectDir, fromDir, spec string, deps map[string]bool, syn refSyntax) (string, refKind) {
 	// A protocol-relative URL only LOOKS root-relative. Without this, the `/`
 	// case below strips one slash and `filepath.Join` cleans the rest, so
 	// `//evil.example.com/../civitai-host.js` resolves to EXACTLY the emitter's
 	// path and is accepted — measured. Pinned by the "protocol-relative URL
 	// that cleans back" corpus case.
-	//
-	// There is deliberately no `strings.Contains(spec, "://")` companion: no URI
-	// scheme can begin with `/`, `./` or `../`, so an `https://…` specifier
-	// already falls through to the bare-specifier branch, where it is not a
-	// declared dependency and reports refUnresolved — the identical answer.
 	if strings.HasPrefix(spec, "//") {
 		return "", refUnresolved
 	}
-	// Vite allows query/hash suffixes (`?raw`, `?url`); they are not part of the
-	// path, and an emitter imported as `./civitai-host.js?url` is still the
-	// emitter. Pinned by the "?url suffix" accept case.
+	if syn == syntaxURL && reURLScheme.MatchString(spec) {
+		return "", refUnresolved
+	}
+	// Vite allows query/hash suffixes (`?raw`, `?url`); a URL has a real query
+	// and fragment. Neither is part of the path, and an emitter referenced as
+	// `./civitai-host.js?url` is still the emitter.
 	if i := strings.IndexAny(spec, "?#"); i >= 0 {
 		spec = spec[:i]
 	}
@@ -385,6 +481,9 @@ func resolveProjectRef(projectDir, fromDir, spec string, deps map[string]bool) (
 	case strings.HasPrefix(spec, "/"):
 		out = filepath.Clean(filepath.Join(projectDir, filepath.FromSlash(strings.TrimPrefix(spec, "/"))))
 	case strings.HasPrefix(spec, "./"), strings.HasPrefix(spec, "../"):
+		out = filepath.Clean(filepath.Join(fromDir, filepath.FromSlash(spec)))
+	case syn == syntaxURL:
+		// Document-relative. `app.js` and `./app.js` are the same URL.
 		out = filepath.Clean(filepath.Join(fromDir, filepath.FromSlash(spec)))
 	default:
 		if declaresPackage(deps, spec) {
@@ -403,6 +502,11 @@ func resolveProjectRef(projectDir, fromDir, spec string, deps map[string]bool) (
 
 // declaresPackage reports whether spec names a declared dependency, allowing a
 // subpath (`react-dom/client` -> `react-dom`, `@scope/pkg/sub` -> `@scope/pkg`).
+//
+// 🔴 The boundary is a PATH SEPARATOR, never a character offset. `reactive-ui`
+// starts with `react` and is a different package; a prefix test that does not
+// split on `/` accepts it and silently classifies a real project file as a
+// dependency — which turns a gap into a confident (wrong) finding.
 func declaresPackage(deps map[string]bool, spec string) bool {
 	if len(deps) == 0 {
 		return false
@@ -420,14 +524,41 @@ func declaresPackage(deps map[string]bool, spec string) bool {
 	return deps[parts[0]]
 }
 
+// srcAttrValue extracts a `src` attribute value from a tag's attribute list,
+// accepting the three HTML forms: double-quoted, single-quoted and UNQUOTED.
+//
+// 🔴 The unquoted form is legal HTML and used to be dropped entirely. The tag
+// then looked like an INLINE script with an empty body, so the reference
+// vanished from the graph while `Complete` stayed TRUE — a correct `static`
+// scaffold written `src=./civitai-host.js` produced the strong tier's warning
+// and `--strict` rc=1. A false warning at a correct project is the outcome
+// AGENTS.md item 10 records four measured corrections to avoid.
+func srcAttrValue(attrs string) (string, bool) {
+	m := reSrcAttr.FindStringSubmatch(attrs)
+	if m == nil {
+		return "", false
+	}
+	for _, v := range m[1:] {
+		if v != "" {
+			return v, true
+		}
+	}
+	// `src=""` / `src=''`: present but empty. It IS a src attribute (so the tag
+	// is external rather than inline) and it names nothing.
+	return "", true
+}
+
 var (
-	reScriptSrc = regexp.MustCompile(`(?is)<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']`)
-	// Captures a whole `<script …>…</script>` so an INLINE module's imports can
-	// be read. Group 1 is the attribute list, group 2 the body.
+	// reScriptOpen captures a `<script …>` open tag's attribute list.
+	reScriptOpen = regexp.MustCompile(`(?is)<script\b([^>]*)>`)
+	// reScriptBlock captures a whole `<script …>…</script>` so an INLINE
+	// module's imports can be read. Group 1 is the attribute list, group 2 the
+	// body.
 	reScriptBlock = regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script>`)
-	reSrcAttr     = regexp.MustCompile(`(?is)\bsrc\s*=\s*["']`)
-	// Captures the SPECIFIER of an import / re-export / require, so it can be
-	// resolved. Matching a basename inside the specifier is what let
+	// reSrcAttr captures a src value in any of HTML's three quoting forms.
+	reSrcAttr = regexp.MustCompile(`(?is)\bsrc\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'` + "`" + `=<>]+))`)
+	// reJSImport captures the SPECIFIER of an import / re-export / require, so
+	// it can be resolved. Matching a basename inside the specifier is what let
 	// `import '../nonexistent/civitai-host.js'` through.
 	reJSImport = regexp.MustCompile(`(?:\bimport\s*\(?\s*|\bfrom\s+|\brequire\(\s*)['"]([^'"]+)['"]`)
 )

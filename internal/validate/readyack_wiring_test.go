@@ -12,6 +12,7 @@ package validate
 // the near-miss shapes that made the old check look green.
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -170,6 +171,103 @@ func TestWiredEmitterIsSilent(t *testing.T) {
 		}
 		wantAckKind(t, dir, "")
 	})
+}
+
+// TestHTMLSrcIsAURLNotAModuleSpecifier is the end-to-end guard for the audit's
+// root cause: `<script src>` was resolved with JS module-specifier rules.
+//
+// Every case below is a real `static` scaffold with ONE character changed in
+// `index.html`, and every one is ordinary HTML that a browser resolves to
+// exactly the same file as the shipped form. Two were measured failing before
+// the fix:
+//
+//	src="app.js"           -> the emitter-not-wired defect went SILENT again
+//	src=./civitai-host.js  -> a CORRECT project got --strict rc=1
+func TestHTMLSrcIsAURLNotAModuleSpecifier(t *testing.T) {
+	// Correct projects: the reference is spelled differently, the file is the
+	// same, and the check must stay silent. A warning here is the expensive
+	// failure — advisory output that fires at a correct project.
+	for _, c := range []struct{ name, old, new string }{
+		{"unquoted src", `src="./civitai-host.js"`, `src=./civitai-host.js`},
+		{"single-quoted src", `src="./civitai-host.js"`, `src='./civitai-host.js'`},
+		{"no leading ./", `src="./civitai-host.js"`, `src="civitai-host.js"`},
+		{"root-relative", `src="./civitai-host.js"`, `src="/civitai-host.js"`},
+		{"extra attribute after src", `src="./civitai-host.js"`, `src="./civitai-host.js" defer`},
+	} {
+		t.Run("silent: "+c.name, func(t *testing.T) {
+			dir := renderTemplate(t, scaffold.Static)
+			wantAckKind(t, dir, "") // positive control on the untouched scaffold
+			editFile(t, dir, "index.html", c.old, c.new)
+			wantAckKind(t, dir, "")
+		})
+	}
+
+	// And the defect must still be caught when the SAME spellings are used for
+	// the project's own script while the emitter is unreferenced. Without this
+	// half, "stays silent" is satisfied by a check that never fires at all.
+	for _, c := range []struct{ name, old, new string }{
+		{"unquoted src", `src="./app.js"`, `src=./app.js`},
+		{"no leading ./", `src="./app.js"`, `src="app.js"`},
+	} {
+		t.Run("warns: emitter unwired, "+c.name, func(t *testing.T) {
+			dir := renderTemplate(t, scaffold.Static)
+			editFile(t, dir, "index.html", c.old, c.new)
+			editFile(t, dir, "index.html", `<script src="./civitai-host.js"></script>`, "")
+			wantAckKind(t, dir, "unwired")
+		})
+	}
+
+	t.Run("an extensionless src is a 404, not an extension to guess", func(t *testing.T) {
+		// 🔴 A browser fetches the literal path. On the no-build `static`
+		// template `<script src="./civitai-host">` is a 404, so the emitter is
+		// NOT loaded — guessing `.js` accepted the exact "ships a 404" shape the
+		// resolver exists to reject, and reported the strong tier's silence.
+		// Now the reference resolves to nothing, which is a GAP, so the check
+		// drops to the presence tier and (the tree does hold the literal) stays
+		// quiet WITHOUT claiming the emitter is wired.
+		dir := renderTemplate(t, scaffold.Static)
+		editFile(t, dir, "index.html", `src="./civitai-host.js"`, `src="./civitai-host"`)
+		wantAckKind(t, dir, "")
+		g, loaded := resolveLoadedFiles(dir, nil)
+		if g.Complete {
+			t.Fatalf("a src pointing at a file that does not exist must make the graph INCOMPLETE, or the "+
+				"check reports a confident finding on a model that disagrees with the project\ntrace: %v", g.Trace)
+		}
+		if loaded {
+			t.Fatal("the extensionless src resolved to the emitter — a browser would 404 that URL")
+		}
+	})
+}
+
+// TestAckBelowTheDepthBoundIsAGapNotAFinding pins the third root-cause bug: the
+// depth bound truncated the walk WITHOUT clearing Complete, so a correct project
+// whose emitter sits below it got the strong tier's warning and `--strict` rc=1.
+// Three separate comments claimed an exhausted budget made the graph incomplete;
+// none of them was true of this budget.
+func TestAckBelowTheDepthBoundIsAGapNotAFinding(t *testing.T) {
+	dir := renderTemplate(t, scaffold.Static)
+	// Rebuild the entry as a chain deeper than blockproto's default bound, with
+	// the emitter genuinely loaded at the bottom. This project WORKS.
+	editFile(t, dir, "index.html", `<script src="./civitai-host.js"></script>`, "")
+	editFile(t, dir, "index.html", `<script src="./app.js"></script>`, `<script type="module" src="./m0.js"></script>`)
+	const depth = blockproto.DefaultEntryMaxDepth + 3
+	for i := 0; i < depth; i++ {
+		next := fmt.Sprintf("./m%d.js", i+1)
+		if i == depth-1 {
+			next = "./" + blockproto.ReadyAckFilename
+		}
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("m%d.js", i)),
+			[]byte("import '"+next+"';\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g, _ := resolveLoadedFiles(dir, nil)
+	if g.Complete {
+		t.Fatalf("the walk stopped at the depth bound and still reported a COMPLETE graph — every finding "+
+			"built on it is a claim about files we chose not to read\ngaps: %v", g.Gaps)
+	}
+	// The observable consequence: no strong-tier warning at a project that works.
+	wantAckKind(t, dir, "")
 }
 
 // ---------------------------------------------------------------------------
