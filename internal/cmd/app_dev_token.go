@@ -100,8 +100,34 @@ func readOnlyTokenWarning(sty ui.Styler, canSpend bool, authKind, slug string) s
 	}
 }
 
+// validateDevTokenBudget range-checks a --budget value against the server's real
+// accepted range, returning a usage error naming the bound it broke.
+//
+// It is a pure function so both bounds are testable without a round trip, and it
+// exists at all because the two bounds fail differently on the server: under the
+// minimum the route answers 400 (so sending it only wastes a call), while OVER
+// the cap the route succeeds and silently clamps — the developer asks for 400,
+// receives a 250-budget token, and nothing anywhere says so. Catching that here
+// is the only place it can be caught.
+func validateDevTokenBudget(budget int) error {
+	switch {
+	case budget < appapi.DevBuzzBudgetMin:
+		return fmt.Errorf(
+			"--budget %d is not a positive Buzz amount — pass an integer between %d and %d, or omit --budget to take the server's default (%d)",
+			budget, appapi.DevBuzzBudgetMin, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetDefault)
+	case budget > appapi.DevBuzzBudgetCap:
+		return fmt.Errorf(
+			"--budget %d is above the server's dev-token cap of %d Buzz — the server would clamp it to %d WITHOUT saying so, "+
+				"leaving you a token that does not carry the budget you asked for. Pass --budget %d or lower",
+			budget, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetCap)
+	default:
+		return nil
+	}
+}
+
 func newAppDevTokenCmd() *cobra.Command {
 	var envOut bool
+	var budget int
 
 	cmd := &cobra.Command{
 		Use:   "dev-token <slug>",
@@ -125,8 +151,27 @@ Pre-GA the mint route is invite-only. You do NOT need to submit the app
 first — for a brand-new slug with no app row yet, the token is minted from the
 scopes in your local block.manifest.json (clamped server-side), so
 "create → dev-token → dev:live" works directly. The token is short-lived —
-never commit it; re-mint when it expires.`,
+never commit it; re-mint when it expires.
+
+BUDGET (--budget, 1-250 Buzz). The token carries a per-generation Buzz budget.
+Omit --budget and the server picks one — 50 for a slug with no submitted app.
+Your LOCAL block.manifest.json page.buzzBudgetPerGen does NOT raise it: until
+the app is submitted there is no server-side manifest to read, so the 50 is a
+flat default, not a clamp of your file. --budget is the only way to move it.
+
+A generation is REFUSED outright when the recipe's Buzz ceiling exceeds that
+budget, so a shipped recipe with a ceiling of 90 dead-ends on the default:
+
+  insufficient buzz budget: recipe ceiling 90 exceeds budget 50
+
+Raise it (--budget 250) rather than editing the recipe.
+
+The trap: for an inline customComfy graph your maxBuzz is BOTH the Buzz ceiling
+and the step timeout in SECONDS. An over-thrifty budget therefore does not fail
+as a billing error — the step runs out of wall clock and comes back "expired",
+which reads like a broken graph. Budget for the seconds the graph needs.`,
 		Example: `  civitai app dev-token my-block               # print the token to stdout
+  civitai app dev-token my-block --budget 250  # max budget (and 250s of customComfy wall clock)
   civitai app dev-token my-block --env         # print VITE_LIVE_BLOCK_TOKEN=<token>
   civitai app dev-token my-block --env >> .env.development.local`,
 		Args: cobra.MaximumNArgs(1),
@@ -147,6 +192,19 @@ never commit it; re-mint when it expires.`,
 				return fmt.Errorf("an app slug is required — e.g. `civitai app dev-token my-block` (find it with `civitai app status`)")
 			}
 
+			// Distinguish "not set" from "set to zero": only a CHANGED flag
+			// becomes a request field. Defaulting the variable and always
+			// sending it would permanently shadow the server's own budget
+			// resolution, which is the behaviour every omitted-flag invocation
+			// depends on today.
+			var buzzBudget *int
+			if cmd.Flags().Changed("budget") {
+				if err := validateDevTokenBudget(budget); err != nil {
+					return asUsageError(err)
+				}
+				buzzBudget = &budget
+			}
+
 			// Read the LOCAL manifest scopes (current working directory — the
 			// user runs this from the scaffolded project dir) so the server can
 			// mint a token for a slug with no app row yet (no submit needed).
@@ -157,7 +215,7 @@ never commit it; re-mint when it expires.`,
 
 			client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
 			errOut := cmd.ErrOrStderr()
-			token, slug, err := mintDevTokenWithRename(context.Background(), client, errOut, ".", slug, scopes)
+			token, slug, err := mintDevTokenWithRename(context.Background(), client, errOut, ".", slug, scopes, buzzBudget)
 			if err != nil {
 				return err
 			}
@@ -192,6 +250,9 @@ never commit it; re-mint when it expires.`,
 		},
 	}
 	cmd.Flags().BoolVar(&envOut, "env", false, "print VITE_LIVE_BLOCK_TOKEN=<token> (paste-ready into .env.development.local)")
+	cmd.Flags().IntVar(&budget, "budget", 0, fmt.Sprintf(
+		"per-generation Buzz budget the token may spend (%d-%d; omit to let the server decide — %d for an unsubmitted app). Must clear your recipe's ceiling; for inline customComfy it is ALSO the step timeout in seconds",
+		appapi.DevBuzzBudgetMin, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetDefault))
 	return cmd
 }
 
@@ -205,10 +266,14 @@ never commit it; re-mint when it expires.`,
 // Renaming only applies when a local manifest exists in dir (nothing to rewrite
 // otherwise); any non-collision error, or a collision with no manifest, is
 // surfaced verbatim without a rename.
-func mintDevTokenWithRename(ctx context.Context, client *appapi.Client, errOut io.Writer, dir, slug string, scopes []string) (string, string, error) {
+//
+// buzzBudget is carried through every retry unchanged (nil = not requested): a
+// rename changes which slug is minted for, never what the developer asked the
+// token to be able to spend.
+func mintDevTokenWithRename(ctx context.Context, client *appapi.Client, errOut io.Writer, dir, slug string, scopes []string, buzzBudget *int) (string, string, error) {
 	original := slug
 	for attempt := 0; ; attempt++ {
-		token, err := client.MintDevToken(ctx, slug, scopes)
+		token, err := client.MintDevToken(ctx, slug, scopes, buzzBudget)
 		if err == nil {
 			return token, slug, nil
 		}

@@ -32,7 +32,7 @@ func TestMintDevToken404SentinelWrapping(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(map[string]string{"message": tc.message})
 			}))
 			defer srv.Close()
-			_, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil)
+			_, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil, nil)
 			if err == nil {
 				t.Fatal("expected a 404 error")
 			}
@@ -64,7 +64,7 @@ func TestMintDevTokenSendsBearerAndBody(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok123", "")
-	tok, err := c.MintDevToken(context.Background(), "my-block", []string{"ai:write:budgeted"})
+	tok, err := c.MintDevToken(context.Background(), "my-block", []string{"ai:write:budgeted"}, nil)
 	if err != nil {
 		t.Fatalf("MintDevToken: %v", err)
 	}
@@ -105,7 +105,7 @@ func TestMintDevTokenOmitsEmptyScopes(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "tok", "")
-	if _, err := c.MintDevToken(context.Background(), "my-block", nil); err != nil {
+	if _, err := c.MintDevToken(context.Background(), "my-block", nil, nil); err != nil {
 		t.Fatalf("MintDevToken: %v", err)
 	}
 	if hasScopesKey {
@@ -113,7 +113,7 @@ func TestMintDevTokenOmitsEmptyScopes(t *testing.T) {
 	}
 
 	// An empty (non-nil) slice must also be omitted (omitempty).
-	if _, err := c.MintDevToken(context.Background(), "my-block", []string{}); err != nil {
+	if _, err := c.MintDevToken(context.Background(), "my-block", []string{}, nil); err != nil {
 		t.Fatalf("MintDevToken: %v", err)
 	}
 	if hasScopesKey {
@@ -128,7 +128,7 @@ func TestMintDevTokenEmptyTokenErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 	c := New(srv.URL, "tok", "")
-	if _, err := c.MintDevToken(context.Background(), "my-block", nil); err == nil {
+	if _, err := c.MintDevToken(context.Background(), "my-block", nil, nil); err == nil {
 		t.Fatal("expected error when response has no token")
 	}
 }
@@ -151,7 +151,7 @@ func TestMintDevTokenErrorMapping(t *testing.T) {
 			w.WriteHeader(tc.status)
 			_ = json.NewEncoder(w).Encode(tc.body)
 		}))
-		_, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil)
+		_, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil, nil)
 		srv.Close()
 		if err == nil {
 			t.Fatalf("status %d: expected error", tc.status)
@@ -170,7 +170,7 @@ func TestMintDevToken404DropsSubmitFirst(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(map[string]string{"message": "not found"})
 	}))
 	defer srv.Close()
-	_, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil)
+	_, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil, nil)
 	if err == nil {
 		t.Fatal("expected a 404 error")
 	}
