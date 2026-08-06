@@ -34,45 +34,119 @@ var devTokenSuffixGen = func() string { return scaffold.RandomSuffix(5) }
 // yields a read-only token whose Generate button silently dead-ends in the live
 // harness. We decode the minted JWT to detect that case and warn loudly.
 //
-// A `civitai login --scopes generate` token DOES carry AIServicesWrite, so the
-// clamp no longer strips it — which is precisely why --spend exists (see
-// devTokenRequestScopes).
+// A `civitai login --scopes generate` token DOES carry AIServicesWrite, so that
+// clamp no longer strips it. The server-side ceiling therefore stopped being the
+// backstop it used to be, which is why the CLI must not REQUEST this scope
+// unless asked to — see devTokenRequestScopes.
 const budgetedScope = "ai:write:budgeted"
+
+// selfReadScope is the ONE scope the mint force-grants unconditionally, AFTER
+// every clamp (dev-scoped-mint.service.ts `clampDevScopes`: `granted.push(
+// 'user:read:self')` past the narrowing + spend-ceiling steps). It is a
+// self-bound read of the caller's OWN identity, so requesting it can never
+// escalate anything — which is exactly what makes it usable as a sentinel below.
+const selfReadScope = "user:read:self"
 
 // devTokenRequestScopes composes the `scopes` array POSTed to the dev-token mint
 // route from the local manifest's scopes and the --spend affirmation.
 //
-// 🔴 THE ASYMMETRY IS DELIBERATE, and it is the whole design decision here:
+// 🔴 THE CLI NEVER REQUESTS BUDGETED SPEND IMPLICITLY. That is the whole rule:
 //
-//   - --spend NOT given (default): return the manifest scopes VERBATIM. The body
-//     is byte-identical to what this command has always sent. We do NOT narrow.
+//   - --spend NOT given (default): return the manifest scopes with
+//     `ai:write:budgeted` FILTERED OUT. Everything else goes through untouched.
 //   - --spend given: UNION `ai:write:budgeted` in, so the request explicitly
 //     asks for spend instead of relying on the server inferring it from the
 //     bearer.
 //
-// Why not narrow by default, when the point is to stop a --scopes-generate login
-// silently arming real-Buzz dev:live? Because `scopes` is an INTERSECTION
-// allow-list with "absent ⇒ server decides" as its only sentinel — there is no
-// encoding for "everything you would grant me, minus spend". Narrowing by default
-// would force the CLI to enumerate a grant set it does not know, silently
-// stripping storage/collections/etc. And it would REGRESS the users it works for
-// today: a full-scope personal API key with no local manifest gets budgeted spend
-// right now, and would lose it with no error. Closing the inference hole belongs
-// on the server (it knows the full grant set); this is the client half — the
-// explicit request — which lands safely ahead of it.
+// Why the filter had to exist: the page-money scaffold declares
+// `ai:write:budgeted` in block.manifest.json, so passing the manifest through
+// verbatim REQUESTED spend on every default mint. The server's clamp only
+// stripped it while no OAuth credential could carry AIServicesWrite; once the
+// civitai-cli client was widened (allowedScopes 100777985), `civitai login
+// --scopes generate` + `civitai app dev-token <slug>` silently produced a
+// real-Buzz-spending dev token. Filtering makes the default request say what the
+// developer actually asked for.
+//
+// 🔴 THE SENTINEL IS LOAD-BEARING, NOT DECORATION. `scopes` is `omitempty` on
+// the wire and the server only narrows when `requestedScopes.length > 0`
+// (clampDevScopes). So for a manifest that declares budgeted spend and NOTHING
+// ELSE — which is precisely the default scaffold — filtering to an empty slice
+// would drop the key entirely, and on an APPROVED or PENDING app the server
+// would then fall back to that app's own scope snapshot and re-grant spend. The
+// fix would be inert exactly where it matters most. Substituting the
+// force-granted `user:read:self` keeps the narrowing expressible while adding no
+// capability the token would not have had anyway.
+//
+// 🔴 WHAT THIS DOES NOT CLOSE. With NO local manifest the CLI sends no `scopes`
+// field and the server resolves spend from the bearer. That case is not
+// expressible client-side: `scopes` is an intersection allow-list whose only
+// sentinel is "absent ⇒ server decides", so "everything you would grant me,
+// minus spend" cannot be written — enumerating a grant set the CLI does not know
+// would silently strip storage/collections/etc. Closing it belongs on the server
+// (it knows the full grant set) and is tracked as civitai/civitai#3703. Do not
+// describe this function as making a `--scopes generate` login unable to spend.
 func devTokenRequestScopes(manifestScopes []string, spend bool) []string {
-	if !spend {
+	if spend {
+		for _, s := range manifestScopes {
+			if s == budgetedScope {
+				return manifestScopes // already declared — --spend is a no-op
+			}
+		}
+		// Fresh slice: never append into the caller's backing array.
+		out := make([]string, 0, len(manifestScopes)+1)
+		out = append(out, manifestScopes...)
+		return append(out, budgetedScope)
+	}
+	// No declared scopes → send nothing, preserving nil-ness so the key is
+	// OMITTED. This is the inexpressible case above, not an oversight.
+	if len(manifestScopes) == 0 {
 		return manifestScopes
+	}
+	out := make([]string, 0, len(manifestScopes))
+	for _, s := range manifestScopes {
+		if s == budgetedScope {
+			continue // EVERY occurrence, not just the first
+		}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return []string{selfReadScope}
+	}
+	return out
+}
+
+// spendFilteredFromManifest reports whether the local manifest DECLARED
+// budgetedScope while --spend was absent — i.e. devTokenRequestScopes just
+// dropped it from the request. That is a deliberate behaviour change with a
+// user-visible consequence (dev:live will not generate), so it is announced
+// rather than left to surface as a 403 later.
+func spendFilteredFromManifest(manifestScopes []string, spend bool) bool {
+	if spend {
+		return false
 	}
 	for _, s := range manifestScopes {
 		if s == budgetedScope {
-			return manifestScopes // already declared — --spend is a no-op
+			return true
 		}
 	}
-	// Fresh slice: never append into the caller's backing array.
-	out := make([]string, 0, len(manifestScopes)+1)
-	out = append(out, manifestScopes...)
-	return append(out, budgetedScope)
+	return false
+}
+
+// spendFilteredNotice is the stderr notice for spendFilteredFromManifest.
+//
+// 🔴 CLAIM DISCIPLINE — the wording is load-bearing. What this closes is the
+// CLI requesting budgeted spend IMPLICITLY. It does NOT make a
+// `civitai login --scopes generate` credential unable to spend in dev:live: with
+// no local manifest the CLI sends no `scopes` field at all and the server
+// resolves spend from the bearer, which is not expressible client-side (see
+// devTokenRequestScopes). That closure is server-side — civitai/civitai#3703.
+// Never phrase this as "your login cannot spend".
+func spendFilteredNotice(sty ui.Styler, slug string) string {
+	return sty.Warn(manifest.Filename+" declares "+budgetedScope+", but --spend was not passed — "+
+		"this token does NOT request budgeted spend.") + "\n" +
+		"   The CLI no longer requests budgeted spend implicitly, so `npm run dev:live` will refuse to\n" +
+		"   generate with \"block lacks " + budgetedScope + " scope\". Re-mint with --spend to allow REAL Buzz:\n" +
+		"     civitai app dev-token " + slug + " --spend --env >> .env.development.local"
 }
 
 // spendNarrowsToBudgetedOnly reports whether --spend turns an OTHERWISE-EMPTY
@@ -214,9 +288,15 @@ The minted token's CAPABILITIES depend on the credential you mint with:
 --spend is the explicit affirmation that this token may spend real Buzz: it adds
 ai:write:budgeted to the scopes REQUESTED from the mint route. The server still
 clamps against your credential, so --spend cannot grant what your credential
-lacks. Omitting --spend changes nothing about today's behaviour — the request
-carries your block.manifest.json scopes and the server resolves spend from your
-credential, so a full-scope personal API key keeps working exactly as before.
+lacks.
+
+WITHOUT --spend the CLI never requests budgeted spend implicitly: if your
+block.manifest.json declares ai:write:budgeted it is FILTERED OUT of the request
+(the command tells you when that happens). The scaffolded money app declares it,
+so a live run that used to generate now needs --spend — otherwise dev:live
+refuses with "block lacks ai:write:budgeted scope". Every other manifest scope is
+requested unchanged. With no local manifest the CLI sends no scopes at all and
+the server resolves spend from your credential, as before.
 
 Pre-GA the mint route is invite-only. You do NOT need to submit the app
 first — for a brand-new slug with no app row yet, the token is minted from the
@@ -295,6 +375,11 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 			if spendNarrowsToBudgetedOnly(manifestScopes, spend) {
 				fmt.Fprintln(errOut, spendNarrowingNotice(ui.For(errOut)))
 			}
+			// Announce the FILTER before the mint, so the developer learns why
+			// dev:live won't generate here rather than from the server's 403.
+			if spendFilteredFromManifest(manifestScopes, spend) {
+				fmt.Fprintln(errOut, spendFilteredNotice(ui.For(errOut), slug))
+			}
 			token, slug, err := mintDevTokenWithRename(context.Background(), client, errOut, ".", slug, scopes, buzzBudget)
 			if err != nil {
 				return err
@@ -332,8 +417,8 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 	cmd.Flags().BoolVar(&envOut, "env", false, "print VITE_LIVE_BLOCK_TOKEN=<token> (paste-ready into .env.development.local)")
 	cmd.Flags().BoolVar(&spend, "spend", false,
 		"explicitly REQUEST the "+budgetedScope+" scope so npm run dev:live can spend REAL Buzz. "+
-			"Omit it and the request is exactly what it is today: your "+manifest.Filename+" scopes, "+
-			"with the server deciding whether spend is granted from your credential")
+			"Omit it and that scope is FILTERED OUT of the request — the CLI never asks for "+
+			"budgeted spend implicitly, even when your "+manifest.Filename+" declares it")
 	cmd.Flags().IntVar(&budget, "budget", 0, fmt.Sprintf(
 		"per-generation Buzz budget the token may spend (%d-%d; omit to let the server decide — %d for an unsubmitted app). Must clear your recipe's ceiling; for inline customComfy it is ALSO the step timeout in seconds",
 		appapi.DevBuzzBudgetMin, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetDefault))

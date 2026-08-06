@@ -220,6 +220,11 @@ func writeDevTokenManifest(t *testing.T, dir, body string) {
 // TestAppDevTokenSendsManifestScopes: a block.manifest.json with `scopes` in the
 // current working directory is read and its scopes are POSTed in the body — this
 // is the no-row local-manifest mint path.
+//
+// 🔴 `ai:write:budgeted` is DELIBERATELY EXCLUDED from the expectation even
+// though the manifest declares it: without --spend the CLI never requests
+// budgeted spend (see devTokenRequestScopes). The manifest here keeps declaring
+// it precisely so this test also covers the filter on the real command path.
 func TestAppDevTokenSendsManifestScopes(t *testing.T) {
 	var rec devTokenRec
 	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
@@ -244,9 +249,9 @@ func TestAppDevTokenSendsManifestScopes(t *testing.T) {
 	if rec.slug != "my-block" {
 		t.Errorf("slug = %q, want my-block", rec.slug)
 	}
-	want := []string{"ai:write:budgeted", "identity:read"}
+	want := []string{"identity:read"}
 	if !reflect.DeepEqual(rec.scopes, want) {
-		t.Errorf("scopes = %v, want %v", rec.scopes, want)
+		t.Errorf("scopes = %v, want %v (budgeted spend is filtered without --spend)", rec.scopes, want)
 	}
 }
 

@@ -207,7 +207,7 @@ README. For the end-to-end walkthrough, see
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**). Needs the BuzzRead scope — a full-scope personal API key or `civitai login --scopes generate`; a **default** OAuth login token can't read it, and gets a clear message naming both fixes. `--json` emits `{blue,green,yellow,total}` (scriptable — handy for before/after diffing a `dev:live` spend). |
 | `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
-| `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the invite-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). `--spend` explicitly REQUESTS `ai:write:budgeted` (real Buzz); omit it and the request is unchanged from today (the server resolves spend from your credential). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
+| `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the invite-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). `--spend` explicitly REQUESTS `ai:write:budgeted` (real Buzz); omit it and that scope is **filtered out** of the request — the CLI never asks for budgeted spend implicitly, even when your manifest declares it (the scaffolded money app does, so a live run that used to generate now needs `--spend`). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / dark)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your dev port (start `npm run dev:tunnel` first) to the Civitai tunnel endpoint, prints the URL to open, and tears everything down on Ctrl-C or an idle timeout. Before minting it also **pre-flights whether the host can actually embed your dev server** — the host iframes it sandboxed (opaque `null` origin), so a dev server missing `Access-Control-Allow-Origin: *`, missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that excludes `civitai.com` loads as a blank iframe with no error anywhere. Those are printed as warnings (never fatal) just above the URL, with the `vite.config.ts` fix. Apps scaffolded by `civitai app init --template page-money` already satisfy all of it. Gated behind an Apps-author invite **and** a kill-switch flag that is off today, and the tunnel endpoint is not exposed yet — so it reports "not available" until it ships. |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message`) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
@@ -315,7 +315,9 @@ hosts) to close that gap, with two modes:
 > (`civitai login`, no `--scopes`) mints read-only (`user:read:self`) and
 > **cannot spend**. Use `civitai buzz` / `civitai whoami` to confirm your
 > credential can spend before a live run, and pass `--spend` to `dev-token` to
-> request the spend scope explicitly.
+> request the spend scope explicitly — **without it the CLI filters
+> `ai:write:budgeted` out of the request**, so a spend-capable credential still
+> mints a token that will not generate.
 
 **Live mode** needs a short-lived dev block token. Mint it with **`civitai app
 dev-token`** (the CLI handles the invite-gated `POST /api/v1/blocks/dev-token`
@@ -331,9 +333,10 @@ npm run dev:live
 `.env.development*` is never committed (`submit` excludes it) and the token is
 short-lived (~4h) — re-run `dev-token` when it expires. For real generation mint
 with a spend-capable credential (**full-scope personal API key** or
-`civitai login --scopes generate`) and add `--spend` to request
-`ai:write:budgeted` explicitly; a default OAuth login mints a read-only token
-(the command warns you at mint time). With no token, `dev:live` **fails safe**
+`civitai login --scopes generate`) **and** add `--spend`: the scope is requested
+only when you ask for it, so without the flag the mint drops it and dev:live
+refuses to generate with `block lacks ai:write:budgeted scope`. A default OAuth
+login mints a read-only token either way (the command warns you at mint time). With no token, `dev:live` **fails safe**
 (renders a notice, never spends). Live v1 covers the money path
 (`estimate`/`submit`/`poll`/`cancel`); pickers, checkpoint-set, App-Storage KV,
 and in-band Buzz purchase are mock-only.

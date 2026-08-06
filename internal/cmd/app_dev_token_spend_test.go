@@ -32,10 +32,18 @@ func writeManifestWithScopes(t *testing.T, scopesJSON string) {
 
 // TestDevTokenRequestScopes is the pure-function contract behind --spend.
 //
-// The DEFAULT rows are the regression guard that matters most: they pin that
-// omitting --spend leaves the request BYTE-IDENTICAL to today's, so a full-scope
-// personal API key with no local manifest keeps getting budgeted spend from the
-// server. Narrowing by default would silently take that away.
+// 🔴 The DEFAULT rows encode a DELIBERATE BEHAVIOUR CHANGE. They used to pin
+// "omitting --spend leaves the request byte-identical to today's". That property
+// was the bug: the page-money scaffold declares `ai:write:budgeted` in
+// block.manifest.json, so passing the manifest through VERBATIM requested
+// budgeted spend on every default mint — and once the civitai-cli OAuth client
+// was widened (allowedScopes 100777985), the server's keyCanSpend clamp stopped
+// stripping it. `civitai login --scopes generate` + `civitai app dev-token`
+// therefore armed real-Buzz dev:live with no --spend and no notice.
+//
+// The new contract: the CLI NEVER requests budgeted spend implicitly. Without
+// --spend the scope is FILTERED OUT of the manifest list. The no-manifest row is
+// unchanged and is the inexpressible case — see devTokenRequestScopes.
 func TestDevTokenRequestScopes(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -45,17 +53,28 @@ func TestDevTokenRequestScopes(t *testing.T) {
 		wantIsNil bool
 	}{
 		{
-			name:     "default + no manifest → nothing sent (server decides, as today)",
+			name:     "default + no manifest → nothing sent (server decides — inexpressible)",
 			manifest: nil, spend: false, want: nil, wantIsNil: true,
 		},
 		{
-			name:     "default + manifest → verbatim, NOT narrowed",
+			name:     "default + manifest declaring spend → budgeted FILTERED OUT, rest in order",
 			manifest: []string{"user:read:self", "ai:write:budgeted", "apps:storage:read"},
 			spend:    false,
-			want:     []string{"user:read:self", "ai:write:budgeted", "apps:storage:read"},
+			want:     []string{"user:read:self", "apps:storage:read"},
 		},
 		{
-			name:     "default + manifest WITHOUT spend → still verbatim (no scope invented)",
+			name:     "default + manifest declaring ONLY spend → self-read sentinel keeps the narrowing expressible",
+			manifest: []string{"ai:write:budgeted"}, spend: false,
+			want: []string{"user:read:self"},
+		},
+		{
+			name:     "default + manifest declaring spend TWICE → every occurrence filtered",
+			manifest: []string{"ai:write:budgeted", "apps:storage:read", "ai:write:budgeted"},
+			spend:    false,
+			want:     []string{"apps:storage:read"},
+		},
+		{
+			name:     "default + manifest WITHOUT spend → unchanged (no scope invented, none removed)",
 			manifest: []string{"user:read:self"}, spend: false,
 			want: []string{"user:read:self"},
 		},
@@ -156,11 +175,19 @@ func TestAppDevTokenSpendSendsBudgetedScope(t *testing.T) {
 	}
 }
 
-// TestAppDevTokenDefaultDoesNotNarrow is the behaviour-change guard for the
-// item-3 decision: WITHOUT --spend the body is exactly the manifest's scopes.
-// Nothing is added and — critically — nothing is stripped.
-func TestAppDevTokenDefaultDoesNotNarrow(t *testing.T) {
-	writeManifestWithScopes(t, `["user:read:self","ai:write:budgeted"]`)
+// TestAppDevTokenDefaultDropsBudgetedScope is THE regression test for this
+// change, asserted on the ACTUAL OUTGOING REQUEST BODY rather than on the
+// helper's return value.
+//
+// RED at cdf777a (the body carried "ai:write:budgeted" verbatim from the
+// manifest), GREEN here. This is the sequence the audit reproduced:
+//
+//	civitai login --scopes generate      # bearer now carries AIServicesWrite
+//	civitai app dev-token my-block       # scaffolded money app, no --spend
+//
+// which minted a real-Buzz-spending dev token silently.
+func TestAppDevTokenDefaultDropsBudgetedScope(t *testing.T) {
+	writeManifestWithScopes(t, `["user:read:self","ai:write:budgeted","apps:storage:read"]`)
 
 	var rec devTokenRec
 	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
@@ -173,9 +200,77 @@ func TestAppDevTokenDefaultDoesNotNarrow(t *testing.T) {
 	if _, _, err := run(t, "app", "dev-token", "my-block"); err != nil {
 		t.Fatalf("app dev-token: %v", err)
 	}
-	want := []string{"user:read:self", "ai:write:budgeted"}
+	want := []string{"user:read:self", "apps:storage:read"}
+	if !reflect.DeepEqual(rec.scopes, want) {
+		t.Errorf("default sent scopes = %#v, want the manifest MINUS budgeted spend %#v", rec.scopes, want)
+	}
+	// Read the RAW BYTES too: the decoded []string could in principle agree while
+	// the scope rides along in some other key. The wire is the contract.
+	if strings.Contains(string(rec.rawBody), "ai:write:budgeted") {
+		t.Errorf("the outgoing request body must not mention ai:write:budgeted without --spend; raw body: %s", rec.rawBody)
+	}
+}
+
+// TestAppDevTokenDefaultBudgetedOnlyManifestStillNarrows covers the DEFAULT
+// SCAFFOLD, whose block.manifest.json declares `ai:write:budgeted` and NOTHING
+// ELSE. Filtering that list to empty would be INERT rather than safe: the server
+// only applies body narrowing when `requestedScopes.length > 0`
+// (dev-scoped-mint.service.ts clampDevScopes), and `scopes` is `omitempty` on
+// the wire — so an emptied list vanishes from the body and, on an approved or
+// pending app, the server would fall back to the app's own scope snapshot and
+// re-grant spend. The self-read sentinel keeps the narrowing EXPRESSIBLE.
+func TestAppDevTokenDefaultBudgetedOnlyManifestStillNarrows(t *testing.T) {
+	writeManifestWithScopes(t, `["ai:write:budgeted"]`)
+
+	var rec devTokenRec
+	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	if _, _, err := run(t, "app", "dev-token", "my-block"); err != nil {
+		t.Fatalf("app dev-token: %v", err)
+	}
+	if !rec.hasScopesKey {
+		t.Fatalf("a declared-scopes manifest must still send a NON-EMPTY scopes key so the "+
+			"server actually narrows (length>0); raw body: %s", rec.rawBody)
+	}
+	if want := []string{"user:read:self"}; !reflect.DeepEqual(rec.scopes, want) {
+		t.Errorf("scopes = %#v, want %#v", rec.scopes, want)
+	}
+	if strings.Contains(string(rec.rawBody), "ai:write:budgeted") {
+		t.Errorf("budgeted spend must not be requested without --spend; raw body: %s", rec.rawBody)
+	}
+}
+
+// TestAppDevTokenDefaultManifestWithoutSpendUnchanged is the negative control on
+// the filter: a manifest that never declared budgeted spend must go out exactly
+// as before. If the filter ever starts removing more than the one scope, this
+// goes red.
+func TestAppDevTokenDefaultManifestWithoutSpendUnchanged(t *testing.T) {
+	writeManifestWithScopes(t, `["user:read:self","apps:storage:read"]`)
+
+	var rec devTokenRec
+	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, errOut, err := run(t, "app", "dev-token", "my-block")
+	if err != nil {
+		t.Fatalf("app dev-token: %v", err)
+	}
+	want := []string{"user:read:self", "apps:storage:read"}
 	if !reflect.DeepEqual(rec.scopes, want) {
 		t.Errorf("default sent scopes = %#v, want the manifest verbatim %#v", rec.scopes, want)
+	}
+	// …and the spend-filtered notice must NOT fire — nothing was filtered.
+	if strings.Contains(errOut, "does NOT request budgeted spend") {
+		t.Errorf("the spend-filtered notice fired for a manifest that never declared the scope:\n%s", errOut)
 	}
 }
 
@@ -256,6 +351,141 @@ func TestAppDevTokenNoSpendFlagPrintsNoNarrowingNotice(t *testing.T) {
 	}
 	if strings.Contains(errOut, "narrows the token") {
 		t.Errorf("no narrowing notice should print without --spend; got:\n%s", errOut)
+	}
+}
+
+// TestSpendFilteredFromManifest pins the predicate behind the new notice.
+func TestSpendFilteredFromManifest(t *testing.T) {
+	cases := []struct {
+		name     string
+		manifest []string
+		spend    bool
+		want     bool
+	}{
+		{"declared + no --spend → filtered, say so", []string{"user:read:self", "ai:write:budgeted"}, false, true},
+		{"declared ONLY it + no --spend → filtered, say so", []string{"ai:write:budgeted"}, false, true},
+		{"declared + --spend → nothing filtered", []string{"ai:write:budgeted"}, true, false},
+		{"not declared + no --spend → nothing filtered", []string{"user:read:self"}, false, false},
+		{"no manifest + no --spend → nothing filtered (inexpressible case)", nil, false, false},
+		{"no manifest + --spend → nothing filtered", nil, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := spendFilteredFromManifest(tc.manifest, tc.spend); got != tc.want {
+				t.Errorf("spendFilteredFromManifest(%#v, spend=%v) = %v, want %v", tc.manifest, tc.spend, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSpendFilteredNoticeWording pins the CLAIM the notice makes.
+//
+// 🔴 CLAIM DISCIPLINE. This change closes the case where the manifest DECLARES
+// scopes. It does NOT make a `--scopes generate` login unable to spend in
+// dev:live — with no manifest the CLI sends no `scopes` field at all and the
+// server resolves spend from the bearer. That closure is server-side
+// (civitai/civitai#3703). The notice must therefore say the CLI no longer
+// requests spend IMPLICITLY, and must never claim the credential cannot spend.
+func TestSpendFilteredNoticeWording(t *testing.T) {
+	notice := spendFilteredNotice(ui.For(io.Discard), "my-block")
+
+	for _, want := range []string{
+		"ai:write:budgeted",                            // names the scope
+		"--spend",                                      // names the flag that enables it
+		"block.manifest.json",                          // names where it was declared
+		"does NOT request budgeted spend",              // states the outcome
+		"no longer requests budgeted spend implicitly", // the ACCURATE claim
+		"civitai app dev-token my-block --spend",       // copy-pasteable fix, real slug
+		"block lacks ai:write:budgeted scope",          // the 403 they'd otherwise hit
+	} {
+		if !strings.Contains(notice, want) {
+			t.Errorf("spend-filtered notice missing %q; got:\n%s", want, notice)
+		}
+	}
+	// 🔴 The overstatement that produced this finding in the first place.
+	for _, banned := range []string{
+		"cannot spend",
+		"can't spend",
+		"read-only credential",
+	} {
+		if strings.Contains(notice, banned) {
+			t.Errorf("notice overstates the closure with %q — this change does not stop a "+
+				"credential spending, only implicit REQUESTS; got:\n%s", banned, notice)
+		}
+	}
+}
+
+// TestAppDevTokenDefaultDeclaredSpendPrintsNotice: the notice must actually
+// reach stderr on the real command path, BEFORE the mint, so the developer sees
+// it instead of discovering the change via a 403.
+func TestAppDevTokenDefaultDeclaredSpendPrintsNotice(t *testing.T) {
+	writeManifestWithScopes(t, `["user:read:self","ai:write:budgeted"]`)
+
+	var rec devTokenRec
+	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, errOut, err := run(t, "app", "dev-token", "my-block")
+	if err != nil {
+		t.Fatalf("app dev-token: %v", err)
+	}
+	if !strings.Contains(errOut, "does NOT request budgeted spend") {
+		t.Errorf("expected the spend-filtered notice on stderr; got:\n%s", errOut)
+	}
+	if !strings.Contains(errOut, "civitai app dev-token my-block --spend") {
+		t.Errorf("the notice must name the re-mint command with the real slug; got:\n%s", errOut)
+	}
+}
+
+// TestAppDevTokenSpendDeclaredPrintsNoFilteredNotice is the negative control:
+// with --spend nothing is filtered, so the notice must stay quiet or it becomes
+// noise nobody reads.
+func TestAppDevTokenSpendDeclaredPrintsNoFilteredNotice(t *testing.T) {
+	writeManifestWithScopes(t, `["user:read:self","ai:write:budgeted"]`)
+
+	var rec devTokenRec
+	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, errOut, err := run(t, "app", "dev-token", "my-block", "--spend")
+	if err != nil {
+		t.Fatalf("app dev-token --spend: %v", err)
+	}
+	if strings.Contains(errOut, "does NOT request budgeted spend") {
+		t.Errorf("the spend-filtered notice must not fire WITH --spend; got:\n%s", errOut)
+	}
+	if want := []string{"user:read:self", "ai:write:budgeted"}; !reflect.DeepEqual(rec.scopes, want) {
+		t.Errorf("--spend + declaring manifest sent %#v, want %#v", rec.scopes, want)
+	}
+}
+
+// TestAppDevTokenNoManifestPrintsNoFilteredNotice: the inexpressible case must
+// stay silent — there was no declaration to filter, so a notice would be a lie.
+func TestAppDevTokenNoManifestPrintsNoFilteredNotice(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	var rec devTokenRec
+	srv := devTokenServer(t, map[string]any{"token": "jwt-x"}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, errOut, err := run(t, "app", "dev-token", "my-block")
+	if err != nil {
+		t.Fatalf("app dev-token: %v", err)
+	}
+	if strings.Contains(errOut, "does NOT request budgeted spend") {
+		t.Errorf("no manifest → nothing was filtered → no notice; got:\n%s", errOut)
 	}
 }
 
