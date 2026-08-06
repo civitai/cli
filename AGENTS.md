@@ -479,6 +479,26 @@ neither one's.
       Don't reintroduce it as a "minimal example". Note `iframe.resizable` in
       the vendored `schema/` still describes itself in size-to-content terms;
       that is a schema-side wording issue, not a licence to re-add the message.
+    - **The entry-graph resolver moved OUT of Guard A and into
+      `internal/blockproto`** (`entrygraph.go` + `wiring.go`, with the comment
+      stripper in `comments.go`), because `internal/validate` needed the same
+      question answered for an AUTHOR's project and had answered it with a
+      whole-tree grep instead — see item 20 for the false pass that produced.
+      Guard A now calls `blockproto.ReadyAckWiring`; its control corpus moved
+      with the predicate, into `internal/blockproto/entrygraph_test.go`.
+      🔴 **Guard A's REJECTION set is unchanged, but its ACCEPTANCE set moved —
+      state both, because "nothing changed" was the claim an audit falsified.**
+      It now also accepts an emitter imported by an INLINE
+      `<script type="module">` in index.html (a real browser load it used to
+      miss, and missing it manufactured a finding at a correct project), and the
+      unquoted / no-`./` HTML spellings a browser resolves identically. It also
+      briefly accepted an extensionless `src="./civitai-host"`, which was a BUG
+      rather than a widening — a 404 on a no-build template — and is reverted;
+      see item 20. The depth bound it relies on
+      (`readyAckWiringDepth = 2`: index.html's `<script src>` entries plus their
+      DIRECT imports) is now pinned by a corpus case — widening it to 99 was a
+      SURVIVING mutant, i.e. the "one level deep on purpose" contract was
+      documented and unheld.
     - **Three guards, and none subsumes the others.**
       `ready_ack_contract_test.go` (Guard A, runs in `make ci`) enumerates
       `AllTemplates()`, decides subject-hood from the RENDERED manifest and
@@ -824,9 +844,16 @@ neither one's.
       `TestReadyAckSkippedByManifestOnly` pins it, with a `Dir()` positive
       control so a green there cannot mean "the check never fires at all".
     - **What it does NOT prove:** that the ack fires. Only that the message is
-      mentioned in code. The runtime proof is Guard B (item 11), and there is
-      none at all for an app the author already has — which is why this is
-      advisory and says so in its own message.
+      mentioned in code the browser loads. The runtime proof is Guard B (item
+      11), and there is none at all for an app the author already has — which is
+      why this is advisory and says so in its own message.
+    - 🔴 **"MENTIONED IN CODE" WAS NOT ENOUGH, AND ITEM 20 IS THE REPAIR.** As
+      first shipped this bullet read "mentioned in code" full stop, and the
+      check's own remedy asked for TWO edits while verifying one. Read item 20
+      before touching `readyack.go`: the whole-tree presence scan described
+      above is now the WEAK tier, reached only when the entry graph cannot be
+      resolved, and the advisory it emits is a different string that discloses
+      the difference.
 
 19. **img2img sends `workflow: "txt2img"` PLUS `images[]`, requires
     `--ecosystem`, and uploads with NO credential — three things that each read
@@ -939,6 +966,204 @@ neither one's.
     blob URLs rather than local paths. An upload spends no Buzz, but it is a
     network write — so `--print-input`'s "reaches no money seam" claim is still
     true while its "no request at all" claim is not, with `--image`.
+
+20. **The ready-ack advisory has TWO TIERS, the message names which one ran, and
+    that disclosure is the fix — not a nicety.** `validate`'s page-without-ack
+    check (item 18) used to ask only "does any file in this tree mention
+    `BLOCK_READY`". Its own remedy asked the author for TWO edits — copy
+    `civitai-host.js` in, and LOAD it from index.html or the entry module — and
+    it verified the first. Measured on a genuinely pre-fix scaffold (`app init`
+    from the CLI at `0ce0025`, emitter copied in, never referenced):
+    `civitai app validate --strict` printed `✓ … is valid` and exited **0** for
+    an app that was still exactly as broken as before #206, and an orphan file
+    containing the literal anywhere in the tree passed identically. 🔴 **A green
+    check earned by obeying our own advice is worse than the silence it
+    replaced** — that is the whole reason this item exists, and it is the same
+    "presence is not reachability" hole Guard A had before it was rewritten,
+    regenerated at a second call site.
+    - **The tiers.** REACHABILITY (strong) runs when
+      `blockproto.ResolveEntryGraph` resolves the project COMPLETELY — a root
+      index.html, and every `<script src>`, inline-module import and import
+      below it accounted for. Then "nothing the browser loads posts
+      `BLOCK_READY`" is a real finding, and an unreferenced emitter is reported
+      as the orphan it is (`readyAckAdviceUnwired`). PRESENCE ONLY (weak) runs
+      when the graph is INCOMPLETE, and falls back to the whole-tree scan
+      (`readyAckAdvicePresenceOnly`).
+    - 🔴 **THE WEAK TIER'S MESSAGE MUST KEEP SAYING WHAT IT DID NOT CHECK**
+      ("it did NOT check that the file is loaded"), and the strong tier's must
+      NOT carry that disclaimer. A check that changes strength SILENTLY between
+      project shapes is exactly how the false pass above shipped, so the
+      strength is part of the output, not an implementation detail.
+      `TestReadyAckAdvisoriesStateTheirOwnStrength` pins both directions.
+    - 🔴 **AN HTML `src` IS A URL; A JS SPECIFIER IS A MODULE SPECIFIER. THE
+      FIRST VERSION CONFLATED THEM, AND THAT ONE MISTAKE PRODUCED THREE BUGS,
+      TWO OF THEM OPPOSITES.** Measured, each on a project one character from a
+      shipped template. `<script src="app.js">` — no `./`, entirely ordinary
+      HTML — was read as a BARE specifier, resolved to nothing, made the graph
+      incomplete, and left the headline defect SILENT: the fix did not cover the
+      projects it was written for. `<script src="./civitai-host">` was
+      extension-guessed to `.js` and ACCEPTED on the no-build `static` template,
+      where the browser fetches the literal path and 404s — the exact "ships a
+      404" shape `wiring.go` claims to reject. And an unquoted
+      `src=./civitai-host.js`, also legal HTML, was dropped by a quotes-only
+      regex and then re-classified as an *inline* script with an empty body: the
+      reference vanished with `Complete` still TRUE, so a CORRECT scaffold got
+      the strong tier's warning and `--strict` rc=1.
+      `refSyntax` now splits the two. Under URL syntax a specifier that is not
+      scheme-qualified or protocol-relative is DOCUMENT-RELATIVE, there are no
+      bare specifiers, and there is no extension or directory-index guessing.
+      Under module syntax a bare specifier is a package and a bundler's
+      extension resolution applies. The scheme regex is ANCHORED (`^`), or an
+      unanchored pattern matches a `https:` in a QUERY STRING and throws away
+      `./x.js?from=https://cdn`. (An earlier revision of this item credited the
+      ORDER of the scheme check and the `?`/`#` strip. It does not matter — two
+      independent sweeps swapped them with nothing failing. Only the anchor is
+      load-bearing.) Do not re-merge these paths.
+      🔴 **And the boundaries are HTML boundaries, not `\b`.** `\b` matches
+      between `-` and `s`, so `\bsrc\s*=` read `data-src=` as `src=` and
+      `<script\b` read `<script-loader>` as a script. Measured on a CORRECT
+      `static` scaffold with `data-src` — a real consent-manager / lazy-load
+      pattern — the wrong reference resolved, `Complete` stayed true, and the
+      STRONG tier warned with `--strict` rc=1: the same false-warning class the
+      unquoted-`src` fix had just closed, reintroduced by the fix itself. RE2
+      has no lookahead, so the tag boundary is spelled as "the character after
+      `<script` is whitespace, `/` or `>`".
+    - **THE DECIDABILITY BOUNDARY IS COMPLETENESS, NOT PROJECT TYPE.** The first
+      draft drew it at "does the manifest declare a `buildCommand`" — bundled
+      means undecidable — and that is wrong in both directions: an ordinary Vite
+      project resolves perfectly (index.html IS Vite's entry), while a
+      *no-build* project can still carry a specifier we cannot follow. So the
+      resolver reports `Complete`, and ANY reference it cannot account for
+      clears it: a bundler alias or other bare MODULE specifier that is not a
+      declared dependency, an off-project or protocol-relative URL, a path
+      escaping the project root, a reference resolving to a file that is not
+      there, an unreadable file, an exhausted file/size budget, **and an import
+      below the depth bound**. **A bare MODULE specifier naming a declared npm
+      dependency is ACCOUNTED FOR** — it is a package, not a file in this
+      project — which is the only reason a React app resolves at all; that is
+      why `packageDeps` returns the dependency NAMES alongside the ack verdict
+      from one read of package.json. The name matches at a PATH SEPARATOR, never
+      a character offset: `reactive-ui` is not `react`.
+    - 🔴 **THE DEPTH BOUND IS A BUDGET LIKE ANY OTHER, AND TRUNCATING IT IS A
+      GAP.** It was not: `continue`-ing at `MaxDepth` left `Complete` true while
+      three separate comments — this item included — claimed an exhausted budget
+      made the graph incomplete. Measured: a CORRECT project whose ack sits ten
+      imports below index.html got the STRONG tier's warning and `--strict`
+      rc=1, on a graph we had stopped walking.
+      🔴 **But the gap must fire ONLY when something was actually truncated, and
+      getting that wrong silenced the defect this whole PR exists to catch.** A
+      declared package was never going to be followed, and a target ALREADY IN
+      THE GRAPH was read by another route. The first version checked only the
+      first, so a DIAMOND — the normal shape of any real module graph — whose
+      deepest module re-imports an already-walked file produced a gap whose
+      message was literally false about a file sitting in `g.Files`, dropped the
+      project to the presence tier, and let an orphaned emitter pass with rc=0.
+      Measured; a self-cycle at the bound did the same. A gap that over-fires is
+      not "conservative", it is the false pass wearing a different hat. See
+      `truncatedBelow`.
+      🔴 **And the question is DEFERRED to the end of the walk, because
+      `g.Files` cannot answer it while the walk is running.** Files enter
+      `g.Files` when POPPED, not when QUEUED, so a target already enqueued looks
+      absent. Two modules at exactly `MaxDepth` where the first-enqueued imports
+      the second therefore gapped or did not according to THE TEXTUAL ORDER OF
+      TWO IMPORT STATEMENTS — and in the losing order an orphaned emitter
+      shipped silently. Measured flat and nested. Do not move the check back
+      inline; the fixture pair that pins it is two copies of one graph with the
+      imports swapped.
+    - 🔴 **THE GRAPH MUST STAY O(ONE FILE), AND THAT TOOK TWO FIXES — THE FIRST
+      ONE ALONE WAS CLAIMED AS COMPLETE AND WAS NOT.** `EntryFile` must not grow
+      a `Code` field again, AND every import specifier must be `strings.Clone`d:
+      a Go substring shares its parent's backing array, so an un-cloned
+      specifier pins its whole file, and it is held in both the BFS queue and
+      `EntryFile.Spec`. Measured on a 200-module graph entirely INSIDE the
+      file-count and size budgets, where every module is ~2 MiB of REAL
+      (non-comment) code AND carries an import:
+
+      | build | peak RSS (3 runs) |
+      |---|---|
+      | `e800129`, before the graph existed | 26.4 – 27.8 MB |
+      | retaining `Code` | 421 – 439 MB |
+      | `Code` dropped, specifiers aliased | 558 – 628 MB |
+      | both fixed | 31.4 – 33.3 MB |
+
+      🔴 **EVERY ROW IS FIXTURE-DEPENDENT; QUOTE THE FIXTURE WITH THE NUMBER.**
+      These four are one 400 MB tree of 200 modules (`~2 MiB` each, real code,
+      each carrying an import). The `e800129` row is the WHOLE-TREE GREP, not
+      the graph, so it moves with the tree rather than with the entry graph — an
+      independent measurement on a smaller tree put it at 17.6 – 17.8 MB, and
+      both are right about their own fixture. The three graph rows reproduce
+      independently. The ratio is the durable fact: the aliased build is ~18×
+      the fixed one.
+
+      🔴 **THE FIXTURE SHAPE IS THE MEASUREMENT.** A tree padded with COMMENTS
+      leaves almost nothing after stripping, and a tree whose leaves carry no
+      imports has no specifier to alias — both report a reassuring number while
+      exercising neither hazard. That is exactly how the first round certified
+      "39.5 MB, one file at a time" from a fixture the depth bound truncated to
+      ten files. State the fixture with the number.
+      `TestEntryGraphRetainsNoContents` pins the `Code` half structurally, and
+      says in its own body that it CANNOT see the aliasing half —
+      `strings.Contains` reads the logical string, not the backing array.
+    - 🔴 **A reference to a file that is NOT THERE is a GAP, not a decided
+      absence.** It is tempting to read it as "the browser 404s that, so it
+      cannot be the ack" — but a project that presumably builds having an
+      unresolvable reference means OUR MODEL is wrong, and a confident finding
+      built on a wrong model is the failure this item is about. It also keeps
+      two documented trades alive: deleting the emitter from a current scaffold
+      (dangling `<script src>`) drops to the presence tier, and the
+      `public/`-holds-a-stale-ack false negative in item 18 stays a false
+      negative instead of silently becoming a warning.
+    - **"Cannot observe" must not become "everything passes" either.** An
+      incomplete graph never produces a WIRING finding (item 10's doctrine), but
+      the presence finding still fires when nothing in the tree mentions the
+      message at all. The residual is stated rather than hidden: an unresolvable
+      graph PLUS the literal somewhere is silence — a false negative, the cheap
+      direction. And an UNOBSERVABLE tree scan (unreadable file, size cap, file
+      budget) gates BOTH tiers: a tree we could not read is not one we can draw
+      a wiring conclusion about.
+    - **Both tiers share the `readyAckSourceExts` gate.** A `.css` an entry
+      module imports really is loaded by the browser and really cannot implement
+      a handshake, so it is in the graph but is not ack evidence. Dropping that
+      gate on the graph scan was a mutant killed by a rendered page-vite fixture
+      with the literal in `src/index.css`.
+    - **Still a Warning, never an Error** — every reason in item 18 stands, and
+      the stronger tier does not change that: reachability is still inference
+      from static text, and `--strict` already gives anyone who wants a gate
+      one.
+    - 🔴 **THE RESIDUALS THIS CHECK KNOWINGLY SHIPS WITH.** Written down because
+      every one of them was found by an audit rather than by the author, and a
+      residual nobody records is indistinguishable from a bug nobody noticed:
+      - **An extensionless `src`** (`<script src="./civitai-host">`) resolves to
+        nothing, so the graph gaps and the check goes quiet on the presence
+        tier. Correct — a browser 404s that URL and we stopped modelling — but
+        it IS a false negative, not approval.
+      - **A large graph falls to the presence tier more often than the caps
+        suggest.** With truncation now a gap, any project deeper than
+        `MaxDepth` or wider than `MaxFiles` is checked on presence alone. The
+        strong tier covers small and pre-fix apps — which is the #206
+        population — not big ones. Raising the caps is a separate, measurable
+        change.
+      - **The `strings.Clone` property is guarded by a MEASUREMENT, not a
+        test.** No unit assertion can see a shared backing array; dropping the
+        clone passes the entire suite while costing ~18× peak RSS. The mutant
+        is declared a known survivor and `TestEntryGraphRetainsNoContents` says
+        in its own body that it cannot see that half.
+      - **An attribute VALUE containing ` src=` hijacks the reference.**
+        `<script data-x="foo src=./nope.js" src="./civitai-host.js">` resolves
+        the decoy. Pre-existing and byte-identical before and after this work,
+        so it was left alone here; fixing it needs a real attribute parser
+        rather than a regex, which is a bigger change than this check earns.
+      - **A computed `import(expr)`** is not matched at all: the specifier must
+        be a literal. That makes the graph silently smaller, not incomplete —
+        the one residual here that does NOT set a gap.
+    - **Measured, before (`e800129`) → after**, on pre-fix `static` and
+      `page-vite` projects: emitter copied but not wired
+      `silent rc=0 strict 0` → `WARN rc=0 strict 1`; orphan `BLOCK_READY` file
+      the same; properly wired → silent both; fresh `static` / `page-vite` /
+      `page-money` scaffolds → silent both. The harness carries a POSITIVE
+      CONTROL — a pre-fix project with no emitter warns on BOTH binaries — so
+      the silent cells are real false passes rather than a probe wired to
+      nothing.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

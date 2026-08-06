@@ -250,7 +250,12 @@ renders perfectly. Nothing you can run locally reproduces that.
 transport acks internally, which is why the SDK templates never touch raw
 `postMessage`. The two **SDK-free** templates (`static`, `page-vite`) therefore
 ship a small vendored emitter, **`civitai-host.js`**, loaded from the entry
-point. Leave it in place.
+point. Leave it in place — and if you are retrofitting it into an older app,
+note that the file has to be *referenced* as well as copied: `static` loads it
+with `<script src="./civitai-host.js"></script>` in `index.html`, `page-vite`
+with `import './civitai-host.js';` as the first line of `src/main.jsx`.
+`civitai app validate` checks that reference where it can resolve your entry
+point, and tells you when it can't.
 
 > ⚠️ **If you adopt `@civitai/blocks-react`, delete `civitai-host.js` in the
 > same change.** This is the one situation where removing it is correct, and
@@ -671,14 +676,36 @@ never installs for them and they are never flagged.
 
 Finally it emits one **advisory** about the
 [host handshake](#the-host-handshake-block_ready): if your manifest declares a
-`page` surface and **nothing in your source posts `BLOCK_READY`**, `validate`
+`page` surface and **nothing your app loads posts `BLOCK_READY`**, `validate`
 says so. That is the shape of an app scaffolded before the templates were fixed
 (#206) — it renders perfectly everywhere you can look locally and is replaced by
 a failure card in the real host. It is a **warning, never an error**: unlike the
 lockfile rule (where the platform build provably dies), this one infers
 *runtime* behaviour from *static text* and can be wrong, so it must not fail a
-correct project. Three things follow:
+correct project.
 
+> ⚠️ **Copying `civitai-host.js` in is only half the fix.** A browser never
+> fetches a file nothing references, so the emitter has to be *loaded* too — a
+> `<script src="./civitai-host.js"></script>` in `index.html`, or an
+> `import './civitai-host.js';` at the top of the entry module `index.html`
+> loads. Earlier releases of this check looked only for the *text*
+> `BLOCK_READY` anywhere in your tree, so an unreferenced copy silenced it and a
+> still-broken app validated clean. It now resolves what your `index.html`
+> actually loads.
+
+Four things follow:
+
+- **It checks REACHABILITY where it can, and says when it can't.** Starting at
+  `index.html` it follows every `<script src>`, inline module and `import` it can
+  resolve, and asks whether any of *those* files posts the message. When that
+  resolution is complete you get a precise finding — including "you have an
+  emitter, but nothing loads it". When it *isn't* — no `index.html` at your
+  project root, a bundler alias (`import '@/…'`), a reference to a file that
+  isn't there, an import chain deeper than it follows — it falls back to
+  scanning your whole tree for the text, and the
+  warning **says so in as many words**: *"it did NOT check that the file is
+  loaded"*. Read that sentence as it is written; in that mode, adding the emitter
+  without referencing it will silence the warning and leave the app broken.
 - **A dependency that acks ends the check** — today that is
   `@civitai/blocks-react`, and nothing else. Its iframe transport acks internally
   and the literal never appears in your `src/`, so a `page-money` app is never
@@ -694,13 +721,16 @@ correct project. Three things follow:
   that is a **symlink** into a shared package *is* followed.
 - **It stays quiet when it cannot see the whole project.** An unreadable file, a
   file over 2 MiB, a very large tree, or a directory holding only a manifest all
-  mean "we could not look" — reported as nothing, never as a finding.
+  mean "we could not look" — reported as nothing, never as a finding. Likewise a
+  project whose entry graph can't be resolved *and* which contains the literal
+  somewhere: quiet, deliberately, because warning at a correct project is the
+  more expensive mistake.
 
 If it fires on a project you know is correct — your ack arrives from a bundled
 dependency, or from a file type this scan doesn't open — it is a false alarm, and
-it never blocks (exit 0) unless you pass `--strict`. What it proves is narrow:
-that the message is *mentioned* in code. It cannot prove the ack ever **fires**;
-only the real host can.
+it never blocks (exit 0) unless you pass `--strict`. What it proves stays narrow
+even at its strongest: that a file your `index.html` really loads *mentions* the
+message. It cannot prove the ack ever **fires**; only the real host can.
 
 `civitai app submit` prints the same warnings before it uploads, and likewise
 does not block on them.

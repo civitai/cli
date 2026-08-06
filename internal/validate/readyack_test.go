@@ -79,17 +79,44 @@ func ackProject(t *testing.T, manifestJSON string, files map[string]string) stri
 	return dir
 }
 
-// hasReadyAckWarning compares against the advisory VALUE, not a substring of its
-// prose. A substring match would keep passing if the message were rewritten into
-// something that no longer says what to do, and would also match a different
-// warning that happened to share a phrase.
-func hasReadyAckWarning(res Result) bool {
+// hasReadyAckWarning compares against the advisory VALUES, not a substring of
+// their prose. A substring match would keep passing if a message were rewritten
+// into something that no longer says what to do, and would also match a
+// different warning that happened to share a phrase.
+//
+// It matches the SET, so a caller asking only "did the ready-ack check fire"
+// keeps working across the tiers. A caller that cares WHICH tier fired must use
+// readyAckKind — "it warned" and "it warned for the right reason" are different
+// claims, and the whole defect this file now covers was a check that answered
+// the weaker question while the message promised the stronger one.
+func hasReadyAckWarning(res Result) bool { return readyAckKind(res) != "" }
+
+// readyAckKind names the tier that fired, or "".
+func readyAckKind(res Result) string {
 	for _, w := range res.Warnings {
-		if w == readyAckAdvice {
-			return true
+		switch w {
+		case readyAckAdviceUnwired:
+			return "unwired"
+		case readyAckAdviceMissing:
+			return "missing"
+		case readyAckAdvicePresenceOnly:
+			return "presence-only"
 		}
 	}
-	return false
+	return ""
+}
+
+// wantAckKind asserts the exact tier. `want` of "" means no ready-ack warning.
+func wantAckKind(t *testing.T, dir, want string) Result {
+	t.Helper()
+	res, err := Dir(dir)
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if got := readyAckKind(res); got != want {
+		t.Fatalf("ready-ack advisory tier = %q, want %q\nwarnings: %v\nerrors: %v", got, want, res.Warnings, res.Errors)
+	}
+	return res
 }
 
 func wantAckWarning(t *testing.T, dir string, want bool) Result {
@@ -591,7 +618,13 @@ func TestReadyAckSkipListNeverRemovesTheRoot(t *testing.T) {
 			// Positive control on the same tree: with an emitter it goes silent,
 			// so the assertion above cannot be satisfied by a scan that warns
 			// unconditionally.
+			//
+			// 🔴 index.html has to LOAD it. Writing the file alone used to be
+			// enough here, and that is precisely the false pass this check was
+			// rewritten to close — an unreferenced emitter is now (correctly) the
+			// `unwired` finding, which this control would otherwise trip.
 			write("civitai-host.js", realEmitter())
+			write("index.html", `<!doctype html><script src="./civitai-host.js"></script><script src="./app.js"></script>`)
 			wantAckWarning(t, root, false)
 		})
 	}
@@ -720,9 +753,44 @@ func TestReadyAckSymlinkCycleTerminates(t *testing.T) {
 	}
 }
 
+// TestReadyAckCapValues pins the caps INDEPENDENTLY of the code under test.
+//
+// 🔴 TestReadyAckCapsAreUnobservable below sizes its fixtures FROM these
+// constants, so a mutant that raises one does not fail — it just allocates. An
+// audit mutant setting maxAckFileBytes to 1<<40 hung the suite twice instead of
+// going red. A literal here is the only thing that can see that, and it is also
+// the only record that these numbers are a deliberate cost decision rather than
+// whatever the code happens to say.
+func TestReadyAckCapValues(t *testing.T) {
+	if maxAckFileBytes != 2<<20 {
+		t.Errorf("maxAckFileBytes = %d, want %d (2 MiB) — these caps exist because `validate` must not "+
+			"become a memory event; raising one silently makes every cap fixture allocate instead of fail",
+			maxAckFileBytes, 2<<20)
+	}
+	if maxAckScanFiles != 5000 {
+		t.Errorf("maxAckScanFiles = %d, want 5000", maxAckScanFiles)
+	}
+	if maxAckGraphFiles != 200 {
+		t.Errorf("maxAckGraphFiles = %d, want 200", maxAckGraphFiles)
+	}
+}
+
 // TestReadyAckCapsAreUnobservable pins that hitting a cap stays SILENT. A scan
 // that stopped early has a gap in it, and a gap is not evidence of absence.
+//
+// It sizes its fixtures from the constants on purpose (a hardcoded 2 MiB would
+// silently stop exercising the branch if the cap moved); TestReadyAckCapValues
+// is what makes that safe.
 func TestReadyAckCapsAreUnobservable(t *testing.T) {
+	// 🔴 Sizing a fixture from the constant under test turns a raised cap into an
+	// ALLOCATION rather than a failure: a 1<<40 mutant hung this suite twice
+	// instead of going red. TestReadyAckCapValues is the real guard; this bound
+	// makes the hang a fast, readable failure instead.
+	if maxAckFileBytes > 8<<20 || maxAckScanFiles > 20000 {
+		t.Fatalf("the caps are too large to exercise (maxAckFileBytes=%d, maxAckScanFiles=%d) — this test "+
+			"builds fixtures from them, so it would allocate instead of testing. See TestReadyAckCapValues.",
+			maxAckFileBytes, maxAckScanFiles)
+	}
 	t.Run("a file over the size cap silences the check", func(t *testing.T) {
 		dir := ackProject(t, ackManifest(false), map[string]string{
 			"index.html": `<!doctype html><script src="./app.js"></script>`,
@@ -768,20 +836,124 @@ func TestReadyAckAdviceIsActionable(t *testing.T) {
 		{"civitai app init", "the concrete command that produces a correct emitter"},
 		{blockproto.ReadyAckFilename, "the file to copy in"},
 		{"index.html", "where the emitter has to be referenced from"},
+		{"not enough on its own", "copying the file was the ONE step the old wording let an author stop at"},
 		{"@civitai/blocks-react", "the alternative to hand-writing it"},
 		{"never both", "adopting the SDK without deleting the emitter is strictly worse"},
 		{"#206", "the issue an author can read for the full story"},
 		{"--strict", "so nobody thinks this blocks them today"},
 	}
-	for _, r := range required {
-		if !strings.Contains(readyAckAdvice, r.substr) {
-			t.Errorf("the advisory does not mention %q — %s\ngot: %s", r.substr, r.why, readyAckAdvice)
+	if len(readyAckAdvisories) != 3 {
+		t.Fatalf("readyAckAdvisories has %d entries, want 3 — a tier added without a case here ships "+
+			"unasserted prose", len(readyAckAdvisories))
+	}
+	for _, advice := range readyAckAdvisories {
+		for _, r := range required {
+			if !strings.Contains(advice, r.substr) {
+				t.Errorf("an advisory does not mention %q — %s\ngot: %s", r.substr, r.why, advice)
+			}
+		}
+		// A message that says nothing useful is short. This is a crude floor, but
+		// it is the one thing a "something may be wrong" rewrite cannot satisfy.
+		if len(advice) < 400 {
+			t.Errorf("an advisory is %d chars — too short to carry a diagnosis and a remedy: %s", len(advice), advice)
 		}
 	}
-	// A message that says nothing useful is short. This is a crude floor, but it
-	// is the one thing a "something may be wrong" rewrite cannot satisfy.
-	if len(readyAckAdvice) < 400 {
-		t.Errorf("the advisory is %d chars — too short to carry a diagnosis and a remedy", len(readyAckAdvice))
+}
+
+// TestReadyAckAdvisoriesStateTheirOwnStrength pins the disclosure that the
+// dogfood defect turned on.
+//
+// 🔴 The presence-only tier CANNOT see wiring, and it is the tier that fires at
+// the project shapes this CLI models worst. A message that reads identically to
+// the reachability tier tells an author their app is checked when it is not —
+// which is how "copy the emitter in" became a green check for a broken app. So
+// each tier must name what it did, and the weak one must name what it did not.
+// 🔴 AN EARLIER VERSION OF THIS TEST WAS HALF VACUOUS, and an audit mutant
+// proved it. It asserted the two strong advisories contain "index.html loads" —
+// but that phrase comes from the SHARED `readyAckRemedy` fragment, which EVERY
+// advisory carries, including the weak one. So replacing the unwired advisory's
+// entire headline with "but something is off" PASSED. That is the spelled-guard
+// class: a check satisfied by a different feature's text.
+//
+// Every literal below appears in exactly ONE tier's own diagnosis, and each is
+// paired with an INVERSE assertion that no other tier carries it — so a rewrite
+// that blurs two tiers together fails in both directions.
+func TestReadyAckAdvisoriesStateTheirOwnStrength(t *testing.T) {
+	const disclosure = "did NOT check that the file is loaded"
+	// The operative half of the weak tier's disclosure: without this sentence an
+	// author reads "add the emitter", stops, and stays broken — which is the
+	// defect. Deleting it was a surviving mutant.
+	const operative = "will silence this warning"
+
+	perTier := []struct {
+		name   string
+		advice string
+		// own are literals this tier's DIAGNOSIS must carry, and which no other
+		// tier may carry.
+		own []string
+	}{
+		{"unwired", readyAckAdviceUnwired, []string{
+			"DOES contain",                        // it found the message…
+			"nothing index.html loads reaches it", // …and nothing loads it
+			"orphan",                              // named for what it is
+		}},
+		{"missing", readyAckAdviceMissing, []string{
+			"nothing index.html loads posts it either", // resolved, and absent
+		}},
+		{"presence-only", readyAckAdvicePresenceOnly, []string{
+			disclosure,
+			operative,
+			"could not resolve the files your",
+		}},
+	}
+
+	// 🔴 THE SHARED OPENING DIAGNOSIS, and the reason this test needed a second
+	// round. `own` literals can only pin a tier that has something UNIQUE to
+	// say — and the presence tier's three unique literals ALL live in its
+	// trailing disclosure, so replacing its OPENING ("…but nothing in this
+	// project's source posts BLOCK_READY") with vague prose survived everything
+	// below. That is the identical half-vacuous shape this test's own header
+	// records catching last round, one tier over.
+	//
+	// The sentence is shared with the `missing` tier by design — both report an
+	// absence — so it is asserted as SET MEMBERSHIP: present in exactly those
+	// two, absent from the tier that fires because the message IS present.
+	const foundNothing = "nothing in this project's source posts "
+	for _, tier := range perTier {
+		wantShared := tier.name != "unwired"
+		if got := strings.Contains(tier.advice, foundNothing); got != wantShared {
+			if wantShared {
+				t.Errorf("the %s advisory no longer opens by saying WHAT WAS FOUND (%q) — every other literal "+
+					"this test pins for it lives in the trailing disclosure, so the diagnosis itself was "+
+					"unguarded:\n%s", tier.name, foundNothing, tier.advice)
+			} else {
+				t.Errorf("the unwired advisory says nothing in the source posts the message, but that tier "+
+					"fires precisely because something DOES:\n%s", tier.advice)
+			}
+		}
+	}
+
+	for _, tier := range perTier {
+		for _, lit := range tier.own {
+			if !strings.Contains(tier.advice, lit) {
+				t.Errorf("the %s advisory no longer says %q — that literal is this tier's whole diagnosis, "+
+					"and without it the message does not tell an author WHAT WAS FOUND:\n%s",
+					tier.name, lit, tier.advice)
+			}
+			// The inverse control: no OTHER tier may claim it. This is what
+			// makes the assertion above a statement about THIS tier rather than
+			// about the shared remedy fragment every advisory carries.
+			for _, other := range perTier {
+				if other.name == tier.name {
+					continue
+				}
+				if strings.Contains(other.advice, lit) {
+					t.Errorf("the %s advisory carries %q, which belongs to the %s tier — the tiers are no "+
+						"longer distinguishable by their text, so a reader cannot tell which check ran:\n%s",
+						other.name, lit, tier.name, other.advice)
+				}
+			}
+		}
 	}
 }
 
@@ -795,8 +967,10 @@ func TestReadyAckIsAdvisoryOnly(t *testing.T) {
 	})
 	res := wantAckWarning(t, dir, true)
 	for _, e := range res.Errors {
-		if e == readyAckAdvice {
-			t.Fatalf("the ready-ack advisory reached Errors — it must stay a warning")
+		for _, advice := range readyAckAdvisories {
+			if e == advice {
+				t.Fatalf("a ready-ack advisory reached Errors — it must stay a warning")
+			}
 		}
 	}
 	if !res.OK() {
@@ -931,8 +1105,10 @@ func TestDeletingTheEmitterMakesTheWarningFire(t *testing.T) {
 			wantAckWarning(t, dest, true)
 
 			// The advisory must name the file the author has to restore.
-			if !strings.Contains(readyAckAdvice, blockproto.ReadyAckFilename) {
-				t.Errorf("the advisory does not name %s — an author cannot act on it", blockproto.ReadyAckFilename)
+			for _, advice := range readyAckAdvisories {
+				if !strings.Contains(advice, blockproto.ReadyAckFilename) {
+					t.Errorf("an advisory does not name %s — an author cannot act on it", blockproto.ReadyAckFilename)
+				}
 			}
 		})
 	}
