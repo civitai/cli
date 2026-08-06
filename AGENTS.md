@@ -504,18 +504,18 @@ neither one's.
       thing that BUILDS an SDK-free template, and it asserts the ack survives
       bundling (Guard A pins the source tree; Vite output is what the platform
       serves).
-      🔴 **REPORTING IS NOT GATING — no ready-ack check currently blocks a
-      merge.** Measured, not assumed, via
+      🔴 **REPORTING VS GATING — measure it, never infer it from the job
+      existing.** These jobs now gate. Measured via
       `gh api repos/civitai/cli/branches/main/protection`: the required contexts
-      are exactly `pins-vs-published` and `scaffold-currency`, with no rulesets.
-      So `ready-ack-runtime`, `template-page-vite` and even `build-test` all
-      report and stop nothing. **Outstanding step:** adding `ready-ack-runtime`
-      (and arguably `build-test`) to the required contexts is what converts
-      reporting into gating. That is a repo-policy change touching every open
-      PR, so it is the maintainer's call and was deliberately not taken by the
-      agent that wrote this. Until it is, do not describe any of these jobs as a
-      gate — an earlier revision of this item, and of
-      `ready_ack_runtime_test.go`, claimed one "BLOCKS the merge". It was false.
+      are `pins-vs-published`, `scaffold-currency`, `build-test`,
+      `ready-ack-runtime` and `template-page-vite`, with no rulesets. That was a
+      deliberate repo-policy change made AFTER this item first shipped; until
+      then all of these reported and stopped nothing — including `build-test`,
+      so the suite itself did not gate. Re-measure before describing any job
+      here as a gate: an earlier revision of this item, and of
+      `ready_ack_runtime_test.go`, claimed one "BLOCKS the merge" while it did
+      not. That claim was false when written and is true now only because the
+      contexts were added — not because the job runs.
       If you add a template, add nothing — Guard A picks it up automatically and
       fails until `ReadyAckPath()` is set.
     - **`BLOCK_HELLO` now exists host-side, and the emitter deliberately does

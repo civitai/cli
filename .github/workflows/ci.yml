@@ -103,11 +103,13 @@ jobs:
   # workflow nobody watches — running it per-PR puts the result in front of a
   # reviewer while the change is still open.
   #
-  # 🔴 NOTE: this REPORTS, it does not GATE. `main`'s required contexts are
-  # exactly `pins-vs-published` and `scaffold-currency` (no rulesets), so a red
-  # run here does not block a merge — `build-test` doesn't either. Adding this
-  # to the required contexts is the outstanding maintainer decision recorded in
-  # AGENTS.md item 11.
+  # 🔴 NOTE: this both reports AND gates. `main`'s required contexts are
+  # `pins-vs-published`, `scaffold-currency`, `build-test`, `ready-ack-runtime`
+  # and `template-page-vite` (no rulesets), so a red run here blocks the merge.
+  # That was a policy change made after this job landed — it did NOT gate when
+  # it shipped. Re-measure with
+  # `gh api repos/civitai/cli/branches/main/protection` before calling any job
+  # here a gate; see AGENTS.md item 11.
   #
   # -v so the run REPORTS its controls (an inert emitter and a naive ack are
   # driven through the same assertions and must be rejected) rather than just an

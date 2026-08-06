@@ -523,12 +523,18 @@ func TestReadyAckCannotObserve(t *testing.T) {
 	})
 
 	t.Run("an unreadable source file silences the check", func(t *testing.T) {
-		// A DANGLING SYMLINK with a scanned extension: WalkDir hands it over as a
-		// non-directory, os.ReadFile fails, and the walk aborts. We then know
-		// nothing about the rest of the tree — including whatever we had not
-		// reached yet — so the only honest answer is silence. Without this
-		// fixture that branch is unreachable: chmod is a no-op for root, so a
-		// permissions-based fixture proves nothing on a root CI runner.
+		// A DANGLING SYMLINK with a scanned extension: os.Stat cannot resolve it,
+		// so the walk stops there. We then know nothing about the rest of the
+		// tree — including whatever we had not reached yet — so the only honest
+		// answer is silence.
+		//
+		// 🔴 This fixture reaches the os.Stat guard, NOT the os.ReadFile one
+		// below it. Measured: mutating that ReadFile branch to `continue` fails
+		// NOTHING in the suite, and the same is true of the os.ReadDir branch.
+		// Both are reachable only via permissions (a mode-0000 file, a mode-0111
+		// dir), and chmod is a no-op for root, so neither can be pinned on a root
+		// CI runner. Shipped behaviour for both was verified by hand — they stay
+		// silent — but do not read this case as covering them.
 		dir := ackProject(t, ackManifest(false), map[string]string{
 			"index.html": `<!doctype html><script src="./app.js"></script>`,
 			"app.js":     `document.title = 'hi';`,

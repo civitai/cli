@@ -419,7 +419,7 @@ func TestScaffoldedPageTemplatesShipTheReadyAck(t *testing.T) {
 
 		rel := tmpl.ReadyAckPath()
 		if rel == "" {
-			t.Errorf("template %q declares a `page` surface and carries no @civitai/* SDK, but "+
+			t.Errorf("template %q declares a `page` surface and depends on no package that acks, but "+
 				"ReadyAckPath() is empty — a page app that never posts BLOCK_READY is replaced by a "+
 				"failure card in the real host (issue #206). Give it a path in scaffold.go so "+
 				"Render ships blockproto's emitter.", tmpl)
