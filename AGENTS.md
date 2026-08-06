@@ -297,6 +297,20 @@ neither one's.
    across 27 distinct apps) — so deduping on it would report ~1 viewer per app.
    Anonymous rows all carry `userId = 0`, so the server sums distinct authed
    `userId` with distinct anon `ip`.
+   🔴 **`installs` has a THIRD state too, and it is a different KIND of flag.**
+   `installs.notApplicable` means "the question does not apply", not "we could
+   not ask": a page app is stateless by design and has no install slot, so a
+   subscription record cannot exist for it. Rendering `0` there reads as
+   "nobody installed my app" when the truth is "installs do not exist for this
+   app type" — the same fabricated-zero class as items 6 and 9, arrived at from
+   a third direction. The distinction that matters when editing this: a
+   TRUTHFUL zero (an installable app nobody has installed yet) arrives with the
+   flag ABSENT and must keep printing `0`. The server owns that call — do NOT
+   re-derive it in the CLI from the counters, because `total == 0` is true in
+   both states. Measured on prod: every approved app is a page app (0 installs
+   possible), while the model-slot apps that CAN be installed hold real rows,
+   so the two populations are disjoint and the bare `0` was never a
+   measurement of user behaviour.
    Two more things the label has to keep straight, both of which read wrong if
    you shorten them: `AnonCount` is signed-out **LOADS**, not viewers, and is
    NOT a subset of `UniqueViewers` — one anonymous visitor reloading ten times
