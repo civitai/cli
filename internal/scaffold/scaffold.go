@@ -11,6 +11,8 @@ import (
 	"sort"
 	"strings"
 	"text/template"
+
+	"github.com/civitai/cli/internal/blockproto"
 )
 
 //go:embed all:templates
@@ -35,6 +37,31 @@ func AllTemplates() []Template { return []Template{Static, PageVite, PageMoney} 
 // SDKTemplates are templates whose dev loop needs a mock host (`dev:harness`)
 // rather than a plain `dev` (which renders blank without a host).
 func (t Template) NeedsHarness() bool { return t == PageMoney }
+
+// ReadyAckPath is where this template's rendered tree carries the canonical
+// block -> host ready-ack emitter (blockproto.ReadyAckSource), or "" when the
+// template does not need one.
+//
+// Every template declares a `page` surface, and the host will not reveal a
+// page app until it posts `BLOCK_READY`. page-money gets that for free —
+// `@civitai/blocks-react`'s IframeTransport acks internally — so shipping a
+// second emitter there would double-post into a rate-limited inbound channel
+// for no gain. The two SDK-free templates have to say hello themselves.
+//
+// The path is relative to the project root and uses forward slashes.
+// `internal/scaffold/ready_ack_contract_test.go` enumerates AllTemplates() and
+// fails when a page template that carries no SDK returns "" here, so a future
+// template cannot quietly opt out.
+func (t Template) ReadyAckPath() string {
+	switch t {
+	case Static:
+		return blockproto.ReadyAckFilename
+	case PageVite:
+		return "src/" + blockproto.ReadyAckFilename
+	default:
+		return ""
+	}
+}
 
 // NeedsInstall reports whether the template scaffolds a package.json — i.e.
 // whether the platform build will run an install step for it, and therefore
@@ -134,6 +161,22 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// The ready-ack emitter is NOT a template file. It is copied verbatim from
+	// blockproto so the repo holds one authority for the handshake and every
+	// scaffolded app ships byte-identical bytes — no `text/template` pass, so
+	// nothing in it can be reinterpreted as a template action.
+	if rel := tmpl.ReadyAckPath(); rel != "" {
+		out := filepath.Join(destDir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+			return nil, err
+		}
+		if err := os.WriteFile(out, blockproto.ReadyAckSource(), 0o644); err != nil {
+			return nil, err
+		}
+		written = append(written, out)
+	}
+
 	sort.Strings(written)
 	return written, nil
 }

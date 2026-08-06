@@ -11,8 +11,12 @@
     <main id="app">
       <h1>{{ .Name }}</h1>
       <p>This is a Civitai App (static template). Edit <code>app.js</code> to build your app.</p>
-      <button id="ping">Tell the host my height</button>
+      <button id="ping">Click me</button>
     </main>
+    <!-- The host -> block readiness handshake. Loaded FIRST and left alone:
+         without it the Civitai host never reveals this app. See the comments
+         in civitai-host.js. -->
+    <script src="./civitai-host.js"></script>
     <script src="./app.js"></script>
   </body>
 </html>

@@ -88,6 +88,140 @@ jobs:
           CIVITAI_CHECK_PUBLISHED_PINS: "1"
         run: go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -v
 
+  # Guard B for the block->host ready-ack (issue #206) — the RUNTIME half.
+  #
+  # `internal/scaffold/ready_ack_contract_test.go` runs in the build-test job
+  # above and proves each SDK-free page template ships a byte-identical copy of
+  # `internal/blockproto/ready-ack.js` that the entry point RESOLVES to. It
+  # cannot prove the ack FIRES — no Go static check can prove JavaScript
+  # executes, and an emitter with an inverted `event.source` check passes every
+  # static assertion while being completely inert.
+  #
+  # This job executes the emitter in node against a fake host. It is env-gated
+  # so `make ci` stays Go-only and offline. The daily `bump-scaffold-pins` sweep
+  # runs it too, but a daily runner reports up to 24h AFTER a merge, on a
+  # workflow nobody watches — running it per-PR puts the result in front of a
+  # reviewer while the change is still open.
+  #
+  # 🔴 NOTE: this REPORTS, it does not GATE. `main`'s required contexts are
+  # exactly `pins-vs-published` and `scaffold-currency` (no rulesets), so a red
+  # run here does not block a merge — `build-test` doesn't either. Adding this
+  # to the required contexts is the outstanding maintainer decision recorded in
+  # AGENTS.md item 11.
+  #
+  # -v so the run REPORTS its controls (an inert emitter and a naive ack are
+  # driven through the same assertions and must be rejected) rather than just an
+  # exit code.
+  ready-ack-runtime:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: scaffolded ready-ack actually fires
+        env:
+          CIVITAI_CHECK_SCAFFOLD_RUNTIME: "1"
+        run: go test ./internal/scaffold -run TestScaffoldedReadyAckActuallyFires -count=1 -v
+
+  # Rot-guard: build the page-vite template. It is the only SDK-free template
+  # with a build step, and nothing else in CI builds it — `template-page-money`
+  # and `scaffold-currency` both scaffold page-money.
+  #
+  # Since #206 its entry module has a HARD RESOLUTION DEPENDENCY on
+  # `./civitai-host.js`, so a wrong import path is a build failure rather than a
+  # subtle one. Measured: `import '../nonexistent/civitai-host.js'` survived the
+  # entire Go suite, and would have shipped a template that cannot build at all.
+  #
+  # The bundle assertion is separate from Guard A on purpose. Guard A pins the
+  # SOURCE tree; Vite output is what the platform actually serves, and a
+  # tree-shaken or mis-externalised side-effect import would leave a bundle with
+  # no handshake in it. Control pair, both measured locally: with the import the
+  # bundle carries BLOCK_INIT/BLOCK_READY, with it commented out it carries
+  # neither — while the positive control (the app's display name) matches in
+  # both cases, proving the grep reads the bundle either way.
+  template-page-vite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: scaffold page-vite
+        run: go run ./cmd/civitai app init "CI Vite Block" --dir ./_ci-page-vite --template page-vite
+
+      - name: install
+        working-directory: ./_ci-page-vite
+        run: npm install --no-audit --no-fund
+
+      - name: build
+        working-directory: ./_ci-page-vite
+        run: npm run build
+
+      - name: the ready-ack survives bundling
+        working-directory: ./_ci-page-vite
+        run: |
+          set -euo pipefail
+
+          # Every grep below is `|| true`. Without it this whole step is a trap:
+          # grep exits 1 on NO MATCH, pipefail propagates that through the pipe,
+          # and `set -e` kills the step AT THE ASSIGNMENT — so the count line and
+          # the ::error:: annotation never print. Measured: the step exited 1
+          # having printed only the positive-control line, which is precisely the
+          # ambiguity the positive control exists to remove ("is the harness not
+          # reading the bundle, or did the ack not survive the build?").
+          # It failed CLOSED, so this was a diagnosis bug, not a safety one.
+
+          # The exact JS files under test, captured once and reused, so the
+          # assertions cannot be satisfied by dist/index.html or a public/
+          # passthrough that never goes through the bundler.
+          mapfile -t js < <(find dist -name '*.js' -type f | sort)
+          echo "JS files emitted into dist/: ${#js[@]}"
+          printf '  %s\n' "${js[@]}"
+          if [ "${#js[@]}" -lt 1 ]; then
+            echo "::error::the build emitted no JS into dist/ — nothing to check, so a pass here would be meaningless"
+            exit 1
+          fi
+
+          # POSITIVE CONTROL for the grep itself, FIRST: a string that must be in
+          # the bundle whatever the handshake does. If this misses, the path or
+          # the pattern is wrong and the two assertions below prove nothing.
+          control=$(grep -lF 'CI Vite Block' "${js[@]}" | wc -l || true)
+          echo "positive control (app display name): $control file(s)"
+          if [ "$control" -lt 1 ]; then
+            echo "::error::positive control failed — this step is not reading the built bundle, so its verdict on the ready-ack means nothing"
+            exit 1
+          fi
+
+          rc=0
+          for needle in BLOCK_INIT BLOCK_READY; do
+            n=$(grep -lF "$needle" "${js[@]}" | wc -l || true)
+            echo "$needle: $n file(s)"
+            if [ "$n" -lt 1 ]; then
+              echo "::error::$needle is absent from the built bundle — the ready-ack did not survive the build, so the shipped app never says hello (issue #206)"
+              rc=1
+            fi
+          done
+          exit "$rc"
+
+      - name: validate
+        working-directory: ./_ci-page-vite
+        run: go run ../cmd/civitai app validate
+
   # Rot-guard: scaffold the page-money template and run its JS toolchain against
   # the PUBLISHED SDK (@civitai/blocks-react). Catches a template that renders
   # but no longer installs / typechecks / tests / builds after an SDK bump — the
