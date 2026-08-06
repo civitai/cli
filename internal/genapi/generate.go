@@ -70,6 +70,19 @@ type WhatIfResult struct {
 	AllowMatureContent *bool         `json:"allowMatureContent,omitempty"`
 	// Transactions is passed through untyped; its shape is orchestrator-owned.
 	Transactions json.RawMessage `json:"transactions,omitempty"`
+	// ModelSubstitutions records checkpoints the server swapped out for this
+	// graph. See substitution.go.
+	//
+	// 🔴 THIS IS THE MOST VALUABLE FIELD ON THIS REPLY. A whatIf spends nothing
+	// and persists nothing, so it is the ONLY place a caller can discover — while
+	// it can still back out — that the model it named is not the model that will
+	// run. It is also the only signal for a SAME-PRICE substitution: comparing
+	// costs only helps if you already knew the expected price, and a swap between
+	// similarly-priced checkpoints is otherwise completely invisible.
+	//
+	// Nothing is persisted on this path, so unlike the submit there is no
+	// metadata round-trip to recover it from later. Read it here or never.
+	ModelSubstitutions []ModelSubstitution `json:"modelSubstitutions,omitempty"`
 }
 
 // SubmitResult is the generateFromGraph reply — one normalized workflow.
@@ -92,6 +105,16 @@ type SubmitResult struct {
 	Status string        `json:"status"`
 	Cost   *WorkflowCost `json:"cost"`
 	Tags   []string      `json:"tags,omitempty"`
+	// ModelSubstitutions is the TOP-LEVEL record of checkpoints the server
+	// swapped out for this submit — the money has already moved by the time this
+	// is read. See substitution.go.
+	ModelSubstitutions []ModelSubstitution `json:"modelSubstitutions,omitempty"`
+	// Metadata carries the SAME record a second time, under the key the server
+	// persists onto the orchestrator workflow. Both are populated on this reply;
+	// only this one survives to a later read.
+	//
+	// 🔴 Read neither directly — use Substitutions(), which fixes the precedence.
+	Metadata *substitutionMetadata `json:"metadata,omitempty"`
 }
 
 // SubmitOptions carries the ENVELOPE siblings of the graph — the fields that

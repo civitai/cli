@@ -859,7 +859,11 @@ neither one's.
 
     🔴 **And the CLI still cannot tell you whether the promotion actually
     fired.** The whatIf reply carries `{ready, cost, transactions,
-    allowMatureContent}` and no echo of the resolved workflow. The obvious
+    allowMatureContent}` — plus, since item 20, `modelSubstitutions` — and no
+    echo of the resolved workflow. 🔴 **`modelSubstitutions` does NOT close this
+    gap and must not be read as closing it**: it reports a substituted
+    *checkpoint*, never a dropped `images[]`, so a graph whose images were
+    silently ignored still carries no record of it. The obvious
     detector — "did a `factors.images` key appear?" — is WRONG, and a
     differential estimate ("does the price change when I add the images?") is
     wrong the same way: measured, `Flux1Kontext`, `NanoBanana` and `Seedream`
@@ -939,6 +943,59 @@ neither one's.
     blob URLs rather than local paths. An upload spends no Buzz, but it is a
     network write — so `--print-input`'s "reaches no money seam" claim is still
     true while its "no request at all" claim is not, with `--image`.
+
+20. **A reported model substitution is a WARNING by default, not a failure — and
+    that is a deliberate product decision, not laziness.** The server accepts a
+    checkpoint version id that is not valid for a `modelLocked` ecosystem,
+    substitutes the ecosystem default, runs the job and bills for what ran
+    (civitai/civitai#3665). It now records each swap and returns it as
+    `modelSubstitutions: [{requested, applied, reason}]`, `reason` ∈
+    `{wrong-workflow, unrecognized, gated}`. `internal/genapi/substitution.go`
+    models it; `internal/cmd/generate_substitution.go` renders it.
+
+    (a) **Three carriers, and they differ.** `whatIfFromGraph` → TOP-LEVEL only
+    (nothing is persisted on that path, so the reply is the only copy).
+    `generateFromGraph` → top-level AND `metadata`. Any later read
+    (`getWorkflow`) → `metadata` only. `SubmitResult.Substitutions()` prefers the
+    top-level copy and falls back to metadata; it must never CONCATENATE them, or
+    one swap is reported as two.
+
+    (b) 🔴 **ABSENCE IS AMBIGUOUS. The key is OMITTED when nothing was
+    substituted, so "no record" means EITHER "no substitution" OR "a server
+    older than the field" — the same bytes.** Nothing may render that as "no
+    substitutions": a reassuring negative would be wrong against every server
+    predating civitai/civitai#3692. The renderer prints *nothing at all* when the
+    record is empty, and there is a test asserting the CLI never claims the
+    negative. This is also why the field is a plain slice and not a pointer —
+    unlike item 9's `AppAnalytics.Views` there is no third state to preserve, and
+    no Go type can resolve an ambiguity that is inherent to the protocol.
+
+    (c) **Why warn-and-continue is the default.** The substitution is a
+    deliberate graceful degradation: a script pinned to a version that was later
+    retired keeps producing images instead of breaking. Making it a hard CLI
+    failure by default would override that server-side decision and break working
+    automation on a CLI upgrade. So the default is the fail-soft shape of item
+    13(b) — warn loudly, proceed — and the protection for a human is that the
+    warning prints BEFORE the confirmation prompt, where they can still say no.
+    `--fail-on-substitution` is the opt-in for callers who would rather fail than
+    get a different model; it mirrors `--max-cost` (an opt-in pre-flight refusal
+    evaluated on the ESTIMATE, so it spends nothing) and is tagged
+    `ErrModelSubstituted`.
+
+    (d) 🔴 **It is checked on the estimate and deliberately does NOT re-fire
+    after the submit.** By then the money is gone, and aborting would strand
+    outputs the caller has paid for and still needs to collect. A post-submit
+    substitution is always REPORTED and always present in `--json`; it just does
+    not change the exit code.
+
+    (e) **The report goes to STDERR in every mode, `--json` included** — the raw
+    passthrough already carries the record on stdout, so warning there would
+    corrupt the stream for exactly the callers automating a spend. And the
+    server's `reason` token is printed RAW per item 8, with the CLI's advice on a
+    separate line; the advice supplements the token, it never replaces it. An
+    UNRECOGNISED reason still warns with the ids intact — a fourth reason from a
+    newer server must not make the CLI go quiet, which is the original defect
+    reintroduced via a `switch`.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
