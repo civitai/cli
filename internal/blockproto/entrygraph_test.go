@@ -188,6 +188,24 @@ func TestReadyAckWiringPredicate(t *testing.T) {
 			wantAccept: true,
 		},
 		{
+			// NEW: pins readyAckWiringDepth. Found by a SURVIVING mutant —
+			// widening Guard A's bound from 2 to 99 passed the entire suite, so
+			// nothing was holding the "one level of imports" contract at all. A
+			// TEMPLATE's emitter is meant to be loaded by the entry itself;
+			// burying it behind a helper module is a template smell, and this is
+			// the only case that can tell the two bounds apart. (`validate` uses
+			// the deeper default for an author's project — see
+			// TestEntryGraphBudgetsAreGaps for that bound.)
+			name: "reject: the emitter is two import levels below the entry",
+			ack:  ackRel,
+			files: []gfile{
+				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
+				{"src/main.jsx", "import './helper.js';"},
+				{"src/helper.js", "import './civitai-host.js';"},
+			},
+			wantErr: "no <script src> in index.html resolves to it",
+		},
+		{
 			// NEW: pins the ROOT CONTAINMENT guard. Without it the `..` climbs out
 			// of the project and — if a same-named file happens to sit beside it —
 			// a sibling checkout's emitter would satisfy this project's wiring.

@@ -479,6 +479,18 @@ neither one's.
       Don't reintroduce it as a "minimal example". Note `iframe.resizable` in
       the vendored `schema/` still describes itself in size-to-content terms;
       that is a schema-side wording issue, not a licence to re-add the message.
+    - **The entry-graph resolver moved OUT of Guard A and into
+      `internal/blockproto`** (`entrygraph.go` + `wiring.go`, with the comment
+      stripper in `comments.go`), because `internal/validate` needed the same
+      question answered for an AUTHOR's project and had answered it with a
+      whole-tree grep instead — see item 20 for the false pass that produced.
+      Guard A now calls `blockproto.ReadyAckWiring`; its control corpus moved
+      with the predicate, into `internal/blockproto/entrygraph_test.go`. Nothing
+      about Guard A's strength changed, and the depth bound it relies on
+      (`readyAckWiringDepth = 2`: index.html's `<script src>` entries plus their
+      DIRECT imports) is now pinned by a corpus case — widening it to 99 was a
+      SURVIVING mutant, i.e. the "one level deep on purpose" contract was
+      documented and unheld.
     - **Three guards, and none subsumes the others.**
       `ready_ack_contract_test.go` (Guard A, runs in `make ci`) enumerates
       `AllTemplates()`, decides subject-hood from the RENDERED manifest and
@@ -816,9 +828,16 @@ neither one's.
       `TestReadyAckSkippedByManifestOnly` pins it, with a `Dir()` positive
       control so a green there cannot mean "the check never fires at all".
     - **What it does NOT prove:** that the ack fires. Only that the message is
-      mentioned in code. The runtime proof is Guard B (item 11), and there is
-      none at all for an app the author already has — which is why this is
-      advisory and says so in its own message.
+      mentioned in code the browser loads. The runtime proof is Guard B (item
+      11), and there is none at all for an app the author already has — which is
+      why this is advisory and says so in its own message.
+    - 🔴 **"MENTIONED IN CODE" WAS NOT ENOUGH, AND ITEM 20 IS THE REPAIR.** As
+      first shipped this bullet read "mentioned in code" full stop, and the
+      check's own remedy asked for TWO edits while verifying one. Read item 20
+      before touching `readyack.go`: the whole-tree presence scan described
+      above is now the WEAK tier, reached only when the entry graph cannot be
+      resolved, and the advisory it emits is a different string that discloses
+      the difference.
 
 19. **img2img sends `workflow: "txt2img"` PLUS `images[]`, requires
     `--ecosystem`, and uploads with NO credential — three things that each read
@@ -928,6 +947,83 @@ neither one's.
     blob URLs rather than local paths. An upload spends no Buzz, but it is a
     network write — so `--print-input`'s "reaches no money seam" claim is still
     true while its "no request at all" claim is not, with `--image`.
+
+20. **The ready-ack advisory has TWO TIERS, the message names which one ran, and
+    that disclosure is the fix — not a nicety.** `validate`'s page-without-ack
+    check (item 18) used to ask only "does any file in this tree mention
+    `BLOCK_READY`". Its own remedy asked the author for TWO edits — copy
+    `civitai-host.js` in, and LOAD it from index.html or the entry module — and
+    it verified the first. Measured on a genuinely pre-fix scaffold (`app init`
+    from the CLI at `0ce0025`, emitter copied in, never referenced):
+    `civitai app validate --strict` printed `✓ … is valid` and exited **0** for
+    an app that was still exactly as broken as before #206, and an orphan file
+    containing the literal anywhere in the tree passed identically. 🔴 **A green
+    check earned by obeying our own advice is worse than the silence it
+    replaced** — that is the whole reason this item exists, and it is the same
+    "presence is not reachability" hole Guard A had before it was rewritten,
+    regenerated at a second call site.
+    - **The tiers.** REACHABILITY (strong) runs when
+      `blockproto.ResolveEntryGraph` resolves the project COMPLETELY — a root
+      index.html, and every `<script src>`, inline-module import and import
+      below it accounted for. Then "nothing the browser loads posts
+      `BLOCK_READY`" is a real finding, and an unreferenced emitter is reported
+      as the orphan it is (`readyAckAdviceUnwired`). PRESENCE ONLY (weak) runs
+      when the graph is INCOMPLETE, and falls back to the whole-tree scan
+      (`readyAckAdvicePresenceOnly`).
+    - 🔴 **THE WEAK TIER'S MESSAGE MUST KEEP SAYING WHAT IT DID NOT CHECK**
+      ("it did NOT check that the file is loaded"), and the strong tier's must
+      NOT carry that disclaimer. A check that changes strength SILENTLY between
+      project shapes is exactly how the false pass above shipped, so the
+      strength is part of the output, not an implementation detail.
+      `TestReadyAckAdvisoriesStateTheirOwnStrength` pins both directions.
+    - **THE DECIDABILITY BOUNDARY IS COMPLETENESS, NOT PROJECT TYPE.** The first
+      draft drew it at "does the manifest declare a `buildCommand`" — bundled
+      means undecidable — and that is wrong in both directions: an ordinary Vite
+      project resolves perfectly (index.html IS Vite's entry), while a
+      *no-build* project can still carry a specifier we cannot follow. So the
+      resolver reports `Complete`, and ANY reference it cannot account for
+      clears it: a bundler alias or other bare specifier that is not a declared
+      dependency, an off-project or protocol-relative URL, a path escaping the
+      project root, a reference resolving to a file that is not there, an
+      unreadable file, an exhausted budget. **A bare specifier naming a declared
+      npm dependency is ACCOUNTED FOR** — it is a package, not a file in this
+      project — which is the only reason a React app resolves at all; that is
+      why `packageDeps` returns the dependency NAMES alongside the ack verdict
+      from one read of package.json.
+    - 🔴 **A reference to a file that is NOT THERE is a GAP, not a decided
+      absence.** It is tempting to read it as "the browser 404s that, so it
+      cannot be the ack" — but a project that presumably builds having an
+      unresolvable reference means OUR MODEL is wrong, and a confident finding
+      built on a wrong model is the failure this item is about. It also keeps
+      two documented trades alive: deleting the emitter from a current scaffold
+      (dangling `<script src>`) drops to the presence tier, and the
+      `public/`-holds-a-stale-ack false negative in item 18 stays a false
+      negative instead of silently becoming a warning.
+    - **"Cannot observe" must not become "everything passes" either.** An
+      incomplete graph never produces a WIRING finding (item 10's doctrine), but
+      the presence finding still fires when nothing in the tree mentions the
+      message at all. The residual is stated rather than hidden: an unresolvable
+      graph PLUS the literal somewhere is silence — a false negative, the cheap
+      direction. And an UNOBSERVABLE tree scan (unreadable file, size cap, file
+      budget) gates BOTH tiers: a tree we could not read is not one we can draw
+      a wiring conclusion about.
+    - **Both tiers share the `readyAckSourceExts` gate.** A `.css` an entry
+      module imports really is loaded by the browser and really cannot implement
+      a handshake, so it is in the graph but is not ack evidence. Dropping that
+      gate on the graph scan was a mutant killed by a rendered page-vite fixture
+      with the literal in `src/index.css`.
+    - **Still a Warning, never an Error** — every reason in item 18 stands, and
+      the stronger tier does not change that: reachability is still inference
+      from static text, and `--strict` already gives anyone who wants a gate
+      one.
+    - **Measured, before (`e800129`) → after**, on pre-fix `static` and
+      `page-vite` projects: emitter copied but not wired
+      `silent rc=0 strict 0` → `WARN rc=0 strict 1`; orphan `BLOCK_READY` file
+      the same; properly wired → silent both; fresh `static` / `page-vite` /
+      `page-money` scaffolds → silent both. The harness carries a POSITIVE
+      CONTROL — a pre-fix project with no emitter warns on BOTH binaries — so
+      the silent cells are real false passes rather than a probe wired to
+      nothing.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
