@@ -64,12 +64,115 @@ func TestGenerate_EstimateWarnsAboutSubstitutionBeforeSpending(t *testing.T) {
 	if !strings.Contains(got, "unrecognized") {
 		t.Errorf("the server's raw reason token must be printed; got:\n%s", got)
 	}
-	// It must be framed as pre-spend, which is the whole point of warning here.
-	if !strings.Contains(got, "charged") {
-		t.Errorf("the estimate warning must say nothing has been charged yet; got:\n%s", got)
-	}
+	// 🔴 THE PHASE THE CALL SITE PASSES, asserted structurally. See assertPhase:
+	// the previous `Contains(got, "charged")` here was a SPELLED guard satisfied
+	// by the quote renderer's own "nothing was submitted and nothing was charged"
+	// line, so mutating this call site to substitutionAfterSubmit left the suite
+	// green while --dry-run announced "HAS BEEN CHARGED".
+	assertPhase(t, got, substitutionAtEstimate)
+
 	if s.submitCalls != 0 {
 		t.Errorf("a dry run must never submit; got %d", s.submitCalls)
+	}
+}
+
+// assertPhase pins WHICH phase a call site passed, by deriving the expected lead
+// from the phase constant itself and requiring the other phases' leads to be
+// ABSENT.
+//
+// 🔴 THIS IS THE STRUCTURAL FORM OF A GUARD THAT USED TO BE SPELLED. Matching a
+// word ("charged") could not distinguish the phases, and could be satisfied by an
+// unrelated line from a different renderer entirely. Deriving the text from the
+// constant means a wrong argument at a call site moves the expectation and fails.
+//
+// It refuses an EMPTY expected lead rather than passing vacuously — Contains(x,
+// "") is always true, which is exactly how an emptied lead survived before.
+func assertPhase(t *testing.T, got string, want substitutionPhase) {
+	t.Helper()
+
+	wantLead := substitutionLead(want)
+	if wantLead == "" {
+		t.Fatalf("phase %d has an EMPTY lead — every Contains() check against it would pass vacuously", want)
+	}
+	if !strings.Contains(got, wantLead) {
+		t.Errorf("output must carry the lead for phase %d:\n  want: %s\n  got:\n%s", want, wantLead, got)
+	}
+	for _, other := range []substitutionPhase{substitutionAtEstimate, substitutionAfterSubmit, substitutionOnRead} {
+		if other == want {
+			continue
+		}
+		if lead := substitutionLead(other); lead != "" && strings.Contains(got, lead) {
+			t.Errorf("output carries the lead for the WRONG phase %d (wanted %d):\n%s", other, want, got)
+		}
+	}
+}
+
+// 🔴 assertPhase is only meaningful if the three leads are non-empty and
+// PAIRWISE DISTINCT. If two collapse to the same text, assertPhase cannot tell
+// those phases apart and every call-site assertion using it goes quiet — the
+// harness-validation half of the guard.
+//
+// The audit killed three mutants here that nothing had covered: an EMPTY
+// substitutionOnRead lead, one identical to the post-submit lead, and — worst —
+// one carrying the PRE-SPEND framing, which made `civitai workflows get` tell a
+// user whose workflow was already billed that "Nothing has been submitted or
+// charged yet".
+func TestSubstitutionLead_AllPhasesNonEmptyAndPairwiseDistinct(t *testing.T) {
+	phases := map[string]substitutionPhase{
+		"atEstimate":  substitutionAtEstimate,
+		"afterSubmit": substitutionAfterSubmit,
+		"onRead":      substitutionOnRead,
+	}
+	seen := map[string]string{}
+	for name, p := range phases {
+		lead := substitutionLead(p)
+		if strings.TrimSpace(lead) == "" {
+			t.Fatalf("phase %s has an empty lead — assertions against it pass vacuously", name)
+		}
+		if prev, dup := seen[lead]; dup {
+			t.Errorf("phases %s and %s share an identical lead, so they are indistinguishable:\n%s", prev, name, lead)
+		}
+		seen[lead] = name
+	}
+
+	// ...and each must make the RIGHT claim about whether money already moved.
+	if !strings.Contains(substitutionLead(substitutionAtEstimate), "Nothing has been submitted or charged yet") {
+		t.Errorf("the estimate lead must state that nothing has been charged; got:\n%s", substitutionLead(substitutionAtEstimate))
+	}
+	for _, p := range []substitutionPhase{substitutionAfterSubmit, substitutionOnRead} {
+		lead := substitutionLead(p)
+		if !strings.Contains(lead, "CHARGED") {
+			t.Errorf("phase %d describes an already-billed generation and must say so; got:\n%s", p, lead)
+		}
+		// 🔴 The specific inversion the audit found: post-spend phases must NOT
+		// carry the pre-spend reassurance.
+		if strings.Contains(lead, "Nothing has been submitted or charged yet") {
+			t.Errorf("phase %d is post-spend but claims nothing was charged; got:\n%s", p, lead)
+		}
+	}
+}
+
+// The id line's VERB must follow the same split: on the estimate nothing has run
+// yet, so "ran version N" under "nothing has been charged yet" contradicts itself
+// on the one path where the user is still deciding whether to spend.
+func TestSubstitutionVerb_IsTensedByPhase(t *testing.T) {
+	var est bytes.Buffer
+	reportModelSubstitutions(&est, []genapi.ModelSubstitution{
+		{Requested: 1, Applied: 2, Reason: genapi.SubstitutionGated},
+	}, substitutionAtEstimate)
+	if !strings.Contains(est.String(), "will run version 2") {
+		t.Errorf("the estimate must use the future tense; got:\n%s", est.String())
+	}
+	if strings.Contains(est.String(), "ran version") {
+		t.Errorf("the estimate must not claim a model already ran; got:\n%s", est.String())
+	}
+
+	var done bytes.Buffer
+	reportModelSubstitutions(&done, []genapi.ModelSubstitution{
+		{Requested: 1, Applied: 2, Reason: genapi.SubstitutionGated},
+	}, substitutionAfterSubmit)
+	if !strings.Contains(done.String(), "ran version 2") {
+		t.Errorf("the post-submit line must use the past tense; got:\n%s", done.String())
 	}
 }
 
@@ -241,9 +344,10 @@ func TestGenerate_SubmitReplySubstitutionIsReported(t *testing.T) {
 	if !strings.Contains(got, "555") || !strings.Contains(got, "666") {
 		t.Errorf("the submit reply's substitution must be reported; got:\n%s", got)
 	}
-	if !strings.Contains(got, "HAS BEEN CHARGED") {
-		t.Errorf("post-submit the user must be told the charge already happened; got:\n%s", got)
-	}
+	// 🔴 The phase this call site passes, pinned structurally. The estimate in
+	// this run reports nothing, so the ONLY lead present must be the post-submit
+	// one — which is what fails if the argument is swapped.
+	assertPhase(t, got, substitutionAfterSubmit)
 }
 
 // The same record arriving ONLY under `metadata` — the shape a later read has —
@@ -336,6 +440,67 @@ func TestGenerate_FailOnSubstitutionRefusesAndNeverSubmits(t *testing.T) {
 	}
 }
 
+// 🔴 THE REFUSAL MESSAGE'S OPERANDS, PINNED. All three of these survived an
+// audit's mutation battery:
+//
+//	(a) swapping Applied/Requested — the money-refusal line then stated the
+//	    substitution BACKWARDS, naming the model the caller wanted as the one
+//	    that would run;
+//	(b) subs[0] -> subs[len(subs)-1] — it named a different swap entirely;
+//	(c) an off-by-one in "(and %d more)".
+//
+// The fixtures are pairwise distinct on every field so no two operands can be
+// confused for one another.
+func TestSubstitutionRefusal_MessageOperandsAreCorrect(t *testing.T) {
+	o := baseOpts()
+	o.failOnSubstitution = true
+	subs := []genapi.ModelSubstitution{
+		{Requested: 111, Applied: 222, Reason: genapi.SubstitutionGated},
+		{Requested: 333, Applied: 444, Reason: genapi.SubstitutionUnrecognized},
+		{Requested: 555, Applied: 666, Reason: genapi.SubstitutionWrongWorkflow},
+	}
+
+	err := substitutionRefusal(o, subs)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	msg := err.Error()
+
+	// (a) APPLIED is what would run; REQUESTED is what was asked for. The whole
+	// phrase is asserted, so a swap cannot satisfy it by containing both numbers.
+	if !strings.Contains(msg, "would run version 222 instead of the version 111 you asked for") {
+		t.Errorf("applied/requested are swapped or mangled; got:\n%s", msg)
+	}
+	// (b) It must name the FIRST record, not the last.
+	if strings.Contains(msg, "666") || strings.Contains(msg, "555") {
+		t.Errorf("the refusal named a record other than the first; got:\n%s", msg)
+	}
+	// (c) 3 records -> "(and 2 more)".
+	if !strings.Contains(msg, "(and 2 more)") {
+		t.Errorf("the overflow count is wrong (3 records means 2 more); got:\n%s", msg)
+	}
+	// ...and the first record's reason, not another's.
+	if !strings.Contains(msg, genapi.SubstitutionGated) {
+		t.Errorf("the refusal must carry the first record's reason; got:\n%s", msg)
+	}
+}
+
+// The overflow clause must be ABSENT for a single record — "(and 0 more)" is the
+// other half of the off-by-one.
+func TestSubstitutionRefusal_SingleRecordHasNoOverflowClause(t *testing.T) {
+	o := baseOpts()
+	o.failOnSubstitution = true
+	err := substitutionRefusal(o, []genapi.ModelSubstitution{
+		{Requested: 111, Applied: 222, Reason: genapi.SubstitutionGated},
+	})
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if strings.Contains(err.Error(), "more)") {
+		t.Errorf("a single record must not print an overflow clause; got:\n%s", err.Error())
+	}
+}
+
 // POSITIVE CONTROL for the zero above: the SAME counter, through the SAME deps,
 // reaches 1 when the flag is off. Without this, "0 submits" could mean a broken
 // harness.
@@ -356,6 +521,57 @@ func TestGenerate_FailOnSubstitutionOffStillSubmits(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "requested version") {
 		t.Errorf("the default path must still WARN; got:\n%s", errb.String())
+	}
+	// 🔴 runGenerate must actually CALL substitutionFlagHint. Deleting that call
+	// site survived the whole suite: the hint function had its own unit test, but
+	// nothing asserted anyone invoked it — the seam, not the component.
+	if !strings.Contains(errb.String(), "--fail-on-substitution") {
+		t.Errorf("runGenerate must emit the flag hint on the default path; got:\n%s", errb.String())
+	}
+}
+
+// 🔴 THE FLAG'S HELP MUST DISCLOSE THAT ITS GUARANTEE IS SERVER-CONDITIONAL.
+// Against a server that does not report substitutions the flag is silently inert
+// — exit 0, submitted, charged (verified). Someone adopting it as a spend guard
+// against an older deployment gets no protection and no signal, so the usage
+// string has to say so rather than promising an unconditional refusal.
+func TestFailOnSubstitutionFlag_HelpStatesItIsNotAGuarantee(t *testing.T) {
+	f := newGenerateCmd().Flags().Lookup("fail-on-substitution")
+	if f == nil {
+		t.Fatal("--fail-on-substitution is not registered")
+	}
+	usage := f.Usage
+	for _, want := range []string{"NOT A GUARANTEE", "inert"} {
+		if !strings.Contains(usage, want) {
+			t.Errorf("the usage string must disclose the server-version condition (missing %q); got:\n%s", want, usage)
+		}
+	}
+	// It must still say what the flag DOES.
+	if !strings.Contains(usage, "ESTIMATE") {
+		t.Errorf("the usage string must still say the check runs against the estimate; got:\n%s", usage)
+	}
+}
+
+// 🔴 THE INERTNESS ITSELF, DRIVEN. Against a reply with no record the flag must
+// NOT refuse — the run proceeds and is charged. This is the documented
+// limitation, pinned so it cannot be mistaken for a bug later, and so the help
+// text above is describing real behaviour rather than a guess.
+func TestGenerate_FailOnSubstitutionIsInertAgainstAnOldServer(t *testing.T) {
+	withStdinTTY(t, false)
+	var s genSeams // default quote: no modelSubstitutions key at all
+	o := baseOpts()
+	o.assumeYes = true
+	o.failOnSubstitution = true
+
+	c, _, errb := genCmd("")
+	if err := runGenerate(c, s.deps(t), o); err != nil {
+		t.Fatalf("an older server must not trip the flag: %v", err)
+	}
+	if s.submitCalls != 1 {
+		t.Errorf("the run must proceed and be charged; got %d submits", s.submitCalls)
+	}
+	if strings.Contains(errb.String(), "requested version") {
+		t.Errorf("nothing may be reported when the server sent no record; got:\n%s", errb.String())
 	}
 }
 
@@ -414,6 +630,11 @@ func TestPrintWorkflow_ReportsPersistedSubstitution(t *testing.T) {
 	if !strings.Contains(got, "11") || !strings.Contains(got, "22") {
 		t.Errorf("a persisted substitution must be reported on read-back; got:\n%s", got)
 	}
+	// 🔴 `workflows get` reads an ALREADY-BILLED workflow, so it must never carry
+	// the pre-spend framing. Mutating this call site to substitutionAtEstimate
+	// survived the whole suite and made this command tell a user whose generation
+	// was already charged that "Nothing has been submitted or charged yet".
+	assertPhase(t, got, substitutionOnRead)
 }
 
 // ...and a workflow without one prints no block and makes no claim.

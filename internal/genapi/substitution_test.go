@@ -108,6 +108,25 @@ func TestSubmit_FallsBackToMetadataWhenTopLevelAbsent(t *testing.T) {
 	}
 }
 
+// 🔴 ABSENT vs EMPTY at the top level. An EMPTY top-level array is not a record,
+// so the metadata copy must still be consulted. This distinguishes `len(...) > 0`
+// from `!= nil`: the `!= nil` mutant returns the empty slice and reports NOTHING,
+// and it survived the suite until this test existed — the behaviour was
+// implemented correctly and asserted nowhere.
+func TestSubmit_EmptyTopLevelArrayStillFallsBackToMetadata(t *testing.T) {
+	r := &SubmitResult{
+		ID:                 "wf_1",
+		ModelSubstitutions: []ModelSubstitution{}, // present, non-nil, EMPTY
+		Metadata: &substitutionMetadata{ModelSubstitutions: []ModelSubstitution{
+			{Requested: 9, Applied: 10, Reason: SubstitutionGated},
+		}},
+	}
+	subs := r.Substitutions()
+	if len(subs) != 1 || subs[0].Requested != 9 {
+		t.Fatalf("an empty top-level array must not suppress the metadata record; got %+v", subs)
+	}
+}
+
 // POSITIVE CONTROL for the precedence rule: when the two copies DISAGREE, the
 // top-level one must win. Without this, a Substitutions() that simply returned
 // the metadata copy would pass every test above.

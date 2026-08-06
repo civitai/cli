@@ -100,6 +100,11 @@ func (r *SubmitResult) Substitutions() []ModelSubstitution {
 	if r == nil {
 		return nil
 	}
+	// 🔴 len() > 0, NOT != nil. A top-level key decoded as an EMPTY array is not a
+	// record — falling back to metadata is what surfaces the swap. `!= nil` would
+	// return the empty slice and report nothing, and that mutation survived the
+	// suite until it was pinned: absent-vs-empty was implemented correctly here
+	// and asserted nowhere.
 	if len(r.ModelSubstitutions) > 0 {
 		return r.ModelSubstitutions
 	}

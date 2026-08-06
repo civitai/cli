@@ -402,10 +402,17 @@ interpreted, so nothing in it is checked before you pay for it.`,
 	// nothing. See AGENTS.md item 20.
 	//
 	// NOTE: no back-quotes in this usage string — see the note above.
+	// 🔴 THE USAGE STRING MUST STATE THE SERVER-VERSION CONDITION. This flag can
+	// only refuse what the server REPORTS, and a server predating the report omits
+	// the field entirely — so against an older deployment the flag is silently
+	// inert: exit 0, submitted, charged. Someone adopting it as a spend guard
+	// deserves to read that here rather than discover it from a bill.
 	cmd.Flags().BoolVar(&o.failOnSubstitution, "fail-on-substitution", false,
-		"refuse to submit if the server reports it substituted a different checkpoint for the one you asked for. "+
+		"refuse to submit if the server REPORTS it substituted a different checkpoint for the one you asked for. "+
 			"Checked against the ESTIMATE, so nothing is spent when it refuses. Off by default: the server substitutes "+
-			"deliberately so that a script pinned to a retired version keeps working")
+			"deliberately so that a script pinned to a retired version keeps working. "+
+			"NOT A GUARANTEE: a server that does not report substitutions makes this flag silently inert, so it "+
+			"cannot be relied on as a spend guard against an older deployment")
 
 	// NOTE: no back-quotes in ANY usage string here — pflag's UnquoteUsage
 	// treats the first back-quoted span as the flag's VALUE NAME. Quoting a

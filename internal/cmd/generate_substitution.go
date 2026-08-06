@@ -97,29 +97,60 @@ func reportModelSubstitutions(errw io.Writer, subs []genapi.ModelSubstitution, p
 	if len(subs) == 0 {
 		return
 	}
-	st := ui.For(errw)
-
-	var lead string
-	switch phase {
-	case substitutionAtEstimate:
-		lead = "The server will NOT use the checkpoint you asked for. It has substituted a different model, " +
-			"and the estimate below prices the SUBSTITUTE. Nothing has been submitted or charged yet."
-	case substitutionAfterSubmit:
-		lead = "The server did NOT use the checkpoint you asked for. It substituted a different model and " +
-			"this generation HAS BEEN CHARGED for the model that actually ran."
-	case substitutionOnRead:
-		lead = "The server did not use the checkpoint that was requested for this workflow. It substituted a " +
-			"different model, and the charge was for the model that actually ran."
-	}
-	fmt.Fprintln(errw, st.Warn(lead))
+	fmt.Fprintln(errw, ui.For(errw).Warn(substitutionLead(phase)))
 
 	for _, s := range subs {
 		// The ids are ints, so they cannot carry terminal escapes; the reason is a
 		// server-supplied STRING and goes through safeTerm like every other one.
-		fmt.Fprintf(errw, "    requested version %d -> ran version %d  (reason: %s)\n",
-			s.Requested, s.Applied, safeTerm(s.Reason))
+		//
+		// 🔴 The VERB is phase-dependent. On the estimate nothing has run yet, so
+		// "ran version N" under a lead that says "nothing has been charged yet" is
+		// self-contradictory on the one path where the user is deciding whether to
+		// spend.
+		fmt.Fprintf(errw, "    requested version %d -> %s version %d  (reason: %s)\n",
+			s.Requested, substitutionVerb(phase), s.Applied, safeTerm(s.Reason))
 		fmt.Fprintf(errw, "      %s\n", substitutionAdvice(s.Reason))
 	}
+}
+
+// substitutionLead is the phase's lead sentence — the part that says whether the
+// money has already moved.
+//
+// 🔴 IT IS A FUNCTION OF THE PHASE CONSTANT SO A TEST CAN ASSERT THE STATE
+// RATHER THAN SPELL A WORD. An earlier test checked `Contains(out, "charged")`
+// to prove the estimate call site passed substitutionAtEstimate. That is a
+// SPELLED guard, and it was satisfied by an unrelated pre-existing line ("…
+// nothing was submitted and nothing was charged") printed by the quote renderer
+// — so mutating the call site to substitutionAfterSubmit left the whole suite
+// green while `--dry-run` told the user "this generation HAS BEEN CHARGED".
+// Deriving the expected text from the constant makes a wrong argument at a call
+// site fail, because the assertion moves with the phase instead of matching a
+// word another line can also spell.
+//
+// A phase with no case returns "", which substitutionLeadsAreDistinct rejects —
+// an empty lead would make every Contains() check pass vacuously.
+func substitutionLead(phase substitutionPhase) string {
+	switch phase {
+	case substitutionAtEstimate:
+		return "The server will NOT use the checkpoint you asked for. It has substituted a different model, " +
+			"and the estimate below prices the SUBSTITUTE. Nothing has been submitted or charged yet."
+	case substitutionAfterSubmit:
+		return "The server did NOT use the checkpoint you asked for. It substituted a different model and " +
+			"this generation HAS BEEN CHARGED for the model that actually ran."
+	case substitutionOnRead:
+		return "The server did not use the checkpoint that was requested for this workflow. It substituted a " +
+			"different model, and it was CHARGED for the model that actually ran."
+	}
+	return ""
+}
+
+// substitutionVerb is the tense of the id line, which follows the same
+// already-spent/not-yet-spent split as the lead.
+func substitutionVerb(phase substitutionPhase) string {
+	if phase == substitutionAtEstimate {
+		return "will run"
+	}
+	return "ran"
 }
 
 // substitutionFlagHint suggests --fail-on-substitution, and ONLY when the caller
@@ -157,13 +188,22 @@ func substitutionRefusal(o generateOpts, subs []genapi.ModelSubstitution) error 
 	if !o.failOnSubstitution || len(subs) == 0 {
 		return nil
 	}
+	// 🔴 subs[0], and the count is len-1 because the FIRST one is the one named.
+	// Both were unpinned until an audit mutated them: `subs[len(subs)-1]` and an
+	// off-by-one `(and %d more)` each survived the whole suite.
 	first := subs[0]
 	detail := ""
-	if len(subs) > 1 {
-		detail = fmt.Sprintf(" (and %d more)", len(subs)-1)
+	if rest := len(subs) - 1; rest > 0 {
+		detail = fmt.Sprintf(" (and %d more)", rest)
 	}
 	// Tagged so a script pins the kind with errors.Is rather than matching this
 	// text, which is free to change.
+	//
+	// 🔴 OPERAND ORDER IS LOAD-BEARING AND WAS UNPINNED: APPLIED first ("would
+	// run"), REQUESTED second ("you asked for"). Swapping them survived the whole
+	// suite and made the money-refusal line state the substitution BACKWARDS,
+	// which is worse than not printing it — it names the model the caller wanted
+	// as the one that would run.
 	return civitai.Tag(ErrModelSubstituted, fmt.Errorf(
 		"refusing to submit: the server reports it would run version %d instead of the version %d you asked for%s (reason: %s) — "+
 			"nothing was submitted and nothing was charged. Pin a version this workflow offers, or drop --fail-on-substitution to run with the substitute",

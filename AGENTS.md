@@ -997,6 +997,31 @@ neither one's.
     newer server must not make the CLI go quiet, which is the original defect
     reintroduced via a `switch`.
 
+    (f) 🔴 **The PHASE a call site passes is part of the contract, and asserting
+    it by keyword does NOT work.** `reportModelSubstitutions` takes a
+    `substitutionPhase`, and the difference between them is whether the money has
+    already moved — so a wrong argument makes `--dry-run` announce "HAS BEEN
+    CHARGED", or makes `workflows get` tell someone whose workflow was billed that
+    "Nothing has been submitted or charged yet". A test asserting
+    `Contains(out, "charged")` cannot see any of that: it was satisfied by an
+    unrelated line from the *quote* renderer, so every call-site mutation survived
+    a green suite. Assert the phase STRUCTURALLY — derive the expected lead from
+    the constant via `substitutionLead(phase)` and require the other phases' leads
+    to be ABSENT (`assertPhase` in generate_substitution_test.go), and keep
+    `TestSubstitutionLead_AllPhasesNonEmptyAndPairwiseDistinct`, because an empty
+    or duplicated lead silently disarms every one of those assertions
+    (`Contains(x, "")` is always true).
+
+    (g) 🔴 **A mutation matrix scoped to the renderer proves nothing about the
+    call sites.** The first round of this feature reported 17/17 mutants killed
+    and was still missing all of the above: every mutant targeted
+    `reportModelSubstitutions`/`substitutionRefusal` internals, so the ARGUMENTS
+    passed to them, the third phase, and the refusal message's operand ORDER were
+    structurally outside the battery. A second, independently-built battery found
+    11 survivors — including a swap of `Applied`/`Requested` that made the
+    money-refusal line state the substitution backwards. When you mutation-test a
+    reporter, mutate the CALL SITES too, not just the function.
+
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
 the slot registry), the Vite dotenv resolution behind the dev-tunnel parent-origin
