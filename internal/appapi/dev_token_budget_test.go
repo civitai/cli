@@ -54,7 +54,7 @@ func TestMintDevTokenBudgetWireShape(t *testing.T) {
 			srv := budgetRecorder(t, &raw)
 			defer srv.Close()
 
-			if _, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil, tc.budget); err != nil {
+			if _, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil, tc.budget, false); err != nil {
 				t.Fatalf("MintDevToken: %v", err)
 			}
 			var generic map[string]any
@@ -85,7 +85,7 @@ func TestMintDevTokenBudgetIsIndependentOfScopes(t *testing.T) {
 
 	n := 200
 	if _, err := New(srv.URL, "tok", "").MintDevToken(
-		context.Background(), "my-block", []string{"ai:write:budgeted"}, &n); err != nil {
+		context.Background(), "my-block", []string{"ai:write:budgeted"}, &n, true); err != nil {
 		t.Fatalf("MintDevToken: %v", err)
 	}
 	var body struct {
@@ -174,7 +174,7 @@ func TestMintDevToken400SurfacesServerMessage(t *testing.T) {
 				_, _ = w.Write([]byte(tc.body))
 			}))
 			defer srv.Close()
-			_, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil, nil)
+			_, err := New(srv.URL, "tok", "").MintDevToken(context.Background(), "my-block", nil, nil, false)
 			if err == nil {
 				t.Fatal("expected a 400 error")
 			}

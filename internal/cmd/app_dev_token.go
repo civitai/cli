@@ -77,14 +77,25 @@ const selfReadScope = "user:read:self"
 // force-granted `user:read:self` keeps the narrowing expressible while adding no
 // capability the token would not have had anyway.
 //
-// 🔴 WHAT THIS DOES NOT CLOSE. With NO local manifest the CLI sends no `scopes`
-// field and the server resolves spend from the bearer. That case is not
-// expressible client-side: `scopes` is an intersection allow-list whose only
-// sentinel is "absent ⇒ server decides", so "everything you would grant me,
-// minus spend" cannot be written — enumerating a grant set the CLI does not know
-// would silently strip storage/collections/etc. Closing it belongs on the server
-// (it knows the full grant set) and is tracked as civitai/civitai#3703. Do not
-// describe this function as making a `--scopes generate` login unable to spend.
+// 🔴 WHAT THIS FUNCTION DOES NOT DO. With NO local manifest the CLI sends no
+// `scopes` field, and that case is not expressible through this list at all:
+// `scopes` is an intersection allow-list whose only sentinel is "absent ⇒ server
+// decides", so "everything you would grant me, minus spend" cannot be written —
+// enumerating a grant set the CLI does not know would silently strip
+// storage/collections/etc. That gap is why the request ALSO carries a separate
+// spend-intent field (devTokenBody.RequestBudgetedSpend, civitai/civitai#3703
+// step 1), which says the same thing without enumerating anything.
+//
+// 🔴 THE TWO MECHANISMS ARE COMPLEMENTARY AND MUST AGREE. The narrowing here is
+// what works against a server that has not flipped its `?? true` default; the
+// field is what works after. Both are derived from the SAME `spend` bool in
+// newAppDevTokenCmd, and the invariant they owe each other is a biconditional:
+// the body's requestBudgetedSpend is true if and only if the scopes list
+// contains `ai:write:budgeted` (an absent list contains nothing). Never one
+// asking for spend while the other strips it.
+//
+// Do not describe this function as making a `--scopes generate` login unable to
+// spend.
 func devTokenRequestScopes(manifestScopes []string, spend bool) []string {
 	if spend {
 		for _, s := range manifestScopes {
@@ -285,18 +296,21 @@ The minted token's CAPABILITIES depend on the credential you mint with:
     READ/IDENTITY-ONLY dev token (no spend) — dev:live shows your viewer +
     catalog/storage, but estimate → submit → generation will NOT spend.
 
---spend is the explicit affirmation that this token may spend real Buzz: it adds
-ai:write:budgeted to the scopes REQUESTED from the mint route. The server still
-clamps against your credential, so --spend cannot grant what your credential
-lacks.
+--spend is the explicit affirmation that this token may spend real Buzz. It does
+two things to the request: it adds ai:write:budgeted to the scopes REQUESTED from
+the mint route, and it sets the request's spend-intent field (requestBudgetedSpend)
+to true. The server still clamps against your credential, so --spend cannot grant
+what your credential lacks.
 
 WITHOUT --spend the CLI never requests budgeted spend implicitly: if your
 block.manifest.json declares ai:write:budgeted it is FILTERED OUT of the request
 (the command tells you when that happens). The scaffolded money app declares it,
 so a live run that used to generate now needs --spend — otherwise dev:live
 refuses with "block lacks ai:write:budgeted scope". Every other manifest scope is
-requested unchanged. With no local manifest the CLI sends no scopes at all and
-the server resolves spend from your credential, as before.
+requested unchanged. With no local manifest the CLI sends no scopes at all —
+independently of that, EVERY mint now states its spend intent explicitly, since
+requestBudgetedSpend is always present on the request and is true only with
+--spend.
 
 Pre-GA the mint route is invite-only. You do NOT need to submit the app
 first — for a brand-new slug with no app row yet, the token is minted from the
@@ -369,8 +383,18 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 			errOut := cmd.ErrOrStderr()
 
 			// --spend is the EXPLICIT affirmation that this token may spend real
-			// Buzz. Without it the request is unchanged from today (see
-			// devTokenRequestScopes for why the default does not narrow).
+			// Buzz, and it drives BOTH halves of the request:
+			//
+			//   - the `scopes` narrowing (devTokenRequestScopes), which works
+			//     against a server that has not flipped its default, and
+			//   - the `requestBudgetedSpend` field passed to MintDevToken below,
+			//     which states the intent outright.
+			//
+			// 🔴 ONE VARIABLE FEEDS BOTH, and that is the point: the two must
+			// never disagree (a body asking for spend while the scopes strip it,
+			// or the reverse). Do not compute either from anything but `spend` —
+			// TestAppDevTokenSpendIntentAndScopesAgree pins the relationship on
+			// the wire across the whole manifest × flag matrix.
 			scopes := devTokenRequestScopes(manifestScopes, spend)
 			if spendNarrowsToBudgetedOnly(manifestScopes, spend) {
 				fmt.Fprintln(errOut, spendNarrowingNotice(ui.For(errOut)))
@@ -380,7 +404,7 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 			if spendFilteredFromManifest(manifestScopes, spend) {
 				fmt.Fprintln(errOut, spendFilteredNotice(ui.For(errOut), slug))
 			}
-			token, slug, err := mintDevTokenWithRename(context.Background(), client, errOut, ".", slug, scopes, buzzBudget)
+			token, slug, err := mintDevTokenWithRename(context.Background(), client, errOut, ".", slug, scopes, buzzBudget, spend)
 			if err != nil {
 				return err
 			}
@@ -417,8 +441,9 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 	cmd.Flags().BoolVar(&envOut, "env", false, "print VITE_LIVE_BLOCK_TOKEN=<token> (paste-ready into .env.development.local)")
 	cmd.Flags().BoolVar(&spend, "spend", false,
 		"explicitly REQUEST the "+budgetedScope+" scope so npm run dev:live can spend REAL Buzz. "+
-			"Omit it and that scope is FILTERED OUT of the request — the CLI never asks for "+
-			"budgeted spend implicitly, even when your "+manifest.Filename+" declares it")
+			"Omit it and that scope is FILTERED OUT of the request and the request's spend-intent "+
+			"field states false — the CLI never asks for budgeted spend implicitly, even when your "+
+			manifest.Filename+" declares it")
 	cmd.Flags().IntVar(&budget, "budget", 0, fmt.Sprintf(
 		"per-generation Buzz budget the token may spend (%d-%d; omit to let the server decide — %d for an unsubmitted app). Must clear your recipe's ceiling; for inline customComfy it is ALSO the step timeout in seconds",
 		appapi.DevBuzzBudgetMin, appapi.DevBuzzBudgetCap, appapi.DevBuzzBudgetDefault))
@@ -436,13 +461,14 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 // otherwise); any non-collision error, or a collision with no manifest, is
 // surfaced verbatim without a rename.
 //
-// buzzBudget is carried through every retry unchanged (nil = not requested): a
-// rename changes which slug is minted for, never what the developer asked the
-// token to be able to spend.
-func mintDevTokenWithRename(ctx context.Context, client *appapi.Client, errOut io.Writer, dir, slug string, scopes []string, buzzBudget *int) (string, string, error) {
+// buzzBudget and requestBudgetedSpend are carried through every retry unchanged
+// (nil = budget not requested; the spend intent is always stated): a rename
+// changes which slug is minted for, never what the developer asked the token to
+// be able to spend.
+func mintDevTokenWithRename(ctx context.Context, client *appapi.Client, errOut io.Writer, dir, slug string, scopes []string, buzzBudget *int, requestBudgetedSpend bool) (string, string, error) {
 	original := slug
 	for attempt := 0; ; attempt++ {
-		token, err := client.MintDevToken(ctx, slug, scopes, buzzBudget)
+		token, err := client.MintDevToken(ctx, slug, scopes, buzzBudget, requestBudgetedSpend)
 		if err == nil {
 			return token, slug, nil
 		}
