@@ -53,6 +53,22 @@ func TestScanDir(t *testing.T) {
 			wantFile:  "README.md",
 			wantInMsg: "civitai app",
 		},
+		{
+			// The pre-#206 page template shape: an app that sizes itself to
+			// content on a surface that does not size to content.
+			name:      "RESIZE_IFRAME posted from a page app fails",
+			dir:       "resize-iframe",
+			wantRule:  "resize-iframe-page",
+			wantFile:  "App.jsx",
+			wantInMsg: "BLOCK_READY",
+		},
+		{
+			// The false-positive direction, which matters more: docs that TELL an
+			// author not to post RESIZE_IFRAME must not be flagged for saying so,
+			// and neither must an app whose only host message is the ready ack.
+			name: "docs naming RESIZE_IFRAME in backticks are not flagged",
+			dir:  "resize-iframe-doc",
+		},
 	}
 
 	for _, tt := range tests {
@@ -151,6 +167,47 @@ func TestBlocksCliBoundary(t *testing.T) {
 		{`import x from '@civitai/blocks-client';`, false},
 		{`"@civitai/blocks-client": "^1.0.0"`, false},
 		{`@civitai/blocks-client-utils`, false},
+	}
+	for _, c := range cases {
+		if got := rule.Pattern.MatchString(c.line); got != c.want {
+			t.Errorf("match(%q) = %v, want %v (pattern %s)", c.line, got, c.want, rule.Pattern)
+		}
+	}
+}
+
+// TestResizeIframeBoundary is the resize-iframe-page rule's control pair. The
+// rule exists to catch a DEAD HOST MESSAGE, and the population it must never
+// touch is prose: this repo's own README and both scaffold READMEs discuss
+// `RESIZE_IFRAME` by name precisely to tell authors not to post it, and a gate
+// that fails the documentation of its own rule is a false positive at a correct
+// project.
+func TestResizeIframeBoundary(t *testing.T) {
+	var rule Rule
+	for _, r := range Rules() {
+		if r.ID == "resize-iframe-page" {
+			rule = r
+		}
+	}
+	if rule.Pattern == nil {
+		t.Fatal("resize-iframe-page rule not found")
+	}
+
+	cases := []struct {
+		line string
+		want bool
+	}{
+		// The real emitting shapes, single- and double-quoted.
+		{`window.parent.postMessage({ type: 'RESIZE_IFRAME', height: h }, '*');`, true},
+		{`window.parent.postMessage({ type: "RESIZE_IFRAME", height: h }, "*");`, true},
+		{`if (msg.type === 'RESIZE_IFRAME') return;`, true},
+		{`const RESIZE = 'RESIZE_IFRAME';`, true},
+		// Prose — the direction that must stay silent.
+		{"`RESIZE_IFRAME` is **not** part of a page app's protocol.", false},
+		{"Do not post RESIZE_IFRAME from a page app.", false},
+		{`// RESIZE_IFRAME is N/A for PageBlockHost — do not send it.`, false},
+		// Neighbouring identifiers must not be dragged in.
+		{`useBlockResize();`, false},
+		{`"description": "Whether the host honours RESIZE_IFRAME messages."`, false},
 	}
 	for _, c := range cases {
 		if got := rule.Pattern.MatchString(c.line); got != c.want {

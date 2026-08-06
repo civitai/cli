@@ -145,6 +145,14 @@ func validateDir(dir string, projectState bool) (Result, error) {
 		lockErrs, lockWarns := lockfileChecks(dir, m)
 		res.Errors = append(res.Errors, lockErrs...)
 		res.Warnings = append(res.Warnings, lockWarns...)
+
+		// Project state: a `page` app whose source never posts BLOCK_READY is
+		// invisible in the real host (issue #206). ADVISORY, not fatal — it
+		// infers runtime behaviour from static text and can be wrong. It lives
+		// HERE rather than in warningChecks because it reads src/, and
+		// warningChecks also runs under ManifestOnly, where `civitai app init`
+		// self-checks a template it just wrote. See readyack.go.
+		res.Warnings = append(res.Warnings, readyAckChecks(dir, generic, m)...)
 	}
 
 	// Non-fatal advisories: real money-path footguns the schema can't catch as

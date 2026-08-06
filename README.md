@@ -282,7 +282,9 @@ Two rules it encodes, which apply to every message you add afterwards:
 page block full-viewport, so it does not size to content and ignores the
 message. (`useBlockResize` is surface-agnostic and page-money still calls it —
 on a page surface it is simply a no-op, which is why the SDK templates can share
-component code across surfaces.)
+component code across surfaces.) A **raw** `postMessage` of `RESIZE_IFRAME` is
+flagged by the scaffold-currency gate as dead code — the pre-#206 templates
+demoed it, so a project scaffolded before that fix still carries it.
 
 ### Local dev loop (harness: mock vs live)
 
@@ -619,6 +621,30 @@ fallback — so `"buildCommand": "pnpm run build"` needs `pnpm-lock.yaml`,
 mismatch or a missing lockfile is a hard `validate` error; an *extra* unused
 lockfile is a warning. Apps with no `package.json` are static — the platform
 never installs for them and they are never flagged.
+
+Finally it emits one **advisory** about the
+[host handshake](#the-host-handshake-block_ready): if your manifest declares a
+`page` surface and **nothing in your source posts `BLOCK_READY`**, `validate`
+says so. That is the shape of an app scaffolded before the templates were fixed
+(#206) — it renders perfectly everywhere you can look locally and is replaced by
+a failure card in the real host. It is a **warning, never an error**: unlike the
+lockfile rule (where the platform build provably dies), this one infers
+*runtime* behaviour from *static text* and can be wrong, so it must not fail a
+correct project. Two things follow:
+
+- **An `@civitai/*` dependency ends the check.** `@civitai/blocks-react`'s
+  transport acks internally and the literal never appears in your `src/`, so a
+  `page-money` app is never flagged.
+- **It reads source only** — never `outputDir` (not built yet, and gitignored),
+  never `node_modules`, and never a `.md` file: a README *describing* the
+  handshake is not an implementation of it. Comments are stripped too, so a
+  comment naming `BLOCK_READY` does not satisfy it.
+
+If it fires on a project you know is correct — your ack arrives from a bundled
+dependency, or from a file type this scan doesn't open — it is a false alarm, and
+it never blocks (exit 0) unless you pass `--strict`. What it proves is narrow:
+that the message is *mentioned* in code. It cannot prove the ack ever **fires**;
+only the real host can.
 
 The **durable fix** is a server-side `civitai app validate` endpoint that calls
 the real `BlockManifestValidator` (the faithful contract), with this schema

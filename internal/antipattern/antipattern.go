@@ -38,6 +38,12 @@
 // Flagging any of those would false-fail a correct scaffold, so they are
 // deliberately absent from the denylist. We only flag routes that are REMOVED or
 // whose bridge has fully superseded the REST shape (buzz, shared-storage).
+//
+// A SECOND FAMILY: DEAD HOST MESSAGES. The denylist is not only about REST. The
+// same "compiles, installs, ships an app that is broken or inert" failure has a
+// postMessage shape: a block -> host message type the page host does not handle.
+// `RESIZE_IFRAME` is the first of those (see the rule below) — the raw page
+// templates demoed it until #206, and on a `page` surface the host marks it N/A.
 package antipattern
 
 import (
@@ -104,6 +110,36 @@ func Rules() []Rule {
 			What:        "reference to the deprecated @civitai/blocks-cli npm package",
 			Pattern:     regexp.MustCompile("@civitai/blocks-cli(?:[@/'\"\\x60\\s),;]|$)"),
 			Replacement: "use the Go civitai CLI (`civitai app <init|submit>`); the @civitai/blocks-cli npm package is deprecated",
+		},
+		{
+			// DEAD MESSAGE (not a route). `hostHandlerParity.ts` marks
+			// RESIZE_IFRAME **N/A for PageBlockHost** — "a page block fills the
+			// surface and does NOT size to content" — so a page app that posts it
+			// is posting into a handler that does not exist. It is inert rather
+			// than broken, which is exactly why it survives every local check and
+			// teaches the next message the author writes to look like this one.
+			// Both raw page templates demoed it until #206 removed them; anything
+			// scaffolded before that still carries it.
+			//
+			// SCOPE (read before widening): this package scans SCAFFOLDED APP
+			// TREES, and every template this CLI ships declares a `page` surface
+			// (scaffold.Template.ReadyAckPath's doc, and the manifest evidence in
+			// ready_ack_contract_test.go). The rule therefore assumes a page
+			// surface rather than reading the manifest — Rule is a per-line regex
+			// with no manifest context by construction. If a non-page (model-slot)
+			// template ever ships, this rule needs manifest awareness, because
+			// RESIZE_IFRAME is honoured on the surfaces that DO size to content.
+			//
+			// The pattern requires a MATCHING ' or " pair, deliberately excluding
+			// the backtick form. Prose discusses this message by name in markdown
+			// backticks — our own scaffold READMEs will say "don't post
+			// RESIZE_IFRAME" — and flagging the doc that tells an author not to
+			// use it is a false positive at a correct project. A JS template
+			// literal for a constant message type is the (vanishingly rare) cost.
+			ID:          "resize-iframe-page",
+			What:        "postMessage of RESIZE_IFRAME, which the page host does not handle",
+			Pattern:     regexp.MustCompile(`'RESIZE_IFRAME'|"RESIZE_IFRAME"`),
+			Replacement: "delete it — hostHandlerParity.ts marks RESIZE_IFRAME N/A for PageBlockHost (a page block fills the host surface and does NOT size to content), so the message is dead code. The one message a page app must send is BLOCK_READY: keep the vendored civitai-host.js emitter `civitai app init` ships, or adopt @civitai/blocks-react (whose transport acks internally) — never both",
 		},
 	}
 }

@@ -154,7 +154,9 @@ func newWhoAmICmd() *cobra.Command {
 
 Items 1–3, 10 and 11 are deliberate mirrors of the platform (items 4 and 8 are
 deliberate *non*-mirrors); items 5–9 cover `civitai app metrics`, the CLI's only
-analytics read path. The durable fix for the mirroring is a server-side
+analytics read path; item 12 covers the two checks that tell an author their
+EXISTING app is missing the item-11 handshake. The durable fix for the mirroring
+is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
 
@@ -501,6 +503,72 @@ neither one's.
       of one retry tick, and sending it would add a second vendored message for
       no correctness gain. If you reconsider, note the init-fragment fast path
       ships gated off and refuses `surface === 'dev-tunnel'` by construction.
+
+12. **The ready-ack checks for EXISTING apps are two deliberately different
+    tiers, and neither is allowed to be a hard failure.** #206 fixed the
+    templates; every app scaffolded before `4018e2c` is still broken and nothing
+    told its author. These close that gap, and the tier split is the whole
+    design:
+    - **`internal/antipattern`'s `resize-iframe-page` rule is a GATE** (it fails
+      the scaffold-currency job), because it fires on a *literal that is present
+      in the file* — no inference. It is the first non-REST entry in that
+      denylist: the package's original doctrine was "dead REST route behind a
+      host bridge", and this is a dead host MESSAGE, marked N/A for
+      `PageBlockHost` by `hostHandlerParity.ts`. It matches only a `'`/`"`-quoted
+      literal, deliberately NOT the backtick form, because this repo's README,
+      both scaffold READMEs and item 11 all name `RESIZE_IFRAME` in markdown
+      backticks precisely to tell authors not to post it — a gate that fails the
+      documentation of its own rule is a false positive. It also assumes a page
+      surface rather than reading a manifest: `Rule` is a per-line regex with no
+      manifest context, and every template this CLI ships declares `page`. A
+      non-page template would need that assumption revisited, not the rule
+      deleted.
+    - 🔴 **`validate`'s page-without-ack check is a WARNING and must stay one**
+      (`internal/validate/readyack.go`). It is the mirror image of item 3's
+      reasoning: `lockfile.go` earns hard-error status because the platform
+      *provably* fails (`npm ci` dies), whereas this infers RUNTIME behaviour
+      from STATIC TEXT and there are correct projects it cannot read — an ack
+      from a bundled dependency, a framework wrapper, a code-split chunk, an
+      extension the scan does not open. Hard-failing on a heuristic is the
+      false-warning-at-a-correct-project failure item 10 spent four measured
+      corrections avoiding, and `--strict` already lets anyone who wants a gate
+      have one.
+    - **The dependency is evidence, and it is checked FIRST.** For a project on
+      `@civitai/blocks-react` the ack comes from `IframeTransport` and the
+      literal `BLOCK_READY` NEVER appears in `src/` — measured on a rendered
+      `page-money` (zero occurrences outside `node_modules`). A source-only scan
+      therefore warns at every correct money-path app, which is the worst
+      outcome for advisory output. `sdkDependency` mirrors `civitaiSDKDeps` in
+      `ready_ack_contract_test.go` on purpose: the two answer the same question,
+      and disagreeing would mean the CLI warns at a shape its own scaffold guard
+      calls correct. `TestSDKTemplateIsQuietOnlyBecauseOfTheDependency` pins that
+      the dep gate is the ONLY reason page-money is accepted.
+    - **Comments are stripped, and that is load-bearing rather than tidy.** Both
+      SDK-free templates carry a source comment reading "The ONE message a page
+      app must send is `BLOCK_READY`", and it SURVIVES deleting
+      `civitai-host.js` — so without the strip the check is inert on the exact
+      population it was written for. Measured both ways. `.md` is excluded from
+      the scan for the same reason: a README describing the handshake is not an
+      implementation of it.
+    - 🔴 **Reading NOTHING is not finding nothing.** `emitsReadyAck` reports "no
+      finding" when it opened ZERO source files — a zero-hit scan over a
+      zero-file tree is indistinguishable from a scanner wired to nothing (a
+      broken extension table, an over-eager skip list, or `validate` pointed at a
+      directory holding a manifest and no checkout, which is the shape of every
+      manifest-only fixture in that package). This is not defensive padding: it
+      is what a manifest-only fixture in `warnings_test.go` failed on, and
+      removing it re-breaks that test.
+    - **Placement is a real constraint, not style.** `warningChecks` runs
+      unconditionally *including under `ManifestOnly`*, which `app init` uses to
+      self-check the template it just wrote. A check that reads `src/` must live
+      in the `projectState` branch beside `lockfileChecks`, or init's
+      self-validation starts reading files that are not its business.
+      `TestReadyAckSkippedByManifestOnly` pins it, with a `Dir()` positive
+      control so a green there cannot mean "the check never fires at all".
+    - **What it does NOT prove:** that the ack fires. Only that the message is
+      mentioned in code. The runtime proof is Guard B (item 11), and there is
+      none at all for an app the author already has — which is why this is
+      advisory and says so in its own message.
 
 **When you change a validation rule, keep both vendored mirrors (`schema/` + the
 ported Go checks in `internal/validate/`, including the slot registry) in sync
