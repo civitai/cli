@@ -69,6 +69,20 @@ type Graph struct {
 	Sampler  string   `json:"sampler,omitempty"`
 	Seed     *int     `json:"seed,omitempty"`
 
+	// Images are the img2img reference images. Their PRESENCE is what promotes
+	// a `txt2img` workflow to `img2img:edit` server-side — the CLI never sends
+	// an img2img workflow value itself (see AGENTS.md item 18).
+	//
+	// 🔴 The promotion also requires Ecosystem to be set. `normalizeImageWorkflow`
+	// reads `input.ecosystem` off the RAW request body, BEFORE the graph's own
+	// ecosystem defaulting runs, so an absent ecosystem means no promotion — and
+	// the default ecosystem's graph has no `images` node, so the key is then
+	// dropped with zero diagnostics and a plain txt2img is billed. Measured
+	// against civitai.com: `{workflow:txt2img, images:[…]}` with no ecosystem
+	// priced 8 with factors {base,pixels,steps,quantity} — byte-identical to the
+	// same graph with no images at all.
+	Images []GraphImage `json:"images,omitempty"`
+
 	// Raw, when non-nil, IS the graph: MarshalJSON emits it VERBATIM and every
 	// typed field above is ignored. It is the `--input` passthrough.
 	//
@@ -105,6 +119,30 @@ func (g Graph) MarshalJSON() ([]byte, error) {
 	}
 	type graphAlias Graph
 	return json.Marshal(graphAlias(g))
+}
+
+// GraphImage is one entry of Graph.Images.
+//
+// 🔴 Width and Height are VALUE ints with NO `omitempty`, which contradicts
+// item 14's "unset must be absent" rule on every other optional field. That is
+// deliberate and is the opposite situation: the server REQUIRES both. The
+// graph's images node accepts them as optional on INPUT and then validates the
+// same array against an output schema where both are required numbers, so
+// omitting them is a hard 400 — measured against civitai.com:
+// `images:[{"url":"…"}]` returns
+// `Validation failed: images: Invalid input: expected number, received undefined`,
+// and a bare URL string (which the input union also accepts) fails identically
+// because the input transform turns it into `{url}` with no dimensions.
+//
+// So there is no "unset" state to preserve here: a GraphImage that reached the
+// wire without dimensions would be rejected, not silently mispriced. `omitempty`
+// would additionally erase a legitimate value — it drops the key for 0, and a
+// 0-dimension image is a caller bug that should surface as the server's own
+// error rather than as a missing key.
+type GraphImage struct {
+	URL    string `json:"url"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
 }
 
 // Resource is one graph resource reference (a checkpoint or an additional

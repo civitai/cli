@@ -214,7 +214,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
-| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results into `--out-dir` as `<workflow-id>-<n>.<ext>`. `--no-wait` prints the workflow id and exits; `--timeout` bounds the **wait** (never the job and never the charge); `--no-download` waits but prints URLs instead of writing files. `--dry-run` estimates and exits without submitting (`--dry-run --json` emits the raw estimate). `--print-input` prints the assembled graph and exits **without reaching any money seam** (no submit, no estimate, no balance read); `--input <file>` (or `-` for stdin) sends a raw graph as-is — txt2img only, and mutually exclusive with the content flags. Needs a **personal API key** with the AI Services scopes; an OAuth login is refused. `--max-cost` is an **estimate check, not a spending cap**. See [Generate](#generate). |
+| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results into `--out-dir` as `<workflow-id>-<n>.<ext>`. `--no-wait` prints the workflow id and exits; `--timeout` bounds the **wait** (never the job and never the charge); `--no-download` waits but prints URLs instead of writing files. `--dry-run` estimates and exits without submitting (`--dry-run --json` emits the raw estimate). `--print-input` prints the assembled graph and exits **without reaching any money seam** (no submit, no estimate, no balance read); `--input <file>` (or `-` for stdin) sends a raw graph as-is — txt2img only, and mutually exclusive with the content flags. `--image <path-or-url>` (repeatable) attaches a reference image for **image-to-image** — a local png/jpeg is uploaded, an https URL is passed through — and **requires `--ecosystem`**, because without one the server ignores the images, generates from the prompt alone and charges anyway. Needs a **personal API key** with the AI Services scopes; an OAuth login is refused. `--max-cost` is an **estimate check, not a spending cap**. See [Generate](#generate). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
 | `civitai workflows cancel <workflow-id> [--json]` | **Stop a running generation.** 🔴 **This does not refund anything** — a mid-run cancel bills the accrued cost, non-refundably. Cancel because you no longer want the output, never to save money. See [Generate](#listing-and-cancelling-workflows). |
@@ -932,6 +932,13 @@ civitai workflows get <workflow-id>
 # Non-interactive (CI) — --yes is required, or the run is refused
 civitai generate "a cat" --yes --max-cost 20
 
+# Image-to-image from a local file — --ecosystem is REQUIRED with --image
+civitai generate "make it winter" --ecosystem Qwen --image ./cat.png --dry-run
+
+# …or from a public https URL, with two reference images
+civitai generate "combine these" --ecosystem Seedream \
+  --image https://example.com/a.jpg --image ./b.png --yes
+
 # Graduate from flags to a raw graph: print, edit, send back
 civitai generate "a cat" --quantity 2 --print-input > graph.json
 civitai generate --input graph.json --dry-run
@@ -964,10 +971,57 @@ names, then asks. A **non-interactive shell (pipe/CI) without `--yes` is
 refused** rather than charged silently. Everything the confirmation prints goes
 to **stderr**, so `--json` keeps stdout machine-clean.
 
-### The five content flags, and why there aren't twelve
+### Image-to-image: `--image` and `--ecosystem`
+
+`--image <path-or-url>` (repeatable) attaches a reference image and turns the
+job into an edit. A **local `.png`/`.jpg`** is uploaded to Civitai first and the
+stored blob is referenced; an **`https` URL** is passed through as-is, but must
+be publicly reachable — the generator downloads it server-side too, and an
+unfetchable URL is a `400` after you have already been priced. Either way the
+CLI reads the image's width and height from its **header only** (never decoding
+the pixels) and sends them, because the server requires both and rejects an entry
+without them. `http://`, `file://` and `data:` are refused, local files are
+capped at **64 MiB** (checked by `stat`, before a byte is read), and only png and
+jpeg are supported — webp would need a new third-party decoder dependency.
+
+> 🔴 **`--image` requires `--ecosystem`, and the reason is money.** The server
+> promotes a text-to-image job to image-to-image only when the request *names an
+> ecosystem*. Without one it **ignores the images, generates from the prompt
+> alone, and charges you the full amount** — HTTP 200, no error, no warning.
+> Measured: the same graph with and without `images[]` priced byte-identically.
+
+Two more things the CLI genuinely cannot check for you, so it says them instead
+of pretending:
+
+- **Only some ecosystems accept reference images at all.** `Qwen`,
+  `Flux1Kontext`, `NanoBanana`, `Seedream`, `OpenAI`, `Grok`, `Reve`, `MAI`,
+  `Boogu` and a few more do; the Stable Diffusion family and the *default*
+  ecosystem do **not** — and for those the images are dropped silently and
+  billed. **The cost estimate cannot tell you which case you are in**: several
+  edit-capable ecosystems price identically with and without images (measured on
+  `Flux1Kontext`, `NanoBanana` and `Seedream`), so a price comparison is not a
+  detector. Name an ecosystem you know supports editing.
+- **Too many reference images are silently truncated.** Per-ecosystem limits run
+  from 1 to 7, live only inside the server's per-engine graphs, and the extras
+  are dropped *before* any limit check can fire — so the server never reports it
+  and the truncated job is billed. Measured on `Qwen` (limit 3): 4, 5, 6 and 12
+  images all priced identically to 3. The CLI refuses **more than 7** (no
+  ecosystem accepts more, so that refusal can never block a valid request) and
+  **warns** for anything above 1. It deliberately does not vendor the
+  per-ecosystem table — see [`AGENTS.md`](AGENTS.md) items 13 and 18.
+
+`--ecosystem` is sent to the server **verbatim and is not checked locally**;
+an unknown value comes back as the server's own `unknown ecosystem` error.
+
+`--dry-run` **does** upload local `--image` files, because an estimate built on a
+graph with no `images[]` prices a plain text-to-image job. Uploading spends no
+Buzz, and `--dry-run` still never submits.
+
+### The content flags, and why there aren't twelve
 
 `--negative-prompt`, `--quantity`, `--aspect-ratio`, `--checkpoint
-<version-id>`, `--lora <version-id>[:strength]` (repeatable).
+<version-id>`, `--lora <version-id>[:strength]` (repeatable), plus `--image` /
+`--ecosystem` above.
 
 The generator is **permissive, not a validator** — it returns HTTP 200 for
 things it silently changes:

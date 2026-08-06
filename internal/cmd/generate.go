@@ -87,8 +87,13 @@ type generateDeps struct {
 	// nothing.
 	getWorkflow getWorkflowFn
 	// downloadBlob fetches one presigned output URL WITHOUT a credential (see
-	// blobFetcher).
+	// blobFetcher). It is also what reads a remote --image's header bytes, so
+	// that fetch inherits the same SSRF/https posture and carries no token.
 	downloadBlob blobFetcher
+	// uploadImage stores one local --image and returns the blob URL to reference
+	// in the graph. 🔴 Its second hop must never carry a credential — see
+	// genapi.UploadImageBlob and AGENTS.md item 18. It spends no Buzz.
+	uploadImage func(ctx context.Context, contentType string, body []byte) (string, error)
 	// pendingDir is where the pre-submit crash-recovery record is written. A
 	// test points it at a t.TempDir(); empty means the real config dir.
 	pendingDir string
@@ -110,12 +115,17 @@ type generateOpts struct {
 	checkpoint     int
 	checkpointSet  bool
 	loras          []string
-	dryRun         bool
-	jsonOut        bool
-	assumeYes      bool
-	maxCost        int
-	maxCostSet     bool
-	baseURL        string
+	// images are the --image values (local paths and/or https URLs).
+	images []string
+	// ecosystem is the --ecosystem passthrough. It is REQUIRED with --image; see
+	// validateGenerateOpts.
+	ecosystem  string
+	dryRun     bool
+	jsonOut    bool
+	assumeYes  bool
+	maxCost    int
+	maxCostSet bool
+	baseURL    string
 
 	// noWait prints the workflow id and exits instead of waiting.
 	noWait bool
@@ -193,6 +203,27 @@ If a submit's reply never arrives, re-run with --external-id <the recorded key>:
 the orchestrator dedupes on it and returns the PRE-EXISTING workflow instead of
 charging a second time.
 
+IMAGE-TO-IMAGE: --image <file-or-url> attaches a reference image (repeatable).
+A local png/jpeg is uploaded to Civitai first and the stored blob is referenced;
+an https URL is passed through as-is, but must be publicly reachable, because the
+generator downloads it server-side too. Either way the CLI reads the image's
+width and height from its header and sends them — the server requires both and
+rejects an entry without them.
+
+🔴 --image REQUIRES --ecosystem, and the reason is money. The server turns a
+text-to-image job into image-to-image only when the request names an ecosystem;
+without one it ignores the images, generates from the prompt alone, and charges
+you the full amount with no error. Worse, only SOME ecosystems accept reference
+images at all (Qwen, Flux1Kontext, NanoBanana, Seedream, OpenAI, Grok and a few
+more do; the SD family and the default do not) — and the cost estimate cannot
+tell you which case you are in, because several edit-capable ecosystems price
+identically with and without images. Name an ecosystem you know supports editing.
+
+🔴 The server SILENTLY TRUNCATES too many reference images. Per-ecosystem limits
+run from 1 to 7 and are not knowable from here; over the limit the extras are
+dropped with no error and the truncated job is billed. The CLI refuses more than
+7 (no ecosystem accepts more) and warns for anything above 1.
+
 RAW GRAPHS: --input <file> (or --input -) sends a generation-graph JSON document
 exactly as written, instead of building one from the flags above. It is how you
 reach graph parameters this CLI has no flag for. Get a valid starting point with
@@ -223,6 +254,13 @@ interpreted, so nothing in it is checked before you pay for it.`,
 
   # A specific checkpoint plus a LoRA at 0.8 strength
   civitai generate "a cat" --checkpoint 128713 --lora 250712:0.8
+
+  # Image-to-image from a local file — --ecosystem is required
+  civitai generate "make it winter" --ecosystem Qwen --image ./cat.png --dry-run
+
+  # …or from a public URL, with two reference images
+  civitai generate "combine these" --ecosystem Seedream \
+    --image https://example.com/a.jpg --image ./b.png --yes
 
   # Wait, and write the images into ./out
   civitai generate "a cat" --yes --out-dir ./out
@@ -281,6 +319,16 @@ interpreted, so nothing in it is checked before you pay for it.`,
 				resolveVersion: gen.ResolveModelVersion,
 				getWorkflow:    gen.GetWorkflow,
 				downloadBlob:   reader.DownloadPresigned,
+				// 🔴 The presigned UPLOAD is credential-free for the same
+				// reason the download is (AGENTS.md items 17 + 18): the upload
+				// URL is server-supplied and lives on a *.civitai.com host that
+				// isTrustedDownloadHost matches, so a token-carrying client
+				// would hand a full-scope personal API key to a request its own
+				// signature already authorizes. `reader` is passed as a
+				// civitai.PresignedUploader, whose only method takes no token.
+				uploadImage: func(ctx context.Context, contentType string, body []byte) (string, error) {
+					return gen.UploadImageBlob(ctx, reader, contentType, body)
+				},
 				buzzBalance: func(ctx context.Context) (int64, error) {
 					acct, err := buzz.GetBuzzAccount(ctx)
 					if err != nil {
@@ -312,6 +360,14 @@ interpreted, so nothing in it is checked before you pay for it.`,
 	cmd.Flags().StringVar(&o.aspectRatio, "aspect-ratio", "", "aspect ratio bucket, e.g. 1:1 (width/height derive from it)")
 	cmd.Flags().IntVar(&o.checkpoint, "checkpoint", 0, "checkpoint model-VERSION id (not a model id) — resolved before submitting")
 	cmd.Flags().StringArrayVar(&o.loras, "lora", nil, "LoRA model-version id, optionally :strength (e.g. 250712:0.8). Repeatable")
+	// NOTE: no back-quotes in these usage strings — see the pflag UnquoteUsage
+	// note further down.
+	cmd.Flags().StringArrayVar(&o.images, "image", nil,
+		"reference image for image-to-image: a local file (png or jpeg, uploaded) or an https URL (passed through). "+
+			"Repeatable. Requires --ecosystem, and only some ecosystems accept reference images at all")
+	cmd.Flags().StringVar(&o.ecosystem, "ecosystem", "",
+		"model family to generate with, e.g. Qwen or Flux1Kontext. Sent to the server verbatim and NOT checked locally; "+
+			"required with --image because the server only promotes a job to image-to-image when the ecosystem is stated")
 
 	cmd.Flags().BoolVar(&o.dryRun, "dry-run", false, "print the cost estimate and exit without submitting (spends nothing)")
 	cmd.Flags().BoolVar(&o.jsonOut, "json", false, "emit the raw server payload on stdout (scriptable)")
@@ -380,6 +436,12 @@ func graphInputFlags(o generateOpts) []string {
 	if len(o.loras) > 0 {
 		used = append(used, "--lora")
 	}
+	if len(o.images) > 0 {
+		used = append(used, "--image")
+	}
+	if o.ecosystem != "" {
+		used = append(used, "--ecosystem")
+	}
 	return used
 }
 
@@ -442,6 +504,51 @@ func validateGenerateOpts(o *generateOpts) error {
 			return err
 		}
 	}
+	if err := validateImageOpts(o); err != nil {
+		return err
+	}
+	return nil
+}
+
+// validateImageOpts holds the two --image rules that must fire BEFORE any
+// network call — before an upload, and long before a submit.
+//
+// 🔴 Rule 1: --image REQUIRES --ecosystem. This is a refusal, not a warning,
+// because without it the flag is a guaranteed no-op that still charges. The
+// server promotes `txt2img` + images to `img2img:edit` in
+// `normalizeImageWorkflow`, which reads `ecosystem` off the RAW request body
+// BEFORE the graph applies its own ecosystem default — so an absent ecosystem
+// skips the promotion, the default ecosystem's graph has no `images` node, and
+// the graph engine DROPS the unknown key with zero diagnostics. Measured against
+// civitai.com: `{workflow:txt2img, images:[<real image>]}` with no ecosystem
+// priced 8 with factors {base,pixels,steps,quantity} — byte-identical to the
+// same graph carrying no images at all, HTTP 200 throughout.
+//
+// This is not the vendored validation item 13 forbids: it checks a FLAG
+// COMBINATION this CLI owns, and asserts nothing about which ecosystem values
+// exist or what any of them allows. `--ecosystem` itself is passed through
+// unexamined.
+//
+// 🔴 Rule 2: refuse above maxReferenceImages. See that constant for why the
+// bound is a single global ceiling rather than a per-ecosystem table, and why
+// exceeding it cannot be left to the server (it truncates silently and bills the
+// truncated job).
+func validateImageOpts(o *generateOpts) error {
+	if len(o.images) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(o.ecosystem) == "" {
+		return asUsageError(errors.New(
+			"--image requires --ecosystem — the server only turns a job into image-to-image when the request names an ecosystem. " +
+				"Without one it silently ignores the images, generates from the prompt alone and charges you for it. " +
+				"Pass an ecosystem that supports image editing, e.g. --ecosystem Qwen or --ecosystem Flux1Kontext"))
+	}
+	if len(o.images) > maxReferenceImages {
+		return asUsageError(fmt.Errorf(
+			"--image was given %d times, above the %d-image maximum any ecosystem accepts — nothing was uploaded and nothing was submitted. "+
+				"The server does not reject an over-limit list: it DROPS the extras silently and charges for the truncated job. Pass at most %d",
+			len(o.images), maxReferenceImages, maxReferenceImages))
+	}
 	return nil
 }
 
@@ -492,6 +599,10 @@ type resolvedGraph struct {
 	graph      genapi.Graph
 	checkpoint string
 	loras      []string
+	// images renders the resolved reference images (dimensions + final URL) for
+	// the confirmation, so the user approves what will actually be sent rather
+	// than the paths they typed — a local file's URL is a stored blob by then.
+	images []string
 	// inputPath is set when the graph came from --input, so the confirmation can
 	// name the FILE the user is about to be charged for rather than a prompt it
 	// deliberately did not parse out of it.
@@ -537,7 +648,11 @@ func buildInputGraph(cmd *cobra.Command, o generateOpts) (*resolvedGraph, error)
 // spend, and before the cost estimate the user is shown.
 func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) (*resolvedGraph, error) {
 	out := &resolvedGraph{graph: genapi.Graph{
+		// 🔴 Always "txt2img", even with --image. The server promotes it to
+		// img2img:edit itself; sending an img2img workflow value is a DIFFERENT
+		// and worse request — see AGENTS.md item 18.
 		Workflow:       generateWorkflow,
+		Ecosystem:      strings.TrimSpace(o.ecosystem),
 		Prompt:         o.prompt,
 		NegativePrompt: o.negativePrompt,
 		AspectRatio:    o.aspectRatio,
@@ -565,6 +680,16 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 		}
 		out.graph.Resources = append(out.graph.Resources, rv.Resource(spec.strength))
 		out.loras = append(out.loras, describeVersion(rv, spec.strength))
+	}
+	// Reference images last: it is the only step that can UPLOAD, so a bad
+	// --checkpoint / --lora id still fails without having stored anything.
+	imgs, err := resolveImages(ctx, deps, o.images)
+	if err != nil {
+		return nil, err
+	}
+	out.graph.Images = imgs
+	for _, img := range imgs {
+		out.images = append(out.images, fmt.Sprintf("%dx%d %s", img.Width, img.Height, safeTerm(img.URL)))
 	}
 	return out, nil
 }
@@ -634,6 +759,13 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 			o.quantity, serverQuantityClamp, serverQuantityClamp)))
 	}
 
+	if note := imageCountNote(len(o.images)); note != "" {
+		// Printed BEFORE the uploads, so the caveat is visible even if a later
+		// step fails — and because it describes what the estimate below cannot
+		// tell you.
+		fmt.Fprintln(errw, ui.For(errw).Warn(note))
+	}
+
 	built, err := buildGraphForRun(ctx, cmd, deps, o)
 	if err != nil {
 		return err
@@ -647,6 +779,12 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// hand-written --set expression is accepted silently by the server and
 		// billed, whereas editing a printed file is inspectable before it is
 		// sent.
+		//
+		// Second honest caveat: with --image it also UPLOADS each local file
+		// first, because the graph it prints must reference a real stored blob
+		// to be a valid --input. That spends no Buzz (an upload is not a
+		// charge), but it is a network write, so --print-input is not purely
+		// local when --image is present.
 		//
 		// One honest caveat on "no network call": it reaches NO money seam —
 		// not the submit, not the estimator, not the balance read. But the graph
@@ -1001,6 +1139,21 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 	}
 	for _, l := range built.loras {
 		fmt.Fprintf(errw, "  LoRA:       %s\n", l)
+	}
+	if o.ecosystem != "" {
+		fmt.Fprintf(errw, "  Ecosystem:  %s\n", safeTerm(o.ecosystem))
+	}
+	for _, img := range built.images {
+		fmt.Fprintf(errw, "  Image:      %s\n", img)
+	}
+	if len(built.images) > 0 {
+		// 🔴 The one thing the estimate cannot tell them. An ecosystem with no
+		// images node drops the array silently and bills a plain txt2img, and
+		// nothing in the whatIf reply distinguishes that from a real edit job
+		// (measured: Flux1Kontext, NanoBanana and Seedream all price identically
+		// with and without images, so a price comparison cannot discriminate).
+		fmt.Fprintln(errw, st.Dim(
+			"If this ecosystem does not support image editing, the server IGNORES the images above, generates from the prompt alone and still charges — the estimate cannot show the difference."))
 	}
 	if balanceKnown {
 		fmt.Fprintf(errw, "Cost: %s Buzz (balance %d).\n", buzzAmount(cost), balance)
