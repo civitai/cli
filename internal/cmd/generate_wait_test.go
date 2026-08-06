@@ -587,19 +587,40 @@ func TestGenerate_SubmitWithNoResponseWarnsAboutAPossibleCharge(t *testing.T) {
 // this phase's first draft, not theorised. The existing --max-cost usage
 // carries the same note; this pins it for every flag on both commands at once.
 func TestGenerateFlagUsageHasNoBackquotes(t *testing.T) {
+	// 🔴 WALK THE WHOLE COMMAND TREE, not a hand-listed pair.
+	//
+	// This guard originally listed `newGenerateCmd(), newWorkflowsGetCmd()` —
+	// the two commands its author was working on. Every other command was
+	// unguarded, and one of them had the exact defect: `app dev-tunnel`'s
+	// --local-host usage back-quoted `localhost`, so --help rendered
+	// `--local-host localhost` instead of `--local-host string` while every
+	// sibling showed its type. It shipped and CI stayed green, because a guard
+	// that enumerates its own scope only ever protects what someone remembered
+	// to add.
+	//
+	// Walking from NewRootCmd() means a NEW command is covered the day it is
+	// registered, with nobody having to remember this file exists.
 	checked := 0
-	for _, cmd := range []*cobra.Command{newGenerateCmd(), newWorkflowsGetCmd()} {
-		name := cmd.Name()
+	var walk func(cmd *cobra.Command, path string)
+	walk = func(cmd *cobra.Command, path string) {
 		cmd.Flags().VisitAll(func(f *pflag.Flag) {
 			checked++
 			if strings.Contains(f.Usage, "`") {
-				t.Errorf("%s --%s: usage contains a back-quote, which pflag turns into the flag's VALUE NAME: %q", name, f.Name, f.Usage)
+				t.Errorf("%s --%s: usage contains a back-quote, which pflag turns into the flag's VALUE NAME: %q", path, f.Name, f.Usage)
 			}
 		})
+		for _, sub := range cmd.Commands() {
+			walk(sub, path+" "+sub.Name())
+		}
 	}
-	// POSITIVE CONTROL (a): a zero here would mean VisitAll walked nothing.
-	if checked < 10 {
-		t.Fatalf("POSITIVE CONTROL FAILED: only %d flags inspected — the walk found nothing to check", checked)
+	root := NewRootCmd()
+	walk(root, root.Name())
+
+	// POSITIVE CONTROL (a): a zero here would mean the walk found nothing. The
+	// floor is deliberately far above the old hand-listed pair — if it drops
+	// back to ~10 the tree walk has silently stopped descending.
+	if checked < 60 {
+		t.Fatalf("POSITIVE CONTROL FAILED: only %d flags inspected across the whole command tree — the walk is not descending", checked)
 	}
 	// POSITIVE CONTROL (b): prove the predicate CAN fire, so the clean result
 	// above is a fact about the flags rather than about a check that never
