@@ -817,8 +817,11 @@ Two data caveats.
 
 **Engagement counts only authenticated, scope-gated API
 calls.** An app that ships no scoped API surface shows real installs and revenue
-with a flat engagement section — that is expected, not a bug. **App loads is the
-exception**: it is measured on every load, so it counts signed-out visitors and
+with a flat engagement section — that is expected, not a bug. **Installs** is a
+different case again: it shows **`n/a`** for an app that cannot be installed at
+all (a page app has no install slot, so an install record cannot exist), which
+is deliberately distinct from a real `0` on an installable app nobody has
+installed yet. **App loads is the exception**: it is measured on every load, so it counts signed-out visitors and
 static blocks that engagement structurally cannot see. `Unique viewers` counts
 signed-in people once each and approximates signed-out ones by network address,
 so read it as reach rather than an identity count, and `Signed-out loads` is a
@@ -840,6 +843,12 @@ counter zeroed and the command still exits `0`, so
 `civitai app metrics <slug> --json | jq .runs.count` returns `0` for an app you
 can't see. A script must branch on the `notOwned` field rather than trusting the
 counts.
+
+**Installs carries `installs.notApplicable`** for the case above. It is NOT an
+outage flag — it means the question does not apply to this app type, so a script
+should render it as "not applicable" rather than retrying or warning about
+infrastructure. `--json` passes it through and still exits `0`, so branch on it
+rather than trusting the counts.
 
 **App loads has a SECOND, section-local unavailability flag** — `views.unavailable`,
 independent of `notOwned`. It is the one section the server reads from a
