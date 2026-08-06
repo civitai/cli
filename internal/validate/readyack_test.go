@@ -638,8 +638,57 @@ func TestReadyAckFollowsSymlinkedSource(t *testing.T) {
 	wantAckWarning(t, proj, true)
 }
 
-// TestReadyAckSymlinkCycleTerminates pins the cost of following symlinks. A
-// self-referential link is the obvious way a followed walk never returns.
+// TestReadyAckScannerVisitsEachDirectoryOnce pins the visited set DIRECTLY, by
+// counting files read.
+//
+// Found by a surviving mutant: deleting the visited set entirely passed the
+// suite, including the cycle test below. That test was proving the wrong thing —
+// a self-referential symlink terminates anyway, because Linux gives up with
+// ELOOP after ~40 resolutions and the resulting error makes the scan partial. So
+// termination is guaranteed by the OS, and the visited set's real job is
+// avoiding DUPLICATE WORK: without it, two links to the same directory read
+// every file in it twice, inflating the file count toward a budget whose only
+// effect is to silence the check.
+//
+// Asserting the count is the only thing that can see that. This walks the
+// scanner directly rather than through Dir(), because the number of files read
+// is the observable and the verdict is not.
+func TestReadyAckScannerVisitsEachDirectoryOnce(t *testing.T) {
+	dir := t.TempDir()
+	shared := filepath.Join(dir, "shared")
+	if err := os.MkdirAll(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const nFiles = 3
+	for i := 0; i < nFiles; i++ {
+		p := filepath.Join(shared, fmt.Sprintf("m%d.js", i))
+		if err := os.WriteFile(p, []byte("var x=1;\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Two more routes to the same directory. A walk with no visited set reads
+	// each file three times.
+	for _, link := range []string{"link1", "link2"} {
+		if err := os.Symlink("shared", filepath.Join(dir, link)); err != nil {
+			t.Skipf("symlinks unavailable here: %v", err)
+		}
+	}
+
+	s := &ackScanner{visited: map[string]bool{}}
+	s.walk(dir)
+	if s.partial {
+		t.Fatalf("the scan reported partial on a readable tree — it should have read all %d files", nFiles)
+	}
+	if s.files != nFiles {
+		t.Fatalf("scanner read %d files, want %d — three paths reach the same directory, so a walk that "+
+			"does not record RESOLVED paths reads each file once per route", s.files, nFiles)
+	}
+}
+
+// TestReadyAckSymlinkCycleTerminates pins that a self-referential link does not
+// hang. Note what it does NOT prove: the OS's own ELOOP limit terminates this
+// even with the visited set deleted, so this is a backstop assertion and
+// TestReadyAckScannerVisitsEachDirectoryOnce is what actually covers the guard.
 func TestReadyAckSymlinkCycleTerminates(t *testing.T) {
 	dir := ackProject(t, ackManifest(false), map[string]string{
 		"index.html":      `<!doctype html><script src="./app.js"></script>`,
