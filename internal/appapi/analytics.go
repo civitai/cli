@@ -41,10 +41,31 @@ type AnalyticsPoint struct {
 }
 
 // AnalyticsInstalls is the install-side rollup.
+//
+// 🔴 NotApplicable is a THIRD state, and it is not the same as a zero. There
+// are three, and collapsing any pair of them is a bug:
+//
+//	total > 0        — a real count.
+//	total == 0       — a TRUTHFUL zero: the app CAN be installed, nobody has yet.
+//	NotApplicable    — the question is meaningless. A page app has no install
+//	                   slot, so a `block_user_subscriptions` row cannot exist
+//	                   for it; rendering `0` there reads as "nobody installed
+//	                   my app" when the truth is "installs do not exist for
+//	                   this app type".
+//
+// Distinct from `AnalyticsViews.Unavailable`, which means "we could not ask".
+// This means "we asked and the question does not apply" — so it is NOT an
+// outage and callers must not retry or warn about infrastructure.
+//
+// Absent (an older server) decodes to false and takes the measured branch,
+// which is exactly the pre-3664 behaviour and therefore safe. `--json` passes
+// the field through untouched and still exits 0, so a script must branch on it
+// itself — the same contract as `notOwned` and `views.unavailable`.
 type AnalyticsInstalls struct {
-	Total  int64            `json:"total"`
-	Active int64            `json:"active"`
-	Series []AnalyticsPoint `json:"series"`
+	Total         int64            `json:"total"`
+	Active        int64            `json:"active"`
+	Series        []AnalyticsPoint `json:"series"`
+	NotApplicable bool             `json:"notApplicable,omitempty"`
 }
 
 // AnalyticsRuns is the run-side rollup: how often the app ran and how much Buzz

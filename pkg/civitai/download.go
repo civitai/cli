@@ -24,6 +24,26 @@ type Downloader interface {
 	DownloadFile(ctx context.Context, fileURL string) (*http.Response, error)
 }
 
+// PresignedDownloader streams a file from a URL that is ALREADY AUTHORIZED by
+// its own signature, with NO credential attached.
+//
+// 🔴 It exists because reuse of DownloadFile would have leaked a credential.
+// isTrustedDownloadHost (below) attaches the bearer token to civitai.com and to
+// ANY *.civitai.com subdomain — which is correct for the model-download route it
+// was written for, and wrong for an orchestrator blob: those are served from a
+// *.civitai.com host and are presigned, so DownloadFile would send a full-scope
+// personal API key (25 scopes, including ModelsDelete and VaultWrite) to a
+// request that needs no token at all. Weakening isTrustedDownloadHost was not an
+// option — `civitai download` depends on it attaching the token — so the fix is
+// a SEAM that never has a credential to attach, not a hole in the predicate.
+//
+// Everything else is shared with DownloadFile: the same SSRF dial guard, the
+// same https-per-redirect-hop policy and 10-hop cap, the same
+// ResponseHeaderTimeout. The CALLER owns resp.Body and MUST close it.
+type PresignedDownloader interface {
+	DownloadPresigned(ctx context.Context, fileURL string) (*http.Response, error)
+}
+
 // downloadResponseHeaderTimeout bounds how long the download client waits for a
 // server to send response HEADERS after the connection is accepted. There is
 // deliberately NO overall client Timeout (a large file legitimately streams for
@@ -205,6 +225,19 @@ func (c *Client) DownloadFile(ctx context.Context, fileURL string) (*http.Respon
 		}
 	}
 	return resp, nil
+}
+
+// DownloadPresigned implements PresignedDownloader. See the interface doc for
+// why this is a separate entry point rather than a flag on DownloadFile.
+//
+// It passes an EMPTY token to doDownload, so no Authorization header is ever
+// built — the check there is `token != "" && isTrustedDownloadHost(...)`, and
+// the empty token short-circuits it before the host predicate is even consulted.
+// It also does NOT do the 401-refresh replay DownloadFile does: there is no
+// credential to refresh, and a 401 from a presigned URL means the signature is
+// wrong or expired, which a token would not fix.
+func (c *Client) DownloadPresigned(ctx context.Context, fileURL string) (*http.Response, error) {
+	return c.doDownload(ctx, c.downloadHTTPClient(), fileURL, "")
 }
 
 // doDownload builds + issues a single GET. The bearer token is attached ONLY

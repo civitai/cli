@@ -94,6 +94,12 @@ These go beyond the global defaults because this repo's release pipeline
   `root.go`.
 - `internal/{scaffold,validate,pkgzip,manifest,api,config,auth}` — the building
   blocks behind those commands.
+- `internal/genapi` — the orchestrator **generation** client behind
+  `civitai generate` and `civitai workflows …`: tRPC transport, the two envelope
+  shapes, the graph payload, model-version resolution. Deliberately not in
+  `pkg/civitai` (that is the public read/download SDK) because generation is a
+  money-spending surface whose wire shape is not a public contract. Read
+  items 12–17 before touching it.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to
   `go:embed` the vendored `schema/` and `examples/`. It is not the executable.
 
@@ -154,11 +160,18 @@ func newWhoAmICmd() *cobra.Command {
 
 Items 1–3, 10 and 11 are deliberate mirrors of the platform (items 4 and 8 are
 deliberate *non*-mirrors); items 5–9 cover `civitai app metrics`, the CLI's only
-analytics read path; item 12 covers the two checks that tell an author their
-EXISTING app is missing the item-11 handshake. The durable fix for the mirroring
-is a server-side
-`civitai app validate` endpoint that calls the real `BlockManifestValidator` —
-until that exists, vendoring is on purpose.
+analytics read path; items 12–17 cover `civitai generate`, the CLI's only path
+that **spends the user's money irreversibly**; item 18 covers the two checks
+that tell an author their EXISTING app is missing the item-11 handshake. The
+durable fix for the mirroring is a server-side `civitai app validate` endpoint
+that calls the real `BlockManifestValidator` — until that exists, vendoring is
+on purpose.
+
+The generate items pull in the opposite direction from the mirror items, and
+that is deliberate: `validate` mirrors the platform because a local answer is
+*cheaper* than a round-trip, while `generate` mirrors nothing because a local
+answer that is *wrong* costs real Buzz. Read item 13 before adding any check to
+that path.
 
 **Maintaining this list:** items are append-only and numbered by arrival — a PR
 adding items takes the next free numbers, and when two PRs collide the one
@@ -286,6 +299,20 @@ neither one's.
    across 27 distinct apps) — so deduping on it would report ~1 viewer per app.
    Anonymous rows all carry `userId = 0`, so the server sums distinct authed
    `userId` with distinct anon `ip`.
+   🔴 **`installs` has a THIRD state too, and it is a different KIND of flag.**
+   `installs.notApplicable` means "the question does not apply", not "we could
+   not ask": a page app is stateless by design and has no install slot, so a
+   subscription record cannot exist for it. Rendering `0` there reads as
+   "nobody installed my app" when the truth is "installs do not exist for this
+   app type" — the same fabricated-zero class as items 6 and 9, arrived at from
+   a third direction. The distinction that matters when editing this: a
+   TRUTHFUL zero (an installable app nobody has installed yet) arrives with the
+   flag ABSENT and must keep printing `0`. The server owns that call — do NOT
+   re-derive it in the CLI from the counters, because `total == 0` is true in
+   both states. Measured on prod: every approved app is a page app (0 installs
+   possible), while the model-slot apps that CAN be installed hold real rows,
+   so the two populations are disjoint and the bare `0` was never a
+   measurement of user behaviour.
    Two more things the label has to keep straight, both of which read wrong if
    you shorten them: `AnonCount` is signed-out **LOADS**, not viewers, and is
    NOT a subset of `UniqueViewers` — one anonymous visitor reloading ten times
@@ -504,7 +531,173 @@ neither one's.
       no correctness gain. If you reconsider, note the init-fragment fast path
       ships gated off and refuses `surface === 'dev-tunnel'` by construction.
 
-12. **The ready-ack checks for EXISTING apps are two deliberately different
+12. **`civitai generate` calls tRPC, not REST — because there is no REST
+    generation route to call.** Exactly the situation item 5 documents for
+    `app metrics`, and it will attract the same "fix". Generation exists only as
+    the tRPC procedures `orchestrator.whatIfFromGraph` (the cost estimate, a
+    GET) and `orchestrator.generateFromGraph` (the submit, a POST) in
+    `civitai/civitai → src/server/routers/orchestrator.router.ts`; there is no
+    `/api/v1` equivalent, and the same is true of the reads behind
+    `civitai workflows list|get|cancel`. So `internal/genapi` speaks tRPC — path
+    constants in `generate.go`, the query's input riding in
+    `?input={"json":{…}}`, success unwrapping `result.data.json` — reusing the
+    `authedDo` + envelope-unwrap pattern `internal/appapi` already established.
+    Don't "simplify" any of it into a REST call that does not exist.
+    Two things in there are load-bearing and look like oversights. `unwrapTRPC`
+    rejects a literal `null` payload as malformed rather than unmarshalling it:
+    `null` decodes CLEANLY into a zero `WhatIfResult`, which renders as
+    **total 0** — a fabricated free quote, on the one screen a user reads before
+    approving a charge. And `CancelWorkflow` deliberately does NOT go through
+    that unwrap, because the server's successful cancel reply has no
+    `result.data.json` at all (`workflows.ts`) — routing it through the standard
+    path would turn **every successful cancel** into "unexpected response". HTTP
+    200 is the success signal there.
+
+13. **The CLI deliberately validates NOTHING about the generation graph, and
+    that is the feature.** `internal/genapi/graph.go` models a handful of fields
+    and `--input` passes a caller's graph through byte-for-byte. It does not
+    vendor, and must never vendor: the ecosystem keys, the ~51 per-engine
+    graphs, the sampler enum, the resolution/aspect-ratio buckets, the
+    per-ecosystem defaults, the tier limits, or any cost table. The server
+    re-derives every one of them at submit time from state the CLI cannot see —
+    a caller's usable (non-disabled, non-memberOnly) ecosystem set, for one, so
+    even the *default* model differs between a free and a member account — so a
+    vendored copy buys no correctness, goes stale, and starts **refusing valid
+    new inputs**, which is worse than the gap it closes. This is the same
+    anti-mirror judgement as item 8, with money on it.
+    Two consequences that look like missing features:
+    (a) `KnownGraphKeys()` (`graph.go`) is derived by REFLECTION over the struct
+    tags, never hand-listed, and it answers *"does the CLI model this key?"* —
+    **not** *"does the server accept it?"*. `unknownKeyWarning`
+    (`internal/cmd/generate_input.go`) is worded to say exactly that and must
+    stay worded that way; a warning phrased as "invalid key" would be a
+    validation claim this CLI has no authority to make.
+    (b) The one bounded exception is `serverQuantityClamp` in
+    `internal/cmd/generate.go` — a **warn-only** constant, currently 10, that
+    **fails soft**: it warns and sends anyway. It exists because the server
+    silently CLAMPS an out-of-range quantity (measured: 10000 → 10, −5 → 1) with
+    no error, so a `--quantity 40` typo charges for 10 and gives the user no
+    signal at all. Because it only warns, a stale number produces a needless
+    note, never a blocked valid request. Do not promote it to validation, and do
+    not add siblings for the other clamped fields without the same fail-soft
+    shape.
+    **Live lookups are not mirrors**, which is why one is allowed:
+    `ResolveModelVersion` (`internal/genapi/versions.go`) resolves
+    `--checkpoint` / `--lora` ids against the existing public
+    `GET /api/v1/model-versions/{id}` before submitting. It is a round-trip, so
+    it carries no drift cost, and it buys two things nothing else can. A
+    **nonexistent** checkpoint id is otherwise accepted with HTTP 200, the
+    ecosystem default silently substituted, and **billed** (measured on one
+    ecosystem: the correct id priced 160, while a nonexistent id, a
+    foreign-ecosystem id, and no model at all ALL priced 60 — the server's own
+    comment says this correction is visible on-site and invisible through a
+    non-browser path). And `Graph.Resources` entries **require** `model:{type}`,
+    which is not derivable from a version id — a bare id and `{id}` alone are
+    both 400s, while a *wrong* type is silently accepted. The type must come
+    from the lookup, never a guess.
+
+14. **Unset flags must be ABSENT from the payload, never Go zero values.** Every
+    optional field on `genapi.Graph` is a pointer or carries `omitempty`. This
+    reads as a missing-`omitempty` nit or gratuitous pointer-itis; it is a
+    correctness requirement, and the server is what makes it one. Measured:
+    `steps: 0` is **accepted**, and prices a degenerate, cheaper, WRONG job (the
+    steps cost factor drops to 0.333 from 1) — HTTP 200, billed. `cfgScale: 0`
+    goes the same way, and `quantity: 0` is clamped rather than rejected. So a
+    value-typed field silently converts *"the user did not pass `--steps`"* into
+    *"the user asked for a broken job"*, at half price, with no error anywhere.
+    The pointers also keep "unset" distinguishable from "explicitly zero", which
+    a `--print-input` → edit → `--input` round-trip depends on. The parsed
+    invocation carries `quantitySet` / `checkpointSet` / `maxCostSet` off
+    `cmd.Flags().Changed(...)` for the same reason.
+    🔴 **The guard asserts KEY ABSENCE on a decoded `map[string]any`** — see
+    `TestGraph_UnsetFieldsAreAbsent` in `internal/genapi/generate_test.go`, which
+    marshals the real outgoing bytes and checks `_, ok := m["steps"]`. It is
+    explicitly **not** a `strings.Contains` search, and rewriting it as one would
+    make it vacuous in a way that reads fine: `"cfg"` substring-matches
+    `"cfgScale"`, so a text search cannot tell the two keys apart. The same test
+    also pins that a zero-valued `Graph` marshals to zero keys, so a newly added
+    value-typed field fails immediately rather than at the first user's expense.
+
+15. **`whatIf` and `generate` take DIFFERENT tRPC envelopes for the SAME graph,
+    and both shapes are pinned by tests.** The query takes the graph **flat**
+    (`{"json": <graph>}`); the mutation takes it **NESTED** under `.input`
+    (`{"json":{"input": <graph>, "externalId": …}}`), because the server
+    destructures the graph out of a wrapper on the mutation and not on the query.
+    The web mirrors the asymmetry deliberately. This looks like an obvious
+    duplication to collapse into one builder. Do not.
+    🔴 **The mismatch is SILENT and returns HTTP 200 with a plausible wrong
+    cost.** Measured: a nested payload sent to whatIf is never parsed at all —
+    every nested body prices the server's default job (total 8) byte-identically
+    to `{}`, while the same graph sent flat priced 60. The discriminating control
+    was an ecosystem that 500s "Unknown ecosystem" when sent flat and returns a
+    clean `200 ready:true` when sent nested. So a builder wired to the wrong
+    nesting quotes a **constant** while every "did it 200?" assertion stays
+    green — and `--max-cost 50` would wave through an arbitrarily expensive job
+    while the confirmation prints "cost 8". That is the spend-safety feature
+    failing open, inside itself. A test that only checks the request succeeded
+    cannot see this; the tests assert the envelope SHAPE on the decoded body, on
+    both procedures.
+    Related, and easy to undo by accident: `whatIfGraph` strips
+    `prompt`/`negativePrompt` from the estimate (they do not affect cost, and the
+    server substitutes its own defaults), and it strips them from a RAW `--input`
+    graph by deleting the two keys from the decoded object — never by
+    re-marshalling through the typed struct, which would silently DELETE every
+    key the struct does not model.
+
+16. **`externalId` is minted unconditionally on every submit, and must never be
+    sent on a whatIf.** `generateInput.ExternalID` deliberately has **no**
+    `omitempty`, and `GenerateFromGraph` mints a UUIDv4 when the caller passes
+    none. This looks like a field that should be optional. It is the idempotency
+    key, and without it a single user action can be charged up to **three
+    times**: the platform's submit wrapper retries 3× on a 5xx *and* on a network
+    error / no response, reusing the same body, adds no idempotency key of its
+    own, and has no server-side minting fallback. The orchestrator dedupes on
+    `(userId, externalId)`. The web client is safe only because it always mints
+    one.
+    It is also what makes the CLI's own 401-refresh replay in
+    `genapi/client.go` safe to point at a mutation — the key is minted *before*
+    the body is marshalled, so a replay re-sends byte-identical bytes and gets
+    the pre-existing workflow back. **Do not add a mutation to that package that
+    omits it.**
+    🔴 **Never send it on `whatIfFromGraph`.** A matching key returns the
+    pre-existing workflow, so a quote would BURN the key the subsequent submit
+    needs — which is why the server's own whatIf body omits it. And because a
+    duplicate key returns **HTTP 200 with the pre-existing workflow** rather than
+    a 409, re-attachment has to be inferred locally: that is why the key is
+    written to a local record *before* the POST goes out
+    (`internal/cmd/generate_state.go`) and why `--external-id` exists at all. It
+    overrides; it does not enable.
+    A `--input` file supplying its own `externalId` is REFUSED, not honoured —
+    see the envelope whitelist below.
+
+17. **`DownloadPresigned` exists so a blob fetch carries NO credential, and it is
+    the thing in this feature most likely to be "simplified" away.** It is a
+    near-duplicate of `DownloadFile` in `pkg/civitai/download.go` differing only
+    in that it passes an empty token, and every instinct says to fold it back in
+    behind a bool. 🔴 Doing that leaks a full-scope personal API key.
+    `isTrustedDownloadHost` attaches the bearer token to `civitai.com` and to
+    **any** `*.civitai.com` subdomain — correct for the model-download route it
+    was written for — and orchestrator output blobs are served from
+    `orchestration.civitai.com`, which **matches**. So `DownloadFile` would send
+    a 25-scope key (including `ModelsDelete` and `VaultWrite`) to the
+    orchestrator, on a request that is already authorized by its own signature
+    and needs no token whatsoever.
+    Weakening `isTrustedDownloadHost` is not the alternative: `civitai download`
+    depends on it attaching the token. The fix is a **seam that never has a
+    credential to attach** — `DownloadPresigned` passes `""` to `doDownload`,
+    whose guard is `token != "" && isTrustedDownloadHost(...)`, so the empty
+    token short-circuits before the host predicate is even consulted. That
+    ordering is deliberate: it cannot be defeated by a change to the predicate.
+    Everything genuinely shared is still shared — the SSRF dial guard, the
+    https-per-redirect-hop policy and 10-hop cap, the `ResponseHeaderTimeout` —
+    so there is no duplicated security logic to drift. It also skips the
+    401-refresh replay on purpose: there is no credential to refresh, and a 401
+    from a presigned URL means the signature is wrong or **expired**, which a
+    token would not fix. `internal/cmd/generate.go` wires
+    `deps.downloadBlob = reader.DownloadPresigned`; if you ever see that wired to
+    `DownloadFile`, it is a credential leak, not a cleanup.
+
+18. **The ready-ack checks for EXISTING apps are two deliberately different
     tiers, and neither is allowed to be a hard failure.** #206 fixed the
     templates; every app scaffolded before `4018e2c` is still broken and nothing
     told its author. These close that gap, and the tier split is the whole
@@ -627,10 +820,13 @@ neither one's.
       none at all for an app the author already has — which is why this is
       advisory and says so in its own message.
 
-**When you change a validation rule, keep both vendored mirrors (`schema/` + the
-ported Go checks in `internal/validate/`, including the slot registry) in sync
-with the server, and update `examples_test.go` (asserts shipped examples
-validate clean) + the README.**
+**When you change a validation rule, keep all four vendored mirrors in sync with
+the server — `schema/`, the ported Go checks in `internal/validate/` (including
+the slot registry), the Vite dotenv resolution behind the dev-tunnel parent-origin
+check (item 10), and the block→host ready-ack in `internal/blockproto/` (item 11)
+— and update `examples_test.go` (asserts shipped examples validate clean) + the
+README. `internal/genapi` is deliberately NOT on that list: item 13 explains why
+the generation path mirrors nothing.**
 
 ## Permission boundaries
 

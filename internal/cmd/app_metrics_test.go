@@ -1025,3 +1025,178 @@ func valueOnLine(out, label string) string {
 	}
 	return ""
 }
+
+// --- installs.notApplicable (the third state) -----------------------------
+//
+// There are THREE states and every pair of them is a distinct bug if merged:
+// a real count, a TRUTHFUL zero (installable app, nobody has yet), and
+// not-applicable (a page app has no install slot, so a row cannot exist).
+// Both directions are pinned below on purpose — asserting only that the flag
+// renders "n/a" would let it become unconditional and silently hide a real
+// zero, which is a NEW fabricated-zero bug pointing the other way.
+
+func TestAppMetricsInstallsNotApplicableIsNotAZero(t *testing.T) {
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":0,"active":0,"series":[],"notApplicable":true},
+	  "runs":{"count":7,"buzzSpent":7000,"series":[]},
+	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
+	  "engagement":{"apiCalls":100,"activeUsers":4,"errorRate":0.1,"topScopes":[],"topEndpoints":[]}}`
+	srv := metricsServer(t,
+		submissionsBody("page-app", strPtr("apb_page")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "page-app")
+	if err != nil {
+		t.Fatalf("a not-applicable installs section is still a successful read: %v", err)
+	}
+	if got := valueOnLine(out, "Total"); got != "n/a" {
+		t.Errorf("Total should render n/a for an uninstallable app, got %q:\n%s", got, out)
+	}
+	if got := valueOnLine(out, "Active"); got != "n/a" {
+		t.Errorf("Active should render n/a for an uninstallable app, got %q:\n%s", got, out)
+	}
+	if !strings.Contains(out, "cannot be installed") {
+		t.Errorf("the caveat must say WHY it is n/a:\n%s", out)
+	}
+	// It is a category error, not an outage — must not read as infrastructure.
+	// Scoped to the Installs SECTION: "unavailable" legitimately appears in the
+	// App loads section when that store cannot be read, and this payload
+	// deliberately omits `views` so that branch is active. Asserting over the
+	// whole output would fail on a neighbouring section's honest wording.
+	installsSection := sectionOf(out, "Installs")
+	if installsSection == "" {
+		t.Fatalf("could not isolate the Installs section:\n%s", out)
+	}
+	if strings.Contains(installsSection, "could not be read") ||
+		strings.Contains(installsSection, "unavailable") {
+		t.Errorf("not-applicable must not be phrased as an outage:\n%s", installsSection)
+	}
+	// Everything else in the payload is genuinely measured and must render.
+	for _, want := range []string{"Runs", "7000", "Engagement", "100"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("a not-applicable installs section must not disturb the rest, missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestAppMetricsInstallsTruthfulZeroStillRendersZero(t *testing.T) {
+	// The direction people forget. An INSTALLABLE app with no installs yet has
+	// notApplicable ABSENT, and 0 is the honest answer — hiding it behind n/a
+	// would be a new bug pointing the other way.
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":0,"active":0,"series":[]},
+	  "runs":{"count":0,"buzzSpent":0,"series":[]},
+	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
+	  "engagement":{"apiCalls":0,"activeUsers":0,"errorRate":0,"topScopes":[],"topEndpoints":[]}}`
+	srv := metricsServer(t,
+		submissionsBody("model-app", strPtr("apb_model")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "model-app")
+	if err != nil {
+		t.Fatalf("app metrics: %v", err)
+	}
+	if got := valueOnLine(out, "Total"); got != "0" {
+		t.Errorf("a truthful zero must render 0, got %q:\n%s", got, out)
+	}
+	if strings.Contains(out, "n/a") || strings.Contains(out, "cannot be installed") {
+		t.Errorf("an installable app with no installs must NOT be reported as n/a:\n%s", out)
+	}
+}
+
+func TestAppMetricsInstallsNonZeroNeverSuppressed(t *testing.T) {
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":3,"active":2,"series":[]},
+	  "runs":{"count":0,"buzzSpent":0,"series":[]},
+	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
+	  "engagement":{"apiCalls":0,"activeUsers":0,"errorRate":0,"topScopes":[],"topEndpoints":[]}}`
+	srv := metricsServer(t,
+		submissionsBody("installed-app", strPtr("apb_inst")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "metrics", "installed-app")
+	if err != nil {
+		t.Fatalf("app metrics: %v", err)
+	}
+	// Distinct values so a swapped field cannot pass by coincidence.
+	if got := valueOnLine(out, "Total"); got != "3" {
+		t.Errorf("Total = %q, want 3:\n%s", got, out)
+	}
+	if got := valueOnLine(out, "Active"); got != "2" {
+		t.Errorf("Active = %q, want 2:\n%s", got, out)
+	}
+	if strings.Contains(out, "n/a") {
+		t.Errorf("a non-zero count must never be suppressed:\n%s", out)
+	}
+}
+
+func TestAppMetricsJSONPassesNotApplicableThroughRaw(t *testing.T) {
+	// --json is a passthrough and still exits 0, so a script must be able to
+	// branch on installs.notApplicable itself — the same contract as notOwned
+	// and views.unavailable. Dropping the field would silently turn a category
+	// error into a zero for every scripted consumer.
+	payload := `{"range":{"from":"2026-07-04T00:00:00.000Z","to":"2026-08-03T00:00:00.000Z","granularity":"day"},
+	  "notOwned":false,
+	  "installs":{"total":0,"active":0,"series":[],"notApplicable":true},
+	  "runs":{"count":0,"buzzSpent":0,"series":[]},
+	  "buzzPurchased":{"count":0,"buzzAmount":0,"grossCents":0},
+	  "engagement":{"apiCalls":0,"activeUsers":0,"errorRate":0,"topScopes":[],"topEndpoints":[]}}`
+	srv := metricsServer(t,
+		submissionsBody("page-app", strPtr("apb_page")), http.StatusOK,
+		trpcEnvelope(payload), http.StatusOK, nil)
+	defer srv.Close()
+	setupMetricsEnv(t, srv.URL)
+
+	jsonOut, _, err := run(t, "app", "metrics", "page-app", "--json")
+	if err != nil {
+		t.Fatalf("app metrics --json: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(jsonOut), &got); err != nil {
+		t.Fatalf("--json output is not valid JSON: %v\n%s", err, jsonOut)
+	}
+	installs, ok := got["installs"].(map[string]any)
+	if !ok {
+		t.Fatalf("--json must pass the installs section through:\n%s", jsonOut)
+	}
+	if installs["notApplicable"] != true {
+		t.Errorf("--json must surface installs.notApplicable for scripts:\n%s", jsonOut)
+	}
+}
+
+// sectionOf returns the lines of one `app metrics` section — from its heading
+// up to the next heading (a non-indented, non-empty line) or EOF. Section-scoped
+// assertions matter here because several sections legitimately use the same
+// words for different reasons: "unavailable" is honest wording in App loads and
+// wrong wording in Installs.
+func sectionOf(out, heading string) string {
+	lines := strings.Split(out, "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.TrimSpace(l) == heading {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return ""
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		t := lines[i]
+		if t != "" && !strings.HasPrefix(t, " ") && strings.TrimSpace(t) != "" {
+			end = i
+			break
+		}
+	}
+	return strings.Join(lines[start:end], "\n")
+}
