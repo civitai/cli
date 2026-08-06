@@ -221,11 +221,36 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		fmt.Fprintln(out, "     civitai app dev-tunnel  # preview your LOCAL app INSIDE the real Civitai host — prod-fidelity")
 	case tmpl == scaffold.PageVite:
 		fmt.Fprintf(out, "  1. cd %s && npm install    # writes package-lock.json — COMMIT it\n", destDir)
-		fmt.Fprintln(out, "  2. npm run dev              # preview locally")
+		fmt.Fprintln(out, "  2. npm run dev              # preview locally (your UI only — see below)")
 		fmt.Fprintln(out, "  3. civitai app submit       # validate + submit for review")
 	default:
 		fmt.Fprintf(out, "  1. cd %s              # then open index.html or serve the directory\n", destDir)
 		fmt.Fprintln(out, "  2. civitai app submit       # validate + submit for review")
+	}
+
+	// The no-host caveat, for the templates that don't ship a harness. A page
+	// app only reaches the host's `ready` state by posting BLOCK_READY in
+	// response to the host's BLOCK_INIT — and locally there is no host to send
+	// one, so the handshake file the scaffold ships stays silent. Say so at the
+	// moment the author is about to preview, or its silence reads as a bug and
+	// the file looks deletable. (The NeedsHarness branch above already covers
+	// this in its own words.)
+	//
+	// BOTH conjuncts are load-bearing even though they are coextensive across
+	// today's three templates (page-money is the only harness template and the
+	// only one with no emitter). Neither should be dropped as redundant:
+	//   - `ReadyAckPath() != ""` stops the sentence printing with an EMPTY
+	//     filename for a template that ships no emitter. Not hypothetical:
+	//     forcing this condition true is exactly what produced
+	//     "   performs the host handshake — keep it. …" during the audit.
+	//   - `!NeedsHarness()` keeps the WORDING honest — "there's no host to send
+	//     BLOCK_INIT" is false for a template whose `dev:harness` mounts one.
+	// A future template shipping an emitter AND a harness needs both halves
+	// reconsidered, not either conjunct deleted.
+	if !tmpl.NeedsHarness() && tmpl.ReadyAckPath() != "" {
+		fmt.Fprintln(out, "\n"+ui.Dim(fmt.Sprintf("  %s performs the host handshake — keep it. Previewing locally shows your", tmpl.ReadyAckPath())))
+		fmt.Fprintln(out, ui.Dim("  UI only: there's no host to send BLOCK_INIT, so it stays quiet by design."))
+		fmt.Fprintln(out, ui.Dim("  Without it the real host never reveals the app. See README.md."))
 	}
 
 	// The lockfile is load-bearing, and the failure it causes is remote and

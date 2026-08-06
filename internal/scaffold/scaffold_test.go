@@ -24,6 +24,9 @@ func TestRenderStatic(t *testing.T) {
 		"README.md",
 		"app.js",
 		"block.manifest.json",
+		// The vendored block -> host ready-ack emitter, copied verbatim from
+		// internal/blockproto (see ready_ack_contract_test.go).
+		"civitai-host.js",
 		"index.html",
 		"style.css",
 	}

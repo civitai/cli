@@ -41,6 +41,46 @@ permissions:
   pull-requests: write
 
 jobs:
+  # Runtime half of the ready-ack contract (issue #206). The offline guard in
+  # `internal/scaffold/ready_ack_contract_test.go` proves each SDK-free page
+  # template ships a byte-identical copy of `internal/blockproto/ready-ack.js`
+  # and that the entry point loads it — it CANNOT prove the ack fires, because
+  # no Go static check can prove JavaScript executes. This job runs the emitter
+  # in node against a fake host and asserts a single correctly-addressed
+  # `{type:'BLOCK_READY',payload:{height:0}}` goes out.
+  #
+  # 🔴 This is the DRIFT runner, NOT the gate. The gate is the identically-named
+  # job in ci.yml, which runs on every pull request. A daily job cannot block a
+  # merge — a regression would land green and surface up to 24h later, on a
+  # workflow with no dependent job — so this copy alone would be a guard that
+  # gates nothing. It exists to catch drift on `main` between PRs (a merged-tree
+  # interaction, a node bump, an npm-side change), and is deliberately
+  # independent of the `bump` job below so it runs on every sweep, including the
+  # usual no-op ones where the pins are already current.
+  ready-ack-runtime:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # -v so the run REPORTS its controls (an inert emitter and a naive ack are
+      # both driven through the same assertions and must be rejected) rather than
+      # just an exit code.
+      - name: scaffolded ready-ack actually fires
+        env:
+          CIVITAI_CHECK_SCAFFOLD_RUNTIME: "1"
+        run: go test ./internal/scaffold -run TestScaffoldedReadyAckActuallyFires -count=1 -v
+
   bump:
     runs-on: ubuntu-latest
     steps:

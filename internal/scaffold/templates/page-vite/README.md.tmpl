@@ -18,12 +18,62 @@ manifest schema requires alongside it) and commit *that* lockfile instead:
 A lockfile that disagrees with `buildCommand` is the most common build failure
 there is — `civitai app validate` catches it before you submit.
 
+## The host handshake (`src/civitai-host.js`) — don't delete it
+
+This app declares a `page` surface, so the Civitai host mounts it full-viewport
+and **waits for it to say hello before revealing it**. That hello is a single
+`BLOCK_READY` message, and it is the only thing that flips the host into its
+ready state. An app that never sends it is replaced by a failure card once the
+host's bounded retries run out — even though the app itself works perfectly.
+
+`src/civitai-host.js` does exactly that and nothing else. `src/main.jsx`
+imports it first, for its side effect; leave both in place.
+
+Two details worth knowing, because they apply to every message you add later:
+
+- **Every block → host message is an envelope:** `{ type, payload }`. The host
+  reads `event.data.payload`, so fields put at the top level
+  (`{ type: 'X', height: 0 }`) arrive as `payload: undefined`.
+- **Answer, don't announce.** The ack is sent in *response* to the host's
+  `BLOCK_INIT`, addressed at the origin that init arrived from rather than
+  broadcast to `'*'`.
+
+> 🔒 **Before you handle any message that carries data, add an origin
+> allowlist.** `src/civitai-host.js` answers `window.parent` — whoever framed
+> you. That is fine for the ack, which carries no data and discloses nothing a
+> framing page doesn't already know. It is *not* fine for a token, a viewer,
+> storage, or a generation result: check `event.origin` against origins you
+> trust first, or any page that frames your app can feed it anything. The
+> emitter deliberately ships no allowlist — the real list (production, preview
+> subdomains, dev tunnels) is platform state that moves without notice, and
+> `@civitai/blocks-react` already maintains it from
+> `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. Adopt the SDK before you handle data.
+
+If you outgrow raw `postMessage`, `@civitai/blocks-react` covers all of this
+(and the rest of the protocol): its transport performs this same handshake
+internally.
+
+> ⚠️ **When you adopt the SDK, delete `src/civitai-host.js` in the SAME
+> change.** That is the one time removing it is correct, and running both is
+> worse than running neither. Whichever handshake answers the host's *first*
+> `BLOCK_INIT` cancels the host's retry loop **and** its readiness timeout, so
+> if this file wins the race the SDK's transport can be left never having seen
+> an init: it gives up after 10s while the host sits "ready", showing an app
+> that never started, with no retry and no error card.
+
 ## Develop
 
 ```bash
 npm install
 npm run dev      # http://localhost:5173
 ```
+
+**There is no host behind `npm run dev`**, so nothing sends `BLOCK_INIT` and
+`src/civitai-host.js` stays silent — expected, not a bug. You are looking at
+your own UI; the handshake is exercised for real once the app runs on Civitai.
+(If you want to drive the protocol locally, the `page-money` template ships a
+mock host: `civitai app init "…" --template page-money`, then
+`npm run dev:harness`.)
 
 Build locally to sanity-check what the platform will produce:
 

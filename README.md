@@ -181,8 +181,8 @@ source <(civitai completion bash)   # bash; see `civitai completion --help` for 
 ## SDK packages
 
 This CLI scaffolds, validates, and submits — but the code your app actually
-imports lives in two published npm packages (the `page-money` / `page-vite`
-templates wire them for you):
+imports lives in two published npm packages (the `page-money` template wires
+them for you; `static` and `page-vite` are deliberately dependency-free):
 
 | Package | What it is |
 | --- | --- |
@@ -238,13 +238,63 @@ full details and examples.
   parent-origin config, and a unit-test stub. Run `npm run dev:harness` (plain
   `npm run dev` renders blank without a host).
 
+### The host handshake (`BLOCK_READY`)
+
+Every template declares a `page` surface, and the host **will not reveal a page
+app until the app posts `BLOCK_READY`** — that handler is the only transition
+into the host's ready state. An app that never sends it is replaced by a visible
+failure card once the host's bounded retries run out, even though the app itself
+renders perfectly. Nothing you can run locally reproduces that.
+
+`page-money` gets the handshake for free: `@civitai/blocks-react`'s iframe
+transport acks internally, which is why the SDK templates never touch raw
+`postMessage`. The two **SDK-free** templates (`static`, `page-vite`) therefore
+ship a small vendored emitter, **`civitai-host.js`**, loaded from the entry
+point. Leave it in place.
+
+> ⚠️ **If you adopt `@civitai/blocks-react`, delete `civitai-host.js` in the
+> same change.** This is the one situation where removing it is correct, and
+> running both is worse than running neither: whichever handshake answers the
+> host's *first* `BLOCK_INIT` cancels the host's retry loop **and** its
+> readiness timeout. If the vendored emitter wins that race, the SDK transport
+> can be left never having seen an init — its `waitForInit` rejects after 10s
+> and the host sits "ready", showing an app that never started, with no retry
+> and no error card.
+
+Two rules it encodes, which apply to every message you add afterwards:
+
+- **The envelope is `{ type, payload }`.** The host dispatches
+  `event.data.payload` to its subscribers, so fields put at the top level
+  (`{ type: 'X', height: 0 }`) arrive as `payload: undefined`.
+- **Answer, don't announce.** The ack goes out in *response* to the host's
+  `BLOCK_INIT`, addressed at the origin that init arrived from rather than
+  broadcast to `'*'`. It is also why nothing is posted when you preview locally:
+  there is no host to send `BLOCK_INIT`, so the emitter stays silent by design.
+
+> 🔒 **The emitter checks the sender *window*, not the sender's *identity*.** It
+> answers `window.parent` — whoever framed you — which is sound for this one
+> message because the ack carries no data. It is **not** sufficient for anything
+> you add next. The moment you handle an inbound message carrying a token, a
+> viewer, storage or a result, check `event.origin` against an allowlist of
+> origins you trust, or any page that frames your app can feed it whatever it
+> likes. The emitter deliberately does not vendor that allowlist — the real list
+> (production, preview subdomains, dev tunnels) is platform state that moves
+> without notice, and `@civitai/blocks-react` already maintains it from
+> `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. Adopt the SDK before you handle data.
+
+`RESIZE_IFRAME` is **not** part of a page app's protocol: the host renders a
+page block full-viewport, so it does not size to content and ignores the
+message. (`useBlockResize` is surface-agnostic and page-money still calls it —
+on a page surface it is simply a no-op, which is why the SDK templates can share
+component code across surfaces.)
+
 ### Local dev loop (harness: mock vs live)
 
-A scaffolded App is a sandboxed iframe — `npm run dev` alone shows a blank
-screen because there's no host to send `BLOCK_INIT`. The `page-money` /
-`page-vite` templates ship a dev **harness** (the SDK's
+A scaffolded App is a sandboxed iframe, and locally there is no host to send
+`BLOCK_INIT` — so `npm run dev` shows you your own UI and nothing of the
+protocol. The **`page-money`** template ships a dev **harness** (the SDK's
 [`@civitai/blocks-react/testing`](https://www.npmjs.com/package/@civitai/blocks-react)
-hosts) with two modes:
+hosts) to close that gap, with two modes:
 
 | Command | Mode | What it does |
 |---|---|---|
