@@ -217,7 +217,7 @@ README. For the end-to-end walkthrough, see
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results into `--out-dir` as `<workflow-id>-<n>.<ext>`. `--no-wait` prints the workflow id and exits; `--timeout` bounds the **wait** (never the job and never the charge); `--no-download` waits but prints URLs instead of writing files. `--dry-run` estimates and exits without submitting (`--dry-run --json` emits the raw estimate). `--print-input` prints the assembled graph and exits **without reaching any money seam** (no submit, no estimate, no balance read) — note that with `--image` it still **uploads** local files first, because the printed graph has to reference real blob URLs for `--input` to be able to submit it; uploading spends nothing; `--input <file>` (or `-` for stdin) sends a raw graph as-is — txt2img only, and mutually exclusive with the content flags. `--image <path-or-url>` (repeatable) attaches a reference image for **image-to-image** — a local png/jpeg is uploaded, an https URL is passed through — and **requires `--ecosystem`**, because without one the server ignores the images, generates from the prompt alone and charges anyway. Needs a **personal API key** with the AI Services scopes; an OAuth login is refused. `--max-cost` is an **estimate check, not a spending cap**. See [Generate](#generate). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
-| `civitai workflows cancel <workflow-id> [--json]` | **Stop a running generation.** 🔴 **This does not refund anything** — a mid-run cancel bills the accrued cost, non-refundably. Cancel because you no longer want the output, never to save money. See [Generate](#listing-and-cancelling-workflows). |
+| `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **This does not refund anything** — a mid-run cancel bills the accrued cost, non-refundably. Cancel because you no longer want the output, never to save money. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
 
@@ -1213,7 +1213,8 @@ civitai workflows list                      # newest first
 civitai workflows list --limit 5
 civitai workflows list --limit 50 --cursor <next-cursor>
 civitai workflows list --json               # raw server payload, incl. nextCursor
-civitai workflows cancel <workflow-id>
+civitai workflows cancel <workflow-id>      # asks for confirmation
+civitai workflows cancel <workflow-id> -y   # skip the prompt (scripts/CI)
 ```
 
 `list` is **cursor-paged**, not page-numbered: when more results exist it prints
@@ -1233,6 +1234,20 @@ the per-output reason.
 > never to undo a submit. (This is also why `--timeout` and Ctrl-C deliberately
 > do **not** cancel: stopping the wait costs nothing, while stopping the job
 > would cost the same as letting it finish and throw the result away.)
+
+`cancel` **asks for confirmation**, matching `civitai generate` and
+`civitai app submit`. It is the one irreversible action here, and it destroys a
+job you have already paid for, so it is gated the same way every other
+destructive path in this feature is:
+
+- `--yes` / `-y` proceeds without prompting;
+- an interactive terminal prints what is lost and prompts — the default is
+  **no**, so a bare Enter aborts;
+- a **non-interactive** shell without `--yes` **refuses** rather than cancelling
+  silently. Scripts must pass `--yes` explicitly.
+
+Nothing is cancelled when the confirmation is refused — the gate runs before the
+request goes out.
 
 ### Exit codes specific to `generate`
 

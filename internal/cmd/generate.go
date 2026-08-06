@@ -689,9 +689,10 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 	}
 	out.graph.Images = imgs
 	// Label each image with the SOURCE the user typed, not just the blob URL it
-	// became: after upload every entry is an opaque orchestration.civitai.com
-	// blob, so a confirmation listing only those cannot be matched back to the
-	// files on disk — which is the whole point of showing them before a spend.
+	// became: after upload every entry is an opaque blob URL on a *.civitai.com
+	// host (observed: orchestration-new.civitai.com), so a confirmation listing
+	// only those cannot be matched back to the files on disk — which is the whole
+	// point of showing them before a spend.
 	// resolveImages preserves order, so imgs[i] is o.images[i].
 	for i, img := range imgs {
 		src := ""

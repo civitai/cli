@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -18,6 +20,8 @@ import (
 type workflowsCancelOpts struct {
 	jsonOut bool
 	baseURL string
+	// assumeYes is --yes/-y: skip the confirmation prompt (for scripts/CI).
+	assumeYes bool
 }
 
 // workflowsCancelDeps is the single network seam.
@@ -49,9 +53,15 @@ Cancelling an already-finished workflow is harmless — the outputs of a succeed
 workflow are not deleted by it (use the website to delete results).
 
 This needs the same personal API key with the AI Services scopes that
-` + "`civitai generate`" + ` needs.`,
+` + "`civitai generate`" + ` needs.
+
+CONFIRMATION: cancelling is IRREVERSIBLE and destroys a job you have already paid
+for, so an interactive run asks first. Pass ` + "`--yes`" + ` to skip the prompt in a
+script; a non-interactive shell without ` + "`--yes`" + ` REFUSES rather than cancelling
+silently.`,
 		Example: `  civitai workflows cancel 01JABCXYZ
-  civitai workflows cancel 01JABCXYZ --json`,
+  civitai workflows cancel 01JABCXYZ --yes
+  civitai workflows cancel 01JABCXYZ --json --yes`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -68,7 +78,55 @@ This needs the same personal API key with the AI Services scopes that
 		},
 	}
 	cmd.Flags().BoolVar(&o.jsonOut, "json", false, "emit the raw server reply on stdout (scriptable)")
+	cmd.Flags().BoolVarP(&o.assumeYes, "yes", "y", false, "skip the confirmation prompt and cancel (for scripts/CI)")
 	return cmd
+}
+
+// confirmCancel gates the cancel mutation, mirroring confirmSubmit and
+// confirmGenerate.
+//
+// Every other destructive path in this feature gates, and this one has the
+// strongest case of the three: `app submit` gates a REVERSIBLE action, and
+// `generate` gates a spend the user has not made yet, whereas a cancel is
+// irreversible AND throws away a job that has ALREADY been paid for. A bare
+// `civitai workflows cancel <id>` on the wrong id used to destroy that job with
+// no prompt at all.
+//
+//   - --yes/-y              → proceed without prompting.
+//   - non-TTY without --yes → REFUSE (never hang, never destroy silently).
+//   - interactive TTY       → say what is lost, prompt, proceed only on "y".
+//
+// Everything it prints goes to STDERR so a `--json` stdout stays machine-clean.
+//
+// 🔴 The prompt DEFAULTS TO NO: the switch enumerates the accepting answers and
+// everything else — including a bare Enter — cancels. Rewriting it to enumerate
+// the refusing answers instead would turn `[y/N]` into `[Y/n]` and destroy a
+// paid-for job on a stray keystroke.
+func confirmCancel(cmd *cobra.Command, workflowID string, assumeYes bool) error {
+	if assumeYes {
+		return nil
+	}
+	if !stdinIsTTY() {
+		return fmt.Errorf("refusing to cancel without --yes in a non-interactive shell — cancelling %s is irreversible and does NOT refund the Buzz already spent on it. "+
+			"Pass --yes to confirm, or `civitai workflows get %s` to see what it has produced first",
+			safeTerm(workflowID), safeTerm(workflowID))
+	}
+
+	errw := cmd.ErrOrStderr()
+	st := ui.For(errw)
+	fmt.Fprintf(errw, "About to cancel workflow %s.\n", safeTerm(workflowID))
+	fmt.Fprintln(errw, st.Warn("This does NOT refund anything — a mid-run cancel bills the accrued cost, non-refundably."))
+	fmt.Fprintln(errw, st.Dim("You are throwing away a job you have already paid for. It cannot be un-cancelled."))
+	fmt.Fprint(errw, "Cancel it? [y/N]: ")
+
+	r := bufio.NewReader(cmd.InOrStdin())
+	line, _ := r.ReadString('\n')
+	switch strings.ToLower(strings.TrimSpace(line)) {
+	case "y", "yes":
+		return nil
+	default:
+		return errors.New("cancel aborted")
+	}
 }
 
 // runWorkflowsCancel is the testable core.
@@ -76,6 +134,11 @@ func runWorkflowsCancel(cmd *cobra.Command, deps workflowsCancelDeps, o workflow
 	id := strings.TrimSpace(workflowID)
 	if id == "" {
 		return asUsageError(fmt.Errorf("a workflow id is required: civitai workflows cancel <workflow-id>"))
+	}
+	// 🔴 The gate runs BEFORE the mutation seam is touched, so a refusal cannot
+	// have cancelled anything.
+	if err := confirmCancel(cmd, id, o.assumeYes); err != nil {
+		return err
 	}
 	ctx := cmd.Context()
 	if ctx == nil {

@@ -62,6 +62,15 @@ func (c *Client) UploadPresigned(ctx context.Context, uploadURL, contentType str
 		return nil, fmt.Errorf("refusing to upload without a Content-Type — the orchestrator rejects an unlabelled blob")
 	}
 	req.Header.Set("Content-Type", contentType)
+	// BELT-AND-BRACES, not load-bearing today: http.NewRequestWithContext ALREADY
+	// sets ContentLength (and GetBody, which is what makes the body replayable)
+	// when handed a *bytes.Reader, so deleting this line changes nothing about
+	// the request currently sent — measured. It is kept because the requirement
+	// is the ENDPOINT's, not the reader type's: the orchestrator's signed URL
+	// rejects a chunked body, and the day someone swaps bytes.NewReader for a
+	// wrapper the stdlib cannot size, that guarantee would vanish silently with
+	// no test able to see it. One line to keep the length pinned to the bytes we
+	// were handed rather than to an implementation detail of net/http.
 	req.ContentLength = int64(len(body))
 	return c.downloadHTTPClient().Do(req)
 }

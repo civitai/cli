@@ -165,6 +165,22 @@ func decodeImageHeader(r io.Reader, what string) (int, int, string, error) {
 			"%s could not be read as an image (%w) — the file may be truncated or corrupt; supported formats: %s",
 			what, err, supportedImageFormatList())
 	}
+	// 🔴 DEFENSIVE ONLY — this branch is UNREACHABLE as the package is currently
+	// built, and no test can kill a mutation inside it. image.DecodeConfig can
+	// only name a format whose decoder is registered, this file registers exactly
+	// png and jpeg (the blank imports above), and both are keys of
+	// supportedImageFormats — so every input either yields one of those two names
+	// or fails earlier with image.ErrFormat. Neutering this `if` therefore leaves
+	// the whole suite green, and that is a fact about reachability, not a missing
+	// test: forcing it reachable would mean registering a third decoder, which is
+	// exactly what gifBytes() in generate_image_test.go documents as the thing
+	// that would silently destroy the real unsupported-format test.
+	//
+	// It is kept because the invariant it depends on is one line away from being
+	// broken: adding a blank import WITHOUT adding the map entry makes this the
+	// live guard that stops an unlabelled format reaching the upload. That
+	// lockstep is what TestSupportedImageFormats_DecoderRegistrationIsInLockstep
+	// pins — the reachable half of this rule.
 	if _, ok := supportedImageFormats[format]; !ok {
 		return 0, 0, "", fmt.Errorf(
 			"%s is a %s image, which this CLI cannot attach — supported formats: %s",
