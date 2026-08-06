@@ -677,11 +677,19 @@ neither one's.
     behind a bool. 🔴 Doing that leaks a full-scope personal API key.
     `isTrustedDownloadHost` attaches the bearer token to `civitai.com` and to
     **any** `*.civitai.com` subdomain — correct for the model-download route it
-    was written for — and orchestrator output blobs are served from
-    `orchestration.civitai.com`, which **matches**. So `DownloadFile` would send
-    a 25-scope key (including `ModelsDelete` and `VaultWrite`) to the
-    orchestrator, on a request that is already authorized by its own signature
-    and needs no token whatsoever.
+    was written for — and orchestrator output blobs are served from a
+    `*.civitai.com` host (observed: `orchestration-new.civitai.com`), which
+    **matches**. So `DownloadFile` would send a 25-scope key (including
+    `ModelsDelete` and `VaultWrite`) to the orchestrator, on a request that is
+    already authorized by its own signature and needs no token whatsoever.
+    🔴 **The specific subdomain is incidental to the argument, and must not be
+    written as if it were the load-bearing fact.** An earlier revision of this
+    item named `orchestration.civitai.com`; the host actually observed in a real
+    upload reply is `orchestration-new.civitai.com`. BOTH match the `*.civitai.com`
+    wildcard, so the credential-free seam is required either way — which is
+    exactly why the reasoning is stated over the wildcard rather than over a
+    hostname a server-side rename can invalidate. Do not "fix" this seam because
+    the subdomain you see does not match the one written here.
     Weakening `isTrustedDownloadHost` is not the alternative: `civitai download`
     depends on it attaching the token. The fix is a **seam that never has a
     credential to attach** — `DownloadPresigned` passes `""` to `doDownload`,
@@ -901,9 +909,12 @@ neither one's.
     item 17's download does not.** `UploadPresigned` (`pkg/civitai/upload.go`) is
     a near-duplicate of `DownloadPresigned` and will attract the same "fold it
     back in behind a bool". The upload URL is **server-supplied** and lives on a
-    `*.civitai.com` host, which `isTrustedDownloadHost` **matches**, so a
-    token-carrying path would hand a 25-scope personal API key to a request its
-    own signature already authorizes. The interface has no token parameter and
+    `*.civitai.com` host (observed: `orchestration-new.civitai.com`), which
+    `isTrustedDownloadHost` **matches**, so a token-carrying path would hand a
+    25-scope personal API key to a request its own signature already authorizes.
+    As in item 17, the WILDCARD is the load-bearing fact and the subdomain is
+    incidental — the seam is required for any `*.civitai.com` host, so a rename
+    server-side changes nothing here. The interface has no token parameter and
     consults no `TokenSource`, so the safety is structural rather than
     conditional. `genapi.UploadImageBlob`'s two hops differ on purpose — hop 1
     (presign) is authed, hop 2 (upload) is not — and the test asserts BOTH, since

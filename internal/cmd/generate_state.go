@@ -32,11 +32,21 @@ type pendingGeneration struct {
 	ExternalID string `json:"externalId"`
 	// SubmittedAt is when the CLI was about to POST, in RFC3339.
 	SubmittedAt string `json:"submittedAt"`
-	// PayloadHash is the SHA-256 of the marshalled GRAPH. It exists so a
-	// re-attach can tell "the same job" from "a different job that reused the
-	// key" — the orchestrator would silently return the FIRST workflow either
-	// way, so a mismatch here is the only local signal that the key no longer
-	// describes what the user is asking for.
+	// PayloadHash is the SHA-256 of the marshalled GRAPH.
+	//
+	// 🔴 It is RECORDED ONLY — nothing reads it back and compares it. The single
+	// reader of a written record is recordPendingWorkflowID, which loads the file
+	// solely to add the workflow id and rewrites this field unchanged. So the CLI
+	// does NOT today detect "a different job that reused the key", and this
+	// comment must not claim it does: the comparison needs a recover/re-attach
+	// flow that does not exist yet.
+	//
+	// It is written now because the value is only obtainable at submit time —
+	// once the process is gone the graph is gone with it — so recording it is
+	// what keeps that future comparison POSSIBLE. If you add the recover flow,
+	// the comparison is the point: the orchestrator silently returns the FIRST
+	// workflow for a reused key, so a hash mismatch would be the only local
+	// signal that the key no longer describes what the user is asking for.
 	PayloadHash string `json:"payloadHash"`
 	// BaseURL records which server was charged.
 	BaseURL string `json:"baseUrl,omitempty"`

@@ -36,7 +36,7 @@ func wfCancelDeps(reply string, err error, seenID *string, calls *int) workflows
 func TestWorkflowsCancel_Success(t *testing.T) {
 	var seen string
 	c, out, errb := genCmd("")
-	if err := runWorkflowsCancel(c, wfCancelDeps(`{"result":{"data":{}}}`, nil, &seen, nil), workflowsCancelOpts{}, "  wf_1 "); err != nil {
+	if err := runWorkflowsCancel(c, wfCancelDeps(`{"result":{"data":{}}}`, nil, &seen, nil), workflowsCancelOpts{assumeYes: true}, "  wf_1 "); err != nil {
 		t.Fatalf("workflows cancel: %v", err)
 	}
 	if seen != "wf_1" {
@@ -80,7 +80,7 @@ func TestWorkflowsCancel_HelpStatesTheBillingTruth(t *testing.T) {
 func TestWorkflowsCancel_NotFound(t *testing.T) {
 	apiErr := apiErrorWithStatus(t, http.StatusNotFound)
 	c, out, _ := genCmd("")
-	err := runWorkflowsCancel(c, wfCancelDeps("", apiErr, nil, nil), workflowsCancelOpts{}, "wf_gone")
+	err := runWorkflowsCancel(c, wfCancelDeps("", apiErr, nil, nil), workflowsCancelOpts{assumeYes: true}, "wf_gone")
 	if err == nil {
 		t.Fatal("a 404 must return an error")
 	}
@@ -95,7 +95,7 @@ func TestWorkflowsCancel_NotFound(t *testing.T) {
 func TestWorkflowsCancel_EmptyIDIsAUsageError(t *testing.T) {
 	calls := 0
 	c, _, _ := genCmd("")
-	err := runWorkflowsCancel(c, wfCancelDeps("", nil, nil, &calls), workflowsCancelOpts{}, "   ")
+	err := runWorkflowsCancel(c, wfCancelDeps("", nil, nil, &calls), workflowsCancelOpts{assumeYes: true}, "   ")
 	if !errors.Is(err, ErrUsage) {
 		t.Fatalf("want ErrUsage (exit 2), got %v", err)
 	}
@@ -103,7 +103,7 @@ func TestWorkflowsCancel_EmptyIDIsAUsageError(t *testing.T) {
 		t.Errorf("a mutation was issued for an empty id (%d calls)", calls)
 	}
 	// Positive control: the same seam IS reached for a real id.
-	if err := runWorkflowsCancel(c, wfCancelDeps(`{}`, nil, nil, &calls), workflowsCancelOpts{}, "wf_1"); err != nil {
+	if err := runWorkflowsCancel(c, wfCancelDeps(`{}`, nil, nil, &calls), workflowsCancelOpts{assumeYes: true}, "wf_1"); err != nil {
 		t.Fatalf("control cancel: %v", err)
 	}
 	if calls != 1 {
@@ -115,7 +115,7 @@ func TestWorkflowsCancel_EmptyIDIsAUsageError(t *testing.T) {
 // on success — an empty stdout is a hard error for `jq`.
 func TestWorkflowsCancel_JSONEmitsAParseableDocument(t *testing.T) {
 	c, out, _ := genCmd("")
-	if err := runWorkflowsCancel(c, wfCancelDeps("", nil, nil, nil), workflowsCancelOpts{jsonOut: true}, "wf_1"); err != nil {
+	if err := runWorkflowsCancel(c, wfCancelDeps("", nil, nil, nil), workflowsCancelOpts{jsonOut: true, assumeYes: true}, "wf_1"); err != nil {
 		t.Fatalf("--json: %v", err)
 	}
 	var decoded map[string]any
@@ -136,7 +136,7 @@ func TestWorkflowsCancel_AgainstHTTPTest(t *testing.T) {
 
 	gen := genapi.New(srv.URL, "test-key")
 	c, out, _ := genCmd("")
-	if err := runWorkflowsCancel(c, workflowsCancelDeps{cancelWorkflow: gen.CancelWorkflow}, workflowsCancelOpts{}, "wf_1"); err != nil {
+	if err := runWorkflowsCancel(c, workflowsCancelDeps{cancelWorkflow: gen.CancelWorkflow}, workflowsCancelOpts{assumeYes: true}, "wf_1"); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
 	if method != http.MethodPost || path != genapi.CancelWorkflowPath {

@@ -74,6 +74,12 @@ func TestUploadPresigned_SendsNoCredential(t *testing.T) {
 	if rec.ctype != "image/png" {
 		t.Errorf("Content-Type = %q, want image/png", rec.ctype)
 	}
+	// This pins the OUTCOME the signed endpoint requires (a real Content-Length,
+	// never a chunked body), NOT the `req.ContentLength = …` line in upload.go.
+	// Measured: deleting that line leaves this assertion green, because
+	// http.NewRequestWithContext already sizes a *bytes.Reader body. Read it as
+	// "the request went out sized", not as coverage of our own assignment — see
+	// the belt-and-braces comment at that line.
 	if rec.clen != int64(len("PNGBYTES")) {
 		t.Errorf("Content-Length = %d, want %d — the signed endpoint rejects a chunked body", rec.clen, len("PNGBYTES"))
 	}
