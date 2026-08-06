@@ -214,6 +214,10 @@ README. For the end-to-end walkthrough, see
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
+| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results into `--out-dir` as `<workflow-id>-<n>.<ext>`. `--no-wait` prints the workflow id and exits; `--timeout` bounds the **wait** (never the job and never the charge); `--no-download` waits but prints URLs instead of writing files. `--dry-run` estimates and exits without submitting (`--dry-run --json` emits the raw estimate). `--print-input` prints the assembled graph and exits **without reaching any money seam** (no submit, no estimate, no balance read); `--input <file>` (or `-` for stdin) sends a raw graph as-is — txt2img only, and mutually exclusive with the content flags. Needs a **personal API key** with the AI Services scopes; an OAuth login is refused. `--max-cost` is an **estimate check, not a spending cap**. See [Generate](#generate). |
+| `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
+| `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
+| `civitai workflows cancel <workflow-id> [--json]` | **Stop a running generation.** 🔴 **This does not refund anything** — a mid-run cancel bills the accrued cost, non-refundably. Cancel because you no longer want the output, never to save money. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
 
@@ -335,13 +339,20 @@ blocked by CORS preflight and rejected by civitai's tRPC origin gate. The
 same-origin proxy + Origin rewrite fixes both. `VITE_LIVE_HOST_ORIGIN` overrides
 the proxy target (default `https://civitai.com`).
 
-**Which credential can spend?** Only a full-scope **personal API key** can run a
-real `dev:live` generation — the default OAuth login can't:
+**Which credential can spend?** Only a full-scope **personal API key** can spend
+Buzz — whether that is a real `dev:live` generation in your app or a
+[`civitai generate`](#generate) run from the terminal. The default OAuth login
+can't do either:
 
-| Credential | Real `dev:live` generation? | How to get it |
+| Credential | Can spend Buzz? (`dev:live`, `civitai generate`) | How to get it |
 |---|---|---|
 | **Personal API key** (full scope) | ✅ **Yes** — estimate → submit → generation → real Buzz | create it **in the web UI** at `civitai.com/user/account`, then `civitai login --token <key>` (a personal key carries AI Services) |
-| **`civitai login`** (OAuth, default) | ❌ No — viewer + catalog + app storage only | the `civitai-cli` client has no AI Services scope, so the server strips the spend scope — fine for read/identity `dev:live`, not generation |
+| **`civitai login`** (OAuth, default) | ❌ No — viewer + catalog + app storage only | the `civitai-cli` client has no AI Services scope, so the server strips the spend scope — fine for read/identity `dev:live`, not for generation |
+
+This is the single most common blocker for `civitai generate`: an OAuth login
+looks perfectly valid, and the refusal is a scope problem, not a login problem —
+re-running `civitai login` will not fix it. `civitai whoami` shows the capability
+as **Spend Buzz (AI Services)**.
 
 You can't mint a personal key over OAuth or the CLI (`apiKey.add` returns 403
 without a full-scope session) — create it in the web UI. The dev token always grants
@@ -532,6 +543,11 @@ Two properties make the output safe to pipe:
   exits `4` with `Error: not found (404): Model not found` on stderr and an empty
   stdout.
 
+Both properties hold for `civitai generate` and `civitai workflows …` too, but
+their payloads are **not** Site API REST shapes — generation has no REST route,
+so those commands pass through the raw *orchestrator* reply. Read
+[Generation `--json`](#generation---json) before scripting against them.
+
 ### Cursor pagination loop
 
 For deep paging use `--cursor` (**not** `--page` — the API caps `page*limit` at
@@ -556,6 +572,35 @@ The CLI runs a background check for a newer release and prints a nag to
 **stderr**. In scripts, silence it with `CIVITAI_NO_UPDATE_CHECK=1` (env) or
 `--no-update-check` (flag). Either way stdout stays pure JSON — the nag never
 touches stdout — but suppressing it keeps stderr clean for logs.
+
+### Generation `--json`
+
+`civitai generate --dry-run --json`, `civitai workflows list --json` and
+`civitai workflows get <id> --json` emit the raw orchestrator payload. Two
+caveats have bitten people, and neither shows up as an error:
+
+- **Output URLs are presigned and EXPIRE.** The links in a workflow payload are
+  short-lived signatures, not durable addresses. A pipeline that stores them and
+  fetches later gets a 401/403 from the storage host that no credential can fix
+  — re-run `civitai workflows get <id>` for fresh links instead of caching the
+  old ones. (Fetch them with **no** `Authorization` header; they are already
+  authorized, and the CLI deliberately attaches nothing to them.)
+- **`--json` still exits `0` when the job is not generatable.**
+  `--dry-run --json` prints the estimate and exits `0` even when the payload
+  says `"ready": false`, which means the server has already decided it cannot
+  serve this job (an unavailable or unsupported resource). A human `--dry-run`
+  prints a warning and a real submit refuses outright, but a script reading only
+  the exit code sees success. **Branch on the field**, exactly as `app metrics`
+  requires branching on `notOwned`:
+
+  ```bash
+  q=$(civitai generate "a cat" --checkpoint 128713 --dry-run --json) || exit $?
+  [ "$(echo "$q" | jq -r .ready)" = "true" ] || { echo "not generatable" >&2; exit 1; }
+  echo "$q" | jq -r .cost.total
+  ```
+
+  Cost keys (`cost.factors`, `cost.fixed`) are server-owned and passed through
+  **verbatim**, so treat them as an open map rather than a fixed set.
 
 ### Gotchas
 
@@ -854,6 +899,266 @@ outage from a real zero. A server old enough to predate this section omits the
 (naming the different cause), and a script should treat a missing `.views` the
 same way.
 
+## Generate
+
+`civitai generate "<prompt>"` runs a text-to-image generation on Civitai's
+generator.
+
+> 🔴 **This spends real Buzz and cannot be undone.** A submitted generation is
+> charged. There is no cancel-for-refund. Price it with `--dry-run` first — that
+> calls the cost estimator and spends nothing.
+
+```bash
+# Price it. Spends nothing.
+civitai generate "a cat wearing sunglasses" --dry-run
+
+# The same estimate as raw JSON, for scripts
+civitai generate "a cat wearing sunglasses" --dry-run --json
+
+# Generate, refusing if the estimate exceeds 50 Buzz
+civitai generate "a cat wearing sunglasses" --quantity 4 --max-cost 50
+
+# A specific checkpoint plus a LoRA at 0.8 strength
+civitai generate "a cat" --checkpoint 128713 --lora 250712:0.8
+
+# Wait for the result and write the images into ./out
+civitai generate "a cat" --yes --out-dir ./out
+
+# Fire and forget; collect the results later
+civitai generate "a cat" --yes --no-wait
+civitai workflows list
+civitai workflows get <workflow-id>
+
+# Non-interactive (CI) — --yes is required, or the run is refused
+civitai generate "a cat" --yes --max-cost 20
+
+# Graduate from flags to a raw graph: print, edit, send back
+civitai generate "a cat" --quantity 2 --print-input > graph.json
+civitai generate --input graph.json --dry-run
+```
+
+**Credential.** Generation needs a full-scope **personal API key** carrying the
+AI Services scopes ([create one](https://civitai.com/user/account), then
+`civitai login --token <key>`). An OAuth browser login (`civitai login`) does
+**not** carry them and is refused. `civitai whoami` shows the capability as
+**Spend Buzz (AI Services)**.
+
+### 🔴 `--max-cost` is an estimate check, not a spending cap
+
+The cost this command shows is an **estimate, not a quote**: the server's
+estimator returns no quote id, no signed price and no expiry, so there is
+nothing to hand back at submit time — and **no server-side spending ceiling is
+reachable from an API key at all**. The realized charge can exceed the estimate
+and is **not refunded**.
+
+`--max-cost` compares that estimate against your number and refuses **locally**
+before submitting. It catches a `--quantity` typo. That is all it can do. Do not
+run an unattended loop believing it caps spend. (The per-API-key `buzzLimit` on
+your account does not bind this path either — the generator meters a separate
+server-minted subject, not your key.)
+
+### Confirmation
+
+An interactive run prints the estimate, your balance and the resolved model
+names, then asks. A **non-interactive shell (pipe/CI) without `--yes` is
+refused** rather than charged silently. Everything the confirmation prints goes
+to **stderr**, so `--json` keeps stdout machine-clean.
+
+### The five content flags, and why there aren't twelve
+
+`--negative-prompt`, `--quantity`, `--aspect-ratio`, `--checkpoint
+<version-id>`, `--lora <version-id>[:strength]` (repeatable).
+
+The generator is **permissive, not a validator** — it returns HTTP 200 for
+things it silently changes:
+
+- An out-of-range `--quantity` is **clamped** with no error (asking for 40
+  charges you for the server's limit). The CLI warns when you cross it.
+- `--steps 0` / `--cfg-scale 0` are *accepted* and price a degenerate, cheaper,
+  wrong job — which is exactly why those flags are **not** exposed yet.
+- A checkpoint id that does not exist is accepted, the ecosystem default is
+  **silently substituted**, and you are billed for it.
+
+So `--checkpoint` and every `--lora` is resolved against the public
+model-version API **before** anything is submitted: a bad id becomes a hard
+local *not found* (exit 4) instead of a wrong charge, and the confirmation
+echoes the resolved **model name** so you approve a name rather than an integer.
+`--model` is deliberately absent: `civitai download --model` takes a *model* id,
+while this takes a *version* id.
+
+### Raw graphs: `--print-input` and `--input`
+
+The five flags cover the common job. Everything else the generator understands
+lives in the **generation graph** — the JSON document the flags assemble. You can
+write that document yourself:
+
+```bash
+# 1. Assemble it from flags, print it, and exit. No submit, no cost estimate,
+#    no balance read — with no --checkpoint/--lora, no request at all.
+civitai generate "a cat" --quantity 2 --aspect-ratio 1:1 --print-input > graph.json
+
+# 2. Edit graph.json however you like.
+
+# 3. Send it as-is. Price it first; --dry-run still spends nothing.
+civitai generate --input graph.json --dry-run
+civitai generate --input graph.json --yes
+
+# …or pipe it, with `-`
+jq '.prompt = "a dog"' graph.json | civitai generate --input - --dry-run
+```
+
+`--print-input` reaches **no money seam**: not the submit, not the cost
+estimator, not the balance read. With `--checkpoint`/`--lora` it does still make
+the public model-version *read* those flags always make — that lookup supplies
+`model.type`, which graph `resources[]` require, so skipping it would print a
+document `--input` could not submit.
+
+`--print-input`'s output is a valid `--input` document by construction — that
+round-trip is the point of the pair, and it is what replaces a `--set
+some.path=value` expression language the CLI deliberately does not have (a wrong
+type in such an expression is accepted by the server silently, and billed; an
+edited file is inspectable before it is sent).
+
+Four things to know, all of them consequences of it being a **passthrough**:
+
+- **txt2img only.** A graph declaring any other workflow is refused. The
+  server's content audit reads the top-level `prompt` node, and it rebuilds what
+  it inspects from *declared* graph nodes — so a graph carrying its prompt
+  somewhere else (a comfy node, a nested step input) is exactly the shape that
+  could reach the generator unaudited. That question is open upstream, and this
+  CLI will not be the path that answers it the wrong way.
+- **Envelope keys are refused, not ignored.** `civitaiTip`, `creatorTip`,
+  `buzzType`, `tags`, `externalId`, `sourceMetadata`, `sourceMetadataMap`,
+  `remixOfId` and a top-level `input` belong to the request *envelope* around the
+  graph, not to the graph. A file setting `civitaiTip` would charge a tip that
+  **`--dry-run` structurally cannot show you** — the estimator prices a strictly
+  smaller request and is never sent tips at all — so the file is rejected with an
+  error rather than quietly cleaned up.
+- **Keys the CLI does not model are passed through, with a warning.** The warning
+  says the CLI cannot *verify* the key; it is not a claim that the key is
+  invalid, because the CLI does not carry a copy of the server's node registry.
+  It matters because the server's failure mode for a key it does not declare is
+  to **drop it silently at HTTP 200** — a typo costs Buzz and produces a job that
+  ran without your parameter, with no error anywhere.
+- **No model-id safety net.** `--checkpoint` / `--lora` are resolved against the
+  public API before submitting; a raw graph is not interpreted, so a nonexistent
+  id in it is accepted, the ecosystem default is substituted, and you are billed.
+
+`--input` cannot be combined with a prompt argument or with
+`--negative-prompt` / `--quantity` / `--aspect-ratio` / `--checkpoint` /
+`--lora` — there is no predictable answer to "does `--lora` append to or replace
+the file's `resources`?", so the combination is a usage error. Every *execution*
+flag (`--dry-run`, `--yes`, `--max-cost`, `--json`, `--no-wait`, `--timeout`,
+`--out-dir`, `--no-download`, `--force`, `--external-id`) still applies.
+
+### Waiting, downloading, and re-attaching
+
+By default `generate` **waits** for the job to finish and writes every
+deliverable output into `--out-dir` (default `.`) as
+`<workflow-id>-<n>.<ext>`. `--force` overwrites existing files; without it a
+collision is refused *before any bytes move*.
+
+- `--no-wait` submits, prints the workflow id and exits `0`.
+- `--no-download` waits and prints the output URLs instead of writing files.
+- `civitai workflows get <workflow-id>` shows a workflow at any time. It is the
+  re-attach path for every case where the CLI stopped early, and it spends
+  nothing.
+
+> 🔴 **`--timeout` stops *waiting*. It does not stop *paying*.** When the
+> deadline passes (or you press Ctrl-C) the generation keeps running
+> server-side and the charge stands — there is no cancel-for-refund, and a
+> mid-run cancel bills the accrued cost anyway. Both cases exit **non-zero**,
+> print the workflow id, the idempotency key and the exact `civitai workflows
+> get …` command, and never report success.
+
+**Output URLs are presigned and expire.** Download promptly; re-read the
+workflow for fresh links. The blob fetch deliberately carries **no credential**
+— the URL is already authorized, and attaching your full-scope API key to it
+would hand 25 unrelated permissions to a request that needs none.
+
+**A finished workflow can contain fewer usable results than you paid for.** An
+output can be blocked by moderation, never land, or be one you hid on the
+website. Those are filtered out of the download — and **reported, with the
+reason**, plus an explicit note when the count differs from `--quantity`.
+Silently writing three files for a four-image job is the failure this exists to
+prevent. If *every* output is filtered out the command exits non-zero.
+
+**Crash safety.** The orchestrator's idempotency key is written to
+`~/.config/civitai/pending/<key>.json` **before** the request is sent, because
+the money moves server-side even if the process dies mid-POST. If a submit's
+reply never arrives, re-run with `--external-id <key>`: the orchestrator dedupes
+on it and returns the **pre-existing** workflow instead of charging again (it
+answers a duplicate with HTTP 200, not a 409, so re-attachment is inferred
+locally).
+
+**Polling cadence.** The status poll starts at 5s, backs off exponentially to a
+cap, and backs off harder on a `429`. That floor is not tunable downward: the
+workflow read proxies straight through to the orchestrator with no cache and no
+server-side rate limit, so the CLI's own restraint is the only thing between it
+and a 429 storm.
+
+### Listing and cancelling workflows
+
+```bash
+civitai workflows list                      # newest first
+civitai workflows list --limit 5
+civitai workflows list --limit 50 --cursor <next-cursor>
+civitai workflows list --json               # raw server payload, incl. nextCursor
+civitai workflows cancel <workflow-id>
+```
+
+`list` is **cursor-paged**, not page-numbered: when more results exist it prints
+`Next cursor: <c>` on **stdout**, which you pass back as `--cursor`. `--tag`
+filters on orchestrator workflow tags (repeatable).
+
+The `OUTPUTS` column reads `deliverable/total`. The two differ when an output was
+blocked by moderation, never landed, or you hid it on the website — so
+`0/4` means four images were produced and paid for and none of them are usable,
+which is a very different fact from `0/0`. `civitai workflows get <id>` shows
+the per-output reason.
+
+> 🔴 **`cancel` does not refund anything.** A mid-run cancel **bills the accrued
+> cost**, orchestrator-side and non-refundably. There is no cancel-for-refund on
+> this platform: by the time a workflow is running the money has moved. Cancel a
+> job because you no longer want its *output* — never as a way to save Buzz, and
+> never to undo a submit. (This is also why `--timeout` and Ctrl-C deliberately
+> do **not** cancel: stopping the wait costs nothing, while stopping the job
+> would cost the same as letting it finish and throw the result away.)
+
+### Exit codes specific to `generate`
+
+`generate` follows the [global exit-code table](#exit-codes), with one
+deliberate refinement. The API answers several very different failures with the
+same HTTP status, and the generic mapping would send a script down the wrong
+path — in particular a caller who is out of Buzz, muted, or hitting a
+server-side outage must **never** be told to re-run `civitai login`. Those cases
+therefore exit `1` (generic), not `3` (auth) or `2` (usage):
+
+🔴 **An exit code does not tell you whether you were charged.** Every failure
+above the divider happens *before* anything is submitted, so nothing was spent.
+Every failure below it happens *after* the submit, and **the Buzz is gone** —
+including a `--timeout`, a Ctrl-C, and a workflow that ends `failed`. Do not
+write a retry loop that branches on the exit code alone; re-attach with
+`civitai workflows get <workflow-id>` instead of re-submitting.
+
+| Failure | Exit |
+| --- | --- |
+| *— nothing submitted, nothing spent —* | |
+| Missing AI Services scope / no token / not authenticated | `3` |
+| Not enough Buzz (caught locally against your balance, or reported by the server) | `1` |
+| Account muted, or onboarding incomplete | `1` |
+| Generation disabled server-side | `1` |
+| Prompt refused by content moderation — 🔴 **never retry**, repeated blocked prompts get the account muted | `1` |
+| The server priced the job but reports `ready: false` (a selected resource is not currently generatable) | `2` |
+| Estimate above `--max-cost`, an unknown ecosystem, or a resource that resolved fine but is "not enabled for generation" (the ids exist; the *combination* is not runnable — distinct from exit `4`, which means "no such id") | `2` |
+| `--input` that is malformed, declares a non-txt2img workflow, carries an envelope key (`civitaiTip`, …), or is combined with a content flag | `2` |
+| No such `--checkpoint` / `--lora` version id | `4` |
+| `civitai workflows get` / `workflows cancel` on an unknown workflow id (a read; spends nothing) | `4` |
+| *— 🔴 submitted: the Buzz is already spent —* | |
+| `--timeout` expired, or Ctrl-C while waiting — the job **keeps running** server-side and was **not** cancelled | `1` |
+| The workflow finished `failed` / `expired` / `canceled` | `1` |
+| The workflow succeeded but every output was filtered out (blocked / unavailable / hidden) | `1` |
+
 ## Configuration
 
 | Setting | Config key | Env var | Default |
@@ -877,7 +1182,7 @@ by this — only `echo $?` differs.
 | `0` | Success. |
 | `1` | Generic / unclassified error. |
 | `2` | Usage error — a bad flag, a bad flag value (e.g. `--limit` out of range, a non-integer id), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum). |
-| `3` | Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured). |
+| `3` | Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured). **`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as "bad flags". See [Generate](#exit-codes-specific-to-generate). |
 | `4` | Not found — the requested resource does not exist (HTTP 404). |
 | `5` | Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries. |
 | `6` | Rate limited — throttled by the API (HTTP 429). |
