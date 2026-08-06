@@ -31,6 +31,7 @@ const tokenFlagNoValue = "\x00civitai-token-no-value"
 func newLoginCmd() *cobra.Command {
 	var tokenFlag string
 	var noBrowser bool
+	var scopeSets []string
 
 	cmd := &cobra.Command{
 		Use:   "login",
@@ -49,18 +50,29 @@ credential is saved
 to your config file (~/.config/civitai/config.yaml, owner-readable only). The
 CIVITAI_TOKEN environment variable still overrides the stored credential.
 
-Note: ` + "`civitai login`" + ` (OAuth) grants submit but NOT Buzz-spend. To run
-` + "`dev:live`" + ` real generations, authenticate with a full-scope personal API key
-(` + "`civitai login --token <key>`" + `, created at https://civitai.com/user/account).
+SCOPES. By DEFAULT ` + "`civitai login`" + ` grants identity + Apps submit +
+dev-tunnel, and deliberately NOT Buzz-spend — a plain login must never silently
+hand the CLI authority to spend your Buzz. Opt in per named scope set with
+--scopes (additive — you keep everything the default grants):
+
+` + deviceScopeSetHelp() + `
+So ` + "`civitai login --scopes generate`" + ` yields ONE credential that can both
+submit apps and run ` + "`civitai generate`" + `. Without it, generation is refused
+and ` + "`dev:live`" + ` cannot spend; the other way to get spend authority is a
+full-scope personal API key (` + "`civitai login --token <key>`" + `, created at
+https://civitai.com/user/account).
+
+--scopes applies only to the browser device login; it is rejected with --token.
 
 Switching accounts: running ` + "`civitai login`" + ` again overwrites the stored
 credential with the new account — no separate logout needed. (Check the active
 account with ` + "`civitai whoami`" + `.)`,
-		Example: `  civitai login                 # browser device login (recommended)
-  civitai login --no-browser    # device login without auto-opening a browser
-  civitai login --token <token> # store a personal API key instead
-  civitai login --token         # no value: print where to create a personal key
-  civitai login                 # run again to SWITCH the active account (overwrites the stored credential)`,
+		Example: `  civitai login                    # browser device login (recommended); no Buzz-spend
+  civitai login --scopes generate  # ALSO grant generation + Buzz SPEND (civitai generate)
+  civitai login --no-browser       # device login without auto-opening a browser
+  civitai login --token <token>    # store a personal API key instead
+  civitai login --token            # no value: print where to create a personal key
+  civitai login                    # run again to SWITCH the active account (overwrites the stored credential)`,
 		// Setting --token's NoOptDefVal (so `login --token` needs no argument) makes
 		// pflag parse the space-separated form `login --token <value>` as a single
 		// positional arg. Accept exactly one positional ONLY when --token was given,
@@ -107,11 +119,30 @@ account with ` + "`civitai whoami`" + `.)`,
 				return nil
 			}
 
+			// --scopes is a DEVICE-FLOW concept: it is the `scope` parameter of the
+			// device-authorization request. A personal API key's scopes are fixed
+			// when it is minted in the web UI, so `--token <key> --scopes generate`
+			// cannot do what it says. Reject it loudly rather than storing the key
+			// and silently dropping the scope request.
+			if cmd.Flags().Changed("scopes") && cmd.Flags().Changed("token") {
+				return asUsageError(fmt.Errorf(
+					"--scopes applies only to the browser device login and cannot be combined with --token: " +
+						"a personal API key's scopes are fixed when you create it at " + accountAPIKeysURL +
+						". Run `civitai login --scopes generate` on its own, or drop --scopes"))
+			}
+
+			// Resolve the requested scope BEFORE any network call so a typo'd set
+			// name fails instantly instead of after a device-init round trip.
+			scope, err := appapi.ResolveDeviceScope(scopeSets)
+			if err != nil {
+				return asUsageError(err)
+			}
+
 			// --token <value> keeps the personal-key path.
 			if tokenVal != "" {
 				return loginWithToken(cmd, cfg, tokenVal)
 			}
-			return loginWithDevice(cmd, cfg, noBrowser)
+			return loginWithDevice(cmd, cfg, noBrowser, scope, scopeSets)
 		},
 	}
 	cmd.Flags().StringVar(&tokenFlag, "token", "", "store a personal API key instead of the browser device login (pass with no value to print where to create one)")
@@ -142,7 +173,38 @@ account with ` + "`civitai whoami`" + `.)`,
 	// nonsensical anyway.)
 	cmd.Flags().SetInterspersed(false)
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "do not attempt to open a browser for device login")
+	// --scopes takes a NAMED SET, never a raw bitmask: nobody should type bit
+	// arithmetic to log in, and a named set is what lets the granted mask change
+	// server-side without changing this interface.
+	//
+	// It is deliberately a value-taking flag with NO NoOptDefVal, which is what
+	// keeps it clear of the --token footgun documented above. Because pflag
+	// consumes the following argument as this flag's VALUE, `login --scopes
+	// generate` produces ZERO positionals — so it can never be mistaken for the
+	// `--token <value>` positional-recovery form, and the Args guard is untouched.
+	// The SetInterspersed(false) trade-off still applies in the other direction:
+	// in `login --token <key> --scopes generate` the positional <key> halts flag
+	// parsing, so --scopes is left as a stray positional and the Args guard
+	// rejects the whole invocation rather than silently ignoring it. Put --scopes
+	// FIRST (or use `--token=<key>`).
+	cmd.Flags().StringSliceVar(&scopeSets, "scopes", nil, fmt.Sprintf(
+		"extra scope sets to request on a browser device login, additive on top of the default (valid: %s). "+
+			"--scopes generate grants generation AND Buzz-SPEND authority; omit it and this login cannot spend your Buzz. "+
+			"Not valid with --token",
+		strings.Join(appapi.DeviceScopeSetNames(), ", ")))
 	return cmd
+}
+
+// deviceScopeSetHelp renders the named --scopes sets as an indented list for the
+// command's long help. Single-sourced from the appapi registry so a new set
+// shows up in `civitai login --help` without editing this file.
+func deviceScopeSetHelp() string {
+	var b strings.Builder
+	for _, name := range appapi.DeviceScopeSetNames() {
+		summary, _ := appapi.DeviceScopeSetSummary(name)
+		fmt.Fprintf(&b, "  --scopes %s\n      %s\n", name, summary)
+	}
+	return b.String()
 }
 
 // printMintTokenHelp tells the user where to create a personal API key and how to
@@ -174,15 +236,24 @@ func loginWithToken(cmd *cobra.Command, cfg *config.Config, tokenFlag string) er
 	return nil
 }
 
-// loginWithDevice runs the OAuth device-authorization grant.
-func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) error {
+// loginWithDevice runs the OAuth device-authorization grant. scope is the
+// already-resolved device scope (ResolveDeviceScope); scopeSets are the raw
+// --scopes names, used only to tell the user what extra authority they just
+// asked for.
+func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool, scope string, scopeSets []string) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
 	}
 
+	// Surface the consequence at the point of use: the approval screen names
+	// scopes, but the terminal is where the user decided. Printed BEFORE the
+	// browser opens so it is on screen while they approve.
+	printRequestedScopeSets(out, scopeSets)
+
 	oc := appapi.NewOAuthClient(cfg.BaseURL())
+	oc.Scope = scope
 	da, err := oc.StartDevice(ctx)
 	if err != nil {
 		return err
@@ -219,6 +290,21 @@ func loginWithDevice(cmd *cobra.Command, cfg *config.Config, noBrowser bool) err
 	fmt.Fprintf(out, "\n%s\n", ui.Success(fmt.Sprintf("Logged in. Tokens saved to %s", cfg.Path())))
 	fmt.Fprintf(out, "Verify with: %s\n", ui.Code("civitai whoami"))
 	return nil
+}
+
+// printRequestedScopeSets tells the user which extra scope sets this login is
+// asking for, and what each one authorizes. It prints NOTHING for a default
+// login (no --scopes), so existing output is unchanged. Unknown names never
+// reach here — ResolveDeviceScope rejects them before any network call.
+func printRequestedScopeSets(out io.Writer, scopeSets []string) {
+	for _, raw := range scopeSets {
+		summary, ok := appapi.DeviceScopeSetSummary(raw)
+		if !ok {
+			continue
+		}
+		fmt.Fprintf(out, "%s\n", ui.Warn(fmt.Sprintf(
+			"Requesting the %q scope set: %s.", strings.ToLower(strings.TrimSpace(raw)), summary)))
+	}
 }
 
 // deviceVerificationURI returns the BARE verification URI (no code prefilled),

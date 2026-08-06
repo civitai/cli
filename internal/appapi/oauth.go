@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -40,32 +41,51 @@ const (
 	ClientID = "civitai-cli"
 
 	// DeviceScope is UserRead|AppBlocksSubmit|AppBlocksDevTunnel (bit flags), the
-	// fixed scope the CLI requests on login. 100663297 == (1<<0)|(1<<25)|(1<<26):
+	// scope `civitai login` requests when no --scopes set is named — i.e. the
+	// DEFAULT login. 100663297 == (1<<0)|(1<<25)|(1<<26):
 	//   - UserRead           (1<<0  = 1)        — whoami / identity.
 	//   - AppBlocksSubmit     (1<<25 = 33554432) — `app submit` AND the dev-token mint
 	//     gate (both require this on an OAuth token).
 	//   - AppBlocksDevTunnel  (1<<26 = 67108864) — `app dev-tunnel` (start/stop/status).
 	//     The dev-tunnel tRPC procs require this bit on an OAuth token; without it a
 	//     login token 403s the scope gate and only a Full personal API key works.
-	// This is exactly the civitai-cli OauthClient.allowedScopes set (100663297). We
-	// deliberately do NOT request AIServicesWrite: the server's device-flow
-	// validateScope is all-or-nothing — requesting any scope the client doesn't
-	// allow REJECTS the whole login — and we don't want every login token to carry
-	// general Buzz-spend authority.
 	//
-	// 🔴 SERVER DEPENDENCY: AppBlocksDevTunnel (bit 26) + the widened civitai-cli
-	// allowedScopes (100663297) must be LIVE on prod auth (migration applied) BEFORE
-	// this ships — else the device request exceeds allowedScopes and login 400s
-	// (invalid_scope). Do NOT release this ahead of the civitai server change.
+	// The DEFAULT deliberately omits AIServicesWrite. That is a product decision,
+	// not a protocol limit: a plain `civitai login` must not silently hand every
+	// stored credential general Buzz-SPEND authority. A user who wants generation
+	// asks for it explicitly with `civitai login --scopes generate`, which ORs in
+	// the ScopeSetGenerate bits (see deviceScopeSets) — the request is computed by
+	// ResolveDeviceScope, not fixed.
 	//
-	// What a login token can do: MINT an App-Blocks dev token (the mint gate needs
-	// AppBlocksSubmit), open an on-site dev tunnel (AppBlocksDevTunnel), and drive
-	// the read/estimate harness paths — cost preview / whatif, catalog browsing, app
-	// storage. It CANNOT run a real generation: the dev-token mint applies a uniform
-	// AIServicesWrite ceiling on the budgeted-spend scope, so a login-minted dev
-	// token has ai:write:budgeted STRIPPED (read/estimate only). Real-Buzz dev:live
-	// needs a personal API key with full scope (civitai.com/user/account), which
-	// carries AIServicesWrite.
+	// 🔴 SERVER DEPENDENCY, and it is all-or-nothing: the device-flow validateScope
+	// REJECTS THE WHOLE LOGIN (400 invalid_scope) if the requested mask carries any
+	// bit outside the civitai-cli OauthClient's allowedScopes. So every value this
+	// package can produce must be a subset of the LIVE allowedScopes column:
+	//   - DeviceScope (100663297) needs the AppBlocksDevTunnel widening — live.
+	//   - DeviceScope|ScopeSetGenerate (100777985) needs the AIServicesRead |
+	//     AIServicesWrite | BuzzRead widening — NOT yet applied to production as of
+	//     2026-08-06 (civitai/civitai#3681). Until that migration is confirmed
+	//     applied, `civitai login --scopes generate` 400s; StartDevice maps that to
+	//     an actionable message (see InvalidScopeError) and plain `civitai login`
+	//     keeps working. Do NOT release a version that DEFAULTS to the wider mask
+	//     ahead of the civitai server change.
+	//
+	// What a login token can do:
+	//   - DEFAULT (`civitai login`, 100663297): identity/whoami, `app submit`,
+	//     `app dev-tunnel`, and MINT an App-Blocks dev token. That dev token is
+	//     read/estimate-only — the mint clamps the budgeted-spend scope against the
+	//     BEARER's AIServicesWrite bit (keyCanSpend), which this mask lacks, so
+	//     ai:write:budgeted is STRIPPED and `dev:live` cannot spend real Buzz.
+	//   - GENERATE (`civitai login --scopes generate`, 100777985): all of the above
+	//     PLUS AIServicesRead|AIServicesWrite|BuzzRead, so it clears the
+	//     `civitai generate` scope gate and reads the Buzz balance. Because the
+	//     bearer now carries AIServicesWrite, the dev-token mint's clamp no longer
+	//     strips ai:write:budgeted — a dev token minted from it CAN arm real-Buzz
+	//     `dev:live`. `civitai app dev-token` therefore only REQUESTS that scope
+	//     when the user passes --spend (see internal/cmd/app_dev_token.go).
+	//   - A full-scope personal API key (civitai.com/user/account) remains the other
+	//     way to get AIServicesWrite, and is still the only credential carrying the
+	//     rest of the Full mask.
 	DeviceScope = "100663297"
 
 	grantTypeDeviceCode   = "urn:ietf:params:oauth:grant-type:device_code"
@@ -80,10 +100,117 @@ const (
 	maxPollInterval = 60 * time.Second
 )
 
+// ScopeAppBlocksDevTunnel (1<<26) gates the on-site dev-tunnel tRPC procs. It is
+// declared here rather than in the appblocks.go scope table because that table
+// drives the `whoami --scopes` decode of a PERSONAL key's mask, whose upstream
+// Full constant stops at bit 24; this bit only ever appears on an OAuth token.
+const ScopeAppBlocksDevTunnel = 1 << 26
+
+// ScopeSetGenerate is the name a user types to opt a login into generation:
+//
+//	civitai login --scopes generate
+//
+// Named sets exist so nobody ever types bit arithmetic on the command line, and
+// so a future set can be added without changing the flag's shape.
+const ScopeSetGenerate = "generate"
+
+// deviceScopeSet is one named, user-facing bundle of extra bits a login may
+// opt into. Bits are ADDITIVE on top of DeviceScope: opting into generation
+// must not cost the user app-submit or dev-tunnel ability, because a login
+// yields ONE credential.
+type deviceScopeSet struct {
+	Name string
+	Bits int
+	// Summary is shown in `login --help` and echoed at login time. It must name
+	// the CONSEQUENCE (Buzz-spend authority), not just the bit names — the point
+	// of use is the only place a user reliably reads it.
+	Summary string
+}
+
+// deviceScopeSets is the registry of named --scopes sets, in listing order.
+// Adding a set here is the whole extension point: the flag help, the validation
+// error, and ResolveDeviceScope all read from it.
+var deviceScopeSets = []deviceScopeSet{
+	{
+		Name: ScopeSetGenerate,
+		Bits: ScopeAIServicesRead | ScopeAIServicesWrite | ScopeBuzzRead,
+		Summary: "run `civitai generate` and read your Buzz balance " +
+			"(AIServicesRead|AIServicesWrite|BuzzRead) — this login WILL be able to SPEND your Buzz",
+	},
+}
+
+// deviceScopeBase is DeviceScope as an int. Pinned against the string constant
+// by TestDeviceScopeStringMatchesBits so the two can never drift.
+const deviceScopeBase = ScopeUserRead | ScopeAppBlocksSubmit | ScopeAppBlocksDevTunnel
+
+// DeviceScopeSetNames returns the valid --scopes set names in listing order.
+func DeviceScopeSetNames() []string {
+	names := make([]string, 0, len(deviceScopeSets))
+	for _, s := range deviceScopeSets {
+		names = append(names, s.Name)
+	}
+	return names
+}
+
+// DeviceScopeSetSummary returns the human summary for a named set, and whether
+// the name is known.
+func DeviceScopeSetSummary(name string) (string, bool) {
+	for _, s := range deviceScopeSets {
+		if s.Name == normalizeScopeSetName(name) {
+			return s.Summary, true
+		}
+	}
+	return "", false
+}
+
+// normalizeScopeSetName canonicalizes a user-typed set name (trim + lowercase)
+// so `--scopes Generate` and `--scopes " generate "` behave like `generate`.
+func normalizeScopeSetName(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
+
+// ResolveDeviceScope computes the `scope` value the device-authorization request
+// must carry, given zero or more named scope sets from `login --scopes`.
+//
+// It is ADDITIVE and starts from DeviceScope: passing no sets (or only
+// empty/whitespace entries) returns DeviceScope unchanged, so the default login
+// is bit-for-bit what it has always been. Each recognized set ORs its bits in.
+// An unrecognized name is a hard error naming the valid sets — a typo'd
+// `--scopes generte` must not silently log the user in with fewer scopes than
+// they asked for.
+func ResolveDeviceScope(sets []string) (string, error) {
+	bits := deviceScopeBase
+	for _, raw := range sets {
+		name := normalizeScopeSetName(raw)
+		if name == "" {
+			continue // a stray empty element (e.g. `--scopes ""`) means "no set"
+		}
+		found := false
+		for _, s := range deviceScopeSets {
+			if s.Name == name {
+				bits |= s.Bits
+				found = true
+				break
+			}
+		}
+		if !found {
+			return "", fmt.Errorf("unknown login scope set %q — valid scope sets: %s",
+				strings.TrimSpace(raw), strings.Join(DeviceScopeSetNames(), ", "))
+		}
+	}
+	return strconv.Itoa(bits), nil
+}
+
 // OAuthClient talks the device-flow + refresh endpoints.
 type OAuthClient struct {
 	BaseURL string
 	HTTP    *http.Client
+
+	// Scope is the exact `scope` value StartDevice puts on the wire. Empty means
+	// "the default login scope" (DeviceScope) — callers that don't care about
+	// scope sets leave it zero and get today's behaviour. Callers honouring
+	// `login --scopes` set it from ResolveDeviceScope.
+	Scope string
 
 	// endpoints, once resolved, hold the concrete OAuth endpoint URLs + issuer
 	// used for the POSTs (and the Origin header). Resolved lazily via OpenID
@@ -273,6 +400,54 @@ func sameOriginEndpoint(origin, endpoint string) bool {
 	return true
 }
 
+// RequestedScope returns the scope value the device request will carry: the
+// caller-supplied Scope, or DeviceScope when it is unset/blank.
+func (c *OAuthClient) RequestedScope() string {
+	if s := strings.TrimSpace(c.Scope); s != "" {
+		return s
+	}
+	return DeviceScope
+}
+
+// InvalidScopeError is the device-init `invalid_scope` rejection, rendered as
+// something a user can act on. The server's scope validation is ALL-OR-NOTHING:
+// one bit outside the civitai-cli client's allowedScopes rejects the entire
+// login, so this is what a CLI running ahead of the server's scope-widening
+// migration sees. The message names the concrete fallback (plain `civitai
+// login`) rather than echoing an OAuth code.
+type InvalidScopeError struct {
+	// Requested is the scope mask the CLI put on the wire.
+	Requested string
+	// Description is the server's error_description, if any.
+	Description string
+}
+
+func (e *InvalidScopeError) Error() string {
+	var b strings.Builder
+	b.WriteString("the Civitai auth server rejected this login's scopes (invalid_scope)")
+	if e.Description != "" {
+		b.WriteString(": " + e.Description)
+	}
+	if e.Requested != "" && e.Requested != DeviceScope {
+		// A widened request — the actionable case. Name the fallback that works
+		// TODAY and why the wide one may not.
+		b.WriteString(fmt.Sprintf(
+			".\nThis login asked for extra scopes (requested %s; the default login requests %s), "+
+				"and this server does not permit them for the %s client yet.\n"+
+				"Run `civitai login` (no --scopes) — it still works — and retry `civitai login --scopes %s` "+
+				"once the server-side scope widening is live.",
+			e.Requested, DeviceScope, ClientID, ScopeSetGenerate))
+	} else {
+		b.WriteString(fmt.Sprintf(
+			".\nThis server does not permit the default login scope (%s) for the %s client — "+
+				"your CLI is likely newer than the auth server it is pointed at (check CIVITAI_BASE_URL). "+
+				"Use a personal API key instead: `civitai login --token <key>` "+
+				"(create one at https://civitai.com/user/account).",
+			e.Requested, ClientID))
+	}
+	return b.String()
+}
+
 // DeviceAuth is the device-init response.
 type DeviceAuth struct {
 	DeviceCode              string `json:"device_code"`
@@ -370,15 +545,26 @@ func (c *OAuthClient) StartDevice(ctx context.Context) (*DeviceAuth, error) {
 	if err != nil {
 		return nil, err
 	}
+	scope := c.RequestedScope()
 	form := url.Values{
 		"client_id": {ClientID},
-		"scope":     {DeviceScope},
+		"scope":     {scope},
 	}
 	resp, raw, err := c.postForm(ctx, ep.DeviceInit, form, ep.Issuer)
 	if err != nil {
 		return nil, err
 	}
 	if resp != http.StatusOK {
+		// invalid_scope is the ONE device-init failure a user can act on, and the
+		// raw OAuth code says nothing about what to do. It means the requested mask
+		// carried a bit outside the civitai-cli client's allowedScopes — which is
+		// exactly what happens when the CLI is newer than the server's scope
+		// widening. Map it to a message that names the fallback.
+		var oe oauthErr
+		_ = json.Unmarshal(raw, &oe)
+		if oe.Error == "invalid_scope" {
+			return nil, &InvalidScopeError{Requested: scope, Description: oe.ErrorDescription}
+		}
 		return nil, fmt.Errorf("device init failed (status %d): %s", resp, oauthMsg(raw))
 	}
 	var d DeviceAuth
