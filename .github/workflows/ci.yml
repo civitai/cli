@@ -4,6 +4,21 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Manual trigger — the recovery path when GitHub drops a run.
+  #
+  # On 2026-08-06 an Actions incident throttled webhook triggers: push and
+  # pull_request events stopped creating workflow runs entirely (GitHub-managed
+  # workflows like CodeQL kept firing, so events WERE arriving — only user
+  # workflow runs went missing). PR #219 sat unmergeable for hours with no way
+  # to re-run anything: `gh run rerun` needs an existing run for the head sha,
+  # and empty commits and a close/reopen both produced nothing, because the
+  # trigger they rely on was the throttled thing.
+  #
+  # workflow_dispatch is the only trigger that does not depend on a webhook.
+  # It cannot be back-applied — a dispatchable workflow must already exist on
+  # the default branch — so it is only useful if it lands BEFORE the next
+  # incident. Do not remove it because it looks unused.
+  workflow_dispatch:
 
 permissions:
   contents: read
