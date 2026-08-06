@@ -99,7 +99,7 @@ These go beyond the global defaults because this repo's release pipeline
   shapes, the graph payload, model-version resolution. Deliberately not in
   `pkg/civitai` (that is the public read/download SDK) because generation is a
   money-spending surface whose wire shape is not a public contract. Read
-  items 12–18 before touching it.
+  items 12–17 and 19 before touching it.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to
   `go:embed` the vendored `schema/` and `examples/`. It is not the executable.
 
@@ -160,10 +160,12 @@ func newWhoAmICmd() *cobra.Command {
 
 Items 1–3, 10 and 11 are deliberate mirrors of the platform (items 4 and 8 are
 deliberate *non*-mirrors); items 5–9 cover `civitai app metrics`, the CLI's only
-analytics read path; items 12–18 cover `civitai generate`, the CLI's only path
-that **spends the user's money irreversibly**. The durable fix for the mirroring
-is a server-side `civitai app validate` endpoint that calls the real
-`BlockManifestValidator` — until that exists, vendoring is on purpose.
+analytics read path; items 12–17 and 19 cover `civitai generate`, the CLI's only
+path that **spends the user's money irreversibly** (19 is img2img); item 18
+covers the two checks that tell an author their EXISTING app is missing the
+item-11 handshake. The durable fix for the mirroring is a server-side
+`civitai app validate` endpoint that calls the real `BlockManifestValidator` —
+until that exists, vendoring is on purpose.
 
 The generate items pull in the opposite direction from the mirror items, and
 that is deliberate: `validate` mirrors the platform because a local answer is
@@ -297,6 +299,20 @@ neither one's.
    across 27 distinct apps) — so deduping on it would report ~1 viewer per app.
    Anonymous rows all carry `userId = 0`, so the server sums distinct authed
    `userId` with distinct anon `ip`.
+   🔴 **`installs` has a THIRD state too, and it is a different KIND of flag.**
+   `installs.notApplicable` means "the question does not apply", not "we could
+   not ask": a page app is stateless by design and has no install slot, so a
+   subscription record cannot exist for it. Rendering `0` there reads as
+   "nobody installed my app" when the truth is "installs do not exist for this
+   app type" — the same fabricated-zero class as items 6 and 9, arrived at from
+   a third direction. The distinction that matters when editing this: a
+   TRUTHFUL zero (an installable app nobody has installed yet) arrives with the
+   flag ABSENT and must keep printing `0`. The server owns that call — do NOT
+   re-derive it in the CLI from the counters, because `total == 0` is true in
+   both states. Measured on prod: every approved app is a page app (0 installs
+   possible), while the model-slot apps that CAN be installed hold real rows,
+   so the two populations are disjoint and the bare `0` was never a
+   measurement of user behaviour.
    Two more things the label has to keep straight, both of which read wrong if
    you shorten them: `AnonCount` is signed-out **LOADS**, not viewers, and is
    NOT a subset of `UniqueViewers` — one anonymous visitor reloading ten times
@@ -488,18 +504,18 @@ neither one's.
       thing that BUILDS an SDK-free template, and it asserts the ack survives
       bundling (Guard A pins the source tree; Vite output is what the platform
       serves).
-      🔴 **REPORTING IS NOT GATING — no ready-ack check currently blocks a
-      merge.** Measured, not assumed, via
+      🔴 **REPORTING VS GATING — measure it, never infer it from the job
+      existing.** These jobs now gate. Measured via
       `gh api repos/civitai/cli/branches/main/protection`: the required contexts
-      are exactly `pins-vs-published` and `scaffold-currency`, with no rulesets.
-      So `ready-ack-runtime`, `template-page-vite` and even `build-test` all
-      report and stop nothing. **Outstanding step:** adding `ready-ack-runtime`
-      (and arguably `build-test`) to the required contexts is what converts
-      reporting into gating. That is a repo-policy change touching every open
-      PR, so it is the maintainer's call and was deliberately not taken by the
-      agent that wrote this. Until it is, do not describe any of these jobs as a
-      gate — an earlier revision of this item, and of
-      `ready_ack_runtime_test.go`, claimed one "BLOCKS the merge". It was false.
+      are `pins-vs-published`, `scaffold-currency`, `build-test`,
+      `ready-ack-runtime` and `template-page-vite`, with no rulesets. That was a
+      deliberate repo-policy change made AFTER this item first shipped; until
+      then all of these reported and stopped nothing — including `build-test`,
+      so the suite itself did not gate. Re-measure before describing any job
+      here as a gate: an earlier revision of this item, and of
+      `ready_ack_runtime_test.go`, claimed one "BLOCKS the merge" while it did
+      not. That claim was false when written and is true now only because the
+      contexts were added — not because the job runs.
       If you add a template, add nothing — Guard A picks it up automatically and
       fails until `ReadyAckPath()` is set.
     - **`BLOCK_HELLO` now exists host-side, and the emitter deliberately does
@@ -681,7 +697,130 @@ neither one's.
     `deps.downloadBlob = reader.DownloadPresigned`; if you ever see that wired to
     `DownloadFile`, it is a credential leak, not a cleanup.
 
-18. **img2img sends `workflow: "txt2img"` PLUS `images[]`, requires
+18. **The ready-ack checks for EXISTING apps are two deliberately different
+    tiers, and neither is allowed to be a hard failure.** #206 fixed the
+    templates; every app scaffolded before `4018e2c` is still broken and nothing
+    told its author. These close that gap, and the tier split is the whole
+    design:
+    - **`internal/antipattern`'s `resize-iframe-page` rule is a GATE** (it fails
+      the scaffold-currency job), because it fires on a *literal that is present
+      in the file* — no inference. It adds a THIRD family to that denylist: not a
+      dead REST route, and not a dead TOOL (`deprecated-blocks-cli` already
+      covered that one), but a dead host MESSAGE — marked N/A for
+      `PageBlockHost` by `hostHandlerParity.ts`.
+      🔴 **A message NAME needs tighter scoping than a route or a package name,
+      because it is far more quotable, and both devices were earned by a false
+      positive.** `Exts: codeExts` keeps it out of `.md`/`.txt`/`.json`, where
+      naming the message in a sentence or using it as a JSON handler-table key is
+      ordinary writing — unscoped, the rule flagged its own documentation, and
+      this repo's README plus both scaffold READMEs exist to say "don't post
+      RESIZE_IFRAME". And it matches only a MATCHING `'` or `"` pair —
+      deliberately not the backtick form (markdown), and not a mismatched pair,
+      which is not a string literal in any language. `What` reads "reference to",
+      not "postMessage of": the regex matches the quoted token anywhere in code
+      (a dispatch-table key, a comparison, a constant — all equally dead on a
+      page surface), and saying "postMessage" would be a claim the pattern does
+      not make. It also assumes a page surface rather than reading a manifest:
+      `Rule` is a per-line regex with no manifest context, and every template this
+      CLI ships declares `page`. A non-page template would need that assumption
+      revisited, not the rule deleted.
+    - 🔴 **`validate`'s page-without-ack check is a WARNING and must stay one**
+      (`internal/validate/readyack.go`). It is the mirror image of item 3's
+      reasoning: `lockfile.go` earns hard-error status because the platform
+      *provably* fails (`npm ci` dies), whereas this infers RUNTIME behaviour
+      from STATIC TEXT and there are correct projects it cannot read — an ack
+      from a bundled dependency, a framework wrapper, a code-split chunk, an
+      extension the scan does not open. Hard-failing on a heuristic is the
+      false-warning-at-a-correct-project failure item 10 spent four measured
+      corrections avoiding, and `--strict` already lets anyone who wants a gate
+      have one.
+    - 🔴 **The evidence is an EXACT SET OF PACKAGES THAT ACK — never the
+      `@civitai/` scope.** This is the claim an audit falsified, so it is stated
+      with its measurement. Of the six published first-party packages, exactly
+      ONE acks: `@civitai/blocks-react@0.39.0`
+      (`dist/internal/iframeTransport.js:311`, `this.dispatch('BLOCK_READY', …)`).
+      `@civitai/app-sdk@0.31.0` does **not** — 17 runtime `.js` files, zero
+      containing the literal, the only hits a `.d.ts` type and the README, and it
+      declares no dependencies so it cannot ack transitively either.
+      `@civitai/theme`, `@civitai/components`, `@civitai/components-react` and
+      `@civitai/cli` contain none at all. A scope test is therefore wrong for
+      FOUR of six, and wrong in the expensive direction: `theme` and `components`
+      are framework-agnostic CSS, exactly what a hand-written no-build page app
+      installs, so the check went **silent on a genuinely broken app** — verified
+      live by adding `@civitai/theme` to a `static` scaffold with
+      `civitai-host.js` deleted.
+      The predicate lives in `blockproto.PackageAcksReady` with the per-package
+      evidence, and is used by BOTH `internal/validate/readyack.go` and
+      `civitaiSDKDeps` in `ready_ack_contract_test.go` — one rule, one place,
+      because Guard A had the identical hole (a future template depending on
+      `@civitai/theme` would have been classified SDK-backed and excused from
+      shipping an emitter: a born-broken template passing its own guard). The
+      match is EXACT; a prefix or substring test accepts a sibling
+      (`@civitai/blocks-react-native`) or a fork, and that widening class is what
+      `TestAckingPackagePredicate` exists to pin. Adding a package there is a
+      claim about its RUNTIME code — verify against the tarball, not the README
+      or the types, and record the version.
+    - **Comments are stripped, and that is load-bearing rather than tidy.** Both
+      SDK-free templates carry a source comment reading "The ONE message a page
+      app must send is `BLOCK_READY`", and it SURVIVES deleting
+      `civitai-host.js` — so without the strip the check is inert on the exact
+      population it was written for. Measured both ways. `.md` is excluded from
+      the scan for the same reason: a README describing the handshake is not an
+      implementation of it.
+      🔴 **HTML comment stripping is gated to MARKUP extensions, and an
+      unterminated `<!--` keeps the rest of the file.** `stripHTMLComments` has no
+      string awareness, so running it over `.js` made an ordinary
+      `var OPEN = '<!--';` in a sanitiser open a "comment" that ran to EOF and
+      deleted the emitter below it — a false warning at a correct project,
+      reproduced live. Neither half is optional: the gate stops the common
+      string case, the non-lossy tail stops the rest.
+    - 🔴 **Reading NOTHING is not finding nothing, and neither is reading only
+      PART.** `scanForReadyAck` is three-valued on purpose — found / absent /
+      unobservable — and only `absent` warns. Unobservable covers zero source
+      files read (a zero-hit scan over a zero-file tree is indistinguishable from
+      a scanner wired to nothing, and is the shape of every manifest-only fixture
+      in that package — a `warnings_test.go` fixture failed on exactly this), an
+      unresolvable symlink, a read error, a file over the size cap, and the
+      file-count budget. A partial scan reporting "absent" is manufacturing
+      advice from a gap.
+    - 🔴 **SKIPPING IS A COST DECISION, NEVER A CORRECTNESS ONE**, because this is
+      a PRESENCE check: scanning an extra directory can only ADD evidence, while
+      skipping one can only CREATE a false warning. That asymmetry is why the
+      manifest's `outputDir` is NOT skipped — it was, and a perfectly valid
+      `"outputDir": "src"` on a page-vite app skipped the directory holding the
+      emitter and warned at a project with zero validation errors, while
+      `"outputDir": "."` skipped the entire tree and silenced a broken one. What
+      remains is a fixed list of names that are never source, applied to
+      ENTRIES only so no rule can ever remove the root. `vendor` and `public` are
+      deliberately absent — both routinely hold hand-written source. The residual
+      trade is stated rather than hidden: a stale committed build under a
+      non-conventional output directory can retain an ack the source lost. That
+      is a false negative, which is the cheap direction here.
+    - 🔴 **Directory symlinks are FOLLOWED.** `filepath.WalkDir` does not follow
+      them and does not even report them as directories, so a monorepo whose
+      `src` is a symlink into a shared package had its entire source tree skipped
+      and warned at a correct project — reproduced live. Cycles are bounded by a
+      visited set keyed on the `EvalSymlinks`-resolved path, and total work by
+      the file-count and file-size caps (`validate` used to be a manifest-only
+      read; before the caps, 20,008 files with one 88 MB `.js` peaked at 316 MB
+      RSS).
+    - **The advisory is printed by `app submit` too.** It used to branch only on
+      `res.OK()` and drop warnings, so the highest-traffic path — the last point
+      before an app reaches review — told nobody. It prints and does NOT block;
+      blocking stays the `--strict` contract.
+    - **Placement is a real constraint, not style.** `warningChecks` runs
+      unconditionally *including under `ManifestOnly`*, which `app init` uses to
+      self-check the template it just wrote. A check that reads `src/` must live
+      in the `projectState` branch beside `lockfileChecks`, or init's
+      self-validation starts reading files that are not its business.
+      `TestReadyAckSkippedByManifestOnly` pins it, with a `Dir()` positive
+      control so a green there cannot mean "the check never fires at all".
+    - **What it does NOT prove:** that the ack fires. Only that the message is
+      mentioned in code. The runtime proof is Guard B (item 11), and there is
+      none at all for an app the author already has — which is why this is
+      advisory and says so in its own message.
+
+19. **img2img sends `workflow: "txt2img"` PLUS `images[]`, requires
     `--ecosystem`, and uploads with NO credential — three things that each read
     like a bug.**
 

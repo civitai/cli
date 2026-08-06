@@ -224,9 +224,27 @@ func printAppMetrics(w io.Writer, slug string, a *appapi.AppAnalytics) {
 
 	fmt.Fprintf(w, "\n%s\n", ui.For(w).Bold("Installs"))
 	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "  Total\t%d\n", a.Installs.Total)
-	fmt.Fprintf(tw, "  Active\t%d\n", a.Installs.Active)
-	_ = tw.Flush()
+	if a.Installs.NotApplicable {
+		// 🔴 Not a zero, and not an outage. The server sets this only when NO
+		// owned app has an install slot — a page app is stateless by design, so
+		// a subscription row cannot exist for it. Printing `0` here reads as
+		// "nobody installed my app" when the truth is "installs do not exist
+		// for this app type", which is the same fabricated-zero class the
+		// notOwned and views.unavailable branches already guard.
+		//
+		// A TRUTHFUL zero (an installable app nobody has installed yet) does
+		// NOT set the flag and must keep printing 0 — the server owns that
+		// distinction; do not re-derive it here from the counters.
+		fmt.Fprintf(tw, "  Total\t%s\n", "n/a")
+		fmt.Fprintf(tw, "  Active\t%s\n", "n/a")
+		_ = tw.Flush()
+		fmt.Fprintf(w, "\n%s\n", ui.For(w).Dim(
+			"This app cannot be installed — it has no install slot, so installs do not apply. That is different from zero installs."))
+	} else {
+		fmt.Fprintf(tw, "  Total\t%d\n", a.Installs.Total)
+		fmt.Fprintf(tw, "  Active\t%d\n", a.Installs.Active)
+		_ = tw.Flush()
+	}
 
 	fmt.Fprintf(w, "\n%s\n", ui.For(w).Bold("Runs"))
 	tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)

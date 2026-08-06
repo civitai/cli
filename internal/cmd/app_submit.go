@@ -77,8 +77,18 @@ Defaults to the current directory.`,
 					for _, e := range res.Errors {
 						fmt.Fprintf(errw, "  - %s\n", e)
 					}
+					// Warnings are useful context on a failure too, and this is
+					// the last moment before the app would have gone to review.
+					printWarnings(errw, res)
 					return fmt.Errorf("validation failed")
 				}
+				// Non-fatal advisories still have to be SEEN. `submit` is the
+				// highest-traffic path and the last point before an app reaches
+				// review, so printing them only in `app validate` means the
+				// ready-ack advisory — which predicts a blank failure card in the
+				// real host — reaches nobody who does not run validate by hand.
+				// They do NOT block the submit; that stays the --strict contract.
+				printWarnings(cmd.ErrOrStderr(), res)
 			}
 
 			m, err := manifest.Load(dir)

@@ -8,14 +8,13 @@ import (
 	"image/color"
 	"image/jpeg"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/civitai/cli/pkg/civitai"
 )
@@ -475,38 +474,35 @@ func TestResolveRemoteImage_Rejections(t *testing.T) {
 func TestResolveRemoteImage_ReadsOnlyABoundedPrefix(t *testing.T) {
 	header := pngBytes(t, 200, 100)
 	const tailChunks, chunkSize = 64, 32 << 10 // 2 MiB of tail
-	var mu sync.Mutex
-	sent := 0
-	completed := false
-	done := make(chan struct{})
 
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		defer close(done)
 		w.WriteHeader(200)
-		n, _ := w.Write(header)
-		mu.Lock()
-		sent += n
-		mu.Unlock()
+		_, _ = w.Write(header)
 		chunk := make([]byte, chunkSize)
 		for i := 0; i < tailChunks; i++ {
-			n, err := w.Write(chunk)
-			mu.Lock()
-			sent += n
-			mu.Unlock()
-			if err != nil {
-				return // the client hung up: the bound did its job
-			}
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
+			if _, err := w.Write(chunk); err != nil {
+				return
 			}
 		}
-		mu.Lock()
-		completed = true
-		mu.Unlock()
 	}))
 	defer srv.Close()
 
-	s := &genSeams{downloadBlob: tlsFetcherFor(t, srv)}
+	// 🔴 Measure on the CLIENT side. Counting what the SERVER managed to write is
+	// a RACE, not a measurement: 2 MiB fits in socket buffers often enough that
+	// the assertion passes and fails on alternate runs (observed). A flaky guard
+	// on a memory bound is worse than none. Wrapping the response body counts
+	// exactly what the CLI consumed, which is the property under test.
+	var consumed int64
+	counting := func(ctx context.Context, url string) (*http.Response, error) {
+		resp, err := tlsFetcherFor(t, srv)(ctx, url)
+		if err != nil {
+			return nil, err
+		}
+		resp.Body = &countingReadCloser{rc: resp.Body, n: &consumed}
+		return resp, nil
+	}
+
+	s := &genSeams{downloadBlob: counting}
 	imgs, err := resolveImages(context.Background(), s.deps(t), []string{srv.URL + "/big.png"})
 	if err != nil {
 		t.Fatalf("resolveImages: %v", err)
@@ -515,29 +511,33 @@ func TestResolveRemoteImage_ReadsOnlyABoundedPrefix(t *testing.T) {
 		t.Errorf("dimensions = %dx%d, want 200x100", imgs[0].Width, imgs[0].Height)
 	}
 
-	// Wait for the handler to observe the client's disconnect before reading the
-	// counters, so this is a measurement rather than a race.
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("handler did not finish")
+	// POSITIVE CONTROL: the fixture must offer far more than the bound, or
+	// "the client stopped early" would be true for an unbounded read too.
+	if offered := len(header) + tailChunks*chunkSize; int64(offered) <= imageHeaderProbeBytes {
+		t.Fatalf("POSITIVE CONTROL FAILED: fixture offers %d bytes, not more than the %d-byte bound", offered, imageHeaderProbeBytes)
 	}
-	mu.Lock()
-	gotSent, gotCompleted := sent, completed
-	mu.Unlock()
-
-	// POSITIVE CONTROL: the server really did try to push far more than the
-	// bound, so "the client stopped early" is a fact about the client.
-	if want := len(header) + tailChunks*chunkSize; want < 1<<20 {
-		t.Fatalf("POSITIVE CONTROL FAILED: the fixture only offers %d bytes, too few to distinguish a bounded read", want)
+	if consumed > imageHeaderProbeBytes {
+		t.Errorf("the CLI consumed %d bytes from a user-supplied URL; the bound is %d — an unbounded read here is a memory hazard",
+			consumed, imageHeaderProbeBytes)
 	}
-	if gotCompleted {
-		t.Errorf("the server streamed its ENTIRE 2 MiB tail — the client read past the %d-byte bound", imageHeaderProbeBytes)
-	}
-	if gotSent >= 1<<20 {
-		t.Errorf("server pushed %d bytes before the client hung up; a bounded read must not consume ~1 MiB", gotSent)
+	if consumed == 0 {
+		t.Error("consumed 0 bytes — the counter is not wired to the body under test")
 	}
 }
+
+// countingReadCloser tallies bytes actually read by the code under test.
+type countingReadCloser struct {
+	rc io.ReadCloser
+	n  *int64
+}
+
+func (c *countingReadCloser) Read(p []byte) (int, error) {
+	n, err := c.rc.Read(p)
+	*c.n += int64(n)
+	return n, err
+}
+
+func (c *countingReadCloser) Close() error { return c.rc.Close() }
 
 // --- multiple / mixed --------------------------------------------------------
 

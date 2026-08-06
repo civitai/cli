@@ -286,7 +286,11 @@ Two rules it encodes, which apply to every message you add afterwards:
 page block full-viewport, so it does not size to content and ignores the
 message. (`useBlockResize` is surface-agnostic and page-money still calls it —
 on a page surface it is simply a no-op, which is why the SDK templates can share
-component code across surfaces.)
+component code across surfaces.) The pre-#206 templates demoed a **raw**
+`postMessage` of `RESIZE_IFRAME`, so a project scaffolded before that fix still
+carries dead code you can delete. (This CLI's own CI fails if a shipped template
+ever reintroduces it; there is no author-facing command that scans your project
+for it — `civitai app validate` checks the manifest and the handshake, not this.)
 
 ### Local dev loop (harness: mock vs live)
 
@@ -665,6 +669,48 @@ mismatch or a missing lockfile is a hard `validate` error; an *extra* unused
 lockfile is a warning. Apps with no `package.json` are static — the platform
 never installs for them and they are never flagged.
 
+Finally it emits one **advisory** about the
+[host handshake](#the-host-handshake-block_ready): if your manifest declares a
+`page` surface and **nothing in your source posts `BLOCK_READY`**, `validate`
+says so. That is the shape of an app scaffolded before the templates were fixed
+(#206) — it renders perfectly everywhere you can look locally and is replaced by
+a failure card in the real host. It is a **warning, never an error**: unlike the
+lockfile rule (where the platform build provably dies), this one infers
+*runtime* behaviour from *static text* and can be wrong, so it must not fail a
+correct project. Three things follow:
+
+- **A dependency that acks ends the check** — today that is
+  `@civitai/blocks-react`, and nothing else. Its iframe transport acks internally
+  and the literal never appears in your `src/`, so a `page-money` app is never
+  flagged. This is an *exact* list, not the `@civitai/` scope:
+  `@civitai/app-sdk` is the server-side SDK and no runtime code in it posts
+  `BLOCK_READY`, and `@civitai/theme` / `@civitai/components` are CSS. Depending
+  on those does not give you the handshake, so it does not silence the check
+  either.
+- **It reads source only** — never `node_modules`, never the conventional build
+  directories (`dist`, `build`, `out`, …), and never a `.md` file: a README
+  *describing* the handshake is not an implementation of it. Comments are
+  stripped too, so a comment naming `BLOCK_READY` does not satisfy it. A `src`
+  that is a **symlink** into a shared package *is* followed.
+- **It stays quiet when it cannot see the whole project.** An unreadable file, a
+  file over 2 MiB, a very large tree, or a directory holding only a manifest all
+  mean "we could not look" — reported as nothing, never as a finding.
+
+If it fires on a project you know is correct — your ack arrives from a bundled
+dependency, or from a file type this scan doesn't open — it is a false alarm, and
+it never blocks (exit 0) unless you pass `--strict`. What it proves is narrow:
+that the message is *mentioned* in code. It cannot prove the ack ever **fires**;
+only the real host can.
+
+`civitai app submit` prints the same warnings before it uploads, and likewise
+does not block on them.
+
+> ⚠️ **If you already run `civitai app validate --strict` in CI**, this advisory
+> is new and can turn a previously-green project red — which is what `--strict`
+> asks for. If it is a false alarm for your project, drop `--strict` or add the
+> ack, and please open an issue: a warning at a correct project is a bug in the
+> check, not something you should have to work around.
+
 The **durable fix** is a server-side `civitai app validate` endpoint that calls
 the real `BlockManifestValidator` (the faithful contract), with this schema
 published as the syntactic half. See [`AGENTS.md`](AGENTS.md) for the full
@@ -862,8 +908,11 @@ Two data caveats.
 
 **Engagement counts only authenticated, scope-gated API
 calls.** An app that ships no scoped API surface shows real installs and revenue
-with a flat engagement section — that is expected, not a bug. **App loads is the
-exception**: it is measured on every load, so it counts signed-out visitors and
+with a flat engagement section — that is expected, not a bug. **Installs** is a
+different case again: it shows **`n/a`** for an app that cannot be installed at
+all (a page app has no install slot, so an install record cannot exist), which
+is deliberately distinct from a real `0` on an installable app nobody has
+installed yet. **App loads is the exception**: it is measured on every load, so it counts signed-out visitors and
 static blocks that engagement structurally cannot see. `Unique viewers` counts
 signed-in people once each and approximates signed-out ones by network address,
 so read it as reach rather than an identity count, and `Signed-out loads` is a
@@ -885,6 +934,12 @@ counter zeroed and the command still exits `0`, so
 `civitai app metrics <slug> --json | jq .runs.count` returns `0` for an app you
 can't see. A script must branch on the `notOwned` field rather than trusting the
 counts.
+
+**Installs carries `installs.notApplicable`** for the case above. It is NOT an
+outage flag — it means the question does not apply to this app type, so a script
+should render it as "not applicable" rather than retrying or warning about
+infrastructure. `--json` passes it through and still exits `0`, so branch on it
+rather than trusting the counts.
 
 **App loads has a SECOND, section-local unavailability flag** — `views.unavailable`,
 independent of `notOwned`. It is the one section the server reads from a

@@ -419,7 +419,7 @@ func TestScaffoldedPageTemplatesShipTheReadyAck(t *testing.T) {
 
 		rel := tmpl.ReadyAckPath()
 		if rel == "" {
-			t.Errorf("template %q declares a `page` surface and carries no @civitai/* SDK, but "+
+			t.Errorf("template %q declares a `page` surface and depends on no package that acks, but "+
 				"ReadyAckPath() is empty — a page app that never posts BLOCK_READY is replaced by a "+
 				"failure card in the real host (issue #206). Give it a path in scaffold.go so "+
 				"Render ships blockproto's emitter.", tmpl)
@@ -495,8 +495,20 @@ func manifestDeclaresPage(t *testing.T, tmpl Template, dir string) bool {
 	return ok && strings.TrimSpace(string(v)) != "null"
 }
 
-// civitaiSDKDeps returns the `@civitai/*` packages the rendered package.json
-// depends on (sorted). Empty for a template with no package.json at all.
+// civitaiSDKDeps returns the rendered package.json's dependencies that ACK on
+// the app's behalf (sorted). Empty for a template with no package.json at all.
+//
+// 🔴 It asks `blockproto.PackageAcksReady`, NOT "is this name under the
+// `@civitai/` scope". Those are different questions, and the scope answer is
+// wrong for four of the six published first-party packages — `@civitai/theme`,
+// `@civitai/components`, `@civitai/components-react` and `@civitai/cli` contain
+// no BLOCK_READY at all (measured; the per-package evidence is in blockproto).
+// A scope test here would let a future template that depends on, say,
+// `@civitai/theme` be classified SDK-backed and silently excused from shipping
+// an emitter — a born-broken template passing its own contract guard. The same
+// predicate answers the same question for an author's project in
+// internal/validate/readyack.go, which is why it lives in blockproto instead of
+// being open-coded at both sites.
 func civitaiSDKDeps(t *testing.T, dir string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
@@ -507,22 +519,60 @@ func civitaiSDKDeps(t *testing.T, dir string) []string {
 		t.Fatalf("read package.json in %s: %v", dir, err)
 	}
 	var pkg struct {
-		Dependencies    map[string]string `json:"dependencies"`
-		DevDependencies map[string]string `json:"devDependencies"`
+		Dependencies     map[string]string `json:"dependencies"`
+		DevDependencies  map[string]string `json:"devDependencies"`
+		PeerDependencies map[string]string `json:"peerDependencies"`
 	}
 	if err := json.Unmarshal(raw, &pkg); err != nil {
 		t.Fatalf("rendered package.json in %s is not valid JSON: %v", dir, err)
 	}
 	var out []string
-	for _, set := range []map[string]string{pkg.Dependencies, pkg.DevDependencies} {
+	for _, set := range []map[string]string{pkg.Dependencies, pkg.DevDependencies, pkg.PeerDependencies} {
 		for name := range set {
-			if strings.HasPrefix(name, "@civitai/") {
+			if blockproto.PackageAcksReady(name) {
 				out = append(out, name)
 			}
 		}
 	}
 	sort.Strings(out)
 	return out
+}
+
+// TestAckingPackagePredicate is the shared predicate's own control pair. Every
+// name blockproto claims must be accepted, and the reject corpus is built
+// entirely from the WIDENING class: a prefix test or a substring test passes
+// every accept case below and fails these, so this is the only thing that
+// distinguishes an exact match from either.
+func TestAckingPackagePredicate(t *testing.T) {
+	accept := blockproto.AckingPackages()
+	if len(accept) == 0 {
+		t.Fatal("blockproto.AckingPackages() is empty — the predicate can never accept anything, " +
+			"which would silently make every SDK project look emitter-less")
+	}
+	for _, name := range accept {
+		if !blockproto.PackageAcksReady(name) {
+			t.Errorf("PackageAcksReady(%q) = false but it IS in AckingPackages()", name)
+		}
+	}
+	reject := []string{
+		// Published first-party packages that do NOT ack (measured — see the
+		// per-package evidence in blockproto). A `@civitai/` prefix test, which
+		// is what this used to be, accepts every one of these.
+		"@civitai/app-sdk", "@civitai/theme", "@civitai/components",
+		"@civitai/components-react", "@civitai/cli", "@civitai/blocks-cli",
+		// Prefix widening: siblings that merely START with an acking name.
+		"@civitai/blocks-react-native", "@civitai/blocks-reactor",
+		// Substring widening: forks/re-scopes that merely CONTAIN one.
+		"@myorg/@civitai/blocks-react", "fork-of-@civitai/blocks-react",
+		// Unscoped lookalikes.
+		"civitai-blocks-react", "blocks-react", "react",
+	}
+	for _, name := range reject {
+		if blockproto.PackageAcksReady(name) {
+			t.Errorf("PackageAcksReady(%q) = true — that package does not perform the ready-ack. "+
+				"This is the widening class (prefix/substring) the exact match exists to prevent.", name)
+		}
+	}
 }
 
 var (

@@ -1076,7 +1076,7 @@ func printOutputURLs(out, errw io.Writer, kept []genapi.Output) {
 //
 // 🔴 It must print the REALIZED charge whenever the server reported one. The
 // user approved an ESTIMATE, and this command's whole spend story is that the
-// realized cost can exceed it with no refund (AGENTS.md items 11-16) — so the
+// realized cost can exceed it with no refund (AGENTS.md items 12-17) — so the
 // one number that settles what actually happened cannot be visible only on the
 // --no-wait branch. `cost` is nil when the server sent none; say nothing then
 // rather than printing a fabricated 0.

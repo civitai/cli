@@ -409,7 +409,7 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 
 	cmd.Flags().StringVar(&blockFlag, "block", "", "the blockId (app slug) to tunnel (or pass it positionally; defaults to the blockId in "+manifest.Filename+" in the CWD)")
 	cmd.Flags().IntVar(&port, "port", defaultDevTunnelPort, "local dev-server port to tunnel (matches the scaffold's dev:tunnel)")
-	cmd.Flags().StringVar(&localHost, "local-host", defaultLocalHost, "host your local dev server is bound to. Default `localhost` (loopback) — the scaffold's `dev:tunnel` binds localhost, so most users need nothing. Set this for a dev server NOT on the CLI's loopback: a container/pod (e.g. --local-host 10.42.0.100), a VM, or a specific bound interface")
+	cmd.Flags().StringVar(&localHost, "local-host", defaultLocalHost, "host your local dev server is bound to. Default localhost (loopback) — the scaffold's dev:tunnel binds localhost, so most users need nothing. Set this for a dev server NOT on the CLI's loopback: a container/pod (e.g. --local-host 10.42.0.100), a VM, or a specific bound interface")
 	cmd.Flags().StringVar(&endpoint, "tunnel-endpoint", "", "sish SSH endpoint host:port (default "+defaultDevTunnelEndpoint+", or $"+devTunnelEndpointEnv+")")
 	cmd.Flags().DurationVar(&idle, "idle-timeout", defaultDevTunnelIdle, "tear the tunnel down after this much inactivity")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultReadyTimeout, "cap the wait for the public host to start serving (0 = wait indefinitely until ready or Ctrl-C; a positive value warns + prints the URL anyway on expiry)")

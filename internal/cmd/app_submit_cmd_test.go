@@ -50,6 +50,59 @@ func TestAppSubmitPackageOnly(t *testing.T) {
 	}
 }
 
+// TestAppSubmitSurfacesWarnings pins that a non-fatal advisory REACHES the
+// author on the submit path.
+//
+// `submit` used to branch only on res.OK() and drop res.Warnings on the floor.
+// That is the highest-traffic command and the last point before an app goes to
+// review, so the ready-ack advisory — which predicts a blank failure card in the
+// real host — reached nobody who did not run `app validate` by hand.
+//
+// It must NOT block: warnings failing a submit is the --strict contract, and
+// promoting a heuristic to a gate here would break correct projects.
+func TestAppSubmitSurfacesWarnings(t *testing.T) {
+	tmp := t.TempDir()
+	writeStaticManifest(t, tmp)
+	// A page app whose only source file never posts BLOCK_READY: the #206 shape.
+	if err := os.WriteFile(filepath.Join(tmp, "index.html"), []byte("<html></html>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(tmp, "bundle.zip")
+
+	stdout, stderr, err := run(t, "app", "submit", tmp, "--package-only", "--out", out)
+	if err != nil {
+		t.Fatalf("a warning must not fail the submit: %v\n%s", err, stderr)
+	}
+	if !strings.Contains(stderr, "BLOCK_READY") {
+		t.Errorf("submit swallowed the ready-ack advisory; it must reach the author here, not only in "+
+			"`app validate`.\nstderr: %s", stderr)
+	}
+	if !strings.Contains(stderr, "warning(s)") {
+		t.Errorf("submit should print the warning header: %s", stderr)
+	}
+	// The submit still has to have happened.
+	if _, err := os.Stat(out); err != nil {
+		t.Errorf("the bundle must still be written: %v\n%s", err, stdout)
+	}
+
+	// NEGATIVE CONTROL: a project that is not in the #206 shape must produce no
+	// such line, or the assertion above is satisfied by output that is always
+	// printed regardless of the finding.
+	clean := t.TempDir()
+	writeStaticManifest(t, clean)
+	if err := os.WriteFile(filepath.Join(clean, "index.html"),
+		[]byte("<html><script>parent.postMessage({type:'BLOCK_READY',payload:{}},o)</script></html>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, stderr2, err := run(t, "app", "submit", clean, "--package-only", "--out", filepath.Join(clean, "b.zip"))
+	if err != nil {
+		t.Fatalf("clean submit: %v\n%s", err, stderr2)
+	}
+	if strings.Contains(stderr2, "nothing in this project's source posts") {
+		t.Errorf("a correct app must not get the advisory on submit: %s", stderr2)
+	}
+}
+
 func TestAppSubmitFallbackPrintsManualSteps(t *testing.T) {
 	tmp := t.TempDir()
 	writeStaticManifest(t, tmp)
