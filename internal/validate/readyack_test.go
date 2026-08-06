@@ -17,10 +17,16 @@ import (
 // ackManifest is an otherwise-valid PAGE manifest. `build` splices in the
 // buildCommand + outputDir pair the schema couples, so the outputDir-is-never-
 // scanned case has a real outputDir to be ignored.
-func ackManifest(build bool) string {
+func ackManifest(build bool) string { return ackManifestOut(build, "dist") }
+
+// ackManifestOut is ackManifest with an explicit outputDir. `dist` is ALSO in
+// readyAckSkipDirs, so a fixture using it can never reach the outputDir branch —
+// the name-based skip always wins first. A non-standard outputDir is the only
+// way to exercise that branch, which is why this exists.
+func ackManifestOut(build bool, outputDir string) string {
 	extra := ""
 	if build {
-		extra = `, "buildCommand": "npm run build", "outputDir": "dist"`
+		extra = `, "buildCommand": "npm run build", "outputDir": "` + outputDir + `"`
 	}
 	return `{
 		"blockId": "ack-block", "version": "0.1.0", "name": "Ack Block",
@@ -34,6 +40,15 @@ func ackManifest(build bool) string {
 const nonPageManifest = `{
 	"blockId": "slot-block", "version": "0.1.0", "name": "Slot Block",
 	"contentRating": "g", "scopes": [],
+	"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts"}
+}`
+
+// nullPageManifest sets the key EXPLICITLY to null. `encoding/json` decodes that
+// to a present key holding a nil value, so a presence-only test ("is the key
+// there") reads it as a page app and a `v != nil` test does not.
+const nullPageManifest = `{
+	"blockId": "null-page", "version": "0.1.0", "name": "Null Page",
+	"contentRating": "g", "scopes": [], "page": null,
 	"iframe": {"minHeight": 400, "resizable": true, "sandbox": "allow-scripts"}
 }`
 
@@ -168,6 +183,18 @@ func TestReadyAckWarning(t *testing.T) {
 			why:      "the ready contract pinned here is the PAGE host's",
 		},
 		{
+			// An explicit null is not a page surface. Pins the `v != nil` half of
+			// declaresPage: a presence-only test passes every other case in this
+			// table, so without this the two halves are indistinguishable.
+			name:     `an explicit "page": null does not warn`,
+			manifest: nullPageManifest,
+			files: map[string]string{
+				"index.html": `<!doctype html><script src="./app.js"></script>`,
+				"app.js":     `document.title = 'hi';`,
+			},
+			wantWarn: false,
+		},
+		{
 			// 🔴 The comment strip. Both shipped SDK-free templates carry this
 			// exact sentence in a source comment, and it SURVIVES deleting the
 			// emitter — so without stripping, the check is inert on the very
@@ -205,13 +232,31 @@ func TestReadyAckWarning(t *testing.T) {
 			// outputDir is never read: it does not exist before the first build
 			// and is gitignored, so a hit there says nothing about what is
 			// submitted... and its ABSENCE must not be read as evidence either.
-			name:     "an ack present only in outputDir warns",
+			name:     "an ack present only in dist/ warns",
 			manifest: ackManifest(true),
 			files: map[string]string{
 				"package.json":     `{"dependencies": {"react": "^19.0.0"}}`,
 				"index.html":       `<script type="module" src="/src/main.jsx"></script>`,
 				"src/main.jsx":     `import App from './App';`,
 				"dist/assets/x.js": `window.parent.postMessage({type:'BLOCK_READY',payload:{}},o)`,
+			},
+			wantWarn: true,
+			why:      "killed by the NAME skip list (dist), not by the outputDir branch — see the case below",
+		},
+		{
+			// 🔴 The one that actually reaches the outputDir branch. `dist` is in
+			// readyAckSkipDirs, so the case above is decided by an EARLIER check
+			// and leaves the manifest-driven skip untested — a mutation that
+			// disabled it survived the whole suite until this case existed. A
+			// non-standard outputDir is the only way in.
+			name:     "an ack present only in a NON-STANDARD outputDir warns",
+			manifest: ackManifestOut(true, "public"),
+			files: map[string]string{
+				"package.json":   `{"dependencies": {"react": "^19.0.0"}}`,
+				"index.html":     `<script type="module" src="/src/main.jsx"></script>`,
+				"src/main.jsx":   `import App from './App';`,
+				"public/app.js":  `window.parent.postMessage({type:'BLOCK_READY',payload:{}},o)`,
+				"public/x/y.mjs": `window.parent.postMessage({type:'BLOCK_READY',payload:{}},o)`,
 			},
 			wantWarn: true,
 		},
@@ -248,14 +293,17 @@ func TestReadyAckWarning(t *testing.T) {
 			wantWarn: false,
 		},
 		{
-			// A URL inside a string must not be read as the start of a comment —
-			// otherwise everything after it is stripped and a real ack below it
-			// disappears.
-			name:     "a URL literal does not swallow the rest of the file",
+			// A URL inside a string must not be read as the start of a comment.
+			// The ack is on the SAME LINE as the URL on purpose: with quote
+			// handling defeated, the `//` in `https://` starts a line comment and
+			// swallows everything after it — including the ack. Split across two
+			// lines this case passes with the string handling deleted, which is
+			// how the first version of it left that branch unproven.
+			name:     "a URL literal does not swallow the ack after it",
 			manifest: ackManifest(false),
 			files: map[string]string{
 				"index.html": `<!doctype html><script src="./app.js"></script>`,
-				"app.js": "var docs = 'https://civitai.com/docs';\n" +
+				"app.js": "var docs = 'https://civitai.com/docs'; " +
 					"window.parent.postMessage({ type: 'BLOCK_READY', payload: {} }, o);\n",
 			},
 			wantWarn: false,
@@ -312,6 +360,23 @@ func TestReadyAckCannotObserve(t *testing.T) {
 			"index.html": `<!doctype html><h1>hi</h1>`,
 		})
 		wantAckWarning(t, dir, true)
+	})
+
+	t.Run("an unreadable source file silences the check", func(t *testing.T) {
+		// A DANGLING SYMLINK with a scanned extension: WalkDir hands it over as a
+		// non-directory, os.ReadFile fails, and the walk aborts. We then know
+		// nothing about the rest of the tree — including whatever we had not
+		// reached yet — so the only honest answer is silence. Without this
+		// fixture that branch is unreachable: chmod is a no-op for root, so a
+		// permissions-based fixture proves nothing on a root CI runner.
+		dir := ackProject(t, ackManifest(false), map[string]string{
+			"index.html": `<!doctype html><script src="./app.js"></script>`,
+			"app.js":     `document.title = 'hi';`,
+		})
+		if err := os.Symlink(filepath.Join(dir, "gone.js"), filepath.Join(dir, "broken.js")); err != nil {
+			t.Skipf("symlinks unavailable here: %v", err)
+		}
+		wantAckWarning(t, dir, false)
 	})
 
 	t.Run("an unreadable package.json silences the check", func(t *testing.T) {
