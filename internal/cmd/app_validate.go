@@ -42,9 +42,16 @@ plus the ported semantic rules and structural checks:
     lockfile is a guaranteed build failure. Only applies when package.json
     exists — a static app never installs.
 
-It also emits non-fatal WARNINGS for money-path footguns the schema can't catch
-as hard errors (e.g. a budgeted page with no page.buzzBudgetPerGen). Warnings do
-NOT fail validation (exit 0) unless --strict is passed.
+It also emits non-fatal WARNINGS the schema can't catch as hard errors:
+  - money-path footguns (e.g. a budgeted page with no page.buzzBudgetPerGen)
+  - a "page" app whose source never posts BLOCK_READY. The host will not reveal
+    a page app until it acks BLOCK_INIT, so such an app renders fine locally and
+    is replaced by a failure card in the real host — the shape of anything
+    scaffolded before that was fixed. Advisory ONLY: it infers runtime behaviour
+    from static text. A project depending on @civitai/* is never flagged (the
+    SDK transport acks internally), and it reads source only — never outputDir,
+    node_modules, markdown, or comments.
+Warnings do NOT fail validation (exit 0) unless --strict is passed.
 
 Defaults to the current directory.`,
 		Example: `  civitai app validate            # the current directory

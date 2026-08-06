@@ -53,6 +53,25 @@ func TestScanDir(t *testing.T) {
 			wantFile:  "README.md",
 			wantInMsg: "civitai app",
 		},
+		{
+			// The pre-#206 page template shape: an app that sizes itself to
+			// content on a surface that does not size to content.
+			name:      "RESIZE_IFRAME posted from a page app fails",
+			dir:       "resize-iframe",
+			wantRule:  "resize-iframe-page",
+			wantFile:  "App.jsx",
+			wantInMsg: "BLOCK_READY",
+		},
+		{
+			// The false-positive direction, which matters more. This fixture
+			// carries the message name in every NON-CODE shape at once: markdown
+			// backticks in a README, prose with straight DOUBLE quotes in a .txt,
+			// and a double-quoted JSON key in a handler table. None of them is a
+			// call — the first is literally documentation telling the author not
+			// to post it — and flagging any one fails a correct project.
+			name: "RESIZE_IFRAME named in docs, prose and JSON data is not flagged",
+			dir:  "resize-iframe-doc",
+		},
 	}
 
 	for _, tt := range tests {
@@ -91,6 +110,10 @@ func TestScanDir(t *testing.T) {
 			}
 			if hit.Rule.Replacement == "" {
 				t.Errorf("finding rule %q has an empty Replacement — the message must tell the author what to use instead", hit.Rule.ID)
+			}
+			if strings.TrimSpace(hit.Rule.What) == "" {
+				t.Errorf("finding rule %q has an empty What — the report would name the file and the fix "+
+					"but never say what was wrong", hit.Rule.ID)
 			}
 			// The formatted report must name the file, the pattern, and the fix.
 			msg := Format(findings)
@@ -156,6 +179,92 @@ func TestBlocksCliBoundary(t *testing.T) {
 		if got := rule.Pattern.MatchString(c.line); got != c.want {
 			t.Errorf("match(%q) = %v, want %v (pattern %s)", c.line, got, c.want, rule.Pattern)
 		}
+	}
+}
+
+// TestResizeIframeBoundary is the resize-iframe-page rule's control pair. The
+// rule exists to catch a DEAD HOST MESSAGE, and the population it must never
+// touch is prose: this repo's own README and both scaffold READMEs discuss
+// `RESIZE_IFRAME` by name precisely to tell authors not to post it, and a gate
+// that fails the documentation of its own rule is a false positive at a correct
+// project.
+func TestResizeIframeBoundary(t *testing.T) {
+	var rule Rule
+	for _, r := range Rules() {
+		if r.ID == "resize-iframe-page" {
+			rule = r
+		}
+	}
+	if rule.Pattern == nil {
+		t.Fatal("resize-iframe-page rule not found")
+	}
+
+	cases := []struct {
+		line string
+		want bool
+	}{
+		// The real emitting shapes, single- and double-quoted.
+		{`window.parent.postMessage({ type: 'RESIZE_IFRAME', height: h }, '*');`, true},
+		{`window.parent.postMessage({ type: "RESIZE_IFRAME", height: h }, "*");`, true},
+		{`if (msg.type === 'RESIZE_IFRAME') return;`, true},
+		{`const RESIZE = 'RESIZE_IFRAME';`, true},
+		// Prose — the direction that must stay silent.
+		{"`RESIZE_IFRAME` is **not** part of a page app's protocol.", false},
+		{"Do not post RESIZE_IFRAME from a page app.", false},
+		{`// RESIZE_IFRAME is N/A for PageBlockHost — do not send it.`, false},
+		// MISMATCHED quote pairs are not string literals in any language. This
+		// pins the "matching pair" claim: a relaxed `['"]RESIZE_IFRAME['"]`
+		// accepts both of these and passes every other case above.
+		{`var x = 'RESIZE_IFRAME";`, false},
+		{`var x = "RESIZE_IFRAME';`, false},
+		// Neighbouring identifiers must not be dragged in.
+		{`useBlockResize();`, false},
+		{`"description": "Whether the host honours RESIZE_IFRAME messages."`, false},
+	}
+	for _, c := range cases {
+		if got := rule.Pattern.MatchString(c.line); got != c.want {
+			t.Errorf("match(%q) = %v, want %v (pattern %s)", c.line, got, c.want, rule.Pattern)
+		}
+	}
+
+	// The rule must be scoped to CODE. Without Exts it fires on prose and on a
+	// JSON handler table, which is how it came to flag its own documentation.
+	if rule.Exts == nil {
+		t.Fatal("the resize-iframe-page rule has no Exts — a message NAME is quotable in prose and " +
+			"usable as a JSON key, so an unscoped rule fails a correct project's README")
+	}
+	for _, ext := range []string{".md", ".txt", ".json", ".css"} {
+		if rule.appliesTo(ext) {
+			t.Errorf("the rule applies to %s — that corpus is prose/data, not calls", ext)
+		}
+	}
+	// Positive control on the same predicate: it must still reach real code, or
+	// "does not apply to .md" is satisfied by a rule that applies to nothing.
+	for _, ext := range []string{".js", ".jsx", ".ts", ".tsx", ".html"} {
+		if !rule.appliesTo(ext) {
+			t.Errorf("the rule does NOT apply to %s — that is where the dead post lives", ext)
+		}
+	}
+}
+
+// TestRuleExtScopeDefaultsToEverything pins that adding Exts to one rule did not
+// silently narrow the others: a nil Exts must still mean "the whole corpus", or
+// the package-name and route rules stop catching a documented dead workflow.
+func TestRuleExtScopeDefaultsToEverything(t *testing.T) {
+	unscoped := 0
+	for _, r := range Rules() {
+		if r.Exts != nil {
+			continue
+		}
+		unscoped++
+		for _, ext := range []string{".md", ".txt", ".json", ".js", ".html"} {
+			if !r.appliesTo(ext) {
+				t.Errorf("rule %q has no Exts but does not apply to %s — nil must mean every extension", r.ID, ext)
+			}
+		}
+	}
+	if unscoped == 0 {
+		t.Fatal("no rule is unscoped — this control observed nothing")
 	}
 }
 

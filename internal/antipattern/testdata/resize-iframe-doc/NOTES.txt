@@ -1,0 +1,4 @@
+Migration notes.
+
+The host used to accept a "RESIZE_IFRAME" message from blocks that sized
+themselves to content. On a page surface it is N/A, so we removed ours.

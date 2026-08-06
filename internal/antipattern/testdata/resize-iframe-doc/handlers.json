@@ -1,0 +1,7 @@
+{
+  "comment": "A handler table naming the message as a KEY. Data, not a call.",
+  "handlers": {
+    "RESIZE_IFRAME": "ignored-on-page-surfaces",
+    "BLOCK_READY": "the one message a page app must send"
+  }
+}
