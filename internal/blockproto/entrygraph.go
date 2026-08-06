@@ -269,6 +269,9 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 	}
 
 	var queue []pending
+	// Candidate truncations, evaluated AFTER the walk — see the depth-bound
+	// branch below for why the answer is not available while it is running.
+	var pendingTrunc []truncCandidate
 
 	// `<script src=…>` is a URL resolved against the document, which sits at
 	// the project root.
@@ -363,22 +366,27 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			spec := strings.Clone(im[1])
 			if p.depth+1 > opts.MaxDepth {
 				// 🔴 TRUNCATION IS A GAP — BUT ONLY IF SOMETHING WAS ACTUALLY
-				// TRUNCATED. Two things are not: a package specifier (never
-				// going to be followed) and a target ALREADY IN THE GRAPH.
+				// TRUNCATED, AND THAT QUESTION CANNOT BE ANSWERED YET.
 				//
-				// Missing the second check made the fix silence the very defect
-				// it exists to catch. A DIAMOND — the normal shape of any real
-				// module graph — where the deepest module re-imports a file the
-				// walk already read produced a gap whose message was literally
-				// false ("…which this check did not follow", about a file in
-				// g.Files), dropped the project to the presence tier, and an
-				// orphaned emitter went SILENT with rc=0. Measured; a
-				// self-cycle at the bound did the same.
-				if !truncatedBelow(g, dir, file, spec, opts.Dependencies) {
-					continue
-				}
-				g.gap("stopped at import depth %d: %s imports %q, which this check did not follow",
-					opts.MaxDepth, f.Rel, spec)
+				// Two things are not truncation: a package specifier (never
+				// going to be followed) and a target the walk reads anyway.
+				// Missing the second silenced the very defect this check exists
+				// for — a DIAMOND, the normal shape of any real module graph,
+				// produced a gap whose message was false about a file sitting in
+				// g.Files and let an orphaned emitter pass with rc=0.
+				//
+				// 🔴 So the check is DEFERRED to the end of the walk. Asking
+				// `g.Files` here answers "has it been POPPED yet", not "is it in
+				// the graph" — a target already ENQUEUED is absent from g.Files
+				// until its turn comes. Two modules at exactly MaxDepth where
+				// the first-enqueued imports the second therefore gapped or did
+				// not depending on THE TEXTUAL ORDER OF TWO IMPORT STATEMENTS,
+				// and in the losing order an orphaned emitter shipped silently.
+				// Measured flat and nested. After the walk drains, g.Files is
+				// final and the answer cannot depend on ordering.
+				pendingTrunc = append(pendingTrunc, truncCandidate{
+					fromFile: file, spec: spec, rel: f.Rel,
+				})
 				continue
 			}
 			queue = append(queue, pending{
@@ -387,7 +395,26 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			})
 		}
 	}
+
+	// The walk has drained, so g.Files is final: now "did we actually miss
+	// anything below the bound" has an order-independent answer.
+	for _, c := range pendingTrunc {
+		if !truncatedBelow(g, dir, c.fromFile, c.spec, opts.Dependencies) {
+			continue
+		}
+		g.gap("stopped at import depth %d: %s imports %q, which this check did not follow",
+			opts.MaxDepth, c.rel, c.spec)
+	}
 	return g
+}
+
+// truncCandidate is an import seen at the depth bound, held until the walk
+// finishes. Evaluating it in place asked g.Files a question g.Files could not
+// answer yet — see the depth-bound branch in ResolveEntryGraph.
+type truncCandidate struct {
+	fromFile string // the module the import was seen in
+	spec     string // the specifier
+	rel      string // fromFile, project-relative, for the message
 }
 
 // truncatedBelow reports whether an import sitting at the depth bound really
@@ -635,11 +662,20 @@ var (
 	reScriptOpen = regexp.MustCompile(`(?is)<script([\s/][^>]*)?>`)
 	// reScriptBlock captures a whole `<script …>…</script>` so an INLINE
 	// module's imports can be read. Group 1 is the attribute list, group 2 the
-	// body.
+	// body. The close tag allows trailing whitespace (`</script >`, which a
+	// browser accepts) but NOT arbitrary characters — `</scriptx>` closes
+	// nothing, and widening to `</script[^>]*>` would make it close an inline
+	// module that is still open.
 	reScriptBlock = regexp.MustCompile(`(?is)<script([\s/][^>]*)?>(.*?)</script\s*>`)
 	// reSrcAttr captures a src value in any of HTML's three quoting forms. The
-	// leading `(?:^|[\s/])` is the attribute-name boundary `\b` could not be.
-	reSrcAttr = regexp.MustCompile(`(?is)(?:^|[\s/])src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'` + "`" + `=<>]+))`)
+	// leading `[\s/]` is the attribute-name boundary `\b` could not be.
+	//
+	// There is deliberately no `^` alternative: reScriptOpen's capture is
+	// `([\s/][^>]*)?`, so an attribute list is either EMPTY (no src to find) or
+	// begins with whitespace or `/`. An `^` arm was there and was UNREACHABLE —
+	// a mutation sweep removing it survived, which is the tell. It was dropped
+	// rather than left as a branch nothing can exercise.
+	reSrcAttr = regexp.MustCompile(`(?is)[\s/]src\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'` + "`" + `=<>]+))`)
 	// reJSImport captures the SPECIFIER of an import / re-export / require, so
 	// it can be resolved. Matching a basename inside the specifier is what let
 	// `import '../nonexistent/civitai-host.js'` through.

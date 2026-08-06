@@ -312,6 +312,47 @@ func TestReadyAckWiringPredicate(t *testing.T) {
 			wantErr: "no <script src> in index.html resolves to it",
 		},
 		{
+			// 🟡 F2: `</script >` — trailing whitespace before the `>` — is a
+			// valid close tag and a browser accepts it. This commit changed the
+			// close pattern to `</script\s*>` and shipped it unpinned; without
+			// the `\s*` the block never matches, so the inline module's imports
+			// are never read and a correctly wired project is rejected.
+			name: "accept: an inline module closed by `</script >`",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", "<script type=\"module\">import './civitai-host.js';</script >"},
+			},
+			wantAccept: true,
+		},
+		{
+			// 🟡 F2, the other direction: `</scriptx>` closes NOTHING — a browser
+			// keeps parsing the script until a real `</script>`, so code AFTER
+			// the bogus tag still executes. Widening the close pattern to
+			// `</script[^>]*>` ends the block early and loses exactly that code.
+			// (My first draft of this case asserted the opposite and was simply
+			// wrong about HTML: it is an ACCEPT, and the accept is what
+			// discriminates the widening.)
+			name: "accept: an inline module continues past a bogus `</scriptx>`",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", "<script type=\"module\">var x = 1;</scriptx>\nimport './civitai-host.js';</script>"},
+			},
+			wantAccept: true,
+		},
+		{
+			// 🟡 F2: the TAG boundary again, this time for the inline path. A
+			// `<script-loader>` custom element's body is never executed, so an
+			// import inside it is not a load. Reverting the tag boundary makes
+			// this element an inline script and accepts it.
+			name: "reject: an import inside a <script-loader> body is not a load",
+			ack:  "civitai-host.js",
+			files: []gfile{
+				{"index.html", "<script-loader>import './civitai-host.js';</script-loader>\n<script src=\"./app.js\"></script>"},
+				{"app.js", "// app"},
+			},
+			wantErr: "no <script src> in index.html resolves to it",
+		},
+		{
 			// 🟢 `srcAttrValue` reports an EMPTY src as PRESENT, which makes the
 			// tag EXTERNAL rather than inline. A browser ignores the body of an
 			// element that has a `src` attribute, so the import below must NOT
@@ -614,6 +655,88 @@ func TestEntryGraphCompleteness(t *testing.T) {
 			opts:         &EntryGraphOptions{MaxDepth: 2},
 			wantComplete: true,
 			wantFiles:    []string{"index.html", "a.js", "b.js"},
+		},
+		{
+			// 🔴 F1: THE ANSWER MUST NOT DEPEND ON THE TEXTUAL ORDER OF TWO
+			// IMPORT STATEMENTS. `g.Files` records files that have been POPPED,
+			// so a target already ENQUEUED is absent from it — and evaluating
+			// truncation mid-walk therefore gapped, or did not, according to
+			// which of two same-depth imports was written first. Measured
+			// end-to-end on real scaffolds, flat and nested: in the losing order
+			// an orphaned emitter shipped SILENTLY. The check is now deferred to
+			// the end of the walk. These two cases are the SAME GRAPH with the
+			// two imports swapped, and they must agree.
+			name: "the bound is order-independent (import A then B)",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/a.js"></script>`},
+				{"a.js", "import './b.js';\nimport './sib.js';"},
+				{"b.js", "import './sib.js';"},
+				{"sib.js", "export const s = 1;"},
+			},
+			deps:         deps,
+			opts:         &EntryGraphOptions{MaxDepth: 2},
+			wantComplete: true,
+			wantFiles:    []string{"index.html", "a.js", "b.js", "sib.js"},
+		},
+		{
+			name: "the bound is order-independent (import B then A)",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/a.js"></script>`},
+				{"a.js", "import './sib.js';\nimport './b.js';"},
+				{"b.js", "import './sib.js';"},
+				{"sib.js", "export const s = 1;"},
+			},
+			deps:         deps,
+			opts:         &EntryGraphOptions{MaxDepth: 2},
+			wantComplete: true,
+			wantFiles:    []string{"index.html", "a.js", "sib.js", "b.js"},
+		},
+		{
+			// 🟡 F3: truncatedBelow resolves against the IMPORTING MODULE's
+			// directory, not the project root. Every other fixture here is
+			// root-flat, where the two coincide — so only a NESTED one can tell
+			// them apart. Resolving against the root would look for
+			// `<root>/sib.js`, miss the file, and gap at a complete graph.
+			name: "the bound resolves against the importing module's directory",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/src/deep/a.js"></script>`},
+				{"src/deep/a.js", "import './b.js';\nimport './sib.js';"},
+				{"src/deep/b.js", "import './sib.js';"},
+				{"src/deep/sib.js", "export const s = 1;"},
+			},
+			deps:         deps,
+			opts:         &EntryGraphOptions{MaxDepth: 2},
+			wantComplete: true,
+			wantFiles:    []string{"index.html", "src/deep/a.js", "src/deep/b.js", "src/deep/sib.js"},
+		},
+		{
+			// 🟡 F3: the refUnresolved arm. A bundler alias at the bound is
+			// something we genuinely cannot follow, so it MUST gap — otherwise
+			// the strong tier fires on a graph with a hole in it.
+			name: "a bundler alias at the depth bound is a gap",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/a.js"></script>`},
+				{"a.js", "import './b.js';"},
+				{"b.js", "import '@/civitai-host.js';"},
+			},
+			deps:         deps,
+			opts:         &EntryGraphOptions{MaxDepth: 2},
+			wantComplete: false,
+			wantGap:      "stopped at import depth 2",
+		},
+		{
+			// 🟡 F3: the resolveRefPath-error arm. A dangling import at the
+			// bound is the same model disagreement the normal path gaps on.
+			name: "a dangling import at the depth bound is a gap",
+			files: []gfile{
+				{"index.html", `<script type="module" src="/a.js"></script>`},
+				{"a.js", "import './b.js';"},
+				{"b.js", "import './nope.js';"},
+			},
+			deps:         deps,
+			opts:         &EntryGraphOptions{MaxDepth: 2},
+			wantComplete: false,
+			wantGap:      "stopped at import depth 2",
 		},
 		{
 			// The counterpart: a leaf at the bound that imports only a declared

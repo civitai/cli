@@ -1050,6 +1050,15 @@ neither one's.
       Measured; a self-cycle at the bound did the same. A gap that over-fires is
       not "conservative", it is the false pass wearing a different hat. See
       `truncatedBelow`.
+      🔴 **And the question is DEFERRED to the end of the walk, because
+      `g.Files` cannot answer it while the walk is running.** Files enter
+      `g.Files` when POPPED, not when QUEUED, so a target already enqueued looks
+      absent. Two modules at exactly `MaxDepth` where the first-enqueued imports
+      the second therefore gapped or did not according to THE TEXTUAL ORDER OF
+      TWO IMPORT STATEMENTS — and in the losing order an orphaned emitter
+      shipped silently. Measured flat and nested. Do not move the check back
+      inline; the fixture pair that pins it is two copies of one graph with the
+      imports swapped.
     - 🔴 **THE GRAPH MUST STAY O(ONE FILE), AND THAT TOOK TWO FIXES — THE FIRST
       ONE ALONE WAS CLAIMED AS COMPLETE AND WAS NOT.** `EntryFile` must not grow
       a `Code` field again, AND every import specifier must be `strings.Clone`d:
@@ -1065,6 +1074,15 @@ neither one's.
       | retaining `Code` | 421 – 439 MB |
       | `Code` dropped, specifiers aliased | 558 – 628 MB |
       | both fixed | 31.4 – 33.3 MB |
+
+      🔴 **EVERY ROW IS FIXTURE-DEPENDENT; QUOTE THE FIXTURE WITH THE NUMBER.**
+      These four are one 400 MB tree of 200 modules (`~2 MiB` each, real code,
+      each carrying an import). The `e800129` row is the WHOLE-TREE GREP, not
+      the graph, so it moves with the tree rather than with the entry graph — an
+      independent measurement on a smaller tree put it at 17.6 – 17.8 MB, and
+      both are right about their own fixture. The three graph rows reproduce
+      independently. The ratio is the durable fact: the aliased build is ~18×
+      the fixed one.
 
       🔴 **THE FIXTURE SHAPE IS THE MEASUREMENT.** A tree padded with COMMENTS
       leaves almost nothing after stripping, and a tree whose leaves carry no
@@ -1101,6 +1119,32 @@ neither one's.
       the stronger tier does not change that: reachability is still inference
       from static text, and `--strict` already gives anyone who wants a gate
       one.
+    - 🔴 **THE RESIDUALS THIS CHECK KNOWINGLY SHIPS WITH.** Written down because
+      every one of them was found by an audit rather than by the author, and a
+      residual nobody records is indistinguishable from a bug nobody noticed:
+      - **An extensionless `src`** (`<script src="./civitai-host">`) resolves to
+        nothing, so the graph gaps and the check goes quiet on the presence
+        tier. Correct — a browser 404s that URL and we stopped modelling — but
+        it IS a false negative, not approval.
+      - **A large graph falls to the presence tier more often than the caps
+        suggest.** With truncation now a gap, any project deeper than
+        `MaxDepth` or wider than `MaxFiles` is checked on presence alone. The
+        strong tier covers small and pre-fix apps — which is the #206
+        population — not big ones. Raising the caps is a separate, measurable
+        change.
+      - **The `strings.Clone` property is guarded by a MEASUREMENT, not a
+        test.** No unit assertion can see a shared backing array; dropping the
+        clone passes the entire suite while costing ~18× peak RSS. The mutant
+        is declared a known survivor and `TestEntryGraphRetainsNoContents` says
+        in its own body that it cannot see that half.
+      - **An attribute VALUE containing ` src=` hijacks the reference.**
+        `<script data-x="foo src=./nope.js" src="./civitai-host.js">` resolves
+        the decoy. Pre-existing and byte-identical before and after this work,
+        so it was left alone here; fixing it needs a real attribute parser
+        rather than a regex, which is a bigger change than this check earns.
+      - **A computed `import(expr)`** is not matched at all: the specifier must
+        be a literal. That makes the graph silently smaller, not incomplete —
+        the one residual here that does NOT set a gap.
     - **Measured, before (`e800129`) → after**, on pre-fix `static` and
       `page-vite` projects: emitter copied but not wired
       `silent rc=0 strict 0` → `WARN rc=0 strict 1`; orphan `BLOCK_READY` file
