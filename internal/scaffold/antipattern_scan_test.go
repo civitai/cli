@@ -15,7 +15,9 @@ import (
 // author. The network-dependent scaffold-of-record scan runs in CI against the
 // `civitai app init` output; this covers all templates hermetically.
 func TestScaffoldedTemplatesHaveNoAntipatterns(t *testing.T) {
+	examined := 0
 	for _, tmpl := range AllTemplates() {
+		examined++
 		t.Run(string(tmpl), func(t *testing.T) {
 			dest := filepath.Join(t.TempDir(), string(tmpl))
 			if _, err := Render(tmpl, dest, Data{Slug: "sample-block", Name: "Sample Block"}); err != nil {
@@ -29,5 +31,12 @@ func TestScaffoldedTemplatesHaveNoAntipatterns(t *testing.T) {
 				t.Fatalf("template %q ships an anti-pattern:\n%s", tmpl, antipattern.Format(findings))
 			}
 		})
+	}
+	// COUNT POSITIVE CONTROL. This test's reassuring answer is a ZERO ("no
+	// findings"), which is exactly the answer a guard wired to nothing produces:
+	// an empty AllTemplates() makes the loop body never run and the test pass
+	// serenely. Assert it actually examined the templates that exist.
+	if examined < len(AllTemplates()) || examined < 3 {
+		t.Fatalf("scanned only %d template(s), expected at least 3 — the enumeration stopped OBSERVING", examined)
 	}
 }

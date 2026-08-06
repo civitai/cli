@@ -39,11 +39,13 @@
 // deliberately absent from the denylist. We only flag routes that are REMOVED or
 // whose bridge has fully superseded the REST shape (buzz, shared-storage).
 //
-// A SECOND FAMILY: DEAD HOST MESSAGES. The denylist is not only about REST. The
-// same "compiles, installs, ships an app that is broken or inert" failure has a
-// postMessage shape: a block -> host message type the page host does not handle.
-// `RESIZE_IFRAME` is the first of those (see the rule below) — the raw page
-// templates demoed it until #206, and on a `page` surface the host marks it N/A.
+// THE DENYLIST IS NOT ONLY ABOUT REST. It already covered a dead TOOL
+// (`@civitai/blocks-cli`, a retired npm package). `RESIZE_IFRAME` adds a third
+// family — a dead HOST MESSAGE: a block -> host message type the page host does
+// not handle, so the code compiles, installs, ships, and does nothing. The raw
+// page templates demoed it until #206, and on a `page` surface the host marks it
+// N/A. Message-name rules need tighter scoping than route or package rules; see
+// `Rule.Exts`.
 package antipattern
 
 import (
@@ -69,7 +71,26 @@ type Rule struct {
 	Pattern *regexp.Regexp
 	// Replacement is the concrete thing to use instead (a hook / the Go CLI).
 	Replacement string
+	// Exts, when non-nil, restricts this rule to those file extensions
+	// (lowercase, dotted). Nil means every extension in scannedExts.
+	//
+	// It exists because the default corpus deliberately includes prose and data
+	// (.md, .txt, .json) so a documented dead workflow or a dead pin is caught —
+	// right for a rule matching a PACKAGE NAME or a URL, wrong for one matching
+	// a MESSAGE NAME, where quoting the token in a sentence, or using it as a
+	// JSON key in a handler table, is ordinary writing rather than a call.
+	Exts map[string]bool
 }
+
+// codeExts is the Exts value for rules that must only fire on executable code.
+var codeExts = map[string]bool{
+	".ts": true, ".tsx": true, ".js": true, ".jsx": true,
+	".mjs": true, ".cjs": true, ".html": true, ".htm": true,
+}
+
+// appliesTo reports whether the rule is evaluated against a file with the given
+// lowercased, dotted extension.
+func (r Rule) appliesTo(ext string) bool { return r.Exts == nil || r.Exts[ext] }
 
 // Rules is the curated denylist. Keep it SMALL and PRECISE — every entry must be
 // a surface the platform has REMOVED or fully superseded with a host bridge, and
@@ -130,14 +151,26 @@ func Rules() []Rule {
 			// template ever ships, this rule needs manifest awareness, because
 			// RESIZE_IFRAME is honoured on the surfaces that DO size to content.
 			//
-			// The pattern requires a MATCHING ' or " pair, deliberately excluding
-			// the backtick form. Prose discusses this message by name in markdown
-			// backticks — our own scaffold READMEs will say "don't post
-			// RESIZE_IFRAME" — and flagging the doc that tells an author not to
-			// use it is a false positive at a correct project. A JS template
-			// literal for a constant message type is the (vanishingly rare) cost.
+			// TWO precision devices, because a message NAME is a far more
+			// quotable token than a route or a package name:
+			//   1. `Exts: codeExts` — prose and data are not calls. Double-quoting
+			//      a message name in a sentence is ordinary English, and a JSON
+			//      handler table `{"RESIZE_IFRAME": …}` is a data structure, not
+			//      a post. Without this the rule fails a README that says "do not
+			//      post RESIZE_IFRAME".
+			//   2. A MATCHING ' or " pair, deliberately excluding the backtick
+			//      form — markdown backticks are how our own docs name it, and a
+			//      mismatched pair (`'RESIZE_IFRAME"`) is not a JS string literal
+			//      at all. A JS template literal holding a constant message type
+			//      is the (vanishingly rare) cost of excluding backticks.
+			// `What` says "reference to", not "postMessage of": the pattern
+			// matches the quoted token wherever it appears in code — a dispatch
+			// table key, a comparison, a constant — and all of those are dead on
+			// a page surface. Claiming it matched a postMessage call would be a
+			// claim the regex does not make.
 			ID:          "resize-iframe-page",
-			What:        "postMessage of RESIZE_IFRAME, which the page host does not handle",
+			What:        "reference to RESIZE_IFRAME, a message the page host does not handle",
+			Exts:        codeExts,
 			Pattern:     regexp.MustCompile(`'RESIZE_IFRAME'|"RESIZE_IFRAME"`),
 			Replacement: "delete it — hostHandlerParity.ts marks RESIZE_IFRAME N/A for PageBlockHost (a page block fills the host surface and does NOT size to content), so the message is dead code. The one message a page app must send is BLOCK_READY: keep the vendored civitai-host.js emitter `civitai app init` ships, or adopt @civitai/blocks-react (whose transport acks internally) — never both",
 		},
@@ -195,8 +228,12 @@ func ScanDir(dir string) ([]Finding, error) {
 		if readErr != nil {
 			return readErr
 		}
+		ext := strings.ToLower(filepath.Ext(d.Name()))
 		for i, line := range strings.Split(string(data), "\n") {
 			for _, r := range rules {
+				if !r.appliesTo(ext) {
+					continue
+				}
 				if r.Pattern.MatchString(line) {
 					findings = append(findings, Finding{
 						File: rel,

@@ -152,7 +152,7 @@ func validateDir(dir string, projectState bool) (Result, error) {
 		// HERE rather than in warningChecks because it reads src/, and
 		// warningChecks also runs under ManifestOnly, where `civitai app init`
 		// self-checks a template it just wrote. See readyack.go.
-		res.Warnings = append(res.Warnings, readyAckChecks(dir, generic, m)...)
+		res.Warnings = append(res.Warnings, readyAckChecks(dir, generic)...)
 	}
 
 	// Non-fatal advisories: real money-path footguns the schema can't catch as

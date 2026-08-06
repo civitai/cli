@@ -511,18 +511,26 @@ neither one's.
     design:
     - **`internal/antipattern`'s `resize-iframe-page` rule is a GATE** (it fails
       the scaffold-currency job), because it fires on a *literal that is present
-      in the file* — no inference. It is the first non-REST entry in that
-      denylist: the package's original doctrine was "dead REST route behind a
-      host bridge", and this is a dead host MESSAGE, marked N/A for
-      `PageBlockHost` by `hostHandlerParity.ts`. It matches only a `'`/`"`-quoted
-      literal, deliberately NOT the backtick form, because this repo's README,
-      both scaffold READMEs and item 11 all name `RESIZE_IFRAME` in markdown
-      backticks precisely to tell authors not to post it — a gate that fails the
-      documentation of its own rule is a false positive. It also assumes a page
-      surface rather than reading a manifest: `Rule` is a per-line regex with no
-      manifest context, and every template this CLI ships declares `page`. A
-      non-page template would need that assumption revisited, not the rule
-      deleted.
+      in the file* — no inference. It adds a THIRD family to that denylist: not a
+      dead REST route, and not a dead TOOL (`deprecated-blocks-cli` already
+      covered that one), but a dead host MESSAGE — marked N/A for
+      `PageBlockHost` by `hostHandlerParity.ts`.
+      🔴 **A message NAME needs tighter scoping than a route or a package name,
+      because it is far more quotable, and both devices were earned by a false
+      positive.** `Exts: codeExts` keeps it out of `.md`/`.txt`/`.json`, where
+      naming the message in a sentence or using it as a JSON handler-table key is
+      ordinary writing — unscoped, the rule flagged its own documentation, and
+      this repo's README plus both scaffold READMEs exist to say "don't post
+      RESIZE_IFRAME". And it matches only a MATCHING `'` or `"` pair —
+      deliberately not the backtick form (markdown), and not a mismatched pair,
+      which is not a string literal in any language. `What` reads "reference to",
+      not "postMessage of": the regex matches the quoted token anywhere in code
+      (a dispatch-table key, a comparison, a constant — all equally dead on a
+      page surface), and saying "postMessage" would be a claim the pattern does
+      not make. It also assumes a page surface rather than reading a manifest:
+      `Rule` is a per-line regex with no manifest context, and every template this
+      CLI ships declares `page`. A non-page template would need that assumption
+      revisited, not the rule deleted.
     - 🔴 **`validate`'s page-without-ack check is a WARNING and must stay one**
       (`internal/validate/readyack.go`). It is the mirror image of item 3's
       reasoning: `lockfile.go` earns hard-error status because the platform
@@ -533,16 +541,32 @@ neither one's.
       false-warning-at-a-correct-project failure item 10 spent four measured
       corrections avoiding, and `--strict` already lets anyone who wants a gate
       have one.
-    - **The dependency is evidence, and it is checked FIRST.** For a project on
-      `@civitai/blocks-react` the ack comes from `IframeTransport` and the
-      literal `BLOCK_READY` NEVER appears in `src/` — measured on a rendered
-      `page-money` (zero occurrences outside `node_modules`). A source-only scan
-      therefore warns at every correct money-path app, which is the worst
-      outcome for advisory output. `sdkDependency` mirrors `civitaiSDKDeps` in
-      `ready_ack_contract_test.go` on purpose: the two answer the same question,
-      and disagreeing would mean the CLI warns at a shape its own scaffold guard
-      calls correct. `TestSDKTemplateIsQuietOnlyBecauseOfTheDependency` pins that
-      the dep gate is the ONLY reason page-money is accepted.
+    - 🔴 **The evidence is an EXACT SET OF PACKAGES THAT ACK — never the
+      `@civitai/` scope.** This is the claim an audit falsified, so it is stated
+      with its measurement. Of the six published first-party packages, exactly
+      ONE acks: `@civitai/blocks-react@0.39.0`
+      (`dist/internal/iframeTransport.js:311`, `this.dispatch('BLOCK_READY', …)`).
+      `@civitai/app-sdk@0.31.0` does **not** — 17 runtime `.js` files, zero
+      containing the literal, the only hits a `.d.ts` type and the README, and it
+      declares no dependencies so it cannot ack transitively either.
+      `@civitai/theme`, `@civitai/components`, `@civitai/components-react` and
+      `@civitai/cli` contain none at all. A scope test is therefore wrong for
+      FOUR of six, and wrong in the expensive direction: `theme` and `components`
+      are framework-agnostic CSS, exactly what a hand-written no-build page app
+      installs, so the check went **silent on a genuinely broken app** — verified
+      live by adding `@civitai/theme` to a `static` scaffold with
+      `civitai-host.js` deleted.
+      The predicate lives in `blockproto.PackageAcksReady` with the per-package
+      evidence, and is used by BOTH `internal/validate/readyack.go` and
+      `civitaiSDKDeps` in `ready_ack_contract_test.go` — one rule, one place,
+      because Guard A had the identical hole (a future template depending on
+      `@civitai/theme` would have been classified SDK-backed and excused from
+      shipping an emitter: a born-broken template passing its own guard). The
+      match is EXACT; a prefix or substring test accepts a sibling
+      (`@civitai/blocks-react-native`) or a fork, and that widening class is what
+      `TestAckingPackagePredicate` exists to pin. Adding a package there is a
+      claim about its RUNTIME code — verify against the tarball, not the README
+      or the types, and record the version.
     - **Comments are stripped, and that is load-bearing rather than tidy.** Both
       SDK-free templates carry a source comment reading "The ONE message a page
       app must send is `BLOCK_READY`", and it SURVIVES deleting
@@ -550,14 +574,47 @@ neither one's.
       population it was written for. Measured both ways. `.md` is excluded from
       the scan for the same reason: a README describing the handshake is not an
       implementation of it.
-    - 🔴 **Reading NOTHING is not finding nothing.** `emitsReadyAck` reports "no
-      finding" when it opened ZERO source files — a zero-hit scan over a
-      zero-file tree is indistinguishable from a scanner wired to nothing (a
-      broken extension table, an over-eager skip list, or `validate` pointed at a
-      directory holding a manifest and no checkout, which is the shape of every
-      manifest-only fixture in that package). This is not defensive padding: it
-      is what a manifest-only fixture in `warnings_test.go` failed on, and
-      removing it re-breaks that test.
+      🔴 **HTML comment stripping is gated to MARKUP extensions, and an
+      unterminated `<!--` keeps the rest of the file.** `stripHTMLComments` has no
+      string awareness, so running it over `.js` made an ordinary
+      `var OPEN = '<!--';` in a sanitiser open a "comment" that ran to EOF and
+      deleted the emitter below it — a false warning at a correct project,
+      reproduced live. Neither half is optional: the gate stops the common
+      string case, the non-lossy tail stops the rest.
+    - 🔴 **Reading NOTHING is not finding nothing, and neither is reading only
+      PART.** `scanForReadyAck` is three-valued on purpose — found / absent /
+      unobservable — and only `absent` warns. Unobservable covers zero source
+      files read (a zero-hit scan over a zero-file tree is indistinguishable from
+      a scanner wired to nothing, and is the shape of every manifest-only fixture
+      in that package — a `warnings_test.go` fixture failed on exactly this), an
+      unresolvable symlink, a read error, a file over the size cap, and the
+      file-count budget. A partial scan reporting "absent" is manufacturing
+      advice from a gap.
+    - 🔴 **SKIPPING IS A COST DECISION, NEVER A CORRECTNESS ONE**, because this is
+      a PRESENCE check: scanning an extra directory can only ADD evidence, while
+      skipping one can only CREATE a false warning. That asymmetry is why the
+      manifest's `outputDir` is NOT skipped — it was, and a perfectly valid
+      `"outputDir": "src"` on a page-vite app skipped the directory holding the
+      emitter and warned at a project with zero validation errors, while
+      `"outputDir": "."` skipped the entire tree and silenced a broken one. What
+      remains is a fixed list of names that are never source, applied to
+      ENTRIES only so no rule can ever remove the root. `vendor` and `public` are
+      deliberately absent — both routinely hold hand-written source. The residual
+      trade is stated rather than hidden: a stale committed build under a
+      non-conventional output directory can retain an ack the source lost. That
+      is a false negative, which is the cheap direction here.
+    - 🔴 **Directory symlinks are FOLLOWED.** `filepath.WalkDir` does not follow
+      them and does not even report them as directories, so a monorepo whose
+      `src` is a symlink into a shared package had its entire source tree skipped
+      and warned at a correct project — reproduced live. Cycles are bounded by a
+      visited set keyed on the `EvalSymlinks`-resolved path, and total work by
+      the file-count and file-size caps (`validate` used to be a manifest-only
+      read; before the caps, 20,008 files with one 88 MB `.js` peaked at 316 MB
+      RSS).
+    - **The advisory is printed by `app submit` too.** It used to branch only on
+      `res.OK()` and drop warnings, so the highest-traffic path — the last point
+      before an app reaches review — told nobody. It prints and does NOT block;
+      blocking stays the `--strict` contract.
     - **Placement is a real constraint, not style.** `warningChecks` runs
       unconditionally *including under `ManifestOnly`*, which `app init` uses to
       self-check the template it just wrote. A check that reads `src/` must live

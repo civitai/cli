@@ -29,8 +29,16 @@ package validate
 // SDK's `IframeTransport` and the literal `BLOCK_READY` NEVER APPEARS in `src/`.
 // A source scan alone therefore warns at every correct page-money app on the
 // platform, which is the worst possible outcome for advisory output: it teaches
-// authors that this warning is noise. So package.json is read first and an
-// `@civitai/*` dependency ENDS the check.
+// authors that this warning is noise. So package.json is read first and a
+// dependency that ACKS ends the check.
+//
+// 🔴 "A dependency that acks" is an EXACT SET (blockproto.PackageAcksReady), not
+// the `@civitai/` scope. Four of the six published first-party packages do not
+// ack at all — `@civitai/theme` and `@civitai/components` are plain CSS, and are
+// exactly what a hand-written no-build page app installs — so a scope test goes
+// SILENT on a genuinely broken app. Measured per package in blockproto, and
+// reproduced live on a `static` scaffold with the emitter deleted. Do not
+// re-widen this to a prefix.
 //
 // WHAT IT DOES NOT PROVE. That the ack FIRES. No static check can — an emitter
 // with an inverted `event.source` guard satisfies every assertion here (that is
@@ -41,40 +49,40 @@ package validate
 // conclusive anyway, because being generous here costs a missed warning while
 // being strict costs a false one.
 //
-// SCOPE — IT ONLY FIRES WHERE IT CAN OBSERVE. Mirroring lockfile.go's early-out
-// shape: no `page` surface, no check. Unreadable package.json, no check.
-// Unwalkable tree, no check. And it reads SOURCE only — never `outputDir`,
-// which does not exist before the first build and is gitignored, so its absence
-// says nothing. A check that cannot observe returns NO findings rather than
-// manufacturing advice.
+// SCOPE — IT ONLY FIRES WHERE IT CAN OBSERVE, AND "OBSERVE" MEANS THE WHOLE
+// TREE. Mirroring lockfile.go's early-out shape: no `page` surface, no check;
+// unreadable package.json, no check. Beyond that, the scan concludes "this app
+// never acks" ONLY if it read every source file it could reach and found
+// nothing. Anything that leaves a gap — an unresolvable symlink, a read error, a
+// file over the size cap, the file-count budget — reports UNOBSERVABLE and stays
+// silent. A partial scan that says "absent" is manufacturing advice from a gap.
+//
+// 🔴 SKIPPING IS A COST DECISION, NEVER A CORRECTNESS ONE, because this is a
+// PRESENCE check: scanning an extra directory can only ever ADD ack evidence,
+// while skipping one can only ever CREATE a false warning. That asymmetry is why
+// the manifest's `outputDir` is NOT skipped (it was, and it was wrong — a
+// perfectly valid `"outputDir": "src"` on a page-vite app skipped the directory
+// holding the emitter and warned at a correct project; `"outputDir": "."`
+// skipped the entire tree). What remains is a fixed list of names that are
+// never source — dependencies, VCS metadata, and the conventional build
+// directories — chosen for cost. The residual trade is accepted and stated: a
+// stale committed build under a NON-conventional output directory can retain an
+// ack the source has lost, silencing a genuinely broken app. That is a false
+// negative, and false negatives are the cheap direction here.
 
 import (
 	"encoding/json"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/civitai/cli/internal/blockproto"
-	"github.com/civitai/cli/internal/manifest"
 )
 
 // readyAckType is the message the page host waits for. It is the same literal
 // blockproto's emitter posts; the emitter is the authority for the SHAPE, this
 // is only the token we look for.
 const readyAckType = "BLOCK_READY"
-
-// civitaiDepPrefix marks a first-party package. Any of them is taken as
-// evidence that a real transport is in play — `@civitai/blocks-react` is the
-// one that acks today, but a project pulling `@civitai/app-sdk` is on the SDK
-// path too, and a false negative is the cheap direction.
-//
-// This deliberately mirrors `civitaiSDKDeps` in
-// internal/scaffold/ready_ack_contract_test.go, which decides the same question
-// for the templates. Keep them agreeing: they answer "does this project's ack
-// come from the SDK", and disagreeing would mean the CLI warns at a shape its
-// own scaffold guard considers correct.
-const civitaiDepPrefix = "@civitai/"
 
 // readyAckSourceExts are the extensions a hand-written emitter can live in.
 // Deliberately CODE ONLY — `.md` is excluded because a README that explains the
@@ -88,13 +96,44 @@ var readyAckSourceExts = map[string]bool{
 	".vue": true, ".svelte": true, ".astro": true,
 }
 
-// readyAckSkipDirs are never descended into: dependencies, VCS metadata, and
-// build output. The manifest's own outputDir is skipped on top of these.
+// readyAckMarkupExts are the subset whose comments are `<!-- -->`. HTML comment
+// stripping is applied ONLY to these.
+//
+// 🔴 Applying it to `.js`/`.ts` was a false-warning source: `stripHTMLComments`
+// has no string awareness, so a perfectly ordinary `var OPEN = '<!--';` in a
+// sanitiser started a "comment" that ran to end of file and deleted the emitter
+// below it. Reproduced live on a `static` scaffold. JS has no HTML comments
+// worth stripping here — `//` and `/* */` cover it, and Annex B's HTML-like
+// comment form is vanishingly rare next to the literal appearing in a string.
+var readyAckMarkupExts = map[string]bool{
+	".html": true, ".htm": true, ".vue": true, ".svelte": true, ".astro": true,
+}
+
+// readyAckSkipDirs are never descended into. These names are never source:
+// dependencies, VCS metadata, and the conventional build directories. The list
+// is a COST decision (see the header) — every entry can only cost a false
+// warning, so it is kept short and conventional rather than expanded to every
+// directory that might be large. `vendor` and `public` are deliberately ABSENT:
+// both routinely hold hand-written source (a vendored emitter, Vite's static
+// `public/`), and cost is bounded by the caps below instead.
 var readyAckSkipDirs = map[string]bool{
 	"node_modules": true, ".git": true, "dist": true, "build": true,
 	"out": true, "coverage": true, ".vite": true, ".next": true,
 	".svelte-kit": true, ".output": true,
 }
+
+// Scan caps. `validate` used to be a manifest-only read; walking a project tree
+// is new cost, and an app that commits a large bundle or a huge vendored tree
+// must not turn it into a memory event (measured before these existed: 20,008
+// files with one 88 MB .js peaked at 316 MB RSS).
+//
+// Hitting either cap makes the scan UNOBSERVABLE, not "absent" — we stopped
+// reading, so we do not know. That is deliberately the direction that stays
+// silent.
+const (
+	maxAckScanFiles = 5000
+	maxAckFileBytes = 2 << 20 // 2 MiB
+)
 
 // readyAckChecks returns the ready-ack advisory for the project in dir, or nil.
 //
@@ -102,7 +141,7 @@ var readyAckSkipDirs = map[string]bool{
 // NOT in warningChecks: warningChecks is reached under ManifestOnly, which
 // `civitai app init` uses to self-check the template it just wrote, and a check
 // that reads `src/` has no business running there.
-func readyAckChecks(dir string, generic any, m *manifest.Manifest) []string {
+func readyAckChecks(dir string, generic any) []string {
 	if !declaresPage(generic) {
 		return nil
 	}
@@ -113,7 +152,9 @@ func readyAckChecks(dir string, generic any, m *manifest.Manifest) []string {
 	case sdkPresent, sdkUnknown:
 		return nil
 	}
-	if emitsReadyAck(dir, m.OutputDir) {
+	// Only a scan that read the WHOLE reachable tree and found nothing is
+	// evidence of absence.
+	if scanForReadyAck(dir) != ackAbsent {
 		return nil
 	}
 	return []string{readyAckAdvice}
@@ -165,7 +206,7 @@ func sdkDependency(dir string) sdkState {
 	}
 	for _, set := range []map[string]json.RawMessage{pkg.Dependencies, pkg.DevDependencies, pkg.PeerDependencies} {
 		for name := range set {
-			if strings.HasPrefix(name, civitaiDepPrefix) {
+			if blockproto.PackageAcksReady(name) {
 				return sdkPresent
 			}
 		}
@@ -173,17 +214,30 @@ func sdkDependency(dir string) sdkState {
 	return sdkAbsent
 }
 
-// emitsReadyAck reports whether any source file under dir mentions the ready-ack
-// message OUTSIDE a comment.
+// ackScanResult is the THREE-valued outcome of the source scan. Two values
+// would collapse "we did not look" into "it is not there", which is the whole
+// class of bug this check has to avoid.
+type ackScanResult int
+
+const (
+	// ackFound: a source file mentions the message outside a comment.
+	ackFound ackScanResult = iota
+	// ackAbsent: every reachable source file was read, and none mentions it.
+	// This is the ONLY result that produces a warning.
+	ackAbsent
+	// ackUnobservable: the scan left a gap — an unresolvable symlink, a read
+	// error, a file over the size cap, the file budget, or simply no source
+	// files at all.
+	ackUnobservable
+)
+
+// scanForReadyAck walks dir looking for the ready-ack message in source.
 //
-// 🔴 READING NOTHING IS NOT THE SAME AS FINDING NOTHING, and this returns TRUE
-// (no finding) when it opened ZERO source files. That is this check's own
-// positive control, inlined: a zero-hit scan over a zero-file tree is
-// indistinguishable from a scanner wired to nothing — a broken extension table,
-// an over-eager skip list, or `validate` pointed at a directory that holds a
-// manifest and no checkout (which is exactly the shape of every manifest-only
-// fixture in this package). Concluding "this app never acks" from a scan that
-// never read a line is manufacturing advice from an absence.
+// 🔴 READING NOTHING IS NOT THE SAME AS FINDING NOTHING. A zero-hit scan over a
+// zero-file tree is indistinguishable from a scanner wired to nothing — a broken
+// extension table, an over-eager skip list, or `validate` pointed at a directory
+// that holds a manifest and no checkout (the shape of every manifest-only
+// fixture in this package). So "no files read" is ackUnobservable, not ackAbsent.
 //
 // 🔴 The comment strip is load-bearing, not tidiness. Both shipped SDK-free
 // templates carry a source COMMENT naming `BLOCK_READY`
@@ -191,59 +245,112 @@ func sdkDependency(dir string) sdkState {
 // send is `BLOCK_READY`"), and those comments SURVIVE deleting `civitai-host.js`.
 // Without stripping, the exact repair this check exists to demand — restore the
 // emitter — would already look satisfied, and the check would be inert on the
-// one population it was written for. Measured: with the strip, deleting
-// civitai-host.js from a freshly scaffolded static app makes the warning fire;
-// without it, it does not.
+// one population it was written for. Measured both ways.
 //
-// An unwalkable/unreadable tree reports TRUE (i.e. "no finding"): we could not
-// observe, so we say nothing.
-func emitsReadyAck(dir, outputDir string) bool {
-	skipOut := ""
-	if out := strings.TrimSpace(outputDir); out != "" {
-		skipOut = filepath.Clean(filepath.Join(dir, filepath.FromSlash(out)))
+// 🔴 SYMLINKED DIRECTORIES ARE FOLLOWED. filepath.WalkDir does not follow them,
+// and it does not report them as directories either, so a monorepo whose `src`
+// is a symlink into a shared package had its ENTIRE source tree skipped and
+// warned at a correct project — reproduced live. Following is also the safe
+// direction for a presence check (more files can only add evidence). Cycles are
+// bounded by a visited set keyed on the RESOLVED path, and total work by the
+// caps above.
+func scanForReadyAck(dir string) ackScanResult {
+	s := &ackScanner{visited: map[string]bool{}}
+	s.walk(dir)
+	switch {
+	case s.found:
+		return ackFound
+	case s.partial || s.files == 0:
+		return ackUnobservable
+	default:
+		return ackAbsent
 	}
-
-	found := false
-	scanned := 0
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			if readyAckSkipDirs[d.Name()] || (skipOut != "" && filepath.Clean(path) == skipOut) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		if !readyAckSourceExts[strings.ToLower(filepath.Ext(d.Name()))] {
-			return nil
-		}
-		data, readErr := os.ReadFile(path)
-		if readErr != nil {
-			return readErr
-		}
-		scanned++
-		if strings.Contains(stripComments(string(data)), readyAckType) {
-			found = true
-			return fs.SkipAll
-		}
-		return nil
-	})
-	if err != nil {
-		// Could not observe the tree — do not manufacture advice.
-		return true
-	}
-	if scanned == 0 {
-		return true
-	}
-	return found
 }
 
-// stripComments removes HTML comments and then JS line/block comments, leaving
-// string and template literals intact (so `'https://x'` is not read as the start
-// of a comment, and an emitter that posts from inside a string still counts).
-func stripComments(src string) string {
-	return stripJSComments(stripHTMLComments(src))
+type ackScanner struct {
+	visited map[string]bool
+	files   int
+	found   bool
+	// partial records that something in the tree could not be read. It is
+	// sticky: once set, the answer can never be ackAbsent.
+	partial bool
+}
+
+func (s *ackScanner) walk(dir string) {
+	if s.found || s.partial {
+		return
+	}
+	// Resolve before recording: two paths that reach the same directory (a
+	// symlink and its target) must count once, or a self-referential link
+	// recurses forever.
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		s.partial = true
+		return
+	}
+	if s.visited[real] {
+		return
+	}
+	s.visited[real] = true
+
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		s.partial = true
+		return
+	}
+	for _, e := range entries {
+		if s.found || s.partial {
+			return
+		}
+		path := filepath.Join(dir, e.Name())
+		// os.Stat FOLLOWS symlinks — that is the point: a symlinked source
+		// directory must be walked as a directory. A dangling link fails here
+		// and correctly makes the scan partial.
+		info, err := os.Stat(path)
+		if err != nil {
+			s.partial = true
+			return
+		}
+		if info.IsDir() {
+			// Note the skip list is applied to ENTRIES only, never to the root
+			// we were handed — no skip rule can remove the whole tree.
+			if readyAckSkipDirs[e.Name()] {
+				continue
+			}
+			s.walk(path)
+			continue
+		}
+		ext := strings.ToLower(filepath.Ext(e.Name()))
+		if !readyAckSourceExts[ext] {
+			continue
+		}
+		if info.Size() > maxAckFileBytes || s.files >= maxAckScanFiles {
+			s.partial = true
+			return
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			s.partial = true
+			return
+		}
+		s.files++
+		if strings.Contains(stripComments(string(data), ext), readyAckType) {
+			s.found = true
+			return
+		}
+	}
+}
+
+// stripComments removes comments from src, given its file extension. JS
+// line/block comments are always stripped, leaving string and template literals
+// intact (so `'https://x'` is not read as the start of a comment, and an emitter
+// that posts from inside a string still counts). HTML comments are stripped only
+// for markup files — see readyAckMarkupExts for why that gate exists.
+func stripComments(src, ext string) string {
+	if readyAckMarkupExts[strings.ToLower(ext)] {
+		src = stripHTMLComments(src)
+	}
+	return stripJSComments(src)
 }
 
 func stripHTMLComments(src string) string {
@@ -253,6 +360,14 @@ func stripHTMLComments(src string) string {
 		if strings.HasPrefix(src[i:], "<!--") {
 			end := strings.Index(src[i+4:], "-->")
 			if end < 0 {
+				// 🔴 UNTERMINATED. Keep the remainder VERBATIM rather than
+				// discarding it. Dropping the tail is lossy in the expensive
+				// direction — everything below an unclosed `<!--` disappears,
+				// including an emitter, and the author gets a warning about a
+				// correct project. There is no upside to the lossy branch: text
+				// after an unclosed marker is not evidence of a comment, it is
+				// evidence the file is not what we assumed.
+				b.WriteString(src[i:])
 				return b.String()
 			}
 			i += 4 + end + 3
@@ -316,7 +431,8 @@ var readyAckAdvice = "the manifest declares a \"page\" surface but nothing in th
 	"bounded init retries run out (issue #206). Apps scaffolded before that fix ship no emitter: run " +
 	"`civitai app init` into a scratch directory and copy its `" + blockproto.ReadyAckFilename + "` " +
 	"into this project, loading it from index.html (a <script src>) or from the entry module — or adopt " +
-	"`@civitai/blocks-react`, whose transport acks for you (never both: whichever answers the first " +
-	"BLOCK_INIT cancels the host's retry). This is a source-text check, so it is wrong about a project " +
-	"whose ack arrives from a bundled dependency or a file type it does not read; it never inspects " +
-	"outputDir, which is not built yet"
+	"`@civitai/blocks-react`, whose iframe transport acks for you (never both: whichever answers the first " +
+	"BLOCK_INIT cancels the host's retry). Note `@civitai/app-sdk` alone does NOT ack — it is the " +
+	"server-side SDK and no runtime code in it posts " + readyAckType + ". This is a source-text check, so " +
+	"it is wrong about a project whose ack arrives from a bundled dependency or a file type it does not " +
+	"read; it is advisory only and never fails `civitai app validate` unless you pass --strict"

@@ -1,10 +1,12 @@
 package validate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/civitai/cli/internal/blockproto"
 	"github.com/civitai/cli/internal/scaffold"
@@ -151,19 +153,79 @@ func TestReadyAckWarning(t *testing.T) {
 			wantWarn: false,
 		},
 		{
-			name:     "the SDK dep counts from devDependencies too",
+			name:     "the acking dep counts from devDependencies too",
 			manifest: ackManifest(true),
 			files: map[string]string{
-				"package.json": `{"devDependencies": {"@civitai/app-sdk": "^0.31.0"}}`,
+				"package.json": `{"devDependencies": {"@civitai/blocks-react": "^0.39.0"}}`,
 				"src/main.ts":  `export const x = 1;`,
 			},
 			wantWarn: false,
 		},
 		{
-			// The dep gate must be about @civitai/*, not about "has a
+			name:     "the acking dep counts from peerDependencies too",
+			manifest: ackManifest(true),
+			files: map[string]string{
+				"package.json": `{"peerDependencies": {"@civitai/blocks-react": "^0.39.0"}}`,
+				"src/main.ts":  `export const x = 1;`,
+			},
+			wantWarn: false,
+		},
+		{
+			// 🔴 THE FALSIFIED CLAIM. `@civitai/theme` is framework-agnostic CSS
+			// tokens and contains no BLOCK_READY at all (measured on 0.2.0), so a
+			// scope test silenced a genuinely broken app. Reproduced live on a
+			// `static` scaffold with the emitter deleted before this case existed.
+			name:     "a non-acking @civitai package does NOT silence the check",
+			manifest: ackManifest(true),
+			files: map[string]string{
+				"package.json": `{"dependencies": {"@civitai/theme": "^0.2.0", "@civitai/components": "^0.3.0"}}`,
+				"index.html":   `<!doctype html><script src="./app.js"></script>`,
+				"app.js":       `document.title = 'hi';`,
+			},
+			wantWarn: true,
+		},
+		{
+			// `@civitai/app-sdk@0.31.0` ships 17 runtime .js files and NONE posts
+			// BLOCK_READY — the only occurrences are a .d.ts type literal and the
+			// README, and it declares no dependencies, so it cannot be acking
+			// transitively. An app-sdk-only project genuinely does not ack.
+			name:     "@civitai/app-sdk alone does NOT silence the check",
+			manifest: ackManifest(true),
+			files: map[string]string{
+				"package.json": `{"dependencies": {"@civitai/app-sdk": "^0.31.0"}}`,
+				"index.html":   `<!doctype html><script type="module" src="/src/main.ts"></script>`,
+				"src/main.ts":  `export const x = 1;`,
+			},
+			wantWarn: true,
+		},
+		{
+			// Prefix widening: a sibling package name that merely starts the
+			// same way makes no ack promise.
+			name:     "a sibling of the acking package does NOT silence the check",
+			manifest: ackManifest(true),
+			files: map[string]string{
+				"package.json": `{"dependencies": {"@civitai/blocks-react-native": "^1.0.0"}}`,
+				"index.html":   `<!doctype html><script src="./app.js"></script>`,
+				"app.js":       `document.title = 'hi';`,
+			},
+			wantWarn: true,
+		},
+		{
+			// Substring widening: a fork that merely CONTAINS the acking name.
+			name:     "a re-scoped fork does NOT silence the check",
+			manifest: ackManifest(true),
+			files: map[string]string{
+				"package.json": `{"dependencies": {"@myorg/@civitai/blocks-react": "^1.0.0"}}`,
+				"index.html":   `<!doctype html><script src="./app.js"></script>`,
+				"app.js":       `document.title = 'hi';`,
+			},
+			wantWarn: true,
+		},
+		{
+			// The dep gate must be about a package that ACKS, not about "has a
 			// package.json". Without this, adding any dependency would silence
 			// the check.
-			name:     "a package.json with no @civitai dep still warns",
+			name:     "a package.json with no acking dep still warns",
 			manifest: ackManifest(true),
 			files: map[string]string{
 				"package.json": `{"dependencies": {"react": "^19.0.0", "react-dom": "^19.0.0"}}`,
@@ -232,6 +294,10 @@ func TestReadyAckWarning(t *testing.T) {
 			// outputDir is never read: it does not exist before the first build
 			// and is gitignored, so a hit there says nothing about what is
 			// submitted... and its ABSENCE must not be read as evidence either.
+			// The conventional build directories are skipped BY NAME, for cost.
+			// A stale `dist` therefore cannot supply ack evidence the source
+			// lacks — the one correctness benefit of skipping, and the reason
+			// the name list keeps these entries.
 			name:     "an ack present only in dist/ warns",
 			manifest: ackManifest(true),
 			files: map[string]string{
@@ -241,22 +307,116 @@ func TestReadyAckWarning(t *testing.T) {
 				"dist/assets/x.js": `window.parent.postMessage({type:'BLOCK_READY',payload:{}},o)`,
 			},
 			wantWarn: true,
-			why:      "killed by the NAME skip list (dist), not by the outputDir branch — see the case below",
 		},
 		{
-			// 🔴 The one that actually reaches the outputDir branch. `dist` is in
-			// readyAckSkipDirs, so the case above is decided by an EARLIER check
-			// and leaves the manifest-driven skip untested — a mutation that
-			// disabled it survived the whole suite until this case existed. A
-			// non-standard outputDir is the only way in.
-			name:     "an ack present only in a NON-STANDARD outputDir warns",
+			// 🔴 THE FALSIFIED CLAIM, HALF ONE. `outputDir` used to be skipped
+			// from the MANIFEST, which meant a perfectly valid `"outputDir":
+			// "src"` skipped the directory holding the emitter and warned at a
+			// correct project — reproduced live on a page-vite scaffold whose
+			// manifest had ZERO validation errors. Skipping is a cost decision,
+			// never a correctness one: for a presence check, scanning extra can
+			// only ADD evidence while skipping can only CREATE a false warning.
+			name:     `"outputDir": "src" must not hide the emitter that lives there`,
+			manifest: ackManifestOut(true, "src"),
+			files: map[string]string{
+				"package.json":        `{"dependencies": {"react": "^19.0.0"}}`,
+				"index.html":          `<script type="module" src="/src/main.jsx"></script>`,
+				"src/main.jsx":        `import './civitai-host.js';`,
+				"src/civitai-host.js": realEmitter(),
+			},
+			wantWarn: false,
+		},
+		{
+			// 🔴 HALF TWO. `"outputDir": "."` resolved to the project root, so the
+			// manifest-driven skip removed the ENTIRE tree, `scanned == 0`, and a
+			// genuinely broken app was silenced. No skip rule may ever be able to
+			// remove the root: the list is applied to ENTRIES, never to the root
+			// the scanner was handed.
+			name:     `"outputDir": "." must not skip the whole project`,
+			manifest: ackManifestOut(true, "."),
+			files: map[string]string{
+				"package.json": `{"dependencies": {"react": "^19.0.0"}}`,
+				"index.html":   `<!doctype html><script src="./app.js"></script>`,
+				"app.js":       `document.title = 'hi';`,
+			},
+			wantWarn: true,
+		},
+		{
+			// A non-conventional output directory is now SCANNED. That is the
+			// accepted residual trade: a stale build under `public/` can retain
+			// an ack the source lost and silence the check. A false negative,
+			// deliberately preferred over false-warning at every project whose
+			// outputDir happens to hold source (Vite's `public/` is a SOURCE
+			// directory, which is what made this the realistic shape).
+			name:     "a non-conventional outputDir is scanned rather than skipped",
 			manifest: ackManifestOut(true, "public"),
 			files: map[string]string{
-				"package.json":   `{"dependencies": {"react": "^19.0.0"}}`,
-				"index.html":     `<script type="module" src="/src/main.jsx"></script>`,
-				"src/main.jsx":   `import App from './App';`,
-				"public/app.js":  `window.parent.postMessage({type:'BLOCK_READY',payload:{}},o)`,
-				"public/x/y.mjs": `window.parent.postMessage({type:'BLOCK_READY',payload:{}},o)`,
+				"package.json":  `{"dependencies": {"react": "^19.0.0"}}`,
+				"index.html":    `<script type="module" src="/src/main.jsx"></script>`,
+				"src/main.jsx":  `import App from './App';`,
+				"public/app.js": `window.parent.postMessage({type:'BLOCK_READY',payload:{}},o)`,
+			},
+			wantWarn: false,
+		},
+		{
+			// 🔴 An unterminated `<!--` in a .js used to truncate the scan of that
+			// file, deleting the emitter below it and warning at a correct
+			// project. Reproduced live by prefixing a scaffold's own
+			// civitai-host.js with this line. Two defences now: HTML stripping is
+			// not applied to .js at all, and an unterminated marker keeps the
+			// remainder verbatim.
+			name:     "an unterminated <!-- in a .js does not truncate the scan",
+			manifest: ackManifest(false),
+			files: map[string]string{
+				"index.html": `<!doctype html><script src="./app.js"></script>`,
+				"app.js":     "var OPEN_COMMENT = '<!--';\n" + realEmitter(),
+			},
+			wantWarn: false,
+		},
+		{
+			// The same hazard in a MARKUP file, where HTML stripping does apply:
+			// the unterminated marker must keep the tail rather than discard it.
+			name:     "an unterminated <!-- in .html keeps the rest of the file",
+			manifest: ackManifest(false),
+			files: map[string]string{
+				"index.html": "<!doctype html>\n<!-- unterminated\n<script>\n" +
+					"window.parent.postMessage({ type: 'BLOCK_READY', payload: {} }, o);\n</script>",
+			},
+			wantWarn: false,
+		},
+		{
+			// A .js pair of `<!--` … `-->` in strings must not swallow what is
+			// between them either — the reason HTML stripping is gated to markup.
+			name:     "a matched <!-- --> pair in .js strings does not eat the emitter",
+			manifest: ackManifest(false),
+			files: map[string]string{
+				"index.html": `<!doctype html><script src="./app.js"></script>`,
+				"app.js": "var OPEN = '<!--';\n" +
+					"window.parent.postMessage({ type: 'BLOCK_READY', payload: {} }, o);\n" +
+					"var CLOSE = '-->';\n",
+			},
+			wantWarn: false,
+		},
+		{
+			// A real HTML comment in a markup file must STILL be stripped — the
+			// positive control for the gate above. Without it, "don't strip HTML
+			// in .js" is indistinguishable from "don't strip HTML at all".
+			name:     "an HTML comment in .html is still stripped",
+			manifest: ackManifest(false),
+			files: map[string]string{
+				"index.html": "<!doctype html>\n<!-- TODO: post BLOCK_READY here -->\n<script src=\"./app.js\"></script>",
+				"app.js":     `document.title = 'hi';`,
+			},
+			wantWarn: true,
+		},
+		{
+			// A block comment naming the message is still a comment. There was no
+			// /* */ fixture at all before.
+			name:     "an ack named only in a /* */ block comment warns",
+			manifest: ackManifest(false),
+			files: map[string]string{
+				"index.html": `<!doctype html><script src="./app.js"></script>`,
+				"app.js":     "/*\n * We should post BLOCK_READY at some point.\n */\ndocument.title = 'hi';\n",
 			},
 			wantWarn: true,
 		},
@@ -393,6 +553,145 @@ func TestReadyAckCannotObserve(t *testing.T) {
 	})
 }
 
+// TestReadyAckFollowsSymlinkedSource pins the monorepo shape. filepath.WalkDir
+// does NOT follow symlinks and does not even report them as directories, so a
+// project whose `src` is a symlink into a shared package had its entire source
+// tree silently skipped and warned at a correct project — reproduced live on a
+// page-vite scaffold before this existed.
+func TestReadyAckFollowsSymlinkedSource(t *testing.T) {
+	root := t.TempDir()
+	shared := filepath.Join(root, "shared")
+	proj := filepath.Join(root, "app")
+
+	for _, d := range []string{shared, proj} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write := func(p, body string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(filepath.Join(proj, "block.manifest.json"), ackManifest(true))
+	write(filepath.Join(proj, "package.json"), `{"dependencies": {"react": "^19.0.0"}}`)
+	write(filepath.Join(proj, "package-lock.json"), `{"lockfileVersion":3}`)
+	write(filepath.Join(proj, "index.html"), `<script type="module" src="/src/main.jsx"></script>`)
+	write(filepath.Join(shared, "main.jsx"), `import './civitai-host.js';`)
+	write(filepath.Join(shared, "civitai-host.js"), realEmitter())
+
+	// Positive control FIRST: with the emitter reachable only through the link,
+	// a green below could otherwise mean the scanner found it somewhere else.
+	if err := os.Symlink(filepath.Join("..", "shared"), filepath.Join(proj, "src")); err != nil {
+		t.Skipf("symlinks unavailable here: %v", err)
+	}
+	wantAckWarning(t, proj, false)
+
+	// Negative control: break the symlinked tree the same way #206 breaks an
+	// app, and the warning must come back — otherwise "does not warn" above is
+	// satisfied by a scanner that silently gave up on the symlink.
+	if err := os.Remove(filepath.Join(shared, "civitai-host.js")); err != nil {
+		t.Fatal(err)
+	}
+	wantAckWarning(t, proj, true)
+}
+
+// TestReadyAckSymlinkCycleTerminates pins the cost of following symlinks. A
+// self-referential link is the obvious way a followed walk never returns.
+func TestReadyAckSymlinkCycleTerminates(t *testing.T) {
+	dir := ackProject(t, ackManifest(false), map[string]string{
+		"index.html":      `<!doctype html><script src="./app.js"></script>`,
+		"src/app.js":      `document.title = 'hi';`,
+		"src/nested/x.js": `document.title = 'hi';`,
+	})
+	if err := os.Symlink("..", filepath.Join(dir, "src", "loop")); err != nil {
+		t.Skipf("symlinks unavailable here: %v", err)
+	}
+	// The assertion is that this RETURNS at all; the verdict is secondary.
+	done := make(chan bool, 1)
+	go func() {
+		res, err := Dir(dir)
+		if err != nil {
+			t.Error(err)
+		}
+		done <- hasReadyAckWarning(res)
+	}()
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the scan did not terminate on a symlink cycle — the visited set is not doing its job")
+	}
+}
+
+// TestReadyAckCapsAreUnobservable pins that hitting a cap stays SILENT. A scan
+// that stopped early has a gap in it, and a gap is not evidence of absence.
+func TestReadyAckCapsAreUnobservable(t *testing.T) {
+	t.Run("a file over the size cap silences the check", func(t *testing.T) {
+		dir := ackProject(t, ackManifest(false), map[string]string{
+			"index.html": `<!doctype html><script src="./app.js"></script>`,
+			"app.js":     `document.title = 'hi';`,
+		})
+		// Positive control: without the oversized file this project warns.
+		wantAckWarning(t, dir, true)
+		big := strings.Repeat("x", maxAckFileBytes+1)
+		if err := os.WriteFile(filepath.Join(dir, "bundle.js"), []byte(big), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		wantAckWarning(t, dir, false)
+	})
+
+	t.Run("exceeding the file budget silences the check", func(t *testing.T) {
+		dir := ackProject(t, ackManifest(false), map[string]string{
+			"index.html": `<!doctype html><script src="./app.js"></script>`,
+			"app.js":     `document.title = 'hi';`,
+		})
+		wantAckWarning(t, dir, true)
+		for i := 0; i <= maxAckScanFiles; i++ {
+			p := filepath.Join(dir, "gen", fmt.Sprintf("f%05d.js", i))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte("var x=1;\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		wantAckWarning(t, dir, false)
+	})
+}
+
+// TestReadyAckAdviceIsActionable pins the message CONTENT. hasReadyAckWarning
+// compares against the readyAckAdvice variable, which is self-referential —
+// replacing the whole advisory with "something may be wrong" passes every other
+// test in this file. AGENTS.md requires a message to name what to do, so assert
+// the parts an author acts on.
+func TestReadyAckAdviceIsActionable(t *testing.T) {
+	required := []struct{ substr, why string }{
+		{"page", "the author has to know WHICH manifest field put them here"},
+		{readyAckType, "the message that is missing"},
+		{"civitai app init", "the concrete command that produces a correct emitter"},
+		{blockproto.ReadyAckFilename, "the file to copy in"},
+		{"index.html", "where the emitter has to be referenced from"},
+		{"@civitai/blocks-react", "the alternative to hand-writing it"},
+		{"never both", "adopting the SDK without deleting the emitter is strictly worse"},
+		{"#206", "the issue an author can read for the full story"},
+		{"--strict", "so nobody thinks this blocks them today"},
+	}
+	for _, r := range required {
+		if !strings.Contains(readyAckAdvice, r.substr) {
+			t.Errorf("the advisory does not mention %q — %s\ngot: %s", r.substr, r.why, readyAckAdvice)
+		}
+	}
+	// A message that says nothing useful is short. This is a crude floor, but it
+	// is the one thing a "something may be wrong" rewrite cannot satisfy.
+	if len(readyAckAdvice) < 400 {
+		t.Errorf("the advisory is %d chars — too short to carry a diagnosis and a remedy", len(readyAckAdvice))
+	}
+}
+
 // TestReadyAckIsAdvisoryOnly pins the tier. The check must never reach Errors —
 // it infers runtime behaviour from static text, and a hard failure on a
 // heuristic breaks correct projects.
@@ -478,15 +777,42 @@ func TestSDKTemplateIsQuietOnlyBecauseOfTheDependency(t *testing.T) {
 	if _, err := scaffold.Render(scaffold.PageMoney, dest, scaffold.Data{Slug: "ack-block", Name: "Ack Block"}); err != nil {
 		t.Fatal(err)
 	}
-	if emitsReadyAck(dest, "dist") {
-		t.Fatalf("page-money's SOURCE mentions %s — the dep gate is no longer the reason it is accepted, "+
-			"so nothing in this suite covers that branch any more", readyAckType)
+	if got := scanForReadyAck(dest); got != ackAbsent {
+		t.Fatalf("scanForReadyAck(page-money) = %v, want ackAbsent — the dep gate is no longer the reason "+
+			"it is accepted, so nothing in this suite covers that branch any more", got)
 	}
 	if got := sdkDependency(dest); got != sdkPresent {
-		t.Fatalf("sdkDependency(page-money) = %v, want sdkPresent — the rendered package.json must depend on %s*",
-			got, civitaiDepPrefix)
+		t.Fatalf("sdkDependency(page-money) = %v, want sdkPresent — the rendered package.json must depend "+
+			"on one of %v", got, blockproto.AckingPackages())
 	}
 	wantAckWarning(t, dest, false)
+}
+
+// TestSDKTemplateDepsAreNotJustAnyCivitaiPackage pins that page-money is
+// accepted because of the package that ACKS, not merely because it has
+// `@civitai/*` dependencies. It depends on BOTH `@civitai/app-sdk` (which does
+// not ack) and `@civitai/blocks-react` (which does), so a scope test and an
+// exact test agree on this template — which is exactly why the template alone
+// could never have caught the widening.
+func TestSDKTemplateDepsAreNotJustAnyCivitaiPackage(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "page-money")
+	if _, err := scaffold.Render(scaffold.PageMoney, dest, scaffold.Data{Slug: "ack-block", Name: "Ack Block"}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(dest, "package.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	acking := 0
+	for _, name := range blockproto.AckingPackages() {
+		if strings.Contains(string(raw), `"`+name+`"`) {
+			acking++
+		}
+	}
+	if acking == 0 {
+		t.Fatalf("page-money depends on no acking package (%v) — it must, or the SDK branch of the check "+
+			"has no real-template coverage at all", blockproto.AckingPackages())
+	}
 }
 
 // TestDeletingTheEmitterMakesTheWarningFire is the NEGATIVE CONTROL for the
