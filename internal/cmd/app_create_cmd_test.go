@@ -150,6 +150,14 @@ func TestAppCreateHelpMentionsComfy(t *testing.T) {
 			t.Errorf("app create help should mention %q (Comfy on Civitai discoverability):\n%s", want, out)
 		}
 	}
+	// BOTH arms must be discoverable, not just the recipe one. The help text
+	// previously described customComfy as recipe-only, which reads as "an app
+	// cannot ship a graph" — the exact claim that cost a dogfooding session.
+	for _, want := range []string{"inline", "its own ComfyUI graph"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("app create help should mention %q (inline-graph arm discoverability):\n%s", want, out)
+		}
+	}
 }
 
 func TestAppCreateRespectsTemplateOverride(t *testing.T) {

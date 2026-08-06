@@ -92,26 +92,143 @@ server is LoRA-only for additional resources and **re-validates** base-model
 compatibility + per-resource entitlement (early-access / Private) AND
 **re-prices** the whole body **before any Buzz spend**.
 
-### Comfy on Civitai sample (customComfy)
+### Comfy on Civitai samples (customComfy)
 
 A **mode toggle** at the top switches between two samples that share the one
-estimate → consent → submit → poll driver + the account picker — only the body
-differs:
+estimate → consent → submit → poll driver — only the body differs:
 
 - **Text to image** (primary, runnable today) — the checkpoint + LoRA path above.
-- **Comfy on Civitai recipe** (secondary, invite-only beta) — runs a **Comfy on
-  Civitai (`customComfy`)** generation via `buildComfyBody` in `src/comfy.ts`.
+- **Comfy on Civitai recipe** (invite-only beta) — runs a **server-registered**
+  recipe via `buildComfyBody` in `src/comfy.ts`.
 
-**How customComfy works — server-owned graph, fail-closed.** The iframe **never
-sends a Comfy graph.** It sends `{ kind: 'customComfy', recipe, params }` where
-`recipe` is a **server-registered, code-reviewed recipe id** — the civitai server
-owns the graph, the resource allowlist, the checkpoint policy, and a hard per-job
-`maxBuzz` ceiling. An app **cannot ship its own graph**; the block can only pick
-the recipe + a small, per-recipe-validated `params` object (here just a prompt,
-plus the shared account picker — no checkpoint/LoRA axis). This sample invokes
-**`starter-comfy-txt2img`** — a cheap, minimal Z-Image txt2img starter recipe
-(per-job Buzz ceiling 30). The scope is unchanged — `customComfy` needs exactly
+`src/comfy.ts` also ships **`buildInlineComfyBody`** — a complete, unit-tested
+builder for the OTHER `customComfy` arm, where your app ships **its own ComfyUI
+graph**. It is not on the toggle yet; see [Why inline is not on the
+toggle](#why-inline-is-not-on-the-toggle-yet) below. Read that function and its
+tests — it is the shape you need, and it is why you are not guessing at key
+names.
+
+**`customComfy` has TWO arms, selected by `mode`.** Earlier versions of this
+README stated flatly that an app could not ship a ComfyUI graph. That was true
+once and is not any more — the inline arm below is live. It is called out here
+because a developer reading that stale sentence believed it over a working
+feature and stopped probing.
+
+| | `mode` | The app sends | Who can run it |
+|---|---|---|---|
+| **recipe** | omitted, or `'recipe'` | a registered recipe id + bounded `params` | invite-only beta |
+| **inline** | `'inline'` (required) | the graph itself + a declared resource manifest + `maxBuzz` | app developers |
+
+The scope is the same for both — `customComfy` needs exactly
 `ai:write:budgeted`, already declared.
+
+#### The recipe arm
+
+`{ kind: 'customComfy', recipe, params }`, where `recipe` is a
+**server-registered, code-reviewed recipe id**. The civitai server owns the
+graph, the resource allowlist, the checkpoint policy, and a hard per-job
+`maxBuzz` ceiling; the block picks only the recipe + a small, per-recipe-
+validated `params` object (here just a prompt, plus the shared account picker —
+no checkpoint/LoRA axis). This sample invokes **`starter-comfy-txt2img`** — a
+cheap, minimal Z-Image txt2img starter recipe (per-job Buzz ceiling 30).
+
+Note that `mode` is **omitted**, not set to `'recipe'`. The server declares it an
+optional literal precisely so a body without the key parses as a recipe, which is
+what keeps every already-published app working.
+
+#### The inline arm — ship your own graph
+
+```ts
+{
+  kind: 'customComfy',
+  mode: 'inline',                 // REQUIRED — a `workflow` key alone is not enough
+  workflow: { '1': { class_type: 'CheckpointLoaderSimple', inputs: { … } }, … },
+  resources: ['urn:air:sdxl:checkpoint:civitai:101055@128078'],
+  prompt: 'a mountain at dawn',   // optional; surfaced + audited
+  negativePrompt: '',             // optional
+  maxBuzz: 90,                    // REQUIRED — see below, it is also the timeout
+}
+```
+
+**`mode: 'inline'` is required.** Including a `workflow` key does not select this
+arm. A body without `mode` routes to the *recipe* arm and is then rejected for a
+missing `recipe` — which reads like an unrelated error.
+
+**`resources` is a declared manifest, and declaring is not optional.** Every AIR
+URN that appears anywhere in your graph — including as an object key — must also
+appear in this array, or the submit is rejected. It is not inferred from the
+graph: this flat array is the entire surface the entitlement check runs over, and
+containment is what makes checking it sufficient. Anything the graph references
+that is missing here would also fail at load time inside ComfyUI. A
+`civitai`-sourced AIR must carry a model **version** id
+(`urn:air:<ecosystem>:<type>:civitai:<modelId>@<versionId>`); without one there
+is no version to check entitlement against. At most 24 entries. The permitted AIR
+types are model **weights** (checkpoint, diffusion_model, unet, lora, lycoris,
+dora, embedding, hypernet, controlnet, vae, upscaler, clip, clipvision,
+text_encoders, motion, …); an OCI container-image AIR is not permitted.
+
+**Graph limits, all of which REJECT rather than truncate:** 1–300 nodes, at most
+256 KB serialized, at most 128 levels of nesting. Each node is exactly
+`{ class_type, inputs }` — the node schema is `.strict()`, so the `_meta` key a
+raw ComfyUI "Save (API Format)" export adds per node must be stripped or the
+whole body bounces.
+
+**What replaced code review.** A recipe is reviewed in-repo; an inline graph is
+not, so three server-side gates stand in, all of which run *before* any spend:
+AIR containment (above), an entitlement belt over `resources` that is stricter
+than the on-site generator (early-access and Private/epoch subscription are both
+folded in, and a resource the site would silently swap for a sibling version is
+**rejected** instead — your graph names one exact string and nothing rewrites
+it), and a moderation sweep that reads every string leaf in the graph, not just
+your declared `prompt`.
+
+**Who can run it.** App developers only, on page tokens only — the host runs a
+developer check on every `customComfy` estimate *and* submit, so a non-developer
+viewing your published block cannot submit one. Treat inline as a build-and-
+iterate primitive; to serve a graph to every viewer, get it registered as a
+recipe.
+
+**An inline body has no account picker.** Its schema is `.strict()` with no
+`accountType` field, so the host funds it as Auto. The picker is hidden in that
+mode rather than shown and ignored.
+
+#### 🔴 `maxBuzz` is the step TIMEOUT in seconds, not just a price
+
+The server stamps `stepTimeoutSeconds = maxBuzz`. One number, both roles — which
+is exactly what makes the ceiling physically enforceable rather than merely
+promised.
+
+So **setting it low to be thrifty does not buy a cheaper generation.** It buys a
+job that is killed after that many seconds and comes back `expired`, with nothing
+to show for it. You are billed the *real* cost either way: billing is post-paid
+against measured GPU seconds and settles to actual, refunding the unused
+remainder of the ceiling. Headroom is free; a stingy ceiling is not thrift, it is
+a timeout. Size it to the wall-clock time your graph needs (this sample's 20-step
+SDXL graph gets 90s; the server's hard maximum is 250).
+
+For the same reason, `estimate` on an inline body just echoes your `maxBuzz` back
+as `cost.total`. That is an **upper bound, not a price** — the orchestrator
+forwards the graph opaquely and cannot price it. Surface it as "up to N Buzz".
+
+#### Why inline is not on the toggle yet
+
+Not because the feature is missing — it is live server-side — but because the
+**mock host** in the pinned `@civitai/blocks-react` crashes on an inline body.
+Its `preferredAccountType` helper reads `body.params.accountType`
+unconditionally, and an inline body has no `params`, so `npm run dev:harness`
+fails with `Cannot read properties of undefined (reading 'accountType')` rather
+than generating. That is a bug in the mock, not in your body.
+
+The fix is landing in `@civitai/blocks-react`. Once this scaffold's pin moves
+past it, wiring inline into the toggle is a three-line change: add `'inline'` to
+`GenMode`, add a `SegmentedControl` entry, and select `buildInlineComfyBody(prompt)`
+in `runGeneration`. Two things to remember when you do: hide the account picker
+in that mode (an inline body has no `accountType` field, so a picker there cannot
+affect the request), and drop the `as WorkflowBody` cast the older pinned SDK
+needs.
+
+**None of this affects live civitai.com** — the inline arm works there today for
+an app-developer account. It only affects the offline mock harness.
 
 **Two different numbers, and they are not the same quantity.** It is easy to
 read one off the other; don't.
@@ -152,28 +269,33 @@ worst case.
 > and note that cumulative spend is separately capped per viewer per day — a high
 > per-gen ceiling does not widen total exposure.
 
-**Requesting a new recipe.** Because recipes are server-registered + code-reviewed,
-you can't add one from the app. Request a new Comfy on Civitai recipe via the CLI's
-issue form at
+**Requesting a new recipe.** Recipes are server-registered + code-reviewed, so
+you can't add one from the app. Request one via the CLI's issue form at
 <https://github.com/civitai/cli/issues/new?template=request-recipe.yml> (describe
 the graph + the intended `params` + the use case). It ships as a registered id
-once reviewed.
+once reviewed. **If you just want to run a graph today, use the inline arm** —
+that is what it is for; a recipe is for making a graph available to every viewer.
 
 **Dev loop — honest state.** In `npm run dev:harness` (the **mock** host) the
-Comfy on Civitai sample **works end-to-end** (estimate → submit → poll →
-succeeded with a mock image + cost), so you can build against it today. That is
-the fully-working path.
+**recipe** sample works end-to-end (estimate → submit → poll → succeeded with a
+mock image + cost), so you can build against it today. The **inline** sample's
+builder and its unit tests run under `npm test`, but the mock host cannot drive
+it yet — see [above](#why-inline-is-not-on-the-toggle-yet).
 
-On **live** civitai.com the sample is **not runnable yet**, for two reasons, and
-its graceful panel is best-effort:
+On **live** civitai.com:
 
-- `customComfy` is **invite-only beta** — a submit by a non-tester is rejected by
-  the app-blocks gate (`"Apps are not enabled"` / `"Apps authoring is not enabled
-  for this account"`).
-- The recipe `starter-comfy-txt2img` is **not registered server-side yet** (the
-  registry currently holds only `seamless-pano-360`). Until it ships, a submit is
-  rejected even earlier — at the workflow-schema **enum** boundary
-  (`Invalid enum value … received 'starter-comfy-txt2img'`).
+- **Inline** requires an **app-developer** account (and a page token). With one,
+  the path is live; without one the submit is rejected by the same app-blocks
+  gate below.
+- **The recipe sample** is **not runnable yet**, for two reasons, and its
+  graceful panel is best-effort:
+  - `customComfy` is **invite-only beta** — a submit by a non-tester is rejected
+    by the app-blocks gate (`"Apps are not enabled"` / `"Apps authoring is not
+    enabled for this account"`).
+  - The recipe `starter-comfy-txt2img` is **not registered server-side yet** (the
+    registry currently holds only `seamless-pano-360`). Until it ships, a submit
+    is rejected even earlier — at the workflow-schema **enum** boundary
+    (`Invalid enum value … received 'starter-comfy-txt2img'`).
 
 The app tries to degrade both of these to a friendly **invite-only beta** panel:
 `isFeatureGated` matches those three specific strings and, **in Comfy mode only**,

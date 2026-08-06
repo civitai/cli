@@ -28,19 +28,24 @@ Buzz spend), with a mock-host dev harness and a unit test. The scaffold is
 immediately runnable (npm install && npm run dev:harness), test-green, and
 validates clean.
 
-The default scaffold ships TWO samples in the one app: a runnable txt2img money
-path AND a Comfy on Civitai (customComfy) sample that runs a server-registered recipe
-(invite-only beta) — both share the estimate -> consent -> submit -> poll driver,
-switched by an on-screen mode toggle. Both work end-to-end in "npm run
-dev:harness" (mock host); see the generated README's "Comfy on Civitai sample" section.
+The default scaffold ships a runnable txt2img money path AND a Comfy on Civitai
+(customComfy) sample that runs a server-registered recipe (invite-only beta) —
+both share the estimate -> consent -> submit -> poll driver, switched by an
+on-screen mode toggle, and both work end-to-end in "npm run dev:harness".
+
+customComfy has TWO arms. Besides the recipe arm above, an app may also ship
+its own ComfyUI graph inline (mode: 'inline', app developers only). src/comfy.ts
+includes a complete, unit-tested buildInlineComfyBody for it: the graph, the
+declared AIR resource manifest, and the maxBuzz ceiling (which is ALSO the step
+timeout in seconds). See the generated README's "Comfy on Civitai samples" section.
 
 Templates (override with --template):
   static      a no-build page app (index.html + a tiny JS, no build step)
   page-vite   a vite + React page app (config-as-code build: buildCommand + outputDir)
   page-money  a vite + React + TS full-page (W10) money-path app wired to the
               published App SDK (estimate -> consent -> submit -> poll -> Buzz
-              spend); includes a txt2img + a Comfy on Civitai (customComfy) sample
-              [default for create]
+              spend); includes a txt2img + a Comfy on Civitai (customComfy) sample,
+              recipe and inline-graph body builders [default for create]
 
 The display name can be free-form ("My Cool Block"); it is slugified for the
 blockId. A slug-shaped name is used verbatim.

@@ -191,12 +191,13 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 	// One scannable line: name, template, where, and how many files — no tree.
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Created App %q (%s)  ·  %s/  ·  %d files", display, tmpl, destDir, len(written))))
 
-	// page-money ships TWO samples in the one app — a runnable txt2img money path
-	// and a Comfy on Civitai (customComfy) sample. Surface it (honestly: invite-only
-	// beta) and point at the README's Comfy on Civitai section rather than the raw
-	// file count.
+	// page-money ships a runnable txt2img money path and a Comfy on Civitai
+	// (customComfy) sample, with body builders for BOTH customComfy arms — the
+	// server-registered recipe, and an inline graph the app ships itself. Surface
+	// both honestly (each has its own access gate) and point at the README's
+	// Comfy on Civitai section rather than the raw file count.
 	if tmpl.NeedsHarness() {
-		fmt.Fprintln(out, ui.Dim("  Includes a txt2img sample + a Comfy on Civitai (customComfy) sample (invite-only beta) — see the Comfy on Civitai section in README.md."))
+		fmt.Fprintln(out, ui.Dim("  Includes a txt2img sample + a Comfy on Civitai (customComfy) sample (invite-only beta), with body builders for BOTH arms: a server-registered recipe and an inline ComfyUI graph your own app ships (app developers) — see the Comfy on Civitai section in README.md."))
 	}
 
 	fmt.Fprintln(out, "\n"+ui.Bold("Next steps:"))
