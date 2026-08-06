@@ -26,22 +26,39 @@ func TestGenerate_WaitingPathPrintsTheRealizedCharge(t *testing.T) {
 		ID: "wf_123", Status: "queued",
 		Cost: &genapi.WorkflowCost{Total: 137},
 	}
+	c, _, errOut := genCmd("")
+
+	// 🔴 ORDERING, not just presence. Sampling stderr at the moment the FIRST
+	// poll runs is what makes "before the wait begins" an assertion rather than
+	// a comment — moving printSubmitted after waitAndCollect otherwise passes
+	// the whole suite, and a charge deferred until after a long wait is exactly
+	// the failure the user feels.
+	var stderrAtFirstPoll string
+	polls := 0
 	s.getWorkflow = func(ctx context.Context, id string) (*genapi.Workflow, json.RawMessage, error) {
+		if polls == 0 {
+			stderrAtFirstPoll = errOut.String()
+		}
+		polls++
 		var wf genapi.Workflow
 		_ = json.Unmarshal([]byte(wfJSON(genapi.StatusFailed)), &wf)
 		return &wf, json.RawMessage(wfJSON(genapi.StatusFailed)), nil
 	}
 
-	c, _, errOut := genCmd("")
-	// A failed terminal status returns an error; the charge notice is emitted
-	// before the wait begins, which is exactly what we are pinning.
+	// A failed terminal status returns an error; the charge notice precedes it.
 	_ = runGenerate(c, s.deps(t), waitOpts(t.TempDir()))
 
+	if polls == 0 {
+		t.Fatal("POSITIVE CONTROL FAILED: the poll seam was never reached, so the ordering assertion below is vacuous")
+	}
 	if !strings.Contains(errOut.String(), "137") {
 		t.Errorf("waiting path must print the realized charge 137 via runGenerate.\nstderr:\n%s", errOut.String())
 	}
 	if !strings.Contains(errOut.String(), "Charged") {
 		t.Errorf("waiting path must label the charge.\nstderr:\n%s", errOut.String())
+	}
+	if !strings.Contains(stderrAtFirstPoll, "Charged") {
+		t.Errorf("the charge must be printed BEFORE the wait begins; stderr at the first poll was:\n%s", stderrAtFirstPoll)
 	}
 }
 
@@ -80,15 +97,23 @@ func TestGenerate_WaitingPathNilCostPrintsNoCharge(t *testing.T) {
 // entirely possible). This is the case that regression made silent, and it is
 // the dominant one: a slow orchestrator hop is exactly why a user hits Ctrl-C.
 //
-// The cancel fires INSIDE the submit seam, i.e. after the request has notionally
-// gone out — submitCalls == 1 is the positive control proving that.
+// The cancel fires inside the submit seam, so the spend gate has provably been
+// passed and the seam entered (submitCalls == 1).
+//
+// ⚠️ Honest limit, measured: this fixture does NOT discriminate mid-flight
+// cancellation from pre-entry cancellation. runGenerate performs no context
+// check between entry and the submit seam, so both produce byte-identical
+// output — cancelling before runGenerate leaves this test passing. It is kept
+// because the SCENARIO is the one that matters, not because the fixture proves
+// the bytes were written; distinguishing the two would need an httptrace
+// WroteRequest seam the client does not expose.
 func TestGenerate_CancelDuringSubmitStillWarnsAboutAPossibleCharge(t *testing.T) {
 	withStdinTTY(t, false)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	s := genSeams{
 		submitErr:      errors.New("context canceled"),
-		submitObserver: cancel, // cancels once the request is already in flight
+		submitObserver: cancel, // cancels once the seam has been entered
 	}
 	o := baseOpts()
 	o.assumeYes = true
@@ -99,13 +124,21 @@ func TestGenerate_CancelDuringSubmitStillWarnsAboutAPossibleCharge(t *testing.T)
 		t.Fatal("cancel during submit: want an error, got nil")
 	}
 	if s.submitCalls != 1 {
-		t.Fatalf("POSITIVE CONTROL FAILED: submit seam reached %d times, want 1 — the cancel must happen AFTER the request went out", s.submitCalls)
+		t.Fatalf("POSITIVE CONTROL FAILED: submit seam reached %d times, want 1", s.submitCalls)
 	}
 	if !strings.Contains(errOut.String(), "MAY still have been accepted") {
-		t.Errorf("cancel DURING the submit must still warn about a possible charge — the request went out.\nstderr:\n%s", errOut.String())
+		t.Errorf("cancel during the submit must still warn about a possible charge.\nstderr:\n%s", errOut.String())
 	}
-	if !strings.Contains(errOut.String(), "--external-id") {
-		t.Errorf("cancel DURING the submit must hand back the externalId — this is the only surface that does, and nothing reads the crash-recovery record.\nstderr:\n%s", errOut.String())
+	// 🔴 STRUCTURAL, not spelled: assert the externalId VALUE, not the flag name.
+	// `Contains(errOut, "--external-id")` matches even when the value behind it
+	// is empty, so blanking the interpolated id passed the whole suite — in the
+	// one case this warning exists to protect.
+	if s.lastExternalID == "" {
+		t.Fatal("POSITIVE CONTROL FAILED: no externalId was minted, so the assertion below cannot mean anything")
+	}
+	if !strings.Contains(errOut.String(), s.lastExternalID) {
+		t.Errorf("the externalId VALUE %q must appear — this is the only surface that hands it back, and nothing reads the crash-recovery record.\nstderr:\n%s",
+			s.lastExternalID, errOut.String())
 	}
 	// The wording must acknowledge the interruption rather than claiming the
 	// server was silent, since we cannot observe whether the bytes were written.

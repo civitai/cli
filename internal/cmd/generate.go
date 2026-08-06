@@ -756,9 +756,10 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 			// microsecond window for SILENCE in a two-minute window where the
 			// charge is real, and silence here strands the user: this is the only
 			// surface that hands back the externalId, and nothing reads the
-			// crash-recovery record. Compare generate_wait.go's cancel path, which
-			// routes to printReattach and says the job "has already been charged"
-			// — the precedent points the other way.
+			// crash-recovery record. Compare the wait loop's cancel path, which
+			// routes to printReattach (this file, called from waitAndCollect) and
+			// says the job "has already been charged" — the precedent points the
+			// other way.
 			//
 			// We cannot observe whether the bytes were written, so the message
 			// carries the uncertainty instead of the control flow resolving it.

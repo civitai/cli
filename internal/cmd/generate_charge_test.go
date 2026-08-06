@@ -122,10 +122,14 @@ func TestGenerate_LostReplyOnLiveContextSaysNoAnswer(t *testing.T) {
 	}
 }
 
-// POSITIVE CONTROL for the test above. Without this, the assertions could pass
-// against a build that never emits the warning at all — the warning is REQUIRED
-// when the request genuinely went out and the reply was lost.
-func TestGenerate_LostReplyStillWarnsAboutAPossibleCharge(t *testing.T) {
+// A lost reply on a LIVE context must hand back the externalId VALUE.
+//
+// This was previously labelled a "positive control" for a negative test that no
+// longer exists (the one asserting cancellation stays silent, deleted because it
+// pinned a regression). It earns its place on its own: it is the structural
+// externalId assertion for the non-cancelled branch, complementing the
+// wording contrast in TestGenerate_LostReplyOnLiveContextSaysNoAnswer.
+func TestGenerate_LostReplyHandsBackTheExternalID(t *testing.T) {
 	withStdinTTY(t, false)
 	s := genSeams{submitErr: errors.New("EOF")} // no HTTP status, live context
 	o := baseOpts()
@@ -136,6 +140,13 @@ func TestGenerate_LostReplyStillWarnsAboutAPossibleCharge(t *testing.T) {
 		t.Fatal("lost reply: want an error, got nil")
 	}
 	if !strings.Contains(errOut.String(), "MAY still have been accepted") {
-		t.Fatalf("POSITIVE CONTROL FAILED: a lost reply on a LIVE context must warn about a possible charge.\nstderr:\n%s", errOut.String())
+		t.Fatalf("a lost reply on a LIVE context must warn about a possible charge.\nstderr:\n%s", errOut.String())
+	}
+	// Structural, not spelled — see the note in generate_charge_seam_test.go.
+	if s.lastExternalID == "" {
+		t.Fatal("POSITIVE CONTROL FAILED: no externalId was minted, so the assertion below is vacuous")
+	}
+	if !strings.Contains(errOut.String(), s.lastExternalID) {
+		t.Errorf("the externalId VALUE %q must appear in the warning.\nstderr:\n%s", s.lastExternalID, errOut.String())
 	}
 }
