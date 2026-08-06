@@ -11,6 +11,18 @@ package validate
 // app scaffolded before that commit is still broken, and nothing tells its
 // author. This check is the thing that tells them.
 //
+// 🔴 PRESENCE IS NOT REACHABILITY, AND THE FIRST VERSION OF THIS CHECK ONLY
+// MEASURED PRESENCE. Its own remedy told the author to do TWO things — copy
+// `civitai-host.js` in, and LOAD it from index.html or the entry module — and it
+// verified only the first. Measured on a genuinely pre-fix scaffold: with the
+// emitter copied in and never referenced, `civitai app validate --strict`
+// printed `✓ … is valid` and exited 0, for an app that was still exactly as
+// broken as before. An orphan file containing the literal ANYWHERE in the tree
+// passed identically. A green check earned by obeying our own advice is worse
+// than the silence it replaced, so the check now RESOLVES THE ENTRY GRAPH
+// (`blockproto.ResolveEntryGraph`) wherever it can, and says which of the two
+// questions it answered.
+//
 // 🔴 IT IS A WARNING, NOT AN ERROR, AND THAT IS DELIBERATE.
 // The lockfile check next door (lockfile.go) earns hard-error status because the
 // platform PROVABLY fails: the build recipe runs `npm ci` and dies. Nothing here
@@ -23,6 +35,31 @@ package validate
 // avoiding — and unlike that one, `--strict` here would turn it into a build
 // break in somebody's CI. `Result.Warnings` costs an author nothing to ignore
 // and still puts the sentence in front of them.
+//
+// THE TWO TIERS, AND WHY THE MESSAGE NAMES WHICH ONE RAN.
+//
+//	REACHABILITY (strong). The entry graph resolved COMPLETELY: index.html is at
+//	the project root and every `<script src>` and import below it was accounted
+//	for. Then "nothing the browser loads posts BLOCK_READY" is a real finding,
+//	and an emitter sitting unreferenced in the tree is reported as the orphan it
+//	is.
+//
+//	PRESENCE ONLY (weak). The graph is INCOMPLETE — no root index.html, a
+//	bundler alias, a specifier pointing at a file that is not there, a budget
+//	exhausted. Then wiring is undecidable and the check falls back to the
+//	whole-tree scan it always did. 🔴 Its message SAYS SO, in the same breath as
+//	the remedy that tells the author to wire the emitter up. A check that
+//	silently changes strength between project shapes is how the false pass above
+//	happened in the first place.
+//
+// 🔴 "CANNOT OBSERVE" MUST NOT SILENTLY BECOME "EVERYTHING PASSES" — but it also
+// must not manufacture advice. The split: an INCOMPLETE graph never produces a
+// wiring finding (that is the AGENTS.md item 10 doctrine), yet the presence
+// finding still fires when nothing in the tree mentions the message at all, and
+// discloses its own weakness when it does. The residual, stated rather than
+// hidden: a project whose entry graph we cannot resolve AND which contains the
+// literal somewhere gets silence, exactly as before. That is a false negative,
+// and false negatives are the cheap direction here.
 //
 // EVIDENCE ORDER — THE DEPENDENCY IS CHECKED FIRST, AND THAT IS LOAD-BEARING.
 // For a project depending on `@civitai/blocks-react`, the ack comes from the
@@ -40,35 +77,33 @@ package validate
 // reproduced live on a `static` scaffold with the emitter deleted. Do not
 // re-widen this to a prefix.
 //
-// WHAT IT DOES NOT PROVE. That the ack FIRES. No static check can — an emitter
-// with an inverted `event.source` guard satisfies every assertion here (that is
-// what the scaffold's Guard B exists for, see AGENTS.md item 11). This check
-// answers one narrower question: does anything in this project's source so much
-// as MENTION the message, outside a comment. A "no" is strong evidence of the
-// #206 shape; a "yes" is weak evidence of correctness, and is treated as
-// conclusive anyway, because being generous here costs a missed warning while
-// being strict costs a false one.
+// WHAT IT STILL DOES NOT PROVE. That the ack FIRES. No static check can — an
+// emitter with an inverted `event.source` guard satisfies every assertion here
+// (that is what the scaffold's Guard B exists for, see AGENTS.md item 11). At
+// its strongest this check answers: does a file the browser actually loads so
+// much as MENTION the message, outside a comment.
 //
-// SCOPE — IT ONLY FIRES WHERE IT CAN OBSERVE, AND "OBSERVE" MEANS THE WHOLE
-// TREE. Mirroring lockfile.go's early-out shape: no `page` surface, no check;
-// unreadable package.json, no check. Beyond that, the scan concludes "this app
-// never acks" ONLY if it read every source file it could reach and found
-// nothing. Anything that leaves a gap — an unresolvable symlink, a read error, a
-// file over the size cap, the file-count budget — reports UNOBSERVABLE and stays
-// silent. A partial scan that says "absent" is manufacturing advice from a gap.
+// SCOPE OF THE PRESENCE SCAN — IT ONLY FIRES WHERE IT CAN OBSERVE, AND
+// "OBSERVE" MEANS THE WHOLE TREE. Mirroring lockfile.go's early-out shape: no
+// `page` surface, no check; unreadable package.json, no check. Beyond that, the
+// scan concludes "this app never acks" ONLY if it read every source file it
+// could reach and found nothing. Anything that leaves a gap — an unresolvable
+// symlink, a read error, a file over the size cap, the file-count budget —
+// reports UNOBSERVABLE and stays silent, and that verdict gates BOTH tiers: a
+// tree we could not read is not a tree we can draw a wiring conclusion about
+// either.
 //
-// 🔴 SKIPPING IS A COST DECISION, NEVER A CORRECTNESS ONE, because this is a
-// PRESENCE check: scanning an extra directory can only ever ADD ack evidence,
-// while skipping one can only ever CREATE a false warning. That asymmetry is why
-// the manifest's `outputDir` is NOT skipped (it was, and it was wrong — a
-// perfectly valid `"outputDir": "src"` on a page-vite app skipped the directory
-// holding the emitter and warned at a correct project; `"outputDir": "."`
-// skipped the entire tree). What remains is a fixed list of names that are
-// never source — dependencies, VCS metadata, and the conventional build
-// directories — chosen for cost. The residual trade is accepted and stated: a
-// stale committed build under a NON-conventional output directory can retain an
-// ack the source has lost, silencing a genuinely broken app. That is a false
-// negative, and false negatives are the cheap direction here.
+// 🔴 SKIPPING IS A COST DECISION, NEVER A CORRECTNESS ONE, because the tree scan
+// is a PRESENCE check: scanning an extra directory can only ever ADD ack
+// evidence, while skipping one can only ever CREATE a false warning. That
+// asymmetry is why the manifest's `outputDir` is NOT skipped (it was, and it was
+// wrong — a perfectly valid `"outputDir": "src"` on a page-vite app skipped the
+// directory holding the emitter and warned at a correct project;
+// `"outputDir": "."` skipped the entire tree). What remains is a fixed list of
+// names that are never source — dependencies, VCS metadata, and the conventional
+// build directories — chosen for cost. The residual trade is accepted and
+// stated: a stale committed build under a NON-conventional output directory can
+// retain an ack the source has lost, silencing a genuinely broken app.
 
 import (
 	"encoding/json"
@@ -89,6 +124,10 @@ const readyAckType = "BLOCK_READY"
 // handshake is not an implementation of it, and both shipped scaffold READMEs
 // describe `BLOCK_READY` at length. Including docs would silence the check for
 // exactly the apps it exists to find.
+//
+// It gates BOTH tiers: a `.css` a module imports is in the entry graph (the
+// browser really loads it) but cannot implement a handshake, so it is not read
+// as ack evidence either.
 var readyAckSourceExts = map[string]bool{
 	".js": true, ".jsx": true, ".mjs": true, ".cjs": true,
 	".ts": true, ".tsx": true, ".mts": true, ".cts": true,
@@ -96,26 +135,17 @@ var readyAckSourceExts = map[string]bool{
 	".vue": true, ".svelte": true, ".astro": true,
 }
 
-// readyAckMarkupExts are the subset whose comments are `<!-- -->`. HTML comment
-// stripping is applied ONLY to these.
+// readyAckSkipDirs are never descended into by the TREE scan. These names are
+// never source: dependencies, VCS metadata, and the conventional build
+// directories. The list is a COST decision (see the header) — every entry can
+// only cost a false warning, so it is kept short and conventional rather than
+// expanded to every directory that might be large. `vendor` and `public` are
+// deliberately ABSENT: both routinely hold hand-written source (a vendored
+// emitter, Vite's static `public/`), and cost is bounded by the caps below
+// instead.
 //
-// 🔴 Applying it to `.js`/`.ts` was a false-warning source: `stripHTMLComments`
-// has no string awareness, so a perfectly ordinary `var OPEN = '<!--';` in a
-// sanitiser started a "comment" that ran to end of file and deleted the emitter
-// below it. Reproduced live on a `static` scaffold. JS has no HTML comments
-// worth stripping here — `//` and `/* */` cover it, and Annex B's HTML-like
-// comment form is vanishingly rare next to the literal appearing in a string.
-var readyAckMarkupExts = map[string]bool{
-	".html": true, ".htm": true, ".vue": true, ".svelte": true, ".astro": true,
-}
-
-// readyAckSkipDirs are never descended into. These names are never source:
-// dependencies, VCS metadata, and the conventional build directories. The list
-// is a COST decision (see the header) — every entry can only cost a false
-// warning, so it is kept short and conventional rather than expanded to every
-// directory that might be large. `vendor` and `public` are deliberately ABSENT:
-// both routinely hold hand-written source (a vendored emitter, Vite's static
-// `public/`), and cost is bounded by the caps below instead.
+// It does NOT apply to the entry graph: a file index.html demonstrably loads is
+// loaded whatever directory it sits in.
 var readyAckSkipDirs = map[string]bool{
 	"node_modules": true, ".git": true, "dist": true, "build": true,
 	"out": true, "coverage": true, ".vite": true, ".next": true,
@@ -135,6 +165,13 @@ const (
 	maxAckFileBytes = 2 << 20 // 2 MiB
 )
 
+// maxAckGraphFiles bounds the entry-graph walk. It is far smaller than
+// maxAckScanFiles because an entry graph is not a tree walk: a project whose
+// index.html reaches 200 modules through relative imports alone is not a shape
+// this resolver models honestly, and exhausting the budget makes the graph
+// incomplete (i.e. drops to the presence tier) rather than producing a finding.
+const maxAckGraphFiles = 200
+
 // readyAckChecks returns the ready-ack advisory for the project in dir, or nil.
 //
 // It runs in the projectState branch of validateDir (beside lockfileChecks) and
@@ -147,17 +184,57 @@ func readyAckChecks(dir string, generic any) []string {
 	}
 	// The dependency is checked FIRST — see the file header. `unknown` means the
 	// package.json is there but unreadable, i.e. we cannot answer the question
-	// that decides whether a source scan is even meaningful.
-	switch sdkDependency(dir) {
+	// that decides whether any source reading is meaningful.
+	deps, state := packageDeps(dir)
+	switch state {
 	case sdkPresent, sdkUnknown:
 		return nil
 	}
-	// Only a scan that read the WHOLE reachable tree and found nothing is
-	// evidence of absence.
-	if scanForReadyAck(dir) != ackAbsent {
+
+	// The whole-tree presence scan runs FIRST and gates everything: if we could
+	// not read the tree, we have no business drawing a conclusion from a subset
+	// of it either.
+	tree := scanForReadyAck(dir)
+	if tree == ackUnobservable {
 		return nil
 	}
-	return []string{readyAckAdvice}
+
+	graph := blockproto.ResolveEntryGraph(dir, blockproto.EntryGraphOptions{
+		MaxFiles:     maxAckGraphFiles,
+		MaxFileBytes: maxAckFileBytes,
+		Dependencies: deps,
+	})
+	if graph.Complete {
+		if graphPostsReadyAck(graph) {
+			return nil
+		}
+		// Reachability tier: nothing the browser loads posts the message.
+		if tree == ackFound {
+			return []string{readyAckAdviceUnwired}
+		}
+		return []string{readyAckAdviceMissing}
+	}
+
+	// Presence tier: wiring is undecidable for this project shape.
+	if tree == ackFound {
+		return nil
+	}
+	return []string{readyAckAdvicePresenceOnly}
+}
+
+// graphPostsReadyAck reports whether any file the browser loads mentions the
+// message outside a comment. blockproto has already stripped comments per
+// extension; readyAckSourceExts decides what counts as code.
+func graphPostsReadyAck(g *blockproto.EntryGraph) bool {
+	for _, f := range g.Files {
+		if !readyAckSourceExts[strings.ToLower(filepath.Ext(f.Rel))] {
+			continue
+		}
+		if strings.Contains(f.Code, readyAckType) {
+			return true
+		}
+	}
+	return false
 }
 
 // declaresPage reports whether the manifest declares a non-null `page` surface.
@@ -183,16 +260,24 @@ const (
 	sdkUnknown
 )
 
-func sdkDependency(dir string) sdkState {
+// packageDeps returns the project's declared dependency names and whether one of
+// them ACKS.
+//
+// The names are needed by the entry-graph resolver: a bare specifier naming a
+// declared dependency is accounted for (it is a package, not a file in this
+// project), while one that names nothing declared is a bundler alias we cannot
+// follow — which must make the graph incomplete rather than look like a dead
+// end. Both answers come from ONE read of package.json.
+func packageDeps(dir string) (map[string]bool, sdkState) {
 	raw, err := os.ReadFile(filepath.Join(dir, "package.json"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No package.json at all: a static, no-build app. It installs
-			// nothing, so it cannot be acking through a dependency — the source
-			// scan is the whole answer for it.
-			return sdkAbsent
+			// nothing, so it cannot be acking through a dependency — reading the
+			// source is the whole answer for it.
+			return nil, sdkAbsent
 		}
-		return sdkUnknown
+		return nil, sdkUnknown
 	}
 	// json.RawMessage values, not strings: a package.json with an unusual
 	// (non-string) version entry must not make the whole decode fail and warn.
@@ -202,16 +287,26 @@ func sdkDependency(dir string) sdkState {
 		PeerDependencies map[string]json.RawMessage `json:"peerDependencies"`
 	}
 	if err := json.Unmarshal(raw, &pkg); err != nil {
-		return sdkUnknown
+		return nil, sdkUnknown
 	}
+	names := map[string]bool{}
+	state := sdkAbsent
 	for _, set := range []map[string]json.RawMessage{pkg.Dependencies, pkg.DevDependencies, pkg.PeerDependencies} {
 		for name := range set {
+			names[name] = true
 			if blockproto.PackageAcksReady(name) {
-				return sdkPresent
+				state = sdkPresent
 			}
 		}
 	}
-	return sdkAbsent
+	return names, state
+}
+
+// sdkDependency is packageDeps' verdict alone, for callers (and tests) that only
+// need to know whether a dependency acks.
+func sdkDependency(dir string) sdkState {
+	_, state := packageDeps(dir)
+	return state
 }
 
 // ackScanResult is the THREE-valued outcome of the source scan. Two values
@@ -223,7 +318,6 @@ const (
 	// ackFound: a source file mentions the message outside a comment.
 	ackFound ackScanResult = iota
 	// ackAbsent: every reachable source file was read, and none mentions it.
-	// This is the ONLY result that produces a warning.
 	ackAbsent
 	// ackUnobservable: the scan left a gap — an unresolvable symlink, a read
 	// error, a file over the size cap, the file budget, or simply no source
@@ -245,7 +339,9 @@ const (
 // send is `BLOCK_READY`"), and those comments SURVIVE deleting `civitai-host.js`.
 // Without stripping, the exact repair this check exists to demand — restore the
 // emitter — would already look satisfied, and the check would be inert on the
-// one population it was written for. Measured both ways.
+// one population it was written for. Measured both ways. The stripper itself
+// lives in blockproto, because the entry-graph resolver and the scaffold's
+// Guard A ask the identical question.
 //
 // 🔴 SYMLINKED DIRECTORIES ARE FOLLOWED. filepath.WalkDir does not follow them,
 // and it does not report them as directories either, so a monorepo whose `src`
@@ -334,105 +430,81 @@ func (s *ackScanner) walk(dir string) {
 			return
 		}
 		s.files++
-		if strings.Contains(stripComments(string(data), ext), readyAckType) {
+		if strings.Contains(blockproto.StripCommentsForExt(string(data), ext), readyAckType) {
 			s.found = true
 			return
 		}
 	}
 }
 
-// stripComments removes comments from src, given its file extension. JS
-// line/block comments are always stripped, leaving string and template literals
-// intact (so `'https://x'` is not read as the start of a comment, and an emitter
-// that posts from inside a string still counts). HTML comments are stripped only
-// for markup files — see readyAckMarkupExts for why that gate exists.
-func stripComments(src, ext string) string {
-	if readyAckMarkupExts[strings.ToLower(ext)] {
-		src = stripHTMLComments(src)
-	}
-	return stripJSComments(src)
-}
+// ---------------------------------------------------------------------------
+// The advisories.
+//
+// Three messages, built from shared fragments so the remedy cannot drift apart
+// between them, and so the ONE thing each has to add — what this run actually
+// verified — is the only thing that differs.
+// ---------------------------------------------------------------------------
 
-func stripHTMLComments(src string) string {
-	var b strings.Builder
-	b.Grow(len(src))
-	for i := 0; i < len(src); {
-		if strings.HasPrefix(src[i:], "<!--") {
-			end := strings.Index(src[i+4:], "-->")
-			if end < 0 {
-				// 🔴 UNTERMINATED. Keep the remainder VERBATIM rather than
-				// discarding it. Dropping the tail is lossy in the expensive
-				// direction — everything below an unclosed `<!--` disappears,
-				// including an emitter, and the author gets a warning about a
-				// correct project. There is no upside to the lossy branch: text
-				// after an unclosed marker is not evidence of a comment, it is
-				// evidence the file is not what we assumed.
-				b.WriteString(src[i:])
-				return b.String()
-			}
-			i += 4 + end + 3
-			continue
-		}
-		b.WriteByte(src[i])
-		i++
-	}
-	return b.String()
-}
+// readyAckWhy is the consequence. Every advisory carries it: an author who does
+// not know what breaks has no reason to act.
+const readyAckWhy = "the host will not reveal a page app until it acks the host's BLOCK_INIT, so an app that " +
+	"never sends it renders fine locally and is replaced by a failure card in the real host once the bounded " +
+	"init retries run out (issue #206)"
 
-func stripJSComments(src string) string {
-	var b strings.Builder
-	b.Grow(len(src))
-	for i := 0; i < len(src); {
-		c := src[i]
-		switch {
-		case c == '/' && i+1 < len(src) && src[i+1] == '/':
-			for i < len(src) && src[i] != '\n' {
-				i++
-			}
-		case c == '/' && i+1 < len(src) && src[i+1] == '*':
-			i += 2
-			for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
-				i++
-			}
-			i = min(i+2, len(src))
-		case c == '\'' || c == '"' || c == '`':
-			quote := c
-			b.WriteByte(c)
-			i++
-			for i < len(src) {
-				if src[i] == '\\' && i+1 < len(src) {
-					b.WriteString(src[i : i+2])
-					i += 2
-					continue
-				}
-				b.WriteByte(src[i])
-				if src[i] == quote {
-					i++
-					break
-				}
-				i++
-			}
-		default:
-			b.WriteByte(c)
-			i++
-		}
-	}
-	return b.String()
-}
+// readyAckRemedy names the concrete next command, per the house rule that a
+// message must tell the author what to run.
+//
+// 🔴 IT SPELLS OUT BOTH STEPS AND SAYS THE FIRST ONE ALONE DOES NOTHING. The
+// earlier wording ("copy its civitai-host.js into this project, loading it from
+// index.html or from the entry module") read as one action with a parenthetical,
+// and a blind dogfooder did the copy, skipped the load, and got a green check.
+const readyAckRemedy = "run `civitai app init` into a scratch directory and copy its `" +
+	blockproto.ReadyAckFilename + "` into this project — then LOAD it, which is a SECOND edit in a " +
+	"DIFFERENT file: add `<script src=\"./" + blockproto.ReadyAckFilename + "\"></script>` to index.html " +
+	"above your own script tags, or `import './" + blockproto.ReadyAckFilename + "';` as the first line of " +
+	"the entry module index.html loads. Copying the file in is not enough on its own — a browser never " +
+	"fetches a file nothing references. The alternative is to adopt `@civitai/blocks-react`, whose iframe " +
+	"transport acks for you (never both: whichever answers the first BLOCK_INIT cancels the host's retry). " +
+	"Note `@civitai/app-sdk` alone does NOT ack — it is the server-side SDK and no runtime code in it posts " +
+	readyAckType
 
-// readyAckAdvice names the concrete next command, per the house rule that a
-// message must tell the author what to run. It also states its own evidentiary
-// limit — an author who knows their ack comes from a bundled dependency needs to
-// be able to recognise this as a false alarm without reading the source of the
-// CLI.
-var readyAckAdvice = "the manifest declares a \"page\" surface but nothing in this project's source posts " +
-	readyAckType + " — the host will not reveal a page app until it acks the host's BLOCK_INIT, so an app " +
-	"that never sends it renders fine locally and is replaced by a failure card in the real host once the " +
-	"bounded init retries run out (issue #206). Apps scaffolded before that fix ship no emitter: run " +
-	"`civitai app init` into a scratch directory and copy its `" + blockproto.ReadyAckFilename + "` " +
-	"into this project, loading it from index.html (a <script src>) or from the entry module — or adopt " +
-	"`@civitai/blocks-react`, whose iframe transport acks for you (never both: whichever answers the first " +
-	"BLOCK_INIT cancels the host's retry). Note `@civitai/app-sdk` alone does NOT ack — it is the " +
-	"server-side SDK and no runtime code in it posts " + readyAckType + ". This is a source-text check, so " +
-	"it is wrong about a project whose ack arrives from a bundled dependency or a file type it does not " +
-	"read; it is advisory only and never fails `civitai app validate` unless you pass --strict"
+// readyAckTail states the tier and the limit. Every advisory ends with it.
+const readyAckTail = "no static check can prove the ack FIRES — only the real host can; this is advisory only " +
+	"and never fails `civitai app validate` unless you pass --strict"
+
+// readyAckAdviceUnwired is the REACHABILITY finding for a project that has an
+// emitter nothing loads. This is the exact false pass this check was rewritten
+// to close.
+var readyAckAdviceUnwired = "the manifest declares a \"page\" surface, and this project's source DOES contain " +
+	readyAckType + " — but nothing index.html loads reaches it: resolving index.html and every script and " +
+	"module it loads found no " + readyAckType + " among them, so whatever posts it is an orphan the browser " +
+	"never fetches — " + readyAckWhy + ". Wire it up: " + readyAckRemedy + ". Caveat: " + readyAckTail
+
+// readyAckAdviceMissing is the REACHABILITY finding for a project with no
+// emitter at all — the original #206 shape, now stated with the stronger
+// evidence.
+var readyAckAdviceMissing = "the manifest declares a \"page\" surface but nothing in this project's source " +
+	"posts " + readyAckType + ", and nothing index.html loads posts it either — " + readyAckWhy + ". Apps " +
+	"scaffolded before that fix ship no emitter: " + readyAckRemedy + ". Caveat: " + readyAckTail
+
+// readyAckAdvicePresenceOnly is the PRESENCE finding, and it discloses its own
+// weakness. It fires where the entry graph could not be resolved, so it is the
+// one message that must not let an author read "valid" as "wired".
+var readyAckAdvicePresenceOnly = "the manifest declares a \"page\" surface but nothing in this project's " +
+	"source posts " + readyAckType + " — " + readyAckWhy + ". Apps scaffolded before that fix ship no " +
+	"emitter: " + readyAckRemedy + ". 🔴 What this run did NOT check: it could not resolve the files your " +
+	"index.html loads (there is no index.html at the project root, or it holds a reference this CLI cannot " +
+	"follow — a bundler alias, a generated file, an off-project URL), so it checked only whether SOME file " +
+	"in the project mentions " + readyAckType + "; it did NOT check that the file is loaded. Adding the " +
+	"emitter without referencing it will silence this warning and leave the app just as broken — verify the " +
+	"reference yourself. It is also wrong about a project whose ack arrives from a bundled dependency or a " +
+	"file type it does not read. Caveat: " + readyAckTail
+
+// readyAckAdvisories is every string this check can emit. Callers and tests
+// match against the SET rather than one variable, so a new tier cannot be
+// introduced without the tests that classify them noticing.
+var readyAckAdvisories = []string{
+	readyAckAdviceUnwired,
+	readyAckAdviceMissing,
+	readyAckAdvicePresenceOnly,
+}

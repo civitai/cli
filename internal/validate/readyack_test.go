@@ -79,17 +79,44 @@ func ackProject(t *testing.T, manifestJSON string, files map[string]string) stri
 	return dir
 }
 
-// hasReadyAckWarning compares against the advisory VALUE, not a substring of its
-// prose. A substring match would keep passing if the message were rewritten into
-// something that no longer says what to do, and would also match a different
-// warning that happened to share a phrase.
-func hasReadyAckWarning(res Result) bool {
+// hasReadyAckWarning compares against the advisory VALUES, not a substring of
+// their prose. A substring match would keep passing if a message were rewritten
+// into something that no longer says what to do, and would also match a
+// different warning that happened to share a phrase.
+//
+// It matches the SET, so a caller asking only "did the ready-ack check fire"
+// keeps working across the tiers. A caller that cares WHICH tier fired must use
+// readyAckKind — "it warned" and "it warned for the right reason" are different
+// claims, and the whole defect this file now covers was a check that answered
+// the weaker question while the message promised the stronger one.
+func hasReadyAckWarning(res Result) bool { return readyAckKind(res) != "" }
+
+// readyAckKind names the tier that fired, or "".
+func readyAckKind(res Result) string {
 	for _, w := range res.Warnings {
-		if w == readyAckAdvice {
-			return true
+		switch w {
+		case readyAckAdviceUnwired:
+			return "unwired"
+		case readyAckAdviceMissing:
+			return "missing"
+		case readyAckAdvicePresenceOnly:
+			return "presence-only"
 		}
 	}
-	return false
+	return ""
+}
+
+// wantAckKind asserts the exact tier. `want` of "" means no ready-ack warning.
+func wantAckKind(t *testing.T, dir, want string) Result {
+	t.Helper()
+	res, err := Dir(dir)
+	if err != nil {
+		t.Fatalf("Dir: %v", err)
+	}
+	if got := readyAckKind(res); got != want {
+		t.Fatalf("ready-ack advisory tier = %q, want %q\nwarnings: %v\nerrors: %v", got, want, res.Warnings, res.Errors)
+	}
+	return res
 }
 
 func wantAckWarning(t *testing.T, dir string, want bool) Result {
@@ -591,7 +618,13 @@ func TestReadyAckSkipListNeverRemovesTheRoot(t *testing.T) {
 			// Positive control on the same tree: with an emitter it goes silent,
 			// so the assertion above cannot be satisfied by a scan that warns
 			// unconditionally.
+			//
+			// 🔴 index.html has to LOAD it. Writing the file alone used to be
+			// enough here, and that is precisely the false pass this check was
+			// rewritten to close — an unreferenced emitter is now (correctly) the
+			// `unwired` finding, which this control would otherwise trip.
 			write("civitai-host.js", realEmitter())
+			write("index.html", `<!doctype html><script src="./civitai-host.js"></script><script src="./app.js"></script>`)
 			wantAckWarning(t, root, false)
 		})
 	}
@@ -768,20 +801,57 @@ func TestReadyAckAdviceIsActionable(t *testing.T) {
 		{"civitai app init", "the concrete command that produces a correct emitter"},
 		{blockproto.ReadyAckFilename, "the file to copy in"},
 		{"index.html", "where the emitter has to be referenced from"},
+		{"not enough on its own", "copying the file was the ONE step the old wording let an author stop at"},
 		{"@civitai/blocks-react", "the alternative to hand-writing it"},
 		{"never both", "adopting the SDK without deleting the emitter is strictly worse"},
 		{"#206", "the issue an author can read for the full story"},
 		{"--strict", "so nobody thinks this blocks them today"},
 	}
-	for _, r := range required {
-		if !strings.Contains(readyAckAdvice, r.substr) {
-			t.Errorf("the advisory does not mention %q — %s\ngot: %s", r.substr, r.why, readyAckAdvice)
+	if len(readyAckAdvisories) != 3 {
+		t.Fatalf("readyAckAdvisories has %d entries, want 3 — a tier added without a case here ships "+
+			"unasserted prose", len(readyAckAdvisories))
+	}
+	for _, advice := range readyAckAdvisories {
+		for _, r := range required {
+			if !strings.Contains(advice, r.substr) {
+				t.Errorf("an advisory does not mention %q — %s\ngot: %s", r.substr, r.why, advice)
+			}
+		}
+		// A message that says nothing useful is short. This is a crude floor, but
+		// it is the one thing a "something may be wrong" rewrite cannot satisfy.
+		if len(advice) < 400 {
+			t.Errorf("an advisory is %d chars — too short to carry a diagnosis and a remedy: %s", len(advice), advice)
 		}
 	}
-	// A message that says nothing useful is short. This is a crude floor, but it
-	// is the one thing a "something may be wrong" rewrite cannot satisfy.
-	if len(readyAckAdvice) < 400 {
-		t.Errorf("the advisory is %d chars — too short to carry a diagnosis and a remedy", len(readyAckAdvice))
+}
+
+// TestReadyAckAdvisoriesStateTheirOwnStrength pins the disclosure that the
+// dogfood defect turned on.
+//
+// 🔴 The presence-only tier CANNOT see wiring, and it is the tier that fires at
+// the project shapes this CLI models worst. A message that reads identically to
+// the reachability tier tells an author their app is checked when it is not —
+// which is how "copy the emitter in" became a green check for a broken app. So
+// each tier must name what it did, and the weak one must name what it did not.
+func TestReadyAckAdvisoriesStateTheirOwnStrength(t *testing.T) {
+	if !strings.Contains(readyAckAdvicePresenceOnly, "did NOT check that the file is loaded") {
+		t.Errorf("the presence-only advisory does not disclose that it cannot see wiring — an author who "+
+			"reads it as the reachability tier will copy the emitter in, be silenced, and stay broken:\n%s",
+			readyAckAdvicePresenceOnly)
+	}
+	// And the two reachability advisories must NOT carry that disclaimer: they
+	// really did resolve the entry graph, and disclaiming it would train authors
+	// to ignore the one message that is strong.
+	for name, advice := range map[string]string{
+		"unwired": readyAckAdviceUnwired,
+		"missing": readyAckAdviceMissing,
+	} {
+		if strings.Contains(advice, "did NOT check that the file is loaded") {
+			t.Errorf("the %s advisory (reachability tier) disclaims a check it DID perform:\n%s", name, advice)
+		}
+		if !strings.Contains(advice, "index.html loads") {
+			t.Errorf("the %s advisory does not say it resolved what index.html loads:\n%s", name, advice)
+		}
 	}
 }
 
@@ -795,8 +865,10 @@ func TestReadyAckIsAdvisoryOnly(t *testing.T) {
 	})
 	res := wantAckWarning(t, dir, true)
 	for _, e := range res.Errors {
-		if e == readyAckAdvice {
-			t.Fatalf("the ready-ack advisory reached Errors — it must stay a warning")
+		for _, advice := range readyAckAdvisories {
+			if e == advice {
+				t.Fatalf("a ready-ack advisory reached Errors — it must stay a warning")
+			}
 		}
 	}
 	if !res.OK() {
@@ -931,8 +1003,10 @@ func TestDeletingTheEmitterMakesTheWarningFire(t *testing.T) {
 			wantAckWarning(t, dest, true)
 
 			// The advisory must name the file the author has to restore.
-			if !strings.Contains(readyAckAdvice, blockproto.ReadyAckFilename) {
-				t.Errorf("the advisory does not name %s — an author cannot act on it", blockproto.ReadyAckFilename)
+			for _, advice := range readyAckAdvisories {
+				if !strings.Contains(advice, blockproto.ReadyAckFilename) {
+					t.Errorf("an advisory does not name %s — an author cannot act on it", blockproto.ReadyAckFilename)
+				}
 			}
 		})
 	}
