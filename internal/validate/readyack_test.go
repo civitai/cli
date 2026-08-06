@@ -553,6 +553,44 @@ func TestReadyAckCannotObserve(t *testing.T) {
 	})
 }
 
+// TestReadyAckSkipListNeverRemovesTheRoot pins the "applied to ENTRIES only"
+// half of the skip rule.
+//
+// Found by a surviving mutant: adding `if readyAckSkipDirs[filepath.Base(dir)]
+// { return }` to the top of the walk passed the ENTIRE suite, because every
+// fixture's project root is a random t.TempDir() name. A project whose own
+// directory is called `build`, `out` or `dist` is perfectly ordinary, and under
+// that mutant it scanned nothing, reported "no files read", and went silent —
+// the same whole-tree removal that `"outputDir": "."` used to cause.
+func TestReadyAckSkipListNeverRemovesTheRoot(t *testing.T) {
+	for _, name := range []string{"dist", "build", "out", "node_modules"} {
+		t.Run("project directory named "+name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), name)
+			if err := os.MkdirAll(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			write := func(p, body string) {
+				t.Helper()
+				if err := os.WriteFile(filepath.Join(root, p), []byte(body), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("block.manifest.json", ackManifest(false))
+			write("index.html", `<!doctype html><script src="./app.js"></script>`)
+			write("app.js", `document.title = 'hi';`)
+			// The #206 shape: it must still be REPORTED even though the project
+			// happens to live in a directory whose name is on the skip list.
+			wantAckWarning(t, root, true)
+
+			// Positive control on the same tree: with an emitter it goes silent,
+			// so the assertion above cannot be satisfied by a scan that warns
+			// unconditionally.
+			write("civitai-host.js", realEmitter())
+			wantAckWarning(t, root, false)
+		})
+	}
+}
+
 // TestReadyAckFollowsSymlinkedSource pins the monorepo shape. filepath.WalkDir
 // does NOT follow symlinks and does not even report them as directories, so a
 // project whose `src` is a symlink into a shared package had its entire source
