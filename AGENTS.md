@@ -161,8 +161,10 @@ until that exists, vendoring is on purpose.
 **Maintaining this list:** items are append-only and numbered by arrival — a PR
 adding items takes the next free numbers, and when two PRs collide the one
 merging **second** renumbers **its own** new items. Never renumber an existing
-item: other items, the Layout section, and code comments all cross-reference
-them by number. After any renumber, re-grep every `item N` / `items N–M` in this
+item: other items, workflow YAML (`.github/workflows/ci.yml`) and Go test
+comments cross-reference them by number today, and prose elsewhere in this file
+(the Layout section) picks them up as items are added. After any renumber,
+re-grep every `item N` / `items N–M` in this
 file and confirm each still points at what it means — the range clauses in the
 paragraph above are the first thing to break, and both sides of a collision tend
 to have edited them differently, so the correct merged sentence is usually

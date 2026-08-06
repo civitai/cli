@@ -643,11 +643,18 @@ func resolveProjectRef(projectDir, fromDir, spec string) (string, bool) {
 	// path and is accepted — measured. This half is load-bearing and pinned by
 	// the "protocol-relative URL that cleans back" corpus case.
 	//
-	// There is deliberately no `strings.Contains(spec, "://")` companion: an
-	// `https://…` specifier already fails the switch below and returns the
-	// identical `("", false)`, so that half decided nothing for any input. It
-	// was removed rather than left as a branch no mutation can reach — the
-	// CDN-URL corpus case is rejected by the fallthrough, and says so.
+	// There is deliberately no `strings.Contains(spec, "://")` companion: no URI
+	// scheme can begin with `/`, `./` or `../`, so an `https://…` specifier
+	// already fails the switch below and returns the identical `("", false)` —
+	// it decided nothing for any URL, which is all it claimed to guard. It was
+	// removed rather than left as a branch no mutation can reach; the CDN-URL
+	// corpus case is rejected by the fallthrough, and says so.
+	//
+	// It did change the answer for a handful of NON-URLs that merely contain
+	// `://` — `/x://../civitai-host.js`, `./civitai-host.js?u=https://evil.com`
+	// — which it rejected and which now resolve to the emitter. That is the
+	// correct outcome (it is how a browser resolves them), so the removal fixes
+	// a latent false rejection rather than widening what is accepted.
 	if strings.HasPrefix(spec, "//") {
 		return "", false
 	}
