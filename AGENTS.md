@@ -1243,6 +1243,52 @@ neither one's.
     money-refusal line state the substitution backwards. When you mutation-test a
     reporter, mutate the CALL SITES too, not just the function.
 
+    (h) 🔴 **The post-spend report runs AFTER the handle reaches the user, and
+    that ordering is the thing to preserve — not the line's position in the
+    file.** By the submit reply the job is CHARGED and the workflow id is the
+    user's only way back to what they paid for; the report explains a charge that
+    has already happened, so it is advisory. It used to be emitted BEFORE the id,
+    which was harmless only because it does no I/O — and the obvious next
+    improvement (resolving the substituted ids to NAMES through
+    `ResolveModelVersion`, which the estimate path already does for
+    `--checkpoint`) would have inherited `getWithRetry`'s **4 attempts**
+    (`readMaxAttempts`, `pkg/civitai/retry.go`) against a **30s**-timeout client
+    (`defaultTimeout`, `pkg/civitai/api.go`) plus backoff — minutes per id, two
+    ids per record, holding the handle for a cosmetic gain. `emitSubmitHandle`
+    exists so all four branches (--no-wait, --json, a reply with no workflow id,
+    and the waiting path) emit the handle from ONE place before any advisory, and
+    `generate_handle_order_test.go` pins it by BLOCKING the advisory's own write
+    and reading what the user already has — no wall-clock sleep is involved. If
+    you do add name enrichment, bound it and keep the ids as the fallback: the
+    report must still appear with ids rather than go quiet, which is the silence
+    the whole feature exists to end.
+    Two traps that cost a mutation round: extracting the handle emission moved
+    three control-flow decisions with it, and `||`→`&&` on either branch test
+    turns a `--no-wait` run into a POLLING run — detected at first only as a
+    **nil-seam panic**, which aborts the binary and stops the guard that would
+    have named the defect from ever running. So the `--no-wait` cases wire a
+    working poll seam they never use (`wireIdlePoll`), and the poll-count
+    assertion is deliberately NOT fatal-gated on the returned error, which every
+    one of those mutants also changes.
+
+    (i) 🔴 **The approval summary annotates the superseded checkpoint; it never
+    swaps it.** The summary echoes the checkpoint as a NAME rather than an
+    integer (item 13) so the user approves something recognisable — but with a
+    substitution in play that made the LAST model line before `Generate? [y/N]`
+    the name the server had already said it would discard, with the warning
+    scrolled above it. `substitutionCheckpointNote` appends
+    `[SUPERSEDED — the server will run version N instead; …]` to the requested
+    label at BOTH pre-spend surfaces (the confirm prompt and the `--dry-run`
+    quote), computed from one call site so the two cannot disagree. Printing the
+    applied id in the requested one's place would be a second silence, not a
+    fix: the user asked for their version and must still see it was overridden.
+    The match is on `requested`, so a substitution of anything the line does not
+    name leaves it alone — a false mark on a correct line teaches authors to
+    ignore the real one. The tense comes from `substitutionVerb(phase)`, the same
+    constant the lead uses, and is asserted structurally per (f): a call site
+    passing `substitutionAfterSubmit` would tell someone deciding whether to
+    spend that the substitute already ran.
+
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
 the slot registry), the Vite dotenv resolution behind the dev-tunnel parent-origin
