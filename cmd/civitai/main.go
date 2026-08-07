@@ -24,15 +24,24 @@ var (
 )
 
 // Process exit codes. Scripts can branch on the FAILURE KIND without parsing
-// stderr. Keep this scheme in sync with the "Exit codes" section of README.md.
+// stderr.
+//
+// What each code MEANS is deliberately not restated here. It has one source —
+// cmd.ExitCodeDocs() in internal/cmd/exitcodes_doc.go — which renders both the
+// root `--help` section and README.md's exit-code table. These comments used to
+// restate it and drifted: they still described 4 as "HTTP 404" and 2 as "bad
+// flags" after PR #233 taught `app status <unknown-slug>` to exit 4 on an HTTP
+// 200 and a missing required flag to exit 2. A third copy of a contract is a
+// third thing to forget, so the names carry the label and the docs carry the
+// contract. TestExitCodeConstantsMatchDocs pins the two sets against each other.
 const (
-	exitOK          = 0 // success
-	exitGeneric     = 1 // generic / unknown / unclassified failure
-	exitUsage       = 2 // bad flags, bad flag value, or a request rejected as malformed (HTTP 400)
-	exitAuth        = 3 // authentication/authorization: login required, token invalid/expired, missing scope
-	exitNotFound    = 4 // the requested resource does not exist (HTTP 404)
-	exitNetwork     = 5 // network/transport failure or service unavailable (dial/timeout, HTTP 502/503/504)
-	exitRateLimited = 6 // throttled by the API (HTTP 429)
+	exitOK          = 0
+	exitGeneric     = 1
+	exitUsage       = 2
+	exitAuth        = 3
+	exitNotFound    = 4
+	exitNetwork     = 5
+	exitRateLimited = 6
 )
 
 func main() {

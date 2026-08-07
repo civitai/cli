@@ -177,6 +177,10 @@ func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "civitai",
 		Short: "Civitai CLI — browse & download models, and build Apps",
+		// The "Exit codes:" block is APPENDED, not written here: it is rendered
+		// from exitCodeDocs (exitcodes_doc.go), the one source this help section
+		// and the README's exit-code table both come from. Hand-writing it back
+		// in is what let the two drift — see the file header there.
 		Long: `civitai is the command-line interface for Civitai (https://civitai.com).
 
 It does three things from one static binary:
@@ -204,21 +208,7 @@ Get started:
   civitai app create my-app        scaffold a ready-to-build App
   civitai app submit               package + submit for review
 
-Exit codes:
-
-  Every command returns a differentiated exit code so scripts can branch on the
-  KIND of failure without parsing stderr (the error message itself is unchanged):
-
-    0  success
-    1  generic / unclassified error
-    2  usage error — a bad flag, a bad flag value, or a request the API rejected
-       as malformed (HTTP 400)
-    3  authentication/authorization — login required, token invalid/expired, or
-       the credential lacks the needed scope (HTTP 401/403)
-    4  not found — the requested resource does not exist (HTTP 404)
-    5  network/transport failure or service unavailable (dial/timeout, HTTP
-       502/503/504 after retries)
-    6  rate limited — throttled by the API (HTTP 429)`,
+` + rootExitCodeHelp(),
 		Example: `  # Browse & download the public catalog (no account needed to read).
   civitai models search --query "dreamshaper" --limit 5
   civitai images search --sort "Most Reactions" --period Week
@@ -359,6 +349,21 @@ Exit codes:
 //     ahead of cobra's call; the message is cobra's, unchanged, and when they
 //     pass cobra's own later call is a no-op repeat. `--help` is unaffected:
 //     execute() returns flag.ErrHelp before it ever reaches Args.
+//     🔴 It does MOVE them, though: running them from Args puts these two
+//     validators BEFORE PersistentPreRunE/PreRunE, where cobra runs them
+//     after. Benign today, and MEASURED rather than assumed: the sole
+//     PersistentPreRunE (the root's ui/color setup) always returns nil, and
+//     the sole MarkFlagRequired (`app pull --app`) sits on a command with no
+//     PreRunE at all — the two PreRunE hooks that do exist (`app list` in
+//     apps.go, bindReadFlags in read.go) only REJECT, and neither command has
+//     a required flag or a flag group. The trap is for the next person: a
+//     PreRunE that SATISFIES a required flag — filling it from an env var,
+//     viper or config before cobra checks — would now have a perfectly valid
+//     invocation rejected as `required flag(s) "..." not set`, because we ask
+//     the question a hook earlier than cobra does. If you add such a hook, the
+//     flag must stop being cobra-required and become a check inside RunE
+//     (asUsageError-tagged); do not reorder this wrapper, which would put the
+//     usage-classification hole of (3) straight back.
 //
 // It only reclassifies ARGUMENT/subcommand validation. A command's real RunE
 // failures — a 404 not-found, a network error, an auth failure — are never

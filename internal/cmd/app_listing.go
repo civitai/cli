@@ -566,9 +566,26 @@ func cmdCtx(cmd *cobra.Command) context.Context {
 //
 // Every refusal about the VALUE the user passed is asUsageError-tagged (exit 2),
 // mirroring resolveLocalImage in generate_image.go, which does the same job for
-// `generate --image`. The raw os.Stat/os.ReadFile failures are deliberately NOT
-// tagged: they wrap an opaque filesystem cause (permissions, I/O), which is not
-// a usage mistake and must not be reported as one.
+// `generate --image`. The set of tagged refusals is published — it is rendered
+// into the README/`--help` exit-code contract from imageUsageRefusals in
+// exitcodes_doc.go, and TestImageUsageRefusalLedger requires the two to agree.
+//
+// The raw os.Stat/os.ReadFile failures are deliberately NOT tagged: they wrap an
+// opaque filesystem cause (permissions, I/O), which is not a mistake about the
+// invocation and must not be reported as one.
+//
+// 🔴 Be precise about what leaving them untagged costs today, because an earlier
+// version of this comment was not, and its reasoning was the wrong way round. It
+// said tagging would misreport an I/O failure "as a user mistake" — implying the
+// status quo reports it as something better. It does not: untagged, a
+// permission-denied read exits **5, the network code**. syscall.Errno has both
+// Timeout() and Temporary(), so it satisfies net.Error, and cmd/civitai's
+// isNetworkErr errors.As-matches it straight through the *fs.PathError.
+// Measured: `civitai app listing set-icon <mode-000 png>` exits 5. So the real
+// trade is "misreported as retryable transport" vs "misreported as a usage
+// mistake", and the decision stands only because the fix belongs in isNetworkErr
+// — where it corrects every filesystem error in the CLI at once — and not in a
+// per-call-site tag here, which would leave the same defect everywhere else.
 func loadAndValidateImage(kind mediaKind, file string) ([]byte, appapi.ImageInfo, error) {
 	fi, err := os.Stat(file)
 	if err != nil {

@@ -425,7 +425,7 @@ func TestListingImageValidationIsUsageTagged(t *testing.T) {
 				t.Fatalf("expected an error for %s", tc.file)
 			}
 			if !errors.Is(err, ErrUsage) {
-				t.Errorf("a bad --file VALUE must classify as usage (exit 2), got %T: %v", err, err)
+				t.Errorf("a bad <file> argument must classify as usage (exit 2), got %T: %v", err, err)
 			}
 		})
 	}
