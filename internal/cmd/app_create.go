@@ -52,11 +52,13 @@ Templates (override with --template):
 The display name can be free-form ("My Cool Block"); it is slugified for the
 blockId. A slug-shaped name is used verbatim.
 
-The blockId is your app's PERMANENT public identity — it is the hostname your app
-is served at and the argument every later command takes — so derivation refuses
-rather than guesses when the name carries characters a blockId cannot hold
-("Café Del Mar", "ÜberApp", any non-Latin name). Pass --slug <slug> to choose one
-yourself; it bypasses derivation entirely.
+The blockId is your app's PERMANENT public identity — the hostname your app will
+be served at once it is approved, and the argument every later command takes — so
+derivation refuses rather than guesses when the name carries LETTERS a blockId
+cannot hold ("Café Del Mar", "ÜberApp", any non-Latin name). Punctuation, symbols
+and emoji still fold to a hyphen, as they always have ("Rocket 🚀 App" ->
+rocket-app). Pass --slug <slug> to choose the blockId yourself; it bypasses
+derivation entirely.
 
 By default the project is created in ./<slug>. Override the output directory with
 a positional [dir] or --dir <path>; override the display name independently with

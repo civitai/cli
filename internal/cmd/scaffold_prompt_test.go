@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 func TestScaffoldNonInteractiveNoPrompt(t *testing.T) {
 	orig := scaffoldPromptFn
 	t.Cleanup(func() { scaffoldPromptFn = orig })
-	scaffoldPromptFn = func(_ *cobra.Command, _ string) (scaffoldInputs, error) {
+	scaffoldPromptFn = func(_ *cobra.Command, _ string, _ bool) (scaffoldInputs, error) {
 		t.Fatal("huh prompt must NOT run on a non-TTY stdin")
 		return scaffoldInputs{}, nil
 	}
@@ -44,7 +44,7 @@ func TestScaffoldYesSkipsPromptEvenOnTTY(t *testing.T) {
 	t.Cleanup(func() { stdinIsTTY = origTTY; scaffoldPromptFn = origPrompt })
 
 	stdinIsTTY = func() bool { return true }
-	scaffoldPromptFn = func(_ *cobra.Command, _ string) (scaffoldInputs, error) {
+	scaffoldPromptFn = func(_ *cobra.Command, _ string, _ bool) (scaffoldInputs, error) {
 		t.Fatal("huh prompt must NOT run when --yes is set")
 		return scaffoldInputs{}, nil
 	}
@@ -65,7 +65,7 @@ func TestScaffoldInteractiveUsesPromptValues(t *testing.T) {
 	t.Cleanup(func() { stdinIsTTY = origTTY; scaffoldPromptFn = origPrompt })
 
 	stdinIsTTY = func() bool { return true }
-	scaffoldPromptFn = func(_ *cobra.Command, _ string) (scaffoldInputs, error) {
+	scaffoldPromptFn = func(_ *cobra.Command, _ string, _ bool) (scaffoldInputs, error) {
 		return scaffoldInputs{name: "prompted-block", template: "static"}, nil
 	}
 
@@ -91,7 +91,7 @@ func TestScaffoldNameArgSkipsPrompt(t *testing.T) {
 	t.Cleanup(func() { stdinIsTTY = origTTY; scaffoldPromptFn = origPrompt })
 
 	stdinIsTTY = func() bool { return true }
-	scaffoldPromptFn = func(_ *cobra.Command, _ string) (scaffoldInputs, error) {
+	scaffoldPromptFn = func(_ *cobra.Command, _ string, _ bool) (scaffoldInputs, error) {
 		t.Fatal("huh prompt must NOT run when a name is supplied")
 		return scaffoldInputs{}, nil
 	}

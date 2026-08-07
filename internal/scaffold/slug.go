@@ -68,82 +68,176 @@ var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
 
 var nonSlugChars = regexp.MustCompile(`[^a-z0-9]+`)
 
-// LossyRunes returns, in first-appearance order and deduplicated, the runes in
-// name that slug derivation would DROP rather than fold into a hyphen.
+// isCombiningMark reports whether r is a Unicode Mark (Mn/Mc/Me) — a character
+// that has no standalone appearance and renders on top of the one before it.
+func isCombiningMark(r rune) bool { return unicode.Is(unicode.M, r) }
+
+// isLossyBase classifies ONE base rune: true when derivation would DROP it
+// rather than fold it into a hyphen.
 //
-// 🔴 The point is the ASYMMETRY between the two things a non-`[a-z0-9]` rune can
-// be. A SEPARATOR (space, `_`, `.`, `/`, `-`, `!`, `&`, an em dash …) carries no
-// information of its own: turning it into a hyphen is what the author meant, and
-// that is why `"My Cool Block"` → `my-cool-block` is correct. A LETTER, DIGIT or
-// MARK the ASCII slug alphabet cannot carry is the opposite: it is content the
-// author typed, and there is no lossless place to put it. Dropping it silently
-// mints a DIFFERENT permanent public identity — `"ÜberApp Ω"` → `berapp` (the
-// leading `Ü` becomes a hyphen and is then trimmed), `"Café Del Mar"` →
-// `caf-del-mar` (a spurious word boundary mid-name). Neither is a truncation the
-// author can recognise, and a blockId is not renameable, so the caller refuses
-// and asks for an explicit slug instead.
+// 🔴 THE CLASSIFICATION IS ON THE LOWERED RUNE AND THE REPORT IS ON THE ORIGINAL
+// — the two must not be collapsed. Derivation lowercases first, so lowering is
+// what decides whether a rune survives; but a message that quotes the LOWERED
+// rune names a character the user never typed. Measured on the first version of
+// this code, which classified and reported off `strings.ToLower(name)`:
+// `"ẞE App"` reported `"ß"`, a rune ABSENT from the input, and `"ＡＢＣ"`
+// reported `"ａ", "ｂ", "ｃ"`. Someone searching their own name for the quoted
+// character finds nothing.
+//
+// 🔴 The rule itself is the ASYMMETRY between the two things a non-`[a-z0-9]`
+// rune can be. A SEPARATOR (space, `_`, `.`, `/`, `-`, `!`, `&`, an em dash …)
+// carries no information of its own: turning it into a hyphen is what the author
+// meant, and that is why `"My Cool Block"` → `my-cool-block` is correct. A
+// LETTER, DIGIT or MARK the ASCII slug alphabet cannot carry is the opposite: it
+// is content the author typed, and there is no lossless place to put it.
+// Dropping it silently mints a DIFFERENT permanent public identity —
+// `"ÜberApp Ω"` → `berapp` (the leading `Ü` becomes a hyphen and is then
+// trimmed), `"Café Del Mar"` → `caf-del-mar` (a spurious word boundary
+// mid-name). Neither is a truncation the author can recognise, and a blockId is
+// not renameable, so the caller refuses and asks for an explicit slug instead.
+//
+// 🔴 EVERY RUNE THAT LOWERS INTO ASCII IS EXEMPT BY CONSTRUCTION, and that is
+// load-bearing rather than lazy: it is what makes the ASCII derivations that
+// work today byte-identical, including the two dead ends whose existing messages
+// are good (`"123 Numbers"` → starts with a digit; `"!!!"` → nothing left). It
+// is also the source of the (b) exception in the Slugify header: exactly two
+// runes above ASCII lower INTO ASCII. Do not "improve" the exemption into a
+// character allowlist — an allowlist re-decides every ASCII derivation this CLI
+// has ever produced, and the whole point of the boundary is that it decides
+// none of them.
+func isLossyBase(r rune) bool {
+	lower := unicode.ToLower(r)
+	if lower < utf8.RuneSelf {
+		// Lowers into ASCII: either a slug character or a separator.
+		// Byte-identical to the derivation this CLI has always done.
+		return false
+	}
+	// A separator with no content of its own — becomes a hyphen.
+	return !unicode.IsSpace(lower) && !unicode.IsPunct(lower) && !unicode.IsSymbol(lower)
+}
+
+// dottedCircle is the Unicode convention for displaying a combining mark that
+// has no base character to sit on (U+25CC DOTTED CIRCLE).
+const dottedCircle = "◌"
+
+// LossyChars returns, in first-appearance order and deduplicated, the characters
+// in name that slug derivation would DROP rather than fold into a hyphen — each
+// as the printable string the AUTHOR typed, never a lowered or decomposed
+// substitute.
+//
+// 🔴 A COMBINING MARK IS REPORTED WITH ITS BASE, because on its own it renders
+// as an accent floating over nothing. macOS paths and some paste routes deliver
+// NFD, so `"Café App"` arrives as `e` + U+0301 and the first version of this
+// message read `"́" cannot appear in a blockId` — the same VISIBLE name yielding
+// two different messages, one of them pointing at nothing the user can see. The
+// cluster is what gets quoted, so NFC and NFD both report `"é"`. This changes
+// only the RENDERING: a mark is non-ASCII and is neither space, punct nor
+// symbol, so it was already refused, and the set of refused names is unchanged.
+// A mark with no base at all (a name STARTING with one) is shown on a dotted
+// circle rather than bare.
 //
 // Transliteration was considered and rejected: `Ω → o` vs `omega` is a
 // locale-dependent judgement, a general transliterator means a new
 // `golang.org/x/text` dependency, and it produces nothing usable for CJK,
 // Cyrillic or Arabic — which is most of the population this refusal serves.
 //
-// 🔴 EVERY ASCII RUNE IS EXEMPT BY CONSTRUCTION, and that is load-bearing rather
-// than lazy: it is what makes the ASCII derivations that work today
-// byte-identical, including the two dead ends whose existing messages are good
-// (`"123 Numbers"` → starts with a digit; `"!!!"` → nothing left). Above ASCII
-// the classification is by Unicode category, so an em dash or a `»` is still an
-// ordinary separator.
-func LossyRunes(name string) []rune {
-	var lossy []rune
-	seen := map[rune]bool{}
-	for _, r := range strings.ToLower(strings.TrimSpace(name)) {
-		if r < utf8.RuneSelf {
-			// ASCII: either a slug character or a separator. Byte-identical to
-			// the derivation this CLI has always done.
-			continue
+// name MUST be valid UTF-8; Slugify gates that before calling here. Ranging over
+// invalid bytes yields U+FFFD, which is a Symbol and would be waved through as a
+// separator.
+func LossyChars(name string) []string {
+	runes := []rune(strings.TrimSpace(name))
+	var lossy []string
+	seen := map[string]bool{}
+	add := func(s string) {
+		if seen[s] {
+			return
 		}
-		if unicode.IsSpace(r) || unicode.IsPunct(r) || unicode.IsSymbol(r) {
-			// A separator with no content of its own — becomes a hyphen.
-			continue
+		seen[s] = true
+		lossy = append(lossy, s)
+	}
+	for i := 0; i < len(runes); {
+		base := runes[i]
+		j := i + 1
+		for j < len(runes) && isCombiningMark(runes[j]) {
+			j++
 		}
-		if seen[r] {
-			continue
+		switch {
+		case isCombiningMark(base):
+			// Only reachable at the very start of the name: every other mark is
+			// consumed by the base before it.
+			add(dottedCircle + string(runes[i:j]))
+		case j > i+1 || isLossyBase(base):
+			// Either the cluster carries a mark (content, dropped by
+			// derivation) or the base itself is lossy. Report the cluster.
+			add(string(runes[i:j]))
 		}
-		seen[r] = true
-		lossy = append(lossy, r)
+		i = j
 	}
 	return lossy
 }
 
-// maxNamedRunes bounds how many offending characters the refusal spells out. A
-// fully non-Latin name can carry dozens of distinct runes and an error that
+// maxNamedChars bounds how many offending characters the refusal spells out. A
+// fully non-Latin name can carry dozens of distinct characters and an error that
 // re-prints the whole name back as a quoted list stops being readable; the first
 // few are enough to make the refusal recognisable, and the name itself is quoted
 // in the same sentence.
-const maxNamedRunes = 6
+const maxNamedChars = 6
 
-// quoteRunes renders runes as a comma-separated list of quoted characters, for
-// an error that has to NAME what it is refusing.
-func quoteRunes(rs []rune) string {
+// quoteChars renders characters as a comma-separated list of quoted characters,
+// for an error that has to NAME what it is refusing.
+func quoteChars(cs []string) string {
 	more := ""
-	if len(rs) > maxNamedRunes {
-		more = fmt.Sprintf(" (and %d more)", len(rs)-maxNamedRunes)
-		rs = rs[:maxNamedRunes]
+	if len(cs) > maxNamedChars {
+		more = fmt.Sprintf(" (and %d more)", len(cs)-maxNamedChars)
+		cs = cs[:maxNamedChars]
 	}
-	parts := make([]string, len(rs))
-	for i, r := range rs {
-		parts[i] = fmt.Sprintf("%q", string(r))
+	parts := make([]string, len(cs))
+	for i, c := range cs {
+		parts[i] = fmt.Sprintf("%q", c)
 	}
 	return strings.Join(parts, ", ") + more
 }
 
 // Slugify converts an arbitrary name into a valid block slug, or returns an
 // error if it cannot produce one within the length bounds — or if deriving one
-// would silently DISCARD characters the author typed (see LossyRunes).
+// would silently DISCARD characters the author typed (see LossyChars).
+//
+// 🔴 THIS NARROWS ISSUE #259, IT DOES NOT CLOSE IT. Three classes of input still
+// derive a slug that quietly differs from the name, and all three are stated
+// here rather than implied away — a residual nobody writes down is
+// indistinguishable from a bug nobody noticed:
+//
+//   - (a) INVALID UTF-8 — CLOSED. `caf\xe9 app` used to derive `caf-app` with
+//     rc 0, because `for _, r := range` yields U+FFFD per bad byte and U+FFFD is
+//     a Symbol, i.e. the separator branch. Worse, the manifest the scaffold then
+//     wrote held the raw `0xE9` and was not valid UTF-8 — and `validate` accepted
+//     it. The `utf8.ValidString` guard below refuses it. (The manifest half is
+//     closed at the call site, which also refuses an invalid-UTF-8 DISPLAY name;
+//     `internal/validate` still has no UTF-8 check of its own.)
+//   - (b) THE TWO RUNES ABOVE ASCII THAT LOWER INTO ASCII — a deliberate,
+//     ENUMERATED exception, not an oversight. All of Unicode was walked: exactly
+//     two exist, `İ` U+0130 → `i` and `K` U+212A KELVIN SIGN → `k`. So
+//     `"İstanbul App"` derives `istanbul-app` with rc 0. That is arguably the
+//     nicest transliteration available and it costs nothing, so it stays — but
+//     it means the exemption below is "lowers into ASCII", never "is ASCII",
+//     and any absolute claim that every non-ASCII letter is refused is false.
+//   - (c) SYMBOLS, EMOJI AND NON-ASCII PUNCTUATION fold to a hyphen, so
+//     `"Rocket 🚀 App"` derives `rocket-app` with rc 0. Census over printable
+//     non-ASCII runes: 8,580 take the separator branch, 140,321 the refuse
+//     branch. This is the asymmetry working as designed for `—` and `»`, and
+//     arguably NOT what an author means by an emoji — but an emoji has no
+//     lossless ASCII form either, so refusing would only trade a silent drop for
+//     a dead end. Left as-is deliberately, tracked separately.
 func Slugify(name string) (string, error) {
-	if lossy := LossyRunes(name); len(lossy) > 0 {
-		return "", fmt.Errorf("cannot derive a slug from %q: %s cannot appear in a blockId (lowercase a-z, 0-9 and hyphens only), and dropping them would give your app a different permanent public id than you typed — choose one yourself with --slug <slug>", name, quoteRunes(lossy))
+	// 🔴 BEFORE anything ranges over the string. `for _, r := range` silently
+	// substitutes U+FFFD for each invalid byte, and U+FFFD classifies as a
+	// Symbol — the separator branch — so a mojibake name derived a slug that
+	// dropped the bad bytes AND wrote them raw into block.manifest.json.
+	if !utf8.ValidString(name) {
+		return "", fmt.Errorf("cannot derive a slug from %q: the name is not valid UTF-8, so the characters it holds cannot be read (a blockId is lowercase a-z, 0-9 and hyphens only), and deriving one anyway would give your app a different permanent public id than you typed — choose one yourself with --slug <slug>", name)
+	}
+	if lossy := LossyChars(name); len(lossy) > 0 {
+		return "", fmt.Errorf("cannot derive a slug from %q: %s cannot appear in a blockId (lowercase a-z, 0-9 and hyphens only), and dropping them would give your app a different permanent public id than you typed — choose one yourself with --slug <slug>", name, quoteChars(lossy))
 	}
 	s := strings.ToLower(strings.TrimSpace(name))
 	s = nonSlugChars.ReplaceAllString(s, "-")
