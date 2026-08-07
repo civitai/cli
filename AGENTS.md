@@ -1566,11 +1566,26 @@ neither one's.
       image exits 2, an unreadable one does not. And it is deliberately **not a
       new code 7**: that would be a contract EXPANSION every existing
       `case $?` script meets as an unknown, and it would promise a taxonomy the
-      CLI cannot deliver — `generate --input <unreadable json>` is
-      `asUsageError`-tagged and exits **2** today, so "7 means filesystem" would
-      be false on arrival. `1` promises nothing it cannot keep. The contract is
-      published from `exitCodeDocs` (codes 1, 2 and 5 all say it), so the README
-      and `--help` moved together.
+      CLI cannot deliver. The CLI sorts a path failure by the AUTHOR'S MISTAKE,
+      not by the errno — a missing `--image`, a missing `--input` and a
+      directory passed to either are all filesystem facts that exit **2**,
+      because what went wrong is the invocation — so "7 means filesystem" would
+      be false on arrival however the code were wired. `1` promises nothing it
+      cannot keep. The contract is published from `exitCodeDocs` (codes 1, 2
+      and 5 all say it), so the README and `--help` moved together.
+      🔴 **The EXAMPLE this bullet used to give is RETRACTED, because the
+      behaviour changed underneath it — the conclusion never rested on it.** It
+      read "`generate --input <unreadable json>` is `asUsageError`-tagged and
+      exits **2** today". True when written, and it was a BUG rather than a
+      taxonomy problem: `readGraphInput` wrapped every `os.ReadFile` failure in
+      `asUsageError` alike, so an unreadable file exited 2 while the code-2 note
+      in `exitCodeDocs` already promised it exits 1, and while the stdin sibling
+      twelve lines up in the same function returned its read failure untagged
+      and exited 1. Closed in #251: an unreadable `--input` now exits **1**, a
+      missing one and a directory still exit **2**. Do not re-derive the old
+      inconsistency from this bullet — and do not read the retraction as
+      weakening the case against a code 7, which stands on the contract
+      expansion alone.
     - 🔴 **THERE WERE TWO COPIES, AND FIXING ONE IS WHAT THIS ITEM NOW EXISTS
       TO PREVENT.** `pkg/civitai/retry.go`'s `isTransientNetErr` carried the
       IDENTICAL unfixed spelling through #242, and `syscall.Errno.Timeout()` is

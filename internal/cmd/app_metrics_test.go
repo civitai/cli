@@ -664,6 +664,34 @@ func TestAppMetricsNoApprovedBlockYet(t *testing.T) {
 	if rec.trpcReached {
 		t.Error("a null appBlockId must not reach the analytics query")
 	}
+
+	// 🔴 THE EXIT CODE, PINNED WITH errors.Is — AND IT IS THE HALF THE MESSAGE
+	// ASSERTIONS ABOVE CANNOT SEE (AGENTS.md item 7: the sentinels carry no
+	// visible text, so a message check says nothing about the code).
+	//
+	// This case must stay on the GENERIC code 1 and must NOT be promoted to 4.
+	// The sibling nine lines up in resolveAppBlockID already returns
+	// ErrNotFound → exit 4 for len(subs)==0 — the app genuinely does not exist.
+	// Collapsing both onto 4 destroys the only actionable distinction the
+	// resolver's own doc comment says it exists to draw ("fix your slug" versus
+	// "wait for approval"), and 4 would additionally promise "does not exist"
+	// about an app that does. exitCodeDocs publishes this case under code 1 —
+	// a resource that exists but is not READY — so the docs and the code have
+	// to agree here or one of them is lying.
+	//
+	// Without this, "promote it to ErrNotFound" is a one-token mutation that
+	// leaves the message identical and the whole suite green. Its positive
+	// control is TestAppMetricsUnknownSlugIsActionableNotFound, which requires
+	// the genuine-absence case to STILL be ErrNotFound — so this assertion
+	// cannot be satisfied by removing exit 4 from the resolver altogether.
+	if errors.Is(err, civitai.ErrNotFound) {
+		t.Errorf("an app that EXISTS but has no approved version must not classify as ErrNotFound (exit 4) — "+
+			"exit 4 means the slug is wrong, and this slug is right. It stays on the generic code 1, which is "+
+			"what exitCodeDocs publishes for a resource that exists but is not ready. got %T: %v", err, err)
+	}
+	if errors.Is(err, ErrUsage) {
+		t.Errorf("waiting for approval is not a mistake about the invocation (exit 2), got %T: %v", err, err)
+	}
 }
 
 func TestAppMetricsPicksNewestNonNullAppBlockID(t *testing.T) {
