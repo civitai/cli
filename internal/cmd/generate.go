@@ -313,7 +313,29 @@ interpreted, so nothing in it is checked before you pay for it.`,
 			if err != nil {
 				return err
 			}
-			if cfg.Token() == "" {
+			// 🔴 ONE credential gate, and it stays here — before every seam is
+			// built, not pushed down into the call sites. `--print-input` is the
+			// single exception, and only when it reaches no authed request at
+			// all: it assembles the graph and exits before the estimator, the
+			// submit and the balance read, so with no `--image` it makes NO
+			// request of any kind and refusing it contradicted the invariant
+			// stated at the --print-input short-circuit below. Issue #257.
+			//
+			// 🔴 The condition is `--image`, NOT `--checkpoint`/`--lora`, and
+			// the difference is which hop needs a credential. `--image` with a
+			// local file UPLOADS before printing (item 19(f)) and hop 1 of that
+			// upload — `getConsumerBlobUploadUrl` — is AUTHED (item 19(e)), so
+			// the flag genuinely needs a token even on this path. An https
+			// `--image` reaches only the credential-free fetch, but a token is
+			// still required for the whole flag rather than per value: the
+			// narrower rule buys nothing, and "some --image values need a
+			// credential" is a worse contract than "--image does".
+			// `--checkpoint`/`--lora` resolve through the PUBLIC
+			// `GET /api/v1/model-versions/{id}` (item 13, "free,
+			// unauthenticated-capable"), so gating on them would keep refusing
+			// a case that demonstrably works with no credential.
+			needsCredential := !o.printInput || len(o.images) > 0
+			if needsCredential && cfg.Token() == "" {
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf(
 					"no token configured — generation needs a credential with the AI Services scopes: "+
 						spendCredentialRoutes+". Or set CIVITAI_TOKEN"))
@@ -850,6 +872,10 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// make --print-input emit a document that --input then cannot submit,
 		// destroying the round-trip that is the whole feature. With no
 		// --checkpoint/--lora there is no request of any kind.
+		//
+		// That last sentence is what the credential gate in RunE now honours:
+		// `--print-input` without `--image` needs no token, because nothing on
+		// this path sends one. Issue #257 — the command used to refuse offline.
 		return printAssembledGraph(out, built.graph)
 	}
 
