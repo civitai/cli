@@ -201,7 +201,7 @@ Get started:
   # Browse & download
   civitai models search --query "pony" --limit 5
   civitai images search --sort "Most Reactions" --period Week
-  civitai download 128713 --layout comfyui --root ~/ComfyUI
+  civitai download ` + downloadExampleVersionID + ` --layout comfyui --root ~/ComfyUI
 
   # Build an App
   civitai login                    store your API token
@@ -212,7 +212,7 @@ Get started:
 		Example: `  # Browse & download the public catalog (no account needed to read).
   civitai models search --query "dreamshaper" --limit 5
   civitai images search --sort "Most Reactions" --period Week
-  civitai download 128713 --layout comfyui --root ~/ComfyUI
+  civitai download ` + downloadExampleVersionID + ` --layout comfyui --root ~/ComfyUI
 
   # Browse the App store.
   civitai app list

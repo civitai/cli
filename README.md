@@ -113,14 +113,14 @@ civitai models search --base-model Illustrious --type Checkpoint --sort "Most Do
 civitai models search --type TextualInversion --base-model "SDXL 1.0"
 
 # Inspect a specific model or a specific model version:
-civitai models get 4384
-civitai model-versions get 128713
+civitai models get 618692
+civitai model-versions get 691639
 
 # Download a version's file(s) — SHA256-verified, streamed atomically.
 # `--layout` routes each file into the right app subfolder (also `a1111`);
 # `--dry-run` prints the plan without transferring. Downloads require `civitai login`.
-civitai download 128713 --layout comfyui --root ~/ComfyUI
-civitai download 128713 --dry-run
+civitai download 691639 --layout comfyui --root ~/ComfyUI
+civitai download 691639 --dry-run
 
 # Find and read articles (guides) right in the terminal:
 civitai articles search --query "comfyui workflow"
@@ -157,6 +157,13 @@ civitai app submit
 
 # 6. Check where your submission is in review / deploy.
 civitai app status
+
+# 7. Attach the store-listing media. An icon AND a cover are REQUIRED before the
+#    listing can publish — do it now, while the app is in review; it carries
+#    forward on approval. `listing status` shows what's still missing.
+civitai app listing set-icon ./assets/icon.png
+civitai app listing set-cover ./assets/cover.png
+civitai app listing status
 ```
 
 > Want to drive the **real** backend (real Buzz/compute) before submitting? Mint
@@ -208,9 +215,10 @@ README. For the end-to-end walkthrough, see
 | `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
 | `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the invite-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). `--spend` explicitly REQUESTS `ai:write:budgeted` (real Buzz); omit it and that scope is **filtered out** of the request — the CLI never asks for budgeted spend implicitly, even when your manifest declares it (the scaffolded money app does, so a live run that used to generate now needs `--spend`). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
-| `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your dev port (start `npm run dev:tunnel` first) to the Civitai tunnel endpoint, prints the URL to open, and tears everything down on Ctrl-C or an idle timeout. Before minting it also **pre-flights whether the host can actually embed your dev server** — the host iframes it sandboxed (opaque `null` origin), so a dev server missing `Access-Control-Allow-Origin: *`, missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that excludes `civitai.com` loads as a blank iframe with no error anywhere. Those are printed as warnings (never fatal) **twice** — once the moment the checks run, so you still get them if you Ctrl-C the DNS wait, and again just above the URL, with the `vite.config.ts` fix. Apps scaffolded by `civitai app init --template page-money` already satisfy all of it. The tunnel endpoint is live; access is gated behind an Apps-author invite **and** a server kill-switch flag, so if you are not enrolled the mint reports "not available" — ask to be added to the cohort. Publishing the tunnel host through external-dns + Cloudflare usually takes 1–3 min (occasionally longer); the command waits for it and prints the elapsed time. |
+| `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your dev port (start `npm run dev:tunnel` first) to the Civitai tunnel endpoint, prints the URL to open, and tears everything down on Ctrl-C or an idle timeout. Before minting it also **pre-flights whether the host can actually embed your dev server** — the host iframes it sandboxed (opaque `null` origin), so a dev server missing `Access-Control-Allow-Origin: *`, missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that excludes `civitai.com` loads as a blank iframe with no error anywhere. Those are printed as warnings (never fatal) **twice** — once the moment the checks run, so you still get them if you Ctrl-C the DNS wait, and again just above the URL, with the `vite.config.ts` fix. Apps scaffolded by `civitai app init --template page-money` already satisfy all of it. The tunnel endpoint (`sish.civitai.com:2224`) is **live**; access is gated behind an Apps-author invite **and** a server kill-switch flag, so if you are not enrolled the mint reports **"not available"** — ask to be added to the cohort. Publishing the tunnel host through external-dns + Cloudflare usually takes 1–3 min (occasionally longer); the command waits for it and prints the elapsed time. |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message`) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
+| `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `civitai app submit` mints your listing as a **draft**, so you can set the media *while the app is in review* and it carries forward on approval. `listing status` prints what is attached vs. what the publish floor still requires. Source images are validated locally (png/jpeg/webp; icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB) before upload, then wait for the content scan. On an **already-live** listing an attach opens a **revision** for moderator re-review (`--changelog`, `-y`). App resolved from `block.manifest.json` in the CWD, or `--slug`. See [After you submit](#after-you-submit-review--approve--deploy). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
@@ -495,15 +503,15 @@ version deterministically by its numeric **version id**, or resolve a model's
 default (first) published version with `--model`:
 
 ```bash
-civitai download 128713                       # the version's primary file → ./<server-name>
+civitai download 691639                       # the version's primary file → ./<server-name>
 civitai download --model 4384                 # resolve model 4384's default version, then download its primary file
 civitai download --model 4384 --dry-run       # print the plan (files, sizes, hashes, targets) — download nothing
-civitai download 128713 --out ./dreamshaper.safetensors
-civitai download 128713 --file vae --out-dir ./models   # pick a file by name; write into a dir
+civitai download 691639 --out ./flux_dev.safetensors
+civitai download 290640 --file vae --out-dir ./models   # pick a file by name; write into a dir
 civitai download 691639 --file 1234567                  # pick one of two same-named files by its file id
-civitai download 128713 --all --out-dir ./models        # every file in the version
-civitai download 128713 --all --layout comfyui --root ~/ComfyUI   # route each file to its type folder
-civitai download 128713 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout + base-model compat warning
+civitai download 290640 --all --out-dir ./models        # every file in the version
+civitai download 290640 --all --layout comfyui --root ~/ComfyUI   # route each file to its type folder
+civitai download 691639 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout + base-model compat warning
 ```
 
 > **Downloads require authentication.** Every model-file download needs a token —
@@ -513,7 +521,7 @@ civitai download 128713 --layout a1111 --for-base "SDXL 1.0"      # A1111 layout
 
 Behavior:
 
-- **Identifier** — exactly one of the positional `<version-id>` or `--model <model-id>` is required (no numeric-ambiguity guessing).
+- **Identifier** — exactly one of the positional id or `--model <model-id>` is required. The positional is normally a model-**version** id, but because `models search` / `models get` print **model** ids, handing one over just works: the CLI notices it is a model id and downloads that model's default version, printing a `note: <id> is a model id — downloading its default version <v>` line. When a number is **both** a valid model id and a valid version id (common for low/mid numbers), the CLI **stops** rather than guess, naming both interpretations — re-run with `--model <id>` (that model's default version), `--version <id>` (that version as-is), or `--yes` to take the version interpretation and have it echoed back. `--version` names a version id explicitly and skips the stop entirely.
 - **`--model` resolves the default version** — the model's default (first published) version; its primary file is downloaded regardless of file type. Any model type works, including a `type: Workflows` model whose deliverable is a downloadable `Archive`.
 - **`--dry-run`** — resolve the version + selected file(s) and print the plan (each file's name, size, SHA256, resolved target path, and whether authentication will be required) then exit `0`, transferring nothing and creating no file (not even a `.part`). Works with `--file`, `--all`, `--model`, `--out`, `--out-dir`, and `--layout`/`--root` (the plan shows the routed target paths).
 - **File selection** — defaults to the version's **primary** file. `--file` selects one file by **numeric file id** (the version's `files[].id`) or by **name** (exact, else a unique case-insensitive substring; ambiguous/none errors and lists the candidate files with their ids). `--all` downloads every file.
@@ -830,6 +838,46 @@ make the subdomain serve (but `dev:live` works against a pending app — see
 walkthrough (build → submit → review → deploy), see the
 [Build your first App](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md)
 guide.
+
+**Budget time for artwork.** Review and deploy are not the only gate: a store
+listing **cannot go live without an icon AND a cover**. `civitai app submit`
+mints your listing as a **draft** and prints this reminder inline — which is the
+moment to act on it, because the media is settable **while the app is in review**
+and carries forward when a moderator approves it. Attach it without the browser:
+
+```text
+$ civitai app listing status                        # what's attached vs. required
+App:             my-app
+Listing status:  draft
+Icon:            MISSING (required)
+Cover:           MISSING (required)
+Screenshots:     0
+
+⚠ Not publishable yet — missing icon and cover.
+  Add one:  civitai app listing set-icon <file>
+  Add one:  civitai app listing set-cover <file>
+
+$ civitai app listing set-icon ./assets/icon.png    # square-ish, ≤2 MiB
+$ civitai app listing set-cover ./assets/cover.png  # landscape hero, ≤4 MiB
+$ civitai app listing add-screenshot ./shot.png --caption "Grid view"   # optional, up to 8
+```
+
+Details worth knowing before you start:
+
+- **Source images** are png/jpeg/webp and are size-checked **locally before any
+  upload** — icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB. Each attach then
+  waits for the platform content scan (a blocked image is rejected, not
+  attached).
+- **The app is resolved from `block.manifest.json`** in the current directory;
+  pass `--slug <blockId>` (with `--dir` if you prefer) to run it from anywhere.
+- **On a listing that is already LIVE**, attaching media does not edit the live
+  listing — it opens a **revision** that goes back to moderator review. Describe
+  it with `--changelog "<what changed>"`; `-y`/`--yes` skips the confirmation.
+  `civitai app listing status` on a live listing reports that in-progress
+  revision's media, and tells you when a revision is already under review.
+- **Screenshots** are managed by id (the `alsc_…` ids `listing status` prints):
+  `rm-screenshot <id>` removes one, and `reorder <id...>` takes **all** the
+  current ids in the new order — a partial set is rejected.
 
 **Need to change the bundle while a request is still `pending`?** Withdraw it
 first to free the slug, then resubmit:

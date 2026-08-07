@@ -20,6 +20,57 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// downloadExampleVersionID is the model-VERSION id every `civitai download`
+// example uses as a BARE POSITIONAL id — in this command's help, in the root
+// command's help, and in the README.
+//
+// 🔴 It must be a number that is a valid VERSION id and NOT also a valid MODEL
+// id. A bare positional that is BOTH makes `download` stop and refuse to guess
+// (exit 2, see resolveDownloadVersion), so an ambiguous id turns the first
+// command a new user copy-pastes into an error. That is issue #227: the shipped
+// example was 128713, which is DreamShaper's v8 VERSION id *and* the MODEL id of
+// an unrelated NSFW-titled model, so the error message also sent the reader
+// there. `--version 128713` / `--model 4384` stay fine — they name the kind
+// explicitly and can never be ambiguous, which is why they are still used below.
+//
+// Verified against civitai.com on 2026-08-06 (redo this before changing it):
+//
+//	GET /api/v1/model-versions/691639 -> 200  (FLUX "Dev", model 618692)
+//	GET /api/v1/models/691639         -> 404  (so the bare id cannot be ambiguous)
+//	civitai download 691639 --dry-run -> rc=0, plans flux_dev.safetensors
+const downloadExampleVersionID = "691639"
+
+// unambiguousExampleIDs is the set of ids an example is allowed to pass as a
+// BARE POSITIONAL to `civitai download`. The invariant is NOT "must be a version
+// id" — it is "must not be BOTH", because only a number that resolves as a model
+// id *and* a version id triggers the refuse-to-guess stop. A model-id-only entry
+// is fine: `download` auto-resolves it to that model's default version and says
+// so. Values record what each one resolved as when it was verified.
+//
+// Adding an id here is a claim about the LIVE API, not a formatting choice.
+// Verify both routes before you add one — /api/v1/models/<id> AND
+// /api/v1/model-versions/<id> — and reject any id where both answer 200.
+//
+// 🔴 The keys are LITERALS, never `downloadExampleVersionID`. Keying the headline
+// entry by the constant made the allowlist self-fulfilling: repointing the
+// constant at any id moved the key with it, so the membership check passed by
+// construction. Measured — that mutant SURVIVED, and only the separate hardcoded
+// -128713 denylist caught the one case; repointing the constant at a DIFFERENT
+// ambiguous id (403131) was green. A literal key forces a human to re-verify.
+var unambiguousExampleIDs = map[string]string{
+	"691639": `version only (200) — FLUX "Dev", model 618692`,
+	// Ships a Model *and* a distinctly-named VAE, which is what makes the
+	// README's `--file vae` / `--all` / `--layout` fan-out examples runnable.
+	// 691639's two files share a name (that is the point of the `--file <id>`
+	// example), so it cannot demonstrate those.
+	"290640": `version only (200) — Pony Diffusion V6 XL "V6", model 257749`,
+	// A MODEL id on purpose: it is what the `download` help uses to show that
+	// pasting a model id from `models search` auto-resolves to the default
+	// version. Verified 2026-08-06: `civitai download 4384 --dry-run` prints
+	// "note: 4384 is a model id — downloading its default version 128713", rc=0.
+	"4384": `model only (200); /model-versions/4384 404s — DreamShaper`,
+}
+
 // downloadOpts holds the resolved flag values for `civitai download`.
 type downloadOpts struct {
 	modelID  string // --model (mutually exclusive with the positional version id)
@@ -113,10 +164,10 @@ the CLI notes this on stderr. Only download models from creators you trust.`,
 		Example: `  civitai download 691639
   civitai download --version 128713                # force a version id (skips the ambiguous-id stop)
   civitai download --model 4384 --out ./dreamshaper.safetensors
-  civitai download 691639 --file vae --out-dir ./models
+  civitai download 290640 --file vae --out-dir ./models
   civitai download 691639 --file 1234567          # pick one of two same-named files by id
-  civitai download 691639 --all --out-dir ./models
-  civitai download 691639 --all --layout comfyui --root ~/ComfyUI
+  civitai download 290640 --all --out-dir ./models
+  civitai download 290640 --all --layout comfyui --root ~/ComfyUI
   civitai download 691639 --layout a1111 --for-base "SDXL 1.0"`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
