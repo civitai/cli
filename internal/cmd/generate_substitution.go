@@ -133,8 +133,19 @@ func reportModelSubstitutions(errw io.Writer, subs []genapi.ModelSubstitution, p
 func substitutionLead(phase substitutionPhase) string {
 	switch phase {
 	case substitutionAtEstimate:
+		// 🔴 NO POSITIONAL PROMISE — an earlier wording said "the estimate BELOW".
+		// This lead is printed on all three pre-spend surfaces, and on one of them
+		// nothing follows it: `--yes` skips the prompt, and `confirmGenerate`'s
+		// --yes arm prints the image disclosure and returns, never the cost. So the
+		// old wording pointed at an estimate that is never rendered — on the one
+		// surface that is MANDATORY non-interactively and has nobody watching.
+		// Describing the estimate that PRODUCED this warning is true everywhere;
+		// describing where it lands on screen is not. Pinned by
+		// TestConfirmGenerate_YesPathPrintsNoCost, which goes red if `--yes` ever
+		// starts printing the cost — at which point a positional wording would be
+		// honest again and this comment is the record of why it wasn't.
 		return "The server will NOT use the checkpoint you asked for. It has substituted a different model, " +
-			"and the estimate below prices the SUBSTITUTE. Nothing has been submitted or charged yet."
+			"and this estimate prices the SUBSTITUTE. Nothing has been submitted or charged yet."
 	case substitutionAfterSubmit:
 		return "The server did NOT use the checkpoint you asked for. It substituted a different model and " +
 			"this generation HAS BEEN CHARGED for the model that actually ran."

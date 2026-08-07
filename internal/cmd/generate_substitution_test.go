@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/civitai/cli/internal/genapi"
+	"github.com/spf13/cobra"
 )
 
 // Surfacing silent checkpoint substitutions (civitai/civitai#3665).
@@ -163,10 +164,49 @@ func TestSubstitutionLead_AllPhasesNonEmptyAndPairwiseDistinct(t *testing.T) {
 // So the whole sentence is the contract. Any edit to user-facing money wording
 // has to come here and be read, which is the point: these three sentences are the
 // only place the CLI states whether the caller's money has already moved.
+// TestConfirmGenerate_YesPathPrintsNoCost pins the FACT the estimate lead's
+// wording depends on.
+//
+// 🔴 THIS IS A RELATIONSHIP GUARD, not a test of `confirmGenerate`. The
+// pre-spend lead used to say "the estimate BELOW prices the SUBSTITUTE". That is
+// true on `--dry-run` (the quote is printed after) and on the interactive path
+// (`confirmGenerate` prints cost + balance in the prompt) — and FALSE on `--yes`,
+// where the --yes arm prints the image disclosure and returns without ever
+// rendering the cost. So the warning pointed at output that does not exist, on
+// the one pre-spend surface that is MANDATORY non-interactively and has nobody
+// watching it.
+//
+// The wording no longer makes a positional claim. This test exists so that stays
+// a deliberate choice: if `--yes` ever starts printing the cost, this goes red,
+// and whoever changed it can re-read `substitutionLead` and decide whether a
+// positional wording has become honest again. Without it, the fix is just a
+// sentence nobody can check.
+func TestConfirmGenerate_YesPathPrintsNoCost(t *testing.T) {
+	cmd := &cobra.Command{}
+	var errw bytes.Buffer
+	cmd.SetErr(&errw)
+
+	o := generateOpts{assumeYes: true}
+	if err := confirmGenerate(cmd, o, &resolvedGraph{}, 12345, 999999, true); err != nil {
+		t.Fatalf("confirmGenerate(--yes) = %v, want nil", err)
+	}
+
+	got := errw.String()
+	// The cost is 12345; `buzzAmount` renders it for the prompt and the
+	// non-TTY refusal. Neither may appear on the --yes path.
+	for _, forbidden := range []string{buzzAmount(12345), "12345"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("--yes printed the cost (%q) — the estimate lead may now legitimately "+
+				"say \"the estimate below\"; re-read substitutionLead before changing this test.\ngot:\n%s",
+				forbidden, got)
+		}
+	}
+}
+
 func TestSubstitutionLead_ExactTextPerPhase(t *testing.T) {
 	want := map[substitutionPhase]string{
 		substitutionAtEstimate: "The server will NOT use the checkpoint you asked for. It has substituted a different model, " +
-			"and the estimate below prices the SUBSTITUTE. Nothing has been submitted or charged yet.",
+			"and this estimate prices the SUBSTITUTE. Nothing has been submitted or charged yet.",
 		substitutionAfterSubmit: "The server did NOT use the checkpoint you asked for. It substituted a different model and " +
 			"this generation HAS BEEN CHARGED for the model that actually ran.",
 		substitutionOnRead: "The server did not use the checkpoint that was requested for this workflow. It substituted a " +

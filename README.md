@@ -1095,7 +1095,7 @@ The server now reports each swap, and `civitai generate` surfaces it:
 ```console
 $ civitai generate "a cat" --checkpoint 999999999 --dry-run
 ⚠ The server will NOT use the checkpoint you asked for. It has substituted a
-  different model, and the estimate below prices the SUBSTITUTE. Nothing has
+  different model, and this estimate prices the SUBSTITUTE. Nothing has
   been submitted or charged yet.
     requested version 999999999 -> will run version 2436219  (reason: unrecognized)
       the server does not offer that version in this model family at all …
