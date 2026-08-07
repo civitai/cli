@@ -8,10 +8,15 @@ what remains is follow-up hardening and one open platform issue.
 
 ## State now
 
-- **Branch:** `main` (base clone is **1 behind** `origin/main` — `git -C ~/workspace/civit/cli merge --ff-only origin/main` first).
-- **Working tree clean** except three pre-existing untracked files in `claudedocs/`
-  (`img2img-anime-research.md`, `photo-to-anime-workflow.json`, `verify_workflow.py`) —
-  **not mine, leave them.**
+- 🔴 **The base clone is a SHARED checkout — check `git branch --show-current` before
+  assuming it is on `main`.** As of 2026-08-06 it sits on
+  `docs/login-comment-scanner-reflow` with an uncommitted `internal/cmd/login.go`
+  belonging to **another session**. Do not switch it, stash it, or `merge --ff-only`
+  over it. Work in a worktree instead:
+  `git worktree add <dir> -b <branch> origin/main` (there is no `.envrc` in this repo,
+  so a worktree needs no direnv setup).
+- **Untracked files in `claudedocs/`** (`img2img-anime-research.md`,
+  `photo-to-anime-workflow.json`, `verify_workflow.py`) — **not mine, leave them.**
 
 ### DONE (merged to `main`)
 
@@ -30,10 +35,28 @@ Platform issues filed against `civitai/civitai`:
 ### IN FLIGHT
 
 - **PR #237** — the two substitution follow-ups (handle-before-advisory ordering, and
-  the SUPERSEDED annotation). `MERGEABLE/CLEAN`, gate verified locally
-  (**2377 PASS / 0 FAIL / 4 SKIP**, gofmt + vet clean, 13/13 semantic mutants killed).
-  CI checks were queued at handoff. **Merge it, or review first — nothing else should
-  touch `generate_substitution.go` until it lands.**
+  the SUPERSEDED annotation). `MERGEABLE/CLEAN`; all **12** CI checks `SUCCESS`.
+  **Nothing else should touch `generate_substitution.go` until it lands.**
+  ✅ **Gate INDEPENDENTLY re-verified** (not the author's self-report):
+  - **2377 `--- PASS` / 0 `--- FAIL` / 4 `--- SKIP`**, no timeout panic — counted,
+    never read off the exit code. The 4 skips are the documented by-design ones.
+  - **10/10 mutants killed** on a *separately constructed* battery, weighted at the
+    CALL SITES rather than the renderer internals — which is the hole AGENTS item
+    21(g) records from the first round. Both classes named there are now covered:
+    an operand swap (note prints `Requested` instead of `Applied`) and a call-site
+    phase swap (`substitutionAtEstimate` → `substitutionAfterSubmit`) each died to a
+    specific named test. Also killed: advisory-before-handle ordering, note always
+    empty, match on `Applied`, note dropped from confirm only, dropped from
+    `--dry-run` only, hardcoded tense, dropped `checkpointSet` guard, `--no-wait`
+    JSON branch reporting non-terminal.
+  - 🔴 **The battery carried a POSITIVE CONTROL**, because 10/10 KILLED is also what
+    a harness wired to nothing prints: a real edit no test can see (a comment word)
+    was scored **SURVIVED**, so the harness can distinguish. Each mutation also
+    asserted it actually applied, so a no-op `perl` could not be scored as a survivor.
+  - `gofmt -s -l .` 0 files **with a planted malformed file flagged** as its control;
+    `go vet` clean; `golangci-lint run` **0 issues with a planted `ineffassign` +
+    `unused` flagged** in `internal/cmd` as its control (the handoff's own warning
+    that a lint verdict needs a known-bad first).
 
 ### Deploy/verify status — honest
 
@@ -94,32 +117,68 @@ Platform issues filed against `civitai/civitai`:
   no parallel notion of tense). Annotate rather than swap, so the user still sees that
   their input was overridden.
 
-### 3. #3667 — prompt-audit coverage guard (platform, OPEN)
+### 3. #3667 — prompt-audit coverage guard (platform, OPEN) — ⚠️ NOW CONFIRMED, NOT PREVENTIVE
+
+🔴 **THE "no known bypass" LINE THAT USED TO BE HERE WAS WRONG. Do not restore it.**
+It read *"Ruled out — IMPORTANT, do not re-derive: there is no known bypass"*, and its
+reasoning was that ecosystem graphs lacking a `prompt` node **compose** a shared one
+(`flux-graph.ts:269` merges `promptGraph`). That is true of the image graphs and false
+as a generalisation — checking that some graphs compose `promptGraph` says nothing
+about the graphs that deliberately **opt out of the shared node names**. Two do.
 
 - **Symptom:** the content audit is keyed by hardcoded field names — `prompt` +
-  `negativePrompt` (`orchestration-new.service.ts:1452`) and, separately,
-  `musicDescription` + `lyrics` (`:1495`). Nothing enforces that a new text-bearing
+  `negativePrompt` (`orchestration-new.service.ts:1460`) and, separately,
+  `musicDescription` + `lyrics` (`:1510`). Nothing enforces that a new text-bearing
   graph node gets an audit block.
-- **Observed:** `data` is rebuilt from **declared graph nodes only**
-  (`data-graph.ts` `_validate`, ~:735-765), so the gate is necessarily name-based.
-  ACE Audio needing its own block is proof the pattern recurs. No test in
+- **Observed:** `data` is rebuilt from **declared graph nodes only**, so the gate is
+  necessarily name-based. No test in
   `src/server/services/orchestrator/__tests__/` asserts call-site coverage.
-- **Ruled out — IMPORTANT, do not re-derive:** there is **no known bypass**. An earlier
-  read suggested several ecosystem graphs lack a `prompt` node; they **compose** a
-  shared one (e.g. `flux-graph.ts:269` merges `promptGraph`). ACE Audio's fields are
-  already covered at `:1495`. Filing this as a security hole would be an overclaim.
-- **Leading hypothesis:** ask for an asserted ledger (text-bearing nodes vs audited
-  fields) failing when the first set grows.
-- **Next probe:** none needed from the CLI side; it is a platform ask awaiting triage.
+- 🔴 **CONFIRMED unaudited, verified by code path at `civitai@a7e0bcd668`:**
+  - **Hunyuan3D declares NO `prompt` node** — only `hunyuanPrompt`
+    (`hunyuan3d-graph.ts:71`), prefixed because the bare names *"collide with the
+    standard image Controllers in `GenerationForm.tsx`"* (`:12`). `data.prompt` is
+    absent → `:1460` false → `auditPromptServer` never called. The handler then maps
+    it back: `prompt: hunyuanPrompt ? hunyuanPrompt : undefined`
+    (`hunyuan3d-graph.handler.ts:58`). The generator's prompt is text nothing audited.
+  - **PolyGen's `texturePrompt`** (600 chars, `polygen-graph.ts:162`) is covered by no
+    audit block, reaches the orchestrator (`polygen.schema.ts:143`), and is rendered
+    publicly (`pages/3d-models/[id]/[[...slug]].tsx:279`). On `img2model3d` it is the
+    only text in the request — that workflow's `prompt` node is gated
+    `when: ctx.workflow.startsWith('txt')` and is deleted from `data`.
+- **Sweep basis (so the next reader does not redo it):** all **79** declared node keys
+  across `src/shared/data-graph/generation/*.ts`, checking every node whose input is a
+  bare `z.string()`. Complete free-text set: `prompt`/`negativePrompt` (audited
+  `:1467`), `musicDescription`/`lyrics` (audited `:1510`), `hunyuanPrompt`,
+  `texturePrompt`, `title` (ACE Audio, display-only per its own comment).
+  ⚠️ A `.node('key'` grep on ONE line misses these — both are multi-line `.node(\n
+  'name',` declarations. Use a `perl -0777` multiline match.
+- 🔴 **What this still is NOT — keep the claim this size.** The CLI is not the vector:
+  both fields are reachable from the first-party form (`GenerationForm.tsx:1528`,
+  `:2014`) and from any direct tRPC caller holding a personal API key. The gate stops
+  accidents, not adversaries. And **no live generation probe was run** — this is
+  reachability by code path, not a demonstrated exploit.
+- **Escalated:** comment on civitai/civitai#3667
+  (`#issuecomment-5210701143`) with the evidence above, proposing the asserted ledger
+  (text-bearing nodes vs audited fields, failing when the first set grows). Open
+  question left to the triager: whether the ledger keys on the graph node name or on
+  what the handler emits — Hunyuan3D is a case where those differ.
+- **CLI side:** PR #240 rewrites the `inputWorkflow` gate comment and design-doc §10 q4
+  from "SUSPECTED" to confirmed. No behaviour change; the gate was already correct.
 
 ## Next steps (ranked)
 
 1. **`git merge --ff-only origin/main`** in the base clone (1 behind).
 2. **Wait for / review the in-flight follow-up PR** (investigations 1 and 2). Verify its
    gate yourself — re-run its mutations, don't trust the report.
-3. **`--input` is txt2img-only on purpose.** Unblocking video/audio/comfy (all 51
-   ecosystems, free via `--input`) is gated on #3667's answer. That is the single
-   biggest capability unlock left.
+3. ~~**`--input` is txt2img-only on purpose.** Unblocking … is gated on #3667's
+   answer.~~ 🔴 **DECIDED: keep the gate. Do not unblock.** #3667 is now confirmed
+   rather than suspected (investigation 3), so the gate's own stated lift condition
+   — *"lift only when the upstream question is answered"* — has been answered in the
+   negative. Unblocking would make CLI traffic a second client to a confirmed
+   unaudited path. Revisit when the platform ships the coverage guard, and **not** on
+   the argument that the gap is reachable from the web anyway: that argument is true,
+   and it is an argument for fixing the platform. Still the biggest capability unlock
+   left — it is just not available yet.
 4. **webp support for `--image`** — needs `golang.org/x/image`, a new dependency.
    AGENTS.md puts that behind maintainer approval. **Zach's call.**
 5. `--steps` / `--cfg-scale` / `--sampler` — deliberately omitted; the server accepts
