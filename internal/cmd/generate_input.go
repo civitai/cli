@@ -17,18 +17,41 @@ import (
 // 🔴 This gate is a CONTENT-AUDIT guard, not a feature-completeness placeholder.
 // The server audits prompts at `'prompt' in data && typeof data.prompt ===
 // 'string'` (civitai/civitai ->
-// src/server/services/orchestrator/orchestration-new.service.ts), and the `data`
-// it tests is REBUILT FROM DECLARED GRAPH NODES ONLY. A graph that carries its
-// prompt somewhere other than a top-level `prompt` string node — a comfy graph's
-// embedded node inputs, a nested step input — is therefore exactly the shape
-// that reaches the generator with its prompt never having been seen by the
-// audit. Whether that is actually exploitable is an OPEN question upstream
-// (design doc §10 q4: "SUSPECTED; neither review resolved it"). Until it is
-// closed, a general-purpose raw-graph CLI would be the vector that turns a
-// suspected server-side gap into a shipped one, so `--input` is pinned to
-// txt2img — whose prompt IS the declared top-level `prompt` node the audit
-// reads. Lift this only when the upstream question is answered, not when the
-// next workflow "looks like it would work".
+// src/server/services/orchestrator/orchestration-new.service.ts:1460), and the
+// `data` it tests is REBUILT FROM DECLARED GRAPH NODES ONLY. A graph that
+// carries its prompt somewhere other than a top-level `prompt` string node
+// therefore reaches the generator with its prompt never having been seen by the
+// audit.
+//
+// 🔴 THAT IS NO LONGER A SUSPICION. An earlier revision of this comment called
+// it an OPEN question upstream, and a later session went further and recorded it
+// as "ruled out — no known bypass". Both are wrong, and the second is the
+// dangerous one: verified against civitai@a7e0bcd668, TWO shipped ecosystems are
+// exactly this shape.
+//   - Hunyuan3D declares NO `prompt` node — only `hunyuanPrompt`
+//     (hunyuan3d-graph.ts:71), prefixed because the bare names "collide with the
+//     standard image Controllers in GenerationForm.tsx" (:12). So `data.prompt`
+//     is absent, the audit never runs, and the handler maps the name back for
+//     the generator: `prompt: hunyuanPrompt ? hunyuanPrompt : undefined`
+//     (hunyuan3d-graph.handler.ts:58).
+//   - PolyGen's `texturePrompt` (polygen-graph.ts:162) is audited by nothing,
+//     reaches the orchestrator (polygen.schema.ts:143), and on `img2model3d` is
+//     the only text in the request — that workflow's `prompt` node is gated
+//     `when: workflow.startsWith('txt')` and is deleted from `data`.
+//
+// Neither was introduced deliberately: Hunyuan3D renamed its nodes to dodge a UI
+// Controller collision and changed its AUDIT status as a side effect, because
+// the two are keyed on the same strings with nothing tying them together.
+// Escalated as civitai/civitai#3667.
+//
+// 🔴 AND THE HONEST FRAMING, because the overclaim is tempting: this CLI is NOT
+// what holds the line. Both fields are reachable from the first-party generation
+// form, and any personal API key can call the tRPC procedure directly — so the
+// gate stops accidents, not adversaries. What it does buy is that we do not add
+// a second client to a CONFIRMED unaudited path while it is open. Lift this when
+// the server closes the coverage (#3667), not when the next workflow "looks like
+// it would work", and not on the argument that the gap is reachable elsewhere
+// anyway — that argument is true, and it is an argument for fixing the platform.
 const inputWorkflow = generateWorkflow
 
 // envelopeOnlyKeys are the keys the tRPC generate MUTATION destructures out of

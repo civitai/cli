@@ -21,7 +21,7 @@ import (
 //     outputDir is missing" reported `buildCommand`;
 //   - the budgeted-scope-no-page warning moved from `page` to `scopes`;
 //   - BOTH lockfile findings moved from `(project)` to `(root)` — the exact
-//     sentinel collapse AGENTS.md item 22 marks 🔴, because it sends a CI job
+//     sentinel collapse AGENTS.md item 23 marks 🔴, because it sends a CI job
 //     looking in block.manifest.json for a missing lockfile.
 //
 // The ledger below is BIDIRECTIONAL, which is what makes it a gate rather than a
@@ -86,7 +86,7 @@ func findingFieldLedger() []fieldExpectation {
 		{"is not an allowed build invocation", "buildCommand",
 			"the rule reports on buildCommand's own value"},
 		{"buildCommand is set but outputDir is missing", "outputDir",
-			"PAIR RULE: the finding names the MISSING side (AGENTS.md item 22) — " +
+			"PAIR RULE: the finding names the MISSING side (AGENTS.md item 23) — " +
 				"buildCommand is correct as written; outputDir is the edit"},
 		{"outputDir is set but buildCommand is missing", "buildCommand",
 			"PAIR RULE, the mirror: outputDir is correct as written; buildCommand is the edit"},
@@ -246,7 +246,7 @@ func TestEveryFindingCarriesItsDocumentedField(t *testing.T) {
 	}
 }
 
-// TestPairRuleNamesTheMissingField pins the CONVENTION AGENTS.md item 22 states
+// TestPairRuleNamesTheMissingField pins the CONVENTION AGENTS.md item 23 states
 // as a contract and nothing asserted: "for an 'X is set but Y is missing' pair
 // rule the field is **Y** (the missing one)".
 //
@@ -291,7 +291,7 @@ func TestPairRuleNamesTheMissingField(t *testing.T) {
 			if f.Field != p.missing {
 				t.Errorf("PAIR RULE INVERTED: %q reports field %q.\n"+
 					"  %q is the side that is SET and correct; %q is the side that is MISSING "+
-					"and is the edit that resolves the finding. AGENTS.md item 22: the field is "+
+					"and is the edit that resolves the finding. AGENTS.md item 23: the field is "+
 					"the missing one.\n  %s", p.fragment, f.Field, p.present, p.missing, f.Message)
 			}
 		}

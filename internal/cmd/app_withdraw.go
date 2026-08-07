@@ -50,8 +50,11 @@ for symmetry with "civitai app submit" so the same scripted flag works on both.`
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 
+			// Both refusals below are about the INVOCATION (a mutually exclusive
+			// pair, and a missing required id), so both are usage errors —
+			// exit 2, like the bad-flag-name errors Cobra already tags.
 			if idFlag != "" && len(args) == 1 {
-				return fmt.Errorf("pass the publish-request id as an argument OR via --id, not both")
+				return asUsageError(fmt.Errorf("pass the publish-request id as an argument OR via --id, not both"))
 			}
 			id := idFlag
 			if id == "" && len(args) == 1 {
@@ -59,7 +62,7 @@ for symmetry with "civitai app submit" so the same scripted flag works on both.`
 			}
 			id = strings.TrimSpace(id)
 			if id == "" {
-				return fmt.Errorf("a publish-request id is required — pass it as an argument or with --id (find it via `civitai app status`)")
+				return asUsageError(fmt.Errorf("a publish-request id is required — pass it as an argument or with --id (find it via `civitai app status`)"))
 			}
 
 			client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")

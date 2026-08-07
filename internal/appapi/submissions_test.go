@@ -3,10 +3,13 @@ package appapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 func sampleSubmission(slug, status string) Submission {
@@ -130,7 +133,19 @@ func TestGetSubmissionEmptyListIsNotFound(t *testing.T) {
 	c := New(srv.URL, "tok", "")
 	_, err := c.GetSubmission(context.Background(), "", "ghost")
 	if err == nil || !strings.Contains(err.Error(), "no such submission") {
-		t.Errorf("want no-such-submission error, got %v", err)
+		t.Fatalf("want no-such-submission error, got %v", err)
+	}
+	// The KIND, not the text — the exit code is derived from this and from
+	// nothing else (AGENTS.md item 7). A `?blockId=` miss answers 200 with an
+	// empty list, so this never reaches submissionsError's TagStatus and has to
+	// be tagged at the construction site; untagged it exits 1 where the docs
+	// (and the 404-answering `?id=` spelling of the same lookup) promise 4.
+	if !errors.Is(err, civitai.ErrNotFound) {
+		t.Errorf("empty-list miss must classify as not-found (exit 4), got %T: %v", err, err)
+	}
+	// Tag adds no visible text.
+	if err.Error() != "no such submission" {
+		t.Errorf("classification must not change the message, got %q", err.Error())
 	}
 }
 

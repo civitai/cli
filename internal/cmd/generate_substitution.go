@@ -165,6 +165,46 @@ func substitutionVerb(phase substitutionPhase) string {
 	return "ran"
 }
 
+// substitutionCheckpointNote is the annotation the approval summary appends to
+// its `Checkpoint:` line, or "" when there is nothing to annotate.
+//
+// 🔴 THE SUMMARY MUST NOT NAME THE MODEL THAT WILL NOT RUN. The summary echoes
+// the checkpoint as a NAME rather than an integer (AGENTS.md item 13) precisely
+// so the user approves something they can recognise — but with a substitution in
+// play the LAST model line before `Generate? [y/N]` was the requested one, which
+// is the one the server has already said it is discarding. So a user approved a
+// name that would not be used, with the warning scrolled several lines above.
+//
+// 🔴 IT ANNOTATES, IT NEVER SWAPS. Printing the applied id in place of the
+// requested one would erase the fact that the user's own input was overridden,
+// which is a second silence rather than a fix. The requested label stays, and
+// the note says it has been superseded and by what.
+//
+// 🔴 THE TENSE COMES FROM THE PHASE, via substitutionVerb — the same constant
+// the lead and the id line already key off (AGENTS.md item 21(f)), not a
+// parallel notion of "before/after the money". Both call sites are pre-spend,
+// so a wrong argument here would tell someone deciding whether to spend that
+// the substitute already ran.
+//
+// The match is by REQUESTED ID, deliberately. The record names the id the caller
+// sent, so a substitution of something other than the checkpoint on this line
+// leaves it un-annotated — the line is then accurate, and the warning block above
+// still carries the ids. `label` is empty on the --input path (the CLI does not
+// interpret that graph, so it prints no checkpoint line at all), and an
+// annotation with no line to hang on would be lost.
+func substitutionCheckpointNote(label string, o generateOpts, subs []genapi.ModelSubstitution, phase substitutionPhase) string {
+	if label == "" || !o.checkpointSet || len(subs) == 0 {
+		return ""
+	}
+	for _, s := range subs {
+		if s.Requested == o.checkpoint {
+			return fmt.Sprintf("  [SUPERSEDED — the server %s version %d instead; see the warning above]",
+				substitutionVerb(phase), s.Applied)
+		}
+	}
+	return ""
+}
+
 // substitutionFlagHint suggests --fail-on-substitution, and ONLY when the caller
 // has not already passed it.
 //

@@ -335,6 +335,94 @@ func TestSubmitFloorHeadsUp(t *testing.T) {
 	}
 }
 
+// readmeCommandRefRow returns the single command-reference TABLE ROW whose
+// command cell names `cmd`. A row is `| `civitai …` | … |`; a passing mention in
+// prose is not one, which is the distinction this helper exists to enforce.
+func readmeCommandRefRow(t *testing.T, readme, cmd string) string {
+	t.Helper()
+	var found []string
+	for _, line := range strings.Split(readme, "\n") {
+		if !strings.HasPrefix(line, "| `") {
+			continue
+		}
+		// The command cell is everything up to the first unescaped ` | `.
+		cell := line
+		if i := strings.Index(line[1:], "` | "); i >= 0 {
+			cell = line[:i+2]
+		}
+		if strings.Contains(cell, cmd) {
+			found = append(found, line)
+		}
+	}
+	switch len(found) {
+	case 0:
+		t.Fatalf("README.md has no command-reference table row for %q — it is undocumented "+
+			"in the table a reader scans to find out what the CLI can do", cmd)
+	case 1:
+		return found[0]
+	default:
+		t.Fatalf("README.md has %d command-reference rows for %q; expected exactly one", len(found), cmd)
+	}
+	return ""
+}
+
+// TestReadmeDocumentsAppListing is the regression guard for issue #227 point 1:
+// `civitai app listing` had ZERO mentions in an 80 KB README while GATING
+// publication (a listing needs an icon and a cover before it can go live), so a
+// reader planning a release budgeted no time for artwork.
+//
+// The guard is structural rather than a `strings.Contains("app listing")`: it
+// requires a real command-reference ROW, and requires that row to name EVERY
+// subcommand actually registered on the group. Adding `app listing set-banner`
+// therefore fails here until the README is updated — which is the drift that
+// produced the defect in the first place.
+func TestReadmeDocumentsAppListing(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	readme := string(raw)
+
+	row := readmeCommandRefRow(t, readme, "civitai app listing")
+
+	// Every registered subcommand must be named in that row. Reading them off the
+	// live command tree (never a hardcoded list) is what makes this catch drift.
+	subs := newAppListingCmd().Commands()
+	if len(subs) < 6 {
+		t.Fatalf("expected the `app listing` group to register >= 6 subcommands, got %d — "+
+			"if the group shrank on purpose, re-derive this floor", len(subs))
+	}
+	for _, sub := range subs {
+		if !strings.Contains(row, sub.Name()) {
+			t.Errorf("README command-reference row for `app listing` does not name the %q "+
+				"subcommand:\n%s", sub.Name(), row)
+		}
+	}
+
+	// The row must carry the fact that GATES publication — both required assets.
+	// Naming the commands without it documents the tool and not the deadline.
+	for _, want := range []string{"icon", "cover"} {
+		if !strings.Contains(strings.ToLower(row), want) {
+			t.Errorf("README command-reference row for `app listing` should name the %q "+
+				"the publish floor requires:\n%s", want, row)
+		}
+	}
+
+	// …and the publication FLOW must show the commands too, not just the table.
+	// Scoped to the text outside the row so a single mention can't satisfy both.
+	body := strings.Replace(readme, row, "", 1)
+	for _, want := range []string{
+		"civitai app listing status",
+		"civitai app listing set-icon",
+		"civitai app listing set-cover",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("README should show %q in the publication flow, not only in the "+
+				"command-reference table", want)
+		}
+	}
+}
+
 // 🔴 TestAppListingPendingReachesDraftBySlug — the whole point of draft-at-submit.
 // A first-version app pending review has NO backing appBlockId, but `civitai app
 // submit` minted its store listing as a pre-approval DRAFT, resolvable ONLY BY SLUG.

@@ -113,5 +113,38 @@ func TestExitCodesAreDistinct(t *testing.T) {
 	}
 }
 
+// TestExitCodeConstantsMatchDocs is the seam guard between the codes this
+// binary can RETURN and the codes the CLI PUBLISHES (root `--help` + the
+// README table, both rendered from cmd.ExitCodeDocs()). Neither side can move
+// alone: the assertion is set EQUALITY, so it fails when a constant is added
+// without documentation and when a documented code has no constant.
+//
+// It replaces the per-constant comments that used to restate the contract here
+// and drifted from it — a comment cannot be asserted, a set can.
+func TestExitCodeConstantsMatchDocs(t *testing.T) {
+	constants := map[int]string{
+		exitOK: "exitOK", exitGeneric: "exitGeneric", exitUsage: "exitUsage",
+		exitAuth: "exitAuth", exitNotFound: "exitNotFound",
+		exitNetwork: "exitNetwork", exitRateLimited: "exitRateLimited",
+	}
+	docs := cmd.ExitCodeDocs()
+	if len(docs) == 0 {
+		t.Fatal("cmd.ExitCodeDocs() is empty — the guard would compare against nothing")
+	}
+
+	documented := make(map[int]bool, len(docs))
+	for _, d := range docs {
+		documented[d.Code] = true
+		if _, ok := constants[d.Code]; !ok {
+			t.Errorf("exit code %d is documented in internal/cmd/exitcodes_doc.go but this binary has no constant for it", d.Code)
+		}
+	}
+	for code, name := range constants {
+		if !documented[code] {
+			t.Errorf("%s = %d is returned by this binary but documented nowhere — add it to exitCodeDocs (internal/cmd/exitcodes_doc.go)", name, code)
+		}
+	}
+}
+
 // Ensure the interface assertion for net.Error stays valid.
 var _ net.Error = fakeNetErr{}
