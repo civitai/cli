@@ -144,6 +144,12 @@ func printWorkflow(out, errw io.Writer, wf *genapi.Workflow) {
 	}
 	_ = tw.Flush()
 
+	// 🔴 THIS IS THE LAST CHANCE TO LEARN IT. `civitai generate --no-wait` prints
+	// a workflow id and tells the user to collect the results here, so for that
+	// documented flow the submit reply is long gone and this persisted record is
+	// the ONLY surviving evidence that a different checkpoint was billed.
+	reportModelSubstitutions(errw, wf.Substitutions(), substitutionOnRead)
+
 	kept, excluded := genapi.PartitionOutputs(wf)
 	fmt.Fprintf(out, "\n%s\n", ui.For(out).Bold(fmt.Sprintf("Outputs (%d deliverable, %d excluded)", len(kept), len(excluded))))
 	if len(kept) == 0 && len(excluded) == 0 {
