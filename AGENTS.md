@@ -166,10 +166,13 @@ is model substitution, and 22 is the one gate on that path that guards CONTENT
 rather than money); items 18 and 20 cover the checks that tell an author their
 EXISTING app is missing the item-11 handshake (20 is the reachability repair to
 18's presence-only scan); item 23 covers the SHAPE of a validation finding — the
-`field` every `--json` consumer groups on; and item 24 covers the ONE
+`field` every `--json` consumer groups on; item 24 covers the ONE
 transport-vs-filesystem predicate now shared by the CLI-wide exit-code
 classifier (which every command's published exit code funnels through) and
-`pkg/civitai`'s read-GET retry loop.
+`pkg/civitai`'s read-GET retry loop; and item 25 covers the OTHER gate on that
+same published contract — the classification of the project path
+`civitai app validate` / `app submit` are handed, which is a different rule from
+item 24's predicate and is filed separately for exactly that reason.
 The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
@@ -1586,57 +1589,6 @@ neither one's.
       inconsistency from this bullet — and do not read the retraction as
       weakening the case against a code 7, which stands on the contract
       expansion alone.
-      🔴 **AND THE SENTENCE THAT PUBLISHED THAT RULE EXCLUDED THE COMMANDS THAT
-      BROKE IT.** The code-2 note read "that split is the rule for **every local
-      path a FLAG names**" — so `civitai app validate <dir>` and
-      `civitai app submit <dir>`, which take the path POSITIONALLY, were outside
-      the sentence and disagreed with it for a release. Issue #256: `validate.Dir`
-      stats the JOINED `<dir>/block.manifest.json` and branches on
-      `os.IsNotExist`, which COLLAPSES "the directory does not exist" into "the
-      directory exists but has no manifest" — so `app validate /nope` reported a
-      missing manifest at a project root nobody has and exited **1**, and
-      `app validate README.md` fell through to the raw syscall and printed
-      `stat README.md/block.manifest.json: not a directory` — a path the CLI
-      assembled and the user never typed — also on 1. Closed by
-      `resolveProjectDir` (`internal/cmd/project_dir.go`), a three-way branch on
-      the path the user NAMED: nonexistent → 2, exists-but-not-a-directory → 2,
-      a real directory → unchanged (`validate.Dir` decides, and a manifest-less
-      directory keeps its finding and exit 1, because the invocation was right
-      and the project is wrong). The published note now says "every local path
-      the CLI is **handed** — a flag's value and a positional argument alike",
-      and `exitCodeContractClaims` carries a row for the widened wording so the
-      old, narrower sentence cannot come back quietly.
-      - **The gate is in `internal/cmd`, not `internal/validate`, and that is
-        item 7's boundary.** `ErrUsage` is this package's sentinel and
-        `validate.Dir` returns a validation VERDICT; pushing the tag down would
-        make `internal/validate` import the usage sentinel and hold a slice of
-        the exit-code contract. It is also deliberately NOT on
-        `validate.ManifestOnly`'s path — `app init` self-checks a directory it
-        just created and has no user-named path to classify.
-      - 🔴 **ONE HELPER, TWO CALL SITES, AND THE SET IS ASSERTED.** `app submit`
-        had the identical hole; a per-command copy is the shape this whole item
-        is about. `TestEveryValidateDirCallerGatesOnResolveProjectDir` AST-walks
-        the package and requires the set of files calling `validate.Dir` to
-        EQUAL the set calling `resolveProjectDir` — failing when it grows (a
-        third command validating a user-named directory without the gate) and
-        when it shrinks (a deleted gate, which would otherwise leave the ledger
-        a false map). Mutation-measured: dropping the submit call alone reddens
-        4 leaf subtests including this guard by name.
-      - 🔴 **`app validate --json` IS A DELIBERATE WIRE BREAK, of item 23's
-        class.** `civitai app validate /nope --json` used to write
-        `{"ok":false,"dir":"/nope","errors":[…]}` to stdout and exit 1 — a
-        fabricated validation result, complete with a finding about a manifest
-        nobody could have written. It now writes **nothing** to stdout and exits
-        2, keeping the CLI-wide convention that a usage error emits no JSON
-        object. Announced in the code-2 README cell. The gate therefore runs
-        BEFORE the `--json` block, and sliding it below is its own mutant: it
-        reddens exactly the JSON rows (3 leaf subtests) while the text-mode rows
-        stay green, so a table that only checked exit codes would miss it.
-      - **A stat failure that is neither ENOENT nor a non-directory stays
-        UNTAGGED and exits 1** — EACCES on a parent, or ENOTDIR partway down a
-        longer path. `app validate <regular-file>/x.json` is one of the six
-        invocations measured in #241, and 1 is the answer that issue settled on;
-        a CONTROL row pins it so the fix cannot quietly widen into it.
     - 🔴 **THERE WERE TWO COPIES, AND FIXING ONE IS WHAT THIS ITEM NOW EXISTS
       TO PREVENT.** `pkg/civitai/retry.go`'s `isTransientNetErr` carried the
       IDENTICAL unfixed spelling through #242, and `syscall.Errno.Timeout()` is
@@ -1915,6 +1867,120 @@ neither one's.
         dot-imported `net`) are listed in the file's own header; there is no
         full type resolution because `golang.org/x/tools/go/packages` would be a
         new dependency, which is an "ask first" below.
+25. **`civitai app validate <dir>` / `app submit <dir>` CLASSIFY THE PATH THE
+    USER NAMED BEFORE VALIDATING ANYTHING, and that gate is deliberately NOT
+    item 24's transport predicate — it is a separate rule that happens to live
+    next door on the exit-code contract.** Issue #256. The code-2 note read
+    "that split is the rule for **every local path a FLAG names**", so the two
+    commands that take the path POSITIONALLY were outside the sentence and
+    disagreed with it for a release: `validate.Dir` stats the JOINED
+    `<dir>/block.manifest.json` and branches on `os.IsNotExist`, which COLLAPSES
+    "the directory does not exist" into "the directory exists but has no
+    manifest". `app validate /nope` reported a missing manifest at a project root
+    nobody has and exited **1**, and `app validate README.md` fell through to the
+    raw syscall and printed `stat README.md/block.manifest.json: not a
+    directory` — a path the CLI assembled and the user never typed — also on 1.
+    Closed by `resolveProjectDir` (`internal/cmd/project_dir.go`), a three-way
+    branch on the path the user NAMED: nonexistent → 2,
+    exists-but-not-a-directory → 2, a real directory → unchanged (`validate.Dir`
+    decides, and a manifest-less directory keeps its finding and exit 1, because
+    the invocation was right and the project is wrong).
+    - **The gate is in `internal/cmd`, not `internal/validate`, and that is
+      item 7's boundary.** `ErrUsage` is this package's sentinel and
+      `validate.Dir` returns a validation VERDICT; pushing the tag down would
+      make `internal/validate` import the usage sentinel and hold a slice of the
+      exit-code contract. It is also deliberately NOT on
+      `validate.ManifestOnly`'s path — `app init` self-checks a directory it just
+      created and has no user-named path to classify.
+    - 🔴 **ONE HELPER, TWO CALL SITES, AND THE SET IS ASSERTED.** `app submit`
+      had the identical hole; a per-command copy is the shape item 24 is about.
+      `TestEveryValidateDirCallerGatesOnResolveProjectDir` AST-walks the package
+      and requires the set of files calling `validate.Dir` to EQUAL the set
+      calling `resolveProjectDir` — failing when it grows (a third command
+      validating a user-named directory without the gate) and when it shrinks (a
+      deleted gate, which would otherwise leave the ledger a false map).
+      Mutation-measured: dropping the submit call alone reddens 4 leaf subtests
+      including this guard by name.
+    - 🔴 **THE GATE RUNS AHEAD OF `--skip-validate`, AND THAT CLAUSE SHIPPED
+      WITH NO TEST AT ALL.** `--skip-validate` waives our opinion of the
+      MANIFEST; it cannot waive the question of whether the directory the user
+      typed exists, because there is no manifest to have an opinion about. The
+      ordering was stated in `app_submit.go`'s own comment, in the PR body and
+      here — and moving the call inside the `if !skipValidate` block, a one-line
+      move that reads like a tidy-up, left the ENTIRE suite green while reverting
+      `app submit <nonexistent> --package-only --skip-validate` from rc **2** to
+      rc **1**. The only test that mentioned the flag used a VALID directory, so
+      nothing in the repo observed the interaction. `TestSubmitGateRunsBefore
+      SkipValidate` is the repair; re-measured, that mutant now reddens **2 leaf
+      subtests** by name.
+    - 🔴 **`app validate --json` IS A DELIBERATE WIRE BREAK, of item 23's
+      class.** `civitai app validate /nope --json` used to write
+      `{"ok":false,"dir":"/nope","errors":[…]}` to stdout and exit 1 — a
+      fabricated validation result, complete with a finding about a manifest
+      nobody could have written. It now writes **nothing** to stdout and exits 2,
+      keeping the CLI-wide convention that a usage error emits no JSON object.
+      The gate therefore runs BEFORE the `--json` block, and sliding it below is
+      its own mutant: it reddens exactly the JSON rows (3 leaf subtests) while
+      the text-mode rows stay green, so a table that only checked exit codes
+      would miss it. It is announced in THREE places, because the one that
+      matters is the one a `--json` consumer reads: the code-2 README cell, the
+      `app validate` row of the command table, and the canonical
+      "The `--json` result shape" section — which is where a script author is
+      when they decide whether `| jq` is safe.
+    - 🔴 **`--json` PUBLISHES A RESULT ONLY WHEN VALIDATION PRODUCED ONE, AND
+      THE CODE-1 NOTE PROMISED OTHERWISE.** It read "`app validate --json` prints
+      the full result … so a script never has to read stderr", unqualified.
+      Measured on this branch: `app validate <mode-000 project> --json` exits 1
+      with stdout **empty (0 bytes)** and the error on stderr only, because
+      `validate.Dir` returns an `error` rather than a `Result` for a non-ENOENT
+      stat failure and for a `schema()` failure (the `return res, err` arms in
+      `internal/validate/validate.go`). An unqualified promise is worse than
+      silence on the one command whose job is to be machine-read, so the note is
+      SCOPED — "for a project directory it could **read**" — rather than the code
+      being changed to match it, which is a much larger change (every such arm
+      would have to become a Result). Exit 1 with no object is therefore a real
+      state a consumer must handle; the README carries the exit→stdout table.
+    - **A stat failure that is neither ENOENT nor a non-directory stays UNTAGGED
+      and exits 1** — EACCES on a parent, or ENOTDIR partway down a longer path.
+      `app validate <regular-file>/x.json` is one of the six invocations measured
+      in #241, and 1 is the answer that issue settled on.
+      🔴 **The battery that pins it used to rest on ONE skippable row.** The
+      widening mutant — turning the untagged arm into `asUsageError`, i.e. "tag
+      every stat failure" — reddened exactly one leaf subtest, and that subtest
+      carried a `t.Skip` when the fixture produced no error, so a filesystem that
+      resolved the path would have taken the whole guard with it silently. This
+      is item 24's own recorded "a battery rested on a single row" shape,
+      regenerated. `project_dir_gate_test.go` now runs TWO independent stat
+      shapes (ENOTDIR below a regular file, EACCES on an unsearchable parent)
+      across THREE surfaces (the helper, `app validate`, `app submit`), each row
+      ASSERTING ITS OWN PREMISE — an independent `os.Stat` must fail with
+      something that is neither ENOENT nor a live non-directory, or the row
+      FAILS rather than quietly testing a different branch — plus a count floor.
+      Re-measured: the widening mutant reddens **9 leaf subtests**, up from 1.
+    - **The message is NOT wrapped, and that is the fix rather than an
+      omission.** `os.Stat`'s error is an `*fs.PathError` whose `Error()` already
+      begins `stat <path>: `, so a `fmt.Errorf("stat %s: %w", dir, err)` printed
+      the op and the path twice: measured on the first cut of this PR,
+      `Error: stat …/file.txt/x.json: stat …/file.txt/x.json: not a directory`,
+      where the base binary printed one `stat` (naming the JOINED path, which is
+      the defect above). There is no context left to add — we stat the path the
+      user typed. `TestProjectDirStatErrorDoesNotStutter` COUNTS occurrences
+      rather than matching a golden string, because the defect is a duplicate.
+    - 🔴 **THE PUBLISHED SPLIT IS A LEDGER OF ENUMERATED PATHS, NOT A
+      QUANTIFIER — AND BOTH OVER-NARROW AND OVER-BROAD WORDINGS HAVE SHIPPED.**
+      "Every local path a FLAG names" excluded the positional commands (above).
+      The replacement, "every local path the CLI is **handed**", is ALSO false,
+      and has a live counterexample inside its own scope: measured identical on
+      base and on this branch, `civitai app listing status --dir /does/not/exist`
+      exits **1** (`app_listing.go`, `manifest.Load(lc.dir)` wrapped untagged),
+      and so does `app submit <valid> --package-only --out /nodir/x.zip`. So the
+      sentence now publishes the SHAPE — "a flag's value and a positional
+      argument alike" — over the paths it enumerates, and the README states the
+      residual instead of hiding it. `TestUngatedPathFlagsAreNotUsageErrors`
+      pins the residual and FAILS if `--dir` is ever brought into the gate,
+      which is the moment the published paragraph becomes wrong. Bringing it in
+      is a fine change; doing it without moving the docs is the failure this
+      guards.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

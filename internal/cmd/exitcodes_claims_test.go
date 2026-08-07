@@ -80,15 +80,20 @@ func exitCodeContractClaims() []contractClaim {
 		},
 		{
 			code:    2,
-			name:    "the missing-vs-unreadable split covers every local path, flag OR positional",
-			phrases: []string{"every local path the CLI is handed", "positional argument", "generate --input"},
-			why: "stated generally because it was NOT general: --input was the counterexample, and a " +
-				"rule written only about images is one a future path flag can be added beside without " +
-				"anyone noticing it disagrees. It said \"every local path a FLAG names\" for a release, " +
-				"and the two commands that broke it — `app validate <dir>` / `app submit <dir>`, issue " +
-				"#256 — take the path POSITIONALLY, so the sentence excluded exactly the cases that " +
-				"disagreed with it",
-			pinnedBy: "TestGenerateInputExitCodes (cmd/civitai) + TestReadGraphInputClassification + TestProjectDirExitCodes",
+			name:    "the missing-vs-unreadable split holds for a flag's value and a positional alike",
+			phrases: []string{"a flag's value and a positional argument alike", "generate --input"},
+			why: "the shape of the rule, not its extent: a rule written only about images is one a future " +
+				"path flag can be added beside without anyone noticing it disagrees, and --input was that " +
+				"counterexample. It said \"every local path a FLAG names\" for a release, and the two " +
+				"commands that broke it — `app validate <dir>` / `app submit <dir>`, issue #256 — take the " +
+				"path POSITIONALLY, so the sentence excluded exactly the cases that disagreed with it. " +
+				"🔴 The replacement then over-corrected to \"every local path the CLI is HANDED\", which is " +
+				"ALSO false and has a live counterexample INSIDE its own scope: `app listing --dir <missing>` " +
+				"exits 1, measured identical on base and on this branch. So the sentence now publishes the " +
+				"shape over an enumerated ledger and states the residual, rather than quantifying over " +
+				"paths nobody has audited",
+			pinnedBy: "TestGenerateInputExitCodes (cmd/civitai) + TestReadGraphInputClassification + " +
+				"TestProjectDirExitCodes + TestUngatedPathFlagsAreNotUsageErrors (the residual)",
 		},
 		{
 			code:    2,
@@ -109,6 +114,20 @@ func exitCodeContractClaims() []contractClaim {
 				"real place, so the invocation was right and the project is wrong, and that is the " +
 				"answer `--json`'s `ok` field reports",
 			pinnedBy: "TestProjectDirExitCodes (the control rows)",
+		},
+		{
+			code: 1,
+			name: "`app validate --json` publishes a result only when it produced one",
+			phrases: []string{"For a project directory it could", "nothing on stdout",
+				"branch on the exit code before parsing"},
+			why: "the note said `--json` \"prints the full result … so a script never has to read stderr\", " +
+				"full stop — and that is false for the failures that produce no Result at all. Measured on " +
+				"this branch: `app validate <mode-000 project> --json` exits 1 with stdout EMPTY, because " +
+				"validate.Dir returns an error rather than a Result for a non-ENOENT stat failure and for a " +
+				"schema() failure. An unqualified promise here is worse than silence: it tells a script " +
+				"author they may parse stdout unconditionally, on the one command whose whole job is to be " +
+				"machine-read",
+			pinnedBy: "TestValidateJSONOnlyEmitsAResultItActuallyProduced (+ its readable-dir positive control)",
 		},
 		{
 			code:     5,

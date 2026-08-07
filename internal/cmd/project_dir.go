@@ -11,6 +11,11 @@ import (
 // before any validation runs. It is the one gate `app validate` and `app submit`
 // share; both take the same optional positional `[dir]`.
 //
+// The full rationale, the measured mutants, and the residual the published
+// contract knowingly ships with are AGENTS.md item 25 — read it before changing
+// any branch here. (It is deliberately NOT item 24: that is the
+// transport-vs-filesystem predicate, a different rule on the same contract.)
+//
 // 🔴 IT STATS THE PATH THE USER TYPED — NEVER the joined manifest path, and that
 // is the whole fix (issue #256). `validate.Dir` stats `<dir>/block.manifest.json`
 // and branches on os.IsNotExist, which collapses two different mistakes into one
@@ -57,7 +62,19 @@ func resolveProjectDir(dir string) error {
 			return asUsageError(fmt.Errorf(
 				"%s: no such directory — pass the path to an App project root, or scaffold one with `civitai app init <name>`", dir))
 		}
-		return fmt.Errorf("stat %s: %w", dir, err)
+		// Returned BARE, and that is not laziness. os.Stat's error is an
+		// *fs.PathError whose Error() already reads `stat <path>: <reason>`, so
+		// a `fmt.Errorf("stat %s: %w", dir, err)` wrapper printed the op and the
+		// path TWICE — measured on this branch before the fix:
+		// `Error: stat …/file.txt/x.json: stat …/file.txt/x.json: not a
+		// directory`, where the base binary printed one `stat`. There is no
+		// context left to add: we stat the path the USER typed, never the joined
+		// manifest path, so the PathError already names the right thing.
+		//
+		// Do not re-add a prefix; if you ever need one, it must not repeat `stat`
+		// or the path. The classification is unchanged either way — untagged is
+		// exit 1, per the comment above.
+		return err
 	}
 	if !info.IsDir() {
 		return asUsageError(fmt.Errorf(

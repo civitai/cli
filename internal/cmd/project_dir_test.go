@@ -271,9 +271,24 @@ func TestResolveProjectDirClassification(t *testing.T) {
 		// `app validate <regular-file>/x.json` is one of the six invocations
 		// measured in issue #241, and exit 1 (generic/filesystem) is the answer
 		// that issue settled on. It must not silently become a 2 here.
-		err := resolveProjectDir(filepath.Join(root, "notadir.txt", "sub"))
-		if err == nil {
+		//
+		// 🔴 This row ASSERTS ITS OWN PREMISE. It used to be the ONLY leaf
+		// subtest the "tag every stat failure" widening reddened, and it carries
+		// a t.Skip — so a fixture that quietly stopped reaching the untagged arm
+		// would have taken the whole battery with it, silently. The wider,
+		// multi-shape battery now lives in project_dir_gate_test.go; this row
+		// stays because the helper-level assertion is cheap, but it no longer
+		// stands alone and it no longer skips for the wrong reason.
+		path := filepath.Join(root, "notadir.txt", "sub")
+		if _, serr := os.Stat(path); serr == nil {
 			t.Skip("this filesystem resolves a path below a regular file")
+		} else if os.IsNotExist(serr) {
+			t.Fatalf("PREMISE BROKEN: %s stats as ENOENT (%v) — this row would then be exercising the "+
+				"exit-2 arm and would stay green under the widening mutant", path, serr)
+		}
+		err := resolveProjectDir(path)
+		if err == nil {
+			t.Fatal("the gate must surface the stat failure")
 		}
 		if errors.Is(err, ErrUsage) {
 			t.Errorf("a stat failure that is neither ENOENT nor a non-directory must stay untagged (exit 1): %v", err)
