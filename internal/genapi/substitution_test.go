@@ -97,10 +97,8 @@ func TestSubmit_DecodesTopLevelAndMetadata(t *testing.T) {
 // has — Substitutions() must fall back to it rather than reporting nothing.
 func TestSubmit_FallsBackToMetadataWhenTopLevelAbsent(t *testing.T) {
 	r := &SubmitResult{
-		ID: "wf_1",
-		Metadata: &substitutionMetadata{ModelSubstitutions: []ModelSubstitution{
-			{Requested: 7, Applied: 8, Reason: SubstitutionWrongWorkflow},
-		}},
+		ID:       "wf_1",
+		Metadata: json.RawMessage(`{"modelSubstitutions":[{"requested":7,"applied":8,"reason":"wrong-workflow"}]}`),
 	}
 	subs := r.Substitutions()
 	if len(subs) != 1 || subs[0].Requested != 7 {
@@ -117,9 +115,7 @@ func TestSubmit_EmptyTopLevelArrayStillFallsBackToMetadata(t *testing.T) {
 	r := &SubmitResult{
 		ID:                 "wf_1",
 		ModelSubstitutions: []ModelSubstitution{}, // present, non-nil, EMPTY
-		Metadata: &substitutionMetadata{ModelSubstitutions: []ModelSubstitution{
-			{Requested: 9, Applied: 10, Reason: SubstitutionGated},
-		}},
+		Metadata:           json.RawMessage(`{"modelSubstitutions":[{"requested":9,"applied":10,"reason":"gated"}]}`),
 	}
 	subs := r.Substitutions()
 	if len(subs) != 1 || subs[0].Requested != 9 {
@@ -133,9 +129,7 @@ func TestSubmit_EmptyTopLevelArrayStillFallsBackToMetadata(t *testing.T) {
 func TestSubmit_TopLevelWinsOverMetadata(t *testing.T) {
 	r := &SubmitResult{
 		ModelSubstitutions: []ModelSubstitution{{Requested: 1, Applied: 2, Reason: SubstitutionUnrecognized}},
-		Metadata: &substitutionMetadata{ModelSubstitutions: []ModelSubstitution{
-			{Requested: 3, Applied: 4, Reason: SubstitutionGated},
-		}},
+		Metadata:           json.RawMessage(`{"modelSubstitutions":[{"requested":3,"applied":4,"reason":"gated"}]}`),
 	}
 	subs := r.Substitutions()
 	if len(subs) != 1 || subs[0].Applied != 2 {
@@ -204,5 +198,53 @@ func TestSubstitution_UnknownReasonIsPreservedNotDropped(t *testing.T) {
 	}
 	if out.ModelSubstitutions[0].Reason != "some-future-reason" {
 		t.Errorf("the server's own token must be preserved verbatim, got %q", out.ModelSubstitutions[0].Reason)
+	}
+}
+
+// 🔴 A GARBLED WARNING MUST NEVER COST THE WORKFLOW ITSELF.
+//
+// `metadata` is an orchestrator-owned free-form bag. While it was modelled as a
+// typed struct, a malformed ADVISORY field failed the unmarshal of the WHOLE
+// reply — and `GetWorkflow` turns that into
+// `unexpected orchestrator.getWorkflow payload`, discarding a workflow the user
+// has already been charged for. Measured before the fix: all three shapes below
+// lost the entire workflow.
+//
+// None is producible by today's server, which only writes well-formed records.
+// That is exactly why it is worth pinning: this feature exists so a user can
+// discover they were billed for the wrong model, so its read path must fail soft
+// rather than take the workflow down with the warning.
+//
+// The well-formed case is the POSITIVE CONTROL — without it, "everything decodes"
+// would also be satisfied by a decoder that silently returns nothing for every
+// input.
+func TestWorkflow_MalformedMetadataNeverCostsTheWorkflow(t *testing.T) {
+	cases := []struct {
+		name     string
+		payload  string
+		wantSubs int
+	}{
+		{"entry field has the wrong type",
+			`{"id":"wf-1","status":"succeeded","metadata":{"modelSubstitutions":[{"requested":"x","applied":2,"reason":"unrecognized"}]}}`, 0},
+		{"the key is not an array",
+			`{"id":"wf-1","status":"succeeded","metadata":{"modelSubstitutions":"nope"}}`, 0},
+		{"the metadata bag is not an object",
+			`{"id":"wf-1","status":"succeeded","metadata":"nope"}`, 0},
+		{"POSITIVE CONTROL: well-formed still decodes",
+			`{"id":"wf-1","status":"succeeded","metadata":{"modelSubstitutions":[{"requested":1,"applied":2,"reason":"unrecognized"}]}}`, 1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var w Workflow
+			if err := json.Unmarshal([]byte(tc.payload), &w); err != nil {
+				t.Fatalf("a malformed advisory field must not fail the whole reply: %v", err)
+			}
+			if w.ID != "wf-1" {
+				t.Fatalf("workflow id lost: %q", w.ID)
+			}
+			if got := len(w.Substitutions()); got != tc.wantSubs {
+				t.Fatalf("Substitutions() = %d records, want %d", got, tc.wantSubs)
+			}
+		})
 	}
 }

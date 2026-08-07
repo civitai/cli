@@ -185,7 +185,7 @@ type Workflow struct {
 	// 🔴 Read it via Substitutions(), not directly. This is the ONLY carrier once
 	// the submit reply is gone — which is precisely the situation
 	// `civitai generate --no-wait` creates by design.
-	Metadata *substitutionMetadata `json:"metadata,omitempty"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 // Output is one workflow output with the two step-derived fields folded in.
