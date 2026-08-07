@@ -83,14 +83,6 @@ func TestDanglingEmitterReferenceIsNamed(t *testing.T) {
 			"does not exist",                 // WHY the resolver stopped
 			"fix the reference",              // what to do about it
 		)
-		// 🔴 The guess must be GONE, not merely supplemented. This is a five-file
-		// no-build app: it has no bundler, so it cannot have a bundler alias, and
-		// being sent to look for one is the whole complaint in #258.
-		for _, gone := range []string{"bundler alias", "generated file", "off-project URL"} {
-			if strings.Contains(report, gone) {
-				t.Errorf("the gap report still speculates about %q at a project where it is impossible\ngot: %s", gone, report)
-			}
-		}
 	})
 
 	t.Run("page-vite: the entry module imports the deleted emitter", func(t *testing.T) {
@@ -108,6 +100,60 @@ func TestDanglingEmitterReferenceIsNamed(t *testing.T) {
 			"does not exist",
 		)
 	})
+}
+
+// TestPresenceAdviceNoLongerSpeculates is the OTHER half of issue #258, and it
+// has to read the WHOLE emitted message rather than the gap report.
+//
+// 🔴 A REPORT-SCOPED ABSENCE CHECK CANNOT SEE THE DEFECT, AND A MUTATION PROVED
+// IT. The first version of this assertion lived inside
+// TestDanglingEmitterReferenceIsNamed and asked only whether the GAP REPORT
+// speculates. Restoring the shipped guess to `readyAckAdvicePresenceOnlyHead` —
+// i.e. adding the true reasons and keeping the false ones, the most likely way
+// this regresses — reddened NOTHING: 0 failures across internal/validate and
+// internal/cmd. Naming the real cause is only half the fix; the speculation has
+// to be gone, and "gone" is a claim about the message a user reads.
+//
+// The fixture is chosen so every phrase below is PROVABLY false of it: a
+// rendered `static` scaffold is five files with no build step, so it has no
+// bundler and therefore no alias, nothing generates a file, every reference is
+// local, and index.html is right there at the root. A message that offers any of
+// them is manufacturing advice, which is the failure AGENTS.md item 10 spent
+// four measured corrections avoiding.
+func TestPresenceAdviceNoLongerSpeculates(t *testing.T) {
+	dir := renderTemplate(t, scaffold.Static)
+	if err := os.Remove(filepath.Join(dir, blockproto.ReadyAckFilename)); err != nil {
+		t.Fatal(err)
+	}
+	res := wantAckKind(t, dir, "presence-only")
+
+	msg := ""
+	for _, w := range res.Warnings {
+		if isPresenceOnlyAdvice(w.Message) {
+			msg = w.Message
+		}
+	}
+	if msg == "" {
+		t.Fatal("no presence-tier message to inspect")
+	}
+	// The positive control: the message DOES name the real cause. Without it,
+	// "says none of the wrong things" is satisfied by a message that says nothing.
+	if !strings.Contains(msg, "which does not exist") {
+		t.Fatalf("the advisory does not name the real cause, so the absence assertions below are vacuous:\n%s", msg)
+	}
+	// Quoted from the wording that shipped, so a revert is caught verbatim.
+	for _, gone := range []string{
+		"a bundler alias",
+		"a generated file",
+		"an off-project URL",
+		"there is no index.html at the project root",
+	} {
+		if strings.Contains(msg, gone) {
+			t.Errorf("the advisory still offers %q at a five-file no-build scaffold where it is impossible — "+
+				"naming the real cause does not close #258 while the speculation is still printed alongside "+
+				"it:\n%s", gone, msg)
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

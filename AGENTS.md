@@ -888,7 +888,8 @@ neither one's.
       before touching `readyack.go`: the whole-tree presence scan described
       above is now the WEAK tier, reached only when the entry graph cannot be
       resolved, and the advisory it emits is a different string that discloses
-      the difference.
+      the difference — and, since #258, NAMES the resolver's own reason for
+      falling back instead of guessing at it. See item 20.
 
 19. **img2img sends `workflow: "txt2img"` PLUS `images[]`, requires
     `--ecosystem`, and uploads with NO credential — three things that each read
@@ -1030,6 +1031,79 @@ neither one's.
       project shapes is exactly how the false pass above shipped, so the
       strength is part of the output, not an implementation detail.
       `TestReadyAckAdvisoriesStateTheirOwnStrength` pins both directions.
+    - 🔴 **AND THE WEAK TIER NAMES ITS REASON RATHER THAN GUESSING AT IT — THE
+      RESOLVER ALREADY KNEW, AND THE CHECK THREW IT AWAY.** Every gap kind
+      writes a precise, per-reference reason into `EntryGraph.Gaps`;
+      `readyAckChecks` returned the CONSTANT `readyAckAdvicePresenceOnly` and
+      discarded the slice, so the message offered a fixed list of plausible
+      causes instead — "there is no index.html at the project root, or it holds
+      a reference this CLI cannot follow — a bundler alias, a generated file, an
+      off-project URL". In the canonical #206 shape, a `static` scaffold whose
+      `civitai-host.js` has been deleted, **not one of those is true**: the
+      reason is that `<script src="./civitai-host.js">` points at a file that is
+      not there, and a five-file no-build app has no bundler to alias anything.
+      Issue #258. The gaps are now spliced between
+      `readyAckAdvicePresenceOnlyHead` and `…Tail` by `presenceOnlyAdvice`.
+      - **The fix is GENERAL, and that is the point.** It surfaces `Gaps`
+        wholesale rather than special-casing the dangling reference, so all six
+        kinds (dangling reference, bare specifier, off-project URL, unreadable
+        file, file budget, depth truncation) reach the author from one change.
+        `TestEveryGapKindReachesTheAuthor` covers four of them; a fifth would
+        have been a special case nobody wrote.
+      - 🔴 **THE TIERING DID NOT CHANGE, AND MUST NOT.** The bullet below —
+        a reference to a file that is not there is a GAP, not a decided
+        absence — is why #258's project is on the weak tier at all, and it
+        stands. **The message was the defect.** A reading of #258 as "promote
+        the dangling case to the strong tier" walks straight into the confident
+        finding built on a wrong model that this item exists to prevent.
+      - 🔴 **"NAMES THE CAUSE" IS ONLY HALF; THE SPECULATION HAS TO BE GONE,
+        AND A REPORT-SCOPED ASSERTION CANNOT SEE THAT.** Measured: the first
+        version asserted the absence of "bundler alias" within the GAP REPORT
+        only, and the most likely regression — restoring the guess to
+        `…PresenceOnlyHead` while keeping the real reasons — reddened **0**
+        subtests across `internal/validate` and `internal/cmd`.
+        `TestPresenceAdviceNoLongerSpeculates` reads the WHOLE emitted message
+        at a fixture where every quoted phrase is provably impossible, with a
+        positive control that the real cause is present so "says none of the
+        wrong things" is not satisfied by a message that says nothing.
+      - **The cap is 3 and the overflow is COUNTED OUT LOUD**
+        (`readyAckGapCap`). A silently truncated list reads as "that was all of
+        them" — the same class of lie as the guess it replaced: the author
+        fixes what they were shown, re-runs, and meets reasons that were there
+        the whole time.
+      - **The gap strings are AUTHOR-FACING NOW.** They used to be read only in
+        a test failure message, and one carried "this resolver's model of the
+        project is incomplete" — a fact about US. Word a new gap for the person
+        who has to fix it (referencing file, specifier, edit), and keep it to a
+        SINGLE LINE: it rides in a `--json` `message` field. `readyAckGapReport`
+        collapses whitespace rather than trusting a `%v`-interpolated OS error.
+      - **Layout is the PRINTER's, not the message's** — the inverse of item 23.
+        The advisory is ~2 kB and `app validate` printed it as ONE
+        1938-character line; `internal/cmd/validate_print.go`'s `printFinding`
+        now wraps EVERY finding to 79 columns with a hanging indent, which fixes
+        every long message rather than the one that provoked it. Wrapping in the
+        message would corrupt `--json` for exactly the consumers item 23 exists
+        to serve, so both directions are asserted:
+        `TestValidateJSONMessagesAreOneLine` DECODES the payload (a
+        `strings.Contains` over raw stdout cannot tell a real newline from the
+        `\n` escape) and `TestValidateTextOutputIsWrapped` requires the advisory
+        to occupy ≥10 lines, since a width assertion alone is satisfied by a
+        build that prints nothing long. Consequence for anyone adding a test: a
+        substring assertion on `validate`'s stderr is really an assertion about
+        where the layout broke — one in `app_validate_lockfile_test.go` had to
+        go through `unwrapFinding` the moment wrapping landed.
+      - **Mutation matrix**, `--- FAIL` leaf lines counted from output (never an
+        exit code), each mutation checksum-gated: discard the gaps 11; restore
+        the guess 1; remove the cap 2; truncate silently 2; drop the one-line
+        collapse 1; put a newline in the message 2 (including the `--json`
+        guard); revert the printer to one line 1; revert the gap wording to the
+        maintainer form 3; splice the report after the tail instead of before
+        24 (the bracketing matchers); weak tier loses its disclosure 2; a strong
+        tier gains it 1; the report leaks another tier's own literal 1
+        (`TestGapReportCannotSatisfyAnotherTiersStrengthAssertion`, the case the
+        strength test structurally cannot make because it reads the FIXED bases
+        and this text is appended at runtime). A comment-only null mutant
+        survives.
     - 🔴 **AN HTML `src` IS A URL; A JS SPECIFIER IS A MODULE SPECIFIER. THE
       FIRST VERSION CONFLATED THEM, AND THAT ONE MISTAKE PRODUCED THREE BUGS,
       TWO OF THEM OPPOSITES.** Measured, each on a project one character from a
