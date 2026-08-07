@@ -355,7 +355,10 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 				slug = strings.TrimSpace(args[0])
 			}
 			if slug == "" {
-				return fmt.Errorf("an app slug is required — e.g. `civitai app dev-token my-block` (find it with `civitai app status`)")
+				// Same class as app_metrics.go's "an app slug is required",
+				// which is already asUsageError-tagged: a missing required
+				// argument is a usage error (exit 2), not a generic failure.
+				return asUsageError(fmt.Errorf("an app slug is required — e.g. `civitai app dev-token my-block` (find it with `civitai app status`)"))
 			}
 
 			// Distinguish "not set" from "set to zero": only a CHANGED flag

@@ -329,8 +329,8 @@ Exit codes:
 
 // enforceUsageExitCodes walks the assembled command tree and routes cobra's own
 // argument- and subcommand-validation failures through the ErrUsage tag, so the
-// entrypoint maps them to the usage exit code (2). It closes two leaks that the
-// hand-written validators (which already tag their own errors) don't cover:
+// entrypoint maps them to the usage exit code (2). It closes three leaks that
+// the hand-written validators (which already tag their own errors) don't cover:
 //
 //  1. Cobra's built-in count validators (ExactArgs, MinimumNArgs, …) return
 //     plain errors ("accepts 1 arg(s), received 0") that map to the generic exit
@@ -350,6 +350,15 @@ Exit codes:
 //     help and exits 0, but any leftover argument becomes a usage-tagged
 //     "unknown command" error (exit 2). Defining RunE makes the parent runnable,
 //     so cobra runs it (and our Args) instead of the help short-circuit.
+//  3. REQUIRED FLAGS and flag GROUPS. Cobra validates these inside execute()
+//     *after* Args and after the PreRun hooks, so they reach neither
+//     SetFlagErrorFunc (which only sees PARSE errors) nor the wrapper in (1) —
+//     `required flag(s) "app" not set` exited 1 while an unknown flag NAME
+//     exited 2, for the same category of mistake. Running cobra's own
+//     validators from inside our Args wrapper is the only interception point
+//     ahead of cobra's call; the message is cobra's, unchanged, and when they
+//     pass cobra's own later call is a no-op repeat. `--help` is unaffected:
+//     execute() returns flag.ErrHelp before it ever reaches Args.
 //
 // It only reclassifies ARGUMENT/subcommand validation. A command's real RunE
 // failures — a 404 not-found, a network error, an auth failure — are never
@@ -367,6 +376,15 @@ func enforceUsageExitCodes(cmd *cobra.Command) {
 			if err := existing(c, args); err != nil {
 				return asUsageError(err)
 			}
+		}
+		// (3) Required flags / flag groups — see the doc comment. Run cobra's own
+		// validators here so their errors can be tagged; cobra repeats them later
+		// and finds nothing left to report.
+		if err := c.ValidateRequiredFlags(); err != nil {
+			return asUsageError(err)
+		}
+		if err := c.ValidateFlagGroups(); err != nil {
+			return asUsageError(err)
 		}
 		return nil
 	}
