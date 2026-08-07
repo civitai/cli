@@ -117,6 +117,15 @@ changes** (emit `longDescription: parseLongDescription(help)` alongside
 PR and it is the **prerequisite**, not a follow-up — do it before migrating any
 further group.
 
+🔴 **AND THE FIX IS WORTH MORE THAN THE WHOLE MIGRATION.** Measured by adding that
+one line to a scratch copy of the generator and running it against the pilot
+binary: **52 of 52** commands gain a `longDescription`, publishing **43,460 chars
+of prose that ALREADY EXISTS in the CLI today** — `cli.json` goes 42,784 →
+88,747 chars (**+107%**). The largest are `generate` (5,726), `download` (3,742),
+`app dev-token` (3,245), `app create` (2,385), `app validate` (2,293). None of
+that required writing a word. Do this BEFORE authoring any more `Long`, or the
+authoring is measured against a surface that discards it.
+
 ### Pilot — `civitai app listing`, 7 nodes, on branch `zach/help-long-pilot`
 
 Chosen because it holds 3 of the 8 no-`Long` nodes, maps to the README's densest
