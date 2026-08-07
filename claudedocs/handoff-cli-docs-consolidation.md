@@ -171,7 +171,7 @@ Closed by `9cfe468` (#264). Re-verified on a clean build at `aeceb6b`:
 `printf 'a\000b' | tr -dc '\000' | wc -c` → 1, so the pipe is wired).
 The original diagnosis is kept below for the mechanism.
 
-### `civitai login --help` emits a raw NUL byte — filed as #253, still ships
+### `civitai login --help` NUL byte — the original diagnosis (mechanism only)
 - **Symptom + exact repro:** `civitai login --help > out.txt` yields a file git,
   grep and `file(1)` classify as binary.
 - **Observed (with values), on a CLEAN build from `origin/main`** (not a dirty tree):
@@ -232,14 +232,20 @@ The original diagnosis is kept below for the mechanism.
 
 ## Next steps (ranked)
 
-1. 🔴 **Publish `Long` from the generator** (`civitai-developer-docs`) — emit
-   `longDescription: parseLongDescription(help)` at `gen-appblocks-cli.mjs:781`
-   and render it in `<CliReference />`. **Everything else in this workstream is
-   dead weight until this lands** — measured above, the pilot's 4,000 chars of
-   `Long` reached `--help` and 0 chars of `cli.json`. Cheap: the parser already
-   exists and is already called.
-2. **Merge the pilot** (`zach/help-long-pilot`, 1 commit) — it stands on its own
-   for terminal users even before step 1.
+1. 🔴 **Publish `Long` from the generator** — **SHIPPED as docs PR #49**
+   (`zach/publish-long-description`), awaiting review. Emits
+   `longDescription: parseLongDescription(help)` alongside an untouched
+   `description`, and renders it in BOTH channels (`<CliReference />` and the
+   `.md`/LLM region — a Vue island's payload is invisible to the `.md` channel,
+   and `check:md-regions` blocks a PR that forgets it). Measured there:
+   `cli.json` 56,045 → 99,125 B (+76.9%), 52/52 commands gain a non-empty
+   `longDescription`, **0** commands change `description` or any other field.
+   🔴 Residual it ships with, flagged not buried: **nothing in CI renders the
+   `.vue` SFC**, so deleting the render line leaves the whole node suite AND the
+   build green while the built page drops 44 → 0 blocks. Pre-existing (the
+   `.ab-example` block has the same gap); closing it needs a Vue test runner.
+2. **Merge the pilot** (`zach/help-long-pilot` → cli PR #274) — it stands on its
+   own for terminal users, and now has a consumer once #49 lands.
 3. **Then migrate the read-API group** (`models`/`images`/`collections`/
    `creators`/`tags`/`users`/`model-versions`/`articles`, 19 empty-or-thin nodes)
    using the pilot's three guards as the template. Its source prose is
@@ -248,7 +254,7 @@ The original diagnosis is kept below for the mechanism.
 4. **Do NOT add an `Annotations` half.** Measured disproof above.
 5. **Decide the IA wart** (below) — cheapest is option (c).
 6. The two LOW items below (pins header comment; `parseSemver` build metadata).
-5. **Prune `claudedocs/`** — dated handoffs that belong in neither the repo nor the
+7. **Prune `claudedocs/`** — dated handoffs that belong in neither the repo nor the
    site. Coordinate: other sessions actively write here.
 
 ## Gotchas / decisions / dead-ends

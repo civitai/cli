@@ -134,10 +134,24 @@ func TestListingHelpQuotesTheEnforcedCaps(t *testing.T) {
 // hole: a per-kind body asserted only to contain "2.0 MB" is satisfied by the
 // OTHER 2 MiB kind's sentence.
 //
-// Measured: swapping `add-screenshot`'s `listingSourceRule(kindScreenshot)` to
-// `kindIcon` SURVIVED the whole suite, because both render "2.0 MB". Requiring
-// the body to name its own kind, and NOT to name a sibling that has a different
-// cap, is what makes the swap observable — the cap string alone cannot.
+// Measured: swapping `set-cover`'s `listingSourceRule(kindCover)` to `kindIcon`
+// SURVIVED the original guard. Requiring the body to name its own kind, and NOT
+// to name a sibling that has a DIFFERENT cap, is what makes such a swap
+// observable — the cap string alone cannot.
+//
+// 🔴 THE ICON <-> SCREENSHOT SWAP IS A DECLARED **EQUIVALENT MUTANT**, NOT A
+// SURVIVING HOLE, AND THE DIFFERENCE MATTERS TO WHOEVER EDITS THIS NEXT.
+// `humanBytes(maxIconBytes)` and `humanBytes(maxScreenshotBytes)` are both
+// "2.0 MB" today, so swapping `kindScreenshot` -> `kindIcon` produces a DIFFERENT
+// BINARY and BYTE-IDENTICAL rendered help — measured, `cmp` on the two `--help`
+// outputs, with the differing binaries as the negative control. There is nothing
+// for any assertion to observe, which is why `foreign` deliberately names COVER
+// (a differently-capped sibling) rather than the same-capped one: an assertion
+// against a token that cannot vary is a guard that cannot fail.
+// The protection against the swap MATTERING is elsewhere and was measured too —
+// set maxScreenshotBytes to 3 MiB under that mutation and
+// TestListingHelpQuotesTheEnforcedCaps reddens with "does not quote the cap it
+// enforces (3.0 MB)". So the swap is invisible exactly while it is harmless.
 func TestListingHelpNamesTheKindItDescribes(t *testing.T) {
 	nodes := listingHelpNodes(t)
 	cases := []struct {
