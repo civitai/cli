@@ -1,10 +1,16 @@
 package cmd
 
 import (
+	"bytes"
+	"image"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"strings"
 	"testing"
 	"unicode/utf8"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/spf13/cobra"
 )
 
@@ -98,20 +104,157 @@ func TestListingHelpQuotesTheEnforcedCaps(t *testing.T) {
 		})
 	}
 
+	// 🔴 THE GROUP ASSERTION MUST BE CAP-IN-CONTEXT, NOT CAP-ALONE.
+	//
+	// `humanBytes(maxIconBytes)` and `humanBytes(maxScreenshotBytes)` are the SAME
+	// STRING today ("2.0 MB"), so three bare Contains checks over three strings —
+	// two of them byte-identical — enforce only TWO of the three caps. Measured:
+	// deleting the icon cap from the group body, and deleting the screenshot cap
+	// from it, BOTH survived a green suite, because the other one's identical
+	// text satisfied the check. Pairing each cap with its label is what makes the
+	// three assertions independent.
 	t.Run("group", func(t *testing.T) {
 		parent := nodes[""]
 		for _, want := range []string{
-			humanBytes(maxIconBytes),
-			humanBytes(maxCoverBytes),
-			humanBytes(maxScreenshotBytes),
+			humanBytes(maxIconBytes) + " for an icon",
+			humanBytes(maxCoverBytes) + " for a cover",
+			humanBytes(maxScreenshotBytes) + " for a screenshot",
 			listingImageFormats,
 		} {
 			if !strings.Contains(parent.Long, want) {
 				t.Errorf("`app listing` group Long does not state %q — the group page is where a "+
-					"reader lands first, so all three caps belong there", want)
+					"reader lands first, so all three caps belong there, each next to the kind "+
+					"it applies to", want)
 			}
 		}
 	})
+}
+
+// TestListingHelpNamesTheKindItDescribes closes the other half of the shared-cap
+// hole: a per-kind body asserted only to contain "2.0 MB" is satisfied by the
+// OTHER 2 MiB kind's sentence.
+//
+// Measured: swapping `add-screenshot`'s `listingSourceRule(kindScreenshot)` to
+// `kindIcon` SURVIVED the whole suite, because both render "2.0 MB". Requiring
+// the body to name its own kind, and NOT to name a sibling that has a different
+// cap, is what makes the swap observable — the cap string alone cannot.
+func TestListingHelpNamesTheKindItDescribes(t *testing.T) {
+	nodes := listingHelpNodes(t)
+	cases := []struct {
+		cmd  string
+		self string
+		// A sibling whose cap DIFFERS, so naming it is unambiguous evidence of a
+		// copy-paste rather than an incidental mention.
+		foreign string
+	}{
+		{"set-icon", "ICON", "COVER"},
+		{"set-cover", "COVER", "ICON"},
+		{"add-screenshot", "SCREENSHOT", "COVER"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.cmd, func(t *testing.T) {
+			c, ok := nodes[tc.cmd]
+			if !ok {
+				t.Fatalf("`app listing %s` is not in the command tree", tc.cmd)
+			}
+			if !strings.Contains(c.Long, tc.self) {
+				t.Errorf("`app listing %s` Long never names %s — a body that does not say which "+
+					"asset it is about cannot be distinguished from its sibling's", tc.cmd, tc.self)
+			}
+			if strings.Contains(c.Long, tc.foreign) {
+				t.Errorf("`app listing %s` Long names %s, a different asset with a different cap — "+
+					"this is what a copy-paste between two media bodies looks like", tc.cmd, tc.foreign)
+			}
+		})
+	}
+}
+
+// TestListingImageFormatsMatchesTheDecoder is the drift check for the FOURTH
+// thing this file states about images.
+//
+// 🔴 `listingImageFormats` is a prose MIRROR of what appapi.DecodeImageInfo will
+// actually decode, and the caps guard above cannot see it: that assertion
+// compares the constant against a Long built by interpolating the SAME constant,
+// so it is a constant compared with itself and can never fail. Measured, both on
+// a green suite: narrowing the constant to "png or jpeg" (the help then
+// UNDERSTATES — webp is accepted) survived, and widening it to
+// "png, jpeg or avif" (the help then LIES — avif is refused) survived.
+//
+// Unlike this repo's server-side mirrors there is a local counterpart to check
+// against, so the drift is cheap to pin: decode a real header of each claimed
+// format and refuse one that is not claimed.
+func TestListingImageFormatsMatchesTheDecoder(t *testing.T) {
+	accepted := map[string][]byte{
+		"png":  minimalPNG(t),
+		"jpeg": minimalJPEG(t),
+		"webp": minimalWebP(t),
+	}
+	for name, data := range accepted {
+		t.Run("accepted/"+name, func(t *testing.T) {
+			if _, err := appapi.DecodeImageInfo(data); err != nil {
+				t.Fatalf("listingImageFormats claims %s is accepted, but DecodeImageInfo refused it: %v",
+					name, err)
+			}
+			if !strings.Contains(listingImageFormats, name) {
+				t.Errorf("DecodeImageInfo accepts %s but listingImageFormats (%q) does not name it — "+
+					"the help UNDERSTATES what the CLI will take", name, listingImageFormats)
+			}
+		})
+	}
+	// Negative control: a format the constant must NOT claim. Without this the
+	// test above is satisfied by a constant listing every format under the sun.
+	t.Run("refused/gif", func(t *testing.T) {
+		if _, err := appapi.DecodeImageInfo(minimalGIF(t)); err == nil {
+			t.Fatal("DecodeImageInfo accepted a GIF — this test's premise is stale, not the constant")
+		}
+		if strings.Contains(listingImageFormats, "gif") {
+			t.Errorf("listingImageFormats (%q) claims gif, which DecodeImageInfo refuses — "+
+				"the help LIES about what it will take", listingImageFormats)
+		}
+	})
+}
+
+// Fixtures for the drift check above. They are REAL encoded images (or, for
+// WebP, a real RIFF/VP8X container header), not magic-byte stubs — the point is
+// to exercise the decoder the CLI actually calls, and a stub would only prove
+// that a byte comparison works.
+func minimalPNG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatalf("png encode: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func minimalJPEG(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatalf("jpeg encode: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// minimalWebP is a VP8X (extended) container header — the sub-format that
+// carries the canvas size directly, so a 30-byte header is a complete answer to
+// DecodeImageInfo without encoding pixel data the stdlib cannot write.
+func minimalWebP(*testing.T) []byte {
+	b := make([]byte, 30)
+	copy(b[0:4], "RIFF")
+	copy(b[8:12], "WEBP")
+	copy(b[12:16], "VP8X")
+	b[24], b[27] = 1, 1 // (width-1, height-1) little-endian -> 2x2
+	return b
+}
+
+func minimalGIF(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := gif.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
+		t.Fatalf("gif encode: %v", err)
+	}
+	return buf.Bytes()
 }
 
 // TestListingHelpBodiesAreComplete is the pilot's own contract: every node in
@@ -171,8 +314,15 @@ func TestListingHelpStaysWithinTheBudget(t *testing.T) {
 		checked++
 		// 🔴 RUNES, NOT BYTES. These bodies are full of em-dashes (3 bytes, one
 		// column), so a byte count reports a 79-column line as 81 and fails prose
-		// that is fine. Measured: the first version of this guard reddened four
-		// PRE-EXISTING bodies that render inside 80 columns.
+		// that is fine.
+		//
+		// Measured on THIS tree: a byte count reddens 4 lines across 4 bodies
+		// (`app listing`, set-icon, set-cover, add-screenshot) that all render
+		// inside 80 columns. An earlier version of this comment called those four
+		// bodies PRE-EXISTING; that was wrong — three of them had no Long at all
+		// before this file was written. The 3 genuinely pre-existing over-80
+		// COLUMN lines (two in the group body, one in `status`) are a separate
+		// set, and are rewrapped rather than excused.
 		if n := utf8.RuneCountInString(body); n > helpBodyBudget {
 			t.Errorf("`app listing %s` Long is %d chars, over the %d budget — "+
 				"prose that does not fit a screen belongs in the guide, not in `--help`",

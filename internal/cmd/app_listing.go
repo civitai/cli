@@ -82,7 +82,7 @@ early to clear the publish floor before you go live.
 
 Source files are checked locally BEFORE any upload — ` + listingImageFormats + `, at most
 ` + humanBytes(maxIconBytes) + ` for an icon, ` + humanBytes(maxCoverBytes) + ` for a cover, ` + humanBytes(maxScreenshotBytes) + ` for a screenshot.
-A file that fails those checks is refused as a usage error (exit 2) with nothing
+A file in the wrong format, or over its cap, is refused before anything is
 uploaded.`,
 		Example: `  civitai app listing status
   civitai app listing set-icon ./assets/icon.png
@@ -328,8 +328,7 @@ page. A cover is MANDATORY: a listing cannot publish without one.
 
 The source file is validated locally first (` + listingSourceRule(kindCover) + `),
 then ingested, held until the content scan clears, and attached. Nothing is
-uploaded if the local check fails. The cover's cap is larger than the icon's
-because a cover is stored at full resolution rather than inlined.
+uploaded if the local check fails.
 
 On a listing that is already LIVE this opens a REVISION for moderator re-review
 instead of changing the live listing — pass --changelog to describe the change,
@@ -357,8 +356,8 @@ func newAppListingAddScreenshotCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-screenshot <file>",
 		Short: "Add a screenshot (up to 8) with an optional caption",
-		Long: `Add a SCREENSHOT to your store listing's gallery. Screenshots are OPTIONAL —
-they are not part of the publish floor — and a listing holds up to 8.
+		Long: `Add a SCREENSHOT to your store listing's gallery. Screenshots are OPTIONAL:
+they are not part of the publish floor.
 
 The source file is validated locally first (` + listingSourceRule(kindScreenshot) + `),
 then ingested, held until the content scan clears, and appended to the gallery.
@@ -369,9 +368,10 @@ Each run appends one screenshot; there is no bulk add. Use
 ` + "`civitai app listing rm-screenshot`" + ` to drop one — both take the screenshot ids
 that ` + "`civitai app listing status`" + ` prints.
 
-The 8-screenshot ceiling is NOT checked locally — this command does not count
-the existing gallery before uploading, so hitting the ceiling surfaces as a
-server refusal after the ingest rather than as a local usage error.
+The gallery has a ceiling (8 at the time of writing) and it is the SERVER's, not
+this CLI's: nothing here counts the gallery before uploading, so hitting the
+ceiling surfaces as a server refusal after the ingest rather than as a local
+usage error.
 
 On a listing that is already LIVE this opens a REVISION for moderator re-review
 instead of changing the live listing — pass --changelog to describe the change,
