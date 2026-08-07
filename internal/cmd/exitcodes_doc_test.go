@@ -261,12 +261,13 @@ func TestImageUsageRefusalLedger(t *testing.T) {
 // TestUnreadableImageIsNotAUsageError pins the NEGATIVE half of the corrected
 // README claim: "a file that exists but cannot be read … does not exit 2".
 //
-// 🔴 INVARIANT GUARD, not regression coverage — it passes at this PR's base
+// 🔴 INVARIANT GUARD, not regression coverage — it passes at its own PR's base
 // too. Its job is to stop a future "tidy-up" from tagging the os.ReadFile
 // failure in loadAndValidateImage, which would silently make the published
-// sentence false. It asserts only what the docs claim (not ErrUsage); the code
-// this error DOES produce today is exit 5, which is a separate pre-existing
-// defect in cmd/civitai's isNetworkErr and is deliberately not pinned here.
+// sentence false. It asserts only what the docs claim (not ErrUsage); which
+// code the error DOES produce is cmd/civitai's business, and is pinned there —
+// it was exit 5 until issue #241 fixed isNetworkErr, and is exit 1 now (see
+// TestFilesystemErrorsAreNotNetworkErrors in cmd/civitai/fs_not_network_test.go).
 func TestUnreadableImageIsNotAUsageError(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: a mode-000 file is still readable, so the probe cannot observe the case")

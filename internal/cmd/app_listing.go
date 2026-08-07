@@ -574,18 +574,20 @@ func cmdCtx(cmd *cobra.Command) context.Context {
 // opaque filesystem cause (permissions, I/O), which is not a mistake about the
 // invocation and must not be reported as one.
 //
-// 🔴 Be precise about what leaving them untagged costs today, because an earlier
-// version of this comment was not, and its reasoning was the wrong way round. It
-// said tagging would misreport an I/O failure "as a user mistake" — implying the
-// status quo reports it as something better. It does not: untagged, a
-// permission-denied read exits **5, the network code**. syscall.Errno has both
-// Timeout() and Temporary(), so it satisfies net.Error, and cmd/civitai's
-// isNetworkErr errors.As-matches it straight through the *fs.PathError.
-// Measured: `civitai app listing set-icon <mode-000 png>` exits 5. So the real
-// trade is "misreported as retryable transport" vs "misreported as a usage
-// mistake", and the decision stands only because the fix belongs in isNetworkErr
-// — where it corrects every filesystem error in the CLI at once — and not in a
-// per-call-site tag here, which would leave the same defect everywhere else.
+// 🔴 Be precise about what leaving them untagged costs, because two earlier
+// versions of this comment were not. The first said tagging would misreport an
+// I/O failure "as a user mistake", implying the status quo reported it as
+// something better; it did not — untagged, a permission-denied read exited **5,
+// the network code**, because syscall.Errno has both Timeout() and Temporary()
+// and so satisfies net.Error, which cmd/civitai's isNetworkErr errors.As-matched
+// straight through the *fs.PathError. Measured then:
+// `civitai app listing set-icon <mode-000 png>` exited 5.
+// That is fixed (issue #241) where the second version of this comment said it
+// belonged — in isNetworkErr, which corrects every filesystem error in the CLI
+// at once rather than one call site. An unreadable image now exits **1**, the
+// generic code, and the published contract says so. Leaving these untagged is
+// still the right call: exit 2 means the user got the INVOCATION wrong, and a
+// chmod problem is not that.
 func loadAndValidateImage(kind mediaKind, file string) ([]byte, appapi.ImageInfo, error) {
 	fi, err := os.Stat(file)
 	if err != nil {
