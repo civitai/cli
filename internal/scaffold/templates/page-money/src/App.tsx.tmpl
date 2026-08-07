@@ -60,9 +60,11 @@ import { STARTER_COMFY_RECIPE, buildComfyBody } from './comfy.js';
  *  - `txt2img` — the PRIMARY, runnable-today path (hardcoded-default checkpoint +
  *    host checkpoint/LoRA pickers).
  *  - `comfy`  — the SECONDARY Comfy on Civitai (customComfy) sample: a
- *    server-registered, code-reviewed recipe (`starter-comfy-txt2img`). The app
- *    can't ship a graph; it sends only the recipe id + a prompt. Invite-only beta
- *    on live civitai.com (works end-to-end against the mock host).
+ *    code-reviewed recipe (`starter-comfy-txt2img`), which IS registered
+ *    server-side. On THIS arm the app sends only the recipe id + a prompt and
+ *    the server owns the graph — but an app CAN ship its own graph;
+ *    that is the separate INLINE arm, built and unit-tested in comfy.ts. Comfy is
+ *    invite-only beta on live civitai.com (works end-to-end against the mock host).
  */
 type GenMode = 'txt2img' | 'comfy';
 

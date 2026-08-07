@@ -49,10 +49,17 @@ export type ComfyParams = ComfyRecipeBody['params'];
 
 /**
  * The starter recipe the RECIPE sample invokes: a cheap, minimal Z-Image txt2img
- * recipe (per-job Buzz ceiling 30). It is SERVER-registered — a recipe id must
- * exist in the server registry for a real run to resolve, and an unknown id is
- * rejected fail-closed at the schema enum. To run a graph that is NOT in the
- * registry, use the inline arm below instead of waiting for a review.
+ * recipe. It IS server-registered — a recipe id must exist in the server registry
+ * for a real run to resolve, and an unknown id is rejected fail-closed at the
+ * schema enum (whose message lists the ids that ARE registered — that list, not a
+ * constant written here, is how you find out what the registry currently holds).
+ *
+ * Its per-job Buzz ceiling is declared by the REGISTRY, not by this file, and can
+ * be raised server-side without a scaffold release. Don't mirror it into a
+ * constant here: a stale copy of a spend limit is worse than no copy.
+ *
+ * To run a graph that is NOT in the registry, use the inline arm below instead of
+ * waiting for a review.
  */
 export const STARTER_COMFY_RECIPE = 'starter-comfy-txt2img';
 
