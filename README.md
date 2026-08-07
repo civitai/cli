@@ -902,6 +902,25 @@ the cap.
 Notes like the cap caveat go to stderr, so `--json` stdout stays pure and the
 exit code stays 0.
 
+### Deployed is not the same as listed in the store
+
+`civitai app status` and `civitai app view` read **different resources**, and an
+app can legitimately be in one and not the other:
+
+- `civitai app status <slug>` reads your **submission pipeline**
+  (`GET /api/v1/blocks/submissions`) — review status, deploy state, live URL.
+- `civitai app view <slug>` reads the **public store catalog**
+  (`GET /api/v1/apps/{slug}`) — the published store listing.
+
+So `app status` can show `approved / live` with a working `<slug>.civit.ai` URL
+while `app view <slug>` returns **not found** (exit 4). That 404 is truthful and
+says nothing about your deploy: the store lists an app only once its **store
+listing** is published (a listing needs an icon and a cover — see
+`civitai app listing status`), and the catalog itself is still gated by a launch
+flag while the store is pre-GA. When the 404 lands on a slug **you own**, the CLI
+detects that and says so, naming both next commands, instead of leaving you with
+a bare "App not found".
+
 ## App metrics
 
 `civitai app metrics <slug>` shows the owner-only analytics for one of **your**

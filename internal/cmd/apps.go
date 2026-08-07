@@ -2,11 +2,13 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 	"text/tabwriter"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
 	"github.com/civitai/cli/pkg/civitai"
@@ -154,20 +156,27 @@ external / connect target).
 
 Login is required (` + "`civitai login`" + `). A missing or out-of-scope slug returns a
 clean "not found" message. This command is useless until the backing API is
-deployed.`,
+deployed.
+
+This reads the PUBLIC STORE CATALOG, which is NOT the same thing as your
+deployment: an app can be approved, deployed and serving at <slug>.civit.ai and
+still not be in the store. When a 404 lands on a slug you own, the error says so
+and points at ` + "`civitai app listing status`" + ` / ` + "`civitai app status`" + `.`,
 		Example: `  civitai app view my-cool-app
   civitai app view my-cool-app --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			jsonOut, _ := cmd.Flags().GetBool("json")
+			slug := args[0]
+			ctx := context.Background()
 
 			client, err := newLoginGatedReader()
 			if err != nil {
 				return err
 			}
-			d, raw, err := client.GetApp(context.Background(), args[0])
+			d, raw, err := client.GetApp(ctx, slug)
 			if err != nil {
-				return err
+				return explainAppViewNotFound(ctx, slug, err)
 			}
 			if jsonOut {
 				return emitJSON(cmd, raw)
@@ -178,6 +187,88 @@ deployed.`,
 	}
 	cmd.Flags().Bool("json", false, "print the raw API JSON response (for scripting)")
 	return cmd
+}
+
+// explainAppViewNotFound upgrades the bare 404 from GET /api/v1/apps/{slug} to
+// an actionable error when the caller turns out to OWN that slug (issue #223).
+//
+// The 404 is TRUTHFUL — `app view` and `app status` read genuinely DIFFERENT
+// resources. `app view` reads the PUBLIC STORE CATALOG (GET /api/v1/apps/{slug},
+// an approved+published AppListing), while `app status` reads the AUTHOR
+// SUBMISSION PIPELINE (GET /api/v1/blocks/submissions), which is what carries
+// deployState and the live URL. An app can therefore be approved, deployed and
+// serving while the store cannot show it, and the store detail route correctly
+// 404s. So the fix is the MESSAGE, not the lookup: nothing about the request
+// changes, only what we tell the author a 404 means.
+//
+// 🔴 The ownership probe runs ONLY on the 404 path, and that is deliberate. The
+// happy path must not pay a second round trip for advice it will never print,
+// and the submissions route is invite-gated (a caller who is not an Apps author
+// gets a 403 there) — so probing unconditionally would add both latency and a
+// brand-new failure mode to a command that already succeeded.
+func explainAppViewNotFound(ctx context.Context, slug string, err error) error {
+	if !errors.Is(err, civitai.ErrNotFound) {
+		return err
+	}
+	sub := ownedSubmission(ctx, slug)
+	if sub == nil {
+		// 🔴 Ownership was NOT ESTABLISHED — either the caller does not own this
+		// slug, or the probe itself could not answer (network, auth, no token,
+		// not an Apps author). Both collapse to the plain 404 on purpose:
+		// reading nothing is not finding nothing, and asserting "your store
+		// listing is not published" when we could not actually check would be a
+		// false diagnosis at a correct project — strictly worse than the terse
+		// 404 it replaced.
+		return err
+	}
+	// %w keeps the classification (and therefore the not-found exit code)
+	// attached; the advice is appended, never substituted.
+	return fmt.Errorf("%w\n\n%s", err, appViewOwnedAdvice(slug, sub))
+}
+
+// ownedSubmission answers "does the caller own <slug>?" against the author
+// submission route, returning the matching submission row or nil.
+//
+// nil means "not established" and deliberately does NOT distinguish "not yours"
+// from "could not ask" — explainAppViewNotFound must treat those identically,
+// so collapsing them here keeps the one decision in one place.
+func ownedSubmission(ctx context.Context, slug string) *appapi.Submission {
+	cfg, err := config.Load()
+	if err != nil || cfg.Token() == "" {
+		return nil
+	}
+	subs, err := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "").ListSubmissions(ctx, slug)
+	if err != nil {
+		return nil
+	}
+	// Match the slug HERE rather than trusting the ?blockId= narrowing: a
+	// submission's blockId IS the slug, and a server that ignored the filter
+	// would otherwise hand back someone else's newest row and turn this into a
+	// confident false claim of ownership.
+	for i := range subs {
+		if subs[i].BlockID == slug {
+			return &subs[i]
+		}
+	}
+	return nil
+}
+
+// appViewOwnedAdvice is the actionable half of the #223 message. It reports only
+// what the two endpoints actually said — the store 404ed, and the submissions
+// route holds a row for this slug with this status/deployState — and names the
+// next command for each of the two resources. It deliberately does NOT claim a
+// single cause: the CLI cannot see whether the listing is unpublished or the
+// store's launch flag is simply hiding it, and re-deriving publication rules
+// locally is exactly the vendoring this repo refuses.
+func appViewOwnedAdvice(slug string, s *appapi.Submission) string {
+	return fmt.Sprintf(
+		"`%s` IS one of your own apps (submission status: %s, deploy: %s), so this 404 is not evidence that your deploy is broken.\n"+
+			"`civitai app view` reads the PUBLIC store catalog (GET /api/v1/apps/{slug}) — a different resource from your submission, "+
+			"which is what carries the deploy state and the live URL. The store lists an app only once its store LISTING is published "+
+			"(a listing needs an icon and a cover), and the catalog itself is still gated by a launch flag: until it opens publicly you "+
+			"only see apps if your account is a moderator or app-dev-tester.\n"+
+			"Next: `civitai app listing status --slug %s` for the listing, `civitai app status %s` for the deploy state and live URL",
+		slug, dashIfEmpty(safeTerm(s.Status)), deployLabel(s.DeployState), slug, slug)
 }
 
 // newLoginGatedReader builds a civitai.Client for the App-store read endpoints,
