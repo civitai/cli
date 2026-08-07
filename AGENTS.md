@@ -886,7 +886,7 @@ neither one's.
 
     🔴 **And the CLI still cannot tell you whether the promotion actually
     fired.** The whatIf reply carries `{ready, cost, transactions,
-    allowMatureContent}` and no echo of the resolved workflow. The obvious
+    allowMatureContent}` — plus, since item 21, `modelSubstitutions` — and no
     detector — "did a `factors.images` key appear?" — is WRONG, and a
     differential estimate ("does the price change when I add the images?") is
     wrong the same way: measured, `Flux1Kontext`, `NanoBanana` and `Seedream`
@@ -1164,6 +1164,84 @@ neither one's.
       CONTROL — a pre-fix project with no emitter warns on BOTH binaries — so
       the silent cells are real false passes rather than a probe wired to
       nothing.
+
+21. **A reported model substitution is a WARNING by default, not a failure — and
+    that is a deliberate product decision, not laziness.** The server accepts a
+    checkpoint version id that is not valid for a `modelLocked` ecosystem,
+    substitutes the ecosystem default, runs the job and bills for what ran
+    (civitai/civitai#3665). It now records each swap and returns it as
+    `modelSubstitutions: [{requested, applied, reason}]`, `reason` ∈
+    `{wrong-workflow, unrecognized, gated}`. `internal/genapi/substitution.go`
+    models it; `internal/cmd/generate_substitution.go` renders it.
+
+    (a) **Three carriers, and they differ.** `whatIfFromGraph` → TOP-LEVEL only
+    (nothing is persisted on that path, so the reply is the only copy).
+    `generateFromGraph` → top-level AND `metadata`. Any later read
+    (`getWorkflow`) → `metadata` only. `SubmitResult.Substitutions()` prefers the
+    top-level copy and falls back to metadata; it must never CONCATENATE them, or
+    one swap is reported as two.
+
+    (b) 🔴 **ABSENCE IS AMBIGUOUS. The key is OMITTED when nothing was
+    substituted, so "no record" means EITHER "no substitution" OR "a server
+    older than the field" — the same bytes.** Nothing may render that as "no
+    substitutions": a reassuring negative would be wrong against every server
+    predating civitai/civitai#3692. The renderer prints *nothing at all* when the
+    record is empty, and there is a test asserting the CLI never claims the
+    negative. This is also why the field is a plain slice and not a pointer —
+    unlike item 9's `AppAnalytics.Views` there is no third state to preserve, and
+    no Go type can resolve an ambiguity that is inherent to the protocol.
+
+    (c) **Why warn-and-continue is the default.** The substitution is a
+    deliberate graceful degradation: a script pinned to a version that was later
+    retired keeps producing images instead of breaking. Making it a hard CLI
+    failure by default would override that server-side decision and break working
+    automation on a CLI upgrade. So the default is the fail-soft shape of item
+    13(b) — warn loudly, proceed — and the protection for a human is that the
+    warning prints BEFORE the confirmation prompt, where they can still say no.
+    `--fail-on-substitution` is the opt-in for callers who would rather fail than
+    get a different model; it mirrors `--max-cost` (an opt-in pre-flight refusal
+    evaluated on the ESTIMATE, so it spends nothing) and is tagged
+    `ErrModelSubstituted`.
+
+    (d) 🔴 **It is checked on the estimate and deliberately does NOT re-fire
+    after the submit.** By then the money is gone, and aborting would strand
+    outputs the caller has paid for and still needs to collect. A post-submit
+    substitution is always REPORTED and always present in `--json`; it just does
+    not change the exit code.
+
+    (e) **The report goes to STDERR in every mode, `--json` included** — the raw
+    passthrough already carries the record on stdout, so warning there would
+    corrupt the stream for exactly the callers automating a spend. And the
+    server's `reason` token is printed RAW per item 8, with the CLI's advice on a
+    separate line; the advice supplements the token, it never replaces it. An
+    UNRECOGNISED reason still warns with the ids intact — a fourth reason from a
+    newer server must not make the CLI go quiet, which is the original defect
+    reintroduced via a `switch`.
+
+    (f) 🔴 **The PHASE a call site passes is part of the contract, and asserting
+    it by keyword does NOT work.** `reportModelSubstitutions` takes a
+    `substitutionPhase`, and the difference between them is whether the money has
+    already moved — so a wrong argument makes `--dry-run` announce "HAS BEEN
+    CHARGED", or makes `workflows get` tell someone whose workflow was billed that
+    "Nothing has been submitted or charged yet". A test asserting
+    `Contains(out, "charged")` cannot see any of that: it was satisfied by an
+    unrelated line from the *quote* renderer, so every call-site mutation survived
+    a green suite. Assert the phase STRUCTURALLY — derive the expected lead from
+    the constant via `substitutionLead(phase)` and require the other phases' leads
+    to be ABSENT (`assertPhase` in generate_substitution_test.go), and keep
+    `TestSubstitutionLead_AllPhasesNonEmptyAndPairwiseDistinct`, because an empty
+    or duplicated lead silently disarms every one of those assertions
+    (`Contains(x, "")` is always true).
+
+    (g) 🔴 **A mutation matrix scoped to the renderer proves nothing about the
+    call sites.** The first round of this feature reported 17/17 mutants killed
+    and was still missing all of the above: every mutant targeted
+    `reportModelSubstitutions`/`substitutionRefusal` internals, so the ARGUMENTS
+    passed to them, the third phase, and the refusal message's operand ORDER were
+    structurally outside the battery. A second, independently-built battery found
+    11 survivors — including a swap of `Applied`/`Requested` that made the
+    money-refusal line state the substitution backwards. When you mutation-test a
+    reporter, mutate the CALL SITES too, not just the function.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

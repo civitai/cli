@@ -70,6 +70,21 @@ func TestExitCode(t *testing.T) {
 		{"wrapped dial refused", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), exitNetwork, ""},
 		{"deadline exceeded", fmt.Errorf("request: %w", context.DeadlineExceeded), exitNetwork, ""},
 
+		// 🔴 The generate sentinels must land on GENERIC 1 — deliberately NOT 3
+		// (auth) or 2 (usage), because a caller who is out of Buzz, muted, or was
+		// given a different model must never be told to re-run `civitai login`.
+		// generate.go asserts this in a comment; nothing tested it until an audit
+		// found ErrModelSubstituted's exit code unpinned.
+		{"insufficient buzz sentinel", cmd.ErrInsufficientBuzz, exitGeneric, ""},
+		{"generation disabled sentinel", cmd.ErrGenerationDisabled, exitGeneric, ""},
+		{"account restricted sentinel", cmd.ErrAccountRestricted, exitGeneric, ""},
+		{"prompt blocked sentinel", cmd.ErrPromptBlocked, exitGeneric, ""},
+		{"model substituted sentinel", cmd.ErrModelSubstituted, exitGeneric, ""},
+		{"tagged model substitution keeps its message", civitai.Tag(cmd.ErrModelSubstituted,
+			errors.New("refusing to submit: the server reports it would run version 2 instead of the version 1 you asked for")),
+			exitGeneric,
+			"refusing to submit: the server reports it would run version 2 instead of the version 1 you asked for"},
+
 		{"generic fallback", errors.New("something unexpected"), exitGeneric, ""},
 		{"wrapped generic", fmt.Errorf("outer: %w", errors.New("inner")), exitGeneric, ""},
 	}
