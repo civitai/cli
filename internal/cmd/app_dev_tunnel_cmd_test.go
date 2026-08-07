@@ -412,12 +412,20 @@ func TestAppHelpListsDevTunnel(t *testing.T) {
 // checks AGREEMENT rather than either wording alone: the README must name the
 // endpoint the code actually dials, and must not contradict the command's own
 // claim that the endpoint is live.
+//
+// 🔴 SCOPE: "the README" here is the row PLUS the section(s) the row links to.
+// The detail used to sit inside the table cell — 222 words in one markdown
+// column, which GitHub renders unreadably — and moved into a dedicated section
+// (issue #260). Keeping the assertions pinned to the CELL would have made the
+// relocation look like deletion; following the row's own cross-reference keeps
+// the anti-drift claim intact AND fails if that link ever breaks.
 func TestReadmeDevTunnelRowMatchesTheCommandHelp(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), "README.md"))
 	if err != nil {
 		t.Fatalf("read README.md: %v", err)
 	}
-	row := readmeCommandRefRow(t, string(raw), "civitai app dev-tunnel")
+	row := readmeRowPlusLinkedSections(t, string(raw),
+		readmeCommandRefRow(t, string(raw), "civitai app dev-tunnel"))
 
 	// The command's Long is the surface that was kept current; it is the anchor.
 	long := newAppDevTunnelCmd().Long

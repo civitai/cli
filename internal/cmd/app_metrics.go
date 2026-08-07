@@ -29,6 +29,19 @@ const wireTimeLayout = "2006-01-02T15:04:05.000Z"
 // regardless of where they run the CLI.
 const dateOnlyLayout = "2006-01-02"
 
+// appMetricsCredentialRoute names the ONE credential that works for this
+// command, and it is deliberately NOT login.go's spendCredentialRoutes.
+//
+// 🔴 That constant names BOTH routes because generation accepts either. The
+// analytics proc does not: it is full-scope, so an OAuth browser login is
+// refused with 403 (see the Long text, and item 5 in AGENTS.md). Until issue
+// #260 the no-token error here was the generic "run `civitai login`" — which is
+// the ONE route this command cannot use, so following the CLI's own advice
+// landed the author on a second refusal. `generate` and `workflows` already name
+// their working routes; this mirrors that shape for the route that works here.
+const appMetricsCredentialRoute = "a full-scope personal API key " +
+	"(`civitai login --token <key>`, created at " + accountAPIKeysURL + ")"
+
 // appMetricsDeps are the two network seams `app metrics` needs: slug →
 // appBlockId resolution (the existing submissions route) and the analytics query
 // itself. Bundled so the command core is exercisable without a live server.
@@ -58,8 +71,8 @@ command therefore always prints the window the SERVER served (echoed from the
 response), not the one you asked for. Pass --from / --to as a plain YYYY-MM-DD
 date (midnight UTC) or a full RFC3339 timestamp to widen it.
 
-CREDENTIAL: the analytics query is full-scope, so it needs a personal API key
-(` + "`civitai login --token <key>`" + `); an OAuth browser login is refused with 403.
+CREDENTIAL: the analytics query is full-scope, so it needs ` + appMetricsCredentialRoute + `;
+an OAuth browser login is refused with 403.
 
 DATA CAVEAT: engagement counts only AUTHENTICATED, scope-gated API calls. An app
 that ships no scoped API surface will show real installs and revenue with a flat
@@ -80,7 +93,12 @@ engagement section — that is expected, not a bug.`,
 				return err
 			}
 			if cfg.Token() == "" {
-				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
+				// Name the route that WORKS, not the generic one: an OAuth
+				// browser login is refused here with 403 (see
+				// appMetricsCredentialRoute).
+				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf(
+					"no token configured — app analytics need %s; a browser login (`civitai login`) is full-scope-refused with 403 here. Or set CIVITAI_TOKEN to that key",
+					appMetricsCredentialRoute))
 			}
 
 			client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")

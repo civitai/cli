@@ -166,6 +166,54 @@ func isDevDefault(v string) bool {
 	return v == "" || v == "dev"
 }
 
+// rootHelpTemplate renders `civitai --help` with the exit-code taxonomy AFTER
+// the usage/commands block instead of before it.
+//
+// WHY A TEMPLATE AND NOT `Long`. Cobra's help template prints Long, then the
+// usage string (Usage / Examples / Available Commands / Flags). The exit-code
+// section is ~60 lines, so appending it to Long — which is where it lived — put
+// the whole taxonomy AHEAD of "Available Commands": a first-time user running
+// `civitai --help` had to scroll past a reference table to find the list of
+// things the binary can do. Moving the section is the only way to fix the order,
+// because Long has no "render me last" slot.
+//
+// 🔴 THE `{{if not .HasParent}}` GATE IS LOAD-BEARING. Command.HelpTemplate()
+// walks UP to the parent when a command sets none of its own, so a template set
+// on the root is inherited by every subcommand — without the gate,
+// `civitai app validate --help` would grow a copy of the root's exit-code
+// taxonomy. The gate is evaluated per command, so only the root renders it.
+//
+// The block is still GENERATED from exitCodeDocs at NewRootCmd() time, which is
+// what keeps `--help` unable to drift from the README (exitcodes_doc.go). The
+// rest of the template is cobra v1.8.1's default, copied verbatim.
+func rootHelpTemplate() string {
+	return `{{with (or .Long .Short)}}{{. | trimTrailingWhitespaces}}
+
+{{end}}{{if or .Runnable .HasSubCommands}}{{.UsageString}}{{end}}{{if not .HasParent}}
+` + rootExitCodeHelp() + `
+{{end}}`
+}
+
+// flagErrorWithHelpHint appends the next step to cobra's own flag-parse error.
+//
+// Cobra answers a mistyped FLAG with a bare `unknown flag: --stict` and no next
+// step, while a mistyped COMMAND already gets `Run 'civitai app --help' …` from
+// unknownSubcommandError — the same class of typo got two different qualities of
+// answer (issue #260). The hint names the command whose flags were ACTUALLY
+// being parsed, so `civitai app validate --stict` points at
+// `civitai app validate --help` rather than at the root's flag list.
+//
+// Cobra's own wording is APPENDED to, never replaced: its shorthand and
+// `--flag=value` diagnostics are what a user greps for. The error is wrapped
+// with %w so the caller's asUsageError tag (and therefore exit code 2) is
+// unaffected by this function.
+func flagErrorWithHelpHint(c *cobra.Command, err error) error {
+	if c == nil || err == nil {
+		return err
+	}
+	return fmt.Errorf("%w\nRun '%s --help' for the available flags.", err, c.CommandPath())
+}
+
 // NewRootCmd builds the root command with all subcommands attached.
 func NewRootCmd() *cobra.Command {
 	var noUpdateCheck bool
@@ -177,21 +225,25 @@ func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "civitai",
 		Short: "Civitai CLI — browse & download models, and build Apps",
-		// The "Exit codes:" block is APPENDED, not written here: it is rendered
-		// from exitCodeDocs (exitcodes_doc.go), the one source this help section
-		// and the README's exit-code table both come from. Hand-writing it back
-		// in is what let the two drift — see the file header there.
+		// 🔴 The "Exit codes:" block is NOT part of Long — see rootHelpTemplate
+		// below for why it is appended by the help TEMPLATE instead. It is still
+		// rendered from exitCodeDocs (exitcodes_doc.go), the one source this help
+		// section and the README's exit-code table both come from. Hand-writing
+		// it back in is what let the two drift — see the file header there.
 		Long: `civitai is the command-line interface for Civitai (https://civitai.com).
 
 It does three things from one static binary:
 
   • Browse & download the public catalog — search models, list images and
-    articles, and fetch model files. Reading is anonymous; downloading a
-    model file needs a token (civitai login). --layout routes each file into
-    the right folder for ComfyUI / A1111.
+    articles, and fetch model files. Reading the PUBLIC catalog is anonymous;
+    downloading a model file needs a token (civitai login). --layout routes
+    each file into the right folder for ComfyUI / A1111.
   • Build & submit Apps — small, sandboxed web apps that run inside Civitai
     surfaces. Scaffold a correct project, validate it against the platform
-    contract, and package it for submission.
+    contract, and package it for submission. EVERY civitai app command needs a
+    token, including the App-store browse commands app list / app view: that
+    endpoint keys the visible catalog off your identity, so it has no
+    anonymous view.
   • Generate images — civitai generate "<prompt>". This SPENDS REAL BUZZ and
     needs the AI Services scopes (civitai login --scopes generate, or a
     full-scope personal API key); price a job with --dry-run first.
@@ -206,15 +258,13 @@ Get started:
   # Build an App
   civitai login                    store your API token
   civitai app create my-app        scaffold a ready-to-build App
-  civitai app submit               package + submit for review
-
-` + rootExitCodeHelp(),
+  civitai app submit               package + submit for review`,
 		Example: `  # Browse & download the public catalog (no account needed to read).
   civitai models search --query "dreamshaper" --limit 5
   civitai images search --sort "Most Reactions" --period Week
   civitai download ` + downloadExampleVersionID + ` --layout comfyui --root ~/ComfyUI
 
-  # Browse the App store.
+  # Browse the App store (needs civitai login — this is NOT an anonymous read).
   civitai app list
   civitai app view <slug>
 
@@ -253,6 +303,7 @@ Get started:
 		},
 	}
 	root.SetVersionTemplate("civitai {{.Version}}\n")
+	root.SetHelpTemplate(rootHelpTemplate())
 
 	// A persistent flag so every command honours --no-update-check, and the
 	// post-run hook can read its resolved value.
@@ -270,11 +321,13 @@ Get started:
 	_ = colorViper.BindEnv("no_color", "CIVITAI_NO_COLOR")
 	_ = colorViper.BindEnv("color", "CIVITAI_COLOR")
 
-	// Classify Cobra's own flag-parsing failures as usage errors (message left
-	// untouched) so the entrypoint can map them to a dedicated exit code. Applies
-	// to every subcommand via cobra's flag-error propagation.
-	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		return asUsageError(err)
+	// Classify Cobra's own flag-parsing failures as usage errors so the
+	// entrypoint can map them to a dedicated exit code, and append the next step
+	// (see flagErrorWithHelpHint). Applies to every subcommand via cobra's
+	// flag-error propagation — cobra passes the command whose flags failed to
+	// parse, not the root.
+	root.SetFlagErrorFunc(func(c *cobra.Command, err error) error {
+		return asUsageError(flagErrorWithHelpHint(c, err))
 	})
 
 	root.AddCommand(newAppCmd())
