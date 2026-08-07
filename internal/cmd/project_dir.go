@@ -55,12 +55,35 @@ import (
 // 24 already assigns to exactly those shapes. `app validate <regular-file>/x.json`
 // is one of the six invocations measured in #241, and 1 is the answer that issue
 // settled on.
+// The two exit-2 arms carry DIFFERENT remedies, and which arm gets which is
+// part of the contract rather than cosmetic: "the path is not there" sends you
+// to `app init`, while "you pointed at a file" sends you to the parent
+// directory. Swapped, the CLI tells someone whose path is simply missing to
+// pass "the ROOT, not a file" — advice about a file that does not exist — and
+// tells someone who pointed at their manifest to scaffold a project they
+// already have.
+//
+// 🔴 They are named constants because a swap is otherwise INVISIBLE: measured
+// on this branch, exchanging the two format strings passed the ENTIRE suite
+// (0 failures). Every classification assertion uses errors.Is and both arms
+// carry the same ErrUsage sentinel, so nothing downstream can tell them apart,
+// and the one message test only asks that the path the user typed appears —
+// which both spellings do. That is AGENTS item 21(f)'s recorded shape: the
+// operand ORDER of a message is a contract no exit-code assertion can see.
+// TestProjectDirRemediesMatchTheirArm requires each arm to carry its own AND
+// NOT the other's, and pins that the two are non-empty and distinct — an empty
+// or duplicated remedy would make `strings.Contains` vacuously true and disarm
+// the whole guard.
+const (
+	remedyNoSuchDir = "%s: no such directory — pass the path to an App project root, or scaffold one with `civitai app init <name>`"
+	remedyNotADir   = "%s is not a directory — pass the App project ROOT (the directory holding %s), not a file"
+)
+
 func resolveProjectDir(dir string) error {
 	info, err := os.Stat(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return asUsageError(fmt.Errorf(
-				"%s: no such directory — pass the path to an App project root, or scaffold one with `civitai app init <name>`", dir))
+			return asUsageError(fmt.Errorf(remedyNoSuchDir, dir))
 		}
 		// Returned BARE, and that is not laziness. os.Stat's error is an
 		// *fs.PathError whose Error() already reads `stat <path>: <reason>`, so
@@ -77,8 +100,7 @@ func resolveProjectDir(dir string) error {
 		return err
 	}
 	if !info.IsDir() {
-		return asUsageError(fmt.Errorf(
-			"%s is not a directory — pass the App project ROOT (the directory holding %s), not a file", dir, manifest.Filename))
+		return asUsageError(fmt.Errorf(remedyNotADir, dir, manifest.Filename))
 	}
 	return nil
 }

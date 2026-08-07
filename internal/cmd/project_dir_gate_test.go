@@ -2,10 +2,13 @@ package cmd
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/civitai/cli/internal/manifest"
 )
 
 // This file is the second half of the #256 guards, added after an audit found
@@ -328,6 +331,72 @@ func TestValidateJSONOnlyEmitsAResultItActuallyProduced(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"ok"`) {
 		t.Errorf("--json must still emit the result object for a directory it could read:\n%s", stdout)
+	}
+}
+
+// TestProjectDirRemediesMatchTheirArm pins WHICH remedy each exit-2 arm
+// carries, which no errors.Is assertion can see: both arms tag ErrUsage, so
+// they are indistinguishable downstream, and the pre-existing message test only
+// requires the path the user typed to appear — true of both spellings.
+//
+// 🔴 Measured before this guard existed: exchanging the two format strings
+// passed the ENTIRE suite, 0 failures. The result is advice that is exactly
+// backwards — a missing path told to "pass the ROOT, not a file", a manifest
+// path told to scaffold a project the author already has. AGENTS item 21(f)
+// records the same class for the substitution reporter, and prescribes this
+// shape: derive the expected text from the CONSTANT and require the other arm's
+// to be ABSENT.
+func TestProjectDirRemediesMatchTheirArm(t *testing.T) {
+	root := newProjectDirRoot(t)
+	missing := filepath.Join(root, "nope")
+	file := filepath.Join(root, "notadir.txt")
+
+	// The remedies must be non-empty and distinct, or every Contains below is
+	// vacuous (`strings.Contains(x, "")` is always true) and the absence
+	// assertions can never fire.
+	noSuch := fmt.Sprintf(remedyNoSuchDir, missing)
+	notDir := fmt.Sprintf(remedyNotADir, file, manifest.Filename)
+	if strings.TrimSpace(noSuch) == "" || strings.TrimSpace(notDir) == "" {
+		t.Fatalf("a remedy rendered empty — every assertion in this test would be vacuous\nnoSuch=%q notDir=%q", noSuch, notDir)
+	}
+	if noSuch == notDir {
+		t.Fatal("the two remedies are identical — this guard cannot tell the arms apart, so a swap is undetectable")
+	}
+
+	for _, tc := range []struct {
+		name       string
+		dir        string
+		want, deny string
+		why        string
+	}{
+		{
+			name: "nonexistent path gets the `app init` remedy",
+			dir:  missing, want: noSuch, deny: notDir,
+			why: "the path is not there, so there is no file to have pointed at — telling the user to " +
+				"pass the ROOT rather than a file is advice about something that does not exist",
+		},
+		{
+			name: "a regular file gets the project-ROOT remedy",
+			dir:  file, want: notDir, deny: noSuch,
+			why: "the user has a real project and pointed one level too deep (typically at the manifest) — " +
+				"telling them to scaffold a new one with `app init` sends them to create what they already have",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := resolveProjectDir(tc.dir)
+			if err == nil {
+				t.Fatal("must be refused")
+			}
+			if !errors.Is(err, ErrUsage) {
+				t.Fatalf("premise: both arms must be usage errors, got %v", err)
+			}
+			if got := err.Error(); !strings.Contains(got, tc.want) {
+				t.Errorf("wrong remedy for this arm.\nWhy it matters: %s\nwant it to contain: %s\ngot: %s", tc.why, tc.want, got)
+			}
+			if got := err.Error(); strings.Contains(got, tc.deny) {
+				t.Errorf("this arm carries the OTHER arm's remedy — the two are swapped.\nWhy it matters: %s\ngot: %s", tc.why, got)
+			}
+		})
 	}
 }
 

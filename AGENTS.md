@@ -1944,19 +1944,29 @@ neither one's.
       and exits 1** — EACCES on a parent, or ENOTDIR partway down a longer path.
       `app validate <regular-file>/x.json` is one of the six invocations measured
       in #241, and 1 is the answer that issue settled on.
-      🔴 **The battery that pins it used to rest on ONE skippable row.** The
-      widening mutant — turning the untagged arm into `asUsageError`, i.e. "tag
-      every stat failure" — reddened exactly one leaf subtest, and that subtest
-      carried a `t.Skip` when the fixture produced no error, so a filesystem that
-      resolved the path would have taken the whole guard with it silently. This
-      is item 24's own recorded "a battery rested on a single row" shape,
-      regenerated. `project_dir_gate_test.go` now runs TWO independent stat
-      shapes (ENOTDIR below a regular file, EACCES on an unsearchable parent)
-      across THREE surfaces (the helper, `app validate`, `app submit`), each row
-      ASSERTING ITS OWN PREMISE — an independent `os.Stat` must fail with
-      something that is neither ENOENT nor a live non-directory, or the row
-      FAILS rather than quietly testing a different branch — plus a count floor.
-      Re-measured: the widening mutant reddens **9 leaf subtests**, up from 1.
+      🔴 **The battery that pins it rested on ONE SKIPPABLE row inside
+      `internal/cmd`.** The widening mutant — turning the untagged arm into
+      `asUsageError`, i.e. "tag every stat failure" — reddened a single leaf
+      subtest there, and that subtest carried a `t.Skip` when the fixture
+      produced no error, so a filesystem that resolved the path would have taken
+      the guard with it silently. This is item 24's own recorded "a battery
+      rested on a single row" shape, regenerated. `project_dir_gate_test.go` now
+      runs TWO independent stat shapes (ENOTDIR below a regular file, EACCES on
+      an unsearchable parent) across THREE surfaces (the helper, `app validate`,
+      `app submit`), each row ASSERTING ITS OWN PREMISE — an independent
+      `os.Stat` must fail with something that is neither ENOENT nor a live
+      non-directory, or the row FAILS rather than quietly testing a different
+      branch — plus a count floor.
+      🔴 **The audit's "exactly one" was itself scoped, and the corrected count
+      is stated because a mutation number nobody re-ran is a claim.** Measured
+      over the WHOLE module at the audited tip `a4807f4`, the widening reddened
+      **2** leaf subtests, not 1: the `internal/cmd` control row plus a
+      pre-existing `cmd/civitai` end-to-end row
+      (`TestFilesystemErrorsExitGenericEndToEnd/app_validate_(ENOTDIR)`), which a
+      package-scoped run does not see. Re-measured on the fixed tree: **8** leaf
+      subtests. And with that single old row DELETED as well, the new battery
+      alone still kills it — 7 leaves — so the guard no longer rests on a row
+      anyone can remove.
     - **The message is NOT wrapped, and that is the fix rather than an
       omission.** `os.Stat`'s error is an `*fs.PathError` whose `Error()` already
       begins `stat <path>: `, so a `fmt.Errorf("stat %s: %w", dir, err)` printed
@@ -1966,6 +1976,21 @@ neither one's.
       the defect above). There is no context left to add — we stat the path the
       user typed. `TestProjectDirStatErrorDoesNotStutter` COUNTS occurrences
       rather than matching a golden string, because the defect is a duplicate.
+    - 🔴 **THE TWO EXIT-2 REMEDIES ARE NAMED CONSTANTS, BECAUSE SWAPPING THEM
+      PASSED THE ENTIRE SUITE.** Both arms tag the same `ErrUsage` sentinel, so
+      no `errors.Is` assertion can tell them apart (item 7 is about the exit
+      code, and the exit code is identical), and the one message test asks only
+      that the path the user typed appears — true of either spelling. Measured:
+      exchanging the two format strings produced **0 failures**, leaving the CLI
+      telling a missing path to "pass the ROOT, not a file" and telling someone
+      who pointed at their manifest to `app init` a project they already have.
+      That is item 21(f)/(g)'s operand-order class, arrived at from a third
+      direction. `remedyNoSuchDir` / `remedyNotADir` and
+      `TestProjectDirRemediesMatchTheirArm` close it by deriving each arm's
+      expected text FROM THE CONSTANT and requiring the other arm's to be
+      ABSENT, with a non-empty + distinct precondition — because
+      `strings.Contains(x, "")` is always true and an empty or duplicated remedy
+      would silently disarm every assertion in the guard.
     - 🔴 **THE PUBLISHED SPLIT IS A LEDGER OF ENUMERATED PATHS, NOT A
       QUANTIFIER — AND BOTH OVER-NARROW AND OVER-BROAD WORDINGS HAVE SHIPPED.**
       "Every local path a FLAG names" excluded the positional commands (above).
