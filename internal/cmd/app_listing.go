@@ -35,6 +35,27 @@ var (
 	scanPollTimeout  = 120 * time.Second
 )
 
+// listingImageFormats is the accepted source set, mirroring what
+// appapi.DecodeImageInfo will actually decode (png/jpeg/webp — the server's
+// LISTING_ASSET_ALLOWED_MIME). Stated once so the six help bodies below cannot
+// disagree with each other.
+const listingImageFormats = "png, jpeg or webp"
+
+// listingSourceRule renders the one sentence describing what a source file for
+// `kind` may be.
+//
+// 🔴 IT IS COMPUTED FROM THE CAP CONSTANTS AND MUST STAY THAT WAY — the number
+// in the help has to be the number loadAndValidateImage enforces, and it is
+// rendered through the SAME humanBytes the refusal message uses, so `--help`
+// predicts the error text byte-for-byte ("larger than the 2.0 MB max") instead
+// of quoting a differently-rounded prose figure. A hand-typed "2 MiB" here is a
+// second copy of a constant: it reads fine, it survives every test that only
+// greps for a cap being mentioned, and it goes stale the day a cap moves.
+// TestListingHelpQuotesTheEnforcedCaps pins the coupling in both directions.
+func listingSourceRule(kind mediaKind) string {
+	return fmt.Sprintf("%s, at most %s", listingImageFormats, humanBytes(int64(kindByteCap(kind))))
+}
+
 // newAppListingCmd is the `civitai app listing` group: attach the store-listing
 // MEDIA (icon / cover / screenshots) an app needs to clear the publish floor,
 // without the browser. Operates on the app in the current directory (or --slug).
@@ -46,18 +67,23 @@ func newAppListingCmd() *cobra.Command {
 a listing needs before it can publish.
 
 A store listing must have an ICON and a COVER before it can go live; screenshots
-are optional. These commands ingest a local image, wait for the content scan, and
-attach it to your listing — the same pipeline the web submit form uses.
+are optional. These commands ingest a local image, wait for the content scan,
+and attach it to your listing — the same pipeline the web submit form uses.
 
 For a listing that is already LIVE (approved), attaching media opens a REVISION
 that goes back to moderator review (the live listing is untouched until the
 revision is approved); pass --changelog to describe the change.
 
 The app is resolved from block.manifest.json in the current directory (or pass
---slug). Your store listing is created as a DRAFT when you run ` + "`civitai app submit`" + `,
-so you can set its media WHILE your app is pending review — the media you attach
-carries forward when a moderator approves it. Set it early to clear the publish
-floor before you go live.`,
+--slug). Your store listing is created as a DRAFT when you run
+` + "`civitai app submit`" + `, so you can set its media WHILE your app is pending review
+— the media you attach carries forward when a moderator approves it. Set it
+early to clear the publish floor before you go live.
+
+Source files are checked locally BEFORE any upload — ` + listingImageFormats + `, at most
+` + humanBytes(maxIconBytes) + ` for an icon, ` + humanBytes(maxCoverBytes) + ` for a cover, ` + humanBytes(maxScreenshotBytes) + ` for a screenshot.
+A file that fails those checks is refused as a usage error (exit 2) with nothing
+uploaded.`,
 		Example: `  civitai app listing status
   civitai app listing set-icon ./assets/icon.png
   civitai app listing set-cover ./assets/cover.png
@@ -151,12 +177,15 @@ func newAppListingStatusCmd() *cobra.Command {
 		Long: `Show your store listing's attached media (icon, cover, screenshots) and what
 is still required before it can publish (an icon and a cover are mandatory).
 
-Your store listing exists as a DRAFT from the moment you run ` + "`civitai app submit`" + `,
-so this works while your app is still pending review.
+Your store listing exists as a DRAFT from the moment you run
+` + "`civitai app submit`" + `, so this works while your app is still pending review.
 
 Note: on a LIVE (approved) listing this opens an in-progress revision draft and
 reports ITS media (idempotent — it reuses any existing draft, and nothing is
 submitted for moderator review until you run a set-/add- command and confirm).`,
+		Example: `  civitai app listing status
+  civitai app listing status --slug my-app
+  civitai app listing status --dir ./my-app`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, err := newListingClient()
@@ -262,7 +291,22 @@ func newAppListingSetIconCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-icon <file>",
 		Short: "Set the listing icon (a square-ish image)",
-		Args:  cobra.ExactArgs(1),
+		Long: `Set your store listing's ICON — the small square-ish image shown beside your
+app's name. An icon is MANDATORY: a listing cannot publish without one.
+
+The source file is validated locally first (` + listingSourceRule(kindIcon) + `),
+then ingested, held until the content scan clears, and attached. Nothing is
+uploaded if the local check fails.
+
+On a listing that is already LIVE this opens a REVISION for moderator re-review
+instead of changing the live listing — pass --changelog to describe the change,
+-y to skip the confirmation. On a DRAFT listing it attaches directly.
+
+Run ` + "`civitai app listing status`" + ` to see what the publish floor still needs.`,
+		Example: `  civitai app listing set-icon ./assets/icon.png
+  civitai app listing set-icon ./icon.png --slug my-app
+  civitai app listing set-icon ./icon.png --changelog "New brand mark" -y`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetMedia(cmd, kindIcon, args[0], "", lc, changelog, assumeYes)
 		},
@@ -279,7 +323,23 @@ func newAppListingSetCoverCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "set-cover <file>",
 		Short: "Set the listing cover (a landscape hero image)",
-		Args:  cobra.ExactArgs(1),
+		Long: `Set your store listing's COVER — the wide hero image at the top of the listing
+page. A cover is MANDATORY: a listing cannot publish without one.
+
+The source file is validated locally first (` + listingSourceRule(kindCover) + `),
+then ingested, held until the content scan clears, and attached. Nothing is
+uploaded if the local check fails. The cover's cap is larger than the icon's
+because a cover is stored at full resolution rather than inlined.
+
+On a listing that is already LIVE this opens a REVISION for moderator re-review
+instead of changing the live listing — pass --changelog to describe the change,
+-y to skip the confirmation. On a DRAFT listing it attaches directly.
+
+Run ` + "`civitai app listing status`" + ` to see what the publish floor still needs.`,
+		Example: `  civitai app listing set-cover ./assets/cover.png
+  civitai app listing set-cover ./cover.jpg --slug my-app
+  civitai app listing set-cover ./cover.png --changelog "Updated hero" -y`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetMedia(cmd, kindCover, args[0], "", lc, changelog, assumeYes)
 		},
@@ -297,7 +357,29 @@ func newAppListingAddScreenshotCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-screenshot <file>",
 		Short: "Add a screenshot (up to 8) with an optional caption",
-		Args:  cobra.ExactArgs(1),
+		Long: `Add a SCREENSHOT to your store listing's gallery. Screenshots are OPTIONAL —
+they are not part of the publish floor — and a listing holds up to 8.
+
+The source file is validated locally first (` + listingSourceRule(kindScreenshot) + `),
+then ingested, held until the content scan clears, and appended to the gallery.
+Nothing is uploaded if the local check fails. --caption adds a one-line caption.
+
+Each run appends one screenshot; there is no bulk add. Use
+` + "`civitai app listing reorder`" + ` to change the order afterwards and
+` + "`civitai app listing rm-screenshot`" + ` to drop one — both take the screenshot ids
+that ` + "`civitai app listing status`" + ` prints.
+
+The 8-screenshot ceiling is NOT checked locally — this command does not count
+the existing gallery before uploading, so hitting the ceiling surfaces as a
+server refusal after the ingest rather than as a local usage error.
+
+On a listing that is already LIVE this opens a REVISION for moderator re-review
+instead of changing the live listing — pass --changelog to describe the change,
+-y to skip the confirmation. On a DRAFT listing it attaches directly.`,
+		Example: `  civitai app listing add-screenshot ./shot.png
+  civitai app listing add-screenshot ./grid.png --caption "Grid view"
+  civitai app listing add-screenshot ./shot.png --slug my-app`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetMedia(cmd, kindScreenshot, args[0], caption, lc, changelog, assumeYes)
 		},
@@ -489,6 +571,8 @@ func newAppListingRmScreenshotCmd() *cobra.Command {
 		Long: `Remove a screenshot from your listing by its screenshot id (the id shown by
 ` + "`civitai app listing status`" + `, e.g. alsc_...). Note: for a LIVE listing,
 direct screenshot edits are only possible while a revision is open.`,
+		Example: `  civitai app listing rm-screenshot alsc_01H8XYZ
+  civitai app listing rm-screenshot alsc_01H8XYZ --slug my-app`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newListingClient()
@@ -518,7 +602,13 @@ func newAppListingReorderCmd() *cobra.Command {
 		Short: "Reorder screenshots (pass ALL current screenshot ids in the new order)",
 		Long: `Reorder your listing's screenshots. Pass EXACTLY the current set of screenshot
 ids (from ` + "`civitai app listing status`" + `) in the desired order — a partial or
-unknown set is rejected.`,
+unknown set is rejected.
+
+Ordering is positional: the first id becomes the first screenshot in the
+gallery. There is no "move one" form — read the current order out of
+` + "`civitai app listing status`" + ` and pass the whole list back.`,
+		Example: `  civitai app listing reorder alsc_02 alsc_01 alsc_03
+  civitai app listing reorder alsc_02 alsc_01 --slug my-app`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newListingClient()
