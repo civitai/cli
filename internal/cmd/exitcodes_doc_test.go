@@ -192,6 +192,16 @@ func TestExitCodeDocsAreDenseAndOrdered(t *testing.T) {
 // classifies as a usage error (exit 2), and requires the two sets to be EQUAL —
 // so the ledger fails when it grows a phrase the code does not honour AND when
 // the code grows a case the docs do not mention.
+//
+// Mutation-measured, per case: untagging any ONE of the five refusals reddens
+// exactly that subtest, with this test's own message — so a green sweep here is
+// not one case carrying five. One KNOWN EQUIVALENT MUTANT, recorded so nobody
+// re-derives it as a hole: DELETING the `len(data) == 0` branch outright leaves
+// every test green, because DecodeImageInfo then rejects the empty bytes with a
+// usage-tagged error of its own. The documented claim (an empty file exits 2)
+// stays TRUE under that mutation — only the message degrades — so the guard is
+// right not to fail. What it must catch is a change to the CLASSIFICATION, and
+// it does.
 func TestImageUsageRefusalLedger(t *testing.T) {
 	dir := t.TempDir()
 
@@ -227,10 +237,11 @@ func TestImageUsageRefusalLedger(t *testing.T) {
 		t.Run(phrase, func(t *testing.T) {
 			_, _, err := loadAndValidateImage(kindIcon, fixtures[phrase])
 			if err == nil {
-				t.Fatalf("the docs say a %s file exits 2, but loadAndValidateImage accepted %s", phrase, fixtures[phrase])
+				t.Fatalf("the published contract lists %q as an exit-2 refusal, but loadAndValidateImage ACCEPTED %s", phrase, fixtures[phrase])
 			}
 			if !errors.Is(err, ErrUsage) {
-				t.Errorf("the docs say a %s file exits 2, but the error is not ErrUsage-tagged (%T): %v", phrase, err, err)
+				t.Errorf("the published contract lists %q as an exit-2 refusal, but the error is not ErrUsage-tagged (%T): %v\n"+
+					"Either tag it, or drop the phrase from imageUsageRefusals — the docs and the code must agree.", phrase, err, err)
 			}
 		})
 	}
