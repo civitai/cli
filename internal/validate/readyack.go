@@ -178,7 +178,12 @@ const maxAckGraphFiles = 200
 // NOT in warningChecks: warningChecks is reached under ManifestOnly, which
 // `civitai app init` uses to self-check the template it just wrote, and a check
 // that reads `src/` has no business running there.
-func readyAckChecks(dir string, generic any) []string {
+//
+// FIELD: FieldProject on every tier. The manifest's `page` is what makes the
+// check APPLY, but the finding is about what the browser loads — the remedy is
+// two edits in source files and the manifest is not one of them. Reporting it
+// against `page` would send a consumer to the one field that is correct.
+func readyAckChecks(dir string, generic any) []Finding {
 	if !declaresPage(generic) {
 		return nil
 	}
@@ -206,16 +211,16 @@ func readyAckChecks(dir string, generic any) []string {
 		}
 		// Reachability tier: nothing the browser loads posts the message.
 		if tree == ackFound {
-			return []string{readyAckAdviceUnwired}
+			return []Finding{newFinding(FieldProject, readyAckAdviceUnwired)}
 		}
-		return []string{readyAckAdviceMissing}
+		return []Finding{newFinding(FieldProject, readyAckAdviceMissing)}
 	}
 
 	// Presence tier: wiring is undecidable for this project shape.
 	if tree == ackFound {
 		return nil
 	}
-	return []string{readyAckAdvicePresenceOnly}
+	return []Finding{newFinding(FieldProject, readyAckAdvicePresenceOnly)}
 }
 
 // resolveLoadedFiles walks the entry graph and reports whether any file the

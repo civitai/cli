@@ -40,12 +40,22 @@ const (
 
 // semanticChecks runs the ported BlockManifestValidator semantic rules over the
 // decoded manifest map.
-func semanticChecks(generic any) []string {
+//
+// 🔴 EVERY finding here carries a Field, and that is the whole point of issue
+// #225: these are the checks the JSON Schema cannot express, so they are the
+// ones `--json` exists to surface — and they were also the four that came back
+// `field: null`, because their messages are prose with no parseable path
+// prefix. A field derived at the printer could never have worked for them.
+//
+// FIELD ASSIGNMENT: a finding names the manifest location it is ABOUT — the
+// field whose presence, absence, or value the rule reports on. For an
+// "X requires Y" rule that is Y, the thing that must appear.
+func semanticChecks(generic any) []Finding {
 	m, ok := generic.(map[string]any)
 	if !ok {
 		return nil
 	}
-	var errs []string
+	var errs []Finding
 
 	// renderMode defaults to "iframe" (validator ~L280).
 	renderMode := "iframe"
@@ -58,9 +68,9 @@ func semanticChecks(generic any) []string {
 	// always rejected. The schema can't express this (it's a cross-field gate
 	// on the server-owned trustTier).
 	if renderMode == "inline" || renderMode == "hybrid" {
-		errs = append(errs, fmt.Sprintf(
+		errs = append(errs, newFinding("renderMode", fmt.Sprintf(
 			"renderMode %q requires a verified/internal trust tier (INLINE_REQUIRES_VERIFIED_TIER); "+
-				"a submitted block is always unverified, so use renderMode \"iframe\"", renderMode))
+				"a submitted block is always unverified, so use renderMode \"iframe\"", renderMode)))
 	}
 
 	iframe, hasIframe := m["iframe"].(map[string]any)
@@ -69,12 +79,13 @@ func semanticChecks(generic any) []string {
 	// page ⇒ iframe required (validator ~L504): a manifest declaring a page
 	// must also ship an iframe block (the bundle the page mounts).
 	if hasPage && !hasIframe {
-		errs = append(errs, "a manifest declaring \"page\" must also declare an iframe block (the bundle the page mounts)")
+		errs = append(errs, newFinding("iframe",
+			"a manifest declaring \"page\" must also declare an iframe block (the bundle the page mounts)"))
 	}
 
 	// renderMode=iframe ⇒ iframe block required (validator ~L375-377).
 	if renderMode == "iframe" && !hasIframe {
-		errs = append(errs, "iframe block is required for renderMode=iframe")
+		errs = append(errs, newFinding("iframe", "iframe block is required for renderMode=iframe"))
 	}
 
 	// iframe required sub-fields when an iframe block is present (validator
@@ -162,15 +173,20 @@ func unjustifiedSensitiveScopes(generic map[string]any) []string {
 // sensitiveScopeJustificationChecks emits ONE hard error naming every declared
 // sensitive scope that lacks a non-empty justification, using the server's exact
 // message so the local failure is byte-identical to the submit-time 400.
-func sensitiveScopeJustificationChecks(generic map[string]any) []string {
+//
+// FIELD: `scopeJustifications` — the map the author must add entries to. Not
+// `scopes` (the declared scopes are correct; it is the justifications that are
+// missing) and not one entry per scope (the server emits ONE message naming
+// them all, and the mirror is byte-identical on purpose).
+func sensitiveScopeJustificationChecks(generic map[string]any) []Finding {
 	unjustified := unjustifiedSensitiveScopes(generic)
 	if len(unjustified) == 0 {
 		return nil
 	}
-	return []string{
-		"sensitive scopes require a justification — add a non-empty scopeJustifications entry for: " +
+	return []Finding{newFinding("scopeJustifications",
+		"sensitive scopes require a justification — add a non-empty scopeJustifications entry for: "+
 			strings.Join(unjustified, ", "),
-	}
+	)}
 }
 
 // scopeJustificationChecks enforces that every key in scopeJustifications is a
@@ -180,7 +196,12 @@ func sensitiveScopeJustificationChecks(generic map[string]any) []string {
 // ONLY the keys⊆scopes rule the schema cannot express. Absent map or empty map
 // yields no error (backward-compatible). Scope names are canonical lowercase, so
 // the comparison is an exact match with no case-folding (mirroring the server).
-func scopeJustificationChecks(generic map[string]any) []string {
+//
+// FIELD: `scopeJustifications.<key>` — ONE finding per offending key, each
+// naming that key. This is the check whose findings would collapse into each
+// other if the message ever stopped interpolating the key, which is why
+// dedupeFindings keys on the (field, message) PAIR rather than the message.
+func scopeJustificationChecks(generic map[string]any) []Finding {
 	just, ok := generic["scopeJustifications"].(map[string]any)
 	if !ok || len(just) == 0 {
 		// Absent, wrong-typed (schema-handled), or empty → nothing to check.
@@ -195,11 +216,11 @@ func scopeJustificationChecks(generic map[string]any) []string {
 	}
 	sort.Strings(keys)
 
-	var errs []string
+	var errs []Finding
 	for _, key := range keys {
 		if _, declared := scopes[key]; !declared {
-			errs = append(errs, fmt.Sprintf(
-				"scopeJustifications key %q is not one of the manifest's declared scopes", key))
+			errs = append(errs, newFinding(childField("scopeJustifications", key), fmt.Sprintf(
+				"scopeJustifications key %q is not one of the manifest's declared scopes", key)))
 		}
 	}
 	return errs
@@ -209,22 +230,24 @@ func scopeJustificationChecks(generic map[string]any) []string {
 // resizable on a present iframe block (validator ~L387-415). Range bounds when
 // present are already covered by the JSON Schema; here we add the required-ness
 // the schema omits, with the same bounds for a clear single message.
-func iframeRequiredFields(iframe map[string]any) []string {
-	var errs []string
+func iframeRequiredFields(iframe map[string]any) []Finding {
+	var errs []Finding
 
+	minHeightField := childField("iframe", "minHeight")
 	mh, ok := iframe["minHeight"]
 	if !ok {
-		errs = append(errs, fmt.Sprintf(
-			"iframe.minHeight is required and must be a number in [%d, %d]", heightMinFloor, heightMaxCeiling))
+		errs = append(errs, newFinding(minHeightField, fmt.Sprintf(
+			"iframe.minHeight is required and must be a number in [%d, %d]", heightMinFloor, heightMaxCeiling)))
 	} else if n, isNum := toNumber(mh); !isNum || n < heightMinFloor || n > heightMaxCeiling {
-		errs = append(errs, fmt.Sprintf(
-			"iframe.minHeight must be a number in [%d, %d]", heightMinFloor, heightMaxCeiling))
+		errs = append(errs, newFinding(minHeightField, fmt.Sprintf(
+			"iframe.minHeight must be a number in [%d, %d]", heightMinFloor, heightMaxCeiling)))
 	}
 
+	resizableField := childField("iframe", "resizable")
 	if rz, ok := iframe["resizable"]; !ok {
-		errs = append(errs, "iframe.resizable is required and must be a boolean")
+		errs = append(errs, newFinding(resizableField, "iframe.resizable is required and must be a boolean"))
 	} else if _, isBool := rz.(bool); !isBool {
-		errs = append(errs, "iframe.resizable must be a boolean")
+		errs = append(errs, newFinding(resizableField, "iframe.resizable must be a boolean"))
 	}
 
 	return errs
@@ -234,7 +257,12 @@ func iframeRequiredFields(iframe map[string]any) []string {
 // tier — the only tier a submitted block can hold. Any token outside the
 // unverified allowlist is rejected, and the allow-same-origin + allow-scripts
 // sandbox-escape combo is rejected explicitly (defense in depth).
-func sandboxChecks(iframe map[string]any) []string {
+//
+// FIELD: `iframe.sandbox` on every finding — including the sandbox-escape combo
+// rule, which is genuinely about the interaction of two TOKENS inside one
+// string value rather than about two fields, so the string is the location.
+func sandboxChecks(iframe map[string]any) []Finding {
+	sandboxField := childField("iframe", "sandbox")
 	raw, ok := iframe["sandbox"]
 	if !ok {
 		// sandbox required-ness / type is handled by the schema (minLength 1).
@@ -248,10 +276,10 @@ func sandboxChecks(iframe map[string]any) []string {
 
 	tokens := strings.Fields(sandbox)
 	if len(tokens) == 0 {
-		return []string{"iframe.sandbox must contain at least one token"}
+		return []Finding{newFinding(sandboxField, "iframe.sandbox must contain at least one token")}
 	}
 
-	var errs []string
+	var errs []Finding
 	seen := make(map[string]struct{}, len(tokens))
 	// Iterate deterministically over deduped tokens so error order is stable.
 	var order []string
@@ -264,10 +292,10 @@ func sandboxChecks(iframe map[string]any) []string {
 	}
 	for _, tok := range order {
 		if _, allowed := sandboxUnverifiedAllowlist[tok]; !allowed {
-			errs = append(errs, fmt.Sprintf(
+			errs = append(errs, newFinding(sandboxField, fmt.Sprintf(
 				"sandbox token %q is not allowed for unverified blocks "+
 					"(trustTier is server-forced to unverified at submit; "+
-					"only allow-scripts and allow-forms are permitted)", tok))
+					"only allow-scripts and allow-forms are permitted)", tok)))
 		}
 	}
 
@@ -276,9 +304,9 @@ func sandboxChecks(iframe map[string]any) []string {
 	_, hasSameOrigin := seen["allow-same-origin"]
 	_, hasScripts := seen["allow-scripts"]
 	if hasSameOrigin && hasScripts {
-		errs = append(errs,
+		errs = append(errs, newFinding(sandboxField,
 			"iframe.sandbox MUST NOT combine allow-same-origin with allow-scripts (sandbox escape) — "+
-				"forbidden outside the internal trust tier")
+				"forbidden outside the internal trust tier"))
 	}
 
 	return errs

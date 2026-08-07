@@ -94,7 +94,7 @@ func mustReject(t *testing.T, name, json, wantSubstr string) {
 	if wantSubstr != "" {
 		found := false
 		for _, e := range res.Errors {
-			if strings.Contains(e, wantSubstr) {
+			if strings.Contains(e.Message, wantSubstr) {
 				found = true
 				break
 			}

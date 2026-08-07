@@ -54,7 +54,12 @@ func knownSlotIDList() string {
 // (array of objects with a non-empty string slotId, ≤16 entries) is already
 // enforced by the JSON Schema; here we add the registry-membership + page-slot
 // semantic the schema cannot express.
-func targetChecks(generic any) []string {
+//
+// FIELD: `targets[i].slotId`, carrying the ELEMENT INDEX. `targets` alone would
+// be useless on a manifest with several targets — which is the only shape where
+// this check fires more than once — and the index is exactly what a consumer
+// grouping findings needs in order to point at a line.
+func targetChecks(generic any) []Finding {
 	m, ok := generic.(map[string]any)
 	if !ok {
 		return nil
@@ -69,8 +74,8 @@ func targetChecks(generic any) []string {
 		return nil
 	}
 
-	var errs []string
-	for _, t := range arr {
+	var errs []Finding
+	for i, t := range arr {
 		obj, ok := t.(map[string]any)
 		if !ok {
 			continue // shape handled by the schema.
@@ -79,14 +84,15 @@ func targetChecks(generic any) []string {
 		if !ok || slotID == "" {
 			continue // shape handled by the schema.
 		}
+		field := childField(indexField("targets", i), "slotId")
 		if !isKnownSlotID(slotID) {
-			errs = append(errs, fmt.Sprintf(
-				"target slotId %q is not a known slot — value must be one of %s", slotID, knownSlotIDList()))
+			errs = append(errs, newFinding(field, fmt.Sprintf(
+				"target slotId %q is not a known slot — value must be one of %s", slotID, knownSlotIDList())))
 			continue
 		}
 		if isPageSlotID(slotID) {
-			errs = append(errs, fmt.Sprintf(
-				"target slotId %q is the page slot — declare a full page via the \"page\" field, not targets", slotID))
+			errs = append(errs, newFinding(field, fmt.Sprintf(
+				"target slotId %q is the page slot — declare a full page via the \"page\" field, not targets", slotID)))
 		}
 	}
 	return errs

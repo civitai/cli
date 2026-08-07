@@ -107,7 +107,14 @@ func packageManagerFor(buildCommand string) packageManager {
 
 // lockfileChecks reports the lockfile ↔ buildCommand inconsistencies for the
 // project in dir. Hard errors are returned first, advisories second.
-func lockfileChecks(dir string, m *manifest.Manifest) (errs []string, warns []string) {
+//
+// FIELD: FieldProject on both. These are findings about a FILE that is or is
+// not committed, not about a manifest key — the manifest can be byte-perfect
+// and still trip them. `buildCommand` appears in the remedy (one way out is to
+// set it to match the lockfile you already have) but the other way out touches
+// no manifest field at all, so pinning the finding there would mis-group every
+// project that runs the install instead.
+func lockfileChecks(dir string, m *manifest.Manifest) (errs []Finding, warns []Finding) {
 	// A block with no package.json is STATIC: the recipe's `if [ -f package.json ]`
 	// guard is false, it never installs anything, and the bundle is served as-is.
 	// Never flag it.
@@ -140,7 +147,7 @@ func lockfileChecks(dir string, m *manifest.Manifest) (errs []string, warns []st
 	}
 
 	if !haveWanted {
-		return []string{missingLockfileError(want, foreign, build)}, nil
+		return []Finding{newFinding(FieldProject, missingLockfileError(want, foreign, build))}, nil
 	}
 	// The required lockfile IS there, so the build installs strictly and
 	// reproducibly — any extra lockfile is unused by the platform. That is not
@@ -148,7 +155,7 @@ func lockfileChecks(dir string, m *manifest.Manifest) (errs []string, warns []st
 	// an unused lockfile drifts, and the next contributor who runs the other
 	// package manager lands right back in the mismatch above.
 	if len(foreign) > 0 {
-		warns = append(warns, extraLockfileWarning(want, committed, build))
+		warns = append(warns, newFinding(FieldProject, extraLockfileWarning(want, committed, build)))
 	}
 	return nil, warns
 }

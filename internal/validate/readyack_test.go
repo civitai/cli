@@ -94,7 +94,7 @@ func hasReadyAckWarning(res Result) bool { return readyAckKind(res) != "" }
 // readyAckKind names the tier that fired, or "".
 func readyAckKind(res Result) string {
 	for _, w := range res.Warnings {
-		switch w {
+		switch w.Message {
 		case readyAckAdviceUnwired:
 			return "unwired"
 		case readyAckAdviceMissing:
@@ -968,7 +968,7 @@ func TestReadyAckIsAdvisoryOnly(t *testing.T) {
 	res := wantAckWarning(t, dir, true)
 	for _, e := range res.Errors {
 		for _, advice := range readyAckAdvisories {
-			if e == advice {
+			if e.Message == advice {
 				t.Fatalf("a ready-ack advisory reached Errors — it must stay a warning")
 			}
 		}

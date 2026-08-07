@@ -50,7 +50,7 @@ func TestUnknownSlotErrorEnumeratesKnownSlots(t *testing.T) {
 	if len(errs) != 1 {
 		t.Fatalf("want exactly 1 error, got %d: %v", len(errs), errs)
 	}
-	got := errs[0]
+	got := errs[0].Message
 	if !strings.Contains(got, "value must be one of ") {
 		t.Errorf("error missing the enum phrasing: %q", got)
 	}
@@ -165,8 +165,8 @@ func TestScopeJustificationChecks(t *testing.T) {
 				t.Fatalf("got %d errors %v, want %d %v", len(got), got, len(tc.want), tc.want)
 			}
 			for i := range tc.want {
-				if got[i] != tc.want[i] {
-					t.Errorf("error[%d] = %q, want %q", i, got[i], tc.want[i])
+				if got[i].Message != tc.want[i] {
+					t.Errorf("error[%d] = %q, want %q", i, got[i].Message, tc.want[i])
 				}
 			}
 		})
@@ -273,8 +273,8 @@ func TestSensitiveScopeJustificationChecks(t *testing.T) {
 				t.Fatalf("got %d errors %v, want %d %v", len(got), got, len(tc.want), tc.want)
 			}
 			for i := range tc.want {
-				if got[i] != tc.want[i] {
-					t.Errorf("error[%d] = %q, want %q", i, got[i], tc.want[i])
+				if got[i].Message != tc.want[i] {
+					t.Errorf("error[%d] = %q, want %q", i, got[i].Message, tc.want[i])
 				}
 			}
 		})

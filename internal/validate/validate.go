@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"regexp"
-	"sort"
 	"strings"
 
 	cli "github.com/civitai/cli"
@@ -34,14 +33,19 @@ const buildCommandMaxLength = 128
 var printer = message.NewPrinter(language.English)
 
 // Result is the outcome of validating a project directory.
+//
+// Both slices hold Findings — a field PLUS a message — rather than bare
+// strings. See finding.go for why (issue #225): the field has to be carried
+// from where a finding is produced, because it cannot be recovered from prose
+// afterwards.
 type Result struct {
 	// Errors are hard failures: the server will reject the manifest. Non-empty
 	// Errors means validation failed.
-	Errors []string
+	Errors []Finding
 	// Warnings are non-fatal money-path / footgun advisories the schema can't
 	// express as hard errors (e.g. a budgeted page with no per-gen budget).
 	// They do not fail validation unless --strict is requested.
-	Warnings []string
+	Warnings []Finding
 }
 
 // OK reports whether validation passed (no hard errors).
@@ -93,20 +97,22 @@ func ManifestOnly(dir string) (Result, error) { return validateDir(dir, false) }
 func validateDir(dir string, projectState bool) (Result, error) {
 	var res Result
 
-	// Structural: manifest must exist at the project root.
+	// Structural: manifest must exist at the project root. There is no manifest
+	// to name a field IN, so this is a document-level finding.
 	if _, err := os.Stat(manifest.Path(dir)); err != nil {
 		if os.IsNotExist(err) {
-			return Result{Errors: []string{
+			return Result{Errors: []Finding{newFinding(FieldDocument,
 				fmt.Sprintf("%s not found at project root %s", manifest.Filename, dir),
-			}}, nil
+			)}}, nil
 		}
 		return res, err
 	}
 
 	generic, m, err := manifest.LoadRaw(dir)
 	if err != nil {
-		// A parse error is a validation failure, not a CLI error.
-		return Result{Errors: []string{err.Error()}}, nil
+		// A parse error is a validation failure, not a CLI error. The document
+		// did not decode, so no field inside it can be named.
+		return Result{Errors: []Finding{newFinding(FieldDocument, err.Error())}}, nil
 	}
 
 	// Schema validation.
@@ -160,34 +166,44 @@ func validateDir(dir string, projectState bool) (Result, error) {
 	// caller opts into --strict.
 	res.Warnings = append(res.Warnings, warningChecks(generic)...)
 
-	sort.Strings(res.Errors)
-	res.Errors = dedupe(res.Errors)
-	sort.Strings(res.Warnings)
-	res.Warnings = dedupe(res.Warnings)
+	sortFindings(res.Errors)
+	res.Errors = dedupeFindings(res.Errors)
+	sortFindings(res.Warnings)
+	res.Warnings = dedupeFindings(res.Warnings)
 	return res, nil
 }
 
 // serverOwnedFieldChecks rejects manifest fields the platform assigns. Devs
 // must not set them; doing so is a hard error with a clear, actionable message.
-func serverOwnedFieldChecks(generic any) []string {
-	var errs []string
+func serverOwnedFieldChecks(generic any) []Finding {
+	var errs []Finding
 	m, ok := generic.(map[string]any)
 	if !ok {
 		return nil
 	}
 	if _, set := m["trustTier"]; set {
-		errs = append(errs, "trustTier is server-owned — remove it from your manifest; the platform assigns the trust tier during review")
+		errs = append(errs, newFinding("trustTier",
+			"trustTier is server-owned — remove it from your manifest; the platform assigns the trust tier during review"))
 	}
 	if iframe, ok := m["iframe"].(map[string]any); ok {
 		if _, set := iframe["src"]; set {
-			errs = append(errs, "iframe.src is server-owned — remove it; the platform stamps the canonical bundle URL during build/approve")
+			errs = append(errs, newFinding(childField("iframe", "src"),
+				"iframe.src is server-owned — remove it; the platform stamps the canonical bundle URL during build/approve"))
 		}
 	}
 	return errs
 }
 
-func buildCoherence(dir string, m *manifest.Manifest) []string {
-	var errs []string
+// buildCoherence checks buildCommand/outputDir.
+//
+// FIELD ASSIGNMENT for the two PAIR rules: the finding names the field the
+// message reports as MISSING, not the one whose presence triggered the rule.
+// "buildCommand is set but outputDir is missing" is a finding about
+// `outputDir`; its mirror is a finding about `buildCommand`. That is mechanical
+// (it reads straight off the sentence), symmetric across the pair, and it puts
+// the finding on the field a consumer would have to edit.
+func buildCoherence(dir string, m *manifest.Manifest) []Finding {
+	var errs []Finding
 	build := strings.TrimSpace(m.BuildCommand)
 	hasBuild := build != ""
 	out := strings.TrimSpace(m.OutputDir)
@@ -200,19 +216,19 @@ func buildCoherence(dir string, m *manifest.Manifest) []string {
 	// BUILD_COMMAND_RE / BUILD_COMMAND_MAX_LENGTH exactly.
 	if hasBuild {
 		if len(build) > buildCommandMaxLength {
-			errs = append(errs, fmt.Sprintf("buildCommand is too long (%d chars) — it must be at most %d characters", len(build), buildCommandMaxLength))
+			errs = append(errs, newFinding("buildCommand", fmt.Sprintf("buildCommand is too long (%d chars) — it must be at most %d characters", len(build), buildCommandMaxLength)))
 		} else if !buildCommandRe.MatchString(build) {
-			errs = append(errs, fmt.Sprintf("buildCommand %q is not an allowed build invocation — use \"npm run <script>\", \"pnpm run <script>\", \"yarn run <script>\", \"vite build\", or \"npx vite build\"", build))
+			errs = append(errs, newFinding("buildCommand", fmt.Sprintf("buildCommand %q is not an allowed build invocation — use \"npm run <script>\", \"pnpm run <script>\", \"yarn run <script>\", \"vite build\", or \"npx vite build\"", build)))
 		}
 	}
 
 	switch {
 	case hasBuild && !hasOut:
-		errs = append(errs, "buildCommand is set but outputDir is missing — the platform needs to know where the build output lands (e.g. \"dist\")")
+		errs = append(errs, newFinding("outputDir", "buildCommand is set but outputDir is missing — the platform needs to know where the build output lands (e.g. \"dist\")"))
 	case !hasBuild && hasOut:
 		// Not fatal, but almost always a mistake: an outputDir with no build
 		// to produce it. Warn as an error so it surfaces.
-		errs = append(errs, "outputDir is set but buildCommand is missing — a no-build (static) app should omit outputDir; a built app must set buildCommand")
+		errs = append(errs, newFinding("buildCommand", "outputDir is set but buildCommand is missing — a no-build (static) app should omit outputDir; a built app must set buildCommand"))
 	}
 
 	// outputDir must be a SAFE RELATIVE path. The server companion validates
@@ -223,34 +239,38 @@ func buildCoherence(dir string, m *manifest.Manifest) []string {
 	// message.
 	if hasOut {
 		if strings.HasPrefix(out, "/") {
-			errs = append(errs, fmt.Sprintf("outputDir %q must be a relative path under the project root — remove the leading \"/\"", out))
+			errs = append(errs, newFinding("outputDir", fmt.Sprintf("outputDir %q must be a relative path under the project root — remove the leading \"/\"", out)))
 		} else if out == ".." || strings.HasPrefix(out, "../") || strings.Contains(out, "/../") || strings.HasSuffix(out, "/..") {
-			errs = append(errs, fmt.Sprintf("outputDir %q must not escape the project root — remove the \"..\" path traversal", out))
+			errs = append(errs, newFinding("outputDir", fmt.Sprintf("outputDir %q must not escape the project root — remove the \"..\" path traversal", out)))
 		}
 	}
 	return errs
 }
 
 // schemaErrors flattens a jsonschema validation error into clear, per-field
-// messages keyed by the offending JSON path.
-func schemaErrors(err error) []string {
+// findings keyed by the offending JSON path.
+//
+// The path used to be rendered as a JSON Pointer ("/scopes/1"), which was one
+// of the three notations issue #225 was about. It is now dotted
+// ("scopes[1]") — the same notation the ported semantic checks and the human
+// output use. The MESSAGE still leads with the path, so the text output reads
+// the same way it always did; only the notation inside it changed.
+func schemaErrors(err error) []Finding {
 	ve, ok := err.(*jsonschema.ValidationError)
 	if !ok {
-		return []string{err.Error()}
+		// Not a jsonschema error at all — we have no location to report, so the
+		// finding is about the document.
+		return []Finding{newFinding(FieldDocument, err.Error())}
 	}
-	var out []string
+	var out []Finding
 	var walk func(e *jsonschema.ValidationError)
 	walk = func(e *jsonschema.ValidationError) {
 		// Only emit leaf errors (those with no children carry the concrete
 		// reason); intermediate nodes just describe the path.
 		if len(e.Causes) == 0 {
-			loc := strings.Join(e.InstanceLocation, "/")
-			if loc == "" {
-				loc = "(root)"
-			} else {
-				loc = "/" + loc
-			}
-			out = append(out, fmt.Sprintf("%s: %s", loc, e.ErrorKind.LocalizedString(printer)))
+			field := fieldPath(e.InstanceLocation)
+			out = append(out, newFinding(field,
+				fmt.Sprintf("%s: %s", field, e.ErrorKind.LocalizedString(printer))))
 			return
 		}
 		for _, c := range e.Causes {
@@ -259,20 +279,7 @@ func schemaErrors(err error) []string {
 	}
 	walk(ve)
 	if len(out) == 0 {
-		out = append(out, ve.Error())
-	}
-	return out
-}
-
-func dedupe(in []string) []string {
-	seen := make(map[string]struct{}, len(in))
-	var out []string
-	for _, s := range in {
-		if _, ok := seen[s]; ok {
-			continue
-		}
-		seen[s] = struct{}{}
-		out = append(out, s)
+		out = append(out, newFinding(fieldPath(ve.InstanceLocation), ve.Error()))
 	}
 	return out
 }

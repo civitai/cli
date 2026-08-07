@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/civitai/cli/internal/ui"
 	"github.com/civitai/cli/internal/validate"
@@ -100,7 +99,7 @@ Defaults to the current directory.`,
 			if !res.OK() {
 				fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("%d validation error(s) in %s:", len(res.Errors), dir)))
 				for _, e := range res.Errors {
-					fmt.Fprintf(errw, "  - %s\n", e)
+					fmt.Fprintf(errw, "  - %s\n", e.Message)
 				}
 				// Surface warnings too — they're useful context even on a failure.
 				printWarnings(errw, res)
@@ -126,35 +125,31 @@ Defaults to the current directory.`,
 	return cmd
 }
 
-// issues converts the flat validation messages into structured objects with a
-// machine-readable field (when one can be derived) plus the full message. Schema
-// errors are formatted "<json/path>: <reason>"; we surface the leading path as
-// the field. Messages with no derivable path carry field "" (omitted).
-func issues(msgs []string) []map[string]string {
-	out := make([]map[string]string, 0, len(msgs))
-	for _, m := range msgs {
-		item := map[string]string{"message": m}
-		if field, ok := deriveField(m); ok {
-			item["field"] = field
+// issues renders findings as the `--json` objects README promises: `field` plus
+// `message`, on EVERY finding.
+//
+// 🔴 The field is READ OFF the finding, never re-derived from the message. It
+// used to be recovered by string-parsing a schema-style "<path>: <reason>"
+// prefix, which worked for schema errors and produced `field: null` for every
+// ported semantic check — the prose ones, i.e. the findings a local pre-check
+// exists for (issue #225). Do not reintroduce a parser here: a new check that
+// emits prose would silently go back to null, with nothing failing.
+//
+// The empty-field fallback is defence in depth for the README's "every finding
+// carries a field" promise, not a working path — `TestFindingsAreConstructedWithAField`
+// rejects an empty field at the construction site, and
+// `TestEveryCheckEmitsAField` drives the checks and asserts it end to end. If it
+// ever fires, the finding is at least grouped somewhere honest instead of null.
+func issues(fs []validate.Finding) []map[string]string {
+	out := make([]map[string]string, 0, len(fs))
+	for _, f := range fs {
+		field := f.Field
+		if field == "" {
+			field = validate.FieldDocument
 		}
-		out = append(out, item)
+		out = append(out, map[string]string{"field": field, "message": f.Message})
 	}
 	return out
-}
-
-// deriveField pulls the JSON-path field out of a schema-style "<path>: <reason>"
-// message. It only treats the prefix as a field when it looks like a path
-// (starts with "/" or is the literal "(root)") so prose messages aren't split.
-func deriveField(msg string) (string, bool) {
-	i := strings.Index(msg, ": ")
-	if i <= 0 {
-		return "", false
-	}
-	prefix := msg[:i]
-	if prefix == "(root)" || strings.HasPrefix(prefix, "/") {
-		return prefix, true
-	}
-	return "", false
 }
 
 func printWarnings(w io.Writer, res validate.Result) {
@@ -163,6 +158,6 @@ func printWarnings(w io.Writer, res validate.Result) {
 	}
 	fmt.Fprintln(w, ui.For(w).Warn(fmt.Sprintf("%d warning(s):", len(res.Warnings))))
 	for _, warn := range res.Warnings {
-		fmt.Fprintf(w, "  - %s\n", warn)
+		fmt.Fprintf(w, "  - %s\n", warn.Message)
 	}
 }

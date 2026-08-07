@@ -7,7 +7,7 @@ import (
 
 func hasWarningContaining(res Result, substr string) bool {
 	for _, w := range res.Warnings {
-		if strings.Contains(w, substr) {
+		if strings.Contains(w.Message, substr) {
 			return true
 		}
 	}
