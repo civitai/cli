@@ -1,4 +1,4 @@
-# Handoff: cli-docs-consolidation — 2026-08-07
+# Handoff: cli-docs-consolidation — 2026-08-07 (r2)
 
 ## Goal
 Decide whether `civitai/cli`'s in-repo docs should be dropped in favour of the hosted
@@ -55,7 +55,112 @@ table cells measure 60–2,263 chars (median ~400) against `Short` strings of 24
 - Forgejo downgrade (`civitai/civitai#3713`) **rolled out** — prod on `5.0.2249`,
   6/6 pods. Released by another session.
 
+## The Long/Annotations split — SCOPED AND PILOTED (2026-08-07, session 2)
+
+The premise of next-step 1 below was **half wrong, and the half that was wrong is
+the half that mattered.** Measured on the whole tree at `aeceb6b`, 53 command
+nodes, via a scratch test that dumps the real cobra tree (`Short`/`Long`/
+`Example`/`Annotations`) as JSON — not by parsing help text:
+
+| Fact | Measured |
+|---|---|
+| Nodes carrying an `Annotations` map | **0 of 53** |
+| Nodes with NO `Long` at all | 8 |
+| Nodes with a `Long` under 400 chars | 16 more |
+| README table cells, 16 matched rows | 6,255 chars total |
+| `Long` on those same 16 nodes | **19,017 chars** total |
+
+**`Long` is already 3× RICHER than the README table for the App-authoring
+commands.** For 14 of the 16 matched rows the ratio is >1 (`app submit` 11×,
+`app init` 9×). Only `whoami` is genuinely README-richer (590 vs 431). So
+"migrate the README's prose into `Long`" is mostly ALREADY DONE where the handoff
+assumed it was pending — and the real gap is the **public read-API group**
+(`models`/`images`/`collections`/`creators`/`tags`/`users`/`model-versions`/
+`articles`), which owns 19 of the 24 empty-or-thin nodes and has **no table row
+at all**.
+
+### 🔴 `Annotations` CANNOT reach the docs site. Measured, not inferred.
+
+The generator captures exactly two channels per node — `civitai <path> --help`
+and `civitai __complete <path> ""` — and parses the text
+(`gen-appblocks-cli.mjs:13-15`). Cobra's default help template does not render
+`Annotations`. Probe: set `Annotations{"probe:visible-in-help": "ZZPROBEZZ"}` on
+`workflows get` and rebuild —
+
+- `strings <binary> | grep -c ZZPROBEZZ` → **1** (the probe really applied)
+- in `--help` → **0**; in `__complete` → **0**
+- positive control, a word that IS in that help (`PRESIGNED`) → **1**
+- `workflows get --help` is byte-identical with and without it (1512 both)
+
+So an `Annotations` half is a no-op for docs unless (a) a custom help template
+renders them — at which point they are `Long` with extra steps and cost the same
+terminal space, or (b) a `cli.json` export seam, which the gotchas below
+**disprove**. **Recommendation: drop the `Annotations` half.** The split that
+survives is `Long` (prose, budgeted) vs the *guide* (everything that does not fit).
+
+### 🔴 THE BLOCKER: the generator PARSES `Long` and then THROWS IT AWAY.
+
+`gen-appblocks-cli.mjs:781` —
+`description: short || parseLongDescription(help).split('\n')[0] || ''`
+
+`parseLongDescription` captures the whole `Long` body, but it is only a
+**fallback**, and even then only its **first line**. A subcommand always has a
+`Short` from the parent's "Available Commands" block, so `short` always wins.
+Measured end-to-end through the real generator with `CIVITAI_CLI_LIVE=1
+CIVITAI_CLI_BIN=<pilot binary>`: the pilot added ~4,000 chars of `Long` and the
+published `cli.json` gained **+926 chars, all of it `examples`**. The `Long`
+reached `--help` and nothing else.
+
+**Nothing about this migration reaches developer.civitai.com until that line
+changes** (emit `longDescription: parseLongDescription(help)` alongside
+`description`, and render it in `<CliReference />`). That is a `civitai-developer-docs`
+PR and it is the **prerequisite**, not a follow-up — do it before migrating any
+further group.
+
+### Pilot — `civitai app listing`, 7 nodes, on branch `zach/help-long-pilot`
+
+Chosen because it holds 3 of the 8 no-`Long` nodes, maps to the README's densest
+single table row, and its missing facts (formats + per-kind byte caps) are **Go
+constants**, so the help can be derived from the validator rather than duplicated.
+
+- set-icon / set-cover / add-screenshot gained a `Long` + `Example` (had neither).
+- status / rm-screenshot / reorder gained an `Example`.
+- Formats + caps now stated, **computed** from `maxIconBytes`/`maxCoverBytes`/
+  `maxScreenshotBytes` through the same `humanBytes` the refusal message uses, so
+  `--help` predicts the error text.
+- Four pre-existing lines over 80 columns rewrapped.
+
+**`--help` cost, base vs the committed pilot, all 54 captured nodes:** 47 nodes
+byte-identical, 7 changed; tree 100,451 → 104,190 bytes (**+3.7%**) and
+1,987 → 2,065 lines (**+3.9%**). Per node the group runs 16→32 lines (set-icon),
+17→40 (add-screenshot, the largest).
+
+Three guards, none subsuming the others — caps-vs-constants (incl. cross-kind,
+since icon and screenshot share a 2 MiB cap), completeness (Long+Short+Example on
+every node, tree-walked with a count floor), budget (1400 chars / 80 columns).
+**9/9 mutants killed by the intended guard, checksum-gated; a comment-only null
+mutant survived.** `make ci` green, 18/18 packages.
+
+🔴 **Count RUNES, not bytes, in a column guard.** The first version used `len()`
+and failed four PRE-EXISTING bodies that render inside 80 columns — em-dashes are
+3 bytes, one column.
+
+### Where the remaining ~46 nodes stand
+
+| Bucket | Count | Nodes |
+|---|---|---|
+| No `Long` | 5 left | `collections get`, `creators search`, `model-versions get`, `models get`, `tags search` |
+| Thin (<400) | 14 left | the rest of the read-API group |
+| Mid (400–1200) | 17 left | mostly fine |
+| Rich (>1200) | 11 | `generate` (5,726), `download` (3,742), root (4,203) — these need a BUDGET, not more prose |
+
 ## Open investigations — live diagnosis state
+
+### ~~`civitai login --help` emits a raw NUL byte — #253~~ — FIXED
+Closed by `9cfe468` (#264). Re-verified on a clean build at `aeceb6b`:
+`civitai login --help | tr -dc '\000' | wc -c` → **0** (positive control:
+`printf 'a\000b' | tr -dc '\000' | wc -c` → 1, so the pipe is wired).
+The original diagnosis is kept below for the mechanism.
 
 ### `civitai login --help` emits a raw NUL byte — filed as #253, still ships
 - **Symptom + exact repro:** `civitai login --help > out.txt` yields a file git,
@@ -118,14 +223,22 @@ table cells measure 60–2,263 chars (median ~400) against `Short` strings of 24
 
 ## Next steps (ranked)
 
-1. **Migrate README command-reference prose into `Long` / `Annotations`** — the
-   actual answer to this session's question, and the only path that converges the
-   two surfaces without deleting the richer one. gh's
-   `Annotations["help:json-fields"]` is the working precedent for publishing
-   `--json` shapes from the command definition.
-2. **Decide the IA wart** (above) — cheapest is option (c).
-3. **Fix #253** in `civitai/cli` — one-line sentinel change + a regression test.
-4. The two LOW items above (pins header comment; `parseSemver` build metadata).
+1. 🔴 **Publish `Long` from the generator** (`civitai-developer-docs`) — emit
+   `longDescription: parseLongDescription(help)` at `gen-appblocks-cli.mjs:781`
+   and render it in `<CliReference />`. **Everything else in this workstream is
+   dead weight until this lands** — measured above, the pilot's 4,000 chars of
+   `Long` reached `--help` and 0 chars of `cli.json`. Cheap: the parser already
+   exists and is already called.
+2. **Merge the pilot** (`zach/help-long-pilot`, 1 commit) — it stands on its own
+   for terminal users even before step 1.
+3. **Then migrate the read-API group** (`models`/`images`/`collections`/
+   `creators`/`tags`/`users`/`model-versions`/`articles`, 19 empty-or-thin nodes)
+   using the pilot's three guards as the template. Its source prose is
+   README lines 414–498, which has **no table row** — so unlike the App commands
+   this really is a migration rather than a re-statement.
+4. **Do NOT add an `Annotations` half.** Measured disproof above.
+5. **Decide the IA wart** (below) — cheapest is option (c).
+6. The two LOW items below (pins header comment; `parseSemver` build metadata).
 5. **Prune `claudedocs/`** — dated handoffs that belong in neither the repo nor the
    site. Coordinate: other sessions actively write here.
 
@@ -203,6 +316,24 @@ gh api repos/civitai/civitai-developer-docs/branches/main/protection --jq '.requ
 gh run list --repo civitai/civitai-developer-docs --workflow appblocks-drift.yml --limit 3 \
   --json conclusion,event,createdAt
 
-# #253 — the NUL bug still ships (expect 1 until it is fixed)
-${R}/bin/civitai login --help | tr -dc '\000' | wc -c
+# #253 — FIXED in #264; expect 0 now. The positive control matters: a pipe that
+# reports 0 because it is wired to nothing looks identical to a fixed binary.
+${R}/bin/civitai login --help | tr -dc '\000' | wc -c   # expect 0
+printf 'a\000b' | tr -dc '\000' | wc -c                 # expect 1 (control)
+
+# the app-listing help pilot (branch zach/help-long-pilot)
+git -C ${R} fetch origin -q
+go test ./internal/cmd -run TestListingHelp -count=1 -v | grep -c -- '--- PASS'  # expect 14
+
+# 🔴 Annotations are invisible to the docs pipeline — re-measure before believing
+# any plan that relies on them. Set one on any command, rebuild, then:
+#   strings <bin> | grep -c ZZPROBEZZ      -> 1   (the probe applied)
+#   <bin> <cmd> --help | grep -c ZZPROBEZZ -> 0   (it never reaches the channel)
+#   <bin> <cmd> --help | grep -c <a word actually in that help> -> 1  (control)
+
+# 🔴 The generator drops Long. This is the blocker, not a nicety.
+command grep -n 'description: short ||' ${D}/scripts/gen-appblocks-cli.mjs
+# End-to-end proof: generate from a binary with a fattened Long and diff cli.json —
+# only `examples` moves.
+CIVITAI_CLI_LIVE=1 CIVITAI_CLI_BIN=<your build> node ${D}/scripts/gen-appblocks-cli.mjs
 ```
