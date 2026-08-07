@@ -71,7 +71,7 @@ type Graph struct {
 
 	// Images are the img2img reference images. Their PRESENCE is what promotes
 	// a `txt2img` workflow to `img2img:edit` server-side — the CLI never sends
-	// an img2img workflow value itself (see AGENTS.md item 18).
+	// an img2img workflow value itself (see AGENTS.md item 19(a)).
 	//
 	// 🔴 The promotion also requires Ecosystem to be set. `normalizeImageWorkflow`
 	// reads `input.ecosystem` off the RAW request body, BEFORE the graph's own

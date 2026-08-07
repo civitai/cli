@@ -101,7 +101,7 @@ type generateDeps struct {
 	downloadBlob blobFetcher
 	// uploadImage stores one local --image and returns the blob URL to reference
 	// in the graph. 🔴 Its second hop must never carry a credential — see
-	// genapi.UploadImageBlob and AGENTS.md item 18. It spends no Buzz.
+	// genapi.UploadImageBlob and AGENTS.md item 19(e). It spends no Buzz.
 	uploadImage func(ctx context.Context, contentType string, body []byte) (string, error)
 	// pendingDir is where the pre-submit crash-recovery record is written. A
 	// test points it at a t.TempDir(); empty means the real config dir.
@@ -336,7 +336,7 @@ interpreted, so nothing in it is checked before you pay for it.`,
 				getWorkflow:    gen.GetWorkflow,
 				downloadBlob:   reader.DownloadPresigned,
 				// 🔴 The presigned UPLOAD is credential-free for the same
-				// reason the download is (AGENTS.md items 17 + 18): the upload
+				// reason the download is (AGENTS.md items 17 and 19(e)): the upload
 				// URL is server-supplied and lives on a *.civitai.com host that
 				// isTrustedDownloadHost matches, so a token-carrying client
 				// would hand a full-scope personal API key to a request its own
@@ -401,7 +401,7 @@ interpreted, so nothing in it is checked before you pay for it.`,
 	// loudly, before the confirmation prompt, where a human can still say no —
 	// and this flag is for callers who would rather fail than get a different
 	// model. It mirrors --max-cost: an opt-in pre-flight refusal that spends
-	// nothing. See AGENTS.md item 20.
+	// nothing. See AGENTS.md item 21(c).
 	//
 	// NOTE: no back-quotes in this usage string — see the note above.
 	// 🔴 THE USAGE STRING MUST STATE THE SERVER-VERSION CONDITION. This flag can
@@ -694,7 +694,7 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 	out := &resolvedGraph{graph: genapi.Graph{
 		// 🔴 Always "txt2img", even with --image. The server promotes it to
 		// img2img:edit itself; sending an img2img workflow value is a DIFFERENT
-		// and worse request — see AGENTS.md item 18.
+		// and worse request — see AGENTS.md item 19(a).
 		Workflow:       generateWorkflow,
 		Ecosystem:      strings.TrimSpace(o.ecosystem),
 		Prompt:         o.prompt,
