@@ -29,10 +29,11 @@ Platform issues filed against `civitai/civitai`:
 
 ### IN FLIGHT
 
-- **Follow-up agent running** in worktree `.claude/worktrees/agent-af84d3a63080c18a3`,
-  branched from `ba3136c`. Two fixes (details in "Open investigations"). It will open a
-  PR. **Check for that PR before starting new work on `generate_substitution.go` /
-  `generate.go`.**
+- **PR #237** — the two substitution follow-ups (handle-before-advisory ordering, and
+  the SUPERSEDED annotation). `MERGEABLE/CLEAN`, gate verified locally
+  (**2377 PASS / 0 FAIL / 4 SKIP**, gofmt + vet clean, 13/13 semantic mutants killed).
+  CI checks were queued at handoff. **Merge it, or review first — nothing else should
+  touch `generate_substitution.go` until it lands.**
 
 ### Deploy/verify status — honest
 
@@ -44,26 +45,33 @@ Platform issues filed against `civitai/civitai`:
 
 ## Open investigations — live diagnosis state
 
-### 1. Advisory name lookups can delay the workflow id of an already-charged job
+### 1. ~~Advisory name lookups delay the workflow id~~ — PREMISE WAS WRONG. RESOLVED in PR #237.
 
-- **Symptom + exact repro:** after a successful submit, `printModelSubstitutions`
-  resolves substituted version ids to names *before* the workflow id reaches the user
-  and before the pending record is written. The job is already charged; the id is the
-  user's only handle on it.
-- **Observed (values):** `ResolveModelVersion` → `getWithRetry`
-  (`pkg/civitai/retry.go`, `readMaxAttempts = 4`) on a client with
-  `defaultTimeout = 30s` (`pkg/civitai/api.go`). Worst case ≈2 min **per id**, two ids
-  per record. Call site was `internal/cmd/generate.go` post-submit render, before
-  `recordPendingWorkflowID`.
-- **Ruled out:** not a parsing problem — `parseModelSubstitutions` is already lenient
-  by design so a malformed advisory field cannot cost the user the handle
-  (8 malformed shapes pinned, each asserting `res.ID` survives). The render path
-  reintroduces the same exposure by a *different* mechanism.
-- **Leading hypothesis:** bound the lookups (short total `context.WithTimeout`) or
-  print the id first and enrich after. On timeout the report must still appear **with
-  ids instead of names** — never silently drop it.
-- **Next probe:** the in-flight agent is fixing this. If it failed, verify the
-  constants first: `grep -n "readMaxAttempts\|defaultTimeout" pkg/civitai/retry.go pkg/civitai/api.go`.
+🔴 **Do not re-derive this. The hazard as originally written does not exist on `main`.**
+
+- **What I claimed:** the post-spend substitution report resolves version ids to names
+  via `ResolveModelVersion` → `getWithRetry` (≈2 min/id worst case) *before* the
+  workflow id reaches the user.
+- **What is actually true (verified at `ba3136c`):**
+  `reportModelSubstitutions(errw io.Writer, subs []genapi.ModelSubstitution, phase substitutionPhase)`
+  — no `context`, no resolver, **zero I/O**; it prints raw ids.
+  `grep -cE "context\.|resolveVersion|ResolveModelVersion|http\." internal/cmd/generate_substitution.go` → **0**.
+  `resolveVersion` is called only at `internal/cmd/generate.go:703,715`, inside
+  `buildGenerateGraph` **pre-estimate**, for `--checkpoint`/`--lora` — the load-bearing
+  lookup AGENTS item 13 requires, not an advisory one.
+- **Where the false premise came from:** the finding was real, but against **PR #222** —
+  a competing implementation of the same feature that *did* resolve names in the render
+  path. #222 was closed as a duplicate; **#221 merged instead**, and I carried the
+  finding across without re-reading the merged code. The `Ran: Google's Nano Banana — …`
+  transcript quoted in the original brief is not producible by anything on `main`.
+- **Still worth knowing:** the constants themselves are right — `readMaxAttempts = 4`
+  (`pkg/civitai/retry.go:29`), `defaultTimeout = 30s` (`pkg/civitai/api.go:54`) plus
+  exponential backoff. So *if* name enrichment is ever added to the report, it must be
+  bounded.
+- **What #237 did instead:** fixed the *ordering* so the hazard cannot appear —
+  `emitSubmitHandle` emits workflow id + externalId from one call site across all four
+  branches **before** `reportModelSubstitutions`, plus a signature ledger that fails to
+  compile the moment the renderer grows a context or resolver argument.
 
 ### 2. Approval summary names the checkpoint that will NOT run
 
@@ -79,10 +87,12 @@ Platform issues filed against `civitai/civitai`:
   ```
 - **Ruled out:** silently swapping in the applied id — the user asked for the
   requested one and must still see that their input was overridden.
-- **Leading hypothesis:** annotate (`… (SUPERSEDED — see above)`) or show both. Reuse
-  AGENTS item 21's phase model (pre-spend "will run" vs post-spend "ran"); do not
-  invent a parallel notion of tense.
-- **Next probe:** in-flight agent is fixing this too.
+- **RESOLVED in PR #237:** `substitutionCheckpointNote` appends
+  `[SUPERSEDED — the server will run version N instead; see the warning above]` to the
+  requested label at both pre-spend surfaces, computed at one call site, matched on
+  `requested`, tense from `substitutionVerb(phase)` (reuses item 21's phase model —
+  no parallel notion of tense). Annotate rather than swap, so the user still sees that
+  their input was overridden.
 
 ### 3. #3667 — prompt-audit coverage guard (platform, OPEN)
 
