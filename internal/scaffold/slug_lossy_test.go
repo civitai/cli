@@ -335,18 +335,18 @@ func TestSlugifyAsciiDerivationIsByteIdentical(t *testing.T) {
 func TestSlugifyAsciiExemptionBoundary(t *testing.T) {
 	// U+007F DEL is the last ASCII rune: exempt, folded to a hyphen like any
 	// other non-slug ASCII character.
-	if got, err := Slugify("delimiter app"); err != nil || got != "del-imiter-app" {
+	if got, err := Slugify("del\x7fimiter app"); err != nil || got != "del-imiter-app" {
 		t.Errorf("U+007F is ASCII and must stay exempt: Slugify = (%q, %v), want del-imiter-app", got, err)
 	}
 	// U+0080 is the first rune ABOVE ASCII. It is a control (Cc) — not space,
 	// punct or symbol — so it is content with nowhere to go, and refusing it is
 	// what the boundary says.
-	got, err := Slugify("ctrlname app")
+	got, err := Slugify("ctrl\u0080name app")
 	if err == nil {
 		t.Errorf("U+0080 is above ASCII and must be refused, got %q", got)
 	}
-	if len(LossyChars("ctrlname")) != 1 {
-		t.Errorf("LossyChars must report U+0080: %q", LossyChars("ctrlname"))
+	if len(LossyChars("ctrl\u0080name")) != 1 {
+		t.Errorf("LossyChars must report U+0080: %q", LossyChars("ctrl\u0080name"))
 	}
 }
 
