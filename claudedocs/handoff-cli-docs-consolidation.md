@@ -40,7 +40,7 @@ table cells measure 60–2,263 chars (median ~400) against `Short` strings of 24
 | #44 | docs | took the npm pin-freshness fetch out of the required `test-bridge` gate |
 | #42 | docs | **CLI reference 19 → 52 commands + global flags** |
 | #46 | docs | retired the hand-maintained flag tables from `site/guide/cli.md` |
-| **issue #253** | cli | the `login --help` NUL byte (below) — **filed, unfixed** |
+| **issue #253** | cli | the `login --help` NUL byte — filed here, **FIXED by #264** (`9cfe468`) |
 
 ### Verified live
 - Published reference documents `generate`, `workflows`, `download`, `models`,
