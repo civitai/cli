@@ -396,6 +396,34 @@ neither one's.
     vite.config.ts advice), and `net/http` DROPS a custom `Request.Host` across an
     absolute redirect, which silently turns the tunnel-Host probe into an ordinary
     loopback request unless it is re-applied.
+    🔴 **The findings are printed TWICE on purpose, and the duplicate is the
+    fix — not an oversight to collapse.** They were printed once, immediately
+    before the "open this URL" block, and that placement is right: the last
+    thing on screen before the URL should be the reason the URL won't work.
+    It is also insufficient, because the readiness wait sits in front of it.
+    Measured over three runs against the live endpoint (#226): >60 s (killed),
+    >3:00 (never resolved), ~2:30–3:00 — and the 45-second run produced **zero**
+    preflight output, because the author killed an apparently-hung command. So
+    the check with the best diagnostics in the product was invisible to the user
+    most likely to need it: the silent failure it exists to end, reproduced by
+    the placement meant to fix it. Moving the print EARLIER just swaps which
+    failure you get — on a slow tunnel it scrolls away behind minutes of
+    heartbeat lines. Hence both, and the duplicate is the accepted cost. It was
+    chosen over a "re-print only if the wait was slow" threshold specifically
+    because it carries **no timing dependency**: nothing to tune, no clock to
+    mock, and both placements are pinned by ordering assertions against the
+    injected `probePublic` seam rather than by wall-clock timing.
+    `--no-wait` is the ONE exception and it drops the EARLY print, not the late
+    one — there is no wait to scroll behind, so a second copy would only
+    duplicate an eight-line `vite.config.ts` block a few seconds apart.
+    Related, same issue: the DNS-pending heartbeat's estimate is now the single
+    constant `dnsPublishNote`, shared by the TTY spinner and the non-TTY
+    heartbeat because they held two hand-copied copies of it. It used to say
+    "usually <1 min", which **0 of 3** measured runs met. An estimate the wait
+    routinely blows past is what makes a working command read as a hang — which
+    is what got the run killed in the first place — so it states a range and
+    says longer is normal. Three runs do not support a percentile; do not
+    replace it with one you have not measured.
 
 11. **The scaffold VENDORS the block→host ready-ack (`internal/blockproto/`),
     and it is the FOURTH vendored mirror.** (Provenance: read against
