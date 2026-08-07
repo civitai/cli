@@ -4,6 +4,29 @@ on:
   push:
     tags:
       - "v*"
+  # Manual trigger — the recovery path when GitHub drops a run.
+  #
+  # On 2026-08-06 an Actions incident throttled webhook triggers: push and
+  # pull_request events stopped creating workflow runs entirely. #228 added the
+  # same escape hatch to ci.yml. Here the stakes are higher: the only recovery
+  # from a dropped tag-push run today is to DELETE and re-push a tag that users
+  # already install from.
+  #
+  # workflow_dispatch is the only trigger that does not ride a webhook, and it
+  # cannot be back-applied — a dispatchable workflow must already exist on the
+  # default branch — so it only ever helps if it lands BEFORE the next
+  # incident. It will therefore look permanently unused. Do not prune it.
+  #
+  # Unlike ci.yml this one needs an input. goreleaser derives the version,
+  # changelog and artifact names from the git tag at HEAD, and a dispatch
+  # checks out the DEFAULT BRANCH, where that tag is the wrong one or absent.
+  # So the tag has to be named explicitly and checked out below.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, with the leading v — e.g. v0.1.90. Must already be pushed; this does not create it."
+        required: true
+        type: string
 
 permissions:
   contents: write # create the GitHub Release + upload assets
@@ -12,9 +35,55 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     steps:
+      # On a tag push there is no `inputs` in the event payload, so `ref`
+      # renders as the empty string and checkout falls back to its default
+      # (github.ref = the pushed tag) — that path is unchanged. On a dispatch
+      # it resolves the supplied tag to the same detached HEAD at the same
+      # commit, so goreleaser sees identical git context either way.
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.inputs.tag }}
           fetch-depth: 0 # goreleaser needs full history + tags for the changelog
+
+      # Dispatch path only — skipped entirely on a tag push.
+      #
+      # goreleaser takes the version from the git tag at HEAD, never from
+      # anything we hand it, so a dispatch that resolves to the wrong ref does
+      # not fail — it publishes the WRONG release. checkout above already fails
+      # on a tag that does not exist; this catches the case that would
+      # otherwise succeed silently, e.g. someone typing a branch name like
+      # `main`, which is a perfectly valid ref and would release from a branch.
+      - name: Verify HEAD is exactly the requested tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          if ! git rev-parse -q --verify "refs/tags/${TAG}^{commit}" >/dev/null; then
+            echo "::error::'${TAG}' is not a tag in this repository. Push the tag first — this workflow releases an existing tag, it does not create one."
+            exit 1
+          fi
+          head="$(git rev-parse HEAD)"
+          tagged="$(git rev-parse "refs/tags/${TAG}^{commit}")"
+          if [ "$head" != "$tagged" ]; then
+            echo "::error::HEAD is ${head} but tag ${TAG} points at ${tagged}."
+            exit 1
+          fi
+          # The tag goreleaser will resolve for ITSELF. Mirrors its own lookup
+          # (internal/pipe/git/git.go, getTag): $GORELEASER_CURRENT_TAG, which
+          # we do not set, then `git tag --points-at HEAD` under the default
+          # `-version:refname` sort, then `git describe`. So when two tags sit
+          # on this commit the highest-sorting one wins and the release would
+          # go out under THAT name. goreleaser's own validate() does not catch
+          # this — it only asserts that some tag matching the name it picked is
+          # at HEAD, never that it matches the tag that was asked for.
+          at_head="$(git tag --points-at HEAD --sort=-version:refname)"
+          detected="${at_head%%$'\n'*}"
+          if [ "$detected" != "$TAG" ]; then
+            echo "::error::goreleaser would release '${detected}', not '${TAG}'. Refusing rather than publishing the wrong version."
+            exit 1
+          fi
+          echo "HEAD ${head} is tag ${TAG}; goreleaser will release ${detected}."
 
       - uses: actions/setup-go@v5
         with:
