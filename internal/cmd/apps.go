@@ -80,7 +80,7 @@ backs off and retries automatically).
 
 NOTE: the store is gated by a launch flag — until it opens publicly you will only
 see apps if your account is a moderator or app-dev-tester; a normal login may get
-an empty list. This command is useless until the backing API is deployed.`,
+an empty list.`,
 		Example: `  civitai app list
   civitai app list --kind onsite --sort popular --limit 10
   civitai app list --category generation --json
@@ -153,8 +153,7 @@ kind-specific action target (an on-site app's live URL, or an off-site app's
 external / connect target).
 
 Login is required (` + "`civitai login`" + `). A missing or out-of-scope slug returns a
-clean "not found" message. This command is useless until the backing API is
-deployed.`,
+clean "not found" message.`,
 		Example: `  civitai app view my-cool-app
   civitai app view my-cool-app --json`,
 		Args: cobra.ExactArgs(1),

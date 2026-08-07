@@ -334,3 +334,53 @@ func TestAppHelpListsDiscoveryCommands(t *testing.T) {
 		}
 	}
 }
+
+// TestAppBrowsingHelpDoesNotClaimTheAPIIsUndeployed pins the fix for issue #227's
+// stale-claim half. `app list` and `app view` both shipped a Long ending "This
+// command is useless until the backing API is deployed" — written before the
+// route existed and never revised. Both routes serve real data today (measured
+// 2026-08-06 against civitai.com: `civitai app list --limit 3` returned three
+// published apps plus a next cursor, and `civitai app view buzz` returned that
+// app's full detail), so the sentence tells a reader not to bother with a
+// command that works.
+//
+// The check is scoped to the two Longs rather than the whole help blob: the
+// GENUINE gates in that text — the launch flag on the store, the login
+// requirement — must survive, and a whole-tree phrase ban would fight them.
+func TestAppBrowsingHelpDoesNotClaimTheAPIIsUndeployed(t *testing.T) {
+	for name, long := range map[string]string{
+		"app list": newAppListCmd().Long,
+		"app view": newAppViewCmd().Long,
+	} {
+		low := strings.ToLower(long)
+		for _, gone := range []string{
+			"until the backing api is deployed",
+			"useless until",
+			"not yet deployed",
+		} {
+			if strings.Contains(low, gone) {
+				t.Errorf("%s help still claims the API is undeployed (%q) — it serves real data:\n%s",
+					name, gone, long)
+			}
+		}
+		// Positive control: the Long must still be substantive, so a green here
+		// can't be earned by emptying the field.
+		if len(strings.TrimSpace(long)) < 100 {
+			t.Errorf("%s Long is only %d chars — the phrase check would pass vacuously",
+				name, len(strings.TrimSpace(long)))
+		}
+	}
+	// The real, still-true gates must NOT have been stripped along with the
+	// stale sentence.
+	if !strings.Contains(newAppListCmd().Long, "launch flag") {
+		t.Error("app list help should still document the store's launch-flag gate")
+	}
+	for name, long := range map[string]string{
+		"app list": newAppListCmd().Long,
+		"app view": newAppViewCmd().Long,
+	} {
+		if !strings.Contains(long, "civitai login") {
+			t.Errorf("%s help should still state that login is required:\n%s", name, long)
+		}
+	}
+}

@@ -402,6 +402,55 @@ func TestAppHelpListsDevTunnel(t *testing.T) {
 	}
 }
 
+// TestReadmeDevTunnelRowMatchesTheCommandHelp pins the two surfaces together.
+//
+// The README's dev-tunnel row said "the tunnel endpoint is not exposed yet — so
+// it reports 'not available' until it ships". That was true when the command
+// landed (#87) and was superseded by #92, which set defaultDevTunnelEndpoint to
+// the live listener and rewrote the command's own Long to say so — and left the
+// README untouched for the whole interval. This is that drift, so the guard
+// checks AGREEMENT rather than either wording alone: the README must name the
+// endpoint the code actually dials, and must not contradict the command's own
+// claim that the endpoint is live.
+func TestReadmeDevTunnelRowMatchesTheCommandHelp(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	row := readmeCommandRefRow(t, string(raw), "civitai app dev-tunnel")
+
+	// The command's Long is the surface that was kept current; it is the anchor.
+	long := newAppDevTunnelCmd().Long
+	if !strings.Contains(long, "tunnel endpoint is live") {
+		t.Fatalf("dev-tunnel Long no longer states the endpoint is live — re-derive this "+
+			"guard against whatever the code now claims:\n%s", long)
+	}
+
+	// The README must not re-assert the superseded "endpoint isn't exposed" claim.
+	lowRow := strings.ToLower(row)
+	for _, gone := range []string{
+		"not exposed yet",
+		"until it ships",
+		"is off today",
+	} {
+		if strings.Contains(lowRow, gone) {
+			t.Errorf("README dev-tunnel row still says %q, contradicting the command's own "+
+				"help (%q):\n%s", gone, "tunnel endpoint is live", row)
+		}
+	}
+	// …and it must name the endpoint the code will actually dial, so a change to
+	// defaultDevTunnelEndpoint cannot silently orphan the README again.
+	if !strings.Contains(row, defaultDevTunnelEndpoint) {
+		t.Errorf("README dev-tunnel row should name the live endpoint %q:\n%s",
+			defaultDevTunnelEndpoint, row)
+	}
+	// The gate that IS real must survive: enrolment, not deployment.
+	if !strings.Contains(lowRow, "not available") || !strings.Contains(lowRow, "invite") {
+		t.Errorf("README dev-tunnel row should still explain the invite gate and the "+
+			"\"not available\" mint response:\n%s", row)
+	}
+}
+
 // TestAppDevTunnelForbiddenMapsToGuidance: when the server denies the mint (flag
 // off / not an author), the CLI surfaces the actionable dark/pre-GA guidance.
 // Exercises the FULL cobra path (config → api client → StartDevTunnel) against a
