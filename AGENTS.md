@@ -1704,6 +1704,107 @@ neither one's.
       text** (item 7), and message PRESERVATION is asserted separately: the six
       invocations' stderr is byte-for-byte identical base vs HEAD, verified with
       a differ that was itself shown to go red on an injected one-word change.
+    - 🔴 **THERE WERE FOUR COPIES, NOT TWO — AND THE THIRD TAUGHT THAT THE
+      SPELLING IS ONLY HALF OF THE HAZARD.** Issue #246 closed the two remaining
+      `errors.As(err, &netErr)` sites: `isTimeoutErr` in
+      `internal/appapi/appblocks.go` (the `app submit` upload) and
+      `classifyProbeErr` in `internal/cmd/app_dev_tunnel.go` (the readiness
+      probe's progress tag). Both now gate their `net.Error` branch on
+      `civitai.IsTransportError`, so that predicate has **four** callers:
+      `cmd/civitai`'s `exitCode`, `pkg/civitai`'s retry loop, and these two.
+      - 🔴 **`os.IsTimeout` AND `errors.As` ARE COMPLEMENTARY HALVES, so a
+        spelling-only fix is a HALF-FIX — and the gate's PLACEMENT is what
+        carries it.** `isTimeoutErr` began
+        `errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err)`, which
+        reads like a stricter check that the `errors.As` below it merely
+        widens. It is not: the two lines are filesystem-broad over DIFFERENT
+        SHAPES, because `os.IsTimeout` unwraps `*fs.PathError` /
+        `*os.LinkError` / `*os.SyscallError` at the **top level only** while
+        `errors.As` walks a `fmt.Errorf` wrapper. Measured on go1.25.12:
+        `os.IsTimeout(&fs.PathError{Err: ETIMEDOUT})` is **true** and
+        `os.IsTimeout(fmt.Errorf("x: %w", <that>))` is **false**, while
+        `errors.As` matches the Errno under the wrapper and reports
+        `Timeout()` **true**. Same for `EAGAIN`/`EWOULDBLOCK`;
+        `EACCES`/`ENOENT`/`EIO`/`ENOSPC` are false in both halves and were
+        never mis-sorted. So the gate sits **above `os.IsTimeout`**, not merely
+        above the `errors.As`, and `internal/appapi/submit_fs_not_timeout_test.go`
+        carries BOTH shapes with each row recording which half of the old
+        predicate caught it — and the halves are DISJOINT by assertion, an
+        `errors.As only` row requiring `os.IsTimeout` NOT to match it — plus a
+        per-half count floor. Mutation-measured: reverting `isTimeoutErr` to the
+        base spelling reddens **16 leaf subtests** (8 rows × the predicate table
+        and the flow table) plus 3 parents, while moving the gate ONE LINE DOWN
+        — the half-fix — reddens **8** of those, exactly the `os.IsTimeout`
+        rows, and leaves every `errors.As only` row green. A table built on one
+        shape cannot see that second mutant at all.
+      - 🔴 **THE SUBMIT SITE WAS LIVE, AND ITS FAILURE MODE WAS A LIE ABOUT AN
+        UPLOAD THAT NEVER HAPPENED.** `internal/cmd/app_submit.go` wires
+        `auth.New(cfg)` into `SubmitVersion` → `authedDoWith` →
+        `auth.Source.Token(ctx)` → `refreshLocked` → `cfg.SetOAuthTokens` →
+        `config.save()`, a real filesystem write, and `internal/auth/source.go`
+        returns `persist refreshed tokens: %w` when it fails — the exact
+        `fmt.Errorf`-wrapped shape above, and the same seam issue #244 came
+        through. A config dir on NFS-soft / sshfs / CIFS fails with those
+        errnos, so `isTimeoutErr` said "the upload timed out" about a POST that
+        was never built. Measured through the real `SubmitVersion`: **Token()
+        calls=4, submit POSTs=0, recovery polls=3** — three wasted
+        `ListSubmissions` round-trips and then `timedOutSubmitError`, telling
+        the author "submit timed out and the upload may not have completed …
+        run `civitai app status` to check whether it landed" about zero bytes
+        sent. The guard asserts that count and that the error comes back by
+        IDENTITY (`errors.Is`), which is the structural form of "it was not
+        re-wrapped"; `timedOutSubmitError` interpolates its cause with `%v`, so
+        `errors.Is` cannot find it through one.
+      - 🔴 **THE PROBE SITE IS REACHABLE — the handoff's "may not even be
+        reachable with a filesystem error" is RETRACTED — but KEEP THE CLAIM AT
+        THE MEASURED SIZE.** `internal/dnsprobe` imports no fs packages and
+        `DialClient` only ever returns `ErrNotPublished`, so the resolver call
+        site really is clean. The other two take whatever `client.Do` returns
+        on an **https** URL, and the x509 system-roots load surfaces an
+        unreadable CA bundle as `x509.SystemRootsError` wrapping an
+        `*fs.PathError`. Reproduced live against an `httptest` TLS server with
+        `SSL_CERT_FILE` at a mode-000 bundle:
+        `errors.As(clientDoErr, &pathErr)` = **true**.
+        What is NOT true — and an earlier draft of this bullet said it —
+        is that today's shape mislabels. It does not, for a reason two layers
+        away from `classifyProbeErr`: `url.Error.Timeout()` **type-asserts on
+        its immediate `.Err`** instead of unwrapping, so the errno is never
+        consulted. Measured with an ETIMEDOUT bundle: bare
+        `x509.SystemRootsError` tags **timeout**,
+        `*tls.CertificateVerificationError` around it tags **timeout**, and only
+        the outer `*url.Error` drops it back to **unreachable**; with EACCES
+        every shape tags unreachable. So the correct tag is one stdlib
+        implementation detail from being wrong, on an input measured arriving
+        here, and the gate makes it structural rather than accidental. The
+        `*url.Error` row is labelled a CONTROL in
+        `app_dev_tunnel_probe_class_test.go` for exactly that reason — reading
+        it as the regression would be reading an invariant guard as coverage.
+        Mutation-measured: reverting `classifyProbeErr` to the base spelling
+        reddens **9 leaf subtests**, every trapped row and no control;
+        flattening it to a constant `"unreachable"` reddens **8** in the
+        transport battery plus the real-DNS test, so neither battery is
+        satisfiable by the other's fix.
+        Why it is worth closing at all: the tag is the only thing telling an
+        author whether to WAIT (DNS propagation, a slow route) or go looking,
+        so a manufactured "timeout" is the false-advice failure item 10 spent
+        four measured corrections avoiding.
+      - **The `*net.DNSError` and `context.DeadlineExceeded` checks stay AHEAD
+        of the gate at both sites.** Neither is reachable from a filesystem
+        error, and `context.DeadlineExceeded` is not a `net.Error` the walk
+        would find — gating it would delete a real timeout.
+      - **Both guards keep BOTH directions, and the positive controls are what
+        make the fs rows mean anything.** `TestSubmitVersionStillRecoversFromA
+        RealTimeout` drives a REAL `http.Client.Timeout` against a hung handler
+        and requires ≥1 recovery poll; its sibling requires the full
+        `submitPollAttempts` budget plus the actionable message when nothing
+        landed; a `context.DeadlineExceeded` from the TokenSource pins the
+        INJECTION POINT itself (otherwise "no filesystem error recovers" is
+        also satisfied by never recovering from anything a TokenSource
+        returns). Mutation-measured: deleting the recovery branch entirely
+        reddens **5 top-level tests** — the three positive controls plus the two
+        pre-existing `submit_recover_test.go` cases — with the whole filesystem
+        table still green, which is what makes those rows evidence rather than a
+        build that refuses everything.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

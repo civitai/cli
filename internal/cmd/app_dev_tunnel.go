@@ -1462,6 +1462,41 @@ func isDNSPending(detail string, err error) bool {
 
 // classifyProbeErr gives a short human tag for a transport-level probe failure,
 // for the progress line ("dns", "timeout", "unreachable").
+//
+// 🔴 The net.Error branch is gated on civitai.IsTransportError because a
+// FILESYSTEM error can reach here, and tagging one "timeout" is the manufactured
+// claim AGENTS.md item 10 forbids for this command's advisory output — the tag
+// is the only thing telling an author whether to wait (DNS propagation, a slow
+// route) or to go looking. Same trap as #241/#244, AGENTS.md item 24:
+// syscall.Errno satisfies net.Error and its Timeout() is TRUE for
+// ETIMEDOUT/EAGAIN/EWOULDBLOCK, so a plain errors.As walks past the filesystem
+// wrapper and matches the errno underneath.
+//
+// A prior handoff guessed this site "may not even be reachable with a filesystem
+// error". RETRACTED — reachability is measured. internal/dnsprobe imports no fs
+// packages and DialClient only ever returns ErrNotPublished, so the
+// probeLocalHopTunnel resolver call site really is clean; but the two call sites
+// in probePublicURL / probeLocalHopURL take whatever client.Do returns on an
+// https URL, and the x509 system-roots load surfaces an unreadable CA bundle as
+// x509.SystemRootsError wrapping an *fs.PathError. Reproduced live against an
+// httptest TLS server with SSL_CERT_FILE pointing at a mode-000 bundle:
+// errors.As(clientDoErr, &pathErr) is TRUE.
+//
+// 🔴 STATE THE CLAIM AT THE SIZE IT WAS MEASURED. Today's live shape does NOT
+// mislabel, and the reason is an accident two layers away rather than anything
+// this function does: url.Error.Timeout() TYPE-ASSERTS on its immediate .Err
+// (the tls error) instead of unwrapping, so the errno never gets consulted.
+// Measured with an ETIMEDOUT (or EAGAIN) CA bundle: bare x509.SystemRootsError
+// tags "timeout", *tls.CertificateVerificationError around it tags "timeout",
+// and only the outer *url.Error drops it back to "unreachable"; with EACCES
+// every shape tags "unreachable". So the correct answer is one stdlib
+// implementation detail from being wrong, on an input we have measured arriving
+// here. The gate makes it structural instead of accidental — that is the whole
+// value, and it is not a report of a live wrong label.
+//
+// The *net.DNSError and context.DeadlineExceeded checks stay AHEAD of the gate:
+// neither is reachable from a filesystem error, and DeadlineExceeded is not a
+// net.Error the walk would find. Guard: app_dev_tunnel_probe_class_test.go.
 func classifyProbeErr(err error) string {
 	var dnsErr *net.DNSError
 	if errors.As(err, &dnsErr) {
@@ -1469,6 +1504,9 @@ func classifyProbeErr(err error) string {
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
+	}
+	if !civitai.IsTransportError(err) {
+		return "unreachable"
 	}
 	var nerr net.Error
 	if errors.As(err, &nerr) && nerr.Timeout() {
