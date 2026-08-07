@@ -5,8 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/fs"
-	"net"
 	"os"
 	"syscall"
 
@@ -112,7 +110,7 @@ func isDeviceFlowErr(err error) bool {
 // that startlingly easy to get wrong. `syscall.Errno` carries both
 // `Timeout() bool` and `Temporary() bool`, so it satisfies `net.Error` — while
 // `*fs.PathError`, `*os.LinkError` and `*os.SyscallError` do NOT (measured on
-// go1.25: none of the three declares `Temporary()`). A plain
+// go1.25.12: none of the three declares `Temporary()`). A plain
 // `errors.As(err, &netErr)` therefore unwraps straight PAST the filesystem
 // wrapper and matches the bare Errno underneath it, so EVERY untagged
 // os.ReadFile / os.Stat / os.MkdirAll failure in the CLI landed on exit 5 —
@@ -126,69 +124,38 @@ func isDeviceFlowErr(err error) bool {
 // published contract already says in so many words that an unreadable-but-
 // present file does not exit 2.
 //
-// The residual, stated rather than hidden: a network errno that reaches us
-// with NO net-stack wrapper at all now falls to 1 as well (a bare
-// syscall.ETIMEDOUT, say). Nothing in this CLI produces that shape —
-// net/http surfaces a dial failure as *url.Error → *net.OpError → …, and both
-// of those are real net.Errors — and the alternative is to keep reading an
-// errno's Timeout()/Temporary() as evidence, which is what mis-sorted every
-// filesystem failure in the first place. ECONNREFUSED/ECONNRESET keep their
-// explicit bare-form checks above, because their Timeout() and Temporary() are
-// BOTH false and the interface test never caught them anyway.
+// 🔴 The walk itself lives in pkg/civitai (transport_error.go) and is reached
+// through civitai.IsTransportError, because the SAME predicate was open-coded
+// in this file and in that package's retry loop — and only this copy got fixed
+// (issue #241 → PR #242), leaving the retry loop retrying filesystem failures
+// until issue #244. One rule, one place. Do not re-inline it here.
+//
+// 🔴 The residual, stated rather than hidden — and it is WIDER than the "a bare
+// syscall.ETIMEDOUT, say" this comment used to name. The rule, not a list:
+// EVERY network errno except ECONNREFUSED and ECONNRESET (which keep explicit
+// sentinels below) now falls to 1 when it reaches us with no net-stack wrapper,
+// and equally when wrapped in an `*os.SyscallError` with no `*net.OpError`
+// above it — an `*os.SyscallError` is not itself a net.Error, so the walk
+// unwraps to the Errno and skips it. Measured on go1.25.12, `isNetworkErr` is
+// false for all ten of bare ETIMEDOUT, EHOSTUNREACH, ENETUNREACH, EPIPE,
+// ECONNABORTED, ENETDOWN, ENETRESET, EHOSTDOWN, EAGAIN and EWOULDBLOCK, and for
+// each of them under `os.NewSyscallError`; each becomes exit 5 again the moment
+// a `*net.OpError` sits above it, which is the only shape the net stack
+// produces. Do not re-narrow this to a list of four — an enumerated set is what
+// went stale here the first time.
+//
+// Nothing in this CLI produces those shapes — net/http surfaces a
+// dial failure as *url.Error → *net.OpError → …, and both of those are real
+// net.Errors — and the alternative is to keep reading an errno's
+// Timeout()/Temporary() as evidence, which is what mis-sorted every filesystem
+// failure in the first place. ECONNREFUSED/ECONNRESET keep their explicit
+// bare-form checks above, because their Timeout() and Temporary() are BOTH
+// false and the interface test never caught them anyway.
 func isNetworkErr(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, syscall.ECONNREFUSED) ||
 		errors.Is(err, syscall.ECONNRESET) {
 		return true
 	}
-	return hasTransportError(err)
-}
-
-// hasTransportError walks err's tree — both the `Unwrap() error` and
-// `Unwrap() []error` shapes, so it sees everything errors.As would — looking
-// for a net.Error that the NET STACK contributed.
-//
-// Two rules, and neither subsumes the other:
-//
-//   - A bare `syscall.Errno` is not evidence. It satisfies net.Error by
-//     accident of having Timeout()/Temporary(); the walk SKIPS it and keeps
-//     going rather than stopping, so a genuine net.Error elsewhere in a
-//     multi-error tree is still found.
-//   - An error ABOUT A PATH is a filesystem error, full stop. `*fs.PathError`
-//     and `*os.LinkError` terminate the walk, so nothing beneath one can be
-//     read as transport evidence. Today that is belt-and-braces (they bottom
-//     out in an Errno the first rule already rejects); it is here because a
-//     future Go release adding `Temporary()` to either type would otherwise
-//     re-open this exact hole silently, matching the wrapper itself instead of
-//     the Errno. No net API returns either type.
-//
-// `*os.SyscallError` is deliberately NOT a terminator: the net stack nests one
-// inside *net.OpError on every dial failure, and the OpError — a real
-// net.Error — is found before the walk ever reaches it.
-func hasTransportError(err error) bool {
-	for err != nil {
-		switch err.(type) {
-		case *fs.PathError, *os.LinkError:
-			return false
-		}
-		if ne, ok := err.(net.Error); ok {
-			if _, isErrno := ne.(syscall.Errno); !isErrno {
-				return true
-			}
-		}
-		switch x := err.(type) {
-		case interface{ Unwrap() error }:
-			err = x.Unwrap()
-		case interface{ Unwrap() []error }:
-			for _, e := range x.Unwrap() {
-				if hasTransportError(e) {
-					return true
-				}
-			}
-			return false
-		default:
-			return false
-		}
-	}
-	return false
+	return civitai.IsTransportError(err)
 }
