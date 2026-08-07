@@ -154,10 +154,18 @@ const STARTER_COMFY_RECIPE_ID = 'starter-comfy-txt2img';
  *       UNAUTHORIZED `"Apps are not enabled"`.
  *   (b) the author gate — `assertViewerIsAppDeveloper` throws FORBIDDEN
  *       `"Apps authoring is not enabled for this account"`.
- *   (c) the unknown-recipe rejection — before the recipe is registered server-side
- *       (`REGISTERED_RECIPE_IDS = ['seamless-pano-360']`), a customComfy submit is
- *       rejected at the Zod enum boundary with
- *       `"Invalid enum value. Expected 'seamless-pano-360', received 'starter-comfy-txt2img'"`.
+ *   (c) the unknown-recipe rejection — a customComfy submit naming a recipe id
+ *       the server's registry does not hold is rejected at the Zod enum boundary:
+ *       `"Invalid enum value. Expected <the registered ids>, received '<sent id>'"`.
+ *
+ *       🔴 This is NOT the shipped sample's expected state. `starter-comfy-txt2img`
+ *       IS registered server-side. (c) fires when you point
+ *       {@link STARTER_COMFY_RECIPE_ID} at an id the server doesn't have, or run
+ *       against a deployment older than the recipe. An earlier version of this
+ *       comment asserted the reverse AND hardcoded the registry's contents; both
+ *       went stale, and a developer believed them over the published docs. The
+ *       registry is server-owned and changes without a scaffold release — read
+ *       the `Expected …` list in the rejection, never a list written down here.
  *
  * It INTENTIONALLY no longer matches the broad tokens `forbidden` / `not allowed`
  * / `restricted` / bare `invite`: those over-matched dev misconfig (a generic
@@ -178,8 +186,8 @@ export function isFeatureGated(message: string | null | undefined): boolean {
     m.includes('apps are not enabled') ||
     // (b) author gate — exact server string.
     m.includes('apps authoring is not enabled') ||
-    // (c) unknown-recipe Zod enum rejection (pre-deploy) — the enum signature
-    //     AND the recipe id, so a *different* enum rejection can't match.
+    // (c) unknown-recipe Zod enum rejection — the enum signature AND this app's
+    //     own recipe id, so a *different* enum rejection can't match.
     (m.includes('invalid enum value') && m.includes(STARTER_COMFY_RECIPE_ID))
   );
 }
