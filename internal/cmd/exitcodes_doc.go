@@ -50,9 +50,12 @@ type ExitCodeDoc struct {
 // README used to claim "an unreadable --file image" exits 2, which was wrong
 // twice over: there is no `--file` image flag (the image is a positional
 // `<file>`; the only `--file` in the CLI selects a file inside a model version
-// for `civitai download`), and a permission-denied read does not exit 2 —
-// measured, `app listing set-icon <mode-000 png>` exits 5. See the note in
-// loadAndValidateImage for why that is, and why tagging it here is not the fix.
+// for `civitai download`), and a permission-denied read does not exit 2. It
+// exits 1, the generic code — see the note in loadAndValidateImage for why
+// tagging it here is not the fix. (It exited **5** until issue #241: a
+// syscall.Errno satisfies net.Error, so cmd/civitai's isNetworkErr matched
+// every filesystem failure in the CLI and reported it as retryable transport.
+// The fix is in that classifier, not in a per-call-site tag here.)
 var imageUsageRefusals = []string{
 	"missing",
 	"empty",
@@ -70,13 +73,16 @@ var exitCodeDocs = []ExitCodeDoc{
 	{
 		Code:    1,
 		Summary: "Generic / unclassified error.",
+		Notes: []string{
+			"A **filesystem failure** lands here — a file that exists but cannot be read, an unwritable config directory, an I/O error. It is neither a mistake about the invocation (`2`) nor a transport failure (`5`), and there is no filesystem-specific code.",
+		},
 	},
 	{
 		Code:    2,
 		Summary: "Usage error — a bad flag, a **missing required flag or argument** (e.g. `civitai app withdraw` with no publish-request id), a bad flag **value** (`--limit` out of range, a non-integer id, `--template nope`), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum).",
 		Notes: []string{
 			"This does not depend on where the refusal happens: a mistake the CLI catches locally and one the server rejects both exit `2`.",
-			"A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is " + joinPhrases(imageUsageRefusals) + " — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and does **not** exit `2`.",
+			"A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is " + joinPhrases(imageUsageRefusals) + " — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and exits `1`, not `2`.",
 		},
 		Extra: []string{
 			"`app listing set-cover` and `app listing add-screenshot` take the same positional `<file>` and refuse it the same way. (The CLI has no `--file` image flag at all: the only `--file` is `civitai download --file`, which picks a file *inside* a model version.)",
@@ -102,6 +108,9 @@ var exitCodeDocs = []ExitCodeDoc{
 	{
 		Code:    5,
 		Summary: "Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries.",
+		Notes: []string{
+			"This is the code to **retry** on, so a **filesystem** failure never lands here however retryable its errno looks: a permissions or I/O problem does not fix itself, and a loop that sleeps and re-runs would never terminate. Those exit `1`.",
+		},
 	},
 	{
 		Code:    6,

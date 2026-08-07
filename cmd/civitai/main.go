@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
 	"os"
 	"syscall"
@@ -104,14 +105,90 @@ func isDeviceFlowErr(err error) bool {
 }
 
 // isNetworkErr reports whether err is (or wraps) a raw transport/connection
-// failure that was not otherwise classified: a net.Error, a refused/reset
-// connection, or a deadline/timeout.
+// failure that was not otherwise classified: a net.Error contributed by the net
+// stack, a refused/reset connection, or a deadline/timeout.
+//
+// 🔴 A FILESYSTEM ERROR IS NOT A NETWORK ERROR, and the standard library makes
+// that startlingly easy to get wrong. `syscall.Errno` carries both
+// `Timeout() bool` and `Temporary() bool`, so it satisfies `net.Error` — while
+// `*fs.PathError`, `*os.LinkError` and `*os.SyscallError` do NOT (measured on
+// go1.25: none of the three declares `Temporary()`). A plain
+// `errors.As(err, &netErr)` therefore unwraps straight PAST the filesystem
+// wrapper and matches the bare Errno underneath it, so EVERY untagged
+// os.ReadFile / os.Stat / os.MkdirAll failure in the CLI landed on exit 5 —
+// the one code the README tells scripts to RETRY on. Measured before the fix:
+// `app listing set-icon <mode-000 png>` and `login --token …` against an
+// unwritable XDG_CONFIG_HOME both exited 5 with a `permission denied` message,
+// so a CI retry loop span forever on a chmod problem. They now fall through to
+// the generic code 1: the CLI has no filesystem category, and 1 is documented
+// as "generic / unclassified", which is exactly what an opaque errno is. It is
+// deliberately NOT 2 — exit 2 is a mistake about the INVOCATION, and the
+// published contract already says in so many words that an unreadable-but-
+// present file does not exit 2.
+//
+// The residual, stated rather than hidden: a network errno that reaches us
+// with NO net-stack wrapper at all now falls to 1 as well (a bare
+// syscall.ETIMEDOUT, say). Nothing in this CLI produces that shape —
+// net/http surfaces a dial failure as *url.Error → *net.OpError → …, and both
+// of those are real net.Errors — and the alternative is to keep reading an
+// errno's Timeout()/Temporary() as evidence, which is what mis-sorted every
+// filesystem failure in the first place. ECONNREFUSED/ECONNRESET keep their
+// explicit bare-form checks above, because their Timeout() and Temporary() are
+// BOTH false and the interface test never caught them anyway.
 func isNetworkErr(err error) bool {
 	if errors.Is(err, context.DeadlineExceeded) ||
 		errors.Is(err, syscall.ECONNREFUSED) ||
 		errors.Is(err, syscall.ECONNRESET) {
 		return true
 	}
-	var netErr net.Error
-	return errors.As(err, &netErr)
+	return hasTransportError(err)
+}
+
+// hasTransportError walks err's tree — both the `Unwrap() error` and
+// `Unwrap() []error` shapes, so it sees everything errors.As would — looking
+// for a net.Error that the NET STACK contributed.
+//
+// Two rules, and neither subsumes the other:
+//
+//   - A bare `syscall.Errno` is not evidence. It satisfies net.Error by
+//     accident of having Timeout()/Temporary(); the walk SKIPS it and keeps
+//     going rather than stopping, so a genuine net.Error elsewhere in a
+//     multi-error tree is still found.
+//   - An error ABOUT A PATH is a filesystem error, full stop. `*fs.PathError`
+//     and `*os.LinkError` terminate the walk, so nothing beneath one can be
+//     read as transport evidence. Today that is belt-and-braces (they bottom
+//     out in an Errno the first rule already rejects); it is here because a
+//     future Go release adding `Temporary()` to either type would otherwise
+//     re-open this exact hole silently, matching the wrapper itself instead of
+//     the Errno. No net API returns either type.
+//
+// `*os.SyscallError` is deliberately NOT a terminator: the net stack nests one
+// inside *net.OpError on every dial failure, and the OpError — a real
+// net.Error — is found before the walk ever reaches it.
+func hasTransportError(err error) bool {
+	for err != nil {
+		switch err.(type) {
+		case *fs.PathError, *os.LinkError:
+			return false
+		}
+		if ne, ok := err.(net.Error); ok {
+			if _, isErrno := ne.(syscall.Errno); !isErrno {
+				return true
+			}
+		}
+		switch x := err.(type) {
+		case interface{ Unwrap() error }:
+			err = x.Unwrap()
+		case interface{ Unwrap() []error }:
+			for _, e := range x.Unwrap() {
+				if hasTransportError(e) {
+					return true
+				}
+			}
+			return false
+		default:
+			return false
+		}
+	}
+	return false
 }
