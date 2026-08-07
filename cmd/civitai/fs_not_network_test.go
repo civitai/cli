@@ -15,6 +15,12 @@ package main
 // untagged os.ReadFile / os.Stat / os.MkdirAll failure in the CLI therefore
 // exited 5 — the code the README tells scripts to RETRY on.
 //
+// The walk that fixes it now lives in pkg/civitai (transport_error.go), reached
+// through civitai.IsTransportError, because the identical spelling was ALSO
+// open-coded in that package's retry loop and only this copy got fixed — see
+// issue #244. These tests drive the CLI's classifier; pkg/civitai's
+// retry_fs_test.go drives the retry loop through the same predicate.
+//
 // Three tests, and NONE subsumes the others:
 //
 //   - TestSyscallErrnoStillSatisfiesNetError pins the TRAP itself, so a later
@@ -76,8 +82,8 @@ func naivelyLooksLikeANetError(err error) bool {
 // TestSyscallErrnoStillSatisfiesNetError pins the stdlib fact the whole guard
 // is built on, and the three NEGATIVE facts that make it bite.
 //
-// 🔴 Do not "simplify" hasTransportError back to a bare errors.As because the
-// wrapper types look like they would stop it. They do not: measured on
+// 🔴 Do not "simplify" civitai.IsTransportError back to a bare errors.As because
+// the wrapper types look like they would stop it. They do not: measured on
 // go1.25.12, NONE of *fs.PathError, *os.LinkError or *os.SyscallError declares
 // Temporary(), so none of them satisfies net.Error and errors.As walks
 // straight through to the Errno. That asymmetry is the entire bug.
@@ -86,7 +92,7 @@ func TestSyscallErrnoStillSatisfiesNetError(t *testing.T) {
 		t.Fatal("syscall.Errno no longer satisfies net.Error.\n" +
 			"That is GOOD NEWS, not a test failure to silence: the hazard this file guards has\n" +
 			"left the standard library. Re-measure before removing anything — the Errno skip in\n" +
-			"hasTransportError becomes dead code, but the *fs.PathError/*os.LinkError terminators\n" +
+			"pkg/civitai's transportError becomes dead code, but the *fs.PathError/*os.LinkError terminators\n" +
 			"do NOT, they guard the mirror-image hazard of a wrapper GAINING Temporary().")
 	}
 
@@ -101,7 +107,7 @@ func TestSyscallErrnoStillSatisfiesNetError(t *testing.T) {
 		{"*os.SyscallError", os.NewSyscallError("read", syscall.EACCES)},
 	} {
 		if _, ok := tc.err.(net.Error); ok {
-			t.Errorf("%s now satisfies net.Error directly. hasTransportError's Errno skip no longer\n"+
+			t.Errorf("%s now satisfies net.Error directly. The Errno skip in transportError no longer\n"+
 				"covers this shape — the wrapper itself matches. Verify the terminator list still\n"+
 				"stops it (it covers *fs.PathError and *os.LinkError, NOT *os.SyscallError).", tc.name)
 		}
@@ -270,7 +276,7 @@ type multiErr struct{ errs []error }
 func (m multiErr) Error() string   { return "joined" }
 func (m multiErr) Unwrap() []error { return m.errs }
 
-// TestPathErrorTerminatesTheWalk pins the SECOND rule in hasTransportError,
+// TestPathErrorTerminatesTheWalk pins the SECOND rule in transportError,
 // which the Errno skip cannot cover: an error ABOUT A PATH is a filesystem
 // error, and nothing beneath it is transport evidence.
 //
@@ -306,6 +312,19 @@ func TestPathErrorTerminatesTheWalk(t *testing.T) {
 //
 // 🔴 INVARIANT GUARD, not regression coverage — every row passes at base too.
 // That is exactly its job.
+//
+// 🔴 viaNetErrorBranch IS THE BACKSTOP, AND IT USED TO REST ON ONE ROW. The
+// mutation that matters here is re-spelling transportError's Errno skip as
+// `errors.As(ne, &errno)` — precisely the mistake the doc comment warns about,
+// because errors.As unwraps a *net.OpError down to its errno and then rejects
+// the OpError. Measured before this file was widened, that mutant reddened
+// exactly ONE subtest (`*net.OpError nesting *os.SyscallError(ECONNRESET)`);
+// the real refused dial survived it because the ECONNREFUSED sentinel carried
+// the row. Deleting or reshaping that single row would have made the whole
+// regression invisible. So: the real refused dial now ALSO asserts the walk saw
+// it (its exit 5 still comes from the sentinel — the two assertions are
+// independent), and two sentinel-free *net.OpError rows were added, whose exit
+// 5 has no sentinel to fall back on at all.
 func TestTransportErrorsStillExitFive(t *testing.T) {
 	realRefused := realRefusedDial(t)
 	realDeadline := realReadDeadlineExceeded(t)
@@ -315,26 +334,47 @@ func TestTransportErrorsStillExitFive(t *testing.T) {
 		err  error
 		// viaNetErrorBranch requires the row to be classified by the net.Error
 		// walk rather than by one of the three explicit sentinel checks. Without
-		// it, gutting hasTransportError would leave rows green on the sentinels
-		// alone.
+		// it, gutting the walk would leave rows green on the sentinels alone.
 		viaNetErrorBranch bool
+		// sentinelFree additionally requires that NO sentinel could have carried
+		// the row, so its exit-5 assertion is itself evidence about the walk.
+		// Asserted, not just declared — see the check below.
+		sentinelFree bool
 	}{
-		{"REAL refused dial (*net.OpError from net.Dial)", realRefused, false},
-		{"REAL read deadline exceeded (*net.OpError from conn.Read)", realDeadline, true},
-		{"REAL 503 after retries (pkg/civitai read GET)", real503AfterRetries(t), false},
+		{"REAL refused dial (*net.OpError from net.Dial)", realRefused, true, false},
+		{"REAL read deadline exceeded (*net.OpError from conn.Read)", realDeadline, true, true},
+		{"REAL 503 after retries (pkg/civitai read GET)", real503AfterRetries(t), false, false},
 
-		{"bare syscall.ECONNREFUSED", syscall.ECONNREFUSED, false},
-		{"bare syscall.ECONNRESET", syscall.ECONNRESET, false},
-		{"wrapped syscall.ECONNREFUSED", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), false},
-		{"context.DeadlineExceeded", fmt.Errorf("request: %w", context.DeadlineExceeded), false},
+		{"bare syscall.ECONNREFUSED", syscall.ECONNREFUSED, false, false},
+		{"bare syscall.ECONNRESET", syscall.ECONNRESET, false, false},
+		{"wrapped syscall.ECONNREFUSED", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), false, false},
+		{"context.DeadlineExceeded", fmt.Errorf("request: %w", context.DeadlineExceeded), false, false},
 
 		{"*net.OpError nesting *os.SyscallError(ECONNRESET)",
-			&net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)}, true},
-		{"*net.DNSError", &net.DNSError{Err: "no such host", Name: "civitai.com", IsNotFound: true}, true},
+			&net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)}, true, false},
+		{"*net.OpError nesting *os.SyscallError(ETIMEDOUT)",
+			&net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.ETIMEDOUT)}, true, true},
+		{"*net.OpError nesting *os.SyscallError(EHOSTUNREACH)",
+			&net.OpError{Op: "dial", Net: "tcp", Err: os.NewSyscallError("connect", syscall.EHOSTUNREACH)}, true, true},
+		{"*net.DNSError", &net.DNSError{Err: "no such host", Name: "civitai.com", IsNotFound: true}, true, true},
 		{"*url.Error wrapping *net.OpError",
 			&url.Error{Op: "Get", URL: "https://civitai.com/api/v1/models",
-				Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("i/o timeout")}}, true},
-		{"civitai.ErrNetwork sentinel", civitai.ErrNetwork, false},
+				Err: &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("i/o timeout")}}, true, true},
+		{"civitai.ErrNetwork sentinel", civitai.ErrNetwork, false, false},
+	}
+
+	// A count floor, so a table someone trimmed cannot report a serene pass with
+	// the backstop back down to one row.
+	var sentinelFreeWalkRows int
+	for _, tc := range cases {
+		if tc.viaNetErrorBranch && tc.sentinelFree {
+			sentinelFreeWalkRows++
+		}
+	}
+	if sentinelFreeWalkRows < 4 {
+		t.Fatalf("only %d row(s) pin the walk with no sentinel to fall back on; want >= 4.\n"+
+			"This backstop was ONE row once, and the errors.As mutant it exists to catch was\n"+
+			"one row-deletion away from invisible.", sentinelFreeWalkRows)
 	}
 
 	for _, tc := range cases {
@@ -347,10 +387,20 @@ func TestTransportErrorsStillExitFive(t *testing.T) {
 					"A real transport failure must stay retryable — the filesystem fix must not\n"+
 					"have disabled exit 5. err = %#v", got, exitNetwork, tc.err)
 			}
-			if tc.viaNetErrorBranch && !hasTransportError(tc.err) {
+			if tc.viaNetErrorBranch && !civitai.IsTransportError(tc.err) {
 				t.Errorf("this row is meant to be classified by the net.Error walk, but\n" +
-					"hasTransportError said false — it is passing on a sentinel shortcut instead,\n" +
-					"so it cannot see a regression in the walk itself")
+					"civitai.IsTransportError said false — it is passing on a sentinel shortcut\n" +
+					"instead, so it cannot see a regression in the walk itself")
+			}
+			if tc.sentinelFree {
+				// The row's own premise. A "sentinel-free" row that quietly
+				// gained a sentinel would stop being evidence about the walk.
+				for _, s := range []error{context.DeadlineExceeded, syscall.ECONNREFUSED, syscall.ECONNRESET} {
+					if errors.Is(tc.err, s) {
+						t.Fatalf("row is marked sentinel-free but errors.Is finds %v — its exit 5 no longer\n"+
+							"depends on the walk, so it cannot back the errors.As mutation up", s)
+					}
+				}
 			}
 		})
 	}

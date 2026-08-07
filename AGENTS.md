@@ -166,8 +166,10 @@ is model substitution, and 22 is the one gate on that path that guards CONTENT
 rather than money); items 18 and 20 cover the checks that tell an author their
 EXISTING app is missing the item-11 handshake (20 is the reachability repair to
 18's presence-only scan); item 23 covers the SHAPE of a validation finding — the
-`field` every `--json` consumer groups on; and item 24 covers the CLI-wide
-exit-code classifier, which every command's published exit code funnels through.
+`field` every `--json` consumer groups on; and item 24 covers the ONE
+transport-vs-filesystem predicate now shared by the CLI-wide exit-code
+classifier (which every command's published exit code funnels through) and
+`pkg/civitai`'s read-GET retry loop.
 The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
@@ -1537,7 +1539,8 @@ neither one's.
       consumers (`app validate`, `app submit`, `app init`'s self-check) use.
 24. **`syscall.Errno` IS a `net.Error`, so the obvious spelling of the transport
     check silently classified EVERY filesystem failure in the CLI as a network
-    failure.** `cmd/civitai/main.go`'s `isNetworkErr` used to end
+    failure — in TWO places, and the first fix reached only one of them.**
+    `cmd/civitai/main.go`'s `isNetworkErr` used to end
     `var netErr net.Error; return errors.As(err, &netErr)` — the spelling anyone
     would write, and the spelling anyone will "simplify" it back to. Do not.
     `syscall.Errno` declares both `Timeout() bool` and `Temporary() bool` and so
@@ -1568,9 +1571,43 @@ neither one's.
       be false on arrival. `1` promises nothing it cannot keep. The contract is
       published from `exitCodeDocs` (codes 1, 2 and 5 all say it), so the README
       and `--help` moved together.
+    - 🔴 **THERE WERE TWO COPIES, AND FIXING ONE IS WHAT THIS ITEM NOW EXISTS
+      TO PREVENT.** `pkg/civitai/retry.go`'s `isTransientNetErr` carried the
+      IDENTICAL unfixed spelling through #242, and `syscall.Errno.Timeout()` is
+      **true** for `ETIMEDOUT`, `EAGAIN` and `EWOULDBLOCK` — so a FILESYSTEM
+      failure carrying one of those entered the bounded retry loop. Reachable,
+      not theoretical: `internal/auth/source.go` returns
+      `persist refreshed tokens: %w` when writing rotated OAuth tokens fails,
+      `Tokens.Token(ctx)` feeds that straight into `getWithRetry`'s transient
+      arm, and a config dir on NFS-soft / sshfs / CIFS fails with exactly those
+      errnos. Measured through the real `getWithRetry`: **Token() calls=4,
+      server hits=0, retry notices=3** — the user watches three
+      `network error from Civitai, retrying (n/4)…` lines plus backoff for a
+      problem that never clears. Issue #244.
+      **The walk now lives in ONE place**, `pkg/civitai/transport_error.go`, and
+      both callers ask it: `cmd/civitai`'s classifier through the exported
+      `civitai.IsTransportError` (presence), `isTransientNetErr` through the
+      unexported `transportError` (the matched `net.Error`, whose `Timeout()`
+      it needs). It is in `pkg/civitai` because the dependency only runs one
+      way — `cmd/` and `internal/` import `pkg/civitai`, and `pkg/civitai`
+      imports nothing of ours — so putting it in `internal/` would have reversed
+      that for the public SDK. Exactly ONE new exported symbol, a bool: a caller
+      needing the `net.Error` itself uses the unexported form, so the SDK does
+      not owe compatibility on a `net.Error` return. The two callers keep
+      DIFFERENT answers — `exitCode` asks "is this exit 5?", the loop asks
+      "should I retry?", and `context.Canceled` (never retried, not a filesystem
+      error) and a non-timeout `*net.DNSError` (exit 5, not retried) are where
+      they diverge. What is shared is the EVIDENCE, not the verdict.
     - 🔴 **The guard is TWO rules and neither subsumes the other.**
-      `hasTransportError` walks the error tree — both `Unwrap() error` and
-      `Unwrap() []error`, so it sees everything `errors.As` would. (1) A bare
+      `transportError` walks the error tree — both `Unwrap() error` and
+      `Unwrap() []error`. 🔴 It does **not** "see everything `errors.As` would",
+      which is what this bullet used to claim and what `hasTransportError`'s own
+      doc comment claimed: `errors.As` ALSO calls a matched type's own
+      `As(any) bool` method, which the walk never consults. Measured — zero
+      `As(any) bool` / `As(interface{}) bool` declarations in the repo and
+      across all 119 dependency package directories (1445 `.go` files, scanner
+      positive-controlled against both spellings) — so it is UNREACHABLE here,
+      not equivalent. (1) A bare
       `syscall.Errno` is SKIPPED, not stopped at, so a genuine net.Error
       elsewhere in a multi-error tree is still found; the skip is a type
       ASSERTION on the matched value, never `errors.As`, because `errors.As`
@@ -1583,15 +1620,26 @@ neither one's.
       itself. `*os.SyscallError` is deliberately NOT a terminator: the net stack
       nests one inside `*net.OpError` on every dial failure, and the OpError is
       found first.
-    - **The residual, stated rather than hidden.** A network errno arriving with
-      NO net-stack wrapper at all (a bare `syscall.ETIMEDOUT`) now falls to 1.
-      Nothing in this CLI produces that shape — `net/http` surfaces a dial
-      failure as `*url.Error` → `*net.OpError` → …, both real `net.Error`s — and
-      the alternative is to keep reading an errno's `Timeout()`/`Temporary()` as
-      evidence, which is what mis-sorted every filesystem failure. `ECONNREFUSED`
-      and `ECONNRESET` keep their explicit bare-form `errors.Is` checks precisely
-      because both their `Timeout()` and `Temporary()` are **false**, so the
-      interface test never caught them anyway.
+    - 🔴 **The residual, stated rather than hidden — and it is WIDER than the
+      "a bare `syscall.ETIMEDOUT`" this bullet used to name.** State the RULE,
+      not a list, because the list is what went stale: **every network errno
+      except `ECONNREFUSED` and `ECONNRESET`** (which keep explicit sentinels)
+      now falls to 1 when it arrives with no net-stack wrapper — and equally
+      when wrapped in an `*os.SyscallError` with no `*net.OpError` above it,
+      since an `*os.SyscallError` is not itself a `net.Error` and the walk
+      unwraps to the Errno and skips it. Measured on go1.25.12, `isNetworkErr`
+      is false for all ten of bare `ETIMEDOUT`, `EHOSTUNREACH`, `ENETUNREACH`,
+      `EPIPE`, `ECONNABORTED`, `ENETDOWN`, `ENETRESET`, `EHOSTDOWN`, `EAGAIN`,
+      `EWOULDBLOCK` and for each under `os.NewSyscallError`; each becomes exit 5
+      again the moment a `*net.OpError` sits above it — the only shape the net
+      stack produces. Nothing in this CLI produces the bare shapes: `net/http`
+      surfaces a dial failure as `*url.Error` → `*net.OpError` → …, both real
+      `net.Error`s — and the alternative is to keep reading an errno's
+      `Timeout()`/`Temporary()` as evidence, which is what mis-sorted every
+      filesystem failure. `ECONNREFUSED` and `ECONNRESET` keep their explicit
+      bare-form `errors.Is` checks precisely because both their `Timeout()` and
+      `Temporary()` are **false**, so the interface test never caught them
+      anyway.
     - 🔴 **The tests must keep BOTH directions, because either half alone is
       satisfiable by a broken fix.** Delete exit 5 outright and the whole
       filesystem table stays green; leave the classifier alone and the positive
@@ -1605,14 +1653,53 @@ neither one's.
       classified by it rather than by a sentinel shortcut (`viaNetErrorBranch`),
       or gutting the walk leaves them green on `errors.Is` alone.
       Mutation-measured, three ways: reverting `isNetworkErr` to the base
-      spelling reddens 24 subtests; disabling the `net.Error` branch reddens the
-      real read-deadline / `*net.DNSError` / `*url.Error` / multi-error rows;
-      dropping the three explicit sentinels reddens the bare-errno rows. Two
-      known survivors, recorded so nobody re-derives them as holes: a refused
-      dial survives the branch mutation (it is caught by the ECONNREFUSED
-      sentinel) and `context.DeadlineExceeded` survives the sentinel mutation
-      (`deadlineExceededError` is itself a `net.Error`) — both are redundancy
-      working, not a gap.
+      spelling reddens 24 failures (20 leaf subtests + 4 parents) — re-measured
+      after the table grew, unchanged; disabling the `net.Error` branch reddens
+      the real read-deadline / `*net.DNSError` / `*url.Error` / multi-error rows
+      (8 leaf subtests here, 8 more in `pkg/civitai`); dropping the three
+      explicit sentinels reddens the bare-errno rows.
+      🔴 **One recorded survivor MOVED and the old wording is retracted.** This
+      bullet used to say "a refused dial survives the branch mutation (it is
+      caught by the ECONNREFUSED sentinel)". Half true, and the half that
+      changed is the half that mattered: its exit-5 assertion still passes on
+      the sentinel, but the row now ALSO asserts `civitai.IsTransportError` saw
+      it, so the ROW fails. Do not read the surviving exit code as the row
+      surviving. The genuine survivor is `context.DeadlineExceeded` under the
+      sentinel mutation (`deadlineExceededError` is itself a `net.Error`) —
+      redundancy working, not a gap.
+      🔴 **AND ONE OF THOSE BATTERIES RESTED ON A SINGLE ROW.** The mutation
+      that re-spells the Errno skip as `errors.As` — the exact mistake the doc
+      comment warns against, and the one that rejects every real dial failure —
+      reddened **exactly one** subtest at `050d401`
+      (`*net.OpError nesting *os.SyscallError(ECONNRESET)`); the real-refused-dial
+      row survived it because the `ECONNREFUSED` sentinel carried the row, so
+      deleting or reshaping that one row made the regression invisible. Fixed by
+      making the backstop plural rather than by trusting the row: the real
+      refused dial now ALSO asserts the walk saw it (independent of its exit-5
+      assertion, which still comes from the sentinel), two sentinel-free
+      `*net.OpError` rows were added, `sentinelFree` rows ASSERT their own
+      premise (`errors.Is` finds none of the three sentinels — a row that
+      quietly gained one stops being evidence), and a count floor fails if fewer
+      than four rows pin the walk without a sentinel. Re-measured after: that
+      mutant now reddens **9 leaf subtests across both packages** (4 in
+      `TestTransportErrorsStillExitFive`, 5 in `pkg/civitai`), up from 1.
+    - 🔴 **THE RETRY LOOP'S GUARD IS `pkg/civitai/retry_fs_test.go`, AND IT
+      ASSERTS THE ATTEMPT COUNT — not that "an error came back".** The buggy
+      loop also returns an error; the only observable that separates it is what
+      it DID. The harness drives the REAL `getRaw` → `getWithRetry` (never a
+      reimplementation) with a failing `TokenSource`, counting Token() calls,
+      requests that reached a live `httptest` server, and retry-notice LINES
+      (counted, not matched — the wording is pinned elsewhere), and it asserts
+      the loop handed the error back by IDENTITY, which is the structural form
+      of "it was not re-wrapped as `failed after N attempts`". Mutation-measured
+      both ways: restoring the `errors.As` spelling of `isTransientNetErr`
+      reddens 8 leaf subtests with their own message (`Token() was called 4
+      times, want 1` / `3 retry notice(s) printed`), while every positive
+      control stays green; disabling the `net.Error` branch outright reddens 8
+      leaf subtests across the two packages and leaves the filesystem table
+      green. The `EACCES` / `ENOENT` / `EIO` / `ENOSPC` rows are labelled in the
+      table as CONTROLS — `Timeout()` is false for them, so they passed at base
+      too and are invariant guards, not regression coverage.
     - **Classification is asserted through the exit code, never through message
       text** (item 7), and message PRESERVATION is asserted separately: the six
       invocations' stderr is byte-for-byte identical base vs HEAD, verified with

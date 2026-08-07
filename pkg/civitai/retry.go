@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"strconv"
@@ -60,6 +59,19 @@ func isRetriableStatus(status int) bool {
 // isTransientNetErr reports whether a request error is a transient network
 // condition worth retrying (timeout, connection refused, connection reset). A
 // context cancellation (user SIGINT) is NOT transient and is never retried.
+//
+// 🔴 The timeout question is asked of the net.Error that transportError found,
+// NOT of `errors.As(err, &netErr)`. This is issue #244, the second copy of
+// issue #241: `syscall.Errno` satisfies net.Error, and `Timeout()` is TRUE for
+// ETIMEDOUT, EAGAIN and EWOULDBLOCK — so the errors.As spelling fed a
+// FILESYSTEM failure carrying one of those into the retry loop. Reachable
+// through the TokenSource: internal/auth returns `persist refreshed tokens: %w`
+// when writing rotated OAuth tokens fails, and a config dir on NFS-soft, sshfs
+// or CIFS can fail with exactly those errnos. Measured before the fix: four
+// Token() calls, zero requests on the wire, and three
+// `network error from Civitai, retrying (n/4)…` lines plus backoff, for a
+// problem that never clears. See transport_error.go — do not re-spell this as
+// errors.As.
 func isTransientNetErr(err error) bool {
 	if err == nil {
 		return false
@@ -70,8 +82,7 @@ func isTransientNetErr(err error) bool {
 	if errors.Is(err, syscall.ECONNREFUSED) || errors.Is(err, syscall.ECONNRESET) {
 		return true
 	}
-	var netErr net.Error
-	if errors.As(err, &netErr) {
+	if netErr, ok := transportError(err); ok {
 		return netErr.Timeout()
 	}
 	return false
