@@ -29,7 +29,10 @@ func scaffoldGood(t *testing.T, tmpl scaffold.Template) string {
 	dir := scaffoldRaw(t, tmpl)
 	if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
 		// The npm templates declare `npm run build`; stand in for `npm install`.
-		if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{}\n"), 0o600); err != nil {
+		// The body has to be what an install WRITES, not `{}` — `npm ci` refuses
+		// `{}` with the same EUSAGE as an empty file (issue #255), so a `{}`
+		// fixture would assert that a build-breaking project validates clean.
+		if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(npmLockBody), 0o600); err != nil {
 			t.Fatalf("write package-lock.json: %v", err)
 		}
 	}

@@ -220,6 +220,44 @@ neither one's.
    schema's `allOf` requires it whenever `buildCommand` is set, so a remedy that
    omits it walks the author into a second failure. It fires only when
    `package.json` exists; static blocks never install and must never be flagged.
+   🔴 **IT IS A PRESENCE CHECK ABOUT THE FILE, NOT ABOUT ITS BYTES — AND THAT IS
+   WHY IT NOW READS THE REQUIRED LOCKFILE (issue #255).** The old check was
+   `os.Lstat` + `IsRegular` and nothing else, so a **0-byte**
+   `package-lock.json` printed `✓ … is valid` and exited 0 while the platform
+   build failed anyway: measured on npm 11.17.0, `npm ci` over an empty
+   package-lock.json dies with EUSAGE — "can only install with an existing
+   package-lock.json or npm-shrinkwrap.json with **lockfileVersion >= 1**" — the
+   same class of failure as a missing one. Worse, the missing-lockfile message
+   names the filename, so **the check invited the input that defeated it**:
+   `touch package-lock.json` reads as the fix. The SCOPE note above still
+   stands — this is not a *freshness* check and never runs a package manager;
+   an empty file is not a freshness question, it is "not a lockfile at all".
+   Three things about `lockfileContentDefect` are decisions, not details.
+   (a) **The rule is PER-MANAGER and deliberately asymmetric.** npm: parse as
+   JSON and require a **numeric** `lockfileVersion >= 1` — npm's own
+   precondition, mirrored the way the rest of this file mirrors the recipe;
+   note that unmarshalling the value straight into a `json.Number` does NOT
+   discriminate (it is `type Number string`, so the JSON string `"3"` decodes
+   into one), hence the `any` + `UseNumber` type assertion. pnpm and yarn:
+   **non-empty after a whitespace trim and nothing more** — `pnpm-lock.yaml`
+   needs a YAML parser (a new dependency, "ask first" below) and a yarn v1
+   `yarn.lock` carries no version key at all, so "not empty" is the whole of
+   what can be said without inventing authority.
+   (b) **The `Lstat`/`IsRegular` gate stays IN FRONT of the read**, because
+   `os.ReadFile` FOLLOWS symlinks and a symlinked lockfile is dropped from the
+   bundle by `pkgzip.Build` — reading through one would vouch for bytes the
+   submitted zip does not carry. `TestLockfileSymlinkToAValidLockfileIsStillAbsent`
+   pins the ORDER by pointing the link at a *valid* lockfile.
+   (c) 🔴 **This is a FATAL check, so an UNOBSERVABLE state degrades to the old
+   presence-only PASS, never to an error** — a read failure or a file over the
+   64 MiB cap means we did not look, and manufacturing a hard error that blocks
+   a submit out of a gap is the expensive direction (item 18's doctrine applied
+   to a check that can block). Only the **required** lockfile's content is
+   judged; a foreign one is evidence of which package manager the project uses
+   and that reading does not depend on its bytes. And the empty/invalid case
+   has its own message that says the file EXISTS and that a lockfile is
+   GENERATED rather than hand-written — reusing the missing-lockfile wording
+   would re-invite `touch`.
 4. **The CLI does NOT vendor the server's token-scope bitmask — and shouldn't.**
    The `whoami` / `dev-token` "can spend Buzz" capability check decodes the JWT
    `scopes` (a **string array**) and looks for the `ai:write:budgeted` scope

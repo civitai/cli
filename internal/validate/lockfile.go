@@ -36,8 +36,22 @@ package validate
 // `validate` deliberately does not do. `npm ci` / `--frozen-lockfile` still catch
 // a stale lockfile server-side (loudly, which is the point of removing the
 // fallback).
+//
+// 🔴 "PRESENCE" IS ABOUT THE FILE, NOT ABOUT ITS BYTES — AND AN EMPTY FILE IS NOT
+// A FRESHNESS QUESTION, IT IS "NOT A LOCKFILE AT ALL" (issue #255). The check used
+// to ask os.Lstat and nothing else, so a 0-byte `package-lock.json` validated
+// clean, exited 0, and the platform build failed anyway: measured on npm 11.17.0,
+// `npm ci` over an empty package-lock.json dies with EUSAGE — "can only install
+// with an existing package-lock.json or npm-shrinkwrap.json with lockfileVersion
+// >= 1" — the SAME class of failure as a missing one. Worse, the missing-lockfile
+// message names the filename, which makes `touch package-lock.json` a natural
+// reading and a silently wrong one: the check invited the exact input that
+// defeated it. So the required lockfile is now read, and the content rule is
+// PER-MANAGER — see lockfileContentDefect.
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,16 +81,41 @@ type packageManager struct {
 	// buildCommand is the manifest buildCommand that selects this manager, used
 	// when suggesting "switch the manifest to match the lockfile you have".
 	buildCommand string
+	// lockfileIsJSON selects the CONTENT rule. Only npm's lockfile is JSON with a
+	// version key the CLI can check without a parser it does not have; see
+	// lockfileContentDefect for why pnpm and yarn deliberately stop at "not
+	// empty".
+	lockfileIsJSON bool
+	// contentRule states, in the author's terms, what the strict install requires
+	// of the lockfile's CONTENT. It is appended to the "this is not a lockfile"
+	// message so the remedy is checkable rather than a bare assertion.
+	contentRule string
 }
 
 var (
-	pmNpm  = packageManager{"npm", "package-lock.json", "npm ci", "npm install", "npm run build"}
-	pmPnpm = packageManager{"pnpm", "pnpm-lock.yaml", "pnpm install --frozen-lockfile", "pnpm install", "pnpm run build"}
+	pmNpm = packageManager{
+		name: "npm", lockfile: "package-lock.json",
+		installCmd: "npm ci", refreshCmd: "npm install", buildCommand: "npm run build",
+		lockfileIsJSON: true,
+		contentRule: "`npm ci` requires a package-lock.json that parses as JSON and declares a " +
+			`numeric "lockfileVersion" of 1 or more (npm's own words: "can only install with an ` +
+			`existing package-lock.json or npm-shrinkwrap.json with lockfileVersion >= 1")`,
+	}
+	pmPnpm = packageManager{
+		name: "pnpm", lockfile: "pnpm-lock.yaml",
+		installCmd: "pnpm install --frozen-lockfile", refreshCmd: "pnpm install", buildCommand: "pnpm run build",
+		contentRule: "`pnpm install --frozen-lockfile` needs the file `pnpm install` wrote, and that file is never empty",
+	}
 	// The yarn branch of the recipe dispatches on `yarn --version`:
 	//   1.*) yarn install --frozen-lockfile --ignore-scripts
 	//   *)   YARN_ENABLE_SCRIPTS=false yarn install --immutable
 	// so the message names both instead of claiming --frozen-lockfile always.
-	pmYarn = packageManager{"yarn", "yarn.lock", "yarn install --frozen-lockfile (yarn 1) / --immutable (yarn 2+)", "yarn install", "yarn run build"}
+	pmYarn = packageManager{
+		name: "yarn", lockfile: "yarn.lock",
+		installCmd: "yarn install --frozen-lockfile (yarn 1) / --immutable (yarn 2+)",
+		refreshCmd: "yarn install", buildCommand: "yarn run build",
+		contentRule: "a strict `yarn install` needs the file `yarn install` wrote, and that file is never empty",
+	}
 )
 
 // packageManagers is the scan order for reporting which lockfiles are committed.
@@ -134,13 +173,20 @@ func lockfileChecks(dir string, m *manifest.Manifest) (errs []Finding, warns []F
 
 	var committed, foreign []packageManager
 	haveWanted := false
+	wantedDefect := ""
 	for _, pm := range packageManagers {
-		if !regularFileExists(filepath.Join(dir, pm.lockfile)) {
+		path := filepath.Join(dir, pm.lockfile)
+		if !regularFileExists(path) {
 			continue
 		}
 		committed = append(committed, pm)
 		if pm.name == want.name {
 			haveWanted = true
+			// Only the REQUIRED lockfile's content is judged. A foreign one is
+			// reported for what it is — a file that is committed and tells us
+			// which package manager this project really uses — and that reading
+			// does not depend on its bytes.
+			wantedDefect = lockfileContentDefect(path, pm)
 		} else {
 			foreign = append(foreign, pm)
 		}
@@ -148,6 +194,13 @@ func lockfileChecks(dir string, m *manifest.Manifest) (errs []Finding, warns []F
 
 	if !haveWanted {
 		return []Finding{newFinding(FieldProject, missingLockfileError(want, foreign, build))}, nil
+	}
+	if wantedDefect != "" {
+		// The file is there and is provably not a lockfile, so the build fails
+		// exactly as it would with nothing committed. Same tier, different
+		// message: telling this author "no lockfile is committed" when one is
+		// sitting in their tree is what makes `touch` look like the fix.
+		return []Finding{newFinding(FieldProject, unusableLockfileError(want, wantedDefect))}, nil
 	}
 	// The required lockfile IS there, so the build installs strictly and
 	// reproducibly — any extra lockfile is unused by the platform. That is not
@@ -216,6 +269,111 @@ func missingLockfileError(want packageManager, foreign []packageManager, build s
 			joinLockfiles(foreign), want.lockfile, pmClause(build), want.installCmd,
 			foreign[0].buildCommand, outputDirNote, want.refreshCmd, want.lockfile)
 	}
+}
+
+// maxLockfileBytes bounds the read. Real lockfiles are kilobytes to a few
+// megabytes (a big npm monorepo lock is single-digit MB), so 64 MiB is roughly
+// two orders of magnitude above anything a package manager writes and cannot be
+// reached by a genuine lockfile — while still bounding what `validate` will pull
+// into memory for a file whose only job is to be checked for one key.
+// `internal/validate` has been here before: before the ready-ack scan grew caps,
+// one 88 MB `.js` took peak RSS to 316 MB (AGENTS.md item 18).
+const maxLockfileBytes = 64 << 20
+
+// lockfileContentDefect reports WHY the file at path is not a usable lockfile,
+// or "" if it is one — or if we could not tell.
+//
+// 🔴 THIS CHECK IS FATAL, SO AN UNOBSERVABLE STATE MUST FALL BACK TO THE OLD
+// PRESENCE-ONLY PASS AND NEVER TO AN ERROR. A read failure, or a file over
+// maxLockfileBytes, means we did not look — and manufacturing a hard error that
+// blocks a submit out of a gap is the expensive direction (AGENTS.md item 18:
+// "reading nothing is not finding nothing"). The rule the check adds is "a file
+// we READ and that provably is not a lockfile", never "a file we could not
+// vouch for".
+//
+// 🔴 THE Lstat/IsRegular GATE STAYS IN FRONT OF THE READ, and the order is
+// load-bearing rather than incidental. regularFileExists mirrors pkgzip.Build,
+// which skips every non-regular entry, so a SYMLINKED lockfile is dropped from
+// the submitted bundle. os.ReadFile follows symlinks; reading through one would
+// vouch for content the bundle does not carry. Callers therefore call
+// regularFileExists FIRST and only then reach this.
+//
+// The rule is per-manager, and the asymmetry is deliberate:
+//
+//   - npm: parse as JSON and require a NUMERIC `lockfileVersion` >= 1. That is
+//     not a guess at npm's intent — it is npm's own precondition, quoted in
+//     pmNpm.contentRule, so this mirrors the platform build recipe exactly the
+//     way the rest of this file does.
+//   - pnpm / yarn: non-empty after a whitespace trim, and nothing more.
+//     `pnpm-lock.yaml` would need a YAML parser (a new third-party dependency,
+//     which is an "ask first" in AGENTS.md) and a yarn v1 `yarn.lock` carries no
+//     version key at all — it is a comment header and a flat list. "Not empty"
+//     is the whole of what can be said here without inventing authority, and it
+//     is exactly the reported defect from issue #255.
+func lockfileContentDefect(path string, pm packageManager) string {
+	info, err := os.Lstat(path)
+	if err != nil || info.Size() > maxLockfileBytes {
+		return "" // unobservable — degrade to presence-only
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "" // unobservable — degrade to presence-only
+	}
+	if len(bytes.TrimSpace(body)) == 0 {
+		if len(body) == 0 {
+			return "it is EMPTY (0 bytes)"
+		}
+		return "it is EMPTY (whitespace only)"
+	}
+	if !pm.lockfileIsJSON {
+		return ""
+	}
+	// A lockfile is a JSON OBJECT; an array, a string or a bare number decodes
+	// without error and is still not one, so decode into a map rather than into
+	// `any`.
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(body, &doc); err != nil {
+		return "it does not parse as a JSON object"
+	}
+	raw, ok := doc["lockfileVersion"]
+	if !ok {
+		return `it declares no "lockfileVersion"`
+	}
+	// 🔴 UNMARSHALLING THE VALUE STRAIGHT INTO A json.Number DOES NOT DISCRIMINATE:
+	// json.Number is `type Number string`, so the JSON STRING "3" decodes into one
+	// happily and `{"lockfileVersion": "3"}` sailed through. Decoding into `any`
+	// with UseNumber is what keeps the two apart — a JSON number arrives as
+	// json.Number, a JSON string as a string.
+	var val any
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&val); err != nil {
+		return `its "lockfileVersion" is not a number`
+	}
+	num, ok := val.(json.Number)
+	if !ok {
+		return `its "lockfileVersion" is not a number`
+	}
+	v, err := num.Float64()
+	if err != nil || v < 1 {
+		return `its "lockfileVersion" is below 1`
+	}
+	return ""
+}
+
+// unusableLockfileError is the message for "the file is there and is not a
+// lockfile". It is deliberately NOT the missing-lockfile message.
+//
+// 🔴 THE MESSAGE MUST NOT RE-INVITE THE WRONG TURN. missingLockfileError names
+// the filename the build wants, and issue #255 is what an author does with that:
+// `touch package-lock.json`, a green `validate`, and the identical opaque
+// server-side build failure. So this one says the file EXISTS, says what is
+// wrong with it, and says in as many words that a lockfile is generated by the
+// package manager rather than created by hand.
+func unusableLockfileError(want packageManager, defect string) string {
+	return fmt.Sprintf(
+		"%s is committed but %s, so it is not a lockfile the platform build can install from — it will run `%s`, which hard-fails on it exactly as if nothing were committed. A lockfile is GENERATED by the package manager, never hand-written and never created with `touch`: delete %s, run `%s`, and commit the %s it writes. %s.",
+		want.lockfile, defect, want.installCmd, want.lockfile, want.refreshCmd, want.lockfile, want.contentRule)
 }
 
 func extraLockfileWarning(want packageManager, committed []packageManager, build string) string {
