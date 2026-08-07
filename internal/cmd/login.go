@@ -146,12 +146,20 @@ account with ` + "`civitai whoami`" + `.)`,
 			//
 			// 🔴 THIS MUST PRECEDE THE bare-`--token` MINT-HELP RETURN BELOW. It used
 			// to sit after it, which made the guard partial in exactly the two
-			// spellings where --token carries NO value: `login --token --scopes
-			// generate` and `login --scopes generate --token` both took the early
-			// return, printed the mint help and exited 0 with --scopes silently
-			// dropped — while the two value-carrying spellings were rejected. A guard
-			// that fires for some spellings of the same mistake is worse than none,
-			// because the exit-0 ones read as acceptance.
+			// spellings where --token carries NO value: `login --token
+			// --scopes generate` and `login --scopes generate --token` both took
+			// the early return, printed the mint help and exited 0 with --scopes
+			// silently dropped — while the two value-carrying spellings were
+			// rejected. A guard that fires for some spellings of the same mistake
+			// is worse than none, because the exit-0 ones read as acceptance.
+			//
+			// The line break after `--token` above is deliberate — do not reflow
+			// it. With `--token` immediately followed on the SAME line by another
+			// flag, GitGuardian's Generic CLI Option Secret detector reads that
+			// following flag NAME as the option's secret VALUE. It alerted on
+			// this exact line — a comment, in a repo with no secret in it — on
+			// 2026-08-07. Keep the two on separate lines here (and in any new
+			// prose spelling the same mistake) so the scanner stays quiet.
 			if cmd.Flags().Changed("scopes") && cmd.Flags().Changed("token") {
 				return asUsageError(fmt.Errorf(
 					"--scopes applies only to the browser device login and cannot be combined with --token: " +
