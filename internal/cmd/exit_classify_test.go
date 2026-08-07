@@ -3,6 +3,7 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/civitai/cli/pkg/civitai"
+	"github.com/spf13/cobra"
 )
 
 // TestCheckLimitIsUsageTagged asserts an out-of-range --limit is classified as a
@@ -336,6 +338,55 @@ func TestMissingArgsAndBadFlagValuesAreUsageTagged(t *testing.T) {
 				t.Errorf("classification must not change the message:\n got: %q\nwant: %q", err.Error(), tc.wantMsg)
 			}
 		})
+	}
+}
+
+// TestFlagGroupViolationIsUsageTagged covers the OTHER validator
+// enforceUsageExitCodes now runs. No command in the tree declares a flag group
+// today, so without a synthetic command this line would be an unreachable guard
+// — present, untested, and free to rot until the first MarkFlagsMutuallyExclusive
+// lands and silently exits 1. The command is built and wired the same way
+// NewRootCmd builds the real tree.
+func TestFlagGroupViolationIsUsageTagged(t *testing.T) {
+	newTree := func() *cobra.Command {
+		root := &cobra.Command{Use: "root", SilenceUsage: true, SilenceErrors: true}
+		child := &cobra.Command{
+			Use:  "child",
+			Args: cobra.NoArgs,
+			RunE: func(*cobra.Command, []string) error { return nil },
+		}
+		child.Flags().Bool("a", false, "")
+		child.Flags().Bool("b", false, "")
+		child.MarkFlagsMutuallyExclusive("a", "b")
+		root.AddCommand(child)
+		enforceUsageExitCodes(root)
+		return root
+	}
+
+	// Positive control FIRST: a legal invocation must succeed, so a red below
+	// cannot mean "this wiring rejects everything".
+	ok := newTree()
+	ok.SetArgs([]string{"child", "--a"})
+	ok.SetOut(io.Discard)
+	ok.SetErr(io.Discard)
+	if err := ok.Execute(); err != nil {
+		t.Fatalf("a legal invocation must succeed, got: %v", err)
+	}
+
+	bad := newTree()
+	bad.SetArgs([]string{"child", "--a", "--b"})
+	bad.SetOut(io.Discard)
+	bad.SetErr(io.Discard)
+	err := bad.Execute()
+	if err == nil {
+		t.Fatal("expected an error for two mutually exclusive flags")
+	}
+	if !errors.Is(err, ErrUsage) {
+		t.Errorf("a flag-group violation must classify as usage (exit 2), got %T: %v", err, err)
+	}
+	// cobra's own wording, unchanged.
+	if !strings.Contains(err.Error(), "were all set") {
+		t.Errorf("cobra's message must be preserved, got %q", err.Error())
 	}
 }
 
