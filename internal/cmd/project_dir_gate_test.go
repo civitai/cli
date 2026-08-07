@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/civitai/cli/internal/manifest"
-	"github.com/civitai/cli/pkg/civitai"
 )
 
 // This file is the second half of the #256 guards, added after an audit found
@@ -354,21 +353,51 @@ func TestValidateJSONOnlyEmitsAResultItActuallyProduced(t *testing.T) {
 //
 //   - the "other arm's text is ABSENT" assertion could never fire, because
 //     `Contains(err, notDir)` where `notDir` carries a path the error never
-//     mentions is false no matter what the code does. Measured on the swap
-//     mutant: 2 kills, all 2 from `want`, **0 from `deny`**.
+//     mentions is false no matter what the code does. Measured at `ab1e685`:
+//     the BOTH-ARM swap gave 2 kills, all 2 from `want`, **0 from `deny`**
+//     (the one-arm swap gave 1, also entirely from `want`).
 //   - the "distinct" precondition compared two strings that differed only by
-//     their path, so it passed even for IDENTICAL remedy constants. Measured:
-//     giving `remedyNotADir` the text of `remedyNoSuchDir` survived the entire
-//     suite (rc 0, 18 pkgs ok, 0 FAIL) while the built binary answered a real
-//     file with `…/afile.txt: no such directory — … civitai app init …` at
-//     rc 2 — precisely the backwards advice this guard exists to prevent, live
-//     and fully green.
+//     their path, so it passed even for IDENTICAL remedy constants.
+//
+// 🔴 THE DUPLICATE THAT MATTERS IS ARITY-PRESERVING, and an earlier revision of
+// this comment got that backwards — it said a duplicate "breaks `go vet`", which
+// is true of exactly one spelling and false of the ones a refactor produces.
+// Measured at `ab1e685`, all three built as real edits to these two constants:
+//
+//	shape                                        build   vet    suite
+//	A  copy the body over verbatim (arity 2→1)   ok      rc=1   1 `build failed`, 0 `--- FAIL`
+//	B  same text + trailing `%.0s` (arity kept)   ok      rc=0   rc 0, 18 pkgs ok, 0 `--- FAIL`
+//	C  same advice + ` (looking for %s)`          ok      rc=0   rc 0, 18 pkgs ok, 0 `--- FAIL`
+//
+// So B and C shipped the backwards advice **fully green** — `go build` clean,
+// `go vet` clean, whole suite clean — while the binary answered a real file with
+// `…/afile.txt: no such directory — … scaffold one with `civitai app init“
+// at rc 2. Only A is caught by vet, and even A **builds**: what stops it is CI
+// running `go test`, not a compile failure. At HEAD, B is caught by the
+// precondition and C by the `deny` assertion.
 //
 // So the remedies are rendered by helpers taking the path, the precondition
 // runs on one shared probe path, and each row renders both arms with its own
-// `tc.dir`.
+// `tc.dir`. This guard is the live protection, not a backstop for a future
+// refactor.
 func noSuchAt(p string) string { return fmt.Sprintf(remedyNoSuchDir, p) }
 func notDirAt(p string) string { return fmt.Sprintf(remedyNotADir, p, manifest.Filename) }
+
+// remediesAreDistinct reports whether two remedy renderers produce different
+// text for the SAME path.
+//
+// It is a named helper purely so the positive control below can hand it a KNOWN
+// DUPLICATE pair and require it to say so. The previous attempt at that control
+// was `dup != noSuchAt(probe) || dup == notDirAt(probe)` with
+// `dup := noSuchAt(probe)`: clause 1 is `s == s` on a deterministic pure call
+// and is false in every possible state, and clause 2 was byte-identical to the
+// precondition immediately above it, which has already called t.Fatalf. No
+// change to production code could reach its failure branch — it was labelled
+// POSITIVE CONTROL and could not fail. (staticcheck's SA4000 misses that
+// spelling because it is `var != f(x)` rather than `f(x) != f(x)`.)
+func remediesAreDistinct(a, b func(string) string, probe string) bool {
+	return a(probe) != b(probe)
+}
 
 func TestProjectDirRemediesMatchTheirArm(t *testing.T) {
 	root := newProjectDirRoot(t)
@@ -381,28 +410,35 @@ func TestProjectDirRemediesMatchTheirArm(t *testing.T) {
 	// every `deny` unsatisfiable — the arms would be indistinguishable and a
 	// swap undetectable.
 	const probe = "/probe/path"
+
+	// POSITIVE CONTROL, and it runs FIRST so it cannot be shadowed by the
+	// precondition it validates: hand the comparator two IDENTICAL renderers and
+	// require it to report them as not distinct. A comparator nobody has watched
+	// reject anything is indistinguishable from one wired to nothing, and that
+	// is what makes every `deny` assertion below meaningful rather than assumed.
+	if remediesAreDistinct(noSuchAt, noSuchAt, probe) {
+		t.Fatal("remediesAreDistinct called two IDENTICAL renderers distinct — it cannot reject anything, " +
+			"so the precondition below is vacuous and nothing guards the `deny` assertions")
+	}
+
 	if strings.TrimSpace(noSuchAt(probe)) == "" || strings.TrimSpace(notDirAt(probe)) == "" {
 		t.Fatalf("a remedy rendered empty — every assertion in this test would be vacuous\nnoSuch=%q notDir=%q",
 			noSuchAt(probe), notDirAt(probe))
 	}
-	if noSuchAt(probe) == notDirAt(probe) {
+	// 🔴 THIS PRECONDITION IS THE LIVE PROTECTION AGAINST A DUPLICATE, not a
+	// backstop for some future refactor. Measured at `ab1e685` (before the
+	// same-path repair), two ARITY-PRESERVING duplicates — same text plus a
+	// trailing `%.0s` to consume arg 2, and the same advice plus
+	// ` (looking for %s)`, which is a completely natural way to write it — both
+	// `go build` clean AND `go vet` clean, and both survived the entire suite at
+	// rc 0 / 18 pkgs ok / 0 `--- FAIL` while the binary answered a real file
+	// with "no such directory … scaffold one with `civitai app init`" at rc 2.
+	// At HEAD the `%.0s` shape is caught HERE and the `(looking for %s)` shape by
+	// the `deny` assertion below.
+	if !remediesAreDistinct(noSuchAt, notDirAt, probe) {
 		t.Fatalf("the two remedies are IDENTICAL when rendered with the same path (%q), so this guard cannot "+
 			"tell the arms apart and a swap is undetectable. One constant has been given the other's text.",
 			noSuchAt(probe))
-	}
-	// POSITIVE CONTROL for the line above — "can it go red?". A distinctness
-	// check that cannot reject anything is the reassuring-zero shape, and this
-	// one is doing real work only if it flags a KNOWN duplicate. Measured while
-	// writing it: the previous version compared the two remedies rendered with
-	// DIFFERENT paths, so it passed even for two identical constants.
-	//
-	// Note what actually stops a duplicate reaching main today: the two remedies
-	// have DIFFERENT ARITIES (one `%s` vs two), so copy-pasting one over the
-	// other breaks `go vet` at a call site — measured, 2 `build failed`. This
-	// precondition is the guard for the day someone equalises those arities, at
-	// which point vet goes quiet and nothing else would notice.
-	if dup := noSuchAt(probe); dup != noSuchAt(probe) || dup == notDirAt(probe) {
-		t.Fatal("the distinctness comparison cannot detect a duplicate — every `deny` assertion below is vacuous")
 	}
 
 	for _, tc := range []struct {
@@ -500,13 +536,22 @@ func TestUngatedPathFlagsAreNotUsageErrors(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s must fail", tc.name)
 			}
-			// PREMISE. An auth failure means the command never got as far as
-			// --dir, so whatever this row then asserts is about the wrong code
-			// path — exactly how this guard was inert on CI.
-			if errors.Is(err, civitai.ErrUnauthorized) {
-				t.Fatalf("PREMISE BROKEN: %s never reached the --dir path — it failed at the credential "+
-					"gate in newListingClient(), which runs first. This row asserts nothing about --dir "+
-					"while that is true.\nerr: %v", tc.name, err)
+			// 🔴 PREMISE — POSITIVE, not a denylist. The first version asserted
+			// only that the error was NOT civitai.ErrUnauthorized, which closes
+			// the one gate we already knew about and says nothing about whether
+			// the row reached `--dir`. Measured: inserting ANY new preflight
+			// ahead of resolveListingSlug that fails with a plain untagged error
+			// left both rows PASSING — and still passing with the
+			// residual-closing mutant also applied, so the defect regenerated
+			// completely and invisibly.
+			//
+			// So the premise is evidence the path EXECUTED: resolveListingSlug's
+			// own wrapper, derived from the production constant rather than
+			// spelled here, so a reword moves both together.
+			if !strings.Contains(err.Error(), listingSlugResolveFailure) {
+				t.Fatalf("PREMISE BROKEN: %s never reached resolveListingSlug — the error does not carry its "+
+					"wrapper, so something earlier in the command failed first and this row asserts nothing "+
+					"about --dir.\nwant it to contain: %s\nerr: %v", tc.name, listingSlugResolveFailure, err)
 			}
 			if errors.Is(err, ErrUsage) {
 				t.Errorf("%s now exits 2. That may well be an improvement — but the code-2 Extra note in "+

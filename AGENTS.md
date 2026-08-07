@@ -2017,20 +2017,53 @@ neither one's.
       path, and the two rows rendered theirs with DIFFERENT paths (the missing
       one vs the file). So `Contains(err, deny)` compared against a string
       carrying a path the error never mentions: false whatever the code does.
-      Measured on the one-arm swap: 2 kills, **2 from `want`, 0 from `deny`** —
-      the absence half, which is the half this item advertises, never fired
-      once. The same defect made the "distinct" precondition compare two strings
-      that differed only by their path, so **two IDENTICAL remedy constants
-      passed it**. Fixed by rendering both arms from `tc.dir` via `noSuchAt` /
-      `notDirAt`, with the precondition on one shared probe path. Re-measured:
-      one-arm swap `want` 1 / `deny` 1, both-arms swap `want` 2 / `deny` 2.
-      **What actually stops a duplicate reaching `main` today is `go vet`, not
-      this guard** — the two constants have different ARITIES (one `%s` vs two),
-      so copy-pasting one over the other breaks a call site (measured: 2
-      `build failed`). The precondition is the backstop for the day someone
-      equalises those arities, at which point vet goes quiet; it carries its own
-      positive control so "it cannot reject anything" fails loudly rather than
+      Measured at `ab1e685`: the BOTH-ARM swap gave 2 kills, **2 from `want`,
+      0 from `deny`** — the absence half, which is the half this item
+      advertises, never fired once. (The ONE-ARM swap gave 1 kill, also entirely
+      from `want`; an earlier revision of this bullet attributed the 2 to the
+      one-arm swap, which is wrong about which mutant and right about the
+      `0 from deny` that is its point.) The same defect made the "distinct"
+      precondition compare two strings that differed only by their path, so
+      **two IDENTICAL remedy constants passed it**. Fixed by rendering both arms
+      from `tc.dir` via `noSuchAt` / `notDirAt`, with the precondition on one
+      shared probe path. Re-measured: one-arm swap `want` 1 / `deny` 1,
+      both-arms swap `want` 2 / `deny` 2.
+      🔴 **THE CLAIM THAT `go vet` ALREADY CATCHES A DUPLICATE IS RETRACTED — IT
+      WAS TRUE OF ONE SPELLING AND FALSE OF THE ONES A REFACTOR PRODUCES.** This
+      bullet said "what actually stops a duplicate reaching `main` today is
+      `go vet`, not this guard … the precondition is the backstop for the day
+      someone equalises those arities". No equalisation is required. Measured at
+      `ab1e685`, three real edits to these two constants:
+
+      | shape | `go build` | `go vet` | full suite |
+      |---|---|---|---|
+      | A — copy the body over verbatim (arity 2→1) | **ok** | rc=1 | 1 `build failed` line (2 printf diagnostics), 0 `--- FAIL`, 17 ok pkgs |
+      | B — same text + a trailing `%.0s` consuming arg 2 | ok | **rc=0** | **rc 0, 18 pkgs ok, 0 `--- FAIL`** |
+      | C — same advice + ` (looking for %s)` | ok | **rc=0** | **rc 0, 18 pkgs ok, 0 `--- FAIL`** |
+
+      B and C are arity-preserving, and C especially is a completely natural way
+      to write the message — both shipped the backwards advice **fully green**
+      while the binary answered a real file with `…: no such directory —
+      … scaffold one with `civitai app init`` at rc 2. Note also that even A
+      **builds**: `go build ./cmd/civitai` succeeds and produces a binary with
+      the bad advice, so what stops A is CI running `go test` (which runs vet),
+      not a compile failure. At HEAD, B is killed by the precondition and C by
+      the `deny` assertion. **This guard is the live protection.** It carries its
+      own positive control — the comparator is handed a KNOWN duplicate pair and
+      must report it — so "it cannot reject anything" fails loudly rather than
       reading as a pass.
+      🔴 **And the block that positive control REPLACED could not fail**, which
+      is the third instance of that shape in this PR: it was
+      `dup != noSuchAt(probe) || dup == notDirAt(probe)` with
+      `dup := noSuchAt(probe)` — clause 1 is `s == s` on a deterministic pure
+      call, false in every state, and clause 2 was byte-identical to the
+      precondition immediately above it, which has already `t.Fatalf`'d. No
+      production change could reach its `t.Fatal`; measured, mutant B fires the
+      precondition and not it, and only after DELETING the precondition does its
+      one live clause fire — i.e. it backstopped a deleted test line.
+      staticcheck's SA4000 misses it because the spelling is `var != f(x)`
+      rather than the direct `f(x) != f(x)` it does fire on. **A control must be
+      fed a known-bad INPUT, not spelled as a condition about the code.**
     - 🔴 **THE PUBLISHED SPLIT IS A LEDGER OF ENUMERATED PATHS, NOT A
       QUANTIFIER — AND BOTH OVER-NARROW AND OVER-BROAD WORDINGS HAVE SHIPPED.**
       "Every local path a FLAG names" excluded the positional commands (above).
@@ -2059,13 +2092,28 @@ neither one's.
       the manifest error, so it looked healthy locally and was dead in CI, which
       is the worst arrangement of those two facts. Fixed with `t.Setenv` of a
       dummy token (nothing is sent — `manifest.Load` fails first) PLUS a premise
-      assertion that `t.Fatal`s on `ErrUnauthorized`. Re-measured hermetically:
-      the clean run passes and the mutant reddens **2 leaf subtests**.
+      assertion. Re-measured hermetically: the clean run passes and the
+      residual-closing mutant reddens **2 leaf subtests**.
+      🔴 **AND THE FIRST PREMISE WAS A DENYLIST OF ONE SENTINEL, WHICH IS NOT A
+      REACH ASSERTION — THE DEFECT REGENERATED IN FULL.** It asserted the error
+      was NOT `civitai.ErrUnauthorized`: that closes the one gate already known
+      about and says nothing about whether the row reached `resolveListingSlug`.
+      Measured hermetically, inserting ANY new preflight ahead of it that fails
+      with a plain untagged error: both rows **PASSED**, and with the
+      residual-closing mutant ALSO applied they **still both passed** — the
+      whole defect back, invisibly, for the third time in this PR. The premise
+      is now POSITIVE: the error must carry `resolveListingSlug`'s own wrapper,
+      derived from the `listingSlugResolveFailure` constant in `app_listing.go`
+      rather than spelled in the test, so a reword moves both together. Proven
+      by re-running that same preflight mutant: **2 leaf subtests, 2
+      `PREMISE BROKEN` messages**, where the denylist form survived it.
       **The general rule, and this is its third instance in this repo: a guard
-      that drives a whole COMMAND must assert it REACHED the code under test.**
-      An earlier gate in the same `RunE` — credentials, a TTY check, flag
-      parsing — fails first and satisfies any assertion phrased as "it did not do
-      the wrong thing". Item 23's `findingSiteHook` and item 24's `sentinelFree`
+      that drives a whole COMMAND must assert it REACHED the code under test,
+      POSITIVELY.** An earlier gate in the same `RunE` — credentials, a TTY
+      check, flag parsing — fails first and satisfies any assertion phrased as
+      "it did not do the wrong thing", and enumerating the gates you know about
+      is not a substitute, because the next one is by definition the one you did
+      not enumerate. Item 23's `findingSiteHook` and item 24's `sentinelFree`
       rows are the same device: prove the path ran, do not infer it from a pass.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with

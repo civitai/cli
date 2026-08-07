@@ -98,6 +98,13 @@ func newListingClient() (*appapi.Client, error) {
 	return appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), ""), nil
 }
 
+// listingSlugResolveFailure is the prefix resolveListingSlug puts on a manifest
+// failure. It is a named constant so a test can assert POSITIVELY that a row
+// actually REACHED this function, rather than merely that it did not fail at one
+// specific earlier gate — see TestUngatedPathFlagsAreNotUsageErrors, and AGENTS
+// item 25 for why a denylist-of-one premise let the defect regenerate twice.
+const listingSlugResolveFailure = "could not resolve the app — run this from your app directory (with block.manifest.json) or pass --slug"
+
 // resolveListingSlug resolves the app slug from --slug or the manifest.
 func resolveListingSlug(lc listingCommon) (string, error) {
 	if lc.slug != "" {
@@ -105,7 +112,7 @@ func resolveListingSlug(lc listingCommon) (string, error) {
 	}
 	m, err := manifest.Load(lc.dir)
 	if err != nil {
-		return "", fmt.Errorf("could not resolve the app — run this from your app directory (with block.manifest.json) or pass --slug: %w", err)
+		return "", fmt.Errorf(listingSlugResolveFailure+": %w", err)
 	}
 	if m.BlockID == "" {
 		// The remedy is a flag, so this is a usage error (exit 2). The sibling
