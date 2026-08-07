@@ -1805,6 +1805,50 @@ neither one's.
         pre-existing `submit_recover_test.go` cases — with the whole filesystem
         table still green, which is what makes those rows evidence rather than a
         build that refuses everything.
+    - 🔴 **THE SET OF SITES IS NOW AN ASSERTED LEDGER, SO ADDING ONE IS A CODE
+      CHANGE A TEST REFUSES — NOT A CONVENTION SOMEONE MAY NOT HAVE READ.**
+      #246's fourth suggestion was "leave no bare `errors.As(err, &netErr)`
+      without an adjacent comment". That is unenforceable, and unenforceability
+      is the ENTIRE history of this item: four copies, found one at a time,
+      across #241, #244 and #246, each looking fine in isolation because nothing
+      ever counted them. `neterr_ledger_test.go` (module root) AST-walks every
+      non-test `.go` file for `errors.As` calls whose target is typed
+      `net.Error`, and asserts the set equals a ledger carrying a one-line
+      justification per entry. **It fails when the set GROWS, when it SHRINKS,
+      and when a ledgered function's COUNT changes** — a guard that only caught
+      growth would let a silent removal turn the ledger into a false map. So a
+      new site costs a ledger entry AND the behavioural test that entry cites;
+      neither a comment nor a reviewer's memory is load-bearing any more.
+      - **It keys on the TYPE, never the identifier.** The two ledgered sites
+        already spell the variable `netErr` and `nerr`; a matcher keyed on
+        either is a spelled guard that a third site named anything else walks
+        straight past. Mutation-measured, each mutation **checksum-gated** so an
+        edit that silently failed to apply cannot read as a survivor: a new bare
+        site, the same with the variable renamed, and the same after `make fmt`
+        each redden it with `UNLEDGERED …`; deleting a ledgered site reddens it
+        with `LEDGERED site(s) no longer present`; a comment-only null mutant
+        survives. The `make fmt` mutant is not paranoia — it is the #238 trap,
+        where `gofmt -s` rewrote the literal shape a guard keyed on and CI then
+        enforced the rewritten form, disarming it.
+      - 🔴 **DO NOT READ ITS GREEN AS "THE SITES ARE FINE".** It cannot see a
+        gate at all — not whether one exists, and not whether it sits in the
+        right PLACE. Deleting `civitai.IsTransportError` from either site, or
+        sliding it one line down at `isTimeoutErr` (the half-fix the bullet
+        above measured), leaves this file byte-for-byte green. It answers
+        exactly one question — has a site appeared or vanished — and the
+        behavioural guards answer the other. Both are needed.
+      - **It is deliberately blind to `_test.go` files and to comments, and both
+        exclusions are load-bearing.** `cmd/civitai/fs_not_network_test.go`
+        IMPLEMENTS the naive predicate on purpose, as the control that pins the
+        stdlib trap; and `transport_error.go`, `retry.go` and `main.go` all
+        QUOTE the pattern in prose to explain why they avoid it — which is why
+        this is an AST walk rather than a `git grep`, since a text matcher
+        counts all four as sites. The cost is stated rather than hidden: a new
+        bare site inside a `_test.go` file is invisible to it. Its syntactic
+        blind spots (`:=` with no spelled type, a local type alias, a
+        dot-imported `net`) are listed in the file's own header; there is no
+        full type resolution because `golang.org/x/tools/go/packages` would be a
+        new dependency, which is an "ask first" below.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
