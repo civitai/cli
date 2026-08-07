@@ -2,7 +2,6 @@ package scaffold
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,7 +27,10 @@ import (
 //   - that copy is REACHED from the template's real entry point — the rendered
 //     index.html loads it directly, or loads a module that imports it — checked
 //     after stripping comments, so a comment mentioning the filename does not
-//     satisfy it;
+//     satisfy it. The resolution itself lives in `blockproto.ReadyAckWiring`
+//     (see internal/blockproto/{entrygraph,wiring}.go) because
+//     `internal/validate` needs the same question answered for an AUTHOR's
+//     project; its control corpus moved there with it;
 //   - the canonical emitter still has the shape the host contract requires
 //     (window message listener, gated on BLOCK_INIT, `{type,payload}` envelope,
 //     addressed at `event.origin` and never `'*'`).
@@ -120,7 +122,7 @@ func ruleWhy(name string) string {
 // predicate that rejects everything, including the real emitter.
 func TestReadyAckShapePredicate(t *testing.T) {
 	t.Run("positive: the canonical emitter satisfies every rule", func(t *testing.T) {
-		bad := checkReadyAckShape(stripJSComments(string(blockproto.ReadyAckSource())))
+		bad := checkReadyAckShape(blockproto.StripJSComments(string(blockproto.ReadyAckSource())))
 		for _, name := range bad {
 			t.Errorf("blockproto's ready-ack emitter violates %q: %s", name, ruleWhy(name))
 		}
@@ -172,7 +174,7 @@ func TestReadyAckShapePredicate(t *testing.T) {
 
 	for _, c := range corpus {
 		t.Run("negative: "+c.name, func(t *testing.T) {
-			bad := checkReadyAckShape(stripJSComments(c.src))
+			bad := checkReadyAckShape(blockproto.StripJSComments(c.src))
 			if len(bad) == 0 {
 				t.Fatalf("the shape predicate ACCEPTED a snippet that does not implement the handshake:\n%s", c.src)
 			}
@@ -180,182 +182,6 @@ func TestReadyAckShapePredicate(t *testing.T) {
 				t.Fatalf("rejected for the wrong reason: got violations %v, expected %q among them — "+
 					"a green here would say nothing about %s", bad, c.wantRule, c.wantRule)
 			}
-		})
-	}
-}
-
-// TestReadyAckWiringPredicate is the wiring check's own control pair, built on
-// synthetic trees rather than the real templates so the REJECT cases can exist
-// at all.
-//
-// It exists because the first version of this check matched a BASENAME, which
-// accepted every "wrong directory" shape. Each reject case below is a shape
-// that check accepted while shipping a broken app; the accept cases are the two
-// real templates' shapes. Ask of any future edit: can it pass while the emitter
-// is somewhere the browser will not find it?
-func TestReadyAckWiringPredicate(t *testing.T) {
-	const ackRel = "src/civitai-host.js"
-
-	type file struct{ path, body string }
-	cases := []struct {
-		name       string
-		ack        string // where the emitter really is
-		files      []file
-		wantAccept bool
-		// wantErr, when set, must appear in the rejection message. It pins WHICH
-		// branch rejected — without it a case can be green because some other
-		// check happened to reject first.
-		wantErr string
-	}{
-		{
-			name: "accept: index.html loads it directly (the static shape)",
-			ack:  "civitai-host.js",
-			files: []file{
-				{"index.html", `<script src="./civitai-host.js"></script><script src="./app.js"></script>`},
-				{"app.js", "// app"},
-			},
-			wantAccept: true,
-		},
-		{
-			name: "accept: the entry module imports it (the page-vite shape)",
-			ack:  ackRel,
-			files: []file{
-				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
-				{"src/main.jsx", "import './civitai-host.js';\nimport React from 'react';"},
-			},
-			wantAccept: true,
-		},
-		{
-			name: "reject: right basename, wrong directory in the script tag",
-			ack:  "civitai-host.js",
-			files: []file{
-				{"index.html", `<script src="./vendor/civitai-host.js"></script><script src="./app.js"></script>`},
-				{"app.js", "// app"},
-			},
-		},
-		{
-			name: "reject: right basename, unresolvable relative import",
-			ack:  ackRel,
-			files: []file{
-				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
-				{"src/main.jsx", "import '../nonexistent/civitai-host.js';"},
-			},
-		},
-		{
-			name: "reject: a BARE specifier that would resolve to a package",
-			ack:  ackRel,
-			files: []file{
-				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
-				{"src/main.jsx", "import 'civitai-host.js';"},
-			},
-		},
-		{
-			name: "reject: referenced only from an HTML comment",
-			ack:  "civitai-host.js",
-			files: []file{
-				{"index.html", "<!-- <script src=\"./civitai-host.js\"></script> -->\n<script src=\"./app.js\"></script>"},
-				{"app.js", "// app"},
-			},
-		},
-		{
-			name: "reject: the import is commented out but still greppable",
-			ack:  ackRel,
-			files: []file{
-				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
-				{"src/main.jsx", "// import './civitai-host.js';\nimport React from 'react';"},
-			},
-		},
-		{
-			name: "reject: imported by a file nothing loads",
-			ack:  ackRel,
-			files: []file{
-				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
-				{"src/main.jsx", "import React from 'react';"},
-				{"src/orphan.js", "import './civitai-host.js';"},
-			},
-		},
-		{
-			// Pins the errNoScriptTags EARLY RETURN specifically. Without the
-			// wantErr the case passes either way — the fallthrough at the end
-			// also returns an error — so deleting that early return would go
-			// unnoticed.
-			name:    "reject: no script tags at all",
-			ack:     "civitai-host.js",
-			files:   []file{{"index.html", "<h1>hi</h1>"}},
-			wantErr: "no <script src> at all",
-		},
-		{
-			// Rejected by the FALLTHROUGH (an absolute URL fails the
-			// relative/root-relative switch), not by a URL-specific guard —
-			// stated so the case doesn't look like it exercises one.
-			name: "reject: loaded from a CDN URL that merely ends in the name",
-			ack:  "civitai-host.js",
-			files: []file{
-				{"index.html", `<script src="https://cdn.example.com/civitai-host.js"></script><script src="./app.js"></script>`},
-				{"app.js", "// app"},
-			},
-			wantErr: "not a path in this project",
-		},
-		{
-			// 🔴 Pins the `//` half of the URL guard, which IS load-bearing:
-			// without it the leading slash is stripped, filepath.Join cleans the
-			// `..`, and this resolves to EXACTLY the emitter's path — an
-			// off-project URL would be accepted as the emitter.
-			name: "reject: protocol-relative URL that cleans back to the emitter path",
-			ack:  "civitai-host.js",
-			files: []file{
-				{"index.html", `<script src="//evil.example.com/../civitai-host.js"></script><script src="./app.js"></script>`},
-				{"app.js", "// app"},
-			},
-			wantErr: "not a path in this project",
-		},
-		{
-			// Pins the `?`/`#` suffix stripping: Vite's `?url` / `?raw` suffixes
-			// are not part of the path, and the emitter is still the emitter.
-			name: "accept: entry module imports it with a Vite ?url suffix",
-			ack:  ackRel,
-			files: []file{
-				{"index.html", `<script type="module" src="/src/main.jsx"></script>`},
-				{"src/main.jsx", "import './civitai-host.js?url';"},
-			},
-			wantAccept: true,
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			dir := t.TempDir()
-			// The emitter itself always exists where `ack` says — so a
-			// rejection can only come from the REFERENCE, never from a missing
-			// file.
-			all := append([]file{{c.ack, "// emitter"}}, c.files...)
-			for _, f := range all {
-				p := filepath.Join(dir, filepath.FromSlash(f.path))
-				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(p, []byte(f.body), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			chain, err := readyAckWiring(dir, c.ack)
-			if c.wantAccept {
-				if err != nil {
-					t.Fatalf("wiring check REJECTED a correctly wired project: %v", err)
-				}
-				t.Logf("accepted: %s", chain)
-				return
-			}
-			if err == nil {
-				t.Fatalf("wiring check ACCEPTED a project the browser cannot load the emitter in: %q\n"+
-					"this is the basename-matching class — the reference must RESOLVE to the emitter's real path", chain)
-			}
-			if c.wantErr != "" && !strings.Contains(err.Error(), c.wantErr) {
-				t.Fatalf("rejected for the wrong reason — want an error mentioning %q, got:\n%v\n"+
-					"a rejection from a different branch would leave the one this case exists to pin untested",
-					c.wantErr, err)
-			}
-			t.Logf("rejected: %v", err)
 		})
 	}
 }
@@ -449,7 +275,7 @@ func TestScaffoldedPageTemplatesShipTheReadyAck(t *testing.T) {
 			// ASSERTION 2 — the copy is actually LOADED. Byte-equality of an
 			// orphan file proves nothing about the running app.
 			t.Run("reached from the rendered entry point", func(t *testing.T) {
-				chain, err := readyAckWiring(dest, rel)
+				chain, err := blockproto.ReadyAckWiring(dest, rel)
 				if err != nil {
 					t.Fatalf("%s ships %s but nothing loads it: %v\n"+
 						"Reference it from index.html (a <script src>) or from the entry module "+
@@ -573,208 +399,4 @@ func TestAckingPackagePredicate(t *testing.T) {
 				"This is the widening class (prefix/substring) the exact match exists to prevent.", name)
 		}
 	}
-}
-
-var (
-	reHTMLComment = regexp.MustCompile(`(?s)<!--.*?-->`)
-	reScriptSrc   = regexp.MustCompile(`(?is)<script\b[^>]*\bsrc\s*=\s*["']([^"']+)["']`)
-	// Captures the SPECIFIER of an import / re-export / require, so it can be
-	// resolved. Matching a basename inside the specifier is what let
-	// `import '../nonexistent/civitai-host.js'` through.
-	reJSImport = regexp.MustCompile(`(?:\bimport\s*\(?\s*|\bfrom\s+|\brequire\(\s*)['"]([^'"]+)['"]`)
-)
-
-// readyAckWiring walks the rendered entry chain and returns a description of
-// where the emitter is loaded from, or an error if nothing reaches it.
-//
-// It follows the same path a browser does — index.html's <script> tags, then
-// (for a module entry) that module's imports — rather than grepping the whole
-// tree, so an emitter referenced only from a README, a comment, or a file
-// nothing loads does not satisfy it.
-//
-// 🔴 Every reference is RESOLVED to a path and compared with where the emitter
-// actually IS. It is deliberately NOT a basename match. A basename match is a
-// SPELLED check rather than a structural one, and it passes while the hazard
-// exists in a different shape — both of these were MEASURED surviving the
-// entire suite before this was rewritten:
-//
-//	static/index.html    src="./vendor/civitai-host.js"          -> ships a 404
-//	page-vite/main.jsx   import '../nonexistent/civitai-host.js' -> build fails
-//
-// Both reproduce #206 with every check green, which is why the first version of
-// this guard did not deserve the claim that it proved the entry point REACHES
-// the emitter.
-func readyAckWiring(dir, ackRel string) (string, error) {
-	want := filepath.Clean(filepath.Join(dir, filepath.FromSlash(ackRel)))
-
-	htmlRaw, err := os.ReadFile(filepath.Join(dir, "index.html"))
-	if err != nil {
-		return "", err
-	}
-	html := reHTMLComment.ReplaceAllString(string(htmlRaw), "")
-
-	// Every reference considered, with what it resolved to and whether that
-	// file exists — reported verbatim on failure so a near-miss (right
-	// basename, wrong directory) names itself instead of reading as "nothing
-	// references it at all".
-	var tried []string
-	note := func(what, spec, resolved string) {
-		if resolved == "" {
-			tried = append(tried, fmt.Sprintf("%s %q -> not a path in this project (bare specifier or URL)", what, spec))
-			return
-		}
-		state := "exists"
-		if _, err := os.Stat(resolved); err != nil {
-			state = "DOES NOT EXIST"
-		}
-		rel, relErr := filepath.Rel(dir, resolved)
-		if relErr != nil {
-			rel = resolved
-		}
-		tried = append(tried, fmt.Sprintf("%s %q -> %s (%s)", what, spec, filepath.ToSlash(rel), state))
-	}
-
-	var entries []string
-	for _, m := range reScriptSrc.FindAllStringSubmatch(html, -1) {
-		src := m[1]
-		// A <script src> resolves against the document, which sits at the
-		// project root.
-		resolved, ok := resolveProjectRef(dir, dir, src)
-		if ok && resolved == want {
-			// Existence is pinned by the byte-equality sub-test, which reads
-			// this exact path — re-asserting it here would add a branch no
-			// mutation can reach.
-			return "index.html loads " + src + " -> " + ackRel, nil
-		}
-		note("index.html <script src>", src, resolved)
-		entries = append(entries, src)
-	}
-	if len(entries) == 0 {
-		return "", errNoScriptTags
-	}
-
-	// Not loaded directly — follow index.html's script entries and resolve
-	// every import in them. One level deep on purpose: the emitter is meant to
-	// be imported by the entry module itself, not buried behind a chain.
-	for _, src := range entries {
-		entryPath, ok := resolveProjectRef(dir, dir, src)
-		if !ok {
-			continue
-		}
-		raw, err := os.ReadFile(entryPath)
-		if err != nil {
-			continue // a <script src> that is not a file in the tree
-		}
-		code := stripJSComments(string(raw))
-		for _, m := range reJSImport.FindAllStringSubmatch(code, -1) {
-			spec := m[1]
-			// An import resolves against the IMPORTING MODULE's directory.
-			resolved, ok := resolveProjectRef(dir, filepath.Dir(entryPath), spec)
-			if ok && resolved == want {
-				return "index.html loads " + src + ", which imports " + spec + " -> " + ackRel, nil
-			}
-			note("import in "+src, spec, resolved)
-		}
-	}
-	return "", readyAckWiringError(errNotReached.Error() + "\n  references resolved:\n    " +
-		strings.Join(tried, "\n    "))
-}
-
-// resolveProjectRef resolves a <script src> or an import specifier to a path
-// inside the project. A root-relative ref resolves against the project root, a
-// relative one against fromDir. A bare specifier (a package name) or an
-// absolute URL is not a file in this project and reports false — which is what
-// makes `import 'civitai-host.js'` (a bare specifier that would resolve to a
-// PACKAGE, not this file) a rejection rather than a match.
-func resolveProjectRef(projectDir, fromDir, spec string) (string, bool) {
-	// A protocol-relative URL only LOOKS root-relative. Without this, the `/`
-	// case below strips one slash and `filepath.Join` cleans the rest, so
-	// `//evil.example.com/../civitai-host.js` resolves to EXACTLY the emitter's
-	// path and is accepted — measured. This half is load-bearing and pinned by
-	// the "protocol-relative URL that cleans back" corpus case.
-	//
-	// There is deliberately no `strings.Contains(spec, "://")` companion: no URI
-	// scheme can begin with `/`, `./` or `../`, so an `https://…` specifier
-	// already fails the switch below and returns the identical `("", false)` —
-	// it decided nothing for any URL, which is all it claimed to guard. It was
-	// removed rather than left as a branch no mutation can reach; the CDN-URL
-	// corpus case is rejected by the fallthrough, and says so.
-	//
-	// It did change the answer for a handful of NON-URLs that merely contain
-	// `://` — `/x://../civitai-host.js`, `./civitai-host.js?u=https://evil.com`
-	// — which it rejected and which now resolve to the emitter. That is the
-	// correct outcome (it is how a browser resolves them), so the removal fixes
-	// a latent false rejection rather than widening what is accepted.
-	if strings.HasPrefix(spec, "//") {
-		return "", false
-	}
-	// Vite allows query/hash suffixes (`?raw`, `?url`); they are not part of
-	// the path, and an emitter imported as `./civitai-host.js?url` is still the
-	// emitter. Pinned by the "?url suffix" accept case.
-	if i := strings.IndexAny(spec, "?#"); i >= 0 {
-		spec = spec[:i]
-	}
-	if spec == "" {
-		return "", false
-	}
-	switch {
-	case strings.HasPrefix(spec, "/"):
-		return filepath.Clean(filepath.Join(projectDir, filepath.FromSlash(strings.TrimPrefix(spec, "/")))), true
-	case strings.HasPrefix(spec, "./"), strings.HasPrefix(spec, "../"):
-		return filepath.Clean(filepath.Join(fromDir, filepath.FromSlash(spec))), true
-	}
-	return "", false
-}
-
-type readyAckWiringError string
-
-func (e readyAckWiringError) Error() string { return string(e) }
-
-const (
-	errNoScriptTags = readyAckWiringError("the rendered index.html has no <script src> at all")
-	errNotReached   = readyAckWiringError("no <script src> in index.html resolves to it, and no import in an entry module resolves to it")
-)
-
-// stripJSComments removes // and /* */ comments while respecting string and
-// template literals, so a URL like 'https://x' is not mistaken for a comment
-// and a comment mentioning a filename cannot satisfy a wiring check.
-func stripJSComments(src string) string {
-	var b strings.Builder
-	b.Grow(len(src))
-	for i := 0; i < len(src); {
-		c := src[i]
-		switch {
-		case c == '/' && i+1 < len(src) && src[i+1] == '/':
-			for i < len(src) && src[i] != '\n' {
-				i++
-			}
-		case c == '/' && i+1 < len(src) && src[i+1] == '*':
-			i += 2
-			for i+1 < len(src) && !(src[i] == '*' && src[i+1] == '/') {
-				i++
-			}
-			i = min(i+2, len(src))
-		case c == '\'' || c == '"' || c == '`':
-			quote := c
-			b.WriteByte(c)
-			i++
-			for i < len(src) {
-				if src[i] == '\\' && i+1 < len(src) {
-					b.WriteString(src[i : i+2])
-					i += 2
-					continue
-				}
-				b.WriteByte(src[i])
-				if src[i] == quote {
-					i++
-					break
-				}
-				i++
-			}
-		default:
-			b.WriteByte(c)
-			i++
-		}
-	}
-	return b.String()
 }
