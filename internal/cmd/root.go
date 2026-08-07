@@ -211,7 +211,7 @@ func flagErrorWithHelpHint(c *cobra.Command, err error) error {
 	if c == nil || err == nil {
 		return err
 	}
-	return fmt.Errorf("%w\nRun '%s --help' for the available flags.", err, c.CommandPath())
+	return fmt.Errorf("%w\nRun '%s --help' for the available flags", err, c.CommandPath())
 }
 
 // NewRootCmd builds the root command with all subcommands attached.
