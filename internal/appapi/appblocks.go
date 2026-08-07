@@ -501,15 +501,55 @@ func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, versi
 	return &out, nil
 }
 
-// isTimeoutErr reports whether err is a request timeout / deadline-exceeded /
-// no-response condition (as opposed to a clean HTTP error response). It matches
-// context.DeadlineExceeded, os timeouts, and any net.Error whose Timeout() is
-// true (which is what http.Client.Timeout surfaces when awaiting headers).
+// isTimeoutErr reports whether err is a REQUEST timeout — the POST went out and
+// no response came back inside the deadline — as opposed to a clean HTTP error
+// status or any other failure. It matches context.DeadlineExceeded, an os
+// timeout, and any net.Error whose Timeout() is true (which is what
+// http.Client.Timeout surfaces while awaiting response headers).
+//
+// 🔴 A FILESYSTEM ERROR IS NEVER A REQUEST TIMEOUT, BECAUSE NOTHING WAS SENT.
+// That is what civitai.IsTransportError gates, and the gate must stay ABOVE
+// os.IsTimeout — see the two halves below. This is the third instance of the
+// trap AGENTS.md item 24 documents (issues #241, #244, #246): syscall.Errno
+// declares Timeout() and Temporary(), so it IS a net.Error, and Timeout() is
+// TRUE for ETIMEDOUT, EAGAIN and EWOULDBLOCK.
+//
+// Reachable, not theoretical. internal/cmd/app_submit.go wires auth.New(cfg)
+// into SubmitVersion → authedDoWith → auth.Source.Token(ctx) → refreshLocked →
+// cfg.SetOAuthTokens → config.save(), a real filesystem write, and
+// internal/auth/source.go returns `persist refreshed tokens: %w` when it fails.
+// A config dir on NFS-soft / sshfs / CIFS fails with exactly those errnos. Route
+// that into recoverTimedOutSubmit and the CLI polls /submissions three times for
+// a submission that never existed — zero bytes ever left the machine — and then
+// tells the author "submit timed out and the upload may not have completed …
+// check whether it landed", about an upload that was never attempted.
+//
+// The predicate is filesystem-broad through TWO COMPLEMENTARY LINES, and fixing
+// only the errors.As spelling is a HALF-FIX. Measured on go1.25.12:
+//
+//   - os.IsTimeout unwraps *fs.PathError / *os.LinkError / *os.SyscallError at
+//     the TOP LEVEL only, so os.IsTimeout(&fs.PathError{Err: ETIMEDOUT}) is
+//     TRUE — the direct shape a filesystem call site returns.
+//   - errors.As walks through a fmt.Errorf wrapper, so os.IsTimeout of
+//     `persist refreshed tokens: %w` around that same PathError is FALSE while
+//     errors.As matches the Errno underneath and reports Timeout() TRUE — the
+//     exact shape the submit path above produces.
+//
+// EACCES / ENOENT / EIO / ENOSPC are false in both halves and were never
+// mis-sorted. Guard: internal/appapi/submit_fs_not_timeout_test.go.
 func isTimeoutErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.DeadlineExceeded) || os.IsTimeout(err) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	// A filesystem error is never a request timeout — see the doc comment. This
+	// must gate BOTH halves below, not only the errors.As one.
+	if !civitai.IsTransportError(err) {
+		return false
+	}
+	if os.IsTimeout(err) {
 		return true
 	}
 	var netErr net.Error
