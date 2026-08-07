@@ -1101,6 +1101,16 @@ $ civitai generate "a cat" --checkpoint 999999999 --dry-run
       the server does not offer that version in this model family at all …
 ```
 
+The checkpoint line in the summary you approve is annotated too, so the model
+that will *not* run is never the last one you read before saying yes:
+
+```console
+Checkpoint:   DreamShaper — 8 (Checkpoint, id 128713)  [SUPERSEDED — the server will run version 2436219 instead; see the warning above]
+```
+
+Your own id stays on the line: the CLI marks it, it never quietly substitutes
+the applied one.
+
 It is reported **on the estimate** (`--dry-run`, and before the confirmation
 prompt on a real run — while you can still back out), **again after the submit**
 (where it is the receipt for what was billed), and **on a later read** with

@@ -636,7 +636,13 @@ func parseLoraFlag(raw string) (loraSpec, error) {
 type resolvedGraph struct {
 	graph      genapi.Graph
 	checkpoint string
-	loras      []string
+	// checkpointNote annotates the checkpoint label when the server has already
+	// said it will not use it. It is filled in AFTER the estimate (the only
+	// place the substitution record exists) from ONE call site, so the confirm
+	// prompt and the --dry-run quote cannot disagree about it — see
+	// substitutionCheckpointNote.
+	checkpointNote string
+	loras          []string
 	// images renders the resolved reference images (dimensions + final URL) for
 	// the confirmation, so the user approves what will actually be sent rather
 	// than the paths they typed — a local file's URL is a stored blob by then.
@@ -868,6 +874,14 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 	reportModelSubstitutions(errw, quote.ModelSubstitutions, substitutionAtEstimate)
 	substitutionFlagHint(errw, o, quote.ModelSubstitutions)
 
+	// 🔴 AND THE SUMMARY BELOW MUST NOT PRESENT THE SUPERSEDED CHECKPOINT AS THE
+	// ONE THAT WILL RUN. The warning above scrolls; the summary is what the user
+	// reads at `Generate? [y/N]`, and its last model line was the name the server
+	// has already discarded. Computed HERE, from one call site, so the confirm
+	// prompt and the --dry-run quote annotate identically — the two-renderers
+	// mistake generate_charge_test.go exists to remember.
+	built.checkpointNote = substitutionCheckpointNote(built.checkpoint, o, quote.ModelSubstitutions, substitutionAtEstimate)
+
 	if o.dryRun {
 		if o.jsonOut {
 			// Raw passthrough: a script sees every field, including ones this CLI
@@ -992,10 +1006,8 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 	// the waiting path — and putting a money-relevant line in only one of them is
 	// a mistake this repo has already made and written a whole test file about
 	// (generate_charge_test.go: `Charged:` had one call site the waiting path
-	// never reached). One call site here covers --no-wait, the waiting path, and
-	// --json alike.
-	reportModelSubstitutions(errw, result.Substitutions(), substitutionAfterSubmit)
-
+	// never reached). One call site covers --no-wait, the waiting path, and
+	// --json alike, and emitSubmitHandle keeps it that way.
 	workflowID := ""
 	if result != nil {
 		workflowID = result.ID
@@ -1005,6 +1017,38 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		_ = recordPendingWorkflowID(statePath, workflowID)
 	}
 
+	// 🔴 THE HANDLE GOES OUT BEFORE THE ADVISORY, NOT AFTER IT. By this point the
+	// job is CHARGED and the workflow id is the user's only way back to what they
+	// paid for; the substitution report explains a charge that has already
+	// happened. Nothing advisory may sit between the reply and the handle — an
+	// enrichment added to the report later (resolving the substituted ids to
+	// NAMES through ResolveModelVersion, say) would inherit getWithRetry's 4
+	// attempts on a 30s-timeout client and could hold the id for minutes, for a
+	// cosmetic gain, on a job whose money is already gone. It is the same
+	// judgement substitutionAdvice already makes on the decoding side — an
+	// unfamiliar reason still reports the ids rather than failing the record —
+	// applied to time instead of parsing. Ordering is pinned by
+	// TestGenerate_SubmitHandleReachesTheUserBeforeTheSubstitutionAdvisory.
+	terminal, handleErr := emitSubmitHandle(out, errw, o, result, workflowID, externalID, statePath, rawSubmit)
+	reportModelSubstitutions(errw, result.Substitutions(), substitutionAfterSubmit)
+	if handleErr != nil || terminal {
+		return handleErr
+	}
+	return waitAndCollect(ctx, cmd, deps, o, workflowID, externalID, statePath)
+}
+
+// emitSubmitHandle prints the handle on a job that has ALREADY BEEN CHARGED, and
+// reports whether the command is finished (nothing left to wait for).
+//
+// It is one function rather than two call sites for the reason the comment above
+// gives: every branch here — --no-wait, --json, a reply with no workflow id, and
+// the waiting path — has to emit the handle BEFORE any advisory output, and a
+// second call site is how one of those branches quietly stops doing that.
+//
+// The --json branch returns the write error rather than swallowing it, and the
+// caller still emits the substitution advisory afterwards: a broken stdout is no
+// reason to withhold the record of what was billed.
+func emitSubmitHandle(out, errw io.Writer, o generateOpts, result *genapi.SubmitResult, workflowID, externalID, statePath string, rawSubmit json.RawMessage) (bool, error) {
 	if o.noWait || workflowID == "" {
 		// Nothing more can be done without a handle to poll, so the record has
 		// served its purpose the moment the id reaches the user.
@@ -1012,10 +1056,10 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 			clearSubmitRecord(statePath)
 		}
 		if o.jsonOut {
-			return writeRawJSON(out, rawSubmit)
+			return true, writeRawJSON(out, rawSubmit)
 		}
 		printSubmitResult(out, errw, result, externalID, o.baseURL, o.noWait)
-		return nil
+		return true, nil
 	}
 
 	var submitCost *genapi.WorkflowCost
@@ -1023,7 +1067,7 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		submitCost = result.Cost
 	}
 	printSubmitted(errw, workflowID, externalID, o.baseURL, submitCost)
-	return waitAndCollect(ctx, cmd, deps, o, workflowID, externalID, statePath)
+	return false, nil
 }
 
 // writeSubmitRecord writes the pre-submit crash-recovery record and returns its
@@ -1247,7 +1291,7 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 		fmt.Fprintf(errw, "  Quantity:   %d\n", o.quantity)
 	}
 	if built.checkpoint != "" {
-		fmt.Fprintf(errw, "  Checkpoint: %s\n", built.checkpoint)
+		fmt.Fprintf(errw, "  Checkpoint: %s%s\n", built.checkpoint, built.checkpointNote)
 	}
 	for _, l := range built.loras {
 		fmt.Fprintf(errw, "  LoRA:       %s\n", l)
@@ -1299,7 +1343,7 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 		fmt.Fprintf(tw, "Aspect ratio:\t%s\n", safeTerm(o.aspectRatio))
 	}
 	if built.checkpoint != "" {
-		fmt.Fprintf(tw, "Checkpoint:\t%s\n", built.checkpoint)
+		fmt.Fprintf(tw, "Checkpoint:\t%s%s\n", built.checkpoint, built.checkpointNote)
 	}
 	for _, l := range built.loras {
 		fmt.Fprintf(tw, "LoRA:\t%s\n", l)
