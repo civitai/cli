@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/civitai/cli/internal/manifest"
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // This file is the second half of the #256 guards, added after an audit found
@@ -346,38 +347,81 @@ func TestValidateJSONOnlyEmitsAResultItActuallyProduced(t *testing.T) {
 // records the same class for the substitution reporter, and prescribes this
 // shape: derive the expected text from the CONSTANT and require the other arm's
 // to be ABSENT.
+// 🔴 BOTH REMEDIES ARE RENDERED WITH THE **SAME** PATH, and that is the whole
+// mechanic. Each remedy interpolates the path, so rendering the two with
+// DIFFERENT paths (the missing one vs the file) silently disarmed half the
+// guard:
+//
+//   - the "other arm's text is ABSENT" assertion could never fire, because
+//     `Contains(err, notDir)` where `notDir` carries a path the error never
+//     mentions is false no matter what the code does. Measured on the swap
+//     mutant: 2 kills, all 2 from `want`, **0 from `deny`**.
+//   - the "distinct" precondition compared two strings that differed only by
+//     their path, so it passed even for IDENTICAL remedy constants. Measured:
+//     giving `remedyNotADir` the text of `remedyNoSuchDir` survived the entire
+//     suite (rc 0, 18 pkgs ok, 0 FAIL) while the built binary answered a real
+//     file with `…/afile.txt: no such directory — … civitai app init …` at
+//     rc 2 — precisely the backwards advice this guard exists to prevent, live
+//     and fully green.
+//
+// So the remedies are rendered by helpers taking the path, the precondition
+// runs on one shared probe path, and each row renders both arms with its own
+// `tc.dir`.
+func noSuchAt(p string) string { return fmt.Sprintf(remedyNoSuchDir, p) }
+func notDirAt(p string) string { return fmt.Sprintf(remedyNotADir, p, manifest.Filename) }
+
 func TestProjectDirRemediesMatchTheirArm(t *testing.T) {
 	root := newProjectDirRoot(t)
 	missing := filepath.Join(root, "nope")
 	file := filepath.Join(root, "notadir.txt")
 
-	// The remedies must be non-empty and distinct, or every Contains below is
-	// vacuous (`strings.Contains(x, "")` is always true) and the absence
-	// assertions can never fire.
-	noSuch := fmt.Sprintf(remedyNoSuchDir, missing)
-	notDir := fmt.Sprintf(remedyNotADir, file, manifest.Filename)
-	if strings.TrimSpace(noSuch) == "" || strings.TrimSpace(notDir) == "" {
-		t.Fatalf("a remedy rendered empty — every assertion in this test would be vacuous\nnoSuch=%q notDir=%q", noSuch, notDir)
+	// PRECONDITION, on ONE path so it compares the remedies and nothing else.
+	// Non-empty, because `strings.Contains(x, "")` is always true and would make
+	// every `want` vacuous; and DISTINCT, because two identical remedies make
+	// every `deny` unsatisfiable — the arms would be indistinguishable and a
+	// swap undetectable.
+	const probe = "/probe/path"
+	if strings.TrimSpace(noSuchAt(probe)) == "" || strings.TrimSpace(notDirAt(probe)) == "" {
+		t.Fatalf("a remedy rendered empty — every assertion in this test would be vacuous\nnoSuch=%q notDir=%q",
+			noSuchAt(probe), notDirAt(probe))
 	}
-	if noSuch == notDir {
-		t.Fatal("the two remedies are identical — this guard cannot tell the arms apart, so a swap is undetectable")
+	if noSuchAt(probe) == notDirAt(probe) {
+		t.Fatalf("the two remedies are IDENTICAL when rendered with the same path (%q), so this guard cannot "+
+			"tell the arms apart and a swap is undetectable. One constant has been given the other's text.",
+			noSuchAt(probe))
+	}
+	// POSITIVE CONTROL for the line above — "can it go red?". A distinctness
+	// check that cannot reject anything is the reassuring-zero shape, and this
+	// one is doing real work only if it flags a KNOWN duplicate. Measured while
+	// writing it: the previous version compared the two remedies rendered with
+	// DIFFERENT paths, so it passed even for two identical constants.
+	//
+	// Note what actually stops a duplicate reaching main today: the two remedies
+	// have DIFFERENT ARITIES (one `%s` vs two), so copy-pasting one over the
+	// other breaks `go vet` at a call site — measured, 2 `build failed`. This
+	// precondition is the guard for the day someone equalises those arities, at
+	// which point vet goes quiet and nothing else would notice.
+	if dup := noSuchAt(probe); dup != noSuchAt(probe) || dup == notDirAt(probe) {
+		t.Fatal("the distinctness comparison cannot detect a duplicate — every `deny` assertion below is vacuous")
 	}
 
 	for _, tc := range []struct {
-		name       string
-		dir        string
-		want, deny string
+		name string
+		dir  string
+		// want/deny are rendered from tc.dir, so both strings describe the SAME
+		// path and the deny assertion is about the remedy rather than the path.
+		want, deny func(string) string
 		why        string
 	}{
 		{
 			name: "nonexistent path gets the `app init` remedy",
-			dir:  missing, want: noSuch, deny: notDir,
+			dir:  missing, want: noSuchAt, deny: notDirAt,
 			why: "the path is not there, so there is no file to have pointed at — telling the user to " +
 				"pass the ROOT rather than a file is advice about something that does not exist",
 		},
 		{
 			name: "a regular file gets the project-ROOT remedy",
-			dir:  file, want: notDir, deny: noSuch,
+			dir:  file, want: notDirAt, deny: noSuchAt,
 			why: "the user has a real project and pointed one level too deep (typically at the manifest) — " +
 				"telling them to scaffold a new one with `app init` sends them to create what they already have",
 		},
@@ -390,10 +434,11 @@ func TestProjectDirRemediesMatchTheirArm(t *testing.T) {
 			if !errors.Is(err, ErrUsage) {
 				t.Fatalf("premise: both arms must be usage errors, got %v", err)
 			}
-			if got := err.Error(); !strings.Contains(got, tc.want) {
-				t.Errorf("wrong remedy for this arm.\nWhy it matters: %s\nwant it to contain: %s\ngot: %s", tc.why, tc.want, got)
+			want, deny := tc.want(tc.dir), tc.deny(tc.dir)
+			if got := err.Error(); !strings.Contains(got, want) {
+				t.Errorf("wrong remedy for this arm.\nWhy it matters: %s\nwant it to contain: %s\ngot: %s", tc.why, want, got)
 			}
-			if got := err.Error(); strings.Contains(got, tc.deny) {
+			if got := err.Error(); strings.Contains(got, deny) {
 				t.Errorf("this arm carries the OTHER arm's remedy — the two are swapped.\nWhy it matters: %s\ngot: %s", tc.why, got)
 			}
 		})
@@ -412,6 +457,23 @@ func TestProjectDirRemediesMatchTheirArm(t *testing.T) {
 //
 // It is deliberately NOT an argument that exiting 1 here is right. It is a
 // record that the published contract does not claim otherwise.
+// 🔴 IT NEEDS A CREDENTIAL, AND WITHOUT ONE IT IS INERT ON CI — which is the
+// only environment that matters for a guard. `app listing status` calls
+// `newListingClient()` BEFORE `resolveListingSlug`, so with no token configured
+// it fails at `no token configured` (an `ErrUnauthorized`) and never reaches the
+// `--dir` path at all. The bare `!errors.Is(err, ErrUsage)` assertion is
+// satisfied by that auth failure, so the residual-closing change this test
+// exists to catch left it PASSING.
+//
+// Measured before the fix, with HOME and XDG_CONFIG_HOME pointed at an empty
+// directory (what `ubuntu-latest` looks like): both rows PASS, and they still
+// pass with `resolveProjectDir` wired into `resolveListingSlug` — the mutant is
+// invisible. On a developer box with a real config it happens to observe the
+// manifest error instead, so the guard looked fine locally and was dead in CI.
+//
+// So: a dummy token gets past the client constructor (no network is reached —
+// `resolveListingSlug` fails on `manifest.Load` first), and the PREMISE is
+// asserted. A row that stops reaching the thing it tests must FAIL, not pass.
 func TestUngatedPathFlagsAreNotUsageErrors(t *testing.T) {
 	root := newProjectDirRoot(t)
 
@@ -429,9 +491,22 @@ func TestUngatedPathFlagsAreNotUsageErrors(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Past newListingClient()'s credential gate, which sits AHEAD of the
+			// --dir resolution. The value is never sent anywhere: the command
+			// fails at manifest.Load before any request is built.
+			t.Setenv("CIVITAI_TOKEN", "dummy-not-sent-anywhere")
+
 			_, _, err := run(t, tc.args...)
 			if err == nil {
 				t.Fatalf("%s must fail", tc.name)
+			}
+			// PREMISE. An auth failure means the command never got as far as
+			// --dir, so whatever this row then asserts is about the wrong code
+			// path — exactly how this guard was inert on CI.
+			if errors.Is(err, civitai.ErrUnauthorized) {
+				t.Fatalf("PREMISE BROKEN: %s never reached the --dir path — it failed at the credential "+
+					"gate in newListingClient(), which runs first. This row asserts nothing about --dir "+
+					"while that is true.\nerr: %v", tc.name, err)
 			}
 			if errors.Is(err, ErrUsage) {
 				t.Errorf("%s now exits 2. That may well be an improvement — but the code-2 Extra note in "+

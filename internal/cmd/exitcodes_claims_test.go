@@ -118,7 +118,7 @@ func exitCodeContractClaims() []contractClaim {
 		{
 			code: 1,
 			name: "`app validate --json` publishes a result only when it produced one",
-			phrases: []string{"For a project directory it could", "nothing on stdout",
+			phrases: []string{"When validation produces a result", "nothing on stdout",
 				"branch on the exit code before parsing"},
 			why: "the note said `--json` \"prints the full result … so a script never has to read stderr\", " +
 				"full stop — and that is false for the failures that produce no Result at all. Measured on " +
@@ -126,7 +126,11 @@ func exitCodeContractClaims() []contractClaim {
 				"validate.Dir returns an error rather than a Result for a non-ENOENT stat failure and for a " +
 				"schema() failure. An unqualified promise here is worse than silence: it tells a script " +
 				"author they may parse stdout unconditionally, on the one command whose whole job is to be " +
-				"machine-read",
+				"machine-read. 🔴 The first scoping was ALSO wrong, in the other direction: it read \"for a " +
+				"project directory it could READ\", which still promises an object for the schema() arm — a " +
+				"directory the CLI can read perfectly well that yields no Result. The condition is whether " +
+				"validation PRODUCED a result, which is the thing the code actually branches on, so that is " +
+				"what the sentence now says",
 			pinnedBy: "TestValidateJSONOnlyEmitsAResultItActuallyProduced (+ its readable-dir positive control)",
 		},
 		{

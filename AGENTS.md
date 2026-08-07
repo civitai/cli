@@ -1899,8 +1899,13 @@ neither one's.
       calling `resolveProjectDir` — failing when it grows (a third command
       validating a user-named directory without the gate) and when it shrinks (a
       deleted gate, which would otherwise leave the ledger a false map).
-      Mutation-measured: dropping the submit call alone reddens 4 leaf subtests
-      including this guard by name.
+      Mutation-measured **in the tree it ships in**: dropping the submit call
+      alone reddens **6** leaf subtests including this guard by name. (It was 4
+      at `a4807f4`; the two new `TestSubmitGateRunsBeforeSkipValidate` rows below
+      account for the difference. An inherited mutation number is a claim about
+      a tree that no longer exists — re-run it or drop it.) Commenting the call
+      OUT rather than deleting it reddens the same 6: the ledger is an AST walk,
+      so the surviving text in a comment does not satisfy it.
     - 🔴 **THE GATE RUNS AHEAD OF `--skip-validate`, AND THAT CLAUSE SHIPPED
       WITH NO TEST AT ALL.** `--skip-validate` waives our opinion of the
       MANIFEST; it cannot waive the question of whether the directory the user
@@ -1920,9 +1925,15 @@ neither one's.
       nobody could have written. It now writes **nothing** to stdout and exits 2,
       keeping the CLI-wide convention that a usage error emits no JSON object.
       The gate therefore runs BEFORE the `--json` block, and sliding it below is
-      its own mutant: it reddens exactly the JSON rows (3 leaf subtests) while
-      the text-mode rows stay green, so a table that only checked exit codes
-      would miss it. It is announced in THREE places, because the one that
+      its own mutant. 🔴 **Re-measured, and the number this item first published
+      was wrong in a way that misdescribes the guard**: it reddens **4** leaf
+      subtests, not 3, and **two of them are TEXT-mode rows**
+      (`TestProjectDirExitCodes/validate/path_is_a_regular_file` and
+      `TestProjectDirRefusalNamesThePathTheUserTyped/validate`) — not, as first
+      written, "exactly the JSON rows while the text-mode rows stay green". That
+      is unavoidable rather than sloppy: any placement below the `--json` block
+      is also below `validate.Dir`, so the text path loses the gate too. Same 4
+      at `a4807f4` and at HEAD. It is announced in THREE places, because the one that
       matters is the one a `--json` consumer reads: the code-2 README cell, the
       `app validate` row of the command table, and the canonical
       "The `--json` result shape" section — which is where a script author is
@@ -1936,10 +1947,20 @@ neither one's.
       stat failure and for a `schema()` failure (the `return res, err` arms in
       `internal/validate/validate.go`). An unqualified promise is worse than
       silence on the one command whose job is to be machine-read, so the note is
-      SCOPED — "for a project directory it could **read**" — rather than the code
-      being changed to match it, which is a much larger change (every such arm
-      would have to become a Result). Exit 1 with no object is therefore a real
-      state a consumer must handle; the README carries the exit→stdout table.
+      SCOPED rather than the code being changed to match it, which is a much
+      larger change (every such arm would have to become a Result). Exit 1 with
+      no object is therefore a real state a consumer must handle; the README
+      carries the exit→stdout table.
+      🔴 **THE FIRST SCOPING WAS ALSO WRONG, BY ONE ARM.** It read "for a project
+      directory it could **read**", which names only the stat arm — but the
+      `schema()` arm is a directory the CLI reads perfectly well that still
+      yields no Result, so the sentence still promised an object for it (and the
+      README still said "nothing when the failure was a filesystem one", which
+      that arm is not). Both now condition on **whether validation produced a
+      result**, which is what the code actually branches on. Effectively
+      unreachable in a released binary — the schema is vendored and compiled at
+      init — so this is wording, not behaviour, and the operative instruction
+      ("branch on the exit code before parsing") was correct throughout.
     - **A stat failure that is neither ENOENT nor a non-directory stays UNTAGGED
       and exits 1** — EACCES on a parent, or ENOTDIR partway down a longer path.
       `app validate <regular-file>/x.json` is one of the six invocations measured
@@ -1991,6 +2012,25 @@ neither one's.
       ABSENT, with a non-empty + distinct precondition — because
       `strings.Contains(x, "")` is always true and an empty or duplicated remedy
       would silently disarm every assertion in the guard.
+      🔴 **BOTH REMEDIES MUST BE RENDERED WITH THE SAME PATH, AND THE FIRST CUT
+      WAS NOT — WHICH LEFT HALF THE GUARD DEAD.** Each remedy interpolates the
+      path, and the two rows rendered theirs with DIFFERENT paths (the missing
+      one vs the file). So `Contains(err, deny)` compared against a string
+      carrying a path the error never mentions: false whatever the code does.
+      Measured on the one-arm swap: 2 kills, **2 from `want`, 0 from `deny`** —
+      the absence half, which is the half this item advertises, never fired
+      once. The same defect made the "distinct" precondition compare two strings
+      that differed only by their path, so **two IDENTICAL remedy constants
+      passed it**. Fixed by rendering both arms from `tc.dir` via `noSuchAt` /
+      `notDirAt`, with the precondition on one shared probe path. Re-measured:
+      one-arm swap `want` 1 / `deny` 1, both-arms swap `want` 2 / `deny` 2.
+      **What actually stops a duplicate reaching `main` today is `go vet`, not
+      this guard** — the two constants have different ARITIES (one `%s` vs two),
+      so copy-pasting one over the other breaks a call site (measured: 2
+      `build failed`). The precondition is the backstop for the day someone
+      equalises those arities, at which point vet goes quiet; it carries its own
+      positive control so "it cannot reject anything" fails loudly rather than
+      reading as a pass.
     - 🔴 **THE PUBLISHED SPLIT IS A LEDGER OF ENUMERATED PATHS, NOT A
       QUANTIFIER — AND BOTH OVER-NARROW AND OVER-BROAD WORDINGS HAVE SHIPPED.**
       "Every local path a FLAG names" excluded the positional commands (above).
@@ -2006,6 +2046,27 @@ neither one's.
       which is the moment the published paragraph becomes wrong. Bringing it in
       is a fine change; doing it without moving the docs is the failure this
       guards.
+      🔴 **THAT GUARD NEEDS A CREDENTIAL, AND WITHOUT ONE IT WAS INERT IN THE
+      ONLY ENVIRONMENT THAT MATTERS.** `app listing status` calls
+      `newListingClient()` BEFORE `resolveListingSlug`, so with no token
+      configured it fails at `no token configured` — an `ErrUnauthorized` — and
+      never reaches the `--dir` path at all. A bare `!errors.Is(err, ErrUsage)`
+      assertion is satisfied by that auth failure, so the guard passed for the
+      wrong reason. Measured with `HOME`/`XDG_CONFIG_HOME` pointed at an empty
+      directory (what `ubuntu-latest` is): both rows PASSED, **and still passed
+      with the residual-closing mutant applied** — the change it exists to catch
+      was invisible. On a developer box with a real config it happened to observe
+      the manifest error, so it looked healthy locally and was dead in CI, which
+      is the worst arrangement of those two facts. Fixed with `t.Setenv` of a
+      dummy token (nothing is sent — `manifest.Load` fails first) PLUS a premise
+      assertion that `t.Fatal`s on `ErrUnauthorized`. Re-measured hermetically:
+      the clean run passes and the mutant reddens **2 leaf subtests**.
+      **The general rule, and this is its third instance in this repo: a guard
+      that drives a whole COMMAND must assert it REACHED the code under test.**
+      An earlier gate in the same `RunE` — credentials, a TTY check, flag
+      parsing — fails first and satisfies any assertion phrased as "it did not do
+      the wrong thing". Item 23's `findingSiteHook` and item 24's `sentinelFree`
+      rows are the same device: prove the path ran, do not infer it from a pass.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
