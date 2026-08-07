@@ -85,10 +85,15 @@ func TestREADMEExitCodeTableIsGenerated(t *testing.T) {
 // requires the freshly built command to carry it. A hand-written copy pasted
 // back into root.go passes an equality check on the current text and fails
 // this one.
+//
+// It reads the RENDERED `civitai --help` output rather than `cmd.Long`. The
+// section moved OUT of Long and into the help TEMPLATE so it renders after
+// Usage/Available Commands (see rootHelpTemplate) — and the rendered text is the
+// stronger claim anyway: it is what the user actually sees.
 func TestRootHelpExitCodesAreGenerated(t *testing.T) {
 	const sentinel = "ZZ-EXIT-DOC-SENTINEL-ZZ"
 
-	before := NewRootCmd().Long
+	before := renderRootHelp(t)
 	if !strings.Contains(before, rootExitCodeHelp()) {
 		t.Fatalf("root --help does not carry the rendered exit-code section:\n%s", before)
 	}
@@ -104,7 +109,7 @@ func TestRootHelpExitCodesAreGenerated(t *testing.T) {
 	swapped[4].Summary = sentinel
 	exitCodeDocs = swapped
 
-	after := NewRootCmd().Long
+	after := renderRootHelp(t)
 	if !strings.Contains(after, sentinel) {
 		t.Errorf("root --help is not rendered from exitCodeDocs: changing code 4's summary did not change the help text.\n%s", after)
 	}
