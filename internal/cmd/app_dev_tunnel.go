@@ -321,11 +321,14 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 					blockID = strings.TrimSpace(m.BlockID)
 				}
 			}
+			// A missing required argument and an out-of-range flag VALUE are both
+			// usage errors (exit 2) — the same class Cobra's FlagErrorFunc
+			// already tags for a bad flag NAME. asUsageError adds no text.
 			if blockID == "" {
-				return fmt.Errorf("a blockId is required — pass it (`civitai app dev-tunnel my-block`), or run from an App directory containing %s (list your submitted apps with `civitai app status`)", manifest.Filename)
+				return asUsageError(fmt.Errorf("a blockId is required — pass it (`civitai app dev-tunnel my-block`), or run from an App directory containing %s (list your submitted apps with `civitai app status`)", manifest.Filename))
 			}
 			if port < 1 || port > 65535 {
-				return fmt.Errorf("invalid --port %d (must be 1-65535)", port)
+				return asUsageError(fmt.Errorf("invalid --port %d (must be 1-65535)", port))
 			}
 			// Resolve the local host: empty falls back to the loopback default so a
 			// `--local-host ""` can't accidentally break dialing.
@@ -334,10 +337,10 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				lh = defaultLocalHost
 			}
 			if idle <= 0 {
-				return fmt.Errorf("--idle-timeout must be positive (got %s)", idle)
+				return asUsageError(fmt.Errorf("--idle-timeout must be positive (got %s)", idle))
 			}
 			if readyTimeout < 0 {
-				return fmt.Errorf("--ready-timeout must be >= 0 (0 = wait indefinitely until ready or Ctrl-C; got %s)", readyTimeout)
+				return asUsageError(fmt.Errorf("--ready-timeout must be >= 0 (0 = wait indefinitely until ready or Ctrl-C; got %s)", readyTimeout))
 			}
 
 			// Endpoint: flag > env > documented placeholder default.

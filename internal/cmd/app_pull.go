@@ -81,7 +81,8 @@ approved; before then the command tells you so instead of failing obscurely.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app := strings.TrimSpace(appFlag)
 			if app == "" {
-				return fmt.Errorf("an app is required — pass --app <slug|appBlockId> (find the slug with `civitai app status`)")
+				// A missing required flag is a usage error (exit 2).
+				return asUsageError(fmt.Errorf("an app is required — pass --app <slug|appBlockId> (find the slug with `civitai app status`)"))
 			}
 
 			cfg, err := config.Load()

@@ -756,7 +756,12 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 		return nil, fmt.Errorf("unexpected /api/v1/blocks/submissions response: %s", string(raw))
 	}
 	if len(list.Submissions) == 0 {
-		return nil, fmt.Errorf("no such submission")
+		// A `?blockId=` lookup for an unknown slug answers 200 with an EMPTY list
+		// rather than a 404, so this is resolved client-side and never reaches
+		// submissionsError's TagStatus. Tag it here or the exit code silently
+		// differs from the `?id=` spelling of the same question (which does 404
+		// and maps to exit 4). The message is unchanged — Tag adds no text.
+		return nil, civitai.Tag(civitai.ErrNotFound, fmt.Errorf("no such submission"))
 	}
 	return &list.Submissions[0], nil
 }
