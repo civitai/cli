@@ -14,13 +14,16 @@ import (
 )
 
 // buzzScopeHint is the actionable message shown when the stored credential
-// cannot read the Buzz balance (a 403 from buzz.getBuzzAccount, typical of an
-// OAuth login token). It points at the only working path: a full-scope personal
-// API key.
-const buzzScopeHint = "This credential can't read your Buzz balance (needs a full-scope personal API key).\n" +
-	"Create one at https://civitai.com/user/account, then run:\n" +
+// cannot read the Buzz balance (a 403 from buzz.getBuzzAccount, typical of a
+// DEFAULT OAuth login token, whose scope set omits BuzzRead). It names BOTH
+// working paths: a full-scope personal API key, or a browser login that opted
+// into the generate set (which carries BuzzRead alongside AI Services).
+const buzzScopeHint = "This credential can't read your Buzz balance (needs the BuzzRead scope).\n" +
+	"Either create a full-scope personal API key at https://civitai.com/user/account, then run:\n" +
 	"  civitai login --token <key>\n" +
-	"OAuth login tokens (`civitai login`) can't read balance or spend Buzz."
+	"or re-login opting into the generate scope set (which also grants Buzz spend):\n" +
+	"  civitai login --scopes generate\n" +
+	"A DEFAULT OAuth login (`civitai login`, no --scopes) can read neither balance nor spend."
 
 func newBuzzCmd() *cobra.Command {
 	var jsonOut bool
@@ -32,9 +35,10 @@ func newBuzzCmd() *cobra.Command {
 your stored credential.
 
 Reads buzz.getBuzzAccount with the same credential as ` + "`whoami`" + ` / ` + "`app status`" + `.
-A full-scope personal API key can read your balance; an OAuth login token
-(` + "`civitai login`" + `) cannot read balance or spend Buzz — in that case this prints
-how to switch to a personal key.`,
+A full-scope personal API key can read your balance, as can a browser login that
+opted into the generate scope set (` + "`civitai login --scopes generate`" + `). A
+DEFAULT OAuth login (` + "`civitai login`" + `) can read neither balance nor spend Buzz —
+in that case this prints both ways to fix it.`,
 		Example: `  civitai buzz
   civitai buzz --json   # raw JSON (scriptable)`,
 		Args: cobra.NoArgs,

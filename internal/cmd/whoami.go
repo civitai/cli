@@ -85,12 +85,22 @@ Reads the token from config or CIVITAI_TOKEN.`,
 				fmt.Fprintf(out, "\nScopes (%d): %s\n", len(id.DecodeScopes()), strings.Join(id.DecodeScopes(), ", "))
 			}
 
-			// The #34 dead end, made visible before dev:live: an OAuth login (or
-			// any credential without the AI-Services scope) can't spend.
+			// The #34 dead end, made visible before dev:live: a credential without
+			// the AI-Services scope can't spend. There are now TWO fixes — an OAuth
+			// login can opt into generation at login time — so name the one that
+			// matches the credential in hand rather than always pointing at the web
+			// UI. (An OAuth login is re-runnable; a personal key's scopes are fixed
+			// when it is minted, so that user must create a new key.)
 			if !id.CanSpendBuzz() {
-				fmt.Fprintln(out, "\n"+ui.Warn("This credential can't spend Buzz — money-path `dev:live` generation needs a"))
-				fmt.Fprintln(out, "full-scope personal API key: create one at https://civitai.com/user/account,")
-				fmt.Fprintln(out, "then `civitai login --token <key>`. (OAuth login can submit/withdraw but not spend.)")
+				fmt.Fprintln(out, "\n"+ui.Warn("This credential can't spend Buzz — `civitai generate` and money-path `dev:live`"))
+				fmt.Fprintln(out, "generation both need the AI Services scope. To get it:")
+				if cfg.AuthKind() == config.AuthKindOAuth {
+					fmt.Fprintln(out, "  civitai login --scopes generate  # re-login, additively granting generation + Buzz spend")
+					fmt.Fprintln(out, "  civitai login --token <key>      # or a full-scope personal API key: https://civitai.com/user/account")
+				} else {
+					fmt.Fprintln(out, "  civitai login --token <key>      # a FULL-SCOPE personal API key: create one at https://civitai.com/user/account")
+					fmt.Fprintln(out, "  civitai login --scopes generate  # or a browser login that opts into generation")
+				}
 			}
 			return nil
 		},

@@ -81,8 +81,8 @@ the reason rather than omitted — a finished workflow can legitimately contain
 fewer usable results than it was charged for, and silently dropping them would
 make that invisible.
 
-Reading a workflow SPENDS NOTHING. This needs the same personal API key with the
-AI Services scopes that ` + "`civitai generate`" + ` needs.`,
+Reading a workflow SPENDS NOTHING. It needs the same AI Services scopes that
+` + "`civitai generate`" + ` needs: ` + spendCredentialRoutes + `.`,
 		Example: `  civitai workflows get 01JABCXYZ
   civitai workflows get 01JABCXYZ --json`,
 		Args: cobra.ExactArgs(1),
@@ -93,7 +93,8 @@ AI Services scopes that ` + "`civitai generate`" + ` needs.`,
 			}
 			if cfg.Token() == "" {
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf(
-					"no token configured — reading a workflow needs a personal API key: run `civitai login --token <key>` (or set CIVITAI_TOKEN)"))
+					"no token configured — reading a workflow needs a credential with the AI Services scopes: "+
+						spendCredentialRoutes+". Or set CIVITAI_TOKEN"))
 			}
 			o.baseURL = cfg.BaseURL()
 			gen := genapi.NewWithSource(cfg.BaseURL(), auth.New(cfg))

@@ -396,10 +396,11 @@ target with `VITE_LIVE_HOST_ORIGIN` (default `https://civitai.com`).
 > server-side), so `create → dev-token → dev:live` works directly. (A pending
 > slug after `civitai app submit` is accepted too.) You do **not** need to submit
 > or wait for approval to dev:live-test — submit when you're ready to publish.
-> For **real generation** you must mint with a **full-scope personal API key**; an
-> OAuth (`civitai login`) token mints read-only (`user:read:self`) and **cannot
-> spend**. Use `civitai buzz` / `civitai whoami` to confirm your credential can
-> spend. With no `VITE_LIVE_BLOCK_TOKEN` `dev:live` fails safe (renders a notice,
+> For **real generation** you must mint with a credential carrying the **AI
+> Services** scopes: a **full-scope personal API key**, or an OAuth login that
+> opted in via **`civitai login --scopes generate`**. A **default** `civitai
+> login` token mints read-only (`user:read:self`) and **cannot spend**. Use
+> `civitai buzz` / `civitai whoami` to confirm your credential can spend. With no `VITE_LIVE_BLOCK_TOKEN` `dev:live` fails safe (renders a notice,
 > never spends), and `dev:harness` (the mock host) needs no token at all.
 
 To use it:
@@ -413,29 +414,30 @@ To use it:
    (drop `--env >> …` to just print the token). **Auth — the credential you mint
    with decides what the dev token can do:**
    - The mint needs a credential carrying the **Apps submit** scope.
-   - **Real generation (spends real Buzz) needs a full-scope personal API key.**
-     Create one at `https://civitai.com/user/account` (a personal key carries
-     every scope, including AI Services), store it with
-     `civitai login --token <key>` (plain `civitai login` is OAuth and can't
-     spend), then `civitai app dev-token` mints a spendable token. Or pass the
-     key as the Bearer to the raw route directly:
+   - **Real generation (spends real Buzz) needs the AI Services scopes.** Two
+     routes: run **`civitai login --scopes generate`** (a browser login that
+     additively opts into generation), or create a **full-scope personal API
+     key** at `https://civitai.com/user/account` (a personal key carries every
+     scope, including AI Services) and store it with `civitai login --token
+     <key>`. Either way `civitai app dev-token` then mints a spendable token —
+     a **default** `civitai login` (no `--scopes`) cannot spend. Or pass a
+     personal key as the Bearer to the raw route directly:
      ```bash
      curl -s -X POST https://civitai.com/api/v1/blocks/dev-token \
        -H "Authorization: Bearer $CIVITAI_TOKEN" \
        -H 'Content-Type: application/json' \
        -d '{"slug":"{{ .Slug }}","scopes":["ai:write:budgeted"]}'   # → { token, expiresAt, scopes, buzzBudget }
      ```
-   - **`civitai login` (the OAuth device flow) mints a read/identity-only dev
-     token for this app.** The `civitai-cli` client carries Apps submit but
-     NOT AI Services (by design — login shouldn't grant general Buzz spend). A
+   - **A DEFAULT `civitai login` mints a read/identity-only dev token for this
+     app.** The default device-login scope set carries Apps submit but NOT AI
+     Services (by design — a plain login shouldn't grant general Buzz spend). A
      page-money app's manifest declares only `ai:write:budgeted`, and the server
-     strips that budgeted-spend scope from an OAuth-minted token (no AI Services),
-     so what's left is **read/identity only**: `dev:live` shows your **viewer**
-     plus catalog/storage, but **estimate → submit → real generation does NOT
-     work**. For real generation/spend, use the full-scope **personal API key**
-     above. (A separate civitai server change grants `user:read:self` so the
-     viewer/identity resolves cleanly for OAuth dev:live; until that lands, OAuth
-     dev:live is limited.)
+     strips that budgeted-spend scope from a token minted by a bearer without AI
+     Services, so what's left is **read/identity only**: `dev:live` shows your
+     **viewer** plus catalog/storage, but **estimate → submit → real generation
+     does NOT work**. Fix it by re-running **`civitai login --scopes generate`**
+     (the login is re-runnable and additive — you keep submit + dev-tunnel), or
+     by using the full-scope **personal API key** above.
 2. If you printed the token instead of using `--env >> …`, paste it into
    `.env.development.local` as `VITE_LIVE_BLOCK_TOKEN=<token>`. Keep the secret in
    `.env.development.local` (git-ignored), NOT the committed `.env.development`.
@@ -605,8 +607,9 @@ today**; you cannot approve your own app. Track it with `civitai app status`.
 - **`dev:live` works before you submit** — the dev-token mint accepts a brand-new
   slug with no app row yet (minting from your local manifest scopes) as well as a
   pending slug, so you can real-spend-test before submit/approval. Real generation
-  needs a **full-scope personal API key** (an
-  OAuth `civitai login` token mints read-only and can't spend); confirm with
+  needs the **AI Services** scopes — `civitai login --scopes generate`, or a
+  **full-scope personal API key** (a **default** `civitai login` token mints
+  read-only and can't spend); confirm with
   `civitai buzz` / `civitai whoami`. See the live-mode prerequisite above.
 - Need to change the bundle while a request is still `pending`? **Withdraw your
   own pending submission** and resubmit a different one:

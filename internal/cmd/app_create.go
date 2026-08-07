@@ -54,9 +54,9 @@ By default the project is created in ./<slug>. Override the output directory wit
 a positional [dir] or --dir <path>; override the display name independently with
 --name (so name, slug, and directory can all differ).
 
-Note: ` + "`civitai login`" + ` (OAuth) grants submit but NOT Buzz-spend. To run
-` + "`dev:live`" + ` real generations, authenticate with a full-scope personal API key
-(` + "`civitai login --token <key>`" + `, created at https://civitai.com/user/account).`,
+Note: a DEFAULT ` + "`civitai login`" + ` (OAuth) grants submit but NOT Buzz-spend. To
+run ` + "`dev:live`" + ` real generations, authenticate with a credential that carries
+the AI Services scopes: ` + spendCredentialRoutes + `.`,
 		Example: `  # A page-money app in ./my-block (the batteries-included default).
   civitai app create my-block
 

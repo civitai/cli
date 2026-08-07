@@ -174,10 +174,11 @@ func newGenerateCmd() *cobra.Command {
 there is no cancel-for-refund and no "undo". Preview the price with --dry-run
 first — it calls the server's cost estimator and spends nothing.
 
-CREDENTIAL: generation needs a full-scope PERSONAL API KEY with the AI Services
-scopes (create one at https://civitai.com/user/account, then
-` + "`civitai login --token <key>`" + `). An OAuth browser login (` + "`civitai login`" + `) does
-NOT carry those scopes and is refused. Check yours with ` + "`civitai whoami`" + `.
+CREDENTIAL: generation needs the AI Services scopes. Two credentials carry them:
+` + spendCredentialRoutes + `. A DEFAULT OAuth browser login
+(` + "`civitai login`" + ` with no --scopes) does NOT carry them and is refused — and
+re-running plain ` + "`civitai login`" + ` will not fix that. Check yours with
+` + "`civitai whoami`" + `.
 
 --max-cost IS AN ESTIMATE CHECK, NOT A SPENDING CAP. The cost this command shows
 is an estimate, not a quote: the server's estimator returns no quote id, no
@@ -314,7 +315,8 @@ interpreted, so nothing in it is checked before you pay for it.`,
 			}
 			if cfg.Token() == "" {
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf(
-					"no token configured — generation needs a personal API key: run `civitai login --token <key>` (or set CIVITAI_TOKEN)"))
+					"no token configured — generation needs a credential with the AI Services scopes: "+
+						spendCredentialRoutes+". Or set CIVITAI_TOKEN"))
 			}
 			o.baseURL = cfg.BaseURL()
 

@@ -93,7 +93,7 @@ func blobUploadError(status int, raw []byte) error {
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf(
-			"%s — uploading a reference image needs a personal API key with the AI Services scopes; check yours with `civitai whoami`", base))
+			"%s — uploading a reference image needs a credential with the AI Services scopes (`civitai login --scopes generate`, or a full-scope personal API key); check yours with `civitai whoami`", base))
 	default:
 		return civitai.TagStatus(status, fmt.Errorf("%s", base))
 	}

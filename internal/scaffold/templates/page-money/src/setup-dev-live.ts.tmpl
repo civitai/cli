@@ -103,7 +103,7 @@ export function mergeEnvFile(existing: string | undefined, vars: DevLiveEnv): st
  * the CLI's `devTokenError` mapping (api.go) so the auto-setup path and the
  * manual path explain failures the same way.
  *  - 401 → invalid / not-a-spend key
- *  - 403 → needs an invite (invite-only beta) + a full-scope personal key
+ *  - 403 → needs an invite (invite-only beta) + a spend-capable credential
  *  - 404 → slug registered to a different account
  *  - 429 → rate limited
  *  - 503 → Apps unavailable
@@ -122,7 +122,7 @@ export function mapMintError(status: number, body: string): string {
     case 401:
       return `Invalid API key (401)${suffix}. Paste a full-scope personal API key from civitai.com/user/account.`;
     case 403:
-      return `Not authorized (403)${suffix}. Minting a dev token needs an invite (invite-only beta) AND a full-scope personal API key — an OAuth login key can't spend.`;
+      return `Not authorized (403)${suffix}. Minting a dev token needs an invite (invite-only beta) AND a credential carrying the AI Services scopes — a full-scope personal API key, or a login from \`civitai login --scopes generate\`. A DEFAULT \`civitai login\` key can't spend.`;
     case 404:
       return `App not found (404)${suffix}. The slug is registered to a different account.`;
     case 429:
