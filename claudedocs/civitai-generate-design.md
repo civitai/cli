@@ -573,11 +573,35 @@ paragraph already says "both vendored mirrors" while items 2 and 10 track three.
    server-state-dependent (§5.3). Measured on one account.
 3. 🔴 **OPEN** — will the server surface `modelSubstitutions` on the tRPC reply, and give CLI
    traffic a label distinct from `'onsite'` (§3.1)?
-4. 🔴 **OPEN, blocks `--input` beyond txt2img** — the prompt audit is gated on
-   `'prompt' in data && typeof data.prompt === 'string'` (`orchestration-new.service.ts:1452`),
-   and `data` is rebuilt from **declared nodes only**. A graph carrying its prompt in a
-   non-`prompt` node (comfy, nested step input) is exactly the shape that would slip the audit.
-   **SUSPECTED**; neither review resolved it.
+4. 🔴 **CONFIRMED, and it keeps `--input` pinned to txt2img** — the prompt audit is gated on
+   `'prompt' in data && typeof data.prompt === 'string'` (`orchestration-new.service.ts:1460`
+   as of `civitai@a7e0bcd668`), and `data` is rebuilt from **declared nodes only**. A graph
+   carrying its prompt in a non-`prompt` node is exactly the shape that slips the audit — and
+   two shipped ecosystems are that shape:
+   - **Hunyuan3D declares no `prompt` node at all**, only `hunyuanPrompt`
+     (`hunyuan3d-graph.ts:71`). Its own header says the bare names were prefixed because they
+     "collide with the standard image Controllers in `GenerationForm.tsx`" (`:12`). So
+     `data.prompt` is absent, the audit never runs, and the handler then maps the name back:
+     `prompt: hunyuanPrompt ? hunyuanPrompt : undefined` (`hunyuan3d-graph.handler.ts:58`).
+     The text that reaches the generator as its prompt is text no audit saw.
+   - **PolyGen's `texturePrompt`** (600 chars, `polygen-graph.ts:162`) is covered by no audit
+     block under any workflow, reaches the orchestrator (`polygen.schema.ts:143`) and is
+     rendered publicly (`pages/3d-models/[id]/[[...slug]].tsx:279`). On `img2model3d` its
+     audited `prompt` node is `when: ctx.workflow.startsWith('txt')` → false, so it is deleted
+     from `data` and the audit is skipped there too.
+
+   Sweep basis: all 79 declared node keys across `src/shared/data-graph/generation/*.ts`; every
+   node whose input is a bare `z.string()`. The only free-text nodes are `prompt`/
+   `negativePrompt` (audited `:1467`), `musicDescription`/`lyrics` (audited `:1510`),
+   `hunyuanPrompt`, `texturePrompt`, and ACE Audio's `title` (whose comment says display-only,
+   not sent to the orchestrator).
+
+   🔴 **This does not make the CLI the vector, and must not be written as if it did.** Both
+   fields are reachable from the first-party form (`GenerationForm.tsx:1528`, `:2014`) and from
+   any direct tRPC caller holding a personal API key, so the gate buys little against a
+   motivated actor — what it buys is not adding a second client to a **confirmed** unaudited
+   path. Escalated on civitai/civitai#3667 (comment `5210701143`); no live generation probe was
+   run, so this is reachability by code path, not a demonstrated exploit.
 5. **SUSPECTED** — are any graph *video* engines time-metered? Determines whether `--timeout`
    has a money meaning (§4).
 6. Platform bug worth filing, no CLI impact: the POI throw at `:1007-1012` tests
