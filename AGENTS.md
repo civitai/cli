@@ -99,7 +99,7 @@ These go beyond the global defaults because this repo's release pipeline
   shapes, the graph payload, model-version resolution. Deliberately not in
   `pkg/civitai` (that is the public read/download SDK) because generation is a
   money-spending surface whose wire shape is not a public contract. Read
-  items 12–17 and 19 before touching it.
+  items 12–17, 19, 21 and 22 before touching it.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to
   `go:embed` the vendored `schema/` and `examples/`. It is not the executable.
 
@@ -163,8 +163,9 @@ deliberate *non*-mirrors); items 5–9 cover `civitai app metrics`, the CLI's on
 analytics read path; items 12–17, 19, 21 and 22 cover `civitai generate`, the
 CLI's only path that **spends the user's money irreversibly** (19 is img2img, 21
 is model substitution, and 22 is the one gate on that path that guards CONTENT
-rather than money); item 18 covers the two checks that tell an author their
-EXISTING app is missing the item-11 handshake; item 23 covers the SHAPE of a
+rather than money); items 18 and 20 cover the checks that tell an author their
+EXISTING app is missing the item-11 handshake (20 is the reachability repair to
+18's presence-only scan); item 23 covers the SHAPE of a
 validation finding — the `field` every `--json` consumer groups on. The durable
 fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —

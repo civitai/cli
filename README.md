@@ -1300,7 +1300,7 @@ of pretending:
   images all priced identically to 3. The CLI refuses **more than 7** (no
   ecosystem accepts more, so that refusal can never block a valid request) and
   **warns** for anything above 1. It deliberately does not vendor the
-  per-ecosystem table — see [`AGENTS.md`](AGENTS.md) items 13 and 18.
+  per-ecosystem table — see [`AGENTS.md`](AGENTS.md) items 13 and 19(c).
 
 `--ecosystem` is sent to the server **verbatim and is not checked locally**;
 an unknown value comes back as the server's own `unknown ecosystem` error.
