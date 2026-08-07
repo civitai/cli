@@ -250,15 +250,18 @@ func manifestNeedsSpend(m *manifest.Manifest) bool {
 }
 
 // printMoneyPathNote prints a concise reminder — only for money-path apps — that
-// real `dev:live` Buzz spend needs a full-scope personal API key, since an OAuth
-// `civitai login` can submit/withdraw but cannot spend Buzz (issue #34).
+// real `dev:live` Buzz spend needs the AI Services scopes, which a DEFAULT OAuth
+// `civitai login` deliberately omits (issue #34). Since `login --scopes
+// generate` shipped there are TWO routes, and naming only the personal key sent
+// people to the web UI unnecessarily.
 func printMoneyPathNote(out io.Writer, m *manifest.Manifest) {
 	if !manifestNeedsSpend(m) {
 		return
 	}
-	fmt.Fprintln(out, "\nNote: real `dev:live` Buzz spend needs a full-scope personal API key")
-	fmt.Fprintln(out, "(create at https://civitai.com/user/account, then `civitai login --token <key>`).")
-	fmt.Fprintln(out, "An OAuth `civitai login` can submit/withdraw but cannot spend Buzz — check with `civitai whoami`.")
+	fmt.Fprintln(out, "\nNote: real `dev:live` Buzz spend needs the AI Services scopes. Two routes:")
+	fmt.Fprintln(out, "  civitai login --scopes generate  # a browser login that opts into generation")
+	fmt.Fprintln(out, "  civitai login --token <key>      # or a full-scope personal API key: https://civitai.com/user/account")
+	fmt.Fprintln(out, "A DEFAULT `civitai login` can submit/withdraw but cannot spend Buzz — check with `civitai whoami`.")
 }
 
 func printManualNextSteps(cmd *cobra.Command, cfg *config.Config, m *manifest.Manifest, zipPath string) {

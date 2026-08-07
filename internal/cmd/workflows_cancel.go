@@ -52,8 +52,8 @@ letting it finish and would throw away the result you already paid for.
 Cancelling an already-finished workflow is harmless — the outputs of a succeeded
 workflow are not deleted by it (use the website to delete results).
 
-This needs the same personal API key with the AI Services scopes that
-` + "`civitai generate`" + ` needs.
+This needs the same AI Services scopes that ` + "`civitai generate`" + ` needs:
+` + spendCredentialRoutes + `.
 
 CONFIRMATION: cancelling is IRREVERSIBLE and destroys a job you have already paid
 for, so an interactive run asks first. Pass ` + "`--yes`" + ` to skip the prompt in a
@@ -70,7 +70,8 @@ silently.`,
 			}
 			if cfg.Token() == "" {
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf(
-					"no token configured — cancelling a workflow needs a personal API key: run `civitai login --token <key>` (or set CIVITAI_TOKEN)"))
+					"no token configured — cancelling a workflow needs a credential with the AI Services scopes: "+
+						spendCredentialRoutes+". Or set CIVITAI_TOKEN"))
 			}
 			o.baseURL = cfg.BaseURL()
 			gen := genapi.NewWithSource(cfg.BaseURL(), auth.New(cfg))

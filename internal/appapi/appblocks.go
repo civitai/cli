@@ -353,16 +353,33 @@ const ListSubmissionsCap = 100
 const WithdrawPath = "/api/v1/blocks/withdraw"
 
 // DevTokenPath is the invite-gated route that mints a short-lived dev block
-// token for `npm run dev:live` (POST {"slug": ..., "scopes"?: [...]};
-// civitai/civitai src/pages/api/v1/blocks/dev-token.ts). 200 { token, ... } on
-// success; a PENDING (un-approved) slug is accepted, and a slug with NO app row
-// yet mints from the request-body `scopes` (the dev's LOCAL manifest scopes,
-// clamped server-side) — so `create → dev-token → dev:live` works with no
-// submit step. Error bodies are {message}: 404 slug registered to a different
-// account / genuinely not found, 403 not-invited/insufficient-scope, 429
-// rate-limited, 503 flag-off. The minted token's CAPABILITIES depend on the
-// bearer: a full-scope personal API key mints a spend-capable token; an OAuth
-// (`civitai login`) credential mints a read-only one.
+// token for `npm run dev:live` (POST {"slug": ..., "scopes"?: [...],
+// "requestBudgetedSpend"?: bool}; civitai/civitai
+// src/pages/api/v1/blocks/dev-token.ts). 200 { token, ... } on success; a
+// PENDING (un-approved) slug is accepted, and a slug with NO app row yet mints
+// from the request-body `scopes` (the dev's LOCAL manifest scopes, clamped
+// server-side) — so `create → dev-token → dev:live` works with no submit step.
+// Error bodies are {message}: 404 slug registered to a different account /
+// genuinely not found, 403 not-invited/insufficient-scope, 429 rate-limited,
+// 503 flag-off.
+//
+// 🔴 SPEND TAKES **TWO** PREDICATES, NOT ONE (civitai/civitai#3703 step 1, live
+// on main as of ed1427d9fe). The minted token keeps `ai:write:budgeted` only
+// when BOTH hold — either alone STRIPS it, silently, and the mint still
+// succeeds:
+//
+//   - ENTITLEMENT (`spendEntitled`) — the BEARER carries AIServicesWrite. A
+//     full-scope personal API key, or an OAuth credential from
+//     `civitai login --scopes generate`, does; a DEFAULT `civitai login` does
+//     not, and mints read-only however the request is phrased.
+//   - INTENT (`spendRequested`) — THIS request asked for budgeted spend, i.e.
+//     the body's `requestBudgetedSpend`. The server currently resolves an ABSENT
+//     field as `?? true` (the deliberately non-breaking step-1 default), so
+//     omitting the key is not neutral — it reads as "yes".
+//
+// This is why the doc above used to describe the bearer's bit as the whole
+// story, and no longer can: a spend-entitled bearer is now necessary and not
+// sufficient. See devTokenBody.RequestBudgetedSpend for what the CLI sends.
 const DevTokenPath = "/api/v1/blocks/dev-token"
 
 func (c *Client) authedDo(ctx context.Context, build func() (*http.Request, error)) (int, []byte, error) {
@@ -926,8 +943,9 @@ type DevTokenMinter interface {
 	// the server's no-row mint path (clamped server-side); pass nil/empty when
 	// no manifest is available. buzzBudget is the optional per-generation Buzz
 	// budget — nil means "not requested", leaving the server's own resolution
-	// intact. A non-2xx is mapped by devTokenError.
-	MintDevToken(ctx context.Context, slug string, scopes []string, buzzBudget *int) (string, error)
+	// intact. requestBudgetedSpend states this mint's SPEND INTENT and is always
+	// sent (see devTokenBody). A non-2xx is mapped by devTokenError.
+	MintDevToken(ctx context.Context, slug string, scopes []string, buzzBudget *int, requestBudgetedSpend bool) (string, error)
 }
 
 // devTokenBody is the POST /api/v1/blocks/dev-token request body. Scopes is the
@@ -940,10 +958,45 @@ type DevTokenMinter interface {
 // mint and permanently shadow the server's own resolution. Only nil is omitted
 // by `omitempty` on a pointer, so nil is the one encoding that reproduces
 // today's wire shape exactly.
+//
+// RequestBudgetedSpend is the CLI's SPEND INTENT for this mint
+// (civitai/civitai#3703 step 1). It is a plain bool with NO `omitempty`, and
+// both halves of that are deliberate — this is the one field on this struct
+// whose correct encoding is the OPPOSITE of BuzzBudget's:
+//
+//	🔴 `omitempty` WOULD INVERT THE MEANING OF `false`. The server resolves the
+//	field as `spendRequested = requestBudgetedSpend ?? true`, so ABSENT means
+//	"yes, infer spend from the bearer". With `omitempty` on a bool, `false`
+//	serializes to nothing — the CLI would say "no" and the server would read
+//	"yes". A default mint would keep requesting budgeted spend implicitly,
+//	which is the exact thing this field exists to stop.
+//
+//	🔴 A `*bool` WOULD ADD A STATE THE CLI MUST NEVER SEND. Tri-state is only
+//	worth its cost when the caller can genuinely be undecided; `--spend` is a
+//	bool flag with no third position, so the CLI always knows its intent. The
+//	only thing nil would buy is a way to silently reintroduce inference — and
+//	because a forgotten field in a Go struct literal is the ZERO value, a plain
+//	bool makes the forgetful case `false` (state "no spend", the conservative
+//	answer) rather than nil (state nothing, and get spend inferred). The safe
+//	value is the zero value; that is the whole argument.
+//
+//	Contrast BuzzBudget, a pointer for the mirror-image reason: there the
+//	server's absent-resolution (manifest default, then 50) is a value the CLI
+//	cannot name, so "say nothing" is a real, correct request. Here it is not.
+//
+// Compatibility: the route's zod schema is a non-strict `z.object`, so a
+// deployment predating step 1 STRIPS the unknown key and behaves exactly as it
+// does today. Sending it is safe against both.
+//
+// Claim discipline: this makes the CLI STATE ITS SPEND INTENT EXPLICITLY. It is
+// not a claim that spend can no longer be inferred anywhere — the CLI still
+// sends no `scopes` narrowing when there is no local manifest, and nothing here
+// changes what other clients (SDK live host, dev tunnel, mod review) send.
 type devTokenBody struct {
-	Slug       string   `json:"slug"`
-	Scopes     []string `json:"scopes,omitempty"`
-	BuzzBudget *int     `json:"buzzBudget,omitempty"`
+	Slug                 string   `json:"slug"`
+	Scopes               []string `json:"scopes,omitempty"`
+	BuzzBudget           *int     `json:"buzzBudget,omitempty"`
+	RequestBudgetedSpend bool     `json:"requestBudgetedSpend"`
 }
 
 // MintDevToken mints a short-lived dev block token for the given app slug,
@@ -958,10 +1011,23 @@ type devTokenBody struct {
 // are expected to have range-checked a non-nil value; this method sends what it
 // is given so that a bound the server changes still reaches it.
 //
+// requestBudgetedSpend states whether THIS mint asks for `ai:write:budgeted`.
+// Unlike scopes and buzzBudget it is ALWAYS serialized (see devTokenBody), so
+// there is no "say nothing" option and callers must pass their real intent —
+// for the CLI that is the `--spend` flag, the same value that drives the scope
+// narrowing. The two must never disagree: a body asking for spend while the
+// scopes list strips it (or the reverse) is a bug in the caller, not something
+// this method reconciles.
+//
 // The OAuth access token is refreshed transparently on a 401. A non-2xx is
 // mapped by devTokenError.
-func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string, buzzBudget *int) (string, error) {
-	body, err := json.Marshal(devTokenBody{Slug: slug, Scopes: scopes, BuzzBudget: buzzBudget})
+func (c *Client) MintDevToken(ctx context.Context, slug string, scopes []string, buzzBudget *int, requestBudgetedSpend bool) (string, error) {
+	body, err := json.Marshal(devTokenBody{
+		Slug:                 slug,
+		Scopes:               scopes,
+		BuzzBudget:           buzzBudget,
+		RequestBudgetedSpend: requestBudgetedSpend,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -1033,8 +1099,17 @@ func devTokenValidationDetail(raw []byte) string {
 // error. The route returns {"message": ...} on every error status: 400
 // schema-rejected (with per-field details), 404 not-found-or-not-yours, 403
 // not-invited-or-insufficient-scope, 429 rate-limited, 503 flag-off. The 403
-// message is the key DX case — a spend token needs a full-scope personal API key
-// (an OAuth login mints read-only).
+// message is the key DX case — a spend token needs a bearer carrying
+// AIServicesWrite, i.e. a full-scope personal API key OR an OAuth login that
+// opted in via `civitai login --scopes generate`. A DEFAULT `civitai login`
+// mints read-only.
+//
+// That entitlement is NECESSARY, not sufficient: since #3703 step 1 the mint
+// also needs the request to ASK (`requestBudgetedSpend`), and a request that
+// does not ask is not an error — the scope is silently stripped and the mint
+// returns 200. So a read-only token is NOT diagnosable from this function; it is
+// caught after the fact by decoding the minted JWT (see the CLI's tokenCanSpend
+// / readOnlyTokenWarning).
 func devTokenError(status int, raw []byte) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
 	msg := serverMessage(raw)
@@ -1061,7 +1136,7 @@ func devTokenError(status int, raw []byte) (err error) {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401): %s — run `civitai login` (or set CIVITAI_TOKEN)", msg)
 	case http.StatusForbidden:
-		return fmt.Errorf("not authorized (403): %s — minting needs an invite (invite-only beta) AND a full-scope personal API key; an OAuth `civitai login` token can't mint a spend token (check with `civitai whoami`)", msg)
+		return fmt.Errorf("not authorized (403): %s — minting needs an invite (invite-only beta) AND a credential carrying the AI Services scopes: `civitai login --scopes generate` or a full-scope personal API key. A DEFAULT OAuth `civitai login` token can't mint a spend token (check with `civitai whoami`)", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:

@@ -189,7 +189,8 @@ It does three things from one static binary:
     surfaces. Scaffold a correct project, validate it against the platform
     contract, and package it for submission.
   • Generate images — civitai generate "<prompt>". This SPENDS REAL BUZZ and
-    needs a personal API key; price a job with --dry-run first.
+    needs the AI Services scopes (civitai login --scopes generate, or a
+    full-scope personal API key); price a job with --dry-run first.
 
 Get started:
 

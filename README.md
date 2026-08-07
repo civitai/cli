@@ -202,19 +202,19 @@ README. For the end-to-end walkthrough, see
 
 | Command | What it does |
 | --- | --- |
-| `civitai login [--token [<t>]] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens); `--token <t>` stores a personal API key instead. `--token` with **no value** prints where to create a personal key (`civitai.com/user/account`) and how to re-run — handy when you know you want a personal key but haven't minted one yet. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
-| `civitai whoami [--scopes] [--json]` | Verify the stored token; print the authenticated user **and a Capabilities section** — credential type (**OAuth login** vs **personal API key**), **Read Buzz balance**, and **Spend Buzz** — decoded from the token's scope, so a money-path dead end (OAuth login can't spend) is visible before `dev:live`. `--scopes` also lists every granted scope; `--json` emits the user + `credentialType`/`canReadBalance`/`canSpend`/`scopes` (scriptable). |
-| `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**). Needs a full-scope personal API key to read; an OAuth login token can't, and gets a clear "switch to a personal key" message. `--json` emits `{blue,green,yellow,total}` (scriptable — handy for before/after diffing a `dev:live` spend). |
+| `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens). The default scope set grants identity + Apps submit + dev-tunnel and **not** Buzz-spend; `--scopes generate` additively grants generation + Buzz **spend** (needed by `civitai generate` and money-path `dev:live`). `--token <t>` stores a personal API key instead (not combinable with `--scopes`). `--token` with **no value** prints where to create a personal key (`civitai.com/user/account`) and how to re-run — handy when you know you want a personal key but haven't minted one yet. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
+| `civitai whoami [--scopes] [--json]` | Verify the stored token; print the authenticated user **and a Capabilities section** — credential type (**OAuth login** vs **personal API key**), **Read Buzz balance**, and **Spend Buzz** — decoded from the token's scope, so a money-path dead end (a default OAuth login can't spend) is visible before `dev:live` — and when it can't, the output names the fix for that credential (`login --scopes generate` for an OAuth login, a full-scope key otherwise). `--scopes` also lists every granted scope; `--json` emits the user + `credentialType`/`canReadBalance`/`canSpend`/`scopes` (scriptable). |
+| `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**). Needs the BuzzRead scope — a full-scope personal API key or `civitai login --scopes generate`; a **default** OAuth login token can't read it, and gets a clear message naming both fixes. `--json` emits `{blue,green,yellow,total}` (scriptable — handy for before/after diffing a `dev:live` spend). |
 | `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
-| `civitai app dev-token <slug> [--env]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the invite-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
+| `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the invite-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). `--spend` explicitly REQUESTS `ai:write:budgeted` (real Buzz); omit it and that scope is **filtered out** of the request — the CLI never asks for budgeted spend implicitly, even when your manifest declares it (the scaffolded money app does, so a live run that used to generate now needs `--spend`). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / dark)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your dev port (start `npm run dev:tunnel` first) to the Civitai tunnel endpoint, prints the URL to open, and tears everything down on Ctrl-C or an idle timeout. Before minting it also **pre-flights whether the host can actually embed your dev server** — the host iframes it sandboxed (opaque `null` origin), so a dev server missing `Access-Control-Allow-Origin: *`, missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that excludes `civitai.com` loads as a blank iframe with no error anywhere. Those are printed as warnings (never fatal) just above the URL, with the `vite.config.ts` fix. Apps scaffolded by `civitai app init --template page-money` already satisfy all of it. Gated behind an Apps-author invite **and** a kill-switch flag that is off today, and the tunnel endpoint is not exposed yet — so it reports "not available" until it ships. |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message`) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
-| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results into `--out-dir` as `<workflow-id>-<n>.<ext>`. `--no-wait` prints the workflow id and exits; `--timeout` bounds the **wait** (never the job and never the charge); `--no-download` waits but prints URLs instead of writing files. `--dry-run` estimates and exits without submitting (`--dry-run --json` emits the raw estimate). `--print-input` prints the assembled graph and exits **without reaching any money seam** (no submit, no estimate, no balance read) — note that with `--image` it still **uploads** local files first, because the printed graph has to reference real blob URLs for `--input` to be able to submit it; uploading spends nothing; `--input <file>` (or `-` for stdin) sends a raw graph as-is — txt2img only, and mutually exclusive with the content flags. `--image <path-or-url>` (repeatable) attaches a reference image for **image-to-image** — a local png/jpeg is uploaded, an https URL is passed through — and **requires `--ecosystem`**, because without one the server ignores the images, generates from the prompt alone and charges anyway. Needs a **personal API key** with the AI Services scopes; an OAuth login is refused. `--max-cost` is an **estimate check, not a spending cap**. See [Generate](#generate). |
+| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results into `--out-dir` as `<workflow-id>-<n>.<ext>`. `--no-wait` prints the workflow id and exits; `--timeout` bounds the **wait** (never the job and never the charge); `--no-download` waits but prints URLs instead of writing files. `--dry-run` estimates and exits without submitting (`--dry-run --json` emits the raw estimate). `--print-input` prints the assembled graph and exits **without reaching any money seam** (no submit, no estimate, no balance read) — note that with `--image` it still **uploads** local files first, because the printed graph has to reference real blob URLs for `--input` to be able to submit it; uploading spends nothing; `--input <file>` (or `-` for stdin) sends a raw graph as-is — txt2img only, and mutually exclusive with the content flags. `--image <path-or-url>` (repeatable) attaches a reference image for **image-to-image** — a local png/jpeg is uploaded, an https URL is passed through — and **requires `--ecosystem`**, because without one the server ignores the images, generates from the prompt alone and charges anyway. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. `--max-cost` is an **estimate check, not a spending cap**. See [Generate](#generate). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
 | `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **This does not refund anything** — a mid-run cancel bills the accrued cost, non-refundably. Cancel because you no longer want the output, never to save money. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
@@ -314,10 +314,15 @@ hosts) to close that gap, with two modes:
 > (`POST /api/v1/blocks/dev-token`) accepts a **pending** slug — right after a
 > successful `civitai app submit` (status `pending`) it returns `200` with
 > `appId: pending-pubreq_…` and `dev:live` mounts the live host against the
-> pending app. For **real generation** you must mint with a **full-scope personal
-> API key**; an OAuth (`civitai login`) token mints read-only (`user:read:self`)
-> and **cannot spend**. Use `civitai buzz` / `civitai whoami` to confirm your
-> credential can spend before a live run.
+> pending app. For **real generation** you must mint with a credential carrying
+> AI Services — a **full-scope personal API key**, or an OAuth login that opted
+> in via `civitai login --scopes generate`. A **default** OAuth login
+> (`civitai login`, no `--scopes`) mints read-only (`user:read:self`) and
+> **cannot spend**. Use `civitai buzz` / `civitai whoami` to confirm your
+> credential can spend before a live run, and pass `--spend` to `dev-token` to
+> request the spend scope explicitly — **without it the CLI filters
+> `ai:write:budgeted` out of the request**, so a spend-capable credential still
+> mints a token that will not generate.
 
 **Live mode** needs a short-lived dev block token. Mint it with **`civitai app
 dev-token`** (the CLI handles the invite-gated `POST /api/v1/blocks/dev-token`
@@ -331,9 +336,12 @@ npm run dev:live
 ```
 
 `.env.development*` is never committed (`submit` excludes it) and the token is
-short-lived (~4h) — re-run `dev-token` when it expires. Mint with a **full-scope
-personal API key** for real generation; an OAuth login mints a read-only token
-(the command warns you at mint time). With no token, `dev:live` **fails safe**
+short-lived (~4h) — re-run `dev-token` when it expires. For real generation mint
+with a spend-capable credential (**full-scope personal API key** or
+`civitai login --scopes generate`) **and** add `--spend`: the scope is requested
+only when you ask for it, so without the flag the mint drops it and dev:live
+refuses to generate with `block lacks ai:write:budgeted scope`. A default OAuth
+login mints a read-only token either way (the command warns you at mint time). With no token, `dev:live` **fails safe**
 (renders a notice, never spends). Live v1 covers the money path
 (`estimate`/`submit`/`poll`/`cancel`); pickers, checkpoint-set, App-Storage KV,
 and in-band Buzz purchase are mock-only.
@@ -348,20 +356,23 @@ blocked by CORS preflight and rejected by civitai's tRPC origin gate. The
 same-origin proxy + Origin rewrite fixes both. `VITE_LIVE_HOST_ORIGIN` overrides
 the proxy target (default `https://civitai.com`).
 
-**Which credential can spend?** Only a full-scope **personal API key** can spend
-Buzz — whether that is a real `dev:live` generation in your app or a
-[`civitai generate`](#generate) run from the terminal. The default OAuth login
-can't do either:
+**Which credential can spend?** Spending Buzz — a real `dev:live` generation in
+your app, or a [`civitai generate`](#generate) run from the terminal — needs the
+**AI Services** scope. Two credentials carry it; the **default** OAuth login
+deliberately does not:
 
 | Credential | Can spend Buzz? (`dev:live`, `civitai generate`) | How to get it |
 |---|---|---|
 | **Personal API key** (full scope) | ✅ **Yes** — estimate → submit → generation → real Buzz | create it **in the web UI** at `civitai.com/user/account`, then `civitai login --token <key>` (a personal key carries AI Services) |
-| **`civitai login`** (OAuth, default) | ❌ No — viewer + catalog + app storage only | the `civitai-cli` client has no AI Services scope, so the server strips the spend scope — fine for read/identity `dev:live`, not for generation |
+| **`civitai login --scopes generate`** (OAuth, opt-in) | ✅ **Yes** — additive on top of the default, so it also keeps submit + dev-tunnel | `civitai login --scopes generate` (the `civitai-cli` client's `allowedScopes` on `civitai.com` includes the generate bits — see [Submit & auth](#submit--auth)) |
+| **`civitai login`** (OAuth, default) | ❌ No — viewer + catalog + app storage only | the default scope set omits AI Services, so the server strips the spend scope — fine for read/identity `dev:live`, not for generation |
 
-This is the single most common blocker for `civitai generate`: an OAuth login
-looks perfectly valid, and the refusal is a scope problem, not a login problem —
-re-running `civitai login` will not fix it. `civitai whoami` shows the capability
-as **Spend Buzz (AI Services)**.
+This is the single most common blocker for `civitai generate`: a default OAuth
+login looks perfectly valid, and the refusal is a scope problem, not a login
+problem — re-running plain `civitai login` will not fix it, but
+`civitai login --scopes generate` (or a full-scope personal key) will.
+`civitai whoami` shows the capability as **Spend Buzz (AI Services)** and names
+the fix for whichever credential you have.
 
 You can't mint a personal key over OAuth or the CLI (`apiKey.add` returns 403
 without a full-scope session) — create it in the web UI. The dev token always grants
@@ -751,18 +762,39 @@ caveat and how the vendored schema + Go checks are kept in sync.
 `civitai login` (no flags) runs the **OAuth device-authorization grant**: it
 prints a URL + a short code, you approve in your browser, and the CLI stores a
 short-lived access token (1h) plus a refresh token (30d) that it rotates
-automatically before requests and once on a `401`. It **requests** the scopes
-`UserRead | AppBlocksSubmit` (== `33554433`, exactly the `civitai-cli` OAuth
-client's `allowedScopes`) — identity plus Apps submit, which gates both
-`app submit` and the dev-token mint. It deliberately does **not** request
-`AIServicesWrite`: the server's device-flow scope check is all-or-nothing, so
-asking for a scope the client doesn't allow would reject the whole login. A
-login token therefore drives the **read/identity** `dev:live` paths (viewer,
-catalog, app storage) but — for a generation app whose only `ai:write:budgeted`
-scope is stripped — **cannot estimate, submit, or spend real Buzz**. For real
-generation use a full-scope **personal API key** (see the credential table under
-[Local dev loop](#local-dev-loop-harness-mock-vs-live) above), which carries AI
-Services.
+automatically before requests and once on a `401`. By **default** it requests
+`UserRead | AppBlocksSubmit | AppBlocksDevTunnel` (== `100663297`) — identity,
+Apps submit (which gates both `app submit` and the dev-token mint), and the
+on-site dev tunnel. That default deliberately omits `AIServicesWrite`, so a plain
+login **cannot spend Buzz**: it drives the **read/identity** `dev:live` paths
+(viewer, catalog, app storage) but, for a generation app, has its
+`ai:write:budgeted` scope stripped at mint time and **cannot estimate, submit, or
+spend real Buzz**.
+
+Opt into generation explicitly with a **named scope set**:
+
+```bash
+civitai login --scopes generate   # additive: keeps submit + dev-tunnel, ADDS generation
+```
+
+which requests `100777985` (the default **plus** `AIServicesRead |
+AIServicesWrite | BuzzRead`) — one credential that can both submit apps and run
+[`civitai generate`](#generate). `--scopes` takes a **named set**, never a raw
+bitmask, and an unknown name is rejected with the valid list. It applies only to
+the browser device login and is refused alongside `--token`.
+
+> 🔴 **The device-flow scope check is all-or-nothing**: requesting any bit the
+> `civitai-cli` OAuth client's `allowedScopes` does not permit rejects the
+> **whole** login with `invalid_scope`. On `civitai.com` that client's
+> `allowedScopes` **is** `100777985`, so `--scopes generate` works. Against a
+> **self-hosted or older** auth server (a non-default `CIVITAI_BASE_URL`) that
+> predates the widening it is rejected, and the CLI maps the rejection to a
+> message telling you plain `civitai login` still works there.
+
+A full-scope **personal API key** remains the other way to get spend authority
+(see the credential table under
+[Local dev loop](#local-dev-loop-harness-mock-vs-live) above), and is still the
+only credential carrying the rest of the Full scope mask.
 `civitai login --token <key>` stores a personal API key instead (no refresh).
 `CIVITAI_TOKEN` overrides the stored credential (treated as a personal key).
 
@@ -1029,11 +1061,12 @@ civitai generate "a cat" --quantity 2 --print-input > graph.json
 civitai generate --input graph.json --dry-run
 ```
 
-**Credential.** Generation needs a full-scope **personal API key** carrying the
-AI Services scopes ([create one](https://civitai.com/user/account), then
-`civitai login --token <key>`). An OAuth browser login (`civitai login`) does
-**not** carry them and is refused. `civitai whoami` shows the capability as
-**Spend Buzz (AI Services)**.
+**Credential.** Generation needs the AI Services scopes. Either a full-scope
+**personal API key** ([create one](https://civitai.com/user/account), then
+`civitai login --token <key>`), or a browser login that opted in:
+`civitai login --scopes generate`. A **default** OAuth browser login
+(`civitai login`, no `--scopes`) does **not** carry them and is refused.
+`civitai whoami` shows the capability as **Spend Buzz (AI Services)**.
 
 ### 🔴 `--max-cost` is an estimate check, not a spending cap
 
