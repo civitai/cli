@@ -8,10 +8,11 @@ fixes exposed then produced three follow-ups (#241, #244, #246), all now closed.
 
 ## State now
 
-- **Branch/PR:** `main` @ `1d3db3f`, no open PRs from this work. Base clone synced (ff-only).
+- **Branch/PR:** `main` @ `f56aa72` or later, no open PRs from this work. Base clone synced
+  (ff-only). **`civitai/cli` has zero open issues** — this workstream closed the backlog.
 - **Clawgate task 154:** `complete`.
 
-### DONE — 8 PRs merged, all verified on `main`
+### DONE — 9 PRs merged, all verified on `main`
 
 | PR | commit | what |
 |---|---|---|
@@ -23,6 +24,7 @@ fixes exposed then produced three follow-ups (#241, #244, #246), all now closed.
 | #242 | `050d401` | **exit-5 bug** — a filesystem error is not a network error |
 | #245 | `592a8a9` | second copy of the same bug, in the retry loop; predicate consolidated |
 | #248 | `1d3db3f` | **#246** — the two remaining `errors.As(err,&netErr)` sites |
+| #251 | `f56aa72` | exit-code contract hygiene — unreadable `--input` is a filesystem failure |
 
 Issues #223–#227, #241, #244, #246 all CLOSED. `AGENTS.md` has **24** items; item 24 now
 carries all four copies of the `syscall.Errno`/`net.Error` trap.
@@ -99,39 +101,75 @@ yet still makes `url.Error.Timeout()` true when it sits directly at `.Err`.
 `civitai.IsTransportError` now has **four** callers and there are zero unexplained
 `errors.As(err, &netErr)` sites left in the repo.
 
-## Next steps (ranked) — both are exit-code contract hygiene, do them in ONE PR
+## Exit-code contract hygiene — CLOSED (PR #251, `f56aa72`)
 
-Sequence them together and **not** concurrently with anything else touching the exit-code
-docs: both regenerate the README table from `exitCodeDocs`, and this workstream has hit
-semantic merge conflicts three times where the right answer was neither side.
+Both items that sat here as "next steps" shipped. Recorded as decisions, not as work:
 
-1. **`generate --input <unreadable>` exits 2; it should exit 1.** Not a judgement call — a
-   contract violation. Measured on the binary at `592a8a9`:
-   ```
-   generate --input <unreadable>   rc=2   ← permission denied
-   generate --input <missing>      rc=2   ← correct
-   generate --image <unreadable>   rc=1   ← the documented rule
-   ```
-   `exitcodes_doc.go:85` (the one source generating `--help` AND the README) already states
-   the rule: "a file that exists and cannot be **read** … exits `1`, not `2`". Cause:
-   `generate_input.go:112-115` wraps **every** `os.ReadFile` failure in `asUsageError`.
-   Precedent to copy is nine lines of `resolveLocalImage` (`generate_image.go:201-207`):
-   `os.IsNotExist` → `asUsageError`, everything else falls through untagged. Tell that it is
-   an oversight: the stdin sibling at `generate_input.go:108` is already untagged and exits
-   1, so the same command disagrees with itself by input source. ~4 lines + a test row.
+1. **`generate --input <unreadable>` now exits 1, not 2.** It was a contract violation, not a
+   judgement call: `exitcodes_doc.go` already published "a file that exists and cannot be
+   **read** … exits `1`, not `2`" while `readGraphInput` wrapped *every* `os.ReadFile` failure
+   in `asUsageError`. The tell it was an oversight is twelve lines up in the same function —
+   the stdin sibling returned its read failure untagged and always exited 1, so one command
+   answered the same question two ways depending only on whether the graph arrived by file or
+   by pipe. Measured before → after: unreadable `2 → 1`; missing `2 → 2`; directory `2 → 2`;
+   `--image <unreadable>` `1 → 1`.
+   **`--input <directory>` deliberately stays 2** — a directory is not "a file that cannot be
+   read", and `--image <dir>` is already published as 2, so sending `--input <dir>` to 1 would
+   reintroduce the same inconsistency one flag over.
 
-2. **`app metrics <slug>` with no approved block: KEEP exit 1, document the case.** Do NOT
-   promote it to 4. The sibling nine lines up already returns `ErrNotFound` → exit 4 for
-   `len(subs)==0` (genuinely no such app, `app_metrics.go:189`). Promoting this to 4 collapses
-   both onto one code and destroys the only actionable distinction — "fix your slug" vs "wait
-   for approval" — which the resolver's own doc comment (`:177-179`) says it exists to draw.
-   Exit 4 also promises "does not exist" about an app that does. Do not add a code 7 either:
-   AGENTS item 24 already rejected that move (a contract expansion every `case $?` meets as
-   unknown). Fix is a Note under code 1 in `exitCodeDocs`: a resource that exists but is not
-   **ready** is a 1, not a 4.
+2. **`app metrics <slug>` with no approved block deliberately STAYS exit 1** — documented, not
+   changed. The sibling nine lines up in `resolveAppBlockID` already returns `ErrNotFound` →
+   exit 4 for `len(subs)==0` (genuinely no such app). Promoting this case to 4 collapses both
+   onto one code and destroys the only actionable distinction — "fix your slug" vs "wait for
+   approval". Exit 4 would also promise "does not exist" about an app that does. A code 7 was
+   rejected for the reason AGENTS item 24 already gives. `exitCodeDocs` now publishes it under
+   code 1: a resource that exists but is not READY.
+   🔴 **Do not "tidy" this into `ErrNotFound` later** — `TestAppMetricsNoApprovedBlockYet` now
+   asserts `!errors.Is(err, civitai.ErrNotFound)` for exactly that reason, with
+   `TestAppMetricsUnknownSlugIsActionableNotFound` as its positive control so the assertion
+   cannot be satisfied by removing exit 4 from the resolver altogether.
+
+AGENTS item 24 carried a supporting example that this change falsified
+(`generate --input <unreadable json>` … "exits **2** today"). It is **retracted in place** in
+the same PR, with the conclusion preserved — the case against a code 7 never rested on it.
+
+## Next steps (ranked)
+
+1. **Re-run the blind dogfood.** This is the loop that produced the entire workstream: one
+   agent, given only the built binary + `README.md` + `--help`, produced 5 issues → 9 merged
+   PRs. `civitai/cli` now has **zero open issues**. Every fix has been verified by tests and by
+   measurement, but nothing has verified them *from the user's seat* since the original run —
+   "the suite is green" and "a first-time app author now succeeds" are different claims.
+   🔴 Run it in a SANDBOX with an isolated `XDG_CONFIG_HOME` and no credential. That is what
+   makes it structurally unable to spend Buzz, submit an app for review, or clobber the real
+   config — a prose "please don't" is not sufficient for an agent holding a money-spending CLI.
+   Keep it blind: no repo source, no `AGENTS.md`, no tests. Peeking at the implementation
+   silently excuses things a real user is stopped by.
+2. **Worktree sweep.** 33 worktrees under this repo; measured, **none holds uncommitted source
+   work** — every "dirty" one is a stray untracked `opencode.json`, plus one `OIDC-PR-BODY.md`
+   in `cli-oidc-draft`. Most correspond to long-merged PRs. Not cosmetic: `find . -name '*.go'
+   | wc -l` in the base clone reports **3684** instead of ~293 because it descends into them,
+   which turns a positive control into a false one.
+3. **Item 22's `--input` ecosystem unlock is NOT actionable here.** It is gated on
+   `civitai/civitai#3667` (prompt auditing keyed by field name with no coverage guard), still
+   **OPEN**. The fix is server-side in the monorepo; nothing in this repo moves it.
 
 ## Gotchas / decisions / dead-ends
 
+- 🔴 **A MESSAGE ASSERTION CANNOT SEE AN EXIT CODE, AND THAT WAS MEASURED — NOT INFERRED.**
+  While adding the `app metrics` guard for #251, the mutation "tag the no-approved-block error
+  `civitai.ErrNotFound`" — a one-token change that silently moves the command to exit 4 — was
+  applied at the pre-assertion baseline and the test **PASSED**. `civitai.Tag` leaves `Error()`
+  byte-identical, and every pre-existing assertion in that test was on message text. This is
+  AGENTS item 7 caught live, in a test that looked thorough. Pin an exit code with
+  `errors.Is`, and give the assertion a positive control that stops it being satisfiable by
+  deleting the sentinel elsewhere.
+- 🔴 **A DOGFOOD AGENT MUST BE SANDBOXED STRUCTURALLY, NOT BY INSTRUCTION.** This CLI can spend
+  real Buzz (`generate`), submit an app for review (`app submit`), mutate published listings,
+  and overwrite the operator's credentials (`login`). An isolated `XDG_CONFIG_HOME` with no
+  token removes all four capabilities at once *and* is the authentic first-run experience, so
+  the safety measure and the test fidelity point the same way. A forbidden-command list is
+  worth keeping as defence in depth, but it is not the control.
 - 🔴 **THE BASE CLONE IS SHARED AND ACTIVELY WRITTEN BY OTHER SESSIONS.** Observed live this
   session: `claudedocs/handoff-app-blocks-hardening.md` became modified mid-session, and
   `HEAD` fast-forwarded from `592a8a9` → `bea523a` under me while I worked. `git branch
@@ -190,6 +228,12 @@ T=$(mktemp -d); printf '\x89PNG\r\n\x1a\n' > "$T/i.png"; chmod 000 "$T/i.png"
 ./bin/civitai app listing set-icon "$T/i.png" --slug x; echo $?   # 1  (was 5)
 CIVITAI_BASE_URL=http://127.0.0.1:1 ./bin/civitai models get 691639; echo $?   # 5 (preserved)
 chmod 600 "$T/i.png"; rm -rf "$T" "$D"
+
+# #251: an unreadable --input is a filesystem failure (1); a missing one is a usage error (2)
+T=$(mktemp -d); printf '{"workflow":"txt2img","prompt":"x"}' > "$T/g.json"; chmod 000 "$T/g.json"
+./bin/civitai generate --input "$T/g.json"   --dry-run >/dev/null 2>&1; echo $?   # 1  (was 2)
+./bin/civitai generate --input "$T/nope.json" --dry-run >/dev/null 2>&1; echo $?  # 2  (unchanged)
+chmod 600 "$T/g.json"; rm -rf "$T"
 
 # #246: the fs-vs-timeout split is pinned by tests, not by a live repro
 go test ./internal/appapi/ -run 'TestIsTimeoutErrRejectsFilesystemErrors|TestSubmitVersionDoesNotRecoverFromAFilesystemError' -v -count=1
