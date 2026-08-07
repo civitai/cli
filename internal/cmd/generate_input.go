@@ -111,8 +111,36 @@ func readGraphInput(stdin io.Reader, path string) ([]byte, error) {
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
-		// A missing/unreadable path is the user's mistake, not the server's.
-		return nil, asUsageError(fmt.Errorf("read --input %s: %w", path, err))
+		// 🔴 THE TWO FAILURES SPLIT, AND THE SPLIT IS THE PUBLISHED CONTRACT —
+		// not a nicety. A path that is not there, or that is a directory, is a
+		// mistake about the INVOCATION and exits 2. A file that IS there and
+		// cannot be read (permissions, an I/O error) is a filesystem failure
+		// and exits 1: exitCodeDocs says so in as many words under code 2, and
+		// resolveLocalImage (generate_image.go) already honours it for
+		// `--image`.
+		//
+		// This used to tag EVERY os.ReadFile failure `asUsageError` under the
+		// comment "a missing/unreadable path is the user's mistake, not the
+		// server's". Half right, and the wrong half was published: measured on
+		// the binary at 592a8a9, `--input <mode-000 file>` exited 2 while
+		// `--image <mode-000 png>` exited 1, so the CLI contradicted its own
+		// README. The tell that it was an oversight rather than a decision is
+		// twelve lines up — the stdin sibling returns its read failure UNTAGGED
+		// and always exited 1, so one command answered the same question two
+		// ways depending only on whether the graph arrived by file or by pipe.
+		if os.IsNotExist(err) {
+			return nil, asUsageError(fmt.Errorf(
+				"--input %s: no such file — pass a path that exists, or `--input -` to read the graph from stdin; produce a starting point with `civitai generate \"a cat\" --print-input`", path))
+		}
+		// Only reached on the error path, so the happy path pays nothing for
+		// it. os.ReadFile surfaces a directory as an unhelpful read error whose
+		// errno is not portable, and a directory is the same invocation mistake
+		// the image ledger already publishes as exit 2.
+		if info, statErr := os.Stat(path); statErr == nil && info.IsDir() {
+			return nil, asUsageError(fmt.Errorf(
+				"--input %s is a directory, not a generation-graph JSON file", path))
+		}
+		return nil, fmt.Errorf("read --input %s: %w", path, err)
 	}
 	return b, nil
 }
