@@ -178,7 +178,7 @@ init and copy the upstream files in manually`)
 		return verr
 	}
 	if !res.OK() {
-		return fmt.Errorf("internal error: scaffolded manifest failed validation:\n  %s", joinLines(res.Errors))
+		return fmt.Errorf("internal error: scaffolded manifest failed validation:\n  %s", joinLines(validate.Messages(res.Errors)))
 	}
 
 	printScaffoldResult(out, display, slug, tmpl, destDir, abs, written)

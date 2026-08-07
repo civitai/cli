@@ -48,8 +48,8 @@ func project(t *testing.T, manifestJSON string, files map[string]string) Result 
 func lockErrors(res Result) []string {
 	var out []string
 	for _, e := range res.Errors {
-		if strings.Contains(e, "lockfile") || strings.Contains(e, "-lock.") {
-			out = append(out, e)
+		if strings.Contains(e.Message, "lockfile") || strings.Contains(e.Message, "-lock.") {
+			out = append(out, e.Message)
 		}
 	}
 	return out
@@ -407,7 +407,7 @@ func TestLockfileMultipleWithRequiredPresentIsWarning(t *testing.T) {
 	if !res.HasWarnings() {
 		t.Fatal("extra lockfiles should raise an advisory")
 	}
-	joined := strings.Join(res.Warnings, "\n")
+	joined := strings.Join(Messages(res.Warnings), "\n")
 	for _, want := range []string{"more than one lockfile is committed", "package-lock.json and pnpm-lock.yaml", "installs only from package-lock.json"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("warning missing %q:\n%s", want, joined)

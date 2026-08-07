@@ -163,7 +163,8 @@ deliberate *non*-mirrors); items 5–9 cover `civitai app metrics`, the CLI's on
 analytics read path; items 12–17 and 19 cover `civitai generate`, the CLI's only
 path that **spends the user's money irreversibly** (19 is img2img); item 18
 covers the two checks that tell an author their EXISTING app is missing the
-item-11 handshake. The durable fix for the mirroring is a server-side
+item-11 handshake; item 21 covers the SHAPE of a validation finding — the
+`field` every `--json` consumer groups on. The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
 
@@ -1164,6 +1165,103 @@ neither one's.
       CONTROL — a pre-fix project with no emitter warns on BOTH binaries — so
       the silent cells are real false passes rather than a probe wired to
       nothing.
+
+21. **A validation finding is a `Finding{Field, Message}`, and the Field is
+    carried from the CHECK — never re-derived at the printer.** `validate.Result`
+    holds `[]Finding`, not `[]string`, and every check function in
+    `internal/validate` returns `[]Finding`. This looks like ceremony around what
+    used to be a string; it is the fix for issue #225, and the string version is
+    what made that bug unfixable in place.
+    - **What broke.** `--json` promised `errors`/`warnings` each with
+      `field`/`message`. The field was recovered in `internal/cmd/app_validate.go`
+      by string-parsing a schema-style `"<path>: <reason>"` prefix. Schema errors
+      parse; the ported semantic checks of item 1 emit PROSE, so they parsed to
+      nothing. Measured on a six-ways-broken manifest at `e9a44c4`: **7 of 11
+      findings came back `field: null`, and they were precisely the semantic ones**
+      — the checks a local pre-check exists for. Grouping by field in CI, the one
+      thing `--json` is for, did not work for the findings that matter most.
+    - 🔴 **DO NOT "FIX" A FUTURE GAP HERE WITH MORE PREFIX HEURISTICS.** A parser
+      at the printer regenerates the bug at every check added afterwards: the new
+      check emits prose, the parser finds no path, the null is back, and nothing
+      fails. The field has to come from the producer. `newFinding(field, message)`
+      is the only constructor, and `Finding{…}` composite literals outside
+      `finding.go` are rejected by `TestFindingsAreConstructedWithAField`.
+    - **ONE NOTATION: DOTTED.** `blockId`, `iframe.sandbox`, `scopes[1]`,
+      `targets[0].slotId`. Three notations used to coexist — `(root)` and JSON
+      Pointer `/blockId` in `--json`, dotted `iframe.sandbox` in the text output.
+      Dotted won because it is what every other surface already speaks (the
+      semantic messages' own prose, this file, the README, the schema
+      descriptions), so unifying on JSON Pointer would have meant rewriting every
+      author-facing message to `/iframe/sandbox` to buy escaping rigour a manifest
+      whose keys are all identifiers does not need. **This changed the wire
+      values** (`/scopes/1` → `scopes[1]`) and the text output's leading path;
+      it is a deliberate break, called out in the README.
+    - **TWO SENTINELS, NOT ONE, AND THEY ARE NOT INTERCHANGEABLE.** `(root)`
+      (`FieldDocument`) is the manifest DOCUMENT — absent, unparseable, or a
+      schema violation the library locates at the top-level object. `(project)`
+      (`FieldProject`) is repository state OUTSIDE the manifest — the committed
+      lockfile, the source tree the item-20 advisory reads. Collapsing them would
+      send a CI job looking in `block.manifest.json` for a missing lockfile. Note
+      the lockfile remedy *does* offer a `buildCommand` edit as one option; the
+      finding still is not ABOUT that field, and pinning it there would mis-group
+      every project that takes the other remedy.
+    - **Field assignment is mechanical, not taste.** A finding names the location
+      it is ABOUT — the field whose presence, absence or value the rule reports
+      on. For an "X is set but Y is missing" pair rule that is **Y**, which reads
+      straight off the sentence and stays symmetric across the pair. Per-element
+      and per-key rules carry the index or key (`targets[0].slotId`,
+      `scopeJustifications.<scope>`), because `targets` alone is useless on the
+      only manifests where those rules fire more than once.
+    - 🔴 **`dedupe` KEYS ON THE (field, message) PAIR.** The value being deduped
+      grew a second axis and collapsing on either alone loses real findings: an
+      iframe is routinely wrong several ways at once (same field, different
+      messages), and `scopeJustifications` emits one finding per offending key
+      (same message shape, different fields). Pinned by
+      `TestDedupeFindingsKeysOnTheFieldMessagePAIR`.
+    - 🔴 **`findingSiteHook` IS A TEST SEAM IN PRODUCTION CODE, AND IT IS THERE
+      BECAUSE "EVERY FINDING I SAW HAD A FIELD" IS A CLAIM ABOUT THE CORPUS, NOT
+      ABOUT THE CHECKS.** A corpus that never trips the sandbox rule reports a
+      serene pass for a sandbox rule that emits nothing — the reassuring-zero
+      shape. `TestEveryCheckEmitsAField` therefore AST-enumerates every
+      finding-producing function in the package and, through the hook, requires
+      the corpus to have REACHED each one; a check added without a fixture fails
+      by name and source line. Measured: deleting the `targets` fixture failed
+      with `targetChecks (targets.go:89) was never reached`. The hook is nil in
+      every production run — one nil compare per finding, and `runtime.Caller` is
+      not entered unless a test installed it. Do not delete it to "clean up"; the
+      coverage claim becomes vacuous the moment it goes.
+    - **Three guards, and none subsumes the others.**
+      `TestFindingsAreConstructedWithAField` (structural, AST) fires on the
+      SOURCE, so it catches a new check nobody wrote a test for — but cannot see a
+      field computed to `""` at runtime. `TestEveryCheckEmitsAField`
+      (behavioural + ledger) catches exactly that — but only for checks a fixture
+      reaches. `TestValidateJSONEveryFindingCarriesAField` /
+      `…SemanticChecksAreFieldTagged` (in `internal/cmd`) assert on the DECODED
+      `map[string]any` of real `--json` stdout, per AGENTS item 14's reasoning: a
+      `strings.Contains(out, "field")` is satisfied by the word appearing inside a
+      MESSAGE and cannot see `"field": null` at all. Mutation results: a literal
+      `""` field kills guard A at its site; a runtime-computed `""` kills guard B
+      and the per-check cmd guard; a `Finding{…}` literal kills guard A's funnel
+      rule; reverting `fieldPath` to JSON Pointer kills all four notation guards;
+      deleting one corpus fixture kills guard B's ledger by name. Five mutants,
+      five kills, each with the intended guard's own message.
+    - **The `issues()` empty-field fallback in `app_validate.go` maps `""` →
+      `(root)`, and it is DEFENCE IN DEPTH, not a working path.** It upholds the
+      README's "never null" for a case the guards missed. 🔴 State the cost with
+      it, because it is what makes a per-SHAPE assertion insufficient: measured on
+      the runtime-empty mutant, `TestValidateJSONEveryFindingCarriesAField`
+      **passed** — the fallback supplied a non-null value — while
+      `TestValidateJSONSemanticChecksAreFieldTagged`, which asks for the SPECIFIC
+      field, failed on `(root)`. Assert the field a check must carry, never merely
+      that it carried one. The unrestricted claim over every check stays with
+      `TestEveryCheckEmitsAField`, which sees findings before the fallback.
+    - **The human-readable output is `Finding.Message` verbatim**, which is why
+      `Message` is the complete line rather than a reason fragment to compose with
+      `Field`: the semantic messages name their field inside prose
+      ("iframe.sandbox MUST NOT combine …") and composing would stutter. Sorting
+      is by Message first, Field second, so the text output's order is unchanged
+      from the string era. `validate.Messages()` is the projection the three text
+      consumers (`app validate`, `app submit`, `app init`'s self-check) use.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

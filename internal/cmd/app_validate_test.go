@@ -47,8 +47,14 @@ func TestAppValidateJSONOK(t *testing.T) {
 }
 
 // TestAppValidateJSONErrors asserts a bad manifest yields ok:false, a non-empty
-// errors list (each carrying a message, with a field on schema-path errors), AND
-// a non-zero exit so scripts still detect failure.
+// errors list (each carrying a message AND a field), and a non-zero exit so
+// scripts still detect failure.
+//
+// 🔴 This test's "at least one error carries a field" assertion was GREEN
+// throughout the entire life of issue #225, because the schema errors always had
+// one while every semantic finding was null. It is kept for the exit-code and
+// shape coverage; the per-finding and per-check claims live in
+// app_validate_json_field_test.go, which asserts on the decoded object.
 func TestAppValidateJSONErrors(t *testing.T) {
 	tmp := t.TempDir()
 	if err := os.WriteFile(filepath.Join(tmp, "block.manifest.json"), []byte(`{"blockId":"x"}`), 0o600); err != nil {
@@ -74,17 +80,11 @@ func TestAppValidateJSONErrors(t *testing.T) {
 			t.Errorf("every error must carry a message: %+v", e)
 		}
 	}
-	// Schema-path errors should surface a field (e.g. a missing required prop at
-	// the root, or a bad /version). At least one error should be field-tagged.
-	var anyField bool
+	// EVERY error carries a field now, not just the schema-path ones.
 	for _, e := range got.Errors {
-		if e.Field != "" {
-			anyField = true
-			break
+		if e.Field == "" {
+			t.Errorf("every error must carry a field (issue #225): %+v", e)
 		}
-	}
-	if !anyField {
-		t.Errorf("expected at least one schema-path error with a field: %+v", got.Errors)
 	}
 }
 

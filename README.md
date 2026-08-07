@@ -209,7 +209,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
 | `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the invite-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). `--spend` explicitly REQUESTS `ai:write:budgeted` (real Buzz); omit it and that scope is **filtered out** of the request — the CLI never asks for budgeted spend implicitly, even when your manifest declares it (the scaffolded money app does, so a live run that used to generate now needs `--spend`). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / dark)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your dev port (start `npm run dev:tunnel` first) to the Civitai tunnel endpoint, prints the URL to open, and tears everything down on Ctrl-C or an idle timeout. Before minting it also **pre-flights whether the host can actually embed your dev server** — the host iframes it sandboxed (opaque `null` origin), so a dev server missing `Access-Control-Allow-Origin: *`, missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that excludes `civitai.com` loads as a blank iframe with no error anywhere. Those are printed as warnings (never fatal) just above the URL, with the `vite.config.ts` fix. Apps scaffolded by `civitai app init --template page-money` already satisfy all of it. Gated behind an Apps-author invite **and** a kill-switch flag that is off today, and the tunnel endpoint is not exposed yet — so it reports "not available" until it ships. |
-| `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message`) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity). |
+| `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message` — **`field` is always present and never `null`**) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity) and [The `--json` result shape](#the---json-result-shape). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
@@ -756,6 +756,45 @@ The **durable fix** is a server-side `civitai app validate` endpoint that calls
 the real `BlockManifestValidator` (the faithful contract), with this schema
 published as the syntactic half. See [`AGENTS.md`](AGENTS.md) for the full
 caveat and how the vendored schema + Go checks are kept in sync.
+
+### The `--json` result shape
+
+```jsonc
+{
+  "ok": false,
+  "dir": "./my-block",
+  "errors":   [ { "field": "iframe.sandbox", "message": "…" } ],
+  "warnings": [ { "field": "page.buzzBudgetPerGen", "message": "…" } ]
+}
+```
+
+Two guarantees, both of which the previous release broke:
+
+- **`field` is present on every finding, and is never `null` or empty.** It used
+  to be recovered by parsing the message text, which worked only for the JSON
+  Schema errors — so every *semantic* finding (the sandbox rules, the
+  justification rules, the money-path warnings: the ones a local pre-check exists
+  for) arrived as `"field": null`, and grouping by field in CI silently dropped
+  them. Findings now carry their field from where they are produced.
+- **One notation: dotted paths.** `blockId`, `iframe.sandbox`, `scopes[1]`,
+  `targets[0].slotId`, `scopeJustifications.<scope>` — the same way the
+  human-readable messages, this README and the schema all name fields. Earlier
+  releases mixed JSON Pointer (`/blockId`, `/scopes/1`) into `--json` while the
+  text output used dotted; **if you were matching on `/`-prefixed fields, update
+  your scripts.**
+
+Two findings have no single manifest field, and say so explicitly rather than
+omitting the key:
+
+| `field` | meaning |
+| --- | --- |
+| `(root)` | the manifest **document** — it is missing, unparseable, or the schema reports a violation at the top level (e.g. `missing property 'contentRating'`). |
+| `(project)` | **repository state outside the manifest** — the committed lockfile, or the source tree the `BLOCK_READY` advisory reads. No manifest edit alone resolves these. |
+
+`ok` already accounts for `--strict`: it is `false` when there are hard errors,
+and also when `--strict` is passed and there are warnings. The process exit code
+matches, and the JSON still goes to **stdout** while the failure is reported on
+**stderr** — so `civitai app validate --json | jq` works on a failing project.
 
 ## Submit & auth
 

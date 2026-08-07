@@ -32,12 +32,18 @@ package validate
 const budgetedScope = "ai:write:budgeted"
 
 // warningChecks runs the advisory rules over the decoded manifest map.
-func warningChecks(generic any) []string {
+//
+// FIELD ASSIGNMENT: each of these three rules is a relationship between
+// `scopes` and something on `page`, and each names the side that is MISSING —
+// the edit that resolves it. That keeps the assignment mechanical (it reads off
+// the sentence) rather than a judgement call per rule, and it means the three
+// warnings land on three different fields instead of collapsing onto `scopes`.
+func warningChecks(generic any) []Finding {
 	m, ok := generic.(map[string]any)
 	if !ok {
 		return nil
 	}
-	var warns []string
+	var warns []Finding
 
 	page, hasPage := m["page"].(map[string]any)
 	scopes := stringSet(m["scopes"])
@@ -49,14 +55,14 @@ func warningChecks(generic any) []string {
 	//     before it runs. The headline footgun the dogfood found.
 	if hasBudgeted && hasPage {
 		if _, hasBudget := page["buzzBudgetPerGen"]; !hasBudget {
-			warns = append(warns,
+			warns = append(warns, newFinding(childField("page", "buzzBudgetPerGen"),
 				"scopes include \"ai:write:budgeted\" but page.buzzBudgetPerGen is not set — "+
 					"tokens fall back to a 10 Buzz budget, below almost any real generation, so "+
 					"every submit is rejected with insufficient budget before it runs. Set "+
 					"page.buzzBudgetPerGen: it is a SAFETY CEILING on what one generation may "+
 					"cost, not a cost estimate — size it several times your worst-case run "+
 					"(headroom is free; you are charged the real price, and the server clamps "+
-					"the budget at the per-gen cap)")
+					"the budget at the per-gen cap)"))
 		}
 	}
 
@@ -65,10 +71,10 @@ func warningChecks(generic any) []string {
 	//     meant to be a page (declare a `page` field). Not a hard error (the
 	//     server gates the spend), but worth surfacing.
 	if hasBudgeted && !hasPage {
-		warns = append(warns,
+		warns = append(warns, newFinding("page",
 			"scopes include \"ai:write:budgeted\" but no \"page\" block is declared — "+
 				"budgeted Buzz spend is a full-page (W10) affordance; declare a \"page\" field, "+
-				"or drop the scope if this isn't a money-path page app")
+				"or drop the scope if this isn't a money-path page app"))
 	}
 
 	// (3) A page app that declares neither model targets nor a money scope and no
@@ -76,9 +82,9 @@ func warningChecks(generic any) []string {
 	//     a generation budget but no budgeted scope can never spend.
 	if hasPage && !hasBudgeted {
 		if _, hasBudget := page["buzzBudgetPerGen"]; hasBudget {
-			warns = append(warns,
+			warns = append(warns, newFinding("scopes",
 				"page.buzzBudgetPerGen is set but scopes do not include \"ai:write:budgeted\" — "+
-					"the budget is inert; add the scope to enable budgeted generation, or remove the budget")
+					"the budget is inert; add the scope to enable budgeted generation, or remove the budget"))
 		}
 	}
 

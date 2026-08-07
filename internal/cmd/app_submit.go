@@ -75,7 +75,7 @@ Defaults to the current directory.`,
 					errw := cmd.ErrOrStderr()
 					fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("validation failed (%d error(s)) — fix before submitting, or pass --skip-validate:", len(res.Errors))))
 					for _, e := range res.Errors {
-						fmt.Fprintf(errw, "  - %s\n", e)
+						fmt.Fprintf(errw, "  - %s\n", e.Message)
 					}
 					// Warnings are useful context on a failure too, and this is
 					// the last moment before the app would have gone to review.
