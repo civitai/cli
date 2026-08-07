@@ -70,6 +70,21 @@ func TestExitCode(t *testing.T) {
 		{"wrapped dial refused", fmt.Errorf("dial: %w", syscall.ECONNREFUSED), exitNetwork, ""},
 		{"deadline exceeded", fmt.Errorf("request: %w", context.DeadlineExceeded), exitNetwork, ""},
 
+		// 🔴 The generate sentinels must land on GENERIC 1 — deliberately NOT 3
+		// (auth) or 2 (usage), because a caller who is out of Buzz, muted, or was
+		// given a different model must never be told to re-run `civitai login`.
+		// generate.go asserts this in a comment; nothing tested it until an audit
+		// found ErrModelSubstituted's exit code unpinned.
+		{"insufficient buzz sentinel", cmd.ErrInsufficientBuzz, exitGeneric, ""},
+		{"generation disabled sentinel", cmd.ErrGenerationDisabled, exitGeneric, ""},
+		{"account restricted sentinel", cmd.ErrAccountRestricted, exitGeneric, ""},
+		{"prompt blocked sentinel", cmd.ErrPromptBlocked, exitGeneric, ""},
+		{"model substituted sentinel", cmd.ErrModelSubstituted, exitGeneric, ""},
+		{"tagged model substitution keeps its message", civitai.Tag(cmd.ErrModelSubstituted,
+			errors.New("refusing to submit: the server reports it would run version 2 instead of the version 1 you asked for")),
+			exitGeneric,
+			"refusing to submit: the server reports it would run version 2 instead of the version 1 you asked for"},
+
 		{"generic fallback", errors.New("something unexpected"), exitGeneric, ""},
 		{"wrapped generic", fmt.Errorf("outer: %w", errors.New("inner")), exitGeneric, ""},
 	}
@@ -95,6 +110,39 @@ func TestExitCodesAreDistinct(t *testing.T) {
 	}
 	if len(codes) != 7 {
 		t.Fatalf("expected 7 distinct exit codes, got %d", len(codes))
+	}
+}
+
+// TestExitCodeConstantsMatchDocs is the seam guard between the codes this
+// binary can RETURN and the codes the CLI PUBLISHES (root `--help` + the
+// README table, both rendered from cmd.ExitCodeDocs()). Neither side can move
+// alone: the assertion is set EQUALITY, so it fails when a constant is added
+// without documentation and when a documented code has no constant.
+//
+// It replaces the per-constant comments that used to restate the contract here
+// and drifted from it — a comment cannot be asserted, a set can.
+func TestExitCodeConstantsMatchDocs(t *testing.T) {
+	constants := map[int]string{
+		exitOK: "exitOK", exitGeneric: "exitGeneric", exitUsage: "exitUsage",
+		exitAuth: "exitAuth", exitNotFound: "exitNotFound",
+		exitNetwork: "exitNetwork", exitRateLimited: "exitRateLimited",
+	}
+	docs := cmd.ExitCodeDocs()
+	if len(docs) == 0 {
+		t.Fatal("cmd.ExitCodeDocs() is empty — the guard would compare against nothing")
+	}
+
+	documented := make(map[int]bool, len(docs))
+	for _, d := range docs {
+		documented[d.Code] = true
+		if _, ok := constants[d.Code]; !ok {
+			t.Errorf("exit code %d is documented in internal/cmd/exitcodes_doc.go but this binary has no constant for it", d.Code)
+		}
+	}
+	for code, name := range constants {
+		if !documented[code] {
+			t.Errorf("%s = %d is returned by this binary but documented nowhere — add it to exitCodeDocs (internal/cmd/exitcodes_doc.go)", name, code)
+		}
 	}
 }
 

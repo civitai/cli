@@ -103,13 +103,17 @@ init and copy the upstream files in manually`)
 		}
 	}
 
+	// A bad --template VALUE is a usage error (exit 2), exactly like a bad flag
+	// NAME. scaffold cannot tag it itself — ErrUsage lives here, and internal/cmd
+	// already imports internal/scaffold — so the tag is attached at the call site.
+	// asUsageError preserves the message byte-for-byte.
 	tmpl, err := scaffold.ParseTemplate(templateFlag)
 	if err != nil {
-		return err
+		return asUsageError(err)
 	}
 
 	if name == "" {
-		return fmt.Errorf("provide a project name: %s <name>", cmd.CommandPath())
+		return asUsageError(fmt.Errorf("provide a project name: %s <name>", cmd.CommandPath()))
 	}
 
 	// Positional [dir] (args[1]) and --dir both set the output directory;
@@ -119,7 +123,7 @@ init and copy the upstream files in manually`)
 		posDir = args[1]
 	}
 	if posDir != "" && dirFlag != "" && posDir != dirFlag {
-		return fmt.Errorf("conflicting output directory: positional %q and --dir %q", posDir, dirFlag)
+		return asUsageError(fmt.Errorf("conflicting output directory: positional %q and --dir %q", posDir, dirFlag))
 	}
 	targetDir := dirFlag
 	if targetDir == "" {
@@ -133,9 +137,10 @@ init and copy the upstream files in manually`)
 		slug = name
 		display = scaffold.TitleFromSlug(name)
 	} else {
+		// An unusable <name> argument is a bad VALUE, same class as --template.
 		slug, err = scaffold.Slugify(name)
 		if err != nil {
-			return err
+			return asUsageError(err)
 		}
 		display = name
 	}

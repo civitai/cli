@@ -52,8 +52,10 @@ const (
 	devTunnelEndpointEnv = "CIVITAI_DEV_TUNNEL_ENDPOINT"
 	// defaultReadyTimeout bounds the post-dial readiness wait. The PUBLIC host
 	// `dev-<16hex>.civit.ai` isn't reachable the instant the reverse tunnel binds —
-	// external-dns + Cloudflare propagation + Traefik router build take up to
-	// ~1–2 min. The DEFAULT is 0 = wait INDEFINITELY (until ready, Ctrl-C, or the
+	// external-dns + Cloudflare propagation + Traefik router build usually take
+	// 1–3 min and sometimes longer (measured over three runs: >60 s, ~2:30–3:00,
+	// and one still unresolved at 3:00 — see dnsPublishNote). The DEFAULT is 0 =
+	// wait INDEFINITELY (until ready, Ctrl-C, or the
 	// tunnel drops) — the host reliably comes up, and aborting mid-propagation only
 	// hands the dev a URL that NXDOMAINs/404s. A POSITIVE --ready-timeout re-imposes
 	// a cap (warn + print the URL anyway on expiry, non-fatal); --no-wait skips the
@@ -321,11 +323,14 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 					blockID = strings.TrimSpace(m.BlockID)
 				}
 			}
+			// A missing required argument and an out-of-range flag VALUE are both
+			// usage errors (exit 2) — the same class Cobra's FlagErrorFunc
+			// already tags for a bad flag NAME. asUsageError adds no text.
 			if blockID == "" {
-				return fmt.Errorf("a blockId is required — pass it (`civitai app dev-tunnel my-block`), or run from an App directory containing %s (list your submitted apps with `civitai app status`)", manifest.Filename)
+				return asUsageError(fmt.Errorf("a blockId is required — pass it (`civitai app dev-tunnel my-block`), or run from an App directory containing %s (list your submitted apps with `civitai app status`)", manifest.Filename))
 			}
 			if port < 1 || port > 65535 {
-				return fmt.Errorf("invalid --port %d (must be 1-65535)", port)
+				return asUsageError(fmt.Errorf("invalid --port %d (must be 1-65535)", port))
 			}
 			// Resolve the local host: empty falls back to the loopback default so a
 			// `--local-host ""` can't accidentally break dialing.
@@ -334,10 +339,10 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 				lh = defaultLocalHost
 			}
 			if idle <= 0 {
-				return fmt.Errorf("--idle-timeout must be positive (got %s)", idle)
+				return asUsageError(fmt.Errorf("--idle-timeout must be positive (got %s)", idle))
 			}
 			if readyTimeout < 0 {
-				return fmt.Errorf("--ready-timeout must be >= 0 (0 = wait indefinitely until ready or Ctrl-C; got %s)", readyTimeout)
+				return asUsageError(fmt.Errorf("--ready-timeout must be >= 0 (0 = wait indefinitely until ready or Ctrl-C; got %s)", readyTimeout))
 			}
 
 			// Endpoint: flag > env > documented placeholder default.
@@ -413,7 +418,7 @@ enrolled the mint reports "not available" — ask to be added to the cohort.`,
 	cmd.Flags().StringVar(&endpoint, "tunnel-endpoint", "", "sish SSH endpoint host:port (default "+defaultDevTunnelEndpoint+", or $"+devTunnelEndpointEnv+")")
 	cmd.Flags().DurationVar(&idle, "idle-timeout", defaultDevTunnelIdle, "tear the tunnel down after this much inactivity")
 	cmd.Flags().DurationVar(&readyTimeout, "ready-timeout", defaultReadyTimeout, "cap the wait for the public host to start serving (0 = wait indefinitely until ready or Ctrl-C; a positive value warns + prints the URL anyway on expiry)")
-	cmd.Flags().BoolVar(&noWait, "no-wait", false, "skip the readiness wait and print the URL immediately (it may 404/NXDOMAIN for ~1–2 min while DNS/route propagate)")
+	cmd.Flags().BoolVar(&noWait, "no-wait", false, "skip the readiness wait and print the URL immediately (it may 404/NXDOMAIN for a few minutes while DNS/route propagate)")
 	return cmd
 }
 
@@ -434,17 +439,37 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 
 	// Embeddability checks run HERE — after probeLocal has established the server
 	// is up (so a transport error means "can't observe", not "not running"), and
-	// before the mint, so they cost nothing on the failure path. The findings are
-	// deliberately NOT printed yet: they are rendered immediately before the
-	// "open this URL" block below, because that is the moment the dev acts on
-	// them. Printed here they would scroll away behind the readiness wait — the
-	// silent-failure this whole check exists to end.
+	// before the mint, so they cost nothing on the failure path.
 	var embedFindings []devtunnel.Finding
 	if d.probeEmbeddable != nil {
 		embedFindings = append(embedFindings, d.probeEmbeddable(d.localHost, d.port)...)
 	}
 	if d.checkParentOrigins != nil {
 		embedFindings = append(embedFindings, d.checkParentOrigins(".")...)
+	}
+
+	// The findings are printed TWICE — here, and again immediately before the
+	// "open this URL" block below — and BOTH prints are load-bearing (#226).
+	// There are two opposite failure modes and no single placement escapes both:
+	//   - Print ONLY late and an author who Ctrl-Cs the apparently-hung readiness
+	//     wait never sees them at all. Measured against the live endpoint over
+	//     three runs: >60 s (killed), >3:00 (never resolved), ~2:30–3:00. A 45 s
+	//     run produced ZERO preflight output — the silent failure this whole
+	//     check exists to end, reproduced by the placement meant to fix it.
+	//   - Print ONLY early and on a slow tunnel they scroll away behind minutes
+	//     of heartbeat lines, so the last thing on screen before the URL is no
+	//     longer the reason the URL won't work.
+	// So: both. The duplicate is the accepted cost, and it was chosen over a
+	// "only re-print if the wait was slow" threshold precisely because it carries
+	// NO timing dependency — nothing to tune, no clock to mock, and both
+	// placements are deterministically testable.
+	//
+	// --no-wait is the one exception and it drops the EARLY print, not the late
+	// one: there is no readiness wait to scroll behind, so a second copy would
+	// only duplicate an eight-line vite.config block a few seconds apart, and the
+	// late placement (directly above the URL) is the better of the two.
+	if !d.noWait {
+		printEmbedWarnings(d.out, embedFindings)
 	}
 
 	// Immediate feedback: the mint round-trip + SSH dial below take a few seconds
@@ -526,11 +551,14 @@ func runTunnelSession(ctx context.Context, d tunnelSessionDeps) error {
 	}
 
 	// The reverse tunnel is bound, but the PUBLIC host is not reachable yet —
-	// external-dns + Cloudflare + Traefik router readiness lag the bind by up to
-	// ~1–2 min. Wait for the server path to actually serve before telling the dev to
+	// external-dns + Cloudflare + Traefik router readiness lag the bind by a few
+	// minutes (see dnsPublishNote for the measurement). Wait for the server path
+	// to actually serve before telling the dev to
 	// open it, so they don't hit NXDOMAIN/404/502 on a too-early click. --no-wait
 	// skips this and prints the URL immediately (old behavior).
 	if d.noWait {
+		// The ONLY print on this path — the early one above is skipped under
+		// --no-wait. See the comment at the compute site.
 		printEmbedWarnings(d.out, embedFindings)
 		printTunnelReady(d.out, sess, d.localHost, d.port)
 	} else {
@@ -651,10 +679,16 @@ func probeEmbeddableDevServer(host string, port int) []devtunnel.Finding {
 // slow answer means something is wrong, not far away.
 const embedProbeTimeout = 2 * time.Second
 
-// printEmbedWarnings renders embeddability findings immediately before the
-// "open this URL" block. Placement is the point: `dev-tunnel` reporting "Ready"
-// while the app never appears is the exact failure this ends, so the LAST thing
-// on screen before the URL must be the reason it won't work.
+// printEmbedWarnings renders embeddability findings. Placement is the point, and
+// runTunnelSession calls this at BOTH of the two placements that matter (see the
+// comment there): once the instant the checks have run, so an author who Ctrl-Cs
+// the readiness wait still gets the diagnostic, and once immediately before the
+// "open this URL" block, so the LAST thing on screen before the URL is the reason
+// it won't work. `dev-tunnel` reporting "Ready" while the app never appears is
+// the exact failure this ends.
+//
+// No findings must render NOTHING — a clean dev server adds no noise on either
+// call (item 10: a check that cannot observe manufactures no advice).
 func printEmbedWarnings(out io.Writer, findings []devtunnel.Finding) {
 	for _, f := range findings {
 		fmt.Fprintf(out, "\n%s\n", ui.Warn(f.Summary))
@@ -774,6 +808,21 @@ func writerIsTTY(w io.Writer) bool {
 	}
 	return false
 }
+
+// dnsPublishNote is the parenthetical shown while the tunnel host's DNS record is
+// not published yet. It is a single CONSTANT because the quiet (non-TTY)
+// heartbeat and the bubbletea (TTY) spinner both render this state and used to
+// carry two hand-copied copies of the string — which is how the same wrong
+// estimate ended up in both.
+//
+// It used to say "usually <1 min". That was measured wrong: over three runs
+// against the live endpoint (#226) the waits were >60 s (killed), >3:00 (never
+// resolved) and ~2:30–3:00 — 0/3 under a minute. An estimate the wait routinely
+// blows past is what makes a working command read as a hang, which is what got
+// the run killed before the preflight findings were ever printed. Three runs do
+// not support a percentile, so this states a range and says plainly that longer
+// is normal rather than inventing a number.
+const dnsPublishNote = "external-dns + Cloudflare — usually 1–3 min, occasionally longer; that's normal"
 
 // fmtMMSS renders an elapsed duration as M:SS (e.g. 2:07).
 func fmtMMSS(d time.Duration) string {
@@ -980,7 +1029,7 @@ func waitTunnelQuiet(ctx context.Context, d tunnelSessionDeps, tunnel devtunnel.
 			case localHopDown:
 				fmt.Fprintf(d.errw, "  … tunnel up; still waiting for your local dev server on %s (%s)\n", localTarget, fmtMMSS(time.Since(start)))
 			case showDNSPending():
-				fmt.Fprintf(d.errw, "  … waiting for DNS to publish for %s (external-dns + Cloudflare, usually <1 min) (%s)\n", host, fmtMMSS(time.Since(start)))
+				fmt.Fprintf(d.errw, "  … waiting for DNS to publish for %s (%s) (%s)\n", host, dnsPublishNote, fmtMMSS(time.Since(start)))
 			default:
 				fmt.Fprintf(d.errw, "  … still waiting for %s (%s)\n", host, fmtMMSS(time.Since(start)))
 			}
@@ -1158,7 +1207,7 @@ func (m *tunnelWaitModel) View() string {
 	case m.localHopDown:
 		return fmt.Sprintf("%s Tunnel up — waiting for your local dev server on %s… %s elapsed", m.sp.View(), m.localTarget, elapsed)
 	case m.dnsPending && time.Since(m.start) >= m.dnsGrace:
-		return fmt.Sprintf("%s Waiting for DNS to publish for %s (external-dns + Cloudflare, usually <1 min)… %s elapsed", m.sp.View(), m.host, elapsed)
+		return fmt.Sprintf("%s Waiting for DNS to publish for %s (%s)… %s elapsed", m.sp.View(), m.host, dnsPublishNote, elapsed)
 	default:
 		return fmt.Sprintf("%s Waiting for %s… %s elapsed", m.sp.View(), m.host, elapsed)
 	}

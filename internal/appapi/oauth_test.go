@@ -3,6 +3,7 @@ package appapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -11,6 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // writeDiscovery writes an OpenID discovery document whose issuer + endpoints
@@ -444,6 +447,115 @@ func TestRefreshTerminalError(t *testing.T) {
 	base = srv.URL
 	if _, err := NewOAuthClient(srv.URL).Refresh(context.Background(), "rt"); err == nil {
 		t.Fatal("expected error for invalid_grant")
+	}
+}
+
+// TestOAuthStatusFallbacksAreClassified pins the exit-code contract on the
+// non-OAuth-shaped error bodies (issue #224).
+//
+// Refresh and StartDevice each have TWO failure branches: a typed one taken when
+// the body carries an `error` field (*DeviceFlowError / *InvalidScopeError, both
+// exit 3), and a plain fmt.Errorf fallback for every other body. Untagged, the
+// SAME dead-credential failure exited 3 or 1 purely on the shape of the server's
+// error body — and Refresh runs on every authenticated command, so the whole CLI
+// inherited that coin flip. The fallbacks are now classified from the HTTP
+// status; the assertion is errors.Is, never the message (AGENTS.md item 7).
+func TestOAuthStatusFallbacksAreClassified(t *testing.T) {
+	// A body with no `error` key forces the fallback branch on both procedures.
+	const opaqueBody = `{"message":"nope"}`
+
+	cases := []struct {
+		name   string
+		status int
+		want   error
+		// call exercises one procedure against the server; it must return the
+		// fallback error.
+		call func(*OAuthClient) error
+	}{
+		{"refresh 401", http.StatusUnauthorized, civitai.ErrUnauthorized, func(c *OAuthClient) error {
+			_, err := c.Refresh(context.Background(), "rt")
+			return err
+		}},
+		{"refresh 403", http.StatusForbidden, civitai.ErrUnauthorized, func(c *OAuthClient) error {
+			_, err := c.Refresh(context.Background(), "rt")
+			return err
+		}},
+		{"refresh 503", http.StatusServiceUnavailable, civitai.ErrNetwork, func(c *OAuthClient) error {
+			_, err := c.Refresh(context.Background(), "rt")
+			return err
+		}},
+		{"device init 401", http.StatusUnauthorized, civitai.ErrUnauthorized, func(c *OAuthClient) error {
+			_, err := c.StartDevice(context.Background())
+			return err
+		}},
+		{"device init 429", http.StatusTooManyRequests, civitai.ErrRateLimited, func(c *OAuthClient) error {
+			_, err := c.StartDevice(context.Background())
+			return err
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var base string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/.well-known/openid-configuration" {
+					writeDiscovery(w, base)
+					return
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(opaqueBody))
+			}))
+			defer srv.Close()
+			base = srv.URL
+
+			err := tc.call(NewOAuthClient(srv.URL))
+			if err == nil {
+				t.Fatalf("expected an error for status %d", tc.status)
+			}
+			// A typed branch would ALSO be non-nil, so prove we are on the
+			// untyped fallback — otherwise this test could pass while saying
+			// nothing about the line it exists to guard.
+			var dfe *DeviceFlowError
+			var ise *InvalidScopeError
+			if errors.As(err, &dfe) || errors.As(err, &ise) {
+				t.Fatalf("expected the untyped status fallback, got typed %T: %v", err, err)
+			}
+			if !errors.Is(err, tc.want) {
+				t.Errorf("status %d must classify as %v, got %T: %v", tc.status, tc.want, err, err)
+			}
+			// TagStatus adds no visible text.
+			if !strings.Contains(err.Error(), opaqueBody) {
+				t.Errorf("classification must not change the message, got %q", err.Error())
+			}
+		})
+	}
+}
+
+// TestOAuthStatusFallbackLeavesUnknownStatusUnclassified is the negative half:
+// TagStatus deliberately classifies only the statuses with a documented kind, so
+// a status outside that set must stay generic (exit 1) rather than being
+// force-fit into one. Without this, a green run above could not distinguish
+// "classified correctly" from "classified everything".
+func TestOAuthStatusFallbackLeavesUnknownStatusUnclassified(t *testing.T) {
+	var base string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/.well-known/openid-configuration" {
+			writeDiscovery(w, base)
+			return
+		}
+		w.WriteHeader(http.StatusTeapot)
+		_, _ = w.Write([]byte(`{"message":"nope"}`))
+	}))
+	defer srv.Close()
+	base = srv.URL
+
+	_, err := NewOAuthClient(srv.URL).Refresh(context.Background(), "rt")
+	if err == nil {
+		t.Fatal("expected an error for status 418")
+	}
+	for _, k := range []error{civitai.ErrUnauthorized, civitai.ErrNotFound, civitai.ErrBadRequest, civitai.ErrRateLimited, civitai.ErrNetwork} {
+		if errors.Is(err, k) {
+			t.Errorf("a 418 must stay unclassified, but matched %v", k)
+		}
 	}
 }
 

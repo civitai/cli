@@ -215,14 +215,14 @@ README. For the end-to-end walkthrough, see
 | `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
 | `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the invite-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). `--spend` explicitly REQUESTS `ai:write:budgeted` (real Buzz); omit it and that scope is **filtered out** of the request — the CLI never asks for budgeted spend implicitly, even when your manifest declares it (the scaffolded money app does, so a live run that used to generate now needs `--spend`). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
-| `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / dark)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your dev port (start `npm run dev:tunnel` first) to the Civitai tunnel endpoint, prints the URL to open, and tears everything down on Ctrl-C or an idle timeout. Before minting it also **pre-flights whether the host can actually embed your dev server** — the host iframes it sandboxed (opaque `null` origin), so a dev server missing `Access-Control-Allow-Origin: *`, missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that excludes `civitai.com` loads as a blank iframe with no error anywhere. Those are printed as warnings (never fatal) just above the URL, with the `vite.config.ts` fix. Apps scaffolded by `civitai app init --template page-money` already satisfy all of it. The tunnel endpoint (`sish.civitai.com:2224`) is **live**; access is gated behind an Apps-author invite **and** a server kill-switch flag, so if you are not enrolled the mint reports **"not available"** — ask to be added to the cohort. |
+| `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your dev port (start `npm run dev:tunnel` first) to the Civitai tunnel endpoint, prints the URL to open, and tears everything down on Ctrl-C or an idle timeout. Before minting it also **pre-flights whether the host can actually embed your dev server** — the host iframes it sandboxed (opaque `null` origin), so a dev server missing `Access-Control-Allow-Origin: *`, missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that excludes `civitai.com` loads as a blank iframe with no error anywhere. Those are printed as warnings (never fatal) **twice** — once the moment the checks run, so you still get them if you Ctrl-C the DNS wait, and again just above the URL, with the `vite.config.ts` fix. Apps scaffolded by `civitai app init --template page-money` already satisfy all of it. The tunnel endpoint (`sish.civitai.com:2224`) is **live**; access is gated behind an Apps-author invite **and** a server kill-switch flag, so if you are not enrolled the mint reports **"not available"** — ask to be added to the cohort. Publishing the tunnel host through external-dns + Cloudflare usually takes 1–3 min (occasionally longer); the command waits for it and prints the elapsed time. |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message`) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `civitai app submit` mints your listing as a **draft**, so you can set the media *while the app is in review* and it carries forward on approval. `listing status` prints what is attached vs. what the publish floor still requires. Source images are validated locally (png/jpeg/webp; icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB) before upload, then wait for the content scan. On an **already-live** listing an attach opens a **revision** for moderator re-review (`--changelog`, `-y`). App resolved from `block.manifest.json` in the CWD, or `--slug`. See [After you submit](#after-you-submit-review--approve--deploy). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
-| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results into `--out-dir` as `<workflow-id>-<n>.<ext>`. `--no-wait` prints the workflow id and exits; `--timeout` bounds the **wait** (never the job and never the charge); `--no-download` waits but prints URLs instead of writing files. `--dry-run` estimates and exits without submitting (`--dry-run --json` emits the raw estimate). `--print-input` prints the assembled graph and exits **without reaching any money seam** (no submit, no estimate, no balance read) — note that with `--image` it still **uploads** local files first, because the printed graph has to reference real blob URLs for `--input` to be able to submit it; uploading spends nothing; `--input <file>` (or `-` for stdin) sends a raw graph as-is — txt2img only, and mutually exclusive with the content flags. `--image <path-or-url>` (repeatable) attaches a reference image for **image-to-image** — a local png/jpeg is uploaded, an https URL is passed through — and **requires `--ecosystem`**, because without one the server ignores the images, generates from the prompt alone and charges anyway. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. `--max-cost` is an **estimate check, not a spending cap**. See [Generate](#generate). |
+| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results into `--out-dir` as `<workflow-id>-<n>.<ext>`. `--no-wait` prints the workflow id and exits; `--timeout` bounds the **wait** (never the job and never the charge); `--no-download` waits but prints URLs instead of writing files. `--dry-run` estimates and exits without submitting (`--dry-run --json` emits the raw estimate). `--print-input` prints the assembled graph and exits **without reaching any money seam** (no submit, no estimate, no balance read) — note that with `--image` it still **uploads** local files first, because the printed graph has to reference real blob URLs for `--input` to be able to submit it; uploading spends nothing; `--input <file>` (or `-` for stdin) sends a raw graph as-is — txt2img only, and mutually exclusive with the content flags. `--image <path-or-url>` (repeatable) attaches a reference image for **image-to-image** — a local png/jpeg is uploaded, an https URL is passed through — and **requires `--ecosystem`**, because without one the server ignores the images, generates from the prompt alone and charges anyway. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. `--max-cost` is an **estimate check, not a spending cap**. If the server **substitutes a different checkpoint** for the one you asked for it says so — on the estimate, after the submit, and in `--json` — and `--fail-on-substitution` refuses the run instead — though only when the server *reports* one, so it is **not** a spend guard against an older deployment (see [Silent model substitution](#-silent-model-substitution)). See [Generate](#generate). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
 | `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **This does not refund anything** — a mid-run cancel bills the accrued cost, non-refundably. Cancel because you no longer want the output, never to save money. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
@@ -950,6 +950,25 @@ the cap.
 Notes like the cap caveat go to stderr, so `--json` stdout stays pure and the
 exit code stays 0.
 
+### Deployed is not the same as listed in the store
+
+`civitai app status` and `civitai app view` read **different resources**, and an
+app can legitimately be in one and not the other:
+
+- `civitai app status <slug>` reads your **submission pipeline**
+  (`GET /api/v1/blocks/submissions`) — review status, deploy state, live URL.
+- `civitai app view <slug>` reads the **public store catalog**
+  (`GET /api/v1/apps/{slug}`) — the published store listing.
+
+So `app status` can show `approved / live` with a working `<slug>.civit.ai` URL
+while `app view <slug>` returns **not found** (exit 4). That 404 is truthful and
+says nothing about your deploy: the store lists an app only once its **store
+listing** is published (a listing needs an icon and a cover — see
+`civitai app listing status`), and the catalog itself is still gated by a launch
+flag while the store is pre-GA. When the 404 lands on a slug **you own**, the CLI
+detects that and says so, naming both next commands, instead of leaving you with
+a bare "App not found".
+
 ## App metrics
 
 `civitai app metrics <slug>` shows the owner-only analytics for one of **your**
@@ -1129,6 +1148,74 @@ before submitting. It catches a `--quantity` typo. That is all it can do. Do not
 run an unattended loop believing it caps spend. (The per-API-key `buzzLimit` on
 your account does not bind this path either — the generator meters a separate
 server-minted subject, not your key.)
+
+### 🔴 Silent model substitution
+
+If you pass a `--checkpoint` version id that is not valid for the model family
+being generated, the server does **not** reject it. It substitutes that family's
+default checkpoint, runs the job, and bills you for **what actually ran**. Until
+recently the reply was indistinguishable from success — a nonexistent version id
+came back `200 OK` at the default price.
+
+The server now reports each swap, and `civitai generate` surfaces it:
+
+```console
+$ civitai generate "a cat" --checkpoint 999999999 --dry-run
+⚠ The server will NOT use the checkpoint you asked for. It has substituted a
+  different model, and this estimate prices the SUBSTITUTE. Nothing has
+  been submitted or charged yet.
+    requested version 999999999 -> will run version 2436219  (reason: unrecognized)
+      the server does not offer that version in this model family at all …
+```
+
+The checkpoint line in the summary you approve is annotated too, so the model
+that will *not* run is never the last one you read before saying yes:
+
+```console
+Checkpoint:   DreamShaper — 8 (Checkpoint, id 128713)  [SUPERSEDED — the server will run version 2436219 instead; see the warning above]
+```
+
+Your own id stays on the line: the CLI marks it, it never quietly substitutes
+the applied one.
+
+It is reported **on the estimate** (`--dry-run`, and before the confirmation
+prompt on a real run — while you can still back out), **again after the submit**
+(where it is the receipt for what was billed), and **on a later read** with
+`civitai workflows get <id>`, which is the only place a `--no-wait` run can still
+discover it. The report always goes to **stderr**, so `--json` stdout stays
+machine-clean — and `--json` carries the raw `modelSubstitutions` array itself.
+
+There are three `reason` values, and they want different fixes:
+
+| `reason` | What it means | What to do |
+| --- | --- | --- |
+| `wrong-workflow` | The version is real for this family but scoped to a **different** workflow (e.g. an edit-only version sent to text-to-image). | Pick a version offered for the workflow you are running, or change `--ecosystem` to match. |
+| `unrecognized` | The version is in no list for this family — a community checkpoint, or one **retired** since your script was written. | Check it with `civitai model-versions get <id>` and pin one that is still offered. |
+| `gated` | The version **is** offered here, but a gate rule hides it from your account. | An entitlement issue, not a command mistake: may need a membership, an early-access window, or an accepted licence. |
+
+**By default this is a warning and the run continues** — the substitution is a
+deliberate graceful degradation, so a script pinned to a version that was later
+retired keeps working rather than breaking on a CLI upgrade. Pass
+**`--fail-on-substitution`** to refuse instead; it is checked against the
+**estimate**, so nothing is submitted and nothing is charged when it refuses.
+
+🔴 **Silence is not an assurance.** The field is omitted when nothing was
+substituted, so "no warning" means *either* "no substitution" *or* "a server
+older than this feature" — the CLI cannot tell those apart and deliberately
+never claims the negative.
+
+🔴 **`--fail-on-substitution` is therefore NOT a spend guard.** It can only
+refuse what the server *reports*. Against a deployment that does not report
+substitutions the flag is **silently inert** — exit `0`, submitted, charged —
+and there is no signal distinguishing that from "nothing was substituted". Two
+further limits worth knowing before you build a pipeline on it:
+
+- It is evaluated on the **estimate**. A substitution appearing only on the
+  submit reply is **reported** (and is in `--json`) but exits `0`, because the
+  money is already gone and failing there would strand a result you paid for and
+  still need to collect.
+- It refuses on the *first* reported substitution; the message names that one and
+  counts the rest.
 
 ### Confirmation
 
@@ -1386,6 +1473,7 @@ write a retry loop that branches on the exit code alone; re-attach with
 | Prompt refused by content moderation — 🔴 **never retry**, repeated blocked prompts get the account muted | `1` |
 | The server priced the job but reports `ready: false` (a selected resource is not currently generatable) | `2` |
 | Estimate above `--max-cost`, an unknown ecosystem, or a resource that resolved fine but is "not enabled for generation" (the ids exist; the *combination* is not runnable — distinct from exit `4`, which means "no such id") | `2` |
+| `--fail-on-substitution` and the **estimate** reported a substituted checkpoint — nothing submitted (see [Silent model substitution](#-silent-model-substitution)). 🔴 A substitution that appears **only on the submit reply** is reported but exits **`0`**: by then the charge has happened, and failing would strand a result you paid for. And against a server that does not report substitutions at all the flag is **inert** — exit `0`, submitted, charged | `1` |
 | `--input` that is malformed, declares a non-txt2img workflow, carries an envelope key (`civitaiTip`, …), or is combined with a content flag | `2` |
 | No such `--checkpoint` / `--lora` version id | `4` |
 | `civitai workflows get` / `workflows cancel` on an unknown workflow id (a read; spends nothing) | `4` |
@@ -1416,9 +1504,9 @@ by this — only `echo $?` differs.
 | --- | --- |
 | `0` | Success. |
 | `1` | Generic / unclassified error. |
-| `2` | Usage error — a bad flag, a bad flag value (e.g. `--limit` out of range, a non-integer id), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum). |
+| `2` | Usage error — a bad flag, a **missing required flag or argument** (e.g. `civitai app withdraw` with no publish-request id), a bad flag **value** (`--limit` out of range, a non-integer id, `--template nope`), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum). This does not depend on where the refusal happens: a mistake the CLI catches locally and one the server rejects both exit `2`. A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is missing, empty, a directory, over the size cap, or not a PNG/JPEG/WebP — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and does **not** exit `2`. `app listing set-cover` and `app listing add-screenshot` take the same positional `<file>` and refuse it the same way. (The CLI has no `--file` image flag at all: the only `--file` is `civitai download --file`, which picks a file *inside* a model version.) |
 | `3` | Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured). **`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as "bad flags". See [Generate](#exit-codes-specific-to-generate). |
-| `4` | Not found — the requested resource does not exist (HTTP 404). |
+| `4` | Not found — the requested resource does not exist. Usually an HTTP 404, but not always: some lookups answer `200` with an empty result set instead (`civitai app status <slug>` for an unregistered slug, `civitai users get` for an unknown username), and those exit `4` too. The same question therefore exits the same way however the API happens to phrase the miss. |
 | `5` | Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries. |
 | `6` | Rate limited — throttled by the API (HTTP 429). |
 

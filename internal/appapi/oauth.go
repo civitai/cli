@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/civitai/cli/pkg/civitai"
 )
 
 // stderr is where low-noise security warnings go (e.g. a discovery doc that
@@ -594,7 +596,9 @@ func (c *OAuthClient) StartDevice(ctx context.Context) (*DeviceAuth, error) {
 		if oe.Error == "invalid_scope" {
 			return nil, &InvalidScopeError{Requested: scope, Description: oe.ErrorDescription}
 		}
-		return nil, fmt.Errorf("device init failed (status %d): %s", resp, oauthMsg(raw))
+		// As in Refresh: the typed branch above is exit 3, so classify the
+		// fallback from its status rather than letting it drop to generic.
+		return nil, civitai.TagStatus(resp, fmt.Errorf("device init failed (status %d): %s", resp, oauthMsg(raw)))
 	}
 	var d DeviceAuth
 	if err := json.Unmarshal(raw, &d); err != nil {
@@ -739,7 +743,12 @@ func (c *OAuthClient) Refresh(ctx context.Context, refreshToken string) (*TokenR
 		if oe.Error != "" {
 			return nil, &DeviceFlowError{Code: oe.Error, Description: oe.ErrorDescription}
 		}
-		return nil, fmt.Errorf("token refresh failed (status %d): %s", status, oauthMsg(raw))
+		// The branch above returns a *DeviceFlowError, which the entrypoint maps
+		// to exit 3 — but it is only reachable when the body carries an `error`
+		// field. Without TagStatus the SAME dead-refresh-token failure exits 3 or
+		// 1 depending on the shape of the server's error body. TagStatus adds no
+		// visible text and leaves statuses with no specific kind unclassified.
+		return nil, civitai.TagStatus(status, fmt.Errorf("token refresh failed (status %d): %s", status, oauthMsg(raw)))
 	}
 	var tr TokenResponse
 	if err := json.Unmarshal(raw, &tr); err != nil {

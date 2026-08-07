@@ -160,10 +160,11 @@ func newWhoAmICmd() *cobra.Command {
 
 Items 1–3, 10 and 11 are deliberate mirrors of the platform (items 4 and 8 are
 deliberate *non*-mirrors); items 5–9 cover `civitai app metrics`, the CLI's only
-analytics read path; items 12–17 and 19 cover `civitai generate`, the CLI's only
-path that **spends the user's money irreversibly** (19 is img2img); item 18
-covers the two checks that tell an author their EXISTING app is missing the
-item-11 handshake. The durable fix for the mirroring is a server-side
+analytics read path; items 12–17, 19, 21 and 22 cover `civitai generate`, the
+CLI's only path that **spends the user's money irreversibly** (19 is img2img, 21
+is model substitution, and 22 is the one gate on that path that guards CONTENT
+rather than money); item 18 covers the two checks that tell an author their
+EXISTING app is missing the item-11 handshake. The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
 
@@ -396,6 +397,34 @@ neither one's.
     vite.config.ts advice), and `net/http` DROPS a custom `Request.Host` across an
     absolute redirect, which silently turns the tunnel-Host probe into an ordinary
     loopback request unless it is re-applied.
+    🔴 **The findings are printed TWICE on purpose, and the duplicate is the
+    fix — not an oversight to collapse.** They were printed once, immediately
+    before the "open this URL" block, and that placement is right: the last
+    thing on screen before the URL should be the reason the URL won't work.
+    It is also insufficient, because the readiness wait sits in front of it.
+    Measured over three runs against the live endpoint (#226): >60 s (killed),
+    >3:00 (never resolved), ~2:30–3:00 — and the 45-second run produced **zero**
+    preflight output, because the author killed an apparently-hung command. So
+    the check with the best diagnostics in the product was invisible to the user
+    most likely to need it: the silent failure it exists to end, reproduced by
+    the placement meant to fix it. Moving the print EARLIER just swaps which
+    failure you get — on a slow tunnel it scrolls away behind minutes of
+    heartbeat lines. Hence both, and the duplicate is the accepted cost. It was
+    chosen over a "re-print only if the wait was slow" threshold specifically
+    because it carries **no timing dependency**: nothing to tune, no clock to
+    mock, and both placements are pinned by ordering assertions against the
+    injected `probePublic` seam rather than by wall-clock timing.
+    `--no-wait` is the ONE exception and it drops the EARLY print, not the late
+    one — there is no wait to scroll behind, so a second copy would only
+    duplicate an eight-line `vite.config.ts` block a few seconds apart.
+    Related, same issue: the DNS-pending heartbeat's estimate is now the single
+    constant `dnsPublishNote`, shared by the TTY spinner and the non-TTY
+    heartbeat because they held two hand-copied copies of it. It used to say
+    "usually <1 min", which **0 of 3** measured runs met. An estimate the wait
+    routinely blows past is what makes a working command read as a hang — which
+    is what got the run killed in the first place — so it states a range and
+    says longer is normal. Three runs do not support a percentile; do not
+    replace it with one you have not measured.
 
 11. **The scaffold VENDORS the block→host ready-ack (`internal/blockproto/`),
     and it is the FOURTH vendored mirror.** (Provenance: read against
@@ -886,7 +915,7 @@ neither one's.
 
     🔴 **And the CLI still cannot tell you whether the promotion actually
     fired.** The whatIf reply carries `{ready, cost, transactions,
-    allowMatureContent}` and no echo of the resolved workflow. The obvious
+    allowMatureContent}` — plus, since item 21, `modelSubstitutions` — and no
     detector — "did a `factors.images` key appear?" — is WRONG, and a
     differential estimate ("does the price change when I add the images?") is
     wrong the same way: measured, `Flux1Kontext`, `NanoBanana` and `Seedream`
@@ -1164,6 +1193,179 @@ neither one's.
       CONTROL — a pre-fix project with no emitter warns on BOTH binaries — so
       the silent cells are real false passes rather than a probe wired to
       nothing.
+
+21. **A reported model substitution is a WARNING by default, not a failure — and
+    that is a deliberate product decision, not laziness.** The server accepts a
+    checkpoint version id that is not valid for a `modelLocked` ecosystem,
+    substitutes the ecosystem default, runs the job and bills for what ran
+    (civitai/civitai#3665). It now records each swap and returns it as
+    `modelSubstitutions: [{requested, applied, reason}]`, `reason` ∈
+    `{wrong-workflow, unrecognized, gated}`. `internal/genapi/substitution.go`
+    models it; `internal/cmd/generate_substitution.go` renders it.
+
+    (a) **Three carriers, and they differ.** `whatIfFromGraph` → TOP-LEVEL only
+    (nothing is persisted on that path, so the reply is the only copy).
+    `generateFromGraph` → top-level AND `metadata`. Any later read
+    (`getWorkflow`) → `metadata` only. `SubmitResult.Substitutions()` prefers the
+    top-level copy and falls back to metadata; it must never CONCATENATE them, or
+    one swap is reported as two.
+
+    (b) 🔴 **ABSENCE IS AMBIGUOUS. The key is OMITTED when nothing was
+    substituted, so "no record" means EITHER "no substitution" OR "a server
+    older than the field" — the same bytes.** Nothing may render that as "no
+    substitutions": a reassuring negative would be wrong against every server
+    predating civitai/civitai#3692. The renderer prints *nothing at all* when the
+    record is empty, and there is a test asserting the CLI never claims the
+    negative. This is also why the field is a plain slice and not a pointer —
+    unlike item 9's `AppAnalytics.Views` there is no third state to preserve, and
+    no Go type can resolve an ambiguity that is inherent to the protocol.
+
+    (c) **Why warn-and-continue is the default.** The substitution is a
+    deliberate graceful degradation: a script pinned to a version that was later
+    retired keeps producing images instead of breaking. Making it a hard CLI
+    failure by default would override that server-side decision and break working
+    automation on a CLI upgrade. So the default is the fail-soft shape of item
+    13(b) — warn loudly, proceed — and the protection for a human is that the
+    warning prints BEFORE the confirmation prompt, where they can still say no.
+    `--fail-on-substitution` is the opt-in for callers who would rather fail than
+    get a different model; it mirrors `--max-cost` (an opt-in pre-flight refusal
+    evaluated on the ESTIMATE, so it spends nothing) and is tagged
+    `ErrModelSubstituted`.
+
+    (d) 🔴 **It is checked on the estimate and deliberately does NOT re-fire
+    after the submit.** By then the money is gone, and aborting would strand
+    outputs the caller has paid for and still needs to collect. A post-submit
+    substitution is always REPORTED and always present in `--json`; it just does
+    not change the exit code.
+
+    (e) **The report goes to STDERR in every mode, `--json` included** — the raw
+    passthrough already carries the record on stdout, so warning there would
+    corrupt the stream for exactly the callers automating a spend. And the
+    server's `reason` token is printed RAW per item 8, with the CLI's advice on a
+    separate line; the advice supplements the token, it never replaces it. An
+    UNRECOGNISED reason still warns with the ids intact — a fourth reason from a
+    newer server must not make the CLI go quiet, which is the original defect
+    reintroduced via a `switch`.
+
+    (f) 🔴 **The PHASE a call site passes is part of the contract, and asserting
+    it by keyword does NOT work.** `reportModelSubstitutions` takes a
+    `substitutionPhase`, and the difference between them is whether the money has
+    already moved — so a wrong argument makes `--dry-run` announce "HAS BEEN
+    CHARGED", or makes `workflows get` tell someone whose workflow was billed that
+    "Nothing has been submitted or charged yet". A test asserting
+    `Contains(out, "charged")` cannot see any of that: it was satisfied by an
+    unrelated line from the *quote* renderer, so every call-site mutation survived
+    a green suite. Assert the phase STRUCTURALLY — derive the expected lead from
+    the constant via `substitutionLead(phase)` and require the other phases' leads
+    to be ABSENT (`assertPhase` in generate_substitution_test.go), and keep
+    `TestSubstitutionLead_AllPhasesNonEmptyAndPairwiseDistinct`, because an empty
+    or duplicated lead silently disarms every one of those assertions
+    (`Contains(x, "")` is always true).
+
+    (g) 🔴 **A mutation matrix scoped to the renderer proves nothing about the
+    call sites.** The first round of this feature reported 17/17 mutants killed
+    and was still missing all of the above: every mutant targeted
+    `reportModelSubstitutions`/`substitutionRefusal` internals, so the ARGUMENTS
+    passed to them, the third phase, and the refusal message's operand ORDER were
+    structurally outside the battery. A second, independently-built battery found
+    11 survivors — including a swap of `Applied`/`Requested` that made the
+    money-refusal line state the substitution backwards. When you mutation-test a
+    reporter, mutate the CALL SITES too, not just the function.
+
+    (h) 🔴 **The post-spend report runs AFTER the handle reaches the user, and
+    that ordering is the thing to preserve — not the line's position in the
+    file.** By the submit reply the job is CHARGED and the workflow id is the
+    user's only way back to what they paid for; the report explains a charge that
+    has already happened, so it is advisory. It used to be emitted BEFORE the id,
+    which was harmless only because it does no I/O — and the obvious next
+    improvement (resolving the substituted ids to NAMES through
+    `ResolveModelVersion`, which the estimate path already does for
+    `--checkpoint`) would have inherited `getWithRetry`'s **4 attempts**
+    (`readMaxAttempts`, `pkg/civitai/retry.go`) against a **30s**-timeout client
+    (`defaultTimeout`, `pkg/civitai/api.go`) plus backoff — minutes per id, two
+    ids per record, holding the handle for a cosmetic gain. `emitSubmitHandle`
+    exists so all four branches (--no-wait, --json, a reply with no workflow id,
+    and the waiting path) emit the handle from ONE place before any advisory, and
+    `generate_handle_order_test.go` pins it by BLOCKING the advisory's own write
+    and reading what the user already has — no wall-clock sleep is involved. If
+    you do add name enrichment, bound it and keep the ids as the fallback: the
+    report must still appear with ids rather than go quiet, which is the silence
+    the whole feature exists to end.
+    Two traps that cost a mutation round: extracting the handle emission moved
+    three control-flow decisions with it, and `||`→`&&` on either branch test
+    turns a `--no-wait` run into a POLLING run — detected at first only as a
+    **nil-seam panic**, which aborts the binary and stops the guard that would
+    have named the defect from ever running. So the `--no-wait` cases wire a
+    working poll seam they never use (`wireIdlePoll`), and the poll-count
+    assertion is deliberately NOT fatal-gated on the returned error, which every
+    one of those mutants also changes.
+
+    (i) 🔴 **The approval summary annotates the superseded checkpoint; it never
+    swaps it.** The summary echoes the checkpoint as a NAME rather than an
+    integer (item 13) so the user approves something recognisable — but with a
+    substitution in play that made the LAST model line before `Generate? [y/N]`
+    the name the server had already said it would discard, with the warning
+    scrolled above it. `substitutionCheckpointNote` appends
+    `[SUPERSEDED — the server will run version N instead; …]` to the requested
+    label at BOTH pre-spend surfaces (the confirm prompt and the `--dry-run`
+    quote), computed from one call site so the two cannot disagree. Printing the
+    applied id in the requested one's place would be a second silence, not a
+    fix: the user asked for their version and must still see it was overridden.
+    The match is on `requested`, so a substitution of anything the line does not
+    name leaves it alone — a false mark on a correct line teaches authors to
+    ignore the real one. The tense comes from `substitutionVerb(phase)`, the same
+    constant the lead uses, and is asserted structurally per (f): a call site
+    passing `substitutionAfterSubmit` would tell someone deciding whether to
+    spend that the substitute already ran.
+
+22. **`--input` refuses every workflow but `txt2img`, and that refusal is NOT the
+    local validation item 13 forbids — it is a CONTENT-AUDIT gate over a
+    CONFIRMED server-side gap.** This is the item most likely to be read as an
+    unfinished feature, because item 13 says in bold that the CLI validates
+    nothing about the graph and `--input` exists precisely to pass a graph
+    through untouched. The reconciliation: item 13 forbids the CLI from
+    reproducing the server's *judgement* about which graphs are valid, and this
+    check makes no such claim. It is the same shape as item 19(b) — a flag
+    combination the CLI owns, asserting nothing about which ecosystems exist or
+    what any of them allows.
+
+    🔴 **THE GAP IS CONFIRMED, NOT SUSPECTED, AND A PRIOR SESSION RECORDED THE
+    OPPOSITE.** The server audits at `'prompt' in data && typeof data.prompt ===
+    'string'` (`orchestration-new.service.ts:1460`) over a `data` REBUILT FROM
+    DECLARED GRAPH NODES ONLY. An earlier revision of the code comment called
+    exploitability an open question; a later handoff went further and wrote
+    "ruled out — no known bypass", reasoning that graphs lacking a `prompt` node
+    *compose* a shared `promptGraph`. True of the image graphs, and false as a
+    generalisation — it says nothing about graphs that opt out of the shared node
+    names. Verified at `civitai@a7e0bcd668`, two shipped ecosystems do:
+    **Hunyuan3D declares no `prompt` node at all**, only `hunyuanPrompt`
+    (`hunyuan3d-graph.ts:71`, prefixed because the bare names "collide with the
+    standard image Controllers in `GenerationForm.tsx`"), so the audit never runs
+    — and the handler then maps it back for the generator,
+    `prompt: hunyuanPrompt ? hunyuanPrompt : undefined`
+    (`hunyuan3d-graph.handler.ts:58`). **PolyGen's `texturePrompt`**
+    (`polygen-graph.ts:162`) is covered by no audit block at all, and on
+    `img2model3d` is the only text in the request because that workflow's
+    `prompt` node is gated `when: workflow.startsWith('txt')` and is deleted.
+    Sweep basis: all 79 declared node keys under
+    `src/shared/data-graph/generation`, every node whose input is a bare
+    `z.string()`. Note both are MULTI-LINE `.node(\n  'name',` declarations that
+    a single-line grep misses. Tracked at civitai/civitai#3667.
+
+    🔴 **KEEP THE CLAIM THIS SIZE — the overclaim and the dismissal are both
+    available and both wrong.** The CLI is not what holds the line: the same
+    fields are reachable from the first-party form and from any direct tRPC
+    caller with a personal API key, so the gate stops accidents, not adversaries.
+    That is an argument for fixing the platform, **not** for opening `--input`.
+    What the gate buys is that we do not add a second client to a confirmed
+    unaudited path while it is open. Equally, no live generation probe has been
+    run — this is reachability by code path, not a demonstrated exploit, and
+    writing it up as a shipped vulnerability would be the overclaim.
+
+    **Lift it when the server closes the coverage, not when the next workflow
+    looks like it would work.** Unblocking the other ~50 ecosystems through
+    `--input` is the single biggest capability unlock left in this command, which
+    is exactly why the bar is written down rather than left to judgement.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

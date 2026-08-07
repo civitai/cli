@@ -108,7 +108,11 @@ func resolveListingSlug(lc listingCommon) (string, error) {
 		return "", fmt.Errorf("could not resolve the app — run this from your app directory (with block.manifest.json) or pass --slug: %w", err)
 	}
 	if m.BlockID == "" {
-		return "", fmt.Errorf("block.manifest.json has no blockId — pass --slug")
+		// The remedy is a flag, so this is a usage error (exit 2). The sibling
+		// above is deliberately left alone: it wraps an opaque manifest.Load
+		// cause (missing file, permissions, bad JSON), which is not a usage
+		// mistake.
+		return "", asUsageError(fmt.Errorf("block.manifest.json has no blockId — pass --slug"))
 	}
 	return m.BlockID, nil
 }
@@ -559,31 +563,54 @@ func cmdCtx(cmd *cobra.Command) context.Context {
 // loadAndValidateImage reads the file, validates its type is png/jpeg/webp and
 // its size is within the per-kind cap, and returns the bytes + header info — all
 // BEFORE any network call.
+//
+// Every refusal about the VALUE the user passed is asUsageError-tagged (exit 2),
+// mirroring resolveLocalImage in generate_image.go, which does the same job for
+// `generate --image`. The set of tagged refusals is published — it is rendered
+// into the README/`--help` exit-code contract from imageUsageRefusals in
+// exitcodes_doc.go, and TestImageUsageRefusalLedger requires the two to agree.
+//
+// The raw os.Stat/os.ReadFile failures are deliberately NOT tagged: they wrap an
+// opaque filesystem cause (permissions, I/O), which is not a mistake about the
+// invocation and must not be reported as one.
+//
+// 🔴 Be precise about what leaving them untagged costs today, because an earlier
+// version of this comment was not, and its reasoning was the wrong way round. It
+// said tagging would misreport an I/O failure "as a user mistake" — implying the
+// status quo reports it as something better. It does not: untagged, a
+// permission-denied read exits **5, the network code**. syscall.Errno has both
+// Timeout() and Temporary(), so it satisfies net.Error, and cmd/civitai's
+// isNetworkErr errors.As-matches it straight through the *fs.PathError.
+// Measured: `civitai app listing set-icon <mode-000 png>` exits 5. So the real
+// trade is "misreported as retryable transport" vs "misreported as a usage
+// mistake", and the decision stands only because the fix belongs in isNetworkErr
+// — where it corrects every filesystem error in the CLI at once — and not in a
+// per-call-site tag here, which would leave the same defect everywhere else.
 func loadAndValidateImage(kind mediaKind, file string) ([]byte, appapi.ImageInfo, error) {
 	fi, err := os.Stat(file)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, appapi.ImageInfo{}, fmt.Errorf("no such file: %s", file)
+			return nil, appapi.ImageInfo{}, asUsageError(fmt.Errorf("no such file: %s", file))
 		}
 		return nil, appapi.ImageInfo{}, err
 	}
 	if fi.IsDir() {
-		return nil, appapi.ImageInfo{}, fmt.Errorf("%s is a directory, not an image file", file)
+		return nil, appapi.ImageInfo{}, asUsageError(fmt.Errorf("%s is a directory, not an image file", file))
 	}
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return nil, appapi.ImageInfo{}, err
 	}
 	if len(data) == 0 {
-		return nil, appapi.ImageInfo{}, fmt.Errorf("%s is empty", file)
+		return nil, appapi.ImageInfo{}, asUsageError(fmt.Errorf("%s is empty", file))
 	}
 	limit := kindByteCap(kind)
 	if len(data) > limit {
-		return nil, appapi.ImageInfo{}, fmt.Errorf("%s is %s — larger than the %s max for a %s; provide a smaller image", file, humanBytes(int64(len(data))), humanBytes(int64(limit)), kind)
+		return nil, appapi.ImageInfo{}, asUsageError(fmt.Errorf("%s is %s — larger than the %s max for a %s; provide a smaller image", file, humanBytes(int64(len(data))), humanBytes(int64(limit)), kind))
 	}
 	info, err := appapi.DecodeImageInfo(data)
 	if err != nil {
-		return nil, appapi.ImageInfo{}, fmt.Errorf("%s: %w", file, err)
+		return nil, appapi.ImageInfo{}, asUsageError(fmt.Errorf("%s: %w", file, err))
 	}
 	return data, info, nil
 }

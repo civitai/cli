@@ -69,6 +69,15 @@ var (
 	// NEVER retry this: repeated blocked prompts increment a 30-day counter that
 	// auto-mutes the account.
 	ErrPromptBlocked = errors.New("prompt blocked")
+	// ErrModelSubstituted marks a run refused by --fail-on-substitution because
+	// the server reported it would run a different checkpoint than the one asked
+	// for. It is raised BEFORE the submit, so nothing has been spent.
+	//
+	// It is a distinct sentinel rather than a usage error because it is not a
+	// mistake in the command line: the invocation was well-formed and the server
+	// answered it — what failed is an expectation about WHICH MODEL runs, and a
+	// script needs to tell that apart from a typo'd flag.
+	ErrModelSubstituted = errors.New("model substituted")
 )
 
 // generateDeps are the network seams `generate` needs. Bundled as func fields so
@@ -126,6 +135,11 @@ type generateOpts struct {
 	maxCost    int
 	maxCostSet bool
 	baseURL    string
+	// failOnSubstitution turns a reported checkpoint substitution from a warning
+	// into a refusal. Opt-in: the DEFAULT is to warn and continue, because the
+	// server preserves a substitution deliberately so that a script pinned to a
+	// retired version keeps working. See the flag registration for the argument.
+	failOnSubstitution bool
 
 	// noWait prints the workflow id and exits instead of waiting.
 	noWait bool
@@ -379,6 +393,28 @@ interpreted, so nothing in it is checked before you pay for it.`,
 	cmd.Flags().IntVar(&o.maxCost, "max-cost", 0,
 		"refuse to submit if the ESTIMATE exceeds this many Buzz. This is an estimate check, NOT a spending cap: "+
 			"the estimate is not binding, the server enforces no ceiling, and the realized charge can be higher with no refund")
+	// 🔴 OPT-IN, AND IT HAS TO BE. The server substitutes rather than rejects ON
+	// PURPOSE: a script pinned to a checkpoint version that was later retired
+	// keeps producing images instead of breaking. Making that a hard CLI failure
+	// by default would unilaterally override a deliberate server-side degradation
+	// and break working automation on upgrade. The default is therefore to WARN —
+	// loudly, before the confirmation prompt, where a human can still say no —
+	// and this flag is for callers who would rather fail than get a different
+	// model. It mirrors --max-cost: an opt-in pre-flight refusal that spends
+	// nothing. See AGENTS.md item 20.
+	//
+	// NOTE: no back-quotes in this usage string — see the note above.
+	// 🔴 THE USAGE STRING MUST STATE THE SERVER-VERSION CONDITION. This flag can
+	// only refuse what the server REPORTS, and a server predating the report omits
+	// the field entirely — so against an older deployment the flag is silently
+	// inert: exit 0, submitted, charged. Someone adopting it as a spend guard
+	// deserves to read that here rather than discover it from a bill.
+	cmd.Flags().BoolVar(&o.failOnSubstitution, "fail-on-substitution", false,
+		"refuse to submit if the server REPORTS it substituted a different checkpoint for the one you asked for. "+
+			"Checked against the ESTIMATE, so nothing is spent when it refuses. Off by default: the server substitutes "+
+			"deliberately so that a script pinned to a retired version keeps working. "+
+			"NOT A GUARANTEE: a server that does not report substitutions makes this flag silently inert, so it "+
+			"cannot be relied on as a spend guard against an older deployment")
 
 	// NOTE: no back-quotes in ANY usage string here — pflag's UnquoteUsage
 	// treats the first back-quoted span as the flag's VALUE NAME. Quoting a
@@ -600,7 +636,13 @@ func parseLoraFlag(raw string) (loraSpec, error) {
 type resolvedGraph struct {
 	graph      genapi.Graph
 	checkpoint string
-	loras      []string
+	// checkpointNote annotates the checkpoint label when the server has already
+	// said it will not use it. It is filled in AFTER the estimate (the only
+	// place the substitution record exists) from ONE call site, so the confirm
+	// prompt and the --dry-run quote cannot disagree about it — see
+	// substitutionCheckpointNote.
+	checkpointNote string
+	loras          []string
 	// images renders the resolved reference images (dimensions + final URL) for
 	// the confirmation, so the user approves what will actually be sent rather
 	// than the paths they typed — a local file's URL is a stored blob by then.
@@ -821,14 +863,43 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		return fmt.Errorf("the server returned no cost estimate — refusing to submit a generation whose price is unknown")
 	}
 
+	// 🔴 BEFORE THE MONEY, AND BEFORE EVERY EARLY RETURN BELOW. This is the only
+	// moment in the whole command where the user still has the choice: the
+	// estimate has answered, nothing has been submitted, and the confirmation
+	// prompt has not yet been shown. Reporting here covers --dry-run, --dry-run
+	// --json and the full submit path from ONE call site, because the estimate
+	// runs unconditionally on all three.
+	//
+	// It writes to stderr, so a --json stdout stays machine-clean.
+	reportModelSubstitutions(errw, quote.ModelSubstitutions, substitutionAtEstimate)
+	substitutionFlagHint(errw, o, quote.ModelSubstitutions)
+
+	// 🔴 AND THE SUMMARY BELOW MUST NOT PRESENT THE SUPERSEDED CHECKPOINT AS THE
+	// ONE THAT WILL RUN. The warning above scrolls; the summary is what the user
+	// reads at `Generate? [y/N]`, and its last model line was the name the server
+	// has already discarded. Computed HERE, from one call site, so the confirm
+	// prompt and the --dry-run quote annotate identically — the two-renderers
+	// mistake generate_charge_test.go exists to remember.
+	built.checkpointNote = substitutionCheckpointNote(built.checkpoint, o, quote.ModelSubstitutions, substitutionAtEstimate)
+
 	if o.dryRun {
 		if o.jsonOut {
 			// Raw passthrough: a script sees every field, including ones this CLI
 			// does not model.
-			return writeRawJSON(out, rawQuote)
+			if err := writeRawJSON(out, rawQuote); err != nil {
+				return err
+			}
+		} else {
+			printGenerateQuote(out, errw, built, o, quote)
 		}
-		printGenerateQuote(out, errw, built, o, quote)
-		return nil
+		// The refusal comes AFTER the output, not instead of it: a --dry-run is a
+		// pre-flight, and a caller that asked for the estimate should still get
+		// the estimate it asked for before being told the answer is unacceptable.
+		return substitutionRefusal(o, quote.ModelSubstitutions)
+	}
+
+	if err := substitutionRefusal(o, quote.ModelSubstitutions); err != nil {
+		return err
 	}
 
 	if !quote.Ready {
@@ -924,6 +995,19 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		return classifyGenerateError(err)
 	}
 
+	// 🔴 REPORTED AGAIN, FROM THE SUBMIT'S OWN RECORD, AND THIS IS NOT A DUPLICATE
+	// OF THE ESTIMATE WARNING ABOVE. That one said "nothing has been charged yet";
+	// this one is the receipt, and it is authoritative for what was actually
+	// billed — the server builds it from the validation it performed on THIS
+	// request rather than the estimate's.
+	//
+	// 🔴 IT SITS HERE, AT THE REPLY, NOT IN A RENDERER. There are TWO submit
+	// renderers — printSubmitResult on the --no-wait path and printSubmitted on
+	// the waiting path — and putting a money-relevant line in only one of them is
+	// a mistake this repo has already made and written a whole test file about
+	// (generate_charge_test.go: `Charged:` had one call site the waiting path
+	// never reached). One call site covers --no-wait, the waiting path, and
+	// --json alike, and emitSubmitHandle keeps it that way.
 	workflowID := ""
 	if result != nil {
 		workflowID = result.ID
@@ -933,6 +1017,38 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		_ = recordPendingWorkflowID(statePath, workflowID)
 	}
 
+	// 🔴 THE HANDLE GOES OUT BEFORE THE ADVISORY, NOT AFTER IT. By this point the
+	// job is CHARGED and the workflow id is the user's only way back to what they
+	// paid for; the substitution report explains a charge that has already
+	// happened. Nothing advisory may sit between the reply and the handle — an
+	// enrichment added to the report later (resolving the substituted ids to
+	// NAMES through ResolveModelVersion, say) would inherit getWithRetry's 4
+	// attempts on a 30s-timeout client and could hold the id for minutes, for a
+	// cosmetic gain, on a job whose money is already gone. It is the same
+	// judgement substitutionAdvice already makes on the decoding side — an
+	// unfamiliar reason still reports the ids rather than failing the record —
+	// applied to time instead of parsing. Ordering is pinned by
+	// TestGenerate_SubmitHandleReachesTheUserBeforeTheSubstitutionAdvisory.
+	terminal, handleErr := emitSubmitHandle(out, errw, o, result, workflowID, externalID, statePath, rawSubmit)
+	reportModelSubstitutions(errw, result.Substitutions(), substitutionAfterSubmit)
+	if handleErr != nil || terminal {
+		return handleErr
+	}
+	return waitAndCollect(ctx, cmd, deps, o, workflowID, externalID, statePath)
+}
+
+// emitSubmitHandle prints the handle on a job that has ALREADY BEEN CHARGED, and
+// reports whether the command is finished (nothing left to wait for).
+//
+// It is one function rather than two call sites for the reason the comment above
+// gives: every branch here — --no-wait, --json, a reply with no workflow id, and
+// the waiting path — has to emit the handle BEFORE any advisory output, and a
+// second call site is how one of those branches quietly stops doing that.
+//
+// The --json branch returns the write error rather than swallowing it, and the
+// caller still emits the substitution advisory afterwards: a broken stdout is no
+// reason to withhold the record of what was billed.
+func emitSubmitHandle(out, errw io.Writer, o generateOpts, result *genapi.SubmitResult, workflowID, externalID, statePath string, rawSubmit json.RawMessage) (bool, error) {
 	if o.noWait || workflowID == "" {
 		// Nothing more can be done without a handle to poll, so the record has
 		// served its purpose the moment the id reaches the user.
@@ -940,10 +1056,10 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 			clearSubmitRecord(statePath)
 		}
 		if o.jsonOut {
-			return writeRawJSON(out, rawSubmit)
+			return true, writeRawJSON(out, rawSubmit)
 		}
 		printSubmitResult(out, errw, result, externalID, o.baseURL, o.noWait)
-		return nil
+		return true, nil
 	}
 
 	var submitCost *genapi.WorkflowCost
@@ -951,7 +1067,7 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		submitCost = result.Cost
 	}
 	printSubmitted(errw, workflowID, externalID, o.baseURL, submitCost)
-	return waitAndCollect(ctx, cmd, deps, o, workflowID, externalID, statePath)
+	return false, nil
 }
 
 // writeSubmitRecord writes the pre-submit crash-recovery record and returns its
@@ -1175,7 +1291,7 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 		fmt.Fprintf(errw, "  Quantity:   %d\n", o.quantity)
 	}
 	if built.checkpoint != "" {
-		fmt.Fprintf(errw, "  Checkpoint: %s\n", built.checkpoint)
+		fmt.Fprintf(errw, "  Checkpoint: %s%s\n", built.checkpoint, built.checkpointNote)
 	}
 	for _, l := range built.loras {
 		fmt.Fprintf(errw, "  LoRA:       %s\n", l)
@@ -1227,7 +1343,7 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 		fmt.Fprintf(tw, "Aspect ratio:\t%s\n", safeTerm(o.aspectRatio))
 	}
 	if built.checkpoint != "" {
-		fmt.Fprintf(tw, "Checkpoint:\t%s\n", built.checkpoint)
+		fmt.Fprintf(tw, "Checkpoint:\t%s%s\n", built.checkpoint, built.checkpointNote)
 	}
 	for _, l := range built.loras {
 		fmt.Fprintf(tw, "LoRA:\t%s\n", l)

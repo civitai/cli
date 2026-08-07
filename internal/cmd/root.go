@@ -177,6 +177,10 @@ func NewRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "civitai",
 		Short: "Civitai CLI — browse & download models, and build Apps",
+		// The "Exit codes:" block is APPENDED, not written here: it is rendered
+		// from exitCodeDocs (exitcodes_doc.go), the one source this help section
+		// and the README's exit-code table both come from. Hand-writing it back
+		// in is what let the two drift — see the file header there.
 		Long: `civitai is the command-line interface for Civitai (https://civitai.com).
 
 It does three things from one static binary:
@@ -204,21 +208,7 @@ Get started:
   civitai app create my-app        scaffold a ready-to-build App
   civitai app submit               package + submit for review
 
-Exit codes:
-
-  Every command returns a differentiated exit code so scripts can branch on the
-  KIND of failure without parsing stderr (the error message itself is unchanged):
-
-    0  success
-    1  generic / unclassified error
-    2  usage error — a bad flag, a bad flag value, or a request the API rejected
-       as malformed (HTTP 400)
-    3  authentication/authorization — login required, token invalid/expired, or
-       the credential lacks the needed scope (HTTP 401/403)
-    4  not found — the requested resource does not exist (HTTP 404)
-    5  network/transport failure or service unavailable (dial/timeout, HTTP
-       502/503/504 after retries)
-    6  rate limited — throttled by the API (HTTP 429)`,
+` + rootExitCodeHelp(),
 		Example: `  # Browse & download the public catalog (no account needed to read).
   civitai models search --query "dreamshaper" --limit 5
   civitai images search --sort "Most Reactions" --period Week
@@ -329,8 +319,8 @@ Exit codes:
 
 // enforceUsageExitCodes walks the assembled command tree and routes cobra's own
 // argument- and subcommand-validation failures through the ErrUsage tag, so the
-// entrypoint maps them to the usage exit code (2). It closes two leaks that the
-// hand-written validators (which already tag their own errors) don't cover:
+// entrypoint maps them to the usage exit code (2). It closes three leaks that
+// the hand-written validators (which already tag their own errors) don't cover:
 //
 //  1. Cobra's built-in count validators (ExactArgs, MinimumNArgs, …) return
 //     plain errors ("accepts 1 arg(s), received 0") that map to the generic exit
@@ -350,6 +340,30 @@ Exit codes:
 //     help and exits 0, but any leftover argument becomes a usage-tagged
 //     "unknown command" error (exit 2). Defining RunE makes the parent runnable,
 //     so cobra runs it (and our Args) instead of the help short-circuit.
+//  3. REQUIRED FLAGS and flag GROUPS. Cobra validates these inside execute()
+//     *after* Args and after the PreRun hooks, so they reach neither
+//     SetFlagErrorFunc (which only sees PARSE errors) nor the wrapper in (1) —
+//     `required flag(s) "app" not set` exited 1 while an unknown flag NAME
+//     exited 2, for the same category of mistake. Running cobra's own
+//     validators from inside our Args wrapper is the only interception point
+//     ahead of cobra's call; the message is cobra's, unchanged, and when they
+//     pass cobra's own later call is a no-op repeat. `--help` is unaffected:
+//     execute() returns flag.ErrHelp before it ever reaches Args.
+//     🔴 It does MOVE them, though: running them from Args puts these two
+//     validators BEFORE PersistentPreRunE/PreRunE, where cobra runs them
+//     after. Benign today, and MEASURED rather than assumed: the sole
+//     PersistentPreRunE (the root's ui/color setup) always returns nil, and
+//     the sole MarkFlagRequired (`app pull --app`) sits on a command with no
+//     PreRunE at all — the two PreRunE hooks that do exist (`app list` in
+//     apps.go, bindReadFlags in read.go) only REJECT, and neither command has
+//     a required flag or a flag group. The trap is for the next person: a
+//     PreRunE that SATISFIES a required flag — filling it from an env var,
+//     viper or config before cobra checks — would now have a perfectly valid
+//     invocation rejected as `required flag(s) "..." not set`, because we ask
+//     the question a hook earlier than cobra does. If you add such a hook, the
+//     flag must stop being cobra-required and become a check inside RunE
+//     (asUsageError-tagged); do not reorder this wrapper, which would put the
+//     usage-classification hole of (3) straight back.
 //
 // It only reclassifies ARGUMENT/subcommand validation. A command's real RunE
 // failures — a 404 not-found, a network error, an auth failure — are never
@@ -367,6 +381,15 @@ func enforceUsageExitCodes(cmd *cobra.Command) {
 			if err := existing(c, args); err != nil {
 				return asUsageError(err)
 			}
+		}
+		// (3) Required flags / flag groups — see the doc comment. Run cobra's own
+		// validators here so their errors can be tagged; cobra repeats them later
+		// and finds nothing left to report.
+		if err := c.ValidateRequiredFlags(); err != nil {
+			return asUsageError(err)
+		}
+		if err := c.ValidateFlagGroups(); err != nil {
+			return asUsageError(err)
 		}
 		return nil
 	}

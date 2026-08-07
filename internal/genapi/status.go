@@ -177,6 +177,15 @@ type Workflow struct {
 	// Transactions is the orchestrator's own money record, passed through
 	// untyped: its shape is orchestrator-owned and the CLI must not relabel it.
 	Transactions json.RawMessage `json:"transactions,omitempty"`
+	// Metadata carries the workflow-level record the SUBMIT persisted, which is
+	// how a checkpoint substitution survives to be read back. `getWorkflow` is a
+	// straight passthrough of the raw orchestrator workflow, so the key arrives
+	// exactly as it was stored.
+	//
+	// 🔴 Read it via Substitutions(), not directly. This is the ONLY carrier once
+	// the submit reply is gone — which is precisely the situation
+	// `civitai generate --no-wait` creates by design.
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 // Output is one workflow output with the two step-derived fields folded in.
