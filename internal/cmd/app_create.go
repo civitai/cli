@@ -14,6 +14,7 @@ func newAppCreateCmd() *cobra.Command {
 	var fromSlug string
 	var dirFlag string
 	var nameFlag string
+	var slugFlag string
 	var noInput bool
 
 	cmd := &cobra.Command{
@@ -25,8 +26,9 @@ This is the friendly happy path: a thin superset of "civitai app init" that
 defaults to the rich page-money template — a Vite + React + TypeScript full-page
 app wired to the published App SDK (estimate -> consent -> submit -> poll ->
 Buzz spend), with a mock-host dev harness and a unit test. The scaffold is
-immediately runnable (npm install && npm run dev:harness), test-green, and
-validates clean.
+immediately runnable (npm install && npm run dev:harness) and test-green.
+"civitai app validate" passes once you have run "npm install" — until then it
+correctly reports the package-lock.json the platform build installs from.
 
 The default scaffold ships a runnable txt2img money path AND a Comfy on Civitai
 (customComfy) sample that runs a server-registered recipe (invite-only beta) —
@@ -50,6 +52,12 @@ Templates (override with --template):
 The display name can be free-form ("My Cool Block"); it is slugified for the
 blockId. A slug-shaped name is used verbatim.
 
+The blockId is your app's PERMANENT public identity — it is the hostname your app
+is served at and the argument every later command takes — so derivation refuses
+rather than guesses when the name carries characters a blockId cannot hold
+("Café Del Mar", "ÜberApp", any non-Latin name). Pass --slug <slug> to choose one
+yourself; it bypasses derivation entirely.
+
 By default the project is created in ./<slug>. Override the output directory with
 a positional [dir] or --dir <path>; override the display name independently with
 --name (so name, slug, and directory can all differ).
@@ -67,19 +75,23 @@ the AI Services scopes: ` + spendCredentialRoutes + `.`,
   civitai app create my-block --template static
 
   # Custom output directory (slug stays my-block; created in ./apps/foo).
-  civitai app create my-block --dir ./apps/foo`,
+  civitai app create my-block --dir ./apps/foo
+
+  # A name derivation cannot slugify: choose the blockId yourself.
+  civitai app create "Café Del Mar" --slug cafe-del-mar`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, noInput)
+			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag, noInput)
 		},
 	}
 
 	// create defaults to the batteries-included page-money template; every
 	// other flag matches init exactly.
 	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.PageMoney), "project template: static | page-vite | page-money")
-	cmd.Flags().StringVar(&fromSlug, "from", "", "fork from an existing published app slug (not yet wired)")
+	cmd.Flags().StringVar(&fromSlug, "from", "", fromFlagUsage)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
+	cmd.Flags().StringVar(&slugFlag, "slug", "", slugFlagUsage)
 	cmd.Flags().BoolVarP(&noInput, "yes", "y", false, "non-interactive: never prompt (use flags/defaults; fail if a name is missing)")
 	return cmd
 }
