@@ -297,6 +297,54 @@ func TestRenderPageMoney(t *testing.T) {
 		mustNotContain(t, comfyReadme, stale)
 	}
 
+	// The SECOND false invariant, same defect class, found the same way (a blind
+	// dogfooder). The scaffold used to tell the developer that
+	// `starter-comfy-txt2img` was not registered server-side "yet" and to print an
+	// inventory of the recipe registry alongside it. The recipe IS registered; the
+	// published web docs said so; the developer believed the generated README over
+	// them and spent a real generation attempt resolving the contradiction.
+	//
+	// Same SPELLED-guard caveat as above — these match phrasings, so they are a
+	// floor, not a proof, and a retraction that quotes the old wording verbatim
+	// will trip them. Describe the old claim; don't restate it.
+	genTS := readFile(t, filepath.Join(dest, "src", "generation.ts"))
+	genTest := readFile(t, filepath.Join(dest, "src", "generation.test.ts"))
+	comfySurfaces := []string{comfy, app, comfyReadme, genTS, genTest}
+	for _, stale := range []string{
+		"not registered server-side yet",
+		"registry currently holds only",
+		"Until it ships",
+		"is **not runnable yet**",
+	} {
+		for _, surface := range comfySurfaces {
+			mustNotContain(t, surface, stale)
+		}
+	}
+
+	// The STRUCTURAL half, and the one that survives a rephrasing: the generated
+	// app must not enumerate the server-owned recipe registry at all. Every stale
+	// claim above was anchored to a hardcoded inventory of it — a list of recipe
+	// ids this app does not send, written into a file that ships on a different
+	// cadence than the registry does. `seamless-pano-360` is the id that inventory
+	// named; the app's own id is the only recipe id that belongs in here.
+	//
+	// This is deliberately NOT phrasing-matched: it fails on any reintroduction of
+	// a foreign recipe id, in a comment, a doc, or a test fixture, however worded.
+	for _, surface := range comfySurfaces {
+		mustNotContain(t, surface, "seamless-pano-360")
+	}
+
+	// Positive control for the two loops above: they assert ABSENCE, so they are
+	// green against a surface that is empty, misread, or wired to the wrong path.
+	// Pin something that MUST be present on each surface, so a mis-wired read
+	// cannot pass the absence checks vacuously.
+	for i, surface := range comfySurfaces {
+		if !strings.Contains(surface, "starter-comfy-txt2img") {
+			t.Errorf("comfySurfaces[%d] does not mention the app's own recipe id — "+
+				"the stale-claim guards above would pass vacuously against it", i)
+		}
+	}
+
 	// generation.ts threads the chosen checkpoint into modelId/modelVersionId
 	// instead of a hardcoded constant, AND emits the selected LoRAs as
 	// additionalResources (only when non-empty).

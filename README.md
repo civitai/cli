@@ -1,9 +1,10 @@
 # civitai CLI
 
 > **Browse and download Civitai models, images, and articles — and author,
-> validate, and submit App Blocks.** Two paths in one static binary: an
-> anonymous **read/download client** for the public API, and the toolchain for
-> shipping **Apps**.
+> validate, and submit App Blocks.** Two paths in one static binary: a
+> **read/download client** for the public API (reads are anonymous; downloads
+> need a token), and the toolchain for shipping **Apps** (every `civitai app`
+> command needs one).
 
 > ⚠️ **Apps is in a limited, invite-only beta (pre-GA).** You can install this
 > CLI, `login`, scaffold, validate, and run an app locally right now — but
@@ -17,8 +18,11 @@
 
 The command-line interface for [Civitai](https://civitai.com) — a single static
 binary that does two things: it's a thin **read/download client** for Civitai's
-public API (browse and fetch models, images, and articles — no account needed to
-read), and it's the toolchain to **author, validate, and ship Apps**.
+**public** API (browse and fetch models, images, and articles — no account needed
+to read those), and it's the toolchain to **author, validate, and ship Apps**.
+Everything under `civitai app` needs a credential, including the App-store
+browse commands `app list` / `app view` — see
+[Browse the App store](#browse-the-app-store).
 
 An **App** is a small, sandboxed web app that runs inside Civitai
 surfaces (it's served in an iframe; the platform owns the build and the
@@ -29,6 +33,52 @@ contract, and **packages/submits** it for review.
 > New here? The
 > [Build your first App](https://github.com/civitai/civitai-app-starters/blob/main/docs/build-your-first-app-block.md)
 > guide is the full end-to-end walkthrough.
+
+## Contents
+
+- [Install](#install)
+- [Quickstart: browse & download](#quickstart-browse--download)
+- [Quickstart: build an App Block](#quickstart-build-an-app-block)
+- [SDK packages](#sdk-packages)
+- [Command reference](#command-reference)
+  - [Templates](#templates)
+  - [The host handshake (`BLOCK_READY`)](#the-host-handshake-block_ready)
+  - [Local dev loop (harness: mock vs live)](#local-dev-loop-harness-mock-vs-live)
+  - [Preview in the real host (`app dev-tunnel`)](#preview-in-the-real-host-app-dev-tunnel)
+  - [Examples](#examples)
+- [Browse the public API](#browse-the-public-api)
+- [Download model files](#download-model-files)
+- [Scripting with `--json`](#scripting-with---json)
+  - [Cursor pagination loop](#cursor-pagination-loop)
+  - [Clean output for pipelines](#clean-output-for-pipelines)
+  - [Generation `--json`](#generation---json)
+  - [Gotchas](#gotchas)
+  - [Worked example — top LoRAs for a base model, then plan a download](#worked-example--top-loras-for-a-base-model-then-plan-a-download)
+- [Validate fidelity](#validate-fidelity)
+  - [The `--json` result shape](#the---json-result-shape)
+- [Submit & auth](#submit--auth)
+  - [After you submit: review → approve → deploy](#after-you-submit-review--approve--deploy)
+- [Submission status](#submission-status)
+  - [Deployed is not the same as listed in the store](#deployed-is-not-the-same-as-listed-in-the-store)
+- [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
+- [Browse the App store](#browse-the-app-store)
+- [App metrics](#app-metrics)
+- [Generate](#generate)
+  - [`--max-cost` is an estimate check, not a spending cap](#---max-cost-is-an-estimate-check-not-a-spending-cap)
+  - [Silent model substitution](#-silent-model-substitution)
+  - [Confirmation](#confirmation)
+  - [Image-to-image: `--image` and `--ecosystem`](#image-to-image---image-and---ecosystem)
+  - [The content flags, and why there aren't twelve](#the-content-flags-and-why-there-arent-twelve)
+  - [Raw graphs: `--print-input` and `--input`](#raw-graphs---print-input-and---input)
+  - [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching)
+  - [Listing and cancelling workflows](#listing-and-cancelling-workflows)
+  - [Exit codes specific to `generate`](#exit-codes-specific-to-generate)
+- [Configuration](#configuration)
+- [Exit codes](#exit-codes)
+- [Troubleshooting](#troubleshooting)
+- [Development](#development)
+- [Releasing](#releasing)
+- [License](#license)
 
 ## Install
 
@@ -102,8 +152,17 @@ go install github.com/civitai/cli/cmd/civitai@latest
 
 ## Quickstart: browse & download
 
-Reads are **anonymous** — no `login` needed. Every command takes `--json` to
-emit the raw API response for scripting.
+Reads of the **public catalog** — models, model versions, images, tags,
+creators, users, articles, collections — are **anonymous**: no `login` needed
+for the commands in this section. Every one of them takes `--json` to emit the
+raw API response for scripting.
+
+> **What is *not* anonymous.** `civitai download` needs a token, and so does
+> every `civitai app …` command — **including the App-store browse commands**
+> `civitai app list` and `civitai app view`, which exit `3` with
+> `no token configured` when you have not logged in. The store endpoint keys the
+> visible catalog off your identity, so there is no anonymous view of it. See
+> [Browse the App store](#browse-the-app-store).
 
 ```bash
 # Search models — filter by base model, type, and sort:
@@ -212,17 +271,20 @@ README. For the end-to-end walkthrough, see
 | `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens). The default scope set grants identity + Apps submit + dev-tunnel and **not** Buzz-spend; `--scopes generate` additively grants generation + Buzz **spend** (needed by `civitai generate` and money-path `dev:live`). `--token <t>` stores a personal API key instead (not combinable with `--scopes`). `--token` with **no value** prints where to create a personal key (`civitai.com/user/account`) and how to re-run — handy when you know you want a personal key but haven't minted one yet. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
 | `civitai whoami [--scopes] [--json]` | Verify the stored token; print the authenticated user **and a Capabilities section** — credential type (**OAuth login** vs **personal API key**), **Read Buzz balance**, and **Spend Buzz** — decoded from the token's scope, so a money-path dead end (a default OAuth login can't spend) is visible before `dev:live` — and when it can't, the output names the fix for that credential (`login --scopes generate` for an OAuth login, a full-scope key otherwise). `--scopes` also lists every granted scope; `--json` emits the user + `credentialType`/`canReadBalance`/`canSpend`/`scopes` (scriptable). |
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**). Needs the BuzzRead scope — a full-scope personal API key or `civitai login --scopes generate`; a **default** OAuth login token can't read it, and gets a clear message naming both fixes. `--json` emits `{blue,green,yellow,total}` (scriptable — handy for before/after diffing a `dev:live` spend). |
+| `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based discovery, not free-text search. **Needs a credential** (`civitai login` or `CIVITAI_TOKEN`): the endpoint keys the visible catalog off your identity, so this is *not* one of the anonymous reads. Cursor-paged. See [Browse the App store](#browse-the-app-store). |
+| `civitai app view <slug> [--json]` | **Show one published App's store detail** (`GET /api/v1/apps/{slug}`) — description, category, rating, gallery, live/external target. **Needs a credential**, same as `app list`. Reads the *public store catalog*, which is a different resource from your own deploy — a not-found here says nothing about `<slug>.civit.ai`. See [Browse the App store](#browse-the-app-store). |
 | `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
-| `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`** — calls the invite-gated mint route with your stored credential, reading scopes from your local `block.manifest.json` (so it works on an unsubmitted slug). `--spend` explicitly REQUESTS `ai:write:budgeted` (real Buzz); omit it and that scope is **filtered out** of the request — the CLI never asks for budgeted spend implicitly, even when your manifest declares it (the scaffolded money app does, so a live run that used to generate now needs `--spend`). Prints the token (`--env` prints `VITE_LIVE_BLOCK_TOKEN=<token>`, paste-ready); warns at mint time if the token is read-only (can't spend). See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
-| `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your dev port (start `npm run dev:tunnel` first) to the Civitai tunnel endpoint, prints the URL to open, and tears everything down on Ctrl-C or an idle timeout. Before minting it also **pre-flights whether the host can actually embed your dev server** — the host iframes it sandboxed (opaque `null` origin), so a dev server missing `Access-Control-Allow-Origin: *`, missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that excludes `civitai.com` loads as a blank iframe with no error anywhere. Those are printed as warnings (never fatal) **twice** — once the moment the checks run, so you still get them if you Ctrl-C the DNS wait, and again just above the URL, with the `vite.config.ts` fix. Apps scaffolded by `civitai app init --template page-money` already satisfy all of it. The tunnel endpoint (`sish.civitai.com:2224`) is **live**; access is gated behind an Apps-author invite **and** a server kill-switch flag, so if you are not enrolled the mint reports **"not available"** — ask to be added to the cohort. Publishing the tunnel host through external-dns + Cloudflare usually takes 1–3 min (occasionally longer); the command waits for it and prints the elapsed time. |
+| `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`.** `--spend` must be asked for explicitly to request real-Buzz spend — without it the CLI filters `ai:write:budgeted` out of the mint request. `--env` prints a paste-ready `VITE_LIVE_BLOCK_TOKEN=<token>`. See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
+| `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Pre-flights whether the host can actually **embed** your dev server and warns (never fatally) when it cannot. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message` — **`field` is always present and never `null`**) for scriptable parsing — still exits non-zero on failure. 🔴 **BREAKING:** a `[dir]` that does not exist, or is not a directory, is now a **usage error** — exit `2` with **no JSON object** on stdout, where it used to print `{"ok": false, …}` and exit `1`. See [Validate fidelity](#validate-fidelity) and [The `--json` result shape](#the---json-result-shape). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
-| `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `civitai app submit` mints your listing as a **draft**, so you can set the media *while the app is in review* and it carries forward on approval. `listing status` prints what is attached vs. what the publish floor still requires. Source images are validated locally (png/jpeg/webp; icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB) before upload, then wait for the content scan. On an **already-live** listing an attach opens a **revision** for moderator re-review (`--changelog`, `-y`). App resolved from `block.manifest.json` in the CWD, or `--slug`. See [After you submit](#after-you-submit-review--approve--deploy). |
+| `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
+| `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. See [After you submit](#after-you-submit-review--approve--deploy). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
-| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results into `--out-dir` as `<workflow-id>-<n>.<ext>`. `--no-wait` prints the workflow id and exits; `--timeout` bounds the **wait** (never the job and never the charge); `--no-download` waits but prints URLs instead of writing files. `--dry-run` estimates and exits without submitting (`--dry-run --json` emits the raw estimate). `--print-input` prints the assembled graph and exits **without reaching any money seam** (no submit, no estimate, no balance read) — note that with `--image` it still **uploads** local files first, because the printed graph has to reference real blob URLs for `--input` to be able to submit it; uploading spends nothing; `--input <file>` (or `-` for stdin) sends a raw graph as-is — txt2img only, and mutually exclusive with the content flags. `--image <path-or-url>` (repeatable) attaches a reference image for **image-to-image** — a local png/jpeg is uploaded, an https URL is passed through — and **requires `--ecosystem`**, because without one the server ignores the images, generates from the prompt alone and charges anyway. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. `--max-cost` is an **estimate check, not a spending cap**. If the server **substitutes a different checkpoint** for the one you asked for it says so — on the estimate, after the submit, and in `--json` — and `--fail-on-substitution` refuses the run instead — though only when the server *reports* one, so it is **not** a spend guard against an older deployment (see [Silent model substitution](#-silent-model-substitution)). See [Generate](#generate). |
+| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
 | `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **This does not refund anything** — a mid-run cancel bills the accrued cost, non-refundably. Cancel because you no longer want the output, never to save money. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
@@ -343,13 +405,19 @@ civitai app dev-token my-block --env >> .env.development.local
 npm run dev:live
 ```
 
+`dev-token` reads the scopes to request from your **local**
+`block.manifest.json`, so it works on a slug you have never submitted.
 `.env.development*` is never committed (`submit` excludes it) and the token is
 short-lived (~4h) — re-run `dev-token` when it expires. For real generation mint
 with a spend-capable credential (**full-scope personal API key** or
-`civitai login --scopes generate`) **and** add `--spend`: the scope is requested
-only when you ask for it, so without the flag the mint drops it and dev:live
-refuses to generate with `block lacks ai:write:budgeted scope`. A default OAuth
-login mints a read-only token either way (the command warns you at mint time). With no token, `dev:live` **fails safe**
+`civitai login --scopes generate`) **and** add `--spend`: the CLI never asks for
+budgeted spend implicitly — **even when your manifest declares it** (the
+scaffolded money app does) — so without the flag the mint filters
+`ai:write:budgeted` out and dev:live refuses to generate with `block lacks
+ai:write:budgeted scope`. `--budget <n>` sets the token's **per-generation** Buzz
+budget (1–250; omit it and the server picks one — 50 for an unsubmitted app). A
+default OAuth login mints a read-only token either way (the command warns you at
+mint time). With no token, `dev:live` **fails safe**
 (renders a notice, never spends). Live v1 covers the money path
 (`estimate`/`submit`/`poll`/`cancel`); pickers, checkpoint-set, App-Storage KV,
 and in-band Buzz purchase are mock-only.
@@ -391,6 +459,39 @@ Env vars (`VITE_BLOCK_ALLOWED_PARENT_ORIGINS`, `VITE_HARNESS_MODE`,
 `VITE_LIVE_BLOCK_TOKEN`, …) and the scenario knobs are documented in depth in the
 scaffolded project's own `README.md` and `.env.example` — see
 [`internal/scaffold/templates/page-money/README.md.tmpl`](internal/scaffold/templates/page-money/README.md.tmpl).
+
+### Preview in the real host (`app dev-tunnel`)
+
+> **(Pre-GA / invite-gated.)** Access is gated behind an Apps-author invite
+> **and** a server kill-switch flag, so if you are not enrolled the mint reports
+> **"not available"** — ask to be added to the cohort.
+
+The harness is a *mock* of the host. `civitai app dev-tunnel` is the other end of
+that trade: it previews your **local** dev server inside the **real** Civitai
+host at `civitai.com/apps/dev/<blockId>`, so you see prod chrome, prod sandbox
+and the prod handshake against the code in your editor.
+
+```bash
+npm run dev:tunnel                 # start your dev server first
+civitai app dev-tunnel my-block    # then open the tunnel
+```
+
+It mints an **ephemeral in-memory ssh keypair**, opens a reverse tunnel from your
+dev port to the Civitai tunnel endpoint (`sish.civitai.com:2224`, live), prints
+the URL to open, and tears everything down on Ctrl-C or an idle timeout.
+Publishing the tunnel host through external-dns + Cloudflare usually takes 1–3
+min (occasionally longer); the command waits for it and prints the elapsed time.
+
+**Embeddability preflight.** Before minting, the command checks whether the host
+can actually *embed* your dev server. The host iframes it sandboxed, at an opaque
+`null` origin, so a dev server that is missing `Access-Control-Allow-Origin: *`,
+missing the `.civit.ai` entry in `allowedHosts`, or sending a framing header that
+excludes `civitai.com` loads as a **blank iframe with no error anywhere** — the
+worst kind of failure to debug. Those are printed as **warnings, never fatal**,
+and deliberately **twice**: once the moment the checks run, so you still get them
+if you Ctrl-C the DNS wait, and again just above the URL, with the
+`vite.config.ts` fix. Apps scaffolded by `civitai app create` (the `page-money`
+template) already satisfy all of it.
 
 ### Examples
 
@@ -1034,6 +1135,84 @@ flag while the store is pre-GA. When the 404 lands on a slug **you own**, the CL
 detects that and says so, naming both next commands, instead of leaving you with
 a bare "App not found".
 
+## Pull your app's repository (`app pull`)
+
+`civitai app pull` is the **read side of git authoring**: it clones (or, if
+`[dir]` is already a checkout, syncs) the canonical repository backing one of
+**your** approved Apps, so you can edit locally and then `civitai app submit` or
+push.
+
+```bash
+civitai app pull --app my-block                # clone into ./my-block
+civitai app pull ./my-block --app my-block     # clone/sync into ./my-block
+civitai app pull . --app my-block              # sync the current directory
+```
+
+`--app` is required (the slug or `appBlockId`; find it with `civitai app
+status`). Authentication uses your stored credential (`civitai login` or a
+personal API key) — the command calls an owner-only endpoint that **lazily
+provisions a scoped, read-only Forgejo identity** for you and returns a clone URL
+with a pull token embedded.
+
+The repo only exists once your **first version has been submitted as a ZIP and
+approved**; before then the command tells you so rather than failing obscurely.
+
+> ⚠️ **SECURITY — TOKEN-IN-URL LEAKAGE.** The clone URL embeds your access token
+> as HTTP-Basic credentials (`https://<user>:<token>@…`).
+>
+> - On a fresh **CLONE**, git writes the remote URL into `.git/config`, so **the
+>   token lands on disk** in the checkout. Treat the directory as sensitive: do
+>   **not** commit `.git/config` or share the directory. To drop the token, point
+>   the remote at the credential-less HTTPS URL —
+>   `git -C <dir> remote set-url origin <httpUrl>` — which is exactly the command
+>   the CLI prints for you after a clone.
+> - On a **SYNC** (pull into an existing checkout) the URL is passed explicitly
+>   and is **not** persisted to `.git/config`. The token still appears
+>   transiently in the git child process's arguments, so it is briefly visible to
+>   other local processes via `ps` / `/proc/<pid>/cmdline`.
+>
+> The CLI prints the applicable half of this warning to stderr after every run.
+
+A sync is `git fetch` + `git merge --ff-only`, so it never creates a merge commit
+and refuses rather than clobbering diverged history or a conflicting dirty tree.
+
+## Browse the App store
+
+`civitai app list` and `civitai app view <slug>` read the **public App store
+catalog** (`GET /api/v1/apps` and `GET /api/v1/apps/{slug}`).
+
+> 🔴 **These are not anonymous reads.** Unlike the model/image/article commands
+> in [Browse the public API](#browse-the-public-api), both **require a
+> credential** and exit `3` with
+> `no token configured — run 'civitai login' (or set CIVITAI_TOKEN) to browse the App store`
+> without one. The store endpoint keys the **visible catalog off your identity**,
+> so an anonymous call would see nothing; the CLI refuses up front rather than
+> presenting an empty catalog as the whole store.
+
+```bash
+civitai app list
+civitai app list --kind onsite --sort popular --limit 10
+civitai app list --category generation --json
+civitai app list --cursor '<next-cursor-from-a-previous-page>'
+civitai app view my-cool-app
+civitai app view my-cool-app --json
+```
+
+- **Filter-based discovery, not search.** There is no free-text query — the store
+  service does not expose one, which is why there is no `civitai app search`.
+  Filter with `--kind` (`all`, `onsite`, `offsite`), `--category` (`generation`,
+  `games`, `utility`, `discovery`, `moderation`, `analytics`, `other`) and
+  `--sort` (`top-rated`, `popular`, `newest`, `name`).
+- **Keyset cursor pagination**, not page numbers: the next cursor is printed
+  after the results, and you pass it back with `--cursor`. `--limit` is 1–50.
+- **The store is gated by a launch flag.** Until it opens publicly you only see
+  apps if your account is a moderator or an app-dev-tester, so a perfectly valid
+  login may get an **empty list**. That is the pre-GA state, not a broken login.
+- **Rate-limited per caller** — a tight scripted loop may see `429`s, which the
+  CLI backs off and retries automatically.
+- `app view` reads the **store catalog**, which is *not* your deploy: see
+  [Deployed is not the same as listed in the store](#deployed-is-not-the-same-as-listed-in-the-store).
+
 ## App metrics
 
 `civitai app metrics <slug>` shows the owner-only analytics for one of **your**
@@ -1095,8 +1274,11 @@ believable-but-wrong reading:
   `civitai app status <slug>` instead — a silently-empty dashboard that looks
   like real data is the failure mode this command is built to avoid.
 - **It needs a personal API key.** The query is full-scope, so an OAuth
-  `civitai login` token gets a 403; the error names the fix
-  (`civitai login --token <key>`).
+  `civitai login` token gets a 403. Both refusals — the 403 *and* the
+  no-token-at-all case — name the route that actually works
+  (`civitai login --token <key>`, created at `civitai.com/user/account`) rather
+  than the generic "run `civitai login`", which here is the one route that
+  cannot succeed.
 
 Two data caveats.
 

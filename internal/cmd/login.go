@@ -39,7 +39,28 @@ const spendCredentialRoutes = "`civitai login --scopes generate` (a browser logi
 // non-empty; without it, `--token` alone errors "flag needs an argument". We set
 // this sentinel so the no-value form parses, then detect it (or an explicitly
 // empty value) and print where to mint a key instead of attempting a login.
-const tokenFlagNoValue = "\x00civitai-token-no-value"
+//
+// 🔴 IT MUST CONTAIN NO CONTROL BYTES, AND ABOVE ALL NO NUL (issue #253). The
+// sentinel is USER-VISIBLE: pflag interpolates NoOptDefVal into the help row's
+// flag column as `[="%s"]`, so `civitai login --help` prints it verbatim. It
+// used to be prefixed with "\x00" to make collision with a real key literally
+// impossible (argv cannot carry a NUL) — and that prefix escaped into stdout.
+// pflag's FlagUsagesWrapped builds each row as `<flag part>\x00<usage part>` and
+// splits on the FIRST \x00 to align the two columns; ours came first, so pflag
+// aligned on it and its own separator survived into the output. Any captured
+// copy of `civitai login --help` then became BINARY: `file(1)` said `data`,
+// `grep` said "binary file matches", and `git diff` refused to render it — which
+// silently ended human review of the CLI-reference snapshot in
+// civitai-developer-docs.
+//
+// The sentinel's only real requirements are that it be non-empty and not
+// collide with a plausible API key. "(no value)" satisfies both while reading,
+// in the help row, as the description it is rather than as a magic string
+// someone should type: `--token string[="(no value)"]`. A Civitai personal key
+// is an alphanumeric string, so the space and parentheses make a collision
+// implausible; and were one ever passed, the effect is only that the mint
+// guidance prints instead of that literal being stored.
+const tokenFlagNoValue = "(no value)"
 
 func newLoginCmd() *cobra.Command {
 	var tokenFlag string
