@@ -165,9 +165,10 @@ CLI's only path that **spends the user's money irreversibly** (19 is img2img, 21
 is model substitution, and 22 is the one gate on that path that guards CONTENT
 rather than money); items 18 and 20 cover the checks that tell an author their
 EXISTING app is missing the item-11 handshake (20 is the reachability repair to
-18's presence-only scan); item 23 covers the SHAPE of a
-validation finding — the `field` every `--json` consumer groups on. The durable
-fix for the mirroring is a server-side
+18's presence-only scan); item 23 covers the SHAPE of a validation finding — the
+`field` every `--json` consumer groups on; and item 24 covers the CLI-wide
+exit-code classifier, which every command's published exit code funnels through.
+The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
 
@@ -1534,6 +1535,88 @@ neither one's.
       is by Message first, Field second, so the text output's order is unchanged
       from the string era. `validate.Messages()` is the projection the three text
       consumers (`app validate`, `app submit`, `app init`'s self-check) use.
+24. **`syscall.Errno` IS a `net.Error`, so the obvious spelling of the transport
+    check silently classified EVERY filesystem failure in the CLI as a network
+    failure.** `cmd/civitai/main.go`'s `isNetworkErr` used to end
+    `var netErr net.Error; return errors.As(err, &netErr)` — the spelling anyone
+    would write, and the spelling anyone will "simplify" it back to. Do not.
+    `syscall.Errno` declares both `Timeout() bool` and `Temporary() bool` and so
+    satisfies `net.Error`, while the wrappers that carry it do NOT — measured on
+    go1.25.12, none of `*fs.PathError`, `*os.LinkError` or `*os.SyscallError`
+    declares `Temporary()`. So `errors.As` walked straight PAST the wrapper and
+    matched the Errno underneath, and `exitCode`'s default arm reaches
+    `isNetworkErr`, so every untagged `os.ReadFile` / `os.Stat` / `os.MkdirAll`
+    error landed on **exit 5** — the code the README tells scripts to RETRY on.
+    Issue #241. Measured on the binary at `569f5dc`, all six pure-filesystem and
+    all rc=**5**: `app listing set-icon|set-cover|add-screenshot <mode-000 png>`
+    (`permission denied`), `generate --image <mode-000 png>`, `app validate
+    <regular-file>/x.json` (ENOTDIR), and `login --token …` against an
+    unwritable `XDG_CONFIG_HOME` (`mkdir …: permission denied`). Blast radius:
+    80 `os.*` call sites across 24 non-test files, a floor rather than a ceiling
+    (it does not count `filepath.WalkDir` or `*os.File` method errors, which are
+    also `*fs.PathError`).
+    - **The code is 1, and it is a decision — not a fallthrough nobody chose.**
+      `1` is documented as "generic / unclassified", which is exactly what an
+      opaque errno is to this CLI. It is deliberately **not 2**: exit 2 means the
+      user got the INVOCATION wrong, and the published contract already draws
+      that line explicitly — a missing/empty/directory/oversized/wrong-format
+      image exits 2, an unreadable one does not. And it is deliberately **not a
+      new code 7**: that would be a contract EXPANSION every existing
+      `case $?` script meets as an unknown, and it would promise a taxonomy the
+      CLI cannot deliver — `generate --input <unreadable json>` is
+      `asUsageError`-tagged and exits **2** today, so "7 means filesystem" would
+      be false on arrival. `1` promises nothing it cannot keep. The contract is
+      published from `exitCodeDocs` (codes 1, 2 and 5 all say it), so the README
+      and `--help` moved together.
+    - 🔴 **The guard is TWO rules and neither subsumes the other.**
+      `hasTransportError` walks the error tree — both `Unwrap() error` and
+      `Unwrap() []error`, so it sees everything `errors.As` would. (1) A bare
+      `syscall.Errno` is SKIPPED, not stopped at, so a genuine net.Error
+      elsewhere in a multi-error tree is still found; the skip is a type
+      ASSERTION on the matched value, never `errors.As`, because `errors.As`
+      unwraps a `*net.OpError` down to its ECONNREFUSED and would reject every
+      real dial failure. (2) `*fs.PathError` and `*os.LinkError` TERMINATE the
+      walk: an error about a PATH is a filesystem error, full stop. Today (2) is
+      belt-and-braces — real path errors bottom out in an Errno that (1) already
+      rejects — and it is there because a future Go release adding `Temporary()`
+      to either type would re-open the hole silently, matching the wrapper
+      itself. `*os.SyscallError` is deliberately NOT a terminator: the net stack
+      nests one inside `*net.OpError` on every dial failure, and the OpError is
+      found first.
+    - **The residual, stated rather than hidden.** A network errno arriving with
+      NO net-stack wrapper at all (a bare `syscall.ETIMEDOUT`) now falls to 1.
+      Nothing in this CLI produces that shape — `net/http` surfaces a dial
+      failure as `*url.Error` → `*net.OpError` → …, both real `net.Error`s — and
+      the alternative is to keep reading an errno's `Timeout()`/`Temporary()` as
+      evidence, which is what mis-sorted every filesystem failure. `ECONNREFUSED`
+      and `ECONNRESET` keep their explicit bare-form `errors.Is` checks precisely
+      because both their `Timeout()` and `Temporary()` are **false**, so the
+      interface test never caught them anyway.
+    - 🔴 **The tests must keep BOTH directions, because either half alone is
+      satisfiable by a broken fix.** Delete exit 5 outright and the whole
+      filesystem table stays green; leave the classifier alone and the positive
+      controls stay green. `cmd/civitai/fs_not_network_test.go` therefore pins
+      the stdlib TRAP itself (a test whose only job is to say the hazard is still
+      there), asserts per fixture that the naive predicate STILL matches — a row
+      the trap no longer reaches proves nothing about the guard — and carries
+      REAL transport errors (a refused loopback dial, a genuine read-deadline
+      `*net.OpError`, a real 503-after-retries through `pkg/civitai`) rather than
+      only constructed ones. Rows meant to exercise the walk assert they were
+      classified by it rather than by a sentinel shortcut (`viaNetErrorBranch`),
+      or gutting the walk leaves them green on `errors.Is` alone.
+      Mutation-measured, three ways: reverting `isNetworkErr` to the base
+      spelling reddens 24 subtests; disabling the `net.Error` branch reddens the
+      real read-deadline / `*net.DNSError` / `*url.Error` / multi-error rows;
+      dropping the three explicit sentinels reddens the bare-errno rows. Two
+      known survivors, recorded so nobody re-derives them as holes: a refused
+      dial survives the branch mutation (it is caught by the ECONNREFUSED
+      sentinel) and `context.DeadlineExceeded` survives the sentinel mutation
+      (`deadlineExceededError` is itself a `net.Error`) — both are redundancy
+      working, not a gap.
+    - **Classification is asserted through the exit code, never through message
+      text** (item 7), and message PRESERVATION is asserted separately: the six
+      invocations' stderr is byte-for-byte identical base vs HEAD, verified with
+      a differ that was itself shown to go red on an injected one-word change.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
