@@ -158,10 +158,19 @@ describe('isFeatureGated', () => {
     expect(isFeatureGated('UNAUTHORIZED: Apps are not enabled')).toBe(true);
     // (b) author gate — assertViewerIsAppDeveloper.
     expect(isFeatureGated('Apps authoring is not enabled for this account')).toBe(true);
-    // (c) unknown-recipe Zod enum rejection (pre-deploy; recipe not yet registered).
+    // (c) unknown-recipe Zod enum rejection — the server's registry holds no such
+    //     id. `starter-comfy-txt2img` IS registered, so this is the "you pointed
+    //     STARTER_COMFY_RECIPE somewhere else" case, not a pre-deploy state.
+    //
+    //     🔴 The `Expected …` side is a PLACEHOLDER on purpose. An earlier fixture
+    //     wrote the real registry's contents in here; the registry is server-owned,
+    //     it changed, and the fixture became a false claim that a reader took for
+    //     documentation. What the predicate actually keys on is the enum signature
+    //     plus THIS app's recipe id — that is what these fixtures pin, and it does
+    //     not depend on what else is registered.
     expect(
       isFeatureGated(
-        "Invalid enum value. Expected 'seamless-pano-360', received 'starter-comfy-txt2img'",
+        "Invalid enum value. Expected 'some-registered-id', received 'starter-comfy-txt2img'",
       ),
     ).toBe(true);
   });
@@ -203,7 +212,7 @@ describe('phaseForError', () => {
     expect(phaseForError('Apps are not enabled')).toBe('failed');
     expect(
       phaseForError(
-        "Invalid enum value. Expected 'seamless-pano-360', received 'starter-comfy-txt2img'",
+        "Invalid enum value. Expected 'some-registered-id', received 'starter-comfy-txt2img'",
       ),
     ).toBe('failed');
   });
@@ -213,8 +222,10 @@ describe('phaseForSubmitError (comfy-mode-scoped gating)', () => {
   // The three real gate strings (verified against civitai/civitai).
   const FLAG_GATE = 'Apps are not enabled';
   const AUTHOR_GATE = 'Apps authoring is not enabled for this account';
+  // Placeholder `Expected` side — see the note in the isFeatureGated block above:
+  // this fixture must not encode an inventory of the server-owned recipe registry.
   const ENUM_REJECT =
-    "Invalid enum value. Expected 'seamless-pano-360', received 'starter-comfy-txt2img'";
+    "Invalid enum value. Expected 'some-registered-id', received 'starter-comfy-txt2img'";
 
   it('COMFY mode: each gate string -> gated', () => {
     expect(phaseForSubmitError(FLAG_GATE, true)).toBe('gated');
