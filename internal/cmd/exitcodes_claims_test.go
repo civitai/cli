@@ -80,12 +80,35 @@ func exitCodeContractClaims() []contractClaim {
 		},
 		{
 			code:    2,
-			name:    "the missing-vs-unreadable split covers every local path flag, not just images",
-			phrases: []string{"every local path a flag names", "generate --input"},
+			name:    "the missing-vs-unreadable split covers every local path, flag OR positional",
+			phrases: []string{"every local path the CLI is handed", "positional argument", "generate --input"},
 			why: "stated generally because it was NOT general: --input was the counterexample, and a " +
 				"rule written only about images is one a future path flag can be added beside without " +
-				"anyone noticing it disagrees",
-			pinnedBy: "TestGenerateInputExitCodes (cmd/civitai) + TestReadGraphInputClassification",
+				"anyone noticing it disagrees. It said \"every local path a FLAG names\" for a release, " +
+				"and the two commands that broke it — `app validate <dir>` / `app submit <dir>`, issue " +
+				"#256 — take the path POSITIONALLY, so the sentence excluded exactly the cases that " +
+				"disagreed with it",
+			pinnedBy: "TestGenerateInputExitCodes (cmd/civitai) + TestReadGraphInputClassification + TestProjectDirExitCodes",
+		},
+		{
+			code:    2,
+			name:    "a project path that does not exist, or is not a directory, is 2",
+			phrases: []string{"app validate <dir>", "app submit <dir>", "or is not a directory"},
+			why: "issue #256: `app validate /nope` reported the missing path as \"a project root without a " +
+				"manifest\" and exited 1, so a script could not tell a typo'd path from an app that " +
+				"genuinely fails validation — the one distinction the exit-code contract exists to draw",
+			pinnedBy: "TestProjectDirExitCodes + TestResolveProjectDirClassification",
+		},
+		{
+			code: 1,
+			name: "a validation VERDICT is 1, and a manifest-less directory is a verdict",
+			phrases: []string{"validation verdict", "app validate", "no `block.manifest.json` at its root",
+				"app validate --json"},
+			why: "the counterweight to the #256 fix: it would be easy to \"tidy\" the manifest-less " +
+				"directory onto 2 alongside the nonexistent path. It must stay 1 — the user pointed at a " +
+				"real place, so the invocation was right and the project is wrong, and that is the " +
+				"answer `--json`'s `ok` field reports",
+			pinnedBy: "TestProjectDirExitCodes (the control rows)",
 		},
 		{
 			code:     5,

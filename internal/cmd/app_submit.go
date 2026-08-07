@@ -65,6 +65,19 @@ Defaults to the current directory.`,
 			}
 			out := cmd.OutOrStdout()
 
+			// 0. Classify the path the USER named. Same gate `app validate`
+			// uses — one rule, one place (resolveProjectDir, project_dir.go):
+			// a nonexistent path or a file exits 2, a real directory with no
+			// manifest keeps its validation verdict and exit 1.
+			//
+			// It runs UNCONDITIONALLY, ahead of --skip-validate, because it is
+			// not a validation check: `--skip-validate` waives our opinion of
+			// the manifest, not the question of whether the directory the user
+			// typed exists at all.
+			if err := resolveProjectDir(dir); err != nil {
+				return err
+			}
+
 			// 1. Validate first — never submit a known-bad manifest.
 			if !skipValidate {
 				res, err := validate.Dir(dir)

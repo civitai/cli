@@ -1586,6 +1586,57 @@ neither one's.
       inconsistency from this bullet — and do not read the retraction as
       weakening the case against a code 7, which stands on the contract
       expansion alone.
+      🔴 **AND THE SENTENCE THAT PUBLISHED THAT RULE EXCLUDED THE COMMANDS THAT
+      BROKE IT.** The code-2 note read "that split is the rule for **every local
+      path a FLAG names**" — so `civitai app validate <dir>` and
+      `civitai app submit <dir>`, which take the path POSITIONALLY, were outside
+      the sentence and disagreed with it for a release. Issue #256: `validate.Dir`
+      stats the JOINED `<dir>/block.manifest.json` and branches on
+      `os.IsNotExist`, which COLLAPSES "the directory does not exist" into "the
+      directory exists but has no manifest" — so `app validate /nope` reported a
+      missing manifest at a project root nobody has and exited **1**, and
+      `app validate README.md` fell through to the raw syscall and printed
+      `stat README.md/block.manifest.json: not a directory` — a path the CLI
+      assembled and the user never typed — also on 1. Closed by
+      `resolveProjectDir` (`internal/cmd/project_dir.go`), a three-way branch on
+      the path the user NAMED: nonexistent → 2, exists-but-not-a-directory → 2,
+      a real directory → unchanged (`validate.Dir` decides, and a manifest-less
+      directory keeps its finding and exit 1, because the invocation was right
+      and the project is wrong). The published note now says "every local path
+      the CLI is **handed** — a flag's value and a positional argument alike",
+      and `exitCodeContractClaims` carries a row for the widened wording so the
+      old, narrower sentence cannot come back quietly.
+      - **The gate is in `internal/cmd`, not `internal/validate`, and that is
+        item 7's boundary.** `ErrUsage` is this package's sentinel and
+        `validate.Dir` returns a validation VERDICT; pushing the tag down would
+        make `internal/validate` import the usage sentinel and hold a slice of
+        the exit-code contract. It is also deliberately NOT on
+        `validate.ManifestOnly`'s path — `app init` self-checks a directory it
+        just created and has no user-named path to classify.
+      - 🔴 **ONE HELPER, TWO CALL SITES, AND THE SET IS ASSERTED.** `app submit`
+        had the identical hole; a per-command copy is the shape this whole item
+        is about. `TestEveryValidateDirCallerGatesOnResolveProjectDir` AST-walks
+        the package and requires the set of files calling `validate.Dir` to
+        EQUAL the set calling `resolveProjectDir` — failing when it grows (a
+        third command validating a user-named directory without the gate) and
+        when it shrinks (a deleted gate, which would otherwise leave the ledger
+        a false map). Mutation-measured: dropping the submit call alone reddens
+        4 leaf subtests including this guard by name.
+      - 🔴 **`app validate --json` IS A DELIBERATE WIRE BREAK, of item 23's
+        class.** `civitai app validate /nope --json` used to write
+        `{"ok":false,"dir":"/nope","errors":[…]}` to stdout and exit 1 — a
+        fabricated validation result, complete with a finding about a manifest
+        nobody could have written. It now writes **nothing** to stdout and exits
+        2, keeping the CLI-wide convention that a usage error emits no JSON
+        object. Announced in the code-2 README cell. The gate therefore runs
+        BEFORE the `--json` block, and sliding it below is its own mutant: it
+        reddens exactly the JSON rows (3 leaf subtests) while the text-mode rows
+        stay green, so a table that only checked exit codes would miss it.
+      - **A stat failure that is neither ENOENT nor a non-directory stays
+        UNTAGGED and exits 1** — EACCES on a parent, or ENOTDIR partway down a
+        longer path. `app validate <regular-file>/x.json` is one of the six
+        invocations measured in #241, and 1 is the answer that issue settled on;
+        a CONTROL row pins it so the fix cannot quietly widen into it.
     - 🔴 **THERE WERE TWO COPIES, AND FIXING ONE IS WHAT THIS ITEM NOW EXISTS
       TO PREVENT.** `pkg/civitai/retry.go`'s `isTransientNetErr` carried the
       IDENTICAL unfixed spelling through #242, and `syscall.Errno.Timeout()` is
