@@ -114,7 +114,7 @@ type SubmitResult struct {
 	// only this one survives to a later read.
 	//
 	// 🔴 Read neither directly — use Substitutions(), which fixes the precedence.
-	Metadata *substitutionMetadata `json:"metadata,omitempty"`
+	Metadata json.RawMessage `json:"metadata,omitempty"`
 }
 
 // SubmitOptions carries the ENVELOPE siblings of the graph — the fields that

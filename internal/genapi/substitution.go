@@ -1,5 +1,7 @@
 package genapi
 
+import "encoding/json"
+
 // Model substitution — the server's record of a checkpoint it swapped out.
 //
 // 🔴 THE FAILURE THIS EXISTS TO MAKE VISIBLE. When a submitted `model.id` is not
@@ -87,6 +89,40 @@ type substitutionMetadata struct {
 	ModelSubstitutions []ModelSubstitution `json:"modelSubstitutions,omitempty"`
 }
 
+// substitutionsFromMetadata decodes the record out of a RAW `metadata` blob.
+//
+// 🔴 WHY THE CARRIER IS json.RawMessage AND NOT A TYPED FIELD. `metadata` is an
+// orchestrator-owned free-form bag, exactly like the `transactions` field
+// declared a few lines above it in `Workflow`. Modelling it as a struct made a
+// malformed ADVISORY field fail the unmarshal of the whole reply — and the
+// replies this rides on are the ones that tell a user what they were just
+// CHARGED for. Measured on the typed version, all three shapes losing the entire
+// workflow to `unexpected orchestrator.getWorkflow payload`:
+//
+//	{"metadata":{"modelSubstitutions":[{"requested":"x",…}]}}  entry type wrong
+//	{"metadata":{"modelSubstitutions":"nope"}}                 key not an array
+//	{"metadata":"nope"}                                        bag not an object
+//
+// None is producible by today's server, which only ever writes well-formed
+// records. That is the point: a feature that exists so a user can discover they
+// were billed for the wrong model must not have a read path where a
+// garbled WARNING costs them the workflow itself. Failing soft here degrades to
+// "no substitutions reported", which is the same thing an older server produces.
+//
+// Absent / null / not-an-object / no such key all yield nil, none of them an
+// error. Entry-level validation stays where it was — a bad entry is skipped, not
+// fatal.
+func substitutionsFromMetadata(raw json.RawMessage) []ModelSubstitution {
+	if len(raw) == 0 {
+		return nil
+	}
+	var env substitutionMetadata
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return nil
+	}
+	return env.ModelSubstitutions
+}
+
 // Substitutions returns the substitution record for this submit, or nil.
 //
 // 🔴 IT READS TWO PLACES, AND THE ORDER MATTERS. `generateFromGraph` attaches the
@@ -108,10 +144,7 @@ func (r *SubmitResult) Substitutions() []ModelSubstitution {
 	if len(r.ModelSubstitutions) > 0 {
 		return r.ModelSubstitutions
 	}
-	if r.Metadata != nil {
-		return r.Metadata.ModelSubstitutions
-	}
-	return nil
+	return substitutionsFromMetadata(r.Metadata)
 }
 
 // Substitutions returns the substitution record persisted on this workflow, or
@@ -122,8 +155,8 @@ func (r *SubmitResult) Substitutions() []ModelSubstitution {
 // `civitai workflows get <id>`; without this, that documented path is the one
 // place a substituted run stays silent forever.
 func (w *Workflow) Substitutions() []ModelSubstitution {
-	if w == nil || w.Metadata == nil {
+	if w == nil {
 		return nil
 	}
-	return w.Metadata.ModelSubstitutions
+	return substitutionsFromMetadata(w.Metadata)
 }
