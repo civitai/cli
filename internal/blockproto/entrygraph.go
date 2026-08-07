@@ -176,6 +176,16 @@ type EntryGraph struct {
 	// must never be read as evidence that something is absent.
 	Complete bool
 	// Gaps explains, in author-readable terms, why Complete is false.
+	//
+	// 🔴 THESE STRINGS ARE PRINTED TO AUTHORS, not just to a test failure
+	// message. `internal/validate`'s presence-tier advisory renders them
+	// (issue #258: it used to GUESS at why it had fallen back — "a bundler
+	// alias, a generated file, an off-project URL" — while the real reason sat
+	// here and was discarded, so a five-file no-build app was sent hunting for
+	// a bundler alias that cannot exist in it). Word a new gap for the author
+	// who has to fix it: name the referencing file, the specifier, and the
+	// edit. Each one must be a SINGLE LINE — the advisory rides in a
+	// `--json` message field.
 	Gaps []string
 	// Trace lists every reference considered and what it resolved to, for
 	// error messages that name the near-miss instead of saying "nothing".
@@ -327,7 +337,15 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			// the project. That is a GAP, not "the browser 404s it": treating
 			// it as the latter would let a mis-modelled project produce a
 			// confident finding.
-			g.gap("%s %q resolves to %s, which does not exist — this resolver's model of the project is incomplete",
+			//
+			// 🔴 THE WORDING IS AUTHOR-FACING, because `Gaps` is rendered into
+			// the ready-ack advisory an author reads (issue #258). This is the
+			// gap the canonical #206 shape produces — a `static` scaffold whose
+			// `civitai-host.js` was deleted — so it must name the referencing
+			// file, the specifier and the missing target, and say what to do.
+			// "this resolver's model of the project is incomplete", the tail it
+			// used to carry, is a fact about US that an author cannot act on.
+			g.gap("%s %q points at %s, which does not exist — restore that file or fix the reference",
 				p.what, p.spec, relTo(dir, resolved))
 			continue
 		}

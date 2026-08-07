@@ -45,7 +45,12 @@ func TestAppValidateFailsOnPnpmLockWithNpmBuildCommand(t *testing.T) {
 		`"outputDir"`,
 		"npm install",
 	} {
-		if !strings.Contains(stderr, want) {
+		// unwrapFinding because the printer WRAPS a finding to the terminal
+		// width (validate_print.go) — the message is one line on the wire and
+		// several on screen, so a raw substring test here is really asserting
+		// where the layout chose to break. `"buildCommand": "pnpm run build"`
+		// straddled a break the moment wrapping landed.
+		if !strings.Contains(unwrapFinding(stderr), want) {
 			t.Errorf("validate stderr missing %q:\n%s", want, stderr)
 		}
 	}
