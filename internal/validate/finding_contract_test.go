@@ -31,6 +31,15 @@ import (
 // (A) cannot see a field computed to "" at runtime; (B) cannot see a check no
 // fixture reaches that (A) already rejected statically; (C) says nothing about
 // presence. Keep all three.
+//
+// 🔴 AND NONE OF THE THREE PINS THE FIELD'S VALUE — every one of them asks only
+// "non-empty / right notation". That is a fourth question, and it lives in
+// finding_fields_test.go, which exists because three mutants moving a field to a
+// WRONG BUT PLAUSIBLE value survived all of the above with the suite green.
+//
+// (A)'s own scanner is validated by TestFindingFunnelScannerSeesEveryLiteralSpelling,
+// because (A)'s green is a claim about the spellings it can SEE — and that claim
+// was false for the one spelling `gofmt -s` produces.
 
 // packageGoFiles returns the non-test .go files of this package.
 func packageGoFiles(t *testing.T) []string {
@@ -61,7 +70,10 @@ func packageGoFiles(t *testing.T) []string {
 // findingSite is one `newFinding(...)` call in the package source.
 type findingSite struct {
 	file string
-	fn   string // enclosing function, closures normalised to their parent
+	// fn is the enclosing function, closures normalised to their parent. It is
+	// EMPTY for a construction outside any function body (a package-level `var`
+	// initialiser), which Guard A rejects outright — see below.
+	fn   string
 	line int
 	// fieldIsEmptyLiteral is set when the first argument is a literal "" — the
 	// one shape a static check can call out with certainty.
@@ -86,55 +98,170 @@ func normaliseFuncName(name string) string {
 	return name
 }
 
+// findingLitDepth reports how many levels of COMPOSITE-LITERAL NESTING separate
+// a type expression from a `Finding` value:
+//
+//	Finding                            -> 0  (a literal of this type IS a Finding)
+//	*Finding                           -> 0  (`&Finding{…}` / an elided `{…}`)
+//	[]Finding / [3]Finding / map[k]Finding -> 1  (its ELEMENTS are Findings)
+//	[][]Finding                        -> 2
+//	anything else                      -> -1
+//
+// 🔴 THE DEPTH IS THE WHOLE POINT, AND IT IS WHY THE FIRST VERSION OF THIS GUARD
+// WAS DISARMED BY `make fmt`. An element written with its type elided —
+// `[]Finding{{Message: "x"}}` — is an `*ast.CompositeLit` whose `Type` is NIL, so
+// a scanner that asks the literal for its own type finds none and skips it. That
+// is not an exotic spelling: `gofmt -s` REWRITES the caught form
+// `[]Finding{Finding{…}}` into exactly that uncaught one, and this repo runs
+// `gofmt -s -w .` in `make fmt` and enforces `gofmt -s -l .` in CI. So the
+// repo's own formatter converted every literal the guard could see into one it
+// could not. The element type therefore has to come from the ENCLOSING literal,
+// which is what this depth carries.
+func findingLitDepth(t ast.Expr) int {
+	switch e := t.(type) {
+	case *ast.Ident:
+		if e.Name == "Finding" {
+			return 0
+		}
+	case *ast.StarExpr:
+		return findingLitDepth(e.X)
+	case *ast.ArrayType:
+		if d := findingLitDepth(e.Elt); d >= 0 {
+			return d + 1
+		}
+	case *ast.MapType:
+		if d := findingLitDepth(e.Value); d >= 0 {
+			return d + 1
+		}
+	}
+	return -1
+}
+
+// findingScan accumulates one package's worth of scan results.
+type findingScan struct {
+	t     *testing.T
+	fset  *token.FileSet
+	file  string
+	sites []findingSite
+	lits  []string
+	seen  map[string]bool
+}
+
+func (sc *findingScan) flagLit(pos token.Pos, what string) {
+	if sc.file == "finding.go" {
+		return // the one authority, where the literal is allowed to live
+	}
+	at := sc.fset.Position(pos).String()
+	if sc.seen[at] {
+		return
+	}
+	sc.seen[at] = true
+	sc.lits = append(sc.lits, at+" ("+what+")")
+}
+
+// checkComposite flags a composite literal that constructs Finding(s). depth is
+// the element depth of the CONTEXT the literal appears in (see findingLitDepth):
+// 0 means this literal is itself a Finding, >0 means its elements are.
+func (sc *findingScan) checkComposite(cl *ast.CompositeLit, depth int) {
+	if depth < 0 {
+		return
+	}
+	if depth == 0 {
+		what := "Finding{…} composite literal"
+		if cl.Type == nil {
+			what = "elided-type Finding literal `{…}` inside a []Finding/map literal — the form `gofmt -s` produces"
+		}
+		sc.flagLit(cl.Lbrace, what)
+		return
+	}
+	for _, el := range cl.Elts {
+		if kv, ok := el.(*ast.KeyValueExpr); ok {
+			el = kv.Value
+		}
+		inner, ok := el.(*ast.CompositeLit)
+		if !ok {
+			continue // a newFinding(...) call, an identifier, anything else
+		}
+		if inner.Type != nil {
+			continue // it names its own type; the walk visits it in its own right
+		}
+		sc.checkComposite(inner, depth-1)
+	}
+}
+
+// findingWalker carries the enclosing function name down the AST. It is a VALUE
+// so a nested func gets its own name without mutating the parent's.
+type findingWalker struct {
+	sc *findingScan
+	fn string // "" == not inside any function body
+}
+
+func (w findingWalker) Visit(n ast.Node) ast.Visitor {
+	switch v := n.(type) {
+	case *ast.FuncDecl:
+		// A method is named by its own identifier; the ledger normalises the
+		// runtime name to the same thing.
+		return findingWalker{sc: w.sc, fn: v.Name.Name}
+	case *ast.CompositeLit:
+		if v.Type != nil {
+			w.sc.checkComposite(v, findingLitDepth(v.Type))
+		}
+	case *ast.CallExpr:
+		id, ok := v.Fun.(*ast.Ident)
+		if !ok || id.Name != "newFinding" {
+			break
+		}
+		pos := w.sc.fset.Position(v.Lparen)
+		site := findingSite{file: w.sc.file, fn: w.fn, line: pos.Line}
+		if len(v.Args) == 0 {
+			w.sc.t.Errorf("%s:%d: newFinding called with no arguments", w.sc.file, pos.Line)
+			break
+		}
+		if lit, ok := v.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING &&
+			(lit.Value == `""` || lit.Value == "``") {
+			site.fieldIsEmptyLiteral = true
+		}
+		w.sc.sites = append(w.sc.sites, site)
+	}
+	return w
+}
+
+// scanFindingSource parses one file — from disk when src is nil, otherwise from
+// src — and returns its newFinding sites plus every Finding-constructing
+// composite literal in it.
+//
+// It is factored out of collectFindingSites so the scanner itself can be driven
+// by a CONTROL CORPUS of known-good and known-bad spellings
+// (TestFindingFunnelScannerSeesEveryLiteralSpelling). A funnel guard that cannot
+// be shown to go red on the spelling it exists to catch is a claim about the
+// guard, not about the package.
+func scanFindingSource(t *testing.T, fset *token.FileSet, name string, src any) ([]findingSite, []string) {
+	t.Helper()
+	f, err := parser.ParseFile(fset, name, src, parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse %s: %v", name, err)
+	}
+	sc := &findingScan{t: t, fset: fset, file: name, seen: map[string]bool{}}
+	ast.Walk(findingWalker{sc: sc}, f)
+	return sc.sites, sc.lits
+}
+
 // collectFindingSites parses the package and returns every newFinding call site,
-// plus every bare `Finding{...}` composite literal it finds (which must be
-// empty outside finding.go).
+// plus every composite literal that constructs a Finding (which must be none
+// outside finding.go).
+//
+// 🔴 IT WALKS THE WHOLE FILE, NOT ONLY `*ast.FuncDecl`s. An earlier version
+// iterated `f.Decls` and skipped everything that was not a function, so a
+// package-level `var x = newFinding("", …)` was invisible to BOTH guards: Guard
+// A never saw the empty field, and Guard B never listed it in the reachability
+// ledger. Such a site is now collected with an EMPTY `fn` and rejected by name.
 func collectFindingSites(t *testing.T) (sites []findingSite, compositeLits []string) {
 	t.Helper()
 	fset := token.NewFileSet()
 	for _, name := range packageGoFiles(t) {
-		f, err := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
-		if err != nil {
-			t.Fatalf("parse %s: %v", name, err)
-		}
-		// Track the enclosing top-level func for each node.
-		for _, decl := range f.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			fnName := fd.Name.Name
-			ast.Inspect(fd, func(n ast.Node) bool {
-				switch v := n.(type) {
-				case *ast.CallExpr:
-					id, ok := v.Fun.(*ast.Ident)
-					if !ok || id.Name != "newFinding" {
-						return true
-					}
-					pos := fset.Position(v.Lparen)
-					site := findingSite{file: name, fn: fnName, line: pos.Line}
-					if len(v.Args) == 0 {
-						t.Errorf("%s:%d: newFinding called with no arguments", name, pos.Line)
-						return true
-					}
-					if lit, ok := v.Args[0].(*ast.BasicLit); ok && lit.Kind == token.STRING &&
-						(lit.Value == `""` || lit.Value == "``") {
-						site.fieldIsEmptyLiteral = true
-					}
-					sites = append(sites, site)
-				case *ast.CompositeLit:
-					id, ok := v.Type.(*ast.Ident)
-					if !ok || id.Name != "Finding" {
-						return true
-					}
-					if name != "finding.go" {
-						compositeLits = append(compositeLits,
-							fset.Position(v.Lbrace).String())
-					}
-				}
-				return true
-			})
-		}
+		fileSites, fileLits := scanFindingSource(t, fset, name, nil)
+		sites = append(sites, fileSites...)
+		compositeLits = append(compositeLits, fileLits...)
 	}
 	return sites, compositeLits
 }
@@ -145,24 +272,52 @@ func collectFindingSites(t *testing.T) (sites []findingSite, compositeLits []str
 // field?". It fires at the construction site, in the source, so it does not
 // depend on anybody writing a fixture for the new check first.
 //
-// It enforces two properties:
+// It enforces three properties:
 //
-//  1. `Finding{...}` is never written as a composite literal outside finding.go.
-//     That is what makes newFinding the single funnel — a struct literal can
-//     omit Field and compile, and no amount of arguing about conventions stops
-//     the next one.
+//  1. No composite literal outside finding.go CONSTRUCTS a Finding — in ANY
+//     spelling. That is what makes newFinding the single funnel: a struct
+//     literal can omit Field and compile, and no amount of arguing about
+//     conventions stops the next one.
+//
+//     🔴 "IN ANY SPELLING" IS LOAD-BEARING, AND SAYING LESS THAN THAT IS HOW
+//     THIS GUARD WAS ONCE DISARMED BY `make fmt`. The first version matched
+//     only a literal that names its own type (`Finding{…}`), and `gofmt -s`
+//     rewrites `[]Finding{Finding{…}}` into the ELIDED `[]Finding{{…}}`, whose
+//     `Type` is nil — so the repo's own formatter, run by `make fmt` and
+//     enforced by CI's `gofmt -s -l .`, converted the one caught form into an
+//     uncaught one. Measured: a new check returning `[]Finding{{Message: …}}`
+//     with no Field, wired into the real pipeline and with NO corpus fixture,
+//     passed the entire suite. Do not narrow this back to a form; see
+//     findingLitDepth, and TestFindingFunnelScannerSeesEveryLiteralSpelling for
+//     the spellings both directions are pinned on.
+//
 //  2. No newFinding call passes an empty string literal as the field.
 //
+//  3. Every construction sits INSIDE a function, so Guard B's reachability
+//     ledger can attribute it. A package-level `var x = newFinding(…)` runs at
+//     init, before any test can install the hook, and was invisible to both
+//     guards.
+//
 // Residual, stated: a field computed to "" at runtime is invisible here. That is
-// what GUARD B covers.
+// what GUARD B covers. So is a Finding built without a literal at all (`var f
+// Finding; f.Message = …`), which no spelling-based funnel can see.
 func TestFindingsAreConstructedWithAField(t *testing.T) {
 	sites, compositeLits := collectFindingSites(t)
 
 	if len(compositeLits) > 0 {
-		t.Errorf("Finding{...} composite literal(s) outside finding.go at %v —\n"+
+		t.Errorf("Finding-constructing composite literal(s) outside finding.go at %v —\n"+
 			"every finding must be built by newFinding(field, message) so that "+
 			"\"does this check carry a field?\" is a question about one call. "+
 			"See finding.go and issue #225.", compositeLits)
+	}
+
+	for _, s := range sites {
+		if s.fn == "" {
+			t.Errorf("%s:%d: newFinding called OUTSIDE any function body (a package-level "+
+				"initialiser) — construct findings inside the check that reports them, or "+
+				"Guard B's reachability ledger cannot attribute them and the site is "+
+				"unobserved by every test in this file.", s.file, s.line)
+		}
 	}
 
 	// Positive control on the parser: this package HAS finding sites. A zero here
@@ -183,6 +338,141 @@ func TestFindingsAreConstructedWithAField(t *testing.T) {
 	}
 }
 
+// TestFindingFunnelScannerSeesEveryLiteralSpelling VALIDATES THE INSTRUMENT
+// Guard A reads its verdict from.
+//
+// 🔴 Guard A's green is a claim about the SPELLINGS ITS SCANNER CAN SEE, and
+// that claim was FALSE for the one spelling `gofmt -s` produces. So the scanner
+// is driven here against a corpus of synthetic sources with a known answer:
+// every literal form that constructs a Finding must be flagged, and the forms
+// that do not construct one must NOT be (a guard that flagged everything would
+// be equally useless and equally green on the real tree).
+//
+// The two rows that matter most are the gofmt PAIR: `[]Finding{Finding{…}}` is
+// what a person writes, `[]Finding{{…}}` is what `make fmt` leaves behind, and
+// the second is the form that shipped a fieldless finding past the whole suite.
+// If you ever change findingLitDepth or checkComposite, this table is the thing
+// that says whether you narrowed the guard.
+func TestFindingFunnelScannerSeesEveryLiteralSpelling(t *testing.T) {
+	const preamble = "package validate\n\ntype Finding struct{ Field, Message string }\n\nfunc newFinding(a, b string) Finding { panic(\"stub\") }\n"
+
+	cases := []struct {
+		name     string
+		body     string
+		wantLits int
+		// wantSites is the number of newFinding calls, and wantFnEmpty the
+		// number of them attributed to no function (a package-level init).
+		wantSites   int
+		wantFnEmpty int
+	}{
+		{
+			name:     "elided element in a []Finding literal (what `gofmt -s` produces)",
+			body:     "func c() []Finding { return []Finding{{Message: \"x\"}} }",
+			wantLits: 1,
+		},
+		{
+			name:     "explicitly typed element in a []Finding literal (what a person writes)",
+			body:     "func c() []Finding { return []Finding{Finding{Message: \"x\"}} }",
+			wantLits: 1,
+		},
+		{
+			name:     "bare Finding literal",
+			body:     "func c() Finding { return Finding{Field: \"a\"} }",
+			wantLits: 1,
+		},
+		{
+			name:     "address-of a Finding literal",
+			body:     "func c() *Finding { return &Finding{} }",
+			wantLits: 1,
+		},
+		{
+			name:     "elided element in a []*Finding literal",
+			body:     "func c() []*Finding { return []*Finding{{Message: \"x\"}} }",
+			wantLits: 1,
+		},
+		{
+			name:     "elided value in a map[string]Finding literal",
+			body:     "func c() map[string]Finding { return map[string]Finding{\"k\": {Message: \"x\"}} }",
+			wantLits: 1,
+		},
+		{
+			name:     "two elided elements are two literals",
+			body:     "func c() []Finding { return []Finding{{Message: \"a\"}, {Message: \"b\"}} }",
+			wantLits: 2,
+		},
+		{
+			name:     "elided element nested two deep",
+			body:     "func c() [][]Finding { return [][]Finding{{{Message: \"x\"}}} }",
+			wantLits: 1,
+		},
+		{
+			name:     "a var declaration is not a hiding place",
+			body:     "func c() { var f = []Finding{{Message: \"x\"}}; _ = f }",
+			wantLits: 1,
+		},
+		// --- the NEGATIVE side: these must NOT be flagged ------------------
+		{
+			name:      "the sanctioned funnel",
+			body:      "func c() []Finding { return []Finding{newFinding(\"a\", \"b\")} }",
+			wantSites: 1,
+		},
+		{
+			name: "an unrelated composite literal",
+			body: "func c() []string { return []string{\"x\"} }",
+		},
+		{
+			name:      "a struct that merely CONTAINS findings",
+			body:      "type R struct{ E []Finding }\n\nfunc c() R { return R{E: []Finding{newFinding(\"a\", \"b\")}} }",
+			wantSites: 1,
+		},
+		// --- attribution ---------------------------------------------------
+		{
+			name:      "a closure is attributed to its enclosing function",
+			body:      "func outer() []Finding { f := func() Finding { return newFinding(\"a\", \"b\") }; return []Finding{f()} }",
+			wantSites: 1,
+		},
+		{
+			name:      "a method is attributed to the method name",
+			body:      "type T struct{}\n\nfunc (T) m() Finding { return newFinding(\"a\", \"b\") }",
+			wantSites: 1,
+		},
+		{
+			name:        "a package-level initialiser is attributed to NO function",
+			body:        "var pkgLevel = newFinding(\"\", \"x\")",
+			wantSites:   1,
+			wantFnEmpty: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sites, lits := scanFindingSource(t, token.NewFileSet(), "subject.go", preamble+"\n"+tc.body+"\n")
+			if len(lits) != tc.wantLits {
+				t.Errorf("flagged %d Finding literal(s), want %d: %v", len(lits), tc.wantLits, lits)
+			}
+			if len(sites) != tc.wantSites {
+				t.Errorf("found %d newFinding site(s), want %d: %v", len(sites), tc.wantSites, sites)
+			}
+			var empty int
+			for _, s := range sites {
+				if s.fn == "" {
+					empty++
+				}
+			}
+			if empty != tc.wantFnEmpty {
+				t.Errorf("%d site(s) attributed to no function, want %d: %v", empty, tc.wantFnEmpty, sites)
+			}
+		})
+	}
+
+	// The file the funnel LIVES in is exempt, and that exemption must be
+	// file-scoped rather than global — otherwise the guard is off everywhere.
+	if _, lits := scanFindingSource(t, token.NewFileSet(), "finding.go",
+		preamble+"\nfunc c() []Finding { return []Finding{{Message: \"x\"}} }\n"); len(lits) != 0 {
+		t.Errorf("finding.go must be exempt from the funnel rule, got %v", lits)
+	}
+}
+
 // TestEveryCheckEmitsAField is GUARD B — behavioural, with a reachability
 // ledger.
 //
@@ -200,6 +490,13 @@ func TestEveryCheckEmitsAField(t *testing.T) {
 
 	want := map[string]string{} // funcName -> "file:line" of one of its sites
 	for _, s := range sites {
+		if s.fn == "" {
+			// A package-level construction. It has no enclosing function to
+			// reach, so it cannot enter the ledger; Guard A rejects it by name
+			// and line instead. Listing it here would only add a second,
+			// misleading "add a fixture" failure for the same defect.
+			continue
+		}
 		if _, ok := want[s.fn]; !ok {
 			want[s.fn] = s.file + ":" + itoaTest(s.line)
 		}

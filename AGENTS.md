@@ -1291,7 +1291,13 @@ neither one's.
       straight off the sentence and stays symmetric across the pair. Per-element
       and per-key rules carry the index or key (`targets[0].slotId`,
       `scopeJustifications.<scope>`), because `targets` alone is useless on the
-      only manifests where those rules fire more than once.
+      only manifests where those rules fire more than once. All three clauses are
+      ASSERTED, not merely stated: the pair-rule convention by
+      `TestPairRuleNamesTheMissingField` (which also requires the message to name
+      BOTH sides, so "the missing one" is a claim about a pair that exists), the
+      per-element/per-key ones by rows in `findingFieldLedger()`. It was stated
+      here and asserted nowhere for one release, and an inverted pair survived a
+      green suite.
     - 🔴 **`dedupe` KEYS ON THE (field, message) PAIR.** The value being deduped
       grew a second axis and collapsing on either alone loses real findings: an
       iframe is routinely wrong several ways at once (same field, different
@@ -1310,21 +1316,84 @@ neither one's.
       every production run — one nil compare per finding, and `runtime.Caller` is
       not entered unless a test installed it. Do not delete it to "clean up"; the
       coverage claim becomes vacuous the moment it goes.
-    - **Three guards, and none subsumes the others.**
+    - 🔴 **`make fmt` ONCE DISARMED GUARD A, AND THE FIX IS THAT THE FUNNEL RULE
+      IS SPELLING-INDEPENDENT.** The first version of the AST scan matched only a
+      composite literal that NAMES ITS OWN TYPE (`Finding{…}` — an
+      `*ast.CompositeLit` whose `Type` is an `*ast.Ident`). An element with its
+      type ELIDED — `[]Finding{{Message: …}}` — has `Type == nil`, so the scan
+      skipped it. That is not an exotic spelling: **`gofmt -s` REWRITES the
+      caught form into the uncaught one**, and this repo runs `gofmt -s -w .` in
+      `make fmt` and enforces `gofmt -s -l .` in CI. The repo's own formatter
+      converted every literal the guard could see into one it could not.
+      Measured on the merged tree: a new check returning
+      `[]Finding{{Message: …}}` with NO Field, wired into the real pipeline and
+      with no corpus fixture, passed the ENTIRE suite (18/18 packages `ok`,
+      `gofmt -s -l .` clean over 278 files) — guard B could not see it either,
+      because its ledger is built from `newFinding` call sites and this check
+      never calls `newFinding`. `findingLitDepth` now resolves the element type
+      from the ENCLOSING literal (`[]Finding`, `[]*Finding`, `map[k]Finding`,
+      `[][]Finding`), and `TestFindingFunnelScannerSeesEveryLiteralSpelling`
+      drives the scanner against a control corpus of 15 spellings — both the
+      forms that MUST be flagged and the forms that must NOT — so a future
+      narrowing of the guard fails loudly instead of silently.
+      **Do not describe the funnel rule as being about `Finding{…}`**; an earlier
+      revision of this item and of the test's own doc comment both did, and both
+      were true only for the spelling gofmt deletes.
+      Related hole closed in the same change: the scan iterated `f.Decls` and
+      skipped everything that was not an `*ast.FuncDecl`, so a package-level
+      `var x = newFinding("", …)` was invisible to BOTH guards. It now walks the
+      whole file and rejects any construction outside a function body by name —
+      such a site runs at init, before a test can install `findingSiteHook`, so
+      the reachability ledger can never attribute it.
+    - **Four guards, and none subsumes the others.**
       `TestFindingsAreConstructedWithAField` (structural, AST) fires on the
       SOURCE, so it catches a new check nobody wrote a test for — but cannot see a
       field computed to `""` at runtime. `TestEveryCheckEmitsAField`
       (behavioural + ledger) catches exactly that — but only for checks a fixture
-      reaches. `TestValidateJSONEveryFindingCarriesAField` /
+      reaches. `TestEveryFindingCarriesItsDocumentedField` +
+      `TestPairRuleNamesTheMissingField` (`finding_fields_test.go`) pin the
+      field's VALUE — see the bullet below. `TestValidateJSONEveryFindingCarriesAField` /
       `…SemanticChecksAreFieldTagged` (in `internal/cmd`) assert on the DECODED
       `map[string]any` of real `--json` stdout, per AGENTS item 14's reasoning: a
       `strings.Contains(out, "field")` is satisfied by the word appearing inside a
       MESSAGE and cannot see `"field": null` at all. Mutation results: a literal
       `""` field kills guard A at its site; a runtime-computed `""` kills guard B
-      and the per-check cmd guard; a `Finding{…}` literal kills guard A's funnel
-      rule; reverting `fieldPath` to JSON Pointer kills all four notation guards;
-      deleting one corpus fixture kills guard B's ledger by name. Five mutants,
-      five kills, each with the intended guard's own message.
+      and the per-check cmd guard; an elided-type `[]Finding{{…}}` literal kills
+      guard A's funnel rule with its own message; a package-level `newFinding`
+      kills guard A's attribution rule; reverting `fieldPath` to JSON Pointer
+      kills all four notation guards; deleting one corpus fixture kills guard B's
+      ledger by name.
+    - 🔴 **A NON-EMPTY FIELD IS NOT THE CONTRACT — THE SPECIFIC FIELD IS, AND
+      MUTATING ONE TO A *WRONG BUT PLAUSIBLE* VALUE IS THE SHAPE THE FIRST SWEEP
+      NEVER TRIED.** Every guard above answers "is the field non-empty / in the
+      right notation?", and the original sweep only ever mutated a field to `""`
+      or to JSON Pointer — both of which those guards see. It never mutated one
+      to another real field name, which is what a refactor actually produces. An
+      audit found three such mutants surviving the full green suite:
+      `buildCoherence`'s two pair rules INVERTED; the budgeted-scope-no-page
+      warning moved `page` → `scopes`; and **both lockfile findings moved
+      `(project)` → `(root)`**, i.e. exactly the sentinel collapse this item
+      already marked 🔴, undetected. Note the near miss that let the last one
+      through: guard B's positive control asserts the corpus produced *a*
+      `(project)` finding, and `readyack.go` still produced one — a control
+      satisfied by a bystander.
+      `findingFieldLedger()` closes it with a BIDIRECTIONAL ledger over every
+      finding the corpus produces: each finding must match exactly ONE entry (a
+      new check with no row fails, naming itself), and each entry must match at
+      least one finding (a stale row cannot sit there looking like coverage).
+      Each row records the field AND `why` that field — derived from what the
+      check MEANS, never copied from the implementation, or the test is a
+      restatement of the thing it constrains.
+    - **The residual `dedupe`'s second axis knowingly ships with.** Two
+      `targets[]` entries carrying the SAME unknown `slotId` now print two
+      identical-looking lines in the human output, because the message
+      interpolates the slot id but not the index, and the (field, message) key
+      keeps both. Measured. Under the old message-keyed dedupe they collapsed to
+      one. `--json` is unaffected and is arguably *more* correct — the two
+      findings carry `targets[0].slotId` and `targets[1].slotId` and a consumer
+      can point at both lines. Fixing the text would mean interpolating the index
+      into the message, which changes author-facing copy for a cosmetic
+      duplicate; it is left alone deliberately rather than by oversight.
     - **The `issues()` empty-field fallback in `app_validate.go` maps `""` →
       `(root)`, and it is DEFENCE IN DEPTH, not a working path.** It upholds the
       README's "never null" for a case the guards missed. 🔴 State the cost with

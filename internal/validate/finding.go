@@ -100,10 +100,19 @@ const (
 // question about ONE call rather than about a struct literal somewhere.
 //
 // TestFindingsAreConstructedWithAField enforces that structurally — it parses
-// every non-test file in the package, rejects a bare `Finding{…}` composite
-// literal, and rejects a `newFinding("" , …)`. That is the guard that a NEWLY
-// ADDED check cannot ship without a field: it fires on the construction site
-// itself, so it does not depend on the new check being exercised by any test.
+// every non-test file in the package and rejects a composite literal that
+// constructs a Finding IN ANY SPELLING, a `newFinding("", …)`, and a
+// construction outside any function body. That is the guard that a NEWLY ADDED
+// check cannot ship without a field: it fires on the construction site itself,
+// so it does not depend on the new check being exercised by any test.
+//
+// 🔴 "IN ANY SPELLING" is not decoration. The first version of that guard
+// matched only a literal that names its own type (`Finding{…}`), and `gofmt -s`
+// — which `make fmt` runs and CI enforces — rewrites `[]Finding{Finding{…}}`
+// into the ELIDED `[]Finding{{…}}`, whose AST node carries no type at all. So
+// the repo's own formatter converted the one caught form into an uncaught one,
+// and a fieldless finding shipped past the whole suite. Never describe or
+// re-narrow this rule to the `Finding{…}` spelling.
 func newFinding(field, message string) Finding {
 	if h := findingSiteHook; h != nil {
 		recordFindingSite(h)
