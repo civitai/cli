@@ -3,7 +3,6 @@ package cmd
 import (
 	"bytes"
 	"image"
-	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"strings"
@@ -262,13 +261,24 @@ func minimalWebP(*testing.T) []byte {
 	return b
 }
 
-func minimalGIF(t *testing.T) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	if err := gif.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 2, 2)), nil); err != nil {
-		t.Fatalf("gif encode: %v", err)
-	}
-	return buf.Bytes()
+// minimalGIF is hand-built, and 🔴 MUST NOT be replaced with `gif.Encode`.
+//
+// Importing `image/gif` anywhere in this package runs its init() and REGISTERS
+// the GIF decoder process-wide, which changes how `civitai generate --image`
+// refuses a GIF: it stops failing via `image.ErrFormat` and starts failing via
+// the allowlist branch. That is not hypothetical — the first version of this
+// file did import `image/gif` and reddened three unrelated tests, including
+// TestSupportedImageFormats_DecoderRegistrationIsInLockstep, whose whole job is
+// to catch exactly this ("the unreachability argument for the allowlist branch
+// depends on this being the ErrFormat arm"). A test fixture that mutates global
+// decoder state is a test that changes the thing it is measuring.
+//
+// These 13 bytes are a valid GIF87a header (magic + logical screen descriptor),
+// which is all any header-only decoder would read.
+func minimalGIF(*testing.T) []byte {
+	b := []byte("GIF87a")
+	b = append(b, 2, 0, 2, 0) // width=2, height=2 (little-endian uint16)
+	return append(b, 0x00, 0x00, 0x00)
 }
 
 // TestListingHelpBodiesAreComplete is the pilot's own contract: every node in
