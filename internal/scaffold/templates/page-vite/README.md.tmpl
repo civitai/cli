@@ -96,3 +96,16 @@ civitai app submit
 
 `submit` packages the SOURCE tree (manifest + src + build config), excluding
 `.git`, `node_modules`, and `dist` — the platform rebuilds from source.
+
+## Store-listing media (`assets/`)
+
+Your store listing **cannot publish without an icon and a cover**, and both are
+settable while the app is in review. `assets/` is scaffolded for them and ships
+with no images on purpose — see [`assets/README.md`](assets/README.md) for the
+size, format and aspect requirements, then:
+
+```bash
+civitai app listing set-icon  ./assets/icon.png
+civitai app listing set-cover ./assets/cover.png
+civitai app listing status
+```
