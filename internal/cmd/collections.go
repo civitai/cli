@@ -18,12 +18,26 @@ func newCollectionsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "collections",
 		Short: "Search and inspect collections on Civitai",
-		Long: `Read-only access to Civitai collections via the public REST API
-(GET /api/v1/collections). These endpoints are public and work anonymously; if
-you are logged in (civitai login) your token is sent automatically. Only public
-collections are discoverable.`,
+		Long: `Read-only access to Civitai collections through the public REST API
+(GET /api/v1/collections, GET /api/v1/collections/{id}).
+
+` + readAnonNote + `
+
+Only PUBLIC collections are discoverable. Logging in does not widen this
+surface to your own private collections, and there is no create, edit or
+add-to-collection path in the CLI — this group is read-only.
+
+` + "`collections search`" + ` finds collections by name; ` + "`collections get <id>`" + `
+shows one collection's owner, type, read permission, description and tags.
+
+Neither command pages through a collection's CONTENTS: the public route
+answers with collection metadata (` + "`search`" + ` adds an item COUNT), not with the
+models or images inside.
+
+` + readJSONNote,
 		Example: `  civitai collections search --query "favorites" --limit 5
-  civitai collections get 1234`,
+  civitai collections get 1234
+  civitai collections get 1234 --json`,
 	}
 	cmd.AddCommand(newCollectionsSearchCmd())
 	cmd.AddCommand(newCollectionsGetCmd())
@@ -41,14 +55,17 @@ func newCollectionsSearchCmd() *cobra.Command {
 		Short: "Search collections (GET /api/v1/collections)",
 		Long: `Search public collections via GET /api/v1/collections.
 
-Pagination is cursor-based (a keyset cursor on the collection id — there is no
---page). The next cursor is printed after the results; pass it back via --cursor.
+Paging is cursor-only: a keyset cursor on the collection id, so there is
+no --page here. ` + limitRule(collectionsLimitMax) + `.
+The next cursor is printed under the results; pass it back via --cursor.
 
 Cursor paging is only supported for the default (Newest) sort. This is a server
 constraint: for any other --sort (e.g. "Most Followers") the API returns a
 nextCursor that it then rejects — a dead cursor that yields no further pages. So
 for a non-Newest sort the CLI shows the first page only and does NOT print a
-next-page hint; deep paging requires --sort Newest.`,
+next-page hint; deep paging requires --sort Newest.
+
+` + readAnonShort,
 		Example: `  civitai collections search --query "anime" --limit 5
   civitai collections search --sort Newest --cursor <cursor>`,
 		Args: cobra.NoArgs,
@@ -111,6 +128,20 @@ func newCollectionsGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: "Get a collection by id (GET /api/v1/collections/{id})",
+		Long: `Get one collection by id: GET /api/v1/collections/{id}.
+
+The id is the number in a civitai.com/collections/<id> URL. A non-integer or
+non-positive argument is refused locally, as a usage mistake, before any
+request is made.
+
+Prints the collection's name, owner, type, read permission, public flag,
+description (truncated) and tags. Only PUBLIC collections are readable here.
+
+Two differences from the ` + "`search`" + ` row for the same collection, both of them
+the API's shape rather than the CLI's: the detail body drops the item COUNT and
+adds the TAGS. Neither shape lists the collection's items.
+
+` + readAnonShort,
 		Example: `  civitai collections get 1234
   civitai collections get 1234 --json`,
 		Args: cobra.ExactArgs(1),
