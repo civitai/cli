@@ -29,9 +29,10 @@ func scaffoldGood(t *testing.T, tmpl scaffold.Template) string {
 	dir := scaffoldRaw(t, tmpl)
 	if _, err := os.Stat(filepath.Join(dir, "package.json")); err == nil {
 		// The npm templates declare `npm run build`; stand in for `npm install`.
-		// The body has to be what an install WRITES, not `{}` — `npm ci` refuses
-		// `{}` with the same EUSAGE as an empty file (issue #255), so a `{}`
-		// fixture would assert that a build-breaking project validates clean.
+		// The body has to be what an install WRITES, not `{}` — measured on npm
+		// 11.17.0, `npm ci` over `{}` exits 1 on any project with a dependency
+		// (the sync check: "Missing: <pkg> from lock file"), so a `{}` fixture
+		// would assert that a build-breaking project validates clean (issue #255).
 		if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(npmLockBody), 0o600); err != nil {
 			t.Fatalf("write package-lock.json: %v", err)
 		}

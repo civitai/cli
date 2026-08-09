@@ -73,11 +73,20 @@ func wantUnusableLockfileError(t *testing.T, res Result, lockfile, refreshCmd st
 func TestLockfileEmptyNpmLockfileIsFatal(t *testing.T) {
 	res := npmProject(t, "")
 	wantUnusableLockfileError(t, res, "package-lock.json", "npm install", "it is EMPTY (0 bytes)")
-	// The message must also carry npm's OWN precondition, so the author can check
-	// the file against a rule rather than against our assertion. Measured on npm
-	// 11.17.0: an empty package-lock.json fails `npm ci` with EUSAGE naming
-	// exactly this.
-	wantLockError(t, res, "lockfileVersion >= 1", "npm ci")
+	// The message must state the rule the author can check their file against,
+	// and name the command that will run.
+	wantLockError(t, res, `numeric "lockfileVersion" of 1 or more`, "npm ci")
+	// 🔴 It must NOT quote npm's own EUSAGE sentence. That sentence reads
+	// "…an existing package-lock.json or npm-shrinkwrap.json with lockfileVersion
+	// >= 1", and this CLI does not recognise npm-shrinkwrap.json at all — a
+	// shrinkwrap-only project is reported as having NO lockfile, though `npm ci`
+	// installs from one happily (measured: rc 0, node_modules populated). Quoting
+	// npm at an author whose shrinkwrap we just called missing hands them a
+	// sentence that contradicts our own verdict.
+	if msg := lockErrors(res)[0]; strings.Contains(msg, "npm-shrinkwrap") {
+		t.Errorf("the message must not quote npm's sentence naming npm-shrinkwrap.json while "+
+			"this check does not recognise that filename:\n  %s", msg)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +123,25 @@ func TestLockfileNpmContentRule(t *testing.T) {
 			why: "POSITIVE CONTROL: the shape `npm install` writes",
 		},
 		{
+			name: "a real lockfile behind a UTF-8 BOM", body: "\xef\xbb\xbf" + npmLockBody,
+			why: "🔴 POSITIVE CONTROL, and a fixed false HARD ERROR. npm's parser tolerates a " +
+				"BOM and Go's encoding/json does not: measured on npm 11.17.0, `npm ci` over " +
+				"exactly these bytes is rc 0 with node_modules populated, while this check " +
+				"called it \"does not parse as a JSON object\" and exited 1 — blocking " +
+				"`app submit` on a project that builds",
+		},
+		{
+			name: "a BOM and nothing else", body: "\xef\xbb\xbf",
+			defect: "it is EMPTY (a byte-order mark and nothing else)",
+			why: "the BOM strip must not turn an empty file into a pass — measured, npm " +
+				"rejects this with the same lockfileVersion >= 1 EUSAGE as a 0-byte file",
+		},
+		{
+			name: "a BOM in front of an otherwise EMPTY object", body: "\xef\xbb\xbf{}",
+			defect: `it declares no "lockfileVersion"`,
+			why:    "the strip must feed the parser, not excuse it: the content rule still applies",
+		},
+		{
 			name: "lockfileVersion 3 and nothing else", body: `{"lockfileVersion": 3}`,
 			why: "POSITIVE CONTROL: the version key is the whole of npm's precondition; " +
 				"the CLI must not invent further structure it has no authority over",
@@ -134,9 +162,14 @@ func TestLockfileNpmContentRule(t *testing.T) {
 		{
 			name: "valid JSON, no lockfileVersion", body: "{}\n",
 			defect: `it declares no "lockfileVersion"`,
-			why: "🔴 DELIBERATE: `npm ci` rejects `{}` with the SAME EUSAGE as an empty file " +
-				"(\"with lockfileVersion >= 1\"), so accepting it would leave the headline " +
-				"defect half-open — `echo '{}' > package-lock.json` for `touch`",
+			why: "🔴 DELIBERATE, and the REASON is not what an earlier revision of this row " +
+				"claimed. Measured on npm 11.17.0: `{}` does NOT produce the empty file's " +
+				"\"lockfileVersion >= 1\" EUSAGE — it parses, so npm gets past that gate and " +
+				"fails the SYNC check instead (\"…are in sync… Missing: <pkg> from lock file\"). " +
+				"Still rc 1 on any project with a dependency, so the verdict stands. Rejected " +
+				"because accepting it would leave the headline defect half-open — " +
+				"`echo '{}' > package-lock.json` in place of `touch`. Residual, documented in " +
+				"lockfileContentDefect: on a ZERO-dependency project `npm ci` accepts `{}` (rc 0)",
 		},
 		{
 			name: "valid JSON object with other keys but no version", body: `{"name":"x","packages":{}}`,
@@ -189,7 +222,7 @@ func TestLockfileNpmContentRule(t *testing.T) {
 	// Count floors on the table itself. A table that drifted to all-negative
 	// would be satisfied by "reject everything", and one that drifted to
 	// all-positive by "accept everything"; either reads as a serene pass.
-	if accepted < 3 {
+	if accepted < 4 {
 		t.Errorf("only %d ACCEPTED rows — with fewer, a predicate that rejects every "+
 			"lockfile passes this whole table", accepted)
 	}
@@ -310,7 +343,23 @@ func TestLockfileContentCheckNeverFiresWithoutPackageJSON(t *testing.T) {
 // is attributable to the cap and to nothing else — without it, "the big file
 // passed" is equally consistent with a predicate that accepts everything.
 func TestLockfileOverTheSizeCapDegradesToPresenceOnly(t *testing.T) {
+	// 🔴 THE CONSTANT ITSELF IS PINNED, because every assertion below is
+	// RELATIVE to it and therefore survives any value. Measured: raising
+	// maxLockfileBytes to 1<<62 left this whole file green — `f.Truncate` failed
+	// at that size, the old `t.Skipf` fired, and a SKIP reads as a pass. So the
+	// memory bound this check argues for was a constant no test held.
+	if maxLockfileBytes != 64<<20 {
+		t.Fatalf("maxLockfileBytes is %d, want %d (64 MiB). This is a deliberate bound, not a "+
+			"tuning knob: changing it changes how much `validate` will read into memory for a "+
+			"file it only inspects for one key. If the change is intended, update this "+
+			"assertion AND re-measure the peak-RSS table in lockfile.go's comment — the "+
+			"ceiling is ~2.2x the cap, not the cap.", int64(maxLockfileBytes), int64(64<<20))
+	}
+
 	// A sparse file: Truncate reports the size without writing 64 MiB.
+	//
+	// 🔴 FAIL, NEVER SKIP. A guard that silently skips is indistinguishable from
+	// one wired to nothing, and that is exactly how the mutation above survived.
 	sparse := func(t *testing.T, dir string, size int64) {
 		t.Helper()
 		f, err := os.Create(filepath.Join(dir, "package-lock.json"))
@@ -319,7 +368,9 @@ func TestLockfileOverTheSizeCapDegradesToPresenceOnly(t *testing.T) {
 		}
 		defer f.Close()
 		if err := f.Truncate(size); err != nil {
-			t.Skipf("cannot create a sparse file here: %v", err)
+			t.Fatalf("could not create a %d-byte sparse file: %v — this test cannot observe "+
+				"the size cap without one, and skipping here would report a pass for an "+
+				"assertion that never ran", size, err)
 		}
 	}
 	run := func(t *testing.T, size int64) Result {

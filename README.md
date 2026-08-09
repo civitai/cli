@@ -693,6 +693,15 @@ mismatch or a missing lockfile is a hard `validate` error; an *extra* unused
 lockfile is a warning. Apps with no `package.json` are static — the platform
 never installs for them and they are never flagged.
 
+The lockfile also has to **be** one, not merely exist. A `package-lock.json`
+must parse as JSON and declare a numeric `"lockfileVersion"` of 1 or more (what
+`npm ci` itself requires); a `pnpm-lock.yaml` or `yarn.lock` must be non-empty.
+An **empty** lockfile fails the platform build exactly like a missing one, so
+`touch package-lock.json` is not a fix — run the package manager and commit what
+it writes. If the lockfile cannot be read, or is implausibly large, `validate`
+says nothing rather than guessing: it never blocks a submit on a file it could
+not inspect.
+
 Finally it emits one **advisory** about the
 [host handshake](#the-host-handshake-block_ready): if your manifest declares a
 `page` surface and **nothing your app loads posts `BLOCK_READY`**, `validate`

@@ -98,8 +98,7 @@ var (
 		installCmd: "npm ci", refreshCmd: "npm install", buildCommand: "npm run build",
 		lockfileIsJSON: true,
 		contentRule: "`npm ci` requires a package-lock.json that parses as JSON and declares a " +
-			`numeric "lockfileVersion" of 1 or more (npm's own words: "can only install with an ` +
-			`existing package-lock.json or npm-shrinkwrap.json with lockfileVersion >= 1")`,
+			`numeric "lockfileVersion" of 1 or more`,
 	}
 	pmPnpm = packageManager{
 		name: "pnpm", lockfile: "pnpm-lock.yaml",
@@ -278,6 +277,30 @@ func missingLockfileError(want packageManager, foreign []packageManager, build s
 // into memory for a file whose only job is to be checked for one key.
 // `internal/validate` has been here before: before the ready-ack scan grew caps,
 // one 88 MB `.js` took peak RSS to 316 MB (AGENTS.md item 18).
+//
+// 🔴 THE CAP IS NOT THE CEILING — IT IS ABOUT 2.2x THE CAP, AND SAYING "64 MiB"
+// WOULD BE THE WRONG NUMBER. `os.ReadFile` holds the bytes and
+// `json.Unmarshal` then allocates a `map[string]json.RawMessage` whose values
+// alias that buffer but whose KEYS and map overhead do not. Peak RSS of
+// `civitai app validate`, 3 runs each, base (8ed4d69) vs HEAD:
+//
+//	| lockfile                        | base            | HEAD              |
+//	|---------------------------------|-----------------|-------------------|
+//	| 104 B                           | 18.0 – 18.3 MB  | 17.7 – 17.9 MB    |
+//	| 10 MB   (35,242 entries)        | 18.1 – 18.2 MB  | 37.4 – 37.7 MB    |
+//	| 66 MB   (232,595 entries, UNDER)| 17.9 – 18.0 MB  | 146.9 – 147.3 MB  |
+//	| 73 MB   (258,675 entries, OVER) | 17.9 – 18.2 MB  | 17.9 – 18.1 MB    |
+//
+// 🔴 QUOTE THE FIXTURE WITH THE NUMBER. These are REALISTIC lockfiles — real
+// `packages` entries, each with a resolved registry URL, a sha512 integrity
+// hash, a license and an engines object. A whitespace-padded fixture of the
+// same byte count measures nothing, because the decoder allocates per KEY and
+// not per byte, and would report a reassuring number while exercising none of
+// the cost.
+//
+// The last row is what proves the cap is checked BEFORE the read rather than
+// after: at 73 MB, HEAD costs the same as base. At realistic sizes (<= 10 MB)
+// the whole thing costs about +20 MB, which is the trade being accepted here.
 const maxLockfileBytes = 64 << 20
 
 // lockfileContentDefect reports WHY the file at path is not a usable lockfile,
@@ -310,6 +333,28 @@ const maxLockfileBytes = 64 << 20
 //     version key at all — it is a comment header and a flat list. "Not empty"
 //     is the whole of what can be said here without inventing authority, and it
 //     is exactly the reported defect from issue #255.
+//
+// 🔴 TWO RESIDUALS, STATED RATHER THAN HIDDEN — both are cases where this check
+// is STRICTER than `npm ci`, which is the direction that can block a working
+// project:
+//
+//   - A ZERO-DEPENDENCY project. Measured on npm 11.17.0: with no dependencies
+//     at all, `npm ci` over `{}`, over an object with no version, over a JSON
+//     array, over a string version and over version 0 all SUCCEED (rc 0) —
+//     there is nothing to be out of sync about, so the sync check that rejects
+//     them on a real project never fires. Only empty / whitespace / bare-BOM /
+//     YAML / garbage still fail there. So the CLI refuses five shapes npm would
+//     accept on a dependency-free app. Kept deliberately: npm never WRITES any
+//     of them, an app with a buildCommand and zero dependencies (not even
+//     devDependencies — a `vite` build has them) is close to hypothetical, and
+//     accepting `{}` would reopen the headline defect with `echo '{}' >` in
+//     place of `touch`.
+//   - An `npm-shrinkwrap.json`-ONLY project is reported as having no lockfile
+//     at all. `npm ci` accepts one — measured rc 0, node_modules populated, and
+//     `npm shrinkwrap` is what renames package-lock.json into it. This is
+//     PRE-EXISTING (the missing-lockfile check never knew the filename) and not
+//     changed here; it is recorded because the shrinkwrap gap and this check now
+//     live in the same paragraph of anyone's reading.
 func lockfileContentDefect(path string, pm packageManager) string {
 	info, err := os.Lstat(path)
 	if err != nil || info.Size() > maxLockfileBytes {
@@ -319,9 +364,37 @@ func lockfileContentDefect(path string, pm packageManager) string {
 	if err != nil {
 		return "" // unobservable — degrade to presence-only
 	}
+	// 🔴 A UTF-8 BOM MUST BE STRIPPED BEFORE PARSING, OR THIS CHECK HARD-BLOCKS A
+	// PROJECT THAT BUILDS. npm's parser tolerates one; Go's `encoding/json` does
+	// not. Measured on npm 11.17.0: a real package-lock.json prefixed with
+	// EF BB BF installs cleanly (`npm ci` rc 0, node_modules populated), while
+	// this check called it "does not parse as a JSON object" and exited 1 — and
+	// because the finding is FATAL it also blocks `app submit`. That is the
+	// false-error-at-a-correct-project class this file argues against for the
+	// unobservable case, arriving through the parser instead.
+	// Honest scope: npm never WRITES a BOM, so reaching this needs an editor or
+	// a gitattribute to have rewritten the file (VS Code's `files.encoding:
+	// utf8bom`, Visual Studio, a `working-tree-encoding` attribute). Nobody has
+	// measured how common that is, so the claim here is only that it is possible
+	// and cheap to tolerate — not that it is frequent.
+	// Known EQUIVALENT mutant, recorded so nobody re-derives it as a gap:
+	// replacing this TrimPrefix with a strip-anywhere ReplaceAll survives the
+	// suite. It is genuinely equivalent HERE — the only thing these bytes feed is
+	// a decoder we ask for one key, and a U+FEFF inside some string VALUE cannot
+	// change whether "lockfileVersion" is a number >= 1. Prefix-only is kept
+	// because it is the narrower claim, not because a test distinguishes them.
+	raw := body
+	body = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
+	hadBOM := len(body) != len(raw)
 	if len(bytes.TrimSpace(body)) == 0 {
-		if len(body) == 0 {
+		switch {
+		case len(raw) == 0:
 			return "it is EMPTY (0 bytes)"
+		case hadBOM && len(body) == 0:
+			// A file holding nothing but a BOM. npm rejects it exactly as it
+			// rejects a 0-byte one (measured: the lockfileVersion >= 1 EUSAGE),
+			// so the strip above must not turn it into a pass.
+			return "it is EMPTY (a byte-order mark and nothing else)"
 		}
 		return "it is EMPTY (whitespace only)"
 	}
@@ -355,7 +428,15 @@ func lockfileContentDefect(path string, pm packageManager) string {
 		return `its "lockfileVersion" is not a number`
 	}
 	v, err := num.Float64()
-	if err != nil || v < 1 {
+	if err != nil {
+		// Float64 fails only on a number literal Go cannot represent (`1e999`).
+		// That is not "below 1" — it is a number we could not read — so it gets
+		// its own clause rather than a wrong one. Unreachable from any real
+		// lockfile; the wording matters only because the old text was false if
+		// it ever fired.
+		return `its "lockfileVersion" is not a number this tool can read`
+	}
+	if v < 1 {
 		return `its "lockfileVersion" is below 1`
 	}
 	return ""
@@ -370,9 +451,26 @@ func lockfileContentDefect(path string, pm packageManager) string {
 // server-side build failure. So this one says the file EXISTS, says what is
 // wrong with it, and says in as many words that a lockfile is generated by the
 // package manager rather than created by hand.
+// 🔴 IT MUST NOT SAY "EXACTLY AS IF NOTHING WERE COMMITTED", WHICH IS WHAT IT
+// USED TO SAY AND IS MEASURABLY FALSE FOR MOST OF THESE SHAPES. Measured on npm
+// 11.17.0 against a project with one real dependency, `npm ci` splits into two
+// different EUSAGE failures:
+//
+//   - EMPTY, whitespace, a bare BOM, a YAML body and outright garbage get
+//     "can only install with an existing package-lock.json or npm-shrinkwrap.json
+//     with lockfileVersion >= 1" — genuinely the missing-lockfile failure.
+//   - `{}`, an object with no version, a JSON array, a string version and
+//     version 0 PARSE, so npm gets past that gate and fails the sync check
+//     instead: "…package.json and package-lock.json…are in sync… Missing:
+//     <pkg>@<ver> from lock file".
+//
+// Both are rc 1 on any project that has a dependency, so every verdict here
+// stands — but the REASON differs, and stating one reason for both is the kind
+// of confident-and-wrong sentence the next maintainer would trust instead of
+// re-measuring.
 func unusableLockfileError(want packageManager, defect string) string {
 	return fmt.Sprintf(
-		"%s is committed but %s, so it is not a lockfile the platform build can install from — it will run `%s`, which hard-fails on it exactly as if nothing were committed. A lockfile is GENERATED by the package manager, never hand-written and never created with `touch`: delete %s, run `%s`, and commit the %s it writes. %s.",
+		"%s is committed but %s, so it is not a lockfile the platform build can install from — it will run `%s`, which hard-fails on it. A lockfile is GENERATED by the package manager, never hand-written and never created with `touch`: delete %s, run `%s`, and commit the %s it writes. %s.",
 		want.lockfile, defect, want.installCmd, want.lockfile, want.refreshCmd, want.lockfile, want.contentRule)
 }
 

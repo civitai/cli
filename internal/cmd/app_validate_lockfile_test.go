@@ -29,10 +29,11 @@ func scaffoldWithLockfiles(t *testing.T, lockfiles ...string) string {
 // lockfileBodyFor returns a body the named package manager would actually WRITE.
 //
 // These fixtures were all the literal `{}`, which is not a lockfile: measured on
-// npm 11.17.0, `npm ci` refuses `{}` with the same EUSAGE ("lockfileVersion >=
-// 1") as an empty file, and validate now says so too (issue #255). A `{}` body
-// under `package-lock.json` would make the PASS-expecting tests below assert that
-// a build-breaking project validates clean.
+// npm 11.17.0, `npm ci` over `{}` exits 1 on any project with a dependency — via
+// the sync check ("Missing: <pkg> from lock file"), NOT the empty file's
+// "lockfileVersion >= 1" EUSAGE — and validate rejects it too (issue #255). A
+// `{}` body under `package-lock.json` would make the PASS-expecting tests below
+// assert that a build-breaking project validates clean.
 func lockfileBodyFor(name string) string {
 	switch name {
 	case "package-lock.json":

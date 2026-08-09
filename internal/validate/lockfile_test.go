@@ -29,11 +29,13 @@ func lockManifest(buildCommand string) string {
 // trimmed to what matters here.
 //
 // 🔴 These fixtures used to be the literal `{}`, and that was WRONG about the
-// platform in the direction that hid issue #255: measured on npm 11.17.0, `npm
-// ci` over `{}` dies with the same EUSAGE ("lockfileVersion >= 1") as over an
-// empty file. A fixture that stands in for "the author ran the install" has to
-// carry what the install writes, or every "this passes" assertion below is
-// asserting that a build-breaking project validates clean.
+// platform in the direction that hid issue #255. Measured on npm 11.17.0
+// against a project with a real dependency, `npm ci` over `{}` exits 1 — not
+// with the empty file's "lockfileVersion >= 1" EUSAGE (it parses, so it clears
+// that gate) but with the sync failure "…are in sync… Missing: <pkg> from lock
+// file". Different reason, same rc. A fixture that stands in for "the author
+// ran the install" has to carry what the install writes, or every "this passes"
+// assertion below is asserting that a build-breaking project validates clean.
 const npmLockBody = `{
   "name": "lock-block",
   "version": "0.1.0",

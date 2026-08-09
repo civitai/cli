@@ -258,6 +258,48 @@ neither one's.
    has its own message that says the file EXISTS and that a lockfile is
    GENERATED rather than hand-written — reusing the missing-lockfile wording
    would re-invite `touch`.
+   🔴 **A UTF-8 BOM IS STRIPPED BEFORE PARSING, AND OMITTING THAT STRIP WAS A
+   HARD-BLOCKING FALSE POSITIVE.** npm's parser tolerates a BOM; Go's
+   `encoding/json` does not. Measured on npm 11.17.0, a real package-lock.json
+   prefixed with `EF BB BF` installs cleanly (`npm ci` rc 0, `node_modules`
+   populated) while the first version of this check called it "does not parse
+   as a JSON object" and exited 1 — and because the finding is fatal it blocked
+   `app submit` too. npm never *writes* a BOM, so it takes an editor or a
+   `working-tree-encoding` gitattribute to produce one and nobody has measured
+   how often that happens; do not overstate it, but do not drop the strip. A
+   file holding *only* a BOM still fails, which matches npm.
+   🔴 **"`npm ci` fails on it exactly as if nothing were committed" WAS WRONG
+   FOR MOST SHAPES, AND THE CORRECTED STORY IS TWO FAILURES, NOT ONE.** Measured
+   on npm 11.17.0 against a project with one real dependency: **empty,
+   whitespace, a bare BOM, a YAML body and garbage** produce the missing-lockfile
+   EUSAGE ("can only install with an existing package-lock.json or
+   npm-shrinkwrap.json with **lockfileVersion >= 1**"), while **`{}`, an object
+   with no version, a JSON array, a string version and version 0** all *parse*,
+   clear that gate, and fail the SYNC check instead ("…are in sync… Missing:
+   `<pkg>` from lock file"). Both are rc 1, so every verdict the CLI reaches is
+   still correct — but state the reason you measured, not the tidy one.
+   🔴 **Two residuals where this check is STRICTER than `npm ci`.** On a
+   **zero-dependency** project `npm ci` *succeeds* (rc 0) over `{}`, a
+   version-less object, an array, a string version and version 0 — there is
+   nothing to be out of sync about — so the CLI refuses five shapes npm would
+   accept there. Kept deliberately: npm writes none of them, an app with a
+   `buildCommand` and not even a devDependency is close to hypothetical, and
+   accepting `{}` reopens the headline defect with `echo '{}' >` in place of
+   `touch`. And an **`npm-shrinkwrap.json`-only** project is still reported as
+   having no lockfile, though `npm ci` installs from one (measured rc 0, and
+   `npm shrinkwrap` is what produces it) — pre-existing, not introduced here,
+   which is why the CLI's message deliberately does **not** quote npm's EUSAGE
+   sentence naming that filename.
+   **The 64 MiB cap is not the memory ceiling — that is ~2.2x the cap.**
+   `os.ReadFile` holds the bytes and the decoder's map keys are additional.
+   Measured peak RSS, 3 runs each, on REALISTIC lockfiles (real `packages`
+   entries with resolved URLs and sha512 integrity hashes — a whitespace-padded
+   fixture allocates almost nothing and measures nothing): 66 MB / 232,595
+   entries costs **146.9–147.3 MB** vs 17.9–18.0 MB at base, 10 MB costs
+   37.4–37.7 MB vs 18.1, and a 73 MB file (over the cap) costs the same as base,
+   which is what proves the cap is applied *before* the read. The table lives in
+   `lockfile.go`; the constant is pinned by an assertion, because raising it to
+   `1<<62` once left the whole suite green.
 4. **The CLI does NOT vendor the server's token-scope bitmask — and shouldn't.**
    The `whoami` / `dev-token` "can spend Buzz" capability check decodes the JWT
    `scopes` (a **string array**) and looks for the `ai:write:budgeted` scope
