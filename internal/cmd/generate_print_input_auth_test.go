@@ -16,8 +16,9 @@ package cmd
 // `--print-input` really does upload local files (item 19(f)). `--checkpoint` /
 // `--lora` resolve through the PUBLIC model-version route (item 13), so gating on
 // those would keep refusing a case that works with no credential. The rows below
-// are therefore three refusals (--image, --dry-run, plain submit) against one
-// permission, so "delete the gate" fails rather than passes.
+// therefore pin BOTH directions — three refusals (--image, --dry-run, plain
+// submit) and two permissions (bare --print-input, --print-input --checkpoint) —
+// so neither "delete the gate" nor "widen the gate" passes.
 //
 // 🔴 CLASSIFICATION IS ASSERTED WITH errors.Is, NEVER MESSAGE TEXT (item 7). The
 // sentinels leave Error() byte-identical, so a message assertion says nothing at
@@ -33,8 +34,12 @@ package cmd
 // rather than by message. The gate runs BEFORE validateGenerateOpts, so an
 // invocation that is credential-less AND usage-invalid comes back
 // ErrUnauthorized today and flips to ErrUsage the moment the gate is gone.
-// Those rows carry `wantsGateAheadOfValidation`, and they are what makes
-// deleting the gate a failing change rather than a passing one.
+// Those rows call `assertRefusedByTheGate`, and they are what makes deleting
+// the gate a failing change rather than a passing one. There are THREE of them
+// on the --image path alone, reached through three different usage-error sites:
+// an audit measured the single-row version and found all three WIDENING mutants
+// reddening exactly one leaf, so reshaping that row would have unguarded the
+// `--image` half of the condition entirely.
 //
 // 🔴 "NO NETWORK" IS MEASURED, NOT INFERRED. Every run points CIVITAI_BASE_URL at
 // a live httptest server that RECORDS each request, and the offline rows assert
@@ -60,9 +65,10 @@ import (
 	"github.com/civitai/cli/pkg/civitai"
 )
 
-// recordedReq is one request that reached the base-URL server. hasAuth is kept
-// because the `--checkpoint` row's whole claim is that the model-version read is
-// PUBLIC — "a request went out" cannot distinguish that from an authed one.
+// recordedReq is one request that reached the base-URL server. hasAuth catches a
+// hardcoded credential appearing on the model-version read; see the note on
+// TestGeneratePrintInput_WithCheckpointNeedsNoCredential for what it does and
+// does not establish.
 type recordedReq struct {
 	method  string
 	path    string
@@ -153,13 +159,16 @@ func assertOffline(t *testing.T, r cliRun) {
 // Neither branch dials, and both would satisfy a plain "is it ErrUnauthorized?"
 // check via the token source — which is precisely why that check cannot pin the
 // gate and this one can.
-func assertRefusedByTheGate(t *testing.T, r cliRun) {
+//
+// `via` names the usage-error site the row falls through to when the gate is
+// absent; it is printed on failure so the message says WHICH check won the race.
+func assertRefusedByTheGate(t *testing.T, r cliRun, via string) {
 	t.Helper()
 	if errors.Is(r.err, ErrUsage) {
-		t.Fatalf("refused as a USAGE error, so the credential gate no longer runs ahead of validateGenerateOpts: %v", r.err)
+		t.Fatalf("refused as a USAGE error by %s, so the credential gate no longer runs ahead of it: %v", via, r.err)
 	}
 	if !errors.Is(r.err, civitai.ErrUnauthorized) {
-		t.Fatalf("want ErrUnauthorized from the credential gate, got %v", r.err)
+		t.Fatalf("want ErrUnauthorized from the credential gate (ahead of %s), got %v", via, r.err)
 	}
 	assertOffline(t, r)
 }
@@ -242,13 +251,53 @@ func TestGeneratePrintInput_WithImageStillNeedsACredential(t *testing.T) {
 		}
 	})
 
-	t.Run("and it is THIS gate that refuses", func(t *testing.T) {
-		// Credential-less AND usage-invalid: --image without --ecosystem is a
-		// hard usage error (item 19(b)). ErrUnauthorized means the gate won the
-		// race; ErrUsage means the gate is gone.
-		r := runGenerateCLI(t, "", "a cat", "--print-input", "--image", img)
-		assertRefusedByTheGate(t, r)
-	})
+	// 🔴 THREE discriminators, reached through THREE DIFFERENT usage-error
+	// sites, because one row is not a battery.
+	//
+	// An audit measured the first version: all three widening mutants — dropping
+	// `len(o.images) > 0`, swapping it for `len(o.loras) > 0`, replacing it with
+	// `false` — reddened EXACTLY ONE leaf subtest in the whole package, and the
+	// sibling "the refusal itself" survived every one of them (carried by the
+	// genapi token-source bystander). Delete or reshape that single row and the
+	// `--image` half of the condition is unguarded. That is AGENTS item 24's
+	// recorded "battery rested on a single row" shape, regenerated here.
+	//
+	// So the rows are routed through validateImageOpts (before the graph is
+	// built), parseImageFlag (inside resolveImages) and resolveLocalImage's
+	// stat (deepest, one step before the upload). A change that silences any
+	// ONE of those sites cannot silence the other two.
+	for _, tc := range []struct {
+		name string
+		args []string
+		// via names the usage-error site the row reaches when the gate is
+		// ABSENT. Recorded so a row that stops exercising its site is visible
+		// as a documentation mismatch rather than as a quiet duplicate.
+		via string
+	}{
+		{
+			name: "no --ecosystem",
+			args: []string{"a cat", "--print-input", "--image", img},
+			via:  "validateImageOpts (item 19(b): --image requires --ecosystem)",
+		},
+		{
+			name: "empty --image value",
+			args: []string{"a cat", "--print-input", "--ecosystem", "Qwen", "--image", ""},
+			via:  "parseImageFlag (an empty value is not a path or an https URL)",
+		},
+		{
+			name: "--image is a directory",
+			args: []string{"a cat", "--print-input", "--ecosystem", "Qwen", "--image", dir},
+			via:  "resolveLocalImage (os.Stat says directory, one step before the upload)",
+		},
+	} {
+		t.Run("and it is THIS gate that refuses: "+tc.name, func(t *testing.T) {
+			// Credential-less AND usage-invalid. ErrUnauthorized means the gate
+			// won the race; ErrUsage means the gate is gone and tc.via got there
+			// first.
+			r := runGenerateCLI(t, "", tc.args...)
+			assertRefusedByTheGate(t, r, tc.via)
+		})
+	}
 }
 
 // TestGenerateDryRun_StillNeedsACredential — --dry-run reaches the estimator, an
@@ -268,7 +317,7 @@ func TestGenerateDryRun_StillNeedsACredential(t *testing.T) {
 		// --quantity 0 is a usage error (the server would silently clamp it to 1
 		// and charge), so it is the second half of the discriminator.
 		r := runGenerateCLI(t, "", "a cat", "--dry-run", "--quantity", "0")
-		assertRefusedByTheGate(t, r)
+		assertRefusedByTheGate(t, r, "validateGenerateOpts (--quantity must be at least 1)")
 	})
 }
 
@@ -284,7 +333,7 @@ func TestGenerateSubmit_StillNeedsACredential(t *testing.T) {
 
 	t.Run("and it is THIS gate that refuses", func(t *testing.T) {
 		r := runGenerateCLI(t, "", "a cat", "--yes", "--quantity", "0")
-		assertRefusedByTheGate(t, r)
+		assertRefusedByTheGate(t, r, "validateGenerateOpts (--quantity must be at least 1)")
 	})
 }
 
@@ -316,10 +365,15 @@ func TestGeneratePrintInput_SkipsTheGateNotTheValidation(t *testing.T) {
 //
 // `--checkpoint` resolves through `GET /api/v1/model-versions/{id}`, which is
 // PUBLIC (AGENTS.md item 13 calls it "free, unauthenticated-capable"). So the
-// run must be let through, and it must reach that route carrying NO
-// Authorization header — "a request went out" alone cannot tell a public read
-// from an authed one, and the whole argument for excluding --checkpoint from the
-// gate rests on which of the two it is.
+// run must be let through and must actually reach that route.
+//
+// 🔴 KEEP THE hasAuth ASSERTION'S CLAIM AT ITS MEASURED SIZE. Every row in this
+// file runs with token == "", and `doOnceHdr` attaches no header on an empty
+// token — so this can only catch a HARDCODED credential appearing on the
+// version read (mutation-checked: forcing `Authorization: Bearer …` into
+// `doOnceHdr` does redden it, so it is a real guard, not a decoration). It does
+// NOT establish that the route is public: that is item 13's claim, established
+// server-side, and this row consumes it rather than proving it.
 //
 // The server answers 404, so the run fails; that is fine and deliberate. The
 // claim is about WHERE it got to, not that it succeeded.
@@ -381,11 +435,11 @@ func TestGeneratePrintInput_NetworkRecorderPositiveControl(t *testing.T) {
 		t.Fatal("the recorder saw ZERO requests on an invocation that must reach the estimator — " +
 			"the harness is wired to nothing and every offline assertion in this file is vacuous")
 	}
-	// The server answers 500, so this must fail — but never as ErrUnauthorized:
+	// The server answers 404, so this must fail — but never as ErrUnauthorized:
 	// the refusal in the rows above came from the local gate, not from a shape
 	// this run also produces.
 	if r.err == nil {
-		t.Fatal("a 500 from the estimator must surface as an error")
+		t.Fatal("a 404 from the estimator must surface as an error")
 	}
 	if errors.Is(r.err, civitai.ErrUnauthorized) {
 		t.Fatalf("the credentialed run must not be refused for lack of a credential: %v", r.err)

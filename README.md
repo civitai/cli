@@ -1174,6 +1174,12 @@ civitai generate --input graph.json --dry-run
 (`civitai login`, no `--scopes`) does **not** carry them and is refused.
 `civitai whoami` shows the capability as **Spend Buzz (AI Services)**.
 
+The one exception is `--print-input` **without** `--image`: it assembles the
+graph and exits before any authenticated route, so it needs no credential and
+works offline — useful for building a graph to edit before you have logged in.
+`--print-input` **with** `--image` still needs one, because it uploads each local
+file first and that upload is authenticated.
+
 ### 🔴 `--max-cost` is an estimate check, not a spending cap
 
 The cost this command shows is an **estimate, not a quote**: the server's

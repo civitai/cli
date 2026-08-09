@@ -179,6 +179,10 @@ CREDENTIAL: generation needs the AI Services scopes. Two credentials carry them:
 (` + "`civitai login`" + ` with no --scopes) does NOT carry them and is refused — and
 re-running plain ` + "`civitai login`" + ` will not fix that. Check yours with
 ` + "`civitai whoami`" + `.
+The ONE exception is --print-input WITHOUT --image: it assembles the graph and
+exits before any authenticated route, so it needs no credential and works
+offline. --print-input WITH --image still needs one, because it uploads each
+local file first and the upload is authenticated.
 
 --max-cost IS AN ESTIMATE CHECK, NOT A SPENDING CAP. The cost this command shows
 is an estimate, not a quote: the server's estimator returns no quote id, no
