@@ -57,8 +57,22 @@ func wantUnusableLockfileError(t *testing.T, res Result, lockfile, refreshCmd st
 	// It must NOT be the missing-lockfile message: an author whose file is
 	// sitting right there and is told "no lockfile is committed" learns to
 	// distrust the check, and `touch` looks like the fix all over again.
+	//
+	// 🔴 "exactly as if nothing were committed" is in this list because it is a
+	// MEASURABLY FALSE claim the message used to make, and restoring it reddened
+	// nothing. Measured on npm 11.17.0 with a real dependency: only empty /
+	// whitespace / bare-BOM / YAML / garbage produce the missing-lockfile EUSAGE;
+	// `{}`, a version-less object, an array, a string version and version 0 all
+	// PARSE and fail the sync check instead ("Missing: <pkg> from lock file").
+	// Same rc, different reason — and the sibling correction (the shrinkwrap
+	// quote) was pinned while this one was not, which made the asymmetry look
+	// accidental rather than chosen.
 	msg := lockErrors(res)[0]
-	for _, forbidden := range []string{"no lockfile is committed", "package.json is present but"} {
+	for _, forbidden := range []string{
+		"no lockfile is committed",
+		"package.json is present but",
+		"exactly as if nothing were committed",
+	} {
 		if strings.Contains(msg, forbidden) {
 			t.Errorf("the exists-but-invalid message must not reuse the MISSING message's wording %q:\n  %s",
 				forbidden, msg)
@@ -131,6 +145,48 @@ func TestLockfileNpmContentRule(t *testing.T) {
 				"`app submit` on a project that builds",
 		},
 		{
+			name: "a real lockfile behind TWO UTF-8 BOMs", body: "\xef\xbb\xbf\xef\xbb\xbf" + npmLockBody,
+			why: "🔴 POSITIVE CONTROL, and a SECOND fixed false hard error. Measured on npm " +
+				"11.17.0, npm installs fine (rc 0, node_modules populated) from one OR TWO " +
+				"leading BOMs. The first fix used bytes.TrimPrefix, which strips exactly one, " +
+				"so a double-BOM lockfile was still reported \"does not parse as a JSON " +
+				"object\" — the same fatal false positive one BOM further out. Kills the " +
+				"strip-exactly-one mutant",
+		},
+		// --- rows 2-4 of the strip-anywhere discrimination table --------------
+		// 🔴 These exist to KILL the `ReplaceAll` (strip-BOMs-anywhere) mutant,
+		// which an earlier revision wrongly recorded as EQUIVALENT. Each is a
+		// shape npm REFUSES (measured rc 1) that strip-anywhere would ACCEPT.
+		{
+			name: "THREE leading BOMs + a real lockfile", body: "\xef\xbb\xbf\xef\xbb\xbf\xef\xbb\xbf" + npmLockBody,
+			why: "🔴 A KNOWING FALSE NEGATIVE, pinned so it stays a choice. npm REJECTS 3+ " +
+				"leading BOMs (measured rc 1, the lockfileVersion >= 1 EUSAGE) and the " +
+				"run-strip ACCEPTS them. Staying quiet where npm fails is the cheap direction " +
+				"for a fatal check; the alternative — counting BOMs to mirror npm's limit of " +
+				"two — would be a vendored magic number for a shape nobody has measured in " +
+				"the wild. The structural-slot and after-brace rows below are what kill the " +
+				"strip-anywhere mutant, so this row does not need to",
+		},
+		{
+			name:   "a BOM in a structural slot",
+			body:   `{"lockfileVersion"` + "\xef\xbb\xbf" + `: 3}`,
+			defect: "it does not parse as a JSON object",
+			why: "npm rc 1. A BOM between a key and its colon is not JSON in any reading; " +
+				"strip-anywhere would silently repair it and ACCEPT",
+		},
+		{
+			name:   "a BOM straight after the opening brace",
+			body:   "{\xef\xbb\xbf" + `"lockfileVersion": 3}`,
+			defect: "it does not parse as a JSON object",
+			why:    "npm rc 1; strip-anywhere would ACCEPT. Not a leading BOM — the brace is first",
+		},
+		{
+			name: "a BOM inside a string VALUE", body: `{"name":"a` + "\xef\xbb\xbf" + `b","lockfileVersion":3}`,
+			why: "POSITIVE CONTROL and the ONE row where prefix-strip and strip-anywhere agree " +
+				"(npm rc 0). It is the row the retracted equivalence claim reasoned over — kept " +
+				"so the table shows both the agreement and the four disagreements",
+		},
+		{
 			name: "a BOM and nothing else", body: "\xef\xbb\xbf",
 			defect: "it is EMPTY (a byte-order mark and nothing else)",
 			why: "the BOM strip must not turn an empty file into a pass — measured, npm " +
@@ -196,7 +252,23 @@ func TestLockfileNpmContentRule(t *testing.T) {
 		{
 			name: "lockfileVersion 0", body: `{"lockfileVersion": 0}`,
 			defect: `its "lockfileVersion" is below 1`,
-			why:    "npm's bound is `>= 1`; 0 is the pre-v5 sentinel and `npm ci` refuses it",
+			why: "npm's STATED bound is `>= 1`. 🔴 Not npm's measured behaviour: on a real " +
+				"in-sync lockfile npm installs from version 0 (rc 0, `npm warn old lockfile`). " +
+				"This is our own rule, kept because npm never writes it — see the residual " +
+				"block in lockfileContentDefect",
+		},
+		{
+			name: "lockfileVersion -1e999 (underflows to -Inf)", body: `{"lockfileVersion": -1e999}`,
+			defect: `its "lockfileVersion" is below 1`,
+			why: "🔴 strconv returns ERANGE **and** -Inf here. A separate 'not a number this " +
+				"tool can read' clause used to fire, which was both uncovered and WRONG — " +
+				"-1e999 is provably below 1. Ignoring the error and ordering against ±Inf is " +
+				"what makes this row and the next one correct",
+		},
+		{
+			name: "lockfileVersion 1e999 (overflows to +Inf)", body: `{"lockfileVersion": 1e999}`,
+			why: "POSITIVE CONTROL for the same line, in the other direction: +Inf is not " +
+				"below 1, so it is accepted — which matches npm (measured rc 0)",
 		},
 	}
 
@@ -397,6 +469,16 @@ func TestLockfileOverTheSizeCapDegradesToPresenceOnly(t *testing.T) {
 	if res := run(t, 4096); res.OK() {
 		t.Fatal("control: a sub-cap file of NUL bytes is not JSON and must be rejected — " +
 			"the over-cap assertion below is vacuous without this")
+	}
+
+	// 🔴 THE BOUNDARY ITSELF. Without a file of EXACTLY maxLockfileBytes, the
+	// comparison is unpinned: `>` and `>=` behave identically at 4096 and at
+	// cap+1, so flipping one survived the whole suite. A file OF the cap size is
+	// within budget and must therefore be READ (and rejected, being NUL bytes).
+	if res := run(t, maxLockfileBytes); res.OK() {
+		t.Errorf("a lockfile of EXACTLY %d bytes is AT the cap, not over it, so it must still "+
+			"be read and judged — an off-by-one here (`>` becoming `>=`) silently stops "+
+			"inspecting a file the budget allows", int64(maxLockfileBytes))
 	}
 
 	if res := run(t, maxLockfileBytes+1); !res.OK() {

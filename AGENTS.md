@@ -234,9 +234,16 @@ neither one's.
    an empty file is not a freshness question, it is "not a lockfile at all".
    Three things about `lockfileContentDefect` are decisions, not details.
    (a) **The rule is PER-MANAGER and deliberately asymmetric.** npm: parse as
-   JSON and require a **numeric** `lockfileVersion >= 1` — npm's own
-   precondition, mirrored the way the rest of this file mirrors the recipe;
-   note that unmarshalling the value straight into a `json.Number` does NOT
+   JSON and require a **numeric** `lockfileVersion >= 1` — npm's **stated**
+   precondition, and 🔴 **deliberately NOT a claim about npm's measured
+   behaviour**; an earlier revision of this item and of the README called it
+   "what `npm ci` itself requires", which is false. Measured on npm 11.17.0,
+   editing ONLY the version key of a real in-sync lockfile on a project **with
+   a dependency**: `0`, `"3"`, `null`, `-5`, `1e999` and the key **removed
+   entirely** all install fine (rc 0, some printing `npm warn old lockfile`).
+   npm's `lockfileVersion >= 1` EUSAGE fires only when the file fails to
+   **load**. So this is OUR rule, kept because npm never *writes* those shapes —
+   not a mirror. Note that unmarshalling the value straight into a `json.Number` does NOT
    discriminate (it is `type Number string`, so the JSON string `"3"` decodes
    into one), hence the `any` + `UseNumber` type assertion. pnpm and yarn:
    **non-empty after a whitespace trim and nothing more** — `pnpm-lock.yaml`
@@ -258,16 +265,33 @@ neither one's.
    has its own message that says the file EXISTS and that a lockfile is
    GENERATED rather than hand-written — reusing the missing-lockfile wording
    would re-invite `touch`.
-   🔴 **A UTF-8 BOM IS STRIPPED BEFORE PARSING, AND OMITTING THAT STRIP WAS A
-   HARD-BLOCKING FALSE POSITIVE.** npm's parser tolerates a BOM; Go's
-   `encoding/json` does not. Measured on npm 11.17.0, a real package-lock.json
-   prefixed with `EF BB BF` installs cleanly (`npm ci` rc 0, `node_modules`
-   populated) while the first version of this check called it "does not parse
-   as a JSON object" and exited 1 — and because the finding is fatal it blocked
-   `app submit` too. npm never *writes* a BOM, so it takes an editor or a
+   🔴 **A LEADING RUN OF UTF-8 BOMs IS STRIPPED BEFORE PARSING, AND BOTH THE
+   NO-STRIP AND THE STRIP-ONE VERSIONS WERE HARD-BLOCKING FALSE POSITIVES.**
+   npm's parser tolerates them; Go's `encoding/json` does not. Measured on npm
+   11.17.0: npm installs cleanly (rc 0, `node_modules` populated) from a real
+   package-lock.json carrying **one or two** leading BOMs and rejects **three or
+   more**. The first version of this check stripped none, so a single-BOM file
+   was called "does not parse as a JSON object" and exited 1; the second
+   stripped exactly one with `bytes.TrimPrefix`, so a **double**-BOM file failed
+   the same way. Both are fatal findings that also block `app submit`, on
+   projects that build. npm never *writes* a BOM, so it takes an editor or a
    `working-tree-encoding` gitattribute to produce one and nobody has measured
    how often that happens; do not overstate it, but do not drop the strip. A
-   file holding *only* a BOM still fails, which matches npm.
+   file holding *only* BOMs still fails, which matches npm.
+   🔴 **STRIPPING A LEADING RUN IS NOT "STRIPPING BOMs ANYWHERE", and an
+   earlier revision recorded that difference as an EQUIVALENT mutant — wrongly,
+   which is worse than not recording it, because a recorded measurement here
+   gets trusted instead of re-derived.** Measured, a strip-anywhere `ReplaceAll`
+   **accepts** two shapes npm refuses and the run-strip REJECTS: a BOM in a
+   structural slot (`"lockfileVersion"<BOM>:`) and one straight after the
+   opening brace. Those two rows are the fixtures that kill the mutant. The two
+   strategies agree only on a BOM inside a string *value* — the single position
+   the retracted note reasoned over, which is how it reached the wrong
+   conclusion. The run-strip's one cost is a **knowing false negative at 3+
+   BOMs**, where npm fails and the CLI stays quiet: mirroring npm's limit of two
+   would vendor a magic number for a shape nobody has measured in the wild, and
+   silence is the cheap direction for a fatal check. It is pinned as a fixture
+   so it stays a choice.
    🔴 **"`npm ci` fails on it exactly as if nothing were committed" WAS WRONG
    FOR MOST SHAPES, AND THE CORRECTED STORY IS TWO FAILURES, NOT ONE.** Measured
    on npm 11.17.0 against a project with one real dependency: **empty,

@@ -694,8 +694,12 @@ lockfile is a warning. Apps with no `package.json` are static — the platform
 never installs for them and they are never flagged.
 
 The lockfile also has to **be** one, not merely exist. A `package-lock.json`
-must parse as JSON and declare a numeric `"lockfileVersion"` of 1 or more (what
-`npm ci` itself requires); a `pnpm-lock.yaml` or `yarn.lock` must be non-empty.
+must parse as JSON and declare a numeric `"lockfileVersion"` of 1 or more; a
+`pnpm-lock.yaml` or `yarn.lock` must be non-empty. That version rule is
+deliberately **stricter than `npm ci` measures** — npm states it as a
+precondition but will happily install from an otherwise-intact lockfile whose
+version key is `0`, a string, `null` or absent — and `validate` keeps it because
+npm never *writes* those shapes, so a file carrying one was made by hand.
 An **empty** lockfile fails the platform build exactly like a missing one, so
 `touch package-lock.json` is not a fix — run the package manager and commit what
 it writes. If the lockfile cannot be read, or is implausibly large, `validate`

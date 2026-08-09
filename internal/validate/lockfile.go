@@ -323,10 +323,17 @@ const maxLockfileBytes = 64 << 20
 //
 // The rule is per-manager, and the asymmetry is deliberate:
 //
-//   - npm: parse as JSON and require a NUMERIC `lockfileVersion` >= 1. That is
-//     not a guess at npm's intent — it is npm's own precondition, quoted in
-//     pmNpm.contentRule, so this mirrors the platform build recipe exactly the
-//     way the rest of this file does.
+//   - npm: parse as JSON and require a NUMERIC `lockfileVersion` >= 1. 🔴 This
+//     is npm's STATED precondition, and deliberately NOT a claim about npm's
+//     measured behaviour — an earlier revision called it "what `npm ci` itself
+//     requires", which is false. Measured on npm 11.17.0, taking a real in-sync
+//     lockfile and editing ONLY the version key: `0`, `"3"`, `null`, `-5`,
+//     `1e999` and the key REMOVED ENTIRELY all install fine (rc 0; some print
+//     `npm warn old lockfile`), reproduced after `rm -rf node_modules`. npm's
+//     `lockfileVersion >= 1` EUSAGE fires only when the file fails to LOAD.
+//     So this rule is our own, chosen because npm WRITES none of those shapes
+//     and a hand-made file is what issue #255 is about — not a mirror of a
+//     behaviour npm actually has.
 //   - pnpm / yarn: non-empty after a whitespace trim, and nothing more.
 //     `pnpm-lock.yaml` would need a YAML parser (a new third-party dependency,
 //     which is an "ask first" in AGENTS.md) and a yarn v1 `yarn.lock` carries no
@@ -338,17 +345,28 @@ const maxLockfileBytes = 64 << 20
 // is STRICTER than `npm ci`, which is the direction that can block a working
 // project:
 //
-//   - A ZERO-DEPENDENCY project. Measured on npm 11.17.0: with no dependencies
-//     at all, `npm ci` over `{}`, over an object with no version, over a JSON
-//     array, over a string version and over version 0 all SUCCEED (rc 0) —
-//     there is nothing to be out of sync about, so the sync check that rejects
-//     them on a real project never fires. Only empty / whitespace / bare-BOM /
-//     YAML / garbage still fail there. So the CLI refuses five shapes npm would
-//     accept on a dependency-free app. Kept deliberately: npm never WRITES any
-//     of them, an app with a buildCommand and zero dependencies (not even
-//     devDependencies — a `vite` build has them) is close to hypothetical, and
-//     accepting `{}` would reopen the headline defect with `echo '{}' >` in
-//     place of `touch`.
+//   - THE VERSION KEY, on ANY project. Measured on npm 11.17.0 against a
+//     project WITH a real dependency, editing only that key on an otherwise
+//     in-sync lockfile: `0`, `"3"`, `null`, `-5`, `1e999` and the key REMOVED
+//     all install fine (rc 0). So the CLI's version rule refuses files npm
+//     installs from, whenever the rest of the lockfile is intact. This is the
+//     widest of the residuals and it is NOT limited to dependency-free
+//     projects — do not describe it as if the sync check were what rejects
+//     these.
+//
+//   - A ZERO-DEPENDENCY project, additionally. With no dependencies at all,
+//     `npm ci` over `{}`, an object with no version, a JSON array, a string
+//     version and version 0 all SUCCEED (rc 0) — there is nothing to be out of
+//     sync about, so even the sync check that catches them on a real project
+//     never fires. Only empty / whitespace / bare-BOM / YAML / garbage still
+//     fail there.
+//
+//     Both are kept deliberately: npm never WRITES any of these shapes, a
+//     hand-edited lockfile is exactly what issue #255 is about, and accepting
+//     `{}` would reopen the headline defect with `echo '{}' >` in place of
+//     `touch`. The trade is stated so the next person changing this rule knows
+//     it is a CHOICE to be stricter than npm, not a mirror of it.
+//
 //   - An `npm-shrinkwrap.json`-ONLY project is reported as having no lockfile
 //     at all. `npm ci` accepts one — measured rc 0, node_modules populated, and
 //     `npm shrinkwrap` is what renames package-lock.json into it. This is
@@ -377,14 +395,48 @@ func lockfileContentDefect(path string, pm packageManager) string {
 	// utf8bom`, Visual Studio, a `working-tree-encoding` attribute). Nobody has
 	// measured how common that is, so the claim here is only that it is possible
 	// and cheap to tolerate — not that it is frequent.
-	// Known EQUIVALENT mutant, recorded so nobody re-derives it as a gap:
-	// replacing this TrimPrefix with a strip-anywhere ReplaceAll survives the
-	// suite. It is genuinely equivalent HERE — the only thing these bytes feed is
-	// a decoder we ask for one key, and a U+FEFF inside some string VALUE cannot
-	// change whether "lockfileVersion" is a number >= 1. Prefix-only is kept
-	// because it is the narrower claim, not because a test distinguishes them.
+	// 🔴 A LEADING **RUN**, NOT ONE BOM — AND THE ONE-BOM VERSION WAS ITSELF A
+	// FALSE POSITIVE. Measured on npm 11.17.0, npm tolerates exactly ONE OR TWO
+	// leading BOMs (rc 0, node_modules populated) and rejects three or more. A
+	// single TrimPrefix therefore left a DOUBLE-BOM lockfile reported as "does
+	// not parse as a JSON object" — a fatal finding, blocking `app submit`, on a
+	// project that builds. Same class as the bug this strip was added to fix, one
+	// BOM further out.
+	//
+	// 🔴 AND STRIPPING A RUN IS NOT THE SAME AS STRIPPING BOMs ANYWHERE. An
+	// earlier revision recorded "TrimPrefix vs strip-anywhere ReplaceAll" as an
+	// EQUIVALENT mutant. That was wrong, and recording it was the more dangerous
+	// half of the mistake — this repo's doctrine is that a recorded measurement
+	// gets trusted instead of re-derived, so the note would have waved through
+	// exactly the simplification that breaks it. Measured, they disagree, and
+	// strip-anywhere ACCEPTS files npm REFUSES:
+	//
+	//	bytes                                     npm ci  run-strip  ReplaceAll
+	//	BOM x2 + real lockfile                    rc 0    accept     accept
+	//	BOM x3 / x4 + real lockfile               rc 1    accept*    accept
+	//	"lockfileVersion"<BOM>:  (structural slot) rc 1   REJECT     accept
+	//	{<BOM>"name": …  (after the brace)        rc 1    REJECT     accept
+	//	a BOM inside a string VALUE               rc 0    accept     accept
+	//
+	// The two REJECT rows are what kill the ReplaceAll mutant, and both are
+	// fixtures in lockfile_content_test.go. The last row is the only position the
+	// two strategies genuinely agree on — the position the retracted note
+	// reasoned over, which is how it reached the wrong conclusion.
+	//
+	// (*) The starred row is a KNOWING FALSE NEGATIVE: npm fails at 3+ and we
+	// stay quiet. Mirroring npm's limit of two would mean vendoring a magic
+	// number for a shape nobody has measured in the wild, and silence is the
+	// cheap direction for a fatal check. It is pinned as a fixture so it stays a
+	// choice rather than drifting into an accident.
+	//
+	// Stripping the RUN is immune to all of it by construction — it only ever
+	// touches a prefix — and its one cost is a FALSE NEGATIVE at 3+ BOMs, where
+	// npm fails and we stay quiet. That is the cheap direction for a fatal check.
 	raw := body
-	body = bytes.TrimPrefix(body, []byte("\xef\xbb\xbf"))
+	bom := []byte("\xef\xbb\xbf")
+	for bytes.HasPrefix(body, bom) {
+		body = body[len(bom):]
+	}
 	hadBOM := len(body) != len(raw)
 	if len(bytes.TrimSpace(body)) == 0 {
 		switch {
@@ -427,15 +479,16 @@ func lockfileContentDefect(path string, pm packageManager) string {
 	if !ok {
 		return `its "lockfileVersion" is not a number`
 	}
-	v, err := num.Float64()
-	if err != nil {
-		// Float64 fails only on a number literal Go cannot represent (`1e999`).
-		// That is not "below 1" — it is a number we could not read — so it gets
-		// its own clause rather than a wrong one. Unreachable from any real
-		// lockfile; the wording matters only because the old text was false if
-		// it ever fired.
-		return `its "lockfileVersion" is not a number this tool can read`
-	}
+	// The error is deliberately IGNORED rather than given its own clause. It is
+	// only ever strconv's ERANGE — a JSON number literal too large to represent,
+	// like `1e999` — and on ERANGE ParseFloat still returns ±Inf, which orders
+	// correctly against 1. So `-1e999` is "below 1" (it IS below 1: the separate
+	// clause that used to fire here said otherwise, and was wrong) and `1e999`
+	// is accepted, which matches npm (measured: rc 0). A json.Number that came
+	// out of a successful decode is always a valid JSON number literal, so no
+	// other failure mode reaches this line — which is why the clause that did
+	// live here had zero coverage and could not be given any.
+	v, _ := num.Float64()
 	if v < 1 {
 		return `its "lockfileVersion" is below 1`
 	}
