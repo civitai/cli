@@ -54,7 +54,7 @@ func newTagsSearchCmd() *cobra.Command {
 
 Paging is --page only. This endpoint answers with the classic page envelope
 (total items, current page, total pages) and no cursor, so there is no --cursor
-here; the footer prints the next --page for you.
+here. The footer prints the next --page while the response says there is one.
 
 Each row is a tag NAME and a LINK. The name is what
 ` + "`civitai models search --tag <name>`" + ` takes — that is the follow-up this
@@ -92,7 +92,7 @@ website.
 		},
 	}
 	cmd.Flags().StringVar(&query, "query", "", "text search query")
-	cmd.Flags().IntVar(&limit, "limit", 0, "results per page")
+	cmd.Flags().IntVar(&limit, "limit", 0, limitFlagUsage(tagsLimitMax))
 	cmd.Flags().IntVar(&page, "page", 0, "page number")
 	bindReadFlags(cmd)
 	return cmd

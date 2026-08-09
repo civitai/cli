@@ -118,7 +118,7 @@ next-page hint; deep paging requires --sort Newest.
 	cmd.Flags().StringVar(&query, "query", "", "text search query (matches the collection name)")
 	cmd.Flags().StringVar(&sort, "sort", "", "sort order (Newest, \"Most Followers\")")
 	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
-	cmd.Flags().IntVar(&limit, "limit", 0, "results per page (1-100)")
+	cmd.Flags().IntVar(&limit, "limit", 0, limitFlagUsage(collectionsLimitMax))
 	cmd.Flags().StringVar(&cursor, "cursor", "", "pagination cursor from a previous response (Newest sort only)")
 	bindReadFlags(cmd)
 	return cmd

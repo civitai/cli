@@ -28,10 +28,6 @@ func newModelsCmd() *cobra.Command {
 --limit / --page / --cursor. ` + "`models get <id>`" + ` returns one model with its
 full version list.
 
-A search hit already embeds .modelVersions[] — every version's files, hashes
-and trained words — so iterating search results rarely needs a follow-up
-` + "`model-versions get`" + ` per version.
-
 What lives one level down: a model is the PAGE, a model VERSION is the
 downloadable unit. ` + "`civitai download`" + ` and ` + "`civitai generate --checkpoint`" + `
 both take a version id, which ` + "`models get`" + ` lists.
@@ -59,17 +55,16 @@ func newModelsSearchCmd() *cobra.Command {
 		Short: "Search models (GET /api/v1/models)",
 		Long: `Search models via GET /api/v1/models.
 
-Filters: --query (free text), --tag, --username, --type, --base-model
-(repeatable — the API ORs the given values) and --nsfw.
+Filters: --query (free text), --tag, --username, --base-model (repeatable — the
+API ORs the given values) and --nsfw. --base-model is matched LITERALLY, so a
+misspelling returns zero results rather than an error; the CLI says so on
+stderr.
+
+--type, --sort and --period take server-owned value sets.
 ` + serverOwnedEnumNote + `
---base-model in particular is matched LITERALLY, so a misspelling returns zero
-results rather than an error; the CLI prints a stderr note when that happens.
 
 Paging: ` + limitRule(modelsLimitMax) + `.
---page is shallow paging, --cursor is deep paging, and the next cursor is
-printed under the results. The API caps page × limit at 1000 and answers 429
-past it — the CLI recognises that deep-paging cap and reports it as a usage
-mistake rather than as a rate limit, so a retry loop does not spin on it.
+` + deepPagingNote + `
 
 --period changes the SORT, not the DOWNLOADS column: the API returns only the
 all-time download count, so a later row can legitimately show more downloads
@@ -148,7 +143,7 @@ than an earlier one. The column is labelled DL(all-time) for that reason.
 	cmd.Flags().StringVar(&sort, "sort", "", "sort order (e.g. \"Highest Rated\", \"Most Downloaded\", Newest)")
 	cmd.Flags().StringVar(&period, "period", "", "time period (AllTime, Year, Month, Week, Day)")
 	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
-	cmd.Flags().IntVar(&limit, "limit", 0, "results per page (1-100)")
+	cmd.Flags().IntVar(&limit, "limit", 0, limitFlagUsage(modelsLimitMax))
 	cmd.Flags().IntVar(&page, "page", 0, "page number (shallow paging; prefer --cursor for deep paging)")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "pagination cursor from a previous response")
 	bindReadFlags(cmd)

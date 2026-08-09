@@ -52,7 +52,7 @@ func newCreatorsSearchCmd() *cobra.Command {
 
 Paging is --page only. This endpoint answers with the classic page envelope
 (total items, current page, total pages) and no cursor, so there is no --cursor
-here; the footer prints the next --page for you.
+here. The footer prints the next --page while the response says there is one.
 
 Each row is USERNAME, MODELS (that creator's published model count) and LINK
 (the equivalent models query on the website). To list the models themselves,
@@ -89,7 +89,7 @@ run ` + "`civitai models search --username <name>`" + `.
 		},
 	}
 	cmd.Flags().StringVar(&query, "query", "", "text search query")
-	cmd.Flags().IntVar(&limit, "limit", 0, "results per page")
+	cmd.Flags().IntVar(&limit, "limit", 0, limitFlagUsage(creatorsLimitMax))
 	cmd.Flags().IntVar(&page, "page", 0, "page number")
 	bindReadFlags(cmd)
 	return cmd

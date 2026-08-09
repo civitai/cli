@@ -52,20 +52,22 @@ func newArticlesSearchCmd() *cobra.Command {
 		Short: "Search articles (GET /api/v1/articles)",
 		Long: `Search articles via GET /api/v1/articles.
 
-Filters: --query (matches the TITLE, not the body), --tags, --username, --nsfw
-and --sort.
-` + serverOwnedEnumNote + `
---tags takes numeric tag IDS, comma-separated (e.g. --tags 5,12), not tag
-names — and ` + "`civitai tags search`" + ` renders names, not ids, so it cannot
+Filters: --query (matches the TITLE, not the body), --tags, --username and
+--nsfw. --tags takes numeric tag IDS, comma-separated (e.g. --tags 5,12), not
+tag names — and ` + "`civitai tags search`" + ` renders names, not ids, so it cannot
 supply this filter for you.
+
+--sort takes a server-owned value set.
+` + serverOwnedEnumNote + `
 
 Paging is cursor-only: the article feed is a keyset feed, so there is no --page
 here. ` + limitRule(articlesLimitMax) + `.
 The next cursor is printed under the results; pass it back via --cursor.
 
-The REACTIONS column is likes plus favourites. ` + "`articles get <id>`" + ` breaks
-those out and adds views and collected counts, and --content renders the guide
-itself.
+The REACTIONS column is likes plus favourites, from the list endpoint's own
+stats. ` + "`articles get <id>`" + ` reports all-time view / like / favourite /
+comment / collected counts instead — a different stats block, so the two need
+not agree — and --content renders the guide itself.
 
 ` + readAnonShort,
 		Example: `  civitai articles search --query "comfyui" --limit 5
@@ -109,7 +111,7 @@ itself.
 	cmd.Flags().StringVar(&username, "username", "", "filter by author username")
 	cmd.Flags().StringVar(&sort, "sort", "", "sort order (Newest, \"Recently Updated\", \"Most Reactions\", \"Most Comments\", \"Most Bookmarks\", \"Most Collected\")")
 	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
-	cmd.Flags().IntVar(&limit, "limit", 0, "results per page (1-100)")
+	cmd.Flags().IntVar(&limit, "limit", 0, limitFlagUsage(articlesLimitMax))
 	cmd.Flags().StringVar(&cursor, "cursor", "", "pagination cursor from a previous response")
 	bindReadFlags(cmd)
 	return cmd

@@ -62,11 +62,13 @@ func newImagesSearchCmd() *cobra.Command {
 		Short: "Search images (GET /api/v1/images)",
 		Long: `Search images via GET /api/v1/images.
 
-Filters: --model-id, --model-version-id, --post-id, --username, --base-model
-(repeatable — the API ORs the values), --type, --nsfw, --sort and --period.
+Filters: --model-id, --model-version-id, --post-id, --username, --nsfw and
+--base-model (repeatable — the API ORs the values). --base-model is matched
+LITERALLY, so a misspelling returns zero results rather than an error; the CLI
+says so on stderr.
+
+--type, --sort and --period take server-owned value sets.
 ` + serverOwnedEnumNote + `
---base-model is matched LITERALLY, so a misspelling returns zero results rather
-than an error; the CLI prints a stderr note when that happens.
 
 --sort is IGNORED when --model-id is set — the API returns that model's images
 in its own order whatever you ask, so the CLI notes it on stderr rather than
@@ -77,10 +79,7 @@ list, rendered as a per-image block instead of the table (a table cannot hold a
 prompt). With --json it adds the raw meta object to every item.
 
 Paging: ` + limitRule(imagesLimitMax) + `.
---page is shallow paging, --cursor is deep paging, and the next cursor is
-printed under the results. The API caps page × limit at 1000 and answers 429
-past it — the CLI reports that cap as a usage mistake, not a rate limit, so a
-retry loop does not spin on it.
+` + deepPagingNote + `
 
 ` + readAnonShort,
 		Example: `  civitai images search --limit 5
@@ -162,7 +161,7 @@ retry loop does not spin on it.
 			return nil
 		},
 	}
-	cmd.Flags().IntVar(&limit, "limit", 0, "results per page (1-200)")
+	cmd.Flags().IntVar(&limit, "limit", 0, limitFlagUsage(imagesLimitMax))
 	cmd.Flags().IntVar(&page, "page", 0, "page number (shallow paging; prefer --cursor)")
 	cmd.Flags().StringVar(&cursor, "cursor", "", "pagination cursor from a previous response")
 	cmd.Flags().IntVar(&postID, "post-id", 0, "filter by post id")

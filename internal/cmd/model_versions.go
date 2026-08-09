@@ -59,10 +59,11 @@ The output carries the base model, the trigger words, the AIR identifier and
 every file with its size and type. A version whose primary file is not model
 weights is tagged with that type ([Archive], [Training Data], [Other]).
 
-What a version does NOT carry is model-level data: .model is only
-{name, type, nsfw, poi} — no creator, no model download count. If you started
-from a version and need those, read them from ` + "`models get`" + ` /
-` + "`models search`" + ` and join on the version's .modelId.
+What a version does NOT carry is model-level data. Its .model is a stub — the
+CLI reads a name, a type and an nsfw flag out of it — and there is no creator
+and no model-level download count on this response at all. If you started from
+a version and need those, read them from ` + "`models get`" + ` / ` + "`models search`" + `
+and join on the version's .modelId.
 
 ` + readAnonShort,
 		Example: `  civitai model-versions get 128713
