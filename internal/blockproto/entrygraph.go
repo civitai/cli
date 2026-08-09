@@ -72,10 +72,13 @@ package blockproto
 // the cost is a check that goes quiet, never a warning at a correct project.
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -185,8 +188,19 @@ type EntryGraph struct {
 	// a bundler alias that cannot exist in it). Word a new gap for the author
 	// who has to fix it: name the referencing file, the specifier, and the
 	// edit. Each one must be a SINGLE LINE — the advisory rides in a
-	// `--json` message field.
+	// `--json` message field, and must carry NO absolute path: it is one
+	// unbreakable token, and the printer wraps at 79 columns.
+	//
+	// 🔴 THE ORDER IS MOST-LIKELY-CAUSE FIRST, NOT DOCUMENT ORDER — see
+	// rankGaps. A consumer that renders only the first few (the advisory caps
+	// at three) would otherwise bury the actual bug behind whatever happened
+	// to appear earlier in index.html.
 	Gaps []string
+	// gapKinds is the rank of each entry in Gaps, parallel and same length.
+	// Unexported because it is an ordering input, not a contract: callers
+	// consume the ordered Gaps. `gap` is the only writer of either, which is
+	// what keeps the two slices in step.
+	gapKinds []gapKind
 	// Trace lists every reference considered and what it resolved to, for
 	// error messages that name the near-miss instead of saying "nothing".
 	Trace []string
@@ -225,9 +239,76 @@ func (g *EntryGraph) Chain(i int) string {
 	return g.Chain(f.Via) + " " + verb + " " + f.Spec + " -> " + f.Rel
 }
 
-func (g *EntryGraph) gap(format string, a ...any) {
+// gapKind ranks a gap by how likely it is to be the thing the author must fix.
+// Lower sorts first.
+//
+// 🔴 THIS EXISTS BECAUSE THE CAP CAN BURY THE ACTUAL CAUSE, WHICH IS THE DEFECT
+// ISSUE #258 WAS ABOUT, IN A NEW SHAPE. The advisory renders at most three gaps.
+// Measured on an index.html carrying three CDN `<script src>` tags above a
+// dangling `./civitai-host.js`: in document order the report listed the three
+// off-project URLs and withheld the dangling reference — the real bug — under a
+// lead-in claiming "one of these is usually the actual bug". Order is
+// deterministic (no map iteration in the gap path), so that was a stable wrong
+// emphasis rather than a flake.
+//
+// The ranking is a claim about LIKELIHOOD, not about correctness: every gap is
+// equally real, and each still clears `Complete`. A CDN reference is expected in
+// a working project and is a gap only because we do not follow it; a local
+// reference to a file that is not there is the #206 population.
+type gapKind int
+
+const (
+	// gapDangling: a project-LOCAL reference that resolves to nothing, and the
+	// missing-entry-point case. Nearly always the author's actual bug.
+	gapDangling gapKind = iota
+	// gapUnreadable: a file we could not read. Real, and usually local.
+	gapUnreadable
+	// gapUnresolved: a bare specifier, a CDN URL, a path outside the project.
+	// Routine in a working project.
+	gapUnresolved
+	// gapBudget: a limit THIS CHECK imposes. Never the author's bug.
+	gapBudget
+)
+
+func (g *EntryGraph) gap(kind gapKind, format string, a ...any) {
 	g.Complete = false
 	g.Gaps = append(g.Gaps, fmt.Sprintf(format, a...))
+	g.gapKinds = append(g.gapKinds, kind)
+}
+
+// rankGaps reorders Gaps most-likely-cause first. The sort is STABLE, so
+// document order is preserved within a kind — two dangling references stay in
+// the order the author's index.html lists them.
+func (g *EntryGraph) rankGaps() {
+	if len(g.Gaps) < 2 {
+		return
+	}
+	idx := make([]int, len(g.Gaps))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return g.gapKinds[idx[a]] < g.gapKinds[idx[b]] })
+	texts := make([]string, len(g.Gaps))
+	kinds := make([]gapKind, len(g.Gaps))
+	for i, src := range idx {
+		texts[i], kinds[i] = g.Gaps[src], g.gapKinds[src]
+	}
+	g.Gaps, g.gapKinds = texts, kinds
+}
+
+// readableErr renders err for an AUTHOR.
+//
+// 🔴 A `*fs.PathError` carries the ABSOLUTE path, and that breaks two contracts
+// at once now that gaps are printed: it leaks a machine-specific path into a
+// user-facing message, and it is a single unbreakable token — measured at 130
+// runes against the printer's 79-rune budget, which `wrapRunes` cannot split.
+// Every other gap site goes through relTo; this one interpolated a raw error.
+func readableErr(root string, err error) string {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return fmt.Sprintf("%s: %v", relTo(root, pe.Path), pe.Err)
+	}
+	return err.Error()
 }
 
 // refSyntax picks the resolution rules. The distinction is not cosmetic — see
@@ -256,7 +337,18 @@ type pending struct {
 // at index.html. It never returns nil.
 //
 // 🔴 Read `Complete` before reading `Files`. See the file header.
+//
+// The walk itself is `resolveEntryGraph`; this wrapper exists so `rankGaps` runs
+// on EVERY return path. The walk has three (no index.html, the file budget, and
+// the normal drain), and a ranking applied at only some of them would order the
+// gaps differently depending on which limit a project happened to hit.
 func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
+	g := resolveEntryGraph(dir, opts)
+	g.rankGaps()
+	return g
+}
+
+func resolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 	opts = opts.withDefaults()
 	g := &EntryGraph{Root: dir, Complete: true}
 
@@ -268,7 +360,7 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 		// nested html root). There is nothing to walk, so the graph is empty
 		// AND incomplete: callers must not read "no files load the emitter"
 		// out of it.
-		g.gap("no readable index.html at the project root (%v)", err)
+		g.gap(gapDangling, "no readable index.html at the project root (%s) — this check starts there, so it followed nothing", readableErr(dir, err))
 		return g
 	}
 	html := StripHTMLComments(string(raw))
@@ -324,9 +416,9 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			continue
 		case refUnresolved:
 			if p.syn == syntaxURL {
-				g.gap("could not resolve %s %q — an off-project URL, or a path outside this project", p.what, p.spec)
+				g.gap(gapUnresolved, "could not resolve %s %q — an off-project URL, or a path outside this project", p.what, p.spec)
 			} else {
-				g.gap("could not resolve %s %q — a bundler alias, a bare specifier that is not a declared dependency, or an off-project URL", p.what, p.spec)
+				g.gap(gapUnresolved, "could not resolve %s %q — a bundler alias, a bare specifier that is not a declared dependency, or an off-project URL", p.what, p.spec)
 			}
 			continue
 		}
@@ -345,7 +437,7 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			// file, the specifier and the missing target, and say what to do.
 			// "this resolver's model of the project is incomplete", the tail it
 			// used to carry, is a fact about US that an author cannot act on.
-			g.gap("%s %q points at %s, which does not exist — restore that file or fix the reference",
+			g.gap(gapDangling, "%s %q points at %s, which does not exist — restore that file or fix the reference",
 				p.what, p.spec, relTo(dir, resolved))
 			continue
 		}
@@ -353,12 +445,12 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 			continue
 		}
 		if len(g.Files) >= opts.MaxFiles {
-			g.gap("stopped after %d files — the entry graph is larger than this check reads", opts.MaxFiles)
+			g.gap(gapBudget, "stopped after %d files — this project loads more than this check follows, so anything past that point was not examined", opts.MaxFiles)
 			return g
 		}
 		body, err := readCapped(file, opts.MaxFileBytes)
 		if err != nil {
-			g.gap("could not read %s (%v)", relTo(dir, file), err)
+			g.gap(gapUnreadable, "could not read %s (%s) — make it readable, or this check cannot tell what it contains", relTo(dir, file), readableErr(dir, err))
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(file))
@@ -420,7 +512,7 @@ func ResolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 		if !truncatedBelow(g, dir, c.fromFile, c.spec, opts.Dependencies) {
 			continue
 		}
-		g.gap("stopped at import depth %d: %s imports %q, which this check did not follow",
+		g.gap(gapBudget, "stopped at import depth %d: %s imports %q, and this check does not follow imports deeper than that, so anything below it was not examined",
 			opts.MaxDepth, c.rel, c.spec)
 	}
 	return g

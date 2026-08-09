@@ -75,7 +75,13 @@ Defaults to the current directory.`,
 					errw := cmd.ErrOrStderr()
 					fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("validation failed (%d error(s)) — fix before submitting, or pass --skip-validate:", len(res.Errors))))
 					for _, e := range res.Errors {
-						fmt.Fprintf(errw, "  - %s\n", e.Message)
+						// printFinding, not a raw Fprintf: `printWarnings` below
+						// wraps, so a bare one here printed a 400-char unwrapped
+						// error and a wrapped warning in the SAME run — two
+						// layouts on the highest-traffic path. It was the fourth
+						// print site and the one that made "one place fixes
+						// every long message" false.
+						printFinding(errw, e.Message)
 					}
 					// Warnings are useful context on a failure too, and this is
 					// the last moment before the app would have gone to review.

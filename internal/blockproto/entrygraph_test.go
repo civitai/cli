@@ -798,6 +798,24 @@ func TestEntryGraphCompleteness(t *testing.T) {
 				t.Fatalf("gap reason does not mention %q — got %v\n"+
 					"a gap recorded by a different branch leaves the one this case pins untested", c.wantGap, g.Gaps)
 			}
+			// 🔴 `Complete` AND `Gaps` MUST AGREE, over this whole corpus.
+			// `internal/validate` relies on it in two places that CANNOT fail
+			// on their own: the strong tiers append `Gaps` and are quiet only
+			// because a complete graph has none, and the presence tier's
+			// "reasons" would be empty for an incomplete graph that recorded
+			// none. Both would go silently wrong here rather than there, so
+			// this is where it is asserted. `gap` is the only writer of either
+			// field; a second writer, or a `gap` that stopped clearing
+			// Complete, breaks this row.
+			if g.Complete != (len(g.Gaps) == 0) {
+				t.Fatalf("Complete = %v but len(Gaps) = %d — the flag and the reasons disagree, so a caller "+
+					"branching on Complete and a caller rendering Gaps see different graphs", g.Complete, len(g.Gaps))
+			}
+			if len(g.Gaps) != len(g.gapKinds) {
+				t.Fatalf("Gaps (%d) and gapKinds (%d) are out of step — the parallel slices rankGaps sorts "+
+					"together have drifted, so gaps would be reordered under the wrong ranks",
+					len(g.Gaps), len(g.gapKinds))
+			}
 			for _, want := range c.wantFiles {
 				if !graphHasRel(g, want) {
 					t.Fatalf("graph is missing %q; it has %v", want, graphRels(g))
@@ -1019,4 +1037,143 @@ func graphHasRel(g *EntryGraph, rel string) bool {
 		}
 	}
 	return false
+}
+
+// TestGapsAreRankedMostLikelyCauseFirst pins the ORDER of Gaps.
+//
+// 🔴 A CONSUMER THAT RENDERS ONLY THE FIRST FEW BURIES THE ACTUAL BUG WITHOUT
+// IT. `internal/validate`'s advisory caps at three. Measured before ranking, on
+// an index.html carrying three CDN `<script src>` tags above a dangling
+// `./civitai-host.js`: the report showed the three off-project URLs and withheld
+// the dangling reference, under a lead-in claiming the cause was among them.
+//
+// The ranking is a claim about LIKELIHOOD, not correctness — every gap is
+// equally real and each still clears Complete. A CDN reference is expected in a
+// working project; a local reference to a file that is not there is the #206
+// population.
+func TestGapsAreRankedMostLikelyCauseFirst(t *testing.T) {
+	dir := writeTree(t, []gfile{
+		// Document order is the LOSING order: the off-project references come
+		// first and the dangling local one last.
+		{"index.html", `<!doctype html>` +
+			`<script src="https://cdn.example.com/a.js"></script>` +
+			`<script src="//proto.example.com/b.js"></script>` +
+			`<script type="module" src="./entry.js"></script>` +
+			`<script src="./gone.js"></script>`},
+		{"entry.js", "import '@alias/x.js';\nexport const e = 1;\n"},
+	})
+	g := ResolveEntryGraph(dir, EntryGraphOptions{})
+	if g.Complete {
+		t.Fatalf("fixture must be incomplete; gaps=%v", g.Gaps)
+	}
+	if len(g.Gaps) < 4 {
+		t.Fatalf("fixture produced %d gaps, want >= 4 — it does not exercise ordering: %v", len(g.Gaps), g.Gaps)
+	}
+	// The dangling LOCAL reference must sort ahead of every unresolved one.
+	dangling, firstUnresolved := -1, -1
+	for i, s := range g.Gaps {
+		if strings.Contains(s, `"./gone.js"`) && dangling < 0 {
+			dangling = i
+		}
+		if strings.Contains(s, "could not resolve") && firstUnresolved < 0 {
+			firstUnresolved = i
+		}
+	}
+	if dangling < 0 || firstUnresolved < 0 {
+		t.Fatalf("fixture did not produce both gap kinds (dangling=%d unresolved=%d): %v",
+			dangling, firstUnresolved, g.Gaps)
+	}
+	if dangling > firstUnresolved {
+		t.Errorf("a dangling local reference (index %d) sorts BELOW an off-project one (index %d); a "+
+			"consumer that shows the first three would bury the actual bug:\n%v", dangling, firstUnresolved, g.Gaps)
+	}
+	// The kinds themselves must be non-decreasing — the sort really ran, rather
+	// than the fixture happening to be in order.
+	for i := 1; i < len(g.gapKinds); i++ {
+		if g.gapKinds[i] < g.gapKinds[i-1] {
+			t.Fatalf("gapKinds are not sorted at %d: %v (%v)", i, g.gapKinds, g.Gaps)
+		}
+	}
+}
+
+// TestGapRankingIsStableWithinAKind keeps the ranking from scrambling the order
+// an author reads their own file in. Two dangling references must stay in
+// document order — a sort that is merely "grouped" would make the first thing
+// they see depend on nothing they can predict.
+func TestGapRankingIsStableWithinAKind(t *testing.T) {
+	dir := writeTree(t, []gfile{
+		{"index.html", `<!doctype html>` +
+			`<script src="./first-gone.js"></script>` +
+			`<script src="./second-gone.js"></script>`},
+	})
+	g := ResolveEntryGraph(dir, EntryGraphOptions{})
+	first, second := -1, -1
+	for i, s := range g.Gaps {
+		if strings.Contains(s, "first-gone.js") {
+			first = i
+		}
+		if strings.Contains(s, "second-gone.js") {
+			second = i
+		}
+	}
+	if first < 0 || second < 0 {
+		t.Fatalf("fixture did not produce both gaps: %v", g.Gaps)
+	}
+	if first > second {
+		t.Errorf("two gaps of the same kind were reordered (%d > %d); the sort must be STABLE so the report "+
+			"follows the author's own file:\n%v", first, second, g.Gaps)
+	}
+}
+
+// TestGapsCarryNoAbsolutePaths is the general form of the leak that shipped.
+//
+// 🔴 ONE OF SEVEN GAP SITES INTERPOLATED A RAW ERROR instead of going through
+// relTo, so it emitted `stat /abs/.../index.html: no such file or directory`.
+// Now that gaps are printed to authors that is machine-specific noise AND a
+// single unbreakable token — measured at 120 runes on a deep fixture path,
+// producing a 136-rune line under a 79-rune budget, which no greedy wrap can
+// split. The check is over the ROOT rather than one message, so a new site
+// cannot reintroduce it.
+func TestGapsCarryNoAbsolutePaths(t *testing.T) {
+	trees := map[string][]gfile{
+		"no index.html": {{"package.json", `{}`}},
+		"dangling ref":  {{"index.html", `<!doctype html><script src="./gone.js"></script>`}},
+		"unreadable/oversize": {
+			{"index.html", `<!doctype html><script type="module" src="./e.js"></script>`},
+			{"e.js", "import './big.css';\n"},
+			{"big.css", strings.Repeat("/*pad*/\n", 300)},
+		},
+		"off-project": {{"index.html", `<!doctype html><script src="../../outside.js"></script>`}},
+	}
+	checked := 0
+	for name, files := range trees {
+		t.Run(name, func(t *testing.T) {
+			dir := writeTree(t, files)
+			opts := EntryGraphOptions{}
+			if name == "unreadable/oversize" {
+				opts.MaxFileBytes = 64 // force the read to fail on big.css
+			}
+			g := ResolveEntryGraph(dir, opts)
+			if g.Complete {
+				t.Fatalf("fixture is complete, so it records no gap to inspect")
+			}
+			for _, gap := range g.Gaps {
+				if strings.Contains(gap, dir) {
+					t.Errorf("gap leaks the absolute project root:\n%s", gap)
+				}
+				for _, tok := range strings.Fields(gap) {
+					if n := len([]rune(tok)); n > 60 {
+						t.Errorf("gap carries a %d-rune unbreakable token, which sets the printed line width "+
+							"on its own: %q", n, tok)
+					}
+				}
+			}
+			checked += len(g.Gaps)
+		})
+	}
+	// POSITIVE CONTROL: a zero here is indistinguishable from four fixtures that
+	// produced no gaps at all, in which case nothing above was inspected.
+	if checked < 4 {
+		t.Fatalf("only %d gap(s) were inspected across four fixtures — the corpus is not exercising the sites", checked)
+	}
 }

@@ -45,6 +45,28 @@ func gapReportFor(t *testing.T, dir string) string {
 	return ""
 }
 
+// maxGapToken is the widest single token a gap may contain.
+//
+// 🔴 A GREEDY WRAP CANNOT SPLIT A TOKEN, so one long token sets the line width
+// for the whole message however the printer is configured. The advisory is
+// printed at 79 columns less a 4-column hanging indent; this leaves margin
+// rather than sitting exactly on the boundary, because the point is "no gap
+// interpolates something unbounded", not "no gap is one rune over".
+const maxGapToken = 60
+
+// assertNoLongTokens fails if any whitespace-delimited token in s is wider than
+// maxGapToken. It is the general form of the absolute-path check: the hazard is
+// interpolating ANY unbounded value, and a path is only the one that shipped.
+func assertNoLongTokens(t *testing.T, s string) {
+	t.Helper()
+	for _, tok := range strings.Fields(s) {
+		if n := len([]rune(tok)); n > maxGapToken {
+			t.Errorf("a gap carries a %d-rune unbreakable token (max %d) — no wrap can split it, so it sets "+
+				"the printed line width on its own: %q", n, maxGapToken, tok)
+		}
+	}
+}
+
 // wantGapReport asserts the report names every literal in want, and fails
 // naming the ones it does not.
 func wantGapReport(t *testing.T, report string, want ...string) {
@@ -200,7 +222,21 @@ func TestEveryGapKindReachesTheAuthor(t *testing.T) {
 			"package.json": `{"dependencies": {"next": "^15.0.0"}}`,
 			"app/page.tsx": `export default function Page() { return null; }`,
 		})
-		wantGapReport(t, gapReportFor(t, dir), "index.html")
+		report := gapReportFor(t, dir)
+		wantGapReport(t, report, "index.html", "no such file")
+		// 🔴 AND IT CARRIES NO ABSOLUTE PATH. This was the ONE gap site of seven
+		// that interpolated a raw error instead of going through relTo, so it
+		// emitted `stat /abs/path/index.html: no such file or directory`. Two
+		// contracts broken at once: a machine-specific path in an author-facing
+		// message, and a single UNBREAKABLE token — measured at 120 runes on a
+		// deep fixture path, producing a 136-rune line under a 79-rune budget,
+		// because a greedy wrap cannot split a token. Every OTHER gap kind was
+		// already relative, which is why nothing caught it.
+		if strings.Contains(report, dir) {
+			t.Errorf("the gap report leaks the absolute project path — it is machine-specific noise AND an "+
+				"unbreakable token wider than the printer's line budget:\n%s", report)
+		}
+		assertNoLongTokens(t, report)
 	})
 
 	t.Run("an off-project URL in a script src", func(t *testing.T) {
@@ -245,6 +281,114 @@ func TestGapReportIsCappedAndSaysSo(t *testing.T) {
 	if !strings.Contains(report, want) {
 		t.Errorf("the gap report truncated silently — it must say %q, or an author reads three reasons "+
 			"as the complete list:\n%s", want, report)
+	}
+}
+
+// TestTheActualCauseSurvivesTheCap is this PR's own thesis, re-checked in the
+// shape the cap created.
+//
+// 🔴 MEASURED: three CDN `<script src>` tags above a dangling `./civitai-host.js`
+// produced a report listing the three off-project URLs and WITHHOLDING the
+// dangling reference — the real bug — beneath a lead-in asserting "one of these
+// is usually the actual bug". This PR exists because the message pointed away
+// from the cause; a cap that recreates that is the same defect with a different
+// mechanism. Order is document order and deterministic, so it was a stable wrong
+// emphasis rather than a flake.
+//
+// TWO fixes are asserted here because either alone is insufficient: the ranking
+// (the dangling reference must come FIRST, so the cap withholds the least likely
+// causes) and the lead (it must stop claiming the cause is present once anything
+// is withheld, because ranking is a heuristic).
+func TestTheActualCauseSurvivesTheCap(t *testing.T) {
+	dir := renderTemplate(t, scaffold.Static)
+	var cdn strings.Builder
+	for i := 0; i < readyAckGapCap; i++ {
+		fmt.Fprintf(&cdn, `<script src="https://cdn%d.example.com/lib%d.js"></script>`, i, i)
+	}
+	// The CDN tags go ABOVE the emitter reference, so document order puts the
+	// off-project URLs first — the losing order.
+	editFile(t, dir, "index.html", `<script src="./civitai-host.js"></script>`,
+		cdn.String()+`<script src="./civitai-host.js"></script>`)
+	if err := os.Remove(filepath.Join(dir, blockproto.ReadyAckFilename)); err != nil {
+		t.Fatal(err)
+	}
+	report := gapReportFor(t, dir)
+
+	// Positive control: the fixture really does overflow the cap, or "the cause
+	// is shown" is trivially true and this test proves nothing.
+	if !strings.Contains(report, "more this message does not list") {
+		t.Fatalf("the fixture did not exceed the cap, so nothing was withheld and this test is vacuous:\n%s", report)
+	}
+	dangling := `"./` + blockproto.ReadyAckFilename + `" points at`
+	if !strings.Contains(report, dangling) {
+		t.Fatalf("the ACTUAL cause was withheld by the cap while three off-project URLs were shown — the "+
+			"message points away from the bug, which is the defect this whole change exists to close:\n%s", report)
+	}
+	// FIRST, not merely present: at the cap the ordering is what decides whether
+	// it survives at all, and "present" would still pass with one CDN fewer.
+	if i, j := strings.Index(report, dangling), strings.Index(report, "cdn0.example.com"); j >= 0 && i > j {
+		t.Errorf("the dangling local reference is ranked BELOW an off-project URL; a CDN tag is routine in a "+
+			"working project and a missing local file is the #206 population:\n%s", report)
+	}
+	// And the lead must not claim the cause is in a truncated list.
+	if strings.Contains(report, readyAckGapLead) {
+		t.Errorf("a TRUNCATED report used the untruncated lead, which asserts the bug is among the items "+
+			"shown — it may be one of the withheld ones:\n%s", report)
+	}
+	if !strings.Contains(report, readyAckGapLeadTruncated) {
+		t.Errorf("a truncated report does not disclose that it is truncated:\n%s", report)
+	}
+}
+
+// TestGapLeadsAreDistinctAndNonEmpty disarms the assertions above.
+// `strings.Contains(x, "")` is always true, and two identical leads would make
+// "used the wrong lead" unobservable.
+func TestGapLeadsAreDistinctAndNonEmpty(t *testing.T) {
+	if readyAckGapLead == "" || readyAckGapLeadTruncated == "" {
+		t.Fatal("a gap lead is empty; every Contains assertion about the leads is vacuous")
+	}
+	if readyAckGapLead == readyAckGapLeadTruncated {
+		t.Fatal("the two gap leads are identical; a report cannot disclose whether it was truncated")
+	}
+	if strings.Contains(readyAckGapLeadTruncated, readyAckGapLead) ||
+		strings.Contains(readyAckGapLead, readyAckGapLeadTruncated) {
+		t.Fatal("one gap lead contains the other, so Contains cannot tell them apart")
+	}
+	// The untruncated lead claims the cause is present; only a complete list may.
+	if !strings.Contains(readyAckGapLead, "actual bug") {
+		t.Error("the untruncated lead no longer tells the author these ARE the candidate causes")
+	}
+	if !strings.Contains(readyAckGapLeadTruncated, "TRUNCATED") {
+		t.Error("the truncated lead no longer says it is truncated")
+	}
+}
+
+// TestGapReportCapValue pins the LITERAL.
+//
+// 🔴 EVERY ASSERTION IN TestGapReportUnitCap IS RELATIVE TO readyAckGapCap, so
+// setting it to 99 reddened **0** subtests — the wall of gaps the cap exists to
+// prevent came back under a fully green suite. A constant that only ever appears
+// on both sides of its own assertions is unpinned by construction.
+func TestGapReportCapValue(t *testing.T) {
+	if readyAckGapCap != 3 {
+		t.Fatalf("readyAckGapCap = %d, want 3 — this is a published product decision (the advisory shows at "+
+			"most three reasons and counts the rest), not a tuning knob a refactor may move silently. If the "+
+			"change is deliberate, edit this test and AGENTS.md item 20 together", readyAckGapCap)
+	}
+	// And the constant really does bound the OUTPUT, not just itself: 20 gaps in
+	// must render 3. Without this, pinning the literal is numerology.
+	gaps := make([]string, 20)
+	for i := range gaps {
+		gaps[i] = fmt.Sprintf("reason-%d", i)
+	}
+	got := readyAckGapReport(gaps)
+	for i := 0; i < 3; i++ {
+		if !strings.Contains(got, fmt.Sprintf("(%d)", i+1)) {
+			t.Errorf("reason %d missing: %s", i+1, got)
+		}
+	}
+	if strings.Contains(got, "(4)") {
+		t.Errorf("a fourth reason was rendered with readyAckGapCap = 3: %s", got)
 	}
 }
 
@@ -302,10 +446,17 @@ func TestGapReportIsOneLine(t *testing.T) {
 // a check that reports the presence tier at every project.
 // ---------------------------------------------------------------------------
 
-// TestGapReportDoesNotLeakIntoTheStrongTiers is the structural half of item 20's
-// disclosure rule, aimed at THIS change: the reachability tiers resolved the
-// graph completely, so they have no gaps to report and must not acquire the
-// weak tier's apparatus.
+// TestGapReportDoesNotLeakIntoTheStrongTiers is an INVARIANT GUARD, NOT
+// REGRESSION COVERAGE, and it is labelled so nobody counts it as coverage.
+//
+// 🔴 IT CANNOT FAIL TODAY, and an audit measured that: a strong tier implies
+// `graph.Complete`, which implies `len(graph.Gaps) == 0`, so even appending
+// `readyAckGapReport(graph.Gaps)` to `readyAckAdviceUnwired` on purpose reddens
+// **0** subtests — the appended text is empty. It is kept because the invariant
+// it rests on is a property of `blockproto` that this package does not own (see
+// `TestIncompleteIsExactlyHavingGaps` there, which CAN fail), and because a
+// future tier that built its message from a non-empty source would trip it. Read
+// its green as "the invariant still holds", never as "the tiers were tested".
 func TestGapReportDoesNotLeakIntoTheStrongTiers(t *testing.T) {
 	cases := []struct {
 		name, kind string
@@ -396,6 +547,15 @@ func TestPresenceAdviceHalvesBracketTheReport(t *testing.T) {
 // they would keep passing if the appended report happened to carry another
 // tier's own literal — the assertion never sees an emitted message. So the
 // literals are re-checked against a REAL rendered advisory here.
+//
+// 🔴 IT IS FIXTURE-SCOPED, AND THE PROPERTY IT CHECKS CANNOT HOLD IN GENERAL —
+// do not read it as structural. A gap interpolates author-chosen filenames, so a
+// project referencing `./orphan.js` produces a presence-tier report containing
+// the word `orphan`, which is the unwired tier's own literal. That is not a bug:
+// the tiers are told apart by their fixed halves (`isPresenceOnlyAdvice`), not
+// by keyword. What this pins is that the report we GENERATE — from the shipped
+// scaffold's own names — does not blur the tiers, which is the case that would
+// actually reach a user.
 func TestGapReportCannotSatisfyAnotherTiersStrengthAssertion(t *testing.T) {
 	dir := renderTemplate(t, scaffold.Static)
 	if err := os.Remove(filepath.Join(dir, blockproto.ReadyAckFilename)); err != nil {

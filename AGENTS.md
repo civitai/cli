@@ -1045,11 +1045,17 @@ neither one's.
       Issue #258. The gaps are now spliced between
       `readyAckAdvicePresenceOnlyHead` and `…Tail` by `presenceOnlyAdvice`.
       - **The fix is GENERAL, and that is the point.** It surfaces `Gaps`
-        wholesale rather than special-casing the dangling reference, so all six
-        kinds (dangling reference, bare specifier, off-project URL, unreadable
-        file, file budget, depth truncation) reach the author from one change.
+        wholesale rather than special-casing the dangling reference, so every
+        kind reaches the author from one change.
         `TestEveryGapKindReachesTheAuthor` covers four of them; a fifth would
         have been a special case nobody wrote.
+        🔴 **There are SEVEN `g.gap(...)` call sites, not six** — an earlier
+        revision of this bullet said six and omitted the root-`index.html` one,
+        which is the kind `TestEveryGapKindReachesTheAuthor` covers explicitly.
+        Count them (`grep -n 'g.gap(' internal/blockproto/entrygraph.go`) rather
+        than trusting the prose: no root index.html, an unresolvable URL, an
+        unresolvable module specifier, a dangling reference, the file budget, an
+        unreadable file, and the depth bound.
       - 🔴 **THE TIERING DID NOT CHANGE, AND MUST NOT.** The bullet below —
         a reference to a file that is not there is a GAP, not a decided
         absence — is why #258's project is on the weak tier at all, and it
@@ -1070,17 +1076,58 @@ neither one's.
         (`readyAckGapCap`). A silently truncated list reads as "that was all of
         them" — the same class of lie as the guess it replaced: the author
         fixes what they were shown, re-runs, and meets reasons that were there
-        the whole time.
+        the whole time. 🔴 **The VALUE was unpinned for a round**: every
+        assertion in `TestGapReportUnitCap` is written relative to the constant,
+        so `= 99` reddened **0** subtests and the wall of gaps came back under a
+        green suite. `TestGapReportCapValue` pins the literal AND that it bounds
+        the output.
+      - 🔴 **THE CAP CAN BURY THE ACTUAL CAUSE, AND THAT IS THIS ITEM'S OWN
+        THESIS FAILING IN A NEW SHAPE.** Measured on an index.html carrying
+        three CDN `<script src>` tags above a dangling `./civitai-host.js`: the
+        report listed the three off-project URLs and withheld the dangling
+        reference — the real bug — beneath a lead-in asserting "one of these is
+        usually the actual bug". Order was document order and deterministic, so
+        it was a stable wrong emphasis, not a flake. TWO fixes, because either
+        alone is insufficient: `blockproto.rankGaps` orders gaps
+        most-likely-cause-first (a dangling LOCAL reference ahead of a CDN URL,
+        which is routine in a working project, ahead of a budget THIS CHECK
+        imposes), and `readyAckGapLeadTruncated` stops claiming the cause is
+        present whenever anything was withheld — ranking is a heuristic, so the
+        list may still not contain it. The sort is STABLE, so two gaps of one
+        kind keep the author's own document order. Pinned by
+        `TestTheActualCauseSurvivesTheCap` and, at the resolver,
+        `TestGapsAreRankedMostLikelyCauseFirst` /
+        `TestGapRankingIsStableWithinAKind`.
       - **The gap strings are AUTHOR-FACING NOW.** They used to be read only in
         a test failure message, and one carried "this resolver's model of the
         project is incomplete" — a fact about US. Word a new gap for the person
         who has to fix it (referencing file, specifier, edit), and keep it to a
         SINGLE LINE: it rides in a `--json` `message` field. `readyAckGapReport`
         collapses whitespace rather than trusting a `%v`-interpolated OS error.
+        🔴 **AND IT MUST CARRY NO ABSOLUTE PATH.** The first copy pass fixed ONE
+        of the seven sites. The root-`index.html` gap interpolated a raw `%v`,
+        the only site not going through `relTo`, so it printed
+        `stat /abs/…/index.html: no such file or directory` — machine-specific
+        noise AND a single unbreakable token that no greedy wrap can split.
+        Measured on a deep fixture path: a **120-rune** token producing a
+        **136-rune** line under a 79-rune budget. `readableErr` now renders a
+        `*fs.PathError` relative. `TestGapsCarryNoAbsolutePaths` checks the root
+        and a 60-rune token ceiling across four fixtures, so a NEW site cannot
+        reintroduce it — the hazard is interpolating anything unbounded, and a
+        path is only the instance that shipped.
+        Two budget gaps also still read as facts about us
+        ("larger than this check reads" / "which this check did not follow") and
+        were reworded to say what it means for the author: the part of their
+        project that was not examined.
       - **Layout is the PRINTER's, not the message's** — the inverse of item 23.
-        The advisory is ~2 kB and `app validate` printed it as ONE
-        1938-character line; `internal/cmd/validate_print.go`'s `printFinding`
-        now wraps EVERY finding to 79 columns with a hanging indent, which fixes
+        🔴 **Quote the two lengths and say which is which**: PRE-fix, `app
+        validate` printed the advisory as ONE **1847**-rune line (the message
+        itself **1843** chars); POST-fix the message is **1936** chars — longer,
+        because the gap report was added — wrapped over 29 lines with no line
+        over 79. An earlier revision of this bullet gave "1938" as the pre-fix
+        number; it was neither, and the pre/post distinction is the whole point
+        of quoting it. `internal/cmd/validate_print.go`'s `printFinding`
+        wraps EVERY finding to 79 columns with a hanging indent, which fixes
         every long message rather than the one that provoked it. Wrapping in the
         message would corrupt `--json` for exactly the consumers item 23 exists
         to serve, so both directions are asserted:
@@ -1092,6 +1139,30 @@ neither one's.
         substring assertion on `validate`'s stderr is really an assertion about
         where the layout broke — one in `app_validate_lockfile_test.go` had to
         go through `unwrapFinding` the moment wrapping landed.
+        🔴 **THERE ARE FOUR PRINT SITES, AND THE FIRST ROUND FIXED THREE.**
+        `app_submit.go`'s ERROR loop kept its raw `Fprintf`, so one `app submit`
+        run printed a **412**-rune unwrapped error AND a wrapped warning — two
+        layouts in a single run, on the highest-traffic path, which made this
+        item's own "one place fixes every long message" false.
+        `TestAppSubmitWrapsItsErrorsToo` covers it. **Headers are deliberately
+        NOT wrapped**: `✗ N validation error(s) in <dir>:` interpolates the
+        directory the user typed, so its width is theirs to control and wrapping
+        would break a path they may need to copy — measured, it is the only
+        >79-rune line either command still emits, at 136 runes on a deep path.
+      - 🔴 **THE WRAP ITSELF REGRESSED PASTEABLE REMEDY TEXT, AND THAT NEEDED A
+        SECOND FIX.** A greedy wrap split `"pnpm run build"` — a value the
+        lockfile message tells the author to put in their manifest — into
+        `"pnpm` / `run build"`, where the unwrapped base printed it whole. So
+        `findingTokens` keeps a DOUBLE-QUOTED span as one wrap unit. Two
+        fallbacks make that safe and both are load-bearing: an overlong span is
+        split back into words (an atomic span wider than the budget would blow
+        the width contract wrapping exists to hold), and an UNBALANCED quote
+        flushes at end of input rather than swallowing the tail, so the worst
+        case is exactly the old greedy behaviour. Only `"` is grouped — an
+        apostrophe would open a span that never closes, and these messages are
+        full of `project's`. Residual, stated: `"buildCommand": "pnpm run
+        build"` can still break between the balanced `"buildCommand":` token and
+        the span; the pasteable unit is whole, the sentence around it is not.
       - **Mutation matrix**, `--- FAIL` leaf lines counted from output (never an
         exit code), each mutation checksum-gated: discard the gaps 11; restore
         the guess 1; remove the cap 2; truncate silently 2; drop the one-line
@@ -1104,6 +1175,20 @@ neither one's.
         strength test structurally cannot make because it reads the FIXED bases
         and this text is appended at runtime). A comment-only null mutant
         survives.
+      - 🔴 **TWO OF THIS ITEM'S GUARDS CANNOT FAIL, AND ARE LABELLED SO NOBODY
+        COUNTS THEM AS COVERAGE.** `TestGapReportDoesNotLeakIntoTheStrongTiers`
+        is an INVARIANT guard: a strong tier implies `Complete` implies zero
+        gaps, so even appending `readyAckGapReport(graph.Gaps)` to
+        `readyAckAdviceUnwired` on purpose reddens **0** subtests — the appended
+        text is empty. The invariant it rests on is now asserted where it can
+        actually break, in `blockproto`'s completeness corpus (`Complete` iff no
+        gaps, plus the two parallel gap slices being the same length). And
+        `TestGapReportCannotSatisfyAnotherTiersStrengthAssertion` is
+        FIXTURE-SCOPED, not structural: gaps interpolate author-chosen
+        filenames, so a project referencing `./orphan.js` genuinely produces a
+        presence-tier report containing `orphan`, the unwired tier's own
+        literal. The tiers are told apart by their fixed halves
+        (`isPresenceOnlyAdvice`), never by keyword.
     - 🔴 **AN HTML `src` IS A URL; A JS SPECIFIER IS A MODULE SPECIFIER. THE
       FIRST VERSION CONFLATED THEM, AND THAT ONE MISTAKE PRODUCED THREE BUGS,
       TWO OF THEM OPPOSITES.** Measured, each on a project one character from a

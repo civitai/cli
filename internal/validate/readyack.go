@@ -566,15 +566,40 @@ var readyAckAdvicePresenceOnly = readyAckAdvicePresenceOnlyHead + readyAckAdvice
 // A large project can produce many, and a wall of them buries the remedy that
 // follows.
 //
+// 🔴 THE VALUE IS PART OF THE CONTRACT, AND IT WAS UNPINNED. Every assertion in
+// TestGapReportUnitCap is written RELATIVE to this constant, so `= 99` reddened
+// **0** subtests — the wall of gaps the cap exists to prevent came straight back
+// under a green suite. `TestGapReportCapValue` now pins the literal.
+//
 // 🔴 THE OVERFLOW IS COUNTED OUT LOUD. A silently truncated list reads as "that
 // was all of them", which is the same class of lie as the guess this report
 // replaced: the author fixes three references, re-runs, and is told about three
 // more they were never shown. `readyAckGapReport` says how many it withheld.
 const readyAckGapCap = 3
 
-// readyAckGapLead introduces the resolver's own reasons.
+// readyAckGapLead introduces the resolver's own reasons when ALL of them are
+// shown. Only then can the message claim the cause is among them.
 const readyAckGapLead = " Here is what it could not follow, in this project's own terms — one of these is " +
 	"usually the actual bug: "
+
+// readyAckGapLeadTruncated is the lead when the cap withheld some.
+//
+// 🔴 THE UNCONDITIONAL LEAD WAS THIS PR'S OWN THESIS FAILING IN A NEW SHAPE.
+// Measured on an index.html carrying three CDN `<script src>` tags above a
+// dangling `./civitai-host.js`: at three shown of four, the report listed the
+// three off-project URLs and withheld the dangling reference — the actual bug —
+// under a lead-in asserting "one of these is usually the actual bug". Order is
+// deterministic, so that is a stable wrong emphasis, not a flake. This PR exists
+// because the message pointed away from the cause; a cap that recreates it is
+// the same defect with a different mechanism.
+//
+// TWO fixes, because either alone is insufficient. `blockproto.rankGaps` puts
+// the likely causes first, so the withheld ones are now the LEAST likely — that
+// is what makes any claim about this list defensible at all. And this lead stops
+// claiming the cause is present, because ranking is a heuristic and the cap can
+// still withhold the one that mattered.
+const readyAckGapLeadTruncated = " Here is what it could not follow, in this project's own terms, most-likely " +
+	"first — this list is TRUNCATED, so if none of these is your bug, fix them and re-run to see the rest: "
 
 // presenceOnlyAdvice is the presence-tier message for a graph that failed to
 // resolve for the reasons in gaps.
@@ -607,7 +632,11 @@ func readyAckGapReport(gaps []string) string {
 		shown = shown[:readyAckGapCap]
 	}
 	var b strings.Builder
-	b.WriteString(readyAckGapLead)
+	if extra > 0 {
+		b.WriteString(readyAckGapLeadTruncated)
+	} else {
+		b.WriteString(readyAckGapLead)
+	}
 	for i, g := range shown {
 		if i > 0 {
 			b.WriteString("; ")

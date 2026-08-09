@@ -38,17 +38,106 @@ const (
 
 // printFinding writes one finding's message as a wrapped bulleted list item.
 //
-// It is deliberately whitespace-normalising (wrapRunes splits on
-// `strings.Fields`), so a message that acquired a stray newline still prints as
-// a clean block rather than breaking the indent.
+// It is deliberately whitespace-normalising, so a message that acquired a stray
+// newline still prints as a clean block rather than breaking the indent.
 func printFinding(w io.Writer, msg string) {
-	for i, line := range wrapRunes(msg, findingWrapWidth-len(findingIndent)) {
+	width := findingWrapWidth - len(findingIndent)
+	for i, line := range wrapTokens(findingTokens(msg, width), width) {
 		lead := findingIndent
 		if i == 0 {
 			lead = findingBullet
 		}
 		fmt.Fprintf(w, "%s%s\n", lead, line)
 	}
+}
+
+// findingTokens splits msg into wrap units, keeping a DOUBLE-QUOTED span whole.
+//
+// 🔴 REMEDY TEXT IS MEANT TO BE PASTED, AND A GREEDY WRAP SPLIT IT. Measured on
+// the lockfile finding: `"buildCommand": "pnpm run build"` — which the message
+// tells the author to put in their manifest — came out as `"pnpm` / `run
+// build"` across a line break, where the unwrapped base printed it whole. That
+// is a user-visible regression introduced BY the wrapping fix.
+//
+// Two guards keep this from doing harm, and both are load-bearing:
+//   - A span that would not FIT in `width` is split back into its words. An
+//     atomic span wider than the budget would blow the width contract, which is
+//     the very thing wrapping is for.
+//   - An UNBALANCED quote (an odd `"` with no partner, e.g. a 6" measurement)
+//     never swallows the tail: the accumulator is flushed as ordinary words at
+//     end of input. Worst case is exactly today's greedy behaviour.
+//
+// Only `"` is grouped. An apostrophe cannot be: `project's` would open a span
+// that never closes, and these messages are full of them.
+func findingTokens(msg string, width int) []string {
+	var (
+		out  []string
+		span []string
+		open bool
+	)
+	flushUnbalanced := func() {
+		out = append(out, span...)
+		span, open = nil, false
+	}
+	for _, w := range strings.Fields(msg) {
+		odd := strings.Count(w, `"`)%2 == 1
+		if !open {
+			if !odd {
+				out = append(out, w)
+				continue
+			}
+			span, open = []string{w}, true
+			continue
+		}
+		span = append(span, w)
+		if !odd {
+			continue
+		}
+		// The span closed. Keep it whole only if it can fit on a line.
+		if joined := strings.Join(span, " "); len([]rune(joined)) <= width {
+			out = append(out, joined)
+		} else {
+			out = append(out, span...)
+		}
+		span, open = nil, false
+	}
+	if open {
+		flushUnbalanced()
+	}
+	return out
+}
+
+// wrapTokens greedily fills lines of at most width RUNES from pre-split tokens.
+//
+// 🔴 RECONCILE NOTE: `wrapRunes` in exitcodes_doc.go (another agent's file this
+// round) is exactly `wrapTokens(strings.Fields(s), width)`. The two are not
+// duplicated logic by accident — the assembly is identical and only the
+// TOKENIZER differs, which is the whole point of splitting them. If both land,
+// collapse `wrapRunes` into a one-line call to this.
+func wrapTokens(tokens []string, width int) []string {
+	if len(tokens) == 0 {
+		return []string{""}
+	}
+	var (
+		lines []string
+		cur   string
+		n     int
+	)
+	for _, t := range tokens {
+		lw := len([]rune(t))
+		if cur == "" {
+			cur, n = t, lw
+			continue
+		}
+		if n+1+lw > width {
+			lines = append(lines, cur)
+			cur, n = t, lw
+			continue
+		}
+		cur += " " + t
+		n += 1 + lw
+	}
+	return append(lines, cur)
 }
 
 // unwrapFinding is the inverse, for tests: collapse the printed block back to
