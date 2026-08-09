@@ -23,6 +23,9 @@ func TestRenderStatic(t *testing.T) {
 		".gitignore",
 		"README.md",
 		"app.js",
+		// The store-listing media directory: a README of the requirements and
+		// NO placeholder images (assets_dir_test.go pins both halves).
+		"assets/README.md",
 		"block.manifest.json",
 		// The vendored block -> host ready-ack emitter, copied verbatim from
 		// internal/blockproto (see ready_ack_contract_test.go).
@@ -53,6 +56,7 @@ func TestRenderPageVite(t *testing.T) {
 	for _, expect := range []string{
 		"block.manifest.json", "package.json", "vite.config.js", "index.html",
 		"src/main.jsx", "src/App.jsx", "src/index.css", "README.md", ".gitignore",
+		"assets/README.md",
 	} {
 		if !containsStr(got, expect) {
 			t.Errorf("page-vite missing expected file %q (got %v)", expect, got)
@@ -93,6 +97,7 @@ func TestRenderPageMoney(t *testing.T) {
 		"src/setup-dev-live.test.ts", "src/setup-plugin.test.ts",
 		"src/App.pollretry.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
+		"assets/README.md",
 	} {
 		if !containsStr(got, expect) {
 			t.Errorf("page-money missing expected file %q (got %v)", expect, got)

@@ -58,6 +58,7 @@ contract, and **packages/submits** it for review.
   - [The `--json` result shape](#the---json-result-shape)
 - [Submit & auth](#submit--auth)
   - [After you submit: review → approve → deploy](#after-you-submit-review--approve--deploy)
+  - [Listing media requirements](#listing-media-requirements)
 - [Submission status](#submission-status)
   - [Deployed is not the same as listed in the store](#deployed-is-not-the-same-as-listed-in-the-store)
 - [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
@@ -220,10 +221,18 @@ civitai app status
 # 7. Attach the store-listing media. An icon AND a cover are REQUIRED before the
 #    listing can publish — do it now, while the app is in review; it carries
 #    forward on approval. `listing status` shows what's still missing.
+#    The scaffold creates `assets/` and a README of the requirements, but NO
+#    images — save your own icon.png and cover.png in there first.
 civitai app listing set-icon ./assets/icon.png
 civitai app listing set-cover ./assets/cover.png
 civitai app listing status
 ```
+
+> **Step 7 needs artwork you supply.** Every template scaffolds an `assets/`
+> directory with a README of the requirements, and deliberately **no placeholder
+> images** — a placeholder passes every check and uploads cleanly, which is how a
+> stub icon reaches a public listing. Sizes, formats and aspect ratios are in
+> [Listing media requirements](#listing-media-requirements).
 
 > Want to drive the **real** backend (real Buzz/compute) before submitting? Mint
 > a dev token with `civitai app dev-token` and run `npm run dev:live` — see
@@ -280,7 +289,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message` — **`field` is always present and never `null`**) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity) and [The `--json` result shape](#the---json-result-shape). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
-| `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. See [After you submit](#after-you-submit-review--approve--deploy). |
+| `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
@@ -307,6 +316,11 @@ full details and examples.
   (never raw `postMessage`). Ships a `dev:harness` mock host, `.env.*` allowed
   parent-origin config, and a unit-test stub. Run `npm run dev:harness` (plain
   `npm run dev` renders blank without a host).
+
+Every template also scaffolds an **`assets/`** directory holding a README of the
+store-listing media requirements — and no images, so the `set-icon` / `set-cover`
+step fails loudly until you supply real artwork. See
+[Listing media requirements](#listing-media-requirements).
 
 ### The host handshake (`BLOCK_READY`)
 
@@ -997,17 +1011,33 @@ Screenshots:     0
   Add one:  civitai app listing set-icon <file>
   Add one:  civitai app listing set-cover <file>
 
-$ civitai app listing set-icon ./assets/icon.png    # square-ish, ≤2 MiB
-$ civitai app listing set-cover ./assets/cover.png  # landscape hero, ≤4 MiB
-$ civitai app listing add-screenshot ./shot.png --caption "Grid view"   # optional, up to 8
+$ civitai app listing set-icon ./assets/icon.png    # png/jpeg/webp, ≤2 MiB
+$ civitai app listing set-cover ./assets/cover.png  # png/jpeg/webp, ≤4 MiB
+$ civitai app listing add-screenshot ./assets/screenshot-1.png --caption "Grid view"   # optional, up to 8
 ```
+
+`assets/` is scaffolded by every template, with a README of the requirements and
+**no placeholder images** — the files above are ones you supply.
 
 Details worth knowing before you start:
 
 - **Source images** are png/jpeg/webp and are size-checked **locally before any
-  upload** — icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB. Each attach then
-  waits for the platform content scan (a blocked image is rejected, not
-  attached).
+  upload** — icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB. That is the whole of
+  what the CLI **enforces**.
+- **Dimension and aspect rules are the platform's, and it states them.** The CLI
+  does not enforce them locally — a copied number goes stale and starts refusing
+  valid images — but it does *document* the current bounds, as guidance rather
+  than as a gate: see
+  [Listing media requirements](#listing-media-requirements). It uploads,
+  **attaches, and then waits for the content scan** — in that order, because the
+  platform validates dimensions, aspect and format at the *attach* step. So a
+  wrongly-shaped image comes back in a couple of seconds with the platform's own
+  message naming the bound and your value
+  (e.g. `icon must be square-ish (aspect 2.00 outside 0.9–1.1)`), instead of
+  after the scan has finished.
+- **A blocked image never goes live.** The scan verdict is still waited on, so
+  these commands never report success on a pending or blocked scan; a failure
+  tells you what state the listing was left in.
 - **The app is resolved from `block.manifest.json`** in the current directory;
   pass `--slug <blockId>` (with `--dir` if you prefer) to run it from anywhere.
 - **On a listing that is already LIVE**, attaching media does not edit the live
@@ -1032,6 +1062,62 @@ $ civitai app submit                          # resubmit the new bundle
 pending publish request. It is **idempotent** (an already-withdrawn request still
 returns success) and only a **`pending`** request can be withdrawn — an already
 approved/rejected one cannot.
+
+### Listing media requirements
+
+Two different things check your listing images, and it is worth knowing which is
+which before you open an image editor.
+
+**What the CLI checks, locally, before anything is uploaded:** the file's
+**format** and its **byte size**. That is all.
+
+| kind | how many | format | byte cap (the file you pass) |
+| --- | --- | --- | --- |
+| **icon** | 1, required | png / jpeg / webp | ≤ 2 MiB |
+| **cover** | 1, required | png / jpeg / webp | ≤ 4 MiB |
+| **screenshot** | up to 8, optional | png / jpeg / webp | ≤ 2 MiB |
+
+**What the platform checks, server-side, when the image is attached:** the
+dimensions and the aspect ratio. The CLI does not reproduce these, so this table
+is *guidance* — the server is the authority and its rejection names the bound and
+your value (`icon must be square-ish (aspect 2.00 outside 0.9–1.1)`).
+
+| kind | aspect (width ÷ height) | minimum size |
+| --- | --- | --- |
+| **icon** | 0.9 – 1.1 — square-ish, not exactly square | 128 px on the shorter side |
+| **cover** | 1.3 – 2.4 — landscape, ~4:3 to ~21:9 | 640 px wide |
+| **screenshot** | 0.4 – 2.6 — either orientation | 320 px on the shorter side |
+
+Easy starting points: a **512 × 512** icon and a **1600 × 900** cover.
+
+Three behaviours that are not obvious from the numbers:
+
+- **Icons are re-encoded server-side.** Whatever you upload is downscaled to at
+  most **1024 px** on its longer side and re-encoded to PNG — aspect preserved,
+  and **never enlarged**. So an oversized icon is harmless, but an undersized one
+  is not: the 128 px floor still bites, because nothing is ever scaled up.
+  One consequence to know about: the platform also caps the **re-encoded** icon
+  at 1 MiB, and that is a different measurement from the 2 MiB the CLI applies to
+  the file you pass. A detailed photographic icon can clear the local check and
+  still be refused for the size of the PNG the server made from it — the message
+  quotes bytes, not pixels. Flat, simple artwork re-encodes far smaller.
+- **Covers and screenshots are not rescaled.** What you upload is what the store
+  renders, so ship them at the size you want shown.
+- **A wrong image is rejected, not quietly accepted, and it comes back fast.**
+  The CLI attaches *before* it waits on the content scan, so the platform's
+  verdict on shape arrives in a couple of seconds rather than after a scan that
+  can take two minutes — and always before a moderator sees it. The message names
+  the requirement. A source image above ~16 megapixels (say 5000 × 5000) is the
+  one exception with an unhelpful message: it fails the icon decoder with
+  *"That icon couldn't be read"* rather than a dimension error. Downscale it and
+  retry.
+
+> **Why the CLI does not enforce the second table.** These are platform
+> constants that can move. Stale *guidance* costs you one rejection that carries
+> the current bound; a stale local *gate* refuses valid images and cannot be
+> argued with. The asymmetry is the reason the split exists — please don't
+> "helpfully" promote these numbers into a local check (see
+> [`AGENTS.md`](AGENTS.md) item 25).
 
 ## Submission status
 
