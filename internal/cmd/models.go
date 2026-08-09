@@ -18,11 +18,29 @@ func newModelsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "models",
 		Short: "Search and inspect models on Civitai",
-		Long: `Read-only access to Civitai models via the public REST API
-(GET /api/v1/models). These commands work anonymously; if you are logged in
-(civitai login) your token is sent automatically.`,
+		Long: `Read-only access to Civitai models through the public REST API
+(GET /api/v1/models, GET /api/v1/models/{id}).
+
+` + readAnonNote + `
+
+` + "`models search`" + ` is the discovery surface — filter by --query / --tag /
+--username / --type / --base-model, order with --sort / --period, and page with
+--limit / --page / --cursor. ` + "`models get <id>`" + ` returns one model with its
+full version list.
+
+A search hit already embeds .modelVersions[] — every version's files, hashes
+and trained words — so iterating search results rarely needs a follow-up
+` + "`model-versions get`" + ` per version.
+
+What lives one level down: a model is the PAGE, a model VERSION is the
+downloadable unit. ` + "`civitai download`" + ` and ` + "`civitai generate --checkpoint`" + `
+both take a version id, which ` + "`models get`" + ` lists.
+
+` + readJSONNote,
 		Example: `  civitai models search --query "pony" --limit 5
-  civitai models get 4384`,
+  civitai models search --type LORA --base-model Illustrious --limit 20
+  civitai models get 4384
+  civitai models get 4384 --json`,
 	}
 	cmd.AddCommand(newModelsSearchCmd())
 	cmd.AddCommand(newModelsGetCmd())
@@ -41,12 +59,27 @@ func newModelsSearchCmd() *cobra.Command {
 		Short: "Search models (GET /api/v1/models)",
 		Long: `Search models via GET /api/v1/models.
 
-Pagination: use --page for shallow paging, or --cursor for deep paging (the API
-caps page*limit at 1000 and otherwise returns 429 — prefer --cursor). The next
-cursor is printed after the results.`,
+Filters: --query (free text), --tag, --username, --type, --base-model
+(repeatable — the API ORs the given values) and --nsfw.
+` + serverOwnedEnumNote + `
+--base-model in particular is matched LITERALLY, so a misspelling returns zero
+results rather than an error; the CLI prints a stderr note when that happens.
+
+Paging: ` + limitRule(modelsLimitMax) + `.
+--page is shallow paging, --cursor is deep paging, and the next cursor is
+printed under the results. The API caps page × limit at 1000 and answers 429
+past it — the CLI recognises that deep-paging cap and reports it as a usage
+mistake rather than as a rate limit, so a retry loop does not spin on it.
+
+--period changes the SORT, not the DOWNLOADS column: the API returns only the
+all-time download count, so a later row can legitimately show more downloads
+than an earlier one. The column is labelled DL(all-time) for that reason.
+
+` + readAnonShort,
 		Example: `  civitai models search --query "pony" --limit 5
   civitai models search --type LORA --sort "Most Downloaded" --period Month
-  civitai models search --username some-creator --cursor <cursor>`,
+  civitai models search --base-model Pony --base-model Illustrious --limit 20
+  civitai models search --username some-creator --cursor '<cursor>'`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkLimit(limit, modelsLimitMax); err != nil {
@@ -126,6 +159,21 @@ func newModelsGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: "Get a model by id (GET /api/v1/models/{id})",
+		Long: `Get one model by id: GET /api/v1/models/{id}.
+
+The id is the number in a civitai.com/models/<id> URL. A non-integer argument
+is refused locally, as a usage mistake, before any request is made.
+
+The human output lists every published VERSION (id, name, base model) — that
+version id is what ` + "`civitai download --version`" + ` and
+` + "`civitai generate --checkpoint`" + ` take. A version whose primary file is not
+model weights is tagged with its actual file type ([Archive], [Training Data],
+[Other]); it still downloads, the tag just says it is not a .safetensors.
+
+--json carries much more than the human view — the description HTML, per-file
+hashes and download URLs, and the full stats block.
+
+` + readAnonShort,
 		Example: `  civitai models get 4384
   civitai models get 4384 --json`,
 		Args: cobra.ExactArgs(1),
