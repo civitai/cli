@@ -51,7 +51,10 @@ Two behaviours worth knowing:
 
 - **Icons are re-encoded server-side** to PNG and downscaled to at most 1024 px
   on the longer side (aspect preserved, never enlarged). So a large icon is
-  fine, but a **small** one stays small — the 128 px floor is real.
+  fine, but a **small** one stays small — the 128 px floor is real. The platform
+  caps that *re-encoded* PNG at 1 MiB, which is a different measurement from the
+  2 MiB the CLI applies to your file: detailed photographic artwork can pass here
+  and still be refused there. Flat artwork re-encodes far smaller.
 - **Covers and screenshots are not rescaled.** What you upload is what the store
   shows, so ship them at the size you want rendered.
 

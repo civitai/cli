@@ -292,15 +292,16 @@ func newAppListingSetIconCmd() *cobra.Command {
 	var assumeYes bool
 	cmd := &cobra.Command{
 		Use:   "set-icon <file>",
-		Short: "Set the listing icon (a square-ish image)",
-		Long: `Set your store listing's ICON — the small square-ish image shown beside your
-app's name. An icon is MANDATORY: a listing cannot publish without one.
+		Short: "Set the listing icon (" + listingSourceRule(kindIcon) + ")",
+		Long: `Set your store listing's ICON — the small image shown beside your app's name.
+An icon is MANDATORY: a listing cannot publish without one.
 
 The source file is validated locally first (` + listingSourceRule(kindIcon) + `),
 then ingested and attached, and the content scan is waited on afterwards.
 Nothing is uploaded if the local check fails. The platform validates the
 image's dimensions and aspect at the ATTACH step, so a wrongly-shaped image is
 refused in seconds rather than after the scan.
+See "Listing media requirements" in the README for the platform's bounds.
 
 On a listing that is already LIVE this opens a REVISION for moderator re-review
 instead of changing the live listing — pass --changelog to describe the change,
@@ -326,8 +327,8 @@ func newAppListingSetCoverCmd() *cobra.Command {
 	var assumeYes bool
 	cmd := &cobra.Command{
 		Use:   "set-cover <file>",
-		Short: "Set the listing cover (a landscape hero image)",
-		Long: `Set your store listing's COVER — the wide hero image at the top of the listing
+		Short: "Set the listing cover (" + listingSourceRule(kindCover) + ")",
+		Long: `Set your store listing's COVER — the wide image at the top of the listing
 page. A cover is MANDATORY: a listing cannot publish without one.
 
 The source file is validated locally first (` + listingSourceRule(kindCover) + `),
@@ -335,6 +336,7 @@ then ingested and attached, and the content scan is waited on afterwards.
 Nothing is uploaded if the local check fails. The platform validates the
 image's dimensions and aspect at the ATTACH step, so a wrongly-shaped image is
 refused in seconds rather than after the scan.
+See "Listing media requirements" in the README for the platform's bounds.
 
 On a listing that is already LIVE this opens a REVISION for moderator re-review
 instead of changing the live listing — pass --changelog to describe the change,
@@ -371,6 +373,7 @@ afterwards. Nothing is uploaded if the local check fails. The platform
 validates dimensions, aspect and format at the ATTACH step, so a bad image is
 refused in seconds rather than after the scan. --caption adds a one-line
 caption.
+See "Listing media requirements" in the README for the platform's bounds.
 
 Each run appends one screenshot; there is no bulk add. Use
 ` + "`civitai app listing reorder`" + ` to change the order afterwards and

@@ -1096,14 +1096,21 @@ Three behaviours that are not obvious from the numbers:
   most **1024 px** on its longer side and re-encoded to PNG — aspect preserved,
   and **never enlarged**. So an oversized icon is harmless, but an undersized one
   is not: the 128 px floor still bites, because nothing is ever scaled up.
+  One consequence to know about: the platform also caps the **re-encoded** icon
+  at 1 MiB, and that is a different measurement from the 2 MiB the CLI applies to
+  the file you pass. A detailed photographic icon can clear the local check and
+  still be refused for the size of the PNG the server made from it — the message
+  quotes bytes, not pixels. Flat, simple artwork re-encodes far smaller.
 - **Covers and screenshots are not rescaled.** What you upload is what the store
   renders, so ship them at the size you want shown.
-- **A wrong image is rejected, not quietly accepted.** You find out at
-  `set-icon` / `set-cover` / `add-screenshot` time — before a moderator ever sees
-  it — and the message names the requirement. A source image above ~16
-  megapixels (say 5000 × 5000) is the one exception with an unhelpful message:
-  it fails the icon decoder with *"That icon couldn't be read"* rather than a
-  dimension error. Downscale it and retry.
+- **A wrong image is rejected, not quietly accepted, and it comes back fast.**
+  The CLI attaches *before* it waits on the content scan, so the platform's
+  verdict on shape arrives in a couple of seconds rather than after a scan that
+  can take two minutes — and always before a moderator sees it. The message names
+  the requirement. A source image above ~16 megapixels (say 5000 × 5000) is the
+  one exception with an unhelpful message: it fails the icon decoder with
+  *"That icon couldn't be read"* rather than a dimension error. Downscale it and
+  retry.
 
 > **Why the CLI does not enforce the second table.** These are platform
 > constants that can move. Stale *guidance* costs you one rejection that carries

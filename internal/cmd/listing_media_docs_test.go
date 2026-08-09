@@ -102,6 +102,88 @@ func TestREADMEListingMediaPathsExistInEveryScaffoldedProject(t *testing.T) {
 	}
 }
 
+// TestListingMediaShortsQuoteTheirOwnCap covers the surface #274's cap guard
+// does not: `TestListingHelpQuotesTheEnforcedCaps` reads `c.Long` only, so a
+// Short could quote a cap the command does not enforce and stay green.
+//
+// The Shorts carry a cap because they replaced "a square-ish image" / "a
+// landscape hero image" (#270) — one-liners that stated a SHAPE the CLI does not
+// check while omitting the format and size it does. Both are built by
+// interpolating listingSourceRule(kind), so this asserts the interpolation picked
+// the right kind, which is exactly the copy-paste #274 caught in the Long bodies.
+//
+// Scoped to icon and cover on purpose: their caps DIFFER (2.0 MB vs 4.0 MB), so
+// "contains mine" and "does not contain the sibling's" are independent
+// assertions. add-screenshot's Short carries no cap, and its cap string is
+// byte-identical to the icon's today, so asserting on it would be #274's
+// declared equivalent mutant — a guard that cannot fail.
+func TestListingMediaShortsQuoteTheirOwnCap(t *testing.T) {
+	root := NewRootCmd()
+	listing, _, err := root.Find([]string{"app", "listing"})
+	if err != nil {
+		t.Fatalf("`app listing` is not in the command tree: %v", err)
+	}
+
+	cases := []struct {
+		name    string
+		kind    mediaKind
+		foreign mediaKind
+	}{
+		{"set-icon", kindIcon, kindCover},
+		{"set-cover", kindCover, kindIcon},
+	}
+	var checked int
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var short string
+			for _, c := range listing.Commands() {
+				if c.Name() == tc.name {
+					short = c.Short
+				}
+			}
+			if short == "" {
+				t.Fatalf("`app listing %s` is not registered (or has no Short) — a rename must "+
+					"update this test, not silently drop the row", tc.name)
+			}
+			checked++
+
+			mine := humanBytes(int64(kindByteCap(tc.kind)))
+			theirs := humanBytes(int64(kindByteCap(tc.foreign)))
+			if mine == theirs {
+				t.Fatalf("%s and %s render the same cap (%s), so this row cannot distinguish them — "+
+					"pick a differently-capped sibling", tc.kind, tc.foreign, mine)
+			}
+			if !strings.Contains(short, mine) {
+				t.Errorf("`app listing %s` Short (%q) does not quote the cap it enforces (%s) — "+
+					"the one-liner in `app listing --help` is the only thing many readers see",
+					tc.name, short, mine)
+			}
+			if strings.Contains(short, theirs) {
+				t.Errorf("`app listing %s` Short (%q) quotes %s, the %s cap — "+
+					"listingSourceRule was interpolated with the wrong kind",
+					tc.name, short, theirs, tc.foreign)
+			}
+			if !strings.Contains(short, listingImageFormats) {
+				t.Errorf("`app listing %s` Short (%q) does not state the accepted formats (%q)",
+					tc.name, short, listingImageFormats)
+			}
+			// The regression itself: a bare shape adjective, stated as though the
+			// CLI enforced it. Shape is the platform's and is attributed in Long.
+			for _, banned := range []string{"square-ish", "landscape hero"} {
+				if strings.Contains(short, banned) {
+					t.Errorf("`app listing %s` Short (%q) is back to describing a SHAPE the CLI does "+
+						"not check (%q). Shape is the platform's, validated at attach; the Short "+
+						"states what the CLI enforces locally. See AGENTS.md item 25.",
+						tc.name, short, banned)
+				}
+			}
+		})
+	}
+	if checked != 2 {
+		t.Fatalf("checked %d Shorts, want 2 — the command walk is wrong", checked)
+	}
+}
+
 // readmeSectionSlice returns the README text of the section anchored at slug,
 // raw (fences intact) so tables and sample output are visible to the caller.
 func readmeSectionSlice(t *testing.T, md, heading string) string {
