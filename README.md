@@ -1005,9 +1005,18 @@ $ civitai app listing add-screenshot ./shot.png --caption "Grid view"   # option
 Details worth knowing before you start:
 
 - **Source images** are png/jpeg/webp and are size-checked **locally before any
-  upload** — icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB. Each attach then
-  waits for the platform content scan (a blocked image is rejected, not
-  attached).
+  upload** — icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB.
+- **Dimension and aspect rules are the platform's, and it states them.** The CLI
+  does not publish or enforce them (a copied number goes stale and starts
+  refusing valid images). It uploads, **attaches, and then waits for the content
+  scan** — in that order, because the platform validates dimensions, aspect and
+  format at the *attach* step. So a wrongly-shaped image comes back in a couple
+  of seconds with the platform's own message naming the bound and your value
+  (e.g. `icon must be square-ish (aspect 2.00 outside 0.9–1.1)`), instead of
+  after the scan has finished.
+- **A blocked image never goes live.** The scan verdict is still waited on, so
+  these commands never report success on a pending or blocked scan; a failure
+  tells you what state the listing was left in.
 - **The app is resolved from `block.manifest.json`** in the current directory;
   pass `--slug <blockId>` (with `--dir` if you prefer) to run it from anywhere.
 - **On a listing that is already LIVE**, attaching media does not edit the live

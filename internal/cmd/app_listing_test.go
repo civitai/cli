@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -51,6 +52,78 @@ func fastScanPoll(t *testing.T) {
 	scanPollInterval = time.Millisecond
 	scanPollTimeout = 5 * time.Second
 	t.Cleanup(func() { scanPollInterval, scanPollTimeout = oldI, oldT })
+}
+
+// neverSettlingScanPoll shrinks the poll budget so a scan that NEVER reaches a
+// terminal state costs a few hundred milliseconds instead of scanPollTimeout.
+// Used by the fast-fail tests: they assert the CLI answered from the ATTACH, so
+// the poll must be cheap enough to fail loudly rather than hang if it ever runs.
+func neverSettlingScanPoll(t *testing.T) {
+	t.Helper()
+	oldI, oldT := scanPollInterval, scanPollTimeout
+	scanPollInterval = time.Millisecond
+	scanPollTimeout = 300 * time.Millisecond
+	t.Cleanup(func() { scanPollInterval, scanPollTimeout = oldI, oldT })
+}
+
+// callLog records the ORDER in which the fake server was hit. The load-bearing
+// assertion for issue #270 is a sequence, not a pair of booleans: "both happened"
+// is equally true of the ordering that shipped the two-minute wait.
+type callLog struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (c *callLog) add(name string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, name)
+}
+
+func (c *callLog) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.calls...)
+}
+
+// indexOf returns the position of the first call named `name`, or -1.
+func (c *callLog) indexOf(name string) int {
+	for i, got := range c.all() {
+		if got == name {
+			return i
+		}
+	}
+	return -1
+}
+
+func (c *callLog) count(name string) int {
+	n := 0
+	for _, got := range c.all() {
+		if got == name {
+			n++
+		}
+	}
+	return n
+}
+
+// requireBefore fails unless BOTH calls were observed and `first` came first.
+// Requiring both is what stops the assertion passing vacuously on a run where
+// neither happened.
+func (c *callLog) requireBefore(t *testing.T, first, second string) {
+	t.Helper()
+	i, j := c.indexOf(first), c.indexOf(second)
+	if i < 0 {
+		t.Fatalf("%s was never called; sequence was %v", first, c.all())
+	}
+	if j < 0 {
+		t.Fatalf("%s was never called; sequence was %v", second, c.all())
+	}
+	if i > j {
+		t.Fatalf("%s must be called BEFORE %s (issue #270 — the server validates "+
+			"geometry/aspect/MIME at ATTACH, so polling first makes the author wait "+
+			"out the whole scan for a verdict available immediately); sequence was %v",
+			first, second, c.all())
+	}
 }
 
 func listingEnv(t *testing.T, srvURL string) {
@@ -130,7 +203,10 @@ func TestAppListingSetIconDraft(t *testing.T) {
 			if jsonField["listingId"] != "listing_1" {
 				t.Errorf("setIcon listingId = %v, want listing_1", jsonField["listingId"])
 			}
-			trpcData(w, map[string]any{"status": "attached", "iconId": 4242})
+			// The scan is still in flight at attach time, which is the normal case
+			// now that the attach comes first — the server writes the id and flags
+			// `scanPending`, and the CLI polls afterwards.
+			trpcData(w, map[string]any{"status": "attached", "iconId": 4242, "scanPending": true})
 		case strings.Contains(r.URL.Path, "getMyListingForEdit"):
 			trpcData(w, map[string]any{"parentId": "listing_1", "status": "draft",
 				"assets": map[string]any{"icon": map[string]any{"imageId": 4242}, "cover": map[string]any{"imageId": nil}, "screenshots": []any{}}})
@@ -220,22 +296,240 @@ func TestAppListingSetIconLiveOpensRevision(t *testing.T) {
 	}
 }
 
-func TestAppListingSetIconBlockedNoAttach(t *testing.T) {
+// ---------------------------------------------------------------------------
+// Issue #270 — ATTACH BEFORE SCAN POLL.
+//
+// The server validates geometry, aspect, MIME and byte size at ATTACH (inside
+// loadValidatedImage, ahead of the ingestion-status gate) and passes
+// allowPending:true, so a still-scanning image is written and flagged rather than
+// refused. The CLI used to poll the scan first — up to scanPollTimeout — and only
+// then ask, so an author with a wrongly-shaped icon waited two minutes for a
+// verdict that was available immediately. These tests pin the ORDER, the
+// fast-fail, and that no scan signal was lost by moving the poll after the attach.
+// ---------------------------------------------------------------------------
+
+// listingHandler is the shared fake for the #270 tests: one draft listing, an
+// inline-icon ingest, and pluggable setIcon / scan responses. Every request is
+// recorded in the call log so a test can assert the SEQUENCE.
+type listingHandler struct {
+	log      *callLog
+	imageID  int
+	setIcon  func(w http.ResponseWriter)
+	scanStat func(w http.ResponseWriter, n int)
+}
+
+func (h listingHandler) serve(t *testing.T) http.HandlerFunc {
+	var scanCalls int32
+	return func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
+			h.log.add("submissions")
+			submissionRow(w, "my-app", "block_1")
+		case strings.Contains(r.URL.Path, "getMyListingForApp"):
+			h.log.add("getMyListingForApp")
+			trpcData(w, map[string]any{"appListingId": "listing_1", "status": "draft"})
+		case strings.Contains(r.URL.Path, "ingestAssetFromDataUri"):
+			h.log.add("ingest")
+			trpcData(w, map[string]any{"imageId": h.imageID})
+		case strings.Contains(r.URL.Path, "getAssetScanStatuses"):
+			h.log.add("scan")
+			h.scanStat(w, int(atomic.AddInt32(&scanCalls, 1)))
+		case strings.Contains(r.URL.Path, "setIcon"):
+			h.log.add("setIcon")
+			h.setIcon(w)
+		case strings.Contains(r.URL.Path, "getMyListingForEdit"):
+			h.log.add("getMyListingForEdit")
+			trpcData(w, map[string]any{"parentId": "listing_1", "status": "draft",
+				"assets": map[string]any{"icon": map[string]any{"imageId": h.imageID},
+					"cover": map[string]any{"imageId": nil}, "screenshots": []any{}}})
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}
+}
+
+// alwaysPendingScan never reaches a terminal state — the only way to answer is
+// from the attach.
+func alwaysPendingScan(imageID int) func(http.ResponseWriter, int) {
+	return func(w http.ResponseWriter, _ int) {
+		trpcData(w, map[string]any{"statuses": []map[string]any{{"imageId": imageID, "status": "pending"}}})
+	}
+}
+
+// trpcBadRequest writes the tRPC error envelope a rejected attach really returns.
+func trpcBadRequest(w http.ResponseWriter, message string) {
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{"json": map[string]any{"message": message, "code": -32600}},
+	})
+}
+
+// TestAppListingAttachIsObservedBeforeScanPoll is the ordering guard. Both calls
+// happening is not the contract — the SEQUENCE is, and the pre-#270 code made
+// both calls too.
+func TestAppListingAttachIsObservedBeforeScanPoll(t *testing.T) {
 	fastScanPoll(t)
-	var setIconCalled bool
+	log := &callLog{}
+	h := listingHandler{
+		log:     log,
+		imageID: 4242,
+		setIcon: func(w http.ResponseWriter) {
+			trpcData(w, map[string]any{"status": "attached", "iconId": 4242, "scanPending": true})
+		},
+		scanStat: func(w http.ResponseWriter, n int) {
+			st := "scanned"
+			if n == 1 {
+				st = "pending"
+			}
+			trpcData(w, map[string]any{"statuses": []map[string]any{{"imageId": 4242, "status": st}}})
+		},
+	}
+	srv := httptest.NewServer(h.serve(t))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "listing", "set-icon", writePNG(t, 256, 256), "--slug", "my-app")
+	if err != nil {
+		t.Fatalf("set-icon: %v", err)
+	}
+	log.requireBefore(t, "setIcon", "scan")
+	// …and the scan is still waited on afterwards: the signal moved, it did not go away.
+	if got := log.count("scan"); got < 2 {
+		t.Errorf("the scan must still be polled to completion after the attach, got %d polls (sequence %v)", got, log.all())
+	}
+	if !strings.Contains(out, "Icon set") {
+		t.Errorf("expected success output: %q", out)
+	}
+}
+
+// TestAppListingGeometryRejectionDoesNotWaitOutTheScan is the user-visible point
+// of #270: a wrongly-shaped icon must surface the SERVER'S OWN message without
+// waiting for a scan that, here, never settles.
+func TestAppListingGeometryRejectionDoesNotWaitOutTheScan(t *testing.T) {
+	neverSettlingScanPoll(t)
+	const serverMsg = "icon must be square-ish (aspect 2.00 outside 0.9–1.1)"
+	log := &callLog{}
+	h := listingHandler{
+		log:      log,
+		imageID:  77,
+		setIcon:  func(w http.ResponseWriter) { trpcBadRequest(w, serverMsg) },
+		scanStat: alwaysPendingScan(77),
+	}
+	srv := httptest.NewServer(h.serve(t))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	_, _, err := run(t, "app", "listing", "set-icon", writePNG(t, 512, 256), "--slug", "my-app")
+	if err == nil {
+		t.Fatal("expected the server's geometry rejection to surface")
+	}
+	if !strings.Contains(err.Error(), serverMsg) {
+		t.Errorf("the CLI must relay the server's own message verbatim (it vendors no bounds); got: %v", err)
+	}
+	if n := log.count("scan"); n != 0 {
+		t.Errorf("a rejected attach must not be preceded or followed by a scan poll, got %d (sequence %v)", n, log.all())
+	}
+	if log.indexOf("setIcon") < 0 {
+		t.Fatalf("setIcon was never called; sequence %v", log.all())
+	}
+}
+
+// TestAppListingBlockedAtAttachIsReported covers the TERMINAL-blocked path: the
+// scan already finished Blocked, so `loadValidatedImage` throws BAD_REQUEST at
+// attach and nothing is written. Exactly one message reaches the user.
+func TestAppListingBlockedAtAttachIsReported(t *testing.T) {
+	neverSettlingScanPoll(t)
+	const serverMsg = "that image was rejected during scanning — choose a different image"
+	log := &callLog{}
+	h := listingHandler{
+		log:      log,
+		imageID:  66,
+		setIcon:  func(w http.ResponseWriter) { trpcBadRequest(w, serverMsg) },
+		scanStat: alwaysPendingScan(66),
+	}
+	srv := httptest.NewServer(h.serve(t))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "listing", "set-icon", writePNG(t, 256, 256), "--slug", "my-app")
+	if err == nil {
+		t.Fatal("expected an error for a blocked image")
+	}
+	if !strings.Contains(err.Error(), serverMsg) {
+		t.Errorf("error should carry the server's blocked message: %v", err)
+	}
+	// One verdict, not two: the CLI's own blocked-scan wording must not also fire.
+	if strings.Contains(out, "blocked by the content scan") {
+		t.Errorf("the CLI printed a SECOND blocked diagnosis alongside the server's: %q", out)
+	}
+	if strings.Contains(out, "Icon set") {
+		t.Errorf("a rejected attach must not report success: %q", out)
+	}
+}
+
+// TestAppListingBlockedDuringPostAttachPoll is the INVERSION of the pre-#270
+// TestAppListingSetIconBlockedNoAttach, which asserted "setIcon must NOT be called
+// after a blocked scan". With the attach first, a scan that flips to Blocked
+// afterwards is caught by the poll instead — the signal must survive the move, and
+// the command must still not report success.
+func TestAppListingBlockedDuringPostAttachPoll(t *testing.T) {
+	fastScanPoll(t)
+	log := &callLog{}
+	h := listingHandler{
+		log:     log,
+		imageID: 66,
+		setIcon: func(w http.ResponseWriter) {
+			trpcData(w, map[string]any{"status": "attached", "iconId": 66, "scanPending": true})
+		},
+		scanStat: func(w http.ResponseWriter, _ int) {
+			trpcData(w, map[string]any{"statuses": []map[string]any{{"imageId": 66, "status": "blocked"}}})
+		},
+	}
+	srv := httptest.NewServer(h.serve(t))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "listing", "set-icon", writePNG(t, 256, 256), "--slug", "my-app")
+	if err == nil {
+		t.Fatal("expected an error for a blocked image")
+	}
+	if !strings.Contains(err.Error(), "blocked") {
+		t.Errorf("error should mention the block: %v", err)
+	}
+	if strings.Contains(out, "Icon set") {
+		t.Errorf("a blocked scan must not report success: %q", out)
+	}
+	log.requireBefore(t, "setIcon", "scan")
+}
+
+// TestAppListingScreenshotBlockedNamesItsRemoval — attaching first means a blocked
+// SCREENSHOT leaves a row behind that the old order could never create, so the
+// failure has to hand over the id needed to undo it.
+func TestAppListingScreenshotBlockedNamesItsRemoval(t *testing.T) {
+	fastScanPoll(t)
+	log := &callLog{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
 			submissionRow(w, "my-app", "block_1")
 		case strings.Contains(r.URL.Path, "getMyListingForApp"):
 			trpcData(w, map[string]any{"appListingId": "listing_1", "status": "draft"})
-		case strings.Contains(r.URL.Path, "ingestAssetFromDataUri"):
-			trpcData(w, map[string]any{"imageId": 66})
+		case strings.Contains(r.URL.Path, "image-upload"):
+			// A REST route, not tRPC: {id, uploadURL} at the top level.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "uuid-1", "uploadURL": "http://" + r.Host + "/upload-sink",
+			})
+		case strings.Contains(r.URL.Path, "/upload-sink"):
+			w.WriteHeader(http.StatusOK)
+		case strings.Contains(r.URL.Path, "persistAssetImage"):
+			log.add("persist")
+			trpcData(w, map[string]any{"imageId": 91})
+		case strings.Contains(r.URL.Path, "addScreenshot"):
+			log.add("addScreenshot")
+			trpcData(w, map[string]any{"status": "attached", "id": "alsc_new", "order": 0, "scanPending": true})
 		case strings.Contains(r.URL.Path, "getAssetScanStatuses"):
-			trpcData(w, map[string]any{"statuses": []map[string]any{{"imageId": 66, "status": "blocked"}}})
-		case strings.Contains(r.URL.Path, "setIcon"):
-			setIconCalled = true
-			trpcData(w, map[string]any{"status": "attached"})
+			log.add("scan")
+			trpcData(w, map[string]any{"statuses": []map[string]any{{"imageID": 91, "imageId": 91, "status": "blocked"}}})
 		default:
 			t.Errorf("unexpected path %s", r.URL.Path)
 		}
@@ -243,16 +537,144 @@ func TestAppListingSetIconBlockedNoAttach(t *testing.T) {
 	defer srv.Close()
 	listingEnv(t, srv.URL)
 
-	iconPath := writePNG(t, 256, 256)
-	_, _, err := run(t, "app", "listing", "set-icon", iconPath, "--slug", "my-app")
+	out, _, err := run(t, "app", "listing", "add-screenshot", writePNG(t, 640, 480), "--slug", "my-app")
 	if err == nil {
-		t.Fatal("expected an error for a blocked image")
+		t.Fatal("expected an error for a blocked screenshot")
+	}
+	log.requireBefore(t, "addScreenshot", "scan")
+	if !strings.Contains(out, "rm-screenshot alsc_new") {
+		t.Errorf("a blocked screenshot is already written, so the failure must name how to remove it: %q", out)
+	}
+}
+
+// TestAppListingSkipsScanPollWhenAttachReportsScanned pins the fast path AND the
+// reading of the server's own flag: `scanPending` is set only while the scan is in
+// flight and the key is OMITTED once the image is Scanned, so an attach that comes
+// back without it owes no poll at all.
+//
+// It is the negative half of a pair — TestAppListingAttachIsObservedBeforeScanPoll
+// is the positive control that this fake CAN record a non-zero scan count, so a
+// zero here is a measurement rather than a harness wired to nothing.
+func TestAppListingSkipsScanPollWhenAttachReportsScanned(t *testing.T) {
+	neverSettlingScanPoll(t)
+	log := &callLog{}
+	h := listingHandler{
+		log:     log,
+		imageID: 12,
+		setIcon: func(w http.ResponseWriter) {
+			// No `scanPending` key — the server saw ingestion == Scanned.
+			trpcData(w, map[string]any{"status": "attached", "iconId": 12})
+		},
+		scanStat: alwaysPendingScan(12),
+	}
+	srv := httptest.NewServer(h.serve(t))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "listing", "set-icon", writePNG(t, 256, 256), "--slug", "my-app")
+	if err != nil {
+		t.Fatalf("set-icon: %v", err)
+	}
+	if n := log.count("scan"); n != 0 {
+		t.Errorf("an already-scanned attach must not poll, got %d polls (sequence %v)", n, log.all())
+	}
+	if !strings.Contains(out, "Icon set") {
+		t.Errorf("expected success output: %q", out)
+	}
+}
+
+// TestAppListingLegacyPendingAttachFallsBackToScanFirst covers the one shape that
+// would make attaching first SILENTLY do nothing: a server without
+// `allowPending` answers `{status:"pending"}` and writes no id. Today's procs
+// never return it, but printing "Icon set ✓" over a no-op is the worst possible
+// regression, so the CLI falls back to the pre-#270 order and re-attaches.
+func TestAppListingLegacyPendingAttachFallsBackToScanFirst(t *testing.T) {
+	fastScanPoll(t)
+	log := &callLog{}
+	var attachN int32
+	h := listingHandler{
+		log:     log,
+		imageID: 31,
+		setIcon: func(w http.ResponseWriter) {
+			if atomic.AddInt32(&attachN, 1) == 1 {
+				trpcData(w, map[string]any{"status": "pending"})
+				return
+			}
+			trpcData(w, map[string]any{"status": "attached", "iconId": 31})
+		},
+		scanStat: func(w http.ResponseWriter, n int) {
+			st := "scanned"
+			if n == 1 {
+				st = "pending"
+			}
+			trpcData(w, map[string]any{"statuses": []map[string]any{{"imageId": 31, "status": st}}})
+		},
+	}
+	srv := httptest.NewServer(h.serve(t))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "listing", "set-icon", writePNG(t, 256, 256), "--slug", "my-app")
+	if err != nil {
+		t.Fatalf("set-icon: %v", err)
+	}
+	if got := log.count("setIcon"); got != 2 {
+		t.Errorf("a `pending` attach wrote nothing, so it must be retried after the scan: setIcon calls = %d (sequence %v)", got, log.all())
+	}
+	if got := log.count("scan"); got < 2 {
+		t.Errorf("the fallback must wait the scan out before re-attaching, got %d polls (sequence %v)", got, log.all())
+	}
+	if !strings.Contains(out, "Icon set") {
+		t.Errorf("expected success once the retry attached: %q", out)
+	}
+}
+
+// TestAppListingLiveScanFailureLeavesTheRevisionUnsubmitted — on a LIVE listing the
+// attach now lands on the shadow revision before the scan verdict, so a blocked
+// image must NOT be submitted for moderator review, and the user must be told the
+// live listing is untouched.
+func TestAppListingLiveScanFailureLeavesTheRevisionUnsubmitted(t *testing.T) {
+	fastScanPoll(t)
+	log := &callLog{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
+			submissionRow(w, "my-app", "block_1")
+		case strings.Contains(r.URL.Path, "getMyListingForApp"):
+			trpcData(w, map[string]any{"appListingId": "listing_1", "status": "approved"})
+		case strings.Contains(r.URL.Path, "ingestAssetFromDataUri"):
+			trpcData(w, map[string]any{"imageId": 5})
+		case strings.Contains(r.URL.Path, "beginListingRevision"):
+			log.add("begin")
+			trpcData(w, map[string]any{"shadowId": "shadow_9", "created": true})
+		case strings.Contains(r.URL.Path, "setIcon"):
+			log.add("setIcon")
+			trpcData(w, map[string]any{"status": "attached", "iconId": 5, "scanPending": true})
+		case strings.Contains(r.URL.Path, "getAssetScanStatuses"):
+			log.add("scan")
+			trpcData(w, map[string]any{"statuses": []map[string]any{{"imageId": 5, "status": "blocked"}}})
+		case strings.Contains(r.URL.Path, "submitListingRevision"):
+			log.add("submit")
+			trpcData(w, map[string]any{"publishRequestId": "pubreq_9", "shadowId": "shadow_9", "slug": "my-app"})
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "listing", "set-icon", writePNG(t, 256, 256), "--slug", "my-app", "--changelog", "brand refresh")
+	if err == nil {
+		t.Fatal("expected the blocked scan to fail the command")
 	}
 	if !strings.Contains(err.Error(), "blocked") {
 		t.Errorf("error should mention the block: %v", err)
 	}
-	if setIconCalled {
-		t.Error("setIcon must NOT be called after a blocked scan")
+	if log.count("submit") != 0 {
+		t.Errorf("a blocked image must never be submitted for moderator review (sequence %v)", log.all())
+	}
+	if !strings.Contains(out, "live listing is unchanged") {
+		t.Errorf("the user must be told the revision was not submitted: %q", out)
 	}
 }
 

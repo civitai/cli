@@ -88,8 +88,18 @@ type ListingEditView struct {
 }
 
 // AttachResult is the (loosely-parsed) union result of setIcon/setCover/
-// addScreenshot. `scanPending` means the image was stored while still scanning —
-// the CLI polls before attaching, so it should already be false.
+// addScreenshot.
+//
+// 🔴 `ScanPending` is LOAD-BEARING, not diagnostic. Since issue #270 the CLI
+// attaches BEFORE polling the scan (the server validates geometry/aspect/MIME/
+// bytes at attach), so this flag is what tells it whether a poll is still owed.
+// The server sets `scanPending: true` only on the still-scanning branch of
+// `loadValidatedImage` and OMITS the key once `ingestion == Scanned` — so absent
+// and false mean the same thing here, "the server already saw a clean scan", and
+// a plain bool is the honest shape.
+//
+// `Status == "pending"` is the legacy `allowPending: false` variant and means
+// NOTHING was written; the live listing-media procs never return it.
 type AttachResult struct {
 	Status      string `json:"status"`
 	IconID      *int   `json:"iconId,omitempty"`
