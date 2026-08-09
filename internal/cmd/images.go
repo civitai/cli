@@ -20,8 +20,25 @@ func newImagesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "images",
 		Short: "Search images on Civitai",
-		Long: `Read-only access to Civitai images via the public REST API
-(GET /api/v1/images). Works anonymously.`,
+		Long: `Read-only access to Civitai images through the public REST API
+(GET /api/v1/images). Videos and audio posts ride the same route — pick one
+with --type image|video|audio.
+
+` + readAnonNote + `
+
+` + "`images search`" + ` is the feed; ` + "`images get <id>`" + ` is one image, by the id in
+a civitai.com/images/<id> URL.
+
+Both can render the GENERATION METADATA — prompt, negative prompt, sampler,
+cfg, steps, seed, and the resources "recipe" of checkpoint plus LoRAs — which
+is what makes this a reproduction tool rather than a gallery. ` + "`search`" + ` omits
+it unless you pass --meta, matching the API (which leaves meta out by default
+to keep pages small); ` + "`get`" + ` always asks for it.
+
+An uploader can hide their generation data. Those images print
+"meta: (hidden by uploader)" rather than failing.
+
+` + readJSONNote,
 		Example: `  civitai images search --limit 5
   civitai images search --model-id 4384 --period Month
   civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
@@ -45,8 +62,27 @@ func newImagesSearchCmd() *cobra.Command {
 		Short: "Search images (GET /api/v1/images)",
 		Long: `Search images via GET /api/v1/images.
 
-Pagination: use --page for shallow paging or --cursor for deep paging (the API
-caps page*limit at 1000). The next cursor is printed after the results.`,
+Filters: --model-id, --model-version-id, --post-id, --username, --base-model
+(repeatable — the API ORs the values), --type, --nsfw, --sort and --period.
+` + serverOwnedEnumNote + `
+--base-model is matched LITERALLY, so a misspelling returns zero results rather
+than an error; the CLI prints a stderr note when that happens.
+
+--sort is IGNORED when --model-id is set — the API returns that model's images
+in its own order whatever you ask, so the CLI notes it on stderr rather than
+let you believe the sort took. --model-version-id does honour --sort.
+
+--meta adds each image's prompt, sampler, cfg, steps, seed, model and resource
+list, rendered as a per-image block instead of the table (a table cannot hold a
+prompt). With --json it adds the raw meta object to every item.
+
+Paging: ` + limitRule(imagesLimitMax) + `.
+--page is shallow paging, --cursor is deep paging, and the next cursor is
+printed under the results. The API caps page × limit at 1000 and answers 429
+past it — the CLI reports that cap as a usage mistake, not a rate limit, so a
+retry loop does not spin on it.
+
+` + readAnonShort,
 		Example: `  civitai images search --limit 5
   civitai images search --model-version-id 128713 --sort Newest
   civitai images search --base-model "Krea 2" --sort "Most Reactions" --period Week
@@ -147,10 +183,24 @@ func newImagesGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <id>",
 		Short: "Get a single image by id (GET /api/v1/images?imageId=<id>)",
-		Long: `Fetch one image by its numeric id — the id in a civitai.com/images/<id>
-URL — and render its generation metadata (prompt, settings, resources), the same
-detail block as ` + "`images search --meta`" + `. Generation metadata is requested
-implicitly.`,
+		Long: `Fetch one image by its numeric id — the id in a civitai.com/images/<id> URL —
+and render its generation metadata: prompt, negative prompt, sampler, cfg,
+steps, seed, and the resources recipe (checkpoint plus LoRAs, with weights and
+hashes). Metadata is requested implicitly, so this is the same detail block
+` + "`images search --meta`" + ` prints.
+
+There is no per-id REST route. This is GET /api/v1/images?imageId=<id> — the
+search endpoint keyed to a single id — which is why ` + "`--json`" + ` hands back a
+one-item search envelope rather than a bare image object.
+
+The id is validated locally: a non-integer, non-positive, or beyond-32-bit
+value is refused as a usage mistake before any request, so an oversized id
+comes back as a clear refusal instead of a server error.
+
+A resource line falls back to meta.hashes when the generator inlined no hash;
+those hashes are exactly what ` + "`model-versions by-hash`" + ` resolves.
+
+` + readAnonShort,
 		Example: `  civitai images get 136456589
   civitai images get 136456589 --json`,
 		Args: cobra.ExactArgs(1),
