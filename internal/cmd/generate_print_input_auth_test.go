@@ -266,30 +266,49 @@ func TestGeneratePrintInput_WithImageStillNeedsACredential(t *testing.T) {
 	// built), parseImageFlag (inside resolveImages) and resolveLocalImage's
 	// stat (deepest, one step before the upload). A change that silences any
 	// ONE of those sites cannot silence the other two.
-	for _, tc := range []struct {
+	// 🔴 AND THE THREE-SITE PROPERTY IS ASSERTED, NOT ASSERTED-IN-A-COMMENT.
+	// An audit demonstrated the gap: `via` was interpolated only into FAILURE
+	// messages, so a passing row never printed it — collapse rows 2 and 3 onto
+	// row 1's site and the suite stayed fully green at 16 RUN / 0 FAIL, in a
+	// file whose central thesis is that one row is not a battery. Each row now
+	// carries a `fingerprint` of its site's message and a PREMISE subtest that
+	// runs the same invocation WITH a credential — the gate does not fire, the
+	// run falls through to the site the row names, and the fingerprint is
+	// checked. `assertPairwiseDistinctSites` then requires each row's error to
+	// carry its OWN fingerprint and NONE of the others', so two rows that
+	// collapse onto one site fail by name.
+	rows := []struct {
 		name string
 		args []string
 		// via names the usage-error site the row reaches when the gate is
-		// ABSENT. Recorded so a row that stops exercising its site is visible
-		// as a documentation mismatch rather than as a quiet duplicate.
+		// ABSENT.
 		via string
+		// fingerprint is a substring unique to that site's message. It is used
+		// ONLY to identify WHICH check answered — never to assert the
+		// classification, which stays errors.Is per item 7.
+		fingerprint string
 	}{
 		{
-			name: "no --ecosystem",
-			args: []string{"a cat", "--print-input", "--image", img},
-			via:  "validateImageOpts (item 19(b): --image requires --ecosystem)",
+			name:        "no --ecosystem",
+			args:        []string{"a cat", "--print-input", "--image", img},
+			via:         "validateImageOpts (item 19(b): --image requires --ecosystem)",
+			fingerprint: "--image requires --ecosystem",
 		},
 		{
-			name: "empty --image value",
-			args: []string{"a cat", "--print-input", "--ecosystem", "Qwen", "--image", ""},
-			via:  "parseImageFlag (an empty value is not a path or an https URL)",
+			name:        "empty --image value",
+			args:        []string{"a cat", "--print-input", "--ecosystem", "Qwen", "--image", ""},
+			via:         "parseImageFlag (an empty value is not a path or an https URL)",
+			fingerprint: "the value is empty",
 		},
 		{
-			name: "--image is a directory",
-			args: []string{"a cat", "--print-input", "--ecosystem", "Qwen", "--image", dir},
-			via:  "resolveLocalImage (os.Stat says directory, one step before the upload)",
+			name:        "--image is a directory",
+			args:        []string{"a cat", "--print-input", "--ecosystem", "Qwen", "--image", dir},
+			via:         "resolveLocalImage (os.Stat says directory, one step before the upload)",
+			fingerprint: "is a directory, not an image file",
 		},
-	} {
+	}
+
+	for _, tc := range rows {
 		t.Run("and it is THIS gate that refuses: "+tc.name, func(t *testing.T) {
 			// Credential-less AND usage-invalid. ErrUnauthorized means the gate
 			// won the race; ErrUsage means the gate is gone and tc.via got there
@@ -298,6 +317,44 @@ func TestGeneratePrintInput_WithImageStillNeedsACredential(t *testing.T) {
 			assertRefusedByTheGate(t, r, tc.via)
 		})
 	}
+
+	// The premise of every row above: with the gate out of the way, this
+	// invocation really does reach the site it names. Without this, the rows
+	// are three spellings of one claim and nobody would know.
+	t.Run("each row reaches the DISTINCT site it names", func(t *testing.T) {
+		seen := make(map[string]string, len(rows))
+		for _, tc := range rows {
+			r := runGenerateCLI(t, "not-a-real-token-000", tc.args...)
+			if !errors.Is(r.err, ErrUsage) {
+				t.Fatalf("%s: with a credential the run must fall through to %s and fail as ErrUsage, got %v",
+					tc.name, tc.via, r.err)
+			}
+			if !strings.Contains(r.err.Error(), tc.fingerprint) {
+				t.Fatalf("%s: expected the error from %s (fingerprint %q), got %v",
+					tc.name, tc.via, tc.fingerprint, r.err)
+			}
+			// Pairwise distinctness, both directions: this row's error must
+			// carry NO other row's fingerprint, and no two rows may share one.
+			for _, other := range rows {
+				if other.via == tc.via {
+					continue
+				}
+				if strings.Contains(r.err.Error(), other.fingerprint) {
+					t.Fatalf("%s reached %s as well as %s — the rows are not independent sites",
+						tc.name, other.via, tc.via)
+				}
+			}
+			if prev, dup := seen[tc.fingerprint]; dup {
+				t.Fatalf("%s and %s share the fingerprint %q, so one of them is not pinning its own site",
+					prev, tc.name, tc.fingerprint)
+			}
+			seen[tc.fingerprint] = tc.name
+			assertOffline(t, r)
+		}
+		if len(seen) != len(rows) {
+			t.Fatalf("expected %d distinct sites, saw %d", len(rows), len(seen))
+		}
+	})
 }
 
 // TestGenerateDryRun_StillNeedsACredential — --dry-run reaches the estimator, an
@@ -377,23 +434,38 @@ func TestGeneratePrintInput_SkipsTheGateNotTheValidation(t *testing.T) {
 //
 // The server answers 404, so the run fails; that is fine and deliberate. The
 // claim is about WHERE it got to, not that it succeeded.
+// 🔴 BOTH FLAGS GET A ROW. `--checkpoint` alone was pinned, and an audit
+// measured the consequence: an ADDITIVE `|| len(o.loras) > 0` widening survived
+// all 1324 subtests in this package. The gate's own comment treats the two
+// identically, so pinning one and not the other made half of that comment a
+// claim nothing held.
 func TestGeneratePrintInput_WithCheckpointNeedsNoCredential(t *testing.T) {
-	r := runGenerateCLI(t, "", "a cat", "--print-input", "--checkpoint", "128713")
+	for _, tc := range []struct {
+		flag, value string
+	}{
+		{"--checkpoint", "128713"},
+		{"--lora", "128713"},
+	} {
+		t.Run(tc.flag, func(t *testing.T) {
+			r := runGenerateCLI(t, "", "a cat", "--print-input", tc.flag, tc.value)
 
-	if errors.Is(r.err, civitai.ErrUnauthorized) {
-		t.Fatalf("--print-input --checkpoint needs no credential (the version read is public), but it was refused: %v", r.err)
-	}
-	var public int
-	for _, h := range r.hits {
-		if strings.Contains(h.path, "/model-versions/") {
-			if h.hasAuth {
-				t.Errorf("the model-version read carried an Authorization header: %s", h)
+			if errors.Is(r.err, civitai.ErrUnauthorized) {
+				t.Fatalf("--print-input %s needs no credential (the version read is public), but it was refused: %v",
+					tc.flag, r.err)
 			}
-			public++
-		}
-	}
-	if public == 0 {
-		t.Fatalf("the run never reached the public model-version read; hits=%v err=%v", r.hits, r.err)
+			var public int
+			for _, h := range r.hits {
+				if strings.Contains(h.path, "/model-versions/") {
+					if h.hasAuth {
+						t.Errorf("the model-version read carried an Authorization header: %s", h)
+					}
+					public++
+				}
+			}
+			if public == 0 {
+				t.Fatalf("the run never reached the public model-version read; hits=%v err=%v", r.hits, r.err)
+			}
+		})
 	}
 }
 

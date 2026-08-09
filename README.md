@@ -1174,11 +1174,20 @@ civitai generate --input graph.json --dry-run
 (`civitai login`, no `--scopes`) does **not** carry them and is refused.
 `civitai whoami` shows the capability as **Spend Buzz (AI Services)**.
 
-The one exception is `--print-input` **without** `--image`: it assembles the
-graph and exits before any authenticated route, so it needs no credential and
-works offline — useful for building a graph to edit before you have logged in.
-`--print-input` **with** `--image` still needs one, because it uploads each local
-file first and that upload is authenticated.
+The one exception is `--print-input`: it assembles the graph and exits before the
+estimator, the submit and the balance read, so it needs no credential — useful
+for building a graph to edit before you have logged in. Two caveats, and they are
+**not** the same caveat:
+
+- `--print-input` **with `--image`** does need a credential, because it uploads
+  each local file first and that upload is authenticated.
+- `--print-input` **with `--checkpoint` or `--lora`** needs none — the
+  model-version lookup is a public read — but it is **not offline**: that lookup
+  is a real request, and with no network it fails (exit `5`) rather than printing
+  a graph. Measured against a dead endpoint: bare `--print-input` exits `0`;
+  `--print-input --checkpoint <id>` exits `5` after the read's retries.
+
+So only a **bare** `--print-input` needs neither a credential nor a network.
 
 ### 🔴 `--max-cost` is an estimate check, not a spending cap
 
