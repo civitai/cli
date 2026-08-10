@@ -29,13 +29,33 @@ make build   # -> bin/civitai, version ldflags from `git describe`
 make test    # go test ./...
 make vet     # go vet ./...
 make fmt     # gofmt -s -w .
-make lint    # golangci-lint if installed, else falls back to go vet
-make ci      # tidy + vet + test + build — mirrors GitHub Actions CI
+make lint    # golangci-lint; ERRORS with an install hint if it is not on PATH
+make ci      # tidy + vet + test + build. NOT a mirror of CI — see below
 ```
 
-CI (`.github/workflows/ci.yml`) runs `go vet`, `gofmt -s -l .` (must print
-nothing), `go test ./...`, `go build ./...` on every push to `main` and every
-PR. Run the binary you built with `./bin/civitai <cmd>`; per-package coverage is
+🔴 **`make ci` DOES NOT RUN LINT, and this line used to claim it "mirrors GitHub
+Actions CI".** It runs `tidy vet test build`; golangci-lint is a **separate CI
+job** pinned to a specific version in `.github/workflows/ci.yml`. The gap is not
+theoretical — a change once reached a push with four fixtures emitting raw
+control bytes that only staticcheck's ST1018 could see, because `make ci` was
+green and had been documented as equivalent to CI. **Run `make lint` as well
+before claiming done.** (`make lint` errors if golangci-lint is missing rather
+than degrading to something weaker, which is what makes its zero meaningful —
+do not "helpfully" add a fallback.)
+
+CI (`.github/workflows/ci.yml`) runs **eight** jobs, not four steps:
+`build-test` (vet + `gofmt -s -l .` + test + build), `lint`, `schema-drift`,
+`pins-vs-published`, `ready-ack-runtime`, `template-page-vite`,
+`template-page-money` and `scaffold-currency`.
+
+🔴 **Reporting and gating are different questions, and fewer of those jobs gate
+than run** — item 11 carries the measured list of required contexts and the
+instruction to re-measure before calling any job a gate. Read it there rather
+than trusting a second copy here; two lists of the same fact is how the original
+claim went stale. Note in particular that **`lint` reports but does not block a
+merge**, which is another reason to run it locally.
+
+Run the binary you built with `./bin/civitai <cmd>`; per-package coverage is
 `go test ./... -cover`.
 
 ## Shell & CI gotchas
@@ -2574,7 +2594,7 @@ the generation path mirrors nothing.**
 ## Permission boundaries
 
 ✅ **Always**
-- Run `make ci` (or `go build ./... && go test ./... && go vet ./... && gofmt -s -l .`) before claiming done; CI runs the same.
+- Run `make ci` **and `make lint`** before claiming done. `make ci` is not a superset of CI — it does not run golangci-lint (see the Build section), so a green `make ci` alone is a claim about four steps, not about the gate.
 - Add tests for new behaviour, covering error paths.
 - Write output via `cmd.OutOrStdout()`/`cmd.ErrOrStderr()` and make returned errors actionable.
 - Use conventional-commit subjects (`feat:`/`fix:`/`docs:`/`test:`/`chore:`); the changelog filters on them.
