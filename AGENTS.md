@@ -44,13 +44,12 @@ make ci      # tidy + vet + test + build. NOT a mirror of CI — see below
 
 🔴 **`make ci` DOES NOT RUN LINT, and this line used to claim it "mirrors GitHub
 Actions CI".** It runs `tidy vet test build`; golangci-lint is a **separate CI
-job** pinned to a specific version in `.github/workflows/ci.yml`. The gap is not
-theoretical — a change once reached a push with four fixtures emitting raw
-control bytes that only staticcheck's ST1018 could see, because `make ci` was
-green and had been documented as equivalent to CI. **Run `make lint` as well
-before claiming done.** (`make lint` errors if golangci-lint is missing rather
-than degrading to something weaker, which is what makes its zero meaningful —
-do not "helpfully" add a fallback.)
+job**, version-pinned in `.github/workflows/ci.yml`. Not theoretical: a change
+once reached a push with four fixtures emitting raw control bytes that only
+staticcheck's ST1018 could see, because `make ci` was green and documented as
+equivalent to CI. **Run `make lint` too before claiming done** — it errors when
+golangci-lint is missing rather than degrading to something weaker, which is what
+makes its zero meaningful; do not "helpfully" add a fallback.
 
 CI (`.github/workflows/ci.yml`) runs **eight** jobs, not four steps:
 `build-test` (vet + `gofmt -s -l .` + test + build), `lint`, `schema-drift`,
@@ -58,11 +57,10 @@ CI (`.github/workflows/ci.yml`) runs **eight** jobs, not four steps:
 `template-page-money` and `scaffold-currency`.
 
 🔴 **Reporting and gating are different questions, and fewer of those jobs gate
-than run** — item 11 carries the measured list of required contexts and the
-instruction to re-measure before calling any job a gate. Read it there rather
-than trusting a second copy here; two lists of the same fact is how the original
-claim went stale. Note in particular that **`lint` reports but does not block a
-merge**, which is another reason to run it locally.
+than run.** Item 11 carries the measured list of required contexts and the
+instruction to re-measure before calling any job a gate — read it there; a second
+copy here is how the original claim went stale. In particular **`lint` reports
+but does not block a merge**, another reason to run it locally.
 
 Run the binary you built with `./bin/civitai <cmd>`; per-package coverage is
 `go test ./... -cover`.
@@ -76,19 +74,19 @@ follows is specific to this repo's toolchain.
 
 - **`gofmt -s -l .` checking zero files** prints nothing and exits 0 — same as
   "all clean". If a path is misquoted or the working tree is wrong, the clean
-  verdict says nothing about the code. Verify you're in the right directory and
-  the tool found files.
-- **Build/test/tool not on PATH exits `127`; OOM exits `134`** — both are
-  non-zero but a script reading `rc != 0` as "N errors found" reports a plausible
-  wrong count. Prefer `make ci` (which already handles this) over hand-rolled
-  invocations, and assert a **minimum expected count** (≥1 package tested, ≥1
-  file checked) as a positive control.
+  verdict says nothing about the code. Verify the directory, and that the tool
+  found files.
+- **Build/test/tool not on PATH exits `127`; OOM exits `134`** — both non-zero,
+  but a script reading `rc != 0` as "N errors found" reports a plausible wrong
+  count. Prefer `make ci` (which handles this) over hand-rolled invocations, and
+  assert a **minimum expected count** (≥1 package tested, ≥1 file checked) as a
+  positive control.
 - **`go test ./...` with a broken import in `_test.go`** can compile to 0 tests
   and pass. If a package you expect tests for is silent, check explicitly:
   `go test -v -count=1 ./path/to/pkg | head`.
-- **`gh pr checks` / `gh pr view --json statusCheckRollup` pitfalls.** Kept: with
-  eight jobs of which only some gate, "have the checks settled?" is a live
-  question here, and each trap below answers it wrongly in the REASSURING
+- **`gh pr checks` / `gh pr view --json statusCheckRollup` pitfalls.** Kept
+  because with eight jobs of which only some gate, "have the checks settled?" is
+  a live question here, and each trap answers it wrongly in the REASSURING
   direction:
   - `.conclusion` is `null` for commit statuses (only check-runs populate it) —
     poll `.state` instead.
@@ -208,28 +206,27 @@ func newWhoAmICmd() *cobra.Command {
 
 ## Intentional decisions that look wrong (read before "fixing")
 
-Items 1–3, 10 and 11 are deliberate mirrors of the platform (items 4 and 8 are
-deliberate *non*-mirrors); items 5–9 cover `civitai app metrics`, the CLI's only
-analytics read path; items 12–17, 19, 21 and 22 cover `civitai generate`, the
-CLI's only path that **spends the user's money irreversibly** (19 is img2img, 21
-is model substitution, and 22 is the one gate on that path that guards CONTENT
-rather than money); items 18 and 20 cover the checks that tell an author their
-EXISTING app is missing the item-11 handshake (20 is the reachability repair to
-18's presence-only scan); item 23 covers the SHAPE of a validation finding — the
-`field` every `--json` consumer groups on; item 24 covers the ONE
-transport-vs-filesystem predicate now shared by the CLI-wide exit-code
-classifier (which every command's published exit code funnels through) and
-`pkg/civitai`'s read-GET retry loop; item 25 is a third deliberate
-*non*-mirror — the store-listing image dimension/aspect bounds, which stay prose
-in the README rather than becoming a local check; item 26 covers the OTHER gate
-on that same published contract — the classification of the project path
-`civitai app validate` / `app submit` are handed, which is a different rule from
-item 24's predicate and is filed separately for exactly that reason; and item 27
-covers blockId derivation — the one identity this CLI mints that can NEVER be
-renamed, and the residuals the refusal knowingly ships with.
-The durable fix for the mirroring is a server-side
-`civitai app validate` endpoint that calls the real `BlockManifestValidator` —
-until that exists, vendoring is on purpose.
+**Index.** Items 1–3, 10 and 11 are deliberate mirrors of the platform;
+items 4, 8 and 25 are deliberate *non*-mirrors (25 = the store-listing image
+dimension/aspect bounds, which stay prose in the README rather than becoming a
+local check). Items 5–9 cover `civitai app metrics`, the CLI's only analytics
+read path. Items 12–17, 19, 21 and 22 cover `civitai generate`, the CLI's only
+path that **spends the user's money irreversibly** — 19 is img2img, 21 model
+substitution, 22 the one gate there guarding CONTENT rather than money.
+Items 18 and 20 cover the checks telling an author their EXISTING app is
+missing the item-11 handshake (20 is the reachability repair to 18's
+presence-only scan). Item 23 is the SHAPE of a validation finding — the `field`
+every `--json` consumer groups on. Item 24 is the ONE transport-vs-filesystem
+predicate, shared by the CLI-wide exit-code classifier (which every command's
+published exit code funnels through) and `pkg/civitai`'s read-GET retry loop.
+Item 26 is the OTHER gate on that same published contract — the classification
+of the project path `civitai app validate` / `app submit` are handed, a
+different rule from item 24's predicate and filed separately for exactly that
+reason. Item 27 is blockId derivation — the one identity this CLI mints that
+can NEVER be renamed, plus the residuals the refusal knowingly ships with. The
+durable fix for the mirroring is a server-side `civitai app validate` endpoint
+calling the real `BlockManifestValidator`; until that exists, vendoring is on
+purpose.
 
 The generate items pull in the opposite direction from the mirror items, and
 that is deliberate: `validate` mirrors the platform because a local answer is
@@ -238,16 +235,13 @@ answer that is *wrong* costs real Buzz. Read item 13 before adding any check to
 that path.
 
 **Maintaining this list:** items are append-only and numbered by arrival — a PR
-adding items takes the next free numbers, and when two PRs collide the one
-merging **second** renumbers **its own** new items. Never renumber an existing
-item: other items, workflow YAML (`.github/workflows/ci.yml`) and Go test
-comments cross-reference them by number today, and prose elsewhere in this file
-(the Layout section) picks them up as items are added. After any renumber,
-re-grep every `item N` / `items N–M` in this
-file and confirm each still points at what it means — the range clauses in the
-paragraph above are the first thing to break, and both sides of a collision tend
-to have edited them differently, so the correct merged sentence is usually
-neither one's.
+adding items takes the next free numbers; when two PRs collide the one merging
+**second** renumbers **its own** new items. Never renumber an existing item:
+other items, `.github/workflows/ci.yml` and Go test comments point at them by
+number today, as does this file's own Layout section. After any renumber, re-grep
+every `item N` / `items N–M` here and confirm each still points at what it means
+— the index clauses above break first, and both sides of a collision tend to have
+edited them differently, so the correct merged sentence is usually neither one's.
 
 **Where an item's evidence lives:** this file is imported into every session, so
 the largest items keep their THESIS here and carry their body — the
@@ -346,26 +340,26 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
    only part of the payload the server reads from **ClickHouse** (`blockRenders`)
    rather than Postgres, so its store can be unconfigured, SLOW (the server-side
    read is time-bounded and a timeout degrades to this flag) or down while every
-   other counter in the same response is genuinely measured. That is why the
-   flag is per-SECTION: flagging the whole payload would discard good data, and
-   dropping the flag would recreate the fabricated zero that item 6 exists to
-   prevent — an author reading `Impressions 0` as "nobody looked at my app"
-   when the truth is "we could not ask". `printAppMetrics` therefore prints
-   `unavailable` plus an explicit caveat instead of any number, and `--json`
-   passes the field through while **still exiting 0**, so a script must branch
-   on `views.unavailable` exactly as it must already branch on `notOwned`.
-   Whoever changes the server payload has to keep the field
+   other counter in the same response is genuinely measured. Hence the flag is
+   per-SECTION: flagging the whole payload would discard good data, and dropping
+   it would recreate the fabricated zero item 6 exists to prevent — an author
+   reading `Impressions 0` as "nobody looked at my app" when the truth is "we
+   could not ask". `printAppMetrics` therefore prints `unavailable` plus an
+   explicit caveat instead of any number, and `--json` passes the field through
+   while **still exiting 0**, so a script must branch on `views.unavailable`
+   exactly as it must already branch on `notOwned`. Whoever changes the server
+   payload has to keep the field
    (`civitai/civitai → src/server/services/blocks/app-views.service.ts`).
-   🔴 `AppAnalytics.Views` is a **pointer** for the same reason, and must stay
+   🔴 `AppAnalytics.Views` is a **pointer** for the same reason and must stay
    one: there are THREE states, not two — measured, unavailable, and *absent*
    (a server predating the impressions reader omits the key). A value type
-   collapses "absent" into "measured zero", because `encoding/json` simply
-   leaves the zero value in place and the renderer then prints
-   `Impressions 0`. That was **measured, not theorised** — the value-typed
-   version rendered exactly `Impressions     0` for a payload with no `views`
-   key. So `nil` means unknown and renders like `unavailable`, never as `0`.
-   Related gotcha worth not rediscovering: unique viewers deliberately do **not**
-   dedup on `blockInstanceId`. Despite the name it is not per-mount — it is
+   collapses "absent" into "measured zero", because `encoding/json` leaves the
+   zero value in place and the renderer then prints `Impressions 0`. That was
+   **measured, not theorised** — the value-typed version rendered exactly
+   `Impressions     0` for a payload with no `views` key. So `nil` means unknown
+   and renders like `unavailable`, never as `0`.
+   Related gotcha: unique viewers deliberately do **not** dedup on
+   `blockInstanceId`. Despite the name it is not per-mount — it is
    `page_apb_<ULID>`, roughly one per app (measured on prod: 28 distinct ids
    across 27 distinct apps) — so deduping on it would report ~1 viewer per app.
    Anonymous rows all carry `userId = 0`, so the server sums distinct authed
@@ -373,17 +367,17 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
    🔴 **`installs` has a THIRD state too, and it is a different KIND of flag.**
    `installs.notApplicable` means "the question does not apply", not "we could
    not ask": a page app is stateless by design and has no install slot, so a
-   subscription record cannot exist for it. Rendering `0` there reads as
-   "nobody installed my app" when the truth is "installs do not exist for this
-   app type" — the same fabricated-zero class as items 6 and 9, arrived at from
-   a third direction. The distinction that matters when editing this: a
-   TRUTHFUL zero (an installable app nobody has installed yet) arrives with the
-   flag ABSENT and must keep printing `0`. The server owns that call — do NOT
-   re-derive it in the CLI from the counters, because `total == 0` is true in
-   both states. Measured on prod: every approved app is a page app (0 installs
-   possible), while the model-slot apps that CAN be installed hold real rows,
-   so the two populations are disjoint and the bare `0` was never a
-   measurement of user behaviour.
+   subscription record cannot exist for it. Rendering `0` there reads as "nobody
+   installed my app" when the truth is "installs do not exist for this app
+   type" — the same fabricated-zero class as items 6 and 9, from a third
+   direction. The distinction that matters when editing this: a TRUTHFUL zero
+   (an installable app nobody has installed yet) arrives with the flag ABSENT
+   and must keep printing `0`. The server owns that call — do NOT re-derive it
+   in the CLI from the counters, because `total == 0` is true in both states.
+   Measured on prod: every approved app is a page app (0 installs possible),
+   while the model-slot apps that CAN be installed hold real rows, so the two
+   populations are disjoint and the bare `0` was never a measurement of user
+   behaviour.
    Two more things the label has to keep straight, both of which read wrong if
    you shorten them: `AnonCount` is signed-out **LOADS**, not viewers, and is
    NOT a subset of `UniqueViewers` — one anonymous visitor reloading ten times
@@ -402,58 +396,58 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
     `Origin: null` through the same `DialLocalDevServer` the proxy uses, and
     reads real response headers. `CheckParentOrigins` is a **heuristic** —
     `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` is inlined into the bundle at transform
-    time and cannot be observed over HTTP, so it is a **vendored mirror**
-    (one of four — `schema/`, the slot registry, this, and the ready-ack
-    emitter of item 11): `resolveViteEnv` reproduces
-    Vite's dev env resolution, where `.env.<mode>` beats `.env` and a REAL
-    process env var beats every file (dotenv does not overwrite existing vars).
-    Getting that last rule backwards warns at authors who exported the value in
-    their shell. It is gated to dirs holding a manifest AND a package.json
-    depending on `@civitai/app-sdk`, because `dev-tunnel` takes an explicit
-    blockId and runs from anywhere. Neither check is ever fatal: one HTTP
-    response cannot rule out a proxy, a non-Vite dev server, or a deliberately
-    exotic setup, and hard-failing would regress flows that work today — so a
-    check that cannot observe returns NO findings rather than manufacturing
-    advice. Measured facts behind it, on Vite **6.4.3 and 8.2.0 alike**: a stock
-    dev server answers a null-origin module fetch `200` with **no**
-    `Access-Control-Allow-Origin`, and 403s a `dev-*.civit.ai` Host. Two traps
-    if you touch it: the probe's baseline `Host` MUST be the real `host:port`
-    (a placeholder authority trips Vite's own DNS-rebinding check and
-    manufactures findings for a healthy server), and the CLI predicate is pinned
-    to the page-money template by the seam guards in
-    `internal/scaffold/dev_embed_contract_test.go` — they render the real
-    template, extract the values it emits, and require the CLI's own check to
-    accept them, so drift on EITHER side fails loudly.
-    Four rules here are counter-intuitive and were each measured after a first
-    draft got them wrong — every one produced a FALSE WARNING at a correctly
-    configured project, which is the worst outcome for advisory output because it
-    teaches authors to ignore it:
+    time and cannot be observed over HTTP, so it is a **vendored mirror** (one of
+    four — `schema/`, the slot registry, this, and item 11's ready-ack emitter):
+    `resolveViteEnv` reproduces Vite's dev env resolution, where `.env.<mode>`
+    beats `.env` and a REAL process env var beats every file (dotenv does not
+    overwrite existing vars) — getting that last rule backwards warns at authors
+    who exported the value in their shell. It is gated to dirs holding a manifest
+    AND a package.json depending on `@civitai/app-sdk`, because `dev-tunnel`
+    takes an explicit blockId and runs from anywhere. Neither check is ever
+    fatal: one HTTP response cannot rule out a proxy, a non-Vite dev server or a
+    deliberately exotic setup, and hard-failing would regress flows that work
+    today — so a check that cannot observe returns NO findings rather than
+    manufacturing advice. Measured on Vite **6.4.3 and 8.2.0 alike**: a stock dev
+    server answers a null-origin module fetch `200` with **no**
+    `Access-Control-Allow-Origin`, and 403s a `dev-*.civit.ai` Host. Two traps if
+    you touch it: the probe's baseline `Host` MUST be the real `host:port` (a
+    placeholder authority trips Vite's own DNS-rebinding check and manufactures
+    findings for a healthy server), and the CLI predicate is pinned to the
+    page-money template by the seam guards in
+    `internal/scaffold/dev_embed_contract_test.go`, which render the real
+    template, extract the values it emits and require the CLI's own check to
+    accept them — so drift on EITHER side fails loudly.
+    Four rules are counter-intuitive and were each measured after a first draft
+    got them wrong — every one produced a FALSE WARNING at a correctly configured
+    project, the worst outcome for advisory output because it teaches authors to
+    ignore it:
     (a) **`frame-ancestors` OBSOLETES `X-Frame-Options`** (CSP L3) — when both are
     present browsers enforce frame-ancestors and IGNORE XFO, so XFO is only
     consulted when NO frame-ancestors directive is present. (b) **Only a 2xx
-    baseline is interpretable**: a 401/403/5xx response came from something other
-    than the app (auth proxy, deny gate), so its headers say nothing — reading
-    CORS off one blamed healthy servers, and reading the follow-up 403 blamed
+    baseline is interpretable**: a 401/403/5xx came from something other than the
+    app (auth proxy, deny gate), so its headers say nothing — reading CORS off
+    one blamed healthy servers, and reading the follow-up 403 blamed
     `allowedHosts` for a proxy that refuses everything identically. A 3xx is NOT
-    in that list: see (e). (c) **`'none'` is decisive only as the SOLE source**, and every
-    `Content-Security-Policy` header must be evaluated (`Header.Values`, not
-    `Get`) because policies combine restrictively. (d) The **dotenv mirror is
-    verified DIFFERENTIALLY against Vite's own `loadEnv`**, not against
-    assumptions: `KEY: value` is VERSION-DEPENDENT — Vite 8 (dotenv 17) resolves it
-    to nothing while Vite 6 (dotenv 16) accepts it — and the mirror deliberately
-    does not accept it, matching the `vite ^8` that page-money pins; page-vite
-    pins `vite ^6` but carries no SDK, so the parent-origins check is gated off
-    there and the divergence is unreachable, an unresolved `${NOPE}` expands to the EMPTY string rather
-    than its own text, backtick quoting is supported, and an unquoted `#` starts a
-    comment ANYWHERE, not only after a space. If you change the parser, re-run
-    that differential — a same-process dotenv harness silently CONTAMINATES
-    itself, because dotenv-expand writes resolved values into `process.env` and
-    later cases then read the earlier answer. The mirror also MERGES every env
-    file before expanding once (`.env` may define what `.env.development`
-    interpolates; expanding per file resolved that to nothing), a reference
-    resolves against the PROCESS env before the file values, `${X:-default}` is
-    supported, and a self-reference (`K=${K}x`) resolves to the process value or
-    empty — which is what makes it terminate.
+    in that list: see (e). (c) **`'none'` is decisive only as the SOLE source**,
+    and every `Content-Security-Policy` header must be evaluated
+    (`Header.Values`, not `Get`) because policies combine restrictively.
+    (d) The **dotenv mirror is verified DIFFERENTIALLY against Vite's own
+    `loadEnv`**, not against assumptions. `KEY: value` is VERSION-DEPENDENT —
+    Vite 8 (dotenv 17) resolves it to nothing while Vite 6 (dotenv 16) accepts
+    it — and the mirror deliberately does not accept it, matching the `vite ^8`
+    that page-money pins; page-vite pins `vite ^6` but carries no SDK, so the
+    parent-origins check is gated off there and the divergence is unreachable.
+    Also established by that differential: an unresolved `${NOPE}` expands to the
+    EMPTY string rather than its own text; backtick quoting is supported; an
+    unquoted `#` starts a comment ANYWHERE, not only after a space; the mirror
+    MERGES every env file before expanding once (`.env` may define what
+    `.env.development` interpolates, and expanding per file resolved that to
+    nothing); a reference resolves against the PROCESS env before the file
+    values; `${X:-default}` is supported; and a self-reference (`K=${K}x`)
+    resolves to the process value or empty, which is what makes it terminate. If
+    you change the parser, re-run that differential — a same-process dotenv
+    harness silently CONTAMINATES itself, because dotenv-expand writes resolved
+    values into `process.env` and later cases then read the earlier answer.
     (e) The 2xx gate must NOT be reached by refusing redirects. A Vite project
     with a `base` path 404s `/@vite/client` and 302s `/`, so "don't follow
     redirects" plus "only 2xx is interpretable" made a genuinely un-embeddable
@@ -468,25 +462,25 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
     absolute redirect, which silently turns the tunnel-Host probe into an ordinary
     loopback request unless it is re-applied.
     🔴 **The findings are printed TWICE on purpose, and the duplicate is the
-    fix — not an oversight to collapse.** They were printed once, immediately
-    before the "open this URL" block, and that placement is right: the last
-    thing on screen before the URL should be the reason the URL won't work.
-    It is also insufficient, because the readiness wait sits in front of it.
-    Measured over three runs against the live endpoint (#226): >60 s (killed),
-    >3:00 (never resolved), ~2:30–3:00 — and the 45-second run produced **zero**
-    preflight output, because the author killed an apparently-hung command. So
-    the check with the best diagnostics in the product was invisible to the user
-    most likely to need it: the silent failure it exists to end, reproduced by
-    the placement meant to fix it. Moving the print EARLIER just swaps which
-    failure you get — on a slow tunnel it scrolls away behind minutes of
-    heartbeat lines. Hence both, and the duplicate is the accepted cost. It was
-    chosen over a "re-print only if the wait was slow" threshold specifically
-    because it carries **no timing dependency**: nothing to tune, no clock to
-    mock, and both placements are pinned by ordering assertions against the
-    injected `probePublic` seam rather than by wall-clock timing.
-    `--no-wait` is the ONE exception and it drops the EARLY print, not the late
-    one — there is no wait to scroll behind, so a second copy would only
-    duplicate an eight-line `vite.config.ts` block a few seconds apart.
+    fix — not an oversight to collapse.** Printing them once, immediately before
+    the "open this URL" block, is the right placement — the last thing on screen
+    before the URL should be the reason the URL won't work — but insufficient,
+    because the readiness wait sits in front of it. Measured over three runs
+    against the live endpoint (#226): >60 s (killed), >3:00 (never resolved),
+    ~2:30–3:00 — and the 45-second run produced **zero** preflight output,
+    because the author killed an apparently-hung command. So the check with the
+    best diagnostics in the product was invisible to the user most likely to need
+    it: the silent failure it exists to end, reproduced by the placement meant to
+    fix it. Moving the print EARLIER just swaps which failure you get — on a slow
+    tunnel it scrolls away behind minutes of heartbeat lines. Hence both, and the
+    duplicate is the accepted cost. It was chosen over a "re-print only if the
+    wait was slow" threshold specifically because it carries **no timing
+    dependency**: nothing to tune, no clock to mock, and both placements are
+    pinned by ordering assertions against the injected `probePublic` seam rather
+    than by wall-clock timing. `--no-wait` is the ONE exception and it drops the
+    EARLY print, not the late one — there is no wait to scroll behind, so a
+    second copy would only duplicate an eight-line `vite.config.ts` block a few
+    seconds apart.
     Related, same issue: the DNS-pending heartbeat's estimate is now the single
     constant `dnsPublishNote`, shared by the TTY spinner and the non-TTY
     heartbeat because they held two hand-copied copies of it. It used to say
@@ -514,9 +508,9 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
     `civitai/civitai → src/server/routers/orchestrator.router.ts`; there is no
     `/api/v1` equivalent, and the same is true of the reads behind
     `civitai workflows list|get|cancel`. So `internal/genapi` speaks tRPC — path
-    constants in `generate.go`, the query's input riding in
-    `?input={"json":{…}}`, success unwrapping `result.data.json` — reusing the
-    `authedDo` + envelope-unwrap pattern `internal/appapi` already established.
+    constants in `generate.go`, and the same `authedDo` + envelope-unwrap shape
+    (`?input={"json":{…}}`, success unwrapping `result.data.json`) that
+    `internal/appapi` established for item 5.
     Don't "simplify" any of it into a REST call that does not exist.
     Two things in there are load-bearing and look like oversights. `unwrapTRPC`
     rejects a literal `null` payload as malformed rather than unmarshalling it:
@@ -648,30 +642,30 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
 17. **`DownloadPresigned` exists so a blob fetch carries NO credential, and it is
     the thing in this feature most likely to be "simplified" away.** It is a
     near-duplicate of `DownloadFile` in `pkg/civitai/download.go` differing only
-    in that it passes an empty token, and every instinct says to fold it back in
-    behind a bool. 🔴 Doing that leaks a full-scope personal API key.
+    in passing an empty token, and every instinct says to fold it back in behind
+    a bool. 🔴 Doing that leaks a full-scope personal API key.
     `isTrustedDownloadHost` attaches the bearer token to `civitai.com` and to
     **any** `*.civitai.com` subdomain — correct for the model-download route it
     was written for — and orchestrator output blobs are served from a
     `*.civitai.com` host (observed: `orchestration-new.civitai.com`), which
     **matches**. So `DownloadFile` would send a 25-scope key (including
-    `ModelsDelete` and `VaultWrite`) to the orchestrator, on a request that is
-    already authorized by its own signature and needs no token whatsoever.
+    `ModelsDelete` and `VaultWrite`) to the orchestrator, on a request already
+    authorized by its own signature that needs no token whatsoever.
     🔴 **The specific subdomain is incidental to the argument, and must not be
     written as if it were the load-bearing fact.** An earlier revision of this
-    item named `orchestration.civitai.com`; the host actually observed in a real
-    upload reply is `orchestration-new.civitai.com`. BOTH match the `*.civitai.com`
-    wildcard, so the credential-free seam is required either way — which is
-    exactly why the reasoning is stated over the wildcard rather than over a
-    hostname a server-side rename can invalidate. Do not "fix" this seam because
-    the subdomain you see does not match the one written here.
+    item named `orchestration.civitai.com`; the host observed in a real upload
+    reply is `orchestration-new.civitai.com`. BOTH match the `*.civitai.com`
+    wildcard, so the credential-free seam is required either way — which is why
+    the reasoning is stated over the wildcard rather than over a hostname a
+    server-side rename can invalidate. Do not "fix" this seam because the
+    subdomain you see does not match the one written here.
     Weakening `isTrustedDownloadHost` is not the alternative: `civitai download`
     depends on it attaching the token. The fix is a **seam that never has a
     credential to attach** — `DownloadPresigned` passes `""` to `doDownload`,
     whose guard is `token != "" && isTrustedDownloadHost(...)`, so the empty
-    token short-circuits before the host predicate is even consulted. That
-    ordering is deliberate: it cannot be defeated by a change to the predicate.
-    Everything genuinely shared is still shared — the SSRF dial guard, the
+    token short-circuits before the host predicate is consulted. That ordering is
+    deliberate: it cannot be defeated by a change to the predicate. Everything
+    genuinely shared is still shared — the SSRF dial guard, the
     https-per-redirect-hop policy and 10-hop cap, the `ResponseHeaderTimeout` —
     so there is no duplicated security logic to drift. It also skips the
     401-refresh replay on purpose: there is no credential to refresh, and a 401
@@ -767,21 +761,20 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
     which would materialise every pixel to learn two integers — and the upload's
     Content-Type comes from the DECODED format, not the filename extension.
 
-    (e) 🔴 **The presigned upload carries NO credential, for the same reason
-    item 17's download does not.** `UploadPresigned` (`pkg/civitai/upload.go`) is
-    a near-duplicate of `DownloadPresigned` and will attract the same "fold it
-    back in behind a bool". The upload URL is **server-supplied** and lives on a
-    `*.civitai.com` host (observed: `orchestration-new.civitai.com`), which
+    (e) 🔴 **The presigned upload carries NO credential, and item 17 carries the
+    full argument — read it there rather than re-deriving it here.**
+    `UploadPresigned` (`pkg/civitai/upload.go`) is a near-duplicate of
+    `DownloadPresigned` and will attract the same "fold it back in behind a
+    bool". The upload URL is **server-supplied** and lives on a `*.civitai.com`
+    host (observed: `orchestration-new.civitai.com`), which
     `isTrustedDownloadHost` **matches**, so a token-carrying path would hand a
     25-scope personal API key to a request its own signature already authorizes.
-    As in item 17, the WILDCARD is the load-bearing fact and the subdomain is
-    incidental — the seam is required for any `*.civitai.com` host, so a rename
-    server-side changes nothing here. The interface has no token parameter and
-    consults no `TokenSource`, so the safety is structural rather than
-    conditional. `genapi.UploadImageBlob`'s two hops differ on purpose — hop 1
-    (presign) is authed, hop 2 (upload) is not — and the test asserts BOTH, since
-    "hop 2 had no auth" alone cannot distinguish correctness from a recorder
-    wired to nothing.
+    The WILDCARD is the load-bearing fact and the subdomain is incidental. Here
+    the safety is structural rather than conditional: the interface has no token
+    parameter and consults no `TokenSource`. `genapi.UploadImageBlob`'s two hops
+    differ on purpose — hop 1 (presign) is authed, hop 2 (upload) is not — and
+    the test asserts BOTH, since "hop 2 had no auth" alone cannot distinguish
+    correctness from a recorder wired to nothing.
     Everything genuinely shared IS shared: `UploadPresigned` reuses
     `downloadHTTPClient()` wholesale (SSRF dial guard, redirect policy,
     `ResponseHeaderTimeout`) and the https check is the single
@@ -827,12 +820,11 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
     local validation item 13 forbids — it is a CONTENT-AUDIT gate over a
     CONFIRMED server-side gap.** This is the item most likely to be read as an
     unfinished feature, because item 13 says in bold that the CLI validates
-    nothing about the graph and `--input` exists precisely to pass a graph
-    through untouched. The reconciliation: item 13 forbids the CLI from
-    reproducing the server's *judgement* about which graphs are valid, and this
-    check makes no such claim. It is the same shape as item 19(b) — a flag
-    combination the CLI owns, asserting nothing about which ecosystems exist or
-    what any of them allows.
+    nothing about the graph and `--input` exists precisely to pass one through
+    untouched. The reconciliation: item 13 forbids reproducing the server's
+    *judgement* about which graphs are valid, and this check makes no such
+    claim — it is the same shape as item 19(b), a flag combination the CLI owns,
+    asserting nothing about which ecosystems exist or what any of them allows.
 
     🔴 **THE GAP IS CONFIRMED, NOT SUSPECTED, AND A PRIOR SESSION RECORDED THE
     OPPOSITE.** The server audits at `'prompt' in data && typeof data.prompt ===
@@ -957,7 +949,7 @@ the generation path mirrors nothing.**
 ## Permission boundaries
 
 ✅ **Always**
-- Run `make ci` **and `make lint`** before claiming done. `make ci` is not a superset of CI — it does not run golangci-lint (see the Build section), so a green `make ci` alone is a claim about four steps, not about the gate.
+- Run `make ci` **and `make lint`** before claiming done. `make ci` is not a superset of CI — it omits golangci-lint (see the Build section), so a green `make ci` alone is a claim about four steps, not about the gate.
 - Add tests for new behaviour, covering error paths.
 - Write output via `cmd.OutOrStdout()`/`cmd.ErrOrStderr()` and make returned errors actionable.
 - Use conventional-commit subjects (`feat:`/`fix:`/`docs:`/`test:`/`chore:`); the changelog filters on them.
