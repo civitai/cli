@@ -1362,6 +1362,11 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 	}
 }
 
+// promptNotChecked replaces the prompt text on the --dry-run quote. It is a
+// LABEL, not a value: nothing downstream parses it, and it exists so the line
+// reports what the estimate did rather than what the user typed.
+const promptNotChecked = "<not checked by --dry-run>"
+
 // printGenerateQuote renders the --dry-run breakdown. Factor and fixed keys are
 // printed VERBATIM — they are server-owned, and inventing friendlier labels is
 // how a vendored mapping starts.
@@ -1372,15 +1377,38 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	// cheapest to catch.
 	printImageDisclosure(errw, o, built)
 
+	// 🔴 The second thing this estimate structurally cannot tell you, and the
+	// reason the Prompt line below prints a label instead of the text (#281).
+	// `whatIfGraph` STRIPS prompt/negativePrompt before the whatIf call — from a
+	// typed graph and from a raw `--input` one alike — because they do not affect
+	// cost and the server substitutes its own defaults. That strip is correct and
+	// must not change. What was wrong was echoing the prompt back afterwards: the
+	// server never saw it, so a `--dry-run` that printed it read as "checked and
+	// priced". Measured: a real prompt was refused at submit for its content
+	// after a clean `--dry-run`. There is no local repair — a moderation verdict
+	// is server-side and the estimate carries no text to judge — so the honest
+	// answer is to say what was not checked.
+	fmt.Fprintln(errw, ui.For(errw).Dim(
+		"The prompt is not sent with the estimate, so --dry-run cannot tell you whether it passes moderation — a submit can still be refused for prompt content."))
+
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "Workflow:\t%s\n", generateWorkflow)
 	if built.inputPath != "" {
 		fmt.Fprintf(tw, "Graph:\t%s (sent as-is)\n", safeTerm(built.inputPath))
 	} else {
-		fmt.Fprintf(tw, "Prompt:\t%s\n", safeTerm(o.prompt))
+		// NOT safeTerm(o.prompt) — see the disclosure above. The interactive
+		// confirmation in confirmGenerate DOES echo the real prompt and must keep
+		// doing so: that screen precedes an irreversible spend on a graph that
+		// really does carry the text. This one describes an estimate that did not.
+		fmt.Fprintf(tw, "Prompt:\t%s\n", promptNotChecked)
 	}
 	if o.negativePrompt != "" {
-		fmt.Fprintf(tw, "Negative prompt:\t%s\n", safeTerm(o.negativePrompt))
+		// Same strip, same label. Echoing the negative prompt beside a "not
+		// checked" prompt would say the negative one HAD been evaluated — it is
+		// deleted by the same two lines of `whatIfGraph`. The line still appears
+		// when the flag was set, because dropping it silently would leave the user
+		// wondering whether --negative-prompt registered at all.
+		fmt.Fprintf(tw, "Negative prompt:\t%s\n", promptNotChecked)
 	}
 	if o.quantitySet {
 		fmt.Fprintf(tw, "Quantity:\t%d\n", o.quantity)
