@@ -282,4 +282,23 @@ func TestGoldenSpendCopy(t *testing.T) {
 		}
 		assertGolden(t, "cancel_non_tty_refusal", err.Error())
 	})
+
+	// 🔴 THE POST-CANCEL NOTE, ADDED BY #307 — AND IT WAS THE HOLE THIS FILE'S
+	// OWN HEADER WARNS ABOUT. Three cancel surfaces were pinned here and the
+	// fourth, the one printed AFTER the irreversible act, was not: it is the
+	// screen a user reads at the moment they most want to know what the cancel
+	// cost them, and until now a sentence could be added to it silently. It is
+	// also one of the surfaces #307 found asserting a claim the orchestrator
+	// source contradicts, which is exactly the drift a golden catches.
+	t.Run("cancel_result_note", func(t *testing.T) {
+		c, out, errb := genCmd("")
+		if err := runWorkflowsCancel(c, wfCancelDeps(`{"result":{"data":{}}}`, nil, nil, nil),
+			workflowsCancelOpts{assumeYes: true}, "01JABCXYZ"); err != nil {
+			t.Fatalf("cancel: %v", err)
+		}
+		if !strings.Contains(out.String(), "01JABCXYZ") {
+			t.Fatalf("CONTROL failure: the cancel did not report success on stdout, so the stderr note below may not be the success path:\n%s", out.String())
+		}
+		assertGolden(t, "cancel_result_note", errb.String())
+	})
 }

@@ -41,6 +41,9 @@ func TestWorkflowsCancel_NonTTYWithoutYesRefusesAndNeverCancels(t *testing.T) {
 			t.Errorf("refusal does not mention %q: %v", want, err)
 		}
 	}
+	// It is also a money surface — it is the last thing a scripter reads about
+	// what a cancel costs — so it carries the same retraction guard as the rest.
+	assertNoRetractedCancelClaims(t, "the non-TTY cancel refusal", err.Error())
 	if strings.Contains(errb.String(), "[y/N]") {
 		t.Error("a non-TTY must not print a prompt (nobody can answer it)")
 	}
@@ -188,15 +191,20 @@ func TestWorkflowsCancel_TTYDeclineDoesNotCancel(t *testing.T) {
 	if strings.Contains(out.String(), "[y/N]") {
 		t.Errorf("confirmation leaked to stdout: %q", out.String())
 	}
-	// The prompt must state what is lost — it is the last point at which the
-	// user can find out that cancelling does not call the accrued cost back. It
-	// must NOT go further and claim nothing is ever refunded; see #278.
-	if !strings.Contains(errb.String(), "does NOT undo the charge") {
-		t.Errorf("the prompt does not say the accrued cost still stands:\n%s", errb.String())
+	// The prompt must state what is lost — it is the last point at which the user
+	// can find out what a cancel costs them. #307 changed what that is: delivered
+	// work is billed and the rest is re-priced server-side, so the prompt states
+	// the billed half and promises no amount for the rest.
+	if !strings.Contains(errb.String(), "billed for what this run has already delivered") {
+		t.Errorf("the prompt does not say the delivered work is billed:\n%s", errb.String())
+	}
+	if !strings.Contains(errb.String(), "Outputs it has not produced yet are lost") {
+		t.Errorf("the prompt does not say what is actually destroyed:\n%s", errb.String())
 	}
 	if !strings.Contains(errb.String(), buzzLedgerUnknownNote) {
 		t.Errorf("the prompt does not render the shared non-observability note:\n%s", errb.String())
 	}
+	assertNoRetractedCancelClaims(t, "the cancel confirmation prompt", errb.String())
 }
 
 // The gate runs BEFORE the mutation even with --json, so a scripted `--json`

@@ -212,10 +212,10 @@ func newGenerateCmd() *cobra.Command {
 		Long: `Generate images from a text prompt on Civitai's generator.
 
 🔴 THIS SPENDS REAL BUZZ AND CANNOT BE UNDONE. A submitted generation is charged
-the moment the orchestrator accepts it, and nothing local can call that back —
-not --timeout, not Ctrl-C, not ` + "`civitai workflows cancel`" + `. Preview the
-price with --dry-run first; it calls the server's cost estimator and spends
-nothing.
+the moment the orchestrator accepts it, and nothing local calls that back —
+neither --timeout nor Ctrl-C stops the job, and ` + "`civitai workflows cancel`" + ` stops
+the remaining work rather than reversing the charge. Preview the price with
+--dry-run first; it calls the server's cost estimator and spends nothing.
 What the LEDGER then does with that charge — if the run fails, expires, or you
 cancel it — is decided server-side, and ` + buzzLedgerUnknownNote + `.
 
@@ -267,10 +267,11 @@ writes every deliverable output into --out-dir as <workflow-id>-<n>.<ext>. Pass
 later with ` + "`civitai workflows get <workflow-id>`" + `. Output URLs are PRESIGNED AND
 EXPIRE, so download promptly; re-read the workflow for fresh links.
 
-🔴 --timeout STOPS WAITING. IT DOES NOT STOP PAYING. The generation keeps
-running server-side after the CLI gives up, and cancelling it does not stop the
-cost already accrued — a mid-run cancel bills that. The same is true of Ctrl-C.
-Both print the workflow id and the exact command to re-attach.
+🔴 --timeout STOPS WAITING. IT DOES NOT STOP THE JOB. The generation keeps
+running server-side after the CLI gives up, and finishes and bills exactly as if
+you had stayed. The same is true of Ctrl-C. Both print the workflow id and the
+exact command to re-attach; ` + "`civitai workflows cancel`" + ` is the only thing that
+stops the remaining work.
 
 CRASH SAFETY: the idempotency key is written to a local file BEFORE the request
 is sent, because the money moves server-side even if this process dies mid-POST.
@@ -1241,15 +1242,22 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 		// (21 succeeded, 8 failed) two balance reads 25 minutes apart moved by
 		// 11x8 and 21x8, the SUCCESS count both times, not the submit count.
 		//
-		// 🔴 AND IT DOES NOT SAY "IT WAS REFUNDED" EITHER. The refund is
-		// performed by the ORCHESTRATOR service, which is not part of the
-		// civitai monorepo: nothing readable states whether it is full,
-		// pro-rated, or conditional on which of the three statuses was reached
-		// (cancel is described as returning only UNDELIVERED units). Replacing
-		// a false claim with its equally unevidenced opposite would be the same
-		// mistake pointing the other way. This CLI never sees the Buzz ledger,
-		// so it states the outcome and names the command that can answer the
-		// money question. See AGENTS.md item 28.
+		// 🔴 AND IT STILL DOES NOT SAY "IT WAS REFUNDED", though the reason has
+		// CHANGED and the old reason is retracted. It used to read that the
+		// orchestrator is "not part of the civitai monorepo" so "nothing
+		// readable states whether it is full, pro-rated, or conditional" —
+		// true of the monorepo, and false as a claim about the world: the
+		// orchestrator is its own repo (`civitai/civitai-orchestration`) and
+		// #307 read it. Failed/cancelled jobs are re-priced by the share of
+		// their outputs that never landed and the difference is refunded
+		// (traced in runWorkflowsCancel).
+		//
+		// What has NOT changed is what this sentence may promise. The rule is
+		// now known; the AMOUNT is not, because it depends on how many blobs
+		// landed before the run died — and this CLI still never sees the Buzz
+		// ledger, so it cannot confirm any figure it might quote. It therefore
+		// states the outcome and names the command that can answer the money
+		// question. See AGENTS.md item 28.
 		return fmt.Errorf("the generation finished with status %q and produced no usable result; %s. Inspect the run with `civitai workflows get %s`",
 			safeTerm(wf.Status), buzzLedgerUnknownNote, safeTerm(workflowID))
 	}

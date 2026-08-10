@@ -1,1 +1,1 @@
-refusing to cancel without --yes in a non-interactive shell — cancelling 01JABCXYZ is irreversible and does not undo the Buzz already spent on it. Pass --yes to confirm, or `civitai workflows get 01JABCXYZ` to see what it has produced first
+refusing to cancel without --yes in a non-interactive shell — cancelling 01JABCXYZ is irreversible: it throws away whatever the run has not produced yet, and you are still billed for what it did produce. Pass --yes to confirm, or `civitai workflows get 01JABCXYZ` to see what it has produced first

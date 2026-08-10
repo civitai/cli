@@ -37,8 +37,8 @@ workflow id; ` + "`list`" + ` and ` + "`get`" + ` are how you find one afterward
 makes ` + "`--no-wait`" + `, a --timeout expiry and a Ctrl-C recoverable rather than a
 dead end.
 
-` + "`list`" + ` and ` + "`get`" + ` are reads and SPEND NOTHING. 🔴 ` + "`cancel`" + ` stops a job but does
-not undo its cost — a mid-run cancel bills what has already accrued.`,
+` + "`list`" + ` and ` + "`get`" + ` are reads and SPEND NOTHING. 🔴 ` + "`cancel`" + ` stops a job, and you
+stay billed for what it had already delivered — the server re-prices the rest.`,
 		Example: `  civitai workflows list
   civitai workflows get 01JABCXYZ
   civitai workflows get 01JABCXYZ --json
