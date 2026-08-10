@@ -16,14 +16,27 @@ func newUsersCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "users",
 		Short: "Look up users on Civitai",
-		Long: `Read-only access to Civitai users via the public REST API.
+		Long: `Read-only access to Civitai users through the public REST API.
 
-NOTE: the public users route is the search endpoint GET /api/v1/users (keyed by
-?query= or ?ids=). The per-id route /api/v1/users/{userId} is an INTERNAL
-webhook (POST + system token) and is NOT usable by the CLI, so "users get"
-resolves a user through the public search. Works anonymously.`,
+` + readAnonNote + `
+
+NOTE: the only public users route is the SEARCH endpoint GET /api/v1/users,
+keyed by ?query= or ?ids=. The per-id route /api/v1/users/{userId} is an
+INTERNAL webhook (POST plus a system token) and is not usable from the CLI, so
+` + "`users get`" + ` resolves a user through that public search.
+
+That is also why there is no ` + "`users search`" + `: the search endpoint is already
+what ` + "`users get`" + ` calls, and it answers with a handful of fuzzy neighbours
+rather than a browsable, pageable list — it has no pagination envelope at all.
+
+What comes back is identity only: id, username and avatar URL. For a user's
+models use ` + "`civitai models search --username <name>`" + `; for their published
+model COUNT use ` + "`civitai creators search --query <name>`" + `.
+
+` + readJSONNote,
 		Example: `  civitai users get some-username
-  civitai users get 5`,
+  civitai users get 5
+  civitai users get 5 --json`,
 	}
 	cmd.AddCommand(newUsersGetCmd())
 	return cmd
@@ -33,10 +46,25 @@ func newUsersGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <username-or-id>",
 		Short: "Look up a user by username or id (public search: GET /api/v1/users)",
-		Long: `Look up a user by username or numeric id via the public user search
-(GET /api/v1/users). A numeric argument is matched via ?ids=; anything else via
-?query= (returning the best-matching users, from which an exact username match
-is selected when present).`,
+		Long: `Look up a user by username or numeric id through the public user search
+(GET /api/v1/users). A numeric argument is sent as ?ids= and returns exactly
+that user; anything else is sent as ?query=.
+
+A NAME lookup is FUZZY on the server side — the endpoint answers with the
+closest-matching users, not with your user. So the CLI requires an exact
+(case-insensitive) username match before it prints anybody: a typo lists the
+near misses and fails as not-found rather than confidently printing the wrong
+person. When several users match, the exact one is printed and the rest are
+listed under "other matches". Pass the numeric id when you need certainty.
+
+An unknown user comes back from this endpoint as an empty HTTP 200 rather than
+a 404. The CLI still reports it as NOT FOUND, so a script gets the same signal
+it would from a real 404.
+
+The result is identity only — id, username, avatar URL. There are no stats and
+no model list on this route.
+
+` + readAnonShort,
 		Example: `  civitai users get some-username
   civitai users get 5 --json`,
 		Args: cobra.ExactArgs(1),
