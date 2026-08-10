@@ -7,7 +7,7 @@ import (
 
 // The exit-code contract is DOCUMENTED IN ONE PLACE — this file — and rendered
 // into both surfaces that publish it: the root `civitai --help` section and the
-// "Exit codes" table in README.md.
+// "Exit codes" section in README.md.
 //
 // It is one place because it was two, and they drifted. PR #233 taught
 // `app status <unknown-slug>` to exit 4 on an HTTP 200 and a missing required
@@ -18,25 +18,64 @@ import (
 // nothing tied the two texts together.
 //
 // So: `--help` is GENERATED from exitCodeDocs (see rootExitCodeHelp, called by
-// NewRootCmd), and the README table is asserted byte-identical to what the same
-// slice renders (TestREADMEExitCodeTableIsGenerated). Editing either text by
-// hand now fails a test until this slice is edited instead, and editing this
-// slice moves both. cmd/civitai's exit-code CONSTANTS are pinned against the
-// same slice by TestExitCodeConstantsMatchDocs, so a code cannot be added to
-// the binary without being documented, or documented without existing.
+// NewRootCmd), and BOTH README blocks — the table AND the per-code subsections
+// — are asserted byte-identical to what the same slice renders
+// (TestREADMEExitCodeTableIsGenerated, TestREADMEExitCodeSectionsAreGenerated).
+// Editing either text by hand now fails a test until this slice is edited
+// instead, and editing this slice moves both. cmd/civitai's exit-code CONSTANTS
+// are pinned against the same slice by TestExitCodeConstantsMatchDocs, so a code
+// cannot be added to the binary without being documented, or documented without
+// existing.
+//
+// 🔴 SUMMARY VS DETAIL — WHAT `--help` DELIBERATELY NO LONGER CARRIES.
+//
+// Every code's text used to be published in full on both surfaces. That made
+// the CONTENT right and the CONTAINER wrong: code 2's entry was one unbroken
+// 2,525-character / 432-word / 14-sentence blob covering ~12 distinct topics
+// (the enumerated image refusals, the flag-vs-positional split, the project-path
+// classification, two residuals, the no-JSON-object rule), and code 1's was
+// 1,490. In README it rendered as a wall inside a single markdown table cell; in
+// an 80-column terminal it rendered as ~45 unbroken lines with no table, no
+// links and no way to skim. A reference nobody can skim is a reference nobody
+// reads, which is how the contract's own precision stops protecting anyone.
+//
+// So each code now carries a short `Summary` and a long `Detail`:
+//
+//   - `--help` renders `Summary` ONLY — seven skimmable lines, every code
+//     present — plus one pointer line naming the README section by title.
+//   - README renders the SAME `Summary` as its table (the index) and `Detail`
+//     as a `### Exit code N` subsection below it, one bullet per enumerated
+//     path and one per residual.
+//
+// THE TRADE, STATED RATHER THAN DISCOVERED: `--help` no longer carries the full
+// ledger. An offline user — no network, no checkout — can learn from the
+// terminal WHICH KIND of failure each code names, and cannot learn from the
+// terminal which specific paths are covered, that `app listing --dir <missing>`
+// and `app submit --out <under a missing dir>` are documented residuals that
+// exit 1, or that a usage error emits no JSON object. For those they must open
+// README.md's "Exit codes" section. That is why the pointer line names the
+// section by title rather than linking a URL: it has to be findable in a local
+// checkout, not only on github.com.
+//
+// What did NOT change: no exit code moved, nothing was paraphrased, and no
+// clause was dropped. Every sentence the pre-split contract published is still
+// published — asserted mechanically against a fixture of the pre-split text by
+// TestEveryPreSplitClauseSurvives, because "I moved it all" is exactly the claim
+// a reviewer cannot check by eye across 4 kB of prose.
 
 // ExitCodeDoc is the documented meaning of one process exit code.
 //
-// Summary and Notes are the SHARED text: they are rendered into `--help` (with
-// markdown emphasis stripped) and into the README table verbatim. Extra is
-// README-only prose — depth that does not earn its lines in terminal help.
-// Nothing `--help` says can therefore contradict the README: it is a prefix of
-// it, from one string.
+// Summary is the SHORT text, rendered into BOTH surfaces: `--help` (with
+// markdown emphasis stripped) and the README table cell, verbatim. Detail is
+// the long text, rendered into the README's per-code subsection ONLY — one
+// bullet per entry. See the file header for why the terminal gets the summary.
+//
+// Nothing `--help` says can therefore contradict the README: the summary line
+// it prints IS the README's table row, from one string.
 type ExitCodeDoc struct {
 	Code    int
 	Summary string
-	Notes   []string
-	Extra   []string
+	Detail  []string
 }
 
 // imageUsageRefusals is the LEDGER of local `<file>` image refusals that exit 2,
@@ -65,6 +104,14 @@ var imageUsageRefusals = []string{
 }
 
 // exitCodeDocs is the contract. Order is by code and must stay dense from 0.
+//
+// 🔴 EVERY Detail STRING BELOW IS VERBATIM PRE-SPLIT TEXT. The clauses in codes
+// 1 and 2 in particular are the product of two published corrections — the
+// flag-vs-positional sentence shipped once over-narrow ("every local path a FLAG
+// names", which excluded the two commands that took the path positionally) and
+// once over-broad ("every local path the CLI is HANDED", which had a live
+// counterexample inside its own scope). Their precision is what those rounds
+// bought. Do not compress them because a bullet reads long.
 var exitCodeDocs = []ExitCodeDoc{
 	{
 		Code:    0,
@@ -72,23 +119,23 @@ var exitCodeDocs = []ExitCodeDoc{
 	},
 	{
 		Code:    1,
-		Summary: "Generic / unclassified error.",
-		Notes: []string{
+		Summary: "Generic / unclassified error. A **filesystem failure** lands here, and so does a **validation verdict** — an invalid manifest, or a real directory holding no manifest.",
+		Detail: []string{
 			"A **filesystem failure** lands here — a file that exists but cannot be read, an unwritable config directory, an I/O error. It is neither a mistake about the invocation (`2`) nor a transport failure (`5`), and there is no filesystem-specific code.",
-			"A **validation verdict** lands here, and deliberately not on `2`: `civitai app validate` exits `1` when the manifest is invalid, and likewise when the directory you named is a real directory with no `block.manifest.json` at its root — you pointed at a real place, so the invocation was right and the project is wrong. (A path that does **not exist**, or that is not a directory, is the invocation being wrong, and exits `2`.) **When validation produces a result**, `civitai app validate --json` prints it in full and its `ok` field is the structured form of the same answer; a failure that produces no result at all — a project directory the CLI cannot **stat**, say, because it is unreadable or because a path component below it is not a directory — still exits `1` with **nothing on stdout**, so branch on the exit code before parsing.",
+			"A **validation verdict** lands here, and deliberately not on `2`: `civitai app validate` exits `1` when the manifest is invalid, and likewise when the directory you named is a real directory with no `block.manifest.json` at its root — you pointed at a real place, so the invocation was right and the project is wrong. (A path that does **not exist**, or that is not a directory, is the invocation being wrong, and exits `2`.)",
+			"**When validation produces a result**, `civitai app validate --json` prints it in full and its `ok` field is the structured form of the same answer; a failure that produces no result at all — a project directory the CLI cannot **stat**, say, because it is unreadable or because a path component below it is not a directory — still exits `1` with **nothing on stdout**, so branch on the exit code before parsing. The full exit→stdout table is in [The `--json` result shape](#the---json-result-shape).",
 			"A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval.",
 		},
 	},
 	{
 		Code:    2,
-		Summary: "Usage error — a bad flag, a **missing required flag or argument** (e.g. `civitai app withdraw` with no publish-request id), a bad flag **value** (`--limit` out of range, a non-integer id, `--template nope`), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum).",
-		Notes: []string{
+		Summary: "Usage error — a bad flag, a **missing required flag or argument**, a bad flag **value**, or a path that does not exist / is not a directory.",
+		Detail: []string{
+			"Usage error — a bad flag, a **missing required flag or argument** (e.g. `civitai app withdraw` with no publish-request id), a bad flag **value** (`--limit` out of range, a non-integer id, `--template nope`), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum).",
 			"This does not depend on where the refusal happens: a mistake the CLI catches locally and one the server rejects both exit `2`.",
 			"A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is " + joinPhrases(imageUsageRefusals) + " — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and exits `1`, not `2`.",
 			"That split is not images-only and it is not flags-only — it holds for **a flag's value and a positional argument alike**, over the paths listed here: `civitai generate --input <file>` likewise exits `2` for a path that is not there or is a directory, and `1` when the file is there and the read fails.",
 			"The project commands take a positional path and refuse it the same way: `civitai app validate <dir>` and `civitai app submit <dir>` exit `2` when the path does not exist **or is not a directory**, because both are mistakes about the invocation. A directory that **does** exist but holds no `block.manifest.json` is a validation verdict instead, and exits `1`.",
-		},
-		Extra: []string{
 			"`app listing set-cover` and `app listing add-screenshot` take the same positional `<file>` and refuse it the same way. (The CLI has no `--file` image flag at all: the only `--file` is `civitai download --file`, which picks a file *inside* a model version.)",
 			"**Paths outside that list are not covered, and mostly exit `1`.** `civitai app listing … --dir <missing>` exits `1` (it reports \"no `block.manifest.json` found in …\", the same way it does for a directory that is really there but holds no manifest), and so does `civitai app submit … --out <path under a directory that does not exist>`. Both are stated rather than promised: this is a ledger of the paths the split is published for, not a claim about every path in the CLI.",
 			"A usage error emits **no JSON object**, in every mode. `civitai app validate /nope --json` therefore writes nothing to stdout and exits `2`; it used to print `{\"ok\": false, …}` and exit `1`, which reported a nonexistent path as a validation result. Scripts that parsed that object must branch on the exit code first.",
@@ -96,25 +143,25 @@ var exitCodeDocs = []ExitCodeDoc{
 	},
 	{
 		Code:    3,
-		Summary: "Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured).",
-		Extra: []string{
+		Summary: "Not authorized — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403).",
+		Detail: []string{
+			"Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured).",
 			"**`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as \"bad flags\". See [Generate](#exit-codes-specific-to-generate).",
 		},
 	},
 	{
 		Code:    4,
 		Summary: "Not found — the requested resource does not exist.",
-		Notes: []string{
+		Detail: []string{
 			"Usually an HTTP 404, but not always: some lookups answer `200` with an empty result set instead (`civitai app status <slug>` for an unregistered slug, `civitai users get` for an unknown username), and those exit `4` too.",
-		},
-		Extra: []string{
 			"The same question therefore exits the same way however the API happens to phrase the miss.",
 		},
 	},
 	{
 		Code:    5,
-		Summary: "Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries.",
-		Notes: []string{
+		Summary: "Network/transport failure or service unavailable — the code to **retry** on.",
+		Detail: []string{
+			"Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries.",
 			"This is the code to **retry** on, so a **filesystem** failure never lands here however retryable its errno looks: a permissions or I/O problem does not fix itself, and a loop that sleeps and re-runs would never terminate. Those exit `1`.",
 		},
 	},
@@ -132,14 +179,12 @@ func ExitCodeDocs() []ExitCodeDoc {
 	return out
 }
 
-// shared returns the text published on BOTH surfaces: Summary plus Notes.
-func (d ExitCodeDoc) shared() string {
-	return strings.Join(append([]string{d.Summary}, d.Notes...), " ")
-}
-
-// readmeCell returns the full markdown for this code's README table cell.
-func (d ExitCodeDoc) readmeCell() string {
-	return strings.Join(append([]string{d.shared()}, d.Extra...), " ")
+// published returns EVERYTHING this code publishes anywhere: Summary plus every
+// Detail bullet. It is the union the contract-claim ledger and the clause
+// preservation guard assert against — neither cares which surface a sentence
+// reaches, only that the contract still carries it.
+func (d ExitCodeDoc) published() string {
+	return strings.Join(append([]string{d.Summary}, d.Detail...), " ")
 }
 
 // joinPhrases renders a list as an Oxford-comma "a, b, or c" clause.
@@ -156,9 +201,9 @@ func joinPhrases(items []string) string {
 }
 
 // plainify strips the markdown emphasis the README needs from text destined for
-// a terminal. It is deliberately tiny: Summary and Notes are constrained to
-// bold/code emphasis only (pinned by TestSharedExitCodeTextIsTerminalSafe), so
-// there is nothing else to handle.
+// a terminal. It is deliberately tiny: Summary is constrained to bold/code
+// emphasis only (pinned by TestSummaryTextIsTerminalSafe), so there is nothing
+// else to handle. Detail never reaches a terminal and may carry links.
 func plainify(s string) string {
 	return strings.NewReplacer("**", "", "`", "").Replace(s)
 }
@@ -169,18 +214,33 @@ const (
 	// exitCodeHelpIndent is the continuation indent; the "    N  " prefix is the
 	// same width, so the code column and the text column both line up.
 	exitCodeHelpIndent = "       "
+	// exitCodeHelpLead is the one-line orientation above the code list.
+	exitCodeHelpLead = "Branch on the KIND of failure without parsing stderr — the error message itself is unchanged."
+	// exitCodeREADMESection is the README heading the pointer line names. It is
+	// a TITLE, not a URL, because the reader it is for has a checkout and may
+	// have no network. TestHelpPointsAtTheREADMESection asserts the heading
+	// really exists in README.md, so the pointer cannot rot into a dead end.
+	exitCodeREADMESection = "Exit codes"
+	// exitCodeHelpPointer is the accepted cost of the summary/detail split,
+	// printed where the reader meets its consequence. See the file header.
+	exitCodeHelpPointer = "Full ledger — which paths each code covers, the exit→stdout table, and the two documented residuals: see the " + exitCodeREADMESection + " section of README.md."
 )
 
 // rootExitCodeHelp renders the exit-code section of the root command's Long
 // help from exitCodeDocs. NewRootCmd calls this — the text is never written out
 // by hand, which is what makes `--help` unable to drift from the README.
+//
+// It renders Summary only. Detail is README-only by design; the pointer line
+// says so rather than leaving a terminal reader to assume this is everything.
 func rootExitCodeHelp() string {
 	var b strings.Builder
 	b.WriteString("Exit codes:\n\n")
-	b.WriteString("  Every command returns a differentiated exit code so scripts can branch on the\n")
-	b.WriteString("  KIND of failure without parsing stderr (the error message itself is unchanged):\n\n")
+	for _, line := range wrapRunes(exitCodeHelpLead, exitCodeHelpWidth-2) {
+		b.WriteString("  " + line + "\n")
+	}
+	b.WriteString("\n")
 	for _, d := range exitCodeDocs {
-		lines := wrapRunes(plainify(d.shared()), exitCodeHelpWidth-len(exitCodeHelpIndent))
+		lines := wrapRunes(plainify(d.Summary), exitCodeHelpWidth-len(exitCodeHelpIndent))
 		for i, line := range lines {
 			if i == 0 {
 				fmt.Fprintf(&b, "    %d  %s\n", d.Code, line)
@@ -189,18 +249,57 @@ func rootExitCodeHelp() string {
 			b.WriteString(exitCodeHelpIndent + line + "\n")
 		}
 	}
+	b.WriteString("\n")
+	for _, line := range wrapRunes(plainify(exitCodeHelpPointer), exitCodeHelpWidth-2) {
+		b.WriteString("  " + line + "\n")
+	}
 	return strings.TrimRight(b.String(), "\n")
 }
+
+// exitCodeAnchor is the README heading for one code's Detail subsection, and the
+// anchor the table row links to. Both are derived here so the link and the
+// heading cannot disagree.
+func exitCodeHeading(code int) string { return fmt.Sprintf("Exit code %d", code) }
+
+func exitCodeAnchor(code int) string { return fmt.Sprintf("#exit-code-%d", code) }
 
 // readmeExitCodeTable renders the README's "Exit codes" markdown table from
 // exitCodeDocs. TestREADMEExitCodeTableIsGenerated asserts the file matches it
 // byte for byte.
+//
+// The cell is the Summary — the table is the INDEX. A code carrying Detail gets
+// a trailing link into its subsection, so the row a reader lands on names where
+// the rest of its contract is.
 func readmeExitCodeTable() string {
 	var b strings.Builder
 	b.WriteString("| Code | Meaning |\n")
 	b.WriteString("| --- | --- |\n")
 	for _, d := range exitCodeDocs {
-		fmt.Fprintf(&b, "| `%d` | %s |\n", d.Code, d.readmeCell())
+		cell := d.Summary
+		if len(d.Detail) > 0 {
+			cell += fmt.Sprintf(" [Detail](%s)", exitCodeAnchor(d.Code))
+		}
+		fmt.Fprintf(&b, "| `%d` | %s |\n", d.Code, cell)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// readmeExitCodeSections renders the per-code `### Exit code N` subsections —
+// the long half of the contract, one bullet per Detail entry.
+// TestREADMEExitCodeSectionsAreGenerated asserts the file matches it byte for
+// byte, so these are generated exactly as the table is; a code with no Detail
+// gets no subsection and no link.
+func readmeExitCodeSections() string {
+	var b strings.Builder
+	for _, d := range exitCodeDocs {
+		if len(d.Detail) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "### %s\n\n", exitCodeHeading(d.Code))
+		for _, item := range d.Detail {
+			fmt.Fprintf(&b, "- %s\n", item)
+		}
+		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
