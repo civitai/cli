@@ -80,6 +80,28 @@ const serverQuantityClamp = 10
 // run come back" unless you happened to note it beforehand.
 const buzzLedgerUnknownNote = "this CLI cannot see your Buzz ledger — `civitai buzz` reports a balance, not a history, so settle it against your Buzz transaction history (/user/transactions)"
 
+// noFailureReasonNote is the caveat that keeps `civitai workflows get <id>` an
+// HONEST pointer rather than a promised diagnosis (#331, dogfood finding F13).
+//
+// 🔴 THE COMMAND STAYS; ONLY THE PROMISE GOES. Both errors below used to name
+// the command with no qualification, so a user reasonably read it as "run this
+// and you will learn why". The blind dogfood run of 2026-08-07 did exactly that
+// on a failed job and got back `Status: failed`, `Outputs (0 deliverable, 1
+// excluded)` and NO reason — the orchestrator simply does not supply one — and
+// the only strategy left was to re-submit hypotheses at 8 Buzz each. That is
+// what an unqualified pointer costs.
+//
+// The fix is deliberately SUBTRACTIVE IN CLAIM AND ADDITIVE IN NOTHING ELSE:
+// the workflow id and the re-attach command are the user's only handle on a run
+// they have already paid for, so they must survive verbatim. This sentence
+// lowers the expectation of what that handle will tell them.
+//
+// It says nothing about the charge in either direction, so it is outside
+// AGENTS.md item 28's rule — but the surfaces it lands on are golden-pinned
+// spend surfaces, so an edit here has to be re-approved with
+// `go test ./internal/cmd -run TestGoldenSpendCopy -update` and the diff read.
+const noFailureReasonNote = "the orchestrator often supplies no failure reason, so it may not say why"
+
 // Classification sentinels for generation failures that the HTTP-status mapping
 // alone gets wrong. They carry NO user-visible text: they are ATTACHED via
 // civitai.Tag so errors.Is reports the KIND while the printed message is
@@ -1258,8 +1280,8 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 		// ledger, so it cannot confirm any figure it might quote. It therefore
 		// states the outcome and names the command that can answer the money
 		// question. See AGENTS.md item 28.
-		return fmt.Errorf("the generation finished with status %q and produced no usable result; %s. Inspect the run with `civitai workflows get %s`",
-			safeTerm(wf.Status), buzzLedgerUnknownNote, safeTerm(workflowID))
+		return fmt.Errorf("the generation finished with status %q and produced no usable result; %s. Inspect the run with `civitai workflows get %s` (%s)",
+			safeTerm(wf.Status), buzzLedgerUnknownNote, safeTerm(workflowID), noFailureReasonNote)
 	}
 
 	kept, excluded := genapi.PartitionOutputs(wf)
@@ -1276,7 +1298,8 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 	reportOutputCountMismatch(errw, requested, len(kept))
 
 	if len(kept) == 0 {
-		return fmt.Errorf("the generation succeeded but produced no deliverable outputs — it was charged; inspect it with `civitai workflows get %s`", safeTerm(workflowID))
+		return fmt.Errorf("the generation succeeded but produced no deliverable outputs — it was charged; inspect it with `civitai workflows get %s` (%s)",
+			safeTerm(workflowID), noFailureReasonNote)
 	}
 
 	if o.noDownload {
