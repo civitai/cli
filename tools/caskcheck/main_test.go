@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
@@ -43,11 +45,71 @@ func caskFixture(version, releaseHost string) string {
 	return b.String()
 }
 
+// tapCommitFixture is the commit the fixture tap's HEAD points at. A real
+// 40-hex sha, because the advertisement parser is anchored on that width.
+const tapCommitFixture = "df4801ba7479cbe1c8d267481705de617a71cc77"
+
+// staleCaskVersion is the version served at the fixture tap's MUTABLE ref path.
+//
+// 🔴 EVERY fixture serves a decoy there, because the live CDN does: measured on
+// 2026-08-10, `.../homebrew-tap/HEAD/Casks/civitai.rb` answered 0.1.92 to an
+// identity request and 0.1.91 to a gzip one, in the same minute, both `x-cache:
+// HIT`. So a checker that reads the mutable ref reads THIS, whose archives are
+// never published — which makes the regression loud in whichever test trips
+// over it rather than quietly plausible.
+const staleCaskVersion = "0.0.0-stale-cdn-variant"
+
+// refAdvertisement renders a git smart-HTTP ref advertisement in the pkt-line
+// shape github.com actually serves, capabilities and all.
+//
+// It is built rather than hard-coded for one reason: the 4-hex pkt-line LENGTH
+// prefix runs straight into the 40-hex sha (`00000159df4801…`), which is the
+// hazard the parser has to survive. A fixture that omitted the prefix would let
+// an offset-based parser pass.
+func refAdvertisement(commit string) string {
+	var b strings.Builder
+	b.WriteString("001e# service=git-upload-pack\n")
+	b.WriteString("0000")
+	for _, line := range []string{
+		commit + " HEAD\x00multi_ack thin-pack side-band side-band-64k ofs-delta shallow deepen-since no-progress include-tag multi_ack_detailed symref=HEAD:refs/heads/main object-format=sha1 agent=git/github-fixture\n",
+		commit + " refs/heads/main\n",
+	} {
+		fmt.Fprintf(&b, "%04x%s", len(line)+4, line)
+	}
+	b.WriteString("0000")
+	return b.String()
+}
+
+// gzipped is what the CDN's gzip variant is: a real `Content-Encoding: gzip`
+// body, so Go's transparent decompression is exercised rather than sidestepped.
+func gzipped(s string) []byte {
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	// Writing to a bytes.Buffer cannot fail, and neither can closing over one.
+	_, _ = zw.Write([]byte(s))
+	_ = zw.Close()
+	return buf.Bytes()
+}
+
+// serveCask writes a cask body the way the CDN serves it: gzip-encoded when the
+// client said it accepts gzip (which Go's transport says by itself unless the
+// caller set the header), plain otherwise.
+func serveCask(rw http.ResponseWriter, req *http.Request, body string) {
+	if strings.Contains(req.Header.Get("Accept-Encoding"), "gzip") {
+		rw.Header().Set("Content-Encoding", "gzip")
+		rw.WriteHeader(http.StatusOK)
+		_, _ = rw.Write(gzipped(body))
+		return
+	}
+	rw.WriteHeader(http.StatusOK)
+	_, _ = rw.Write([]byte(body))
+}
+
 // recorder captures what each request carried, so a test can assert on the
 // SHAPE of the request and not merely on the answer.
 type recorder struct {
 	mu   sync.Mutex
-	auth map[string][]string // path -> Authorization header per request
+	auth map[string][]string // path+query -> Authorization header per request
 	hits map[string]int
 }
 
@@ -58,30 +120,53 @@ func newRecorder() *recorder {
 func (r *recorder) record(req *http.Request) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.auth[req.URL.Path] = append(r.auth[req.URL.Path], req.Header.Get("Authorization"))
-	r.hits[req.URL.Path]++
+	key := req.URL.Path
+	r.auth[key] = append(r.auth[key], req.Header.Get("Authorization"))
+	r.hits[key]++
 }
 
-func (r *recorder) authFor(prefix string) []string {
+// authForPathContaining matches by SUBSTRING, not prefix.
+//
+// 🔴 It was a prefix match, and pinning the cask to a commit moved the cask
+// request from `/Casks/civitai.rb` to `/<sha>/Casks/civitai.rb` — under which
+// the credential assertion in TestArchiveProbesCarryNoCredential would have
+// matched nothing and passed vacuously. A guard whose matcher silently stops
+// selecting anything is the reassuring zero.
+func (r *recorder) authForPathContaining(substr string) []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var out []string
 	for p, vals := range r.auth {
-		if strings.HasPrefix(p, prefix) {
+		if strings.Contains(p, substr) {
 			out = append(out, vals...)
 		}
 	}
 	return out
 }
 
+func (r *recorder) hitsForPathContaining(substr string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for p, c := range r.hits {
+		if strings.Contains(p, substr) {
+			n += c
+		}
+	}
+	return n
+}
+
 // world is a fixture pipeline: a tap serving one cask, and a release host that
 // serves archives for exactly the versions that have been PUBLISHED.
 type world struct {
-	tap       *httptest.Server
-	releases  *httptest.Server
-	api       *httptest.Server
-	rec       *recorder
-	caskBody  string
+	tap      *httptest.Server
+	releases *httptest.Server
+	api      *httptest.Server
+	rec      *recorder
+	caskBody string
+	// staleBody is what the MUTABLE ref path serves — the decoy the live CDN
+	// had. See staleCaskVersion.
+	staleBody string
 	published map[string]bool // version -> archives are publicly downloadable
 	latestTag string
 	// publishedAt is emitted as the release payload's `published_at` only when
@@ -128,10 +213,26 @@ func newWorldAt(t *testing.T, caskVersion string, published []string, latestTag 
 	t.Cleanup(w.releases.Close)
 
 	w.caskBody = caskFixture(caskVersion, w.releases.URL)
+	w.staleBody = caskFixture(staleCaskVersion, w.releases.URL)
+	// The tap mirrors the two objects the real host exposes for one file: an
+	// IMMUTABLE one at /<commit>/…, and a MUTABLE one at /HEAD/… that is allowed
+	// to be a release behind. Everything else is the ref advertisement.
 	w.tap = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		w.rec.record(req)
-		rw.WriteHeader(http.StatusOK)
-		_, _ = rw.Write([]byte(w.caskBody))
+		switch {
+		case strings.Contains(req.URL.Path, "/info/refs"):
+			rw.Header().Set("Content-Type", "application/x-git-upload-pack-advertisement")
+			rw.WriteHeader(http.StatusOK)
+			_, _ = rw.Write([]byte(refAdvertisement(tapCommitFixture)))
+		case strings.HasPrefix(req.URL.Path, "/"+tapCommitFixture+"/"):
+			// Immutable: every encoding variant agrees, by construction.
+			serveCask(rw, req, w.caskBody)
+		case strings.HasPrefix(req.URL.Path, "/HEAD/"):
+			serveCask(rw, req, w.staleBody)
+		default:
+			// A verbatim -cask-url (the fire-drill shape) still gets the cask.
+			serveCask(rw, req, w.caskBody)
+		}
 	}))
 	t.Cleanup(w.tap.Close)
 
@@ -149,12 +250,16 @@ func newWorldAt(t *testing.T, caskVersion string, published []string, latestTag 
 	return w
 }
 
+// checker drives the DEFAULT shape: a -cask-url carrying the commit
+// placeholder, so every test in this package exercises the ref lookup and the
+// pinned read rather than only the new guards below.
 func (w *world) checker() *checker {
 	return &checker{
-		caskURL:   w.tap.URL + "/Casks/civitai.rb",
-		latestURL: w.api.URL + "/repos/civitai/cli/releases/latest",
-		apiToken:  "fixture-token",
-		client:    &http.Client{Timeout: 10 * time.Second},
+		caskURL:    w.tap.URL + "/" + caskCommitPlaceholder + "/Casks/civitai.rb",
+		tapRefsURL: w.tap.URL + "/info/refs?service=git-upload-pack",
+		latestURL:  w.api.URL + "/repos/civitai/cli/releases/latest",
+		apiToken:   "fixture-token",
+		client:     &http.Client{Timeout: 10 * time.Second},
 	}
 }
 
@@ -338,18 +443,36 @@ func TestArchiveProbesCarryNoCredential(t *testing.T) {
 		t.Fatal("PREMISE BROKEN: this fixture must be the failing one, or the releases-API call below is never made")
 	}
 
-	for _, got := range w.rec.authFor("/civitai/cli/releases/download/") {
+	for _, got := range w.rec.authForPathContaining("/civitai/cli/releases/download/") {
 		if got != "" {
 			t.Errorf("an archive probe carried Authorization %q — it must ask exactly what an unauthenticated `brew install` asks", got)
 		}
 	}
-	for _, got := range w.rec.authFor("/Casks/") {
+	// PREMISE: the substring matchers below must SELECT something. A prefix
+	// match on "/Casks/" silently stopped selecting when the cask moved to
+	// /<commit>/Casks/…, which would have made this whole block vacuous.
+	if n := w.rec.hitsForPathContaining("/Casks/"); n == 0 {
+		t.Fatal("PREMISE BROKEN: no cask request was recorded, so 'the cask fetch carried no credential' is a claim about nothing")
+	}
+	if n := w.rec.hitsForPathContaining("/info/refs"); n == 0 {
+		t.Fatal("PREMISE BROKEN: no ref-advertisement request was recorded, so the tap-resolution credential assertion below is vacuous")
+	}
+	for _, got := range w.rec.authForPathContaining("/Casks/") {
 		if got != "" {
 			t.Errorf("the cask fetch carried Authorization %q; the tap is public and brew reads it anonymously", got)
 		}
 	}
+	// The ref lookup is part of reading the tap and must be as anonymous as the
+	// cask itself — raw.githubusercontent.com varies its cache on Authorization,
+	// so an authenticated tap read is a different object as well as a different
+	// posture.
+	for _, got := range w.rec.authForPathContaining("/info/refs") {
+		if got != "" {
+			t.Errorf("the tap ref lookup carried Authorization %q; resolving a public tap's HEAD needs no credential", got)
+		}
+	}
 
-	api := w.rec.authFor("/repos/civitai/cli/releases/latest")
+	api := w.rec.authForPathContaining("/repos/civitai/cli/releases/latest")
 	if len(api) == 0 {
 		t.Fatal("POSITIVE CONTROL failed: the releases API was never called, so 'no Authorization on the archive' is vacuous")
 	}

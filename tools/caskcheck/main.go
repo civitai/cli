@@ -76,6 +76,62 @@
 // A caller that finds NO kind file after a non-zero exit has learned something
 // real — this command did not reach its own exit path — and must report that as
 // its own state rather than as any verdict here.
+//
+// # The cask is read at a PINNED COMMIT, because a mutable ref served STALE
+//
+// raw.githubusercontent.com sits behind Fastly and answers
+// `vary: Authorization,Accept-Encoding`, so `.../homebrew-tap/HEAD/Casks/civitai.rb`
+// is not one cached object but one PER ENCODING PER EDGE NODE. Measured on
+// 2026-08-10, minutes after v0.1.92 was published and the cask bumped, with
+// `git ls-remote` giving the tap's true HEAD as df4801b:
+//
+//	curl                        -> version "0.1.92"  etag  "a2ee…"  x-cache HIT
+//	curl --compressed           -> version "0.1.91"  etag W/"a4d5…"  x-cache HIT
+//	net/http (adds gzip itself)  -> version "0.1.91"
+//	caskcheck                    -> OK: cask version 0.1.91 … all downloadable
+//
+// Go's transport adds `Accept-Encoding: gzip` unless the caller set the header,
+// so this command always read the gzip variant, and the gzip variant was a
+// release behind. That is green straight through the outage this command was
+// built to catch: if a cask push introduces a BROKEN version, a run reading the
+// previous variant validates the previous, working version's URLs and exits 0.
+// It did exactly that above — reporting "cask version 0.1.91, all publicly
+// downloadable" while the cask said 0.1.92.
+//
+// Three things were measured and rejected as the fix, each of which looks like
+// it should work:
+//
+//   - `Accept-Encoding: identity`. Reads the OTHER variant, and there is no
+//     evidence that variant is systematically fresher. Staleness here is per
+//     EDGE NODE: in the same minute, `cache-yyz4539` served the gzip variant a
+//     release behind on a HIT while `cache-yyz4528` MISSed and fetched 0.1.92
+//     from the origin. Picking a variant picks a different lottery ticket.
+//   - A cache-busting query parameter. raw.githubusercontent.com does not put
+//     the query string in its cache key: `?cb=…` returned the same stale body
+//     and the same weak ETag as the bare URL, under both encodings.
+//   - `Cache-Control: no-cache` (with and without `Pragma`) on the request.
+//     Fastly does not honour it here; same stale body, same ETag.
+//
+// So the fix does not try to defeat the cache — it removes the mutable object.
+// `-cask-url` carries a `{commit}` placeholder, and the run first resolves the
+// tap's HEAD over git's smart-HTTP ref advertisement, which is served by
+// GitHub's git backend rather than Fastly and is explicitly uncacheable
+// (`cache-control: no-cache, max-age=0, must-revalidate`, `expires` in 1980, no
+// `via: varnish` and no `x-cache` on the response). The cask is then read at
+// `.../homebrew-tap/<40-hex sha>/Casks/civitai.rb`, whose content is IMMUTABLE
+// by construction: there is no earlier body for that cache key to be stale
+// from, so a HIT is correct by definition and every encoding variant agrees.
+// Verified live — both variants of the pinned URL returned 0.1.92.
+//
+// This is still exactly what a reader of the tap gets, and still as a stranger:
+// same file, same host, no Authorization on either request. It is one extra
+// unauthenticated GET, and it buys a property the mutable URL cannot have. The
+// resolved commit is printed, so a run says which snapshot it judged.
+//
+// A `-cask-url` with NO placeholder is used verbatim and skips the lookup. That
+// is what the fire drill in release-homebrew.yml passes, and those fixtures are
+// already pinned to a commit sha themselves; a run says which mode it took
+// rather than degrading silently.
 package main
 
 import (
@@ -94,10 +150,25 @@ import (
 )
 
 const (
-	// defaultCaskURL is the file `brew` itself reads, on the tap's default
-	// branch. `HEAD` rather than `main` so a tap that renames its default branch
-	// does not turn this into a 404 that reads like a real finding.
-	defaultCaskURL = "https://raw.githubusercontent.com/civitai/homebrew-tap/HEAD/Casks/civitai.rb"
+	// caskCommitPlaceholder is what a -cask-url puts where a git ref goes. It is
+	// replaced by the tap's HEAD commit before anything is fetched — see the
+	// package comment for the stale-variant measurement that requires it. A URL
+	// without it is used verbatim.
+	caskCommitPlaceholder = "{commit}"
+
+	// defaultCaskURL is the file `brew` itself reads, read at the commit the
+	// tap's default branch points at right now rather than at the mutable
+	// `HEAD` ref, which measured a release behind. Resolving the ref rather
+	// than naming `main` also keeps a tap that renames its default branch from
+	// turning this into a 404 that reads like a real finding.
+	defaultCaskURL = "https://raw.githubusercontent.com/civitai/homebrew-tap/" + caskCommitPlaceholder + "/Casks/civitai.rb"
+
+	// defaultTapRefsURL is git's smart-HTTP ref advertisement for the tap — what
+	// `git ls-remote` reads. Unauthenticated (the tap is public) and served by
+	// GitHub's git backend, which sets `cache-control: no-cache, max-age=0,
+	// must-revalidate` and sits behind no CDN, so unlike the raw host it cannot
+	// answer with a previous revision.
+	defaultTapRefsURL = "https://github.com/civitai/homebrew-tap.git/info/refs?service=git-upload-pack"
 
 	// defaultLatestURL resolves the latest NON-draft, non-prerelease release.
 	// It feeds the failure MESSAGE and the lag finding — never the invariant.
@@ -135,8 +206,12 @@ var (
 // checker carries the seams. Every field is injectable so the tests drive the
 // real code against httptest servers rather than a reimplementation of it.
 type checker struct {
-	caskURL   string
-	latestURL string
+	// caskURL may carry caskCommitPlaceholder, in which case tapRefsURL is
+	// consulted first and the placeholder replaced by the resolved commit.
+	caskURL string
+	// tapRefsURL is read with NO credential, exactly like the cask itself.
+	tapRefsURL string
+	latestURL  string
 	// apiToken is attached to the releases API request and to NOTHING else.
 	apiToken     string
 	client       *http.Client
@@ -189,7 +264,12 @@ type release struct {
 
 // report is what a run learned, whether or not it is a finding.
 type report struct {
-	caskVersion     string
+	caskVersion string
+	// caskURL is the URL actually requested, and caskCommit the tap commit it
+	// was pinned to — empty when -cask-url named no placeholder. Both are
+	// printed: a verdict about a snapshot has to say which snapshot.
+	caskURL         string
+	caskCommit      string
 	latestPublished string // "" when the diagnostic lookup failed
 	probes          []probe
 	// lagEvaluated records whether the lag question could be ASKED at all. A
@@ -258,19 +338,77 @@ func (c *checker) get(ctx context.Context, url string, auth bool) (*http.Respons
 	return c.client.Do(req)
 }
 
-// fetchCask reads the cask exactly as a reader of the tap would.
-func (c *checker) fetchCask(ctx context.Context) (string, error) {
-	resp, err := c.get(ctx, c.caskURL, false)
+// advHeadCommitRe reads the commit HEAD points at out of a smart-HTTP ref
+// advertisement. A ref line is `<4-hex pkt length><40-hex sha> <name>` with an
+// optional NUL-separated capability list, and HEAD is the first one. The match
+// is anchored on the literal " HEAD" terminator rather than on an offset,
+// because the pkt-line length prefix is itself hex and runs straight into the
+// sha (`00000159df4801…`) — the 40 characters ending immediately before " HEAD"
+// are the sha and nothing else can be. A ref merely NAMED HEAD
+// (`<sha> refs/heads/HEAD`) does not match: the sha is not adjacent to " HEAD".
+var advHeadCommitRe = regexp.MustCompile(`([0-9a-f]{40}) HEAD(\x00|\n|$)`)
+
+// tapCommit resolves the tap's default branch to a commit, over the endpoint
+// `git ls-remote` uses. Its failure is errUnreachableTap — not a new kind —
+// because "we could not resolve the tap" and "we could not read the cask" are
+// the same state to a caller: nothing was measured. There is deliberately no
+// fallback to the mutable ref, which would be a silent return to the defect.
+func (c *checker) tapCommit(ctx context.Context) (string, error) {
+	resp, err := c.get(ctx, c.tapRefsURL, false)
 	if err != nil {
-		return "", fmt.Errorf("%w (%s): %w", errUnreachableTap, c.caskURL, err)
+		return "", fmt.Errorf("%w (%s): %w", errUnreachableTap, c.tapRefsURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("%w (%s): HTTP %d", errUnreachableTap, c.caskURL, resp.StatusCode)
+		return "", fmt.Errorf("%w (%s): HTTP %d", errUnreachableTap, c.tapRefsURL, resp.StatusCode)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return "", fmt.Errorf("%w (%s): %w", errUnreachableTap, c.caskURL, err)
+		return "", fmt.Errorf("%w (%s): %w", errUnreachableTap, c.tapRefsURL, err)
+	}
+	adv := string(b)
+	// Assert the INSTRUMENT before reading its answer: an HTML error page, a
+	// login redirect or a protocol-v2 reply would all simply fail to match
+	// below, and "no HEAD found" is a much worse diagnosis than "that was not a
+	// ref advertisement".
+	if !strings.Contains(adv, "# service=git-upload-pack") {
+		return "", fmt.Errorf("%w (%s): the response is not a git ref advertisement (no `# service=git-upload-pack` banner) — this run resolved no tap commit and has measured nothing", errUnreachableTap, c.tapRefsURL)
+	}
+	m := advHeadCommitRe.FindStringSubmatch(adv)
+	if m == nil {
+		return "", fmt.Errorf("%w (%s): the ref advertisement names no HEAD commit", errUnreachableTap, c.tapRefsURL)
+	}
+	return m[1], nil
+}
+
+// resolveCaskURL turns -cask-url into the URL this run will actually request,
+// pinning it to a commit when it carries the placeholder. The returned commit is
+// "" for a verbatim URL, which the report prints rather than hides.
+func (c *checker) resolveCaskURL(ctx context.Context) (url, commit string, err error) {
+	if !strings.Contains(c.caskURL, caskCommitPlaceholder) {
+		return c.caskURL, "", nil
+	}
+	commit, err = c.tapCommit(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	return strings.ReplaceAll(c.caskURL, caskCommitPlaceholder, commit), commit, nil
+}
+
+// fetchCask reads the cask exactly as a reader of the tap would — same file,
+// same host, no credential — at the immutable URL resolveCaskURL produced.
+func (c *checker) fetchCask(ctx context.Context, url string) (string, error) {
+	resp, err := c.get(ctx, url, false)
+	if err != nil {
+		return "", fmt.Errorf("%w (%s): %w", errUnreachableTap, url, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("%w (%s): HTTP %d", errUnreachableTap, url, resp.StatusCode)
+	}
+	b, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("%w (%s): %w", errUnreachableTap, url, err)
 	}
 	return string(b), nil
 }
@@ -369,16 +507,20 @@ func (c *checker) lagFinding(rep *report, rel release) error {
 // check runs the whole assertion. A non-nil error is a finding OR a control
 // failure; the two are told apart by the sentinels above, via classify.
 func (c *checker) check(ctx context.Context) (*report, error) {
-	body, err := c.fetchCask(ctx)
+	caskURL, commit, err := c.resolveCaskURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	body, err := c.fetchCask(ctx, caskURL)
 	if err != nil {
 		return nil, err
 	}
 
 	m := caskVersionRe.FindStringSubmatch(body)
 	if m == nil {
-		return nil, fmt.Errorf("%w: the cask at %s has no `version \"...\"` stanza — this check cannot read it, which is not the same as it being fine", errUnreadableCask, c.caskURL)
+		return nil, fmt.Errorf("%w: the cask at %s has no `version \"...\"` stanza — this check cannot read it, which is not the same as it being fine", errUnreadableCask, caskURL)
 	}
-	rep := &report{caskVersion: m[1]}
+	rep := &report{caskVersion: m[1], caskURL: caskURL, caskCommit: commit}
 
 	var urls []string
 	for _, u := range caskURLRe.FindAllStringSubmatch(body, -1) {
@@ -387,7 +529,7 @@ func (c *checker) check(ctx context.Context) (*report, error) {
 		urls = append(urls, strings.ReplaceAll(u[1], "#{version}", rep.caskVersion))
 	}
 	if len(urls) == 0 {
-		return rep, fmt.Errorf("%w (%s) — a run that asks for nothing cannot fail, so this is a broken check, not a clean pipeline", errNothingChecked, c.caskURL)
+		return rep, fmt.Errorf("%w (%s) — a run that asks for nothing cannot fail, so this is a broken check, not a clean pipeline", errNothingChecked, caskURL)
 	}
 
 	// Read up front rather than lazily: the lag finding needs it on the GREEN
@@ -440,20 +582,23 @@ func writeKind(path, kind string) error {
 }
 
 func main() {
-	caskURL := flag.String("cask-url", defaultCaskURL, "URL of the cask file as published by the tap")
+	caskURL := flag.String("cask-url", defaultCaskURL, "URL of the cask file as published by the tap; `"+caskCommitPlaceholder+"` is replaced by the tap's current HEAD commit, and a URL without it is used verbatim")
+	tapRefsURL := flag.String("tap-refs-url", defaultTapRefsURL, "git smart-HTTP ref advertisement used to resolve the tap's HEAD commit (only read when -cask-url carries the placeholder)")
 	latestURL := flag.String("latest-url", defaultLatestURL, "GitHub API URL for the latest published release (the failure message, and the lag finding)")
 	lagThreshold := flag.Duration("lag-threshold", defaultLagThreshold, "how long after a release is PUBLISHED a cask that has not followed it becomes a finding")
 	kindFile := flag.String("kind-file", "", "write the verdict's kind (green|broken|lagging|unmeasurable|unclassified) to this file")
-	// The overall budget has to cover the cask fetch plus one probe per archive,
-	// each of which can take the per-request 30s. Four archives at 30s is 120s,
-	// so 60s here would let a slow-but-healthy github.com produce a red run —
-	// the false-red that trains people to ignore a gate. 3m is comfortably over
-	// the worst case and still bounded.
-	timeout := flag.Duration("timeout", 3*time.Minute, "overall timeout")
+	// The overall budget has to cover the ref lookup, the cask fetch and one
+	// probe per archive, each of which can take the per-request 30s. Four
+	// archives at 30s is 120s, plus 60s for the two tap reads, so the worst case
+	// is now exactly 180s and a 3m budget would make a slow-but-healthy
+	// github.com produce a red run — the false-red that trains people to ignore
+	// a gate. 4m keeps headroom over the worst case and is still bounded.
+	timeout := flag.Duration("timeout", 4*time.Minute, "overall timeout")
 	flag.Parse()
 
 	c := &checker{
 		caskURL:      *caskURL,
+		tapRefsURL:   *tapRefsURL,
 		latestURL:    *latestURL,
 		apiToken:     os.Getenv("GITHUB_TOKEN"),
 		client:       &http.Client{Timeout: 30 * time.Second},
@@ -474,10 +619,21 @@ func main() {
 		os.Exit(1)
 	}
 	fmt.Printf("OK: cask version %s; %d archive URL(s) checked, all publicly downloadable\n", rep.caskVersion, len(rep.probes))
+	fmt.Printf("read: %s\n", readProvenance(rep))
 	for _, p := range sortedProbes(rep.probes) {
 		fmt.Printf("  %s\n", p)
 	}
 	fmt.Printf("lag: %s\n", rep.lagWhy)
+}
+
+// readProvenance says WHICH bytes the verdict above is about. A run that reads
+// a mutable ref can be a release behind (see the package comment), so "pinned to
+// commit X" versus "read verbatim" is part of the verdict, not decoration.
+func readProvenance(rep *report) string {
+	if rep.caskCommit == "" {
+		return rep.caskURL + " (verbatim — -cask-url named no " + caskCommitPlaceholder + " placeholder, so no tap commit was resolved)"
+	}
+	return rep.caskURL + " (pinned to tap commit " + rep.caskCommit + ")"
 }
 
 // sortedProbes keeps the success output stable run to run. Map iteration is not
