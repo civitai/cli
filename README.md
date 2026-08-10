@@ -1255,7 +1255,14 @@ Two different things check your listing images, and it is worth knowing which is
 which before you open an image editor.
 
 **What the CLI checks, locally, before anything is uploaded:** the file's
-**format** and its **byte size**. That is all.
+**format** and its **byte size**. That is all — and for an **icon** that is
+deliberately not the whole story, because the platform measures an image the CLI
+never sees (the re-encode note below). What the CLI *does* do is show you the
+quantity every server-side bound is a function of, on the line it uploads:
+
+```text
+Uploading icon (37.3 KiB, 1024×1024)…
+```
 
 | kind | how many | format | byte cap (the file you pass) |
 | --- | --- | --- | --- |
@@ -1278,15 +1285,21 @@ Easy starting points: a **512 × 512** icon and a **1600 × 900** cover.
 
 Four behaviours that are not obvious from the numbers:
 
-- **Icons are re-encoded server-side.** Whatever you upload is downscaled to at
-  most **1024 px** on its longer side and re-encoded to PNG — aspect preserved,
-  and **never enlarged**. So an oversized icon is harmless, but an undersized one
-  is not: the 128 px floor still bites, because nothing is ever scaled up.
-  One consequence to know about: the platform also caps the **re-encoded** icon
-  at 1 MiB, and that is a different measurement from the 2 MiB the CLI applies to
-  the file you pass. A detailed photographic icon can clear the local check and
-  still be refused for the size of the PNG the server made from it — the message
-  quotes bytes, not pixels. Flat, simple artwork re-encodes far smaller.
+- **Icons are re-encoded server-side, and that re-encode is what gets capped.**
+  Whatever you upload is downscaled to at most **1024 px** on its longer side and
+  re-encoded to PNG — aspect preserved, and **never enlarged**, so an undersized
+  icon is not rescued: the 128 px floor still bites. The platform then caps that
+  **re-encoded** image at 1 MiB, a different measurement from the 2 MiB the CLI
+  applies to the file you pass — **and it is not a corner case.** Measured on
+  2026-08-10: a **1024 × 1024** photographic JPEG of **37.3 KiB** — under 2% of
+  the local cap — was refused at attach, because the PNG the platform made from it
+  was about **1.15 MiB**. A second source at the same 1024 px ceiling re-encoded
+  to about **2.1 MiB**; a **512 × 512** icon in the same run went through. So the
+  bytes in that rejection are the platform's, not your file's, and the lever is
+  **pixel dimensions, not heavier compression**. The CLI cannot predict the
+  number — the re-encoded size depends on how compressible your artwork is, and
+  flat, simple artwork re-encodes far smaller — so it prints the dimensions it
+  decoded and repeats this mechanism in the error rather than guessing a bound.
 - **An icon's upper bound is a PIXEL count, not a file size.** The decoder that
   re-encodes it refuses a source above roughly **16 megapixels** — about
   4096 × 4096 — and it refuses it *regardless of how small the file is*. A flat

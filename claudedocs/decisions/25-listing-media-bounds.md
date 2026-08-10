@@ -31,6 +31,45 @@ deleting it:
 >     🔴 Never scaffold a placeholder icon or cover — it passes every check and can
 >     reach a public store listing.
 
+## 2026-08-10 — the icon re-encode cap is REACHABLE, and routinely (#344, #295)
+
+The body below already said the two icon byte caps measure different bytes.
+What nobody had was evidence that the second one bites in ordinary use — #286
+closed with the reachability recorded as **unmeasured**. A credentialed dogfood
+run measured it. This section is appended ABOVE the pinned body on purpose:
+`agents_split_preserved_test.go` digests the item verbatim from its `25. **`
+heading down, so new evidence goes here, not into the body.
+
+**Observed.** `civitai app listing set-icon ./icon1024_q15.jpg` on a 1024×1024
+JPEG of **38,201 bytes** was refused by `appListings.setIcon` with a 400 naming
+**1,202,233 bytes** against a **1,048,576** cap. Reproduced 3×. A second source
+at the same ≤1024 px ceiling reported **2,201,537**. A 512×512 JPEG (79.2 KiB)
+attached cleanly.
+
+**What that rules out, and what it does not.** The two rejections sit at the
+same ≤1024 px re-encode ceiling yet report **1.15** and **2.10 bytes per pixel**.
+A raw decoded buffer is a *constant* 3 or 4 bytes/px, so a content-dependent
+ratio rules raw decoding out: the quantity is a **compressed re-encode**, which
+is what the body already reads `listing-meta.service.ts` as doing. That is the
+**effect**, measured end-to-end through the public API. The encoder's exact
+settings are **not** knowable from this repo — no server source is checked out
+here — so nothing was verified about *how* the number is produced, only that it
+tracks content as a compressed encode must. The 512×512 pass is **one point**,
+not a bound.
+
+**Why no local gate was added.** Predicting the number requires reproducing the
+server's PNG encoder; a bound picked from these two samples would be exactly the
+stale *gate* the body argues against — refusing valid images while still failing
+to predict the case it was added for. `maxIconBytes` therefore stays at 2 MiB:
+lowering it to 1 MiB would refuse a 1.5 MiB 512×512 source that re-encodes far
+under the server's cap. What shipped instead — the decoded dimensions are
+printed on the upload line (#295), and a BAD_REQUEST from a listing-media
+ingest/attach is annotated with the source file's own measurements plus the
+re-encode mechanism, so the server's byte count acquires visible units
+(`attachRejectionAdvice`, `internal/cmd/app_listing.go`). Every number in that
+annotation comes from the author's file; the platform's sentence is still
+relayed verbatim ahead of it.
+
 ---
 
 25. **The listing-media DIMENSION and ASPECT bounds live in the README as prose,
