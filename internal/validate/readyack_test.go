@@ -92,18 +92,44 @@ func ackProject(t *testing.T, manifestJSON string, files map[string]string) stri
 func hasReadyAckWarning(res Result) bool { return readyAckKind(res) != "" }
 
 // readyAckKind names the tier that fired, or "".
+//
+// 🔴 THE PRESENCE TIER IS NOT AN EQUALITY MATCH, AND MATCHING IT LIKE ONE MAKES
+// THIS HELPER BLIND TO THE ONE TIER IT MOST NEEDS TO SEE. Its real message is
+// `presenceOnlyAdvice(gaps)` — the base with the resolver's own reasons spliced
+// into the middle (issue #258) — so `w.Message == readyAckAdvicePresenceOnly` is
+// true only for a graph that recorded no reason at all, which no real project
+// produces. Every wantAckKind(…, "presence-only") in this package would then
+// report "" and read as "the check did not fire". It is bracketed instead.
 func readyAckKind(res Result) string {
 	for _, w := range res.Warnings {
-		switch w.Message {
-		case readyAckAdviceUnwired:
+		switch {
+		case w.Message == readyAckAdviceUnwired:
 			return "unwired"
-		case readyAckAdviceMissing:
+		case w.Message == readyAckAdviceMissing:
 			return "missing"
-		case readyAckAdvicePresenceOnly:
+		case isPresenceOnlyAdvice(w.Message):
 			return "presence-only"
 		}
 	}
 	return ""
+}
+
+// isPresenceOnlyAdvice reports whether msg is the presence tier's message, with
+// or without a gap report between its two fixed halves.
+func isPresenceOnlyAdvice(msg string) bool {
+	return strings.HasPrefix(msg, readyAckAdvicePresenceOnlyHead) &&
+		strings.HasSuffix(msg, readyAckAdvicePresenceOnlyTail)
+}
+
+// presenceOnlyGapReport returns the gap report spliced into msg, which must be a
+// presence-tier message. It is what lets a test assert on the REASONS without
+// re-stating the surrounding prose.
+func presenceOnlyGapReport(t *testing.T, msg string) string {
+	t.Helper()
+	if !isPresenceOnlyAdvice(msg) {
+		t.Fatalf("not a presence-tier advisory:\n%s", msg)
+	}
+	return strings.TrimSuffix(strings.TrimPrefix(msg, readyAckAdvicePresenceOnlyHead), readyAckAdvicePresenceOnlyTail)
 }
 
 // wantAckKind asserts the exact tier. `want` of "" means no ready-ack warning.

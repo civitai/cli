@@ -169,10 +169,9 @@ EXISTING app is missing the item-11 handshake (20 is the reachability repair to
 `field` every `--json` consumer groups on; item 24 covers the ONE
 transport-vs-filesystem predicate now shared by the CLI-wide exit-code
 classifier (which every command's published exit code funnels through) and
-`pkg/civitai`'s read-GET retry loop; and item 25 covers the OTHER gate on that
-same published contract — the classification of the project path
-`civitai app validate` / `app submit` are handed, which is a different rule from
-item 24's predicate and is filed separately for exactly that reason.
+`pkg/civitai`'s read-GET retry loop; and item 25 is a third deliberate
+*non*-mirror — the store-listing image dimension/aspect bounds, which stay prose
+in the README rather than becoming a local check; and item 26 covers the OTHER gate on that same published contract — the classification of the project path `civitai app validate` / `app submit` are handed, which is a different rule from item 24's predicate and is filed separately for exactly that reason.
 The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
@@ -223,6 +222,110 @@ neither one's.
    schema's `allOf` requires it whenever `buildCommand` is set, so a remedy that
    omits it walks the author into a second failure. It fires only when
    `package.json` exists; static blocks never install and must never be flagged.
+   🔴 **IT IS A PRESENCE CHECK ABOUT THE FILE, NOT ABOUT ITS BYTES — AND THAT IS
+   WHY IT NOW READS THE REQUIRED LOCKFILE (issue #255).** The old check was
+   `os.Lstat` + `IsRegular` and nothing else, so a **0-byte**
+   `package-lock.json` printed `✓ … is valid` and exited 0 while the platform
+   build failed anyway: measured on npm 11.17.0, `npm ci` over an empty
+   package-lock.json dies with EUSAGE — "can only install with an existing
+   package-lock.json or npm-shrinkwrap.json with **lockfileVersion >= 1**" — the
+   same class of failure as a missing one. Worse, the missing-lockfile message
+   names the filename, so **the check invited the input that defeated it**:
+   `touch package-lock.json` reads as the fix. The SCOPE note above still
+   stands — this is not a *freshness* check and never runs a package manager;
+   an empty file is not a freshness question, it is "not a lockfile at all".
+   Three things about `lockfileContentDefect` are decisions, not details.
+   (a) **The rule is PER-MANAGER and deliberately asymmetric.** npm: parse as
+   JSON and require a **numeric** `lockfileVersion >= 1` — npm's **stated**
+   precondition, and 🔴 **deliberately NOT a claim about npm's measured
+   behaviour**; an earlier revision of this item and of the README called it
+   "what `npm ci` itself requires", which is false. Measured on npm 11.17.0,
+   editing ONLY the version key of a real in-sync lockfile on a project **with
+   a dependency**: `0`, `"3"`, `null`, `-5`, `1e999` and the key **removed
+   entirely** all install fine (rc 0, some printing `npm warn old lockfile`).
+   npm's `lockfileVersion >= 1` EUSAGE fires only when the file fails to
+   **load**. So this is OUR rule, kept because npm never *writes* those shapes —
+   not a mirror. Note that unmarshalling the value straight into a `json.Number` does NOT
+   discriminate (it is `type Number string`, so the JSON string `"3"` decodes
+   into one), hence the `any` + `UseNumber` type assertion. pnpm and yarn:
+   **non-empty after a whitespace trim and nothing more** — `pnpm-lock.yaml`
+   needs a YAML parser (a new dependency, "ask first" below) and a yarn v1
+   `yarn.lock` carries no version key at all, so "not empty" is the whole of
+   what can be said without inventing authority.
+   (b) **The `Lstat`/`IsRegular` gate stays IN FRONT of the read**, because
+   `os.ReadFile` FOLLOWS symlinks and a symlinked lockfile is dropped from the
+   bundle by `pkgzip.Build` — reading through one would vouch for bytes the
+   submitted zip does not carry. `TestLockfileSymlinkToAValidLockfileIsStillAbsent`
+   pins the ORDER by pointing the link at a *valid* lockfile.
+   (c) 🔴 **This is a FATAL check, so an UNOBSERVABLE state degrades to the old
+   presence-only PASS, never to an error** — a read failure or a file over the
+   64 MiB cap means we did not look, and manufacturing a hard error that blocks
+   a submit out of a gap is the expensive direction (item 18's doctrine applied
+   to a check that can block). Only the **required** lockfile's content is
+   judged; a foreign one is evidence of which package manager the project uses
+   and that reading does not depend on its bytes. And the empty/invalid case
+   has its own message that says the file EXISTS and that a lockfile is
+   GENERATED rather than hand-written — reusing the missing-lockfile wording
+   would re-invite `touch`.
+   🔴 **A LEADING RUN OF UTF-8 BOMs IS STRIPPED BEFORE PARSING, AND BOTH THE
+   NO-STRIP AND THE STRIP-ONE VERSIONS WERE HARD-BLOCKING FALSE POSITIVES.**
+   npm's parser tolerates them; Go's `encoding/json` does not. Measured on npm
+   11.17.0: npm installs cleanly (rc 0, `node_modules` populated) from a real
+   package-lock.json carrying **one or two** leading BOMs and rejects **three or
+   more**. The first version of this check stripped none, so a single-BOM file
+   was called "does not parse as a JSON object" and exited 1; the second
+   stripped exactly one with `bytes.TrimPrefix`, so a **double**-BOM file failed
+   the same way. Both are fatal findings that also block `app submit`, on
+   projects that build. npm never *writes* a BOM, so it takes an editor or a
+   `working-tree-encoding` gitattribute to produce one and nobody has measured
+   how often that happens; do not overstate it, but do not drop the strip. A
+   file holding *only* BOMs still fails, which matches npm.
+   🔴 **STRIPPING A LEADING RUN IS NOT "STRIPPING BOMs ANYWHERE", and an
+   earlier revision recorded that difference as an EQUIVALENT mutant — wrongly,
+   which is worse than not recording it, because a recorded measurement here
+   gets trusted instead of re-derived.** Measured, a strip-anywhere `ReplaceAll`
+   **accepts** two shapes npm refuses and the run-strip REJECTS: a BOM in a
+   structural slot (`"lockfileVersion"<BOM>:`) and one straight after the
+   opening brace. Those two rows are the fixtures that kill the mutant. The two
+   strategies agree only on a BOM inside a string *value* — the single position
+   the retracted note reasoned over, which is how it reached the wrong
+   conclusion. The run-strip's one cost is a **knowing false negative at 3+
+   BOMs**, where npm fails and the CLI stays quiet: mirroring npm's limit of two
+   would vendor a magic number for a shape nobody has measured in the wild, and
+   silence is the cheap direction for a fatal check. It is pinned as a fixture
+   so it stays a choice.
+   🔴 **"`npm ci` fails on it exactly as if nothing were committed" WAS WRONG
+   FOR MOST SHAPES, AND THE CORRECTED STORY IS TWO FAILURES, NOT ONE.** Measured
+   on npm 11.17.0 against a project with one real dependency: **empty,
+   whitespace, a bare BOM, a YAML body and garbage** produce the missing-lockfile
+   EUSAGE ("can only install with an existing package-lock.json or
+   npm-shrinkwrap.json with **lockfileVersion >= 1**"), while **`{}`, an object
+   with no version, a JSON array, a string version and version 0** all *parse*,
+   clear that gate, and fail the SYNC check instead ("…are in sync… Missing:
+   `<pkg>` from lock file"). Both are rc 1, so every verdict the CLI reaches is
+   still correct — but state the reason you measured, not the tidy one.
+   🔴 **Two residuals where this check is STRICTER than `npm ci`.** On a
+   **zero-dependency** project `npm ci` *succeeds* (rc 0) over `{}`, a
+   version-less object, an array, a string version and version 0 — there is
+   nothing to be out of sync about — so the CLI refuses five shapes npm would
+   accept there. Kept deliberately: npm writes none of them, an app with a
+   `buildCommand` and not even a devDependency is close to hypothetical, and
+   accepting `{}` reopens the headline defect with `echo '{}' >` in place of
+   `touch`. And an **`npm-shrinkwrap.json`-only** project is still reported as
+   having no lockfile, though `npm ci` installs from one (measured rc 0, and
+   `npm shrinkwrap` is what produces it) — pre-existing, not introduced here,
+   which is why the CLI's message deliberately does **not** quote npm's EUSAGE
+   sentence naming that filename.
+   **The 64 MiB cap is not the memory ceiling — that is ~2.2x the cap.**
+   `os.ReadFile` holds the bytes and the decoder's map keys are additional.
+   Measured peak RSS, 3 runs each, on REALISTIC lockfiles (real `packages`
+   entries with resolved URLs and sha512 integrity hashes — a whitespace-padded
+   fixture allocates almost nothing and measures nothing): 66 MB / 232,595
+   entries costs **146.9–147.3 MB** vs 17.9–18.0 MB at base, 10 MB costs
+   37.4–37.7 MB vs 18.1, and a 73 MB file (over the cap) costs the same as base,
+   which is what proves the cap is applied *before* the read. The table lives in
+   `lockfile.go`; the constant is pinned by an assertion, because raising it to
+   `1<<62` once left the whole suite green.
 4. **The CLI does NOT vendor the server's token-scope bitmask — and shouldn't.**
    The `whoami` / `dev-token` "can spend Buzz" capability check decodes the JWT
    `scopes` (a **string array**) and looks for the `ai:write:budgeted` scope
@@ -891,7 +994,8 @@ neither one's.
       before touching `readyack.go`: the whole-tree presence scan described
       above is now the WEAK tier, reached only when the entry graph cannot be
       resolved, and the advisory it emits is a different string that discloses
-      the difference.
+      the difference — and, since #258, NAMES the resolver's own reason for
+      falling back instead of guessing at it. See item 20.
 
 19. **img2img sends `workflow: "txt2img"` PLUS `images[]`, requires
     `--ecosystem`, and uploads with NO credential — three things that each read
@@ -1033,6 +1137,201 @@ neither one's.
       project shapes is exactly how the false pass above shipped, so the
       strength is part of the output, not an implementation detail.
       `TestReadyAckAdvisoriesStateTheirOwnStrength` pins both directions.
+    - 🔴 **AND THE WEAK TIER NAMES ITS REASON RATHER THAN GUESSING AT IT — THE
+      RESOLVER ALREADY KNEW, AND THE CHECK THREW IT AWAY.** Every gap kind
+      writes a precise, per-reference reason into `EntryGraph.Gaps`;
+      `readyAckChecks` returned the CONSTANT `readyAckAdvicePresenceOnly` and
+      discarded the slice, so the message offered a fixed list of plausible
+      causes instead — "there is no index.html at the project root, or it holds
+      a reference this CLI cannot follow — a bundler alias, a generated file, an
+      off-project URL". In the canonical #206 shape, a `static` scaffold whose
+      `civitai-host.js` has been deleted, **not one of those is true**: the
+      reason is that `<script src="./civitai-host.js">` points at a file that is
+      not there, and a five-file no-build app has no bundler to alias anything.
+      Issue #258. The gaps are now spliced between
+      `readyAckAdvicePresenceOnlyHead` and `…Tail` by `presenceOnlyAdvice`.
+      - **The fix is GENERAL, and that is the point.** It surfaces `Gaps`
+        wholesale rather than special-casing the dangling reference, so every
+        kind reaches the author from one change.
+        `TestEveryGapKindReachesTheAuthor` covers four of them; a fifth would
+        have been a special case nobody wrote.
+        🔴 **There are SEVEN `g.gap(...)` call sites, not six** — an earlier
+        revision of this bullet said six and omitted the root-`index.html` one,
+        which is the kind `TestEveryGapKindReachesTheAuthor` covers explicitly.
+        Count them (`grep -n 'g.gap(' internal/blockproto/entrygraph.go`) rather
+        than trusting the prose: no root index.html, an unresolvable URL, an
+        unresolvable module specifier, a dangling reference, the file budget, an
+        unreadable file, and the depth bound.
+      - 🔴 **THE TIERING DID NOT CHANGE, AND MUST NOT.** The bullet below —
+        a reference to a file that is not there is a GAP, not a decided
+        absence — is why #258's project is on the weak tier at all, and it
+        stands. **The message was the defect.** A reading of #258 as "promote
+        the dangling case to the strong tier" walks straight into the confident
+        finding built on a wrong model that this item exists to prevent.
+      - 🔴 **"NAMES THE CAUSE" IS ONLY HALF; THE SPECULATION HAS TO BE GONE,
+        AND A REPORT-SCOPED ASSERTION CANNOT SEE THAT.** Measured: the first
+        version asserted the absence of "bundler alias" within the GAP REPORT
+        only, and the most likely regression — restoring the guess to
+        `…PresenceOnlyHead` while keeping the real reasons — reddened **0**
+        subtests across `internal/validate` and `internal/cmd`.
+        `TestPresenceAdviceNoLongerSpeculates` reads the WHOLE emitted message
+        at a fixture where every quoted phrase is provably impossible, with a
+        positive control that the real cause is present so "says none of the
+        wrong things" is not satisfied by a message that says nothing.
+      - **The cap is 3 and the overflow is COUNTED OUT LOUD**
+        (`readyAckGapCap`). A silently truncated list reads as "that was all of
+        them" — the same class of lie as the guess it replaced: the author
+        fixes what they were shown, re-runs, and meets reasons that were there
+        the whole time. 🔴 **The VALUE was unpinned for a round**: every
+        assertion in `TestGapReportUnitCap` is written relative to the constant,
+        so `= 99` reddened **0** subtests and the wall of gaps came back under a
+        green suite. `TestGapReportCapValue` pins the literal AND that it bounds
+        the output.
+      - 🔴 **THE CAP CAN BURY THE ACTUAL CAUSE, AND THAT IS THIS ITEM'S OWN
+        THESIS FAILING IN A NEW SHAPE.** Measured on an index.html carrying
+        three CDN `<script src>` tags above a dangling `./civitai-host.js`: the
+        report listed the three off-project URLs and withheld the dangling
+        reference — the real bug — beneath a lead-in asserting "one of these is
+        usually the actual bug". Order was document order and deterministic, so
+        it was a stable wrong emphasis, not a flake. TWO fixes, because either
+        alone is insufficient: `blockproto.rankGaps` orders gaps
+        most-likely-cause-first (a dangling LOCAL reference ahead of a CDN URL,
+        which is routine in a working project, ahead of a budget THIS CHECK
+        imposes), and `readyAckGapLeadTruncated` stops claiming the cause is
+        present whenever anything was withheld — ranking is a heuristic, so the
+        list may still not contain it. The sort is STABLE, so two gaps of one
+        kind keep the author's own document order. Pinned by
+        `TestTheActualCauseSurvivesTheCap` and, at the resolver,
+        `TestGapsAreRankedMostLikelyCauseFirst` /
+        `TestGapRankingIsStableWithinAKind`.
+      - **The gap strings are AUTHOR-FACING NOW.** They used to be read only in
+        a test failure message, and one carried "this resolver's model of the
+        project is incomplete" — a fact about US. Word a new gap for the person
+        who has to fix it (referencing file, specifier, edit), and keep it to a
+        SINGLE LINE: it rides in a `--json` `message` field. `readyAckGapReport`
+        collapses whitespace rather than trusting a `%v`-interpolated OS error.
+        🔴 **AND IT MUST CARRY NO ABSOLUTE PATH.** The first copy pass fixed ONE
+        of the seven sites. The root-`index.html` gap interpolated a raw `%v`,
+        the only site not going through `relTo`, so it printed
+        `stat /abs/…/index.html: no such file or directory` — machine-specific
+        noise AND a single unbreakable token that no greedy wrap can split.
+        Measured on a deep fixture path: a **120-rune** token producing a
+        **136-rune** line under a 79-rune budget. `readableErr` now renders a
+        `*fs.PathError` relative. `TestGapsCarryNoAbsolutePaths` checks the root
+        and a 60-rune token ceiling across four fixtures, so a NEW site cannot
+        reintroduce it — the hazard is interpolating anything unbounded, and a
+        path is only the instance that shipped.
+        Two budget gaps also still read as facts about us
+        ("larger than this check reads" / "which this check did not follow") and
+        were reworded to say what it means for the author: the part of their
+        project that was not examined.
+        🔴 **AND ONE BRANCH CONFLATED OUR OWN LIMIT WITH A DEFECT IN THE
+        AUTHOR'S PROJECT — WRONG IN THE WORDING *AND* IN THE RANK.** `readCapped`
+        returns the same error shape for a genuine read failure and for the
+        per-file SIZE CAP, so an over-cap file produced `could not read big.js
+        (…) — make it readable`: false advice about a perfectly readable file,
+        and ranked `gapUnreadable`, so a limit WE impose outranked a real
+        dangling reference in the capped list — the exact ranking hazard
+        `gapKind` exists to close, in the one branch that had not been separated
+        from it. `errOverCap` / `errIsDirectory` are now sentinels (never
+        message-text matching, which would be a spelled guard) and `readGapFor`
+        sorts them to `gapBudget` with "did not read … so anything it loads was
+        not examined". Pinned in both packages, and the two rows are
+        deliberately separate so neither can drift into the other.
+        🔴 **The leak guard's `unreadable` row was testing the wrong half too**:
+        it forced `MaxFileBytes: 64`, which returns a plain `fmt.Errorf` and so
+        never reaches `readableErr`'s `*fs.PathError` branch at all. Both
+        packages now carry a **chmod-000** row for that branch — with a
+        `Geteuid() == 0` skip and a positive control that the file really is
+        unreadable, because root bypasses mode bits and would silently turn the
+        row into a third different test.
+      - **Layout is the PRINTER's, not the message's** — the inverse of item 23.
+        🔴 **Quote the two lengths and say which is which**: PRE-fix, `app
+        validate` printed the advisory as ONE **1847**-rune line (the message
+        itself **1843** chars); POST-fix the message is **1936** chars — longer,
+        because the gap report was added — wrapped over 29 lines with no line
+        over 79. An earlier revision of this bullet gave "1938" as the pre-fix
+        number; it was neither, and the pre/post distinction is the whole point
+        of quoting it. `internal/cmd/validate_print.go`'s `printFinding`
+        wraps EVERY finding to 79 columns with a hanging indent, which fixes
+        every long message rather than the one that provoked it. Wrapping in the
+        message would corrupt `--json` for exactly the consumers item 23 exists
+        to serve, so both directions are asserted:
+        `TestValidateJSONMessagesAreOneLine` DECODES the payload (a
+        `strings.Contains` over raw stdout cannot tell a real newline from the
+        `\n` escape) and `TestValidateTextOutputIsWrapped` requires the advisory
+        to occupy ≥10 lines, since a width assertion alone is satisfied by a
+        build that prints nothing long. Consequence for anyone adding a test: a
+        substring assertion on `validate`'s stderr is really an assertion about
+        where the layout broke — one in `app_validate_lockfile_test.go` had to
+        go through `unwrapFinding` the moment wrapping landed.
+        🔴 **THERE ARE FOUR PRINT SITES, AND THE FIRST ROUND FIXED THREE.**
+        `app_submit.go`'s ERROR loop kept its raw `Fprintf`, so one `app submit`
+        run printed a **412**-rune unwrapped error AND a wrapped warning — two
+        layouts in a single run, on the highest-traffic path, which made this
+        item's own "one place fixes every long message" false.
+        `TestAppSubmitWrapsItsErrorsToo` covers it.
+        🔴 **NON-FINDING LINES STAY UNWRAPPED, AND AN EARLIER REVISION OF THIS
+        BULLET MISATTRIBUTED WHY.** It claimed one exempt header, "the only
+        >79-rune line either command still emits", justified by its
+        interpolating the user's directory. Re-measured, there are THREE lines
+        and only one is about a path: `app validate`'s header at **130** runes
+        DOES interpolate `<dir>` (so its width is the user's to control, and
+        wrapping would break a path they may need to copy); `app submit`'s
+        header is a **CONSTANT 82** runes with no path in it at all
+        (byte-identical at a short and a deep path — it is simply a long
+        sentence); and `Error: refusing to submit without --yes …` is **184**
+        runes and is not a header at all, because `cmd/civitai/main.go` prints
+        `Error: %v` for every error returned by every command. Wrapping that
+        last one is a deliberate NON-change: it is a CLI-wide error path rather
+        than a validation printer, so it would alter every command's stderr at
+        once, and item 24 pins error-message preservation byte-for-byte across
+        it. Worth doing as its own change, measured against that contract —
+        not as a side effect of this one.
+      - 🔴 **THE WRAP ITSELF REGRESSED PASTEABLE REMEDY TEXT, AND THAT NEEDED A
+        SECOND FIX.** A greedy wrap split `"pnpm run build"` — a value the
+        lockfile message tells the author to put in their manifest — into
+        `"pnpm` / `run build"`, where the unwrapped base printed it whole. So
+        `findingTokens` keeps a DOUBLE-QUOTED span as one wrap unit. Two
+        fallbacks make that safe and both are load-bearing: an overlong span is
+        split back into words (an atomic span wider than the budget would blow
+        the width contract wrapping exists to hold), and an UNBALANCED quote
+        flushes at end of input rather than swallowing the tail, so the worst
+        case is exactly the old greedy behaviour. Only `"` is grouped — an
+        apostrophe would open a span that never closes, and these messages are
+        full of `project's`. Residual, stated: `"buildCommand": "pnpm run
+        build"` can still break between the balanced `"buildCommand":` token and
+        the span; the pasteable unit is whole, the sentence around it is not.
+      - **Mutation matrix**, `--- FAIL` leaf lines counted from output (never an
+        exit code), each mutation checksum-gated: discard the gaps 11; restore
+        the guess 1; remove the cap 2; truncate silently 2; drop the one-line
+        collapse 1; put a newline in the message 2 (including the `--json`
+        guard); revert the printer to one line 1; revert the gap wording to the
+        maintainer form 3; splice the report after the tail instead of before
+        24 (the bracketing matchers); weak tier loses its disclosure 2; a strong
+        tier gains it 1; the report leaks another tier's own literal 1
+        (`TestGapReportCannotSatisfyAnotherTiersStrengthAssertion`, the case the
+        strength test structurally cannot make because it reads the FIXED bases
+        and this text is appended at runtime). A comment-only null mutant
+        survives.
+      - 🔴 **TWO OF THIS ITEM'S GUARDS CANNOT FAIL, AND ARE LABELLED SO NOBODY
+        COUNTS THEM AS COVERAGE.** `TestGapReportDoesNotLeakIntoTheStrongTiers`
+        is an INVARIANT guard: a strong tier implies `Complete` implies zero
+        gaps, so even appending `readyAckGapReport(graph.Gaps)` to
+        `readyAckAdviceUnwired` on purpose reddens **0** subtests — the appended
+        text is empty. The invariant it rests on is now asserted where it can
+        actually break — the `Complete == (len(Gaps) == 0)` assertion inside
+        `blockproto`'s `TestEntryGraphCompleteness` corpus loop, plus the two
+        parallel gap slices being the same length. (It is an assertion in that
+        loop, NOT a test of its own: an earlier revision cited a
+        `TestIncompleteIsExactlyHavingGaps` that does not exist anywhere in the
+        repo. Cite what you can grep.) And
+        `TestGapReportCannotSatisfyAnotherTiersStrengthAssertion` is
+        FIXTURE-SCOPED, not structural: gaps interpolate author-chosen
+        filenames, so a project referencing `./orphan.js` genuinely produces a
+        presence-tier report containing `orphan`, the unwired tier's own
+        literal. The tiers are told apart by their fixed halves
+        (`isPresenceOnlyAdvice`), never by keyword.
     - 🔴 **AN HTML `src` IS A URL; A JS SPECIFIER IS A MODULE SPECIFIER. THE
       FIRST VERSION CONFLATED THEM, AND THAT ONE MISTAKE PRODUCED THREE BUGS,
       TWO OF THEM OPPOSITES.** Measured, each on a project one character from a
@@ -1867,7 +2166,44 @@ neither one's.
         dot-imported `net`) are listed in the file's own header; there is no
         full type resolution because `golang.org/x/tools/go/packages` would be a
         new dependency, which is an "ask first" below.
-25. **`civitai app validate <dir>` / `app submit <dir>` CLASSIFY THE PATH THE
+25. **The listing-media DIMENSION and ASPECT bounds live in the README as prose,
+    and must NOT become a local check.** `civitai app listing set-icon` /
+    `set-cover` / `add-screenshot` validate the **format** and the **byte size**
+    of the source file (`maxIconBytes` / `maxCoverBytes` /
+    `maxScreenshotBytes`) and nothing else. The platform additionally enforces a
+    per-kind aspect range and a minimum dimension at ATTACH time
+    (`civitai/civitai → src/server/schema/blocks/app-listing.schema.ts`,
+    `validateListingImage`), returning a `BAD_REQUEST` that names the bound and
+    the measured value. Those numbers are documented in README →
+    *Listing media requirements* and in the scaffolded `assets/README.md`, and
+    that is deliberately as far as they go.
+    - **Why prose and not a check.** This is item 4's argument, applied to a
+      different constant set: stale *guidance* costs one round-trip carrying the
+      server's current bound, while a stale *gate* refuses valid images and the
+      author cannot override it. A local dimension check would also have to
+      re-derive the icon rescale below to avoid being wrong on day one. So do
+      not add a `LISTING_ICON_ASPECT_MIN` to `internal/cmd`, and do not "fix"
+      the docs by promoting the table into `internal/validate`. The CLI already
+      decodes width/height (`appapi.DecodeImageInfo`) — the omission is a
+      decision, not a missing feature.
+    - **The icon byte cap and the server's icon byte cap measure DIFFERENT
+      bytes, and the docs must not conflate them.** `maxIconBytes` (2 MiB) is
+      the SOURCE file, mirroring the server's `INLINE_ICON_MAX_DECODED_BYTES`
+      on the data-URI path the icon rides. The listing schema's
+      `MAX_LISTING_ICON_SIZE_BYTES` (1 MiB) is checked against
+      `Image.metadata.size`, which for that path is the byte length of the
+      **re-encoded** PNG the server produces after downscaling to ≤1024 px on
+      the longer side (`listing-meta.service.ts`) — not the file the author
+      passed. Cover and screenshot take the full-res path, where the CLI sends
+      `sizeBytes: len(data)`, so there the two caps DO describe the same bytes.
+    - **Never scaffold a placeholder icon or cover.** A placeholder passes every
+      format and byte check and uploads cleanly, so it can reach a public store
+      listing; a missing file fails loudly at the step that can still fix it.
+      `assets/` therefore ships with a README and no images, and
+      `internal/scaffold/assets_dir_test.go` fails if an image file appears
+      under it.
+
+26. **`civitai app validate <dir>` / `app submit <dir>` CLASSIFY THE PATH THE
     USER NAMED BEFORE VALIDATING ANYTHING, and that gate is deliberately NOT
     item 24's transport predicate — it is a separate rule that happens to live
     next door on the exit-code contract.** Issue #256. The code-2 note read

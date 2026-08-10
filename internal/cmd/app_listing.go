@@ -35,6 +35,27 @@ var (
 	scanPollTimeout  = 120 * time.Second
 )
 
+// listingImageFormats is the accepted source set, mirroring what
+// appapi.DecodeImageInfo will actually decode (png/jpeg/webp — the server's
+// LISTING_ASSET_ALLOWED_MIME). Stated once so the six help bodies below cannot
+// disagree with each other.
+const listingImageFormats = "png, jpeg or webp"
+
+// listingSourceRule renders the one sentence describing what a source file for
+// `kind` may be.
+//
+// 🔴 IT IS COMPUTED FROM THE CAP CONSTANTS AND MUST STAY THAT WAY — the number
+// in the help has to be the number loadAndValidateImage enforces, and it is
+// rendered through the SAME humanBytes the refusal message uses, so `--help`
+// predicts the error text byte-for-byte ("larger than the 2.0 MB max") instead
+// of quoting a differently-rounded prose figure. A hand-typed "2 MiB" here is a
+// second copy of a constant: it reads fine, it survives every test that only
+// greps for a cap being mentioned, and it goes stale the day a cap moves.
+// TestListingHelpQuotesTheEnforcedCaps pins the coupling in both directions.
+func listingSourceRule(kind mediaKind) string {
+	return fmt.Sprintf("%s, at most %s", listingImageFormats, humanBytes(int64(kindByteCap(kind))))
+}
+
 // newAppListingCmd is the `civitai app listing` group: attach the store-listing
 // MEDIA (icon / cover / screenshots) an app needs to clear the publish floor,
 // without the browser. Operates on the app in the current directory (or --slug).
@@ -46,18 +67,25 @@ func newAppListingCmd() *cobra.Command {
 a listing needs before it can publish.
 
 A store listing must have an ICON and a COVER before it can go live; screenshots
-are optional. These commands ingest a local image, wait for the content scan, and
-attach it to your listing — the same pipeline the web submit form uses.
+are optional. These commands ingest a local image, attach it to your listing,
+and then wait for the content scan — the same pipeline the web submit form
+uses. The platform validates dimensions, aspect and format at the ATTACH step,
+so a wrongly-shaped image is refused in seconds rather than after the scan.
 
 For a listing that is already LIVE (approved), attaching media opens a REVISION
 that goes back to moderator review (the live listing is untouched until the
 revision is approved); pass --changelog to describe the change.
 
 The app is resolved from block.manifest.json in the current directory (or pass
---slug). Your store listing is created as a DRAFT when you run ` + "`civitai app submit`" + `,
-so you can set its media WHILE your app is pending review — the media you attach
-carries forward when a moderator approves it. Set it early to clear the publish
-floor before you go live.`,
+--slug). Your store listing is created as a DRAFT when you run
+` + "`civitai app submit`" + `, so you can set its media WHILE your app is pending review
+— the media you attach carries forward when a moderator approves it. Set it
+early to clear the publish floor before you go live.
+
+Source files are checked locally BEFORE any upload — ` + listingImageFormats + `, at most
+` + humanBytes(maxIconBytes) + ` for an icon, ` + humanBytes(maxCoverBytes) + ` for a cover, ` + humanBytes(maxScreenshotBytes) + ` for a screenshot.
+A file in the wrong format, or over its cap, is refused before anything is
+uploaded.`,
 		Example: `  civitai app listing status
   civitai app listing set-icon ./assets/icon.png
   civitai app listing set-cover ./assets/cover.png
@@ -158,12 +186,15 @@ func newAppListingStatusCmd() *cobra.Command {
 		Long: `Show your store listing's attached media (icon, cover, screenshots) and what
 is still required before it can publish (an icon and a cover are mandatory).
 
-Your store listing exists as a DRAFT from the moment you run ` + "`civitai app submit`" + `,
-so this works while your app is still pending review.
+Your store listing exists as a DRAFT from the moment you run
+` + "`civitai app submit`" + `, so this works while your app is still pending review.
 
 Note: on a LIVE (approved) listing this opens an in-progress revision draft and
 reports ITS media (idempotent — it reuses any existing draft, and nothing is
 submitted for moderator review until you run a set-/add- command and confirm).`,
+		Example: `  civitai app listing status
+  civitai app listing status --slug my-app
+  civitai app listing status --dir ./my-app`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, err := newListingClient()
@@ -268,8 +299,26 @@ func newAppListingSetIconCmd() *cobra.Command {
 	var assumeYes bool
 	cmd := &cobra.Command{
 		Use:   "set-icon <file>",
-		Short: "Set the listing icon (a square-ish image)",
-		Args:  cobra.ExactArgs(1),
+		Short: "Set the listing icon (" + listingSourceRule(kindIcon) + ")",
+		Long: `Set your store listing's ICON — the small image shown beside your app's name.
+An icon is MANDATORY: a listing cannot publish without one.
+
+The source file is validated locally first (` + listingSourceRule(kindIcon) + `),
+then ingested and attached, and the content scan is waited on afterwards.
+Nothing is uploaded if the local check fails. The platform validates the
+image's dimensions and aspect at the ATTACH step, so a wrongly-shaped image is
+refused in seconds rather than after the scan.
+See "Listing media requirements" in the README for the platform's bounds.
+
+On a listing that is already LIVE this opens a REVISION for moderator re-review
+instead of changing the live listing — pass --changelog to describe the change,
+-y to skip the confirmation. On a DRAFT listing it attaches directly.
+
+Run ` + "`civitai app listing status`" + ` to see what the publish floor still needs.`,
+		Example: `  civitai app listing set-icon ./assets/icon.png
+  civitai app listing set-icon ./icon.png --slug my-app
+  civitai app listing set-icon ./icon.png --changelog "New brand mark" -y`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetMedia(cmd, kindIcon, args[0], "", lc, changelog, assumeYes)
 		},
@@ -285,8 +334,26 @@ func newAppListingSetCoverCmd() *cobra.Command {
 	var assumeYes bool
 	cmd := &cobra.Command{
 		Use:   "set-cover <file>",
-		Short: "Set the listing cover (a landscape hero image)",
-		Args:  cobra.ExactArgs(1),
+		Short: "Set the listing cover (" + listingSourceRule(kindCover) + ")",
+		Long: `Set your store listing's COVER — the wide image at the top of the listing
+page. A cover is MANDATORY: a listing cannot publish without one.
+
+The source file is validated locally first (` + listingSourceRule(kindCover) + `),
+then ingested and attached, and the content scan is waited on afterwards.
+Nothing is uploaded if the local check fails. The platform validates the
+image's dimensions and aspect at the ATTACH step, so a wrongly-shaped image is
+refused in seconds rather than after the scan.
+See "Listing media requirements" in the README for the platform's bounds.
+
+On a listing that is already LIVE this opens a REVISION for moderator re-review
+instead of changing the live listing — pass --changelog to describe the change,
+-y to skip the confirmation. On a DRAFT listing it attaches directly.
+
+Run ` + "`civitai app listing status`" + ` to see what the publish floor still needs.`,
+		Example: `  civitai app listing set-cover ./assets/cover.png
+  civitai app listing set-cover ./cover.jpg --slug my-app
+  civitai app listing set-cover ./cover.png --changelog "Updated hero" -y`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetMedia(cmd, kindCover, args[0], "", lc, changelog, assumeYes)
 		},
@@ -304,7 +371,34 @@ func newAppListingAddScreenshotCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add-screenshot <file>",
 		Short: "Add a screenshot (up to 8) with an optional caption",
-		Args:  cobra.ExactArgs(1),
+		Long: `Add a SCREENSHOT to your store listing's gallery. Screenshots are OPTIONAL:
+they are not part of the publish floor.
+
+The source file is validated locally first (` + listingSourceRule(kindScreenshot) + `),
+then ingested and appended to the gallery, and the content scan is waited on
+afterwards. Nothing is uploaded if the local check fails. The platform
+validates dimensions, aspect and format at the ATTACH step, so a bad image is
+refused in seconds rather than after the scan. --caption adds a one-line
+caption.
+See "Listing media requirements" in the README for the platform's bounds.
+
+Each run appends one screenshot; there is no bulk add. Use
+` + "`civitai app listing reorder`" + ` to change the order afterwards and
+` + "`civitai app listing rm-screenshot`" + ` to drop one — both take the screenshot ids
+that ` + "`civitai app listing status`" + ` prints.
+
+The gallery has a ceiling (8 at the time of writing) and it is the SERVER's, not
+this CLI's: nothing here counts the gallery before uploading, so hitting the
+ceiling surfaces as a server refusal after the ingest rather than as a local
+usage error.
+
+On a listing that is already LIVE this opens a REVISION for moderator re-review
+instead of changing the live listing — pass --changelog to describe the change,
+-y to skip the confirmation. On a DRAFT listing it attaches directly.`,
+		Example: `  civitai app listing add-screenshot ./shot.png
+  civitai app listing add-screenshot ./grid.png --caption "Grid view"
+  civitai app listing add-screenshot ./shot.png --slug my-app`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSetMedia(cmd, kindScreenshot, args[0], caption, lc, changelog, assumeYes)
 		},
@@ -320,7 +414,7 @@ func bindRevisionFlags(cmd *cobra.Command, changelog *string, assumeYes *bool) {
 	cmd.Flags().BoolVarP(assumeYes, "yes", "y", false, "skip the live-listing revision confirmation")
 }
 
-// runSetMedia is the shared resolve -> validate -> ingest -> scan -> attach flow
+// runSetMedia is the shared resolve -> validate -> ingest -> attach -> scan flow
 // for set-icon / set-cover / add-screenshot, branching on the listing status for
 // the live-listing shadow-revision path.
 func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc listingCommon, changelog string, assumeYes bool) error {
@@ -379,12 +473,21 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 		return err
 	}
 
-	// 5. Poll the scan until Scanned (or Blocked / timeout).
-	if err := pollScan(ctx, out, client, imageID); err != nil {
-		return err
-	}
-
-	// 6. Attach — direct for draft/pending, via a shadow revision when live.
+	// 5. Attach — direct for draft/pending, via a shadow revision when live.
+	//
+	// 🔴 ATTACH BEFORE THE SCAN POLL, AND THE ORDER IS THE FIX (issue #270). The
+	// server validates GEOMETRY, ASPECT, MIME and BYTE SIZE at ATTACH, not at
+	// ingest: `validateListingImage` runs inside `loadValidatedImage`
+	// (civitai/civitai → src/server/services/blocks/app-listing-assets.service.ts)
+	// BEFORE the ingestion-status gate, and all three attach procs pass
+	// `allowPending: true`, so an image whose scan is still in flight is written
+	// and flagged `scanPending` rather than refused. Polling first therefore made
+	// an author with a 512x256 icon wait out the whole scan — up to
+	// scanPollTimeout — before hearing `icon must be square-ish (aspect 2.00
+	// outside 0.9–1.1)`. Asking first gets the server's own verdict in one
+	// round-trip, and the CLI still vendors none of those bounds: it relays what
+	// the server said. The scan is polled below, so nothing reports success while
+	// a scan is pending or blocked.
 	targetID := ref.AppListingID
 	var shadowID string
 	if live {
@@ -394,8 +497,38 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 		}
 		targetID = shadowID
 	}
-	if err := attachMedia(ctx, client, kind, targetID, imageID, caption); err != nil {
+	res, err := attachMedia(ctx, client, kind, targetID, imageID, caption)
+	if err != nil {
 		return err
+	}
+
+	// 6. Poll the scan AFTER the attach, so success is still never reported while
+	// the scan is pending or blocked.
+	//
+	// `scanPending` is the server's own answer and is what decides this — the
+	// attach proc sets it ONLY on the still-scanning branch and omits the key
+	// entirely once `ingestion == Scanned`, so absent and false both mean "the
+	// server already saw a clean scan" and there is nothing to wait for.
+	//
+	// `status: "pending"` is the legacy `allowPending: false` shape: NOTHING was
+	// written. Today's procs never return it, but if that ever changed, attaching
+	// first would silently no-op and still print success — so fall back to the
+	// pre-#270 order (wait out the scan, then attach) rather than lie.
+	switch {
+	case res.Status == attachStatusPending:
+		if err := pollScan(ctx, out, client, imageID); err != nil {
+			return scanFailure(out, err, kind, live, res)
+		}
+		if res, err = attachMedia(ctx, client, kind, targetID, imageID, caption); err != nil {
+			return err
+		}
+		if res.Status == attachStatusPending {
+			return fmt.Errorf("the server did not attach the %s — it still reports the image as scanning; try again shortly", kind)
+		}
+	case res.ScanPending:
+		if err := pollScan(ctx, out, client, imageID); err != nil {
+			return scanFailure(out, err, kind, live, res)
+		}
 	}
 
 	// 7. For a live listing, submit the revision for moderator re-review.
@@ -418,18 +551,45 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	return nil
 }
 
-func attachMedia(ctx context.Context, client *appapi.Client, kind mediaKind, listingID string, imageID int, caption string) error {
+// attachStatusPending is the server's legacy `allowPending: false` attach result:
+// the image was still scanning and NOTHING was written. The live listing-media
+// procs all pass `allowPending: true` and never return it; see runSetMedia for
+// why the CLI handles it anyway.
+const attachStatusPending = "pending"
+
+// attachMedia attaches the ingested image and returns the server's attach result
+// (never nil on a nil error), which carries the `scanPending` flag the caller
+// uses to decide whether the scan still has to be waited on.
+func attachMedia(ctx context.Context, client *appapi.Client, kind mediaKind, listingID string, imageID int, caption string) (*appapi.AttachResult, error) {
 	switch kind {
 	case kindIcon:
-		_, err := client.SetIcon(ctx, listingID, imageID)
-		return err
+		return client.SetIcon(ctx, listingID, imageID)
 	case kindCover:
-		_, err := client.SetCover(ctx, listingID, imageID)
-		return err
+		return client.SetCover(ctx, listingID, imageID)
 	default:
-		_, err := client.AddScreenshot(ctx, listingID, imageID, caption)
-		return err
+		return client.AddScreenshot(ctx, listingID, imageID, caption)
 	}
+}
+
+// scanFailure returns the scan error unchanged — it is the ONE diagnosis the user
+// gets — after printing the state the attach-before-scan order leaves behind.
+//
+// The line is context, never a second verdict: attaching first means a blocked or
+// never-settling image can already be written to the DRAFT when the scan verdict
+// arrives, which was impossible when the poll ran first. For a live listing the
+// revision is simply not submitted; for a screenshot the row exists and needs an
+// explicit removal, so its id is handed over.
+func scanFailure(out io.Writer, err error, kind mediaKind, live bool, res *appapi.AttachResult) error {
+	switch {
+	case live:
+		fmt.Fprintln(out, "The revision was not submitted — your live listing is unchanged.")
+	case kind == kindScreenshot && res != nil && res.ID != "":
+		fmt.Fprintf(out, "The screenshot was added to your draft — remove it with %s\n",
+			ui.Code("civitai app listing rm-screenshot "+res.ID))
+	case res != nil && res.Status != attachStatusPending:
+		fmt.Fprintf(out, "The %s is attached to your draft but cannot go live — re-run this command with a different image.\n", kind)
+	}
+	return err
 }
 
 // printFloorAfter reads the listing media and prints the remaining floor gap.
@@ -496,6 +656,8 @@ func newAppListingRmScreenshotCmd() *cobra.Command {
 		Long: `Remove a screenshot from your listing by its screenshot id (the id shown by
 ` + "`civitai app listing status`" + `, e.g. alsc_...). Note: for a LIVE listing,
 direct screenshot edits are only possible while a revision is open.`,
+		Example: `  civitai app listing rm-screenshot alsc_01H8XYZ
+  civitai app listing rm-screenshot alsc_01H8XYZ --slug my-app`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newListingClient()
@@ -525,7 +687,13 @@ func newAppListingReorderCmd() *cobra.Command {
 		Short: "Reorder screenshots (pass ALL current screenshot ids in the new order)",
 		Long: `Reorder your listing's screenshots. Pass EXACTLY the current set of screenshot
 ids (from ` + "`civitai app listing status`" + `) in the desired order — a partial or
-unknown set is rejected.`,
+unknown set is rejected.
+
+Ordering is positional: the first id becomes the first screenshot in the
+gallery. There is no "move one" form — read the current order out of
+` + "`civitai app listing status`" + ` and pass the whole list back.`,
+		Example: `  civitai app listing reorder alsc_02 alsc_01 alsc_03
+  civitai app listing reorder alsc_02 alsc_01 --slug my-app`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			client, err := newListingClient()
@@ -636,6 +804,10 @@ func kindByteCap(kind mediaKind) int {
 }
 
 // pollScan polls the image scan until Scanned, erroring on Blocked or timeout.
+//
+// It runs AFTER the attach (see runSetMedia), so its messages are deliberately
+// position-neutral: they say what is wrong with the IMAGE, not whether it reached
+// the listing. The caller owns the "what that leaves behind" line.
 func pollScan(ctx context.Context, out io.Writer, client *appapi.Client, imageID int) error {
 	deadline := time.Now().Add(scanPollTimeout)
 	start := time.Now()
@@ -654,7 +826,7 @@ func pollScan(ctx context.Context, out io.Writer, client *appapi.Client, imageID
 		case "scanned":
 			return nil
 		case "blocked":
-			return fmt.Errorf("the image was blocked by the content scan — it can't be attached; use a different image")
+			return fmt.Errorf("the image was blocked by the content scan — a blocked image can never go live; use a different image")
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("timed out after %s waiting for the image scan (still %s) — check `civitai app listing status` shortly", scanPollTimeout, st)

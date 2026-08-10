@@ -1029,12 +1029,25 @@ func fieldCoverageCorpus() []fieldFixture {
 			},
 		},
 		{
+			// The required lockfile's body must be a REAL one here, or this
+			// fixture trips the exists-but-invalid error instead and stops
+			// reaching extraLockfileWarning at all — a fixture that silently
+			// changes which site it exercises is the shape the reachability
+			// ledger exists to catch.
 			name: "two lockfiles committed (lockfileChecks, advisory)",
 			files: map[string]string{
 				"block.manifest.json": goodBase,
 				"package.json":        `{"name":"cov-block","private":true}`,
-				"package-lock.json":   "{}\n",
+				"package-lock.json":   npmLockBody,
 				"pnpm-lock.yaml":      "lockfileVersion: '9.0'\n",
+			},
+		},
+		{
+			name: "an EMPTY package-lock.json (lockfileChecks, hard error — issue #255)",
+			files: map[string]string{
+				"block.manifest.json": goodBase,
+				"package.json":        `{"name":"cov-block","private":true}`,
+				"package-lock.json":   "",
 			},
 		},
 		{

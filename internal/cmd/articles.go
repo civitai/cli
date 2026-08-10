@@ -18,11 +18,23 @@ func newArticlesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "articles",
 		Short: "Search and inspect articles on Civitai",
-		Long: `Read-only access to Civitai articles via the public REST API
-(GET /api/v1/articles). These endpoints are public and work anonymously; if you
-are logged in (civitai login) your token is sent automatically.`,
+		Long: `Read-only access to Civitai articles through the public REST API
+(GET /api/v1/articles, GET /api/v1/articles/{id}).
+
+` + readAnonNote + `
+
+Articles are the site's long-form guides. ` + "`articles search`" + ` finds them;
+` + "`articles get <id> --content`" + ` renders the BODY as readable text/markdown —
+headings, paragraphs, lists, links and code blocks, with the HTML stripped and
+entities decoded — so a guide is readable in the terminal without a browser.
+
+--json returns the raw API body, including the UNTOUCHED HTML content, and
+takes precedence over --content.
+
+` + readJSONNote,
 		Example: `  civitai articles search --query "workflow" --limit 5
-  civitai articles get 1234`,
+  civitai articles get 1234
+  civitai articles get 1234 --content`,
 	}
 	cmd.AddCommand(newArticlesSearchCmd())
 	cmd.AddCommand(newArticlesGetCmd())
@@ -40,11 +52,27 @@ func newArticlesSearchCmd() *cobra.Command {
 		Short: "Search articles (GET /api/v1/articles)",
 		Long: `Search articles via GET /api/v1/articles.
 
-Pagination is cursor-based (the article feed uses a keyset cursor — there is no
---page). The next cursor is printed after the results; pass it back via --cursor.`,
+Filters: --query (matches the TITLE, not the body), --tags, --username and
+--nsfw. --tags takes numeric tag IDS, comma-separated (e.g. --tags 5,12), not
+tag names — and ` + "`civitai tags search`" + ` renders names, not ids, so it cannot
+supply this filter for you.
+
+--sort takes a server-owned value set.
+` + serverOwnedEnumNote + `
+
+Paging is cursor-only: the article feed is a keyset feed, so there is no --page
+here. ` + limitRule(articlesLimitMax) + `.
+The next cursor is printed under the results; pass it back via --cursor.
+
+The REACTIONS column is likes plus favourites, from the list endpoint's own
+stats. ` + "`articles get <id>`" + ` reports all-time view / like / favourite /
+comment / collected counts instead — a different stats block, so the two need
+not agree — and --content renders the guide itself.
+
+` + readAnonShort,
 		Example: `  civitai articles search --query "comfyui" --limit 5
   civitai articles search --sort "Most Reactions" --nsfw
-  civitai articles search --username some-creator --cursor <cursor>`,
+  civitai articles search --username some-creator --cursor '<cursor>'`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkLimit(limit, articlesLimitMax); err != nil {
@@ -83,7 +111,7 @@ Pagination is cursor-based (the article feed uses a keyset cursor — there is n
 	cmd.Flags().StringVar(&username, "username", "", "filter by author username")
 	cmd.Flags().StringVar(&sort, "sort", "", "sort order (Newest, \"Recently Updated\", \"Most Reactions\", \"Most Comments\", \"Most Bookmarks\", \"Most Collected\")")
 	cmd.Flags().BoolVar(&nsfw, "nsfw", false, "include NSFW results")
-	cmd.Flags().IntVar(&limit, "limit", 0, "results per page (1-100)")
+	cmd.Flags().IntVar(&limit, "limit", 0, limitFlagUsage(articlesLimitMax))
 	cmd.Flags().StringVar(&cursor, "cursor", "", "pagination cursor from a previous response")
 	bindReadFlags(cmd)
 	return cmd
@@ -100,7 +128,9 @@ By default it prints the article's metadata (title, author, stats, tags). Pass
 --content to also render the article BODY — the actual guide — as readable plain
 text / lightweight markdown (headings, paragraphs, lists, links, code blocks;
 HTML tags stripped and entities decoded). --json returns the raw API body
-(including the untouched HTML content) and takes precedence over --content.`,
+(including the untouched HTML content) and takes precedence over --content.
+
+` + readAnonShort,
 		Example: `  civitai articles get 1234
   civitai articles get 1234 --content
   civitai articles get 1234 --json`,

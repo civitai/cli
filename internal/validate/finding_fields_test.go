@@ -148,6 +148,10 @@ func findingFieldLedger() []fieldExpectation {
 				"block.manifest.json for a file that is missing from the repo"},
 		{"more than one lockfile is committed", FieldProject,
 			"same: the finding is about which files are committed"},
+		{"not a lockfile the platform build can install from", FieldProject,
+			"same again, and the one most likely to be mis-filed: the remedy is `rm` plus " +
+				"`npm install`, so it touches no manifest key at all. `(root)` would send a " +
+				"CI job into block.manifest.json looking for a file on disk"},
 
 		// --- readyack.go ------------------------------------------------
 		{"nothing in this project's source posts BLOCK_READY", FieldProject,

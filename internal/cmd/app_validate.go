@@ -40,6 +40,13 @@ plus the ported semantic rules and structural checks:
     platform installs strictly from the lockfile, so a mismatch or a missing
     lockfile is a guaranteed build failure. Only applies when package.json
     exists — a static app never installs.
+    The lockfile must also BE one, not merely exist: a package-lock.json has to
+    parse as JSON and declare a numeric "lockfileVersion" of 1 or more, and a
+    pnpm-lock.yaml / yarn.lock has to be non-empty. An empty lockfile fails the
+    platform build exactly like a missing one, so creating an empty one by hand
+    is not a fix — run the package manager and commit what it writes. A lockfile
+    that cannot be read (or is implausibly large) is left alone rather than
+    reported.
 
 It also emits non-fatal WARNINGS the schema can't catch as hard errors:
   - money-path footguns (e.g. a budgeted page with no page.buzzBudgetPerGen)
@@ -115,7 +122,7 @@ Defaults to the current directory.`,
 			if !res.OK() {
 				fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("%d validation error(s) in %s:", len(res.Errors), dir)))
 				for _, e := range res.Errors {
-					fmt.Fprintf(errw, "  - %s\n", e.Message)
+					printFinding(errw, e.Message)
 				}
 				// Surface warnings too — they're useful context even on a failure.
 				printWarnings(errw, res)
@@ -174,6 +181,6 @@ func printWarnings(w io.Writer, res validate.Result) {
 	}
 	fmt.Fprintln(w, ui.For(w).Warn(fmt.Sprintf("%d warning(s):", len(res.Warnings))))
 	for _, warn := range res.Warnings {
-		fmt.Fprintf(w, "  - %s\n", warn.Message)
+		printFinding(w, warn.Message)
 	}
 }

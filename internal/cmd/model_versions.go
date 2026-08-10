@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strconv"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/civitai/cli/pkg/civitai"
@@ -16,11 +17,29 @@ func newModelVersionsCmd() *cobra.Command {
 		Use:     "model-versions",
 		Short:   "Inspect model versions on Civitai",
 		Aliases: []string{"model-version", "mv"},
-		Long: `Read-only access to Civitai model versions via the public REST API. Look up a
-version by its id or by a file hash (AutoV2, SHA256, …). Works anonymously.`,
 		Example: `  civitai model-versions get 128713
+  civitai mv get 128713 --json
   civitai model-versions by-hash 5D8D26E2A6`,
 	}
+	// The alias list is rendered FROM cmd.Aliases rather than retyped, so a
+	// dropped or added alias cannot leave the help advertising a spelling the
+	// tree no longer answers to. TestReadAPIHelpNamesItsAliases pins it.
+	cmd.Long = `Read-only access to Civitai model versions through the public REST API
+(GET /api/v1/model-versions/{id} and .../by-hash/{hash}).
+Aliases: ` + strings.Join(cmd.Aliases, ", ") + `.
+
+` + readAnonNote + `
+
+A model VERSION is the downloadable unit, and it is what most of the rest of
+this CLI wants: ` + "`civitai download --version <id>`" + `,
+` + "`civitai generate --checkpoint <id>`" + ` and ` + "`--lora <id>`" + ` all take a version
+id, never a model id. ` + "`civitai models get <id>`" + ` is where you read those
+version ids off a model.
+
+` + "`by-hash`" + ` runs that lookup backwards: it identifies a file you already have
+on disk, which is how you put a name to an unlabelled .safetensors.
+
+` + readJSONNote
 	cmd.AddCommand(newModelVersionsGetCmd())
 	cmd.AddCommand(newModelVersionsByHashCmd())
 	return cmd
@@ -28,10 +47,28 @@ version by its id or by a file hash (AutoV2, SHA256, …). Works anonymously.`,
 
 func newModelVersionsGetCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "get <id>",
-		Short:   "Get a model version by id (GET /api/v1/model-versions/{id})",
-		Example: `  civitai model-versions get 128713`,
-		Args:    cobra.ExactArgs(1),
+		Use:   "get <id>",
+		Short: "Get a model version by id (GET /api/v1/model-versions/{id})",
+		Long: `Get one model version by its version id: GET /api/v1/model-versions/{id}.
+
+This is the id ` + "`civitai download --version`" + ` and
+` + "`civitai generate --checkpoint / --lora`" + ` take. A non-integer argument is
+refused locally, as a usage mistake, before any request is made.
+
+The output carries the base model, the trigger words, the AIR identifier and
+every file with its size and type. A version whose primary file is not model
+weights is tagged with that type ([Archive], [Training Data], [Other]).
+
+What a version does NOT carry is model-level data. Its .model is a stub — the
+CLI reads a name, a type and an nsfw flag out of it — and there is no creator
+and no model-level download count on this response at all. If you started from
+a version and need those, read them from ` + "`models get`" + ` / ` + "`models search`" + `
+and join on the version's .modelId.
+
+` + readAnonShort,
+		Example: `  civitai model-versions get 128713
+  civitai mv get 128713 --json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := readFlags(cmd)
 			if _, err := strconv.Atoi(args[0]); err != nil {
@@ -61,11 +98,28 @@ func newModelVersionsGetCmd() *cobra.Command {
 
 func newModelVersionsByHashCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "by-hash <hash>",
-		Short:   "Get a model version by file hash (GET /api/v1/model-versions/by-hash/{hash})",
-		Long:    `Look up a model version by any of its file hashes (AutoV1, AutoV2, SHA256, CRC32, BLAKE3). The hash is matched case-insensitively.`,
-		Example: `  civitai model-versions by-hash 5D8D26E2A6`,
-		Args:    cobra.ExactArgs(1),
+		Use:   "by-hash <hash>",
+		Short: "Get a model version by file hash (GET /api/v1/model-versions/by-hash/{hash})",
+		Long: `Look up a model version by any of its file hashes:
+GET /api/v1/model-versions/by-hash/{hash}.
+
+AutoV1, AutoV2, SHA256, CRC32 and BLAKE3 hashes all work — the server
+upper-cases the value, so case does not matter here. This is the "what IS this
+file?" lookup for a .safetensors you already have on disk.
+
+Note the API reports SHA256 in UPPER case while sha256sum prints lower case, so
+case-fold before comparing if you hash a file yourself. (` + "`civitai download`" + `'s
+own verification is already case-insensitive.)
+
+On a hit the CLI prints a ready-to-run download line for the resolved version.
+It uses --version rather than a bare positional id deliberately: a bare id is
+ambiguous between a model id and a version id, and the printed command must
+never be the one that trips that stop.
+
+` + readAnonShort,
+		Example: `  civitai model-versions by-hash 5D8D26E2A6
+  civitai mv by-hash 5D8D26E2A6 --json`,
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			o := readFlags(cmd)
 			client, _, err := newReader(o)
