@@ -84,11 +84,25 @@ type world struct {
 	caskBody  string
 	published map[string]bool // version -> archives are publicly downloadable
 	latestTag string
+	// publishedAt is emitted as the release payload's `published_at` only when
+	// non-zero, so every fixture that predates the lag check keeps serving the
+	// EXACT payload it served before — no key, hence no publish time, hence a
+	// lag question that cannot be asked. See TestALagFindingNeedsAKnownPublishTime.
+	publishedAt time.Time
 }
 
 func newWorld(t *testing.T, caskVersion string, published []string, latestTag string) *world {
 	t.Helper()
-	w := &world{rec: newRecorder(), published: map[string]bool{}, latestTag: latestTag}
+	return newWorldAt(t, caskVersion, published, latestTag, time.Time{})
+}
+
+// newWorldAt is newWorld plus a publish time. It is a separate constructor
+// rather than a mutable field so every field is set BEFORE the httptest servers
+// start serving — a test that assigned it afterwards would be writing state the
+// server goroutine reads.
+func newWorldAt(t *testing.T, caskVersion string, published []string, latestTag string, publishedAt time.Time) *world {
+	t.Helper()
+	w := &world{rec: newRecorder(), published: map[string]bool{}, latestTag: latestTag, publishedAt: publishedAt}
 	for _, v := range published {
 		w.published[v] = true
 	}
@@ -124,7 +138,12 @@ func newWorld(t *testing.T, caskVersion string, published []string, latestTag st
 	w.api = httptest.NewServer(http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
 		w.rec.record(req)
 		rw.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(rw, `{"tag_name":%q,"draft":false,"prerelease":false}`, w.latestTag)
+		if w.publishedAt.IsZero() {
+			fmt.Fprintf(rw, `{"tag_name":%q,"draft":false,"prerelease":false}`, w.latestTag)
+			return
+		}
+		fmt.Fprintf(rw, `{"tag_name":%q,"draft":false,"prerelease":false,"published_at":%q}`,
+			w.latestTag, w.publishedAt.UTC().Format(time.RFC3339))
 	}))
 	t.Cleanup(w.api.Close)
 	return w
@@ -220,6 +239,16 @@ func TestThePublishedStateIsGreen(t *testing.T) {
 // still names the previous version. That is the whole point of the new ordering,
 // so it must not be a finding — a check that reddened here would be red for
 // doing the right thing, and a permanently-red gate trains everyone to ignore it.
+//
+// 🔴 STATE WHAT THIS ROW ACTUALLY PINS, WHICH IS NARROWER THAN ITS NAME. Lagging
+// is no longer green forever: a cask that has not followed a release PUBLISHED
+// more than `defaultLagThreshold` ago is now a finding of its own kind (see
+// lag_test.go, which pins that threshold from both sides). This fixture stays
+// green because `newWorld` serves a release payload with no `published_at`, so
+// the lag question cannot be ASKED here at all — the invariant is what is being
+// asserted, and the invariant is still indifferent to a lag. Do not read a pass
+// here as "a lagging cask is always green"; that claim moved, and it moved on
+// purpose.
 func TestACaskLaggingThePublishedReleaseIsDeliberatelyGREEN(t *testing.T) {
 	w := newWorld(t, "0.1.90", []string{"0.1.90", "0.1.91"}, "v0.1.91")
 
