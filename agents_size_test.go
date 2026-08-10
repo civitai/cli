@@ -36,11 +36,11 @@ import (
 
 // agentsMaxBytes is the ceiling on AGENTS.md.
 //
-// Achieved size at the split: 62,372 bytes. The ceiling is 68,000 — about 5.6 kB
-// (9%) of headroom. That number is chosen against what it has to absorb:
+// Achieved size at the split: 63,063 bytes. The ceiling is 68,000 — 4,937 bytes
+// (~7.8%) of headroom. That number is chosen against what it has to absorb:
 //
 //   - A new item written as a STUB runs ~600–700 bytes, so the headroom is
-//     roughly eight more items before anyone has to think about this again.
+//     roughly seven more items before anyone has to think about this again.
 //   - Ordinary prose edits — a retraction paragraph, a re-measured number, a new
 //     bullet in a small item — are tens to a few hundred bytes each.
 //   - A new item written as a FULL BODY is 8.5–28 kB (the nine that were split
