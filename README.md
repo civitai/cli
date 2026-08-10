@@ -319,7 +319,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
-| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
+| `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
 | `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**; the orchestrator re-prices the rest server-side and this CLI cannot report the figure. Cancel because you no longer want the output. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
@@ -1616,6 +1616,9 @@ civitai generate "a cat" --checkpoint 128713 --lora 250712:0.8
 # Wait for the result and write the images into ./out
 civitai generate "a cat" --yes --out-dir ./out
 
+# …naming the files yourself — {n} keeps a batch from colliding
+civitai generate "a cat" --yes --quantity 4 --out-dir ./out --out-name 'cat-{n}{ext}'
+
 # Fire and forget; collect the results later
 civitai generate "a cat" --yes --no-wait
 civitai workflows list
@@ -1881,7 +1884,8 @@ Four things to know, all of them consequences of it being a **passthrough**:
 `--lora` — there is no predictable answer to "does `--lora` append to or replace
 the file's `resources`?", so the combination is a usage error. Every *execution*
 flag (`--dry-run`, `--yes`, `--max-cost`, `--json`, `--no-wait`, `--timeout`,
-`--out-dir`, `--no-download`, `--force`, `--external-id`) still applies.
+`--out-dir`, `--out-name`, `--no-download`, `--force`, `--external-id`) still
+applies.
 
 ### Waiting, downloading, and re-attaching
 
@@ -1889,6 +1893,32 @@ By default `generate` **waits** for the job to finish and writes every
 deliverable output into `--out-dir` (default `.`) as
 `<workflow-id>-<n>.<ext>`. `--force` overwrites existing files; without it a
 collision is refused *before any bytes move*.
+
+- `--out-name <template>` names the files instead of the default scheme. Three
+  placeholders expand and everything else is literal:
+
+  | Placeholder  | Expands to                                              |
+  |--------------|---------------------------------------------------------|
+  | `{workflow}` | the workflow id                                          |
+  | `{n}`        | the output number, **1-based**                           |
+  | `{ext}`      | the file extension **including its leading dot** (`.jpeg`) |
+
+  The default is `{workflow}-{n}{ext}`, so `--out-name 'cat-{n}{ext}'` writes
+  `cat-1.jpeg`, `cat-2.jpeg`, … into `--out-dir`.
+
+  > **The rendered name must be a plain file name inside `--out-dir`.** A path
+  > separator, a leading `/`, or a `..` is **refused, not stripped** — silently
+  > sanitising a traversal writes a file you did not ask for under a name you
+  > did not choose. An unknown placeholder (`{workflowid}`) and a template that
+  > renders to nothing are refused too. All of these are **usage errors
+  > (exit 2) raised before the job is priced or submitted**, so a bad template
+  > costs nothing.
+
+  A template that would give **two outputs the same name** — one with no `{n}`
+  on a multi-image run — is refused before any byte is downloaded, and `--force`
+  does *not* override it: there is no earlier file to replace, only the run's own
+  other output, and the presigned URLs spent getting it are not re-issued.
+  Include `{n}` for a batch. A single-output run with a fixed name is fine.
 
 - `--no-wait` submits, prints the workflow id and exits `0`.
 - `--no-download` waits and prints the output URLs instead of writing files.

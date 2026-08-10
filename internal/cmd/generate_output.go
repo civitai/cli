@@ -10,6 +10,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/civitai/cli/internal/genapi"
@@ -52,18 +53,110 @@ func blobExtension(rawURL string) string {
 	return strings.ToLower(ext)
 }
 
-// blobFileName builds `<workflowId>-<n>.<ext>`.
+// defaultOutNameTemplate is the historical scheme `<workflowId>-<n>.<ext>`,
+// written as a template on purpose: --out-name added a SECOND way to name an
+// output, and a separate hard-coded default path would be a second naming rule
+// to keep in step with the containment guard below. There is one renderer.
+const defaultOutNameTemplate = "{workflow}-{n}{ext}"
+
+// outNamePlaceholder matches ANY {...} span, including ones this CLI does not
+// know. Matching only the three supported names would let `{workflowid}` fall
+// through as literal text and land in a filename, which is how a typo becomes a
+// mystery file instead of an error.
+var outNamePlaceholder = regexp.MustCompile(`\{[^{}]*\}`)
+
+// renderOutName expands an --out-name template for output n. An empty template
+// means the default scheme.
 //
-// The workflow id is SERVER-supplied, so it is reduced to a bare basename and
-// rejected if it degenerates — the same rule `civitai download` applies to
-// server-supplied file names, for the same reason: a value like "../../.bashrc"
-// must never be able to write outside the chosen directory.
-func blobFileName(workflowID string, n int, rawURL string) (string, error) {
+// 🔴 BOTH INPUTS ARE UNTRUSTED. The workflow id is SERVER-supplied and the
+// template is USER-supplied, and the rendered value is the only thing that
+// decides where bytes land — a value like "../../.bashrc" must never be able to
+// write outside the chosen directory. This function bounds what each
+// placeholder can expand to (the id to a bare basename, {ext} to blobExtension's
+// bounded value, {n} to a decimal integer); outputTarget is what enforces
+// containment on the whole rendered name, and planOutputTarget is what keeps the
+// two from ever being called apart.
+func renderOutName(tmpl, workflowID string, n int, rawURL string) (string, error) {
+	// Only a TRULY empty template means "use the default" — the flag's own zero
+	// value. A whitespace-only template is a mistake the user typed, and both
+	// available silent answers are wrong: writing a file named "   ", or quietly
+	// substituting the default scheme they were trying to replace. It falls
+	// through to the empty-render refusal below.
+	if tmpl == "" {
+		tmpl = defaultOutNameTemplate
+	}
 	base := filepath.Base(strings.TrimSpace(workflowID))
 	if base == "" || base == "." || base == ".." || base == string(filepath.Separator) || base == "/" {
 		return "", fmt.Errorf("the server returned an unusable workflow id %q — cannot build an output filename", workflowID)
 	}
-	return fmt.Sprintf("%s-%d%s", base, n, blobExtension(rawURL)), nil
+
+	var unknown string
+	rendered := outNamePlaceholder.ReplaceAllStringFunc(tmpl, func(ph string) string {
+		switch ph {
+		case "{workflow}":
+			return base
+		case "{n}":
+			return strconv.Itoa(n)
+		case "{ext}":
+			// The BOUNDED extension, never raw URL text: blobExtension replaces
+			// anything that is not a dot plus 1-8 alphanumerics with .bin.
+			return blobExtension(rawURL)
+		}
+		if unknown == "" {
+			unknown = ph
+		}
+		return ph
+	})
+	if unknown != "" {
+		return "", fmt.Errorf(
+			"unknown placeholder %s in --out-name %q — the supported placeholders are {workflow}, {n} and {ext}; {ext} carries its own leading dot, so the default is %q",
+			unknown, tmpl, defaultOutNameTemplate)
+	}
+	if strings.TrimSpace(rendered) == "" {
+		return "", fmt.Errorf(
+			"--out-name %q renders an empty file name — the template must produce a name, e.g. 'img-{n}{ext}'", tmpl)
+	}
+	return rendered, nil
+}
+
+// outputTarget resolves one rendered file name against outDir.
+//
+// 🔴 THE CONTAINMENT GUARD, and it REFUSES rather than sanitising. Silently
+// stripping a traversal writes a file the user did not ask for, under a name
+// they did not choose, with nothing on screen saying so — the traversal becomes
+// invisible instead of impossible.
+//
+// It is deliberately STRUCTURAL rather than spelled: the last check does not
+// hunt for separators in the text, it resolves the join and refuses unless the
+// result sits DIRECTLY inside outDir. A spelling check has to enumerate every
+// way a separator can be written; comparing the resolved parent cannot be
+// spelled around. The two literal checks in front of it exist because
+// filepath.Join CLEANS its result, so "." and ".." resolve to real directories
+// that can satisfy a parent comparison (outDir "/" plus name "." is the case
+// that gets through). One guard, one error — they are alternative ways for the
+// same rule to be violated, not three separate rules.
+func outputTarget(outDir, name string) (string, error) {
+	target := filepath.Join(outDir, name)
+	if name == "." || name == ".." || name != filepath.Base(name) || filepath.Dir(target) != filepath.Clean(outDir) {
+		return "", fmt.Errorf(
+			"the output file name %q would not land directly in the output directory %q — it resolves to %q. An output name must be a plain file name: a path separator or \"..\" is refused, not stripped. Fix the --out-name template, and use --out-dir to choose the directory",
+			name, outDir, target)
+	}
+	return target, nil
+}
+
+// planOutputTarget is the ONE place an output's path is decided.
+//
+// Both callers go through it: validateGenerateOpts renders a PROBE before
+// anything is submitted, so a broken template is a usage error instead of a
+// post-charge dead end, and downloadOutputs renders the real ones. A second path
+// would be a second rule, and the rule here is a security boundary.
+func planOutputTarget(tmpl, outDir, workflowID string, n int, rawURL string) (string, error) {
+	name, err := renderOutName(tmpl, workflowID, n, rawURL)
+	if err != nil {
+		return "", err
+	}
+	return outputTarget(outDir, name)
 }
 
 // reportExcludedOutputs prints, per excluded output, WHY it is not being saved.
@@ -174,28 +267,44 @@ func downloadBlobTo(ctx context.Context, fetch blobFetcher, out, errw io.Writer,
 	return nil
 }
 
-// downloadOutputs writes every deliverable output into outDir as
-// `<workflowId>-<n>.<ext>` and returns the paths written.
+// downloadOutputs writes every deliverable output into outDir under the
+// outName template (empty = `<workflowId>-<n>.<ext>`) and returns the paths
+// written.
 //
 // Target collisions are checked for EVERY file before the first byte moves, the
 // same fail-safe ordering `civitai download` uses: a run that would overwrite an
 // existing result must not first spend half the presigned URLs' remaining life
 // downloading the ones that happened to come earlier.
-func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer, workflowID string, outputs []genapi.Output, outDir string, force bool) ([]string, error) {
+//
+// 🔴 There are TWO kinds of collision and both are checked in that same
+// before-any-bytes window. One is a target that already exists on disk (--force
+// overrides it). The other is a template that renders the SAME name for two
+// outputs — an --out-name with no {n} — which --force does NOT override, because
+// the run would silently overwrite its OWN outputs and the presigned URLs it
+// spent getting them are not re-issuable. Discovered halfway through, that is
+// unrecoverable; discovered here, it costs nothing.
+func downloadOutputs(ctx context.Context, fetch blobFetcher, out, errw io.Writer, workflowID string, outputs []genapi.Output, outDir, outName string, force bool) ([]string, error) {
 	type job struct {
 		url    string
 		target string
 	}
 	jobs := make([]job, 0, len(outputs))
+	byTarget := make(map[string]int, len(outputs))
 	for i, o := range outputs {
 		if o.URL == nil || strings.TrimSpace(*o.URL) == "" {
 			return nil, fmt.Errorf("output %s is marked available but carries no URL — nothing to download", safeTerm(dashIfEmpty(o.ID)))
 		}
-		name, err := blobFileName(workflowID, i+1, *o.URL)
+		target, err := planOutputTarget(outName, outDir, workflowID, i+1, *o.URL)
 		if err != nil {
 			return nil, err
 		}
-		jobs = append(jobs, job{url: *o.URL, target: filepath.Join(outDir, name)})
+		if first, dup := byTarget[target]; dup {
+			return nil, fmt.Errorf(
+				"outputs %d and %d would both be written to %q — this run produced %d outputs and the name is the same for each, so it would overwrite its own results. Include {n} in --out-name (e.g. 'img-{n}{ext}'); nothing was downloaded, and the outputs are still readable with `civitai workflows get %s`",
+				first, i+1, target, len(outputs), safeTerm(workflowID))
+		}
+		byTarget[target] = i + 1
+		jobs = append(jobs, job{url: *o.URL, target: target})
 	}
 	if !force {
 		var clashes []string
