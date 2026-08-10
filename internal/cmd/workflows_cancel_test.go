@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/civitai/cli/internal/genapi"
@@ -18,19 +20,41 @@ import (
 
 // wfCancelDeps wires a scripted reply into runWorkflowsCancel and records what
 // the seam was asked to cancel.
+//
+// 🔴 It also wires the EXISTENCE READ (#341) to a workflow that exists, because
+// that is the precondition of every case in this file: they are about what a
+// cancel does to a REAL workflow. The unknown-id cases, and the fail-open cases
+// where the read cannot answer, live in workflows_cancel_existence_test.go and
+// build their own deps.
 func wfCancelDeps(reply string, err error, seenID *string, calls *int) workflowsCancelDeps {
-	return workflowsCancelDeps{cancelWorkflow: func(ctx context.Context, id string) (json.RawMessage, error) {
+	return workflowsCancelDeps{
+		cancelWorkflow: func(ctx context.Context, id string) (json.RawMessage, error) {
+			if calls != nil {
+				*calls++
+			}
+			if seenID != nil {
+				*seenID = id
+			}
+			if err != nil {
+				return nil, err
+			}
+			return json.RawMessage(reply), nil
+		},
+		getWorkflow: existingWorkflowRead(nil),
+	}
+}
+
+// existingWorkflowRead is a read seam reporting a live, cancellable workflow —
+// the case a cancel is FOR. It counts its calls so a test can prove the read
+// happened (or, on the refusal paths, that the mutation did not).
+func existingWorkflowRead(calls *int) getWorkflowFn {
+	return func(_ context.Context, id string) (*genapi.Workflow, json.RawMessage, error) {
 		if calls != nil {
 			*calls++
 		}
-		if seenID != nil {
-			*seenID = id
-		}
-		if err != nil {
-			return nil, err
-		}
-		return json.RawMessage(reply), nil
-	}}
+		raw := json.RawMessage(`{"id":"` + id + `","status":"` + genapi.StatusProcessing + `"}`)
+		return &genapi.Workflow{ID: id, Status: genapi.StatusProcessing}, raw, nil
+	}
 }
 
 func TestWorkflowsCancel_Success(t *testing.T) {
@@ -243,22 +267,41 @@ func TestWorkflowsCancel_JSONEmitsAParseableDocument(t *testing.T) {
 }
 
 // End-to-end over httptest: the real client, the real envelope, no live server.
+//
+// Both seams are the real client's, so this pins the METHOD and PATH of each:
+// the existence read (#341) is a GET on getWorkflow, the cancel a POST on
+// cancelWorkflow.
 func TestWorkflowsCancel_AgainstHTTPTest(t *testing.T) {
-	var method, path string
+	var mu sync.Mutex
+	seen := map[string]string{} // path -> method
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		method, path = r.Method, r.URL.Path
+		mu.Lock()
+		seen[r.URL.Path] = r.Method
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path == genapi.GetWorkflowPath {
+			_, _ = fmt.Fprintf(w, `{"result":{"data":{"json":{"id":"wf_1","status":%q,"steps":[]}}}}`, genapi.StatusProcessing)
+			return
+		}
 		_, _ = w.Write([]byte(`{"result":{"data":{}}}`))
 	}))
 	defer srv.Close()
 
 	gen := genapi.New(srv.URL, "test-key")
 	c, out, _ := genCmd("")
-	if err := runWorkflowsCancel(c, workflowsCancelDeps{cancelWorkflow: gen.CancelWorkflow}, workflowsCancelOpts{assumeYes: true}, "wf_1"); err != nil {
+	if err := runWorkflowsCancel(c, workflowsCancelDeps{
+		cancelWorkflow: gen.CancelWorkflow,
+		getWorkflow:    gen.GetWorkflow,
+	}, workflowsCancelOpts{assumeYes: true}, "wf_1"); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
-	if method != http.MethodPost || path != genapi.CancelWorkflowPath {
-		t.Errorf("request = %s %s, want POST %s", method, path, genapi.CancelWorkflowPath)
+	mu.Lock()
+	defer mu.Unlock()
+	if seen[genapi.GetWorkflowPath] != http.MethodGet {
+		t.Errorf("the existence read was %q on %s, want GET", seen[genapi.GetWorkflowPath], genapi.GetWorkflowPath)
+	}
+	if seen[genapi.CancelWorkflowPath] != http.MethodPost {
+		t.Errorf("the cancel was %q on %s, want POST", seen[genapi.CancelWorkflowPath], genapi.CancelWorkflowPath)
 	}
 	if !strings.Contains(out.String(), "wf_1") {
 		t.Errorf("stdout = %q", out.String())
