@@ -36,22 +36,35 @@ import (
 
 // agentsMaxBytes is the ceiling on AGENTS.md.
 //
-// Achieved size at the split: 63,063 bytes. The ceiling is 68,000 — 4,937 bytes
-// (~7.8%) of headroom. That number is chosen against what it has to absorb:
+// Achieved size: 67,213 bytes. The ceiling is 67,500 — 287 bytes of headroom,
+// deliberately far tighter than the 4,937 it replaced, because a COMPRESSION
+// PASS measured that the old headroom's premise no longer holds.
 //
-//   - A new item written as a STUB runs ~600–700 bytes, so the headroom is
-//     roughly seven more items before anyone has to think about this again.
-//   - Ordinary prose edits — a retraction paragraph, a re-measured number, a new
-//     bullet in a small item — are tens to a few hundred bytes each.
-//   - A new item written as a FULL BODY is 8.5–28 kB (the nine that were split
-//     spanned exactly that range), so it blows the ceiling immediately and by a
-//     wide margin. That is the case this guard exists to catch, and the margin
-//     is why the headroom can be generous without the guard going slack.
+// 🔴 THE HEADROOM IS SMALL BECAUSE SQUEEZING IS NO LONGER AN OPTION. The old
+// number assumed that when the file got close, prose could be tightened to make
+// room. That was measured and it is false: a full lossless compression pass over
+// every unsplit item and every prose section recovered 586 bytes — 0.86% — and
+// most of that came from ONE genuine cross-item duplication (item 19(e) restated
+// item 17's credential argument in full). Mechanically, the file holds only 23
+// repeated 7-word n-grams in 67 kB, and every one is a deliberate parallel
+// construction rather than accidental redundancy. The prose is at its floor.
+//
+// So headroom here no longer means "slack to grow into". It means: THE BUDGET
+// BEFORE AN EVICTION IS MANDATORY.
+//
+//   - 287 bytes absorbs a re-measured number or a corrected sentence.
+//   - It does NOT absorb a new retraction paragraph (300–800 bytes), a new stub
+//     (~600–700), or a new item written as a full body (8.5–28 kB).
+//   - Anything in that second list must be paid for by MOVING a body out, not by
+//     raising this constant. The failure message prints the eviction playbook and
+//     ranks the candidates; items 10 (7,795 bytes) and 19 (7,801) are the two
+//     largest still inline, and both are byte-identical to agentsSplitBase, so
+//     their digests can be taken straight from `git show <base>:AGENTS.md`.
 //
 // Do not raise this to make a large item fit. Split the item.
-const agentsMaxBytes = 68_000
+const agentsMaxBytes = 67_500
 
-// agentsMaxBytesCeiling bounds agentsMaxBytes itself. 80,000 is ~28% above the
+// agentsMaxBytesCeiling bounds agentsMaxBytes itself. 80,000 is ~19% above the
 // achieved size: past that the numbered list is back to being a per-session cost
 // large enough that the split bought nothing, so raising agentsMaxBytes beyond
 // it is a decision about the whole approach, not a bump.
