@@ -1,0 +1,188 @@
+# A reusable "file your own report" job for unattended workflows.
+#
+# WHY THIS EXISTS. A red SCHEDULED run reaches almost nobody: GitHub sends
+# scheduled-workflow failure mail only to whoever last edited the `cron` line,
+# through that person's own per-user Actions setting, and there is no org, team
+# or repo-level Actions failure notification to widen it. #313 measured that in
+# this repo and built the mechanism below for the daily Homebrew cask check —
+# using `bump-flake-vendorhash.yml` as its evidence, because that workflow had
+# failed every scheduled run for three weeks while 30+ issues were filed by hand
+# and not one was about it.
+#
+# It then took another month for anyone to notice that bot was broken, which is
+# the argument for this file rather than a second copy of that job: the pattern
+# is not cask-specific and the next unattended workflow should not have to
+# re-derive it. `release-homebrew.yml` still carries its OWN copy — see the
+# migration note at the bottom.
+#
+# THE ANTI-SPAM RULES, which are the whole design (mechanism and rationale from
+# #313; read that job's header comment for the longer form):
+#   * ONE open issue at a time, found by the caller's title MARKER over a plain
+#     issue LIST — never a search query, whose index is eventually consistent
+#     and would let two runs each conclude "there isn't one yet".
+#   * A repeat failure REWRITES the body. Editing a body notifies nobody, so a
+#     workflow failing daily for a week is one issue, zero comments, and a body
+#     that always describes the most recent run.
+#   * A comment — the one notifying update — is posted ONLY when the `state`
+#     changes, because that is the only change that alters what a human should
+#     do. The previous state is read from a marker in the BODY, not the title,
+#     so renaming the issue by hand does not fake a change.
+#   * A green run CLOSES the issue. That is not cosmetic: it resets the
+#     mechanism so the NEXT failure opens a fresh issue and notifies again,
+#     instead of silently deduping into a stale thread.
+#
+# The caller owns WHAT to say (title/body/state); this workflow owns only WHEN
+# to open, edit, comment or close. Keep it that way — the moment it starts
+# composing messages it stops being reusable.
+name: failure-issue
+
+on:
+  workflow_call:
+    inputs:
+      marker:
+        description: "Title prefix identifying this reporter's issue, e.g. `[vendorhash-bot]`. Must be unique per caller — two callers sharing a marker would fight over one issue."
+        required: true
+        type: string
+      failing:
+        description: "true = something is wrong and should be reported; false = green, close any open report."
+        required: true
+        type: boolean
+      title:
+        description: "Issue title. MUST start with `marker` (asserted below). Ignored when failing=false."
+        required: false
+        type: string
+        default: ""
+      body:
+        description: "Markdown body describing the failure. Ignored when failing=false."
+        required: false
+        type: string
+        default: ""
+      state:
+        description: "Short key for the KIND of failure (e.g. `recompute-failed`). A change between runs posts the one notifying comment."
+        required: false
+        type: string
+        default: "failing"
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The only elevated permission here, scoped to this job.
+      issues: write
+    steps:
+      - name: Open, update or close the report issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          MARKER: ${{ inputs.marker }}
+          FAILING: ${{ inputs.failing }}
+          TITLE: ${{ inputs.title }}
+          BODY: ${{ inputs.body }}
+          STATE: ${{ inputs.state }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # Note the errexit shape: GitHub runs this as `bash -e {0}`, so
+          # errexit is already on and `set -uo pipefail` does NOT clear it.
+          # That trap broke #313's own drill and every run of
+          # bump-flake-vendorhash.yml. Nothing below is expected to fail, so
+          # errexit is welcome here — but do not add a command that IS expected
+          # to fail without handling its status where you write it.
+          set -uo pipefail
+
+          STATE_MARK_PREFIX="<!-- failure-issue-state:"
+
+          if [ -z "$MARKER" ]; then
+            echo "::error::failure-issue was called with an empty marker — it would match every issue in the repo"
+            exit 1
+          fi
+
+          # ONE open issue, found by LISTING. See the header: a search query's
+          # index is eventually consistent and would open duplicates.
+          existing="$(gh issue list --state open --limit 500 --json number,title \
+            --jq "[.[] | select(.title | startswith(\"$MARKER\"))] | first | .number // empty")"
+
+          # ---- green ---------------------------------------------------------
+          if [ "$FAILING" != "true" ]; then
+            if [ -n "$existing" ]; then
+              cat >"$RUNNER_TEMP/recovered.md" <<EOF
+          ✅ Green again as of [this run]($RUN_URL) (trigger: \`$EVENT_NAME\`).
+
+          Closing. The next failure opens a **new** issue rather than reusing this one — that is deliberate, so a
+          fresh failure notifies rather than silently deduping into a closed-then-reopened thread.
+          EOF
+              gh issue comment "$existing" --body-file "$RUNNER_TEMP/recovered.md"
+              gh issue close "$existing" --reason completed
+              echo "closed #$existing"
+            else
+              echo "green, and no open report issue — nothing to do."
+            fi
+            exit 0
+          fi
+
+          # ---- failing -------------------------------------------------------
+          if [ -z "$TITLE" ] || [ -z "$BODY" ]; then
+            echo "::error::failure-issue was called with failing=true but an empty title or body — it cannot file a report that says nothing"
+            exit 1
+          fi
+          case "$TITLE" in
+            "$MARKER"*) ;;
+            *)
+              echo "::error::the title must start with the marker ($MARKER), or the dedupe lookup cannot find this issue again and every run would open a new one. Got: $TITLE"
+              exit 1
+              ;;
+          esac
+
+          {
+            echo "$STATE_MARK_PREFIX $STATE -->"
+            echo "<!-- This body is REWRITTEN by every failing run. Put notes in a COMMENT;"
+            echo "     anything typed into the body is overwritten by the next run. -->"
+            echo
+            echo "$BODY"
+            echo
+            echo "---"
+            echo "[Run log]($RUN_URL) (trigger: \`$EVENT_NAME\`). Run logs expire after 90 days; this issue does not."
+            echo
+            echo "Filed automatically via \`.github/workflows/failure-issue.yml\`, which keeps ONE open issue at a"
+            echo "time: a repeat failure rewrites this body (notifying nobody) and a green run closes the issue."
+          } >"$RUNNER_TEMP/body.md"
+
+          if [ -z "$existing" ]; then
+            num="$(gh issue create --title "$TITLE" --body-file "$RUNNER_TEMP/body.md" | sed 's#.*/##')"
+            echo "opened #$num (state=$STATE)"
+            exit 0
+          fi
+
+          # Read the PREVIOUS state out of the body marker, so a hand-renamed
+          # issue does not read as a state change.
+          prev="$(gh issue view "$existing" --json body --jq .body \
+            | sed -n "s#^$STATE_MARK_PREFIX \(.*\) -->#\1#p" | head -1)"
+
+          gh issue edit "$existing" --body-file "$RUNNER_TEMP/body.md" >/dev/null
+          if [ "$TITLE" != "$(gh issue view "$existing" --json title --jq .title)" ]; then
+            gh issue edit "$existing" --title "$TITLE" >/dev/null
+          fi
+
+          if [ -n "$prev" ] && [ "$prev" != "$STATE" ]; then
+            cat >"$RUNNER_TEMP/changed.md" <<EOF
+          ⚠️ The failure changed kind: \`$prev\` → \`$STATE\` ([run]($RUN_URL)).
+
+          The body above now describes the new state. This comment is posted only on a CHANGE of kind, so a
+          workflow failing the same way every day stays a single silent update.
+          EOF
+            gh issue comment "$existing" --body-file "$RUNNER_TEMP/changed.md"
+            echo "updated #$existing and commented ($prev -> $STATE)"
+          else
+            echo "updated #$existing (state=$STATE, unchanged — no comment posted)"
+          fi
+
+# MIGRATION NOTE. `release-homebrew.yml`'s `signal` job predates this file and
+# still carries its own copy of the mechanism. It was deliberately NOT migrated
+# in the PR that added this workflow: that job is on the RELEASE path, it was
+# merged and fire-drilled days earlier, and its extra machinery (a kind taxonomy
+# with six states, an artifact download, and body composition keyed to
+# caskcheck's output) would all have to move into its caller first. Migrating it
+# is a good follow-up — do it as its own change, and re-run its `drill=broken`
+# dispatch afterwards, because that is the only thing that proves the reporting
+# path still works.

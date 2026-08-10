@@ -14,6 +14,41 @@
 # back. On a run with no drift the recomputed hash equals the committed one, the
 # write-back is a no-op, `git status --porcelain` is empty, and NO PR is opened.
 #
+# 🔴 THAT DANCE IS BUILT ON A COMMAND THAT IS *SUPPOSED* TO FAIL, AND FOR ITS
+# WHOLE LIFE `set -e` KILLED THE STEP THE INSTANT IT DID. Every run of this
+# workflow since it was added failed — 6 for 6, on BOTH triggers (schedule and
+# push), zero successes ever. GitHub invokes a `run:` block as `bash -e {0}`, so
+# errexit is on before the first line and `set -uo pipefail` does NOT clear it;
+# `pipefail` then propagated `nix build`'s deliberate non-zero through the
+# `GOT="$(nix build … | grep … )"` pipeline, and errexit aborted the step AT THE
+# ASSIGNMENT — before the parse it had already done could be used. This is the
+# identical trap #313 hit in `release-homebrew.yml`; read that workflow's notes
+# too, because knowing about it there did not prevent it here.
+#
+# The failure was also SILENT, which is why it survived a month: `nix build`'s
+# entire output was captured into the command substitution, so nothing reached
+# the log. The step printed literally nothing — not even its own `::error::`,
+# which is downstream of the assignment that killed it — and the run showed only
+# `Process completed with exit code 1` after ~19s. So the two fixes below are a
+# pair, and neither is optional:
+#
+#   1. `nix build`'s failure is EXPECTED and is handled explicitly (`|| true`),
+#      never left to errexit.
+#   2. Its output goes to a FILE that is parsed and, on any parse failure,
+#      PRINTED. A step that cannot recompute the hash now says what nix actually
+#      said instead of exiting 1 with an empty log.
+#
+# Nothing here may rely on errexit to catch an error it can predict. If you add
+# a command that is expected to fail, handle its status where you write it.
+#
+# A RED RUN OF THIS WORKFLOW NOW FILES ITS OWN ISSUE — see the `signal` job.
+# That is the second half of the same lesson: this bot was broken for a month
+# and nothing said so, because a failing scheduled run notifies only whoever
+# last edited the `cron` line. #313 built that reporting mechanism for the
+# Homebrew cask check, CITING this workflow's unbroken run of failures as the
+# evidence; the generic core now lives in `failure-issue.yml` and this is its
+# first caller.
+#
 # Run manually anytime via the Actions tab → this workflow → "Run workflow"
 # (workflow_dispatch). It also runs weekly and on any push to main that touches
 # go.mod/go.sum/flake.nix/flake.lock (so a dep change gets a prompt fix, not
@@ -26,7 +61,12 @@ on:
     # (bump-scaffold-pins 07:17, revendor-canonical-schema 07:37). Cron literal
     # in YAML needs quoting so the `*` isn't parsed as a YAML alias.
     - cron: "47 7 * * 1"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: "Fire drill: skip the real nix build and feed the parser a canned unparseable log, so the FAILURE path and the issue it files can be rehearsed. Opens a REAL issue — close it when you are done. It cannot open a PR: the drill fails at the recompute step, which is upstream of every step that writes anything."
+        type: boolean
+        default: false
   push:
     branches: [main]
     paths:
@@ -42,6 +82,14 @@ permissions:
 jobs:
   bump:
     runs-on: ubuntu-latest
+    # Read by the `signal` job to describe WHAT went wrong. `state` is empty
+    # when the job died before the classifier ran (a runner failure, a checkout
+    # failure, nix failing to install) — which `signal` resolves to `unknown`,
+    # a real and different state from any verdict this job produces.
+    outputs:
+      state: ${{ steps.classify.outputs.state }}
+      title: ${{ steps.classify.outputs.title }}
+      body: ${{ steps.classify.outputs.body }}
     steps:
       - uses: actions/checkout@v4
 
@@ -55,18 +103,97 @@ jobs:
       # write it back into flake.nix. On a no-drift run the parsed hash equals
       # the committed one, so this leaves flake.nix byte-identical (no-op) and
       # the detect-changes gate below opens no PR.
+      #
+      # Read the errexit note in this file's header before editing this step:
+      # `nix build` failing IS the mechanism, and letting the shell treat that
+      # as an error is what broke every run of this workflow.
       - name: recompute flake vendorHash
+        id: recompute
+        env:
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || false }}
         run: |
-          set -euo pipefail
+          # Deliberately NOT `set -e`. GitHub already runs this as `bash -e {0}`
+          # so errexit is on regardless — the point is that no line below may
+          # DEPEND on it, because the one command that matters here is expected
+          # to exit non-zero. `pipefail` is also gone: it existed only to make
+          # the old single-pipeline parse strict, and it is what turned that
+          # expected failure into a dead step.
+          set -u
+
           FAKE='sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='
-          sed -i "s#vendorHash = \"sha256-[^\"]*\";#vendorHash = \"$FAKE\";#" flake.nix
-          GOT="$(nix build .#default 2>&1 | grep -oE 'sha256-[A-Za-z0-9+/=]{40,}' | grep -v "$FAKE" | tail -1)"
-          if [ -z "$GOT" ]; then
-            echo "::error::failed to parse a recomputed vendorHash from the nix build output" >&2
+          LOG="$RUNNER_TEMP/nix-build.log"
+
+          # Read the committed hash BEFORE overwriting it, so a failure can
+          # report expected-vs-got rather than just "something went wrong".
+          COMMITTED="$(sed -n 's/^[[:space:]]*vendorHash = "\(sha256-[^"]*\)";.*/\1/p' flake.nix | head -1)"
+          if [ -z "$COMMITTED" ]; then
+            echo "::error::no \`vendorHash = \"sha256-…\";\` line in flake.nix — the sed pattern this job relies on no longer matches. flake.nix's vendorHash line was reshaped; update both seds in this step."
+            grep -n 'vendorHash' flake.nix || echo "(no vendorHash line at all)"
             exit 1
           fi
-          echo "recomputed vendorHash = $GOT"
+          echo "committed   vendorHash = $COMMITTED"
+
+          sed -i "s#vendorHash = \"sha256-[^\"]*\";#vendorHash = \"$FAKE\";#" flake.nix
+
+          # EXPECTED to exit non-zero: the fake hash is what forces the mismatch
+          # we parse. `|| true` is load-bearing — without it errexit ends the
+          # step here, which is exactly what this workflow did 6 runs running.
+          # Output goes to a FILE so it can be parsed AND shown on failure; the
+          # old version piped it into `$( … )`, which is why the log was empty.
+          if [ "$DRILL" = "true" ]; then
+            # Fire drill: feed the REAL parser a log with no hash mismatch in
+            # it, so the genuine failure branch below runs. Rehearsing the
+            # report against a stub of the report would prove nothing.
+            echo "⚠️  FIRE DRILL — skipping the real nix build and using a canned unparseable log."
+            {
+              echo "error: this is a fire drill fixture, not a real nix failure"
+              echo "       dispatched by hand to rehearse the reporting path"
+            } >"$LOG"
+          else
+            nix build .#default >"$LOG" 2>&1 || true
+          fi
+
+          # Parse the `got:` that PAIRS with our own `specified:` line, rather
+          # than "the last sha256- token anywhere in the output". Nix prints
+          #     specified: sha256-<fake>
+          #        got:    sha256-<real>
+          # and pairing them means a DIFFERENT fixed-output derivation failing
+          # in the same build cannot donate its hash to our vendorHash.
+          # Format verified identical on nix 2.22.3 (the 2.22.1 family
+          # install-nix-action@v27 pins) and on nix 2.31.3.
+          GOT="$(awk -v fake="$FAKE" '
+            $1 == "specified:" { pending = ($2 == fake); next }
+            pending && $1 == "got:" { print $2; pending = 0 }
+          ' "$LOG" | tail -1)"
+
+          if [ -z "$GOT" ]; then
+            git checkout -- flake.nix
+            echo "::error::could not parse a recomputed vendorHash from the nix build output — no \`got:\` line paired with our \`specified: $FAKE\`. Either the build failed before reaching the vendor fetch, or nix changed the hash-mismatch wording. The full output follows; flake.nix has been restored."
+            echo "--- nix build output ($(wc -l <"$LOG") lines) ---"
+            cat "$LOG"
+            echo "--- end nix build output ---"
+            exit 1
+          fi
+
+          if [ "$GOT" = "$COMMITTED" ]; then
+            echo "recomputed  vendorHash = $GOT"
+            echo "no drift — the committed hash is already correct"
+          else
+            echo "recomputed  vendorHash = $GOT"
+            echo "::notice::vendorHash drift: committed $COMMITTED, recomputed $GOT"
+          fi
+
           sed -i "s#vendorHash = \"sha256-[^\"]*\";#vendorHash = \"$GOT\";#" flake.nix
+
+          # Never leave the FAKE hash in the tree. Without this a write-back
+          # that silently failed to match would hand the steps below a flake.nix
+          # containing the fake hash — which `detect changes` would read as
+          # drift and propose as a PR.
+          if ! grep -qF "vendorHash = \"$GOT\";" flake.nix; then
+            git checkout -- flake.nix
+            echo "::error::write-back failed — flake.nix does not contain the recomputed hash $GOT after the substitution. flake.nix has been restored; no PR will be opened."
+            exit 1
+          fi
 
       # Only validate + open a PR when the recompute actually rewrote the hash —
       # a no-op run (hash already correct) skips everything downstream.
@@ -85,14 +212,17 @@ jobs:
       # defense-in-depth: the recomputed hash must produce a flake that builds
       # and yields a runnable binary.
       - name: validate — flake builds with the new vendorHash
+        id: validate_build
         if: steps.changed.outputs.changed == 'true'
         run: nix build .#default
 
       - name: validate — the built binary runs
+        id: validate_run
         if: steps.changed.outputs.changed == 'true'
         run: ./result/bin/civitai version
 
       - name: open PR if vendorHash changed
+        id: pr
         if: steps.changed.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
@@ -124,3 +254,89 @@ jobs:
             (`secrets.BUMP_SCAFFOLD_PINS_TOKEN`, Contents + Pull requests RW on
             this repo only), not the default `GITHUB_TOKEN` — so the repo's
             `flake` check re-runs the build on it as an independent confirmation.
+
+      # Name WHICH step failed, for the issue the `signal` job files. `always()`
+      # so it still runs after a failed step — without it this is skipped
+      # exactly when it is needed, and `signal` would only ever see `unknown`.
+      # Each phase gets its own state because they call for different actions: a
+      # parse failure is this job's own bug, a validate failure means the
+      # recomputed hash is wrong, and a PR failure is usually the token.
+      - name: classify the outcome
+        id: classify
+        if: always()
+        env:
+          R_RECOMPUTE: ${{ steps.recompute.outcome }}
+          R_CHANGED: ${{ steps.changed.outcome }}
+          R_VALIDATE_BUILD: ${{ steps.validate_build.outcome }}
+          R_VALIDATE_RUN: ${{ steps.validate_run.outcome }}
+          R_PR: ${{ steps.pr.outcome }}
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || false }}
+        run: |
+          set -uo pipefail
+
+          if [ "$R_RECOMPUTE" != "success" ]; then
+            state=recompute-failed
+            title="the Nix flake vendorHash bot cannot recompute the hash"
+            detail="The \`recompute flake vendorHash\` step failed. It could not parse a hash out of \`nix build\`'s output, or the build never reached the vendor fetch. **The step prints nix's full output on this path — read the run log, the reason is in it.**"
+          elif [ "$R_CHANGED" != "success" ]; then
+            state=detect-failed
+            title="the Nix flake vendorHash bot failed while checking for changes"
+            detail="The \`detect changes\` step failed, which is unusual — it only runs \`git status\`."
+          elif [ "$R_VALIDATE_BUILD" = "failure" ] || [ "$R_VALIDATE_RUN" = "failure" ]; then
+            state=validate-failed
+            title="the Nix flake vendorHash bot recomputed a hash that does not build"
+            detail="A new vendorHash was computed, but \`nix build .#default\` or the built binary then failed with it. **No PR was opened.** This means the recompute produced a hash the flake cannot use — treat the flake as broken for \`nix run\` until a human looks."
+          elif [ "$R_PR" = "failure" ]; then
+            state=pr-failed
+            title="the Nix flake vendorHash bot could not open its PR"
+            detail="The hash was recomputed and validated, but opening the PR failed — usually \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` being expired or missing. **The fix is still un-merged**, so \`nix run github:civitai/cli\` stays broken until someone bumps the hash by hand or repairs the token."
+          else
+            state=green
+            title=""
+            detail=""
+          fi
+
+          DRILL_NOTE=""
+          if [ "$DRILL" = "true" ]; then
+            DRILL_NOTE="> ⚠️ **This is a fire drill**, dispatched by hand with \`drill=true\`. The nix build was skipped and the parser was handed a canned unparseable log, so this is NOT a real failure of the bot — it exists to prove this reporting path works. Close it when you are done."
+          fi
+
+          echo "state=$state"
+          {
+            echo "state=$state"
+            echo "title=[vendorhash-bot] $title"
+            echo "body<<VENDORHASH_BODY_EOF"
+            if [ -n "$DRILL_NOTE" ]; then
+              echo "$DRILL_NOTE"
+              echo
+            fi
+            echo "$detail"
+            echo
+            echo "While this is failing, a \`vendorHash\` that drifts from \`go.sum\` will NOT be fixed automatically, and \`nix run github:civitai/cli\` breaks silently for anyone installing that way. The \`flake\` check on a PR touching \`go.mod\`/\`go.sum\` still DETECTS the drift — only the remediation is down."
+            echo
+            echo "To recompute by hand: set \`vendorHash\` in \`flake.nix\` to \`lib.fakeHash\`, run \`nix build\`, and copy the \`got: sha256-…\` value out of the error."
+            echo "VENDORHASH_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  # File a report when the bot is broken, and close it when it recovers. See
+  # `failure-issue.yml` for why this is an issue rather than email, and for the
+  # rules that stop it becoming noise.
+  #
+  # `always()` so a red `bump` job still reports; `!= 'cancelled'` so a hand
+  # cancellation is not filed as a defect.
+  signal:
+    needs: [bump]
+    if: always() && needs.bump.result != 'cancelled'
+    uses: ./.github/workflows/failure-issue.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      marker: "[vendorhash-bot]"
+      failing: ${{ needs.bump.result != 'success' }}
+      # Empty when `bump` died before the classifier ran — a runner failure, a
+      # failed checkout, nix failing to install. That is its own state and must
+      # not borrow the wording of a verdict this job never reached.
+      state: ${{ needs.bump.outputs.state || 'unknown' }}
+      title: "${{ needs.bump.outputs.title || '[vendorhash-bot] the Nix flake vendorHash bot could not run' }}"
+      body: "${{ needs.bump.outputs.body || 'The `bump` job failed before it could classify what went wrong, so it did not reach the end of the recompute step. Check the run log — the usual causes are the runner dying, the checkout failing, or `install-nix-action` failing.' }}"
