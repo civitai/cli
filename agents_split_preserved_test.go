@@ -42,7 +42,7 @@ import (
 // independent ways:
 //
 //  1. THE BODIES BEING MOVED HAD CHANGED. #297's compression pass rewrote both
-//     items in AGENTS.md — item 10 by 23 bytes, item 19 by 78 — so neither is
+//     items in AGENTS.md — item 10 by 22 bytes, item 19 by 77 — so neither is
 //     byte-identical to c5c3817 any more. (agents_size_test.go's own comment
 //     asserted the opposite, "both are byte-identical to agentsSplitBase"; it
 //     was written before that pass landed and was already false. Re-measure a

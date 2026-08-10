@@ -248,12 +248,14 @@ ceiling. That is a design task, not a prompt.
    this for real: it drafted a new item (which would have been the 28th), found it did not fit, and correctly refused to fake an
    eviction (the playbook requires pinning a `sha256` at `agentsSplitBase`, where the new item
    never existed, so claiming a verbatim move would be false). Its rationale lives in code doc
-   comments instead. Closed by evicting BOTH items 10 and 19: 67,213 → 53,716 bytes, ceiling
-   re-pinned to 54,000.
+   comments instead. Closed by PR #305, which evicted BOTH items 10 and 19.
+   **The figures above are the pre-#297 state**; #297 then compressed the file to 67,213 and
+   lowered the ceiling to 67,500, and #305 took it from there to **53,950 bytes** (−13,263,
+   19.7%) with the ceiling re-pinned to **54,250** and `agentsMaxBytesCeiling` to **64,000**.
    🔴 **The parenthetical here — "both at the split base, so the playbook works" — was FALSE by
    the time it was read**, and it is left visible rather than deleted because it is the reason
-   that PR's shape changed. #297's compression pass had already rewritten both items (10 by 23
-   bytes, 19 by 78), so neither was byte-identical to `agentsSplitBase` and a digest taken there
+   that PR's shape changed. #297's compression pass had already rewritten both items (10 by 22
+   bytes, 19 by 77), so neither was byte-identical to `agentsSplitBase` and a digest taken there
    would have pinned text that was not what was moved. `agents_size_test.go` carried the same
    false claim in its own comment. The fix was a **per-item `base` field** on the splitItems
    table — a body's base commit is fixed at the moment it is evicted, and after wave 1 the nine

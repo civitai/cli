@@ -66,7 +66,7 @@ import (
 // AND THAT IS THE LESSON. It named items 10 and 19 with their byte sizes and
 // asserted "both are byte-identical to agentsSplitBase, so their digests can be
 // taken straight from `git show <base>:AGENTS.md`". By the time anyone read it
-// that was FALSE — #297's compression pass had rewritten both, 23 bytes and 78
+// that was FALSE — #297's compression pass had rewritten both, 22 bytes and 77
 // bytes respectively — so the shortcut it offered would have pinned text that
 // was not what was being moved. A hand-maintained ranking in a comment goes
 // stale silently while reading as current; evictionPlaybook() computes the same
@@ -82,7 +82,7 @@ const agentsMaxBytes = 54_250
 // it is a decision about the whole approach, not a bump.
 //
 // 🔴 IT MOVES DOWN WITH THE ACHIEVED SIZE, OR IT STOPS BOUNDING ANYTHING. Left
-// at the 80,000 that was ~19% above the PRE-wave-2 size, it would sit ~49% above
+// at the 80,000 that was ~19% above the PRE-wave-2 size, it would sit ~48% above
 // the achieved one — enough slack to re-inline both items just moved out and
 // still pass, which is the same "a ceiling nobody bounds" failure one level up.
 // Whoever completes the next wave re-derives this from the new achieved size in
