@@ -233,6 +233,31 @@ type generateOpts struct {
 func newGenerateCmd() *cobra.Command {
 	var o generateOpts
 
+	// 🔴 TWO PARAGRAPHS BELOW ARE DOGFOOD SCAR TISSUE. Both are DOCS-ONLY fixes:
+	// neither adds a check, and neither may grow into one (item 13).
+	//
+	// #345, the checkpoint/ecosystem coupling. The help's headline example was
+	// `--checkpoint 128713 --lora 250712:0.8` on the DEFAULT ecosystem. Run once
+	// with a live token (2026-08-10): charged 8 Buzz, queued 15 min, ran 4.5 min,
+	// `Status: failed`, 0 deliverable outputs. The submitted graph was a hybrid —
+	// `diffuserModel: urn:air:sd1:checkpoint:civitai:4384@128713` (SD 1.5) beside
+	// `ecosystem: zImage`, `engine: sdcpp`, `steps: 9`, `cfgScale: 1`. `--dry-run`
+	// had said `Resources ready: true` beforehand. ONE paid observation, not
+	// independently reproduced — reproducing it costs Buzz — which is why the help
+	// says the settings do not follow the checkpoint (what was observed) and never
+	// names a model/ecosystem pairing. Which checkpoint belongs to which ecosystem
+	// is server state with a shelf life; vendoring it is exactly what item 13
+	// forbids, so the example uses placeholders and hands the pairing to the user.
+	// The design question — should --checkpoint carry its ecosystem, and should
+	// `Resources ready` be able to see this? — is civitai/cli#352, deliberately
+	// NOT answered here.
+	//
+	// #329, the help gap. RAW GRAPHS said only "graph parameters this CLI has no
+	// flag for" and never named them, so there was no discoverable route to a
+	// seed. The four names come from fields genapi.Graph already models, so
+	// naming them vendors nothing. 🔴 THE FLAGS STAY REFUSED: item 14 measured
+	// `steps: 0` accepted at a 0.333 cost factor — billed, wrong output — which
+	// is the whole reason there is no --steps.
 	cmd := &cobra.Command{
 		Use:   "generate [prompt]",
 		Short: "Generate images from a text prompt (SPENDS BUZZ)",
@@ -280,6 +305,19 @@ billed. This command therefore resolves every --checkpoint / --lora id against
 the public model-version API BEFORE submitting, so a bad id is a hard local
 error instead of a wrong charge, and it echoes the resolved model NAME in the
 confirmation so you approve a name rather than an integer.
+
+🔴 NAMING A CHECKPOINT DOES NOT MOVE THE ECOSYSTEM WITH IT. --checkpoint selects
+a model version and nothing else. The settings the server generates with —
+engine, steps, cfg scale, sampler — follow the ECOSYSTEM (--ecosystem, or the
+server's default when you pass none), not the checkpoint you named, and there is
+no --steps or --cfg-scale here to correct them (see RAW GRAPHS below). A
+checkpoint paired with an ecosystem it does not belong to is refused by nothing —
+not by this CLI, not by the estimator, not by the generator. The job is accepted
+and charged, and it can finish having produced no usable output. The
+model-version lookup above proves the id EXISTS, not that it fits, and "Resources
+ready" does not answer it either. Which ecosystem a given checkpoint belongs to is
+server knowledge this CLI does not hold and will not guess: if you name a
+checkpoint, name the --ecosystem it belongs to as well.
 
 🔴 --dry-run's "Resources ready" line is NOT A PROMISE OF OUTPUT. It echoes the
 server's ` + "`ready`" + ` flag, which reports only that the resources this job needs are
@@ -336,9 +374,15 @@ dropped with no error and the truncated job is billed. The CLI refuses more than
 
 RAW GRAPHS: --input <file> (or --input -) sends a generation-graph JSON document
 exactly as written, instead of building one from the flags above. It is how you
-reach graph parameters this CLI has no flag for. Get a valid starting point with
---print-input, which assembles the graph, prints it, and exits without
-submitting or even pricing anything.
+reach graph parameters this CLI has no flag for — seed, steps, cfgScale and
+sampler among them. None of the four has a flag today, and for steps and cfgScale
+that is deliberate: the server ACCEPTS a zero for either, prices the degenerate
+job cheaper, and bills it, so a flag whose unset value could reach the request
+would buy a broken run at a discount. In a graph file they are yours to set and
+yours to get right — a seed set there is what makes a run reproducible — and
+nothing in that file is checked, defaulted or completed by this CLI. Get a valid
+starting point with --print-input, which assembles the graph, prints it, and
+exits without submitting or even pricing anything.
 
 --input is txt2img only in this release. It cannot be combined with the content
 flags (--negative-prompt, --quantity, --aspect-ratio, --checkpoint, --lora) or
@@ -362,15 +406,19 @@ interpreted, so nothing in it is checked before you pay for it.`,
   # Generate 4 images, refusing if the estimate exceeds 50 Buzz
   civitai generate "a cat wearing sunglasses" --quantity 4 --max-cost 50
 
-  # A specific checkpoint plus a LoRA at 0.8 strength
-  civitai generate "a cat" --checkpoint 128713 --lora 250712:0.8
-
   # Image-to-image from a local file — --ecosystem is required
   civitai generate "make it winter" --ecosystem Flux1Kontext --image ./cat.png --dry-run
 
   # …or from a public URL, with two reference images
   civitai generate "combine these" --ecosystem Seedream \
     --image https://example.com/a.jpg --image ./b.png --yes
+
+  # Your own checkpoint (a VERSION id) plus a LoRA at 0.8 strength. A checkpoint
+  # does NOT bring its settings with it — steps, cfg scale and sampler follow the
+  # ecosystem — so name the ecosystem that checkpoint belongs to. Which one that
+  # is, is yours to know: nothing here checks the pair, and a mismatch is charged.
+  civitai generate "a cat" --ecosystem <key> --checkpoint <version-id> \
+    --lora <version-id>:0.8 --dry-run
 
   # Wait, and write the images into ./out
   civitai generate "a cat" --yes --out-dir ./out
@@ -391,7 +439,11 @@ interpreted, so nothing in it is checked before you pay for it.`,
   civitai generate --input graph.json --yes
 
   # …or pipe it straight through
-  jq '.prompt = "a dog"' graph.json | civitai generate --input - --dry-run`,
+  jq '.prompt = "a dog"' graph.json | civitai generate --input - --dry-run
+
+  # …which is also the only way to set a seed, steps, cfgScale or sampler —
+  # there is no flag for any of them.
+  jq '.seed = 12345' graph.json | civitai generate --input - --yes`,
 		// MaximumNArgs(1), not ExactArgs(1): a later release adds a prompt-less
 		// mode (--input). Today a missing prompt is a usage error, raised in
 		// validateGenerateOpts. 🔴 This command deliberately has NO subcommands —
