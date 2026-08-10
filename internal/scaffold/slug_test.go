@@ -18,19 +18,12 @@ func TestTitleFromSlug(t *testing.T) {
 	}
 }
 
-func TestSlugifyTooLongTrims(t *testing.T) {
-	long := "this-is-a-really-long-name-that-exceeds-the-forty-char-limit"
-	got, err := Slugify(long)
-	if err != nil {
-		t.Fatalf("Slugify: %v", err)
-	}
-	if len(got) > 40 {
-		t.Errorf("slug %q exceeds 40 chars (%d)", got, len(got))
-	}
-	if err := ValidateSlug(got); err != nil {
-		t.Errorf("trimmed slug %q should be valid: %v", got, err)
-	}
-}
+// TestSlugifyTooLongTrims is GONE, and its deletion is the behaviour change of
+// #291 rather than a tidy-up: it asserted that an over-length name derives a
+// trimmed slug with no error, which is exactly the silent truncation that let two
+// names mint one un-renameable blockId. Derivation now refuses. The replacement
+// coverage — the collision, both sides of the 40-char boundary, and the explicit
+// --slug control it was made consistent with — is in slug_length_test.go.
 
 func TestSlugifyAllPunctuationFails(t *testing.T) {
 	if _, err := Slugify("!!!"); err == nil {

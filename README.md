@@ -351,9 +351,23 @@ so name, blockId and directory are three fully independent axes.
 > a script passing a non-ASCII name, it must now pass `--slug <slug>`.** The old
 > output was wrong, so the break is the point — but it is a break.
 
-What derivation refuses is **letters, digits and marks** above ASCII that the
-slug alphabet cannot carry. Three things still derive rather than refuse, and
-they are deliberate:
+> **Breaking change.** Derivation also used to **truncate**. A name whose blockId
+> ran past the **40-character** cap was silently cut to fit, at exit 0 — so
+> `civitai app create "aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee"`
+> and the same 54-character name ending `ZZZZZZZZZZ` **both** minted
+> `aaaaaaaaaa-bbbbbbbbbb-cccccccccc-ddddddd`: two apps competing for one id that
+> cannot be renamed, with nothing local to tell the author it happened. An
+> **explicit** `--slug` of that length was already refused (`must be 3-40
+> chars`), so the derived path — the one a first-time author walks — was the
+> inconsistent one. It now refuses too, exiting **2** and naming the length.
+> **If you have a script passing a long name, it must now pass `--slug
+> <slug>`.** A name deriving **exactly 40** characters is *at* the cap, not over
+> it, and still derives byte-identically.
+
+Derivation refuses two things: **letters, digits and marks** above ASCII that the
+slug alphabet cannot carry, and a name whose blockId would **exceed 40
+characters**. Both refusals exit `2` and both are settled the same way — pass
+`--slug`. Three things still derive rather than refuse, and they are deliberate:
 
 | input | blockId | why |
 | --- | --- | --- |
@@ -2164,6 +2178,7 @@ a hand-written list does.)
 | --- | --- | --- |
 | `cannot derive a slug from` / `cannot appear in a blockId` | The name holds characters the blockId alphabet cannot carry, and dropping them would mint a **different permanent public id** than you typed. Choose one yourself with `--slug <slug>`. | [The blockId](#the-blockid) |
 | `is not valid UTF-8` | The same refusal one step earlier: the name's bytes cannot be read at all. Pass `--slug`, and a `--name` that is valid UTF-8. | [The blockId](#the-blockid) |
+| `… and the limit is …` | The name derives a blockId longer than the 40-character cap. It is **not** truncated — two names sharing the first 40 characters would be given the same un-renameable id. Pick a shorter one with `--slug <slug>`. | [The blockId](#the-blockid) |
 | `refusing to overwrite. Scaffold somewhere else` | `app create` / `app init` will not clobber a non-empty directory, and there is deliberately **no `--force`** — overwriting a directory you already have is not recoverable. Use `--dir <new path>`, or remove the directory first. | [Templates](#templates) |
 
 ### Validating and submitting

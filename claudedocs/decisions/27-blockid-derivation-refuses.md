@@ -30,6 +30,96 @@ deleting it:
 >     hatch (#259). 🔴 It NARROWS #259; it does not close it, and the residuals it
 >     knowingly ships with are enumerated in the evidence.
 
+## Amendment — #291: a FOURTH class existed, the list said three, and it is now closed
+
+🔴 **THE BODY BELOW THE RULE IS DIGEST-PINNED VERBATIM** against the AGENTS.md
+commit it was moved from (`agents_split_preserved_test.go`, re-derived from
+`git show <base>:AGENTS.md`). So a later correction to this item is written HERE,
+above the rule, and the historical body is left alone — that is the same
+convention the replaced stub above follows, and it keeps "the move was verbatim"
+a fact instead of a thing that used to be true.
+
+**What #291 found.** The residual enumeration in `internal/scaffold/slug.go`
+opened with "Three classes of input still derive a slug that quietly differs from
+the name, and all three are stated here". There were **four**. Missing was
+LENGTH: `Slugify` ended with `if len(s) > 40 { s = strings.Trim(s[:40], "-") }`,
+so a name whose blockId ran past the cap was silently cut, at rc 0. The issue
+reproduced it on `main` at `c5c3817`; it was re-measured here at `03c3863` by
+running the new tests against unmodified code, where
+`"aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee"` and the same
+54-character name ending `ZZZZZZZZZZ` — differing from character 44, well inside
+the region cut away — **both** minted
+`aaaaaaaaaa-bbbbbbbbbb-cccccccccc-ddddddd`, and `app create` scaffolded a project
+around it rather than erroring.
+
+🔴 **THE ENUMERATION WAS FILED AS THE DEFECT, SEPARATELY FROM THE TRUNCATION IT
+HID.** By this repo's own doctrine — item 20's "residuals this check knowingly
+ships with", and "a comment is a claim too" — a list that presents itself as
+complete and is not costs a reader more than no list, because it is the artefact
+they use to decide they have finished looking. The issue says so explicitly:
+whichever policy was chosen, "the enumeration must stop claiming three classes"
+was not optional.
+
+**The decision: REFUSE (option 1 of the three the issue offered), not warn.** The
+same 3–40 bound was already **enforced** on an explicit `--slug` (`slug %q must
+be 3-40 chars`, exit 2) and **silently applied** on the derived one. That
+asymmetry is what makes this a bug rather than a policy: the derived path is the
+one a first-time author walks. Refusing makes the two agree, and it is the same
+answer #259/#267 gave the non-ASCII case — refuse and ask for `--slug` rather
+than silently mint an identity the author did not type. Warn-and-continue was
+rejected for the reason the issue names: truncation alone is recoverable, but two
+apps competing for one un-renameable id is not something the author can detect
+locally, so a warning would leave the unrecoverable half in place.
+
+🔴 **THE SEAM IS `Slugify`, AND `SuffixSlug`'S TRUNCATION IS A DIFFERENT FEATURE
+THAT MUST NOT BE "FIXED" ALONGSIDE IT.** `SuffixSlug` deliberately shortens its
+base (`maxBase := maxSlugLen - 1 - len(suffix)`) so `base-<suffix>` fits. Both
+non-test callers were enumerated before choosing:
+
+- `Slugify` — ONE caller, `runAppScaffold` in `internal/cmd/app_init.go`, which
+  wraps the error in `asUsageError` (exit 2). It is the only place a NAME becomes
+  a blockId nobody has chosen yet, which is exactly where cutting substitutes a
+  different permanent public id.
+- `SuffixSlug` — ONE caller, `mintDevTokenWithRename` in
+  `internal/cmd/app_dev_token.go`. It is handed a slug the author ALREADY has
+  (read from `block.manifest.json`) which the server has just reported as
+  registered to another account; shortening the base to make room for the suffix
+  IS the operation, the author is told which slug replaced which, and the
+  manifest is rewritten. It does **not** call `Slugify`, so the two paths are
+  disjoint: the refusal cannot break it and it cannot bypass the refusal.
+
+**The four literal `40`s became one constant.** `maxSlugLen` (with `minSlugLen`)
+now backs `ValidateSlug`, `SuffixSlug`'s reservation and the new refusal.
+`ValidateSlug`'s message is rendered from them and is byte-identical
+(`must be 3-40 chars`), which a control test pins — #291 is what a disagreement
+between two copies of one bound costs, so "both paths cap at the same number" is
+made a fact rather than a claim.
+
+**Mutation matrix** (each mutant confirmed to die on THIS guard's error, not a
+neighbour's):
+
+| mutant | dies on |
+| --- | --- |
+| delete the refusal, restore `s = strings.Trim(s[:40], "-")` | 4 tests; the collision test names the pre-fix id `aaaaaaaaaa-bbbbbbbbbb-cccccccccc-ddddddd` and that BOTH names produced it |
+| invert to refuse every derived slug | 14 tests, including `TestAsciiDerivationIsUnchanged` and `TestSlugifyAsciiDerivationIsByteIdentical` — the positive control that ordinary names still derive |
+| `> maxSlugLen` → `>= maxSlugLen` | the exactly-40 tests only, with the length refusal's own message quoting a 40-character blockId |
+| `> maxSlugLen` → `> maxSlugLen+1` | the 41-character test only |
+
+**Residuals this refusal knowingly ships with** — stated because that is the
+whole lesson of this item:
+
+- **The CLI offers no suggested shorter slug.** Deliberate: the obvious
+  suggestion is the truncation, which is the colliding value the refusal exists
+  to avoid printing as if it were safe. The author is told the derived length,
+  the limit, and the flag.
+- **Collision with an app owned by SOMEONE ELSE is still not detectable at
+  scaffold time.** `app create` talks to no server; only `app dev-token` /
+  `app submit` learn the slug is taken (and `SuffixSlug` is the auto-rename that
+  answers it). #291 is only about the CLI minting a collision with *itself*.
+- **The bound is a vendored mirror.** `40` is the server's `SLUG_REGEX` bound,
+  not a CLI policy; if the platform widens it, this constant and `schema/` move
+  together.
+
 ---
 
 27. **The blockId derivation REFUSES rather than transliterates, and the
