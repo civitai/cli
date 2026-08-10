@@ -282,6 +282,18 @@ jobs:
           # drill on a branch rehearses that branch's fixtures.
           DRILL_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/tools/caskcheck/testdata
         run: |
+          # 🔴 `set +e` IS LOAD-BEARING, AND `set -uo pipefail` ALONE DOES NOT
+          # GET IT. GitHub runs a `run:` block as `bash -e {0}` — errexit is on
+          # before the first line of this script, and `set -uo pipefail` does
+          # not clear it. So the `go run` below aborted the whole step the
+          # instant the check found anything, `rc=$?` never executed, no kind
+          # was ever written, and a REAL `broken` verdict was reported as
+          # `unknown` ("the check could not run"). Measured on run
+          # 31358041942, a `drill=broken` dispatch: caskcheck printed the full
+          # 404 finding into the artifact and the issue it filed still said the
+          # Homebrew channel was merely unverified. Understating a live outage
+          # is the one direction this report must never fail in.
+          set +e
           set -uo pipefail
           KIND_FILE="$RUNNER_TEMP/caskcheck.kind"
           OUT_FILE="$RUNNER_TEMP/caskcheck.out"
@@ -361,8 +373,13 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # `always()` so this still runs if the step above died anyway. Without it,
+      # a check step that aborts is followed by a SKIPPED gate, and the job's
+      # red then comes from the abort rather than from a verdict — which is
+      # true but leaves the job's failure unexplained. An empty kind is not
+      # 'green', so this fails and names what it saw.
       - name: Fail unless the check was green
-        if: steps.check.outputs.kind != 'green'
+        if: always() && steps.check.outputs.kind != 'green'
         run: |
           echo "::error::the Homebrew cask check is not green (kind=${{ steps.check.outputs.kind }}). See the job summary, and the issue the signal job files."
           exit 1
