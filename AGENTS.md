@@ -137,6 +137,7 @@ These go beyond the global defaults because this repo's release pipeline
   entry-graph resolver it and `internal/validate` share (item 20).
 - `internal/antipattern` — the scaffold-currency denylist: fails a template
   shipping code against a dead platform endpoint or message (item 18).
+- `internal/dogfoodguard` — DEV-ONLY argv classifier for the dogfood sandbox.
 - `internal/genapi` — the orchestrator **generation** client behind
   `civitai generate` and `civitai workflows …`: tRPC transport, the two envelope
   shapes, the graph payload, model-version resolution. Deliberately not in
