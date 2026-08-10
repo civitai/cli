@@ -253,7 +253,12 @@ func (c *checker) check(ctx context.Context) (*report, error) {
 func main() {
 	caskURL := flag.String("cask-url", defaultCaskURL, "URL of the cask file as published by the tap")
 	latestURL := flag.String("latest-url", defaultLatestURL, "GitHub API URL for the latest published release (diagnostic only)")
-	timeout := flag.Duration("timeout", 60*time.Second, "overall timeout")
+	// The overall budget has to cover the cask fetch plus one probe per archive,
+	// each of which can take the per-request 30s. Four archives at 30s is 120s,
+	// so 60s here would let a slow-but-healthy github.com produce a red run —
+	// the false-red that trains people to ignore a gate. 3m is comfortably over
+	// the worst case and still bounded.
+	timeout := flag.Duration("timeout", 3*time.Minute, "overall timeout")
 	flag.Parse()
 
 	c := &checker{
