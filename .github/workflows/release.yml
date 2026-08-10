@@ -98,7 +98,40 @@ jobs:
         env:
           # Used to create the release on this repo. Provided automatically.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # PAT with write access to civitai/homebrew-tap so goreleaser can push
-          # the updated formula. Set this repo secret (and create the tap repo)
-          # before tagging, or comment out the `brews:` block in .goreleaser.yaml.
+          # 🔴 THIS RUN NO LONGER WRITES TO THE TAP. `release-homebrew.yml`
+          # does, after the release is published (see `skip_upload` in
+          # .goreleaser.yaml). It is kept here deliberately rather than removed:
+          # two independent lines of evidence say the render path never reads it
+          # — goreleaser v2.17.1's TemplateRef (internal/client/config.go:50)
+          # copies `Token` through UNRESOLVED, and a local
+          # `goreleaser release --snapshot` renders the cask fine with the
+          # variable unset — but neither is a real non-snapshot `release` run,
+          # and a wrong guess here fails a release rather than a test. Dropping
+          # it (so the tag-time run holds no tap-write credential at all) is a
+          # good follow-up; verify it on a real release, not on a reading.
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+
+      # The cask goreleaser just rendered, carried to the publish-time workflow.
+      #
+      # 🔴 IT IS THE RENDERED FILE OR NOTHING. The cask names a sha256 per
+      # archive and these builds are not reproducible (`-X main.date`), so a
+      # later re-render would name checksums that do not match the archives
+      # uploaded above — and `brew install` verifies them. Measured 2026-08-09:
+      # two consecutive `goreleaser release --snapshot` runs over one unchanged
+      # tree produced four different sha256 values. So the bytes rendered here
+      # are the bytes that must reach the tap, and the release is where they
+      # wait for the maintainer to publish.
+      - name: Attach the rendered Homebrew cask to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          cask=dist/homebrew/Casks/civitai.rb
+          if [ ! -f "$cask" ]; then
+            echo "::error::goreleaser did not render $cask. release-homebrew.yml has nothing to push, so the Homebrew channel will not update for $TAG. Check the 'homebrew cask' pipe in the log above."
+            exit 1
+          fi
+          # --clobber so a re-run of this workflow for the same tag replaces the
+          # asset instead of failing on a name collision.
+          gh release upload "$TAG" "$cask" --clobber --repo "$GITHUB_REPOSITORY"

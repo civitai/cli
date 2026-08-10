@@ -2172,17 +2172,41 @@ git push origin v0.1.0
 
 This cross-compiles for linux/darwin/windows × amd64/arm64, stamps
 version/commit/date, and creates a **draft** GitHub Release with archives +
-`checksums.txt` plus a Homebrew tap bump. See [`AGENTS.md`](AGENTS.md) for the
-full process and the secrets it needs (`HOMEBREW_TAP_GITHUB_TOKEN`).
+`checksums.txt`. It also *renders* the Homebrew cask and attaches it to the
+release, but does not push it to the tap — see below. See
+[`AGENTS.md`](AGENTS.md) for the full process and the secrets it needs
+(`HOMEBREW_TAP_GITHUB_TOKEN`).
 
-🔴 **There are two publication channels, and clicking "Publish release" fires
-the second one.** `.github/workflows/release-npm.yml` triggers on
-`release: [published]` and publishes the `npm/` wrapper as
-**[`@civitai/cli`](https://www.npmjs.com/package/@civitai/cli)** — the very
-first install option at the top of this README. So publishing the draft is not
-the last step of the GitHub release; it is also, in the same click, an npm
-publish. That matters because **npm unpublish is restricted**: a bad version is
-corrected by publishing another one, not by taking it back.
+🔴 **There are three publication channels, and clicking "Publish release" fires
+the other two.** `.github/workflows/release-npm.yml` publishes the `npm/`
+wrapper as **[`@civitai/cli`](https://www.npmjs.com/package/@civitai/cli)** —
+the very first install option at the top of this README — and
+`.github/workflows/release-homebrew.yml` pushes the cask to
+`civitai/homebrew-tap`. Both trigger on `release: [published]`. So publishing
+the draft is not the last step of the GitHub release; it is also, in the same
+click, an npm publish and a Homebrew release. That matters because **npm
+unpublish is restricted**: a bad version is corrected by publishing another one,
+not by taking it back.
+
+🔴 **Nothing downstream may act on a tag alone, and the Homebrew channel used
+to.** Until [#308](https://github.com/civitai/cli/pull/308), the same goreleaser
+run that created the *draft* release also pushed the cask bump, so the cask
+named a version whose archives 404 for everyone until a human clicked "Publish
+release". Measured on 2026-08-09, with v0.1.91 tagged at 01:09Z and still a
+draft hours later:
+
+```
+cask Casks/civitai.rb          version "0.1.91"
+GET .../download/v0.1.91/civitai_0.1.91_linux_amd64.tar.gz   404
+GET .../download/v0.1.90/civitai_0.1.90_linux_amd64.tar.gz   200
+npm @civitai/cli                                             0.1.90   (correct)
+```
+
+`brew install civitai/tap/civitai` failed for every user for ~2 hours. npm was
+correct throughout because it already waited for `release: [published]`; the
+Homebrew channel now waits for the same event, and `tools/caskcheck` asserts the
+invariant — the cask must never name a version that is not publicly
+downloadable — on every publish and once a day, over real unauthenticated HTTP.
 
 Authentication for that job is **OIDC trusted publishing** — there is no
 `NPM_TOKEN` secret. The trust is bound to the repository *and to that workflow
