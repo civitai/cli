@@ -223,8 +223,9 @@ Item 26 is the OTHER gate on that same published contract — the classification
 of the project path `civitai app validate` / `app submit` are handed, a
 different rule from item 24's predicate and filed separately for exactly that
 reason. Item 27 is blockId derivation — the one identity this CLI mints that
-can NEVER be renamed, plus the residuals the refusal knowingly ships with. The
-durable fix for the mirroring is a server-side `civitai app validate` endpoint
+can NEVER be renamed, plus the residuals the refusal knowingly ships with.
+Item 28 is what the CLI may CLAIM about a spend it cannot observe.
+The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
 
@@ -594,6 +595,38 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
     hatch (#259). 🔴 It NARROWS #259; it does not close it, and the residuals it
     knowingly ships with are enumerated in the evidence.
     → evidence: claudedocs/decisions/27-blockid-derivation-refuses.md
+
+28. **The CLI must not make CLAIMS about a spend it cannot observe.** Same shape
+    as items 8, 13 and 19(b), on the money path; the measurements live in the
+    code comments at each site.
+    (a) **`--dry-run` reports RESOURCE READINESS** — the server's *"every job's
+    `queuePosition.support` is `available`"*, a job with no `queuePosition` being
+    **skipped**. Not generatability, not moderation (the prompt is stripped
+    before the estimate, item 15). As `Generatable` it promised a predicate it
+    cannot carry: 8 submits across 3 checkpoints all quoting `ready: true`
+    produced **0** outputs (#279). No surface says "generatable" — three senses
+    of it once shared one screen. Scripts gate on **false** via a `case`, so an
+    ABSENT key fails closed. 🔴 `false` buys OUR OWN refusal, not the server's:
+    none was found, and #279's bad checkpoints returned HTTP 400s.
+    (b) **No fate-of-charge copy asserts a direction, cancel included.** That a
+    charge HAPPENED stays; what BECAME of it goes. The platform's own client says
+    the orchestrator auto-refunds `failed`/`expired`/`canceled` and two balance
+    reads across 29 submits moved by the SUCCESS count (#278) — yet the opposite
+    is equally unevidenced, the rule living in the orchestrator SERVICE, absent
+    from the monorepo. Cancel keeps the accrued-cost half; civitai/cli#307 owns
+    the substance.
+    🔴 **TWO GUARD SHAPES DIED HERE — DO NOT REACH FOR A THIRD PHRASE LIST.** A
+    banned-substring ledger lost twice: to a paraphrase paying no banned word
+    ("your Buzz returns to your balance automatically"), then to five mutants
+    that kept every required sentence and APPENDED a claim — `Nothing is
+    refunded`, missed while `not refunded` was banned. Both rounds: 18 packages
+    green; the property is not computable from text. The guards are
+    (1) one constant `buzzLedgerUnknownNote` rendered verbatim, (2) an asserted
+    ledger of its call sites, (3) **golden-output pinning of every spend
+    surface**, which closes ADDITION — cosmetic reflows breaking a golden is the
+    accepted cost; re-approve with `-update` and read the diff.
+    🔴 Residual: a NEW file printing its own refund claim is invisible to all
+    three — measured, survived, 18 ok — unless it lands on a golden surface.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

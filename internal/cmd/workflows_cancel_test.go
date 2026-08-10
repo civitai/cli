@@ -46,11 +46,16 @@ func TestWorkflowsCancel_Success(t *testing.T) {
 		t.Errorf("stdout does not confirm the cancelled id:\n%s", out.String())
 	}
 	// 🔴 The billing truth must be stated at the point of use, not only in
-	// --help: cancelling does not refund, and a user who reads only this line
-	// must not come away thinking it did.
+	// --help. What is TRUE is that the accrued cost has been billed and stopping
+	// the job does not call it back; what nobody has evidenced is that nothing
+	// ever comes back, so this asserts the first and refuses the second (#278,
+	// AGENTS.md item 28 — civitai/cli#307 owns the substance).
 	stderr := errb.String()
-	if !strings.Contains(stderr, "did NOT refund") {
-		t.Errorf("stderr does not say the cancel was not refunded:\n%s", stderr)
+	if !strings.Contains(stderr, "did NOT undo the charge") {
+		t.Errorf("stderr does not say the accrued cost still stands:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, buzzLedgerUnknownNote) {
+		t.Errorf("stderr does not render the shared non-observability note:\n%s", stderr)
 	}
 	for _, forbidden := range []string{"saved", "refund" + "ed you", "you will not be charged"} {
 		if strings.Contains(strings.ToLower(stderr), strings.ToLower(forbidden)) {
@@ -67,12 +72,15 @@ func TestWorkflowsCancel_HelpStatesTheBillingTruth(t *testing.T) {
 	// happens to wrap or which case it shouts in. A guard that broke on a re-wrap
 	// would be deleted the first time someone reflowed the paragraph.
 	long := strings.ToLower(strings.Join(strings.Fields(newWorkflowsCancelCmd().Long), " "))
-	for _, want := range []string{"does not get your buzz back", "bills the accrued cost", "non-refundab"} {
+	// "does not get your buzz back" and "non-refundab" were pinned here and are
+	// deliberately gone: both assert that NOTHING comes back, which no source in
+	// this repo establishes. The accrued-cost half is what survives.
+	for _, want := range []string{"is not a way to save money", "bills the accrued cost", "does not call that back"} {
 		if !strings.Contains(long, want) {
 			t.Errorf("`workflows cancel --help` is missing %q:\n%s", want, long)
 		}
 	}
-	if !strings.Contains(newWorkflowsCancelCmd().Short, "DOES NOT REFUND") {
+	if !strings.Contains(newWorkflowsCancelCmd().Short, "DOES NOT UNDO THE CHARGE") {
 		t.Errorf("the one-line summary must carry the warning too: %q", newWorkflowsCancelCmd().Short)
 	}
 }

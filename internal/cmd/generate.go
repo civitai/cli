@@ -39,6 +39,47 @@ const generateWorkflow = "txt2img"
 // (this repo's anti-mirror rule).
 const serverQuantityClamp = 10
 
+// buzzLedgerUnknownNote is THE ONE THING this CLI is allowed to say about the
+// fate of a charge it cannot observe, and it is a shared constant rather than
+// three hand-written sentences ON PURPOSE (#278, AGENTS.md item 28).
+//
+// 🔴 A BANNED-PHRASE LIST IS NOT A GUARD HERE, AND THAT WAS MEASURED. The first
+// version of this fix policed the copy with a substring ledger of directional
+// claims ("not refunded", "has been refunded", …). An audit mutant rewrote the
+// terminal-status error to "your Buzz returns to your balance automatically;
+// confirm with `civitai buzz`" — a paraphrase that asserts a refund, matches no
+// banned substring, and left ALL EIGHTEEN PACKAGES GREEN. Any list of phrases
+// loses to the next paraphrase; the property "this sentence decides the refund
+// question" is not computable from text.
+//
+// So the guard is structural instead: every surface that speaks to the FATE of a
+// charge must render THIS constant verbatim, and the set of call sites is an
+// asserted ledger (see TestBuzzLedgerNoteIsTheOnlyRefundWording).
+//
+// 🔴 THE SCOPE IS "FATE", NOT "MONEY", and the distinction is load-bearing
+// because the comment used to overstate it. Saying a charge HAPPENED is a
+// different claim from saying what became of it, it is not in doubt, and
+// softening it would understate what the user paid for — so
+// `reportOutputCountMismatch` ("the difference was charged for either way") and
+// the succeeded-but-empty error ("it was charged") deliberately do NOT render
+// this note and are deliberately NOT in the ledger.
+//
+// A paraphrase drops the constant, which goes red; a site that stops using it
+// shrinks the ledger, which also goes red. 🔴 What NEITHER catches is a brand-new
+// file that never mentions the constant at all — measured: an added
+// `zz_new_refund_surface.go` printing "your Buzz has been refunded in full"
+// survived with all 18 packages ok, because the ledger only records files where
+// the count is non-zero. The golden-output guards below close that for the
+// surfaces they cover; a fate-of-charge claim on some OTHER command's output is
+// the standing residual, recorded in AGENTS.md item 28.
+//
+// The wording is deliberately about OBSERVABILITY, not about the rule: it says
+// what this process can and cannot see, which is true regardless of what the
+// orchestrator decides. It names `/user/transactions` because `civitai buzz`
+// reports a BALANCE and not a history — a balance alone cannot settle "did THIS
+// run come back" unless you happened to note it beforehand.
+const buzzLedgerUnknownNote = "this CLI cannot see your Buzz ledger — `civitai buzz` reports a balance, not a history, so settle it against your Buzz transaction history (/user/transactions)"
+
 // Classification sentinels for generation failures that the HTTP-status mapping
 // alone gets wrong. They carry NO user-visible text: they are ATTACHED via
 // civitai.Tag so errors.Is reports the KIND while the printed message is
@@ -170,9 +211,13 @@ func newGenerateCmd() *cobra.Command {
 		Short: "Generate images from a text prompt (SPENDS BUZZ)",
 		Long: `Generate images from a text prompt on Civitai's generator.
 
-🔴 THIS SPENDS REAL BUZZ AND CANNOT BE UNDONE. A submitted generation is charged;
-there is no cancel-for-refund and no "undo". Preview the price with --dry-run
-first — it calls the server's cost estimator and spends nothing.
+🔴 THIS SPENDS REAL BUZZ AND CANNOT BE UNDONE. A submitted generation is charged
+the moment the orchestrator accepts it, and nothing local can call that back —
+not --timeout, not Ctrl-C, not ` + "`civitai workflows cancel`" + `. Preview the
+price with --dry-run first; it calls the server's cost estimator and spends
+nothing.
+What the LEDGER then does with that charge — if the run fails, expires, or you
+cancel it — is decided server-side, and ` + buzzLedgerUnknownNote + `.
 
 CREDENTIAL: generation needs the AI Services scopes. Two credentials carry them:
 ` + spendCredentialRoutes + `. A DEFAULT OAuth browser login
@@ -191,7 +236,8 @@ network. Only a bare --print-input needs neither a credential nor a network.
 is an estimate, not a quote: the server's estimator returns no quote id, no
 signed price and no expiry — there is nothing to hand back at submit time, and
 no server-side ceiling is reachable from an API key at all. The realized charge
-can exceed the estimate, and it is not refunded. --max-cost compares the
+can exceed the estimate, and --max-cost cannot claw the difference back — it
+never reaches the server. --max-cost compares the
 ESTIMATE against your number and refuses locally before submitting; it catches a
 --quantity typo, and that is all it can do. Do not run an unattended loop
 believing it caps spend.
@@ -208,6 +254,13 @@ the public model-version API BEFORE submitting, so a bad id is a hard local
 error instead of a wrong charge, and it echoes the resolved model NAME in the
 confirmation so you approve a name rather than an integer.
 
+🔴 --dry-run's "Resources ready" line is NOT A PROMISE OF OUTPUT. It echoes the
+server's ` + "`ready`" + ` flag, which reports only that the resources this job needs are
+currently available — nothing about moderation, and nothing about whether the
+job will actually produce an image. A run that reports resources ready can still
+be charged and return nothing. Treat ` + "`ready: false`" + ` as "do not submit"; do not
+read ` + "`ready: true`" + ` as a green light.
+
 WAITING AND DOWNLOADING: by default the command waits for the job to finish and
 writes every deliverable output into --out-dir as <workflow-id>-<n>.<ext>. Pass
 --no-wait to print the workflow id and exit immediately, and pick the results up
@@ -215,9 +268,9 @@ later with ` + "`civitai workflows get <workflow-id>`" + `. Output URLs are PRES
 EXPIRE, so download promptly; re-read the workflow for fresh links.
 
 🔴 --timeout STOPS WAITING. IT DOES NOT STOP PAYING. The generation keeps
-running server-side after the CLI gives up, and the charge stands — there is no
-cancel-for-refund, and a mid-run cancel bills the accrued cost anyway. The same
-is true of Ctrl-C. Both print the workflow id and the exact command to re-attach.
+running server-side after the CLI gives up, and cancelling it does not stop the
+cost already accrued — a mid-run cancel bills that. The same is true of Ctrl-C.
+Both print the workflow id and the exact command to re-attach.
 
 CRASH SAFETY: the idempotency key is written to a local file BEFORE the request
 is sent, because the money moves server-side even if this process dies mid-POST.
@@ -434,7 +487,7 @@ interpreted, so nothing in it is checked before you pay for it.`,
 	// first back-quoted span as the flag's VALUE NAME.
 	cmd.Flags().IntVar(&o.maxCost, "max-cost", 0,
 		"refuse to submit if the ESTIMATE exceeds this many Buzz. This is an estimate check, NOT a spending cap: "+
-			"the estimate is not binding, the server enforces no ceiling, and the realized charge can be higher with no refund")
+			"the estimate is not binding, the server enforces no ceiling, and the realized charge can be higher — this flag cannot claw that back")
 	// 🔴 OPT-IN, AND IT HAS TO BE. The server substitutes rather than rejects ON
 	// PURPOSE: a script pinned to a checkpoint version that was later retired
 	// keeps producing images instead of breaking. Making that a hard CLI failure
@@ -470,7 +523,7 @@ interpreted, so nothing in it is checked before you pay for it.`,
 	// "stop the generation" or "cap the spend" is a lie the user pays for.
 	cmd.Flags().DurationVar(&o.timeout, "timeout", defaultWaitTimeout,
 		"how long to WAIT for the generation to finish (e.g. 5m, 0 waits indefinitely). This stops the CLI waiting; "+
-			"it does NOT stop the generation and does NOT stop the charge — the job continues server-side and is not refunded")
+			"it does NOT stop the generation and does NOT stop the charge — the job continues server-side to completion")
 	cmd.Flags().StringVar(&o.outDir, "out-dir", ".",
 		"directory to write the generated files into (created if needed); named <workflow-id>-<n>.<ext>")
 	cmd.Flags().BoolVar(&o.noDownload, "no-download", false,
@@ -950,10 +1003,10 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 
 	if !quote.Ready {
 		// `ready:false` means some job in the workflow has no available support —
-		// the resources are not currently generatable. Submitting anyway spends on
+		// the resources are not currently available. Submitting anyway spends on
 		// a job the server has already said it cannot serve.
 		return civitai.Tag(civitai.ErrBadRequest, fmt.Errorf(
-			"the server reports this job is not currently generatable (ready: false) — the selected resources may be unavailable or unsupported by this workflow; inspect the estimate with --dry-run --json"))
+			"the server reports the resources for this job are not currently available (ready: false) — they may be unavailable or unsupported by this workflow; inspect the estimate with --dry-run --json"))
 	}
 
 	cost := quote.Cost.Total
@@ -1176,10 +1229,29 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 	clearSubmitRecord(statePath)
 
 	if !strings.EqualFold(wf.Status, genapi.StatusSucceeded) {
-		// failed / expired / canceled. Say plainly that it was still charged —
-		// the orchestrator does not refund a job that ran and failed.
-		return fmt.Errorf("the generation finished with status %q — it was charged and produced no usable result; inspect it with `civitai workflows get %s`",
-			safeTerm(wf.Status), safeTerm(workflowID))
+		// failed / expired / canceled.
+		//
+		// 🔴 THIS USED TO READ "it was charged and produced no usable result",
+		// i.e. it asserted the charge STANDS. That claim is contradicted by the
+		// platform's own first-party copy for exactly this status set:
+		// `civitai/civitai → src/components/ImageGeneration/QueueItem.tsx`
+		// comments "the orchestrator auto-refunds spent buzz on these" over
+		// `failed || expired || canceled` and renders "Your Buzz has been
+		// refunded." It is also contradicted by measurement — across 29 submits
+		// (21 succeeded, 8 failed) two balance reads 25 minutes apart moved by
+		// 11x8 and 21x8, the SUCCESS count both times, not the submit count.
+		//
+		// 🔴 AND IT DOES NOT SAY "IT WAS REFUNDED" EITHER. The refund is
+		// performed by the ORCHESTRATOR service, which is not part of the
+		// civitai monorepo: nothing readable states whether it is full,
+		// pro-rated, or conditional on which of the three statuses was reached
+		// (cancel is described as returning only UNDELIVERED units). Replacing
+		// a false claim with its equally unevidenced opposite would be the same
+		// mistake pointing the other way. This CLI never sees the Buzz ledger,
+		// so it states the outcome and names the command that can answer the
+		// money question. See AGENTS.md item 28.
+		return fmt.Errorf("the generation finished with status %q and produced no usable result; %s. Inspect the run with `civitai workflows get %s`",
+			safeTerm(wf.Status), buzzLedgerUnknownNote, safeTerm(workflowID))
 	}
 
 	kept, excluded := genapi.PartitionOutputs(wf)
@@ -1241,7 +1313,8 @@ func printOutputURLs(out, errw io.Writer, kept []genapi.Output) {
 //
 // 🔴 It must print the REALIZED charge whenever the server reported one. The
 // user approved an ESTIMATE, and this command's whole spend story is that the
-// realized cost can exceed it with no refund (AGENTS.md items 12-17) — so the
+// realized cost can exceed it and nothing local can claw that back (AGENTS.md
+// items 12-17, and item 28 on why we do not assert what the ledger does) — so the
 // one number that settles what actually happened cannot be visible only on the
 // --no-wait branch. `cost` is nil when the server sent none; say nothing then
 // rather than printing a fabricated 0.
@@ -1348,7 +1421,11 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 	} else {
 		fmt.Fprintf(errw, "Cost: %s Buzz (balance unknown).\n", buzzAmount(cost))
 	}
-	fmt.Fprintln(errw, st.Warn("This SPENDS REAL BUZZ. It cannot be undone and is not refunded."))
+	// "and is not refunded" was dropped here (#278): it is a claim about EVERY
+	// outcome, including the failed one the orchestrator does refund. The
+	// deterrent is that submitting is irreversible and the money moves — which
+	// is true regardless of what the ledger does afterwards.
+	fmt.Fprintln(errw, st.Warn("This SPENDS REAL BUZZ and cannot be undone once submitted."))
 	fmt.Fprintln(errw, st.Dim("The cost is an estimate, not a quote — the server enforces no ceiling and the realized charge can be higher."))
 	fmt.Fprint(errw, "Generate? [y/N]: ")
 
@@ -1422,7 +1499,18 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	for _, l := range built.loras {
 		fmt.Fprintf(tw, "LoRA:\t%s\n", l)
 	}
-	fmt.Fprintf(tw, "Generatable:\t%t\n", q.Ready)
+	// 🔴 NOT "Generatable". The server's `ready` is a RESOURCE-AVAILABILITY flag,
+	// not a prediction that the job will produce anything: it is computed as
+	// "every job's queuePosition.support === 'available'", and a job carrying no
+	// queuePosition at all is SKIPPED, leaving ready true (measured in
+	// civitai/civitai → src/server/services/orchestrator/
+	// orchestration-new.service.ts, the whatIf reply builder). Labelling it
+	// "Generatable" promised a success predicate the flag cannot carry — 8
+	// submits across 3 green-lit checkpoints produced 0 outputs (#279). The
+	// FALSE direction is still sound and is warned about below; the label is
+	// what stops the TRUE direction reading as a guarantee. See AGENTS.md
+	// item 28.
+	fmt.Fprintf(tw, "Resources ready:\t%t\n", q.Ready)
 	_ = tw.Flush()
 
 	fmt.Fprintf(out, "\n%s\n", ui.For(out).Bold("Estimated cost"))
@@ -1435,13 +1523,23 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	_ = tw.Flush()
 
 	if !q.Ready {
+		// 🔴 Two words are deliberately NOT here, and both were in the first
+		// draft. "generatable", because printing it one line under
+		// `Resources ready: false` re-teaches the exact equation the rename
+		// exists to break (#279). And "a real submit would be refused", because
+		// the only refusal this repo can evidence is OUR OWN: `runGenerate`
+		// reads the flag and stops. `support !== 'available'` appears once in
+		// the server's whatIf reply builder and nowhere on the submit path, and
+		// #279's failing checkpoints came back as HTTP 400s rather than as
+		// ready:false. Caveating `true` as unobservable while promoting `false`
+		// on the same unread evidence is the same mistake twice.
 		fmt.Fprintln(errw, ui.For(errw).Warn(
-			"The server reports this job is NOT currently generatable (ready: false) — a real submit would be refused."))
+			"The server reports the resources for this job are NOT currently available (ready: false) — this CLI refuses to submit in that state."))
 	}
 	// The caveat belongs on stderr next to the number, every time. A user who
 	// reads only the total will otherwise treat it as a quote.
 	fmt.Fprintln(errw, ui.For(errw).Dim(
-		"Estimate only — nothing was submitted and nothing was charged. The server returns no binding quote, enforces no spending ceiling, and the realized charge can exceed this figure with no refund."))
+		"Estimate only — nothing was submitted and nothing was charged. The server returns no binding quote, enforces no spending ceiling, and the realized charge can exceed this figure."))
 }
 
 // printCostMap renders one server-owned cost map with its keys sorted for a

@@ -16,7 +16,7 @@ import (
 //	cancelWorkflow       POST  {"json":{"workflowId":"…"}}         MUTATION
 //
 // 🔴 cancelWorkflow is a MUTATION and must never be pointed at a live server
-// from a test. It does not refund anything — see CancelWorkflow.
+// from a test. It does not undo the charge — see CancelWorkflow.
 const (
 	// QueryWorkflowsPath is the paged list of the caller's own workflows.
 	QueryWorkflowsPath = "/api/trpc/orchestrator.queryGeneratedImages"
@@ -168,7 +168,8 @@ func (c *Client) QueryWorkflows(ctx context.Context, opts ListOptions) (*Workflo
 // REFUND ANYTHING.
 //
 // The server-side handler resolves to `updateWorkflow({status:'canceled'})` and
-// a mid-run cancel BILLS THE ACCRUED COST orchestrator-side, non-refundably.
+// a mid-run cancel BILLS THE ACCRUED COST orchestrator-side. What the ledger
+// does with it afterwards is not readable from this repo (AGENTS.md item 28).
 // Cancelling is how you stop a job you no longer want the *output* of; it is
 // never a way to get Buzz back, and no caller of this may present it as one.
 //

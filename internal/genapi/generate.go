@@ -61,7 +61,7 @@ type WorkflowCost struct {
 // 🔴 It is an ESTIMATE, not a quote: it carries no id, nonce, signed price or
 // expiry, so there is nothing to hand back to the submit. No server-side spend
 // ceiling is reachable from a personal API key, and realized cost can exceed
-// this figure with no refund. Never present it as a cap.
+// this figure, and nothing local can call that back. Never present it as a cap.
 type WhatIfResult struct {
 	// Ready is false when some job in the workflow has no available support
 	// (i.e. the resources are not currently generatable).
