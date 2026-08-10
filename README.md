@@ -600,6 +600,33 @@ most authors pass none of these:
 > you Ctrl-C out of it you also lose the embeddability warnings, which is why
 > they are printed once *before* the wait as well as again after it.
 
+**`CIVITAI_DEVTUNNEL_DEBUG` — a debug-only escape hatch.** ⚠️ Not supported
+surface: it is a diagnostic for *this* CLI's tunnel plumbing, and its output
+format, its trigger and its existence may change or be removed in any release.
+Don't build anything on it.
+
+Set it to **any non-empty value** before running `civitai app dev-tunnel` and
+the tunnel writes one extra `[debug]` line to **stderr for each inbound
+connection** the sish endpoint forwards — naming the address/port and *origin*
+address/port sish stamped on that SSH channel, the subdomain label the CLI
+bound, and whether Go's `x/crypto/ssh` built-in listener would have **rejected**
+the channel. That last field is the point: the built-in listener parses the
+origin as an IP address and sish sends a hostname, which is why this CLI accepts
+every forwarded channel itself rather than using `client.Listen`. Reach for it
+when the tunnel reports ready and the public URL still `502`s — it tells you
+whether requests are arriving at the CLI at all, and what they look like when
+they do.
+
+```bash
+CIVITAI_DEVTUNNEL_DEBUG=1 civitai app dev-tunnel
+```
+
+It is **output only** — nothing about how the tunnel behaves changes. The value
+is never parsed, so `CIVITAI_DEVTUNNEL_DEBUG=0` and `=false` switch it *on* just
+like `=1`; leaving it **unset** is the only way to switch it off. It is read once
+as the tunnel is established, and prints nothing until traffic actually arrives,
+so a tunnel nobody has loaded stays as quiet as it was before.
+
 ### Examples
 
 Two real example manifests live under [`examples/`](examples/) (copied from the
@@ -2137,10 +2164,18 @@ is attached.
 | dev-tunnel SSH endpoint | — | `CIVITAI_DEV_TUNNEL_ENDPOINT` | `sish.civitai.com:2224` |
 | Disable colour | — | `NO_COLOR`, `CIVITAI_NO_COLOR` | unset |
 | Force colour | — | `CLICOLOR_FORCE`, `CIVITAI_COLOR` | unset |
+| ⚠️ dev-tunnel channel debug log — **debug only, not supported surface** | — | `CIVITAI_DEVTUNNEL_DEBUG` | unset (no debug output) |
 
 Where a setting also has a flag — `--token`, `--tunnel-endpoint`, and the colour
 and update-check flags — the flag wins over the environment. See
 [Global flags](#global-flags) for the full colour precedence.
+
+Everything in this table except the last row is supported surface.
+`CIVITAI_DEVTUNNEL_DEBUG` is listed only so it is findable: it is a diagnostic
+for the `app dev-tunnel` plumbing, any non-empty value turns it on, and its
+output and its existence may change or be removed in any release. See
+[Preview in the real host](#preview-in-the-real-host-app-dev-tunnel) for what it
+actually prints.
 
 Config lives at `~/.config/civitai/config.yaml` (honours `XDG_CONFIG_HOME`),
 written owner-readable only.
