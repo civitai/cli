@@ -37,13 +37,25 @@ func RandomSuffix(n int) string {
 // server slug contract. suffix must be lowercase-alphanumeric (as RandomSuffix
 // produces). It is used to auto-rename a slug that collides with an app owned by
 // another account.
+//
+// 🔴 THE TRUNCATION HERE IS NOT THE ONE #291 REFUSED, AND THE DIFFERENCE IS THE
+// INPUT. Slugify turns a NAME into an identity nobody has chosen yet, so cutting
+// it silently substitutes a different permanent public id — it refuses instead.
+// SuffixSlug is handed a slug the author ALREADY has (its only caller,
+// mintDevTokenWithRename in internal/cmd/app_dev_token.go, reads it out of
+// block.manifest.json), which the server has just told us is taken; shortening
+// the base to make room for `-<suffix>` is the whole point of the operation, the
+// author is told which slug replaced which, and the manifest is rewritten so
+// nothing is left pointing at the old one. It does NOT call Slugify, so the two
+// paths are disjoint: the refusal cannot break this, and this cannot bypass the
+// refusal.
 func SuffixSlug(original, suffix string) (string, error) {
 	suffix = strings.ToLower(strings.TrimSpace(suffix))
 	if suffix == "" || nonSlugChars.MatchString(suffix) || strings.Contains(suffix, "-") {
 		return "", fmt.Errorf("slug suffix %q must be lowercase-alphanumeric", suffix)
 	}
 	// Reserve room for the hyphen + suffix within the 40-char cap.
-	maxBase := 40 - 1 - len(suffix)
+	maxBase := maxSlugLen - 1 - len(suffix)
 	if maxBase < 1 {
 		return "", fmt.Errorf("slug suffix %q is too long", suffix)
 	}
@@ -65,6 +77,18 @@ func SuffixSlug(original, suffix string) (string, error) {
 // slugPattern mirrors the server SLUG_REGEX: starts with a letter, lowercase,
 // hyphen-separated, ends alphanumeric, 3-40 chars.
 var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*[a-z0-9]$`)
+
+// minSlugLen / maxSlugLen are the server's slug length bounds, in ONE place.
+// They used to be four literal `40`s across three sites — ValidateSlug (the
+// explicit --slug path), SuffixSlug's reservation, and Slugify's truncation
+// (twice) — and #291 is what a disagreement between two of them costs: the
+// explicit path REFUSED at 41 while the derived path silently cut to 40, so two
+// names could mint one un-renameable blockId. A shared constant is what makes
+// "both paths cap at the same number" a fact rather than a claim.
+const (
+	minSlugLen = 3
+	maxSlugLen = 40
+)
 
 var nonSlugChars = regexp.MustCompile(`[^a-z0-9]+`)
 
@@ -202,10 +226,19 @@ func quoteChars(cs []string) string {
 // error if it cannot produce one within the length bounds — or if deriving one
 // would silently DISCARD characters the author typed (see LossyChars).
 //
-// 🔴 THIS NARROWS ISSUE #259, IT DOES NOT CLOSE IT. Three classes of input still
-// derive a slug that quietly differs from the name, and all three are stated
-// here rather than implied away — a residual nobody writes down is
-// indistinguishable from a bug nobody noticed:
+// 🔴 THIS NARROWS ISSUE #259, IT DOES NOT CLOSE IT. FOUR classes of input have
+// derived a slug that quietly differs from the name. Two are now CLOSED by a
+// refusal — (a) and (d) — and two still derive; all four are stated here rather
+// than implied away, because a residual nobody writes down is indistinguishable
+// from a bug nobody noticed.
+//
+// 🔴 THIS LIST SAID "THREE" AND OMITTED (d) FROM THE DAY IT WAS WRITTEN, AND THE
+// OMISSION WAS FILED AS A DEFECT IN ITS OWN RIGHT (#291) — separately from the
+// truncation it hid, precisely because an enumeration that presents itself as
+// complete and is not costs a reader more than no enumeration at all: it is the
+// artefact they use to decide they have finished looking. When you close a class
+// here, or find a new one, re-count the sentence above; "all N are stated here"
+// is a claim, and it is the first thing that goes stale.
 //
 //   - (a) INVALID UTF-8 — CLOSED. `caf\xe9 app` used to derive `caf-app` with
 //     rc 0, because `for _, r := range` yields U+FFFD per bad byte and U+FFFD is
@@ -228,6 +261,18 @@ func quoteChars(cs []string) string {
 //     arguably NOT what an author means by an emoji — but an emoji has no
 //     lossless ASCII form either, so refusing would only trade a silent drop for
 //     a dead end. Left as-is deliberately, tracked separately.
+//   - (d) A NAME WHOSE SLUG RUNS PAST 40 CHARACTERS — CLOSED (#291). Derivation
+//     used to CUT it (`s = strings.Trim(s[:40], "-")`) at rc 0. Measured:
+//     `"aaaaaaaaaa bbbbbbbbbb cccccccccc dddddddddd eeeeeeeeee"` and the same
+//     name ending `ZZZZZZZZZZ` — 54 characters each, differing from character 44
+//     — both minted `aaaaaaaaaa-bbbbbbbbbb-cccccccccc-ddddddd`. Truncation alone
+//     is recoverable; two apps competing for ONE un-renameable public id is not,
+//     and nothing local tells the author it happened. An EXPLICIT `--slug` of the
+//     same length was already refused ("must be 3-40 chars"), so the derived path
+//     — the one a first-time author walks — was the inconsistent one. It refuses
+//     now too, with the same `--slug` escape hatch as (a) and the lossy-character
+//     case. Exactly 40 is AT the cap, not over it, and still derives
+//     byte-identically.
 func Slugify(name string) (string, error) {
 	// 🔴 BEFORE anything ranges over the string. `for _, r := range` silently
 	// substitutes U+FFFD for each invalid byte, and U+FFFD classifies as a
@@ -246,11 +291,14 @@ func Slugify(name string) (string, error) {
 	for strings.Contains(s, "--") {
 		s = strings.ReplaceAll(s, "--", "-")
 	}
-	if len(s) < 3 {
-		return "", fmt.Errorf("cannot derive a valid slug from %q (need ≥3 chars; use lowercase letters/numbers/hyphens)", name)
+	if len(s) < minSlugLen {
+		return "", fmt.Errorf("cannot derive a valid slug from %q (need ≥%d chars; use lowercase letters/numbers/hyphens)", name, minSlugLen)
 	}
-	if len(s) > 40 {
-		s = strings.Trim(s[:40], "-")
+	// 🔴 REFUSE, DO NOT TRUNCATE — residual (d) above. This is the SAME cap
+	// ValidateSlug applies to an explicit --slug, deliberately reached through
+	// the same constant, so the two paths cannot drift apart again.
+	if len(s) > maxSlugLen {
+		return "", fmt.Errorf("cannot derive a slug from %q: it derives the %d-character blockId %q and the limit is %d, and cutting it to fit would give your app a different permanent public id than you typed — one that every other name sharing those first %d characters would be given too — so choose one yourself with --slug <slug>", name, len(s), s, maxSlugLen, maxSlugLen)
 	}
 	if !slugPattern.MatchString(s) {
 		return "", fmt.Errorf("derived slug %q is invalid (must start with a letter, be lowercase, hyphen-separated)", s)
@@ -260,8 +308,8 @@ func Slugify(name string) (string, error) {
 
 // ValidateSlug checks an explicit slug against the server contract.
 func ValidateSlug(slug string) error {
-	if len(slug) < 3 || len(slug) > 40 {
-		return fmt.Errorf("slug %q must be 3-40 chars", slug)
+	if len(slug) < minSlugLen || len(slug) > maxSlugLen {
+		return fmt.Errorf("slug %q must be %d-%d chars", slug, minSlugLen, maxSlugLen)
 	}
 	if !slugPattern.MatchString(slug) {
 		return fmt.Errorf("slug %q must start with a letter, be lowercase, and contain only letters, numbers, and hyphens", slug)

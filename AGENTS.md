@@ -379,8 +379,9 @@ item must carry a trigger that is a routing question rather than a label
     anything?**
     → evidence: claudedocs/decisions/26-project-path-classification.md
 
-27. **Editing `scaffold.Slugify`, its lossy-character exemption, what `--slug`
-    suppresses, or what `app create` echoes about the id it minted?**
+27. **Editing `scaffold.Slugify`, its lossy-character exemption, the 40-char
+    length refusal, what `--slug` suppresses, or what `app create` echoes about
+    the id it minted?**
     → evidence: claudedocs/decisions/27-blockid-derivation-refuses.md
 
 28. **Wording anything about a charge — readiness, refunds, cancel — adding a
