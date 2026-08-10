@@ -206,39 +206,57 @@ func TestValidateJSONCarriesTheLocationAndTheGloss(t *testing.T) {
 // TestAppCreateIntoNonEmptyDirNamesTheRemedy — issue #260 item 7, fourth
 // bullet. The README's Troubleshooting section already had the remedy; the CLI
 // did not print it.
+//
+// 🔴 BOTH SCAFFOLD COMMANDS ARE DRIVEN, not just `app create`. The exit-code
+// half of this guard reddened exactly ONE leaf subtest when only `create` was
+// covered — the "a battery rested on a single row" shape of AGENTS.md item 24,
+// where deleting the row takes the guard with it. `app init` is the other user
+// of the same refusal and is the command the README's Troubleshooting entry
+// names.
 func TestAppCreateIntoNonEmptyDirNamesTheRemedy(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("mine\n"), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	for _, verb := range []string{"create", "init"} {
+		t.Run(verb, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "existing.txt"), []byte("mine\n"), 0o600); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
 
-	_, _, err := run(t, "app", "create", "dogx", "--dir", dir)
-	if err == nil {
-		t.Fatal("PREMISE BROKEN: app create overwrote a non-empty directory")
-	}
-	msg := err.Error()
-	if !strings.Contains(msg, "is not empty") {
-		t.Errorf("the refusal lost its own reason:\n%s", msg)
-	}
-	// Derived from the constant, so a reword cannot leave this asserting a
-	// stale copy.
-	if !strings.Contains(msg, scaffold.NotEmptyRemedy) {
-		t.Errorf("the refusal carries no remedy\n  want: %s\n  got:  %s", scaffold.NotEmptyRemedy, msg)
-	}
-	// CONTROL — the published exit code does not move. A pre-existing directory
-	// is not a mistake about the INVOCATION (the path is real and is a
-	// directory), so this stays off exit 2. Asserted with errors.Is, never with
-	// message text (AGENTS.md item 7).
-	if errors.Is(err, ErrUsage) {
-		t.Error("the non-empty-directory refusal must not become a usage error (exit 2)")
-	}
-	// CONTROL — the refusal is real: the directory is untouched.
-	entries, rerr := os.ReadDir(dir)
-	if rerr != nil {
-		t.Fatalf("read back: %v", rerr)
-	}
-	if len(entries) != 1 || entries[0].Name() != "existing.txt" {
-		t.Errorf("app create modified a directory it refused: %v", entries)
+			_, _, err := run(t, "app", verb, "dogx", "--dir", dir)
+			if err == nil {
+				t.Fatalf("PREMISE BROKEN: app %s overwrote a non-empty directory", verb)
+			}
+			msg := err.Error()
+			if !strings.Contains(msg, "is not empty") {
+				t.Errorf("the refusal lost its own reason:\n%s", msg)
+			}
+			// Derived from the constant, so a reword cannot leave this
+			// asserting a stale copy.
+			if !strings.Contains(msg, scaffold.NotEmptyRemedy) {
+				t.Errorf("the refusal carries no remedy\n  want: %s\n  got:  %s", scaffold.NotEmptyRemedy, msg)
+			}
+			// The one clause the remedy exists to deliver, asserted at the
+			// USER-VISIBLE surface as well as at the constant: without it the
+			// next move on reading "refusing to overwrite" is to go hunting for
+			// an override flag that does not exist.
+			if !strings.Contains(msg, "no --force") {
+				t.Errorf("the refusal does not say there is no --force:\n%s", msg)
+			}
+			// CONTROL — the published exit code does not move. A pre-existing
+			// directory is not a mistake about the INVOCATION (the path is real
+			// and is a directory), so this stays off exit 2. Asserted with
+			// errors.Is, never with message text (AGENTS.md item 7).
+			if errors.Is(err, ErrUsage) {
+				t.Error("the non-empty-directory refusal must not become a usage error (exit 2)")
+			}
+			// CONTROL — the refusal is real: the directory is untouched.
+			entries, rerr := os.ReadDir(dir)
+			if rerr != nil {
+				t.Fatalf("read back: %v", rerr)
+			}
+			if len(entries) != 1 || entries[0].Name() != "existing.txt" {
+				t.Errorf("app %s modified a directory it refused: %v", verb, entries)
+			}
+		})
 	}
 }
 
