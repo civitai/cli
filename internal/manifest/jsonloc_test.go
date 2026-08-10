@@ -95,6 +95,30 @@ func locFixtures(t *testing.T) []locFixture {
 			why: "a rune-indexed slice would land on the wrong LINE here, not merely " +
 				"the wrong column",
 		},
+		// 🔴 A SECOND SHAPE FOR THE BYTE-VS-RUNE PAIR, ON A LATER LINE.
+		//
+		// Measured: with only the one-line pair above, the byte-counted-column
+		// mutant reddened exactly ONE leaf subtest across the whole module —
+		// deleting or reshaping that single row would have made the headline
+		// regression invisible. This is AGENTS.md item 24's "a battery rested on
+		// a single row" shape, so the backstop is plural rather than trusted.
+		//
+		// Both rows put the defect on line 3, AFTER the multi-byte run, which
+		// is what makes the column sensitive to the byte/rune choice — the
+		// earlier-line row above is not, because its failing line is a bare `}`.
+		{
+			name:     "ASCII, defect later on the SAME line, line 3 (CONTROL)",
+			body:     "{\n  \"blockId\": \"ok-app\",\n  \"name\": \"" + asciiPrefix + "\":\n}\n",
+			wantLine: 3, wantCol: 21,
+			why: "the all-ASCII baseline for the row below",
+		},
+		{
+			name:     "multi-byte, defect later on the SAME line, line 3",
+			body:     "{\n  \"blockId\": \"ok-app\",\n  \"name\": \"" + widePrefix + "\":\n}\n",
+			wantLine: 3, wantCol: 21,
+			why: "the second discriminator: identical to the row above in CHARACTERS " +
+				"and 6 bytes longer, on a line that is not the first",
+		},
 		{
 			name:     "unexpected end of input",
 			body:     `{"blockId":`,
@@ -148,22 +172,35 @@ func TestJSONErrorLocation(t *testing.T) {
 				t.Errorf("the decoder's own reason was lost:\n%s", msg)
 			}
 		})
-		if strings.HasSuffix(tc.name, "(CONTROL)") || tc.name == "multi-byte prefix on the failing line" {
+		switch tc.name {
+		case "ASCII prefix on the failing line (CONTROL)",
+			"multi-byte prefix on the failing line",
+			"ASCII, defect later on the SAME line, line 3 (CONTROL)",
+			"multi-byte, defect later on the SAME line, line 3":
 			pairCols = append(pairCols, tc.wantCol)
 		}
 	}
-	// 🔴 The pair's whole point, asserted as its own claim rather than left
-	// implicit in two identical literals: if a future edit changes one row's
-	// expected column and not the other, the pair stops discriminating and this
+	// 🔴 The pairs' whole point, asserted as its own claim rather than left
+	// implicit in matching literals: if a future edit changes one row's expected
+	// column and not its partner's, that pair stops discriminating and this
 	// fails instead of quietly passing.
-	if len(pairCols) != 2 {
-		t.Fatalf("expected exactly 2 rows in the byte-vs-rune pair, found %d", len(pairCols))
+	//
+	// TWO pairs, not one, because the byte-counted-column mutant reddened
+	// exactly one leaf subtest when there was only the first — a count floor is
+	// what stops a single deletion from disarming the guard.
+	const wantPairRows = 4
+	if len(pairCols) != wantPairRows {
+		t.Fatalf("expected %d rows across the byte-vs-rune pairs, found %d — a pair has "+
+			"been renamed or removed, and the byte/rune guard is thinner than it reads",
+			wantPairRows, len(pairCols))
 	}
 	if pairCols[0] != pairCols[1] {
-		t.Fatalf("the byte-vs-rune pair now EXPECTS different columns (%d vs %d). The pair "+
-			"only discriminates a byte-counted column from a character-counted one while "+
-			"both rows expect the SAME column; one of the two literals has been edited",
-			pairCols[0], pairCols[1])
+		t.Fatalf("byte-vs-rune pair 1 now EXPECTS different columns (%d vs %d); it only "+
+			"discriminates while both rows expect the SAME column", pairCols[0], pairCols[1])
+	}
+	if pairCols[2] != pairCols[3] {
+		t.Fatalf("byte-vs-rune pair 2 now EXPECTS different columns (%d vs %d); it only "+
+			"discriminates while both rows expect the SAME column", pairCols[2], pairCols[3])
 	}
 }
 

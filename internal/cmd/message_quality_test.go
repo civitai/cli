@@ -98,14 +98,27 @@ func TestValidateMalformedJSONReportsALocation(t *testing.T) {
 		name, body, want string
 	}{
 		{
-			name: "ASCII (CONTROL)",
+			name: "trailing comma on its own line (CONTROL)",
 			body: "{\n  \"name\": \"plain\",\n  \"blockId\": \"ok-app\",\n}\n",
 			want: "line 4, column 1",
 		},
+		// 🔴 THE PAIR. `aaaaaaaa` and `Café — 🚀` are 8 runes each and 8 vs 14
+		// bytes, and the defect sits AFTER them on the same line — so a
+		// byte-counted column makes the two rows disagree.
+		//
+		// The first version of this pair put the multi-byte text on line 2 and
+		// the defect on a bare `}` on line 4, where the column is 1 either way:
+		// it read like a discriminator and observed nothing. Measured, the
+		// byte-counted mutant reddened it ZERO times.
 		{
-			name: "multi-byte UTF-8 before the syntax error",
-			body: "{\n  \"name\": \"Café — 🚀 app\",\n  \"blockId\": \"ok-app\",\n}\n",
-			want: "line 4, column 1",
+			name: "ASCII before the syntax error, same line (CONTROL)",
+			body: "{\n  \"blockId\": \"ok-app\",\n  \"name\": \"aaaaaaaa\":\n}\n",
+			want: "line 3, column 21",
+		},
+		{
+			name: "multi-byte UTF-8 before the syntax error, same line",
+			body: "{\n  \"blockId\": \"ok-app\",\n  \"name\": \"Café — 🚀\":\n}\n",
+			want: "line 3, column 21",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

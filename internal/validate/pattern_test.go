@@ -170,6 +170,90 @@ func TestPatternRuleTableIsWellFormed(t *testing.T) {
 	}
 }
 
+// TestPatternGlossesAreTheRightWayRound pins, for each pattern, a LITERAL
+// fragment of its rule and its LITERAL example — spelled here, derived from what
+// the regex MEANS rather than read out of patternRules.
+//
+// 🔴 IT EXISTS BECAUSE EVERY OTHER GUARD IN THIS FILE DERIVES ITS EXPECTATION
+// FROM THE TABLE, AND A TABLE THAT IS WRONG THE SAME WAY IN BOTH PLACES AGREES
+// WITH ITSELF. Measured: SWAPPING the blockId and version rows left
+// TestPatternFindingsCarryTheRuleAndAnExample entirely green — its `want` moved
+// with the mutation, and its cross-row denial moved too, because the rule it
+// denies for `version` had become blockId's. That is AGENTS.md item 23's
+// "wrong but plausible value" shape: a sweep that only ever mutates a field to
+// "" or to a different notation cannot see it, and neither can a test that reads
+// the thing it is constraining.
+//
+// Rows are matched on a DISTINCTIVE fragment rather than the whole sentence so
+// an editorial reword does not fail this; a fragment that stops identifying the
+// rule uniquely fails on the pairwise-distinct check below.
+func TestPatternGlossesAreTheRightWayRound(t *testing.T) {
+	ledger := []struct {
+		pattern string
+		// ruleFragment is what this regex MEANS, in the fewest words that no
+		// other row's rule could contain.
+		ruleFragment string
+		example      string
+		why          string
+	}{
+		{`^[a-z][a-z0-9-]*[a-z0-9]$`, "lowercase letters, digits and hyphens", "my-first-app",
+			"a slug alphabet with a first- and last-character rule"},
+		{`^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$`, "semantic version", "1.0.0",
+			"exactly three numeric components plus an optional prerelease"},
+		{`\S`, "non-whitespace", "A tiny image tool",
+			"the only requirement is that SOMETHING is there"},
+		// "dot-separated numbers ONLY" rather than the bare phrase: the version
+		// rule above says "three dot-separated numbers", so the shorter
+		// fragment appears in two rules and the absence half stops working.
+		{`^\d+(\.\d+)*$`, "dot-separated numbers only", "1.2",
+			"any number of numeric components, unlike the version rule above"},
+		{`^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$`, "allowlisted build invocations", "npm run build",
+			"a closed set of commands, not a shape"},
+		{`^https://`, "https:// URL", "https://example.com/bundle.zip",
+			"a scheme requirement and nothing else"},
+		{`^/`, `must start with a "/"`, "/",
+			"a leading-character requirement on a mount path"},
+	}
+	if len(ledger) != len(patternRules) {
+		t.Fatalf("%d ledger rows for %d glossed patterns — the ledger must be total, "+
+			"or a gloss can be wrong with nothing to say so", len(ledger), len(patternRules))
+	}
+	// The fragments must be pairwise non-containing, or "row A's fragment is in
+	// row A's rule" is satisfiable by a swap.
+	for i, a := range ledger {
+		for j, b := range ledger {
+			if i != j && strings.Contains(a.ruleFragment, b.ruleFragment) {
+				t.Fatalf("fragment %q contains %q — the rows cannot tell each other apart",
+					a.ruleFragment, b.ruleFragment)
+			}
+		}
+	}
+	for _, row := range ledger {
+		got, ok := patternRules[row.pattern]
+		if !ok {
+			t.Errorf("no gloss for %q", row.pattern)
+			continue
+		}
+		if !strings.Contains(got.rule, row.ruleFragment) {
+			t.Errorf("pattern %q (%s)\n  rule must mention: %s\n  got:               %s",
+				row.pattern, row.why, row.ruleFragment, got.rule)
+		}
+		if got.example != row.example {
+			t.Errorf("pattern %q example\n  want: %s\n  got:  %s", row.pattern, row.example, got.example)
+		}
+		// ABSENCE: no other row's fragment may appear in this rule.
+		for _, other := range ledger {
+			if other.pattern == row.pattern {
+				continue
+			}
+			if strings.Contains(got.rule, other.ruleFragment) {
+				t.Errorf("the rule for %q carries %q, which belongs to %q — the table is "+
+					"the wrong way round", row.pattern, other.ruleFragment, other.pattern)
+			}
+		}
+	}
+}
+
 func TestPatternFindingsCarryTheRuleAndAnExample(t *testing.T) {
 	fixtures := patternFixtures()
 	if len(fixtures) != len(patternRules) {
