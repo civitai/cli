@@ -320,6 +320,104 @@ func TestREADMEDoesNotPinAServerSentenceForTheOversizedSource(t *testing.T) {
 	}
 }
 
+// readmeQuickstartAppBlock returns the `## Quickstart: build an App Block`
+// section, raw — fences intact, because the listing-media advice this guard
+// reads lives inside the quickstart's ```bash block.
+func readmeQuickstartAppBlock(t *testing.T) string {
+	t.Helper()
+	md := readREADME(t)
+	const heading = "\n## Quickstart: build an App Block\n"
+	i := strings.Index(md, heading)
+	if i < 0 {
+		t.Fatal("README.md has no `## Quickstart: build an App Block` section")
+	}
+	body := md[i+len(heading):]
+	if j := strings.Index(body, "\n## "); j >= 0 {
+		body = body[:j]
+	}
+	return body
+}
+
+// quickstartDimensionRe matches a `512 x 512`-style figure, in either the ASCII
+// `x` a code block prefers or the `×` the prose section uses.
+var quickstartDimensionRe = regexp.MustCompile(`(\d{3,4})\s*[x×]\s*(\d{3,4})`)
+
+// TestQuickstartListingMinimumsAgreeWithTheirSources is the guard for the FOURTH
+// copy of the listing-media numbers.
+//
+// Step 7 of the quickstart tells an author to attach an icon and a cover. The
+// requirements lived ~900 lines further down, so the step that creates the work
+// said nothing about what the work is, and an author sized artwork by guessing.
+// Inlining a summary fixes that and creates the hazard every inlined constant
+// creates: a copy that can drift from what it summarises.
+//
+// So the summary is tied down from BOTH ends, and the two halves are different
+// kinds of claim:
+//
+//   - The BYTE CAPS are this CLI's own constants (`maxIconBytes`,
+//     `maxCoverBytes`), so they are checked against the code. A README quoting a
+//     cap the binary does not enforce is a plain lie.
+//   - The DIMENSIONS are PLATFORM constants the CLI deliberately does not vendor
+//     (AGENTS.md item 25), so nothing here can check them against a gate — there
+//     is none, and adding one is explicitly forbidden. What IS checkable is that
+//     the quickstart's copy agrees with the canonical section it summarises. That
+//     is the drift this inlining could actually introduce, so that is what is
+//     pinned: every dimension the quickstart names must also appear in
+//     `### Listing media requirements`, which stays the single authority.
+func TestQuickstartListingMinimumsAgreeWithTheirSources(t *testing.T) {
+	quick := readmeQuickstartAppBlock(t)
+	canonical := readmeSectionSlice(t, readREADME(t), "\n### Listing media requirements\n")
+	if len(canonical) < 500 {
+		t.Fatalf("the `Listing media requirements` section is only %d bytes — the extractor is reading the wrong block", len(canonical))
+	}
+
+	// Half one: the byte caps, against the constants the CLI enforces.
+	caps := []struct {
+		kind string
+		cap  int
+	}{
+		{"icon", maxIconBytes},
+		{"cover", maxCoverBytes},
+	}
+	for _, tc := range caps {
+		want := fmt.Sprintf("%d MiB", tc.cap/(1024*1024))
+		if !strings.Contains(quick, want) {
+			t.Errorf("quickstart step 7 does not quote the %s byte cap the CLI enforces (%s). "+
+				"An author sizing artwork from the quickstart should never be refused locally by "+
+				"a limit the quickstart did not mention.\nquickstart:\n%s", tc.kind, want, quick)
+		}
+	}
+	// The two caps DIFFER (2 MiB vs 4 MiB), so "quotes both" is a real assertion
+	// rather than one number satisfying two rows. Guard that premise: if they ever
+	// converge, this test silently stops distinguishing them.
+	if maxIconBytes == maxCoverBytes {
+		t.Fatalf("maxIconBytes and maxCoverBytes are both %d, so quoting one satisfies both checks "+
+			"above — this guard can no longer tell them apart", maxIconBytes)
+	}
+
+	// Half two: the dimensions, against the canonical section.
+	dims := quickstartDimensionRe.FindAllStringSubmatch(quick, -1)
+	// Positive control. Zero matches is what a reworded step 7, a changed
+	// separator or a regex typo all look like, and it would pass over nothing.
+	if len(dims) < 2 {
+		t.Fatalf("found only %d dimension figures in quickstart step 7, want >= 2 (an icon and a cover "+
+			"starting point). Either the inlined guidance is gone — in which case step 7 is back to "+
+			"telling authors to 'save your own icon.png' with no idea what shape — or the extractor "+
+			"is wrong (pattern: %s).\nquickstart:\n%s", len(dims), quickstartDimensionRe, quick)
+	}
+	canonicalNorm := strings.NewReplacer("×", "x", " ", "").Replace(canonical)
+	for _, d := range dims {
+		norm := d[1] + "x" + d[2]
+		if !strings.Contains(canonicalNorm, norm) {
+			t.Errorf("quickstart step 7 names the size %s×%s, which does NOT appear in "+
+				"`### Listing media requirements`. That section is the authority (the numbers are the "+
+				"platform's — AGENTS.md item 25 — so nothing can check them against code); a summary "+
+				"that has drifted from it is worse than no summary, because two places now disagree.",
+				d[1], d[2])
+		}
+	}
+}
+
 // TestListingCapRenderingAgreesWithTheREADMEUnitSystem is the seam between the
 // two surfaces that quote a byte cap at an author: `--help`, which renders it
 // through humanBytes, and the README table, which spells it out in prose.

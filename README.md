@@ -36,25 +36,27 @@ contract, and **packages/submits** it for review.
 
 ## Contents
 
+**Get started**
+
 - [Install](#install)
+  - [npm (Node)](#npm-node)
+  - [Homebrew (macOS / Linux)](#homebrew-macos--linux)
+  - [Nix flake](#nix-flake)
+  - [Prebuilt binary](#prebuilt-binary)
+  - [Go install (from source, Go 1.25+)](#go-install-from-source-go-125)
 - [Quickstart: browse & download](#quickstart-browse--download)
 - [Quickstart: build an App Block](#quickstart-build-an-app-block)
+- [Command reference](#command-reference) — every command, one table
+
+**Author an App**
+
 - [SDK packages](#sdk-packages)
-- [Command reference](#command-reference)
-  - [The blockId](#the-blockid)
-  - [Templates](#templates)
-  - [The host handshake (`BLOCK_READY`)](#the-host-handshake-block_ready)
-  - [Local dev loop (harness: mock vs live)](#local-dev-loop-harness-mock-vs-live)
-  - [Preview in the real host (`app dev-tunnel`)](#preview-in-the-real-host-app-dev-tunnel)
-  - [Examples](#examples)
-- [Browse the public API](#browse-the-public-api)
-- [Download model files](#download-model-files)
-- [Scripting with `--json`](#scripting-with---json)
-  - [Cursor pagination loop](#cursor-pagination-loop)
-  - [Clean output for pipelines](#clean-output-for-pipelines)
-  - [Generation `--json`](#generation---json)
-  - [Gotchas](#gotchas)
-  - [Worked example — top LoRAs for a base model, then plan a download](#worked-example--top-loras-for-a-base-model-then-plan-a-download)
+- [The blockId](#the-blockid)
+- [Templates](#templates)
+- [The host handshake (`BLOCK_READY`)](#the-host-handshake-block_ready)
+- [Local dev loop (harness: mock vs live)](#local-dev-loop-harness-mock-vs-live)
+- [Preview in the real host (`app dev-tunnel`)](#preview-in-the-real-host-app-dev-tunnel)
+- [Examples](#examples)
 - [Validate fidelity](#validate-fidelity)
   - [The `--json` result shape](#the---json-result-shape)
 - [Submit & auth](#submit--auth)
@@ -65,7 +67,12 @@ contract, and **packages/submits** it for review.
 - [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
 - [Browse the App store](#browse-the-app-store)
 - [App metrics](#app-metrics)
-- [Generate](#generate)
+
+**Use the API**
+
+- [Browse the public API](#browse-the-public-api)
+- [Download model files](#download-model-files)
+- [Generate](#generate) — **spends real Buzz**
   - [`--max-cost` is an estimate check, not a spending cap](#---max-cost-is-an-estimate-check-not-a-spending-cap)
   - [Silent model substitution](#-silent-model-substitution)
   - [Confirmation](#confirmation)
@@ -75,9 +82,20 @@ contract, and **packages/submits** it for review.
   - [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching)
   - [Listing and cancelling workflows](#listing-and-cancelling-workflows)
   - [Exit codes specific to `generate`](#exit-codes-specific-to-generate)
+- [Scripting with `--json`](#scripting-with---json)
+  - [Cursor pagination loop](#cursor-pagination-loop)
+  - [Clean output for pipelines](#clean-output-for-pipelines)
+  - [Generation `--json`](#generation---json)
+  - [Gotchas](#gotchas)
+  - [Worked example — top LoRAs for a base model, then plan a download](#worked-example--top-loras-for-a-base-model-then-plan-a-download)
+
+**Reference**
+
+- [Upgrading](#upgrading)
+- [Global flags](#global-flags) — colour, `--version`, the update nag
 - [Configuration](#configuration)
 - [Exit codes](#exit-codes)
-- [Troubleshooting](#troubleshooting)
+- [Troubleshooting](#troubleshooting) — **look the error message up here**
 - [Development](#development)
 - [Releasing](#releasing)
 - [License](#license)
@@ -214,6 +232,10 @@ npm run build
 civitai app validate
 
 # 5. Package + submit for review (uploads with your stored token by default).
+#    Interactively this asks you to confirm. In CI — or any non-TTY shell —
+#    a token-carrying submit REFUSES without --yes rather than firing a real
+#    moderator-review request nobody approved. Scripts must pass it:
+#      civitai app submit --yes
 civitai app submit
 
 # 6. Check where your submission is in review / deploy.
@@ -223,7 +245,10 @@ civitai app status
 #    listing can publish — do it now, while the app is in review; it carries
 #    forward on approval. `listing status` shows what's still missing.
 #    The scaffold creates `assets/` and a README of the requirements, but NO
-#    images — save your own icon.png and cover.png in there first.
+#    images — save your own icon.png and cover.png in there first:
+#      icon   png/jpeg/webp, <= 2 MiB, square-ish  — start from 512 x 512
+#      cover  png/jpeg/webp, <= 4 MiB, landscape   — start from 1600 x 900
+#    Full bounds (and who checks what) in "Listing media requirements" below.
 civitai app listing set-icon ./assets/icon.png
 civitai app listing set-cover ./assets/cover.png
 civitai app listing status
@@ -283,12 +308,12 @@ README. For the end-to-end walkthrough, see
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**). Needs the BuzzRead scope — a full-scope personal API key or `civitai login --scopes generate`; a **default** OAuth login token can't read it, and gets a clear message naming both fixes. `--json` emits `{blue,green,yellow,total}` (scriptable — handy for before/after diffing a `dev:live` spend). |
 | `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based discovery, not free-text search. **Needs a credential** (`civitai login` or `CIVITAI_TOKEN`): the endpoint keys the visible catalog off your identity, so this is *not* one of the anonymous reads. Cursor-paged. See [Browse the App store](#browse-the-app-store). |
 | `civitai app view <slug> [--json]` | **Show one published App's store detail** (`GET /api/v1/apps/{slug}`) — description, category, rating, gallery, live/external target. **Needs a credential**, same as `app list`. Reads the *public store catalog*, which is a different resource from your own deploy — a not-found here says nothing about `<slug>.civit.ai`. See [Browse the App store](#browse-the-app-store). |
-| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>] [--slug <slug>]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). `--slug` sets the **blockId** explicitly instead of deriving it from the name — needed when derivation refuses the name (see [The blockId](#the-blockid)). |
-| `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
+| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>] [--slug <slug>] [--yes]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). `--slug` sets the **blockId** explicitly instead of deriving it from the name — needed when derivation refuses the name (see [The blockId](#the-blockid)). `-y`/`--yes` is the non-interactive form: it never prompts, taking flags and defaults instead, and fails if a name is missing. |
+| `civitai app init [name] [dir] [--yes] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias); same `--yes`. |
 | `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`.** `--spend` must be asked for explicitly to request real-Buzz spend — without it the CLI filters `ai:write:budgeted` out of the mint request. `--env` prints a paste-ready `VITE_LIVE_BLOCK_TOKEN=<token>`. See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
-| `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Pre-flights whether the host can actually **embed** your dev server and warns (never fatally) when it cannot. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
+| `civitai app dev-tunnel [blockId] [--block <id>] [--port <n>] [--local-host <host>] [--tunnel-endpoint <h:p>] [--idle-timeout <d>] [--ready-timeout <d>] [--no-wait]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Pre-flights whether the host can actually **embed** your dev server and warns (never fatally) when it cannot. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message` — **`field` is always present and never `null`**) for scriptable parsing — still exits non-zero on failure. 🔴 **BREAKING:** a `[dir]` that does not exist, or is not a directory, is now a **usage error** — exit `2` with **no JSON object** on stdout, where it used to print `{"ok": false, …}` and exit `1`. See [Validate fidelity](#validate-fidelity) and [The `--json` result shape](#the---json-result-shape). |
-| `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
+| `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). **A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`** — `civitai app submit --yes` is the CI form. (The refusal is reached only when there is a token to upload with: `--package-only`, and the no-token fallback that just writes the .zip, never submit and so never ask.) |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
@@ -298,6 +323,7 @@ README. For the end-to-end walkthrough, see
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
 | `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **This does not refund anything** — a mid-run cancel bills the accrued cost, non-refundably. Cancel because you no longer want the output, never to save money. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
+| `civitai upgrade [--force]` | **Self-update this binary in place** — resolve the latest GitHub release, verify its SHA-256 against `checksums.txt`, and replace the running executable. A Homebrew install delegates to `brew upgrade` instead; `--force` reinstalls anyway (and self-replaces a Homebrew install). See [Upgrading](#upgrading). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
 
@@ -542,6 +568,24 @@ if you Ctrl-C the DNS wait, and again just above the URL, with the
 `vite.config.ts` fix. Apps scaffolded by `civitai app create` (the `page-money`
 template) already satisfy all of it.
 
+**Flags.** The defaults match what the scaffold's `npm run dev:tunnel` binds, so
+most authors pass none of these:
+
+| Flag | Default | What it is for |
+| --- | --- | --- |
+| `--block <id>` | the `blockId` in `block.manifest.json` in the CWD | The app to tunnel, if you are not standing in its project (it is also the positional argument). |
+| `--port <n>` | `5186` | The local dev-server port. Matches the scaffold's `dev:tunnel` script. |
+| `--local-host <host>` | `localhost` | **The host your dev server is bound to.** Change this when the dev server is *not* on the CLI's own loopback — inside a **container or pod** (`--local-host 10.42.0.100`), a **VM**, or bound to one specific interface. A dev server that is reachable in your browser but not from the CLI's `localhost` is exactly what this flag is for. |
+| `--no-wait` | off | Print the public URL immediately instead of waiting for it to start serving. It may `404`/`NXDOMAIN` for a few minutes while DNS and routing propagate. |
+| `--ready-timeout <d>` | `0` (wait indefinitely) | Cap the readiness wait. On expiry the command warns and prints the URL anyway rather than failing. |
+| `--idle-timeout <d>` | `30m` | Tear the tunnel down after this much inactivity. |
+| `--tunnel-endpoint <host:port>` | `sish.civitai.com:2224` | The sish SSH endpoint to dial. Also settable with **`CIVITAI_DEV_TUNNEL_ENDPOINT`**; the flag wins. |
+
+> **Publishing DNS takes 1–3 minutes, sometimes longer.** That wait is normal
+> and the command reports elapsed time while it happens — it is not a hang. If
+> you Ctrl-C out of it you also lose the embeddability warnings, which is why
+> they are printed once *before* the wait as well as again after it.
+
 ### Examples
 
 Two real example manifests live under [`examples/`](examples/) (copied from the
@@ -576,6 +620,7 @@ also takes `--json` to print the **raw API JSON response** for scripting.
 | `civitai model-versions get <id>` | Get a model version by id (alias `mv`) | `--json`, `--anon` |
 | `civitai model-versions by-hash <hash>` | Look up a model version by file hash (AutoV2, SHA256, …) | `--json`, `--anon` |
 | `civitai download <version-id>` | Download a model version's file(s) | `--model`, `--file`, `--all`, `--out`, `--out-dir`, `--layout`, `--root`, `--for-base`, `--no-verify`, `--force`, `--anon` |
+| `civitai images get <id>` | Get one image by id (`GET /api/v1/images?imageId=<id>`) | `--json`, `--anon` |
 | `civitai images search` | Search images (`GET /api/v1/images`) | `--model-id`, `--model-version-id`, `--post-id`, `--username`, `--base-model` (repeatable), `--type` (image/video/audio), `--sort`, `--period`, `--nsfw`, `--meta` (include generation metadata); paging `--limit` (≤200), `--page`, `--cursor` |
 | `civitai tags search` | Search model tags | `--query`; paging `--limit` (≤200), `--page` |
 | `civitai creators search` | Search creators | `--query`; paging `--limit` (≤200), `--page` |
@@ -975,23 +1020,44 @@ exist**, or that is not a directory, is a mistake about the invocation: it write
 `{"ok": false, "dir": "/nope", "errors": [ … ]}` and exit `1` — a fabricated
 validation result, complete with a finding about a manifest nobody could have
 written. A failure that produces **no validation result at all** likewise emits
-no object and exits `1` — an unreadable manifest or a permissions error, and in
+no object and exits `1` — a project directory the CLI cannot **stat** (it is
+unreadable, or a component of the path below it is not a directory), and in
 principle an internal schema failure, which is a directory the CLI *can* read
 that still yields nothing to print.
+
+> **An unreadable `block.manifest.json` is not one of those cases** — it is a
+> validation *verdict*, and the object is printed in full with a single
+> `(root)` finding carrying the `permission denied` message. The distinction is
+> how far the CLI got before it stopped: it could not read your *manifest*,
+> which is something to report about the project; it could not read the
+> *directory*, which is nothing at all.
 
 **So branch on the exit code before parsing:**
 
 | exit | stdout |
 | --- | --- |
 | `0` | the object, `"ok": true` |
-| `1` | the object with `"ok": false` for a validation **verdict** — but **nothing** when validation produced no result at all (an unreadable manifest; also an internal schema failure, which a released binary should never hit) |
+| `1` | the object with `"ok": false` for a validation **verdict** — including an unreadable manifest — but **nothing** when validation produced no result at all (an unreadable project *directory*, or an `ENOTDIR` partway down the path; also an internal schema failure, which a released binary should never hit) |
 | `2` | **nothing** — the path does not exist, or is not a directory |
+
+🔴 **`jq -e` is the wrong tool for reading `ok`.** It exits `1` on a JSON
+`false`, which is indistinguishable from its exit code for a missing key — so
+the obvious one-liner reports a *failing but perfectly well-formed* result as
+"no result", which is the one distinction this whole section exists to draw.
+Test for an empty string instead, and read `ok` as a value:
 
 ```bash
 out=$(civitai app validate ./my-block --json); rc=$?
 case $rc in
   2) echo "bad path — check the argument"; exit 2 ;;
-  0|1) [ -n "$out" ] && jq -e .ok <<<"$out" || echo "no result to parse (rc=$rc)" ;;
+  0|1)
+    if [ -z "$out" ]; then
+      echo "no result to parse (rc=$rc)"; exit "$rc"
+    fi
+    echo "ok=$(jq -r .ok <<<"$out")"          # true | false — the verdict
+    jq -r '.errors[]   | "ERROR   \(.field): \(.message)"' <<<"$out"
+    jq -r '.warnings[] | "WARNING \(.field): \(.message)"' <<<"$out"
+    ;;
 esac
 ```
 
@@ -1885,6 +1951,63 @@ write a retry loop that branches on the exit code alone; re-attach with
 | The workflow finished `failed` / `expired` / `canceled` | `1` |
 | The workflow succeeded but every output was filtered out (blocked / unavailable / hidden) | `1` |
 
+## Upgrading
+
+`civitai upgrade` replaces the running binary with the latest GitHub release:
+
+```bash
+civitai upgrade           # no-op (and says so) when already current
+civitai upgrade --force   # reinstall anyway
+```
+
+The release is resolved from the **public** GitHub releases API — no token is
+ever sent — and the downloaded archive is verified against its SHA-256 entry in
+the release's `checksums.txt` before anything is replaced. A mismatch, or a
+release carrying no `checksums.txt` at all, **aborts and leaves the current
+binary untouched**: it will not upgrade without integrity verification.
+
+If this binary came from Homebrew, `upgrade` does not self-replace it — it tells
+you to run `brew upgrade civitai/tap/civitai`, so the package manager keeps
+owning the file. `--force` overrides that and self-replaces anyway.
+
+The other install paths update the way they normally do — `npm install -g
+@civitai/cli@latest`, `nix profile upgrade`, or re-running `go install …@latest`.
+
+Separately from this command, the CLI runs a **background check** for a newer
+release and prints a one-line notice; `--no-update-check` (or
+`CIVITAI_NO_UPDATE_CHECK=1`) turns that off, which is what you want in CI.
+
+## Global flags
+
+These are accepted by **every** command:
+
+| Flag | What it does |
+| --- | --- |
+| `-v`, `--version` | Print the version and exit. (`civitai version` prints version + commit + build date.) |
+| `-h`, `--help` | Help for any command. `civitai --help` also prints the [exit-code](#exit-codes) contract. |
+| `--no-color` | Disable all colour and styling. Also via `NO_COLOR` or `CIVITAI_NO_COLOR`. |
+| `--color` | Force colour **even when stdout is not a TTY**. Also via `CLICOLOR_FORCE` or `CIVITAI_COLOR`. |
+| `--no-update-check` | Skip the background check for a newer release. Also via `CIVITAI_NO_UPDATE_CHECK`. |
+
+**The colour contract, for pipelines.** Colour is **off by default whenever
+stdout is not a TTY**, so a redirected or piped run already emits plain text
+with no escape sequences — you do not have to ask for anything. When you do want
+to override that, the precedence is fixed, highest first:
+
+1. `--no-color` / `NO_COLOR` / `CIVITAI_NO_COLOR` → **off**
+2. `--color` / `CLICOLOR_FORCE` / `CIVITAI_COLOR` → **on**
+3. otherwise: on if stdout is a TTY, off if it is not
+
+Off always beats on, so a `NO_COLOR` in the environment cannot be re-enabled by
+a `--color` further down a pipeline. `NO_COLOR` follows the
+[no-color.org](https://no-color.org) convention — *present and non-empty* is
+what counts, not the value.
+
+🔴 **`--json` output is never styled**, at any of those settings. It is written
+without passing through the presentation layer at all, so `--json` is always
+safe to pipe into `jq` regardless of how colour is configured or whether a TTY
+is attached.
+
 ## Configuration
 
 | Setting | Config key | Env var | Default |
@@ -1893,6 +2016,14 @@ write a retry loop that branches on the exit code alone; re-attach with
 | OAuth tokens (device login) | `auth_kind`, `access_token`, `refresh_token`, `token_expiry`, `scope` | — | — |
 | API base URL | `base_url` | `CIVITAI_BASE_URL` | `https://civitai.com` |
 | Submit endpoint | — | `CIVITAI_SUBMIT_PATH` | `/api/v1/blocks/submit-version` |
+| Skip the update check | — | `CIVITAI_NO_UPDATE_CHECK` | unset (the check runs) |
+| dev-tunnel SSH endpoint | — | `CIVITAI_DEV_TUNNEL_ENDPOINT` | `sish.civitai.com:2224` |
+| Disable colour | — | `NO_COLOR`, `CIVITAI_NO_COLOR` | unset |
+| Force colour | — | `CLICOLOR_FORCE`, `CIVITAI_COLOR` | unset |
+
+Where a setting also has a flag — `--token`, `--tunnel-endpoint`, and the colour
+and update-check flags — the flag wins over the environment. See
+[Global flags](#global-flags) for the full colour precedence.
 
 Config lives at `~/.config/civitai/config.yaml` (honours `XDG_CONFIG_HOME`),
 written owner-readable only.
@@ -1906,7 +2037,7 @@ by this — only `echo $?` differs.
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `1` | Generic / unclassified error. A **filesystem failure** lands here — a file that exists but cannot be read, an unwritable config directory, an I/O error. It is neither a mistake about the invocation (`2`) nor a transport failure (`5`), and there is no filesystem-specific code. A **validation verdict** lands here, and deliberately not on `2`: `civitai app validate` exits `1` when the manifest is invalid, and likewise when the directory you named is a real directory with no `block.manifest.json` at its root — you pointed at a real place, so the invocation was right and the project is wrong. (A path that does **not exist**, or that is not a directory, is the invocation being wrong, and exits `2`.) **When validation produces a result**, `civitai app validate --json` prints it in full and its `ok` field is the structured form of the same answer; a failure that produces no result at all — an unreadable manifest, say — still exits `1` with **nothing on stdout**, so branch on the exit code before parsing. A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval. |
+| `1` | Generic / unclassified error. A **filesystem failure** lands here — a file that exists but cannot be read, an unwritable config directory, an I/O error. It is neither a mistake about the invocation (`2`) nor a transport failure (`5`), and there is no filesystem-specific code. A **validation verdict** lands here, and deliberately not on `2`: `civitai app validate` exits `1` when the manifest is invalid, and likewise when the directory you named is a real directory with no `block.manifest.json` at its root — you pointed at a real place, so the invocation was right and the project is wrong. (A path that does **not exist**, or that is not a directory, is the invocation being wrong, and exits `2`.) **When validation produces a result**, `civitai app validate --json` prints it in full and its `ok` field is the structured form of the same answer; a failure that produces no result at all — a project directory the CLI cannot **stat**, say, because it is unreadable or because a path component below it is not a directory — still exits `1` with **nothing on stdout**, so branch on the exit code before parsing. A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval. |
 | `2` | Usage error — a bad flag, a **missing required flag or argument** (e.g. `civitai app withdraw` with no publish-request id), a bad flag **value** (`--limit` out of range, a non-integer id, `--template nope`), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum). This does not depend on where the refusal happens: a mistake the CLI catches locally and one the server rejects both exit `2`. A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is missing, empty, a directory, over the size cap, or not a PNG/JPEG/WebP — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and exits `1`, not `2`. That split is not images-only and it is not flags-only — it holds for **a flag's value and a positional argument alike**, over the paths listed here: `civitai generate --input <file>` likewise exits `2` for a path that is not there or is a directory, and `1` when the file is there and the read fails. The project commands take a positional path and refuse it the same way: `civitai app validate <dir>` and `civitai app submit <dir>` exit `2` when the path does not exist **or is not a directory**, because both are mistakes about the invocation. A directory that **does** exist but holds no `block.manifest.json` is a validation verdict instead, and exits `1`. `app listing set-cover` and `app listing add-screenshot` take the same positional `<file>` and refuse it the same way. (The CLI has no `--file` image flag at all: the only `--file` is `civitai download --file`, which picks a file *inside* a model version.) **Paths outside that list are not covered, and mostly exit `1`.** `civitai app listing … --dir <missing>` exits `1` (it reports "no `block.manifest.json` found in …", the same way it does for a directory that is really there but holds no manifest), and so does `civitai app submit … --out <path under a directory that does not exist>`. Both are stated rather than promised: this is a ledger of the paths the split is published for, not a claim about every path in the CLI. A usage error emits **no JSON object**, in every mode. `civitai app validate /nope --json` therefore writes nothing to stdout and exits `2`; it used to print `{"ok": false, …}` and exit `1`, which reported a nonexistent path as a validation result. Scripts that parsed that object must branch on the exit code first. |
 | `3` | Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured). **`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as "bad flags". See [Generate](#exit-codes-specific-to-generate). |
 | `4` | Not found — the requested resource does not exist. Usually an HTTP 404, but not always: some lookups answer `200` with an empty result set instead (`civitai app status <slug>` for an unregistered slug, `civitai users get` for an unknown username), and those exit `4` too. The same question therefore exits the same way however the API happens to phrase the miss. |
@@ -1927,32 +2058,86 @@ fi
 
 ## Troubleshooting
 
-- **`no token configured`** — run `civitai login` (or set `CIVITAI_TOKEN`).
-- **`unauthorized (401)`** — your token is invalid/expired. OAuth tokens refresh
-  automatically; if the refresh token has also expired, run `civitai login`
-  again. For a personal key, create a new one at
-  `https://civitai.com/user/account` and `civitai login --token <key>`.
-- **`forbidden (403)` / `service unavailable (503)`** — your account may lack
-  Apps access while the feature is in its invite-only beta (see the warning at
-  the top of this README). Submission is limited to invited beta testers
-  until Apps reaches general availability.
-- **`validation failed`** — read each `- ...` line; fix the manifest, or pass
-  `--skip-validate` to package anyway (the server will still re-validate).
-- **`<dir> is not empty — refusing to overwrite`** — `app init` / `app create`
-  won't clobber an existing directory. Scaffold somewhere else (`--dir <new
-  path>`, or a different name), or remove the directory first. There is **no
-  `--force`**: overwriting a directory you already have is not recoverable, so
-  the CLI does not offer to do it. The command prints this same remedy.
+**Look up the message you got.** Every row's left column is a fragment of a
+string this CLI really prints, so searching this page for a few words of your
+error should land you on the right row. (A test asserts that each of these
+strings still exists in the source, so the index cannot quietly go stale the way
+a hand-written list does.)
+
+### Credentials and access
+
+| You saw | What it means | Where to read more |
+| --- | --- | --- |
+| `no token configured` | Nothing is logged in. Run `civitai login`, or set `CIVITAI_TOKEN`. This includes `civitai app list` / `app view`: the App **store** is not an anonymous read. | [Submit & auth](#submit--auth), [Browse the App store](#browse-the-app-store) |
+| `not logged in (401)` | The credential is present but invalid or expired. OAuth tokens refresh themselves; when the *refresh* token has also expired, log in again. For a personal key, mint a new one at `civitai.com/user/account`. | [Submit & auth](#submit--auth) |
+| `forbidden (403)` | Usually the invite-only Apps beta rather than a broken token — the same account reads the public API fine. | [Submit & auth](#submit--auth) |
+| `not permitted for your account (403)` | Managing a **store listing** needs Apps-author access, which is a narrower grant than being able to submit. | [Listing media requirements](#listing-media-requirements) |
+| `not permitted to read this app's analytics (403)` | `app metrics` needs a **full-scope personal API key**. An OAuth login is refused here even when it can submit. | [App metrics](#app-metrics) |
+| `block lacks ai:write:budgeted scope` | Printed by your app at runtime under `dev:live`. The dev token was minted **without** `--spend`, so the CLI filtered the budgeted-spend scope out — it never requests that scope implicitly, even when your manifest declares it. | [Local dev loop](#local-dev-loop-harness-mock-vs-live) |
+| `insufficient Buzz` / `generation disabled` | Not credential problems, which is why they exit `1` rather than `3` — a script must not loop on `civitai login` for either. | [Exit codes specific to `generate`](#exit-codes-specific-to-generate) |
+| `rate limited (429)` | Throttled; exit `6`. For deep paging use `--cursor` rather than `--page`. | [Exit codes](#exit-codes) |
+
+### Scaffolding a project
+
+| You saw | What it means | Where to read more |
+| --- | --- | --- |
+| `cannot derive a slug from` / `cannot appear in a blockId` | The name holds characters the blockId alphabet cannot carry, and dropping them would mint a **different permanent public id** than you typed. Choose one yourself with `--slug <slug>`. | [The blockId](#the-blockid) |
+| `is not valid UTF-8` | The same refusal one step earlier: the name's bytes cannot be read at all. Pass `--slug`, and a `--name` that is valid UTF-8. | [The blockId](#the-blockid) |
+| `refusing to overwrite. Scaffold somewhere else` | `app create` / `app init` will not clobber a non-empty directory, and there is deliberately **no `--force`** — overwriting a directory you already have is not recoverable. Use `--dir <new path>`, or remove the directory first. | [Templates](#templates) |
+
+### Validating and submitting
+
+| You saw | What it means | Where to read more |
+| --- | --- | --- |
+| `is this an App project?` | There is no `block.manifest.json` at the path you named. The path itself was fine — which is why this exits `1` and not `2`. | [Validate fidelity](#validate-fidelity) |
+| `no such directory — pass the path to an App project root` | The path does not exist. This is a **usage** error: exit `2`, and `--json` prints nothing at all. | [Exit codes](#exit-codes) |
+| `is not a directory — pass the App project ROOT` | You pointed at a file — often the manifest itself. Pass the directory holding it. Exit `2`. | [Exit codes](#exit-codes) |
+| `it did NOT check that the file is loaded` | The `BLOCK_READY` advisory on its **weak** tier: it could not resolve what your `index.html` loads, so it only checked whether *some* file mentions the message. The lines that follow name what it could not follow. | [The host handshake](#the-host-handshake-block_ready) |
+| `nothing index.html loads reaches it` | The **strong** tier: the emitter is in your project but nothing the browser loads reaches it — an orphan file. Copying `civitai-host.js` in is only half the fix; it has to be referenced too. | [The host handshake](#the-host-handshake-block_ready) |
+| `no lockfile is committed` / `is not a lockfile` | The platform build installs **strictly** from the committed lockfile, so a missing one — or a zero-byte one created with `touch` — fails the build server-side. A lockfile is generated by the package manager, never hand-written. | [Validate fidelity](#validate-fidelity) |
+| `refusing to submit without --yes` | A submit that would really upload asked for confirmation and found no TTY. Pass `--yes` in CI, or `--package-only` to just write the .zip. | [Command reference](#command-reference) |
+
+### Generating
+
+| You saw | What it means | Where to read more |
+| --- | --- | --- |
+| `refusing to spend Buzz without --yes` | The same gate on the money path. `--dry-run` prices the job without spending anything. | [Confirmation](#confirmation) |
+| `--image requires --ecosystem` | Without an ecosystem the server never promotes the job to image-to-image: your images are silently dropped and you are billed for a plain text-to-image run. Hence a refusal rather than a warning. | [Image-to-image](#image-to-image---image-and---ecosystem) |
+| `interrupted while waiting` | **The generation is still running and has already been charged.** Ctrl-C stopped the wait, not the job. Re-attach with `civitai workflows get <id>`. | [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching) |
+| `model substituted` | The server ran a **different checkpoint** than you asked for and billed for what ran. Warned by default; `--fail-on-substitution` turns it into a refusal on the estimate, before any spend. | [Silent model substitution](#-silent-model-substitution) |
+
+### Everything else
+
+| You saw | What it means | Where to read more |
+| --- | --- | --- |
+| `has no approved App Block yet` | The slug is right and the app exists — its analytics do not, because the version is still in review. Exit `1`, not `4`. | [App metrics](#app-metrics) |
+| `no such app for your account` | The slug matches none of your submissions. List them with `civitai app status`. | [Submission status](#submission-status) |
+| `is ambiguous — it matches` | A model version has several files sharing that name. Select one by its numeric file id with `--file <id>`. | [Download model files](#download-model-files) |
+| `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. | [Download model files](#download-model-files) |
+| `checksum mismatch for` | The same, during `civitai upgrade`. The binary was **not** replaced. | [Upgrading](#upgrading) |
+| ``git is required for `civitai app pull` `` | `app pull` shells out to `git`, which is not on your `PATH`. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
+
+Still stuck? Every command takes `--help`, `civitai --help` prints the exit-code
+contract, and failures are differentiated by [exit code](#exit-codes) — so a
+script can branch on the *kind* of failure without matching any of these
+strings.
 
 ## Development
 
 ```bash
-make ci      # go mod tidy + vet + test + build (mirrors CI)
+make ci      # go mod tidy + vet + test + build
+make lint    # golangci-lint — a SEPARATE job; `make ci` does not run it
 make test
 make build   # -> bin/civitai
 make fmt
 go test ./... -cover
 ```
+
+🔴 **`make ci` is not a mirror of CI.** It runs tidy + vet + test + build and
+**does not run lint**, which is its own CI job — so run `make lint` too before
+calling a change done. It errors out when `golangci-lint` is not on `PATH`
+rather than degrading to something weaker, which is what makes a clean run mean
+anything.
 
 - **Language:** Go 1.25, [Cobra](https://github.com/spf13/cobra) (commands) +
   [Viper](https://github.com/spf13/viper) (config).
@@ -1960,8 +2145,20 @@ go test ./... -cover
   [`AGENTS.md`](AGENTS.md).
 - **Contributing:** see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-CI (`.github/workflows/ci.yml`) runs `go vet`, `gofmt -s -l .`, `go test ./...`,
-and `go build ./...` on every push/PR.
+**CI is eight jobs, not four steps.** `.github/workflows/ci.yml` runs
+`build-test` (vet + `gofmt -s -l .` + test + build), `lint`, `schema-drift`,
+`pins-vs-published`, `ready-ack-runtime`, `template-page-vite`,
+`template-page-money` and `scaffold-currency` on every push to `main` and every
+PR. Several exist to catch drift between this repo and the platform — the
+vendored schema, the scaffold's npm pins, the block→host handshake — which a
+plain `go test` cannot see.
+
+**Running and gating are different questions**, and fewer of those jobs gate a
+merge than run. The measured set of required status checks, and the instruction
+to re-measure rather than trust a written copy, live in [`AGENTS.md`](AGENTS.md)
+item 11 — deliberately in one place, because a second copy is how the original
+claim went stale. Notably `lint` reports without blocking, which is another
+reason to run it locally.
 
 ## Releasing
 
@@ -1974,9 +2171,23 @@ git push origin v0.1.0
 ```
 
 This cross-compiles for linux/darwin/windows × amd64/arm64, stamps
-version/commit/date, and publishes a GitHub Release with archives +
+version/commit/date, and creates a **draft** GitHub Release with archives +
 `checksums.txt` plus a Homebrew tap bump. See [`AGENTS.md`](AGENTS.md) for the
 full process and the secrets it needs (`HOMEBREW_TAP_GITHUB_TOKEN`).
+
+🔴 **There are two publication channels, and clicking "Publish release" fires
+the second one.** `.github/workflows/release-npm.yml` triggers on
+`release: [published]` and publishes the `npm/` wrapper as
+**[`@civitai/cli`](https://www.npmjs.com/package/@civitai/cli)** — the very
+first install option at the top of this README. So publishing the draft is not
+the last step of the GitHub release; it is also, in the same click, an npm
+publish. That matters because **npm unpublish is restricted**: a bad version is
+corrected by publishing another one, not by taking it back.
+
+Authentication for that job is **OIDC trusted publishing** — there is no
+`NPM_TOKEN` secret. The trust is bound to the repository *and to that workflow
+file's path*, so moving or renaming `release-npm.yml` breaks publishing, and no
+secret rotation will fix it.
 
 ## License
 
