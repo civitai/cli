@@ -339,7 +339,7 @@ func TestGenerateInput_EnvelopeKeyInTheFileIsRefused(t *testing.T) {
 
 // It WARNS and does not block: the CLI does not vendor the server's node
 // registry, so it has no authority to call a key invalid — only to say it does
-// not recognise it.
+// not model it.
 func TestGenerateInput_UnknownKeyWarnsAndProceeds(t *testing.T) {
 	s := &genSeams{}
 	c, _, errb := genCmd("")
@@ -352,19 +352,16 @@ func TestGenerateInput_UnknownKeyWarnsAndProceeds(t *testing.T) {
 		t.Fatalf("submit calls = %d, want 1 — the warning must not stop the run", s.submitCalls)
 	}
 	stderr := errb.String()
-	for _, want := range []string{"shift", "foobar", "does not recognise", "SILENTLY IGNORES"} {
+	for _, want := range []string{"shift", "foobar", unknownKeyWarningMarker} {
 		if !strings.Contains(stderr, want) {
 			t.Errorf("stderr missing %q:\n%s", want, stderr)
 		}
 	}
 	// 🔴 Framing: a statement about the CLI's own knowledge, never a verdict on
-	// the key. Claiming the key is invalid would be a mirror of a registry this
-	// CLI deliberately does not vendor.
-	for _, forbidden := range []string{"invalid key", "unsupported key", "is not a valid"} {
-		if strings.Contains(strings.ToLower(stderr), forbidden) {
-			t.Errorf("the warning asserts the key is invalid (%q); it may only report that the CLI cannot verify it:\n%s", forbidden, stderr)
-		}
-	}
+	// the key — in EITHER direction. Claiming the key is invalid, and claiming
+	// the server ignores it, are both mirrors of a registry this CLI does not
+	// vendor; #343 shipped the second one and it was false.
+	assertNoServerVerdictOnUnknownKeys(t, stderr)
 }
 
 // Negative control: every key the CLI models must produce NO warning, or the
@@ -378,8 +375,256 @@ func TestGenerateInput_KnownKeysDoNotWarn(t *testing.T) {
 	if err := runGenerate(c, s.deps(t), inputOpts(writeGraphFile(t, body))); err != nil {
 		t.Fatalf("--input: %v", err)
 	}
-	if strings.Contains(errb.String(), "does not recognise") {
+	if strings.Contains(errb.String(), unknownKeyWarningMarker) {
 		t.Errorf("a graph of only modelled keys produced an unknown-key warning:\n%s", errb.String())
+	}
+}
+
+// unknownKeyWarningMarker is the phrase both the presence and the absence
+// assertions key off, so they cannot drift apart and start proving different
+// things — one of them would then pass vacuously.
+const unknownKeyWarningMarker = "this CLI does not model"
+
+// retractedUnknownKeyClaims are the assertions about the SERVER that #343
+// removed from unknownKeyWarning, plus the nearby shapes the same mistake takes.
+//
+// 🔴 THIS IS A RETRACTION CHECK, NOT THE GUARD — exactly the split
+// `retractedCancelClaims` records for the cancel copy. AGENTS.md item 28 is the
+// evidence that a phrase list loses: two rounds of banned substrings were beaten
+// by paraphrase, and "does this sentence assert what the server does with the
+// key" is not computable from text. The GUARD is the golden file
+// (`generate_input_unknown_key_warning`), which fails on ANY change including an
+// addition. This list exists only so the SPECIFIC sentences #343 measured to be
+// false fail loudly by name if they are ever reinstated.
+var retractedUnknownKeyClaims = []string{
+	"silently ignores",
+	"prices the same",
+	"has no effect",
+	"returns http 200",
+	"silently drops",
+	"invalid key",
+	"unsupported key",
+	"is not a valid",
+}
+
+// assertNoServerVerdictOnUnknownKeys is deliberately applied to WHOLE STDERR at
+// the run-level call site, not just to unknownKeyWarning's return value: the
+// claim is wrong wherever it lands on that screen, and #343's damage came from
+// the user reading the screen, not the function.
+//
+// 🔴 The cost of that breadth, named so it is diagnosed rather than debugged: a
+// fixture that grows an --image would drag in validateImageOpts' unrelated
+// "silently ignores the images" (generate.go), which is a DIFFERENT and
+// separately-measured claim about a different key. It would trip this check as a
+// false positive. That is a loud red with this message, not a silent pass — but
+// if you hit it, narrow the call site to the warning string rather than deleting
+// the banned phrase.
+func assertNoServerVerdictOnUnknownKeys(t *testing.T, got string) {
+	t.Helper()
+	low := strings.ToLower(got)
+	for _, banned := range retractedUnknownKeyClaims {
+		if strings.Contains(low, banned) {
+			t.Errorf("the unknown-key copy asserts a verdict on the key (%q). It may report only that this CLI does not model it "+
+				"and that it is sent as written — #343 measured the retracted version wrong: `priority` was honoured and "+
+				"more than tripled the price on the same screen.\n%s", banned, got)
+		}
+	}
+}
+
+// The warning must NAME --dry-run, because that is its only actionable half now
+// that the false "no effect" reassurance is gone. Without it the advisory tells
+// the user something is unchecked and gives them nowhere to check it.
+//
+// It is a separate assertion from the golden deliberately: the golden proves the
+// text has not changed, this proves the text still does its job, and a `-update`
+// run silently re-approves the former but not the latter.
+func TestUnknownKeyWarning_PointsAtTheOneSurfaceThatCanShowAPriceEffect(t *testing.T) {
+	got := unknownKeyWarning([]string{"priority"})
+	if !strings.Contains(got, "--dry-run") {
+		t.Errorf("the warning does not name --dry-run, so it reports an unchecked key with no way to check it:\n%s", got)
+	}
+	assertNoServerVerdictOnUnknownKeys(t, got)
+}
+
+// --- --fail-on-substitution's --input COVERAGE NOTE (#342) -------------------
+
+// 🔴 THE FLAG STAYS LIVE HERE, AND A REFUSAL WAS WITHDRAWN. #342 measured it
+// armed, silent and charged: a credentialed run passed --fail-on-substitution
+// with `resources:[{modelVersionId:128713,…}]`, was billed 28 Buzz, and the job
+// ran model version 2442439 with no report and no refusal. The first fix drafted
+// was a usage error on the flag COMBINATION. It was withdrawn because
+// substitutionRefusal keys off the ESTIMATE's reply, not off o.checkpoint — so
+// on a raw graph the flag is a working PRE-SPEND guard, and refusing the
+// combination would have deleted a guard that works. The defect is that its
+// coverage is partial and undocumented; the note is the documentation.
+//
+// This test pins the half that matters for money: the run PROCEEDS.
+func TestGenerateInput_FailOnSubstitutionIsNotRefused(t *testing.T) {
+	for _, name := range []string{"submit", "dry-run"} {
+		t.Run(name, func(t *testing.T) {
+			o := inputOpts(writeGraphFile(t, cleanGraph))
+			o.failOnSubstitution = true
+			o.dryRun = name == "dry-run"
+			s := &genSeams{}
+			c, _, errb := genCmd("")
+			if err := runGenerate(c, s.deps(t), o); err != nil {
+				t.Fatalf("--input with --fail-on-substitution must NOT be refused, got %v", err)
+			}
+			// 🔴 The estimate must still be fetched — that reply is the ONLY thing
+			// --fail-on-substitution can fire on. A version of this that skipped the
+			// quote would leave the flag genuinely inert while this test stayed green.
+			if s.whatIfCalls != 1 {
+				t.Errorf("whatIf calls = %d, want 1 — the flag can only fire on the estimate's reply", s.whatIfCalls)
+			}
+			if !strings.Contains(errb.String(), inputCoverageNoteMarker) {
+				t.Errorf("the coverage note did not print:\n%s", errb.String())
+			}
+		})
+	}
+}
+
+// 🔴 THE NOTE IS UNCONDITIONAL ON THE FLAGS AND BLIND TO THE FILE. Deciding
+// whether to warn by looking at the graph would be the per-key registry item 13
+// forbids — and it is what lets the note make a claim about the FLAG rather than
+// about the FILE. Three graphs whose model references differ in exactly the way
+// a file-inspecting version would branch on must all produce the SAME note.
+func TestInputSubstitutionCoverageNote_DoesNotDependOnTheGraph(t *testing.T) {
+	graphs := map[string]string{
+		"top-level model":    `{"workflow":"txt2img","prompt":"a cat","model":{"id":128713}}`,
+		"nested resources":   `{"workflow":"txt2img","prompt":"a cat","resources":[{"id":128713}]}`,
+		"no model reference": cleanGraph,
+	}
+	seen := map[string]bool{}
+	for name, body := range graphs {
+		o := inputOpts(writeGraphFile(t, body))
+		o.failOnSubstitution = true
+		s := &genSeams{}
+		c, _, errb := genCmd("")
+		if err := runGenerate(c, s.deps(t), o); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !strings.Contains(errb.String(), inputCoverageNoteMarker) {
+			t.Fatalf("%s: no coverage note:\n%s", name, errb.String())
+		}
+		seen[inputSubstitutionCoverageNote(o)] = true
+	}
+	if len(seen) != 1 {
+		t.Errorf("the coverage note varies with the graph's contents (%d distinct texts) — it must read two flags and never the file, "+
+			"or it is making a claim about which keys the server honours (item 13)", len(seen))
+	}
+}
+
+// Both controls on the renderer, so the assertions above cannot pass because it
+// is inert or because it fires unconditionally.
+func TestInputSubstitutionCoverageNote_Controls(t *testing.T) {
+	both := generateOpts{inputPath: "g.json", failOnSubstitution: true}
+	if inputSubstitutionCoverageNote(both) == "" {
+		t.Fatal("positive control: both flags set rendered no note")
+	}
+	for name, o := range map[string]generateOpts{
+		"--input alone":                {inputPath: "g.json"},
+		"--fail-on-substitution alone": {failOnSubstitution: true},
+		"neither":                      {},
+	} {
+		if got := inputSubstitutionCoverageNote(o); got != "" {
+			t.Errorf("%s must render no note, got %q", name, got)
+		}
+	}
+}
+
+// inputCoverageNoteMarker is the phrase the presence assertions key off. It is
+// the note's own claim — that the flag is live but its reach is not knowable
+// here — so a rewording that drops the claim fails these tests rather than
+// silently passing on a phrase that survived by accident.
+const inputCoverageNoteMarker = "LIVE with --input"
+
+// 🔴 THE NOTE MUST NOT CLAIM WHICH GRAPH KEYS ARE COVERED. Item 21(a)'s
+// "TOP-LEVEL" describes where in the REPLY the record is carried — the reply's
+// own top level versus nested under `metadata` — NOT which model reference in
+// the REQUEST graph the server substitutes and reports on. Reading the first as
+// the second turns one paid observation into a per-key rule about the server's
+// registry, which is #343's mistake in a new costume. Retraction check, not the
+// guard: the golden is the guard.
+func TestInputSubstitutionCoverageNote_MakesNoPerKeyCoverageClaim(t *testing.T) {
+	got := strings.ToLower(inputSubstitutionCoverageNote(generateOpts{inputPath: "g.json", failOnSubstitution: true}))
+	for _, banned := range []string{
+		"top-level model substitutions only",
+		"covers top-level",
+		"are not reported",
+		"cannot see them",
+		"nested resources are not",
+	} {
+		if strings.Contains(got, banned) {
+			t.Errorf("the coverage note asserts WHICH graph keys the server reports on (%q). "+
+				"Item 21(a) is about the REPLY's carrier shape, not the request graph's nesting — that inference is #343's error. "+
+				"It may say only that the flag is live, that it fires on the estimate's record, and that this CLI cannot relate that record to an uninterpreted file.", banned)
+		}
+	}
+	// Positive control: the clauses it MUST carry.
+	for _, want := range []string{"estimate", "not interpreted", "nothing was reported"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the coverage note lost the clause %q, so the ban above could pass over an empty claim:\n%s", want, got)
+		}
+	}
+}
+
+// 🔴 THE LOAD-BEARING TEST FOR THE WHOLE #342 DECISION. The coverage note tells
+// the user the flag "is LIVE with --input … a real pre-spend guard". That is a
+// behavioural claim, and prose is not evidence for it: this is. With the ESTIMATE
+// reporting a substitution on a RAW-GRAPH run, --fail-on-substitution must refuse
+// with ErrModelSubstituted and the submit seam must never be reached.
+//
+// Without this, the withdrawn refusal could be reinstated — or the flag could go
+// inert on this path by accident — and every other test here would stay green
+// while the note became a false promise on a money surface. It is also the
+// counterexample to "the flag structurally cannot fire on a raw graph", the
+// premise the refusal was originally drafted on.
+func TestGenerateInput_FailOnSubstitutionStillFiresOnARawGraph(t *testing.T) {
+	s := &genSeams{}
+	s.whatIf = func(context.Context, genapi.Graph) (*genapi.WhatIfResult, json.RawMessage, error) {
+		q := okQuote(12)
+		q.ModelSubstitutions = []genapi.ModelSubstitution{
+			{Requested: 128713, Applied: 2442439, Reason: genapi.SubstitutionUnrecognized},
+		}
+		return q, okQuoteRaw(12), nil
+	}
+	o := inputOpts(writeGraphFile(t, cleanGraph))
+	o.failOnSubstitution = true
+	c, _, _ := genCmd("")
+	err := runGenerate(c, s.deps(t), o)
+	if !errors.Is(err, ErrModelSubstituted) {
+		t.Fatalf("--fail-on-substitution must still refuse a REPORTED substitution on a raw graph, got %v", err)
+	}
+	if s.submitCalls != 0 {
+		t.Errorf("it refused but submitted anyway, so it is not a pre-spend guard: submit=%d", s.submitCalls)
+	}
+	if s.whatIfCalls != 1 {
+		t.Errorf("whatIf calls = %d, want 1", s.whatIfCalls)
+	}
+}
+
+// The flag stays live on the FLAG path too. A change that disarmed
+// --fail-on-substitution everywhere would pass the --input tests above while
+// removing the feature.
+func TestFailOnSubstitution_StillRefusesOnTheFlagPath(t *testing.T) {
+	var s genSeams
+	s.whatIf = func(context.Context, genapi.Graph) (*genapi.WhatIfResult, json.RawMessage, error) {
+		q := okQuote(12)
+		q.ModelSubstitutions = []genapi.ModelSubstitution{
+			{Requested: 111, Applied: 222, Reason: genapi.SubstitutionUnrecognized},
+		}
+		return q, okQuoteRaw(12), nil
+	}
+	o := baseOpts()
+	o.assumeYes = true
+	o.failOnSubstitution = true
+	c, _, _ := genCmd("")
+	err := runGenerate(c, s.deps(t), o)
+	if !errors.Is(err, ErrModelSubstituted) {
+		t.Fatalf("--fail-on-substitution without --input must still refuse with ErrModelSubstituted, got %v", err)
+	}
+	if s.submitCalls != 0 {
+		t.Errorf("the substitution refusal submitted anyway: submit=%d", s.submitCalls)
 	}
 }
 

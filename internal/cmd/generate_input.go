@@ -234,25 +234,106 @@ func parseGraphInput(data []byte) (*parsedGraphInput, error) {
 // unknownKeyWarning renders the advisory for keys the CLI does not model, or ""
 // when there are none.
 //
-// 🔴 The wording is a statement about THIS CLI'S OWN KNOWLEDGE, not about the
-// key's validity, and it must stay one. The CLI has no authority to say whether
-// the server accepts a key — it does not vendor the node registry, and the
-// platform's ~51 ecosystem graphs declare far more nodes than the five flags
-// model. What it CAN say, and what the user needs, is: this key is being sent
-// verbatim, nothing here checked it, and the server's failure mode for a key it
-// does not declare is to DROP IT SILENTLY at HTTP 200 — measured: `foobar:123`
-// returns 200, prices identically, and the parameter simply vanishes. So a typo
-// costs money and produces a job that ran without it, with no error anywhere.
+// 🔴 THE WORDING IS A STATEMENT ABOUT THIS CLI'S OWN KNOWLEDGE, AND ABOUT
+// NOTHING ELSE. It may not say the key is invalid — that would mirror a node
+// registry this CLI deliberately does not vendor (item 13) — and, since #343, it
+// may not say the server IGNORES it either. Both are verdicts on the server's
+// behaviour, and this CLI has authority over neither.
+//
+// 🔴 THE SECOND CLAIM WAS DISPROVED ON ITS OWN SCREEN, WHICH IS WHY IT IS GONE.
+// This warning used to close with: the server "SILENTLY IGNORES keys it does not
+// declare: an unrecognised key returns HTTP 200, prices the same, and simply has
+// no effect". Measured on a credentialed run (#343): a graph carrying
+// `priority: high` drew exactly that sentence, and three lines below it the
+// command's own cost breakdown showed a `fixed → priority 20` component and a
+// total of 28 — against 8 for `normal` and 8 for `low`. The key was honoured, it
+// more than tripled the price, and the job cleared in ~40s instead of the
+// 60–90 minutes the low-priority queue was quoting. So the warning talked the
+// user out of the one change that fixed their actual problem, and contradicted
+// the CLI's own output doing it.
+//
+// The defect was a GENERALISATION, not a typo: ONE measurement (`foobar:123`
+// priced identically and vanished) was written up as a rule about every
+// undeclared key. That is the item-13 mistake in warning form — a vendored claim
+// about the server's node registry, just phrased as prose instead of a table.
+//
+// What survives is only what this CLI can carry on its own authority: the key is
+// not modelled HERE, it is sent exactly as written, and what it does — including
+// what it costs — is the server's answer. Naming --dry-run is the actionable
+// part and is structural rather than asserted: whatIfGraph strips only
+// `prompt`/`negativePrompt` from a raw graph (item 15), so an unmodelled key IS
+// part of what the estimator prices — which is precisely where #343's
+// `priority 20` component appeared. That is not a promise the estimate is a
+// quote (item 28(a) — it is not), only a pointer at the one surface where a
+// price effect can show BEFORE the money moves.
 func unknownKeyWarning(keys []string) string {
 	if len(keys) == 0 {
 		return ""
 	}
 	return fmt.Sprintf(
-		"--input carries %s that this CLI does not recognise and therefore cannot verify: %s. %s sent to the server as-is. "+
-			"This is NOT a claim that %s invalid — the server declares many more graph nodes than this CLI models. "+
-			"But the server SILENTLY IGNORES keys it does not declare: an unrecognised key returns HTTP 200, prices the same, and simply has no effect, so a typo here costs Buzz and produces a job that ran without it. Check the spelling against the graph you copied it from",
+		"--input carries %s that this CLI does not model and therefore did not check: %s. %s sent to the server exactly as written. "+
+			"This is NOT a claim that %s invalid, and NOT a claim that the server ignores %s: this CLI does not vendor the server's graph nodes, so \"unrecognised here\" is the whole of what it knows. "+
+			"The server decides what %s, including what %s — --dry-run prices the graph with %s included, so the server's own estimate is where a price effect would show. "+
+			"Check the spelling against the graph you copied %s from",
 		plural(len(keys), "a key", "keys"), joinQuoted(keys),
-		plural(len(keys), "It is", "They are"), plural(len(keys), "it is", "they are"))
+		plural(len(keys), "It is", "They are"),
+		plural(len(keys), "it is", "they are"),
+		plural(len(keys), "it", "them"),
+		plural(len(keys), "the key does", "the keys do"),
+		plural(len(keys), "it costs", "they cost"),
+		plural(len(keys), "it", "them"),
+		plural(len(keys), "it", "them"))
+}
+
+// inputSubstitutionCoverageNote is the advisory for `--input` +
+// `--fail-on-substitution`, or "" when they are not both present (#342).
+//
+// 🔴 IT IS UNCONDITIONAL ON THE FLAGS AND BLIND TO THE FILE. It reads two
+// booleans and never looks at the graph. Deciding whether to warn by inspecting
+// the file — "does it name a model at the top level, or under resources?" —
+// would be exactly the per-key registry item 13 forbids, and it is the ONLY
+// reason this note can be worded honestly at all: an advisory that fires
+// always makes a claim about the FLAG's coverage, while one that fires
+// selectively would be making a claim about the FILE's contents.
+//
+// # WHY A NOTE AND NOT A REFUSAL
+//
+// A refusal was drafted first and withdrawn. `substitutionRefusal` reads
+// `quote.ModelSubstitutions` — the record returned by the ESTIMATE — so it is
+// evaluated BEFORE the submit and refuses for free. That is a working pre-spend
+// money guard, and it is live on `--input` today: it keys off the reply, not off
+// `o.checkpoint`. Refusing the flag combination would have deleted a guard that
+// works in order to close a gap somewhere else. #342's defect was never "the
+// flag is broken" — it is that its coverage is PARTIAL AND UNDOCUMENTED, and the
+// fix for undocumented is documentation, not amputation.
+//
+// # WHAT THIS MAY AND MAY NOT SAY — READ BEFORE REWORDING
+//
+// 🔴 It must NOT say "top-level model substitutions are covered, resources are
+// not". That sentence is tempting because item 21(a) uses the words "TOP-LEVEL",
+// but item 21(a) is about WHERE IN THE REPLY the record is carried (the reply's
+// own top level, versus nested under `metadata`) — a fact about this CLI's
+// transport. It says nothing about WHICH MODEL REFERENCE IN THE REQUEST GRAPH
+// the server will substitute and report on. Reading the first as the second is a
+// per-key claim about the server's graph registry inferred from one paid
+// observation, which is #343's mistake wearing a different hat: that warning
+// also generalised a single measurement (`foobar:123` vanished) into a rule.
+//
+// So this note states only: the flag is live, it fires on what the estimate
+// reports, this CLI cannot relate that record to an uninterpreted file, and the
+// one case that WAS measured produced no record. Item 21(b) supplies the last
+// clause — absence is ambiguous, because a server predating the record is
+// byte-identical to a server that substituted nothing.
+func inputSubstitutionCoverageNote(o generateOpts) string {
+	if strings.TrimSpace(o.inputPath) == "" || !o.failOnSubstitution {
+		return ""
+	}
+	return "--fail-on-substitution is LIVE with --input, but this CLI cannot tell you how much of your graph it covers. " +
+		"It refuses on the substitution record the ESTIMATE returns, before anything is submitted, so it is a real pre-spend guard. " +
+		"What it cannot do here is relate that record to your file: a raw graph is not interpreted, so nothing local knows which model references the file contains. " +
+		"Measured once: a checkpoint named under \"resources\" was charged and ran a different version with no record at all, so the flag did not fire. " +
+		"Read a silent run as \"nothing was reported\", never as \"nothing was substituted\" — a server predating the record returns exactly the same silence. " +
+		"--checkpoint is the path that resolves model ids before anything is submitted"
 }
 
 // compactJSON validates and whitespace-normalises a JSON document. json.Compact

@@ -1828,7 +1828,7 @@ never claims the negative.
 🔴 **`--fail-on-substitution` is therefore NOT a spend guard.** It can only
 refuse what the server *reports*. Against a deployment that does not report
 substitutions the flag is **silently inert** — exit `0`, submitted, charged —
-and there is no signal distinguishing that from "nothing was substituted". Two
+and there is no signal distinguishing that from "nothing was substituted". Three
 further limits worth knowing before you build a pipeline on it:
 
 - It is evaluated on the **estimate**. A substitution appearing only on the
@@ -1837,6 +1837,14 @@ further limits worth knowing before you build a pipeline on it:
   still need to collect.
 - It refuses on the *first* reported substitution; the message names that one and
   counts the rest.
+- **With `--input` it stays live, but its coverage is unknown to this CLI.** It
+  still fires on the estimate's record, so it still refuses before any spend — a
+  raw graph does not disarm it. What the CLI cannot do is relate that record to
+  your file: the graph is not interpreted, so nothing local knows which model
+  references it contains. Measured once: a checkpoint named under `resources` was
+  charged 28 Buzz and ran a different model version with **no record at all**, so
+  the flag did not fire. Read a silent run as *"nothing was reported"*, never as
+  *"nothing was substituted"*.
 
 ### Confirmation
 
@@ -1959,7 +1967,7 @@ some.path=value` expression language the CLI deliberately does not have (a wrong
 type in such an expression is accepted by the server silently, and billed; an
 edited file is inspectable before it is sent).
 
-Four things to know, all of them consequences of it being a **passthrough**:
+Five things to know, all of them consequences of it being a **passthrough**:
 
 - **txt2img only.** A graph declaring any other workflow is refused. The
   server's content audit reads the top-level `prompt` node, and it rebuilds what
@@ -1974,15 +1982,35 @@ Four things to know, all of them consequences of it being a **passthrough**:
   **`--dry-run` structurally cannot show you** — the estimator prices a strictly
   smaller request and is never sent tips at all — so the file is rejected with an
   error rather than quietly cleaned up.
-- **Keys the CLI does not model are passed through, with a warning.** The warning
-  says the CLI cannot *verify* the key; it is not a claim that the key is
-  invalid, because the CLI does not carry a copy of the server's node registry.
-  It matters because the server's failure mode for a key it does not declare is
-  to **drop it silently at HTTP 200** — a typo costs Buzz and produces a job that
-  ran without your parameter, with no error anywhere.
+- **Keys the CLI does not model are passed through exactly as written, with a
+  warning — and the warning claims nothing about the server.** It says the key is
+  not modelled *here* and was not checked *here*; it is **not** a claim that the
+  key is invalid, and **not** a claim that the server ignores it. The CLI does not
+  carry a copy of the server's node registry, so it cannot tell those apart. What
+  the key does — **including what it costs** — is the server's answer. `--dry-run`
+  prices the graph with your key included, so the estimate is where a price effect
+  would show; nothing local can predict one. Check the spelling.
+
+  🔴 This warning used to assert the opposite, and it was **wrong**: it said an
+  undeclared key "returns HTTP 200, prices the same, and simply has no effect".
+  A graph carrying `"priority": "high"` drew that sentence and then priced at
+  **28** with a `fixed → priority 20` component three lines below it, against
+  **8** for `normal`. The key was honoured, it tripled the price, and the warning
+  would have talked you out of the one change that clears a slow queue.
 - **No model-id safety net.** `--checkpoint` / `--lora` are resolved against the
   public API before submitting; a raw graph is not interpreted, so a nonexistent
   id in it is accepted, the ecosystem default is substituted, and you are billed.
+- **`--fail-on-substitution` works here, but its reach is not knowable from
+  here.** Every *execution* flag still applies, this one included — it fires on
+  the estimate's substitution record, so it refuses before any spend just as it
+  does on the flag path. The limit is that a raw graph is not interpreted, so the
+  CLI cannot tell you which model references your file contains or which of them
+  a record would name. One measured case (a checkpoint under `resources`) was
+  charged and ran a different version with **no record at all**. The command warns
+  about exactly this whenever the two flags appear together — unconditionally,
+  without reading your file, because deciding *which* graphs to warn about would
+  mean vendoring which keys the server reports on. Read a silent run as *"nothing
+  was reported"*, never as *"nothing was substituted"*.
 
 `--input` cannot be combined with a prompt argument or with
 `--negative-prompt` / `--quantity` / `--aspect-ratio` / `--checkpoint` /
@@ -1990,7 +2018,7 @@ Four things to know, all of them consequences of it being a **passthrough**:
 the file's `resources`?", so the combination is a usage error. Every *execution*
 flag (`--dry-run`, `--yes`, `--max-cost`, `--json`, `--no-wait`, `--timeout`,
 `--out-dir`, `--out-name`, `--no-download`, `--force`, `--external-id`) still
-applies.
+applies, `--fail-on-substitution` included — see the coverage caveat above.
 
 ### Waiting, downloading, and re-attaching
 
