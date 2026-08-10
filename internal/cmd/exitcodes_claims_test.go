@@ -143,9 +143,28 @@ func exitCodeContractClaims() []contractClaim {
 	}
 }
 
+// readmeExitCodePublished is everything README publishes about exit codes: the
+// index table plus the per-code `### Exit code N` subsections. After the
+// summary/detail split a claim reaches the README through one or the other, so
+// asserting against the table alone would have quietly stopped observing every
+// clause the split moved — the failure this whole file exists to catch, arrived
+// at from the guard's own side.
+func readmeExitCodePublished() string {
+	return readmeExitCodeTable() + "\n" + readmeExitCodeSections()
+}
+
 // TestPublishedExitCodeClaims requires every ledgered decision to appear in the
-// SHARED text of its own code — which means it reaches `--help` and the README
-// table alike, since both are rendered from exactly that string.
+// PUBLISHED text of its own code (Summary plus Detail) and to reach the README,
+// which publishes both halves.
+//
+// 🔴 IT NO LONGER REQUIRES EVERY CLAIM TO REACH `--help`, AND THAT IS THE
+// SUMMARY/DETAIL TRADE, NOT AN EROSION OF THE LEDGER. The terminal now prints
+// one summary line per code plus a pointer at README (see the file header in
+// exitcodes_doc.go); the ledger's rows are the DETAIL, and most of them live
+// where README publishes them. What replaces the lost `--help` assertion is
+// TestEveryCodesSummaryReachesTheTerminal below plus
+// TestHelpPointsAtTheREADMESection — i.e. the terminal is still asserted to
+// carry every code and to say where the rest is, which is what it now promises.
 func TestPublishedExitCodeClaims(t *testing.T) {
 	claims := exitCodeContractClaims()
 	if len(claims) < 5 {
@@ -157,9 +176,7 @@ func TestPublishedExitCodeClaims(t *testing.T) {
 		byCode[d.Code] = d
 	}
 
-	// Rendered once; every row is checked against both surfaces.
-	help := flattenWS(rootExitCodeHelp())
-	readme := flattenWS(readmeExitCodeTable())
+	readme := flattenWS(readmeExitCodePublished())
 
 	for _, c := range claims {
 		t.Run(c.name, func(t *testing.T) {
@@ -167,7 +184,7 @@ func TestPublishedExitCodeClaims(t *testing.T) {
 			if !ok {
 				t.Fatalf("the ledger claims something about exit code %d, which exitCodeDocs does not document", c.code)
 			}
-			shared := flattenWS(doc.shared())
+			published := flattenWS(doc.published())
 
 			for _, p := range c.phrases {
 				if strings.TrimSpace(p) == "" {
@@ -175,21 +192,34 @@ func TestPublishedExitCodeClaims(t *testing.T) {
 				}
 				// The claim must live under ITS OWN code, not merely somewhere
 				// in the contract.
-				if !strings.Contains(shared, flattenWS(p)) {
+				if !strings.Contains(published, flattenWS(p)) {
 					t.Errorf("exit code %d no longer publishes %q.\nWhy it is published: %s\nHonoured by: %s\n\ncode %d says: %s",
-						c.code, p, c.why, c.pinnedBy, c.code, doc.shared())
+						c.code, p, c.why, c.pinnedBy, c.code, doc.published())
 					continue
 				}
-				// And it must reach both rendered surfaces. `--help` is
-				// de-emphasised, so compare the plainified form there.
-				if !strings.Contains(help, flattenWS(plainify(p))) {
-					t.Errorf("exit code %d's claim %q does not reach `--help`", c.code, p)
-				}
+				// And it must reach the rendered README, which is the surface
+				// that publishes the ledger in full.
 				if !strings.Contains(readme, flattenWS(p)) {
-					t.Errorf("exit code %d's claim %q does not reach the README table", c.code, p)
+					t.Errorf("exit code %d's claim %q does not reach the rendered README (table + `### Exit code %d`)", c.code, p, c.code)
 				}
 			}
 		})
+	}
+}
+
+// TestEveryCodesSummaryReachesTheTerminal is what the `--help` half of
+// TestPublishedExitCodeClaims became. The terminal's promise shrank from "the
+// whole ledger" to "every code, named" — so that is what is asserted, per code,
+// against the RENDERED help rather than the generator's return value.
+func TestEveryCodesSummaryReachesTheTerminal(t *testing.T) {
+	help := flattenWS(renderRootHelp(t))
+	if help == "" {
+		t.Fatal("the rendered help is empty — every assertion below would be vacuous")
+	}
+	for _, d := range exitCodeDocs {
+		if !strings.Contains(help, flattenWS(plainify(d.Summary))) {
+			t.Errorf("exit code %d's summary %q does not reach the rendered `civitai --help`", d.Code, d.Summary)
+		}
 	}
 }
 
@@ -199,7 +229,7 @@ func TestPublishedExitCodeClaims(t *testing.T) {
 // anything (a flattenWS/plainify bug that normalised everything to "", say).
 func TestExitCodeClaimsLedgerIsNotVacuous(t *testing.T) {
 	help := flattenWS(rootExitCodeHelp())
-	readme := flattenWS(readmeExitCodeTable())
+	readme := flattenWS(readmeExitCodePublished())
 	const absent = "ZZ-NOT-IN-THE-EXIT-CODE-CONTRACT-ZZ"
 
 	for name, surface := range map[string]string{"--help": help, "README": readme} {
@@ -211,6 +241,12 @@ func TestExitCodeClaimsLedgerIsNotVacuous(t *testing.T) {
 		}
 	}
 
+	// The README surface must really carry BOTH halves, or "a claim reaches the
+	// README" is satisfied by a renderer wired to the table alone.
+	if !strings.Contains(readme, flattenWS("### Exit code 2")) {
+		t.Error("the README surface used by the ledger carries no per-code subsection — it is wired to the table only")
+	}
+
 	// And the per-code scoping really scopes: code 6's text must NOT carry
 	// code 1's headline claim, or "the claim is under its own code" is not
 	// something this file can observe.
@@ -220,7 +256,7 @@ func TestExitCodeClaimsLedgerIsNotVacuous(t *testing.T) {
 			six = d
 		}
 	}
-	if strings.Contains(flattenWS(six.shared()), "filesystem failure") {
+	if strings.Contains(flattenWS(six.published()), "filesystem failure") {
 		t.Error("code 6's text carries code 1's claim — the per-code scoping in the ledger is not discriminating")
 	}
 }

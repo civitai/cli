@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -56,6 +57,36 @@ func extractREADMEExitCodeTable(t *testing.T, readme string) string {
 	return strings.Join(lines, "\n")
 }
 
+// extractREADMEExitCodeSections pulls the per-code `### Exit code N`
+// subsections out of the README's "## Exit codes" section: from the first such
+// heading to the next `##`-level heading.
+//
+// Like the table extractor it Fatals rather than returning empty on a miss.
+// The long half of the contract living in a block nobody can find is the same
+// failure as the table drifting — a guard that quietly compared "" to "" would
+// report a serene pass for a README that had lost every subsection.
+func extractREADMEExitCodeSections(t *testing.T, readme string) string {
+	t.Helper()
+	const heading = "\n## Exit codes\n"
+	i := strings.Index(readme, heading)
+	if i < 0 {
+		t.Fatalf("README.md has no %q heading — the exit-code contract must be published there", strings.TrimSpace(heading))
+	}
+	rest := readme[i+len(heading):]
+	if j := strings.Index(rest, "\n## "); j >= 0 {
+		rest = rest[:j]
+	}
+	// Anchored at a LINE START, not anywhere: the section's own intro prose names
+	// `### Exit code N` inline to tell the reader where the detail is, and an
+	// unanchored search matched that mention — pulling the table and the shell
+	// example into the "subsections" and reporting 6 headings where there are 5.
+	j := strings.Index(rest, "\n### Exit code ")
+	if j < 0 {
+		t.Fatal("README.md's Exit codes section has no `### Exit code N` subsections — the per-code detail is gone")
+	}
+	return strings.TrimRight(rest[j+1:], "\n")
+}
+
 // TestREADMEExitCodeTableIsGenerated is the README half of the anti-drift
 // guard: the table in the file must be byte-identical to what exitCodeDocs
 // renders. Hand-editing the README fails here; editing exitCodeDocs moves the
@@ -77,6 +108,40 @@ func TestREADMEExitCodeTableIsGenerated(t *testing.T) {
 	if got != want {
 		t.Errorf("README.md's exit-code table has drifted from exitCodeDocs (internal/cmd/exitcodes_doc.go).\n"+
 			"Do not edit the README table by hand — edit exitCodeDocs and paste this:\n\n%s\n\ngot:\n\n%s", want, got)
+	}
+}
+
+// TestREADMEExitCodeSectionsAreGenerated is the same guard for the LONG half.
+//
+// The summary/detail split moved most of the contract out of the table and into
+// `### Exit code N` subsections. Those are the text a reader who follows a row
+// actually reads, so leaving them hand-maintained would have re-created the
+// exact drift the table guard exists to prevent — one surface generated, one
+// not, and nothing tying them together (see the file header in
+// exitcodes_doc.go). They are generated, and asserted byte-identical.
+func TestREADMEExitCodeSectionsAreGenerated(t *testing.T) {
+	got := extractREADMEExitCodeSections(t, readREADME(t))
+
+	// Positive control: the extractor must have found one heading per code that
+	// carries Detail, so a pass cannot mean "we compared two empty strings" or
+	// "the block held one section out of five".
+	wantSections := 0
+	for _, d := range exitCodeDocs {
+		if len(d.Detail) > 0 {
+			wantSections++
+		}
+	}
+	if wantSections < 4 {
+		t.Fatalf("only %d codes carry Detail — this guard would be asserting almost nothing", wantSections)
+	}
+	if n := strings.Count(got, "### Exit code "); n != wantSections {
+		t.Fatalf("extracted %d `### Exit code N` subsections, want %d — the extractor is looking at the wrong block", n, wantSections)
+	}
+
+	want := readmeExitCodeSections()
+	if got != want {
+		t.Errorf("README.md's per-code exit-code subsections have drifted from exitCodeDocs (internal/cmd/exitcodes_doc.go).\n"+
+			"Do not edit them by hand — edit exitCodeDocs and paste this:\n\n%s\n\ngot:\n\n%s", want, got)
 	}
 }
 
@@ -118,62 +183,147 @@ func TestRootHelpExitCodesAreGenerated(t *testing.T) {
 	}
 }
 
-// TestREADMETableIsGeneratedFromTheSameSlice is the README twin of the sentinel
-// check above. Together they prove BOTH published surfaces read the same
-// variable, which is what makes "they cannot drift apart" a structural claim
-// rather than an observation about today's text.
-func TestREADMETableIsGeneratedFromTheSameSlice(t *testing.T) {
-	const sentinel = "ZZ-EXIT-DOC-SENTINEL-ZZ"
+// TestBothFieldsReachTheirSurfaces is the README twin of the sentinel check
+// above, extended to the summary/detail split.
+//
+// Both fields need their own sentinel, and they need DIFFERENT expectations,
+// because the split gave them different jobs. A Summary sentinel must reach
+// BOTH surfaces — that is the "they cannot drift apart" claim, unchanged. A
+// Detail sentinel must reach the README subsections, which is what stops the
+// long half from becoming hand-maintained prose the slice no longer controls.
+//
+// 🔴 The Detail sentinel must ALSO be absent from `--help`, and that half is not
+// pedantry: without it, "rootExitCodeHelp renders Summary only" is an
+// observation about today's text rather than a property, and a well-meaning
+// "let's just print everything again" would restore the 2,525-character wall
+// this split exists to remove while every other guard here stayed green.
+func TestBothFieldsReachTheirSurfaces(t *testing.T) {
+	const (
+		summarySentinel = "ZZ-EXIT-SUMMARY-SENTINEL-ZZ"
+		detailSentinel  = "ZZ-EXIT-DETAIL-SENTINEL-ZZ"
+	)
+
+	// Premise: code 2 is the one whose Detail this whole change is about, so a
+	// swap there is the swap that matters. A code with no Detail would make the
+	// detail half vacuous.
+	if len(exitCodeDocs[2].Detail) == 0 {
+		t.Fatal("code 2 carries no Detail — the detail half of this guard would assert nothing")
+	}
 
 	restore := exitCodeDocs
 	defer func() { exitCodeDocs = restore }()
 	swapped := make([]ExitCodeDoc, len(restore))
 	copy(swapped, restore)
-	swapped[2].Summary = sentinel
+	swapped[2].Summary = summarySentinel
+	detail := make([]string, len(restore[2].Detail))
+	copy(detail, restore[2].Detail)
+	detail[0] = detailSentinel
+	swapped[2].Detail = detail
 	exitCodeDocs = swapped
 
-	if !strings.Contains(readmeExitCodeTable(), sentinel) {
-		t.Error("readmeExitCodeTable() is not rendered from exitCodeDocs")
+	if !strings.Contains(readmeExitCodeTable(), summarySentinel) {
+		t.Error("readmeExitCodeTable() is not rendered from exitCodeDocs' Summary")
 	}
-	if !strings.Contains(rootExitCodeHelp(), sentinel) {
-		t.Error("rootExitCodeHelp() is not rendered from exitCodeDocs")
+	if !strings.Contains(rootExitCodeHelp(), summarySentinel) {
+		t.Error("rootExitCodeHelp() is not rendered from exitCodeDocs' Summary")
 	}
-}
-
-// TestHelpTextIsAPrefixOfTheREADMECell pins the containment relationship the
-// two surfaces are allowed to have: everything `--help` says about a code is
-// the README cell's opening text, de-emphasised. README may say MORE (Extra);
-// it may never say something DIFFERENT.
-func TestHelpTextIsAPrefixOfTheREADMECell(t *testing.T) {
-	for _, d := range exitCodeDocs {
-		cell := d.readmeCell()
-		if !strings.HasPrefix(cell, d.shared()) {
-			t.Errorf("code %d: README cell does not open with the shared text\n cell:   %s\n shared: %s", d.Code, cell, d.shared())
-		}
-		if !strings.Contains(flattenWS(rootExitCodeHelp()), flattenWS(plainify(d.shared()))) {
-			t.Errorf("code %d: --help does not carry the shared text %q", d.Code, d.shared())
-		}
+	if !strings.Contains(renderRootHelp(t), summarySentinel) {
+		t.Error("the RENDERED `civitai --help` does not carry a Summary change — it holds a hand-written copy")
+	}
+	if !strings.Contains(readmeExitCodeSections(), detailSentinel) {
+		t.Error("readmeExitCodeSections() is not rendered from exitCodeDocs' Detail")
+	}
+	if strings.Contains(renderRootHelp(t), detailSentinel) {
+		t.Error("`civitai --help` carries a DETAIL entry — the summary/detail split is gone and the terminal is back to printing the full ledger")
 	}
 }
 
-// TestSharedExitCodeTextIsTerminalSafe constrains the shared text to the
-// emphasis plainify can remove. A markdown link or an image in Summary/Notes
-// would reach the terminal as raw syntax, so it belongs in Extra.
-func TestSharedExitCodeTextIsTerminalSafe(t *testing.T) {
+// TestSummaryIsTheREADMECellAndTheHelpLine pins the containment relationship the
+// two surfaces are allowed to have after the split: the Summary is the README
+// table cell's opening text AND the `--help` line, de-emphasised. README may say
+// MORE (its `### Exit code N` subsection); it may never say something DIFFERENT.
+func TestSummaryIsTheREADMECellAndTheHelpLine(t *testing.T) {
+	table := readmeExitCodeTable()
+	help := flattenWS(rootExitCodeHelp())
 	for _, d := range exitCodeDocs {
-		for _, s := range append([]string{d.Summary}, d.Notes...) {
-			if strings.Contains(s, "](") {
-				t.Errorf("code %d: shared text carries a markdown link (README-only — move it to Extra): %q", d.Code, s)
-			}
-			if strings.Contains(s, "|") {
-				t.Errorf("code %d: shared text carries a `|`, which would break the README table row: %q", d.Code, s)
-			}
-			if plain := plainify(s); strings.ContainsAny(plain, "`*") {
-				t.Errorf("code %d: plainify left markdown emphasis in %q", d.Code, plain)
-			}
+		if !strings.Contains(table, "| `"+itoa(d.Code)+"` | "+d.Summary) {
+			t.Errorf("code %d: the README table row does not open with the Summary %q\n%s", d.Code, d.Summary, table)
+		}
+		if !strings.Contains(help, flattenWS(plainify(d.Summary))) {
+			t.Errorf("code %d: --help does not carry the Summary %q", d.Code, d.Summary)
 		}
 	}
 }
+
+// TestEveryCodeReachesTheTerminal is the "no code silently disappears from
+// `--help`" guard. The split shortened what the terminal says about each code;
+// it must not have shortened WHICH codes it says anything about, which is the
+// one thing a script author reads `--help` for.
+func TestEveryCodeReachesTheTerminal(t *testing.T) {
+	help := renderRootHelp(t)
+	section := help[strings.Index(help, "Exit codes:"):]
+	for _, d := range exitCodeDocs {
+		if !strings.Contains(section, "\n    "+itoa(d.Code)+"  ") {
+			t.Errorf("exit code %d has no line in the rendered `--help` exit-code section:\n%s", d.Code, section)
+		}
+	}
+}
+
+// TestHelpPointsAtTheREADMESection pins the other half of the trade: `--help`
+// no longer carries the ledger, so it has to say where the ledger IS, by a name
+// that works offline. A pointer naming a heading that does not exist is worse
+// than no pointer — it sends the reader looking for something that was renamed.
+func TestHelpPointsAtTheREADMESection(t *testing.T) {
+	help := flattenWS(renderRootHelp(t))
+	if !strings.Contains(help, flattenWS(plainify(exitCodeHelpPointer))) {
+		t.Errorf("`civitai --help` does not carry the pointer to the full ledger:\n%s", help)
+	}
+	readme := readREADME(t)
+	if !strings.Contains(readme, "\n## "+exitCodeREADMESection+"\n") {
+		t.Errorf("`--help` points readers at a %q section of README.md, which has no such heading", exitCodeREADMESection)
+	}
+}
+
+// TestSummaryTextIsTerminalSafe constrains the Summary to the emphasis plainify
+// can remove. A markdown link or an image in a Summary would reach the terminal
+// as raw syntax, so it belongs in Detail — which is README-only and may carry
+// links (code 3's does).
+func TestSummaryTextIsTerminalSafe(t *testing.T) {
+	for _, d := range exitCodeDocs {
+		s := d.Summary
+		if strings.Contains(s, "](") {
+			t.Errorf("code %d: Summary carries a markdown link (README-only — move it to Detail): %q", d.Code, s)
+		}
+		if strings.Contains(s, "|") {
+			t.Errorf("code %d: Summary carries a `|`, which would break the README table row: %q", d.Code, s)
+		}
+		if plain := plainify(s); strings.ContainsAny(plain, "`*") {
+			t.Errorf("code %d: plainify left markdown emphasis in %q", d.Code, plain)
+		}
+		if strings.Contains(s, "\n") {
+			t.Errorf("code %d: Summary carries a newline, which would break the README table row: %q", d.Code, s)
+		}
+	}
+}
+
+// TestSummariesStaySkimmable is the reason this change exists, asserted rather
+// than hoped for. The pre-split code-2 entry was 2,525 characters in one
+// terminal blob; a summary that grows back toward that is the defect returning.
+// The cap is generous — roughly three wrapped terminal lines — so it constrains
+// only the failure mode, not ordinary editing.
+func TestSummariesStaySkimmable(t *testing.T) {
+	const maxSummaryRunes = 220
+	for _, d := range exitCodeDocs {
+		if n := len([]rune(plainify(d.Summary))); n > maxSummaryRunes {
+			t.Errorf("code %d's Summary is %d runes (cap %d) — it is growing back into the wall the split removed. "+
+				"Put the depth in Detail, which README publishes in full.", d.Code, n, maxSummaryRunes)
+		}
+	}
+}
+
+// itoa keeps the assertions above free of a strconv import in a file that
+// otherwise deals only in strings.
+func itoa(n int) string { return strconv.Itoa(n) }
 
 // TestExitCodeDocsAreDenseAndOrdered pins the shape cmd/civitai's constant
 // ledger depends on: one entry per code, 0..N with no gaps.
@@ -258,7 +408,7 @@ func TestImageUsageRefusalLedger(t *testing.T) {
 			t.Errorf("rendered phrase list omits %q: %s", phrase, sentence)
 		}
 	}
-	if !strings.Contains(exitCodeDocs[2].shared(), sentence) {
+	if !strings.Contains(exitCodeDocs[2].published(), sentence) {
 		t.Errorf("exit code 2's documented text does not carry the refusal list %q", sentence)
 	}
 }
