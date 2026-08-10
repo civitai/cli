@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // AGENTS.md is imported wholesale by CLAUDE.md (`@AGENTS.md`), so every byte in
@@ -72,13 +73,18 @@ import (
 // WHY IT CAN BE A REAL BUDGET. Under the stub regime the ceiling was doing two
 // jobs: bounding growth AND making a restored body break CI. It can no longer do
 // the second — every item is now small, so any useful headroom absorbs a few of
-// them — and it does not need to. Restoring a body means deleting that item's
-// trigger, which fails TestEveryAgentsItemCarriesATrigger and orphans a file in
-// TestEvidencePointersAndFilesAreTheSameSet whatever the byte count says; and an
-// item written inline above maxInlineItemBytes fails
-// TestInlineAgentsItemsStayUnderTheBreakEven. Those are structural and
-// byte-free. Read a size failure here as "the prose grew", not as "someone
-// re-inlined an item" — a different test says that, by name.
+// them — and it does not need to. MEASURED, restoring item 6's full body over
+// its trigger reddens TWO tests and neither is this one:
+// TestEvidencePointersAndFilesAreTheSameSet (the evidence file is now an orphan)
+// and TestInlineAgentsItemsStayUnderTheBreakEven (an inline item over
+// maxInlineItemBytes). Both are structural and byte-free.
+//
+// 🔴 Say the measured thing, not the tidy one: it does NOT redden
+// TestEveryAgentsItemCarriesATrigger, which an earlier revision of this comment
+// claimed. That test only judges items that still carry a pointer, so an item
+// re-inlined WITH its pointer removed is outside its scope by construction.
+// Read a size failure here as "the prose grew", not as "someone re-inlined an
+// item" — two different tests say that, by name.
 //
 // 🔴 SQUEEZING IS STILL NOT AN OPTION. A full lossless compression pass over the
 // whole file recovered 586 bytes — 0.86% — most of it from ONE genuine
@@ -235,13 +241,19 @@ func evictionPlaybook(t *testing.T, size int) string {
 		}
 		state := "IN AGENTS.md"
 		if s.split {
-			state = "already split (stub only)"
+			state = "trigger only (body already split out)"
 		}
-		title := s.firstL
+		// 🔴 TRUNCATE BY RUNE, NEVER BY BYTE. `title[:72]` splits a multi-byte
+		// rune whenever one straddles the boundary, and the playbook then emits
+		// INVALID UTF-8 in a failure message — measured: the trigger lines carry
+		// em-dashes, and the byte-sliced version produced output a UTF-8 decoder
+		// rejects outright. The old stubs happened not to have one at that offset,
+		// which is the only reason this never fired before.
+		title := []rune(s.firstL)
 		if len(title) > 72 {
-			title = title[:72] + "…"
+			s.firstL = string(title[:72]) + "…"
 		}
-		fmt.Fprintf(&b, "  item %-2d %7d bytes  %-25s  %s\n", s.num, s.bytes, state, title)
+		fmt.Fprintf(&b, "  item %-2d %7d bytes  %-36s  %s\n", s.num, s.bytes, state, s.firstL)
 		shown++
 	}
 	fmt.Fprintf(&b, "\n🔴 THE LIST IS A TRIGGER INDEX, SO AN ITEM OVER ~%d BYTES IS ALREADY THE BUG.\n"+
@@ -408,12 +420,53 @@ func TestAgentsSizeGuardCanStillFire(t *testing.T) {
 		// The playbook has to teach the SHAPE, not just the mechanics: a
 		// maintainer who evicts a body and leaves a label behind has moved the
 		// bytes and hidden the item.
-		"TRIGGER",
-		"over-narrow trigger",
+		//
+		// 🔴 THESE ARE PHRASES, NOT THE WORD "TRIGGER", AND THAT IS A MEASURED
+		// CORRECTION. The first version asked for the bare token; reverting step
+		// 2 to the old stub instruction left it SATISFIED by the unrelated
+		// "TRIGGER INDEX" sentence at the top of the same message, so the mutant
+		// survived with the advice reverted. A guard answered by a bystander is
+		// the shape this repo keeps meeting; assert the instruction, not a word
+		// another sentence can spell.
+		"Leave a TRIGGER in AGENTS.md",
+		"ONE question asking whether",
+		"over-narrow trigger HIDES the",
 		"agents_trigger_test.go",
 	} {
 		if !strings.Contains(pb, want) {
 			t.Errorf("the eviction playbook no longer mentions %q; a size failure that does not say where the bytes GO gets the ceiling raised instead\n---\n%s", want, pb)
 		}
+	}
+
+	// 🔴 THE PLAYBOOK MUST BE VALID UTF-8, AND IT WAS NOT. It truncated an item's
+	// first line with `title[:72]` — a BYTE slice — which splits a multi-byte rune
+	// whenever one straddles the boundary. Found by a harness that could not decode
+	// the test output at all. Under the old stubs no item happened to carry a
+	// multi-byte character at offset 72; every trigger line does, because they are
+	// written with em-dashes, so the latent defect became live the moment the list
+	// changed shape.
+	if !utf8.ValidString(pb) {
+		t.Errorf("the eviction playbook is not valid UTF-8 — it is truncating a title mid-rune, and the advice a maintainer reads at the ceiling is mojibake\n---\n%q", pb)
+	}
+	// POSITIVE CONTROL. "It is valid UTF-8" is also true of a playbook that never
+	// truncates anything, so prove the corpus actually exercises the hazard: at
+	// least one item's first line must be longer than the cut AND carry a
+	// multi-byte rune that a byte slice at that offset would break.
+	// The condition mirrors the BUGGY code exactly — `len(title) > 72` on bytes,
+	// then `title[:72]` — because that is the input that has to still be present
+	// for the assertion above to mean anything. Item 13's trigger is the live
+	// example: 73 bytes, 71 runes, with an em-dash straddling byte 72.
+	exercised := ""
+	for _, s := range agentsItemSizes(t) {
+		if len(s.firstL) > 72 && !utf8.ValidString(s.firstL[:72]) {
+			exercised = s.firstL
+			break
+		}
+	}
+	if exercised == "" {
+		t.Errorf("CONTROL failure, not a finding: no item's first line is both over 72 BYTES and broken by a byte slice at that offset, " +
+			"so the UTF-8 assertion above is passing on input that could not fail. Re-derive the control against AGENTS.md's current headings.")
+	} else {
+		t.Logf("UTF-8 control exercised by: %s", exercised)
 	}
 }

@@ -413,6 +413,38 @@ func TestInlineAgentsItemsStayUnderTheBreakEven(t *testing.T) {
 		t.Fatalf("CONTROL failure, not a finding: no inline items were found, so the break-even rule was applied to nothing. " +
 			"Either every item is now converted (in which case delete this control deliberately) or the pointer scan is broken.")
 	}
+
+	// 🔴 THE CONSTANT IS BOUNDED BY A MEASUREMENT, NOT BY A SECOND MAGIC NUMBER,
+	// AND IT WAS UNBOUNDED FOR A ROUND. Raising maxInlineItemBytes to 99,999 was
+	// a SURVIVING mutant: nothing exceeded the new value, so the whole suite
+	// stayed green while the rule that keeps this list an index had been
+	// deleted — the "a ceiling nobody bounds" failure agentsMaxBytesCeiling
+	// exists to stop, regenerated one file over.
+	//
+	// The bound is re-derived from the live file rather than pinned: a trigger
+	// block is what an item costs once converted, so an inline item worth
+	// keeping must be within a small multiple of one. 3x is deliberately loose —
+	// it is a bound on ABSURDITY, not a restatement of the break-even — and at
+	// today's largest trigger block it puts the ceiling at ~795 against the
+	// constant's 600.
+	largestTrigger := 0
+	for _, it := range items {
+		if !it.converted {
+			continue
+		}
+		if n := byNum[it.num]; n > largestTrigger {
+			largestTrigger = n
+		}
+	}
+	if largestTrigger == 0 {
+		t.Fatalf("CONTROL failure, not a finding: no converted item had a measurable size, so the bound below was computed from nothing")
+	}
+	if bound := 3 * largestTrigger; maxInlineItemBytes > bound {
+		t.Errorf("maxInlineItemBytes is %d, above %d — three times the largest trigger block in the file (%d bytes).\n"+
+			"At that size an item can be written inline as a BODY and this guard will wave it through, which is the whole thing it exists to prevent. "+
+			"If the break-even genuinely moved, re-derive it from the measured trigger cost and say so in the constant's comment; do not raise it to make one item fit.",
+			maxInlineItemBytes, bound, largestTrigger)
+	}
 	t.Logf("%d inline item(s), all within the %d-byte break-even", inline, maxInlineItemBytes)
 }
 
