@@ -28,12 +28,21 @@ All work landed in `civitai/civitai`, not `civitai/cli`.
 
 Also filed: **issue #3685** (IframeHost divergence, deliberately not fixed — see below).
 
-- **Deploy/verify status (updated 2026-08-06, post-deploy pass):**
+- **Deploy/verify status (updated 2026-08-07 — BOTH VERIFIED, release `5.0.2249`):**
 
 | PR | in prod (`release`)? | verified live? |
 |---|---|---|
-| #3680 | **YES** | ✅ **VERIFIED on civitai.com** — see below |
-| #3713 | **NO — never released** | ❌ not deployed, so not verifiable |
+| #3680 | YES | ✅ **VERIFIED on civitai.com** — see below |
+| #3713 | YES (released 2026-08-07) | ✅ **VERIFIED on civitai.com** — see below |
+
+  Verified against prod image `20260807042815-2f17a51` = release `2f17a511ba` ("5.0.2249").
+  Rollout confirmed COMPLETE, not just specced: **162/162** `civitai-prod` pods on that tag,
+  both Flagger canaries `Succeeded` at weight 0, `api-primary` pods Ready.
+  ```bash
+  export KUBECONFIG=$KC_DPPROD
+  kubectl -n civitai-dp-prod get canary
+  kubectl -n civitai-dp-prod get pods -o jsonpath='{range .items[*]}{.spec.containers[0].image}{"\n"}{end}' | sort | uniq -c
+  ```
 
   🔴 **`main` IS NOT PRODUCTION.** Prod (`civitai.com`) is built from the **`release`**
   branch → `ghcr.io/civitai/civitai-prod`; `main` builds `civitai-web` → **`next.civitai.com`**
@@ -82,7 +91,48 @@ the refusal is ANSWERED differs. Costs one dev tunnel and a static page — repe
 **This also validated the deployed-sha method**: reading source at `0c310aadd7` predicted
 prod's observable behaviour correctly, which is what licenses the #3713 conclusion below.
 
-#### ❌ #3713 — NOT deployed; verification is blocked, not merely skipped
+Re-run after the `5.0.2249` release, on the new build: PASS again (reply at the same
+instant as the send, 250ms **before** the block's `BLOCK_READY` ack).
+
+#### ✅ #3713 — VERIFIED on production civitai.com (2026-08-07)
+
+Measured the collaborator level directly, through the **same endpoint the fixed
+`readCollaboratorPermission` calls** — `GET /api/v1/repos/civitai-apps/<slug>/collaborators/<user>/permission`
+with the `FORGEJO_ADMIN_TOKEN` from `civitai-blocks-w2-w4-env`. `dev-8753561`,
+`civitai-apps/gen-matrix`, with `panorama-360` carried alongside as an untouched
+specificity control:
+
+| step | action | gen-matrix | panorama-360 |
+|---|---|---|---|
+| 0 | baseline | `read` | `read` |
+| 1 | `blocks.getMyAppRepo` (web/push flow, asks **write**) | — | — |
+| 2 | **positive control** | **`write`** | `read` |
+| 3 | `civitai app pull` (`getMyForgejoCloneInfo`, asks **read**) | — | — |
+| 4 | **the test** | **`write`** (retained) | `read` |
+
+On the pre-fix bare PUT, step 3 SETS the level and step 4 reads `read`. It read `write`.
+Step 2 is what makes step 4 mean anything — without it, "still write" is unfalsifiable.
+`panorama-360` staying `read` across all four steps also shows the grant is repo-scoped,
+which is precisely the hole the PR's follow-up commit closed in the test fake (it had keyed
+state by user alone).
+
+🔴 **TWO instruments were built and DISCARDED before this one — both returned a confident
+WRONG answer, and either would have produced a false PASS.**
+1. **Smart-HTTP advertisement probe** (`GET /info/refs?service=git-receive-pack`, 200 =
+   write / 403 = read). It returned **200 on a repo that was genuinely `read`** — Forgejo
+   authorizes push at *pre-receive*, after the advertisement. It could not go red, so it
+   measured nothing. Anonymous 401s made it *look* validated; that only proved the endpoint
+   needs auth, not that it gates on write.
+2. **`GET /api/v1/repos/{owner}/{repo}` via python `urllib`.** Returned **403 on everything**
+   — Cloudflare blocks the default `Python-urllib/3.x` user-agent. A transport-layer block
+   that reads exactly like a permission denial. The identical request via `curl` returned
+   200. **Do not query `forgejo.civitai.com` with python-urllib.**
+
+   The lesson is the general one, hit twice in one hour: *a tool's self-report is a claim
+   about the tool.* Both were caught only by demanding the instrument produce a NON-write
+   value before any of its write verdicts were believed.
+
+#### (historical, 2026-08-06) #3713 was NOT deployed for a day after merge
 
 Content at the deployed prod commit `0c310aadd7`: `permissionRank` **0 occurrences**, and
 the old false comment `"422 if already a collaborator"` **still present**. Prod runs the
@@ -95,6 +145,21 @@ the fix.** `civitai app pull` against prod today calls `getMyForgejoCloneInfo` �
 Prod and next share ONE Forgejo (`FORGEJO_BASE_URL: http://forgejo-http.forgejo.svc.cluster.local:3000`
 in **both** manifests), so the damage is to the real repo either way. Recover by loading the
 app's repo page on the web (`getMyAppRepo` asks `write`).
+
+🔴 **UPDATE, same session: the release was cut at `2026-08-06 23:25:41 -0500` as `5.0.2249`
+(`origin/release` = `origin/main` = `2f17a511ba`, which DOES contain `permissionRank`).**
+So #3713 is now *pending rollout*, not blocked. Prod had not picked it up as of
+`2026-08-07 04:27Z` — still serving `5.0.2248` (commit `0c310aadd7`). The measurement above
+was correct when taken and went stale within the hour; re-measure before acting on it.
+
+**Cheapest rollout readout** — prod's health endpoint reports `package.json` version, so the
+release is live exactly when this flips `5.0.2248` → `5.0.2249`:
+```bash
+# $CIVITAI_HEALTH_TOKEN — the value is deliberately NOT committed: this repo is public.
+curl -s "https://civitai.com/api/health?token=$CIVITAI_HEALTH_TOKEN" | jq '{podname, version, healthy}'
+```
+Don't call it rolled off the image tag alone — prod goes through a Flagger canary, so
+confirm every pod is on the new image (`civitai/.claude/skills/deploy-status/SKILL.md`).
 
 Verifying on `next` instead was attempted and is blocked on auth, not on method: the CLI
 gets `401` there (oauth2-proxy 302s `next.civitai.com`; an API key does not pass it) and the
@@ -123,13 +188,38 @@ positive control, without it step 4 proves nothing:**
   `pr-preview-3701-vh54x-unit-tests` (849 files / 12679 tests, 0 failures).
 - **Ruled out:** load (whose-time-moved: only this test moved). Not caused by any PR in this
   session — it touches none of these files.
-- **Leading hypothesis:** a real-timer TTL race — the test asserts a cached value is still
-  `token-1` after a delay that is not deterministically shorter than the TTL. Same family as
-  #3689, whose fix was a virtual clock. Unowned.
-- **Next probe:** read the test and check whether it uses real timers:
-  `command grep -n "useFakeTimers\|setTimeout\|TTL\|advance" src/server/orchestrator/__tests__/orchestrator-token-cache.test.ts`
-  If real timers, port the #3689 pattern (`vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval']})`
-  + `afterEach(() => vi.useRealTimers())` — an `afterEach`, NOT a `finally`, which does not run on test timeout).
+- ✅ **RESOLVED 2026-08-07 — PR #3731** (test-only, +76/−13). Two things in the diagnosis above
+  were WRONG; both mattered.
+  - 🔴 **The hypothesis blamed the wrong statement.** It said "asserts a cached value is still
+    `token-1` after a delay". There is **no delay**. The failing assertion is
+    `expect(second).toBe('token-1')` (orig. line 175), the *"within TTL: cache hit"* check —
+    two adjacent `await`s with **nothing between them**. The 75ms sleep belongs to the
+    *expiry* assertion further down and was never involved. The real mechanism is a scheduler
+    stall (GC, CI contention) exceeding the 50ms real-time TTL between two consecutive
+    statements. Reproduced deterministically by injecting a 200ms stall into the pre-fix test,
+    which reproduced the exact CI message at the exact line.
+  - 🔴 **The prescribed fix — port #3689's virtual clock — was already ruled out IN THE TEST
+    ITSELF**, in a comment at lines 155-159 nobody had read: lru-cache v11 reads time via its
+    module-level `defaultPerf` (`performance.now()`), which `vi.useFakeTimers({toFake:[…]})`
+    does not reliably intercept. Re-verified against lru-cache 11.2.2. Do not reach for fake
+    timers here.
+  - **The actual fix — split the test by stall-DIRECTION.** The two directions have opposite
+    sensitivity: *expiry* is stall-SAFE (a longer stall only makes the entry more expired, so
+    the sleep is a lower bound and cannot flake), while *cache-hit* is stall-VULNERABLE and no
+    tuning makes a 50ms real-time budget safe. So the cache-hit assertions moved to their own
+    test at `TTL_MS = 300000` (it never sleeps, so a long TTL is free), and expiry kept `50` +
+    the 75ms sleep. Nothing skipped, weakened or `.retry()`d; 11 → 12 tests.
+  - **Why 300s specifically, and this is the load-bearing argument** — it is **5× the unit
+    project's `testTimeout: 60000`** (`vitest.config.mts:135`, inside the `name: 'unit'` block
+    at :106 — verified). A stall long enough to expire the entry would blow the per-test
+    timeout FIRST and be reported as a hang, so the wrong-token failure mode is bounded by the
+    harness's own hang detector rather than by a tuned margin. The 20/20 clean local runs are
+    absence-of-recurrence, NOT the argument.
+  - **Both directions proven, not asserted:** the 200ms injection passes post-fix and FAILS
+    pre-fix with the exact CI assertion; and two independently-built mutants (`ttl: 0`;
+    env-TTL-ignored) each turn the expiry test red **at its own assertion**, with the
+    cache-hit test staying green — each guard fails for its own property.
+  - Minor: this section said "8 sibling tests"; the file actually had 10.
 
 ### `preview / smoke-tests` was red on EVERY PR, then recovered unexplained
 - **Symptom + exact repro:** every PR in the repo, ~5 consecutive, red on one assertion.
@@ -159,11 +249,18 @@ positive control, without it step 4 proves nothing:**
 
 ## Next steps (ranked)
 
-1. ~~**Post-deploy verify #3680 and #3713.**~~ **#3680 DONE** (verified live on prod, above).
-   **#3713 is BLOCKED on a release** — it is not in prod, so there is nothing to verify yet.
-   The real next step is to decide whether to cut a release: the Forgejo downgrade is live in
-   production today, and every `civitai app pull` an author runs strips their own push access.
-   Recipe for the check once released is above; do NOT run it against prod before then.
+1. ~~**Post-deploy verify #3680 and #3713.**~~ **DONE — both verified live on production**
+   against release `5.0.2249` / `2f17a511ba`, rollout confirmed complete (162/162 pods,
+   canaries `Succeeded`). See the two verification sections above. Nothing outstanding.
+
+   How the release is cut, for reference — it is **not** `release-app.mjs`, which is for the
+   per-app `apps/*` images (`auth-app-v*`, etc.):
+   `pnpm run release` → `release:patch` → `npm version patch && git push --follow-tags`,
+   then `release:base` = `git checkout release && git pull --rebase && git rebase main &&
+   git push --force-with-lease`. That force-push is what fires Tekton
+   `civitai-app-build-trigger`. Requires explicit user approval (`civitai/CLAUDE.md:121`).
+   🔴 The `git rebase main` in there is *why* `--is-ancestor` reads false for changes that
+   ARE released — always verify by content at the deployed sha.
 2. **#3685** — fix the `IframeHost` side, or accept the divergence explicitly.
 3. **`orchestrator-token-cache`** flake — see probe above.
 4. **Worktree sweep**: `git -C <civitai> worktree list | wc -l` → **251**. Four hold real
@@ -171,7 +268,13 @@ positive control, without it step 4 proves nothing:**
    (`buzz-debezium-kafka-replication`, `civitai-axiom-loki-phase4`,
    `civitai-blocks-impl` untracked `drain-wildcard-audit-orphans.ts`, `civitai-cli-helpnotice`
    modified `internal/cmd/root.go` + `update_notice.go`). Other sessions' — ask before touching.
-5. **#3711** (another session's, DO NOT MERGE as-is) needs a companion infra pin — see Gotchas.
+5. ~~**#3711** (another session's, DO NOT MERGE as-is) needs a companion infra pin.~~
+   **RESOLVED 2026-08-07** — merged as `15c3ab1de6`, but NOT the way this doc predicted.
+   The companion infra pin was never needed: the PR **reverted the playwright bump** instead
+   (`package.json` on `main` is back to `@playwright/test`/`playwright` `^1.57.0`), which
+   keeps the repo on the same 1.57 line the CI container image is built against. Reverting
+   the app side rather than bumping the image is the cheaper direction and needs no access to
+   the private infra repo.
 
 ## Gotchas / decisions / dead-ends
 
@@ -215,8 +318,43 @@ positive control, without it step 4 proves nothing:**
 - **#3711 is NOT the meili smoke problem.** It is a Playwright/Chromium revision skew:
   `playwright-core@1.57.0`→chromium **1200**, `@1.61.1`→**1228**; the NixOS host ships 1228.
   Failure mode is `Test Files (130) / Tests no tests / Duration 153ms` — **0 of 130 files ran,
-  reported as not-a-failure**. Merging it alone breaks the CI smoke job, whose container image
-  is still pinned to the 1.57 line; needs a companion pin in a private infra repo.
+  reported as not-a-failure**. The skew is real and the failure mode above is the durable
+  lesson — a suite reporting **0 of 130 files ran** as not-a-failure. But the "needs a
+  companion pin in a private infra repo" conclusion was WRONG: #3711 merged (`15c3ab1de6`)
+  by **reverting the bump**, leaving `main` on `^1.57.0` and matching the CI image as-is.
+  🔴 **But that fixed CI at the cost of LOCAL dev on this host, and the earlier wording here
+  ("reverting is cheaper, prefer that direction") was only half the story.** Measured
+  2026-08-07 while running the #3726 component guards: `playwright-core@1.57.0` wants
+  `chromium_headless_shell-1200`, the nix `PLAYWRIGHT_BROWSERS_PATH` store ships only
+  **-1228**, and the `~/.cache/ms-playwright` copy of 1200 is a generic-linux binary NixOS
+  cannot exec. So `pnpm test:component` run bare picks up the WRONG chromium.
+  🔴 **THE FIX ALREADY EXISTS — USE IT. DO NOT BUILD A SYMLINK SHIM.**
+  ```bash
+  cd <civitai checkout> && ~/workspace/devrc/scripts/playwright-nixos npx vitest run --project component <file>
+  ```
+  `devrc/flake.nix:97` exposes `playwright-driver-1_57` (→ chromium-1200) alongside the
+  default `playwright-driver` (1.61.1 → chromium-1228). The wrapper reads the project's OWN
+  installed playwright, maps `1.57.0` → `playwright-driver-1_57` by naming convention, and
+  **asserts the realised bundle contains the exact `chromium-<rev>` that project's
+  `browsers.json` asks for**. Verified 2026-08-09 against civitai: resolves
+  `…-playwright-browsers/chromium-1200`, vs the ambient `…/chromium-1228`.
+  The global default is deliberately left at 1.61.1 (the Playwright MCP and 1.61.x projects
+  need it); per-project bundles are opt-in and live OUTSIDE `PLAYWRIGHT_BROWSERS_PATH`.
+  🔴 **An earlier revision of this file recommended a symlink shim
+  (`chromium_headless_shell-1200 → …-1228`). That advice was WRONG and is retracted** — it
+  makes playwright 1.57 run chromium 1228 under a 1200 name, i.e. it manufactures exactly the
+  version mismatch the whole mechanism exists to prevent. It was written before anyone checked
+  whether a fix existed; it did, built the same evening the problem was measured.
+  Scope note for results obtained under that shim (all of 2026-08-07's local component runs,
+  including the #3726 mutation matrices): the hazard the version match guards against is a
+  **silent zero** — 0 of N files run, reported as not-a-failure. Every run under the shim
+  reported non-zero counts (5/5, 11/11, 380→386), and CI's `preview / component-tests` passed
+  independently on the real bundle, so the hazard demonstrably did not materialise and those
+  results stand. Re-run through the wrapper anyway if you are re-deriving them.
+- **Component tests DO gate, via Tekton — not GitHub Actions.** `.github/workflows/` has no
+  component job, so grepping there concludes "these tests never run" and is WRONG:
+  `preview / component-tests` is a Tekton status (confirmed present and SUCCESS on #3713).
+  Check `gh pr view <n> --json statusCheckRollup`, not the workflow files.
 - **Why `git ls-files` was abandoned in the #3701 guard:** the Tekton workspace `/workspace/source`
   is not a usable git checkout, so the guard collected **0 tests** and reported a collection error,
   not a test failure. Replaced with a filesystem walk (single path, no git-available fallback —
