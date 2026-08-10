@@ -1033,8 +1033,25 @@ func (p *progressWriter) line() string {
 	return fmt.Sprintf("  %s  %s", p.name, humanBytes(p.written))
 }
 
-// humanBytes renders a byte count in binary units (KiB/MiB/GiB…), abbreviated
-// as KB/MB/GB for brevity.
+// humanBytes renders a byte count in IEC binary units (KiB/MiB/GiB…).
+//
+// 🔴 THE LABEL AND THE DIVISOR HAVE TO AGREE. This divided by 1024 and printed
+// the SI suffixes (KB/MB/GB) "for brevity", which is not an abbreviation — it is
+// a different quantity. 2,097,152 bytes rendered as "2.0 MB", 4.9% below the
+// value it described. That was cosmetic while the string only reached download
+// progress; #275 put it in `--help`, where `set-icon` / `set-cover` interpolate
+// listingSourceRule(kind) and so advertised "at most 2.0 MB" / "at most 4.0 MB"
+// for caps the README documents — correctly — as 2 MiB and 4 MiB.
+//
+// It is fixed by RELABELLING, not by re-basing the arithmetic: every caller is
+// already a binary quantity. maxIconBytes and its siblings are literal
+// 1024-multiples mirroring server constants that are themselves 1024-multiples;
+// download progress counts raw bytes against a Content-Length; and the catalog's
+// SizeKB is multiplied by 1024 at the call site. A 1000 divisor would restate all
+// of them in a unit none of them is measured in and make `--help` quote "2.1 MB"
+// for the 2 MiB cap the README and AGENTS.md item 25 both name. The numbers this
+// returns are therefore unchanged from every release before this one; only the
+// suffix moved. TestHumanBytesLabelsItsOwnArithmetic pins both halves.
 func humanBytes(n int64) string {
 	const unit = 1024
 	if n < unit {
@@ -1045,5 +1062,5 @@ func humanBytes(n int64) string {
 		div *= unit
 		exp++
 	}
-	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
+	return fmt.Sprintf("%.1f %ciB", float64(n)/float64(div), "KMGTPE"[exp])
 }

@@ -112,7 +112,7 @@ func TestREADMEListingMediaPathsExistInEveryScaffoldedProject(t *testing.T) {
 // interpolating listingSourceRule(kind), so this asserts the interpolation picked
 // the right kind, which is exactly the copy-paste #274 caught in the Long bodies.
 //
-// Scoped to icon and cover on purpose: their caps DIFFER (2.0 MB vs 4.0 MB), so
+// Scoped to icon and cover on purpose: their caps DIFFER (2.0 MiB vs 4.0 MiB), so
 // "contains mine" and "does not contain the sibling's" are independent
 // assertions. add-screenshot's Short carries no cap, and its cap string is
 // byte-identical to the icon's today, so asserting on it would be #274's
@@ -254,5 +254,128 @@ func TestREADMEListingByteCapsMatchTheCLIConstants(t *testing.T) {
 		if !strings.Contains(section, want) {
 			t.Errorf("the Listing media requirements section never says %q — the dimension bounds then read as rules the CLI enforces", want)
 		}
+	}
+}
+
+// emphasisedQuotedSentenceRe matches a markdown-emphasised verbatim quotation —
+// *"…"* — which in this section is only ever used for one thing: reproducing the
+// exact sentence the platform is expected to print back.
+//
+// It is a SHAPE, not a spelling. Banning the one message that rotted would be a
+// guard against re-typing four particular words; banning the shape catches the
+// next author who pins a different sentence the same way.
+var emphasisedQuotedSentenceRe = regexp.MustCompile(`\*"[^"]+"\*`)
+
+// TestREADMEDoesNotPinAServerSentenceForTheOversizedSource is the doc-rot guard
+// for the half of this section that nothing else can check.
+//
+// The byte caps are the CLI's own constants, so the sibling test above can
+// compare prose against code. The platform's REJECTION TEXT is not in this repo
+// at all, so the only defence is not to quote it. That is not hypothetical: the
+// README documented the oversized-source case by quoting the decoder's
+// catch-all, *"That icon couldn't be read"*, and civitai/civitai#3737 replaced
+// that message with one that names the pixel limit and the measured value. The
+// paragraph was accurate when written and became false on a merge in another
+// repo, with nothing here to notice.
+//
+// So the rule this pins: state what the platform DOES (it names the bound), not
+// what it SAYS. A sentence is exactly the thing that moves.
+//
+// 🔴 The two halves are different kinds of guard and are labelled as such.
+// The quotation ban is a REGRESSION guard — it is red on the tree that shipped
+// the stale paragraph. The "advice survived" assertions are INVARIANT guards:
+// they were already true before this fix, and they are here because deleting the
+// paragraph is the other way to satisfy the ban.
+func TestREADMEDoesNotPinAServerSentenceForTheOversizedSource(t *testing.T) {
+	// Validate the instrument before reading its verdict. A regex that cannot
+	// match the shape it exists to find reports "clean" over anything.
+	const probe = `it fails the icon decoder with *"That icon couldn't be read"* rather than`
+	if !emphasisedQuotedSentenceRe.MatchString(probe) {
+		t.Fatalf("the extractor does not match the shape it exists to find (%s) — "+
+			"a clean verdict below would be a fact about the regex, not about the README",
+			emphasisedQuotedSentenceRe)
+	}
+
+	section := readmeSectionSlice(t, readREADME(t), "\n### Listing media requirements\n")
+	if len(section) < 500 {
+		t.Fatalf("the `Listing media requirements` section is only %d bytes — the section extractor is reading the wrong block:\n%s", len(section), section)
+	}
+
+	if hits := emphasisedQuotedSentenceRe.FindAllString(section, -1); len(hits) > 0 {
+		t.Errorf("the Listing media requirements section pins %d verbatim server sentence(s): %q.\n"+
+			"A quoted message is a claim about another repo's source that this one cannot check, and it "+
+			"goes stale silently — civitai/civitai#3737 rewrote exactly such a message. Say what the "+
+			"platform names in its rejection; do not reproduce the sentence.", len(hits), hits)
+	}
+
+	// Invariant half: the de-pinning must not take the advice with it. An author
+	// whose 5000x5000 icon is refused while every byte cap says they are fine has
+	// no way to reach the answer from the tables alone.
+	for _, want := range []string{"megapixel", "ownscale"} {
+		if !strings.Contains(section, want) {
+			t.Errorf("the Listing media requirements section no longer mentions %q — the "+
+				"pixel-ceiling advice is the reason this paragraph exists; de-pinning the "+
+				"server's wording must not delete the guidance", want)
+		}
+	}
+}
+
+// TestListingCapRenderingAgreesWithTheREADMEUnitSystem is the seam between the
+// two surfaces that quote a byte cap at an author: `--help`, which renders it
+// through humanBytes, and the README table, which spells it out in prose.
+//
+// Each was internally consistent and they disagreed with each other: the table
+// said "2 MiB" while `civitai app listing set-icon --help` said "at most 2.0 MiB"
+// for the same 2,097,152 bytes. Neither TestREADMEListingByteCapsMatchTheCLIConstants
+// (prose vs constant) nor TestListingHelpQuotesTheEnforcedCaps (help vs constant)
+// can see it, because both compare against the constant and never against each
+// other — the defect lives in the relationship, so the guard has to pin the
+// relationship.
+func TestListingCapRenderingAgreesWithTheREADMEUnitSystem(t *testing.T) {
+	section := readmeSectionSlice(t, readREADME(t), "\n### Listing media requirements\n")
+	if len(section) < 500 {
+		t.Fatalf("the `Listing media requirements` section is only %d bytes — the section extractor is reading the wrong block:\n%s", len(section), section)
+	}
+
+	cases := []struct {
+		kind string
+		cap  int
+	}{
+		{"icon", maxIconBytes},
+		{"cover", maxCoverBytes},
+		{"screenshot", maxScreenshotBytes},
+	}
+	var checked int
+	for _, tc := range cases {
+		rendered := humanBytes(int64(tc.cap))
+		unit := rendered[strings.LastIndex(rendered, " ")+1:]
+		if unit == "" || unit == rendered {
+			t.Fatalf("could not split a unit out of humanBytes(%d) = %q — the rest of this "+
+				"test would compare against an empty string and pass", tc.cap, rendered)
+		}
+		row := ""
+		for _, line := range strings.Split(section, "\n") {
+			if strings.HasPrefix(line, "| **"+tc.kind+"**") && strings.Contains(line, "iB") {
+				row = line
+				break
+			}
+		}
+		if row == "" {
+			// The sibling test owns "the row is missing"; here it means the
+			// comparison could not be made, which must not read as agreement.
+			t.Errorf("no byte-cap row for %s in the Listing media requirements section — "+
+				"the unit check could not run", tc.kind)
+			continue
+		}
+		checked++
+		if !strings.Contains(row, unit) {
+			t.Errorf("`civitai app listing` renders the %s cap as %q, but the README row never says %q — "+
+				"the help and the docs quote the same constant in different unit systems, so an "+
+				"author who sizes to one is surprised by the other.\nrow: %s",
+				tc.kind, rendered, unit, strings.TrimSpace(row))
+		}
+	}
+	if checked != len(cases) {
+		t.Fatalf("compared %d of %d caps — a guard that skipped rows is not a guard that passed", checked, len(cases))
 	}
 }
