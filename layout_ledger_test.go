@@ -73,9 +73,50 @@ const layoutMinPackages = 8
 // uses all three spellings.
 var internalPkgRe = regexp.MustCompile(`internal/(\{[^}]*\}|[a-z][a-z0-9_]*)`)
 
-// codeSpanRe matches a single-backtick code span. AGENTS.md uses no triple-backtick
-// fences inside the Layout section, so the simple form is sufficient there.
-var codeSpanRe = regexp.MustCompile("`([^`\n]+)`")
+// codeSpanRe matches a single-backtick code span. AGENTS.md uses no
+// triple-backtick fences inside the Layout section, so the simple form is
+// sufficient there.
+//
+// 🔴 IT ALLOWS ONE NEWLINE INSIDE THE SPAN, AND IT DID NOT FOR A RELEASE. The
+// Layout section is hard-wrapped at ~79 columns like the rest of the file, and
+// markdown lets a code span straddle a wrap (the line ending renders as a
+// space). A pattern that excluded `\n` therefore stopped seeing a span the
+// moment a reflow broke it — and the failure is SILENT IN THE DANGEROUS
+// DIRECTION: the package drops out of the ledgered set, and the guard then
+// reports "internal/<pkg> exists but the Layout section never names it" about a
+// bullet that is sitting right there. A maintainer meeting that message reads it
+// as a false positive and the cheapest fix is to delete the guard — which is the
+// outcome this file's own doc comment says a docs guard must never invite.
+// Worse, a span whose opening backtick lost its partner re-pairs with the NEXT
+// backtick on the line, so one wrap can also invent a span that was never
+// written.
+//
+// The newline is bounded to ONE on purpose. A span that wraps twice does not
+// occur in this section, and an unbounded `[^`]+` would let a single stray
+// backtick swallow whole paragraphs — which would satisfy the ledger from PROSE
+// and quietly repeal design decision 2, the rule that a name counts only inside
+// backticks. TestLayoutLedgerParserHandlesEverySpelling carries both the wrapped
+// spellings and that bound.
+var codeSpanRe = regexp.MustCompile("`([^`\n]+(?:\n[^`\n]+)?)`")
+
+// spanWhitespaceRe and afterInternalRe normalise a span that wrapped. Markdown
+// renders the line ending as a space, so the whitespace run (including the
+// continuation line's indent) collapses to one — which is all `internal/{a, b}`
+// needs, since the parser already accepts a space after the comma. The second
+// rule handles the harsher case where the break landed INSIDE the path
+// (`internal/` / `devtunnel`): a space there defeats internalPkgRe entirely, and
+// re-joining is unambiguous because no real package name begins with a space.
+var (
+	spanWhitespaceRe = regexp.MustCompile(`\s+`)
+	afterInternalRe  = regexp.MustCompile(`internal/\s+`)
+)
+
+// normaliseSpan undoes a hard wrap inside a code span. It is applied by
+// ledgeredPackages and by the spelling corpus alike, so a narrowing of it fails
+// the corpus by name instead of silently shrinking the ledger.
+func normaliseSpan(span string) string {
+	return afterInternalRe.ReplaceAllString(spanWhitespaceRe.ReplaceAllString(span, " "), "internal/")
+}
 
 func layoutSection(t *testing.T) string {
 	t.Helper()
@@ -122,14 +163,26 @@ func parseInternalRefs(span string, into map[string]bool) {
 	}
 }
 
+// parseLayoutPackages is the WHOLE extraction — find the code spans, undo any
+// hard wrap inside one, pull the package names out. It is the ONE pipeline: the
+// ledger and the spelling corpus both call it, so a narrowing anywhere along it
+// (the span pattern, the normaliser, the name regex) fails the corpus by name
+// rather than silently shrinking the ledger and blaming the filesystem. Splitting
+// the corpus off the first two stages is exactly how the newline blind spot
+// survived — the corpus tested parseInternalRefs alone, and the defect was in
+// the stage above it.
+func parseLayoutPackages(md string, into map[string]bool) {
+	for _, span := range codeSpanRe.FindAllStringSubmatch(md, -1) {
+		parseInternalRefs(normaliseSpan(span[1]), into)
+	}
+}
+
 // ledgeredPackages parses the package names the Layout section spells.
 func ledgeredPackages(t *testing.T) map[string]bool {
 	t.Helper()
 
 	got := map[string]bool{}
-	for _, span := range codeSpanRe.FindAllStringSubmatch(layoutSection(t), -1) {
-		parseInternalRefs(span[1], got)
-	}
+	parseLayoutPackages(layoutSection(t), got)
 	return got
 }
 
@@ -232,5 +285,85 @@ func TestLayoutLedgerParserHandlesEverySpelling(t *testing.T) {
 				t.Errorf("parsing %q: got %v, want %v", tc.span, sortedKeys(got), tc.want)
 			}
 		})
+	}
+}
+
+// TestLayoutLedgerSeesSpansThatWrap drives the FULL pipeline over markdown, not
+// just the name regex, because that is where the blind spot was: the corpus
+// above exercised parseInternalRefs and was serenely green while a code span
+// broken across a wrap was invisible to the stage in front of it.
+//
+// Each case carries its own positive control asserting that the single-line span
+// pattern this replaced really does lose the package — so a fixture that is not
+// actually a wrap hazard fails here instead of sitting in the table looking like
+// coverage.
+func TestLayoutLedgerSeesSpansThatWrap(t *testing.T) {
+	// singleLineSpanRe is the pattern that shipped: the control, kept here
+	// deliberately so the hazard is pinned rather than described.
+	singleLineSpanRe := regexp.MustCompile("`([^`\n]+)`")
+
+	for _, tc := range []struct {
+		name string
+		md   string
+		want []string
+	}{
+		{
+			"wrap between two names in one brace expansion",
+			"- `internal/{scaffold,validate,pkgzip,manifest,\n  config,auth}` — the building blocks.",
+			[]string{"auth", "config", "manifest", "pkgzip", "scaffold", "validate"},
+		},
+		{
+			"wrap after a comma-space inside a brace expansion",
+			"- `internal/{devtunnel, \n  dnsprobe}` — `app dev-tunnel`.",
+			[]string{"devtunnel", "dnsprobe"},
+		},
+		{
+			"wrap inside the path itself",
+			"- `internal/\n  blockproto` — the vendored ready-ack.",
+			[]string{"blockproto"},
+		},
+		{
+			"wrap between the path and its file suffix",
+			"- `internal/ui/\n  CONVENTION.md` is the rule set.",
+			[]string{"ui"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := map[string]bool{}
+			parseLayoutPackages(tc.md, got)
+			if strings.Join(sortedKeys(got), ",") != strings.Join(tc.want, ",") {
+				t.Errorf("parsing %q\n got: %v\nwant: %v", tc.md, sortedKeys(got), tc.want)
+			}
+
+			// POSITIVE CONTROL for the control.
+			old := map[string]bool{}
+			for _, span := range singleLineSpanRe.FindAllStringSubmatch(tc.md, -1) {
+				parseInternalRefs(normaliseSpan(span[1]), old)
+			}
+			if strings.Join(sortedKeys(old), ",") == strings.Join(tc.want, ",") {
+				t.Errorf("fixture %q is not a wrap hazard: the single-line span pattern already returns the full answer %v, so this case proves nothing",
+					tc.md, tc.want)
+			}
+		})
+	}
+}
+
+// TestLayoutCodeSpanBoundIsOneNewline pins the bound in design decision 2's
+// direction. An unbounded span pattern would let one stray backtick swallow
+// paragraphs of prose and satisfy the ledger from running text — repealing the
+// "backticks only" rule while every existing test stayed green, since widening
+// can only ever ADD names to the ledgered set and the ledger's growth direction
+// only fires on names that do not exist on disk.
+func TestLayoutCodeSpanBoundIsOneNewline(t *testing.T) {
+	// A lone backtick, then two paragraph breaks, then a closing backtick. A
+	// pattern allowing unlimited newlines pairs these and reads `internal/nope`
+	// out of the prose between them.
+	md := "an opening ` that never closes on its line\n\nprose naming internal/nope in running text\n\nand a stray ` much later"
+	got := map[string]bool{}
+	parseLayoutPackages(md, got)
+	if got["nope"] {
+		t.Errorf("the span pattern paired backticks across %d lines and read a package name out of PROSE. "+
+			"Design decision 2 says a name counts only inside a code span; an unbounded pattern repeals that silently.",
+			strings.Count(md, "\n")+1)
 	}
 }

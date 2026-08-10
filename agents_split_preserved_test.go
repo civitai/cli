@@ -25,14 +25,47 @@ import (
 // text it came from, and the person best placed to notice is the person who did
 // the moving and has already stopped looking.
 //
-// # THE CONTRACT: a digest per item, taken from the BASE commit
+// # THE CONTRACT: a digest per item, taken from THAT ITEM'S base commit
 //
 // splitItems pins, for each moved item, the sha256 of its NON-BLANK body lines
-// as they stood at agentsSplitBase — joined with "\n" and newline-terminated.
-// The digests were computed FROM `git show <base>:AGENTS.md`, not from the
-// evidence files, so they are not a restatement of this change's own output.
-// Anyone can re-derive them; TestSplitDigestsAreTheBaseCommitsText does exactly
-// that whenever the base blob is reachable.
+// as they stood at the commit it was moved FROM — joined with "\n" and
+// newline-terminated. The digests were computed FROM `git show <base>:AGENTS.md`,
+// not from the evidence files, so they are not a restatement of this change's
+// own output. Anyone can re-derive them; TestSplitDigestsAreTheBaseCommitsText
+// does exactly that whenever the base blob is reachable.
+//
+// # 🔴 THE BASE IS PER-ITEM, AND A SINGLE GLOBAL CONSTANT IS NOT AVAILABLE
+//
+// This started as one constant, `agentsSplitBase`, because there had been
+// exactly one eviction wave (#290, nine items). The second wave (items 10 and
+// 19) proved that was an accident of history rather than a design, in two
+// independent ways:
+//
+//  1. THE BODIES BEING MOVED HAD CHANGED. #297's compression pass rewrote both
+//     items in AGENTS.md — item 10 by 23 bytes, item 19 by 78 — so neither is
+//     byte-identical to c5c3817 any more. (agents_size_test.go's own comment
+//     asserted the opposite, "both are byte-identical to agentsSplitBase"; it
+//     was written before that pass landed and was already false. Re-measure a
+//     claim like that, do not inherit it.) Digesting them against c5c3817 would
+//     have pinned text that is not what was moved.
+//
+//  2. THE OLD BASE CANNOT BE RE-POINTED FORWARD. The obvious alternative —
+//     re-derive all eleven digests from one NEWER commit — is impossible, not
+//     merely inconvenient: after wave 1, AGENTS.md no longer CONTAINS the nine
+//     moved bodies at any commit. `baseItemBody(c5c3817+1, 3)` returns item 3's
+//     STUB. A body's base commit is therefore fixed forever at the moment it was
+//     evicted, and different evictions have different moments. Per-item is the
+//     only shape that can express that.
+//
+// So `base` is a field on the row, not a package constant, and the two named
+// constants below exist only so a reader can see which wave a row belongs to.
+// A future wave adds a third; it does not touch the first two.
+//
+// 🔴 WHAT DOES NOT CHANGE: the guard still fails if ANY split body is altered,
+// for all eleven items. Splitting the base per row weakens nothing — each row is
+// still compared against a specific immutable blob — and that is the property to
+// re-verify by mutation whenever this table's shape is edited, because "I made
+// the pinning more flexible" is exactly how a pin stops pinning.
 //
 // Blank lines are excluded on purpose. They carry no content, and including them
 // would make the guard fail on a trailing-whitespace tidy — a false failure at
@@ -65,28 +98,38 @@ import (
 // correction fails with a message that says what it reverted rather than a bare
 // hash mismatch.
 
-// agentsSplitBase is the commit the nine bodies were moved from.
+// agentsSplitBase is the commit WAVE 1's nine bodies were moved from (#290).
 const agentsSplitBase = "c5c3817de72ac457cc41839c31b07f8bf1197dce"
+
+// agentsSplitBaseWave2 is the commit items 10 and 19 were moved from: the tip
+// after #297's compression pass, which edited BOTH of them. It is deliberately
+// not agentsSplitBase — see the 🔴 section of this file's doc comment.
+const agentsSplitBaseWave2 = "5cb45f0ff54fe55f5249aade8b0cb9826ade3c58"
 
 type splitItem struct {
 	num      int
 	file     string
+	base     string // the commit whose AGENTS.md still held this item's BODY
 	nonBlank int    // pinned so a failure says "we found N lines, base had M"
 	sha      string // sha256 of the base body's non-blank lines
 }
 
 // splitItems is the table. Adding a row means moving an item; the sha comes from
-// `git show <base>:AGENTS.md`, never from the file you just wrote.
+// `git show <base>:AGENTS.md`, never from the file you just wrote — and `base`
+// is the commit YOU moved it from, which for a new wave is not the constant the
+// rows above it use.
 var splitItems = []splitItem{
-	{num: 3, file: "claudedocs/decisions/03-lockfile-check.md", nonBlank: 116, sha: "88c413758efb22d2db23f849257c9f6ffd8175bb764c71078fd6c7eeadd9ec4d"},
-	{num: 11, file: "claudedocs/decisions/11-vendored-ready-ack.md", nonBlank: 153, sha: "232d2649f45928825e60396d36c4c513a469112d48092ec45686cc2b9ba396bf"},
-	{num: 18, file: "claudedocs/decisions/18-ready-ack-existing-apps.md", nonBlank: 130, sha: "83c49221352702ce161854c729e2663cc67d6ca120090d807f8c504db52baaf5"},
-	{num: 20, file: "claudedocs/decisions/20-ready-ack-advisory-tiers.md", nonBlank: 389, sha: "82de3c61f2fa3b43516ec8112d5ce64e3026ace3a2a60aa2ca723d44cf6bb191"},
-	{num: 21, file: "claudedocs/decisions/21-model-substitution.md", nonBlank: 114, sha: "60ee9ffc115dac34eff068cd270c2d6427c26f84c77bca28388aa60c51c5be67"},
-	{num: 23, file: "claudedocs/decisions/23-finding-field-message.md", nonBlank: 165, sha: "89ad99bb3e9fec0e6a316045d7160362b6fad8f8e340fc20c022dcc91becc13a"},
-	{num: 24, file: "claudedocs/decisions/24-errno-is-a-net-error.md", nonBlank: 327, sha: "baa658929002c871ee2cbf9332d7dcb9d78749fcab21e832b11a659803c42fd8"},
-	{num: 26, file: "claudedocs/decisions/26-project-path-classification.md", nonBlank: 246, sha: "1747de6cf56e85a935367ec118b7e16aecee5fb100d1ebf545ca40576ebbcc11"},
-	{num: 27, file: "claudedocs/decisions/27-blockid-derivation-refuses.md", nonBlank: 105, sha: "5edc575b345db5b459af8d0fc0bd6c826e8102a7588b61aa873092848394796a"},
+	{num: 3, file: "claudedocs/decisions/03-lockfile-check.md", base: agentsSplitBase, nonBlank: 116, sha: "88c413758efb22d2db23f849257c9f6ffd8175bb764c71078fd6c7eeadd9ec4d"},
+	{num: 10, file: "claudedocs/decisions/10-dev-tunnel-embeddability.md", base: agentsSplitBaseWave2, nonBlank: 103, sha: "b2397598f7913fac286f2fb5ee1e1e1ebf85348e365a6e820799d4ff817cab3c"},
+	{num: 11, file: "claudedocs/decisions/11-vendored-ready-ack.md", base: agentsSplitBase, nonBlank: 153, sha: "232d2649f45928825e60396d36c4c513a469112d48092ec45686cc2b9ba396bf"},
+	{num: 18, file: "claudedocs/decisions/18-ready-ack-existing-apps.md", base: agentsSplitBase, nonBlank: 130, sha: "83c49221352702ce161854c729e2663cc67d6ca120090d807f8c504db52baaf5"},
+	{num: 19, file: "claudedocs/decisions/19-img2img-workflow-and-upload.md", base: agentsSplitBaseWave2, nonBlank: 103, sha: "0e1bd1bd9b862123d99e106167e6fc0bc5fca55445f3d34709e8115092fef1ef"},
+	{num: 20, file: "claudedocs/decisions/20-ready-ack-advisory-tiers.md", base: agentsSplitBase, nonBlank: 389, sha: "82de3c61f2fa3b43516ec8112d5ce64e3026ace3a2a60aa2ca723d44cf6bb191"},
+	{num: 21, file: "claudedocs/decisions/21-model-substitution.md", base: agentsSplitBase, nonBlank: 114, sha: "60ee9ffc115dac34eff068cd270c2d6427c26f84c77bca28388aa60c51c5be67"},
+	{num: 23, file: "claudedocs/decisions/23-finding-field-message.md", base: agentsSplitBase, nonBlank: 165, sha: "89ad99bb3e9fec0e6a316045d7160362b6fad8f8e340fc20c022dcc91becc13a"},
+	{num: 24, file: "claudedocs/decisions/24-errno-is-a-net-error.md", base: agentsSplitBase, nonBlank: 327, sha: "baa658929002c871ee2cbf9332d7dcb9d78749fcab21e832b11a659803c42fd8"},
+	{num: 26, file: "claudedocs/decisions/26-project-path-classification.md", base: agentsSplitBase, nonBlank: 246, sha: "1747de6cf56e85a935367ec118b7e16aecee5fb100d1ebf545ca40576ebbcc11"},
+	{num: 27, file: "claudedocs/decisions/27-blockid-derivation-refuses.md", base: agentsSplitBase, nonBlank: 105, sha: "5edc575b345db5b459af8d0fc0bd6c826e8102a7588b61aa873092848394796a"},
 }
 
 // --- the one deliberate delta, item 3 ---------------------------------------
@@ -231,7 +274,7 @@ func TestSplitItemBodiesArePreservedVerbatim(t *testing.T) {
 					"was paid for by a round of work; a summary of it is not the same artefact. If you genuinely need to CHANGE this item, "+
 					"change it — and re-pin the sha here in the same commit, so the edit is reviewable as an edit rather than lost as drift.\n"+
 					"Re-derive the base text with:  git show %s:AGENTS.md",
-					it.file, it.num, got, len(nb), it.sha, it.nonBlank, agentsSplitBase[:7], agentsSplitBase)
+					it.file, it.num, got, len(nb), it.sha, it.nonBlank, it.base[:7], it.base)
 			}
 		})
 	}
@@ -270,15 +313,55 @@ func TestSplitTableCoversEveryEvidenceFile(t *testing.T) {
 
 // --- git-backed reinforcement ------------------------------------------------
 
-// baseAgentsMD returns AGENTS.md at agentsSplitBase, or "" when the object is
-// not reachable (a shallow CI clone, or no git at all).
-func baseAgentsMD(t *testing.T) string {
+// baseAgentsMD returns AGENTS.md at the given commit, or "" when the object is
+// not reachable (a shallow CI clone, or no git at all). Results are cached: with
+// a base per row, an uncached read would re-shell out once per item.
+var baseAgentsMDCache = map[string]string{}
+
+func baseAgentsMD(t *testing.T, ref string) string {
 	t.Helper()
-	out, err := exec.Command("git", "show", agentsSplitBase+":AGENTS.md").Output()
+	if doc, ok := baseAgentsMDCache[ref]; ok {
+		return doc
+	}
+	out, err := exec.Command("git", "show", ref+":AGENTS.md").Output()
 	if err != nil {
+		baseAgentsMDCache[ref] = ""
 		return ""
 	}
+	baseAgentsMDCache[ref] = string(out)
 	return string(out)
+}
+
+// baseDocFor resolves one row's base document and applies the controls that make
+// a comparison against it meaningful. It returns "" when the blob is unreachable
+// (the caller then skips, per the 🔴 note on the git-backed tests).
+//
+// 🔴 THE OLD CONTROL WAS `len(doc) < 150_000` — "this is the big pre-split file"
+// — AND IT CANNOT SURVIVE A SECOND WAVE. Wave 2's base is a POST-split commit of
+// 67 kB, so that assertion would fail on a perfectly correct row. It is replaced
+// by two controls that are true of any wave: the document must be a plausible
+// AGENTS.md at all, and the sliced body must be a BODY rather than a stub — a
+// base commit accidentally pointed AFTER its own eviction yields the 8-line stub,
+// which would otherwise surface as an inscrutable digest mismatch instead of
+// "you named the wrong commit".
+func baseDocFor(t *testing.T, it splitItem) string {
+	t.Helper()
+	doc := baseAgentsMD(t, it.base)
+	if doc == "" {
+		return ""
+	}
+	if len(doc) < agentsMinBytes {
+		t.Fatalf("CONTROL failure: AGENTS.md at %s is %d bytes, below the %d-byte floor. "+
+			"That is not an AGENTS.md; item %d's base commit is wrong or the blob is truncated.",
+			it.base[:7], len(doc), agentsMinBytes, it.num)
+	}
+	if evidencePathRe.MatchString(strings.Join(baseItemBody(t, doc, it.num), "\n")) {
+		t.Fatalf("CONTROL failure: item %d's body at %s is already a STUB — it carries an `→ evidence:` pointer. "+
+			"The base must be a commit whose AGENTS.md still held the BODY, i.e. the commit you moved it FROM. "+
+			"A body's base is fixed at the moment it was evicted and can never be re-pointed forward.",
+			it.num, it.base[:7])
+	}
+	return doc
 }
 
 // baseItemBody slices one item's body out of a whole AGENTS.md.
@@ -330,30 +413,58 @@ func baseItemBody(t *testing.T, doc string, num int) []string {
 // gates a merge; this one is the reason to believe its constants, and it runs on
 // every developer machine.
 func TestSplitDigestsAreTheBaseCommitsText(t *testing.T) {
-	doc := baseAgentsMD(t)
-	if doc == "" {
-		t.Skipf("base blob %s:AGENTS.md is not reachable (shallow clone, or git unavailable) — "+
-			"the pinned digests could not be re-derived here. TestSplitItemBodiesArePreservedVerbatim still holds them.",
-			agentsSplitBase[:7])
-	}
-	// POSITIVE CONTROL for the slicer: the base file is the big one, and if the
-	// checkout resolved to something else every comparison below is meaningless.
-	if len(doc) < 150_000 {
-		t.Fatalf("CONTROL failure: base AGENTS.md is %d bytes, expected the pre-split file (~186 kB). "+
-			"agentsSplitBase does not name the commit these digests came from.", len(doc))
-	}
+	checked := 0
 	for _, it := range splitItems {
 		t.Run(fmt.Sprintf("item_%d", it.num), func(t *testing.T) {
+			doc := baseDocFor(t, it)
+			if doc == "" {
+				t.Skipf("base blob %s:AGENTS.md is not reachable (shallow clone, or git unavailable) — "+
+					"item %d's pinned digest could not be re-derived here. TestSplitItemBodiesArePreservedVerbatim still holds it.",
+					it.base[:7], it.num)
+			}
+			checked++
 			nb := nonBlank(baseItemBody(t, doc, it.num))
 			if len(nb) != it.nonBlank {
 				t.Errorf("base item %d has %d non-blank line(s), table pins %d", it.num, len(nb), it.nonBlank)
 			}
 			if got := digestLines(nb); got != it.sha {
-				t.Fatalf("the pinned sha for item %d does not match the base commit's own text:\n  base %s\n  pin  %s\n"+
+				t.Fatalf("the pinned sha for item %d does not match its base commit's own text:\n  base %s\n  pin  %s\n"+
 					"The pin is wrong, not the evidence file. Re-derive it from `git show %s:AGENTS.md`.",
-					it.num, got, it.sha, agentsSplitBase)
+					it.num, got, it.sha, it.base)
 			}
 		})
+	}
+	if checked > 0 {
+		t.Logf("re-derived %d of %d pinned digest(s) from their own base commits", checked, len(splitItems))
+	}
+}
+
+// TestSplitBasesAreWellFormed is the cheap always-on control on the new per-row
+// field. It runs in a shallow clone where the git-backed tests skip, so a row
+// added with an empty or abbreviated base fails somewhere rather than nowhere.
+//
+// It also asserts the bases are a SMALL set. Every row of one wave shares a
+// commit; a table where each row carried its own would mean somebody re-derived
+// digests against whatever HEAD happened to be, which is the drift this file
+// exists to stop.
+func TestSplitBasesAreWellFormed(t *testing.T) {
+	fullSHA := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	waves := map[string]int{}
+	for _, it := range splitItems {
+		if !fullSHA.MatchString(it.base) {
+			t.Errorf("item %d's base %q is not a full 40-character sha. An abbreviated ref is ambiguous forever; "+
+				"a body's base commit is permanent and must be spelled in full", it.num, it.base)
+			continue
+		}
+		waves[it.base]++
+	}
+	if len(waves) == 0 {
+		t.Fatal("CONTROL failure: no bases parsed at all")
+	}
+	if len(waves) > len(splitItems)/2 {
+		t.Errorf("%d distinct base commits across %d rows. Eviction happens in WAVES — every item moved in one change "+
+			"shares its base — so a table this fragmented means digests were taken against a moving HEAD rather than "+
+			"against the commit each body was moved from", len(waves), len(splitItems))
 	}
 }
 
@@ -363,13 +474,13 @@ func TestSplitDigestsAreTheBaseCommitsText(t *testing.T) {
 //
 // Skips in a shallow clone for the same reason as its sibling.
 func TestEveryBaseBodyLineSurvivedTheMove(t *testing.T) {
-	doc := baseAgentsMD(t)
-	if doc == "" {
-		t.Skipf("base blob %s:AGENTS.md is not reachable — see TestSplitDigestsAreTheBaseCommitsText", agentsSplitBase[:7])
-	}
 	total := 0
 	for _, it := range splitItems {
 		t.Run(fmt.Sprintf("item_%d", it.num), func(t *testing.T) {
+			doc := baseDocFor(t, it)
+			if doc == "" {
+				t.Skipf("base blob %s:AGENTS.md is not reachable — see TestSplitDigestsAreTheBaseCommitsText", it.base[:7])
+			}
 			have := map[string]int{}
 			for _, l := range nonBlank(evidenceBody(t, it.file, it.num)) {
 				have[l]++
