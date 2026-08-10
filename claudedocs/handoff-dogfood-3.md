@@ -16,10 +16,11 @@ Prior runs: [`handoff-dogfood-154.md`](handoff-dogfood-154.md) (#223–#227),
   #333–#347. Do not assume any SHA in this doc is current.
 - **The run is DONE.** 3 generations, 61 Buzz, 2 submissions, all within limits,
   **verified from the account** (balance 4,187,454 → 4,187,393) not from the agent's report.
-- 🔴 **~14 findings are UNFILED.** They are in this doc (below) and nowhere else.
-- 🔴 **`dogfood3-20260810-money` v0.1.1 is `pending` in a HUMAN REVIEW QUEUE** with icon +
-  cover attached. Test artifact in front of a real moderator. **Withdraw it:**
-  `civitai app withdraw <pubreq-id-from-app-status>`.
+- 🔴 **~13 findings are UNFILED.** They are in this doc (below) and nowhere else.
+  Finding 1 is filed as **#350** (2026-08-10 17:12 CDT).
+- ✅ **`dogfood3-20260810-money` v0.1.1 WITHDRAWN** — 2026-08-10 17:11:32 CDT,
+  `pubreq_01KZPCQRKCBJ9GHQHQ1HFW08AK`, rc=0. Both versions now read `withdrawn` in
+  `app status`. Nothing of this run's is in a moderator queue.
 - **PR #296 (the sandbox harness) MERGED** at `2fe5336`, 2026-08-10T18:53. See the harness
   section — it landed with known 🔴 defects unfixed.
 
@@ -83,16 +84,23 @@ That is the whole harness. It cost minutes and produced 14 findings on the first
     pending App submission **so you can resubmit a new bundle for the same slug**"*.
 - **Ruled out:** caching (re-checked at +20s and through a different code path via `--slug`);
   a wrong-app lookup (`--slug` explicit, same result).
-- **NOT determined — this is the open question:** whether the media is dropped **at
-  withdraw** or **at resubmit**. The dogfood agent declined to burn a third submission to
-  find out, correctly. The user-visible effect is identical either way.
-- **Next probe** (costs one submission on a throwaway app, no generation spend):
+- ✅ **RESOLVED — the loss is AT WITHDRAW, and it deletes the LISTING, not just its media.**
+  Measured 2026-08-10 17:11 CDT, at zero extra submission cost: the probe was run on the
+  v0.1.1 listing that had to be withdrawn anyway. Transcript:
   ```
-  civitai app submit --yes && civitai app listing set-icon ./assets/icon.png
-  civitai app listing status                 # expect: Icon set
-  civitai app withdraw <pubreq>
-  civitai app listing status                 # <-- THE ANSWER. Icon still set => loss is at resubmit.
+  17:11:22  app listing status  -> Icon set ✓ / Cover set ✓ / Screenshots: 1 (re-added)
+  17:11:32  app withdraw pubreq_01KZPCQRKCBJ9GHQHQ1HFW08AK  -> rc=0, no warning
+  17:11:36  app listing status  -> Error: no store listing found for this app (404)  rc=4
   ```
+  Four seconds, three images, no warning. **Reuse this trick:** the probe is free whenever a
+  submission is being withdrawn for other reasons — re-attach, verify, withdraw, re-check.
+- 🔴 **CORRECTION to the report above — icon and cover SELF-HEAL, the screenshot does not.**
+  Between 12:50 and 17:11 the v0.1.1 draft listing went `MISSING` → `set ✓` for icon and
+  cover with **no user action**; the captioned screenshot stayed gone over the same ~4h20m.
+  So the post-resubmit `MISSING` is partly a stale read that reconciles server-side over
+  hours — but the CLI prints `⚠ Not publishable yet` throughout that window, and the caption
+  is lost for good. The `404` after withdraw is unambiguous regardless. This is why the
+  finding was NOT filed as written: live state contradicted "all gone, permanently".
 - **Why it matters:** withdraw→fix→resubmit is the *only* documented repair path, and the
   docs actively push you to attach media *before* reaching it. A user with eight captioned
   screenshots loses all of them and has no reason to re-check, because the tool just told
@@ -107,7 +115,7 @@ on 2026-08-10 and some are adjacent (notably **#345**, the `--checkpoint` exampl
 
 | # | severity | finding |
 |---|---|---|
-| 1 | 🔴 | **Listing wipe on withdraw+resubmit** (above). Silent, on the documented repair path, contradicted by three promises. |
+| 1 | 🔴 | ✅ **FILED #350.** **`app withdraw` deletes the whole store listing** (above). Silent, rc=0, on the documented repair path, contradicted by three promises. |
 | 2 | 🟠 | **`app pull` gives a false diagnosis whose own remedy disproves it.** `app pull ./pulled --app <pending-app>` → `Error: no such app for your account — check the slug with 'civitai app status': App block not found` (rc=4). `app status` lists it twice. Real cause: `app pull --help` says it pulls *approved* apps; the app was `pending`. The README Troubleshooting table repeats the same false explanation. Compare `app metrics` on the identical precondition, which is exemplary: *"has no approved App Block yet — analytics only exist once a submitted version is approved; check where it is in review with `civitai app status <slug>`"*. |
 | 3 | 🟠 | **The README's silent-model-substitution worked example cannot produce its own output.** `civitai generate "a cat" --checkpoint 999999999 --dry-run` → `Error: --checkpoint 999999999: not found (404): Model not found` (rc=4). The item-13 live `ResolveModelVersion` lookup now 404s before the substitution path is reachable. The section that exists to teach substitution demos it with a command that short-circuits. No invocation was found that produces the documented warning. |
 | 4 | 🟠 | **Troubleshooting index attributes a string to the wrong command.** The README promises *"Every row's left column is a fragment of a string this CLI really prints"* and cites a test asserting it. The row `is this an App project?` is attributed to validate; `app validate ./emptydir` actually prints `block.manifest.json not found at project root ./emptydir`. The quoted string comes from `app listing`. The test checks **existence, not attribution**, so the invariant holds while the index is wrong. The message a new user really gets from validate appears nowhere in the index. |
@@ -165,17 +173,46 @@ cobra's real `Find`/`ParseFlags` instead of modelling it — four independent di
 45, 70 and 46 nodes plus a recording origin server found **zero** disagreements with the
 binary), and `scripts/dogfood-mutate.sh` (64-mutant re-runnable battery).
 
+🔴 **CORRECTION (measured 2026-08-10 17:2x) — "keep those two, delete the sandbox" does not
+hold together.** The three pieces are coupled, so it is delete-the-complex or keep-and-fix:
+- `scripts/dogfood-mutate.sh` line 3 declares itself *"the mutation battery for
+  scripts/dogfood-sandbox.sh"* and line 33 targets that file. Delete the sandbox and it has
+  nothing to mutate.
+- `internal/dogfoodguard`'s **only** consumer is the sandbox, which builds it at line 440.
+  Orphaned it is 291 lines of dev-only code with **no test file** (`internal/dogfoodguard/`
+  contains `main.go` and nothing else).
+- `make dogfood-check` (Makefile) runs `shellcheck` + `selftest --offline` against the
+  sandbox, so removal is a Makefile change too, and `claudedocs/dogfood-3-sandbox.md`
+  documents it.
+
+Sizes, if that helps the call: sandbox 2,633 lines / 125 KB, mutate 178, dogfoodguard 291.
+
 ## Next steps (ranked)
 
-1. **Withdraw `dogfood3-20260810-money` v0.1.1** — it is in a human moderator queue.
-2. **File finding 1 (the listing wipe)** with the repro above. It is silent data loss on the
-   documented repair path. Run the "next probe" first if you want withdraw-vs-resubmit
-   attribution in the issue; file it either way.
-3. **File findings 2–5** as separate issues; roll 6–14 into one umbrella. Check #342–#347 for
-   duplicates first.
-4. **Decide the harness's fate on `main`** — either fix the four defects above or delete
-   `scripts/dogfood-sandbox.sh` and keep only `internal/dogfoodguard` + `dogfood-mutate.sh`.
-5. Rotate the API key used for this run (it was pasted into a chat transcript).
+1. ✅ ~~Withdraw `dogfood3-20260810-money` v0.1.1~~ — done 2026-08-10 17:11 CDT.
+2. ✅ ~~File finding 1 (the listing wipe)~~ — **#350**, with the withdraw-vs-resubmit
+   attribution resolved.
+3. 🔄 **IN FLIGHT** — findings 2–14 are being re-verified against a binary built from current
+   `main` and filed. 🔴 **They are STALE as written:** the run's binary was `dfdcc97`, **14
+   commits behind `main`**, and #334/#336/#339/#347 changed `generate`, `workflows` and
+   `scaffold`. Some may already be fixed — finding 6 is the worked example (the same binary
+   gave a fully actionable "run `civitai app submit` first" message on a no-listing app, not
+   the bare `no such submission` recorded). **Re-verify before filing anything from this
+   table.** Filing plan: 2/3/4/5 individually, then three thematic issues (error-message
+   quality 6+7+11+12; README contract accuracy 8+9; papercuts 10+13+14) rather than one
+   9-item umbrella, which never gets actioned. Findings 2 and 13 cannot be re-verified
+   without a live submission or Buzz — file with that caveat stated, do not spend.
+   Confirmed NOT duplicates: finding 3 vs **#345** (that is a *real* checkpoint `128713`
+   failing on ecosystem mismatch; finding 3 is a nonexistent id `999999999` 404ing before
+   substitution is reachable).
+4. **Decide the harness's fate on `main`** — fix the four defects above, or delete the whole
+   complex. See the CORRECTION above: the three pieces are coupled, so "keep dogfoodguard +
+   dogfood-mutate.sh" is not an option that survives deleting the sandbox.
+5. **Rotate the API key used for this run** (it was pasted into a chat transcript, and lives
+   at `/tmp/claude-1000/dogfood3/cfg/civitai/config.yaml`). Verified 2026-08-10: the token
+   string appears **0 times** in the repo and **0 times** in its full git history, so nothing
+   here needs scrubbing — rotate because of the transcript and the on-disk copy, then
+   `rm -rf /tmp/claude-1000/dogfood3`.
 
 ## Gotchas / decisions / dead-ends
 
