@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/huh"
 	"github.com/civitai/cli/internal/scaffold"
@@ -20,6 +21,7 @@ func newAppInitCmd() *cobra.Command {
 	var fromSlug string
 	var dirFlag string
 	var nameFlag string
+	var slugFlag string
 	var noInput bool
 
 	cmd := &cobra.Command{
@@ -36,6 +38,14 @@ Templates:
 The display name can be free-form ("My Cool Block"); it is slugified for the
 blockId. A slug-shaped name is used verbatim.
 
+The blockId is your app's PERMANENT public identity — the hostname your app will
+be served at once it is approved, and the argument every later command takes — so
+derivation refuses rather than guesses when the name carries LETTERS a blockId
+cannot hold ("Café Del Mar", "ÜberApp", any non-Latin name). Punctuation, symbols
+and emoji still fold to a hyphen, as they always have ("Rocket 🚀 App" ->
+rocket-app). Pass --slug <slug> to choose the blockId yourself; it bypasses
+derivation entirely.
+
 By default the project is created in ./<slug>. Override the output directory with
 a positional [dir] or --dir <path>; override the display name independently with
 --name (so name, slug, and directory can all differ).`,
@@ -48,38 +58,60 @@ a positional [dir] or --dir <path>; override the display name independently with
   # Custom output directory (slug stays my-block; created in ./apps/foo).
   civitai app init my-block --dir ./apps/foo
 
+  # A name derivation cannot slugify: choose the blockId yourself.
+  civitai app init "Café Del Mar" --slug cafe-del-mar
+
   # Name, slug, and dir all independent.
   civitai app init my-block ./apps/foo --name "My Block"`,
 		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, noInput)
+			return runAppScaffold(cmd, args, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag, noInput)
 		},
 	}
 
 	cmd.Flags().StringVarP(&templateFlag, "template", "t", string(scaffold.Static), "project template: static | page-vite | page-money")
-	cmd.Flags().StringVar(&fromSlug, "from", "", "fork from an existing published app slug (not yet wired)")
+	cmd.Flags().StringVar(&fromSlug, "from", "", fromFlagUsage)
 	cmd.Flags().StringVar(&dirFlag, "dir", "", "output directory (default ./<slug>)")
 	cmd.Flags().StringVar(&nameFlag, "name", "", "display name (default derived from the name argument)")
+	cmd.Flags().StringVar(&slugFlag, "slug", "", slugFlagUsage)
 	cmd.Flags().BoolVarP(&noInput, "yes", "y", false, "non-interactive: never prompt (use flags/defaults; fail if a name is missing)")
 	return cmd
 }
+
+// slugFlagUsage / fromFlagUsage are shared by `app init` and `app create` so the
+// two commands cannot drift on the same flag.
+const (
+	slugFlagUsage = "explicit blockId (bypasses derivation from the name; 3-40 chars, starts with a letter, lowercase a-z/0-9/hyphens)"
+	// The flag stays discoverable — it is a real roadmap item and hiding it
+	// would only move the surprise to a user who read about it elsewhere — but
+	// the usage string says up front that it cannot work yet, so the failure is
+	// predictable BEFORE the command is run rather than after.
+	fromFlagUsage = "fork from an existing published app slug (NOT AVAILABLE YET — the CLI cannot fetch app source)"
+)
 
 // runAppScaffold is the shared scaffold body behind both `app init` and
 // `app create`. The two commands differ only in the default template; all of
 // the slug/display derivation, dir resolution, rendering, self-validation, and
 // next-steps output lives here so there is a single code path.
-func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, dirFlag, nameFlag string, noInput bool) error {
+func runAppScaffold(cmd *cobra.Command, args []string, templateFlag, fromSlug, dirFlag, nameFlag, slugFlag string, noInput bool) error {
 	out := cmd.OutOrStdout()
 
+	// TODO(server): expose a read endpoint that returns a published app's
+	// canonical source tree by slug, then --from can scaffold from it. Until
+	// then the flag has a 100% failure rate, so the message a user sees is a
+	// plain actionable CLI error — the engineering context stays HERE. An
+	// end-user error is not the place to ship an internal ticket.
 	if fromSlug != "" {
-		return fmt.Errorf(`--from is not yet wired up.
+		return fmt.Errorf("--from is not available yet: this CLI cannot fetch a published app's source. Scaffold a plain project with `%s <name>` and copy the upstream files in by hand", cmd.CommandPath())
+	}
 
-Forking an existing published app requires fetching its source from the
-server, which this CLI cannot do yet (no programmatic app-source endpoint).
-
-TODO(server): expose a read endpoint that returns a published app's canonical
-source tree by slug, then --from can scaffold from it. For now, run a plain
-init and copy the upstream files in manually`)
+	// An explicit --slug bypasses derivation entirely, so it is checked against
+	// the same server contract a derived slug is. A bad VALUE is a usage error
+	// (exit 2), same class as a bad --template.
+	if slugFlag != "" {
+		if err := scaffold.ValidateSlug(slugFlag); err != nil {
+			return asUsageError(err)
+		}
 	}
 
 	name := ""
@@ -92,14 +124,37 @@ init and copy the upstream files in manually`)
 	// stdin (not a TTY), or --yes all SKIP huh — so scripted invocations never
 	// block on a prompt (huh requires a TTY). The prompt fills in the name +
 	// template; everything downstream is identical to the flag-driven path.
+	//
+	// 🔴 --slug SUPPRESSES THE NAME FIELD, NOT THE PROMPT. An earlier version
+	// added `&& slugFlag == ""` to this condition, reasoning that --slug
+	// "supplies the one thing the prompt exists to collect". It does not: the
+	// form collects a name AND a TEMPLATE, so `civitai app create --slug my-app`
+	// on a TTY silently took page-money with no template choice offered — a
+	// question the user was asked before and is no longer asked. The identity is
+	// the only thing --slug settles, so it drops that one field and the template
+	// select still runs; the display name then falls back to the slug's title
+	// case. --yes remains the way to skip the prompt entirely.
 	if name == "" && !noInput && stdinIsTTY() {
-		inputs, err := scaffoldPromptFn(cmd, templateFlag)
+		inputs, err := scaffoldPromptFn(cmd, templateFlag, slugFlag == "")
 		if err != nil {
 			return err
 		}
 		name = strings.TrimSpace(inputs.name)
 		if inputs.template != "" {
 			templateFlag = inputs.template
+		}
+	}
+
+	// The display name is written VERBATIM into block.manifest.json. JSON is
+	// UTF-8 by definition, so an invalid-UTF-8 name produces a manifest no
+	// conforming parser can read — and the platform is the one that finds out.
+	// scaffold.Slugify refuses the same bytes for the blockId (see its (a)
+	// residual); this is the other half, and it is needed because --slug
+	// bypasses derivation entirely, so the name reaches the manifest unchecked.
+	// A bad flag/arg VALUE is a usage error (exit 2), same class as --template.
+	for _, v := range []struct{ what, val string }{{"the name argument", name}, {"--name", nameFlag}} {
+		if v.val != "" && !utf8.ValidString(v.val) {
+			return asUsageError(fmt.Errorf("%s is not valid UTF-8: %q — the display name is written into block.manifest.json verbatim, and JSON must be UTF-8", v.what, v.val))
 		}
 	}
 
@@ -112,7 +167,7 @@ init and copy the upstream files in manually`)
 		return asUsageError(err)
 	}
 
-	if name == "" {
+	if name == "" && slugFlag == "" {
 		return asUsageError(fmt.Errorf("provide a project name: %s <name>", cmd.CommandPath()))
 	}
 
@@ -130,18 +185,35 @@ init and copy the upstream files in manually`)
 		targetDir = posDir
 	}
 
-	// Derive slug + display name. If the name is already a valid slug
-	// use it verbatim; otherwise slugify and title-case for display.
+	// Derive slug + display name. An explicit --slug wins outright; otherwise a
+	// name that is already a valid slug is used verbatim, and anything else is
+	// slugified (which REFUSES rather than dropping characters — see
+	// scaffold.LossyChars, and the residuals in scaffold.Slugify's header:
+	// derivation still folds symbols/emoji to a hyphen and still lowers the two
+	// runes above ASCII that lower INTO ASCII).
+	nameIsSlug := name != "" && scaffold.ValidateSlug(name) == nil
 	var slug, display string
-	if err := scaffold.ValidateSlug(name); err == nil {
+	switch {
+	case slugFlag != "":
+		slug = slugFlag
+	case nameIsSlug:
 		slug = name
-		display = scaffold.TitleFromSlug(name)
-	} else {
+	default:
 		// An unusable <name> argument is a bad VALUE, same class as --template.
 		slug, err = scaffold.Slugify(name)
 		if err != nil {
 			return asUsageError(err)
 		}
+	}
+
+	// Display name: title-cased from whichever identifier we have when the user
+	// typed one that reads as an id, verbatim when they typed prose.
+	switch {
+	case name == "":
+		display = scaffold.TitleFromSlug(slug)
+	case nameIsSlug:
+		display = scaffold.TitleFromSlug(name)
+	default:
 		display = name
 	}
 
@@ -190,11 +262,48 @@ init and copy the upstream files in manually`)
 	return nil
 }
 
+// installStepFmt is next-step 1 for the templates that install. It is shared by
+// both npm branches so they cannot drift.
+//
+// 🔴 THE SECOND LINE IS THE FIX, NOT DECORATION. `civitai app validate` FAILS on
+// a freshly-scaffolded page-money / page-vite project until `npm install` has
+// written package-lock.json — the platform build installs strictly from the
+// committed lockfile, so the check is right and its message is good. What was
+// wrong was the PROMISE: `app create --help` said the scaffold "validates
+// clean", and validating before installing ~103 MB of node_modules is the
+// natural first instinct. Saying it here (the last screen before the author
+// starts) and in the help text is what closes that minute-3 surprise. `static`
+// ships no package.json, installs nothing, and does validate clean — which is
+// why this line lives on the install branches only (issue #260).
+const installStepFmt = "  1. cd %s && npm install    # writes package-lock.json — COMMIT it\n" +
+	"     (`civitai app validate` fails until you do — it needs that lockfile)\n"
+
 // printScaffoldResult prints a one-line summary (with a file count, not the
 // full tree) followed by a numbered, template-tailored "Next steps" sequence.
 func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Template, destDir, abs string, written []string) {
 	// One scannable line: name, template, where, and how many files — no tree.
 	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Created App %q (%s)  ·  %s/  ·  %d files", display, tmpl, destDir, len(written))))
+
+	// 🔴 ECHO THE blockId ALWAYS, not only when it was derived or only when --dir
+	// was passed. It is the app's PERMANENT public identity — the hostname it is
+	// served at, and the argument `app status` / `app metrics` / `app listing`
+	// all take — and `slug` was a DEAD PARAMETER here: no line of this output
+	// named it. With the default directory you can infer it from the directory
+	// name; with --dir it is invisible unless you open block.manifest.json. So
+	// the case where derivation is most likely to surprise you was the case
+	// where it was least visible (issue #259).
+	//
+	// 🔴 THE URL IS A FUTURE TENSE, AND THAT IS NOT A STYLE CHOICE. The first
+	// version printed the bare `https://<blockId>.civit.ai/` as the app's
+	// "permanent public id" at scaffold time — a URL that is guaranteed to 404
+	// at that exact moment, because the subdomain is only programmed on
+	// approval + deploy (README: "Before approval, https://<blockId>.civit.ai/
+	// 404s"). That is the same false-promise class as the "validates clean"
+	// claim two lines up in this very output block, and `app status` already
+	// gets it right ("Not live yet — … only serves after the app is approved and
+	// deployed"). Keep the two surfaces saying the same thing.
+	fmt.Fprintln(out, ui.Dim(fmt.Sprintf("  blockId: %s  —  your app's permanent public id (it cannot be renamed later)", slug)))
+	fmt.Fprintln(out, ui.Dim(fmt.Sprintf("  Will be served at https://%s.civit.ai/ — only after the app is approved and deployed · `civitai app status %s`", slug, slug)))
 
 	// page-money ships a runnable txt2img money path and a Comfy on Civitai
 	// (customComfy) sample, with body builders for BOTH customComfy arms — the
@@ -230,7 +339,7 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		// The two beta surfaces are still listed submit-first, but that is a
 		// PRESENTATIONAL grouping (publish path, then preview path) — not a
 		// dependency. Do not re-derive an ordering requirement from it.
-		fmt.Fprintf(out, "  1. cd %s && npm install    # writes package-lock.json — COMMIT it\n", destDir)
+		fmt.Fprintf(out, installStepFmt, destDir)
 		fmt.Fprintln(out, "  2. npm run dev:harness     # mock host, no Buzz — works today")
 		fmt.Fprintln(out, "  3. edit src/App.tsx and iterate")
 		fmt.Fprintln(out)
@@ -239,7 +348,7 @@ func printScaffoldResult(out io.Writer, display, slug string, tmpl scaffold.Temp
 		fmt.Fprintln(out, "     npm run dev:tunnel      # in another terminal: serve your app for the tunnel")
 		fmt.Fprintln(out, "     civitai app dev-tunnel  # your LOCAL app INSIDE the real host, prod-fidelity — no submit needed")
 	case tmpl == scaffold.PageVite:
-		fmt.Fprintf(out, "  1. cd %s && npm install    # writes package-lock.json — COMMIT it\n", destDir)
+		fmt.Fprintf(out, installStepFmt, destDir)
 		fmt.Fprintln(out, "  2. npm run dev              # preview locally (your UI only — see below)")
 		fmt.Fprintln(out, "  3. civitai app submit       # validate + submit for review")
 	default:
@@ -304,29 +413,35 @@ var scaffoldPromptFn = runScaffoldForm
 // runScaffoldForm runs the huh form that collects a missing app name + template.
 // defaultTemplate pre-selects the template (the command's default). The form
 // renders to stderr (status stream) and reads the command's stdin.
-func runScaffoldForm(cmd *cobra.Command, defaultTemplate string) (scaffoldInputs, error) {
+//
+// askName is false when --slug already settled the identity: the TEMPLATE select
+// still runs, because that is a second, independent question the prompt exists
+// to ask and --slug says nothing about it.
+func runScaffoldForm(cmd *cobra.Command, defaultTemplate string, askName bool) (scaffoldInputs, error) {
 	in := scaffoldInputs{template: defaultTemplate}
+	var fields []huh.Field
+	if askName {
+		fields = append(fields, huh.NewInput().
+			Title("App name").
+			Description(`Free-form ("My Cool Block") — slugified for the blockId.`).
+			Value(&in.name).
+			Validate(func(s string) error {
+				if strings.TrimSpace(s) == "" {
+					return fmt.Errorf("a name is required")
+				}
+				return nil
+			}))
+	}
+	fields = append(fields, huh.NewSelect[string]().
+		Title("Template").
+		Options(
+			huh.NewOption("static — no-build page app (index.html + a tiny JS)", string(scaffold.Static)),
+			huh.NewOption("page-vite — Vite + React page app", string(scaffold.PageVite)),
+			huh.NewOption("page-money — Vite + React + TS SDK money-path app", string(scaffold.PageMoney)),
+		).
+		Value(&in.template))
 	form := huh.NewForm(
-		huh.NewGroup(
-			huh.NewInput().
-				Title("App name").
-				Description(`Free-form ("My Cool Block") — slugified for the blockId.`).
-				Value(&in.name).
-				Validate(func(s string) error {
-					if strings.TrimSpace(s) == "" {
-						return fmt.Errorf("a name is required")
-					}
-					return nil
-				}),
-			huh.NewSelect[string]().
-				Title("Template").
-				Options(
-					huh.NewOption("static — no-build page app (index.html + a tiny JS)", string(scaffold.Static)),
-					huh.NewOption("page-vite — Vite + React page app", string(scaffold.PageVite)),
-					huh.NewOption("page-money — Vite + React + TS SDK money-path app", string(scaffold.PageMoney)),
-				).
-				Value(&in.template),
-		),
+		huh.NewGroup(fields...),
 	).WithInput(cmd.InOrStdin()).WithOutput(cmd.ErrOrStderr())
 	if err := form.Run(); err != nil {
 		return in, err

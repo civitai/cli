@@ -240,15 +240,18 @@ func TestAppCreateRefusesNonEmptyDir(t *testing.T) {
 	}
 }
 
+// TestAppCreateFromIsNotWired pins the `--from` refusal for `app create`; the
+// message contract itself (no internal TODO, an actionable next command) is
+// asserted for BOTH commands in TestScaffoldFromErrorShipsNoEngineeringNote.
 func TestAppCreateFromIsNotWired(t *testing.T) {
 	tmp := t.TempDir()
 	dest := filepath.Join(tmp, "out")
 	_, errOut, err := run(t, "app", "create", "my-block", dest, "--from", "some-slug")
 	if err == nil {
-		t.Fatal("expected --from to error (not yet wired)")
+		t.Fatal("expected --from to error (not available yet)")
 	}
-	if !strings.Contains(err.Error()+errOut, "not yet wired") {
-		t.Errorf("--from should report it is not wired: err=%v stderr=%s", err, errOut)
+	if !strings.Contains(err.Error()+errOut, "--from is not available yet") {
+		t.Errorf("--from should report it is unavailable: err=%v stderr=%s", err, errOut)
 	}
 }
 

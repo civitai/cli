@@ -41,6 +41,7 @@ contract, and **packages/submits** it for review.
 - [Quickstart: build an App Block](#quickstart-build-an-app-block)
 - [SDK packages](#sdk-packages)
 - [Command reference](#command-reference)
+  - [The blockId](#the-blockid)
   - [Templates](#templates)
   - [The host handshake (`BLOCK_READY`)](#the-host-handshake-block_ready)
   - [Local dev loop (harness: mock vs live)](#local-dev-loop-harness-mock-vs-live)
@@ -282,7 +283,7 @@ README. For the end-to-end walkthrough, see
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**). Needs the BuzzRead scope — a full-scope personal API key or `civitai login --scopes generate`; a **default** OAuth login token can't read it, and gets a clear message naming both fixes. `--json` emits `{blue,green,yellow,total}` (scriptable — handy for before/after diffing a `dev:live` spend). |
 | `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based discovery, not free-text search. **Needs a credential** (`civitai login` or `CIVITAI_TOKEN`): the endpoint keys the visible catalog off your identity, so this is *not* one of the anonymous reads. Cursor-paged. See [Browse the App store](#browse-the-app-store). |
 | `civitai app view <slug> [--json]` | **Show one published App's store detail** (`GET /api/v1/apps/{slug}`) — description, category, rating, gallery, live/external target. **Needs a credential**, same as `app list`. Reads the *public store catalog*, which is a different resource from your own deploy — a not-found here says nothing about `<slug>.civit.ai`. See [Browse the App store](#browse-the-app-store). |
-| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). |
+| `civitai app create [name] [dir] [--template static\|page-vite\|page-money] [--dir <path>] [--name <display>] [--slug <slug>]` | **The friendly happy path.** Scaffold a ready-to-build App, defaulting to the batteries-included `page-money` SDK template (default dir `./<slug>`). `--slug` sets the **blockId** explicitly instead of deriving it from the name — needed when derivation refuses the name (see [The blockId](#the-blockid)). |
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
 | `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`.** `--spend` must be asked for explicitly to request real-Buzz spend — without it the CLI filters `ai:write:budgeted` out of the mint request. `--env` prints a paste-ready `VITE_LIVE_BLOCK_TOKEN=<token>`. See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Pre-flights whether the host can actually **embed** your dev server and warns (never fatally) when it cannot. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
@@ -302,6 +303,40 @@ README. For the end-to-end walkthrough, see
 
 Run `civitai help`, `civitai app --help`, or `civitai <command> --help` for the
 full details and examples.
+
+### The blockId
+
+The **blockId** is your app's permanent public identity: the hostname it will be
+served at once approved (`https://<blockId>.civit.ai/`) and the argument every
+later command takes (`app status`, `app metrics`, `app listing`, `app dev-token`,
+`app dev-tunnel`). **It cannot be renamed afterwards.** `app create` / `app init`
+echo the one they chose, so it is on screen before you commit anything.
+
+By default it is derived from the name: `"My Cool Block"` → `my-cool-block`.
+Pass **`--slug <slug>`** to choose it yourself — it bypasses derivation entirely,
+so name, blockId and directory are three fully independent axes.
+
+> **Breaking change.** Derivation used to lowercase the name and replace every
+> run of non-`[a-z0-9]` with a hyphen, which silently **dropped characters**:
+> `civitai app create "Café App"` minted the blockId **`caf-app`**, and
+> `"ÜberApp"` minted **`berapp`** — a different permanent public id than the
+> author typed, with no warning and exit 0. Derivation now **refuses** and names
+> the offending characters, exiting **2** and asking for `--slug`. **If you have
+> a script passing a non-ASCII name, it must now pass `--slug <slug>`.** The old
+> output was wrong, so the break is the point — but it is a break.
+
+What derivation refuses is **letters, digits and marks** above ASCII that the
+slug alphabet cannot carry. Three things still derive rather than refuse, and
+they are deliberate:
+
+| input | blockId | why |
+| --- | --- | --- |
+| `"Rocket 🚀 App"` | `rocket-app` | Symbols, emoji and non-ASCII punctuation are **separators** — that is what makes `"Widget — Pro"` → `widget-pro` right. An emoji has no lossless ASCII form either, so refusing would only trade a silent drop for a dead end. Tracked as [#272](https://github.com/civitai/cli/issues/272). |
+| `"İstanbul App"` | `istanbul-app` | Exactly two runes above ASCII lowercase **into** ASCII — `İ` (U+0130) and `K` (U+212A). Lowercasing is what decides whether a character survives, so these transliterate for free. |
+| `"My  Cool___Block"` | `my-cool-block` | ASCII is exempt by construction — every derivation that worked before still produces the byte-identical blockId. |
+
+A name that is **not valid UTF-8** is refused outright (it used to lose the bad
+bytes from the blockId *and* write them into `block.manifest.json`).
 
 ### Templates
 
