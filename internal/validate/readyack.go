@@ -404,6 +404,29 @@ type ackScanner struct {
 	partial bool
 }
 
+// walk descends dir, stopping at the first ack and at the first thing it cannot
+// read.
+//
+// 🔴 THE TWO `s.found || s.partial` SHORT-CIRCUITS BELOW ARE A MASKING PAIR, NOT
+// A DUPLICATED GUARD — ISSUE #302, AND THE ASYMMETRY IS THE POINT. Measured, not
+// reasoned:
+//   - THIS one (on entry) has a condition that is never true as the code stands.
+//     walk is entered only from scanForReadyAck (both flags false) and from the
+//     recursion below, which sits after the per-entry guard and after an os.Stat
+//     that returns on error. A probe panicking in its body fired 0 times across
+//     this package's 332 test leaves — and 1 time the moment the per-entry guard
+//     was removed. So deleting it ALONE is an equivalent mutation, and it is not
+//     dead code either: it is the line that becomes load-bearing when the other
+//     one breaks.
+//   - The PER-ENTRY one is load-bearing today: delete it alone and a scan that
+//     already set `partial` walks on to a sibling FILE and reports ackFound.
+//   - Delete BOTH and it also walks into a sibling DIRECTORY.
+//
+// Either flip reports an ack in a tree we did not finish reading, which is the
+// direction AGENTS.md item 18 refuses: reading only PART is not finding nothing.
+// All three deletions survived the whole repo (0 `--- FAIL` over 19 packages)
+// until TestPartialScanNeverBecomesFound, which carries one fixture row per
+// guard because a single-mutation sweep cannot see the pair by construction.
 func (s *ackScanner) walk(dir string) {
 	if s.found || s.partial {
 		return

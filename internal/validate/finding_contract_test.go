@@ -693,6 +693,60 @@ func TestDedupeFindingsKeysOnTheFieldMessagePAIR(t *testing.T) {
 	}
 }
 
+// TestDedupeFindingsKeepsEveryFindingAfterADuplicate pins the LOOP CONTROL,
+// which the test above does not and structurally cannot.
+//
+// 🔴 ISSUE #301, A SURVIVING MUTANT: `continue` -> `break` in dedupeFindings
+// survives the whole suite. TestDedupeFindingsKeysOnTheFieldMessagePAIR pins the
+// KEY — which pairs collapse — and every fixture it uses either holds no
+// duplicate at all or holds nothing AFTER the duplicate, which is exactly the
+// shape that renders `continue` and `break` indistinguishable.
+//
+// The mutant is not abstract. `Dir` SORTS before it dedupes (validate.go), so
+// duplicates are adjacent and one duplicated pair early in the sorted order
+// truncates the entire remainder: `app validate` prints a SUBSET of the real
+// findings with the same exit code and the same `--json` shape, the author fixes
+// what they were shown, re-runs, and meets a set of errors nothing ever told them
+// about. So the fixture is ordered unique / duplicate-of-1 / more uniques, and
+// the assertion is that everything past the duplicate survives.
+func TestDedupeFindingsKeepsEveryFindingAfterADuplicate(t *testing.T) {
+	dup := Finding{Field: "iframe.minHeight", Message: "iframe.minHeight is required"}
+	in := []Finding{
+		dup,
+		dup, // the duplicate: it must be SKIPPED, never end the loop
+		{Field: "page.buzzBudgetPerGen", Message: "page.buzzBudgetPerGen is not set"},
+		{Field: "targets[0].slotId", Message: "unknown slotId"},
+		{Field: FieldProject, Message: "no lockfile is committed"},
+	}
+	want := []Finding{in[0], in[2], in[3], in[4]}
+
+	got := dedupeFindings(in)
+	if len(got) != len(want) {
+		t.Fatalf("dedupeFindings kept %d of %d distinct findings — a duplicate must SKIP that one entry, never "+
+			"STOP the loop, or every finding after the first duplicate is silently dropped and `app validate` "+
+			"reports a subset with an unchanged exit code (issue #301)\n got: %v\nwant: %v",
+			len(got), len(want), got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("dedupeFindings()[%d] = %v, want %v — order must be first-occurrence order", i, got[i], want[i])
+		}
+	}
+
+	// A duplicate in the MIDDLE of a long run, so the assertion above cannot be
+	// satisfied by a loop that merely happens to survive one early pair.
+	late := []Finding{
+		{Field: "blockId", Message: "blockId is required"},
+		{Field: "version", Message: "version is required"},
+		dup,
+		dup,
+		{Field: "name", Message: "name is required"},
+	}
+	if got := dedupeFindings(late); len(got) != 4 {
+		t.Errorf("a duplicate at index 3 dropped the findings after it: kept %d of 4: %v", len(got), got)
+	}
+}
+
 // TestMessagesPreservesOrderAndText pins the text seam: the human-readable
 // renderers print Message and nothing else, so Messages must be a pure
 // projection. If this ever needed to compose Field into the line, the byte-for-
