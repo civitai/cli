@@ -65,7 +65,7 @@ func Load(dir string) (*Manifest, error) {
 	}
 	var m Manifest
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, fmt.Errorf("%s is not valid JSON: %w", Filename, err)
+		return nil, invalidJSON(raw, err)
 	}
 	return &m, nil
 }
@@ -108,7 +108,7 @@ func SetBlockID(dir, newBlockID string) error {
 		// preserved, but the file is re-emitted as valid indented JSON).
 		var generic map[string]any
 		if err := json.Unmarshal(raw, &generic); err != nil {
-			return fmt.Errorf("%s is not valid JSON: %w", Filename, err)
+			return invalidJSON(raw, err)
 		}
 		generic["blockId"] = newBlockID
 		b, err := json.MarshalIndent(generic, "", "  ")
@@ -155,11 +155,11 @@ func LoadRaw(dir string) (any, *Manifest, error) {
 	}
 	var generic any
 	if err := json.Unmarshal(raw, &generic); err != nil {
-		return nil, nil, fmt.Errorf("%s is not valid JSON: %w", Filename, err)
+		return nil, nil, invalidJSON(raw, err)
 	}
 	var m Manifest
 	if err := json.Unmarshal(raw, &m); err != nil {
-		return nil, nil, fmt.Errorf("%s is not valid JSON: %w", Filename, err)
+		return nil, nil, invalidJSON(raw, err)
 	}
 	return generic, &m, nil
 }

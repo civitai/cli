@@ -224,9 +224,12 @@ classifier (which every command's published exit code funnels through) and
 in the README rather than becoming a local check; item 26 covers the OTHER gate
 on that same published contract — the classification of the project path
 `civitai app validate` / `app submit` are handed, which is a different rule from
-item 24's predicate and is filed separately for exactly that reason; and item 27
+item 24's predicate and is filed separately for exactly that reason; item 27
 covers blockId derivation — the one identity this CLI mints that can NEVER be
-renamed, and the residuals the refusal knowingly ships with.
+renamed, and the residuals the refusal knowingly ships with; and item 28 covers
+the QUALITY of three author-facing refusals — the schema `pattern` gloss, the
+line:column on a malformed manifest, and the remedy on a non-empty scaffold
+directory.
 The durable fix for the mirroring is a server-side
 `civitai app validate` endpoint that calls the real `BlockManifestValidator` —
 until that exists, vendoring is on purpose.
@@ -945,6 +948,107 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
     hatch (#259). 🔴 It NARROWS #259; it does not close it, and the residuals it
     knowingly ships with are enumerated in the evidence.
     → evidence: claudedocs/decisions/27-blockid-derivation-refuses.md
+
+28. **Three author-facing refusals were TERSE rather than wrong, and the fixes
+    are shaped by that distinction — each ADDS to the existing message and none
+    replaces it.** Issue #260 item 7. The finding this repo's own validator
+    produces for a SEMANTIC rule explains the mechanism; the finding it produces
+    for a SCHEMA rule used to be a regex dump beside it, in the same command, on
+    the field a first-time author gets wrong first. These close that gap without
+    the CLI claiming anything new.
+
+    (a) 🔴 **THE `pattern` GLOSS IS KEYED ON THE REGEX SOURCE, NOT THE FIELD, AND
+    IT IS APPENDED, NEVER SUBSTITUTED.** `internal/validate/pattern.go` maps a
+    schema `pattern` to `{rule, example}` and `schemaErrors` appends
+    ` — <rule> (example: "<value>")` to the library's own sentence. Both halves
+    read like an oversight and are not. Keying on the FIELD would be a second
+    hand-maintained map of which fields carry a pattern — wrong the moment the
+    schema moves one, and blind to a pattern reached through `$ref` or reused on
+    two fields; the regex is what the finding is about, so one gloss covers every
+    field the schema applies it to. And REPLACING the library text would delete
+    the offending value and the authoritative regex, which are the only parts of
+    that message that are not our opinion — a reader who knows regex should not
+    have to trust our prose. `TestPatternFindingsCarryTheRuleAndAnExample`
+    asserts the whole line BYTE-EXACT, reconstructing the base half from
+    `kind.Pattern.LocalizedString` rather than a hand-spelled literal (the
+    library escapes the regex when it prints, so a literal would pin the
+    escaping instead of the message), and denies every OTHER row's rule text so
+    two swapped table entries fail from both directions.
+    - **IT FAILS SOFT, AND THAT IS WHAT MAKES IT SAFE IN FRONT OF A VENDORED
+      MIRROR.** An unglossed pattern emits exactly today's message — terse,
+      never wrong — so a `schema/` sync that adds a pattern degrades to the old
+      output rather than to a stale English claim about a rule that moved. That
+      is the same fail-soft shape as item 13(b)'s `serverQuantityClamp`.
+      `TestPatternRulesCoverTheVendoredSchema` is the bidirectional ledger that
+      keeps the two in step anyway: it fails when the schema grows a pattern
+      with no gloss AND when a gloss names a pattern the schema no longer has,
+      and it carries a positive control (the walker must have found the blockId
+      pattern) so an empty walk cannot agree with an empty table.
+      `TestPatternRuleExamplesSatisfyTheirPattern` compiles each key and
+      requires the example to match, because an example the schema rejects is
+      worse than no example — it is authoritative-looking advice that produces
+      a second failure.
+    - **`outputDir`'s FOUR `not: {"pattern": …}` SUB-SCHEMAS ARE DELIBERATELY
+      UNGLOSSED AND CANNOT BE GLOSSED.** A failing `not` surfaces as `kind.Not`,
+      whose message is the bare `not failed` and which carries no keyword path,
+      no regex and no value — there is nothing to key on. The ledger's walker
+      therefore skips anything under a `not`, with its own negative control, and
+      `outputDir` is covered by `buildCoherence`'s ported messages instead. The
+      residual is stated rather than hidden: `outputDir: not failed` still
+      reaches the author for the two shapes `buildCoherence` does not model (a
+      backslash separator, a Windows drive prefix). Fixing that needs the
+      schema's `$comment` surfaced through the library, which it is not.
+    - **The gloss is for `pattern` ONLY.** The enum findings already name the
+      valid set and are the standard this was written to match, so
+      `TestEnumFindingsKeepTheirExactWording` pins them BYTE-EXACT as a control,
+      and the `internal/cmd` sibling additionally asserts an enum finding does
+      NOT grow an `(example: …)`.
+
+    (b) 🔴 **THE DECODER OFFSET IS A BYTE COUNT AND THE COLUMN IS A CHARACTER
+    COUNT — SLICE BY BYTES, THEN COUNT RUNES.** `internal/manifest/jsonloc.go`
+    turns `*json.SyntaxError`/`*json.UnmarshalTypeError` `.Offset` into
+    `line L, column C`. The two counts agree on every ASCII manifest, so an
+    implementation that confuses them passes every ordinary fixture and
+    mis-reports the moment an author writes an accented display name, an em dash
+    in a tagline, or an emoji — and it does not merely shift the column: a
+    rune-indexed slice lands on the wrong LINE.
+    - **A SINGLE FIXTURE CANNOT SEE EITHER BUG; THE GUARD IS A PAIR.**
+      `TestJSONErrorLocation` carries two manifests identical in CHARACTERS and
+      6 bytes apart (`aaaaaaaa` vs `Café — 🚀`) that must report the SAME
+      column, with the premise (same runes, different bytes) ASSERTED so a
+      fixture that lost its multi-byte characters fails instead of quietly
+      becoming a second ASCII row, and with a check that the two rows still
+      EXPECT the same column so editing one literal cannot silently disarm the
+      pair.
+    - **It is added, not substituted, and it fails soft**: the decoder's own
+      reason survives, `invalidJSON` is the ONE composer every manifest decode
+      goes through, and an error carrying no offset yields exactly the previous
+      message rather than a fabricated `line 1, column 1`.
+    - **The offset points just PAST the offending byte**, so the reported
+      position is `offset-1`; both ends are clamped because `unexpected end of
+      JSON input` reports `len(raw)`. On an `UnmarshalTypeError` that lands on
+      the LAST character of the offending value rather than its first — good
+      enough, and finding the start would mean re-scanning the document.
+
+    (c) **The non-empty-directory refusal names its remedy, and `NotEmptyRemedy`
+    ENDS by saying there is no `--force`.** That sentence is the point, not a
+    hedge: without it the natural next move on reading "refusing to overwrite"
+    is to go hunting for the override flag through `--help` and then the README,
+    and find nothing — which reads as a missing feature rather than as a
+    decision. There is no `--force` because overwriting a directory the author
+    already has is destructive and unrecoverable. **Adding one is a product
+    decision, not a cleanup**; if it is ever added, this constant is the one
+    place that claim has to change, and the README bullet derives from the same
+    wording.
+    🔴 **THE EXIT CODE DOES NOT MOVE, AND THAT IS ASSERTED WITH `errors.Is`.**
+    A directory that exists and IS a directory is not item 26's usage error —
+    the invocation was right — so the refusal stays exit 1. Per item 7 a message
+    assertion cannot see that, so `TestAppCreateIntoNonEmptyDirNamesTheRemedy`
+    asserts `!errors.Is(err, ErrUsage)` and, separately, that the directory was
+    not modified. The refusal half of both guards is labelled CONTROL: it passed
+    before this change and is an invariant guard, not regression coverage — but
+    it has to be there, because "there is no --force" is only honest advice
+    while the refusal is real.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

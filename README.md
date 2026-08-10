@@ -1938,8 +1938,11 @@ fi
   until Apps reaches general availability.
 - **`validation failed`** — read each `- ...` line; fix the manifest, or pass
   `--skip-validate` to package anyway (the server will still re-validate).
-- **`<dir> is not empty — refusing to overwrite`** — `app init` won't clobber an
-  existing directory; pick a new name or remove the directory.
+- **`<dir> is not empty — refusing to overwrite`** — `app init` / `app create`
+  won't clobber an existing directory. Scaffold somewhere else (`--dir <new
+  path>`, or a different name), or remove the directory first. There is **no
+  `--force`**: overwriting a directory you already have is not recoverable, so
+  the CLI does not offer to do it. The command prints this same remedy.
 
 ## Development
 

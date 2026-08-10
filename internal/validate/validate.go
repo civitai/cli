@@ -12,6 +12,7 @@ import (
 	cli "github.com/civitai/cli"
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/santhosh-tekuri/jsonschema/v6/kind"
 	"golang.org/x/text/language"
 	"golang.org/x/text/message"
 )
@@ -269,8 +270,17 @@ func schemaErrors(err error) []Finding {
 		// reason); intermediate nodes just describe the path.
 		if len(e.Causes) == 0 {
 			field := fieldPath(e.InstanceLocation)
+			reason := e.ErrorKind.LocalizedString(printer)
+			// A `pattern` violation is the one schema kind whose base message
+			// is a raw regex with no rule and no example, while the enum
+			// violations beside it read perfectly. Append the gloss; never
+			// replace the library's text, which carries the offending value
+			// and the authoritative regex. See pattern.go.
+			if pk, ok := e.ErrorKind.(*kind.Pattern); ok {
+				reason += patternAdvice(pk)
+			}
 			out = append(out, newFinding(field,
-				fmt.Sprintf("%s: %s", field, e.ErrorKind.LocalizedString(printer))))
+				fmt.Sprintf("%s: %s", field, reason)))
 			return
 		}
 		for _, c := range e.Causes {
