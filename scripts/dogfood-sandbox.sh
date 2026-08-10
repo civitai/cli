@@ -574,7 +574,7 @@ BRIEF
 declare -A GBOOL GINT GSTR GCHANGED
 declare -a GARG
 GPATH=""; GARGC=0; GERR=""; GKIND=""
-GRUNNABLE=""; GHASSUB=""; GARGSERR=""; GBLOCKID=""
+GHASSUB=""; GARGSERR=""
 
 # 🔴 ASSIGNED UNCONDITIONALLY AT STARTUP, WHICH IS THE POINT. The selftest
 # swaps in fake classifiers to prove the shim refuses drifted output, and it
@@ -598,7 +598,7 @@ unescape() {
 classify() {
 	GBOOL=(); GINT=(); GSTR=(); GCHANGED=(); GARG=()
 	GPATH=""; GARGC=0; GERR=""; GKIND=""
-	GRUNNABLE=""; GHASSUB=""; GARGSERR=""; GBLOCKID=""
+	GHASSUB=""; GARGSERR=""
 	local bin="${GUARD_BIN:-${ROOT}/real/dogfoodguard}" out rc ok="" k v
 	if [ ! -x "${bin}" ]; then
 		GERR="the classifier ${bin} is missing or not executable"; return 1
@@ -621,10 +621,16 @@ classify() {
 			str.*)       GSTR[${k#str.}]=$(unescape "${v}") ;;
 			raw.*)       GSTR[${k#raw.}]=$(unescape "${v}") ;;
 			changed.*)   GCHANGED[${k#changed.}]="${v}" ;;
-			runnable)    GRUNNABLE="${v}" ;;
+			# `runnable` is informational: it does NOT discriminate an unknown
+			# subcommand (every group parent is runnable — it prints its help),
+			# so the gate uses hassubcommands + argc. Accepted and ignored.
+			runnable)    : ;;
 			hassubcommands) GHASSUB="${v}" ;;
 			argserr)     GARGSERR=$(unescape "${v}") ;;
-			blockid)     GBLOCKID=$(unescape "${v}") ;;
+			# `blockid` is only emitted in the classifier's manifest mode, which
+			# resolve_block_id parses directly; accept and ignore it here so a
+			# stray one is not mistaken for classifier drift.
+			blockid)     : ;;
 			*)           GERR="the classifier emitted an unrecognised field \`${k}\`"; return 1 ;;
 		esac
 	done <<< "${out}"
@@ -1752,6 +1758,7 @@ OFFLINE
 	# without this row the ok-check is an unpinned redundancy.
 	# The fake must SUCCEED for the argv classification and FAIL only for the
 	# blockid lookup, or the run is denied earlier and the row proves nothing.
+	# shellcheck disable=SC2016  # the body is a script; $1/$4 must NOT expand here
 	mkfake 'if [ "$1" = "blockid" ]; then printf "ok\t0\nerr\tno manifest\n"; exit 0; fi
 printf "ok\t1\npath\tapp submit\nhassubcommands\tfalse\nargserr\t\nbool.package-only\tfalse\nargc\t1\narg.0\t%s\n" "$4"'
 	st_reason "a lookup that fails while exiting 0 denies" "DENY" "cannot read a blockId" app submit "${td}/dup" --yes
