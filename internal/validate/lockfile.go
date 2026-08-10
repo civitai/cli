@@ -335,11 +335,23 @@ const maxLockfileBytes = 64 << 20
 //     and a hand-made file is what issue #255 is about — not a mirror of a
 //     behaviour npm actually has.
 //   - pnpm / yarn: non-empty after a whitespace trim, and nothing more.
-//     `pnpm-lock.yaml` would need a YAML parser (a new third-party dependency,
-//     which is an "ask first" in AGENTS.md) and a yarn v1 `yarn.lock` carries no
-//     version key at all — it is a comment header and a flat list. "Not empty"
-//     is the whole of what can be said here without inventing authority, and it
-//     is exactly the reported defect from issue #255.
+//     `pnpm-lock.yaml` would need a YAML parser, and a yarn v1 `yarn.lock`
+//     carries no version key at all — it is a comment header and a flat list.
+//     "Not empty" is the whole of what can be said here without inventing
+//     authority, and it is exactly the reported defect from issue #255.
+//     🔴 "A NEW THIRD-PARTY DEPENDENCY, WHICH IS AN 'ASK FIRST'" IS RETRACTED
+//     FROM THIS BULLET — THE REASON WAS FALSE, THE DECISION IS NOT. Measured:
+//     `gopkg.in/yaml.v3 v3.0.1` is already a DIRECT requirement (`go list -m`
+//     reports `indirect=false`) and `internal/config/config.go` imports it in
+//     PRODUCTION code to read and write `~/.config/civitai/config.yaml`. So the
+//     parser was never the cost, and a false reason is worse than no reason: it
+//     invites someone to "fix" the rule the moment they notice the dependency is
+//     already there. The RULE and the BEHAVIOUR are unchanged, because the real
+//     argument stands on its own — a `pnpm-lock.yaml` carries no
+//     `lockfileVersion`-style invariant this check could assert, so parsing it
+//     buys nothing over the whitespace trim while adding a second parse surface
+//     to a FATAL check, and asserting more than that is the invented authority
+//     this bullet exists to refuse. See claudedocs/decisions/03-lockfile-check.md.
 //
 // 🔴 TWO RESIDUALS, STATED RATHER THAN HIDDEN — both are cases where this check
 // is STRICTER than `npm ci`, which is the direction that can block a working

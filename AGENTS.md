@@ -14,6 +14,15 @@ contributor checklist see [`CONTRIBUTING.md`](CONTRIBUTING.md).
   `gh` / `kubectl` / `stripe` mold.
 - JSON Schema validation via **santhosh-tekuri/jsonschema/v6**; self-update via
   **minio/selfupdate**. Release tooling: **goreleaser v2**.
+- **Interactive layer** (there IS one — this CLI is not print-only):
+  **huh v1.0.0** (`app init`'s form), **bubbletea v1.3.10** + **bubbles v1.0.0**
+  (`app dev-tunnel`'s spinner), **lipgloss v1.1.0** + **termenv v0.16.0** (every
+  styled string). It all funnels through `internal/ui`; read its `CONVENTION.md`
+  before adding color anywhere else.
+- One job each: `x/term` (TTY detection, gating prompts + spinner),
+  `x/crypto/ssh` (dev-tunnel), `x/net/html` (`internal/cmd/htmlrender.go`),
+  `x/text/message` (required by jsonschema/v6's `LocalizedString`),
+  `gopkg.in/yaml.v3` (config).
 - Module path `github.com/civitai/cli`; the executable is `./cmd/civitai`.
 
 ## What this is
@@ -61,10 +70,10 @@ Run the binary you built with `./bin/civitai <cmd>`; per-package coverage is
 ## Shell & CI gotchas
 
 These produce **clean exits and reassuring output while doing nothing** — the
-expensive class. Read the tool's *output*, not just its exit code.
+expensive class. Read the tool's *output*, not just its exit code. Host-generic
+shell traps were removed from here (they belong in your global rules); what
+follows is specific to this repo's toolchain.
 
-- **`cmd | head; echo rc=$?`** reports `head`'s status, not `cmd`'s. Capture
-  before piping, or use `set -o pipefail`.
 - **`gofmt -s -l .` checking zero files** prints nothing and exits 0 — same as
   "all clean". If a path is misquoted or the working tree is wrong, the clean
   verdict says nothing about the code. Verify you're in the right directory and
@@ -77,10 +86,10 @@ expensive class. Read the tool's *output*, not just its exit code.
 - **`go test ./...` with a broken import in `_test.go`** can compile to 0 tests
   and pass. If a package you expect tests for is silent, check explicitly:
   `go test -v -count=1 ./path/to/pkg | head`.
-- **`date -u -d "3 days ago 16:30"` vs `date -u -d "today -3 day"`** — the
-  latter silently returns the wrong day on some boxes. Build windows from epoch
-  math (`END=$(date -u +%s); START=$((END - 3*86400))`) for reliability.
-- **`gh pr checks` / `gh pr view --json statusCheckRollup` pitfalls:**
+- **`gh pr checks` / `gh pr view --json statusCheckRollup` pitfalls.** Kept: with
+  eight jobs of which only some gate, "have the checks settled?" is a live
+  question here, and each trap below answers it wrongly in the REASSURING
+  direction:
   - `.conclusion` is `null` for commit statuses (only check-runs populate it) —
     poll `.state` instead.
   - Checks go through `QUEUED` → `IN_PROGRESS` → conclusion. A poll matching
@@ -112,8 +121,24 @@ These go beyond the global defaults because this repo's release pipeline
 - `cmd/civitai/main.go` — binary entrypoint; injects build version/commit/date.
 - `internal/cmd/` — the Cobra tree, **one file per command**, wired in
   `root.go`.
-- `internal/{scaffold,validate,pkgzip,manifest,api,config,auth}` — the building
-  blocks behind those commands.
+- `internal/{scaffold,validate,pkgzip,manifest,config,auth}` — the building
+  blocks behind those commands. No `api` — #172 promoted it to `pkg/civitai` on
+  2026-07-20 and it sat here stale until found by hand, so this section is now a
+  BIDIRECTIONAL LEDGER: `layout_ledger_test.go` fails both when a package under
+  `internal/` is unnamed and when a named one does not exist.
+- `internal/appapi` — the App-Blocks REST/tRPC client (submissions, listing
+  media, `app metrics`); holds the `Submitter` / `Verifier` seams tests fake.
+- `internal/ui` — the ONE presentation layer; color is configured once, from the
+  root command. `internal/ui/CONVENTION.md` is the rule set, including why
+  `--json` must never pass through it.
+- `internal/devtunnel` + `internal/dnsprobe` — `app dev-tunnel`: the reverse SSH
+  tunnel (ephemeral in-memory key, never on disk) and the DoH resolver that keeps
+  the unpublished `dev-*.civit.ai` host out of the OS negative cache.
+  `devtunnel/embedcheck.go` is item 10.
+- `internal/blockproto` — the vendored block→host ready-ack (item 11) plus the
+  entry-graph resolver it and `internal/validate` share (item 20).
+- `internal/antipattern` — the scaffold-currency denylist: fails a template
+  shipping code against a dead platform endpoint or message (item 18).
 - `internal/genapi` — the orchestrator **generation** client behind
   `civitai generate` and `civitai workflows …`: tRPC transport, the two envelope
   shapes, the graph payload, model-version resolution. Deliberately not in
@@ -122,6 +147,11 @@ These go beyond the global defaults because this repo's release pipeline
   items 12–17, 19, 21 and 22 before touching it.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to
   `go:embed` the vendored `schema/` and `examples/`. It is not the executable.
+- `npm/` — the `@civitai/cli` wrapper (postinstall downloads the matching raw
+  binary from the GitHub Release). Not built by `make`; see the release section.
+- `flake.nix` / `flake.lock` — the Nix package. `vendorHash` pins the module set,
+  so a dependency change breaks the flake build until `bump-flake-vendorhash.yml`
+  updates it; `flake.yml` is what catches that.
 
 ## House conventions (with one real snippet)
 
@@ -160,7 +190,7 @@ func newWhoAmICmd() *cobra.Command {
 - **Output:** write to `cmd.OutOrStdout()` / `cmd.ErrOrStderr()`, never bare
   `fmt.Println`, so commands stay testable.
 - **Testability:** network/disk seams sit behind small interfaces
-  (`api.Submitter`, `api.Verifier`) or take a dir argument, so tests use
+  (`appapi.Submitter`, `appapi.Verifier`) or take a dir argument, so tests use
   `httptest` + `t.TempDir()` with no live server. New behaviour needs tests that
   cover the **error paths**, not just the happy path.
 - **Config:** `~/.config/civitai/config.yaml` (0600, atomic write). Overridable
@@ -938,7 +968,8 @@ the generation path mirrors nothing.**
 - Adding a new third-party dependency (this is a small, focused project).
 
 🚫 **Never**
-- Tag a release or push a `v*` tag without the maintainer (that triggers goreleaser → GitHub Release + tap push).
+- Tag a release or push a `v*` tag without the maintainer (that triggers goreleaser → **draft** GitHub Release + tap push).
+- **Publish a draft GitHub Release, or dispatch `release-npm.yml`, without the maintainer.** A separate consent from tagging: publishing the draft pushes `@civitai/cli` to npm. "Never" not "Ask first" because npm unpublish is restricted — a mistake is fixed only by publishing again, unlike everything under "Ask first", which is one revert away. See the release section.
 - Use bare `fmt.Println` for command output, or commit with `gofmt` diffs.
 - Treat local `civitai app validate` as authoritative — the server is.
 
@@ -947,13 +978,26 @@ the generation path mirrors nothing.**
 Releases are built by **goreleaser** from a GitHub Actions workflow on a `v*`
 tag push. With `main` green: `git tag v0.1.0 && git push origin v0.1.0`.
 `.github/workflows/release.yml` cross-compiles linux/darwin/windows ×
-amd64/arm64 (no windows/arm64), stamps version/commit/date ldflags, produces
-archives + `checksums.txt`, creates the GitHub Release (**`draft: true`** —
+amd64/arm64 — the **full cross product, windows/arm64 included** (no `ignore:`
+rule exists; confirm on a release, not the config:
+`gh release view v0.1.90 --json assets`). It stamps version/commit/date ldflags,
+produces archives + the bare `civitai-raw` binaries + `checksums.txt`, creates
+the GitHub Release (**`draft: true`** —
 publish manually after sanity-checking artifacts), and updates the **Homebrew
 cask** in `civitai/homebrew-tap` (goreleaser v2 uses `homebrew_casks:`, not the
 old `brews:`; needs the `HOMEBREW_TAP_GITHUB_TOKEN` secret with write to the
 tap). Validate config without releasing: `goreleaser check` and
 `goreleaser release --snapshot --clean` (dry-run into `./dist`).
+
+🔴 **TWO CHANNELS: PUBLISHING THE DRAFT IS WHAT FIRES THE SECOND.**
+`release-npm.yml` triggers on `release: types: [published]` and publishes the
+`npm/` wrapper **`@civitai/cli`**. So clicking "Publish release" is not the last
+step of the GitHub release — it is also, in the same click, an npm publish, and
+npm unpublish is restricted, so a bad version is fixed by publishing another, not
+by taking it back. Auth is **OIDC trusted publishing**: no `NPM_TOKEN`, and the
+trust is bound to repo + *that workflow file path*, so moving or renaming it
+breaks publishing and no secret rotation fixes it. Its own comments carry the
+rest (the `npm@11.18.0` pin, the raw-asset precondition) — read them there.
 
 ## License
 
