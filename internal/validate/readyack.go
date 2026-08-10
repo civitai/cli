@@ -52,6 +52,15 @@ package validate
 //	silently changes strength between project shapes is how the false pass above
 //	happened in the first place.
 //
+//	🔴 AND IT NAMES THE REASON RATHER THAN GUESSING AT IT (issue #258). The
+//	resolver records why it stopped, per reference, in `EntryGraph.Gaps`; this
+//	check used to discard that and offer a fixed list of plausible causes
+//	instead, so the canonical #206 project — a `static` scaffold whose
+//	`civitai-host.js` was deleted, where index.html plainly references a file
+//	that is not there — was told to go looking for a bundler alias. The reasons
+//	are now appended verbatim (capped, with the overflow counted). See
+//	presenceOnlyAdvice.
+//
 // 🔴 "CANNOT OBSERVE" MUST NOT SILENTLY BECOME "EVERYTHING PASSES" — but it also
 // must not manufacture advice. The split: an INCOMPLETE graph never produces a
 // wiring finding (that is the AGENTS.md item 10 doctrine), yet the presence
@@ -107,6 +116,7 @@ package validate
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -216,11 +226,12 @@ func readyAckChecks(dir string, generic any) []Finding {
 		return []Finding{newFinding(FieldProject, readyAckAdviceMissing)}
 	}
 
-	// Presence tier: wiring is undecidable for this project shape.
+	// Presence tier: wiring is undecidable for this project shape. The
+	// resolver's OWN reasons ride along — see presenceOnlyAdvice.
 	if tree == ackFound {
 		return nil
 	}
-	return []Finding{newFinding(FieldProject, readyAckAdvicePresenceOnly)}
+	return []Finding{newFinding(FieldProject, presenceOnlyAdvice(graph.Gaps))}
 }
 
 // resolveLoadedFiles walks the entry graph and reports whether any file the
@@ -508,22 +519,150 @@ var readyAckAdviceMissing = "the manifest declares a \"page\" surface but nothin
 	"posts " + readyAckType + ", and nothing index.html loads posts it either — " + readyAckWhy + ". Apps " +
 	"scaffolded before that fix ship no emitter: " + readyAckRemedy + ". Caveat: " + readyAckTail
 
-// readyAckAdvicePresenceOnly is the PRESENCE finding, and it discloses its own
-// weakness. It fires where the entry graph could not be resolved, so it is the
-// one message that must not let an author read "valid" as "wired".
-var readyAckAdvicePresenceOnly = "the manifest declares a \"page\" surface but nothing in this project's " +
-	"source posts " + readyAckType + " — " + readyAckWhy + ". Apps scaffolded before that fix ship no " +
-	"emitter: " + readyAckRemedy + ". 🔴 What this run did NOT check: it could not resolve the files your " +
-	"index.html loads (there is no index.html at the project root, or it holds a reference this CLI cannot " +
-	"follow — a bundler alias, a generated file, an off-project URL), so it checked only whether SOME file " +
-	"in the project mentions " + readyAckType + "; it did NOT check that the file is loaded. Adding the " +
-	"emitter without referencing it will silence this warning and leave the app just as broken — verify the " +
-	"reference yourself. It is also wrong about a project whose ack arrives from a bundled dependency or a " +
-	"file type it does not read. Caveat: " + readyAckTail
+// readyAckAdvicePresenceOnlyHead is the PRESENCE finding up to the point where
+// the resolver's own reasons are spliced in. It discloses its own weakness: it
+// fires where the entry graph could not be resolved, so it is the one message
+// that must not let an author read "valid" as "wired".
+//
+// 🔴 IT USED TO GUESS AT WHY IT HAD FALLEN BACK, AND THE GUESS WAS WRONG IN THE
+// COMMONEST CASE. This clause read "(there is no index.html at the project root,
+// or it holds a reference this CLI cannot follow — a bundler alias, a generated
+// file, an off-project URL)". In the canonical #206 shape — a `static` scaffold
+// whose `civitai-host.js` has been deleted — NONE of those is the reason: the
+// reason is that `<script src="./civitai-host.js">` points at a file that is not
+// there, and the resolver had already recorded exactly that in `EntryGraph.Gaps`
+// before this constant threw it away. So a five-file no-build app sent its
+// author hunting for a bundler alias that cannot exist in it. Issue #258. The
+// guess is gone; the real reasons are appended by presenceOnlyAdvice, and this
+// clause now only states what was NOT established.
+//
+// The DIAGNOSIS and the disclosure come first, then the gap report, then the
+// remedy — deliberately, and not the order this message grew in. The remedy is
+// the longest fragment by far (it is shared with both reachability tiers), so
+// splicing the reasons after it put the one project-specific sentence in the
+// message roughly two thirds of the way down a wall of generic advice. The
+// concrete cause now sits immediately after the sentence that admits the check
+// could not resolve the entry graph, which is the sentence it explains.
+var readyAckAdvicePresenceOnlyHead = "the manifest declares a \"page\" surface but nothing in this project's " +
+	"source posts " + readyAckType + " — " + readyAckWhy + ". 🔴 What this run did NOT check: it could not " +
+	"resolve the files your index.html loads, so it checked only whether SOME file in the project mentions " +
+	readyAckType + "; it did NOT check that the file is loaded."
 
-// readyAckAdvisories is every string this check can emit. Callers and tests
-// match against the SET rather than one variable, so a new tier cannot be
-// introduced without the tests that classify them noticing.
+// readyAckAdvicePresenceOnlyTail is the rest of the presence finding, after the
+// gap report.
+var readyAckAdvicePresenceOnlyTail = " Apps scaffolded before that fix ship no emitter: " + readyAckRemedy +
+	". Adding the emitter without referencing it will silence this warning " +
+	"and leave the app just as broken — verify the reference yourself. It is also wrong about a project " +
+	"whose ack arrives from a bundled dependency or a file type it does not read. Caveat: " + readyAckTail
+
+// readyAckAdvicePresenceOnly is the presence finding with NO gap report — the
+// shape emitted only if an incomplete graph somehow recorded no reason at all
+// (today it cannot: `EntryGraph.Complete` is cleared only by `gap()`, which
+// appends). It is also the LEDGER value below and the prose the message tests
+// assert against, so the wording every tier shares stays pinned in one place.
+var readyAckAdvicePresenceOnly = readyAckAdvicePresenceOnlyHead + readyAckAdvicePresenceOnlyTail
+
+// readyAckGapCap bounds how many resolver reasons the presence advisory renders.
+// A large project can produce many, and a wall of them buries the remedy that
+// follows.
+//
+// 🔴 THE VALUE IS PART OF THE CONTRACT, AND IT WAS UNPINNED. Every assertion in
+// TestGapReportUnitCap is written RELATIVE to this constant, so `= 99` reddened
+// **0** subtests — the wall of gaps the cap exists to prevent came straight back
+// under a green suite. `TestGapReportCapValue` now pins the literal.
+//
+// 🔴 THE OVERFLOW IS COUNTED OUT LOUD. A silently truncated list reads as "that
+// was all of them", which is the same class of lie as the guess this report
+// replaced: the author fixes three references, re-runs, and is told about three
+// more they were never shown. `readyAckGapReport` says how many it withheld.
+const readyAckGapCap = 3
+
+// readyAckGapLead introduces the resolver's own reasons when ALL of them are
+// shown. Only then can the message claim the cause is among them.
+const readyAckGapLead = " Here is what it could not follow, in this project's own terms — one of these is " +
+	"usually the actual bug: "
+
+// readyAckGapLeadTruncated is the lead when the cap withheld some.
+//
+// 🔴 THE UNCONDITIONAL LEAD WAS THIS PR'S OWN THESIS FAILING IN A NEW SHAPE.
+// Measured on an index.html carrying three CDN `<script src>` tags above a
+// dangling `./civitai-host.js`: at three shown of four, the report listed the
+// three off-project URLs and withheld the dangling reference — the actual bug —
+// under a lead-in asserting "one of these is usually the actual bug". Order is
+// deterministic, so that is a stable wrong emphasis, not a flake. This PR exists
+// because the message pointed away from the cause; a cap that recreates it is
+// the same defect with a different mechanism.
+//
+// TWO fixes, because either alone is insufficient. `blockproto.rankGaps` puts
+// the likely causes first, so the withheld ones are now the LEAST likely — that
+// is what makes any claim about this list defensible at all. And this lead stops
+// claiming the cause is present, because ranking is a heuristic and the cap can
+// still withhold the one that mattered.
+const readyAckGapLeadTruncated = " Here is what it could not follow, in this project's own terms, most-likely " +
+	"first — this list is TRUNCATED, so if none of these is your bug, fix them and re-run to see the rest: "
+
+// presenceOnlyAdvice is the presence-tier message for a graph that failed to
+// resolve for the reasons in gaps.
+//
+// 🔴 THE REASONS COME FROM THE RESOLVER, NEVER FROM A GUESS AT THE PRINTER —
+// which is the same discipline AGENTS.md item 23 imposes on a finding's `Field`,
+// applied to its explanation. `EntryGraph.Gaps` already names the referencing
+// file, the specifier and the missing target for EVERY gap kind (a dangling
+// reference, a bare specifier, an off-project URL, an unreadable file, an
+// exhausted file budget, a truncated depth), so surfacing them generally fixes
+// all six at once rather than special-casing the one issue #258 reported.
+func presenceOnlyAdvice(gaps []string) string {
+	return readyAckAdvicePresenceOnlyHead + readyAckGapReport(gaps) + readyAckAdvicePresenceOnlyTail
+}
+
+// readyAckGapReport renders gaps as one sentence, or "" when there are none.
+//
+// 🔴 THE RESULT IS ONE LINE. A `Finding.Message` is a `--json` string field and
+// the human output wraps at the PRINTER (internal/cmd), per the inverse of
+// AGENTS.md item 23: the field comes from the producer, the layout does not. A
+// gap interpolates `%v` of an OS error, which is not guaranteed newline-free, so
+// each one is collapsed rather than trusted.
+func readyAckGapReport(gaps []string) string {
+	if len(gaps) == 0 {
+		return ""
+	}
+	shown, extra := gaps, 0
+	if len(shown) > readyAckGapCap {
+		extra = len(shown) - readyAckGapCap
+		shown = shown[:readyAckGapCap]
+	}
+	var b strings.Builder
+	if extra > 0 {
+		b.WriteString(readyAckGapLeadTruncated)
+	} else {
+		b.WriteString(readyAckGapLead)
+	}
+	for i, g := range shown {
+		if i > 0 {
+			b.WriteString("; ")
+		}
+		fmt.Fprintf(&b, "(%d) %s", i+1, strings.Join(strings.Fields(g), " "))
+	}
+	if extra > 0 {
+		fmt.Fprintf(&b, "; and %d more this message does not list", extra)
+	}
+	b.WriteString(".")
+	return b.String()
+}
+
+// readyAckAdvisories is every FIXED advisory string this check can emit.
+// Callers and tests match against the SET rather than one variable, so a new
+// tier cannot be introduced without the tests that classify them noticing.
+//
+// 🔴 IT IS A LEDGER OF BASES, NOT OF LITERAL OUTPUTS, AND SAYING SO IS THE POINT.
+// The presence tier's real message is `presenceOnlyAdvice(gaps)` — this base with
+// the resolver's reasons spliced between `…PresenceOnlyHead` and
+// `…PresenceOnlyTail` — so an equality test against this slice classifies the
+// two reachability tiers and MISSES every real presence-tier finding. Anything
+// that must recognise the emitted message has to bracket it with those two
+// halves instead (see readyAckKind in the tests). Describing this slice as
+// "every string this check can emit" would be false, and the falsity is silent:
+// a matcher built on it simply stops seeing one tier.
 var readyAckAdvisories = []string{
 	readyAckAdviceUnwired,
 	readyAckAdviceMissing,

@@ -106,7 +106,7 @@ Defaults to the current directory.`,
 			if !res.OK() {
 				fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("%d validation error(s) in %s:", len(res.Errors), dir)))
 				for _, e := range res.Errors {
-					fmt.Fprintf(errw, "  - %s\n", e.Message)
+					printFinding(errw, e.Message)
 				}
 				// Surface warnings too — they're useful context even on a failure.
 				printWarnings(errw, res)
@@ -165,6 +165,6 @@ func printWarnings(w io.Writer, res validate.Result) {
 	}
 	fmt.Fprintln(w, ui.For(w).Warn(fmt.Sprintf("%d warning(s):", len(res.Warnings))))
 	for _, warn := range res.Warnings {
-		fmt.Fprintf(w, "  - %s\n", warn.Message)
+		printFinding(w, warn.Message)
 	}
 }
