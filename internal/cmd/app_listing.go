@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -19,9 +20,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Per-kind source-file byte caps, mirroring the server's listing-asset caps:
+// Per-kind SOURCE-FILE byte caps, mirroring the server's listing-asset caps:
 //   - icon uses the inline data-URI path (server decoded cap 2 MiB).
 //   - cover / screenshot use the mint+persist full-res path (4 MiB / 2 MiB).
+//
+// 🔴 FOR AN ICON THIS IS NOT THE BINDING CAP, AND CALLING IT "THE" CAP IS WHAT
+// ISSUE #344 WAS. The listing schema separately caps the icon the SERVER made —
+// the PNG it re-encodes after downscaling to at most 1024 px on the longer side —
+// at 1 MiB, and that is a different measurement from the file the author passed.
+// maxIconBytes is deliberately NOT lowered to match it: the two count different
+// bytes, so a 1 MiB source gate would refuse valid images (a 1.5 MiB 512x512
+// source re-encodes far under 1 MiB) while still not predicting the rejection it
+// was lowered for. See AGENTS.md item 25 and attachRejectionAdvice below.
 const (
 	maxIconBytes       = 2 * 1024 * 1024
 	maxCoverBytes      = 4 * 1024 * 1024
@@ -84,8 +94,8 @@ early to clear the publish floor before you go live.
 
 Source files are checked locally BEFORE any upload — ` + listingImageFormats + `, at most
 ` + humanBytes(maxIconBytes) + ` for an icon, ` + humanBytes(maxCoverBytes) + ` for a cover, ` + humanBytes(maxScreenshotBytes) + ` for a screenshot.
-A file in the wrong format, or over its cap, is refused before anything is
-uploaded.`,
+That reads the SOURCE FILE only: an icon is re-encoded server-side and the
+platform caps the image IT made — it can pass here and be refused at attach.`,
 		Example: `  civitai app listing status
   civitai app listing set-icon ./assets/icon.png
   civitai app listing set-cover ./assets/cover.png
@@ -308,6 +318,11 @@ then ingested and attached, and the content scan is waited on afterwards.
 Nothing is uploaded if the local check fails. The platform validates the
 image's dimensions and aspect at the ATTACH step, so a wrongly-shaped image is
 refused in seconds rather than after the scan.
+
+An icon is also RE-ENCODED server-side to PNG (downscaled to at most 1024px on
+the longer side) and the platform caps that re-encoded image — a different
+measurement from the cap above, which is on your file. A detailed 1024x1024
+icon can pass here and be refused there; the lever is smaller pixel dimensions.
 See "Listing media requirements" in the README for the platform's bounds.
 
 On a listing that is already LIVE this opens a REVISION for moderator re-review
@@ -462,7 +477,15 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	}
 
 	// 4. Ingest bytes -> imageId (icon: inline data-URI; cover/screenshot: full-res).
-	fmt.Fprintf(out, "Uploading %s (%s)…\n", kind, humanBytes(int64(len(data))))
+	//
+	// The PIXEL DIMENSIONS are printed beside the byte count (issue #295). They
+	// cost nothing — loadAndValidateImage already decoded them from the header to
+	// pick the MIME type, and threw them away on the icon path. They assert no
+	// threshold and vendor no constant (AGENTS.md item 25 forbids that); they make
+	// the ONE quantity every server-side listing-media bound is a function of
+	// legible, so an author can compare it against the README's documented bounds
+	// instead of reading a rejection that names a number their file does not have.
+	fmt.Fprintf(out, "Uploading %s (%s, %d×%d)…\n", kind, humanBytes(int64(len(data))), info.Width, info.Height)
 	var imageID int
 	if kind == kindIcon {
 		imageID, err = client.IngestAssetFromDataURI(ctx, data, info.MimeType)
@@ -470,7 +493,7 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 		imageID, err = client.IngestAssetFullRes(ctx, data, info)
 	}
 	if err != nil {
-		return err
+		return attachRejectionAdvice(err, kind, file, len(data), info)
 	}
 
 	// 5. Attach — direct for draft/pending, via a shadow revision when live.
@@ -499,7 +522,7 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	}
 	res, err := attachMedia(ctx, client, kind, targetID, imageID, caption)
 	if err != nil {
-		return err
+		return attachRejectionAdvice(err, kind, file, len(data), info)
 	}
 
 	// 6. Poll the scan AFTER the attach, so success is still never reported while
@@ -520,7 +543,7 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 			return scanFailure(out, err, kind, live, res)
 		}
 		if res, err = attachMedia(ctx, client, kind, targetID, imageID, caption); err != nil {
-			return err
+			return attachRejectionAdvice(err, kind, file, len(data), info)
 		}
 		if res.Status == attachStatusPending {
 			return fmt.Errorf("the server did not attach the %s — it still reports the image as scanning; try again shortly", kind)
@@ -790,6 +813,57 @@ func loadAndValidateImage(kind mediaKind, file string) ([]byte, appapi.ImageInfo
 		return nil, appapi.ImageInfo{}, asUsageError(fmt.Errorf("%s: %w", file, err))
 	}
 	return data, info, nil
+}
+
+// attachRejectionAdvice annotates a server BAD_REQUEST from a listing-media
+// ingest or attach with what the CLI measured about the file it sent. It is a
+// pass-through for every other error, and for nil.
+//
+// 🔴 IT VENDORS NO BOUND (AGENTS.md item 25). It adds no threshold, no dimension
+// check and no constant the server owns: every NUMBER it prints was measured
+// from the author's own file, and the server's sentence is still relayed
+// verbatim ahead of it. The only claim it makes about the platform is the
+// MECHANISM — that an icon is re-encoded before it is measured — which is what
+// makes the server's number legible rather than a second bound to keep in sync.
+//
+// Why it exists (issue #344). `appListings.setIcon` refused a 38,201-byte
+// 1024x1024 JPEG with "icon is 1202233 bytes (max 1048576)": a byte count
+// matching nothing the author can see — not the file (37.3 KiB), not the cap the
+// CLI enforces (2 MiB), not even the cap quoted in the message (1 MiB) as
+// applied to anything they hold. There was no path from that number to "shrink
+// the image", so the fix is to name the units, not to guess the formula.
+//
+// What the 2026-08-10 credentialed dogfood run established, and what it did NOT.
+// Two rejections at the SAME <=1024px re-encode ceiling reported 1,202,233 and
+// 2,201,537 bytes — 1.15 and 2.10 bytes per pixel. A RAW decoded buffer is a
+// CONSTANT 3 or 4 bytes/px, so a content-dependent ratio rules raw decoding out:
+// the quantity is a compressed re-encode, matching item 25's reading of
+// listing-meta.service.ts. That is the EFFECT, measured. The encoder's exact
+// settings are NOT knowable from this repo, and a 512x512 source (79.2 KiB) that
+// passed is one point, not a bound — which is exactly why this names the LEVER
+// (pixel dimensions) instead of predicting the number, and why no local gate was
+// added. #286 recorded this reachability as unmeasured; it is now measured.
+func attachRejectionAdvice(err error, kind mediaKind, file string, srcBytes int, info appapi.ImageInfo) error {
+	if err == nil || !errors.Is(err, civitai.ErrBadRequest) {
+		return err
+	}
+	// Every value below comes from the source file, so this line is true whichever
+	// bound the server applied — geometry, aspect, MIME or size.
+	sent := fmt.Sprintf("what was sent: %s — %s on disk, %d×%d px, %s",
+		file, humanBytes(int64(srcBytes)), info.Width, info.Height, info.MimeType)
+	if kind != kindIcon {
+		// Cover and screenshot ride the full-res path, where the CLI sends
+		// sizeBytes: len(data) — the server measures the same bytes the CLI does, so
+		// the re-encode paragraph would be false here.
+		return fmt.Errorf("%w\n  %s\n  see \"Listing media requirements\" in the README for the platform's bounds", err, sent)
+	}
+	return fmt.Errorf("%w\n  %s\n%s", err, sent, strings.Join([]string{
+		"  an icon is re-encoded server-side to PNG (downscaled to at most 1024px on",
+		"  the longer side) and the platform validates THAT image, so a byte count",
+		"  above is the size of the server's PNG and not of your file",
+		"  the lever is smaller PIXEL dimensions, not heavier compression — see",
+		"  \"Listing media requirements\" in the README for the platform's bounds",
+	}, "\n"))
 }
 
 func kindByteCap(kind mediaKind) int {

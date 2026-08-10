@@ -38,9 +38,13 @@ Easy starting points: a **512 × 512** icon and a **1600 × 900** cover.
 ## Who checks what
 
 The CLI checks the **format and the byte size** of the file you hand it, before
-anything is uploaded. It does **not** check dimensions or aspect ratio — those
-are validated by the platform when the image is attached, and the platform is
-the authority. A rejection names the bound and your value, e.g.:
+anything is uploaded — and for an **icon** that is not the whole story, because
+the platform measures an image the CLI never sees (first bullet below). The CLI
+does **not** check dimensions or aspect ratio — those are validated by the
+platform when the image is attached, and the platform is the authority. It does
+print what it decoded, so the dimensions every server-side bound depends on are
+on screen before the upload (`Uploading icon (37.3 KiB, 1024×1024)…`). A
+rejection names the bound and your value, e.g.:
 
 ```text
 icon must be square-ish (aspect 2.00 outside 0.9–1.1)
@@ -50,11 +54,15 @@ cover must be at least 640px wide (got 512px)
 Two behaviours worth knowing:
 
 - **Icons are re-encoded server-side** to PNG and downscaled to at most 1024 px
-  on the longer side (aspect preserved, never enlarged). So a large icon is
-  fine, but a **small** one stays small — the 128 px floor is real. The platform
-  caps that *re-encoded* PNG at 1 MiB, which is a different measurement from the
-  2 MiB the CLI applies to your file: detailed photographic artwork can pass here
-  and still be refused there. Flat artwork re-encodes far smaller.
+  on the longer side (aspect preserved, never enlarged), and the platform caps
+  that *re-encoded* PNG at 1 MiB — a different measurement from the 2 MiB the CLI
+  applies to your file. A **small** icon stays small, so the 128 px floor is
+  real; a **large** one is not automatically fine either. Measured 2026-08-10: a
+  1024 × 1024 photographic JPEG of 37.3 KiB was refused because the PNG the
+  platform made from it came to ~1.15 MiB, while a 512 × 512 icon in the same run
+  went through. The bytes in that rejection are the platform's, not your file's —
+  the lever is **pixel dimensions, not heavier compression**. Flat artwork
+  re-encodes far smaller.
 - **Covers and screenshots are not rescaled.** What you upload is what the store
   shows, so ship them at the size you want rendered.
 
