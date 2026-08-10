@@ -12,11 +12,16 @@ import (
 )
 
 // AGENTS.md's numbered list is loaded into every session through CLAUDE.md's
-// `@AGENTS.md` import, so its size is a per-session cost. The largest items
-// keep their THESIS in AGENTS.md and have their bodies — the RSS tables, the
-// mutation matrices, the retractions, the enumerated residuals — in
+// `@AGENTS.md` import, so its size is a per-session cost. The list is now a
+// TRIGGER INDEX: each item is one line asking whether the reader is about to do
+// what that item governs, and the item ITSELF — the thesis, the RSS tables, the
+// mutation matrices, the retractions, the enumerated residuals — lives in
 // `claudedocs/decisions/NN-<slug>.md`, reached through a `→ evidence: <path>`
 // pointer. That evidence costs nothing until someone opens the code it is about.
+//
+// The trigger's own shape is guarded in agents_trigger_test.go, which also
+// records why the stub-thesis rule that used to live at the bottom of this file
+// was replaced rather than relaxed.
 //
 // A split like that creates exactly one new failure mode, and it is silent: the
 // pointer and the file drift apart. This file is the ledger that closes it.
@@ -50,12 +55,14 @@ const evidenceDir = "claudedocs/decisions"
 // directory — finds zero pointers, compares the empty set with an empty
 // expectation and reports a serene pass while the ledger checks nothing.
 //
-// It rises with each wave, or it stops being a control. Sixteen items are split
-// today; a floor of 5 was set when nine were, and against sixteen it would let a
-// regex that had lost TWO THIRDS of the corpus through — the "comfortable
-// margin" the sibling xrefs guard warns is not evidence of a healthy scan. 10
-// leaves room to re-inline six without weakening the control that far.
-const minEvidencePointers = 10
+// It rises with each wave, or it stops being a control. TWENTY-SIX items are
+// split today — every item but 2 and 4, which are smaller than a trigger plus a
+// file read would cost. A floor of 5 was set when nine were and 10 when sixteen
+// were; against twenty-six, 10 would let a regex that had lost SIXTY PERCENT of
+// the corpus through — the "comfortable margin" the sibling xrefs guard warns is
+// not evidence of a healthy scan. 16 leaves room to re-inline ten without
+// weakening the control that far.
+const minEvidencePointers = 16
 
 // evidencePointerRe matches the pointer line a stub ends with. The path is
 // captured as a non-space run, so a pointer that has been wrapped across a line
@@ -219,58 +226,18 @@ func TestEvidencePointersAndFilesAreTheSameSet(t *testing.T) {
 	t.Logf("evidence ledger: %d pointer(s) and %d file(s) agree", len(pointers), len(files))
 }
 
-// TestEvidenceStubsCarryAThesisAndAPointer asserts the shape of a stub: the
-// pointer must not be the whole of what AGENTS.md says about a split item.
+// 🔴 TestEvidenceStubsCarryAThesisAndAPointer USED TO LIVE HERE, AND WAS
+// REPLACED RATHER THAN DELETED — agents_trigger_test.go is where it went.
 //
-// This is the guard against the failure mode the split most invites — replacing
-// an item with a bare "see the evidence file". A reader deciding whether an item
-// bears on the change they are making must be able to decide it from AGENTS.md;
-// a pointer alone forces one file read per split item per session — sixteen of
-// them now — which is worse than the cost the split removed.
-func TestEvidenceStubsCarryAThesisAndAPointer(t *testing.T) {
-	b, err := os.ReadFile("AGENTS.md")
-	if err != nil {
-		t.Fatalf("read AGENTS.md: %v", err)
-	}
-	lines := strings.Split(string(b), "\n")
-
-	// The minimum is deliberately low: it is a floor against a DEGENERATE stub,
-	// not a style rule. A thesis sentence hard-wrapped at ~79 columns runs to
-	// several lines, so 120 characters of prose before the pointer is a bar an
-	// honest stub clears without trying and a bare pointer cannot clear at all.
-	const minThesisChars = 120
-
-	starts := map[int]int{}
-	for i, line := range lines {
-		if m := itemHeadingRe.FindStringSubmatch(line); m != nil {
-			n, _ := strconv.Atoi(m[1])
-			starts[n] = i
-		}
-	}
-
-	pointers := collectEvidencePointers(t)
-	if len(pointers) < minEvidencePointers {
-		t.Fatalf("CONTROL failure, not a finding: %d pointer(s) found, want >= %d — see TestEvidencePointersAndFilesAreTheSameSet",
-			len(pointers), minEvidencePointers)
-	}
-
-	var thin []string
-	for _, p := range pointers {
-		s, ok := starts[p.item]
-		if !ok {
-			continue // reported by the ledger test
-		}
-		body := strings.Join(lines[s:p.line-1], " ")
-		if n := len(strings.TrimSpace(body)); n < minThesisChars {
-			thin = append(thin, fmt.Sprintf(
-				"  item %d (AGENTS.md:%d) carries only %d character(s) of prose before its pointer, want >= %d",
-				p.item, s+1, n, minThesisChars))
-		}
-	}
-	if len(thin) > 0 {
-		t.Fatalf("%d stub(s) that are a pointer and little else:\n%s\n\n"+
-			"A stub has to carry the item's THESIS — enough for a reader to know the item exists and whether it bears on what they are "+
-			"about to change. The evidence file carries the measurements. A bare pointer moves the cost instead of removing it.",
-			len(thin), strings.Join(thin, "\n"))
-	}
-}
+// It required 120 characters of prose before a pointer, so that an item could
+// not decay into a bare "see the evidence file". That hazard is real and is
+// still guarded; the RULE was incompatible with the fix. A trigger line is
+// deliberately shorter than that floor, because what routes a reader to an item
+// is a question about their situation, not a compressed conclusion — so left in
+// place the old guard would have failed every correct trigger, which is the
+// false-failure-at-correct-content shape that gets a docs guard deleted.
+//
+// The replacement is stricter in the direction that matters: it applies to EVERY
+// item rather than only the split ones, it rejects a label as well as a blank,
+// and it bounds an inline item's size so the list cannot revert to bodies. Do
+// not reintroduce a prose-length floor here.

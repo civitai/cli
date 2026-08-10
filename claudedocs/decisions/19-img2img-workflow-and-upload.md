@@ -1,16 +1,36 @@
 # AGENTS.md item 19 — img2img — txt2img plus images[], --ecosystem, and no credential
 
 Evidence for item 19 of the *Intentional decisions that look wrong* list in
-[`AGENTS.md`](../../AGENTS.md). AGENTS.md keeps the stub — the thesis, plus
-enough to tell you whether this item bears on what you are about to change.
-Everything below the rule is that item's body, moved here VERBATIM: the
-measurements, mutation matrices, retractions and residuals are consulted when
-editing the code they are about, not on every session.
+[`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
+one line naming the situations that mean you should be reading this file.
+Everything below the rule is the item itself, moved here VERBATIM: the thesis,
+the measurements, the mutation matrices, the retractions and the enumerated
+residuals, consulted when editing the code they are about rather than on every
+session.
 
 The list is append-only and never renumbered, so this file's number is stable.
 Edit the body here, not in AGENTS.md; `agents_evidence_test.go` asserts the
-pointer and the file agree, and `agents_split_preserved_test.go` pins the body
-against the text it was moved from.
+pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
+routing question rather than a label, and `agents_split_preserved_test.go` pins
+the body against the text it was moved from.
+
+## The stub thesis this item's trigger replaced
+
+Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in
+AGENTS.md here. That stub was prose written for the split — a compression of the
+body below, not a slice of it — so the trigger index preserves it rather than
+deleting it:
+
+> 19. **img2img sends `workflow: "txt2img"` PLUS `images[]`, requires
+>     `--ecosystem`, and uploads with NO credential — three things that each read
+>     like a bug.** The server promotes `txt2img` + non-empty `images` to
+>     `img2img:edit` itself, so sending the edit workflow would mean vendoring
+>     which ecosystems offer it — item 13's prohibition exactly. `--image`
+>     without `--ecosystem` is a hard error because the promotion reads the
+>     ecosystem off the RAW request body, so an absent one silently skips it and
+>     the flag becomes a guaranteed no-op THAT STILL CHARGES. The presigned upload
+>     carries no credential, for item 17's reason. 🔴 And the CLI still cannot
+>     tell you whether the promotion actually fired — do not add a detector.
 
 ---
 

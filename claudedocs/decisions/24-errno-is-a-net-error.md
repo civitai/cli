@@ -1,16 +1,34 @@
 # AGENTS.md item 24 — syscall.Errno IS a net.Error
 
 Evidence for item 24 of the *Intentional decisions that look wrong* list in
-[`AGENTS.md`](../../AGENTS.md). AGENTS.md keeps the stub — the thesis, plus
-enough to tell you whether this item bears on what you are about to change.
-Everything below the rule is that item's body, moved here VERBATIM: the
-measurements, mutation matrices, retractions and residuals are consulted when
-editing the code they are about, not on every session.
+[`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
+one line naming the situations that mean you should be reading this file.
+Everything below the rule is the item itself, moved here VERBATIM: the thesis,
+the measurements, the mutation matrices, the retractions and the enumerated
+residuals, consulted when editing the code they are about rather than on every
+session.
 
 The list is append-only and never renumbered, so this file's number is stable.
 Edit the body here, not in AGENTS.md; `agents_evidence_test.go` asserts the
-pointer and the file agree, and `agents_split_preserved_test.go` pins the body
-against the text it was moved from.
+pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
+routing question rather than a label, and `agents_split_preserved_test.go` pins
+the body against the text it was moved from.
+
+## The stub thesis this item's trigger replaced
+
+Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in
+AGENTS.md here. That stub was prose written for the split — a compression of the
+body below, not a slice of it — so the trigger index preserves it rather than
+deleting it:
+
+> 24. **`syscall.Errno` IS a `net.Error`, so the obvious spelling of the transport
+>     check silently classified EVERY filesystem failure in the CLI as a network
+>     failure — in TWO places, and the first fix reached only one of them.** A bare
+>     `var netErr net.Error; return errors.As(err, &netErr)` walks straight PAST
+>     the `*fs.PathError` wrapper and matches the Errno underneath, so every
+>     untagged `os.ReadFile` / `os.Stat` error landed on exit **5** — the code the
+>     README tells scripts to RETRY on (#241). The walk now lives in ONE place,
+>     `pkg/civitai/transport_error.go`, with four callers held by an asserted ledger.
 
 ---
 

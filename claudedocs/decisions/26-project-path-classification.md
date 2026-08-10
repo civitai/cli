@@ -1,16 +1,34 @@
 # AGENTS.md item 26 — classifying the project path the user named
 
 Evidence for item 26 of the *Intentional decisions that look wrong* list in
-[`AGENTS.md`](../../AGENTS.md). AGENTS.md keeps the stub — the thesis, plus
-enough to tell you whether this item bears on what you are about to change.
-Everything below the rule is that item's body, moved here VERBATIM: the
-measurements, mutation matrices, retractions and residuals are consulted when
-editing the code they are about, not on every session.
+[`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
+one line naming the situations that mean you should be reading this file.
+Everything below the rule is the item itself, moved here VERBATIM: the thesis,
+the measurements, the mutation matrices, the retractions and the enumerated
+residuals, consulted when editing the code they are about rather than on every
+session.
 
 The list is append-only and never renumbered, so this file's number is stable.
 Edit the body here, not in AGENTS.md; `agents_evidence_test.go` asserts the
-pointer and the file agree, and `agents_split_preserved_test.go` pins the body
-against the text it was moved from.
+pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
+routing question rather than a label, and `agents_split_preserved_test.go` pins
+the body against the text it was moved from.
+
+## The stub thesis this item's trigger replaced
+
+Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in
+AGENTS.md here. That stub was prose written for the split — a compression of the
+body below, not a slice of it — so the trigger index preserves it rather than
+deleting it:
+
+> 26. **`civitai app validate <dir>` / `app submit <dir>` CLASSIFY THE PATH THE
+>     USER NAMED BEFORE VALIDATING ANYTHING, and that gate is deliberately NOT
+>     item 24's transport predicate — it is a separate rule that happens to live
+>     next door on the exit-code contract.** Issue #256. `resolveProjectDir`
+>     (`internal/cmd/project_dir.go`) branches three ways on the path the user
+>     NAMED: nonexistent → 2, exists-but-not-a-directory → 2, a real directory →
+>     unchanged. It runs ahead of `--skip-validate` and ahead of the `--json`
+>     block, and both call sites are held by an asserted ledger.
 
 ---
 
