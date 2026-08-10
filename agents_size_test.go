@@ -228,6 +228,31 @@ func agentsItemSizes(t *testing.T) []struct {
 	return out
 }
 
+// truncateRunes shortens a display string to n RUNES, never n bytes.
+//
+// 🔴 THE BYTE VERSION EMITTED INVALID UTF-8, AND IT WAS LIVE. The playbook used
+// `title[:72]`, which splits a multi-byte rune whenever one straddles the
+// boundary — item 13's trigger is 73 bytes and 71 runes with an em-dash across
+// byte 72, so the advice a maintainer reads at the ceiling was mojibake, and a
+// harness reading the test output could not decode it at all. The old stubs
+// happened to carry no multi-byte character at that offset, which is the only
+// reason the defect was latent rather than visible; it went live the moment the
+// list changed shape, without anything about the truncation changing.
+//
+// It is a named function rather than three inline lines so the property can be
+// driven over a corpus that ALWAYS contains the hazard —
+// TestPlaybookTruncationIsRuneSafe — instead of depending on whichever live
+// heading happens to straddle the boundary this week. That dependency was real:
+// pinning it against AGENTS.md made rewording item 13's trigger fail a UTF-8
+// control, which is a false failure at correct content.
+func truncateRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n]) + "…"
+}
+
 // evictionPlaybook renders the advice a size failure has to carry: which items
 // are largest, which are already split, and the mechanical steps to move one.
 func evictionPlaybook(t *testing.T, size int) string {
@@ -243,17 +268,7 @@ func evictionPlaybook(t *testing.T, size int) string {
 		if s.split {
 			state = "trigger only (body already split out)"
 		}
-		// 🔴 TRUNCATE BY RUNE, NEVER BY BYTE. `title[:72]` splits a multi-byte
-		// rune whenever one straddles the boundary, and the playbook then emits
-		// INVALID UTF-8 in a failure message — measured: the trigger lines carry
-		// em-dashes, and the byte-sliced version produced output a UTF-8 decoder
-		// rejects outright. The old stubs happened not to have one at that offset,
-		// which is the only reason this never fired before.
-		title := []rune(s.firstL)
-		if len(title) > 72 {
-			s.firstL = string(title[:72]) + "…"
-		}
-		fmt.Fprintf(&b, "  item %-2d %7d bytes  %-36s  %s\n", s.num, s.bytes, state, s.firstL)
+		fmt.Fprintf(&b, "  item %-2d %7d bytes  %-36s  %s\n", s.num, s.bytes, state, truncateRunes(s.firstL, 72))
 		shown++
 	}
 	fmt.Fprintf(&b, "\n🔴 THE LIST IS A TRIGGER INDEX, SO AN ITEM OVER ~%d BYTES IS ALREADY THE BUG.\n"+
@@ -438,35 +453,72 @@ func TestAgentsSizeGuardCanStillFire(t *testing.T) {
 		}
 	}
 
-	// 🔴 THE PLAYBOOK MUST BE VALID UTF-8, AND IT WAS NOT. It truncated an item's
-	// first line with `title[:72]` — a BYTE slice — which splits a multi-byte rune
-	// whenever one straddles the boundary. Found by a harness that could not decode
-	// the test output at all. Under the old stubs no item happened to carry a
-	// multi-byte character at offset 72; every trigger line does, because they are
-	// written with em-dashes, so the latent defect became live the moment the list
-	// changed shape.
+	// Belt-and-braces on the live message. The property is PINNED by
+	// TestPlaybookTruncationIsRuneSafe, which supplies the hazard itself; this
+	// only says the rendered advice is readable today.
 	if !utf8.ValidString(pb) {
 		t.Errorf("the eviction playbook is not valid UTF-8 — it is truncating a title mid-rune, and the advice a maintainer reads at the ceiling is mojibake\n---\n%q", pb)
 	}
-	// POSITIVE CONTROL. "It is valid UTF-8" is also true of a playbook that never
-	// truncates anything, so prove the corpus actually exercises the hazard: at
-	// least one item's first line must be longer than the cut AND carry a
-	// multi-byte rune that a byte slice at that offset would break.
-	// The condition mirrors the BUGGY code exactly — `len(title) > 72` on bytes,
-	// then `title[:72]` — because that is the input that has to still be present
-	// for the assertion above to mean anything. Item 13's trigger is the live
-	// example: 73 bytes, 71 runes, with an em-dash straddling byte 72.
-	exercised := ""
-	for _, s := range agentsItemSizes(t) {
-		if len(s.firstL) > 72 && !utf8.ValidString(s.firstL[:72]) {
-			exercised = s.firstL
-			break
-		}
+}
+
+// TestPlaybookTruncationIsRuneSafe is the negative control for truncateRunes.
+//
+// 🔴 THE CORPUS CARRIES THE HAZARD RATHER THAN BORROWING IT FROM AGENTS.md, and
+// that is a correction, not a preference. The first version asserted the live
+// playbook was valid UTF-8 and controlled it by requiring some heading in the
+// file to be a byte-slice hazard — which made REWORDING item 13's trigger fail a
+// UTF-8 control, a false failure at correct content. Every row here supplies its
+// own input and ASSERTS ITS OWN PREMISE: that a byte slice at the same offset
+// really would produce invalid UTF-8. Without that premise a row could sit here
+// looking like coverage while exercising nothing.
+func TestPlaybookTruncationIsRuneSafe(t *testing.T) {
+	cases := []struct {
+		name   string
+		in     string
+		n      int
+		hazard bool // a byte slice at n would split a rune
+	}{
+		{"item 13's real shape: 73 bytes, 71 runes",
+			"13. **Adding any check, table, enum or default to the generation path —", 72, true},
+		{"a 3-byte rune straddling the cut",
+			strings.Repeat("a", 71) + "—" + strings.Repeat("b", 20), 72, true},
+		{"a 4-byte rune straddling the cut",
+			strings.Repeat("a", 70) + "🔴" + strings.Repeat("b", 20), 72, true},
+		{"pure ASCII, longer than the cut",
+			strings.Repeat("a", 200), 72, false},
+		{"shorter than the cut is returned unchanged",
+			"3. **Touching `internal/validate/lockfile.go` —", 72, false},
 	}
-	if exercised == "" {
-		t.Errorf("CONTROL failure, not a finding: no item's first line is both over 72 BYTES and broken by a byte slice at that offset, " +
-			"so the UTF-8 assertion above is passing on input that could not fail. Re-derive the control against AGENTS.md's current headings.")
-	} else {
-		t.Logf("UTF-8 control exercised by: %s", exercised)
+	hazards := 0
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			byteHazard := len(tc.in) > tc.n && !utf8.ValidString(tc.in[:tc.n])
+			if byteHazard != tc.hazard {
+				t.Fatalf("PREMISE BROKEN: the row claims hazard=%v, but a byte slice at %d yields %s. "+
+					"The row is not testing what it says it is.", tc.hazard, tc.n,
+					map[bool]string{true: "invalid UTF-8", false: "valid UTF-8"}[byteHazard])
+			}
+			if byteHazard {
+				hazards++
+			}
+			got := truncateRunes(tc.in, tc.n)
+			if !utf8.ValidString(got) {
+				t.Errorf("truncateRunes(%q, %d) is not valid UTF-8: %q", tc.in, tc.n, got)
+			}
+			if r := []rune(tc.in); len(r) <= tc.n {
+				if got != tc.in {
+					t.Errorf("a string shorter than the cut must be returned unchanged, got %q", got)
+				}
+			} else if want := string(r[:tc.n]) + "…"; got != want {
+				t.Errorf("truncateRunes(%q, %d)\n got: %q\nwant: %q", tc.in, tc.n, got, want)
+			}
+		})
+	}
+	// POSITIVE CONTROL for the corpus: at least two rows must be genuine
+	// byte-slice hazards, or every assertion above passed on input a byte-slicing
+	// implementation would have survived too.
+	if hazards < 2 {
+		t.Fatalf("CONTROL failure, not a finding: only %d row(s) are byte-slice hazards. "+
+			"A byte-slicing implementation would pass this table, so it pins nothing.", hazards)
 	}
 }
