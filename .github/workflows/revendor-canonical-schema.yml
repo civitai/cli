@@ -7,6 +7,29 @@
 # job runs the re-vendor script, validates the result IN THIS JOB, and opens a
 # PR when the schema changed — so the hand-resync never recurs. Sibling of the
 # `bump-scaffold-pins` workflow (the pin-drift automation).
+#
+# A RED RUN OF THIS WORKFLOW NOW FILES ITS OWN ISSUE — see the `signal` job.
+# A failing SCHEDULED run notifies almost nobody (GitHub mails only whoever last
+# edited the `cron` line, through that person's own per-user Actions setting),
+# which is how `bump-flake-vendorhash.yml` failed every run for three weeks with
+# nobody noticing (#316). This workflow was green throughout — so was that one,
+# right up until it wasn't. The reporting mechanism is the shared
+# `failure-issue.yml`; read its header for the anti-spam rules it enforces (one
+# open issue, a repeat failure rewrites the body rather than commenting, a green
+# run closes the issue).
+#
+# ERREXIT NOTE, because this is the trap that caused #316 and #313. GitHub runs
+# every `run:` block as `bash -e {0}`, so errexit is ON before the first line and
+# `set -uo pipefail` does NOT clear it. Audited: NO step in this workflow runs a
+# command that is expected to fail as part of its logic — the re-vendor script
+# owns its own exit contract (0 = re-vendored or already current or transient
+# skip; 1 = the canonical URL moved or served junk) and every other step is
+# expected to succeed. So errexit is welcome here. If you add a command that IS
+# expected to fail, handle its status where you write it; do not leave it to the
+# shell.
+#
+# Run manually anytime via the Actions tab → this workflow → "Run workflow"
+# (workflow_dispatch), including the `drill` fire drill described on the input.
 name: revendor-canonical-schema
 
 on:
@@ -15,7 +38,12 @@ on:
     # two automations don't open PRs in the same minute. Cron literal quoted so
     # the `*` isn't parsed as a YAML alias.
     - cron: "37 7 * * 1"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: "Fire drill: fail the re-vendor step on purpose so the FAILURE path and the issue it files can be rehearsed. Opens a REAL issue — close it when you are done. It cannot open a PR or touch the schema: it fails before the script runs, upstream of every step that writes anything."
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -24,6 +52,21 @@ permissions:
 jobs:
   revendor:
     runs-on: ubuntu-latest
+    # ONE definition of the canonical URL for the whole job. The re-vendor
+    # script reads `CANONICAL_URL` from the environment (falling back to this
+    # same literal), so the reachability probe below and the script that
+    # actually fetches provably ask the same URL — there is no second constant
+    # to drift.
+    env:
+      CANONICAL_URL: https://civitai.com/schemas/app-block/v1.json
+    # Read by the `signal` job to describe WHAT went wrong. Empty when the job
+    # died before the classifier ran (a runner failure, a checkout failure) —
+    # which `signal` resolves to `unknown`, a real and different state from any
+    # verdict this job produces.
+    outputs:
+      state: ${{ steps.classify.outputs.state }}
+      title: ${{ steps.classify.outputs.title }}
+      body: ${{ steps.classify.outputs.body }}
     steps:
       - uses: actions/checkout@v4
 
@@ -32,8 +75,57 @@ jobs:
           go-version: "1.25"
           cache: true
 
+      # Is the canonical schema actually reachable? The re-vendor script treats
+      # a transient fetch failure (network / DNS / timeout / 5xx / 429) as a
+      # SKIP — `exit 0`, no change — which is the right call for the JOB (a blip
+      # must not fail a scheduled run or open a broken PR) and is exactly the
+      # silence this PR exists to end for the REPORT: a green run and a run that
+      # never looked at the canonical are otherwise byte-identical from outside.
+      #
+      # So the reachability question is answered here, independently, and fed to
+      # the classifier as its own state (`canonical-unreachable`). The job still
+      # succeeds; only the report says the mirror was not checked.
+      #
+      # KNOWN COST, stated rather than hidden: a single transient blip at 07:37
+      # on a Monday opens an issue that sits until the next weekly run closes it.
+      # That is one issue and zero comments (failure-issue.yml's rules), and the
+      # backstop for the underlying risk is the `schema-drift` CI job, which
+      # reds on every PR once the mirror actually drifts. If the false alarms
+      # outweigh that, delete the `canonical-unreachable` arm in `classify` —
+      # it is one `elif`, and nothing else depends on it.
+      - name: probe — is the canonical schema reachable
+        id: probe
+        run: |
+          set -u
+          # `|| true` because a network failure exits curl non-zero and errexit
+          # would end the step before the code could be reported. `-w` still
+          # prints a code (`000`) on failure; `tail -1` keeps the last line so a
+          # curl that prints both cannot produce a two-line value.
+          code="$(curl -sS -o /dev/null -w '%{http_code}\n' --max-time 30 "$CANONICAL_URL" 2>&1 | tail -1 || true)"
+          case "$code" in
+            [0-9][0-9][0-9]) ;;
+            *) code=000 ;;
+          esac
+          echo "canonical $CANONICAL_URL -> HTTP $code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
       - name: re-vendor embedded schema from the live canonical
-        run: ./scripts/revendor-canonical-schema.sh
+        id: revendor
+        env:
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || false }}
+        run: |
+          set -u
+          if [ "$DRILL" = "true" ]; then
+            # Fire drill. This fails the step the classifier reads, which is the
+            # SAME input a real re-vendor failure produces — there is no parser
+            # or sub-verdict here to stub, so the rehearsal drives the genuine
+            # path rather than a mock of it. It runs BEFORE the script, so the
+            # drill can neither rewrite the schema nor open a PR.
+            echo "⚠️  FIRE DRILL — failing the re-vendor step on purpose to rehearse the reporting path."
+            echo "    The canonical schema was NOT fetched and nothing on disk was touched."
+            exit 1
+          fi
+          ./scripts/revendor-canonical-schema.sh
 
       # Only validate + open a PR when the re-vendor actually changed the file —
       # a no-op run (already in sync) skips everything downstream.
@@ -53,6 +145,7 @@ jobs:
       # (a human handles the incompatible change); an additive/optional change
       # validates cleanly → the PR opens.
       - name: validate — schema compiles + examples validate
+        id: validate
         if: steps.changed.outputs.changed == 'true'
         # Full suite so the ROOT-package examples test (examples_test.go —
         # `TestExampleManifestsValidateClean`, which validates the shipped
@@ -60,6 +153,7 @@ jobs:
         run: go test ./...
 
       - name: open PR if schema changed
+        id: pr
         if: steps.changed.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
@@ -91,3 +185,110 @@ jobs:
             (e.g. a new manifest key), consider whether `internal/validate/` (the
             Go semantic checks / friendly messages) should track it too — that
             part is a deliberate human call.
+
+      # Name WHICH step failed, for the issue the `signal` job files. `always()`
+      # so it still runs after a failed step — without it this is skipped
+      # exactly when it is needed, and `signal` would only ever see `unknown`.
+      # Each phase gets its own state because they call for different actions: a
+      # re-vendor failure means the canonical URL moved or served junk, a
+      # validate failure means the new canonical is incompatible and needs a
+      # human, and a PR failure is usually the token.
+      - name: classify the outcome
+        id: classify
+        if: always()
+        env:
+          R_PROBE: ${{ steps.probe.outcome }}
+          R_PROBE_CODE: ${{ steps.probe.outputs.code }}
+          R_REVENDOR: ${{ steps.revendor.outcome }}
+          R_CHANGED: ${{ steps.changed.outcome }}
+          R_VALIDATE: ${{ steps.validate.outcome }}
+          R_PR: ${{ steps.pr.outcome }}
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || false }}
+        run: |
+          set -uo pipefail
+
+          # The probe arm is FIRST and is not decoration: if the probe step
+          # itself dies, every later step is `skipped`, and without this arm a
+          # skipped re-vendor would be reported as "the re-vendor failed" —
+          # confident wording built on a step that never ran.
+          if [ "$R_PROBE" != "success" ]; then
+            state=probe-failed
+            title="the canonical-schema re-vendor bot failed before it started"
+            detail="The \`probe — is the canonical schema reachable\` step failed. It only runs \`curl\` and writes one output, so this is either a runner problem or a change to that step that broke it. **Nothing downstream ran**, so the mirror was neither checked nor changed."
+          elif [ "$R_REVENDOR" != "success" ]; then
+            state=revendor-failed
+            title="the canonical-schema re-vendor bot could not re-vendor"
+            detail="The \`re-vendor embedded schema from the live canonical\` step failed. The script fails loudly for exactly two reasons: the canonical URL answered **404/410** (it moved — a real contract break), or it served a body that is empty or not a JSON object. **The step's output is in the run log and names which.**"
+          elif [ "$R_PROBE_CODE" != "200" ]; then
+            state=canonical-unreachable
+            title="the canonical-schema re-vendor bot could not reach the canonical schema"
+            detail="The canonical schema URL answered HTTP \`${R_PROBE_CODE:-000}\`, not 200, so the re-vendor script took its transient-skip path: **the embedded mirror was not compared against anything on this run.** The job itself is green, deliberately — a blip must not fail a scheduled run or open a broken PR — but a green run and a run that never looked are otherwise indistinguishable, which is what this report exists to fix.
+
+          If this is a one-off blip, the next scheduled run closes this issue by itself. If it repeats, the canonical schema is genuinely unreachable from GitHub-hosted runners and the mirror is frozen until it is not."
+          elif [ "$R_CHANGED" != "success" ]; then
+            state=detect-failed
+            title="the canonical-schema re-vendor bot failed while checking for changes"
+            detail="The \`detect changes\` step failed, which is unusual — it only runs \`git status\`."
+          elif [ "$R_VALIDATE" = "failure" ]; then
+            state=validate-failed
+            title="the canonical schema changed in a way the CLI cannot accept"
+            detail="The canonical schema changed and was re-vendored, but \`go test ./...\` then failed with it — the new schema does not compile under the CLI's jsonschema engine, or the bundled example manifests no longer validate against it. **No PR was opened**, on purpose: this is an incompatible canonical change and needs a human, not a bytes-only bump. Expect \`internal/validate/\` and/or \`examples/\` to need work alongside the re-vendor."
+          elif [ "$R_PR" = "failure" ]; then
+            state=pr-failed
+            title="the canonical-schema re-vendor bot could not open its PR"
+            detail="The schema was re-vendored and validated, but opening the PR failed — usually \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` being expired or missing. **The re-vendor is still un-merged**, so the embedded mirror stays stale and \`schema-drift\` stays red until someone re-vendors by hand or repairs the token."
+          else
+            state=green
+            title=""
+            detail=""
+          fi
+
+          DRILL_NOTE=""
+          if [ "$DRILL" = "true" ]; then
+            DRILL_NOTE="> ⚠️ **This is a fire drill**, dispatched by hand with \`drill=true\`. The re-vendor step was failed on purpose and the canonical schema was never fetched, so this is NOT a real failure of the bot — it exists to prove this reporting path works. Close it when you are done."
+          fi
+
+          echo "state=$state"
+          {
+            echo "state=$state"
+            echo "title=[schema-revendor-bot] $title"
+            echo "body<<REVENDOR_BODY_EOF"
+            if [ -n "$DRILL_NOTE" ]; then
+              echo "$DRILL_NOTE"
+              echo
+            fi
+            echo "$detail"
+            echo
+            echo "While this is failing, a canonical schema change will NOT be mirrored into the CLI's \`go:embed\`ed copy automatically. The \`schema-drift\` CI job still DETECTS the drift on every PR — only the remediation is down — so the visible symptom is a red \`schema-drift\` that nothing clears."
+            echo
+            echo "To re-vendor by hand: run \`./scripts/revendor-canonical-schema.sh\`, then \`go test ./...\`, and open the PR yourself."
+            echo "REVENDOR_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  # File a report when the bot is broken, and close it when it recovers. See
+  # `failure-issue.yml` for why this is an issue rather than email, and for the
+  # rules that stop it becoming noise.
+  #
+  # `always()` so a red `revendor` job still reports; `!= 'cancelled'` so a hand
+  # cancellation is not filed as a defect.
+  #
+  # `failing` is deliberately NOT just `result != 'success'`: the
+  # `canonical-unreachable` verdict is reached on a job that SUCCEEDED, because
+  # "the check could not run" and "the check failed" are different facts and
+  # only one of them is visible in the job's own colour.
+  signal:
+    needs: [revendor]
+    if: always() && needs.revendor.result != 'cancelled'
+    uses: ./.github/workflows/failure-issue.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      marker: "[schema-revendor-bot]"
+      failing: ${{ needs.revendor.result != 'success' || needs.revendor.outputs.state == 'canonical-unreachable' }}
+      # Empty when `revendor` died before the classifier ran — a runner failure
+      # or a failed checkout. That is its own state and must not borrow the
+      # wording of a verdict this job never reached.
+      state: ${{ needs.revendor.outputs.state || 'unknown' }}
+      title: "${{ needs.revendor.outputs.title || '[schema-revendor-bot] the canonical-schema re-vendor bot could not run' }}"
+      body: "${{ needs.revendor.outputs.body || 'The `revendor` job failed before it could classify what went wrong, so it did not reach the end of the run. Check the run log — the usual causes are the runner dying, the checkout failing, or `setup-go` failing.' }}"
