@@ -269,6 +269,49 @@ func TestEveryCodeReachesTheTerminal(t *testing.T) {
 	}
 }
 
+// TestHelpExitCodeSectionStaysSkimmable is the PRODUCT property this change
+// exists to deliver, asserted on the rendered terminal output rather than
+// inferred from the generator.
+//
+// Measured on the binary: the pre-split section was 62 lines (widest 81 runes)
+// out of a 143-line `civitai --help`; it is now 19 out of 100. The caps below
+// are deliberately loose — they constrain the failure mode (the wall coming
+// back) and not ordinary editing.
+//
+// It is here because the sentinel guard's "a Detail entry must not reach
+// `--help`" assertion was the ONLY thing observing that property, and a battery
+// resting on one row is a battery anyone can delete by accident. This one is
+// built differently: it never looks at Detail at all, it reads the rendered
+// bytes, and it dies on the same mutation.
+func TestHelpExitCodeSectionStaysSkimmable(t *testing.T) {
+	const (
+		maxLines = 24
+		wasLines = 62 // the pre-split section, measured on the binary
+	)
+	help := renderRootHelp(t)
+	i := strings.Index(help, "Exit codes:")
+	if i < 0 {
+		t.Fatalf("the rendered help has no exit-code section — this guard is reading the wrong text:\n%s", help)
+	}
+	lines := strings.Split(strings.TrimRight(help[i:], "\n"), "\n")
+
+	// Positive control: a section shorter than one line per code would satisfy
+	// every cap below while publishing nothing.
+	if len(lines) < len(exitCodeDocs) {
+		t.Fatalf("the exit-code section is %d lines for %d codes — it cannot be publishing them all:\n%s",
+			len(lines), len(exitCodeDocs), help[i:])
+	}
+	if len(lines) > maxLines {
+		t.Errorf("the `--help` exit-code section is %d lines (cap %d; it was %d before the summary/detail split). "+
+			"Depth belongs in Detail, which README publishes in full.", len(lines), maxLines, wasLines)
+	}
+	for n, line := range lines {
+		if w := len([]rune(line)); w > exitCodeHelpWidth {
+			t.Errorf("line %d of the `--help` exit-code section is %d runes (cap %d): %q", n+1, w, exitCodeHelpWidth, line)
+		}
+	}
+}
+
 // TestHelpPointsAtTheREADMESection pins the other half of the trade: `--help`
 // no longer carries the ledger, so it has to say where the ledger IS, by a name
 // that works offline. A pointer naming a heading that does not exist is worse
