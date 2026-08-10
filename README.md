@@ -2330,8 +2330,10 @@ This cross-compiles for linux/darwin/windows × amd64/arm64, stamps
 version/commit/date, and creates a **draft** GitHub Release with archives +
 `checksums.txt`. It also *renders* the Homebrew cask and attaches it to the
 release, but does not push it to the tap — see below. See
-[`AGENTS.md`](AGENTS.md) for the full process and the secrets it needs
-(`HOMEBREW_TAP_GITHUB_TOKEN`).
+[`AGENTS.md`](AGENTS.md) for the full process. The tap-write secret
+(`HOMEBREW_TAP_GITHUB_TOKEN`) belongs to
+`.github/workflows/release-homebrew.yml`, which runs at *publish* time; the
+tag-time run holds no credential that can write to the tap.
 
 🔴 **There are three publication channels, and clicking "Publish release" fires
 the other two.** `.github/workflows/release-npm.yml` publishes the `npm/`
