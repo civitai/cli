@@ -332,6 +332,164 @@ func TestPollWorkflow_TimeoutReturnsTheLastStatus(t *testing.T) {
 	}
 }
 
+// --- the DEFAULT wait budget -------------------------------------------------
+
+// The queue latency this CLI has actually been measured against, from the blind
+// credentialed dogfood run of 2026-08-07 (the Juggernaut control workflow):
+//
+//	Created:   2026-08-07T17:17:25.589Z
+//	Started:   2026-08-07T17:29:06.848Z   -> 11m41s sitting in `scheduled`
+//	Completed: 2026-08-07T17:31:11.339Z   -> 13m46s end-to-end
+//
+// The queue alone outlasted the old 10m default, so a run left on the default
+// gave up on a healthy job it had already paid for. See civitai/cli#326.
+const (
+	observedQueueLatency = 11*time.Minute + 41*time.Second
+	observedEndToEnd     = 13*time.Minute + 46*time.Second
+)
+
+// unboundedPollCap is the getter's escape hatch, and it is a 404 rather than a
+// bare error ON PURPOSE: pollWorkflow retries a status-0 error forever (a
+// transport failure on a job the user has already paid for is exactly what it
+// should keep polling through), so a plain sentinel would HANG instead of
+// failing. A 404 is non-retryable and returns immediately, which is what turns
+// "the wait is not bounded" into a red test rather than a stuck one.
+func unboundedPollCap(t *testing.T) error {
+	t.Helper()
+	return apiErrorWithStatus(t, http.StatusNotFound)
+}
+
+// timedWorkflows returns a getWorkflowFn whose reply depends on the VIRTUAL
+// CLOCK rather than on a call count, so a test states "queued for 11m41s"
+// instead of hand-computing how many backoff steps that takes.
+//
+// It fails the getter after callCap calls so a mutation that removes the
+// deadline entirely ("wait forever") surfaces as that cap rather than as a hung
+// test.
+func timedWorkflows(t *testing.T, clock *fakeClock, calls *int, callCap int, capErr error) getWorkflowFn {
+	t.Helper()
+	start := clock.Now()
+	return func(ctx context.Context, id string) (*genapi.Workflow, json.RawMessage, error) {
+		*calls++
+		if *calls > callCap {
+			return nil, nil, capErr
+		}
+		status := genapi.StatusSucceeded
+		switch elapsed := clock.Now().Sub(start); {
+		case elapsed < observedQueueLatency:
+			status = genapi.StatusScheduled
+		case elapsed < observedEndToEnd:
+			status = genapi.StatusProcessing
+		}
+		raw := wfJSON(status)
+		var wf genapi.Workflow
+		if err := json.Unmarshal([]byte(raw), &wf); err != nil {
+			return nil, nil, err
+		}
+		return &wf, json.RawMessage(raw), nil
+	}
+}
+
+// 🔴 The DEFAULT wait must outlast the queue latency this CLI has been measured
+// against. This is the regression for civitai/cli#326: at the old 10m default
+// the job below was abandoned 2m5s before it even started executing, and per
+// `generate --help` ("--timeout STOPS WAITING. IT DOES NOT STOP PAYING") the
+// charge stood.
+//
+// It drives the REAL poll loop — real 5s..60s backoff, real deadline arithmetic
+// — over a virtual clock, so it fails when the default stops covering that
+// measured run, not merely when someone edits a number.
+func TestPollWorkflow_DefaultTimeoutOutlastsTheMeasuredQueueLatency(t *testing.T) {
+	clock := newFakeClock()
+	cfg := clock.cfg()
+	cfg.timeout = defaultWaitTimeout // the shipped default, not a test-local number
+
+	calls := 0
+	capErr := unboundedPollCap(t)
+	get := timedWorkflows(t, clock, &calls, 500, capErr)
+	wf, _, err := pollWorkflow(context.Background(), get, "wf_1", cfg,
+		&quietPollReporter{w: &bytes.Buffer{}, now: clock.Now, heartbeat: time.Hour})
+
+	if errors.Is(err, capErr) {
+		t.Fatalf("the poll never terminated: %v", err)
+	}
+	if errors.Is(err, errWaitTimeout) {
+		t.Fatalf("the default wait of %s gave up on a job that finished after %s "+
+			"(queued %s) — a default run abandons a healthy job it has already paid for",
+			defaultWaitTimeout, observedEndToEnd, observedQueueLatency)
+	}
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if wf == nil || wf.Status != genapi.StatusSucceeded {
+		t.Fatalf("want the succeeded workflow back, got %+v", wf)
+	}
+}
+
+// …and it is still a BOUND. Raising the default must not become "wait forever":
+// the constant's whole justification is that an unattended run cannot block
+// indefinitely, with `civitai workflows get <id>` making giving up recoverable.
+//
+// A job that never leaves the queue must therefore still return errWaitTimeout,
+// with the last-seen status intact so the caller can report it. This is the
+// mutation guard on the fix: setting defaultWaitTimeout to 0 makes this fail
+// with the getter's sentinel instead of hanging.
+func TestPollWorkflow_DefaultTimeoutIsStillABound(t *testing.T) {
+	clock := newFakeClock()
+	cfg := clock.cfg()
+	cfg.timeout = defaultWaitTimeout
+
+	calls := 0
+	capErr := unboundedPollCap(t)
+	// A job that NEVER leaves the queue: every reply is `scheduled`, forever.
+	get := func(ctx context.Context, id string) (*genapi.Workflow, json.RawMessage, error) {
+		calls++
+		if calls > 500 {
+			return nil, nil, capErr
+		}
+		raw := wfJSON(genapi.StatusScheduled)
+		var wf genapi.Workflow
+		if err := json.Unmarshal([]byte(raw), &wf); err != nil {
+			return nil, nil, err
+		}
+		return &wf, json.RawMessage(raw), nil
+	}
+
+	wf, _, err := pollWorkflow(context.Background(), get, "wf_1", cfg,
+		&quietPollReporter{w: &bytes.Buffer{}, now: clock.Now, heartbeat: time.Hour})
+
+	if errors.Is(err, capErr) {
+		t.Fatalf("the default wait is not bounded — a permanently queued job polled forever")
+	}
+	if !errors.Is(err, errWaitTimeout) {
+		t.Fatalf("want errWaitTimeout for a permanently queued job, got %v", err)
+	}
+	if wf == nil || wf.Status != genapi.StatusScheduled {
+		t.Errorf("the last-seen workflow must come back so the caller can report its status, got %+v", wf)
+	}
+	var total time.Duration
+	for _, d := range clock.slept {
+		total += d
+	}
+	if total > defaultWaitTimeout {
+		t.Errorf("slept %s in total, overshooting the %s default", total, defaultWaitTimeout)
+	}
+}
+
+// Wiring guard (an invariant, NOT regression coverage): the --timeout flag's
+// default must be the constant the two tests above reason about. A literal
+// pasted into the flag registration would make both of them claims about dead
+// code.
+func TestGenerateTimeoutFlagDefaultsToTheConstant(t *testing.T) {
+	f := newGenerateCmd().Flags().Lookup("timeout")
+	if f == nil {
+		t.Fatal("--timeout flag is missing")
+	}
+	if f.DefValue != defaultWaitTimeout.String() {
+		t.Errorf("--timeout defaults to %q, but defaultWaitTimeout is %q", f.DefValue, defaultWaitTimeout)
+	}
+}
+
 // Ctrl-C (a cancelled context) unblocks the wait promptly.
 func TestPollWorkflow_ContextCancellationStopsTheWait(t *testing.T) {
 	clock := newFakeClock()
