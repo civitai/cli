@@ -390,13 +390,25 @@ with a prompt argument; the execution flags all still apply. Keys that belong to
 the request ENVELOPE rather than the graph — civitaiTip, creatorTip, buzzType,
 tags, externalId — are REFUSED in an input file: they are this CLI's to set, and
 a tip in particular is real Buzz that --dry-run structurally cannot see. Keys
-this CLI does not recognise are passed through with a warning, because the
-server silently drops what it does not declare rather than reporting an error.
+this CLI does not model are passed through exactly as written, with a warning
+that says so and nothing more: what the server does with such a key, including
+what it costs, is the server's answer and not this CLI's to predict. --dry-run
+prices the graph with those keys included, so it is where a price effect would
+show.
 
 🔴 --input DOES NOT get the model-id safety net. --checkpoint and --lora are
 resolved against the public API before submitting, so a bad id fails locally
 instead of being billed with a substituted model; a raw graph is not
-interpreted, so nothing in it is checked before you pay for it.`,
+interpreted, so nothing in it is checked before you pay for it.
+
+🔴 --fail-on-substitution STAYS LIVE with --input, but its COVERAGE is unknown
+to this CLI. It refuses on the substitution record the estimate returns, so it
+still refuses before any spend — but a raw graph is not interpreted here, so
+nothing local knows which model references the file contains or which of them a
+record would name. One measured case (a checkpoint under "resources") was
+charged and ran a different version with no record at all. Read a silent run as
+"nothing was reported", never as "nothing was substituted"; --checkpoint is the
+path that resolves model ids before anything is submitted.`,
 		Example: `  # Preview the price — spends nothing
   civitai generate "a cat wearing sunglasses" --dry-run
 
@@ -594,12 +606,20 @@ interpreted, so nothing in it is checked before you pay for it.`,
 	// the field entirely — so against an older deployment the flag is silently
 	// inert: exit 0, submitted, charged. Someone adopting it as a spend guard
 	// deserves to read that here rather than discover it from a bill.
+	//
+	// 🔴 AND IT MUST STATE THE --input COVERAGE LIMIT, for the same reason. #342
+	// measured the flag armed, silent and charged on a raw graph. The flag stays
+	// LIVE there — it keys off the estimate's reply, so it still refuses before
+	// any spend — but this CLI cannot say how much of an uninterpreted graph it
+	// covers, and a usage string silent about that sells a guarantee.
 	cmd.Flags().BoolVar(&o.failOnSubstitution, "fail-on-substitution", false,
 		"refuse to submit if the server REPORTS it substituted a different checkpoint for the one you asked for. "+
 			"Checked against the ESTIMATE, so nothing is spent when it refuses. Off by default: the server substitutes "+
 			"deliberately so that a script pinned to a retired version keeps working. "+
 			"NOT A GUARANTEE: a server that does not report substitutions makes this flag silently inert, so it "+
-			"cannot be relied on as a spend guard against an older deployment")
+			"cannot be relied on as a spend guard against an older deployment. "+
+			"With --input it stays live but its COVERAGE is unknown to this CLI: a raw graph is not interpreted, so a silent run means "+
+			"'nothing was reported', never 'nothing was substituted'")
 
 	// NOTE: no back-quotes in ANY usage string here — pflag's UnquoteUsage
 	// treats the first back-quoted span as the flag's VALUE NAME. Quoting a
@@ -691,8 +711,11 @@ func validateGenerateOpts(o *generateOpts) error {
 	if usingInput {
 		// Mutual exclusion, not a merge. Execution flags (--dry-run, --yes,
 		// --max-cost, --out-dir, --out-name, --timeout, --no-wait, --json, --force,
-		// --external-id) stay valid: they govern HOW the request is made and
-		// what happens to the result, and none of them writes to the graph.
+		// --external-id, --fail-on-substitution) stay valid: they govern HOW the
+		// request is made and what happens to the result, and none of them writes
+		// to the graph. --fail-on-substitution additionally draws a COVERAGE note
+		// on this path — see inputSubstitutionCoverageNote, and #342 for the
+		// refusal that was drafted here first and withdrawn.
 		if used := graphInputFlags(*o); len(used) > 0 {
 			return asUsageError(fmt.Errorf(
 				"--input cannot be combined with %s — --input sends the graph in the file exactly as written, so a flag that would also set graph content has no defined meaning against it. "+
@@ -1033,6 +1056,16 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// Printed BEFORE the uploads, so the caveat is visible even if a later
 		// step fails — and because it describes what the estimate below cannot
 		// tell you.
+		fmt.Fprintln(errw, ui.For(errw).Warn(note))
+	}
+
+	// 🔴 The --input/--fail-on-substitution coverage note (#342). It sits here,
+	// with the other pre-flight caveats, for the same reason they do: it must be
+	// on screen BEFORE the estimate a user is about to act on, and it must print
+	// even if a later step fails. It is unconditional on the two flags and never
+	// reads the graph — see inputSubstitutionCoverageNote for why that is what
+	// makes it wordable at all.
+	if note := inputSubstitutionCoverageNote(o); note != "" {
 		fmt.Fprintln(errw, ui.For(errw).Warn(note))
 	}
 

@@ -139,6 +139,41 @@ func TestGoldenSpendCopy(t *testing.T) {
 		assertGolden(t, "generate_flag_usage_timeout", f.Usage)
 	})
 
+	// 🔴 THE --input UNKNOWN-KEY WARNING, ADDED BY #343 — AND IT IS THE THIRD
+	// TIME THIS FILE'S HEADER HAS BEEN PROVED RIGHT. This surface was not pinned,
+	// and what it said was: "the server SILENTLY IGNORES keys it does not declare:
+	// an unrecognised key returns HTTP 200, prices the same, and simply has no
+	// effect". Measured on a credentialed run, `priority: high` drew that sentence
+	// and then priced at 28 with a `fixed → priority 20` component three lines
+	// below it, against 8 for `normal`. It is money copy — it tells the user what
+	// a key will and will not cost them — and nothing read it, so a false claim
+	// sat here through every green suite.
+	//
+	// It renders it from the FUNCTION rather than through a run so the pinned
+	// text is the copy itself, undiluted by the surrounding quote.
+	t.Run("generate_input_unknown_key_warning", func(t *testing.T) {
+		assertGolden(t, "generate_input_unknown_key_warning", unknownKeyWarning([]string{"priority"}))
+	})
+
+	// 🔴 THE --input/--fail-on-substitution COVERAGE NOTE, ADDED BY #342. This
+	// surface is the entire fix for that issue: the flag stays LIVE on the raw-graph
+	// path (a refusal was drafted and withdrawn — see the note's own comment), so
+	// what protects the user is no longer a behaviour but a SENTENCE. That makes
+	// pinning it the guard, not a nicety.
+	//
+	// The failure mode it closes is reassurance. "…so nothing can be substituted
+	// without telling you", or a confident "top-level model nodes ARE covered",
+	// each restores the false guarantee #342 is about while leaving every other
+	// sentence intact — the addition-shaped mutation item 28 records as having
+	// beaten two phrase lists.
+	t.Run("generate_input_fail_on_substitution_coverage_note", func(t *testing.T) {
+		note := inputSubstitutionCoverageNote(generateOpts{inputPath: "graph.json", failOnSubstitution: true})
+		if note == "" {
+			t.Fatal("CONTROL failure: both flags set rendered no coverage note, so there is no copy to pin")
+		}
+		assertGolden(t, "generate_input_fail_on_substitution_coverage_note", note)
+	})
+
 	// --- the interactive spend confirmation ---------------------------------
 	t.Run("generate_confirmation", func(t *testing.T) {
 		withStdinTTY(t, true)
