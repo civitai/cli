@@ -116,6 +116,11 @@ func TestGenerateDryRun_DoesNotEchoTheUncheckedPrompt(t *testing.T) {
 // This case is also what makes the absence assertions above meaningful: same
 // sentinel, same renderer stack, same buffers — found here, so a zero there is
 // a measurement rather than a harness wired to nothing.
+//
+// Honest labelling: this is an INVARIANT GUARD, not regression coverage. It is
+// green at 9862c1e as well as at HEAD, because #281 never broke this screen —
+// it pins that the fix for #281 does not. Mutation-verified: pointing
+// confirmGenerate at promptNotChecked turns it red with its own message.
 func TestGenerateConfirm_StillEchoesThePromptBeforeSpend(t *testing.T) {
 	withStdinTTY(t, true)
 	var s genSeams
@@ -148,6 +153,9 @@ func TestGenerateConfirm_StillEchoesThePromptBeforeSpend(t *testing.T) {
 // The `--input` branch never echoed a prompt (the CLI has not interpreted the
 // graph), so it must keep naming the file — the fix must not collapse the two
 // branches into one placeholder and lose which file was priced.
+//
+// Also an INVARIANT GUARD, green at 9862c1e and at HEAD. Mutation-verified:
+// replacing the Graph row with promptNotChecked turns it red here.
 func TestGenerateDryRun_InputBranchStillNamesTheFile(t *testing.T) {
 	withStdinTTY(t, true)
 	path := writeGraphFile(t, `{"workflow":"txt2img","prompt":"`+dryRunPromptSentinel+`"}`)
