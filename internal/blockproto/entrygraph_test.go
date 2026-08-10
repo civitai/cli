@@ -1,6 +1,7 @@
 package blockproto
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -842,13 +843,30 @@ func TestEntryGraphBudgetsAreGaps(t *testing.T) {
 			t.Fatalf("positive control failed: a 4 KiB entry must resolve completely, gaps %v", g.Gaps)
 		}
 		// 64 bytes: index.html (32) still reads, app.js (4096) does not — so the
-		// gap is the ENTRY being unreadable, not the root.
+		// gap is the ENTRY being skipped, not the root.
 		g := ResolveEntryGraph(dir, EntryGraphOptions{MaxFileBytes: 64})
 		if g.Complete {
 			t.Fatal("a file the resolver refused to read was reported as a complete graph")
 		}
-		if !strings.Contains(strings.Join(g.Gaps, "\n"), "could not read") {
-			t.Fatalf("gaps do not name the unread file: %v", g.Gaps)
+		joined := strings.Join(g.Gaps, "\n")
+		if !strings.Contains(joined, "did not read") || !strings.Contains(joined, "app.js") {
+			t.Fatalf("gaps do not name the skipped file: %v", g.Gaps)
+		}
+		// 🔴 THE SIZE CAP IS OUR OWN LIMIT, NOT A PROBLEM WITH THE FILE, and the
+		// wording and the RANK both have to say so. It used to report
+		// "could not read app.js … make it readable" — false advice about a
+		// perfectly readable file — and it was ranked gapUnreadable, so a limit
+		// WE impose outranked a genuine dangling reference in the capped
+		// advisory. That is the ranking hazard gapKind exists to close, in the
+		// one branch that had not been separated from it.
+		if strings.Contains(joined, "make it readable") {
+			t.Errorf("the size-cap gap gives advice about a file that is perfectly readable: %v", g.Gaps)
+		}
+		for i, k := range g.gapKinds {
+			if strings.Contains(g.Gaps[i], "app.js") && k != gapBudget {
+				t.Errorf("the size-cap gap is ranked %v, want gapBudget — a limit this check imposes must "+
+					"never outrank a real defect in the author's project: %s", k, g.Gaps[i])
+			}
 		}
 	})
 
@@ -1097,32 +1115,95 @@ func TestGapsAreRankedMostLikelyCauseFirst(t *testing.T) {
 }
 
 // TestGapRankingIsStableWithinAKind keeps the ranking from scrambling the order
-// an author reads their own file in. Two dangling references must stay in
-// document order — a sort that is merely "grouped" would make the first thing
-// they see depend on nothing they can predict.
+// an author reads their own file in. Gaps of one kind must stay in document
+// order — a sort that is merely "grouped" would make the first thing they see
+// depend on nothing they can predict.
+//
+// 🔴 STABILITY IS LOAD-BEARING, NOT TIDINESS: it decides WHICH THREE gaps the
+// capped advisory shows, so `TestTheActualCauseSurvivesTheCap`'s whole argument —
+// that the withheld gaps are the least likely — rests on it.
+//
+// 🔴 AND THE FIRST VERSION OF THIS GUARD COULD NOT FAIL. It used a 2-gap
+// fixture, and Go's `sort.Slice` switches to INSERTION SORT below n=13, which is
+// stable by accident. Measured: `sort.SliceStable` → `sort.Slice` reddened **0
+// subtests across the entire suite**. The fixture is now deliberately larger
+// than that threshold — that is the only reason the mutant dies — and the
+// constant is named so nobody "simplifies" the fixture back under it.
 func TestGapRankingIsStableWithinAKind(t *testing.T) {
-	dir := writeTree(t, []gfile{
-		{"index.html", `<!doctype html>` +
-			`<script src="./first-gone.js"></script>` +
-			`<script src="./second-gone.js"></script>`},
-	})
+	// 🔴 TWO PROPERTIES THE FIXTURE MUST HAVE, AND MISSING EITHER MAKES THE
+	// MUTANT SURVIVE. Both were measured, not reasoned about.
+	//
+	//  1. MORE THAN ~12 ELEMENTS. Go's `sort.Slice` runs insertion sort below
+	//     that, which is stable by accident. The first version used 2, and the
+	//     `sort.SliceStable` -> `sort.Slice` mutant reddened 0 subtests.
+	//  2. MIXED KINDS. With one kind the comparator is all-equal, and pdqsort
+	//     detects an all-equal partition and leaves it alone — so widening to 40
+	//     of a single kind ALSO reddened 0. The sort has to actually move
+	//     something before instability can show.
+	//
+	// So: 30 gaps alternating between two kinds. After ranking, the 15 dangling
+	// ones come first and the 15 unresolved ones follow, and within each run the
+	// author's document order must survive.
+	const pairs = 15
+
+	var html strings.Builder
+	html.WriteString(`<!doctype html>`)
+	for i := 0; i < pairs; i++ {
+		// Zero-padded so lexical order matches document order — otherwise a
+		// failure is ambiguous between "unstable" and "sorted by name".
+		fmt.Fprintf(&html, `<script src="./gone-%03d.js"></script>`, 2*i)
+		fmt.Fprintf(&html, `<script src="https://cdn.example.com/off-%03d.js"></script>`, 2*i+1)
+	}
+	dir := writeTree(t, []gfile{{"index.html", html.String()}})
 	g := ResolveEntryGraph(dir, EntryGraphOptions{})
-	first, second := -1, -1
+
+	if len(g.Gaps) < 2*pairs {
+		t.Fatalf("fixture produced %d gaps, want >= %d — below Go's insertion-sort threshold an unstable "+
+			"sort passes by accident and this test proves nothing", len(g.Gaps), 2*pairs)
+	}
+	// Positive control on the SHAPE: both kinds must really be present, or the
+	// comparator is all-equal and pdqsort never moves anything — the second way
+	// this guard measured green while testing nothing.
+	kinds := map[gapKind]int{}
+	for _, k := range g.gapKinds {
+		kinds[k]++
+	}
+	if len(kinds) < 2 {
+		t.Fatalf("the fixture produced only one gap kind (%v); with an all-equal comparator pdqsort leaves "+
+			"the slice alone, so an unstable sort is indistinguishable from a stable one", kinds)
+	}
+
+	// Within each KIND, the numbers must ascend — i.e. document order survived.
+	last := map[gapKind]int{}
 	for i, s := range g.Gaps {
-		if strings.Contains(s, "first-gone.js") {
-			first = i
+		n := gapNumberIn(t, s)
+		k := g.gapKinds[i]
+		if prev, seen := last[k]; seen && n <= prev {
+			t.Fatalf("gaps of kind %v are out of document order (%d after %d) — the sort is not STABLE, so "+
+				"WHICH THREE the capped advisory shows depends on nothing the author can predict:\n%v",
+				k, n, prev, g.Gaps)
 		}
-		if strings.Contains(s, "second-gone.js") {
-			second = i
+		last[k] = n
+	}
+}
+
+// gapNumberIn pulls the NNN out of a `gone-NNN.js` / `off-NNN.js` token, so the
+// assertion does not depend on the gap's wording.
+func gapNumberIn(t *testing.T, gap string) int {
+	t.Helper()
+	for _, tok := range strings.FieldsFunc(gap, func(r rune) bool {
+		return r == ' ' || r == '"' || r == ',' || r == '/'
+	}) {
+		var n int
+		if _, err := fmt.Sscanf(tok, "gone-%03d.js", &n); err == nil {
+			return n
+		}
+		if _, err := fmt.Sscanf(tok, "off-%03d.js", &n); err == nil {
+			return n
 		}
 	}
-	if first < 0 || second < 0 {
-		t.Fatalf("fixture did not produce both gaps: %v", g.Gaps)
-	}
-	if first > second {
-		t.Errorf("two gaps of the same kind were reordered (%d > %d); the sort must be STABLE so the report "+
-			"follows the author's own file:\n%v", first, second, g.Gaps)
-	}
+	t.Fatalf("could not read a file number out of gap %q", gap)
+	return -1
 }
 
 // TestGapsCarryNoAbsolutePaths is the general form of the leak that shipped.
@@ -1138,10 +1219,19 @@ func TestGapsCarryNoAbsolutePaths(t *testing.T) {
 	trees := map[string][]gfile{
 		"no index.html": {{"package.json", `{}`}},
 		"dangling ref":  {{"index.html", `<!doctype html><script src="./gone.js"></script>`}},
-		"unreadable/oversize": {
+		"over the size cap (a BUDGET, not a defect)": {
 			{"index.html", `<!doctype html><script type="module" src="./e.js"></script>`},
 			{"e.js", "import './big.css';\n"},
 			{"big.css", strings.Repeat("/*pad*/\n", 300)},
+		},
+		// 🔴 THE ONLY ROW THAT REACHES readableErr. The size-cap row above
+		// returns a plain fmt.Errorf, NOT a *fs.PathError, so it never enters
+		// the branch this test exists to guard — it was labelled
+		// "unreadable/oversize" and tested the wrong half. A chmod-000 file is
+		// the shape that produces a *fs.PathError carrying an absolute path.
+		"genuinely unreadable": {
+			{"index.html", `<!doctype html><script type="module" src="./locked.js"></script>`},
+			{"locked.js", "export const x = 1;\n"},
 		},
 		"off-project": {{"index.html", `<!doctype html><script src="../../outside.js"></script>`}},
 	}
@@ -1150,8 +1240,24 @@ func TestGapsCarryNoAbsolutePaths(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			dir := writeTree(t, files)
 			opts := EntryGraphOptions{}
-			if name == "unreadable/oversize" {
-				opts.MaxFileBytes = 64 // force the read to fail on big.css
+			switch name {
+			case "over the size cap (a BUDGET, not a defect)":
+				opts.MaxFileBytes = 64 // force the read to be DECLINED on big.css
+			case "genuinely unreadable":
+				if os.Geteuid() == 0 {
+					t.Skip("running as root: mode 0000 does not deny, so this row cannot fail a read")
+				}
+				locked := filepath.Join(dir, "locked.js")
+				if err := os.Chmod(locked, 0o000); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
+				// Positive control on the FIXTURE: an unreadable row that is
+				// still readable proves nothing, which is how the size-cap row
+				// passed while exercising a different branch entirely.
+				if _, err := os.ReadFile(locked); err == nil {
+					t.Skip("this filesystem ignores mode 0000")
+				}
 			}
 			g := ResolveEntryGraph(dir, opts)
 			if g.Complete {

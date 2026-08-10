@@ -1119,6 +1119,26 @@ neither one's.
         ("larger than this check reads" / "which this check did not follow") and
         were reworded to say what it means for the author: the part of their
         project that was not examined.
+        🔴 **AND ONE BRANCH CONFLATED OUR OWN LIMIT WITH A DEFECT IN THE
+        AUTHOR'S PROJECT — WRONG IN THE WORDING *AND* IN THE RANK.** `readCapped`
+        returns the same error shape for a genuine read failure and for the
+        per-file SIZE CAP, so an over-cap file produced `could not read big.js
+        (…) — make it readable`: false advice about a perfectly readable file,
+        and ranked `gapUnreadable`, so a limit WE impose outranked a real
+        dangling reference in the capped list — the exact ranking hazard
+        `gapKind` exists to close, in the one branch that had not been separated
+        from it. `errOverCap` / `errIsDirectory` are now sentinels (never
+        message-text matching, which would be a spelled guard) and `readGapFor`
+        sorts them to `gapBudget` with "did not read … so anything it loads was
+        not examined". Pinned in both packages, and the two rows are
+        deliberately separate so neither can drift into the other.
+        🔴 **The leak guard's `unreadable` row was testing the wrong half too**:
+        it forced `MaxFileBytes: 64`, which returns a plain `fmt.Errorf` and so
+        never reaches `readableErr`'s `*fs.PathError` branch at all. Both
+        packages now carry a **chmod-000** row for that branch — with a
+        `Geteuid() == 0` skip and a positive control that the file really is
+        unreadable, because root bypasses mode bits and would silently turn the
+        row into a third different test.
       - **Layout is the PRINTER's, not the message's** — the inverse of item 23.
         🔴 **Quote the two lengths and say which is which**: PRE-fix, `app
         validate` printed the advisory as ONE **1847**-rune line (the message
@@ -1144,11 +1164,24 @@ neither one's.
         run printed a **412**-rune unwrapped error AND a wrapped warning — two
         layouts in a single run, on the highest-traffic path, which made this
         item's own "one place fixes every long message" false.
-        `TestAppSubmitWrapsItsErrorsToo` covers it. **Headers are deliberately
-        NOT wrapped**: `✗ N validation error(s) in <dir>:` interpolates the
-        directory the user typed, so its width is theirs to control and wrapping
-        would break a path they may need to copy — measured, it is the only
-        >79-rune line either command still emits, at 136 runes on a deep path.
+        `TestAppSubmitWrapsItsErrorsToo` covers it.
+        🔴 **NON-FINDING LINES STAY UNWRAPPED, AND AN EARLIER REVISION OF THIS
+        BULLET MISATTRIBUTED WHY.** It claimed one exempt header, "the only
+        >79-rune line either command still emits", justified by its
+        interpolating the user's directory. Re-measured, there are THREE lines
+        and only one is about a path: `app validate`'s header at **130** runes
+        DOES interpolate `<dir>` (so its width is the user's to control, and
+        wrapping would break a path they may need to copy); `app submit`'s
+        header is a **CONSTANT 82** runes with no path in it at all
+        (byte-identical at a short and a deep path — it is simply a long
+        sentence); and `Error: refusing to submit without --yes …` is **184**
+        runes and is not a header at all, because `cmd/civitai/main.go` prints
+        `Error: %v` for every error returned by every command. Wrapping that
+        last one is a deliberate NON-change: it is a CLI-wide error path rather
+        than a validation printer, so it would alter every command's stderr at
+        once, and item 24 pins error-message preservation byte-for-byte across
+        it. Worth doing as its own change, measured against that contract —
+        not as a side effect of this one.
       - 🔴 **THE WRAP ITSELF REGRESSED PASTEABLE REMEDY TEXT, AND THAT NEEDED A
         SECOND FIX.** A greedy wrap split `"pnpm run build"` — a value the
         lockfile message tells the author to put in their manifest — into
@@ -1181,8 +1214,12 @@ neither one's.
         gaps, so even appending `readyAckGapReport(graph.Gaps)` to
         `readyAckAdviceUnwired` on purpose reddens **0** subtests — the appended
         text is empty. The invariant it rests on is now asserted where it can
-        actually break, in `blockproto`'s completeness corpus (`Complete` iff no
-        gaps, plus the two parallel gap slices being the same length). And
+        actually break — the `Complete == (len(Gaps) == 0)` assertion inside
+        `blockproto`'s `TestEntryGraphCompleteness` corpus loop, plus the two
+        parallel gap slices being the same length. (It is an assertion in that
+        loop, NOT a test of its own: an earlier revision cited a
+        `TestIncompleteIsExactlyHavingGaps` that does not exist anywhere in the
+        repo. Cite what you can grep.) And
         `TestGapReportCannotSatisfyAnotherTiersStrengthAssertion` is
         FIXTURE-SCOPED, not structural: gaps interpolate author-chosen
         filenames, so a project referencing `./orphan.js` genuinely produces a

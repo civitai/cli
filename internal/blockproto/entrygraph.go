@@ -450,7 +450,7 @@ func resolveEntryGraph(dir string, opts EntryGraphOptions) *EntryGraph {
 		}
 		body, err := readCapped(file, opts.MaxFileBytes)
 		if err != nil {
-			g.gap(gapUnreadable, "could not read %s (%s) — make it readable, or this check cannot tell what it contains", relTo(dir, file), readableErr(dir, err))
+			g.gap(readGapFor(dir, file, err))
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(file))
@@ -573,18 +573,45 @@ func relTo(root, p string) string {
 	return filepath.ToSlash(rel)
 }
 
+// errOverCap and errIsDirectory mark the two readCapped failures that are NOT
+// the file's fault.
+//
+// 🔴 THEY ARE SENTINELS BECAUSE THE CALLER MUST RANK THEM DIFFERENTLY, AND
+// TELLING THEM APART BY MESSAGE TEXT WOULD BE A SPELLED GUARD. `errOverCap` is a
+// limit THIS CHECK imposes: the file is perfectly readable and a human opening
+// it sees nothing wrong. Reported as an unreadable file it both gave false
+// advice ("make it readable") and outranked genuine gaps in the capped advisory
+// — the exact ranking hazard gapKind exists to close, in the one branch that had
+// not been separated.
+var (
+	errOverCap     = errors.New("this check does not read files that large")
+	errIsDirectory = errors.New("it is a directory, not a file")
+)
+
 func readCapped(path string, max int64) ([]byte, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
 	if info.IsDir() {
-		return nil, fmt.Errorf("%s is a directory", filepath.Base(path))
+		return nil, errIsDirectory
 	}
 	if info.Size() > max {
-		return nil, fmt.Errorf("file is larger than %d bytes", max)
+		return nil, fmt.Errorf("%w (over %d bytes)", errOverCap, max)
 	}
 	return os.ReadFile(path)
+}
+
+// readGapFor classifies a readCapped failure into the kind and the sentence the
+// author should read. Our own limits are budgets and say so; anything else is a
+// real problem with the file and names an edit.
+func readGapFor(root, file string, err error) (gapKind, string) {
+	rel := relTo(root, file)
+	if errors.Is(err, errOverCap) || errors.Is(err, errIsDirectory) {
+		return gapBudget, fmt.Sprintf("did not read %s (%s), so anything it loads was not examined", rel, err)
+	}
+	return gapUnreadable, fmt.Sprintf("could not read %s (%s) — make it readable, or this check cannot tell "+
+		"what it contains", rel, readableErr(root, err))
 }
 
 // entryModuleExts are the extensions whose imports are followed. A `.css` a

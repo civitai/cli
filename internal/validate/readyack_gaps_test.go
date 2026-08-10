@@ -67,6 +67,17 @@ func assertNoLongTokens(t *testing.T, s string) {
 	}
 }
 
+// requireNonRoot skips a case that depends on a permission actually denying
+// something. Root bypasses mode bits, so such a fixture silently becomes a
+// different test rather than failing — the shape this file already got wrong
+// once with the size cap.
+func requireNonRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: mode 0000 does not deny, so this row cannot exercise a read failure")
+	}
+}
+
 // wantGapReport asserts the report names every literal in want, and fails
 // naming the ones it does not.
 func wantGapReport(t *testing.T, report string, want ...string) {
@@ -203,9 +214,38 @@ func TestEveryGapKindReachesTheAuthor(t *testing.T) {
 	})
 
 	t.Run("a file the resolver could not read", func(t *testing.T) {
-		// A stylesheet over the per-file size cap. It has to be a NON-source
-		// extension: the whole-tree scan would hit the same cap on a `.js` and
-		// report UNOBSERVABLE, which gates both tiers and emits nothing at all.
+		// 🔴 A CHMOD-000 FILE, NOT AN OVER-CAP ONE. This row used to force the
+		// per-file size cap, which is OUR limit rather than a problem with the
+		// file — so it never reached `readableErr`'s `*fs.PathError` branch and
+		// the row did not test what its name said. It is now genuinely
+		// unreadable. It has to be a NON-source extension: the whole-tree scan
+		// would fail on a `.js` too and report UNOBSERVABLE, which gates both
+		// tiers and emits nothing at all.
+		requireNonRoot(t)
+		dir := ackProject(t, ackManifest(false), map[string]string{
+			"index.html": `<!doctype html><script type="module" src="./main.js"></script>`,
+			"main.js":    `import './locked.css';` + "\n",
+			"locked.css": ".a{color:red}\n",
+		})
+		locked := filepath.Join(dir, "locked.css")
+		if err := os.Chmod(locked, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(locked, 0o600) })
+		// Positive control on the FIXTURE, not the code: if the file is still
+		// readable the row proves nothing, and that is exactly how the previous
+		// version passed while exercising a different branch.
+		if _, err := os.ReadFile(locked); err == nil {
+			t.Skip("this filesystem ignores mode 0000; the row cannot exercise a real read failure")
+		}
+		wantGapReport(t, gapReportFor(t, dir), "could not read", "locked.css", "make it readable")
+	})
+
+	t.Run("a file the resolver DECLINED to read is a budget, not a defect", func(t *testing.T) {
+		// The mirror of the row above, and the reason they are separate: the
+		// per-file size cap is a limit this check imposes. Reporting it as an
+		// unreadable file gave false advice about a perfectly readable file AND
+		// outranked genuine gaps in the capped list.
 		dir := ackProject(t, ackManifest(false), map[string]string{
 			"index.html": `<!doctype html><script type="module" src="./main.js"></script>`,
 			"main.js":    `import './huge.css';` + "\n",
@@ -214,7 +254,11 @@ func TestEveryGapKindReachesTheAuthor(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "huge.css"), []byte(big), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		wantGapReport(t, gapReportFor(t, dir), "could not read", "huge.css")
+		report := gapReportFor(t, dir)
+		wantGapReport(t, report, "did not read", "huge.css", "not examined")
+		if strings.Contains(report, "make it readable") {
+			t.Errorf("the size-cap gap tells the author to fix a file that is perfectly readable:\n%s", report)
+		}
 	})
 
 	t.Run("no index.html at the project root", func(t *testing.T) {
@@ -454,7 +498,8 @@ func TestGapReportIsOneLine(t *testing.T) {
 // `readyAckGapReport(graph.Gaps)` to `readyAckAdviceUnwired` on purpose reddens
 // **0** subtests — the appended text is empty. It is kept because the invariant
 // it rests on is a property of `blockproto` that this package does not own (see
-// `TestIncompleteIsExactlyHavingGaps` there, which CAN fail), and because a
+// the `Complete == (len(Gaps) == 0)` assertion inside blockproto's
+// `TestEntryGraphCompleteness` corpus loop, which CAN fail), and because a
 // future tier that built its message from a non-empty source would trip it. Read
 // its green as "the invariant still holds", never as "the tiers were tested".
 func TestGapReportDoesNotLeakIntoTheStrongTiers(t *testing.T) {

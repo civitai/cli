@@ -42,11 +42,31 @@ func lockfileMismatch(t *testing.T) string {
 // findingLines returns the wrapped FINDING lines from a command's stderr — the
 // bulleted item plus its hanging-indent continuations.
 //
-// Header lines are excluded deliberately, and the reason is a real boundary
-// rather than convenience: a header interpolates THE DIRECTORY THE USER TYPED
-// (`✗ 1 validation error(s) in <dir>:`), so its width is the user's to control,
-// and wrapping it would break a path they may need to copy. Measured: that
-// header is the only >79-rune line either command emits at HEAD.
+// 🔴 NON-FINDING LINES ARE OUT OF SCOPE, AND THE EARLIER JUSTIFICATION FOR THAT
+// WAS MISATTRIBUTED — corrected here from measurement rather than from memory.
+// THREE distinct lines can exceed the budget, and only ONE is about a path:
+//
+//	130 runes  `app validate`: ✗ N validation error(s) in <dir>:
+//	           DOES interpolate the directory the user typed, so its width is
+//	           theirs to control and wrapping would break a path they may need
+//	           to copy. Measured at a deep fixture path.
+//	 82 runes  `app submit`: ✗ validation failed (N error(s)) — fix before
+//	           submitting, or pass --skip-validate:
+//	           a CONSTANT with NO path in it — measured byte-identical at a
+//	           short and a deep path. It is over budget simply because it is a
+//	           long sentence.
+//	184 runes  `Error: refusing to submit without --yes …`
+//	           not a header at all: `cmd/civitai/main.go` prints `Error: %v` for
+//	           EVERY error returned by EVERY command.
+//
+// Wrapping that last one is a deliberate NON-change here. It is a CLI-wide error
+// path rather than a validation printer, so it would alter every command's
+// stderr at once, and AGENTS.md item 24 pins error-message preservation
+// byte-for-byte across it. If it is worth wrapping, it is worth doing as its own
+// change measured against that contract.
+//
+// So this helper scopes the width assertion to FINDINGS, which is what
+// validate_print.go actually owns.
 func findingLines(stderr string) []string {
 	var out []string
 	inItem := false
