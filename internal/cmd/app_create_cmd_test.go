@@ -19,7 +19,14 @@ func simulateInstall(t *testing.T, dir string) {
 	if _, err := os.Stat(filepath.Join(dir, "package.json")); err != nil {
 		return // static template: no install step, no lockfile
 	}
-	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte("{}\n"), 0o600); err != nil {
+	// The body must be what `npm install` WRITES. It used to be `{}`, and that was
+	// wrong about the platform in the direction that hid issue #255: measured on
+	// npm 11.17.0, `npm ci` over `{}` exits 1 on any project with a dependency
+	// (the sync check — "Missing: <pkg> from lock file", NOT the empty file's
+	// "lockfileVersion >= 1" EUSAGE), so validate rejects it too and a `{}`
+	// fixture would be standing in for an install that did not happen.
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"),
+		[]byte(`{"name":"scaffold","version":"0.1.0","lockfileVersion":3,"requires":true,"packages":{}}`+"\n"), 0o600); err != nil {
 		t.Fatalf("write package-lock.json: %v", err)
 	}
 }
