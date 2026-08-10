@@ -9,9 +9,12 @@ whose five issues produced 9 merged PRs. Tracked as clawgate task **156**.
 
 ## State now
 
-- **`main` @ `f9dcc5a`.** All six issues fixed, six PRs merged, base clone synced (ff-only).
+- **`main` @ `9862c1e`.** All six issues fixed, **seven** PRs merged, base clone synced (ff-only).
 - **Clawgate task 156:** `complete`.
-- **No open PRs from this work.** Four follow-ups filed and open: #283, #284, #285, #286.
+- **No open PRs from this work.** Follow-ups open: **#286** and **#291**. 🔴 **#283, #284 and
+  #285 were all implemented by #294 and should be CLOSED** — #294's body referenced the #260
+  umbrella rather than the three issue numbers, so GitHub never auto-closed them. Verified
+  against the merged binary, not the diff (evidence in the follow-ups table below).
 
 ### DONE — 6 PRs merged
 
@@ -24,6 +27,7 @@ whose five issues produced 9 merged PRs. Tracked as clawgate task **156**.
 | #265 | `59724d3` | #256 | a nonexistent project path is a usage error (exit 2) |
 | #267 | `01c486e` | #259 | refuse to mangle a non-ASCII name into a blockId, add `--slug`, echo the derived id |
 | #287 | `f9dcc5a` | — | `AGENTS.md` described a gate that does not exist (see below) |
+| #294 | `9862c1e` | #260 residuals (= #283, #284, #285) | a schema `pattern` error names its rule and an example; a bad manifest names its line:column; a busy dir names its remedy |
 
 **AGENTS.md gained items 26 and 27** (path classification; blockId derivation). Item 25 was
 taken by #275 (listing media) mid-flight — see the renumbering note below.
@@ -191,10 +195,11 @@ moves while you work.
 
 | issue | what | note |
 |---|---|---|
-| #283 | JSON parse errors carry no line/column | `encoding/json` already carries the offset; cheap |
-| #284 | schema errors raw where semantic ones are excellent | 🔴 remedy must come from the **producer** — a printer heuristic regenerates the #225 bug (item 23) |
-| #285 | `<dir> is not empty` carries no remedy | message-only; explicitly **not** asking for `--force` |
+| ~~#283~~ | JSON parse errors carry no line/column | ✅ **DONE in #294** — `at line 4, column 1: …`. Rune-correct: three fixtures with equal rune counts but 16/17/21 bytes on the defect line all report column 16, and a 17-rune fixture reports 17. **Close it.** |
+| ~~#284~~ | schema errors raw where semantic ones are excellent | ✅ **DONE in #294**, and it took the producer route this table asked for — the gloss table is keyed on the **regex source**, not the field path, and fails soft (an unglossed pattern emits today's terse message). **Close it.** |
+| ~~#285~~ | `<dir> is not empty` carries no remedy | ✅ **DONE in #294**, message-only, no `--force` — the recommendation was explicitly *not* to add one. **Close it.** |
 | #286 | small-but-large-dimension icon vs the server's **decoded** 2 MiB cap | reachability **unmeasured**; do **not** close it with a local dimension check (item 25) |
+| #291 | a name >40 chars silently truncates to a **colliding** blockId | Follow-up to #267, found by an adversarial review of it and reproduced independently. Two names differing from char 44 mint the *same* permanent id at rc 0. The asymmetry is what makes it a bug: an over-length `--slug` is refused rc 2 while an over-length **derived** slug truncates silently — and the derived path is the one a first-time author walks. Item 27's residual list says "three classes"; there are four. |
 
 **Closed as decisions, not as work:**
 
@@ -236,13 +241,26 @@ ceiling. That is a design task, not a prompt.
 
 ## Next, ranked
 
-1. **#283 + #285 as one small PR** — both are message-quality fixes on the two commands a
-   first-time author hits first, and they share a shape (an error that names the problem and stops).
-2. **Measure whether #286 is reachable** before anyone designs a fix — construct a
+1. ~~**#283 + #285 as one small PR**~~ — **DONE**, and #284 came with them: PR #294 (`9862c1e`)
+   shipped all three. Close the three issues; see the follow-ups table.
+2. 🔴 **`AGENTS.md` is 201 bytes from its hard ceiling** — 67,799 of 68,000
+   (`agents_size_test.go`). **The next person who needs an item cannot add one**, and #294 hit
+   this for real: it wrote an item 28, found it did not fit, and correctly refused to fake an
+   eviction (the playbook requires pinning a `sha256` at `agentsSplitBase`, where the new item
+   never existed, so claiming a verbatim move would be false). Its rationale lives in code doc
+   comments instead. Unblocking means deliberately evicting item 19 or 10 (~7.8 kB each, both
+   at the split base, so the playbook works) — a change on its own, never folded into an
+   unrelated PR.
+3. 🔴 **#267 shipped a breaking change under a `fix:` subject with no `!`.** It refuses
+   non-ASCII names that previously scaffolded. `.goreleaser.yaml` filters release notes on
+   subjects, so the `BREAKING CHANGE:` footer in the commit body will **not** surface. The
+   commit is squashed and cannot be amended — **whoever cuts the next tag must add it to the
+   GitHub Release description by hand.** Recorded here because it currently exists nowhere else.
+4. **Measure whether #286 is reachable** before anyone designs a fix — construct a
    large-dimension, low-byte PNG and check its decoded size. ~20 minutes, and it decides whether
    the issue is real.
-3. **A nightly mutation-testing job**, scoped to one package as an experiment. The nine guards
+5. **A nightly mutation-testing job**, scoped to one package as an experiment. The nine guards
    above were caught only by full audit rounds, which is not a sustainable standing defence. The
    `bump-scaffold-pins.yml` daily job is the existing pattern. Measure signal-to-noise on one
    package before widening — these guards are intricate and a generic tool will be noisy.
-4. **Dogfood run 3, credentialed**, per the section above. Largest untested surface in the product.
+6. **Dogfood run 3, credentialed**, per the section above. Largest untested surface in the product.
