@@ -5,7 +5,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: all build install test vet lint fmt clean tidy ci mutate
+.PHONY: all build install test vet lint fmt clean tidy ci ci-shallow mutate
 
 all: build
 
@@ -40,6 +40,18 @@ tidy:
 
 # Mirror CI locally.
 ci: tidy vet test build
+	@echo
+	@echo "make ci passed — note this is a FULL clone. CI checks out at depth 1,"
+	@echo "where tests that read git history cannot resolve their base blobs."
+	@echo "Before you push a change that touches those, run: make ci-shallow"
+
+# Run the test suite in a DEPTH-1 clone of the current branch, which is what
+# `actions/checkout@v4` gives CI. Deliberately NOT a prerequisite of `ci`: it
+# costs a clone plus an uncached test run, and most changes do not need it.
+# Committed state only — uncommitted work is invisible to it, and the target
+# says so on stdout. See scripts/ci-shallow.sh for the controls it asserts.
+ci-shallow:
+	./scripts/ci-shallow.sh
 
 # Mutation-test ONE package and print a report corrected for gremlins'
 # non-compiling-mutant misclassification. Local investigation tool only:
