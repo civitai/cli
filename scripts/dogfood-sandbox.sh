@@ -52,32 +52,29 @@ DEFAULT_PER_CALL_MAX_COST=100
 DEFAULT_TOTAL_SPEND_CAP=2000
 DEFAULT_MAX_GENERATE_SUBMITS=20
 DEFAULT_MAX_APP_SUBMITS=3
+# A listing change on a LIVE listing goes back to moderator review, so it costs
+# human attention exactly as a submit does and is capped for the same reason.
+DEFAULT_MAX_LISTING_MUTATIONS=10
+# Seconds to wait before re-sampling when a submit reports a zero delta.
+DEFAULT_METER_SETTLE_SECONDS=5
+# Require `calibrate` (one deliberate, operator-watched generation) before the
+# agent may spend, so the meter's core assumption is measured, not assumed.
+DEFAULT_REQUIRE_CALIBRATION=1
+# --no-wait returns before the charge settles; off unless calibration showed the
+# balance moves by the time the command returns.
+DEFAULT_ALLOW_NO_WAIT=0
 DEFAULT_SLUG_PREFIX=""
 DEFAULT_BASE_URL="https://civitai.com"
 
-# ---------------------------------------------------------------------------
-# Closed vocabularies. An unrecognised command is DENIED, not passed through:
-# a new subcommand may spend or mutate, and the gate cannot know that it does
-# not.
-# ---------------------------------------------------------------------------
-TOPLEVEL_CMDS="app articles buzz collections completion creators download generate help images login model-versions models tags upgrade users version whoami workflows"
-APP_SUBCMDS="create init validate submit withdraw status list view pull metrics listing dev-token dev-tunnel"
-LISTING_SUBCMDS="status set-icon set-cover add-screenshot rm-screenshot reorder"
-WORKFLOWS_SUBCMDS="list get cancel"
-
-# Root persistent flags. All BOOLEAN — Cobra strips them anywhere they appear
-# and they never consume the following token.
-ROOT_BOOL_FLAGS="--color --no-color --no-update-check --help -h --version -v"
-
-# Boolean flags of the gated commands. Used to decide whether a `--help` is a
-# real help request or the VALUE of a preceding value-taking flag.
-CMD_BOOL_FLAGS="--yes -y --dry-run --print-input --json --force --no-wait --no-download --fail-on-substitution --package-only --skip-validate --strict --no-browser --package-only"
-
-# Flags that CONSUME the next token, per command path.
-VALUE_FLAGS_GENERATE="--checkpoint --lora --image --input --negative-prompt --aspect-ratio --quantity --out-dir --timeout --max-cost --external-id --ecosystem"
-VALUE_FLAGS_APP_SUBMIT="-o --out"
-VALUE_FLAGS_APP_LISTING="--slug --dir --caption --changelog"
-VALUE_FLAGS_APP_WITHDRAW="--id"
+# 🔴 THE COMMAND AND FLAG VOCABULARIES THAT USED TO LIVE HERE ARE GONE ON
+# PURPOSE. This file previously carried its own tables of top-level commands,
+# app/listing/workflows subcommands, root persistent bools, per-command
+# boolean flags and per-command value-taking flags — i.e. a second, hand-written
+# model of pflag. That model disagreed with the real parser three times, each
+# disagreement letting a real spend or mutation through. internal/dogfoodguard
+# now answers every one of those questions from the actual cobra tree. Do not
+# reintroduce a table here: if the gate needs to know something about an argv,
+# teach the classifier to report it.
 
 err()  { printf 'dogfood-sandbox: %s\n' "$*" >&2; }
 die()  { err "$*"; exit 1; }
@@ -85,12 +82,6 @@ note() { printf '%s\n' "$*"; }
 
 SANDBOX_TAG="SANDBOX POLICY"
 now_iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-
-in_list() {
-	local needle="$1" hay="$2" x
-	for x in ${hay}; do [ "${x}" = "${needle}" ] && return 0; done
-	return 1
-}
 
 # ---------------------------------------------------------------------------
 # Balance parsing
@@ -164,10 +155,13 @@ load_policy() {
 	# 🔴 UNSET FIRST. Sourcing does not clear a key the file no longer defines,
 	# so a value left over from an earlier load masked a deleted key and the
 	# validation below passed on a policy that was missing one.
-	unset PER_CALL_MAX_COST TOTAL_SPEND_CAP MAX_GENERATE_SUBMITS MAX_APP_SUBMITS SLUG_PREFIX BASE_URL
+	unset PER_CALL_MAX_COST TOTAL_SPEND_CAP MAX_GENERATE_SUBMITS MAX_APP_SUBMITS \
+	      MAX_LISTING_MUTATIONS METER_SETTLE_SECONDS REQUIRE_CALIBRATION ALLOW_NO_WAIT \
+	      SLUG_PREFIX BASE_URL
 	# shellcheck disable=SC1090
 	. "${f}" || { POLICY_ERROR="policy file ${f} could not be read"; return 1; }
-	for k in PER_CALL_MAX_COST TOTAL_SPEND_CAP MAX_GENERATE_SUBMITS MAX_APP_SUBMITS; do
+	for k in PER_CALL_MAX_COST TOTAL_SPEND_CAP MAX_GENERATE_SUBMITS MAX_APP_SUBMITS \
+	         MAX_LISTING_MUTATIONS METER_SETTLE_SECONDS REQUIRE_CALIBRATION ALLOW_NO_WAIT; do
 		eval "v=\${${k}:-}"
 		case "${v}" in
 			''|*[!0-9]*)
@@ -181,19 +175,33 @@ load_policy() {
 	return 0
 }
 
-# A ledger counter. A missing file is 0; a MALFORMED one is an error, never 0.
+# A ledger counter.
+#
+# 🔴 MISSING AND EMPTY ARE BOTH MALFORMED, NEVER ZERO. `init` creates every
+# counter, so an absent or emptied file means the ledger has been truncated —
+# and reading that as 0 silently restarts every cap. Measured on the previous
+# version: with the counters emptied, a submit was allowed with the meter and
+# the submit count both back at 0.
 read_scalar() {
 	local f="${ROOT}/ledger/$1" v
-	[ -f "${f}" ] || { printf '0'; return 0; }
-	v=$(tr -d ' \n\r\t' < "${f}")
-	[ -n "${v}" ] || { printf '0'; return 0; }
+	[ -f "${f}" ] || return 1
+	v=$(tr -d ' \n\r\t' < "${f}" 2>/dev/null) || return 1
 	case "${v}" in
 		''|*[!0-9]*) return 1 ;;
 	esac
 	printf '%s' "${v}"
 }
 
-write_scalar() { printf '%s\n' "$2" > "${ROOT}/ledger/$1"; }
+# 🔴 A WRITE THAT FAILS MUST NOT LOOK LIKE A WRITE THAT WORKED. With the
+# counter files unwritable the old version bumped nothing and allowed submit
+# after submit. Every caller treats a non-zero return as fatal.
+write_scalar() {
+	local f="${ROOT}/ledger/$1" v="$2" back
+	printf '%s\n' "${v}" > "${f}" 2>/dev/null || return 1
+	back=$(tr -d ' \n\r\t' < "${f}" 2>/dev/null) || return 1
+	[ "${back}" = "${v}" ] || return 1
+	return 0
+}
 
 # ---------------------------------------------------------------------------
 # Running the real binary
@@ -235,6 +243,24 @@ sample_balance() {
 	printf '%s\t%s\t%s\n' "$(now_iso)" "${phase}" "$(tsv_escape "${json}")" \
 		>> "${ROOT}/ledger/buzz.tsv"
 	printf '%s' "${total}"
+}
+
+# Internal: print the verdict for an argv WITHOUT executing anything. Used by
+# the selftest to prove that a GUARD_BIN inherited from the environment cannot
+# reach the gate, which needs a fresh process to be a real test.
+cmd_verdict() {
+	local root=""
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--root) root="$2"; shift 2 ;;
+			--)     shift; break ;;
+			*)      break ;;
+		esac
+	done
+	ROOT="${root:-${DEFAULT_ROOT}}"
+	load_policy || { printf 'DENY'; return 0; }
+	policy_verdict "$@"
+	printf '%s' "${VERDICT:-DENY}"
 }
 
 # Internal: a `buzz --json` that `timeout` can kill as its own process.
@@ -282,19 +308,29 @@ cmd_init() {
 	local max_app="${DEFAULT_MAX_APP_SUBMITS}"
 	local slug_prefix="${DEFAULT_SLUG_PREFIX}"
 	local base_url="${DEFAULT_BASE_URL}"
+	local max_listing="${DEFAULT_MAX_LISTING_MUTATIONS}"
+	local settle="${DEFAULT_METER_SETTLE_SECONDS}"
+	local require_cal="${DEFAULT_REQUIRE_CALIBRATION}"
+	local allow_no_wait="${DEFAULT_ALLOW_NO_WAIT}"
+	local guard=""
 
 	while [ $# -gt 0 ]; do
 		case "$1" in
-			--root)            root="$2"; shift 2 ;;
-			--binary)          binary="$2"; shift 2 ;;
-			--token-file)      token_file="$2"; shift 2 ;;
-			--per-call-max)    per_call="$2"; shift 2 ;;
-			--total-cap)       total_cap="$2"; shift 2 ;;
-			--max-generates)   max_gen="$2"; shift 2 ;;
-			--max-app-submits) max_app="$2"; shift 2 ;;
-			--slug-prefix)     slug_prefix="$2"; shift 2 ;;
-			--base-url)        base_url="$2"; shift 2 ;;
-			--force)           force=1; shift ;;
+			--root)                root="$2"; shift 2 ;;
+			--binary)              binary="$2"; shift 2 ;;
+			--guard)               guard="$2"; shift 2 ;;
+			--token-file)          token_file="$2"; shift 2 ;;
+			--per-call-max)        per_call="$2"; shift 2 ;;
+			--total-cap)           total_cap="$2"; shift 2 ;;
+			--max-generates)       max_gen="$2"; shift 2 ;;
+			--max-app-submits)     max_app="$2"; shift 2 ;;
+			--max-listing-changes) max_listing="$2"; shift 2 ;;
+			--settle-seconds)      settle="$2"; shift 2 ;;
+			--skip-calibration)    require_cal=0; shift ;;
+			--allow-no-wait)       allow_no_wait=1; shift ;;
+			--slug-prefix)         slug_prefix="$2"; shift 2 ;;
+			--base-url)            base_url="$2"; shift 2 ;;
+			--force)               force=1; shift ;;
 			*) die "init: unknown flag $1" ;;
 		esac
 	done
@@ -337,6 +373,24 @@ cmd_init() {
 
 	cp "${binary}" "${ROOT}/real/civitai" || die "init: could not copy the binary"
 
+	# 🔴 THE CLASSIFIER MUST COME FROM THE SAME TREE AS THE BINARY UNDER TEST.
+	# It embeds the command tree, so a classifier built from a different commit
+	# can disagree with the binary about what an argv means — which is the exact
+	# class of defect it exists to remove. Build both from one checkout.
+	if [ -z "${guard}" ]; then
+		local repo
+		repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd) || die "init: cannot locate the repo"
+		command -v go >/dev/null 2>&1 \
+			|| die "init: go is not on PATH; build internal/dogfoodguard yourself and pass --guard <path>"
+		guard="${ROOT}/real/dogfoodguard"
+		( cd "${repo}" && go build -o "${guard}" ./internal/dogfoodguard ) \
+			|| die "init: could not build the classifier from ${repo}"
+	else
+		[ -x "${guard}" ] || die "init: --guard ${guard} is not executable"
+		cp "${guard}" "${ROOT}/real/dogfoodguard" || die "init: could not copy the classifier"
+	fi
+	[ -x "${ROOT}/real/dogfoodguard" ] || die "init: no classifier at ${ROOT}/real/dogfoodguard"
+
 	local self
 	self=$(readlink -f "$0")
 	cp "${self}" "${ROOT}/harness/dogfood-sandbox.sh" || die "init: could not copy the harness"
@@ -352,11 +406,13 @@ SHIM
 	: > "${ROOT}/ledger/buzz.tsv"
 	: > "${ROOT}/ledger/spend.tsv"
 	: > "${ROOT}/ledger/pubreq.allow"
-	write_scalar generate_submits 0
-	write_scalar app_submits 0
-	write_scalar observed_spend 0
-	write_scalar reserved 0
-	rm -f "${ROOT}/ledger/meter_broken"
+	: > "${ROOT}/ledger/workflow.allow"
+	write_scalar generate_submits 0   || die "init: ledger not writable"
+	write_scalar app_submits 0        || die "init: ledger not writable"
+	write_scalar listing_mutations 0  || die "init: ledger not writable"
+	write_scalar observed_spend 0     || die "init: ledger not writable"
+	write_scalar reserved 0           || die "init: ledger not writable"
+	rm -f "${ROOT}/ledger/meter_broken" "${ROOT}/ledger/calibration.ok"
 
 	cat > "${ROOT}/ledger/policy.env" <<POLICY
 # Written by dogfood-sandbox.sh init on $(now_iso). Read and VALIDATED by every
@@ -366,10 +422,15 @@ PER_CALL_MAX_COST=${per_call}
 TOTAL_SPEND_CAP=${total_cap}
 MAX_GENERATE_SUBMITS=${max_gen}
 MAX_APP_SUBMITS=${max_app}
+MAX_LISTING_MUTATIONS=${max_listing}
+METER_SETTLE_SECONDS=${settle}
+REQUIRE_CALIBRATION=${require_cal}
+ALLOW_NO_WAIT=${allow_no_wait}
 SLUG_PREFIX="${slug_prefix}"
 BASE_URL="${base_url}"
 BINARY_SOURCE="${binary}"
 BINARY_SHA256="$(sha256sum "${binary}" | cut -d' ' -f1)"
+GUARD_SHA256="$(sha256sum "${ROOT}/real/dogfoodguard" | cut -d' ' -f1)"
 HARNESS_SHA256="$(sha256sum "${self}" | cut -d' ' -f1)"
 POLICY
 	chmod 0600 "${ROOT}/ledger/policy.env"
@@ -388,7 +449,7 @@ POLICY
 	start=$(sample_balance "start") || die "init: could not read the opening Buzz balance — refusing to start a run whose meter does not work"
 	write_scalar start_balance "${start}"
 
-	chmod 0555 "${ROOT}/real/civitai"
+	chmod 0555 "${ROOT}/real/civitai" "${ROOT}/real/dogfoodguard"
 	chmod 0500 "${ROOT}/real" "${ROOT}/bin" "${ROOT}/harness"
 
 	cmd_write_brief
@@ -445,207 +506,82 @@ BRIEF
 }
 
 # ---------------------------------------------------------------------------
-# ARGV TOKENIZER
+# CLASSIFICATION — delegated to the REAL Cobra command tree.
 #
-# Fills TOK_KIND[i] for each argv token: "flag", "value", or "positional".
-# Value-taking flags are resolved per command path. An UNRECOGNISED flag on a
-# spending command is treated as value-taking, which biases the classification
-# toward DENY rather than toward an unmetered submit.
+# 🔴 THE SHIM NO LONGER PARSES ARGV. It used to keep its own model of how the
+# CLI reads a command line, and that model disagreed with pflag three times,
+# each disagreement letting a real spend or a real mutation through:
+#   * `--no-color generate … --yes`      (root persistent flags precede the command)
+#   * `--negative-prompt --help`         (a flag VALUE that looks like a flag)
+#   * `--print-input=false`              (present, but FALSE)
+# Each was fixed as a spelling; the class survived. internal/dogfoodguard now
+# answers "what is this invocation?" using cobra's own Find + ParseFlags, so
+# the gate and the binary cannot disagree by construction. It never executes
+# anything.
+#
+# 🔴 FAIL CLOSED: a non-zero exit, empty output, a missing `ok`, or an
+# unrecognised field is a DENY.
 # ---------------------------------------------------------------------------
-declare -a TOK TOK_KIND
-CMD1=""; CMD2=""; CMD3=""
-# The token that SHOULD have been a subcommand but is not in the vocabulary.
-# Without this an unknown verb resolved to the empty string and was
-# indistinguishable from a bare `civitai app`, which the gate allows as a usage
-# request — so `app frobnicate` and `app listing frobnicate` were ALLOWED.
-CMD2_UNKNOWN=""; CMD3_UNKNOWN=""
-IDX1=-1; IDX2=-1; IDX3=-1
+declare -A GBOOL GINT GSTR GCHANGED
+declare -a GARG
+GPATH=""; GARGC=0; GERR=""; GKIND=""
 
-value_flags_for_path() {
-	case "${CMD1}:${CMD2}" in
-		generate:*)     printf '%s' "${VALUE_FLAGS_GENERATE}" ;;
-		app:submit)     printf '%s' "${VALUE_FLAGS_APP_SUBMIT}" ;;
-		app:listing)    printf '%s' "${VALUE_FLAGS_APP_LISTING}" ;;
-		app:withdraw)   printf '%s' "${VALUE_FLAGS_APP_WITHDRAW}" ;;
-		*)              printf '%s' "" ;;
-	esac
+# 🔴 ASSIGNED UNCONDITIONALLY AT STARTUP, WHICH IS THE POINT. The selftest
+# swaps in fake classifiers to prove the shim refuses drifted output, and it
+# cannot do that by overwriting the real binary — a running executable gives
+# ETXTBSY and the write SILENTLY fails, which made four "drift is refused" rows
+# pass against the real classifier instead. So the path is injectable. Setting
+# it here to the empty string discards any value inherited from the
+# environment, so an agent exporting GUARD_BIN cannot point the gate at a
+# classifier of its own.
+GUARD_BIN=""
+
+unescape() {
+	local s="$1"
+	s="${s//\\t/$'\t'}"
+	s="${s//\\r/$'\r'}"
+	s="${s//\\n/$'\n'}"
+	s="${s//\\\\/\\}"
+	printf '%s' "${s}"
 }
 
-# Resolve the command path against the closed vocabulary. The FIRST token that
-# is not a flag is the command; root persistent bools never consume a value, so
-# skipping every leading `-*` is correct here and is what fixes the
-# `--no-color generate` bypass.
-# The first token after index `from` that does not start with '-'. Between a
-# parent command and its subcommand Cobra permits only the parent's own flags,
-# and none of `civitai`'s parent commands has a value-taking flag — so "first
-# token not starting with -" is the correct rule here and needs no knowledge of
-# which flags consume a value.
-next_word_after() {
-	local from="$1" i n
-	n=${#TOK[@]}
-	for (( i=from+1; i<n; i++ )); do
-		case "${TOK[i]}" in -*) continue ;; esac
-		printf '%s\t%s' "${TOK[i]}" "${i}"; return 0
-	done
-	return 1
-}
-
-resolve_command() {
-	CMD1=""; CMD2=""; CMD3=""; CMD2_UNKNOWN=""; CMD3_UNKNOWN=""
-	IDX1=-1; IDX2=-1; IDX3=-1
-	local i n t pair word idx
-	n=${#TOK[@]}
-	for (( i=0; i<n; i++ )); do
-		t="${TOK[i]}"
-		case "${t}" in -*) continue ;; esac
-		CMD1="${t}"; IDX1=${i}; break
-	done
-	[ -n "${CMD1}" ] || return 0
-
-	if [ "${CMD1}" = "app" ]; then
-		if pair=$(next_word_after "${IDX1}"); then
-			word="${pair%%$'\t'*}"; idx="${pair##*$'\t'}"
-			if in_list "${word}" "${APP_SUBCMDS}"; then
-				CMD2="${word}"; IDX2="${idx}"
-			else
-				CMD2_UNKNOWN="${word}"; return 0
-			fi
-		fi
-		if [ "${CMD2}" = "listing" ]; then
-			if pair=$(next_word_after "${IDX2}"); then
-				word="${pair%%$'\t'*}"; idx="${pair##*$'\t'}"
-				if in_list "${word}" "${LISTING_SUBCMDS}"; then
-					CMD3="${word}"; IDX3="${idx}"
-				else
-					CMD3_UNKNOWN="${word}"
-				fi
-			fi
-		fi
-	elif [ "${CMD1}" = "workflows" ]; then
-		if pair=$(next_word_after "${IDX1}"); then
-			word="${pair%%$'\t'*}"; idx="${pair##*$'\t'}"
-			if in_list "${word}" "${WORKFLOWS_SUBCMDS}"; then
-				CMD2="${word}"; IDX2="${idx}"
-			else
-				CMD2_UNKNOWN="${word}"
-			fi
-		fi
+classify() {
+	GBOOL=(); GINT=(); GSTR=(); GCHANGED=(); GARG=()
+	GPATH=""; GARGC=0; GERR=""; GKIND=""
+	local bin="${GUARD_BIN:-${ROOT}/real/dogfoodguard}" out rc ok="" k v
+	if [ ! -x "${bin}" ]; then
+		GERR="the classifier ${bin} is missing or not executable"; return 1
 	fi
+	out=$("${bin}" -- "$@" 2>/dev/null); rc=$?
+	if [ -z "${out}" ]; then
+		GERR="the classifier produced no output (exit ${rc})"; return 1
+	fi
+	while IFS=$'\t' read -r k v; do
+		[ -n "${k}" ] || continue
+		case "${k}" in
+			ok)          ok="${v}" ;;
+			err)         GERR=$(unescape "${v}") ;;
+			kind)        GKIND="${v}" ;;
+			path)        GPATH=$(unescape "${v}") ;;
+			argc)        GARGC="${v}" ;;
+			arg.*)       GARG[${k#arg.}]=$(unescape "${v}") ;;
+			bool.*)      GBOOL[${k#bool.}]="${v}" ;;
+			int.*)       GINT[${k#int.}]="${v}" ;;
+			str.*)       GSTR[${k#str.}]=$(unescape "${v}") ;;
+			changed.*)   GCHANGED[${k#changed.}]="${v}" ;;
+			*)           GERR="the classifier emitted an unrecognised field \`${k}\`"; return 1 ;;
+		esac
+	done <<< "${out}"
+	case "${GARGC}" in
+		''|*[!0-9]*) GERR="the classifier reported a non-numeric argument count"; return 1 ;;
+	esac
+	[ "${ok}" = "1" ] || return 1
 	return 0
 }
 
-tokenize() {
-	TOK=("$@")
-	TOK_KIND=()
-	resolve_command
-	local vflags spending=0
-	vflags=$(value_flags_for_path)
-	[ "${CMD1}" = "generate" ] && spending=1
-	local i n t expect_value=0
-	n=${#TOK[@]}
-	for (( i=0; i<n; i++ )); do
-		t="${TOK[i]}"
-		if [ "${expect_value}" = 1 ]; then
-			TOK_KIND[i]="value"; expect_value=0; continue
-		fi
-		case "${t}" in
-			--*=*)  TOK_KIND[i]="flag" ;;
-			-*)
-				TOK_KIND[i]="flag"
-				if in_list "${t}" "${vflags}"; then
-					expect_value=1
-				elif in_list "${t}" "${ROOT_BOOL_FLAGS}" || in_list "${t}" "${CMD_BOOL_FLAGS}"; then
-					: # boolean, consumes nothing
-				elif [ "${spending}" = 1 ]; then
-					# Unknown flag on the money path: assume it eats the next
-					# token, so a following --dry-run/--help is NOT mistaken for
-					# a free preview or a help request.
-					expect_value=1
-				fi
-				;;
-			*)      TOK_KIND[i]="positional" ;;
-		esac
-	done
-}
-
-# Is FLAG present as a FLAG (never as another flag's value)?
-tok_has_flag() {
-	local want="$1" i n
-	n=${#TOK[@]}
-	for (( i=0; i<n; i++ )); do
-		[ "${TOK_KIND[i]}" = "flag" ] || continue
-		case "${TOK[i]}" in
-			"${want}"|"${want}"=*) return 0 ;;
-		esac
-	done
-	return 1
-}
-
-# Value of FLAG. Returns the LAST occurrence, because pflag does — measured on
-# a free read, `--limit 1 --limit 3` returns three results. Reading the first
-# let `--max-cost 5 --max-cost 99999` show the gate a 5 while the CLI enforced
-# 99999.
-tok_flag_value() {
-	local want="$1" i n found=1 out=""
-	n=${#TOK[@]}
-	for (( i=0; i<n; i++ )); do
-		[ "${TOK_KIND[i]}" = "flag" ] || continue
-		case "${TOK[i]}" in
-			"${want}"=*) out="${TOK[i]#*=}"; found=0 ;;
-			"${want}")
-				if [ $(( i + 1 )) -lt "${n}" ] && [ "${TOK_KIND[i+1]}" = "value" ]; then
-					out="${TOK[i+1]}"; found=0
-				fi ;;
-		esac
-	done
-	[ "${found}" = 0 ] || return 1
-	printf '%s' "${out}"
-}
-
-# Positional arguments AFTER the resolved command path — i.e. every positional
-# token whose index is past the last command word. Indices come from
-# resolve_command, so this needs no re-matching by string value (which used to
-# mis-skip an argument that happened to equal its own command's name).
-tok_positionals_after_command() {
-	local i n last
-	n=${#TOK[@]}
-	last="${IDX1}"
-	[ "${IDX2}" -gt "${last}" ] 2>/dev/null && last="${IDX2}"
-	[ "${IDX3}" -gt "${last}" ] 2>/dev/null && last="${IDX3}"
-	for (( i=last+1; i<n; i++ )); do
-		[ "${TOK_KIND[i]}" = "positional" ] || continue
-		printf '%s\n' "${TOK[i]}"
-	done
-}
-
-# Is there a genuine --help / -h?
-#
-# 🔴 ALLOWLIST, NOT DENYLIST. A `--help` counts only when the token before it
-# is nothing, a command word, or a KNOWN boolean flag. `--negative-prompt
-# --help` is pflag taking `--help` as the prompt VALUE, and the old blanket
-# "is --help anywhere in argv" test turned that into a full bypass of every
-# DENY branch — measured: a real submit, charged, meter untouched.
-tok_is_help_request() {
-	local i n prev
-	n=${#TOK[@]}
-	for (( i=0; i<n; i++ )); do
-		case "${TOK[i]}" in
-			--help|-h|--help=*) ;;
-			*) continue ;;
-		esac
-		[ "${TOK_KIND[i]}" = "flag" ] || continue
-		if [ "${i}" = 0 ]; then return 0; fi
-		prev="${TOK[i-1]}"
-		if in_list "${prev}" "${ROOT_BOOL_FLAGS}" \
-			|| in_list "${prev}" "${CMD_BOOL_FLAGS}" \
-			|| in_list "${prev}" "${TOPLEVEL_CMDS}" \
-			|| in_list "${prev}" "${APP_SUBCMDS}" \
-			|| in_list "${prev}" "${LISTING_SUBCMDS}"; then
-			return 0
-		fi
-	done
-	return 1
-}
+gbool()    { printf '%s' "${GBOOL[$1]:-false}"; }
+gstr()     { printf '%s' "${GSTR[$1]:-}"; }
+gchanged() { printf '%s' "${GCHANGED[$1]:-false}"; }
 
 resolve_block_id() {
 	local dir="$1" slug="$2" manifest id
@@ -659,6 +595,17 @@ resolve_block_id() {
 	printf '%s' "${id}"
 }
 
+# Commands that are pure groups: they run nothing themselves, so a leftover
+# positional means the user named a subcommand that does not exist. Cobra
+# resolves `app frobnicate` to `app` with one argument, which is how an unknown
+# subcommand is detected without a vocabulary of our own.
+is_group_path() {
+	case "$1" in
+		""|app|"app listing"|workflows|"app listing"*) return 0 ;;
+	esac
+	return 1
+}
+
 # ---------------------------------------------------------------------------
 # policy_verdict — sets VERDICT / VERDICT_REASON / VERDICT_MC.
 #
@@ -668,141 +615,165 @@ resolve_block_id() {
 # ---------------------------------------------------------------------------
 VERDICT=""; VERDICT_REASON=""; VERDICT_MC=0
 
-deny() { VERDICT="DENY"; VERDICT_REASON="$1"; return 0; }
+deny()  { VERDICT="DENY"; VERDICT_REASON="$1"; return 0; }
 allow() { VERDICT="ALLOW"; VERDICT_REASON="${1:-}"; return 0; }
 
 policy_verdict() {
 	VERDICT=""; VERDICT_REASON=""; VERDICT_MC=0
-	tokenize "$@"
 
-	if tok_is_help_request; then allow "help"; return 0; fi
-
-	if [ -z "${CMD1}" ]; then allow "root usage"; return 0; fi
-
-	if ! in_list "${CMD1}" "${TOPLEVEL_CMDS}"; then
-		deny "\`${CMD1}\` is not a command this gate recognises; it fails closed rather than guess whether a new command spends or mutates"
-		return 0
-	fi
-
-	case "${CMD1}" in
-		upgrade) deny "\`upgrade\` would replace the binary under evaluation mid-run"; return 0 ;;
-		login)   deny "this sandbox is already authenticated; run \`civitai whoami\` to see as whom"; return 0 ;;
-	esac
-
-	if [ "${CMD1}" = "app" ]; then
-		if [ -n "${CMD2_UNKNOWN}" ]; then
-			deny "unrecognised \`app ${CMD2_UNKNOWN}\`; the gate fails closed rather than guess whether it mutates"
-			return 0
-		fi
-		if [ -z "${CMD2}" ]; then allow "app usage"; return 0; fi
-		case "${CMD2}" in
-			dev-tunnel|dev-token)
-				deny "\`app ${CMD2}\` is out of scope for this run"; return 0 ;;
-			withdraw)
-				local id=""
-				id=$(tok_flag_value "--id") || id=""
-				if [ -z "${id}" ]; then
-					id=$(tok_positionals_after_command | head -1)
-				fi
-				if [ -z "${id}" ]; then
-					allow "withdraw with no id (a usage error the CLI reports)"; return 0
-				fi
-				# 🔴 ANY id, not just a pubreq_-shaped one. app_withdraw.go takes
-				# args[0] with no format validation, so the old "the CLI will
-				# refuse it" fallback was a false statement about a branch that
-				# reaches the network.
-				if grep -qxF "${id}" "${ROOT}/ledger/pubreq.allow" 2>/dev/null; then
-					allow "withdraw of a submission this sandbox created"; return 0
-				fi
-				deny "\`${id}\` was not created by this sandbox, so it may be one of the account's real pending submissions"
-				return 0 ;;
-			submit)
-				if tok_has_flag "--package-only"; then
-					allow "--package-only never submits"; return 0
-				fi
-				local dir id n
-				dir=$(tok_positionals_after_command | head -1)
-				[ -n "${dir}" ] || dir="."
-				if ! id=$(resolve_block_id "${dir}" ""); then
-					deny "cannot read a blockId from ${dir}/block.manifest.json, so the app being submitted cannot be identified"
-					return 0
-				fi
-				case "${id}" in
-					"${SLUG_PREFIX}"*) ;;
-					*) deny "blockId \`${id}\` is outside the sanctioned prefix \`${SLUG_PREFIX}\` — this run may only submit its own throwaway app"; return 0 ;;
-				esac
-				n=$(read_scalar app_submits) || { deny "the app-submission counter is unreadable"; return 0; }
-				if [ "${n}" -ge "${MAX_APP_SUBMITS}" ]; then
-					deny "the app-submission cap for this run (${MAX_APP_SUBMITS}) is already used"; return 0
-				fi
-				VERDICT="ALLOW_APP_SUBMIT"; VERDICT_REASON="submitting ${id}"; return 0 ;;
-			listing)
-				if [ -n "${CMD3_UNKNOWN}" ]; then
-					deny "unrecognised \`app listing ${CMD3_UNKNOWN}\`; the gate fails closed on anything that might mutate a listing"
-					return 0
-				fi
-				case "${CMD3}" in
-					"") allow "listing usage"; return 0 ;;
-					status) allow "listing read"; return 0 ;;
-					set-icon|set-cover|add-screenshot|rm-screenshot|reorder)
-						local slug dir id
-						slug=$(tok_flag_value "--slug") || slug=""
-						dir=$(tok_flag_value "--dir") || dir=""
-						[ -n "${dir}" ] || dir="."
-						if ! id=$(resolve_block_id "${dir}" "${slug}"); then
-							deny "cannot identify which app \`app listing ${CMD3}\` would mutate (no --slug, and no readable blockId in ${dir}/block.manifest.json)"
-							return 0
-						fi
-						case "${id}" in
-							"${SLUG_PREFIX}"*) allow "listing mutation on ${id}"; return 0 ;;
-							*) deny "\`${id}\` is outside the sanctioned prefix \`${SLUG_PREFIX}\` — this run may not touch the account's real listings"; return 0 ;;
-						esac ;;
-					*) deny "unrecognised \`app listing ${CMD3}\`; the gate fails closed on anything that might mutate a listing"; return 0 ;;
-				esac ;;
-			create|init|validate|status|list|view|pull|metrics)
-				allow "app read/local"; return 0 ;;
+	if ! classify "$@"; then
+		case "${GKIND}" in
+			unknown-command)
+				deny "the CLI does not recognise this command (${GERR})" ;;
+			flag-parse-error)
+				deny "the CLI would reject these flags (${GERR}); the gate refuses rather than guess what was meant" ;;
 			*)
-				deny "unrecognised \`app ${CMD2}\`; the gate fails closed"; return 0 ;;
+				deny "the invocation could not be classified (${GERR:-no detail}) — refusing" ;;
+		esac
+		return 0
+	fi
+
+	# Help is free on every command, including the forbidden ones. This is the
+	# REAL value of the help flag, so `--help=false` is not a help request.
+	if [ "$(gbool help)" = "true" ]; then allow "help"; return 0; fi
+
+	local path="${GPATH}"
+
+	if is_group_path "${path}"; then
+		case "${path}" in
+			"app listing set-icon"|"app listing set-cover"|"app listing add-screenshot"|"app listing rm-screenshot"|"app listing reorder"|"app listing status") ;;
+			*)
+				if [ "${GARGC}" -gt 0 ]; then
+					deny "\`${GARG[0]:-?}\` is not a subcommand of \`${path:-civitai}\`; the gate fails closed rather than guess whether it spends or mutates"
+					return 0
+				fi
+				allow "usage"; return 0 ;;
 		esac
 	fi
 
-	if [ "${CMD1}" = "generate" ]; then
-		if tok_has_flag "--print-input" || tok_has_flag "--dry-run"; then
-			allow "generate preview (spends nothing)"; return 0
-		fi
-		if [ -f "${ROOT}/ledger/meter_broken" ]; then
-			deny "the spend meter could not read a balance earlier in this run, so spend is no longer being counted — refusing to submit (see ledger/meter_broken)"
-			return 0
-		fi
-		local cum res committed remaining mc n
-		cum=$(read_scalar observed_spend) || { deny "the spend ledger is unreadable or malformed — refusing to submit"; return 0; }
-		res=$(read_scalar reserved)       || { deny "the reservation ledger is unreadable or malformed — refusing to submit"; return 0; }
-		committed=$(( cum + res ))
-		if [ "${committed}" -ge "${TOTAL_SPEND_CAP}" ]; then
-			deny "the run's total spend cap (${TOTAL_SPEND_CAP} Buzz) is reached — ${cum} observed, ${res} committed in flight"
-			return 0
-		fi
-		n=$(read_scalar generate_submits) || { deny "the submission counter is unreadable"; return 0; }
-		if [ "${n}" -ge "${MAX_GENERATE_SUBMITS}" ]; then
-			deny "the generation cap for this run (${MAX_GENERATE_SUBMITS} submits) is already used"; return 0
-		fi
-		if ! mc=$(tok_flag_value "--max-cost"); then
-			deny "a generation that actually submits must carry --max-cost (at most ${PER_CALL_MAX_COST}); use --dry-run to price it first"
-			return 0
-		fi
-		case "${mc}" in
-			''|*[!0-9]*) deny "--max-cost must be a whole number of Buzz, got \`${mc}\`"; return 0 ;;
-		esac
-		if [ "${mc}" -gt "${PER_CALL_MAX_COST}" ]; then
-			deny "--max-cost ${mc} exceeds this run's per-invocation ceiling of ${PER_CALL_MAX_COST} Buzz"; return 0
-		fi
-		remaining=$(( TOTAL_SPEND_CAP - committed ))
-		if [ "${mc}" -gt "${remaining}" ]; then
-			deny "--max-cost ${mc} exceeds the ${remaining} Buzz left under this run's total cap"; return 0
-		fi
-		VERDICT="ALLOW_SPEND"; VERDICT_REASON="submit with --max-cost ${mc}"; VERDICT_MC="${mc}"
-		return 0
-	fi
+	case "${path}" in
+		upgrade)
+			deny "\`upgrade\` would replace the binary under evaluation mid-run"; return 0 ;;
+		login)
+			deny "this sandbox is already authenticated; run \`civitai whoami\` to see as whom"; return 0 ;;
+		"app dev-tunnel"|"app dev-token")
+			deny "\`${path}\` is out of scope for this run"; return 0 ;;
+
+		"app withdraw")
+			local id
+			id=$(gstr id)
+			[ -n "${id}" ] || id="${GARG[0]:-}"
+			if [ -z "${id}" ]; then
+				allow "withdraw with no id (a usage error the CLI reports)"; return 0
+			fi
+			if grep -qxF "${id}" "${ROOT}/ledger/pubreq.allow" 2>/dev/null; then
+				allow "withdraw of a submission this sandbox created"; return 0
+			fi
+			deny "\`${id}\` was not created by this sandbox, so it may be one of the account's real pending submissions"
+			return 0 ;;
+
+		"app submit")
+			if [ "$(gbool package-only)" = "true" ]; then
+				allow "--package-only never submits"; return 0
+			fi
+			local dir id n
+			dir="${GARG[0]:-}"
+			[ -n "${dir}" ] || dir="."
+			if ! id=$(resolve_block_id "${dir}" ""); then
+				deny "cannot read a blockId from ${dir}/block.manifest.json, so the app being submitted cannot be identified"
+				return 0
+			fi
+			case "${id}" in
+				"${SLUG_PREFIX}"*) ;;
+				*) deny "blockId \`${id}\` is outside the sanctioned prefix \`${SLUG_PREFIX}\` — this run may only submit its own throwaway app"; return 0 ;;
+			esac
+			n=$(read_scalar app_submits) || { deny "the app-submission counter is unreadable or malformed"; return 0; }
+			if [ "${n}" -ge "${MAX_APP_SUBMITS}" ]; then
+				deny "the app-submission cap for this run (${MAX_APP_SUBMITS}) is already used"; return 0
+			fi
+			VERDICT="ALLOW_APP_SUBMIT"; VERDICT_REASON="submitting ${id}"; return 0 ;;
+
+		"app listing status")
+			allow "listing read"; return 0 ;;
+
+		"app listing set-icon"|"app listing set-cover"|"app listing add-screenshot"|"app listing rm-screenshot"|"app listing reorder")
+			local slug dir id m
+			slug=$(gstr slug); dir=$(gstr dir)
+			[ -n "${dir}" ] || dir="."
+			if ! id=$(resolve_block_id "${dir}" "${slug}"); then
+				deny "cannot identify which app \`${path}\` would mutate (no --slug, and no readable blockId in ${dir}/block.manifest.json)"
+				return 0
+			fi
+			case "${id}" in
+				"${SLUG_PREFIX}"*) ;;
+				*) deny "\`${id}\` is outside the sanctioned prefix \`${SLUG_PREFIX}\` — this run may not touch the account's real listings"; return 0 ;;
+			esac
+			# A listing change on a LIVE listing goes back to moderator review,
+			# so it carries the same human cost as a submit and is capped too.
+			m=$(read_scalar listing_mutations) || { deny "the listing-mutation counter is unreadable or malformed"; return 0; }
+			if [ "${m}" -ge "${MAX_LISTING_MUTATIONS}" ]; then
+				deny "the listing-mutation cap for this run (${MAX_LISTING_MUTATIONS}) is already used"; return 0
+			fi
+			VERDICT="ALLOW_LISTING"; VERDICT_REASON="listing mutation on ${id}"; return 0 ;;
+
+		"workflows cancel")
+			local wid
+			wid="${GARG[0]:-}"
+			if [ -z "${wid}" ]; then
+				allow "cancel with no id (a usage error the CLI reports)"; return 0
+			fi
+			if grep -qxF "${wid}" "${ROOT}/ledger/workflow.allow" 2>/dev/null; then
+				allow "cancel of a workflow this sandbox created"; return 0
+			fi
+			deny "workflow \`${wid}\` was not created by this sandbox — cancelling DOES NOT REFUND, so the gate will not cancel a job it did not start"
+			return 0 ;;
+
+		generate)
+			if [ "$(gbool print-input)" = "true" ] || [ "$(gbool dry-run)" = "true" ]; then
+				allow "generate preview (spends nothing)"; return 0
+			fi
+			if [ -f "${ROOT}/ledger/meter_broken" ]; then
+				deny "the spend meter stopped agreeing with the account earlier in this run, so spend is no longer being counted — refusing to submit (see ledger/meter_broken)"
+				return 0
+			fi
+			if [ "${REQUIRE_CALIBRATION}" = "1" ] && [ ! -f "${ROOT}/ledger/calibration.ok" ]; then
+				deny "the spend meter has not been calibrated against a real generation; run \`dogfood-sandbox.sh calibrate\` (it spends once, deliberately, while you watch) or re-init with --skip-calibration"
+				return 0
+			fi
+			if [ "$(gbool no-wait)" = "true" ] && [ "${ALLOW_NO_WAIT}" != "1" ]; then
+				deny "--no-wait returns before the charge has settled, and the meter reads the balance when the command returns — refused so the ledger cannot silently under-count"
+				return 0
+			fi
+			local cum res committed remaining mc n
+			cum=$(read_scalar observed_spend) || { deny "the spend ledger is unreadable or malformed — refusing to submit"; return 0; }
+			res=$(read_scalar reserved)       || { deny "the reservation ledger is unreadable or malformed — refusing to submit"; return 0; }
+			committed=$(( cum + res ))
+			if [ "${committed}" -ge "${TOTAL_SPEND_CAP}" ]; then
+				deny "the run's total spend cap (${TOTAL_SPEND_CAP} Buzz) is reached — ${cum} observed, ${res} committed in flight"
+				return 0
+			fi
+			n=$(read_scalar generate_submits) || { deny "the submission counter is unreadable or malformed"; return 0; }
+			if [ "${n}" -ge "${MAX_GENERATE_SUBMITS}" ]; then
+				deny "the generation cap for this run (${MAX_GENERATE_SUBMITS} submits) is already used"; return 0
+			fi
+			if [ "$(gchanged max-cost)" != "true" ]; then
+				deny "a generation that actually submits must carry --max-cost (at most ${PER_CALL_MAX_COST}); use --dry-run to price it first"
+				return 0
+			fi
+			mc="${GINT[max-cost]:-}"
+			case "${mc}" in
+				''|*[!0-9]*) deny "--max-cost must be a non-negative whole number of Buzz, got \`${mc}\`"; return 0 ;;
+			esac
+			if [ "${mc}" -gt "${PER_CALL_MAX_COST}" ]; then
+				deny "--max-cost ${mc} exceeds this run's per-invocation ceiling of ${PER_CALL_MAX_COST} Buzz"; return 0
+			fi
+			remaining=$(( TOTAL_SPEND_CAP - committed ))
+			if [ "${mc}" -gt "${remaining}" ]; then
+				deny "--max-cost ${mc} exceeds the ${remaining} Buzz left under this run's total cap"; return 0
+			fi
+			VERDICT="ALLOW_SPEND"; VERDICT_REASON="submit with --max-cost ${mc}"; VERDICT_MC="${mc}"
+			return 0 ;;
+	esac
 
 	allow "read-only or local"
 	return 0
@@ -845,9 +816,11 @@ cmd_guard() {
 	policy_verdict "${argv[@]+"${argv[@]}"}"
 
 	# 🔴 An empty or unrecognised verdict is a DENY. This is the backstop for
-	# any internal failure that leaves VERDICT unset.
+	# any internal failure that leaves VERDICT unset — measured as load-bearing:
+	# with a branch returning without setting VERDICT, deleting this case lets
+	# the real binary run.
 	case "${VERDICT}" in
-		ALLOW|ALLOW_SPEND|ALLOW_APP_SUBMIT|DENY) ;;
+		ALLOW|ALLOW_SPEND|ALLOW_APP_SUBMIT|ALLOW_LISTING|DENY) ;;
 		*) refuse "the gate could not classify this invocation (internal error) — refusing" "${scrubbed}" ;;
 	esac
 
@@ -855,20 +828,31 @@ cmd_guard() {
 		refuse "${VERDICT_REASON}" "${scrubbed}"
 	fi
 
+	# 🔴 EVERY counter bump is fatal if the write fails. With the ledger
+	# unwritable the previous version bumped nothing and allowed submit after
+	# submit, meter and counter both reading 0 forever.
 	local before="" mc="${VERDICT_MC}"
-	if [ "${VERDICT}" = "ALLOW_SPEND" ]; then
-		before=$(sample_balance "pre-generate") || \
-			refuse "could not read the Buzz balance, so the spend meter cannot be kept — refusing to submit" "${scrubbed}"
-		local res n
-		res=$(read_scalar reserved) || refuse "the reservation ledger is unreadable" "${scrubbed}"
-		n=$(read_scalar generate_submits) || refuse "the submission counter is unreadable" "${scrubbed}"
-		write_scalar reserved "$(( res + mc ))"
-		write_scalar generate_submits "$(( n + 1 ))"
-	elif [ "${VERDICT}" = "ALLOW_APP_SUBMIT" ]; then
-		local a
-		a=$(read_scalar app_submits) || refuse "the app-submission counter is unreadable" "${scrubbed}"
-		write_scalar app_submits "$(( a + 1 ))"
-	fi
+	case "${VERDICT}" in
+		ALLOW_SPEND)
+			before=$(sample_balance "pre-generate") || \
+				refuse "could not read the Buzz balance, so the spend meter cannot be kept — refusing to submit" "${scrubbed}"
+			local res n
+			res=$(read_scalar reserved)       || refuse "the reservation ledger is unreadable or malformed" "${scrubbed}"
+			n=$(read_scalar generate_submits) || refuse "the submission counter is unreadable or malformed" "${scrubbed}"
+			write_scalar reserved "$(( res + mc ))"       || refuse "could not record the spend reservation — refusing to submit" "${scrubbed}"
+			write_scalar generate_submits "$(( n + 1 ))"  || refuse "could not record the submission — refusing to submit" "${scrubbed}"
+			;;
+		ALLOW_APP_SUBMIT)
+			local a
+			a=$(read_scalar app_submits) || refuse "the app-submission counter is unreadable or malformed" "${scrubbed}"
+			write_scalar app_submits "$(( a + 1 ))" || refuse "could not record the app submission — refusing" "${scrubbed}"
+			;;
+		ALLOW_LISTING)
+			local m
+			m=$(read_scalar listing_mutations) || refuse "the listing-mutation counter is unreadable or malformed" "${scrubbed}"
+			write_scalar listing_mutations "$(( m + 1 ))" || refuse "could not record the listing mutation — refusing" "${scrubbed}"
+			;;
+	esac
 
 	unlock_ledger
 
@@ -886,37 +870,106 @@ cmd_guard() {
 	t1=$(date +%s%N)
 
 	local delta=""
+	# 🔴 The ledger append happens INSIDE the lock, along with the settlement
+	# accounting: it used to run after unlock_ledger, so concurrent invocations
+	# appended unserialised.
+	lock_ledger || err "could not re-take the ledger lock; the ledger may be inconsistent"
+
 	if [ "${VERDICT}" = "ALLOW_SPEND" ]; then
-		local after res cum
-		lock_ledger || err "could not re-take the ledger lock; the spend ledger may be short one entry"
-		after=$(sample_balance "post-generate") || after=""
-		res=$(read_scalar reserved) || res="${mc}"
-		cum=$(read_scalar observed_spend) || cum=0
-		if [ -n "${after}" ]; then
-			delta=$(( before - after ))
-			[ "${delta}" -ge 0 ] || delta=0
-			write_scalar observed_spend "$(( cum + delta ))"
-			printf '%s\tgenerate\t%s\t%s\t%s\n' "$(now_iso)" "${before}" "${after}" "${delta}" \
-				>> "${ROOT}/ledger/spend.tsv"
-		else
-			# 🔴 FAIL CLOSED ON A LOST SAMPLE. Dropping the delta silently let a
-			# flaky balance read under-count forever — measured: 5 submits,
-			# 185 truly spent, meter 0. Charge the worst case the estimate
-			# allowed and stop the money path for the rest of the run.
-			delta="unknown"
-			write_scalar observed_spend "$(( cum + mc ))"
-			printf '%s\tgenerate\t%s\tUNREADABLE\tassumed-%s\n' "$(now_iso)" "${before}" "${mc}" \
-				>> "${ROOT}/ledger/spend.tsv"
-			: > "${ROOT}/ledger/meter_broken"
-			printf '%s: %s\n' "${SANDBOX_TAG}" \
-				"the post-submit balance read failed; ${mc} Buzz has been charged to the ledger as a worst case and no further generation will be allowed this run" >&2
-		fi
-		write_scalar reserved "$(( res - mc < 0 ? 0 : res - mc ))"
-		unlock_ledger
+		delta=$(settle_spend "${before}" "${mc}")
 	fi
 
-	log_invocation "${VERDICT}" "${rc}" "$(( (t1 - t0) / 1000000 ))" "${scrubbed}" "${delta:-}"
+	# Record the ids this run created, so the agent can withdraw its OWN
+	# submission and cancel its OWN workflow without the operator doing it by
+	# hand. Reads only; costs one extra API call after a mutation.
+	case "${VERDICT}" in
+		ALLOW_APP_SUBMIT) record_pubreq_ids ;;
+		ALLOW_SPEND)      record_workflow_ids ;;
+	esac
+
+	log_invocation "${VERDICT}" "${rc}" "$(( (t1 - t0) / 1000000 ))" "${scrubbed}" \
+		"${VERDICT_REASON}${delta:+ | delta=${delta}}"
+	unlock_ledger
 	return "${rc}"
+}
+
+# Reconcile the balance after a submit. Echoes the delta (or `unknown`).
+#
+# 🔴 THREE WAYS THIS CAN LIE, AND ALL THREE NOW LATCH `meter_broken`:
+#   * the read FAILS            — charge the worst case the estimate allowed;
+#   * the read SUCCEEDS but is STALE — a job that certainly cost something
+#     reports a delta of 0. Measured against a stub settling 2s later (the
+#     shape of --no-wait): 3 submits, meter 0, balance really moved 111, and
+#     nothing latched. A zero delta after a submit is now re-sampled once after
+#     a settle delay and, if still zero, treated as a broken meter;
+#   * the delta is NEGATIVE — a Buzz credit landing in the same window HIDES a
+#     real charge. Measured: a +100 grant alongside a 37 charge recorded 0.
+#     Clamping to zero is what made that silent, so it no longer clamps.
+settle_spend() {
+	local before="$1" mc="$2" after res cum delta
+	res=$(read_scalar reserved)      || res="${mc}"
+	cum=$(read_scalar observed_spend) || cum=0
+
+	after=$(sample_balance "post-generate") || after=""
+
+	if [ -n "${after}" ] && [ "${after}" = "${before}" ] && [ "${METER_SETTLE_SECONDS}" -gt 0 ]; then
+		sleep "${METER_SETTLE_SECONDS}"
+		after=$(sample_balance "post-generate-resample") || after=""
+	fi
+
+	if [ -z "${after}" ]; then
+		write_scalar observed_spend "$(( cum + mc ))" || true
+		printf '%s\tgenerate\t%s\tUNREADABLE\tassumed-%s\n' "$(now_iso)" "${before}" "${mc}" \
+			>> "${ROOT}/ledger/spend.tsv"
+		break_meter "the post-submit balance read failed; ${mc} Buzz charged to the ledger as a worst case"
+		printf '%s' "unknown"
+	else
+		delta=$(( before - after ))
+		if [ "${delta}" -lt 0 ]; then
+			write_scalar observed_spend "$(( cum + mc ))" || true
+			printf '%s\tgenerate\t%s\t%s\tNEGATIVE(%s)-assumed-%s\n' "$(now_iso)" "${before}" "${after}" "${delta}" "${mc}" \
+				>> "${ROOT}/ledger/spend.tsv"
+			break_meter "the balance went UP across a submit (delta ${delta}); a credit can hide a real charge, so ${mc} Buzz was charged as a worst case"
+			printf '%s' "negative:${delta}"
+		elif [ "${delta}" = 0 ]; then
+			write_scalar observed_spend "$(( cum + mc ))" || true
+			printf '%s\tgenerate\t%s\t%s\tZERO-assumed-%s\n' "$(now_iso)" "${before}" "${after}" "${mc}" \
+				>> "${ROOT}/ledger/spend.tsv"
+			break_meter "a submitted generation moved the balance by 0, so the meter is not seeing charges; ${mc} Buzz charged as a worst case"
+			printf '%s' "zero"
+		else
+			write_scalar observed_spend "$(( cum + delta ))" || true
+			printf '%s\tgenerate\t%s\t%s\t%s\n' "$(now_iso)" "${before}" "${after}" "${delta}" \
+				>> "${ROOT}/ledger/spend.tsv"
+			printf '%s' "${delta}"
+		fi
+	fi
+	write_scalar reserved "$(( res - mc < 0 ? 0 : res - mc ))" || true
+}
+
+break_meter() {
+	printf '%s\n' "$1" > "${ROOT}/ledger/meter_broken"
+	printf '%s: %s — no further generation will be allowed this run\n' "${SANDBOX_TAG}" "$1" >&2
+}
+
+# After an app submit, record the publish-request ids this account now has
+# pending, so the agent can withdraw its own. Read-only.
+record_pubreq_ids() {
+	local out
+	out=$(real_cli app status 2>/dev/null) || return 0
+	printf '%s' "${out}" | grep -o 'pubreq_[A-Za-z0-9_-]*' | sort -u \
+		>> "${ROOT}/ledger/pubreq.allow" 2>/dev/null || true
+	sort -u -o "${ROOT}/ledger/pubreq.allow" "${ROOT}/ledger/pubreq.allow" 2>/dev/null || true
+}
+
+# After a generation, record the workflow ids this run owns, so the agent can
+# cancel its own job (cancelling DOES NOT REFUND, so it may not cancel others').
+record_workflow_ids() {
+	local out
+	out=$(real_cli workflows list 2>/dev/null) || return 0
+	printf '%s' "${out}" | grep -oE '[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}' | sort -u \
+		>> "${ROOT}/ledger/workflow.allow" 2>/dev/null || true
+	sort -u -o "${ROOT}/ledger/workflow.allow" "${ROOT}/ledger/workflow.allow" 2>/dev/null || true
 }
 
 log_invocation() {
@@ -940,6 +993,67 @@ cmd_allow_pubreq() {
 	[ -n "${id}" ] || die "allow-pubreq: pass the publish-request id"
 	printf '%s\n' "${id}" >> "${ROOT}/ledger/pubreq.allow"
 	note "recorded ${id} as withdrawable"
+}
+
+# ---------------------------------------------------------------------------
+# calibrate — the ONE deliberate, operator-watched generation that measures the
+# meter's core assumption: does `buzz` reflect the charge by the time `generate`
+# returns?
+#
+# 🔴 THIS SPENDS REAL BUZZ, ONCE, ON PURPOSE. Everything else in this harness
+# assumes the balance moves before the command returns, and that assumption was
+# never tested — measured against a stub settling 2 s later, three submits left
+# the meter reading 0 while the balance really moved, with nothing latched. A
+# harness whose meter is assumed rather than measured is not auditable, so the
+# gate refuses to spend until this has been run (or --skip-calibration was
+# recorded at init).
+# ---------------------------------------------------------------------------
+cmd_calibrate() {
+	local root="${DEFAULT_ROOT}" yes=0
+	while [ $# -gt 0 ]; do
+		case "$1" in
+			--root) root="$2"; shift 2 ;;
+			--yes)  yes=1; shift ;;
+			*) die "calibrate: unknown flag $1" ;;
+		esac
+	done
+	ROOT="${root}"; load_policy || die "${POLICY_ERROR}"
+
+	if [ "${yes}" != 1 ]; then
+		note "calibrate will submit ONE real generation and SPEND REAL BUZZ."
+		note "It exists so the spend meter is measured rather than assumed."
+		note "Re-run with --yes to proceed."
+		return 2
+	fi
+
+	local before after delta
+	before=$(sample_balance "calibrate-before") || die "calibrate: could not read the opening balance"
+	note "balance before: ${before}"
+
+	note "submitting one generation (--max-cost ${PER_CALL_MAX_COST}) …"
+	real_cli generate "a plain grey square, calibration" --yes --max-cost "${PER_CALL_MAX_COST}" \
+		--no-download >/dev/null 2>&1
+	local rc=$?
+
+	after=$(sample_balance "calibrate-after") || die "calibrate: could not read the closing balance"
+	delta=$(( before - after ))
+	note "balance after:  ${after}   delta=${delta}   (generate rc=${rc})"
+
+	if [ "${rc}" != 0 ]; then
+		die "calibrate: the generation itself failed (rc=${rc}); fix that before calibrating"
+	fi
+	if [ "${delta}" -le 0 ]; then
+		printf '%s\n' "calibration FAILED: the balance did not move by the time generate returned (delta ${delta})" \
+			> "${ROOT}/ledger/meter_broken"
+		die "calibrate: the balance did NOT move by the time the command returned (delta ${delta}). The meter cannot count spend on this account/endpoint — do not run the dogfood until that is understood."
+	fi
+
+	printf 'calibrated %s delta=%s before=%s after=%s\n' "$(now_iso)" "${delta}" "${before}" "${after}" \
+		> "${ROOT}/ledger/calibration.ok"
+	note ""
+	note "CALIBRATED — one generation moved the balance by ${delta} Buzz before the"
+	note "command returned, so the meter observes charges synchronously."
+	note "Recorded in ${ROOT}/ledger/calibration.ok"
 }
 
 cmd_status() {
@@ -1000,22 +1114,84 @@ cmd_enter() {
 	ROOT="${root}"; load_policy || die "${POLICY_ERROR}"
 	command -v bwrap >/dev/null 2>&1 || die "enter: bwrap (bubblewrap) is not on PATH"
 
-	local shell_bin="${SHELL:-/bin/sh}"
+	local shell_bin
+	shell_bin=$(command -v bash) || die "enter: no bash on PATH"
 	[ $# -gt 0 ] || set -- "${shell_bin}" -i
+
+	# 🔴 DO NOT BIND /nix WHOLESALE. `nix build` copies the WHOLE working tree
+	# to a world-readable /nix/store/<hash>-source (flake.nix: `src =
+	# lib.cleanSource ./.`), so `--ro-bind /nix /nix` put this repo — AGENTS.md,
+	# the handoffs, the decisions — back inside a jail whose entire purpose is
+	# that the agent cannot read them. Measured: 4 readable copies of this
+	# repo's AGENTS.md under /nix/store, and one `grep -rl` ends the blindness.
+	# The earlier §5 transcript checked /home and the repo path and never
+	# checked /nix, which is exactly how the claim survived.
+	#
+	# So: bind only the CLOSURE of the handful of tools the jail needs. Anything
+	# not reachable from those roots — including every -source copy — is absent.
+	local -a roots=() binds=()
+	local b p
+	# 🔴 `command -v` returns the NAME for a shell builtin, not a path —
+	# `command -v printf` is literally `printf`. Feeding that to readlink -f
+	# yields a cwd-relative path that does not exist, and nix-store then fails
+	# on the whole list, which read as "nix-store is missing". Only absolute
+	# paths are roots.
+	for b in bash env cat cp rm mkdir chmod chown date grep sed tr head cut wc \
+	         sha256sum flock timeout mv ls readlink stat sort tail touch find id \
+	         dirname basename mktemp sleep awk diff coreutils; do
+		p=$(command -v "${b}" 2>/dev/null) || continue
+		case "${p}" in /*) ;; *) continue ;; esac
+		p=$(readlink -f "${p}") || continue
+		[ -e "${p}" ] || continue
+		roots+=("${p}")
+	done
+	[ "${#roots[@]}" -gt 0 ] || die "enter: could not resolve any tool paths"
+
+	local ca=""
+	for p in /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-bundle.crt; do
+		[ -e "${p}" ] && { ca=$(readlink -f "${p}"); break; }
+	done
+	[ -n "${ca}" ] && roots+=("${ca}")
+
+	# nix-store is not always on PATH even where it exists (a restricted shell,
+	# a non-login environment), so look in the usual places rather than
+	# concluding it is absent and refusing.
+	local nixstore=""
+	for p in "$(command -v nix-store 2>/dev/null)" \
+	         /run/current-system/sw/bin/nix-store \
+	         /nix/var/nix/profiles/default/bin/nix-store; do
+		[ -n "${p}" ] && [ -x "${p}" ] && { nixstore="${p}"; break; }
+	done
+
+	local closure=""
+	[ -n "${nixstore}" ] && closure=$("${nixstore}" -qR "${roots[@]}" 2>/dev/null | sort -u)
+	if [ -z "${closure}" ]; then
+		die "enter: could not compute the store closure (nix-store missing or failed). Refusing to fall back to binding /nix wholesale, which would put the repo back inside the jail."
+	fi
+	while IFS= read -r p; do
+		[ -n "${p}" ] || continue
+		binds+=(--ro-bind "${p}" "${p}")
+	done <<< "${closure}"
+
+	local envbin path_dirs
+	envbin=$(readlink -f "$(command -v env)")
+	path_dirs="${ROOT}/bin"
+	for b in bash coreutils grep sed findutils util-linux gawk diffutils; do :; done
+	for p in "${roots[@]}"; do
+		case "${path_dirs}:" in *":$(dirname "${p}"):"*) continue ;; esac
+		path_dirs="${path_dirs}:$(dirname "${p}")"
+	done
 
 	# 🔴 ORDER IS LOAD-BEARING. bwrap applies these in sequence, so `--tmpfs
 	# /tmp` must come BEFORE the run-root bind: the default run root lives under
 	# /tmp, and a tmpfs mounted afterwards SHADOWS it. Measured — with the bind
 	# first, bwrap died with "Can't chdir to <root>/workspace: No such file or
-	# directory". PATH is set explicitly rather than inherited because the
-	# operator's ~/.nix-profile/bin does not exist inside the jail.
+	# directory".
 	exec bwrap \
-		--ro-bind /nix /nix \
-		--ro-bind /run/current-system /run/current-system \
+		"${binds[@]}" \
+		--ro-bind "${envbin}" /usr/bin/env \
 		--ro-bind /etc/resolv.conf /etc/resolv.conf \
-		--ro-bind /etc/ssl /etc/ssl \
-		--ro-bind /etc/static /etc/static \
-		--ro-bind /usr /usr \
+		${ca:+--ro-bind "${ca}" /etc/ssl/certs/ca-certificates.crt} \
 		--proc /proc --dev /dev --tmpfs /tmp \
 		--bind "${ROOT}" "${ROOT}" \
 		--unshare-pid --die-with-parent \
@@ -1023,7 +1199,8 @@ cmd_enter() {
 		--setenv XDG_CONFIG_HOME "${ROOT}/home/.config" \
 		--setenv XDG_CACHE_HOME "${ROOT}/home/.cache" \
 		--setenv CIVITAI_NO_UPDATE_CHECK 1 \
-		--setenv PATH "${ROOT}/bin:/run/current-system/sw/bin:/usr/bin:/bin" \
+		${ca:+--setenv SSL_CERT_FILE /etc/ssl/certs/ca-certificates.crt} \
+		--setenv PATH "${path_dirs}" \
 		--chdir "${ROOT}/workspace" \
 		"$@"
 }
@@ -1057,19 +1234,19 @@ SELFTEST_FAIL=0
 st_check() {
 	local label="$1" want="$2" got="$3"
 	if [ "${want}" = "${got}" ]; then
-		printf '  PASS  %-58s (%s)\n' "${label}" "${got}"; SELFTEST_PASS=$(( SELFTEST_PASS + 1 ))
+		printf '  PASS  %-62s (%s)\n' "${label}" "${got}"; SELFTEST_PASS=$(( SELFTEST_PASS + 1 ))
 	else
-		printf '  FAIL  %-58s want=%s got=%s\n' "${label}" "${want}" "${got}"; SELFTEST_FAIL=$(( SELFTEST_FAIL + 1 ))
+		printf '  FAIL  %-62s want=%s got=%s\n' "${label}" "${want}" "${got}"; SELFTEST_FAIL=$(( SELFTEST_FAIL + 1 ))
 	fi
 }
 
 vd() { policy_verdict "$@"; printf '%s' "${VERDICT}"; }
 
-# 🔴 A DENY is not evidence that the branch you meant was reached. Measured:
-# with the command resolved positionally again, `--no-color generate … --yes`
-# still DENIED — as an unrecognised command called `--no-color` — so every
-# verdict-only assertion for that bypass stayed green while the gate was blind.
-# These rows pin the REASON, so a refusal from a bystander branch fails.
+# 🔴 A DENY is not evidence that the branch you meant was reached. Measured
+# twice now: with the command resolved positionally, `--no-color generate …
+# --yes` still DENIED — as an unrecognised command called `--no-color` — and a
+# blind auditor found a dev-tunnel row carried by a bystander the same way.
+# These rows pin the REASON.
 st_reason() {
 	local label="$1" needle="$2"; shift 2
 	policy_verdict "$@"
@@ -1077,6 +1254,14 @@ st_reason() {
 		*"${needle}"*) st_check "${label}" "match" "match" ;;
 		*)             st_check "${label}" "match" "no-match: ${VERDICT_REASON}" ;;
 	esac
+}
+
+st_reset_ledger() {
+	write_scalar observed_spend "${1:-0}"
+	write_scalar reserved "${2:-0}"
+	write_scalar generate_submits "${3:-0}"
+	write_scalar app_submits "${4:-0}"
+	write_scalar listing_mutations "${5:-0}"
 }
 
 cmd_selftest() {
@@ -1091,137 +1276,217 @@ cmd_selftest() {
 
 	if [ "${offline}" = 1 ]; then
 		root="${TMPDIR:-/tmp}/dogfood-selftest-$$"
-		rm -rf "${root}"; mkdir -p "${root}/ledger" "${root}/workspace"
+		rm -rf "${root}"; mkdir -p "${root}/ledger" "${root}/workspace" "${root}/real"
 		cat > "${root}/ledger/policy.env" <<OFFLINE
 ROOT="${root}"
 PER_CALL_MAX_COST=100
 TOTAL_SPEND_CAP=2000
 MAX_GENERATE_SUBMITS=20
 MAX_APP_SUBMITS=3
+MAX_LISTING_MUTATIONS=10
+METER_SETTLE_SECONDS=0
+REQUIRE_CALIBRATION=0
+ALLOW_NO_WAIT=0
 SLUG_PREFIX="sanctioned-"
 BASE_URL="https://civitai.com"
 OFFLINE
 		: > "${root}/ledger/pubreq.allow"
-		printf '0\n' > "${root}/ledger/observed_spend"
-		printf '0\n' > "${root}/ledger/reserved"
-		printf '0\n' > "${root}/ledger/generate_submits"
-		printf '0\n' > "${root}/ledger/app_submits"
+		: > "${root}/ledger/workflow.allow"
+		local repo
+		repo=$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd) || die "selftest: cannot locate the repo"
+		command -v go >/dev/null 2>&1 || die "selftest --offline needs go to build internal/dogfoodguard"
+		( cd "${repo}" && go build -o "${root}/real/dogfoodguard" ./internal/dogfoodguard ) \
+			|| die "selftest: could not build the classifier"
 	fi
 
 	ROOT="${root}"
 	load_policy || die "selftest: ${POLICY_ERROR}"
+	st_reset_ledger
 
 	local td="${ROOT}/ledger/_selftest"
 	rm -rf "${td}"; mkdir -p "${td}/good" "${td}/bad"
 	printf '{"blockId":"%sdemo","name":"d","version":"1.0.0","kind":"page"}\n' "${SLUG_PREFIX}" > "${td}/good/block.manifest.json"
 	printf '{"blockId":"someones-real-app","name":"d","version":"1.0.0","kind":"page"}\n'        > "${td}/bad/block.manifest.json"
 
-	note "--- forbidden commands ---"
-	st_check "upgrade denied"                      "DENY"  "$(vd upgrade)"
-	st_check "login denied"                        "DENY"  "$(vd login --token x)"
-	st_check "app dev-tunnel denied"               "DENY"  "$(vd app dev-tunnel)"
-	st_check "app dev-token denied"                "DENY"  "$(vd app dev-token)"
-	st_check "unknown top-level command denied"    "DENY"  "$(vd frobnicate --yes)"
-	st_check "unknown app subcommand denied"       "DENY"  "$(vd app frobnicate)"
-	st_check "unknown listing verb denied"         "DENY"  "$(vd app listing frobnicate)"
+	note "--- the classifier is the REAL cobra tree ---"
+	st_check "classifier present" "yes" "$([ -x "${ROOT}/real/dogfoodguard" ] && printf yes || printf no)"
+	st_check "an unclassifiable invocation denies" "DENY" "$(vd --definitely-not-a-flag)"
 
-	note "--- FINDING 1: root persistent flags must not hide the command ---"
-	st_check "--no-color generate is still a spend"    "DENY" "$(vd --no-color generate cat --yes)"
-	st_check "--no-color upgrade still denied"         "DENY" "$(vd --no-color upgrade)"
-	st_check "--no-update-check upgrade still denied"  "DENY" "$(vd --no-update-check upgrade)"
-	st_check "--color login still denied"              "DENY" "$(vd --color login --token x)"
-	st_check "app --no-color submit foreign denied"    "DENY" "$(vd app --no-color submit "${td}/bad" --yes)"
-	st_check "--no-color app withdraw denied"          "DENY" "$(vd --no-color app withdraw pubreq_OTHER)"
-	st_check "--no-color generate --max-cost is spend" "ALLOW_SPEND" "$(vd --no-color generate cat --yes --max-cost 5)"
-	note "    the REASON must be the real branch, not the unknown-command fallback"
-	st_reason "--no-color generate refused for the MONEY reason" "--max-cost" \
-		--no-color generate cat --yes
-	st_reason "--no-color upgrade refused AS upgrade" "replace the binary" \
-		--no-color upgrade
-	st_reason "app --no-color submit foreign refused on the PREFIX" "sanctioned prefix" \
-		app --no-color submit "${td}/bad" --yes
-	st_reason "--no-color app withdraw refused on the ALLOWLIST" "not created by this sandbox" \
-		--no-color app withdraw pubreq_OTHER
+	# 🔴 The shim and the classifier are versioned together. Output the shim
+	# does not fully understand means they have DRIFTED, and drift is exactly
+	# the failure this whole design removes — so it denies rather than acting on
+	# the fields it did recognise. Only runnable where the classifier is
+	# writable (the offline root); the credentialed sandbox locks it 0500.
+	local fake="${ROOT}/ledger/_fakeguard"
+	mkfake() { printf '#!/usr/bin/env bash\n%s\n' "$1" > "${fake}"; chmod 0755 "${fake}"; GUARD_BIN="${fake}"; }
+	mkfake 'printf "ok\t1\npath\tgenerate\nbogus\tx\n"'
+	st_reason "an UNRECOGNISED classifier field denies" "could not be classified" generate cat --yes --max-cost 5
+	mkfake 'printf "path\tgenerate\n"'
+	st_reason "classifier output with no ok field denies" "could not be classified" generate cat --yes --max-cost 5
+	mkfake 'exit 9'
+	st_reason "a silent non-zero classifier denies" "could not be classified" generate cat --dry-run
+	mkfake 'printf "ok\t1\npath\tgenerate\nargc\tnotanumber\n"'
+	st_reason "a non-numeric argument count denies" "could not be classified" generate cat --dry-run
+	# A classifier that claims everything is a harmless read must still not be
+	# able to say so from OUTSIDE the sandbox: GUARD_BIN is reset at startup, so
+	# an exported value cannot reach the gate.
+	mkfake 'printf "ok\t1\npath\twhoami\nargc\t0\n"'
+	st_check "an injected classifier IS honoured inside the selftest" "ALLOW" "$(vd generate cat --yes)"
+	GUARD_BIN=""; rm -f "${fake}"
+	st_check "the real classifier is back" "DENY" "$(vd generate cat --yes)"
+	st_check "an INHERITED GUARD_BIN is ignored" "DENY" \
+		"$(GUARD_BIN=/bin/true bash "$0" __verdict --root "${ROOT}" -- generate cat --yes 2>/dev/null)"
 
-	note "--- FINDING 2: --help as a flag VALUE is not a help request ---"
-	st_check "genuine generate --help"                 "ALLOW" "$(vd generate --help)"
-	st_check "genuine upgrade --help"                  "ALLOW" "$(vd upgrade --help)"
-	st_check "genuine app listing set-icon --help"     "ALLOW" "$(vd app listing set-icon --help)"
-	st_check "bare --help"                             "ALLOW" "$(vd --help)"
-	st_check "--negative-prompt --help is NOT help"    "DENY"  "$(vd generate cat --yes --negative-prompt --help)"
-	st_check "--ecosystem --help is NOT help"          "DENY"  "$(vd generate cat --yes --ecosystem --help)"
-	st_check "submit -o --help is NOT help"            "DENY"  "$(vd app submit "${td}/bad" --yes -o --help)"
-	st_check "--negative-prompt -h is NOT help"        "DENY"  "$(vd generate cat --yes --negative-prompt -h)"
-	note "    (and the same trick aimed at --dry-run, which the audit did not list)"
-	st_check "--negative-prompt --dry-run is NOT free" "DENY"  "$(vd generate cat --yes --negative-prompt --dry-run)"
-	st_check "--input --print-input is NOT free"       "DENY"  "$(vd generate --yes --input --print-input)"
-	st_check "an unknown flag before --dry-run is not free" "DENY" "$(vd generate cat --yes --mystery --dry-run)"
+	note "--- forbidden commands (reason-pinned, so no bystander can carry them) ---"
+	st_reason "upgrade denied AS upgrade"        "replace the binary"        upgrade
+	st_reason "login denied AS login"            "already authenticated"     login --token x
+	st_reason "dev-tunnel denied AS dev-tunnel"  "out of scope"              app dev-tunnel
+	st_reason "dev-token denied AS dev-token"    "out of scope"              app dev-token
+	st_reason "unknown top-level denied"         "not a subcommand"          frobnicate
+	st_reason "unknown app subcommand denied"    "not a subcommand"          app frobnicate
+	st_reason "unknown listing verb denied"      "not a subcommand"          app listing frobnicate
+	st_reason "unknown workflows verb denied"    "not a subcommand"          workflows frobnicate
+
+	note "--- root persistent flags before the subcommand ---"
+	st_reason "--no-color generate hits the MONEY branch" "--max-cost" --no-color generate cat --yes
+	st_reason "--no-color upgrade denied AS upgrade"      "replace the binary" --no-color upgrade
+	st_reason "--no-update-check upgrade denied"          "replace the binary" --no-update-check upgrade
+	st_reason "--color login denied AS login"             "already authenticated" --color login --token x
+	st_reason "app --no-color submit foreign on PREFIX"   "sanctioned prefix" app --no-color submit "${td}/bad" --yes
+	st_check  "--no-color generate --max-cost is a spend" "ALLOW_SPEND" "$(vd --no-color generate cat --yes --max-cost 5)"
+
+	note "--- a flag VALUE that looks like a flag ---"
+	st_check "--negative-prompt --help is NOT help"     "DENY" "$(vd generate cat --yes --negative-prompt --help)"
+	st_check "--negative-prompt --dry-run is NOT free"  "DENY" "$(vd generate cat --yes --negative-prompt --dry-run)"
+	st_check "--ecosystem --print-input is NOT free"    "DENY" "$(vd generate cat --yes --ecosystem --print-input)"
+	st_check "submit -o --help is NOT help"             "DENY" "$(vd app submit "${td}/bad" --yes -o --help)"
+	st_check "genuine generate --help"                  "ALLOW" "$(vd generate --help)"
+	st_check "genuine upgrade --help"                   "ALLOW" "$(vd upgrade --help)"
+	st_check "genuine listing set-icon --help"          "ALLOW" "$(vd app listing set-icon --help)"
+	st_check "bare --help"                              "ALLOW" "$(vd --help)"
+
+	note "--- 🔴 ALL TWELVE pflag boolean spellings, on every gated bool ---"
+	local v
+	for v in 1 t T TRUE true True; do
+		st_check "--dry-run=${v} is a free preview"      "ALLOW" "$(vd generate cat --yes --dry-run="${v}")"
+		st_check "--print-input=${v} is a free preview"  "ALLOW" "$(vd generate cat --yes --print-input="${v}")"
+	done
+	for v in 0 f F FALSE false False; do
+		st_check "--dry-run=${v} still SPENDS"           "DENY"  "$(vd generate cat --yes --dry-run="${v}")"
+		st_check "--print-input=${v} still SPENDS"       "DENY"  "$(vd generate cat --yes --print-input="${v}")"
+		st_check "--help=${v} is NOT a help request"     "DENY"  "$(vd generate cat --yes --help="${v}")"
+		st_reason "--package-only=${v} still gated"      "sanctioned prefix" app submit "${td}/bad" --yes --package-only="${v}"
+	done
+	for v in 1 t T TRUE true True; do
+		st_check "--help=${v} IS a help request"         "ALLOW" "$(vd generate cat --yes --help="${v}")"
+		st_check "--package-only=${v} never submits"     "ALLOW" "$(vd app submit "${td}/bad" --yes --package-only="${v}")"
+	done
+	st_reason "an unparseable bool value denies"  "would reject these flags" generate cat --yes --dry-run=maybe
+	st_reason "an unparseable int value denies"   "would reject these flags" generate cat --yes --max-cost abc
+	st_reason "--max-cost 08 denies (not a crash)" "would reject these flags" generate cat --yes --max-cost 08
 
 	note "--- generate money path ---"
-	st_check "real dry-run is free"                "ALLOW"       "$(vd generate cat --dry-run)"
-	st_check "real print-input is free"            "ALLOW"       "$(vd generate cat --print-input)"
-	st_check "no --max-cost denied"                "DENY"        "$(vd generate cat --yes)"
-	st_check "--max-cost over ceiling denied"      "DENY"        "$(vd generate cat --yes --max-cost 101)"
-	st_check "--max-cost at ceiling allowed"       "ALLOW_SPEND" "$(vd generate cat --yes --max-cost 100)"
-	st_check "--max-cost=N form"                   "ALLOW_SPEND" "$(vd generate cat --yes --max-cost=1)"
-	st_check "non-numeric --max-cost denied"       "DENY"        "$(vd generate cat --yes --max-cost abc)"
-	note "    LAST --max-cost wins, as pflag does"
-	st_check "--max-cost 5 then 99999 denied"      "DENY"        "$(vd generate cat --yes --max-cost 5 --max-cost 99999)"
-	st_check "--max-cost 99999 then 5 allowed"     "ALLOW_SPEND" "$(vd generate cat --yes --max-cost 99999 --max-cost 5)"
+	st_check "real dry-run is free"            "ALLOW"       "$(vd generate cat --dry-run)"
+	st_check "no --max-cost denied"            "DENY"        "$(vd generate cat --yes)"
+	st_check "--max-cost at ceiling allowed"   "ALLOW_SPEND" "$(vd generate cat --yes --max-cost 100)"
+	st_check "--max-cost=N form"               "ALLOW_SPEND" "$(vd generate cat --yes --max-cost=1)"
+	st_reason "--max-cost over ceiling denied" "per-invocation ceiling" generate cat --yes --max-cost 101
+	st_check "LAST --max-cost wins (5 then 99999)"  "DENY"        "$(vd generate cat --yes --max-cost 5 --max-cost 99999)"
+	st_check "LAST --max-cost wins (99999 then 5)"  "ALLOW_SPEND" "$(vd generate cat --yes --max-cost 99999 --max-cost 5)"
+	st_reason "--no-wait refused by default"   "settled" generate cat --yes --max-cost 5 --no-wait
+
+	note "--- 🔴 EACH CAP, ISOLATED, REASON-PINNED ---"
+	st_reset_ledger 2000 0 0 0 0
+	st_reason "TOTAL_SPEND_CAP branch"        "total spend cap" generate cat --yes --max-cost 1
+	st_reset_ledger 1995 0 0 0 0
+	st_reason "remaining-budget branch"       "left under this run's total cap" generate cat --yes --max-cost 50
+	st_reset_ledger 0 0 20 0 0
+	st_reason "MAX_GENERATE_SUBMITS branch"   "generation cap" generate cat --yes --max-cost 1
+	# A reservation alone must reach the cap: 0 observed + 2000 in flight is a
+	# full budget even though nothing has settled yet.
+	st_reset_ledger 0 2000 0 0 0
+	st_reason "the RESERVATION alone reaches the cap" "committed in flight" generate cat --yes --max-cost 1
+	st_reset_ledger 0 1999 0 0 0
+	st_reason "a reservation shrinks the remaining budget" "left under this run's total cap" generate cat --yes --max-cost 5
+	st_reset_ledger 0 0 0 3 0
+	st_reason "MAX_APP_SUBMITS branch"        "app-submission cap" app submit "${td}/good" --yes
+	st_reset_ledger 0 0 0 0 10
+	st_reason "MAX_LISTING_MUTATIONS branch"  "listing-mutation cap" app listing set-icon i.png --dir "${td}/good"
+	st_reset_ledger
+
+	note "--- 🔴 a malformed or EMPTY ledger scalar is not zero ---"
+	local f
+	for f in observed_spend reserved generate_submits; do
+		printf 'garbage\n' > "${ROOT}/ledger/${f}"
+		st_reason "malformed ${f} refuses a spend" "unreadable or malformed" generate cat --yes --max-cost 5
+		: > "${ROOT}/ledger/${f}"
+		st_reason "EMPTY ${f} refuses a spend"     "unreadable or malformed" generate cat --yes --max-cost 5
+		write_scalar "${f}" 0
+	done
+	printf 'garbage\n' > "${ROOT}/ledger/app_submits"
+	st_reason "malformed app_submits refuses a submit" "unreadable or malformed" app submit "${td}/good" --yes
+	write_scalar app_submits 0
+	printf 'garbage\n' > "${ROOT}/ledger/listing_mutations"
+	st_reason "malformed listing_mutations refuses" "unreadable or malformed" app listing set-icon i.png --dir "${td}/good"
+	write_scalar listing_mutations 0
 
 	note "--- app identity gating ---"
-	st_check "submit sanctioned"                   "ALLOW_APP_SUBMIT" "$(vd app submit "${td}/good" --yes)"
-	st_check "submit foreign denied"               "DENY"             "$(vd app submit "${td}/bad" --yes)"
-	st_check "submit -o value not read as dir"     "ALLOW_APP_SUBMIT" "$(vd app submit -o "${td}/bad" "${td}/good")"
-	st_check "package-only allowed"                "ALLOW"            "$(vd app submit "${td}/bad" --package-only)"
-	st_check "listing foreign --slug denied"       "DENY"             "$(vd app listing set-icon i.png --slug someones-real-app)"
-	st_check "listing sanctioned --dir"            "ALLOW"            "$(vd app listing set-icon i.png --dir "${td}/good")"
-	st_check "listing unidentifiable denied"       "DENY"             "$(vd app listing set-icon i.png --dir "${ROOT}/ledger")"
-	st_check "listing status is a read"            "ALLOW"            "$(vd app listing status)"
+	st_check "submit sanctioned"               "ALLOW_APP_SUBMIT" "$(vd app submit "${td}/good" --yes)"
+	st_reason "submit foreign denied"          "sanctioned prefix" app submit "${td}/bad" --yes
+	st_check "submit -o value not read as dir" "ALLOW_APP_SUBMIT" "$(vd app submit -o "${td}/bad" "${td}/good")"
+	st_check "listing sanctioned --dir"        "ALLOW_LISTING"    "$(vd app listing set-icon i.png --dir "${td}/good")"
+	st_reason "listing foreign --slug denied"  "may not touch the account's real listings" app listing set-icon i.png --slug someones-real-app
+	st_reason "listing unidentifiable denied"  "cannot identify" app listing set-icon i.png --dir "${ROOT}/ledger"
+	st_check "listing status is a read"        "ALLOW" "$(vd app listing status)"
 
-	note "--- FINDING 9: withdraw ---"
-	st_check "unknown pubreq id denied"            "DENY"  "$(vd app withdraw pubreq_UNKNOWN)"
-	st_check "non-pubreq-shaped id denied"         "DENY"  "$(vd app withdraw NOT-A-PUBREQ-ID)"
-	st_check "--id form denied"                    "DENY"  "$(vd app withdraw --id NOT-A-PUBREQ-ID)"
-	st_check "no id at all is a CLI usage error"   "ALLOW" "$(vd app withdraw)"
+	note "--- withdraw + workflows cancel allowlists ---"
+	st_reason "unknown pubreq denied"          "not created by this sandbox" app withdraw pubreq_UNKNOWN
+	st_reason "non-pubreq-shaped id denied"    "not created by this sandbox" app withdraw NOT-A-PUBREQ-ID
+	st_reason "--id form denied"               "not created by this sandbox" app withdraw --id NOT-A-PUBREQ
+	st_check  "no id is a CLI usage error"     "ALLOW" "$(vd app withdraw)"
 	printf 'pubreq_MINE\n' >> "${ROOT}/ledger/pubreq.allow"
-	st_check "allowlisted id permitted"            "ALLOW" "$(vd app withdraw pubreq_MINE)"
+	st_check  "allowlisted pubreq permitted"   "ALLOW" "$(vd app withdraw pubreq_MINE)"
+	st_reason "cancel of a foreign workflow denied" "DOES NOT REFUND" workflows cancel someone-elses
+	printf 'wf-mine\n' >> "${ROOT}/ledger/workflow.allow"
+	st_check  "cancel of our own workflow allowed" "ALLOW" "$(vd workflows cancel wf-mine)"
+	st_check  "workflows list is a read"       "ALLOW" "$(vd workflows list)"
 
-	note "--- FINDING 3: malformed policy / ledger fails CLOSED ---"
-	printf 'garbage\n' > "${ROOT}/ledger/observed_spend"
-	st_check "malformed observed_spend denies spend" "DENY" "$(vd generate cat --yes --max-cost 5)"
-	printf '0\n' > "${ROOT}/ledger/observed_spend"
-	printf '\n' > "${ROOT}/ledger/reserved"
-	st_check "empty reserved reads as 0"             "ALLOW_SPEND" "$(vd generate cat --yes --max-cost 5)"
-	printf 'x\n' > "${ROOT}/ledger/reserved"
-	st_check "malformed reserved denies spend"       "DENY" "$(vd generate cat --yes --max-cost 5)"
-	printf '0\n' > "${ROOT}/ledger/reserved"
-	local saved_pc="${PER_CALL_MAX_COST}"
+	note "--- calibration + meter_broken gates ---"
+	printf 'REQUIRE_CALIBRATION=1\n' >> "${ROOT}/ledger/policy.env"
+	load_policy || die "selftest: policy reload failed"
+	st_reason "uncalibrated meter refuses to spend" "calibrated" generate cat --yes --max-cost 5
+	printf 'calibrated\n' > "${ROOT}/ledger/calibration.ok"
+	st_check  "calibrated meter may spend" "ALLOW_SPEND" "$(vd generate cat --yes --max-cost 5)"
+	: > "${ROOT}/ledger/meter_broken"
+	st_reason "a broken meter refuses to spend" "no longer being counted" generate cat --yes --max-cost 5
+	st_check  "dry-run still allowed with a broken meter" "ALLOW" "$(vd generate cat --dry-run)"
+	rm -f "${ROOT}/ledger/meter_broken" "${ROOT}/ledger/calibration.ok"
+	grep -v '^REQUIRE_CALIBRATION=1$' "${ROOT}/ledger/policy.env" > "${ROOT}/ledger/p.tmp"
+	mv "${ROOT}/ledger/p.tmp" "${ROOT}/ledger/policy.env"
+	load_policy || die "selftest: policy restore failed"
+
+	note "--- policy validation ---"
 	local pol="${ROOT}/ledger/policy.env" bak="${ROOT}/ledger/policy.bak"
 	cp "${pol}" "${bak}"
-	grep -v '^PER_CALL_MAX_COST=' "${bak}" > "${pol}"
-	if load_policy; then
-		st_check "policy missing a key is rejected" "rejected" "accepted"
-	else
-		st_check "policy missing a key is rejected" "rejected" "rejected"
-	fi
+	local key
+	for key in PER_CALL_MAX_COST TOTAL_SPEND_CAP MAX_GENERATE_SUBMITS MAX_APP_SUBMITS \
+	           MAX_LISTING_MUTATIONS REQUIRE_CALIBRATION ALLOW_NO_WAIT METER_SETTLE_SECONDS; do
+		grep -v "^${key}=" "${bak}" > "${pol}"
+		if load_policy; then st_check "policy without ${key} rejected" "rejected" "accepted"
+		else st_check "policy without ${key} rejected" "rejected" "rejected"; fi
+	done
+	# 🔴 An EMPTY SLUG_PREFIX matches every blockId, so it is not merely a
+	# missing key — it is a gate that silently passes the account's real apps.
+	sed 's/^SLUG_PREFIX=.*/SLUG_PREFIX=""/' "${bak}" > "${pol}"
+	if load_policy; then st_check "policy with an EMPTY SLUG_PREFIX rejected" "rejected" "accepted"
+	else st_check "policy with an EMPTY SLUG_PREFIX rejected" "rejected" "rejected"; fi
 	printf 'PER_CALL_MAX_COST=notanumber\n' >> "${pol}"
-	if load_policy; then
-		st_check "policy with a non-numeric key is rejected" "rejected" "accepted"
-	else
-		st_check "policy with a non-numeric key is rejected" "rejected" "rejected"
-	fi
+	if load_policy; then st_check "non-numeric policy key rejected" "rejected" "accepted"
+	else st_check "non-numeric policy key rejected" "rejected" "rejected"; fi
 	cp "${bak}" "${pol}"; rm -f "${bak}"
 	load_policy || die "selftest: could not restore the policy"
-	st_check "policy restored" "${saved_pc}" "${PER_CALL_MAX_COST}"
 
-	note "--- FINDING 4: the meter_broken latch stops the money path ---"
-	: > "${ROOT}/ledger/meter_broken"
-	st_check "spend refused once the meter is broken" "DENY"  "$(vd generate cat --yes --max-cost 5)"
-	st_check "dry-run still allowed"                  "ALLOW" "$(vd generate cat --dry-run)"
-	rm -f "${ROOT}/ledger/meter_broken"
-
-	note "--- FINDING 5: the balance parser ---"
+	note "--- the balance parser ---"
 	local j
 	for j in '{"total":3.5}' '{"total":1e9}' '{"total":-500}' '{"total":99999999999999999999}' \
 	         '{"blue":1}' '' '{"total":}' '{"total":1,"total":2}'; do
@@ -1231,32 +1496,24 @@ OFFLINE
 			st_check "parser rejects ${j:-<empty>}" "reject" "reject"
 		fi
 	done
-	st_check "parser accepts compact"        "4187454" "$(parse_buzz_total '{"total":4187454}' || printf FAILED)"
-	st_check "parser accepts spaced/pretty"  "4187454" "$(parse_buzz_total '{
+	st_check "parser accepts compact"       "4187454" "$(parse_buzz_total '{"total":4187454}' || printf FAILED)"
+	st_check "parser accepts pretty"        "4187454" "$(parse_buzz_total '{
   "blue": 1338425,
-  "green": 999980,
-  "total": 4187454,
-  "yellow": 1849049
+  "total": 4187454
 }' || printf FAILED)"
-	st_check "parser accepts a real zero"    "0"       "$(parse_buzz_total '{"total":0}' || printf FAILED)"
+	st_check "parser accepts a real zero"   "0" "$(parse_buzz_total '{"total":0}' || printf FAILED)"
 
-	note "--- FINDING 6: the ledger lock exists ---"
-	if command -v flock >/dev/null 2>&1; then
-		st_check "flock is available" "yes" "yes"
-	else
-		st_check "flock is available" "yes" "no"
-	fi
-
-	note "--- FINDING 7: TSV escaping ---"
-	st_check "newline escaped"  'a\nb'  "$(tsv_escape "$(printf 'a\nb')")"
-	st_check "tab escaped"      'a\tb'  "$(tsv_escape "$(printf 'a\tb')")"
+	note "--- TSV escaping + lock ---"
+	st_check "newline escaped" 'a\nb' "$(tsv_escape "$(printf 'a\nb')")"
+	st_check "tab escaped"     'a\tb' "$(tsv_escape "$(printf 'a\tb')")"
 	st_check "argv scrub escapes a newline" 'gen a\nDENY\tx' "$(scrub_argv gen "$(printf 'a\nDENY\tx')")"
-	st_check "token redacted"   'login --token <redacted>' "$(scrub_argv login --token SECRETVALUE)"
+	st_check "token redacted"  'login --token <redacted>' "$(scrub_argv login --token SECRETVALUE)"
+	st_check "flock available" "yes" "$(command -v flock >/dev/null 2>&1 && printf yes || printf no)"
 
 	rm -rf "${td}"
 
 	if [ "${offline}" = 1 ]; then
-		selftest_e2e
+		selftest_e2e "${ROOT}/real/dogfoodguard"
 		note ""
 		note "--- offline mode: the credentialed checks below were skipped ---"
 		rm -rf "${ROOT}"
@@ -1274,7 +1531,9 @@ OFFLINE
 		note "--- lockdown ---"
 		st_check "binary dir not writable"  "no" "$([ -w "${ROOT}/real" ] && printf yes || printf no)"
 		st_check "binary file not writable" "no" "$([ -w "${ROOT}/real/civitai" ] && printf yes || printf no)"
+		st_check "classifier present"       "yes" "$([ -x "${ROOT}/real/dogfoodguard" ] && printf yes || printf no)"
 		st_check "sandbox config exists"    "yes" "$([ -f "${ROOT}/home/.config/civitai/config.yaml" ] && printf yes || printf no)"
+		st_reset_ledger
 	fi
 
 	note ""
@@ -1284,15 +1543,17 @@ OFFLINE
 
 # ---------------------------------------------------------------------------
 # End-to-end exercise of the GUARD (not just the classifier), driven by a stub
-# binary that charges a known amount. This is what makes the meter, the lock
-# and the ledger regression-testable without a credential or a network — the
-# classifier being right says nothing about whether the guard acts on it.
+# binary that charges a known amount. The classifier being right says nothing
+# about whether the guard acts on it.
 # ---------------------------------------------------------------------------
 selftest_e2e() {
 	local base="${TMPDIR:-/tmp}/dogfood-e2e-$$"
+	local guard_src="$1"
 	rm -rf "${base}"
 	mkdir -p "${base}/real" "${base}/bin" "${base}/ledger" \
 	         "${base}/home/.config" "${base}/home/.cache" "${base}/workspace"
+	cp "${guard_src}" "${base}/real/dogfoodguard" || { st_check "e2e classifier copied" yes no; return; }
+	chmod 0755 "${base}/real/dogfoodguard"
 
 	cat > "${base}/real/civitai" <<'STUB'
 #!/usr/bin/env bash
@@ -1300,17 +1561,18 @@ set -u
 BAL="${XDG_CACHE_HOME}/bal"; NB="${XDG_CACHE_HOME}/nbuzz"
 [ -f "${BAL}" ] || echo 10000 > "${BAL}"
 [ -f "${NB}" ]  || echo 0 > "${NB}"
-args=()
-for a in "$@"; do
-  case "${a}" in --no-color|--color|--no-update-check) ;; *) args+=("${a}") ;; esac
-done
+args=(); for a in "$@"; do case "${a}" in --no-color|--color|--no-update-check) ;; *) args+=("${a}") ;; esac; done
 set -- "${args[@]+"${args[@]}"}"
 case "${1:-}" in
   buzz)
     n=$(cat "${NB}"); echo $(( n + 1 )) > "${NB}"
     if [ -n "${STUB_FLAKY_BUZZ:-}" ] && [ $(( n % 2 )) = 1 ]; then echo boom >&2; exit 5; fi
     printf '{\n  "total": %s\n}\n' "$(cat "${BAL}")" ;;
-  generate) echo $(( $(cat "${BAL}") - 37 )) > "${BAL}"; echo generated ;;
+  generate)
+    if [ -n "${STUB_LAGGY:-}" ]; then :                       # charge never lands
+    elif [ -n "${STUB_CREDIT:-}" ]; then echo $(( $(cat "${BAL}") - 37 + 100 )) > "${BAL}"
+    else echo $(( $(cat "${BAL}") - 37 )) > "${BAL}"; fi
+    echo generated ;;
   *) : ;;
 esac
 exit 0
@@ -1323,81 +1585,124 @@ exec "$(readlink -f "$0")" guard --root "${base}" -- "\$@"
 SHIM
 	chmod 0755 "${base}/bin/civitai"
 
-	cat > "${base}/ledger/policy.env" <<POL
+	e2e_policy() {
+		cat > "${base}/ledger/policy.env" <<POL
 ROOT="${base}"
 PER_CALL_MAX_COST=100
 TOTAL_SPEND_CAP=2000
 MAX_GENERATE_SUBMITS=50
 MAX_APP_SUBMITS=3
+MAX_LISTING_MUTATIONS=10
+METER_SETTLE_SECONDS=0
+REQUIRE_CALIBRATION=${1:-0}
+ALLOW_NO_WAIT=0
 SLUG_PREFIX="sanctioned-"
 BASE_URL="https://example.invalid"
 POL
-	: > "${base}/ledger/invocations.tsv"; : > "${base}/ledger/buzz.tsv"
-	: > "${base}/ledger/spend.tsv";       : > "${base}/ledger/pubreq.allow"
-	printf '0\n' > "${base}/ledger/observed_spend"
-	printf '0\n' > "${base}/ledger/reserved"
-	printf '0\n' > "${base}/ledger/generate_submits"
-	printf '0\n' > "${base}/ledger/app_submits"
+	}
+	e2e_reset() {
+		: > "${base}/ledger/invocations.tsv"; : > "${base}/ledger/buzz.tsv"
+		: > "${base}/ledger/spend.tsv";       : > "${base}/ledger/pubreq.allow"
+		: > "${base}/ledger/workflow.allow"
+		local f
+		for f in observed_spend reserved generate_submits app_submits listing_mutations; do
+			printf '0\n' > "${base}/ledger/${f}"
+		done
+		printf '10000\n' > "${base}/home/.cache/bal"
+		printf '0\n' > "${base}/home/.cache/nbuzz"
+		rm -f "${base}/ledger/meter_broken" "${base}/ledger/calibration.ok"
+	}
+	e2e_policy 0; e2e_reset
 
-	local C="${base}/bin/civitai"
-	local rc meter lines allow
+	local C="${base}/bin/civitai" rc allow lines i
 
 	note "--- end-to-end through the real guard (stub charges 37) ---"
 
 	"${C}" generate cat --yes --max-cost 50 >/dev/null 2>&1; rc=$?
-	meter=$(cat "${base}/ledger/observed_spend")
-	st_check "e2e allowed spend returns the CLI's rc" "0" "${rc}"
-	st_check "e2e meter moved by the real charge"     "37" "${meter}"
+	st_check "e2e allowed spend returns the CLI's rc" "0"  "${rc}"
+	st_check "e2e meter moved by the real charge"     "37" "$(cat "${base}/ledger/observed_spend")"
 
-	"${C}" --no-color generate cat --yes >/dev/null 2>&1; rc=$?
-	st_check "e2e --no-color generate refused"        "126" "${rc}"
-
-	"${C}" generate cat --yes --negative-prompt --help >/dev/null 2>&1; rc=$?
-	st_check "e2e --negative-prompt --help refused"   "126" "${rc}"
-
-	"${C}" --no-update-check upgrade >/dev/null 2>&1; rc=$?
-	st_check "e2e --no-update-check upgrade refused"  "126" "${rc}"
-
-	"${C}" frobnicate --yes >/dev/null 2>&1; rc=$?
-	st_check "e2e an unrecognised command refused"    "126" "${rc}"
-
-	# The guard must refuse everything when its own policy will not validate.
-	cp "${base}/ledger/policy.env" "${base}/ledger/policy.keep"
-	grep -v '^TOTAL_SPEND_CAP=' "${base}/ledger/policy.keep" > "${base}/ledger/policy.env"
-	"${C}" whoami >/dev/null 2>&1; rc=$?
-	st_check "e2e a malformed policy refuses even a read" "126" "${rc}"
-	cp "${base}/ledger/policy.keep" "${base}/ledger/policy.env"
-	rm -f "${base}/ledger/policy.keep"
+	"${C}" --no-color generate cat --yes >/dev/null 2>&1
+	st_check "e2e --no-color generate refused"        "126" "$?"
+	"${C}" generate cat --yes --print-input=false >/dev/null 2>&1
+	st_check "e2e --print-input=false refused"        "126" "$?"
+	"${C}" generate cat --yes --dry-run=false >/dev/null 2>&1
+	st_check "e2e --dry-run=false refused"            "126" "$?"
+	"${C}" generate cat --yes --negative-prompt --help >/dev/null 2>&1
+	st_check "e2e --negative-prompt --help refused"   "126" "$?"
+	"${C}" --no-update-check upgrade >/dev/null 2>&1
+	st_check "e2e --no-update-check upgrade refused"  "126" "$?"
+	"${C}" frobnicate >/dev/null 2>&1
+	st_check "e2e an unrecognised command refused"    "126" "$?"
+	"${C}" workflows cancel someone-elses >/dev/null 2>&1
+	st_check "e2e cancel of a foreign workflow refused" "126" "$?"
+	"${C}" generate cat --yes --max-cost 08 >/dev/null 2>&1; rc=$?
+	st_check "e2e --max-cost 08 refuses cleanly"      "126" "${rc}"
 
 	lines=$(wc -l < "${base}/ledger/invocations.tsv")
 	"${C}" generate "$(printf 'a\nDENY\tinjected')" --yes --max-cost 5 >/dev/null 2>&1
 	st_check "e2e a newline prompt adds ONE ledger row" "1" \
 		"$(( $(wc -l < "${base}/ledger/invocations.tsv") - lines ))"
+	st_check "e2e ALLOW rows carry a reason" "yes" \
+		"$(awk -F'\t' '$2 ~ /^ALLOW/ && $6 != "" {n++} END{print (n>0)?"yes":"no"}' "${base}/ledger/invocations.tsv")"
+
+	# The guard must refuse everything when its own policy will not validate.
+	cp "${base}/ledger/policy.env" "${base}/ledger/policy.keep"
+	grep -v '^TOTAL_SPEND_CAP=' "${base}/ledger/policy.keep" > "${base}/ledger/policy.env"
+	"${C}" whoami >/dev/null 2>&1
+	st_check "e2e a malformed policy refuses even a read" "126" "$?"
+	cp "${base}/ledger/policy.keep" "${base}/ledger/policy.env"
+	rm -f "${base}/ledger/policy.keep"
 
 	# Concurrency: leave exactly 10 Buzz of headroom and fire 8 at once.
-	printf '1990\n' > "${base}/ledger/observed_spend"
-	printf '0\n' > "${base}/ledger/reserved"
-	printf '0\n' > "${base}/ledger/generate_submits"
-	: > "${base}/ledger/invocations.tsv"
-	local i
+	e2e_reset; printf '1990\n' > "${base}/ledger/observed_spend"
 	for i in 1 2 3 4 5 6 7 8; do "${C}" generate "p${i}" --yes --max-cost 10 >/dev/null 2>&1 & done
 	wait
 	allow=$(grep -c 'ALLOW_SPEND' "${base}/ledger/invocations.tsv" 2>/dev/null || printf 0)
 	st_check "e2e 8 concurrent submits, 10 Buzz headroom" "1" "${allow}"
 	st_check "e2e submit counter matches the allowed rows" "${allow}" "$(cat "${base}/ledger/generate_submits")"
 
-	# A post-call balance read that fails must charge the worst case and latch.
-	printf '0\n' > "${base}/ledger/observed_spend"
-	printf '0\n' > "${base}/ledger/reserved"
-	printf '0\n' > "${base}/ledger/generate_submits"
-	printf '0\n' > "${base}/home/.cache/nbuzz"
-	rm -f "${base}/ledger/meter_broken"
+	note "--- 🔴 the three ways the meter can lie, each must LATCH ---"
+
+	e2e_reset
 	STUB_FLAKY_BUZZ=1 "${C}" generate cat --yes --max-cost 60 >/dev/null 2>&1
-	st_check "e2e a lost post-sample charges the worst case" "60" "$(cat "${base}/ledger/observed_spend")"
-	st_check "e2e a lost post-sample latches meter_broken"   "yes" \
+	st_check "e2e a FAILED post-read charges the worst case" "60" "$(cat "${base}/ledger/observed_spend")"
+	st_check "e2e a FAILED post-read latches"                "yes" \
 		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+
+	e2e_reset
+	STUB_LAGGY=1 "${C}" generate cat --yes --max-cost 60 >/dev/null 2>&1
+	st_check "e2e a ZERO delta charges the worst case"       "60" "$(cat "${base}/ledger/observed_spend")"
+	st_check "e2e a ZERO delta latches"                      "yes" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+	"${C}" generate cat --yes --max-cost 5 >/dev/null 2>&1
+	st_check "e2e spend refused after the latch"             "126" "$?"
+
+	e2e_reset
+	STUB_CREDIT=1 "${C}" generate cat --yes --max-cost 60 >/dev/null 2>&1
+	st_check "e2e a NEGATIVE delta charges the worst case"   "60" "$(cat "${base}/ledger/observed_spend")"
+	st_check "e2e a NEGATIVE delta latches"                  "yes" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+
+	note "--- 🔴 a truncated or unwritable ledger must not restart the caps ---"
+	e2e_reset
+	: > "${base}/ledger/generate_submits"
+	"${C}" generate cat --yes --max-cost 5 >/dev/null 2>&1
+	st_check "e2e an EMPTIED counter refuses a spend" "126" "$?"
+	e2e_reset
+	chmod 0444 "${base}/ledger/generate_submits"
 	"${C}" generate cat --yes --max-cost 5 >/dev/null 2>&1; rc=$?
-	st_check "e2e spend refused after the latch"            "126" "${rc}"
+	chmod 0644 "${base}/ledger/generate_submits"
+	st_check "e2e an UNWRITABLE counter refuses a spend" "126" "${rc}"
+	st_check "e2e nothing was charged in that attempt"   "10000" "$(cat "${base}/home/.cache/bal")"
+
+	note "--- calibration gate, end to end ---"
+	e2e_policy 1; e2e_reset
+	"${C}" generate cat --yes --max-cost 5 >/dev/null 2>&1
+	st_check "e2e uncalibrated refuses to spend" "126" "$?"
+	printf 'calibrated\n' > "${base}/ledger/calibration.ok"
+	"${C}" generate cat --yes --max-cost 5 >/dev/null 2>&1
+	st_check "e2e calibrated may spend"          "0" "$?"
 
 	rm -rf "${base}"
 }
@@ -1412,6 +1717,7 @@ main() {
 	[ $# -gt 0 ] && shift
 	case "${sub}" in
 		init)          cmd_init "$@" ;;
+		calibrate)     cmd_calibrate "$@" ;;
 		guard)         cmd_guard "$@" ;;
 		status)        cmd_status "$@" ;;
 		finish)        cmd_finish "$@" ;;
@@ -1420,6 +1726,7 @@ main() {
 		allow-pubreq)  cmd_allow_pubreq "$@" ;;
 		teardown)      cmd_teardown "$@" ;;
 		__buzz)        cmd_buzz_probe "$@" ;;
+		__verdict)     cmd_verdict "$@" ;;
 		*)             usage ;;
 	esac
 }

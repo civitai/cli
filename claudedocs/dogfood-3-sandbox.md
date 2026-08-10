@@ -61,8 +61,9 @@ only when the agent is launched through `dogfood-sandbox.sh enter`:
 
 | control | enforced by | strength |
 |---|---|---|
-| the repo checkout, `AGENTS.md` and both handoffs are not visible | Linux mount namespace (`bwrap`) | **kernel — only under `enter`** |
+| the repo checkout, `AGENTS.md` and both handoffs are not visible | Linux mount namespace (`bwrap`) | **kernel — only under `enter`, and see §5** |
 | the operator's real `~/.config/civitai` is not reachable | Linux mount namespace (`bwrap`) | **kernel — only under `enter`** |
+| an argv means the same thing to the gate as to the CLI | cobra's own parser (`internal/dogfoodguard`) | **structural** |
 | `upgrade` cannot replace the binary under evaluation | mode bits + the guard | convention |
 | credential isolation without the jail | `HOME` / `XDG_CONFIG_HOME` on the child | convention |
 | the per-invocation `--max-cost` ceiling | the guard script | convention |
@@ -351,6 +352,73 @@ branch (including `--max-cost=N` form parsing, `app submit -o <path>` not being
 mistaken for the project dir, and listing identity via `--slug` vs `--dir`),
 the balance parser's positive and negative controls, and the lockdown modes.
 
+## The classifier: the shim no longer parses argv
+
+🔴 **Three separate bypasses had one root cause, and patching spellings twice
+did not stop the third.** The shim kept its own model of how the CLI reads a
+command line:
+
+| bypass | what the shim believed | what pflag does |
+|---|---|---|
+| `--no-color generate … --yes` | `$1` is the command | root persistent bools are stripped before the command is resolved |
+| `--negative-prompt --help` | `--help` is present ⇒ help | the token after a value-taking flag is its VALUE |
+| `--print-input=false` | the flag is present ⇒ preview | a bool set to false is present **and false** |
+
+Each was fixed as an instance. The class survived, and each instance was a real
+charge with the meter reading zero. So the classification moved into Go.
+
+**`internal/dogfoodguard`** builds the real tree with `cmd.NewRootCmd()`,
+resolves the command with cobra's own `Find`, parses with `ParseFlags`, and
+reads values through `Flags().GetBool` / `GetInt` / `GetString`. It emits
+TAB-separated `key<TAB>value` lines and **never executes anything** — no
+`Execute`, no `RunE`. The shim keeps the meter, ledger, caps, `flock`, `enter`
+and the forbidden list; only the question "what is this invocation?" moved.
+
+- **Where it lives, and why.** `internal/dogfoodguard`, `package main`. It has
+  to be inside this module to import `internal/cmd` at all. It is under
+  `internal/` rather than `cmd/` so that a future release-tooling glob over
+  `./cmd/*` cannot pick it up.
+- **goreleaser: no change needed, and none made.** `.goreleaser.yaml` has
+  exactly one `builds:` entry with an explicit `main: ./cmd/civitai` (no glob),
+  and `archives` reference `ids: [civitai]`. A new main package publishes
+  nothing. Verified by reading the config, not assumed.
+- **No new dependency**; cobra and pflag were already here. `go.mod` unchanged.
+- **It is not a user-facing command** and cannot appear in `civitai --help`,
+  because it is a separate binary rather than a subcommand.
+- 🔴 **Build it from the SAME tree as the binary under test.** It embeds the
+  command tree, so a classifier from another commit could disagree with the
+  binary — the exact defect class it exists to remove. `init` builds it from
+  the repo alongside the binary and records both hashes in `policy.env`.
+- 🔴 **Fail closed.** A non-zero exit, empty output, a missing `ok`, a
+  non-numeric `argc`, or **any field the shim does not recognise** is a DENY.
+  The last one is not hypothetical politeness: an unrecognised field means the
+  shim and the classifier have drifted, which is the thing this design exists
+  to prevent.
+
+### Exactness — is the new path right, or just differently wrong?
+
+A classifier that is wrong in a NEW way is not progress, so its verdict is
+compared against what the real binary actually does over a 30-invocation corpus
+(run with an empty isolated config and no token, so every credentialed path
+stops at exit 3 having spent nothing). The rules asserted:
+
+| classifier says | binary must |
+|---|---|
+| flag-parse-error / unknown-command | exit **2** |
+| help = true | exit **0** and print `Usage:` |
+| generate, print-input = true | exit **0** and emit a JSON graph |
+| generate, otherwise | exit **3** (needs a credential) |
+| a group command with a leftover positional | exit **2** |
+
+**Result: 45 agreements, 0 mismatches.** The corpus includes all three historic
+bypasses, all twelve pflag boolean spellings, `--max-cost 08`, `--` separators
+and unknown commands at three depths.
+
+Two mismatches in the first run were the *probe's* fault, not the classifier's —
+it pattern-matched the first line of help output and `app listing`/`workflows`
+open with a description rather than `Usage:`. Asserting on `Usage:` anywhere
+fixed the probe; the exit codes had agreed all along.
+
 ## The hardening round (adversarial audit of #296)
 
 An independent audit attacked the first version. The bwrap jail held (uid 1000,
@@ -443,6 +511,69 @@ That is the whole failure mode of the original `verdict=$(policy_verdict …)`
 subshell, reproduced deliberately: an internal error left the verdict empty and
 `"" != "DENY"` ran the command.
 
+## The second hardening round (blind re-audit)
+
+A fresh auditor, deliberately not shown the first round's findings, broke it
+again. Five 🔴 plus a 🟡 list. All reproduced here before fixing.
+
+| # | what | measured before | after |
+|---|---|---|---|
+| 1 | a pflag bool `=false` is present-but-false; the shim read "present" | `--print-input=false`, `--dry-run=false`, `--help=false` each ALLOW + **charged**, meter 0; `app submit <foreign> --yes --package-only=false` skipped the prefix gate | all DENY; classification moved to cobra (above) |
+| 2 | `--ro-bind /nix /nix` re-exposed the repo — `nix build` copies the tree to a world-readable `/nix/store/<hash>-source` | **4** readable copies of this repo's `AGENTS.md` inside the jail | the jail binds only the tool CLOSURE; measured inside: **0** `AGENTS.md`, **0** `claudedocs`, **0** `-source` dirs, **0** handoffs, and it refuses to start rather than fall back to binding `/nix` |
+| 3 | `enter` cannot host a Claude Code process | `claude` not on PATH inside; `HOME` rewritten so no `~/.claude` | measured: `claude --version` **does** run inside a jail carrying its 31-path closure — but a real session needs credentials, and the obvious way to supply them re-imports `~/.claude/projects`, i.e. this repo's transcripts. **Not shipped.** The checklist now states the run will be outside the jail and that neither kernel row applies then |
+| 4 | the meter assumed `buzz` reflects the charge by return; a stale-but-successful read was a silent zero | 3 submits, meter **0**, balance really moved 111, nothing latched | a zero or negative delta now latches `meter_broken` and charges the worst case. Re-measured: stale → **1** allowed then latched; credit-masked → latched. `--no-wait` refused by default; `calibrate` (one deliberate, operator-watched generation) is required before any spend |
+| 5 | the caps were pinned by roughly one assertion between them | 6 checksum-gated mutants surviving 88/0 — total cap, remaining budget, generate cap, app cap, empty `SLUG_PREFIX`, negative-delta clamp | each has an isolated, reason-pinned row; all six now killed |
+
+🟡 also fixed: `workflows` closed like `app` (`cancel` of a workflow this run did
+not create is refused — it **does not refund**); listing revisions counted and
+capped, since a live-listing change goes back to review; an empty or missing
+counter file is malformed rather than zero, and a failed write is fatal;
+`--max-cost 08` is a clean refusal instead of a bash-octal crash with no ledger
+row; `pubreq`/`workflow` ids this run creates are recorded automatically so the
+agent can withdraw and cancel its OWN work; `log_invocation` moved inside the
+lock; ALLOW rows now carry their reason, so a bypass and a genuine `--dry-run`
+are no longer byte-identical in the ledger.
+
+**Two defects found here, not by the auditor.** `command -v printf` returns the
+shell BUILTIN, not a path — feeding that to `readlink -f` produced a
+non-existent path, `nix-store` failed on the whole list, and the jail reported
+"nix-store missing" and refused (fail-closed, but for the wrong reason). And
+overwriting the classifier binary in place to test drift handling hits
+**ETXTBSY**, so the write silently failed and four "drift is refused" rows were
+passing against the *real* classifier — a reassuring green from a substitution
+that never happened. The classifier path is now injectable (and reset at
+startup, so an exported `GUARD_BIN` cannot reach the gate — pinned by its own
+row, in a fresh process).
+
+### Mutation matrix (26 mutants, all checksum-gated)
+
+```
+BASELINE                                        177 passed, 0 failed
+presence-not-value on print-input/dry-run  KILLED 14   package-only KILLED 6   help KILLED 9
+classifier failure fails OPEN              KILLED 103
+unknown subcommand allowed                 KILLED 5
+TOTAL_SPEND_CAP deleted                    KILLED 2    remaining-budget deleted   KILLED 2
+MAX_GENERATE_SUBMITS deleted               KILLED 1    MAX_APP_SUBMITS deleted    KILLED 1
+SLUG_PREFIX empty-check removed            KILLED 1    negative-delta latch       KILLED 2
+MAX_LISTING_MUTATIONS deleted              KILLED 1    zero-delta latch           KILLED 3
+failed-read latch removed                  KILLED 2    meter_broken gate          KILLED 2
+calibration gate removed                   KILLED 2    --no-wait gate             KILLED 1
+read_scalar EMPTY as zero                  KILLED 13   read_scalar MISSING as zero KILLED 18
+ledger lock removed                        KILLED 2    tsv_escape drops newlines  KILLED 3
+withdraw allowlist bypassed                KILLED 3    cancel allowlist bypassed  KILLED 2
+listing prefix gate bypassed               KILLED 1    unrecognised guard field   KILLED (after adding rows)
+write_scalar readback removed              SURVIVED — declared below
+NULL comment-only                          SURVIVED — as required
+```
+
+🔴 **The one declared survivor.** Removing `write_scalar`'s readback leaves the
+suite green, because `printf > file || return 1` already catches every
+*constructible* failure: an unwritable file, a directory, `/dev/full`. The only
+shape that would reach the readback is a write that succeeds and does not
+persist — `/dev/null` is the obvious one, and `read_scalar` rejects that as
+malformed one step earlier. It is kept as cheap defence-in-depth and recorded
+here as knowingly unpinned rather than deleted or pretended-about.
+
 ## What this does not protect against
 
 An unrecorded residual is indistinguishable from a bug nobody noticed. These
@@ -472,30 +603,35 @@ are the ones being shipped knowingly.
    other Buzz activity on the account during the run — the website, another
    session, a subscription tick — is attributed to the run. Do not run this
    while using the account for anything else.
-5. **A charge that settles after the post-call sample is missed by that call's
-   delta.** `finish`'s start-minus-end figure catches it; that is why both
-   numbers are reported and why a disagreement between them is meaningful.
+5. **A charge that settles after the post-call sample is now LATCHED, not
+   missed — but latching is a stop, not a measurement.** A zero or negative
+   delta charges the worst case the estimate allowed and refuses every later
+   spend. That bounds the damage to one job; it does not tell you what that job
+   really cost. `finish`'s start-minus-end figure is still the authority, and a
+   disagreement between the two numbers is the interesting signal.
+   🔴 **`calibrate` is what makes any of this more than a guess, and it has
+   never been run** — see residual 11.
 6. **`app submit` enters a human review queue on a real account.** Withdraw
    works only while `pending`. See the non-reversible list in §4 — an approved
    app is live, a rejected one is terminal, and the blockId is consumed
    permanently either way.
-7. **The gate re-implements argv parsing; it is not Cobra — and that is where
-   every one of the audit's two worst findings came from.** It now resolves
-   commands against a CLOSED VOCABULARY and tokenizes flags with per-command
-   knowledge of which ones consume the next token, but it is still a
-   re-implementation. Known costs, deliberately taken:
-   - **An unknown command or subcommand is REFUSED, not passed through.** A new
-     `civitai` verb, or a typo, produces a `SANDBOX POLICY` line rather than the
-     CLI's own error. That is the fail-closed direction, and it means the gate's
-     vocabulary has to be updated when the CLI grows a command.
-   - **On `generate`, an unrecognised flag is assumed to consume the next
-     token.** That biases toward refusal: `--mystery --dry-run` is treated as a
-     submit, not a preview. A false refusal, never a false allow.
-   - **`civitai generate "prompt" --help` is refused**, because `--help` after a
-     bare positional cannot be distinguished from `--help` as a flag value under
-     an allowlist rule. Use `civitai generate --help`.
+7. **The gate no longer parses argv — but it now depends on a classifier
+   binary.** Cobra answers "what is this invocation?", which removes the class
+   that produced three bypasses. What replaces it:
+   - **The classifier must be built from the same tree as the binary.** `init`
+     does that and records both hashes, but nothing *enforces* it if someone
+     passes `--guard` a stale build. A stale classifier could disagree with the
+     binary exactly as the shell parser did.
+   - **An unknown command or subcommand is REFUSED**, so a typo produces a
+     `SANDBOX POLICY` line rather than the CLI's own error. Fail-closed, and a
+     small fidelity cost.
    - A TOCTOU window remains between reading the manifest and exec'ing the CLI;
      irrelevant for a cooperative agent, real in principle.
+   - **`GUARD_BIN` is injectable** so the selftest can substitute fake
+     classifiers (overwriting the real one in place hits ETXTBSY). It is reset
+     to empty at startup so an exported value cannot reach the gate — pinned by
+     a row that runs in a fresh process, but it is one assignment away from
+     being a bypass if that line is ever deleted.
 8. **Concurrency is bounded, not eliminated.** The cap check, the counter bump
    and the reservation are one `flock`-held section, and a submit reserves its
    `--max-cost` for the duration — measured, 8 concurrent submits against 10
@@ -514,10 +650,15 @@ are the ones being shipped knowingly.
    read as harness noise, not a finding.**
 10. **The login and update-notice surfaces are not exercised at all** — a
     coverage gap accepted because runs 1 and 2 covered login un-credentialed.
-11. **The spend path has never been exercised end to end.** The meter was proved
-    against a stub. Proving it against real money requires spending real money,
-    which is precisely what the go/no-go below is for. **This is the gap the
-    owner is approving, and it should not be read as "the meter is verified".**
+11. 🔴 **THE SPEND PATH HAS STILL NEVER BEEN EXERCISED, AND `calibrate` IS
+    ITSELF UNTESTED.** The meter is proved against stubs — including, now, the
+    stale-read and credit-masked cases. Proving it against real money requires
+    spending real money, which is what `calibrate` is for and why it is required
+    before the agent may spend. But `calibrate` has never been run: it is code
+    written to make an untested assumption testable, and it is untested. Its
+    failure mode is the safe one (it hard-fails and writes `meter_broken` if the
+    balance does not move), but **do not read "the meter fails closed" as "the
+    meter is verified" — nothing here has yet observed a real charge.**
 12. **Nothing here bounds rate limits, account flags, or platform-side
     consequences** of a real submission (moderation attention, reputation).
 
@@ -557,12 +698,34 @@ Read time ~2 minutes. Everything below is verifiable in one command each.
 - [ ] `login`, `upgrade`, `app dev-tunnel`, `app dev-token` refused. Accepted
       coverage gap on login and the update notice.
 
-**Run it in the jail (this is the one that matters)**
+**Where the run actually happens — read this, the earlier version was wrong**
 
-- [ ] Launch the agent via `dogfood-sandbox.sh enter`. Without it, credential
-      isolation and blindness are convention rather than kernel-enforced, and
-      the agent can read the repo, `AGENTS.md` and both prior handoffs — which
-      invalidates the method.
+- [ ] 🔴 **Decide, and know what you are choosing.** `enter` gives a jail in
+      which the repo genuinely does not exist (measured: 0 `AGENTS.md`, 0
+      handoffs, 0 `-source` copies) and the operator's config is unreachable.
+      **But it cannot host a Claude Code process today.** `claude --version`
+      runs inside it, so hosting is not impossible — a real session needs
+      credentials, and the natural way to supply them mounts `~/.claude`, whose
+      `projects/` holds transcripts of this very repo. That would hand the
+      agent the source it is supposed to be blind to, so it is **not shipped**.
+- [ ] **Therefore, unless you build that plumbing yourself, the agent runs
+      OUTSIDE the jail and NEITHER kernel row applies.** Blindness is then
+      procedural: the agent is launched with its cwd in `$ROOT/workspace`, given
+      only `AGENT-BRIEF.md`, the `civitai` on PATH and `README.md`, and told not
+      to go looking. That is exactly how dogfood runs 1 and 2 were kept blind,
+      and it worked — but it is an instruction, not a boundary.
+- [ ] Use `enter` at minimum to *verify* the sandbox (it is what the blindness
+      and isolation measurements above were taken in), and prefer it for any
+      shell-driven agent that does not need Claude Code.
+
+**Calibrate the meter before the agent starts**
+
+- [ ] 🔴 `dogfood-sandbox.sh calibrate --yes` submits **one** real generation,
+      deliberately, while you watch, and records whether the balance moved by
+      the time the command returned. Every spend cap depends on that being
+      true, and until this round it was assumed rather than measured. The gate
+      refuses to spend until it has run (or `init --skip-calibration` was
+      recorded). **This is the one place the harness spends money on purpose.**
 
 **Commands**
 
@@ -577,8 +740,11 @@ scripts/dogfood-sandbox.sh init --binary ./bin/civitai --token-file ~/.dogfood-t
 shred -u ~/.dogfood-token
 
 # 3. confirm the harness is honest before trusting it
-scripts/dogfood-sandbox.sh selftest        # expect 79/79 against the live sandbox
-make dogfood-check                         # shellcheck + 88/88, no credential needed
+scripts/dogfood-sandbox.sh selftest        # against the live sandbox
+make dogfood-check                         # shellcheck -x + 177/177, no credential needed
+
+# 4b. calibrate the meter — ONE deliberate generation, spends real Buzz
+scripts/dogfood-sandbox.sh calibrate --yes
 
 # 4. run the agent blind, inside the jail, cwd $ROOT/workspace,
 #    given only: the `civitai` on PATH, README.md, --help, and AGENT-BRIEF.md
