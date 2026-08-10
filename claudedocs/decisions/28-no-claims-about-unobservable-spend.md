@@ -70,6 +70,71 @@ the guard**: the golden is the guard, for the reason (b) itself gives.
 
 The traced chain also lives at the code, in `runWorkflowsCancel`'s comment.
 
+## 🔴 "THE CLI CANNOT OBSERVE THE LEDGER" IS TRUE OF THE ACCOUNT AND FALSE PER WORKFLOW — civitai/cli#346
+
+**Read this before printing `buzzLedgerUnknownNote` on a surface that holds a
+workflow.** The rule below is unchanged; what changed is one premise it was
+applied through, and the fix is a SUBTRACTION — the CLI stops disclaiming
+knowledge it is holding. It asserts no refund rule, and #307's re-pricing
+account still stands as the RULE nobody may promise an amount for.
+
+**What was found.** A blind credentialed dogfood run (2026-08-10, run 3 — the
+first to reach `civitai generate`) read a failed workflow back with
+`civitai workflows get` and was told *"this CLI cannot see your Buzz ledger …
+settle it against your Buzz transaction history (/user/transactions)"* — while
+the payload the command had already parsed contained
+
+```json
+"transactions": {"list": [{"type":"debit","amount":8,…},
+                          {"type":"credit","amount":8,…}]}
+```
+
+and `civitai workflows list` was rendering the same settlement as `COST 0` for
+that run. **The one view that disclaimed the knowledge was the one view that
+discarded it**, and it sent the user to a website for numbers on their screen.
+
+**The distinction that keeps this inside the rule.** *Reporting a ledger the
+server handed you is the opposite of claiming an unobservable one.* Two
+different objects were being conflated:
+
+- the **account-wide Buzz ledger** — still unreadable from here; `civitai buzz`
+  is a balance, not a history. `buzzLedgerUnknownNote` is about THIS, is
+  unchanged, and still renders wherever no per-workflow record is in hand.
+- the **orchestrator's per-workflow transaction record** — on the
+  `orchestrator.getWorkflow` payload, itemised, and now rendered.
+
+**What was built.** `genapi.Workflow.Settlement()` decodes the measured
+`{"list":[…]}` envelope into per-type totals plus `Debits`/`Credits`/`Net`;
+`cmd.reportWorkflowSettlement` prints it. Both fail CLOSED: an absent, null,
+empty or unrecognised record reads as *nothing to report* — **never** as *no
+money moved* — and a transaction `type` this build cannot place on either side
+of the subtraction withholds the NET rather than silently dropping the entry out
+of the arithmetic. Direction is corroborated, not assumed: debit − credit for the
+run above equals the `COST 0` the server's own list rendered.
+
+**The guards, in the same three shapes.** (1) `workflowSettlementPrintedNote` is
+one constant — the sentence that REPLACES `buzzLedgerUnknownNote` — asserted to
+point at the record and to decide nothing; (2) its call sites are an asserted
+bidirectional ledger (`TestSettlementPrintedNoteLedger`, 3 sites); (3) every new
+rendering is golden-pinned in `TestGoldenSpendCopy`. The
+`buzzLedgerUnknownNote` ledger is UNCHANGED at 3/1/3 — each site now selects
+between the two sentences rather than gaining or losing a reference.
+
+🔴 **AND THE PHRASE LIST LOST A THIRD TIME, IN THIS PR, AS PREDICTED BELOW.**
+A control case *"the transactions the server recorded are printed above and
+nothing is refunded"* was ACCEPTED by the new constant's guard: both required
+clauses present, and `refundDirectionalClaims` bans `"not refunded"` but not
+`"nothing is refunded"` — the identical hole (b) records. The list was NOT
+extended; the case was removed and the append mutation is left to the golden,
+which killed it. Measured: appending `". Nothing is refunded."`, `"A cancelled
+run always nets to zero."` and `", so any credit there has been refunded"` to
+the three new surfaces each reddened exactly one golden **and no other test**.
+
+**Residual, unchanged and now wider.** A surface that prints its own fate copy
+without touching either constant is still invisible to all six guards. So is a
+`transactions` envelope in some shape other than `{"list":[…]}`: it reads as
+unobservable, i.e. the pre-#346 behaviour, which is the fail-closed direction.
+
 ---
 
 28. **The CLI must not make CLAIMS about a spend it cannot observe.** Same shape

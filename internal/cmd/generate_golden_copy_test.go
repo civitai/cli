@@ -219,12 +219,65 @@ func TestGoldenSpendCopy(t *testing.T) {
 		})
 	}
 
-	// --- the excluded-outputs note ------------------------------------------
+	// --- the excluded-outputs note, BOTH modes ------------------------------
+	//
+	// 🔴 #346 gave this surface a second rendering, and an unpinned second
+	// rendering is exactly the hole this file's header describes: a sentence
+	// could be added to the settled branch while the pinned unsettled branch
+	// stayed byte-identical.
 	t.Run("excluded_outputs_note", func(t *testing.T) {
 		blocked := "minor"
 		var b bytes.Buffer
-		reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}})
+		reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, false)
 		assertGolden(t, "excluded_outputs_note", b.String())
+	})
+	t.Run("excluded_outputs_note_settled", func(t *testing.T) {
+		blocked := "minor"
+		var b bytes.Buffer
+		reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, true)
+		assertGolden(t, "excluded_outputs_note_settled", b.String())
+	})
+
+	// --- the per-workflow settlement block (#346) ---------------------------
+	//
+	// It is the surface that REPLACES the disclaimer, so it is money copy by
+	// definition: whatever it says is what a user reads instead of "this CLI
+	// cannot see your Buzz ledger". Three renderings, because they are three
+	// different sentences and a mutation only has to survive in one of them.
+	for _, c := range []struct{ name, payload string }{
+		// The #346 payload itself: one debit, one matching credit, net 0.
+		{"settlement_debit_credit", wfWithTransactions},
+		// A type this build cannot place, where the NET is withheld. Its
+		// "not computed" sentence is the one a future edit is most likely to
+		// replace with a guess.
+		{"settlement_unclassified_type", wfWithUnclassifiedTransaction},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var out, errb bytes.Buffer
+			var wf genapi.Workflow
+			if err := json.Unmarshal([]byte(c.payload), &wf); err != nil {
+				t.Fatalf("fixture: %v", err)
+			}
+			if !reportWorkflowSettlement(&out, &errb, &wf) {
+				t.Fatal("CONTROL failure: the fixture rendered no settlement, so there is no copy to pin")
+			}
+			assertGolden(t, c.name, out.String()+"\n"+errb.String())
+		})
+	}
+
+	// --- the terminal-status error when the poll reply DID itemise the run ---
+	t.Run("terminal_status_failed_settled", func(t *testing.T) {
+		clock := newFakeClock()
+		calls := 0
+		var s genSeams
+		s.poll = clock.cfg()
+		s.getWorkflow = scriptedWorkflows(&calls, wfWithTransactions)
+		c, _, _ := genCmd("")
+		err := runGenerate(c, s.deps(t), waitOpts(t.TempDir()))
+		if err == nil {
+			t.Fatal("a failed workflow must not report success")
+		}
+		assertGolden(t, "terminal_status_failed_settled", err.Error())
 	})
 
 	// --- the succeeded-but-empty error --------------------------------------

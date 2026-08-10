@@ -493,7 +493,7 @@ func TestReportExcludedOutputs_DoesNotSettleTheRefund(t *testing.T) {
 	blocked := "minor"
 	id := "out_1"
 	var b bytes.Buffer
-	reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: id, BlockedReason: &blocked}}})
+	reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: id, BlockedReason: &blocked}}}, false)
 	got := b.String()
 
 	if got == "" {
@@ -511,6 +511,44 @@ func TestReportExcludedOutputs_DoesNotSettleTheRefund(t *testing.T) {
 	for _, banned := range refundDirectionalClaims {
 		if strings.Contains(lower, banned) {
 			t.Errorf("the exclusion note decides the refund question with %q.\n%s", banned, got)
+		}
+	}
+}
+
+// The SETTLED variant of the same surface (#346). When the caller has already
+// printed this workflow's own transaction record, the note must stop disclaiming
+// a ledger that is on screen — and must still decide nothing.
+//
+// 🔴 The two modes are asserted as a PAIR, in one place, because the hazard is
+// symmetric: the unsettled branch losing the disclaimer is #278 returning, and
+// the settled branch keeping it is #346 returning.
+func TestReportExcludedOutputs_SettledPointsAtTheRecordAndStillDecidesNothing(t *testing.T) {
+	blocked := "minor"
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, true)
+	got := b.String()
+
+	if got == "" {
+		t.Fatal("CONTROL failure: reportExcludedOutputs printed nothing in settled mode")
+	}
+	if strings.Contains(got, buzzLedgerUnknownNote) {
+		t.Errorf("#346: the note still disclaims a ledger whose per-workflow entries the caller just printed:\n%s", got)
+	}
+	if strings.Contains(got, "/user/transactions") {
+		t.Errorf("#346: the account-wide history pointer is still on a per-workflow surface:\n%s", got)
+	}
+	if !strings.Contains(got, workflowSettlementPrintedNote) {
+		t.Errorf("the settled note does not render the shared pointer constant verbatim, so it has grown its own wording "+
+			"for the money question — the exact drift #278's consolidation exists to prevent:\n%s", got)
+	}
+	// The charge half survives here too.
+	if !strings.Contains(got, "charged") {
+		t.Errorf("the settled note no longer says the workflow was charged:\n%s", got)
+	}
+	lower := strings.ToLower(got)
+	for _, banned := range refundDirectionalClaims {
+		if strings.Contains(lower, banned) {
+			t.Errorf("the settled exclusion note decides the refund question with %q.\n%s", banned, got)
 		}
 	}
 }

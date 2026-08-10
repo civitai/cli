@@ -205,7 +205,13 @@ func excludedOutputReport(t *testing.T, payload string) string {
 		t.Fatalf("fixture is blind to #280: it carries no excluded output, so the charge claim is unreachable")
 	}
 	var b bytes.Buffer
-	reportExcludedOutputs(&b, excluded)
+	// Both #280 fixtures carry no `transactions` record, so the surface they
+	// render is the unsettled one. Deriving the block with settled=false keeps
+	// these assertions matching what runWorkflowsGet prints for them; a fixture
+	// that GAINED a record would make this derivation stop matching the real
+	// stderr, which fails LOUD ("must still get the excluded-output report")
+	// rather than passing silently.
+	reportExcludedOutputs(&b, excluded, false)
 	block := b.String()
 	if strings.TrimSpace(block) == "" {
 		t.Fatalf("positive control failed: reportExcludedOutputs printed nothing for %d excluded output(s)", len(excluded))
