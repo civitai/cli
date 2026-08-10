@@ -12,11 +12,11 @@ import (
 	"testing"
 )
 
-// The evidence split moved nine item BODIES out of AGENTS.md and left stubs
-// behind. The whole value of the split rests on one claim: the move was
-// VERBATIM. Every measured RSS table, every mutation matrix, every retraction
-// and every enumerated residual is still there, byte for byte, in the file the
-// pointer names.
+// The evidence split has moved sixteen item BODIES out of AGENTS.md, over three
+// waves, and left stubs behind. The whole value of the split rests on one
+// claim: the move was VERBATIM. Every measured RSS table, every mutation
+// matrix, every retraction and every enumerated residual is still there, byte
+// for byte, in the file the pointer names.
 //
 // 🔴 THAT CLAIM MUST BE PROVED MECHANICALLY, NOT ASSERTED, because the failure it
 // guards against is invisible by construction. A summarised paragraph reads
@@ -50,19 +50,21 @@ import (
 //     have pinned text that is not what was moved.
 //
 //  2. THE OLD BASE CANNOT BE RE-POINTED FORWARD. The obvious alternative —
-//     re-derive all eleven digests from one NEWER commit — is impossible, not
+//     re-derive every digest from one NEWER commit — is impossible, not
 //     merely inconvenient: after wave 1, AGENTS.md no longer CONTAINS the nine
 //     moved bodies at any commit. `baseItemBody(c5c3817+1, 3)` returns item 3's
 //     STUB. A body's base commit is therefore fixed forever at the moment it was
 //     evicted, and different evictions have different moments. Per-item is the
 //     only shape that can express that.
 //
-// So `base` is a field on the row, not a package constant, and the two named
+// So `base` is a field on the row, not a package constant, and the three named
 // constants below exist only so a reader can see which wave a row belongs to.
-// A future wave adds a third; it does not touch the first two.
+// Wave 3 (items 9, 13, 17, 22 and 25) added the third and touched neither of the
+// first two, which is the property the per-item field was introduced for. A
+// fourth wave adds a fourth.
 //
 // 🔴 WHAT DOES NOT CHANGE: the guard still fails if ANY split body is altered,
-// for all eleven items. Splitting the base per row weakens nothing — each row is
+// for all sixteen items. Splitting the base per row weakens nothing — each row is
 // still compared against a specific immutable blob — and that is the property to
 // re-verify by mutation whenever this table's shape is edited, because "I made
 // the pinning more flexible" is exactly how a pin stops pinning.
@@ -106,6 +108,12 @@ const agentsSplitBase = "c5c3817de72ac457cc41839c31b07f8bf1197dce"
 // not agentsSplitBase — see the 🔴 section of this file's doc comment.
 const agentsSplitBaseWave2 = "5cb45f0ff54fe55f5249aade8b0cb9826ade3c58"
 
+// agentsSplitBaseWave3 is the commit items 9, 13, 17, 22 and 25 were moved
+// from. It is the third distinct base, which is the shape the per-item field
+// exists for: each of the three is the tip at the moment ITS wave ran, and none
+// of them can be re-pointed at either of the others.
+const agentsSplitBaseWave3 = "6e31b4b29a0eb15c83e951a114db2345877d38bd"
+
 type splitItem struct {
 	num      int
 	file     string
@@ -120,14 +128,19 @@ type splitItem struct {
 // rows above it use.
 var splitItems = []splitItem{
 	{num: 3, file: "claudedocs/decisions/03-lockfile-check.md", base: agentsSplitBase, nonBlank: 116, sha: "88c413758efb22d2db23f849257c9f6ffd8175bb764c71078fd6c7eeadd9ec4d"},
+	{num: 9, file: "claudedocs/decisions/09-views-unavailable-discriminator.md", base: agentsSplitBaseWave3, nonBlank: 50, sha: "6bd481b9d65e560c4e02ce8aec2d7d14ce4b37f3e84c933562b9800374330624"},
 	{num: 10, file: "claudedocs/decisions/10-dev-tunnel-embeddability.md", base: agentsSplitBaseWave2, nonBlank: 103, sha: "b2397598f7913fac286f2fb5ee1e1e1ebf85348e365a6e820799d4ff817cab3c"},
+	{num: 13, file: "claudedocs/decisions/13-generation-graph-not-validated.md", base: agentsSplitBaseWave3, nonBlank: 42, sha: "0b875b35411e58cd61c66b16dd64fc20d4fb5d1f787d838912ed1d3fa2074df2"},
+	{num: 17, file: "claudedocs/decisions/17-download-presigned-no-credential.md", base: agentsSplitBaseWave3, nonBlank: 34, sha: "18d1888d11bf5359fa25dcc1fe0d86418e9b9b349bb297d54876afd5d5d5ef21"},
 	{num: 11, file: "claudedocs/decisions/11-vendored-ready-ack.md", base: agentsSplitBase, nonBlank: 153, sha: "232d2649f45928825e60396d36c4c513a469112d48092ec45686cc2b9ba396bf"},
 	{num: 18, file: "claudedocs/decisions/18-ready-ack-existing-apps.md", base: agentsSplitBase, nonBlank: 130, sha: "83c49221352702ce161854c729e2663cc67d6ca120090d807f8c504db52baaf5"},
 	{num: 19, file: "claudedocs/decisions/19-img2img-workflow-and-upload.md", base: agentsSplitBaseWave2, nonBlank: 103, sha: "0e1bd1bd9b862123d99e106167e6fc0bc5fca55445f3d34709e8115092fef1ef"},
 	{num: 20, file: "claudedocs/decisions/20-ready-ack-advisory-tiers.md", base: agentsSplitBase, nonBlank: 389, sha: "82de3c61f2fa3b43516ec8112d5ce64e3026ace3a2a60aa2ca723d44cf6bb191"},
 	{num: 21, file: "claudedocs/decisions/21-model-substitution.md", base: agentsSplitBase, nonBlank: 114, sha: "60ee9ffc115dac34eff068cd270c2d6427c26f84c77bca28388aa60c51c5be67"},
+	{num: 22, file: "claudedocs/decisions/22-input-refuses-non-txt2img.md", base: agentsSplitBaseWave3, nonBlank: 44, sha: "25ddad01439c67ae7d3ef3362c095a0885db409f77b6d3ea62c1008a7c95ce1a"},
 	{num: 23, file: "claudedocs/decisions/23-finding-field-message.md", base: agentsSplitBase, nonBlank: 165, sha: "89ad99bb3e9fec0e6a316045d7160362b6fad8f8e340fc20c022dcc91becc13a"},
 	{num: 24, file: "claudedocs/decisions/24-errno-is-a-net-error.md", base: agentsSplitBase, nonBlank: 327, sha: "baa658929002c871ee2cbf9332d7dcb9d78749fcab21e832b11a659803c42fd8"},
+	{num: 25, file: "claudedocs/decisions/25-listing-media-bounds.md", base: agentsSplitBaseWave3, nonBlank: 36, sha: "91069724894cd2b602034aa89cb61349096567f4e18a2ec40353146ac3dac249"},
 	{num: 26, file: "claudedocs/decisions/26-project-path-classification.md", base: agentsSplitBase, nonBlank: 246, sha: "1747de6cf56e85a935367ec118b7e16aecee5fb100d1ebf545ca40576ebbcc11"},
 	{num: 27, file: "claudedocs/decisions/27-blockid-derivation-refuses.md", base: agentsSplitBase, nonBlank: 105, sha: "5edc575b345db5b459af8d0fc0bd6c826e8102a7588b61aa873092848394796a"},
 }

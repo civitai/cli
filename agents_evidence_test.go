@@ -12,7 +12,7 @@ import (
 )
 
 // AGENTS.md's numbered list is loaded into every session through CLAUDE.md's
-// `@AGENTS.md` import, so its size is a per-session cost. The nine largest items
+// `@AGENTS.md` import, so its size is a per-session cost. The largest items
 // keep their THESIS in AGENTS.md and have their bodies — the RSS tables, the
 // mutation matrices, the retractions, the enumerated residuals — in
 // `claudedocs/decisions/NN-<slug>.md`, reached through a `→ evidence: <path>`
@@ -48,10 +48,14 @@ const evidenceDir = "claudedocs/decisions"
 // minEvidencePointers is the POSITIVE CONTROL. Without it, a pointer regex that
 // has stopped matching — a changed arrow glyph, a reflowed line, a wrong working
 // directory — finds zero pointers, compares the empty set with an empty
-// expectation and reports a serene pass while the ledger checks nothing. Nine
-// items are split today; 5 leaves room for re-inlining a couple without letting
-// a wired-to-nothing scan through.
-const minEvidencePointers = 5
+// expectation and reports a serene pass while the ledger checks nothing.
+//
+// It rises with each wave, or it stops being a control. Sixteen items are split
+// today; a floor of 5 was set when nine were, and against sixteen it would let a
+// regex that had lost TWO THIRDS of the corpus through — the "comfortable
+// margin" the sibling xrefs guard warns is not evidence of a healthy scan. 10
+// leaves room to re-inline six without weakening the control that far.
+const minEvidencePointers = 10
 
 // evidencePointerRe matches the pointer line a stub ends with. The path is
 // captured as a non-space run, so a pointer that has been wrapped across a line
@@ -221,8 +225,8 @@ func TestEvidencePointersAndFilesAreTheSameSet(t *testing.T) {
 // This is the guard against the failure mode the split most invites — replacing
 // an item with a bare "see the evidence file". A reader deciding whether an item
 // bears on the change they are making must be able to decide it from AGENTS.md;
-// a pointer alone forces nine file reads per session, which is worse than the
-// cost the split removed.
+// a pointer alone forces one file read per split item per session — sixteen of
+// them now — which is worse than the cost the split removed.
 func TestEvidenceStubsCarryAThesisAndAPointer(t *testing.T) {
 	b, err := os.ReadFile("AGENTS.md")
 	if err != nil {

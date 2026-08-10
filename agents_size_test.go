@@ -36,31 +36,44 @@ import (
 
 // agentsMaxBytes is the ceiling on AGENTS.md.
 //
-// Achieved size: 53,950 bytes, after wave 2 of the evidence split moved items 10
-// and 19 out (13,263 bytes net, 19.7% of the file, in one change). The ceiling is
-// 54,250 — 300 bytes of headroom, the same deliberate tightness as the 287 it
-// replaces and for the same measured reason.
+// Achieved size: 42,635 bytes, after wave 3 of the evidence split moved items 9,
+// 13, 17, 22 and 25 out (11,596 bytes net, 21.4% of the file, in one change).
+// The ceiling is 45,135 — 2,500 bytes of headroom.
 //
-// 🔴 THE HEADROOM IS SMALL BECAUSE SQUEEZING IS NO LONGER AN OPTION. An earlier
-// number assumed that when the file got close, prose could be tightened to make
-// room. That was measured and it is false: a full lossless compression pass over
-// every unsplit item and every prose section recovered 586 bytes — 0.86% — and
-// most of that came from ONE genuine cross-item duplication (item 19(e) restated
-// item 17's credential argument in full). Mechanically the file held only 23
-// repeated 7-word n-grams in 67 kB, every one a deliberate parallel construction
-// rather than accidental redundancy. The prose is at its floor; EVICTION is the
-// only lever with anything left in it, and wave 2 recovered ~25x what the
-// compression pass did.
+// 🔴 THE HEADROOM IS A BUDGET FOR ORDINARY EDITS, AND THE TWO NUMBERS BEFORE IT
+// WERE NOT. 287 bytes, then 300: each evaporated on the very next commit that
+// touched this file (#308 consumed 94% of the 300, leaving 19), and a ceiling
+// with 19 bytes under it is indistinguishable from a frozen file. It converts
+// every routine correction into an eviction project, which is a much worse
+// failure than the one the ceiling exists to prevent — the guard stops being a
+// budget and becomes a reason not to fix the docs.
 //
-// So headroom here does not mean "slack to grow into". It means: THE BUDGET
-// BEFORE AN EVICTION IS MANDATORY.
+// 2,500 is DERIVED, not picked. Measured over the last 40 commits touching
+// AGENTS.md, the ten docs-only ones changed it by +70, +245, +281, +1,337,
+// +1,456, +2,371, +2,760, +2,890, +3,399 and +3,474 bytes — median 1,913. So
+// 2,500 buys roughly ONE median docs-only correction, or two or three small
+// ones, or one retraction paragraph (300–800 bytes, measured on the ones in the
+// file) plus change.
 //
-//   - 300 bytes absorbs a re-measured number or a corrected sentence.
-//   - It does NOT absorb a new retraction paragraph (300–800 bytes), a new stub
-//     (~600–700), or a new item written as a full body (8.5–28 kB).
-//   - Anything in that second list must be paid for by MOVING a body out, not by
-//     raising this constant. The failure message prints the eviction playbook and
-//     ranks the candidates.
+// What it deliberately does NOT buy:
+//
+//   - A new item written as a full body. The modern ones run 1.5–3.7 kB inline
+//     and the largest evicted bodies were 8.5–28 kB, so a new decision still has
+//     to be paid for by MOVING one out, which is the whole point.
+//   - Re-inlining this wave's work. Restoring item 9, 13 or 22 costs 2,284–3,035
+//     bytes net and breaks this ceiling on its own. (Items 17 and 25 are the two
+//     cheapest at 1,868 and 1,857, and would fit — that is the honest cost of a
+//     headroom big enough to be useful, and it is what agentsMaxBytesCeiling is
+//     sized to bound.)
+//
+// 🔴 SQUEEZING IS STILL NOT AN OPTION, which is why the budget has to be real
+// rather than aspirational. A full lossless compression pass over every unsplit
+// item and every prose section recovered 586 bytes — 0.86% — most of it from ONE
+// genuine cross-item duplication (item 19(e) restated item 17's credential
+// argument in full). Mechanically the file held only 23 repeated 7-word n-grams
+// in 67 kB, every one a deliberate parallel construction rather than accidental
+// redundancy. EVICTION is the only lever with anything left in it: wave 2
+// recovered ~23x what the compression pass did and wave 3 ~20x.
 //
 // 🔴 THE CANDIDATE LIST THAT USED TO SIT HERE IS DELETED RATHER THAN UPDATED,
 // AND THAT IS THE LESSON. It named items 10 and 19 with their byte sizes and
@@ -74,20 +87,27 @@ import (
 // cannot rot. Do not reintroduce one here.
 //
 // Do not raise this to make a large item fit. Split the item.
-const agentsMaxBytes = 54_250
+const agentsMaxBytes = 45_135
 
-// agentsMaxBytesCeiling bounds agentsMaxBytes itself. 64,000 is ~19% above the
-// achieved size: past that the numbered list is back to being a per-session cost
-// large enough that the split bought nothing, so raising agentsMaxBytes beyond
-// it is a decision about the whole approach, not a bump.
+// agentsMaxBytesCeiling bounds agentsMaxBytes itself, so the budget above cannot
+// be turned into unlimited slack by editing one number.
+//
+// 48,600 is ~14% above the achieved size, and it is chosen against a property
+// that can be re-derived rather than a round percentage: re-inlining any THREE
+// of wave 3's five bodies costs at least 6,009 bytes net, landing at 48,644 —
+// just above this bound. So agentsMaxBytes cannot be raised far enough to undo
+// the majority of this wave without a second, deliberate, reviewable edit to
+// this constant. (Any two of them, at 3,725–5,587 net, would still fit; a bound
+// tight enough to block a pair would sit 1,165 bytes above agentsMaxBytes and
+// leave the next wave no room to re-derive anything.)
 //
 // 🔴 IT MOVES DOWN WITH THE ACHIEVED SIZE, OR IT STOPS BOUNDING ANYTHING. Left
-// at the 80,000 that was ~19% above the PRE-wave-2 size, it would sit ~48% above
-// the achieved one — enough slack to re-inline both items just moved out and
-// still pass, which is the same "a ceiling nobody bounds" failure one level up.
-// Whoever completes the next wave re-derives this from the new achieved size in
-// the same commit.
-const agentsMaxBytesCeiling = 64_000
+// at the 64,000 that was ~19% above the PRE-wave-3 size, it would sit ~50% above
+// the achieved one — enough slack to re-inline all five items just moved out
+// (54,231) and still pass, which is the same "a ceiling nobody bounds" failure
+// one level up. Whoever completes the next wave re-derives this from the new
+// achieved size in the same commit.
+const agentsMaxBytesCeiling = 48_600
 
 // agentsMinBytes is the POSITIVE CONTROL. A truncated, empty or wrongly-located
 // AGENTS.md is comfortably under any ceiling, and "0 bytes, well within budget"
@@ -102,6 +122,17 @@ var evidencePathRe = regexp.MustCompile(`→ evidence: \S+`)
 
 // agentsItemSizes returns each item's byte size in AGENTS.md, largest first,
 // together with whether it already has an evidence pointer.
+//
+// 🔴 THE LAST ITEM ENDS AT THE LIST, NOT AT THE END OF THE FILE, AND FORGETTING
+// THAT MADE THE PLAYBOOK RANK A STUB FIRST. There is no item heading after the
+// final one, so a naive slice runs to EOF and swallows the closing
+// vendored-mirrors paragraph plus the Permission boundaries, Release process and
+// License sections. Measured on the wave-3 tree: item 27 is a 683-byte STUB and
+// was reported at 4,789 bytes — 7x its real size, and top of the ranking, so the
+// first advice a maintainer got at the ceiling was to evict something already
+// evicted. The cut is the same one baseItemBody in agents_split_preserved_test.go
+// already applies: stop at the first line that leaves the list's indentation.
+// TestEvictionPlaybookSizesTheLastItemCorrectly pins it.
 func agentsItemSizes(t *testing.T) []struct {
 	num    int
 	bytes  int
@@ -140,7 +171,19 @@ func agentsItemSizes(t *testing.T) []struct {
 		if idx+1 < len(heads) {
 			end = heads[idx+1].line
 		}
-		block := strings.Join(lines[h.line:end], "\n")
+		item := lines[h.line:end]
+		// See the 🔴 note above: the final item has no following heading, so it
+		// is bounded by the first line that leaves the list's indentation.
+		for i, l := range item {
+			if i > 0 && l != "" && !strings.HasPrefix(l, " ") {
+				item = item[:i]
+				break
+			}
+		}
+		for len(item) > 0 && strings.TrimSpace(item[len(item)-1]) == "" {
+			item = item[:len(item)-1]
+		}
+		block := strings.Join(item, "\n")
 		out = append(out, struct {
 			num    int
 			bytes  int
@@ -219,6 +262,80 @@ func TestAgentsMDStaysUnderItsCeiling(t *testing.T) {
 			size, agentsMaxBytes, size-agentsMaxBytes, evictionPlaybook(t, size))
 	}
 	t.Logf("AGENTS.md is %d bytes, %d under the %d-byte ceiling", size, agentsMaxBytes-size, agentsMaxBytes)
+}
+
+// TestEvictionPlaybookSizesTheLastItemCorrectly pins the fix described in
+// agentsItemSizes' 🔴 note, and pins it as a SEAM rather than as a number.
+//
+// Two slicers in this package answer "where does item N end": agentsItemSizes
+// (which decides what the ceiling failure tells a maintainer to evict) and
+// baseItemBody (which decides what the verbatim digest covers). They had
+// diverged on exactly one input — the final item, which has no following heading
+// — and the divergence was invisible because each looked right on its own. So
+// the assertion is that they AGREE, for every item, which is the property that
+// was actually broken. A hardcoded size for whichever item is currently last
+// would go stale the day the next one is appended — and could not even be
+// written here, since the repo-wide xrefs guard reads this file and would flag
+// the number as a dangling reference.
+func TestEvictionPlaybookSizesTheLastItemCorrectly(t *testing.T) {
+	b, err := os.ReadFile("AGENTS.md")
+	if err != nil {
+		t.Fatalf("read AGENTS.md: %v", err)
+	}
+	doc := string(b)
+	sizes := agentsItemSizes(t)
+	if len(sizes) < minAgentsItems {
+		t.Fatalf("CONTROL failure: agentsItemSizes returned %d item(s), want >= %d — it is not seeing the list",
+			len(sizes), minAgentsItems)
+	}
+
+	last := 0
+	for _, s := range sizes {
+		if s.num > last {
+			last = s.num
+		}
+	}
+	for _, s := range sizes {
+		want := len(strings.Join(baseItemBody(t, doc, s.num), "\n"))
+		if s.bytes != want {
+			t.Errorf("item %d: the playbook measures %d bytes, baseItemBody slices %d (delta %+d).\n"+
+				"The two slicers disagree about where this item ends. Whichever is wrong, the cost is real: the playbook's number "+
+				"is the ranking a maintainer evicts by, and baseItemBody's slice is what the verbatim digest covers.",
+				s.num, s.bytes, want, s.bytes-want)
+		}
+	}
+
+	// POSITIVE CONTROL. The agreement above is only evidence if the last item is
+	// genuinely the hazard case — i.e. if a naive to-EOF slice really would
+	// swallow the sections below the list. Without this, a document whose final
+	// item happened to sit at EOF would satisfy the loop while proving nothing.
+	lines := strings.Split(doc, "\n")
+	start := -1
+	for i, l := range lines {
+		if m := itemHeadingRe.FindStringSubmatch(l); m != nil {
+			if n, _ := strconv.Atoi(m[1]); n == last {
+				start = i
+			}
+		}
+	}
+	if start < 0 {
+		t.Fatalf("CONTROL failure: item %d's heading was not found", last)
+	}
+	naive := strings.Join(lines[start:], "\n")
+	if !strings.Contains(naive, "\n## ") {
+		t.Fatalf("CONTROL failure, not a finding: a naive to-EOF slice of the last item (%d) contains no `## ` heading, "+
+			"so this test is not exercising the over-count it exists to pin. AGENTS.md's structure changed; re-derive the control.", last)
+	}
+	for _, s := range sizes {
+		if s.num != last {
+			continue
+		}
+		if strings.Contains(naive[:s.bytes], "\n## ") {
+			t.Errorf("item %d is measured at %d bytes, which still reaches a `## ` section heading — the playbook is counting "+
+				"the document's trailing sections as part of the last item and will rank it first whatever its real size", last, s.bytes)
+		}
+		t.Logf("last item %d measures %d bytes; the naive to-EOF slice would have measured %d", last, s.bytes, len(naive))
+	}
 }
 
 // TestAgentsSizeGuardCanStillFire is the "can it go red" control for the
