@@ -5,7 +5,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: all build install test vet lint fmt clean tidy ci
+.PHONY: all build install test vet lint fmt clean tidy ci mutate
 
 all: build
 
@@ -40,6 +40,17 @@ tidy:
 
 # Mirror CI locally.
 ci: tidy vet test build
+
+# Mutation-test ONE package and print a report corrected for gremlins'
+# non-compiling-mutant misclassification. Local investigation tool only:
+# deliberately NOT part of `ci`, deliberately not a CI job, and it exits 0
+# whatever it finds. `make mutate PKG=internal/blockproto` to point it
+# elsewhere. Read the "what this does not cover" header in scripts/mutate.sh
+# before believing a clean run — in particular, it cannot see a defect that
+# lives in TEST code, which is most of what it would need to see here.
+# Measurements: claudedocs/mutation-testing-experiment.md
+mutate:
+	./scripts/mutate.sh $(PKG)
 
 clean:
 	rm -rf bin dist
