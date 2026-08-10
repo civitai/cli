@@ -468,6 +468,60 @@ func TestGapReportUnitCap(t *testing.T) {
 	}
 }
 
+// TestGapReportSeparatorSitsBETWEENGaps pins the SHAPE of the joined list, which
+// nothing else in this file does.
+//
+// 🔴 ISSUE #309, A SURVIVING MUTANT that PR #300 had classified as EQUIVALENT on
+// a spot-check rather than by execution. `if i > 0` -> `if i >= 0` around the
+// "; " separator survives all 18 packages: the tests here assert that the report
+// NAMES the right things, that the cap truncates, that the lead switches when it
+// does, and that no printed line exceeds the wrap width — none of which can see a
+// separator emitted in the wrong POSITION. The rendered difference is
+//
+//	original:  "… usually the actual bug: (1) alpha."
+//	mutant:    "… usually the actual bug: ; (1) alpha."
+//
+// i.e. a stray separator before the FIRST reason, in the user-facing advisory
+// that #258/#269 rewrote precisely so it would point at the real cause legibly.
+//
+// The assertion is EXACT EQUALITY against the lead plus a hand-written body, not
+// a Contains: a substring check for "(1) alpha" passes under the mutant, and
+// composing the expectation from the loop would be a restatement of the code.
+func TestGapReportSeparatorSitsBETWEENGaps(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		gaps []string
+		body string
+	}{
+		{"one gap takes no separator at all", []string{"alpha"}, "(1) alpha."},
+		{"two gaps are joined by exactly one separator", []string{"alpha", "beta"}, "(1) alpha; (2) beta."},
+		{"a full, untruncated list", []string{"alpha", "beta", "gamma"}, "(1) alpha; (2) beta; (3) gamma."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if len(tc.gaps) > readyAckGapCap {
+				t.Fatalf("this row renders %d gaps but the cap is %d, so it would exercise the truncated lead "+
+					"instead of the one it asserts", len(tc.gaps), readyAckGapCap)
+			}
+			want := readyAckGapLead + tc.body
+			got := readyAckGapReport(tc.gaps)
+			if got != want {
+				t.Fatalf("readyAckGapReport rendered the wrong list shape (issue #309)\n got: %q\nwant: %q\n"+
+					"the separator belongs BETWEEN reasons; emitting it before the first one puts a stray "+
+					"%q in front of reason (1) in the advisory the author reads", got, want, "; ")
+			}
+		})
+	}
+
+	// The truncated lead takes the same loop, so it has the same hazard.
+	t.Run("the truncated list starts at its first reason too", func(t *testing.T) {
+		got := readyAckGapReport([]string{"alpha", "beta", "gamma", "delta"})
+		want := readyAckGapLeadTruncated + "(1) alpha"
+		if !strings.HasPrefix(got, want) {
+			t.Fatalf("the truncated report does not begin at reason (1)\n got: %q\nwant prefix: %q", got, want)
+		}
+	})
+}
+
 // TestGapReportIsOneLine pins the wire contract. `Finding.Message` is a `--json`
 // string field; the human layout happens at the printer (internal/cmd), and a
 // newline here would break a consumer without breaking any assertion about the

@@ -850,6 +850,120 @@ func TestReadyAckCapsAreUnobservable(t *testing.T) {
 	})
 }
 
+// ---------------------------------------------------------------------------
+// The two short-circuits that mask each other (issue #302).
+// ---------------------------------------------------------------------------
+
+// ackPartialTree builds a project whose FIRST entry is a subdirectory the scan
+// cannot finish reading, and whose LAST entry holds the ack.
+//
+// Entry order is the whole fixture: os.ReadDir sorts, so `a-partial` is walked
+// before `z-emitter…`. Inside `a-partial` an oversized file trips the size cap
+// and sets the sticky `partial` flag; the ack then sits BEHIND that flag, where
+// only a scanner that kept walking after giving up could reach it.
+//
+// `partial` false is the POSITIVE CONTROL: the same tree with the oversized file
+// shrunk to nothing, which must scan to ackFound. Without it, "unobservable" is
+// equally satisfied by a scanner that never sees the emitter at all — the
+// reassuring-zero shape.
+//
+// ackInSubdir chooses which of the two guards the fixture reaches; see
+// TestPartialScanNeverBecomesFound.
+func ackPartialTree(t *testing.T, partial, ackInSubdir bool) string {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(rel, body string) {
+		t.Helper()
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	blob := "var x=1;\n"
+	if partial {
+		blob = strings.Repeat("x", maxAckFileBytes+1)
+	}
+	write("a-partial/bundle.js", blob)
+	// Real emitter source, so the fixture cannot drift from the token the
+	// scanner actually looks for.
+	if ackInSubdir {
+		write("z-emitter/civitai-host.js", realEmitter())
+	} else {
+		write("z-emitter.js", realEmitter())
+	}
+	return dir
+}
+
+// ackResultName renders the three-valued verdict for a failure message. It is a
+// TEST helper rather than a String() on ackScanResult, which would be production
+// code no production path calls.
+func ackResultName(r ackScanResult) string {
+	switch r {
+	case ackFound:
+		return "ackFound"
+	case ackAbsent:
+		return "ackAbsent"
+	case ackUnobservable:
+		return "ackUnobservable"
+	}
+	return fmt.Sprintf("ackScanResult(%d)", int(r))
+}
+
+// TestPartialScanNeverBecomesFound pins the THREE-VALUED verdict against issue
+// #302: a scan that gave up part-way must stay ackUnobservable and must never be
+// promoted to ackFound by evidence it only reached because it ignored its own
+// stop flag.
+//
+// 🔴 THE TWO GUARDS MASK EACH OTHER, WHICH IS WHY THIS NEEDS TWO ROWS.
+// ackScanner.walk short-circuits on `s.found || s.partial` twice — once on entry
+// and once per directory entry — and a single-mutation sweep scores both as
+// killed while the PAIR goes unexamined:
+//   - "the ack is a sibling FILE" reaches the PER-ENTRY guard. Drop that one
+//     alone and the root loop walks straight on to `z-emitter.js` after
+//     `a-partial` has already set `partial`, and the verdict flips.
+//   - "the ack is a sibling DIRECTORY" needs BOTH gone. With only the per-entry
+//     guard dropped, the loop reaches `z-emitter/` and calls walk(), where the
+//     ENTRY guard still returns — so this row is the one that requires the pair,
+//     and it is the row single-mutation testing cannot see.
+//
+// The flip is the expensive direction, per AGENTS.md item 18: "Reading NOTHING is
+// not finding nothing, and neither is reading only PART." A tree we could not
+// finish reading, reported as having the ack, silences the advisory on a project
+// that may be exactly as broken as #206.
+func TestPartialScanNeverBecomesFound(t *testing.T) {
+	// The size cap is what makes this fixture partial; a raised cap would make it
+	// allocate rather than fail. See TestReadyAckCapValues.
+	if maxAckFileBytes > 8<<20 {
+		t.Fatalf("maxAckFileBytes=%d is too large to build a partial fixture from", maxAckFileBytes)
+	}
+	for _, tc := range []struct {
+		name        string
+		ackInSubdir bool
+	}{
+		{"the ack sits in a sibling FILE behind the partial directory", false},
+		{"the ack sits in a sibling DIRECTORY behind the partial directory", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// POSITIVE CONTROL first: the identical tree that is NOT partial must
+			// reach the ack, or the assertion below is about a scanner that was
+			// never going to find anything.
+			if got := scanForReadyAck(ackPartialTree(t, false, tc.ackInSubdir)); got != ackFound {
+				t.Fatalf("positive control: a fully readable copy of this tree scanned to %s, want ackFound — "+
+					"the emitter is not where this fixture thinks it is, so the partial case below proves nothing",
+					ackResultName(got))
+			}
+			if got := scanForReadyAck(ackPartialTree(t, true, tc.ackInSubdir)); got != ackUnobservable {
+				t.Fatalf("a scan that hit the size cap in `a-partial` reported %s, want ackUnobservable — the "+
+					"stop flag is sticky, so evidence found only by walking PAST it must not promote the verdict "+
+					"to ackFound (issue #302)", ackResultName(got))
+			}
+		})
+	}
+}
+
 // TestReadyAckAdviceIsActionable pins the message CONTENT. hasReadyAckWarning
 // compares against the readyAckAdvice variable, which is self-referential —
 // replacing the whole advisory with "something may be wrong" passes every other
