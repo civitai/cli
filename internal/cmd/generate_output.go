@@ -83,8 +83,20 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output) {
 	for _, o := range excluded {
 		fmt.Fprintf(errw, "    - %s: %s\n", safeTerm(dashIfEmpty(o.ID)), safeTerm(genapi.ExclusionReason(o)))
 	}
+	// 🔴 The second half of this line used to read "a blocked or missing output
+	// is not refunded". That is true of a HARD block and false of the commonest
+	// soft one: a mature-content output is `canUpgrade`, where the server's own
+	// wording is "your Buzz is held, not lost" and the non-yellow debits are
+	// credited back when the user unlocks it
+	// (`civitai/civitai → src/server/services/orchestrator/poll-iteration.ts`,
+	// `src/components/ImageGeneration/QueueItem.tsx`). The workflow HAS been
+	// charged — that half is not in doubt, and stays — but the CLI cannot see
+	// the Buzz ledger and cannot tell the two exclusion kinds apart from the
+	// payload, so it must not settle the refund question in either direction.
+	// See AGENTS.md item 28 and #278.
 	fmt.Fprintln(errw, st.Dim(
-		"These were still part of the workflow you were charged for — a blocked or missing output is not refunded."))
+		"These were part of the workflow you were charged for. Whether any of that charge comes back depends on why each output was excluded and is decided server-side; "+
+			buzzLedgerUnknownNote+"."))
 }
 
 // reportOutputCountMismatch warns when fewer deliverable outputs came back than

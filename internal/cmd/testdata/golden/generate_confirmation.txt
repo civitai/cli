@@ -1,0 +1,1 @@
+About to generate with txt2img at https://civitai.com. Prompt: a cat wearing sunglasses Cost: 12 Buzz (balance 1000000). ⚠ This SPENDS REAL BUZZ and cannot be undone once submitted. The cost is an estimate, not a quote — the server enforces no ceiling and the realized charge can be higher. Generate? [y/N]:
