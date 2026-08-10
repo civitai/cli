@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -147,6 +148,136 @@ func TestWorkflowsGet_UnfinishedWorkflowSaysSo(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "spends nothing") {
 		t.Errorf("stderr should say re-checking is free:\n%s", errb.String())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #280 — the excluded-output report is a CHARGE claim, so it must only be
+// printed for a workflow that actually reached a terminal state.
+//
+// 🔴 The fixture above (TestWorkflowsGet_UnfinishedWorkflowSaysSo) is
+// STRUCTURALLY BLIND to this bug: its payload is `"steps":[]`, i.e. zero
+// outputs, so it only ever exercises the "(none yet — the workflow has not
+// finished)" branch and never reaches reportExcludedOutputs at all. Reproducing
+// #280 needs BOTH conditions at once — a non-terminal status AND a
+// non-deliverable output — or the contradicting line is unreachable.
+// ---------------------------------------------------------------------------
+
+// A running workflow whose blob has not landed yet: non-terminal status AND one
+// non-available output.
+const wfGetRunningWithPendingOutput = `{
+  "id":"wf_280","status":"processing","createdAt":"2026-08-05T12:00:00Z",
+  "steps":[{"$type":"textToImage","name":"s","status":"processing",
+    "output":{"images":[
+      {"id":"pending","type":"image","available":false}
+    ]}}]}`
+
+// The same shape after it finishes, plus one deliverable output so the
+// presigned-URL note also fires and the ORDER of the two stderr blocks can be
+// asserted.
+const wfGetSucceededWithPendingOutput = `{
+  "id":"wf_280t","status":"succeeded","createdAt":"2026-08-05T12:00:00Z","completedAt":"2026-08-05T12:00:30Z",
+  "steps":[{"$type":"textToImage","name":"s","status":"succeeded",
+    "output":{"images":[
+      {"id":"ok","type":"image","available":true,"url":"https://blobs.example/ok.jpeg"},
+      {"id":"pending","type":"image","available":false}
+    ]}}]}`
+
+// excludedOutputReport renders exactly what reportExcludedOutputs prints for
+// payload's excluded outputs.
+//
+// The assertions below pin WHERE that block is printed, not how it is worded:
+// the charge/refund sentence lives in generate_output.go and is being revised
+// separately, so a literal copy of it here would be a spelling assertion that
+// breaks on a rewording and — worse — would silently stop matching while the
+// hazard remained. Deriving the block from the real function keeps the check
+// structural. Two positive controls guard against the derivation going vacuous
+// (`strings.Contains(x, "")` is always true): the fixture must actually have an
+// excluded output, and the rendered block must be non-empty.
+func excludedOutputReport(t *testing.T, payload string) string {
+	t.Helper()
+	var wf genapi.Workflow
+	if err := json.Unmarshal([]byte(payload), &wf); err != nil {
+		t.Fatalf("fixture does not decode: %v", err)
+	}
+	_, excluded := genapi.PartitionOutputs(&wf)
+	if len(excluded) == 0 {
+		t.Fatalf("fixture is blind to #280: it carries no excluded output, so the charge claim is unreachable")
+	}
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, excluded)
+	block := b.String()
+	if strings.TrimSpace(block) == "" {
+		t.Fatalf("positive control failed: reportExcludedOutputs printed nothing for %d excluded output(s)", len(excluded))
+	}
+	return block
+}
+
+// #280: a queued/running workflow must not be told it was charged and will not
+// be refunded one line before being told it has not finished.
+func TestWorkflowsGet_RunningWorkflowIsNotToldItWasChargedAndUnrefunded(t *testing.T) {
+	chargeClaim := excludedOutputReport(t, wfGetRunningWithPendingOutput)
+
+	c, out, errb := genCmd("")
+	if err := runWorkflowsGet(c, wfGetDeps(wfGetRunningWithPendingOutput, nil), workflowsGetOpts{}, "wf_280"); err != nil {
+		t.Fatalf("workflows get: %v", err)
+	}
+	stderr := errb.String()
+
+	idxNotFinished := strings.Index(stderr, "has not finished")
+	if idxNotFinished < 0 {
+		t.Fatalf("a non-terminal workflow must be told it has not finished; stderr:\n%s", stderr)
+	}
+	// The charge claim is a statement about a job that RAN. It must be absent
+	// entirely — not merely printed later.
+	if idx := strings.Index(stderr, chargeClaim); idx >= 0 {
+		rel := "before"
+		if idx > idxNotFinished {
+			rel = "after"
+		}
+		t.Errorf("#280: a processing workflow was told it was charged and will not be refunded (index %d, %s "+
+			"the \"has not finished\" line at index %d) — the excluded-output report must run only inside "+
+			"the IsTerminalStatus guard.\nstderr:\n%s", idx, rel, idxNotFinished, stderr)
+	}
+	// State, not spelling: the report's own header must not appear either, so a
+	// reworded final sentence cannot let the block through unnoticed.
+	if strings.Contains(stderr, "will NOT be saved") {
+		t.Errorf("#280: the excluded-output report was printed for a non-terminal workflow:\n%s", stderr)
+	}
+	// The counts themselves are honest at any status and must survive: they are
+	// a count, not a claim about money.
+	if !strings.Contains(out.String(), "Outputs (0 deliverable, 1 excluded)") {
+		t.Errorf("the deliverable/excluded counts must still be printed:\n%s", out.String())
+	}
+}
+
+// The counterpart, so the fix cannot silently delete a real warning: a TERMINAL
+// workflow with a non-deliverable output still gets the excluded-output report,
+// and it still comes before the presigned-URL note.
+func TestWorkflowsGet_TerminalWorkflowStillReportsExcludedOutputs(t *testing.T) {
+	chargeClaim := excludedOutputReport(t, wfGetSucceededWithPendingOutput)
+
+	c, _, errb := genCmd("")
+	if err := runWorkflowsGet(c, wfGetDeps(wfGetSucceededWithPendingOutput, nil), workflowsGetOpts{}, "wf_280t"); err != nil {
+		t.Fatalf("workflows get: %v", err)
+	}
+	stderr := errb.String()
+
+	idxClaim := strings.Index(stderr, chargeClaim)
+	if idxClaim < 0 {
+		t.Fatalf("a terminal workflow with a non-deliverable output must still get the excluded-output "+
+			"report; stderr:\n%s", stderr)
+	}
+	idxPresigned := strings.Index(stderr, "presigned and expire")
+	if idxPresigned < 0 {
+		t.Fatalf("the presigned-URL note must still print when a deliverable output exists; stderr:\n%s", stderr)
+	}
+	if idxClaim > idxPresigned {
+		t.Errorf("the excluded-output report (index %d) must precede the presigned-URL note (index %d):\n%s",
+			idxClaim, idxPresigned, stderr)
+	}
+	if strings.Contains(stderr, "has not finished") {
+		t.Errorf("a succeeded workflow must not be told it has not finished:\n%s", stderr)
 	}
 }
 

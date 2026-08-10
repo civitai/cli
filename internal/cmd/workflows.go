@@ -177,12 +177,25 @@ func printWorkflow(out, errw io.Writer, wf *genapi.Workflow) {
 			fmt.Fprintf(out, "      url:     %s\n", safeTerm(*o.URL))
 		}
 	}
-	reportExcludedOutputs(errw, excluded)
-
+	// 🔴 THE TERMINAL GUARD RUNS FIRST, AND reportExcludedOutputs RUNS ONLY
+	// INSIDE IT. Issue #280: the excluded-output report ends with a CHARGE claim
+	// ("These were still part of the workflow you were charged for — a blocked or
+	// missing output is not refunded"), which is a statement about a job that
+	// RAN. A queued or running workflow whose blob has simply not landed yet is
+	// non-deliverable for a completely different reason, so printing that report
+	// told the user they had been charged and would not be refunded one line
+	// before telling them the workflow had not finished — two contradictory
+	// claims about the same job, and the first of them false.
+	//
+	// The partition itself stays above: the "(N deliverable, M excluded)" header
+	// is a COUNT, not a claim about money, and it is honest at any status.
 	if !genapi.IsTerminalStatus(wf.Status) {
 		fmt.Fprintln(errw, ui.For(errw).Dim(
 			"This workflow has not finished. Re-run this command to check again — it is a read and spends nothing."))
-	} else if len(kept) > 0 {
+		return
+	}
+	reportExcludedOutputs(errw, excluded)
+	if len(kept) > 0 {
 		fmt.Fprintln(errw, ui.For(errw).Dim(
 			"Output URLs are presigned and expire — fetch them promptly, or re-run this command for fresh links."))
 	}
