@@ -181,6 +181,29 @@ func Render(tmpl Template, destDir string, data Data) ([]string, error) {
 	return written, nil
 }
 
+// NotEmptyRemedy is the actionable half of the refusal to scaffold into a
+// directory that already holds files (issue #260, item 7).
+//
+// The refusal itself was already right — clobbering an author's directory is
+// not recoverable — but it named no way forward, while the README's
+// Troubleshooting section carried the remedy the CLI did not print. AGENTS.md's
+// house rule is that an error names the next command to run, so the remedy
+// moved into the message and the README now agrees with the binary.
+//
+// 🔴 IT ENDS BY SAYING THERE IS NO `--force`, and that sentence is the point
+// rather than a hedge. Without it the natural next move on reading "refusing to
+// overwrite" is to go looking for the override flag — through `--help`, then
+// the README — and find nothing, which reads as a missing feature rather than
+// as a decision. There is no `--force` because overwriting a directory the user
+// already has is destructive and unrecoverable; if one is ever added, this
+// constant is the one place that claim has to change.
+//
+// It is a named constant so the message and the tests that pin it cannot
+// drift: the guard derives what it expects FROM this value rather than
+// spelling a copy of it.
+const NotEmptyRemedy = "refusing to overwrite. Scaffold somewhere else (`--dir <new path>`, or a different name), " +
+	"or remove the directory first — there is no --force"
+
 func ensureEmptyDir(dir string) error {
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -197,7 +220,7 @@ func ensureEmptyDir(dir string) error {
 		return err
 	}
 	if len(entries) > 0 {
-		return fmt.Errorf("%s is not empty — refusing to overwrite", dir)
+		return fmt.Errorf("%s is not empty — %s", dir, NotEmptyRemedy)
 	}
 	return nil
 }
