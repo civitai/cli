@@ -313,6 +313,56 @@ func TestSplitTableCoversEveryEvidenceFile(t *testing.T) {
 
 // --- git-backed reinforcement ------------------------------------------------
 
+// gitEnv distinguishes the two reasons a base blob can fail to resolve, because
+// they demand OPPOSITE answers and conflating them is what broke CI once.
+//
+// 🔴 A SHALLOW CLONE IS AN EXPECTED ABSENCE; AN UNRESOLVABLE SHA IN A FULL CLONE
+// IS A BUG. `actions/checkout@v4` clones at depth 1, so NO base blob exists in
+// CI and skipping is the honest answer — the digests are the contract and they
+// need no git at all. But on a full clone the same empty string means the sha in
+// the table is wrong, and answering THAT with a skip would retire the differ
+// silently, which is the failure mode this whole file exists to prevent. So the
+// environment is interrogated rather than inferred from the absence.
+type gitEnv int
+
+const (
+	gitUsable      gitEnv = iota // full clone: base blobs must resolve
+	gitShallow                   // depth-limited: base blobs are absent by construction
+	gitUnavailable               // no git, or not a repository
+)
+
+var gitEnvOnce struct {
+	done bool
+	env  gitEnv
+}
+
+func detectGitEnv() gitEnv {
+	if gitEnvOnce.done {
+		return gitEnvOnce.env
+	}
+	gitEnvOnce.done = true
+	out, err := exec.Command("git", "rev-parse", "--is-shallow-repository").Output()
+	switch {
+	case err != nil:
+		gitEnvOnce.env = gitUnavailable
+	case strings.TrimSpace(string(out)) == "true":
+		gitEnvOnce.env = gitShallow
+	default:
+		gitEnvOnce.env = gitUsable
+	}
+	return gitEnvOnce.env
+}
+
+func (g gitEnv) String() string {
+	switch g {
+	case gitShallow:
+		return "a shallow (depth-limited) clone"
+	case gitUnavailable:
+		return "an environment with no usable git"
+	}
+	return "a full clone"
+}
+
 // baseAgentsMD returns AGENTS.md at the given commit, or "" when the object is
 // not reachable (a shallow CI clone, or no git at all). Results are cached: with
 // a base per row, an uncached read would re-shell out once per item.
@@ -348,6 +398,12 @@ func baseDocFor(t *testing.T, it splitItem) string {
 	t.Helper()
 	doc := baseAgentsMD(t, it.base)
 	if doc == "" {
+		if env := detectGitEnv(); env == gitUsable {
+			t.Fatalf("item %d's base commit %s is NOT REACHABLE, and this is %s — so history IS available and the object still "+
+				"did not resolve. That means the sha in splitItems is wrong, not that the environment is limited. "+
+				"A base nobody can resolve is a pin nobody can re-derive; fix the sha rather than letting this degrade to a skip.",
+				it.num, it.base, env)
+		}
 		return ""
 	}
 	if len(doc) < agentsMinBytes {
@@ -412,7 +468,26 @@ func baseItemBody(t *testing.T, doc string, num int) []string {
 // CI's object store. TestSplitItemBodiesArePreservedVerbatim is the guard that
 // gates a merge; this one is the reason to believe its constants, and it runs on
 // every developer machine.
+// reachableBases counts how many rows' base blobs this environment can resolve.
+// It is the ONE question both git-backed tests ask before comparing anything, so
+// neither can reach a positive control on input the environment cannot supply.
+func reachableBases(t *testing.T) int {
+	t.Helper()
+	n := 0
+	for _, it := range splitItems {
+		if baseAgentsMD(t, it.base) != "" {
+			n++
+		}
+	}
+	return n
+}
+
 func TestSplitDigestsAreTheBaseCommitsText(t *testing.T) {
+	if reachableBases(t) == 0 {
+		t.Skipf("none of the %d base blob(s) is reachable — this is %s. The pinned digests could not be re-derived here; "+
+			"TestSplitItemBodiesArePreservedVerbatim still holds every one of them without git.",
+			len(splitItems), detectGitEnv())
+	}
 	checked := 0
 	for _, it := range splitItems {
 		t.Run(fmt.Sprintf("item_%d", it.num), func(t *testing.T) {
@@ -474,6 +549,25 @@ func TestSplitBasesAreWellFormed(t *testing.T) {
 //
 // Skips in a shallow clone for the same reason as its sibling.
 func TestEveryBaseBodyLineSurvivedTheMove(t *testing.T) {
+	// 🔴 THE SKIP IS DECIDED HERE, BEFORE ANY COMPARISON, AND THAT PLACEMENT IS
+	// THE WHOLE FIX. When the per-item base landed, this skip moved INTO the
+	// subtest — which reads like a tidy-up and is not one: in a shallow clone
+	// every subtest then skipped, `total` stayed 0, and the zero-line CONTROL at
+	// the bottom fired. CI went red with "the differ compared 0 lines", which is
+	// the control doing its job on an environment it was never meant to judge.
+	// The local `make ci` could not see it, because a full clone resolves every
+	// blob — a true green about an environment CI does not have.
+	//
+	// So: if NOTHING resolves, this test has nothing to say and says so once, at
+	// the top. The digests in TestSplitItemBodiesArePreservedVerbatim are
+	// unaffected — they read the evidence files and need no git.
+	if reachableBases(t) == 0 {
+		t.Skipf("none of the %d base blob(s) is reachable — this is %s, where the line-naming differ CANNOT run. "+
+			"Every body is still pinned by sha256 in TestSplitItemBodiesArePreservedVerbatim, which needs no git; "+
+			"this test is reinforcement that names WHICH line went missing, and it runs on any full clone.",
+			len(splitItems), detectGitEnv())
+	}
+
 	total := 0
 	for _, it := range splitItems {
 		t.Run(fmt.Sprintf("item_%d", it.num), func(t *testing.T) {
@@ -508,8 +602,14 @@ func TestEveryBaseBodyLineSurvivedTheMove(t *testing.T) {
 	}
 	// POSITIVE CONTROL. A differ that compared zero lines would report a serene
 	// pass; requiring a floor makes "no missing lines" a claim about real work.
+	//
+	// It is reached ONLY when at least one base resolved (the guard at the top of
+	// this function), so a 0 here means the comparison itself is broken — a
+	// finding — rather than "the environment cannot supply the input", which is a
+	// skip. Keeping those two apart is the entire lesson of this function.
 	if total == 0 {
-		t.Fatal("CONTROL failure: the differ compared 0 lines, so its clean result says nothing")
+		t.Fatal("CONTROL failure: at least one base blob resolved, yet the differ compared 0 lines. " +
+			"The slicer or the evidence reader is broken; this is NOT the shallow-clone case, which is skipped above.")
 	}
 	t.Logf("checked %d non-blank base lines across %d moved items", total, len(splitItems))
 }
