@@ -368,17 +368,6 @@ cmd_init() {
 	if [ -e "${ROOT}" ] && [ "${force}" != 1 ]; then
 		die "init: ${ROOT} already exists (use --force to supersede it, or \`teardown\` first)"
 	fi
-	if [ -e "${ROOT}" ]; then
-		# 🔴 SUPERSEDE, NEVER DELETE. The ledger is the audit artefact of the
-		# previous run; a mistyped `init --force` used to destroy it before the
-		# new credential had even been validated.
-		local superseded
-		superseded="${ROOT}.superseded-$(date -u +%Y%m%dT%H%M%SZ)"
-		chmod -R u+w "${ROOT}" 2>/dev/null
-		mv "${ROOT}" "${superseded}" || die "init: could not set the previous run aside"
-		note "init: previous run preserved at ${superseded}"
-	fi
-
 	local token=""
 	if [ -n "${token_file}" ]; then
 		[ -r "${token_file}" ] || die "init: cannot read --token-file ${token_file}"
@@ -389,6 +378,20 @@ cmd_init() {
 		die "init: supply the credential via --token-file <path> or the CIVITAI_DOGFOOD_TOKEN environment variable"
 	fi
 	[ -n "${token}" ] || die "init: the supplied credential is empty"
+
+	if [ -e "${ROOT}" ]; then
+		# 🔴 SUPERSEDE, NEVER DELETE — AND ONLY AFTER THE CREDENTIAL IS IN
+		# HAND. The ledger is the previous run's audit artefact. This block used
+		# to run BEFORE the token was read, so `init --force` with an
+		# unreadable or empty token moved the sandbox aside and then died,
+		# leaving no run root and a superseded one still holding both
+		# credentials — measured.
+		local superseded
+		superseded="${ROOT}.superseded-$(date -u +%Y%m%dT%H%M%SZ)"
+		chmod -R u+w "${ROOT}" 2>/dev/null
+		mv "${ROOT}" "${superseded}" || die "init: could not set the previous run aside"
+		note "init: previous run preserved at ${superseded}"
+	fi
 
 	[ -n "${slug_prefix}" ] || slug_prefix="dogfood3-$(date -u +%Y%m%d)-"
 
@@ -603,7 +606,13 @@ classify() {
 	if [ ! -x "${bin}" ]; then
 		GERR="the classifier ${bin} is missing or not executable"; return 1
 	fi
-	out=$("${bin}" -- "$@" 2>/dev/null); rc=$?
+	# Bounded like the balance read: a classifier that hangs must not hang the
+	# gate. It does no I/O beyond writing its verdict, so 30s is generous.
+	if command -v timeout >/dev/null 2>&1; then
+		out=$(timeout 30 "${bin}" -- "$@" 2>/dev/null); rc=$?
+	else
+		out=$("${bin}" -- "$@" 2>/dev/null); rc=$?
+	fi
 	if [ -z "${out}" ]; then
 		GERR="the classifier produced no output (exit ${rc})"; return 1
 	fi
@@ -800,6 +809,19 @@ policy_verdict() {
 				deny "the spend meter stopped agreeing with the account earlier in this run, so spend is no longer being counted — refusing to submit (see ledger/meter_broken)"
 				return 0
 			fi
+			# 🔴 ONE SPEND AT A TIME. Two concurrent generates cannot both be
+			# metered: the balance delta of either is the sum of both, and the
+			# crash record is per-run. The cap arithmetic already reserves, but
+			# refusing outright is the honest bound — and the threat model says
+			# the agent "runs things in parallel because that seems efficient".
+			local inflight_pid
+			if [ -f "${ROOT}/ledger/inflight" ]; then
+				inflight_pid=$(cut -f4 < "${ROOT}/ledger/inflight" 2>/dev/null)
+				if [ -n "${inflight_pid}" ] && kill -0 "${inflight_pid}" 2>/dev/null; then
+					deny "another generation is still running in this sandbox (pid ${inflight_pid}); two concurrent spends cannot both be metered, so this one is refused — wait for it to finish"
+					return 0
+				fi
+			fi
 			if [ "${REQUIRE_CALIBRATION}" = "1" ] && [ ! -f "${ROOT}/ledger/calibration.ok" ]; then
 				deny "the spend meter has not been calibrated against a real generation; run \`dogfood-sandbox.sh calibrate\` (it spends once, deliberately, while you watch) or re-init with --skip-calibration"
 				return 0
@@ -933,7 +955,15 @@ cmd_guard() {
 	# the cap is evadable. This is a no-op rewrite of the current value purely
 	# to establish writability while refusing still costs nothing.
 	case "${VERDICT}" in
-		ALLOW_SPEND)      assert_writable generate_submits "${scrubbed}" ;;
+		# 🔴 THE METER FILE ITSELF, NOT JUST THE COUNTER. Asserting only
+		# `generate_submits` proved the wrong file: with just `observed_spend`
+		# at 0444, 111 Buzz moved, the meter read 0 and nothing latched, while
+		# every invocation row recorded `delta=37` — the spend was observed and
+		# never accumulated. `observed_spend` and `reserved` are what the cap is
+		# computed from, so they are what must be writable before a spend.
+		ALLOW_SPEND)      assert_writable generate_submits "${scrubbed}"
+		                  assert_writable observed_spend "${scrubbed}"
+		                  assert_writable reserved "${scrubbed}" ;;
 		ALLOW_APP_SUBMIT) assert_writable app_submits "${scrubbed}" ;;
 		ALLOW_LISTING)    assert_writable listing_mutations "${scrubbed}" ;;
 	esac
@@ -945,7 +975,7 @@ cmd_guard() {
 		res=$(read_scalar reserved) || refuse "the reservation ledger is unreadable or malformed" "${scrubbed}"
 		write_scalar reserved "$(( res + mc ))" || refuse "could not record the spend reservation — refusing to submit" "${scrubbed}"
 		# A crash between here and the reconciliation must not lose the charge.
-		printf '%s\t%s\t%s\t%s\n' "$(now_iso)" "${mc}" "${before}" "${scrubbed}" \
+		printf '%s\t%s\t%s\t%s\t%s\n' "$(now_iso)" "${mc}" "${before}" "$$" "${scrubbed}" \
 			> "${ROOT}/ledger/inflight"
 		workflow_snapshot
 	fi
@@ -1022,31 +1052,6 @@ settle_spend() {
 	res=$(read_scalar reserved)      || res="${mc}"
 	cum=$(read_scalar observed_spend) || cum=0
 
-	# 🔴 A ZERO DELTA ON A NON-ZERO EXIT IS EXPECTED, NOT A BROKEN METER. The
-	# command failed before spending: the CLI's own `--max-cost` refusal, a
-	# balance-too-low refusal, a 4xx/5xx, a bad `--input`, an `--ecosystem`
-	# typo. Latching on those killed the run at the agent's first likely
-	# mistake — and the brief MANDATES `--max-cost`, which the agent cannot
-	# size without a `--dry-run` first. Measured: `--max-cost 5` against an
-	# estimate of 8 gave rc=2, delta 0, meter_broken latched, and every
-	# subsequent generate refused. It also credited 5 Buzz that never moved.
-	if [ "${rc}" != 0 ]; then
-		after=$(sample_balance "post-generate-failed") || after=""
-		if [ -n "${after}" ] && [ "${after}" != "${before}" ]; then
-			delta=$(( before - after ))
-			if [ "${delta}" -gt 0 ]; then
-				write_scalar observed_spend "$(( cum + delta ))" || true
-				printf '%s\tgenerate\t%s\t%s\t%s (rc=%s)\n' "$(now_iso)" "${before}" "${after}" "${delta}" "${rc}" \
-					>> "${ROOT}/ledger/spend.tsv"
-			fi
-		else
-			delta=0
-		fi
-		write_scalar reserved "$(( res - mc < 0 ? 0 : res - mc ))" || true
-		printf '%s' "${delta:-0}"
-		return 0
-	fi
-
 	after=$(sample_balance "post-generate") || after=""
 
 	if [ -n "${after}" ] && [ "${after}" = "${before}" ] && [ "${METER_SETTLE_SECONDS}" -gt 0 ]; then
@@ -1054,34 +1059,66 @@ settle_spend() {
 		after=$(sample_balance "post-generate-resample") || after=""
 	fi
 
+	# 🔴 THE rc-AWARE SUPPRESSION APPLIES TO EXACTLY ONE CASE: THE READ WORKED
+	# AND THE DELTA REALLY IS 0.
+	#
+	# Suppressing on rc alone was too strong in both directions, and both were
+	# measured. A zero delta on a non-zero exit IS expected — the CLI's own
+	# `--max-cost` refusal, a bad `--input`, an `--ecosystem` typo — and
+	# latching on it killed the run at the agent's first likely mistake. But a
+	# generate can charge and THEN fail: AGENTS item 28(b) refuses to assert
+	# what becomes of a charge, and #279 records submits that quoted `ready` and
+	# produced no outputs. Measured control pair, rc=1 throughout:
+	#   read fails  -> 37 really moved, meter 0, no latch   <- the hole
+	#   credit hides -> 37 really moved, meter 0, no latch   <- the hole
+	#   read healthy -> 37 metered                           <- correct
+	# So an UNREADABLE balance and a NEGATIVE delta latch whatever the exit code
+	# was; only the observable zero is trusted, and only then.
 	if [ -z "${after}" ]; then
-		write_scalar observed_spend "$(( cum + mc ))" || true
-		printf '%s\tgenerate\t%s\tUNREADABLE\tassumed-%s\n' "$(now_iso)" "${before}" "${mc}" \
+		write_scalar observed_spend "$(( cum + mc ))" || meter_write_failed
+		printf '%s\tgenerate\t%s\tUNREADABLE\tassumed-%s (rc=%s)\n' "$(now_iso)" "${before}" "${mc}" "${rc}" \
 			>> "${ROOT}/ledger/spend.tsv"
-		break_meter "the post-submit balance read failed; ${mc} Buzz charged to the ledger as a worst case"
-		printf '%s' "unknown"
+		break_meter "the post-submit balance read failed (rc=${rc}); ${mc} Buzz charged to the ledger as a worst case"
+		delta="unknown"
 	else
 		delta=$(( before - after ))
 		if [ "${delta}" -lt 0 ]; then
-			write_scalar observed_spend "$(( cum + mc ))" || true
-			printf '%s\tgenerate\t%s\t%s\tNEGATIVE(%s)-assumed-%s\n' "$(now_iso)" "${before}" "${after}" "${delta}" "${mc}" \
+			write_scalar observed_spend "$(( cum + mc ))" || meter_write_failed
+			printf '%s\tgenerate\t%s\t%s\tNEGATIVE(%s)-assumed-%s (rc=%s)\n' "$(now_iso)" "${before}" "${after}" "${delta}" "${mc}" "${rc}" \
 				>> "${ROOT}/ledger/spend.tsv"
-			break_meter "the balance went UP across a submit (delta ${delta}); a credit can hide a real charge, so ${mc} Buzz was charged as a worst case"
-			printf '%s' "negative:${delta}"
+			break_meter "the balance went UP across a submit (delta ${delta}, rc=${rc}); a credit can hide a real charge, so ${mc} Buzz was charged as a worst case"
+			delta="negative:${delta}"
 		elif [ "${delta}" = 0 ]; then
-			write_scalar observed_spend "$(( cum + mc ))" || true
-			printf '%s\tgenerate\t%s\t%s\tZERO-assumed-%s\n' "$(now_iso)" "${before}" "${after}" "${mc}" \
-				>> "${ROOT}/ledger/spend.tsv"
-			break_meter "a submitted generation moved the balance by 0, so the meter is not seeing charges; ${mc} Buzz charged as a worst case"
-			printf '%s' "zero"
+			if [ "${rc}" != 0 ]; then
+				# Observably nothing moved and the command failed: benign.
+				printf '%s\tgenerate\t%s\t%s\t0 (rc=%s, no charge)\n' "$(now_iso)" "${before}" "${after}" "${rc}" \
+					>> "${ROOT}/ledger/spend.tsv"
+				delta=0
+			else
+				write_scalar observed_spend "$(( cum + mc ))" || meter_write_failed
+				printf '%s\tgenerate\t%s\t%s\tZERO-assumed-%s\n' "$(now_iso)" "${before}" "${after}" "${mc}" \
+					>> "${ROOT}/ledger/spend.tsv"
+				break_meter "a submitted generation moved the balance by 0, so the meter is not seeing charges; ${mc} Buzz charged as a worst case"
+				delta="zero"
+			fi
 		else
-			write_scalar observed_spend "$(( cum + delta ))" || true
-			printf '%s\tgenerate\t%s\t%s\t%s\n' "$(now_iso)" "${before}" "${after}" "${delta}" \
+			write_scalar observed_spend "$(( cum + delta ))" || meter_write_failed
+			printf '%s\tgenerate\t%s\t%s\t%s (rc=%s)\n' "$(now_iso)" "${before}" "${after}" "${delta}" "${rc}" \
 				>> "${ROOT}/ledger/spend.tsv"
-			printf '%s' "${delta}"
 		fi
 	fi
 	write_scalar reserved "$(( res - mc < 0 ? 0 : res - mc ))" || true
+	printf '%s' "${delta}"
+}
+
+# 🔴 THE METER WRITE IS THE ONE WRITE THAT CANNOT BE REFUSED — it happens after
+# the money has moved. Ignoring its failure with `|| true` meant that with only
+# `observed_spend` at 0444, 111 Buzz moved, the meter read 0 and nothing
+# latched, while every invocation row recorded `delta=37`: the spend was
+# OBSERVED and never accumulated. It cannot be undone, so it latches.
+meter_write_failed() {
+	break_meter "the spend ledger could not be written after a charge; the observed figure is now incomplete"
+	return 0
 }
 
 # Read a counter and write the same value back, so an unreadable or unwritable
@@ -1123,8 +1160,21 @@ verify_provenance() {
 reconcile_inflight() {
 	local f="${ROOT}/ledger/inflight"
 	[ -f "${f}" ] || return 0
-	local ts mc before now cum res delta
-	IFS=$'\t' read -r ts mc before _ < "${f}"
+	local ts mc before pid now cum res delta
+	IFS=$'\t' read -r ts mc before pid _ < "${f}"
+
+	# 🔴 A RUNNING GENERATE IS NOT A CRASHED ONE, AND THIS COULD NOT TELL THEM
+	# APART. The record was one file with no liveness check, so ANY invocation
+	# arriving mid-generate consumed it — deleted the record, released the
+	# reservation and wrote a false RECONCILED row. It takes one read command
+	# inside the window, and a real generate waits up to the 10-minute
+	# `--timeout` default. Measured 3/3 with a `whoami` at t=1s of a 3-second
+	# generate: a RECONCILED row every time. With 8 racers the meter reported
+	# 2064 where 37 had actually moved — one charge counted twice, once by the
+	# bystander and once by the real settlement.
+	if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+		return 0
+	fi
 	rm -f "${f}"
 	case "${mc}" in ''|*[!0-9]*) mc=0 ;; esac
 	case "${before}" in ''|*[!0-9]*) before="" ;; esac
@@ -1443,11 +1493,21 @@ cmd_enter() {
 		path_dirs="${path_dirs}:$(dirname "${p}")"
 	done
 
-	# 🔴 ORDER IS LOAD-BEARING. bwrap applies these in sequence, so `--tmpfs
-	# /tmp` must come BEFORE the run-root bind: the default run root lives under
-	# /tmp, and a tmpfs mounted afterwards SHADOWS it. Measured — with the bind
-	# first, bwrap died with "Can't chdir to <root>/workspace: No such file or
-	# directory".
+	# 🔴 ORDER IS LOAD-BEARING, TWICE OVER. bwrap applies these in sequence, so
+	# `--tmpfs /tmp` must come BEFORE the run-root bind (the default run root
+	# lives under /tmp and a later tmpfs SHADOWS it — measured, bwrap died with
+	# "Can't chdir to <root>/workspace"), and the read-only re-binds of `real/`,
+	# `harness/` and `bin/` must come AFTER the read-write parent bind or the
+	# parent overrides them. Those three re-binds move the `upgrade` refusal and
+	# the harness's own integrity from convention to KERNEL: measured before
+	# them, `chmod u+w $ROOT/real` and `touch $ROOT/real/.civitai.new` both
+	# SUCCEEDED inside the jail.
+	#
+	# 🔴 `--clearenv` IS NOT COSMETIC. Blindness is a mount property; the
+	# environment is not a mount. Measured inside without it: 118 inherited
+	# variables, including a real `CIVITAI_TOKEN` (a second credential sitting
+	# outside every gate), an unrelated `sk-ant-…` key, and a `CDPATH` naming
+	# the very repo the jail exists to hide.
 	exec bwrap \
 		"${binds[@]}" \
 		--ro-bind "${envbin}" /usr/bin/env \
@@ -1455,7 +1515,11 @@ cmd_enter() {
 		${ca:+--ro-bind "${ca}" /etc/ssl/certs/ca-certificates.crt} \
 		--proc /proc --dev /dev --tmpfs /tmp \
 		--bind "${ROOT}" "${ROOT}" \
+		--ro-bind "${ROOT}/real" "${ROOT}/real" \
+		--ro-bind "${ROOT}/harness" "${ROOT}/harness" \
+		--ro-bind "${ROOT}/bin" "${ROOT}/bin" \
 		--unshare-pid --die-with-parent \
+		--clearenv \
 		--setenv HOME "${ROOT}/home" \
 		--setenv XDG_CONFIG_HOME "${ROOT}/home/.config" \
 		--setenv XDG_CACHE_HOME "${ROOT}/home/.cache" \
@@ -1476,14 +1540,59 @@ cmd_teardown() {
 			*) die "teardown: unknown flag $1" ;;
 		esac
 	done
-	[ -e "${root}" ] || { [ "${quiet}" = 1 ] || note "teardown: ${root} does not exist"; return 0; }
-	chmod -R u+w "${root}" 2>/dev/null
-	if [ "${delete}" = 1 ]; then
-		rm -rf "${root}"
-		[ "${quiet}" = 1 ] || note "teardown: deleted ${root}"
+	# 🔴 THE SIBLING SCAN MUST NOT BE BEHIND THE EXISTENCE CHECK. It was, and a
+	# failed `init --force` is exactly the case that leaves NO run root and a
+	# superseded one still holding both credentials — so teardown printed "does
+	# not exist" and returned, leaving the thing it exists to remove.
+	if [ -e "${root}" ]; then
+		chmod -R u+w "${root}" 2>/dev/null
+		if [ "${delete}" = 1 ]; then
+			shred_secrets "${root}"
+			rm -rf "${root}"
+			[ "${quiet}" = 1 ] || note "teardown: deleted ${root}"
+		else
+			[ "${quiet}" = 1 ] || note "teardown: unlocked ${root} (not deleted; pass --delete to remove)"
+		fi
 	else
-		[ "${quiet}" = 1 ] || note "teardown: unlocked ${root} (not deleted; pass --delete to remove)"
+		[ "${quiet}" = 1 ] || note "teardown: ${root} does not exist"
 	fi
+
+	# 🔴 `init --force` LEAVES A SUPERSEDED ROOT, AND IT HOLDS BOTH CREDENTIALS.
+	# The go/no-go is scrupulous about `shred -u` on the operator's own token
+	# file and was silent about the copies the harness itself makes: the Civitai
+	# key in `home/.config/civitai/config.yaml` and, after `--with-claude`, the
+	# Anthropic OAuth token in `home/.claude/.credentials.json`. `teardown
+	# --delete` removed only ${ROOT} and never the siblings.
+	local sib found=0
+	for sib in "${root}".superseded-*; do
+		[ -e "${sib}" ] || continue
+		found=1
+		if [ "${delete}" = 1 ]; then
+			chmod -R u+w "${sib}" 2>/dev/null
+			shred_secrets "${sib}"
+			rm -rf "${sib}"
+			[ "${quiet}" = 1 ] || note "teardown: deleted superseded run ${sib}"
+		else
+			note "teardown: 🔴 ${sib} still holds a credential — re-run with --delete"
+		fi
+	done
+	[ "${found}" = 1 ] || true
+}
+
+# Overwrite credential material before unlinking it. `shred` is best-effort on a
+# journalling or copy-on-write filesystem — it is not a guarantee, it is the
+# difference between "deleted" and "deleted and overwritten once".
+shred_secrets() {
+	local root="$1" f
+	for f in "${root}/home/.config/civitai/config.yaml" \
+	         "${root}/home/.claude/.credentials.json"; do
+		[ -f "${f}" ] || continue
+		if command -v shred >/dev/null 2>&1; then
+			shred -u "${f}" 2>/dev/null || rm -f "${f}"
+		else
+			rm -f "${f}"
+		fi
+	done
 }
 
 # ---------------------------------------------------------------------------
@@ -1597,15 +1706,21 @@ OFFLINE
 	st_reason "a silent non-zero classifier denies" "DENY" "could not be classified" generate cat --dry-run
 	mkfake 'printf "ok\t1\npath\tgenerate\nargc\tnotanumber\n"'
 	st_reason "a non-numeric argument count denies" "DENY" "could not be classified" generate cat --dry-run
-	# These two branches are unreachable through today's command tree — cobra's
-	# ValidateArgs never errors for these commands, and `unknown-command` is
-	# reported as a flag-parse error for the spellings the corpus uses. They are
-	# still gate branches, so they are exercised through an injected classifier
-	# rather than left as unpinned code.
-	mkfake 'printf "ok\t1\npath\tmodels\nargc\t0\nhassubcommands\tfalse\nargserr\taccepts at most 1 arg\n"'
-	st_reason "an argserr from cobra denies" "DENY" "would reject these arguments" models search x
+	# 🔴 THE CLAIM THAT WAS HERE WAS WRONG. It said cobra's ValidateArgs never
+	# errors for these commands. Measured, it does: `workflows cancel` with no
+	# id gives "accepts 1 arg(s), received 0", and `generate a b` gives "accepts
+	# at most 1 arg(s), received 2" — both are now real rows below. Only the
+	# `unknown-command` KIND is unreachable through the corpus (cobra reports
+	# those spellings as flag-parse errors), so it alone is exercised through an
+	# injected classifier.
 	mkfake 'printf "ok\t0\nkind\tunknown-command\nerr\tunknown command \"zzz\"\n"; exit 2'
 	st_reason "an unknown-command kind denies" "DENY" "does not recognise this command" zzz
+	GUARD_BIN=""; rm -f "${fake}"
+	# Real argserr cases, measured against the shipped tree rather than faked.
+	st_reason "workflows cancel with no id denies" "DENY" "would reject these arguments" workflows cancel
+	st_reason "generate with two positionals denies" "DENY" "would reject these arguments" generate a b
+	st_check  "civitai help generate is help"     "ALLOW" "$(vd help generate)"
+	st_check  "civitai help is help"              "ALLOW" "$(vd help)"
 	# A classifier that claims everything is a harmless read must still not be
 	# able to say so from OUTSIDE the sandbox: GUARD_BIN is reset at startup, so
 	# an exported value cannot reach the gate.
@@ -1876,6 +1991,12 @@ printf "ok\t1\npath\tapp submit\nhassubcommands\tfalse\nargserr\t\nbool.package-
 # binary that charges a known amount. The classifier being right says nothing
 # about whether the guard acts on it.
 # ---------------------------------------------------------------------------
+# grep -c prints "0" AND exits 1 when there are no matches, so `|| printf 0`
+# appends a SECOND zero. Count via a helper that always succeeds.
+reconciled_rows() {
+	grep -c RECONCILED "$1/ledger/invocations.tsv" 2>/dev/null || true
+}
+
 selftest_e2e() {
 	local base="${TMPDIR:-/tmp}/dogfood-e2e-$$"
 	local guard_src="$1"
@@ -1896,6 +2017,8 @@ set -- "${args[@]+"${args[@]}"}"
 case "${1:-}" in
   buzz)
     [ -n "${STUB_BUZZ_ALWAYS_FAILS:-}" ] && { echo boom >&2; exit 5; }
+    # Fail only the POST read (any buzz after the first of this invocation).
+    if [ -n "${STUB_POSTREAD_FAIL:-}" ] && [ "$(cat "${NB}")" -ge 1 ]; then echo boom >&2; exit 5; fi
     # Widen the locked section so the concurrency row is deterministic: the
     # pre-spend balance read happens INSIDE the lock, so without flock the
     # eight racers overlap reliably rather than by luck.
@@ -1916,9 +2039,17 @@ case "${1:-}" in
       [ -f "${XDG_CACHE_HOME}/../../ledger/inflight" ] && echo yes > "${XDG_CACHE_HOME}/saw-inflight" || echo no > "${XDG_CACHE_HOME}/saw-inflight"
     fi
     [ -n "${STUB_WORKFLOWS:-}" ] && : > "${XDG_CACHE_HOME}/wf-submitted"
+    [ -n "${STUB_SLOW_GEN:-}" ] && sleep "${STUB_SLOW_GEN}"
+    # Make the meter unwritable DURING the call, after the pre-flight has
+    # already proved it writable — the only way the post-charge write can fail,
+    # and the reason meter_write_failed exists.
+    [ -n "${STUB_LOCK_METER:-}" ] && chmod 0444 "${XDG_CACHE_HOME}/../../ledger/observed_spend" 2>/dev/null
     if [ -n "${STUB_LAGGY:-}" ]; then :                       # charge never lands
     elif [ -n "${STUB_CREDIT:-}" ]; then echo $(( $(cat "${BAL}") - 37 + 100 )) > "${BAL}"
     else echo $(( $(cat "${BAL}") - 37 )) > "${BAL}"; fi
+    # A charge that lands and THEN fails — the shape AGENTS item 28(b) refuses
+    # to make claims about, and the one the rc-aware suppression must not hide.
+    [ -n "${STUB_FAIL_AFTER_CHARGE:-}" ] && { echo "submitted, then failed" >&2; exit 1; }
     echo generated ;;
   app)
     [ -n "${STUB_APP_RC:-}" ] && { echo "validation failed" >&2; exit "${STUB_APP_RC}"; }
@@ -2040,6 +2171,58 @@ POL
 	st_check "e2e the lock is free once released" "acquired" \
 		"$(bash "$(readlink -f "$0")" __locktest --root "${base}" try 2>/dev/null)"
 	rm -f "${base}/ledger/.locktest-held"
+
+	note "--- 🔴 a charge that happens and THEN fails must still latch ---"
+	e2e_reset
+	STUB_POSTREAD_FAIL=1 STUB_FAIL_AFTER_CHARGE=1 "${C}" generate cat --yes --max-cost 60 >/dev/null 2>&1
+	st_check "e2e rc!=0 + unreadable post-read LATCHES"  "yes" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+	st_check "e2e rc!=0 + unreadable charges worst case" "60" "$(cat "${base}/ledger/observed_spend")"
+	e2e_reset
+	STUB_CREDIT=1 STUB_FAIL_AFTER_CHARGE=1 "${C}" generate cat --yes --max-cost 60 >/dev/null 2>&1
+	st_check "e2e rc!=0 + NEGATIVE delta LATCHES"        "yes" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+	e2e_reset
+	STUB_FAIL_AFTER_CHARGE=1 "${C}" generate cat --yes --max-cost 60 >/dev/null 2>&1
+	st_check "e2e rc!=0 with a REAL charge is metered"   "37" "$(cat "${base}/ledger/observed_spend")"
+	st_check "e2e rc!=0 with a real charge does not latch" "no" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+	# CONTROL: the benign case must still be suppressed.
+	e2e_reset
+	STUB_FAIL_RC=2 "${C}" generate cat --yes --max-cost 60 >/dev/null 2>&1
+	st_check "e2e a failure that spent NOTHING is suppressed" "0" "$(cat "${base}/ledger/observed_spend")"
+	st_check "e2e that suppression does not latch"           "no" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+
+	note "--- 🔴 the meter file itself must be writable before a spend ---"
+	e2e_reset
+	chmod 0444 "${base}/ledger/observed_spend"
+	"${C}" generate cat --yes --max-cost 50 >/dev/null 2>&1; rc=$?
+	chmod 0644 "${base}/ledger/observed_spend"
+	st_check "e2e an unwritable METER refuses a spend" "126"   "${rc}"
+	st_check "e2e that refusal spent nothing"          "10000" "$(cat "${base}/home/.cache/bal")"
+
+	note "--- 🔴 a meter write that fails AFTER the charge must latch ---"
+	e2e_reset
+	STUB_LOCK_METER=1 "${C}" generate cat --yes --max-cost 50 >/dev/null 2>&1
+	chmod 0644 "${base}/ledger/observed_spend" 2>/dev/null
+	st_check "e2e a post-charge meter write failure LATCHES" "yes" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+
+	note "--- 🔴 a live generate's crash record must not be consumed ---"
+	e2e_reset
+	STUB_SLOW_GEN=3 "${C}" generate slow --yes --max-cost 50 >/dev/null 2>&1 &
+	local slow=$!
+	sleep 1
+	"${C}" whoami >/dev/null 2>&1
+	st_check "e2e a read mid-generate writes NO reconcile row" "0" \
+		"$(reconciled_rows "${base}")"
+	"${C}" generate second --yes --max-cost 10 >/dev/null 2>&1
+	st_check "e2e a SECOND concurrent generate is refused" "126" "$?"
+	wait "${slow}" 2>/dev/null
+	st_check "e2e the live generate metered exactly once" "37" "$(cat "${base}/ledger/observed_spend")"
+	st_check "e2e no reconcile row was ever written"      "0" \
+		"$(reconciled_rows "${base}")"
 
 	note "--- 🔴 the three ways the meter can lie, each must LATCH ---"
 

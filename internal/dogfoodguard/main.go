@@ -146,6 +146,13 @@ func main() {
 	root.SetOut(os.Stderr)
 	root.SetErr(os.Stderr)
 
+	// 🔴 `help` IS ADDED BY Execute(), WHICH WE NEVER CALL. Without this,
+	// `root.Find` never sees a `help` command, so `civitai help generate` — the
+	// first thing a blind agent reaches for — resolved to the root with a
+	// leftover positional and was REFUSED. Fail-closed, but a pointless
+	// distortion. InitDefaultHelpCmd registers it exactly as Execute would.
+	root.InitDefaultHelpCmd()
+
 	target, remaining, err := root.Find(args)
 	if err != nil {
 		// An unknown command is a real answer, not an internal failure: report

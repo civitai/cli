@@ -65,7 +65,9 @@ only when the agent is launched through `dogfood-sandbox.sh enter`:
 | the operator's real `~/.config/civitai` is not reachable | Linux mount namespace (`bwrap`) | **kernel — under `enter`** |
 | the host `~/.claude/projects` transcripts are not reachable | Linux mount namespace (`bwrap`) | **kernel — under `enter --with-claude`** |
 | an argv means the same thing to the gate as to the CLI | cobra's own parser (`internal/dogfoodguard`) | **structural** |
-| `upgrade` cannot replace the binary under evaluation | mode bits + the guard | convention |
+| `upgrade` cannot replace the binary under evaluation | mode bits + the guard | convention **outside** the jail; **kernel** inside it (`--ro-bind real/`) |
+| the harness script cannot be edited by the agent | `--ro-bind harness/` | **kernel — under `enter`** |
+| the operator's environment does not enter the jail | `bwrap --clearenv` | **kernel — under `enter`** |
 | credential isolation without the jail | `HOME` / `XDG_CONFIG_HOME` on the child | convention |
 | the per-invocation `--max-cost` ceiling | the guard script | convention |
 | the total spend cap and the meter | the guard script | convention |
@@ -74,8 +76,14 @@ only when the agent is launched through `dogfood-sandbox.sh enter`:
 | `login`, `dev-tunnel`, `dev-token`, unknown commands refused | the guard script | convention |
 | the audit ledger | the guard script | convention |
 
-🔴 **The `upgrade` row moved from "kernel" to "convention", and the earlier
-version of this table was wrong about it.** The mode bits genuinely defeat the
+🔴 **The `upgrade` row is now split, and the earlier table was wrong in BOTH
+directions in turn.** It first claimed kernel enforcement it did not have; the
+correction then said "convention" full stop, which undersold what `enter` can
+do. Inside the jail `real/`, `harness/` and `bin/` are re-bound READ-ONLY after
+the parent bind, so the mode-bit argument becomes a mount argument — measured,
+`chmod u+w $ROOT/real` and `touch $ROOT/real/.civitai.new` now both return 1 and
+overwriting the harness reports "Read-only file system". Outside the jail the
+original caveat stands verbatim: The mode bits genuinely defeat the
 *command* — `selfupdate` `O_CREATE`s `.civitai.new` in a `0500` directory and
 gets `EACCES` — but they do not bind the *agent*, because a process owning an
 inode may always chmod it. Measured, **inside the jail, as uid 1000**:
@@ -344,7 +352,7 @@ three real `--dry-run` estimates moved the balance by **0**
 ### `selftest`
 
 `make dogfood-check` runs `shellcheck -x` plus
-`dogfood-sandbox.sh selftest --offline` — **225 assertions, 225 pass**, no
+`dogfood-sandbox.sh selftest --offline` — **241 assertions, 241 pass**, no
 credential and no network required, so this is regression-testable in CI. The
 credentialed `selftest` (against a live sandbox) runs **79**, the same set minus
 the 13 stub-driven end-to-end rows plus 4 live lockdown/balance rows. It covers
@@ -644,6 +652,58 @@ overwriting the classifier binary to test substitution hits **ETXTBSY**, so the
 write failed silently and the row passed against the *real* classifier; `rm`
 first, and assert the substitution actually happened.
 
+## The fourth hardening round (blind re-audit #3)
+
+A third blind auditor built a ground-truth probe that runs the **real
+`Execute()`** with recorders replacing every `RunE` — so dispatch, `ParseFlags`,
+`Args`, `ValidateRequiredFlags` and `PersistentPreRunE` all run exactly as in the
+shipped binary — and diffed it field-by-field against `dogfoodguard` over 70
+rows: **zero disagreements**. Two 🔴 remained, both in the ledger rather than the
+classifier.
+
+| # | what | measured before | after |
+|---|---|---|---|
+| 1 | `reconcile_inflight` could not tell a CRASHED spend from a RUNNING one | one `whoami` at t=1s of a 3-second generate consumed the record **3/3**: false `RECONCILED` row, reservation released mid-flight. With 8 racers the meter read **2064 where 37 had moved** — one charge counted twice | the record carries the writer's PID and a live one is skipped; a second concurrent `generate` is refused outright. Re-measured 5/5: `RECONCILED=0`, meter **2027** = exactly 1990+37 |
+| 2 | the rc-aware fix suppressed too much — a generate can charge and THEN fail | rc≠0 + failed post-read → 37 really moved, **meter 0, no latch**; rc≠0 + credit masking → same | the suppression now applies to ONE case: the read worked and the delta really is 0. Re-measured: both now latch and charge the worst case; the benign control (rc≠0, healthy read, nothing moved) is still suppressed |
+
+🟡 also fixed, each measured: the writability pre-flight proved the wrong file —
+with only `observed_spend` at 0444, **111 Buzz moved, meter 0, no latch**, while
+every row logged `delta=37`; `observed_spend` and `reserved` are now asserted
+before a spend and a failed meter write latches, because it cannot be refused
+after the money has moved. `enter` now passes **`--clearenv`** (measured without
+it: **118** inherited variables including a real `CIVITAI_TOKEN`, an unrelated
+`sk-ant-…` key, and a `CDPATH` naming the repo the jail exists to hide) and
+**read-only re-binds** `real/`, `harness/` and `bin/` after the parent bind
+(measured before: `chmod u+w $ROOT/real` and `touch .civitai.new` both
+succeeded). `teardown` now shreds both credential files and cleans
+`*.superseded-*` roots, which `init --force` used to leave holding the Civitai
+key and the Anthropic token. `civitai help generate` works — cobra registers
+`help` in `Execute()`, which the classifier deliberately never calls, so
+`InitDefaultHelpCmd()` is called explicitly; that removes the fifth fidelity
+distortion rather than documenting it.
+
+🔴 **A comment of mine was wrong and is corrected:** it claimed cobra's
+`ValidateArgs` never fires for this tree. It does — `workflows cancel` with no
+id gives *"accepts 1 arg(s), received 0"* and `generate a b` gives *"accepts at
+most 1 arg(s), received 2"*. Both are now real selftest rows instead of a faked
+one.
+
+🔴 **The audit's headline concurrency number did not reproduce for me, and the
+defect did.** It reported 8 ALLOW_SPEND / 0 DENY; I measured **1 / 7 on 5
+consecutive runs**, so the cap itself held. What reproduced every time was the
+bystander consuming the crash record — a false `RECONCILED` row and a
+double-counted meter. Same root cause, opposite direction of error (mine
+over-counted, theirs under-counted); both are fixed by the liveness check, and I
+am reporting the numbers I measured rather than the ones I was handed.
+
+### The matrix is now a committed artifact
+
+`scripts/dogfood-mutate.sh` — 59 checksum-gated mutants, runnable on demand.
+Three rounds reported mutation results that the next round had to take on trust
+and could not re-derive, and one of those tables was later falsified.
+`scripts/mutate.sh` covers Go packages only, so the shell gate — where the money
+decisions live — had no re-runnable evidence until now.
+
 ## What this does not protect against
 
 An unrecorded residual is indistinguishable from a bug nobody noticed. These
@@ -704,8 +764,12 @@ are the ones being shipped knowingly.
      being a bypass if that line is ever deleted.
 8. **Concurrency is bounded, not eliminated.** The cap check, the counter bump
    and the reservation are one `flock`-held section, and a submit reserves its
-   `--max-cost` for the duration — measured, 8 concurrent submits against 10
-   Buzz of headroom now yield exactly 1. But the reservation is the ESTIMATE
+   `--max-cost` for the duration. 🔴 **The claim that stood here — "8 concurrent
+   submits against 10 Buzz of headroom now yield exactly 1" — was true of the
+   ALLOW count and false about the LEDGER**: every such run also had a bystander
+   consume the in-flight crash record, writing a false `RECONCILED` row and
+   counting one charge twice (meter 2064 where 37 moved). A second concurrent
+   `generate` is now refused outright, which is the honest bound. But the reservation is the ESTIMATE
    ceiling, not the realized charge, so N concurrent jobs can still overshoot by
    the same "realized exceeds estimate" margin as residual 2. **If `flock` is
    absent the lock silently degrades to a no-op** — `selftest` asserts it is
@@ -760,6 +824,20 @@ are the ones being shipped knowingly.
       deliberately, because the test is the damage. `claude setup-token` would
       mint an independent, revocable token; it is one owner action and was not
       taken.
+
+15. 🔴 **The unknown-verdict backstop in `cmd_guard` survives deletion, and
+    that is now DECLARED rather than merely true.** No valid input can reach it —
+    `policy_verdict` always sets a verdict — so only an internal bug can, which
+    is what it is for. Its value was shown by a two-stage mutant (make a branch
+    return without setting `VERDICT`, then delete the backstop: rc 126 → rc 0,
+    binary ran) and it is listed here alongside `write_scalar`'s readback as a
+    knowingly-unpinned guard, because the previous round left it undeclared.
+16. **`make dogfood-check` is still not in CI, and `internal/dogfoodguard` shows
+    `[no test files]` under `make ci`.** The classifier — the component three
+    audits have now agreed is the load-bearing one — is pinned only by a suite CI
+    never runs. Workflow files are ask-first, so this is flagged rather than
+    fixed; it is the single cheapest remaining improvement and it needs a
+    maintainer's hand.
 
 ## Go / no-go checklist
 
@@ -841,7 +919,7 @@ shred -u ~/.dogfood-token
 
 # 3. confirm the harness is honest before trusting it
 scripts/dogfood-sandbox.sh selftest        # against the live sandbox
-make dogfood-check                         # shellcheck -x + 225/225, no credential needed
+make dogfood-check                         # shellcheck -x + 241/241, no credential needed
 
 # 4b. calibrate the meter — ONE deliberate generation, spends real Buzz
 scripts/dogfood-sandbox.sh calibrate --yes
