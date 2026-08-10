@@ -459,10 +459,58 @@ func TestGenerate_AllOutputsFilteredIsAnError(t *testing.T) {
 	if fetched != 0 {
 		t.Errorf("a blocked output was fetched %d time(s) — the filter did not exclude it", fetched)
 	}
+	// This one KEEPS its charge claim. The workflow SUCCEEDED, so it ran and was
+	// billed; nothing in #278 touches that half, and softening it here would
+	// over-fix a true statement into a false negative on the one path where the
+	// user demonstrably paid for something.
 	if !strings.Contains(err.Error(), "charged") {
-		t.Errorf("the error must say it was charged: %v", err)
+		t.Errorf("a succeeded workflow with no deliverable outputs was still charged; the error must say so: %v", err)
 	}
 	if !strings.Contains(errb.String(), "moderation") {
 		t.Errorf("the reason must still be reported:\n%s", errb.String())
+	}
+}
+
+// The per-output exclusion note may say the workflow was CHARGED, and may not
+// say the excluded outputs are NOT REFUNDED.
+//
+// 🔴 The retracted half was "a blocked or missing output is not refunded". It is
+// true of a hard block and false of the commonest soft one: a mature-content
+// output is `canUpgrade`, where the server's own wording is "your Buzz is held,
+// not lost" and the non-yellow debits are credited back on unlock
+// (`civitai/civitai → src/server/services/orchestrator/poll-iteration.ts`,
+// `src/components/ImageGeneration/QueueItem.tsx`). The payload does not let the
+// CLI tell the two kinds apart, so it must settle neither — see #278 and
+// AGENTS.md item 28.
+//
+// The assertion is PAIRED on purpose. The charge half must SURVIVE (it is not in
+// doubt and dropping it would understate what happened), the refund half must be
+// GONE, and both are checked against the same rendered line — a Contains on the
+// new wording alone would pass with the retracted sentence printed beside it.
+// It calls reportExcludedOutputs directly rather than asserting a literal from
+// afar, so the guard reads the string the user actually sees.
+func TestReportExcludedOutputs_DoesNotSettleTheRefund(t *testing.T) {
+	blocked := "minor"
+	id := "out_1"
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: id, BlockedReason: &blocked}}})
+	got := b.String()
+
+	if got == "" {
+		t.Fatal("CONTROL failure: reportExcludedOutputs printed nothing, so every assertion below is vacuous")
+	}
+	if !strings.Contains(got, "charged") {
+		t.Errorf("the note must still say the workflow was charged — that half is not in doubt:\n%s", got)
+	}
+	if !strings.Contains(got, buzzLedgerUnknownNote) {
+		t.Errorf("the exclusion note does not render the shared buzzLedgerUnknownNote verbatim. A mature-content block is "+
+			"`canUpgrade` — the server says the Buzz is HELD, not lost — and the CLI cannot tell that apart from a hard block "+
+			"here, so it must make the one reviewed non-directional claim rather than its own.\n%s", got)
+	}
+	lower := strings.ToLower(got)
+	for _, banned := range refundDirectionalClaims {
+		if strings.Contains(lower, banned) {
+			t.Errorf("the exclusion note decides the refund question with %q.\n%s", banned, got)
+		}
 	}
 }

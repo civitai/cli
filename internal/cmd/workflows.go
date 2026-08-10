@@ -38,7 +38,7 @@ makes ` + "`--no-wait`" + `, a --timeout expiry and a Ctrl-C recoverable rather 
 dead end.
 
 ` + "`list`" + ` and ` + "`get`" + ` are reads and SPEND NOTHING. 🔴 ` + "`cancel`" + ` stops a job but does
-NOT refund it — a mid-run cancel bills the accrued cost, non-refundably.`,
+not undo its cost — a mid-run cancel bills what has already accrued.`,
 		Example: `  civitai workflows list
   civitai workflows get 01JABCXYZ
   civitai workflows get 01JABCXYZ --json

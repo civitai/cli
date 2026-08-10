@@ -71,8 +71,14 @@ func substitutionAdvice(reason string) string {
 			"(for example an edit-only version sent to text-to-image). There is usually a specific version " +
 			"you meant: pick one offered for the workflow you are running, or change --ecosystem to match the version"
 	case genapi.SubstitutionUnrecognized:
+		// "never generatable" was the wording here. It is a THIRD sense of a word
+		// #279 removed from the readiness label and the ready:false warning, and
+		// it reaches the same screen: reportModelSubstitutions prints on the
+		// ESTIMATE path, so this line lands in `--dry-run` stderr a few lines
+		// from `Resources ready`. Two different meanings of "generatable" on one
+		// screen is what made the label ambiguous in the first place.
 		return "the server does not offer that version in this model family at all — it may be a community " +
-			"checkpoint that was never generatable, or a version retired since this command was written. " +
+			"checkpoint that was never offered for generation, or a version retired since this command was written. " +
 			"Check it with `" + substitutionInspectCmd + " <id>` and pin a version that is still offered"
 	case genapi.SubstitutionGated:
 		return "that version IS offered for this workflow, but a gate rule hides it from your account — " +

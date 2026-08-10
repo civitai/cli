@@ -1,0 +1,1 @@
+Workflow: txt2img Prompt: <not checked by --dry-run> Resources ready: true Estimated cost base 8 factors quantity 1.5 total 12

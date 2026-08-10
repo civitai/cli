@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/civitai/cli/internal/genapi"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -440,9 +441,25 @@ func TestGenerate_NoWaitSkipsThePoll(t *testing.T) {
 	}
 }
 
-// A workflow that ends failed/expired/canceled is an ERROR, and the message must
-// say it was charged anyway.
-func TestGenerate_NonSucceededTerminalStatusFails(t *testing.T) {
+// A workflow that ends failed/expired/canceled is an ERROR — and the message must
+// state the OUTCOME without settling the money question.
+//
+// 🔴 THIS ASSERTION WAS INVERTED BY #278. It used to require
+// `Contains(err, "charged")`, pinning copy that read "it was charged and
+// produced no usable result" — i.e. asserting the charge STANDS. That is
+// contradicted by the platform's own client, which comments "the orchestrator
+// auto-refunds spent buzz on these" over exactly `failed || expired ||
+// canceled` and renders "Your Buzz has been refunded.", and by measurement: two
+// balance reads 25 minutes apart across 29 submits (21 succeeded / 8 failed)
+// moved by 11x8 and 21x8 — the SUCCESS count both times.
+//
+// The replacement is PAIRED, because a bare Contains on the new pointer would
+// pass with the retracted sentence still printed beside it: the message must
+// name the outcome, render the shared buzzLedgerUnknownNote VERBATIM, and carry
+// no directional claim. The phrase ban below is defence in depth only — the
+// structural guard is the constant, for the reason spelled out in
+// generate_refund_copy_test.go (a paraphrase beat the phrase list once already).
+func TestGenerate_NonSucceededTerminalStatusDoesNotSettleTheRefund(t *testing.T) {
 	withStdinTTY(t, false)
 	for _, st := range []string{genapi.StatusFailed, genapi.StatusExpired, genapi.StatusCanceled} {
 		t.Run(st, func(t *testing.T) {
@@ -456,11 +473,52 @@ func TestGenerate_NonSucceededTerminalStatusFails(t *testing.T) {
 			if err == nil {
 				t.Fatalf("%s must not report success", st)
 			}
-			if !strings.Contains(err.Error(), "charged") {
-				t.Errorf("%s error must say it was charged: %v", st, err)
+			msg := err.Error()
+
+			// The neutral note is asserted as the SHARED CONSTANT, not as
+			// phrases: see generate_refund_copy_test.go for why a phrase list
+			// cannot be the guard here.
+			if !strings.Contains(msg, buzzLedgerUnknownNote) {
+				t.Errorf("%s: the error does not render buzzLedgerUnknownNote verbatim, so it has grown its own wording for "+
+					"the money question: %v", st, err)
 			}
-			if !strings.Contains(err.Error(), "civitai workflows get") {
-				t.Errorf("%s error must name the re-attach command: %v", st, err)
+			for _, want := range []string{st, "civitai buzz", "civitai workflows get"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("%s: the error must name %q so the user can settle the money question themselves: %v", st, want, err)
+				}
+			}
+			lower := strings.ToLower(msg)
+			for _, banned := range refundDirectionalClaims {
+				if strings.Contains(lower, banned) {
+					t.Errorf("%s: the error decides the refund question with %q, which this CLI cannot observe — "+
+						"the orchestrator owns the rule and it is not readable from the civitai monorepo (AGENTS.md item 28). Got: %v",
+						st, banned, err)
+				}
+			}
+
+			// 🔴 EXIT-CODE PIN (AGENTS.md item 7). #278 is a MESSAGE-ONLY change,
+			// and every assertion above is on message text — which says nothing
+			// about what a script sees. The published contract for this failure is
+			// the GENERIC code, reached by the error carrying no classification
+			// sentinel at all; attaching one while rewording would silently move a
+			// failed generation onto 2/3/4/5/6 with the whole suite still green.
+			for _, k := range []struct {
+				sentinel error
+				name     string
+			}{
+				{civitai.ErrBadRequest, "ErrBadRequest"},
+				{civitai.ErrUnauthorized, "ErrUnauthorized"},
+				{civitai.ErrNotFound, "ErrNotFound"},
+				{civitai.ErrRateLimited, "ErrRateLimited"},
+				{civitai.ErrNetwork, "ErrNetwork"},
+			} {
+				if errors.Is(err, k.sentinel) {
+					t.Errorf("%s: the terminal-status error is now classified %s, which changes its published exit code. "+
+						"Rewording a message must not reclassify it.", st, k.name)
+				}
+			}
+			if errors.Is(err, ErrUsage) {
+				t.Errorf("%s: the terminal-status error is now cmd.ErrUsage (exit 2) — a failed generation is not a usage mistake", st)
 			}
 		})
 	}

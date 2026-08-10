@@ -36,14 +36,14 @@ func newWorkflowsCancelCmd() *cobra.Command {
 	var o workflowsCancelOpts
 	cmd := &cobra.Command{
 		Use:   "cancel <workflow-id>",
-		Short: "Cancel a running generation workflow (DOES NOT REFUND)",
+		Short: "Cancel a running generation workflow (DOES NOT UNDO THE CHARGE)",
 		Long: `Cancel a generation workflow that is still running.
 
-🔴 CANCELLING DOES NOT GET YOUR BUZZ BACK. A mid-run cancel BILLS THE ACCRUED
-COST, orchestrator-side and non-refundably. There is no cancel-for-refund
-anywhere on this platform: by the time a workflow is running, the money has
-moved. Cancel a job because you no longer want its OUTPUT — never as a way to
-save money, and never as a way to undo a submit you regret.
+🔴 CANCELLING IS NOT A WAY TO SAVE MONEY. A mid-run cancel BILLS THE ACCRUED
+COST, orchestrator-side: by the time a workflow is running the money has already
+moved, and stopping it does not call that back. Cancel a job because you no
+longer want its OUTPUT — never to save money, and never to undo a submit you
+regret. What the ledger does afterwards is decided server-side, and ` + buzzLedgerUnknownNote + `.
 
 That is also why ` + "`civitai generate --timeout`" + ` and Ctrl-C do not cancel anything:
 stopping the wait costs nothing, while stopping the job would cost the same as
@@ -108,7 +108,7 @@ func confirmCancel(cmd *cobra.Command, workflowID string, assumeYes bool) error 
 		return nil
 	}
 	if !stdinIsTTY() {
-		return fmt.Errorf("refusing to cancel without --yes in a non-interactive shell — cancelling %s is irreversible and does NOT refund the Buzz already spent on it. "+
+		return fmt.Errorf("refusing to cancel without --yes in a non-interactive shell — cancelling %s is irreversible and does not undo the Buzz already spent on it. "+
 			"Pass --yes to confirm, or `civitai workflows get %s` to see what it has produced first",
 			safeTerm(workflowID), safeTerm(workflowID))
 	}
@@ -116,7 +116,8 @@ func confirmCancel(cmd *cobra.Command, workflowID string, assumeYes bool) error 
 	errw := cmd.ErrOrStderr()
 	st := ui.For(errw)
 	fmt.Fprintf(errw, "About to cancel workflow %s.\n", safeTerm(workflowID))
-	fmt.Fprintln(errw, st.Warn("This does NOT refund anything — a mid-run cancel bills the accrued cost, non-refundably."))
+	fmt.Fprintln(errw, st.Warn("This does NOT undo the charge — a mid-run cancel bills the cost already accrued."))
+	fmt.Fprintln(errw, st.Dim("What the ledger does afterwards is decided server-side — "+buzzLedgerUnknownNote+"."))
 	fmt.Fprintln(errw, st.Dim("You are throwing away a job you have already paid for. It cannot be un-cancelled."))
 	fmt.Fprint(errw, "Cancel it? [y/N]: ")
 
@@ -163,7 +164,8 @@ func runWorkflowsCancel(cmd *cobra.Command, deps workflowsCancelDeps, o workflow
 	// 🔴 Repeated at the point of use, not just in --help: the one place a user
 	// is guaranteed to read is the line printed after the thing happened.
 	fmt.Fprintln(errw, ui.For(errw).Warn(
-		"This did NOT refund anything — a mid-run cancel bills the accrued cost, non-refundably."))
+		"This did NOT undo the charge — a mid-run cancel bills the cost already accrued."))
+	fmt.Fprintln(errw, ui.For(errw).Dim("What the ledger does now is decided server-side — "+buzzLedgerUnknownNote+"."))
 	fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
 		"Check what it produced before stopping with `civitai workflows get %s`.", safeTerm(id))))
 	return nil

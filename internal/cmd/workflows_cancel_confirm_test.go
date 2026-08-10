@@ -189,9 +189,13 @@ func TestWorkflowsCancel_TTYDeclineDoesNotCancel(t *testing.T) {
 		t.Errorf("confirmation leaked to stdout: %q", out.String())
 	}
 	// The prompt must state what is lost — it is the last point at which the
-	// user can find out that cancelling does not get the money back.
-	if !strings.Contains(errb.String(), "does NOT refund") {
-		t.Errorf("the prompt does not say cancelling is not refunded:\n%s", errb.String())
+	// user can find out that cancelling does not call the accrued cost back. It
+	// must NOT go further and claim nothing is ever refunded; see #278.
+	if !strings.Contains(errb.String(), "does NOT undo the charge") {
+		t.Errorf("the prompt does not say the accrued cost still stands:\n%s", errb.String())
+	}
+	if !strings.Contains(errb.String(), buzzLedgerUnknownNote) {
+		t.Errorf("the prompt does not render the shared non-observability note:\n%s", errb.String())
 	}
 }
 

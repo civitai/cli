@@ -1,0 +1,1 @@
+the generation finished with status "canceled" and produced no usable result; this CLI cannot see your Buzz ledger — `civitai buzz` reports a balance, not a history, so settle it against your Buzz transaction history (/user/transactions). Inspect the run with `civitai workflows get wf_123`

@@ -322,7 +322,7 @@ README. For the end-to-end walkthrough, see
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
-| `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **This does not refund anything** — a mid-run cancel bills the accrued cost, non-refundably. Cancel because you no longer want the output, never to save money. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
+| `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **This does not undo the charge** — a mid-run cancel bills the cost already accrued. Cancel because you no longer want the output, never to save money. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai upgrade [--force]` | **Self-update this binary in place** — resolve the latest GitHub release, verify its SHA-256 against `checksums.txt`, and replace the running executable. A Homebrew install delegates to `brew upgrade` instead; `--force` reinstalls anyway (and self-replaces a Homebrew install). See [Upgrading](#upgrading). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
@@ -808,19 +808,49 @@ caveats have bitten people, and neither shows up as an error:
   — re-run `civitai workflows get <id>` for fresh links instead of caching the
   old ones. (Fetch them with **no** `Authorization` header; they are already
   authorized, and the CLI deliberately attaches nothing to them.)
-- **`--json` still exits `0` when the job is not generatable.**
-  `--dry-run --json` prints the estimate and exits `0` even when the payload
-  says `"ready": false`, which means the server has already decided it cannot
-  serve this job (an unavailable or unsupported resource). A human `--dry-run`
-  prints a warning and a real submit refuses outright, but a script reading only
-  the exit code sees success. **Branch on the field**, exactly as `app metrics`
-  requires branching on `notOwned`:
+- **`--json` still exits `0` when the server reports the resources are
+  unavailable.** `--dry-run --json` prints the estimate and exits `0` even when
+  the payload says `"ready": false`. A human `--dry-run` prints a warning and
+  this CLI refuses to submit in that state, but a script reading only the exit
+  code sees success. **Branch on the field**, exactly as `app metrics` requires
+  branching on `notOwned` — and note the shape below, which **fails closed**:
 
   ```bash
   q=$(civitai generate "a cat" --checkpoint 128713 --dry-run --json) || exit $?
-  [ "$(echo "$q" | jq -r .ready)" = "true" ] || { echo "not generatable" >&2; exit 1; }
-  echo "$q" | jq -r .cost.total
+  case "$(printf '%s' "$q" | jq -r 'if has("ready") then .ready else "absent" end')" in
+    false)   echo "resources unavailable" >&2; exit 1 ;;   # decisive: do not submit
+    true)    ;;                                            # NOT a green light — see below
+    *)       echo "no readable .ready field" >&2; exit 1 ;; # absent, null, or jq failed
+  esac
+  printf '%s' "$q" | jq -r .cost.total
   ```
+
+  The `*` arm is the point. An earlier version of this snippet tested
+  `[ … = "false" ] && exit 1`, which exits **0** when the key is absent or `jq`
+  fails — it read "we could not ask" as "we asked and it was fine", the
+  fabricated-zero mistake `app metrics` documents for `views.unavailable`.
+
+  🔴 **`ready` is one-directional, and the human label says so.** It reports
+  only that the resources this job needs are currently available — the server
+  computes it as "every job's queue position reports `support: available`", and
+  a job carrying no queue position at all is skipped, leaving the flag `true`.
+  It is not a moderation verdict and not a prediction that the job produces an
+  image; `--dry-run` therefore prints it as **`Resources ready`**, not
+  "Generatable". A run reporting `ready: true` can still be charged and return
+  nothing — measured: 8 submits across 3 checkpoints that all quoted
+  `ready: true` produced 0 outputs. So gate on the FALSE direction, as above,
+  and never treat `true` as a success predicate. The only thing that settles
+  whether a job produced output is the finished workflow
+  (`civitai workflows get <id>`), and `civitai generate` exits non-zero when it
+  waited and got no deliverable output.
+
+  **What `ready: false` gets you is a LOCAL refusal, and that is all this repo
+  can evidence.** `civitai generate` reads the flag and refuses to submit; no
+  server-side enforcement of it has been found — `support !== 'available'`
+  appears once in the whatIf reply builder and nowhere on the submit path, and
+  the checkpoints that failed in the measurement above surfaced as HTTP 400s
+  rather than as `ready: false`. Treat it as this CLI's own pre-flight, not as
+  a promise about what the server would have done.
 
   Cost keys (`cost.factors`, `cost.fixed`) are server-owned and passed through
   **verbatim**, so treat them as an open map rather than a fixed set.
@@ -1543,8 +1573,18 @@ same way.
 generator.
 
 > 🔴 **This spends real Buzz and cannot be undone.** A submitted generation is
-> charged. There is no cancel-for-refund. Price it with `--dry-run` first — that
-> calls the cost estimator and spends nothing.
+> charged the moment the orchestrator accepts it, and nothing local calls that
+> back — not `--timeout`, not Ctrl-C, not `civitai workflows cancel`. Price it
+> with `--dry-run` first — that calls the cost estimator and spends nothing.
+
+> 🔴 **What the LEDGER does with a charge is not something this CLI reports, in
+> either direction.** If a run fails, expires, or you cancel it, whether any
+> Buzz comes back is decided server-side; this CLI cannot see your Buzz ledger — `civitai buzz` reports a balance, not a history, so settle it against your Buzz transaction history (`/user/transactions`). The CLI states the outcome and
+> stops there. It does **not** tell you the charge stands, and it does **not**
+> tell you it was refunded — earlier versions asserted the first, which the
+> platform's own client contradicts for `failed`/`expired`/`canceled`. The rule
+> itself lives in the orchestrator service and is not readable from the civitai
+> monorepo, so neither claim is made. Tracked at civitai/cli#307.
 
 ```bash
 # Price it. Spends nothing.
@@ -1609,8 +1649,10 @@ So only a **bare** `--print-input` needs neither a credential nor a network.
 The cost this command shows is an **estimate, not a quote**: the server's
 estimator returns no quote id, no signed price and no expiry, so there is
 nothing to hand back at submit time — and **no server-side spending ceiling is
-reachable from an API key at all**. The realized charge can exceed the estimate
-and is **not refunded**.
+reachable from an API key at all**. The realized charge can exceed the estimate,
+and `--max-cost` cannot claw the difference back — it never reaches the server.
+What the ledger then does with that charge is not something this CLI reports —
+see **What the LEDGER does with a charge** under [Generate](#generate).
 
 `--max-cost` compares that estimate against your number and refuses **locally**
 before submitting. It catches a `--quantity` typo. That is all it can do. Do not
@@ -1842,8 +1884,8 @@ collision is refused *before any bytes move*.
 
 > 🔴 **`--timeout` stops *waiting*. It does not stop *paying*.** When the
 > deadline passes (or you press Ctrl-C) the generation keeps running
-> server-side and the charge stands — there is no cancel-for-refund, and a
-> mid-run cancel bills the accrued cost anyway. Both cases exit **non-zero**,
+> server-side, and cancelling it does not stop the cost already accrued — a
+> mid-run cancel bills that. Both cases exit **non-zero**,
 > print the workflow id, the idempotency key and the exact `civitai workflows
 > get …` command, and never report success.
 
@@ -1894,11 +1936,12 @@ blocked by moderation, never landed, or you hid it on the website — so
 which is a very different fact from `0/0`. `civitai workflows get <id>` shows
 the per-output reason.
 
-> 🔴 **`cancel` does not refund anything.** A mid-run cancel **bills the accrued
-> cost**, orchestrator-side and non-refundably. There is no cancel-for-refund on
-> this platform: by the time a workflow is running the money has moved. Cancel a
-> job because you no longer want its *output* — never as a way to save Buzz, and
-> never to undo a submit. (This is also why `--timeout` and Ctrl-C deliberately
+> 🔴 **`cancel` does not undo the charge.** A mid-run cancel **bills the cost
+> already accrued**, orchestrator-side: by the time a workflow is running the
+> money has moved, and stopping it does not call that back. Cancel a job because
+> you no longer want its *output* — never as a way to save Buzz, and never to
+> undo a submit. Whether the ledger returns anything afterwards is the
+> server's call and this CLI does not report it either way (civitai/cli#307). (This is also why `--timeout` and Ctrl-C deliberately
 > do **not** cancel: stopping the wait costs nothing, while stopping the job
 > would cost the same as letting it finish and throw the result away.)
 
@@ -1940,7 +1983,7 @@ write a retry loop that branches on the exit code alone; re-attach with
 | Account muted, or onboarding incomplete | `1` |
 | Generation disabled server-side | `1` |
 | Prompt refused by content moderation — 🔴 **never retry**, repeated blocked prompts get the account muted | `1` |
-| The server priced the job but reports `ready: false` (a selected resource is not currently generatable) | `2` |
+| The server priced the job but reports `ready: false` (a selected resource is not currently available) | `2` |
 | Estimate above `--max-cost`, an unknown ecosystem, or a resource that resolved fine but is "not enabled for generation" (the ids exist; the *combination* is not runnable — distinct from exit `4`, which means "no such id") | `2` |
 | `--fail-on-substitution` and the **estimate** reported a substituted checkpoint — nothing submitted (see [Silent model substitution](#-silent-model-substitution)). 🔴 A substitution that appears **only on the submit reply** is reported but exits **`0`**: by then the charge has happened, and failing would strand a result you paid for. And against a server that does not report substitutions at all the flag is **inert** — exit `0`, submitted, charged | `1` |
 | `--input` that is malformed, declares a non-txt2img workflow, carries an envelope key (`civitaiTip`, …), or is combined with a content flag | `2` |
