@@ -1,4 +1,4 @@
-# Handoff: cli-docs-consolidation — 2026-08-07 (r2)
+# Handoff: cli-docs-consolidation — 2026-08-09 (r3, SHIPPED)
 
 ## Goal
 Decide whether `civitai/cli`'s in-repo docs should be dropped in favour of the hosted
@@ -12,19 +12,21 @@ generator can produce. But the README's *command-reference* prose can migrate in
 Deleting it and generating from `Short` would destroy ~80% of its content: reference
 table cells measure 60–2,263 chars (median ~400) against `Short` strings of 24–79.
 
-## State now
+## State now (2026-08-09)
 
-- **Branch / PR:** none open from this session. `civitai/cli` @ `24797c7` (main),
-  `civitai-developer-docs` @ `308b633` (main). Both clean.
-  Other sessions have two unrelated PRs open in the docs repo: **#45**
-  (`.md`/LLM channel App Blocks island payloads — see the llms.txt note below) and
-  **#5** (from July).
+- **The pipeline is closed end-to-end.** See "SHIPPED" below for the six PRs.
+  `civitai/cli` @ `01c486e`+, `civitai-developer-docs` @ `3153eab`+ — both moved
+  repeatedly during the work; pin a SHA before measuring anything.
+- **Open from this session:** docs **#52** (the snapshot re-capture — the last
+  mile; nothing above is on the site without it).
+- Other sessions have unrelated PRs open in the docs repo (**#45**, **#5**) and
+  several in `cli`.
 - 🔴 **Both repos are SHARED checkouts.** `cli`'s tree shows
   ` M claudedocs/handoff-app-blocks-hardening.md` — **another session's edit.**
   Other sessions landed #244–#251 and #254 in `cli` during this work. Always
   `git branch --show-current` before any write; work in a worktree.
 
-### DONE — 12 PRs merged + 1 issue filed
+### DONE — earlier rounds (12 PRs + 1 issue)
 
 | PR | Repo | What |
 |---|---|---|
@@ -230,34 +232,118 @@ The original diagnosis is kept below for the mechanism.
   `apps/reference/cli.md` is a bare `<CliReference />` tag (INFERRED from how
   `vitepress-plugin-llms` operates; confirm by building and reading the artifact).
 
+## SHIPPED — the pipeline is end-to-end (2026-08-09)
+
+Five PRs merged; the loop that this whole workstream was about is closed.
+
+| PR | Repo | What |
+|---|---|---|
+| #49 | docs | generator publishes `longDescription` — the blocker |
+| #274 | cli | `app listing` pilot, 7 nodes |
+| #51 | docs | build is HERMETIC — OpenAPI spec committed, fetch opt-in |
+| #276 | cli | public read-API group, 21 nodes |
+| #50 | docs | `build-site` job asserting the built CLI-reference HTML |
+| #52 | docs | re-capture the snapshot — **without this none of the above is on the site** |
+
+Every merge verified **by content on `origin/main`**, never by ancestry — a
+squash merge makes `git merge-base --is-ancestor` false forever, so the ancestry
+check reads as "not merged" and is wrong.
+
+🔴 **THE SNAPSHOT IS THE LAST MILE AND IT IS EASY TO FORGET.** Writing `Long` in
+`civitai/cli` changes nothing on developer.civitai.com until the docs repo
+re-captures `appblocks-snapshots/civitai-cli-help.txt`. Measured before #52: the
+snapshot sat at `v0.1.90-25-g9cfe468` while both #274 and #276 had merged, and
+`grep` for their prose returned **0 and 0** against a working positive control.
+Capture from a **clean build pinned by SHA, with real version ldflags** — a bare
+`go build` off a `git archive` stamps `version=dev`, the base clone is dirty, and
+`~/.local/bin/civitai` has silently produced **47 commands instead of 52**.
+
 ## Next steps (ranked)
 
-1. 🔴 **Publish `Long` from the generator** — **SHIPPED as docs PR #49**
-   (`zach/publish-long-description`), awaiting review. Emits
-   `longDescription: parseLongDescription(help)` alongside an untouched
-   `description`, and renders it in BOTH channels (`<CliReference />` and the
-   `.md`/LLM region — a Vue island's payload is invisible to the `.md` channel,
-   and `check:md-regions` blocks a PR that forgets it). Measured there:
-   `cli.json` 56,045 → 99,125 B (+76.9%), 52/52 commands gain a non-empty
-   `longDescription`, **0** commands change `description` or any other field.
-   🔴 Residual it ships with, flagged not buried: **nothing in CI renders the
-   `.vue` SFC**, so deleting the render line leaves the whole node suite AND the
-   build green while the built page drops 44 → 0 blocks. Pre-existing (the
-   `.ab-example` block has the same gap); closing it needs a Vue test runner.
-2. **Merge the pilot** (`zach/help-long-pilot` → cli PR #274) — it stands on its
-   own for terminal users, and now has a consumer once #49 lands.
-3. **Then migrate the read-API group** (`models`/`images`/`collections`/
-   `creators`/`tags`/`users`/`model-versions`/`articles`, 19 empty-or-thin nodes)
-   using the pilot's three guards as the template. Its source prose is
-   README lines 414–498, which has **no table row** — so unlike the App commands
-   this really is a migration rather than a re-statement.
-4. **Do NOT add an `Annotations` half.** Measured disproof above.
-5. **Decide the IA wart** (below) — cheapest is option (c).
-6. The two LOW items below (pins header comment; `parseSemver` build metadata).
-7. **Prune `claudedocs/`** — dated handoffs that belong in neither the repo nor the
+1. **Promote `build-site` to a required context** in `civitai-developer-docs`.
+   Unblocked by #51 (the build no longer fetches a third-party host). Until then
+   the renderer guard reports and gates nothing. Current required set:
+   `test-cli, test-messages, test-bridge, typecheck-snippets`.
+2. 🔴 **The `.vue` SFC is still unguarded by CI, and #50 only half-closes it.**
+   Nothing runs a Vue test runner; #50 builds the site and asserts the built HTML,
+   which kills the delete/wrong-variable/`v-html` mutants — but a defect inside
+   the SHARED `cliLongBody` predicate is invisible to it by construction (`want`
+   is recomputed through the same function the component calls). Measured: that
+   mutant renders 52 wrong blocks with all 9 built-site checks green. The
+   already-required `test-cli` catches it, so the gate SET holds — do not read
+   `check:built-site` alone as covering the predicate.
+3. **Settle the README's `.modelVersions[]` and `poi` claims** — both are wrong in
+   `README.md` (~741 and ~747) and were retyped from there into `--help` before
+   the audit caught them. Deliberately NOT "fixed" by inference: the CLI's structs
+   are declared SUBSETS, so a field's absence there is not evidence the API omits
+   it. Needs one live `--json` call against civitai.com.
+4. **`build-site.yml`'s inline comment is now stale** — it still calls the
+   `copy:spec` fetch "the one thing to fix first if this job is ever made a
+   required check". #51 fixed it. A comment is a claim.
+5. **The next migration bucket needs a BUDGET, not more prose.** After the pilot
+   (7) and the read-API group (21), what remains is ~17 MID nodes and 11 RICH ones
+   — and the RICH ones are the problem: `generate` is 5,726 chars, root 4,203,
+   `download` 3,742. Now that `Long` is published these land on BOTH surfaces, so
+   the question changed: it is no longer "migrate prose in" but "what belongs in
+   `--help` versus the guide". Answer that before writing more.
+6. **Do NOT add an `Annotations` half.** Measured disproof above.
+7. **Decide the IA wart** (below) — cheapest is option (c).
+8. The two LOW items below (pins header comment; `parseSemver` build metadata).
+9. **Prune `claudedocs/`** — dated handoffs that belong in neither the repo nor the
    site. Coordinate: other sessions actively write here.
 
 ## Gotchas / decisions / dead-ends
+
+### From the 2026-08-09 shipping session — every one cost a round
+
+- 🔴 **A guard that compares a constant against itself cannot fail, and it LOOKS
+  like coverage.** Three separate instances shipped and were caught only by
+  audit: `want := limitRule(max)` (mutating `max`→`max+1` rendered "1–101" while
+  the CLI enforced 100 — suite green); `Contains(Long, readAnonNote)` where the
+  Long interpolates `readAnonNote` (the exact blanket auth claim #268 removed
+  could be pasted back — green); and `Contains(Long, listingImageFormats)`
+  likewise (narrowing to "png or jpeg" AND widening to claim avif both survived).
+  The fix is always the same shape: assert against a LITERAL, or against
+  BEHAVIOUR, never against the producer.
+- 🔴 **A mutant killed by the WRONG guard reads as coverage.** An auth mutant
+  looked dead; it was the BUDGET guard firing, because the rewrite pushed a body
+  to 1413 runes. The length-neutral version survived. Always check WHICH
+  assertion fired.
+- 🔴 **Two guards can share a blind spot when they share a cap.**
+  `humanBytes(maxIconBytes) == humanBytes(maxScreenshotBytes) == "2.0 MB"`, so
+  three `Contains` checks over three strings enforced TWO of three caps. Pair
+  each value with its label. And the icon↔screenshot swap is a declared
+  EQUIVALENT mutant — different binary, byte-identical help — proven with `cmp`
+  plus the differing binaries as the negative control.
+- 🔴 **Count RUNES, not bytes, in a column guard.** Em-dashes are 3 bytes and one
+  column; a byte count failed four bodies that render inside 80 columns.
+- 🔴 **A test fixture must not mutate global state.** Importing `image/gif` for a
+  negative control ran its `init()`, registered the decoder process-wide, changed
+  how `generate --image` refuses a GIF, and reddened three unrelated tests. Build
+  the bytes by hand.
+- 🔴 **A gate can be satisfied by following its own remedy.** Blanking the `.md`
+  renderer's call site failed `check:md-regions`, whose message says "regenerate
+  and commit the page diff" — do that and EVERYTHING goes green while 41,109
+  bytes vanish from the LLM channel. A floor on the COMMITTED artifact is what
+  closes it.
+- **Instrument errors that produced confident wrong answers, all mine:** an
+  overlap check that ran on two failed `git diff` commands and printed "no
+  overlap" from empty input; a "before" binary built from the base clone instead
+  of the worktree; `grep -c 'poi'` matching "check**poi**nt"; `npm run
+  check:openapi-drift` exiting 1 because **the script is named
+  `check:spec-drift`** — an rc=1 that reads exactly like a failing check; and a
+  mutation harness whose `open(SRC,"w")` truncated the file BEFORE the mutation
+  function ran, so a raising mutation left it empty. **Checksum-gate every
+  mutation**, and pair every zero with a positive control.
+- **The shared base clone's `node_modules` drifts ahead of `package-lock.json`.**
+  It makes `gen-appblocks-messages` / `gen-appblocks-bridge` fail with an SDK
+  inventory error that looks like real drift. `npm ci` in your worktree is the
+  discriminating control.
+- **A five-minute hang was measured as forty-five seconds** because the measurer
+  stopped waiting. `copy-spec`'s fetch had no `AbortSignal.timeout` — the only
+  `fetch(` in that repo without one — so a degraded host burned the job's full
+  20-minute budget and reported a TIMEOUT. Run the failure to completion before
+  quoting its duration.
 
 - 🔴 **The `cli.json` export command is DISPROVED — do not re-propose it.** The
   widening it was meant to enable works with the existing scraper (53 nodes, 0
@@ -336,9 +422,17 @@ gh run list --repo civitai/civitai-developer-docs --workflow appblocks-drift.yml
 ${R}/bin/civitai login --help | tr -dc '\000' | wc -c   # expect 0
 printf 'a\000b' | tr -dc '\000' | wc -c                 # expect 1 (control)
 
-# the app-listing help pilot (branch zach/help-long-pilot)
+# the help guards, both groups (merged)
 git -C ${R} fetch origin -q
-go test ./internal/cmd -run TestListingHelp -count=1 -v | grep -c -- '--- PASS'  # expect 14
+go test ./internal/cmd -run TestListingHelp -count=1 -v | grep -c -- '--- PASS'   # app listing
+go test ./internal/cmd -run TestReadAPI     -count=1 -v | grep -c -- '--- PASS'   # read API
+
+# 🔴 THE LAST MILE: is the SITE actually carrying the CLI's current help?
+# A zero here means the snapshot is stale, not that the prose is missing.
+git -C ${D} show origin/main:appblocks-snapshots/civitai-cli-help.txt | command grep -m1 'Binary version'
+git -C ${R} describe --tags origin/main    # if this is ahead, re-capture (see #52)
+# positive control for the grep above:
+git -C ${D} show origin/main:appblocks-snapshots/civitai-cli-help.txt | command grep -c 'Manage your App store listing'  # expect 1
 
 # 🔴 Annotations are invisible to the docs pipeline — re-measure before believing
 # any plan that relies on them. Set one on any command, rebuild, then:
