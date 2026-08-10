@@ -113,6 +113,23 @@ homebrew_casks:
     repository:
       owner: civitai
       name: homebrew-tap
+      # 🔴 THIS TEMPLATE IS DELIBERATELY DANGLING, AND MUST STAY THAT WAY.
+      # #319 removed HOMEBREW_TAP_GITHUB_TOKEN from release.yml's goreleaser
+      # step, so the variable is NOT set when this config is read. That is
+      # inert, not broken: `skip_upload: true` above makes doPublish return on
+      # its first statement, and the render path (doRun → client.TemplateRef)
+      # copies `token` through UNTEMPLATED — the only code that resolves it is
+      # client.NewIfToken, reached from doPublish AFTER the skip. Verified in
+      # goreleaser v2.17.1 source, not inferred from a green snapshot: a
+      # snapshot run skips publishing entirely and so cannot tell the two
+      # apart.
+      #
+      # The line stays because it names the credential the tap push actually
+      # uses — `release-homebrew.yml` reads the same secret directly — and
+      # because it is the tripwire: anyone deleting `skip_upload` (which
+      # restores the 2026-08-09 outage) gets a loud template error on the next
+      # release instead of a silent fallback to this repo's GITHUB_TOKEN, which
+      # has no write access to civitai/homebrew-tap.
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: "https://github.com/civitai/cli"
     description: "Civitai CLI — author and ship Apps"

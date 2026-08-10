@@ -95,21 +95,37 @@ jobs:
         with:
           version: "~> v2"
           args: release --clean
+        # 🔴 THIS JOB HOLDS EXACTLY ONE CREDENTIAL, AND IT CANNOT WRITE TO THE
+        # TAP. `HOMEBREW_TAP_GITHUB_TOKEN` used to be here beside GITHUB_TOKEN;
+        # #319 removed it once a real release had gone out under #308's flow,
+        # where this run only RENDERS the cask and `release-homebrew.yml`
+        # pushes it on `release: published`. Nothing in this job can now reach
+        # `civitai/homebrew-tap`.
+        #
+        # Why dropping it is safe, read out of goreleaser v2.17.1's source
+        # rather than inferred from a green run — both halves of the cask pipe
+        # are token-free while `skip_upload: true` stands:
+        #   - render: internal/pipe/cask/cask.go `doRun` hands the repository
+        #     to client.TemplateRef, and internal/client/config.go returns
+        #     `Token: ref.Token` UNTEMPLATED — so the `{{ .Env.… }}` string in
+        #     .goreleaser.yaml is never resolved on this path;
+        #   - publish: `doPublish` returns `pipe.Skip("brew.skip_upload is
+        #     set")` on its FIRST statement, well above the one call that does
+        #     resolve it (client.NewIfToken → tmpl.ApplySingleEnvOnly).
+        #
+        # 🔴 A LOCAL SNAPSHOT CANNOT CONFIRM THIS, so do not treat one as
+        # evidence: `--snapshot` never runs the publish pipe at all, so it
+        # exercises only the first bullet. The second is a source reading, and
+        # the first release cut after this change is what tests it.
+        #
+        # 🔴 RE-ADD IT IF `skip_upload` EVER GOES AWAY. Deleting that line is
+        # already forbidden — it restores the 2026-08-09 outage, see
+        # .goreleaser.yaml — but were it deleted, `doPublish` would reach
+        # ApplySingleEnvOnly on a variable this job no longer sets and the
+        # release would die on a `missingkey=error` template failure.
         env:
           # Used to create the release on this repo. Provided automatically.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 🔴 THIS RUN NO LONGER WRITES TO THE TAP. `release-homebrew.yml`
-          # does, after the release is published (see `skip_upload` in
-          # .goreleaser.yaml). It is kept here deliberately rather than removed:
-          # two independent lines of evidence say the render path never reads it
-          # — goreleaser v2.17.1's TemplateRef (internal/client/config.go:50)
-          # copies `Token` through UNRESOLVED, and a local
-          # `goreleaser release --snapshot` renders the cask fine with the
-          # variable unset — but neither is a real non-snapshot `release` run,
-          # and a wrong guess here fails a release rather than a test. Dropping
-          # it (so the tag-time run holds no tap-write credential at all) is a
-          # good follow-up; verify it on a real release, not on a reading.
-          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
 
       # The cask goreleaser just rendered, carried to the publish-time workflow.
       #
