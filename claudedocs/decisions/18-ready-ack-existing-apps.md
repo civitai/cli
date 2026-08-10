@@ -1,16 +1,34 @@
 # AGENTS.md item 18 — the ready-ack checks for EXISTING apps
 
 Evidence for item 18 of the *Intentional decisions that look wrong* list in
-[`AGENTS.md`](../../AGENTS.md). AGENTS.md keeps the stub — the thesis, plus
-enough to tell you whether this item bears on what you are about to change.
-Everything below the rule is that item's body, moved here VERBATIM: the
-measurements, mutation matrices, retractions and residuals are consulted when
-editing the code they are about, not on every session.
+[`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
+one line naming the situations that mean you should be reading this file.
+Everything below the rule is the item itself, moved here VERBATIM: the thesis,
+the measurements, the mutation matrices, the retractions and the enumerated
+residuals, consulted when editing the code they are about rather than on every
+session.
 
 The list is append-only and never renumbered, so this file's number is stable.
 Edit the body here, not in AGENTS.md; `agents_evidence_test.go` asserts the
-pointer and the file agree, and `agents_split_preserved_test.go` pins the body
-against the text it was moved from.
+pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
+routing question rather than a label, and `agents_split_preserved_test.go` pins
+the body against the text it was moved from.
+
+## The stub thesis this item's trigger replaced
+
+Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in
+AGENTS.md here. That stub was prose written for the split — a compression of the
+body below, not a slice of it — so the trigger index preserves it rather than
+deleting it:
+
+> 18. **The ready-ack checks for EXISTING apps are two deliberately different
+>     tiers, and neither is allowed to be a hard failure.** #206 fixed the
+>     templates; every app scaffolded before `4018e2c` is still broken and nothing
+>     told its author. `internal/antipattern`'s `resize-iframe-page` rule is a
+>     GATE, because it fires on a literal that is present in the file — no
+>     inference. `validate`'s page-without-ack check is a WARNING and must stay
+>     one, because it infers RUNTIME behaviour from STATIC TEXT. Item 20 is the
+>     reachability repair to this item's presence-only scan.
 
 ---
 

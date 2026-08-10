@@ -1,16 +1,35 @@
 # AGENTS.md item 13 — the CLI deliberately validates NOTHING about the generation graph
 
 Evidence for item 13 of the *Intentional decisions that look wrong* list in
-[`AGENTS.md`](../../AGENTS.md). AGENTS.md keeps the stub — the thesis, plus
-enough to tell you whether this item bears on what you are about to change.
-Everything below the rule is that item's body, moved here VERBATIM: the
-measurements, mutation matrices, retractions and residuals are consulted when
-editing the code they are about, not on every session.
+[`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
+one line naming the situations that mean you should be reading this file.
+Everything below the rule is the item itself, moved here VERBATIM: the thesis,
+the measurements, the mutation matrices, the retractions and the enumerated
+residuals, consulted when editing the code they are about rather than on every
+session.
 
 The list is append-only and never renumbered, so this file's number is stable.
 Edit the body here, not in AGENTS.md; `agents_evidence_test.go` asserts the
-pointer and the file agree, and `agents_split_preserved_test.go` pins the body
-against the text it was moved from.
+pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
+routing question rather than a label, and `agents_split_preserved_test.go` pins
+the body against the text it was moved from.
+
+## The stub thesis this item's trigger replaced
+
+Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in
+AGENTS.md here. That stub was prose written for the split — a compression of the
+body below, not a slice of it — so the trigger index preserves it rather than
+deleting it:
+
+> 13. **The CLI deliberately validates NOTHING about the generation graph, and
+>     that is the feature.** `internal/genapi/graph.go` models a handful of fields
+>     and `--input` passes a caller's graph through byte-for-byte. It does not
+>     vendor, and must never vendor, the ecosystem keys, the ~51 per-engine
+>     graphs, the sampler enum, the buckets, the per-ecosystem defaults, the tier
+>     limits or any cost table: the server re-derives every one of them from state
+>     the CLI cannot see, so a vendored copy buys no correctness and starts
+>     **refusing valid new inputs**. Live lookups are not mirrors, which is why
+>     `ResolveModelVersion` is allowed.
 
 ---
 

@@ -12,11 +12,11 @@ import (
 	"testing"
 )
 
-// The evidence split has moved sixteen item BODIES out of AGENTS.md, over three
-// waves, and left stubs behind. The whole value of the split rests on one
-// claim: the move was VERBATIM. Every measured RSS table, every mutation
-// matrix, every retraction and every enumerated residual is still there, byte
-// for byte, in the file the pointer names.
+// The evidence split has moved TWENTY-SIX item BODIES out of AGENTS.md, over
+// four waves, and left first stubs and now TRIGGER LINES behind. The whole value
+// of the split rests on one claim: the move was VERBATIM. Every measured RSS
+// table, every mutation matrix, every retraction and every enumerated residual
+// is still there, byte for byte, in the file the pointer names.
 //
 // 🔴 THAT CLAIM MUST BE PROVED MECHANICALLY, NOT ASSERTED, because the failure it
 // guards against is invisible by construction. A summarised paragraph reads
@@ -57,17 +57,27 @@ import (
 //     evicted, and different evictions have different moments. Per-item is the
 //     only shape that can express that.
 //
-// So `base` is a field on the row, not a package constant, and the three named
+// So `base` is a field on the row, not a package constant, and the four named
 // constants below exist only so a reader can see which wave a row belongs to.
 // Wave 3 (items 9, 13, 17, 22 and 25) added the third and touched neither of the
-// first two, which is the property the per-item field was introduced for. A
-// fourth wave adds a fourth.
+// first two, which is the property the per-item field was introduced for. Wave 4
+// — the trigger index — added the fourth and touched none of the first three.
 //
 // 🔴 WHAT DOES NOT CHANGE: the guard still fails if ANY split body is altered,
-// for all sixteen items. Splitting the base per row weakens nothing — each row is
-// still compared against a specific immutable blob — and that is the property to
-// re-verify by mutation whenever this table's shape is edited, because "I made
+// for all twenty-six items. Splitting the base per row weakens nothing — each row
+// is still compared against a specific immutable blob — and that is the property
+// to re-verify by mutation whenever this table's shape is edited, because "I made
 // the pinning more flexible" is exactly how a pin stops pinning.
+//
+// 🔴 WAVE 4 MOVED TEN BODIES AND REWROTE SIXTEEN EVIDENCE HEADERS, AND ONLY THE
+// FIRST HALF IS PINNED HERE. The sixteen files split by waves 1–3 kept their
+// digested bodies byte-identical — the header above each file's `---` rule is
+// outside evidenceBody's slice, which is what made adding the replaced stub text
+// to it safe. That the bodies were untouched was verified independently, by
+// comparing each committed blob's post-`---` region against the working copy
+// rather than by re-deriving anything through this file; the fifteen unchanged
+// shas below are the standing evidence for it. (Item 3's differs only because
+// reverseKnownDelta is applied before digesting, as it always was.)
 //
 // Blank lines are excluded on purpose. They carry no content, and including them
 // would make the guard fail on a trailing-whitespace tidy — a false failure at
@@ -114,6 +124,12 @@ const agentsSplitBaseWave2 = "5cb45f0ff54fe55f5249aade8b0cb9826ade3c58"
 // of them can be re-pointed at either of the others.
 const agentsSplitBaseWave3 = "6e31b4b29a0eb15c83e951a114db2345877d38bd"
 
+// agentsSplitBaseWave4 is the commit items 1, 5, 6, 7, 8, 12, 14, 15, 16 and 28
+// were moved from — the tip when the trigger index landed. Wave 4 is the wave
+// that converted the list itself: every remaining inline body was evicted except
+// items 2 and 4, which are smaller than a trigger plus a file read would cost.
+const agentsSplitBaseWave4 = "dfdcc974976ef4d8104f273b28b1f702c5a7f839"
+
 type splitItem struct {
 	num      int
 	file     string
@@ -143,6 +159,16 @@ var splitItems = []splitItem{
 	{num: 25, file: "claudedocs/decisions/25-listing-media-bounds.md", base: agentsSplitBaseWave3, nonBlank: 36, sha: "91069724894cd2b602034aa89cb61349096567f4e18a2ec40353146ac3dac249"},
 	{num: 26, file: "claudedocs/decisions/26-project-path-classification.md", base: agentsSplitBase, nonBlank: 246, sha: "1747de6cf56e85a935367ec118b7e16aecee5fb100d1ebf545ca40576ebbcc11"},
 	{num: 27, file: "claudedocs/decisions/27-blockid-derivation-refuses.md", base: agentsSplitBase, nonBlank: 105, sha: "5edc575b345db5b459af8d0fc0bd6c826e8102a7588b61aa873092848394796a"},
+	{num: 1, file: "claudedocs/decisions/01-validate-is-a-local-mirror.md", base: agentsSplitBaseWave4, nonBlank: 12, sha: "683542d055f8a80e875d439a4aca82a98f341606283a05770afe24f096a5a291"},
+	{num: 5, file: "claudedocs/decisions/05-app-metrics-trpc-not-rest.md", base: agentsSplitBaseWave4, nonBlank: 10, sha: "7667f72c8ac6401741ef6ee35c5d6db45cca24309f74b2f5b6f33dde8ad6fb34"},
+	{num: 6, file: "claudedocs/decisions/06-notowned-is-a-cross-repo-contract.md", base: agentsSplitBaseWave4, nonBlank: 9, sha: "65c638326f5058c3ef024e0940769b5a7749bf40c91bbc4fa3f6d92b44a2d7a6"},
+	{num: 7, file: "claudedocs/decisions/07-exit-codes-pinned-by-errors-is.md", base: agentsSplitBaseWave4, nonBlank: 11, sha: "accbedbfa5e72549447b3e69787a090c5f30ed3e3f6c42181a1f9defd1e9d140"},
+	{num: 8, file: "claudedocs/decisions/08-raw-tokens-are-a-non-mirror.md", base: agentsSplitBaseWave4, nonBlank: 24, sha: "8a813151963da668be1cb2a0308ad7e2e1ad218413e529c5bebcf2934e55eec1"},
+	{num: 12, file: "claudedocs/decisions/12-generate-speaks-trpc.md", base: agentsSplitBaseWave4, nonBlank: 21, sha: "a3cdf52894cab892d1b5fc6626990fe013edbd7af08075154bdd5bfd238201ce"},
+	{num: 14, file: "claudedocs/decisions/14-unset-flags-must-be-absent.md", base: agentsSplitBaseWave4, nonBlank: 21, sha: "90f229c4135bb79c9a3419d90e3bb69e8cf3662ec8155c32e7231a61e65c9447"},
+	{num: 15, file: "claudedocs/decisions/15-two-trpc-envelopes.md", base: agentsSplitBaseWave4, nonBlank: 25, sha: "74a0d1e7746bec2ccec78bfae7616b7398f7c6a44b995cd7ddc3b58e27425fbb"},
+	{num: 16, file: "claudedocs/decisions/16-externalid-is-the-idempotency-key.md", base: agentsSplitBaseWave4, nonBlank: 25, sha: "cf7f2bd23cf64b0421fad49ace38df6dcdef3d3c3104aecef19e7657935caa4f"},
+	{num: 28, file: "claudedocs/decisions/28-no-claims-about-unobservable-spend.md", base: agentsSplitBaseWave4, nonBlank: 31, sha: "41387de27265146eb9c9fc8a507621b27b8b20cdf0db8d7eb9d4903021707478"},
 }
 
 // --- the one deliberate delta, item 3 ---------------------------------------

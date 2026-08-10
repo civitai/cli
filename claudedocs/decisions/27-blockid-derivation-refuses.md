@@ -1,16 +1,34 @@
 # AGENTS.md item 27 — the blockId derivation refuses
 
 Evidence for item 27 of the *Intentional decisions that look wrong* list in
-[`AGENTS.md`](../../AGENTS.md). AGENTS.md keeps the stub — the thesis, plus
-enough to tell you whether this item bears on what you are about to change.
-Everything below the rule is that item's body, moved here VERBATIM: the
-measurements, mutation matrices, retractions and residuals are consulted when
-editing the code they are about, not on every session.
+[`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
+one line naming the situations that mean you should be reading this file.
+Everything below the rule is the item itself, moved here VERBATIM: the thesis,
+the measurements, the mutation matrices, the retractions and the enumerated
+residuals, consulted when editing the code they are about rather than on every
+session.
 
 The list is append-only and never renumbered, so this file's number is stable.
 Edit the body here, not in AGENTS.md; `agents_evidence_test.go` asserts the
-pointer and the file agree, and `agents_split_preserved_test.go` pins the body
-against the text it was moved from.
+pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
+routing question rather than a label, and `agents_split_preserved_test.go` pins
+the body against the text it was moved from.
+
+## The stub thesis this item's trigger replaced
+
+Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in
+AGENTS.md here. That stub was prose written for the split — a compression of the
+body below, not a slice of it — so the trigger index preserves it rather than
+deleting it:
+
+> 27. **The blockId derivation REFUSES rather than transliterates, and the
+>     exemption that makes refusing safe is "LOWERCASES INTO ASCII" — never a
+>     character allowlist.** `scaffold.Slugify` used to replace every run of
+>     non-`[a-z0-9]` with a hyphen, which silently DROPPED content — `"Café App"`
+>     minted `caf-app` — for an identity that **cannot be renamed afterwards**. It
+>     now refuses and names the offending characters, with `--slug` as the escape
+>     hatch (#259). 🔴 It NARROWS #259; it does not close it, and the residuals it
+>     knowingly ships with are enumerated in the evidence.
 
 ---
 

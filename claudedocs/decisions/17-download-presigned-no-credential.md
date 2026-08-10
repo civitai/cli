@@ -1,16 +1,34 @@
 # AGENTS.md item 17 — `DownloadPresigned` exists so a blob fetch carries NO credential
 
 Evidence for item 17 of the *Intentional decisions that look wrong* list in
-[`AGENTS.md`](../../AGENTS.md). AGENTS.md keeps the stub — the thesis, plus
-enough to tell you whether this item bears on what you are about to change.
-Everything below the rule is that item's body, moved here VERBATIM: the
-measurements, mutation matrices, retractions and residuals are consulted when
-editing the code they are about, not on every session.
+[`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
+one line naming the situations that mean you should be reading this file.
+Everything below the rule is the item itself, moved here VERBATIM: the thesis,
+the measurements, the mutation matrices, the retractions and the enumerated
+residuals, consulted when editing the code they are about rather than on every
+session.
 
 The list is append-only and never renumbered, so this file's number is stable.
 Edit the body here, not in AGENTS.md; `agents_evidence_test.go` asserts the
-pointer and the file agree, and `agents_split_preserved_test.go` pins the body
-against the text it was moved from.
+pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
+routing question rather than a label, and `agents_split_preserved_test.go` pins
+the body against the text it was moved from.
+
+## The stub thesis this item's trigger replaced
+
+Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in
+AGENTS.md here. That stub was prose written for the split — a compression of the
+body below, not a slice of it — so the trigger index preserves it rather than
+deleting it:
+
+> 17. **`DownloadPresigned` exists so a blob fetch carries NO credential, and it is
+>     the thing in this feature most likely to be "simplified" away.** It is a
+>     near-duplicate of `DownloadFile` differing only in passing an empty token,
+>     and every instinct says to fold it back in behind a bool. 🔴 Doing that
+>     leaks a full-scope personal API key: `isTrustedDownloadHost` attaches the
+>     token to **any** `*.civitai.com` subdomain, which is where orchestrator
+>     output blobs live. The fix is a seam that never HAS a credential to attach —
+>     the empty token short-circuits before the host predicate is consulted.
 
 ---
 

@@ -36,44 +36,58 @@ import (
 
 // agentsMaxBytes is the ceiling on AGENTS.md.
 //
-// Achieved size: 42,635 bytes, after wave 3 of the evidence split moved items 9,
-// 13, 17, 22 and 25 out (11,596 bytes net, 21.4% of the file, in one change).
-// The ceiling is 45,135 — 2,500 bytes of headroom.
+// Achieved size: 25,258 bytes, after wave 4 turned the numbered list into a
+// TRIGGER INDEX — twenty-six items reduced to a one-line routing question plus a
+// pointer, ten bodies evicted in the process, items 2 and 4 left inline because
+// they are smaller than a trigger plus a file read would cost. The item list
+// went from 26,571 bytes to 6,109 (−77%) and the file from 45,027 to 25,258
+// (−43.9%). The ceiling is 28,758 — 3,500 bytes of headroom.
 //
-// 🔴 THE HEADROOM IS A BUDGET FOR ORDINARY EDITS, AND THE TWO NUMBERS BEFORE IT
-// WERE NOT. 287 bytes, then 300: each evaporated on the very next commit that
-// touched this file (#308 consumed 94% of the 300, leaving 19), and a ceiling
-// with 19 bytes under it is indistinguishable from a frozen file. It converts
-// every routine correction into an eviction project, which is a much worse
-// failure than the one the ceiling exists to prevent — the guard stops being a
-// budget and becomes a reason not to fix the docs.
+// 🔴 THE HEADROOM IS A BUDGET FOR ORDINARY EDITS, AND THE THREE NUMBERS BEFORE
+// IT WERE NOT. 287 bytes, then 300, then 2,500: the first two evaporated on the
+// very next commit touching this file (#308 consumed 94% of the 300, leaving 19)
+// and the 2,500 was consumed by one ordinary correction (#304, +2,392). A
+// ceiling with 19 bytes under it is indistinguishable from a frozen file: it
+// converts every routine correction into an eviction project, which is a much
+// worse failure than the one the ceiling exists to prevent, because the guard
+// stops being a budget and becomes a reason not to fix the docs.
 //
-// 2,500 is DERIVED, not picked. Measured over the last 40 commits touching
-// AGENTS.md, the ten docs-only ones changed it by +70, +245, +281, +1,337,
-// +1,456, +2,371, +2,760, +2,890, +3,399 and +3,474 bytes — median 1,913. So
-// 2,500 buys roughly ONE median docs-only correction, or two or three small
-// ones, or one retraction paragraph (300–800 bytes, measured on the ones in the
-// file) plus change.
+// 🔴 3,500 IS DERIVED FROM THE CHURN THAT REMAINS, WHICH IS NOT THE CHURN THAT
+// HAPPENED. Every earlier derivation measured WHOLE-FILE deltas — median 3,399
+// over the 39 non-zero commits touching AGENTS.md — and that number is now
+// irrelevant, because it is dominated by item bodies growing, and item bodies no
+// longer live here. #304's +2,392 was an edit to item 28's body; under the
+// trigger index the same correction costs this file ZERO bytes.
 //
-// What it deliberately does NOT buy:
+// So the budget is derived from the NON-ITEM region instead — the prose sections
+// plus the index preamble, which is what an in-file edit can still touch.
+// Measured over the same history, |delta| of that region on the 28 commits that
+// moved it: 1, 2, 2, 2, 4, 6, 8, 32, 34, 69, 70, 80, 97, 101, 105, 111, 114,
+// 147, 164, 261, 281, 347, 691, 778, 1,127, 1,337, 2,890 and 3,399 — median
+// 103, p90 1,127, max 3,399 (#289's Layout-ledger rewrite). 3,500 buys the
+// worst prose rewrite this file has ever had, or ~17 new items at one trigger
+// block each (162–265 bytes, mean 204), or ~34 median corrections.
 //
-//   - A new item written as a full body. The modern ones run 1.5–3.7 kB inline
-//     and the largest evicted bodies were 8.5–28 kB, so a new decision still has
-//     to be paid for by MOVING one out, which is the whole point.
-//   - Re-inlining this wave's work. Restoring item 9, 13 or 22 costs 2,284–3,035
-//     bytes net and breaks this ceiling on its own. (Items 17 and 25 are the two
-//     cheapest at 1,868 and 1,857, and would fit — that is the honest cost of a
-//     headroom big enough to be useful, and it is what agentsMaxBytesCeiling is
-//     sized to bound.)
+// 🔴 THE ANTI-RE-INLINING PROPERTY HAS MOVED OUT OF THIS CONSTANT, AND THAT IS
+// WHY IT CAN BE A REAL BUDGET. Under the stub regime the ceiling was doing two
+// jobs: bounding growth AND making a restored body break CI. It can no longer do
+// the second — every item is now small, so any useful headroom absorbs a few of
+// them — and it does not need to. Restoring a body means deleting that item's
+// trigger, which fails TestEveryAgentsItemCarriesATrigger and orphans a file in
+// TestEvidencePointersAndFilesAreTheSameSet whatever the byte count says; and an
+// item written inline above maxInlineItemBytes fails
+// TestInlineAgentsItemsStayUnderTheBreakEven. Those are structural and
+// byte-free. Read a size failure here as "the prose grew", not as "someone
+// re-inlined an item" — a different test says that, by name.
 //
-// 🔴 SQUEEZING IS STILL NOT AN OPTION, which is why the budget has to be real
-// rather than aspirational. A full lossless compression pass over every unsplit
-// item and every prose section recovered 586 bytes — 0.86% — most of it from ONE
-// genuine cross-item duplication (item 19(e) restated item 17's credential
-// argument in full). Mechanically the file held only 23 repeated 7-word n-grams
-// in 67 kB, every one a deliberate parallel construction rather than accidental
-// redundancy. EVICTION is the only lever with anything left in it: wave 2
-// recovered ~23x what the compression pass did and wave 3 ~20x.
+// 🔴 SQUEEZING IS STILL NOT AN OPTION. A full lossless compression pass over the
+// whole file recovered 586 bytes — 0.86% — most of it from ONE genuine
+// cross-item duplication, and mechanically the file held 23 repeated 7-word
+// n-grams in 67 kB, every one a deliberate parallel construction. Eviction was
+// the lever, and wave 4 has now pulled it as far as it goes: 19,149 of the
+// remaining 25,258 bytes are non-item prose, and the twenty-six triggers cost
+// 5,308 bytes in total. The next lever is the prose sections themselves, which
+// is a different and much more judgement-heavy change.
 //
 // 🔴 THE CANDIDATE LIST THAT USED TO SIT HERE IS DELETED RATHER THAN UPDATED,
 // AND THAT IS THE LESSON. It named items 10 and 19 with their byte sizes and
@@ -86,34 +100,47 @@ import (
 // ranking from the live file at the moment of failure, which is the copy that
 // cannot rot. Do not reintroduce one here.
 //
-// Do not raise this to make a large item fit. Split the item.
-const agentsMaxBytes = 45_135
+// Do not raise this to make an item fit. Write its trigger and move its body.
+const agentsMaxBytes = 28_758
 
 // agentsMaxBytesCeiling bounds agentsMaxBytes itself, so the budget above cannot
 // be turned into unlimited slack by editing one number.
 //
-// 48,600 is ~14% above the achieved size, and it is chosen against a property
-// that can be re-derived rather than a round percentage: re-inlining any THREE
-// of wave 3's five bodies costs at least 6,009 bytes net, landing at 48,644 —
-// just above this bound. So agentsMaxBytes cannot be raised far enough to undo
-// the majority of this wave without a second, deliberate, reviewable edit to
-// this constant. (Any two of them, at 3,725–5,587 net, would still fit; a bound
-// tight enough to block a pair would sit 1,165 bytes above agentsMaxBytes and
-// leave the next wave no room to re-derive anything.)
+// 30,600 is ~21% above the achieved size, and it is chosen against a property
+// that can be re-derived rather than a round percentage: re-inlining the THREE
+// largest bodies wave 4 evicted — items 28, 15 and 8, which were 2,323 + 1,827 +
+// 1,809 bytes inline against trigger blocks of 231 + 180 + 167 — costs 5,381
+// bytes net and lands the file at 30,639, just above this bound. So
+// agentsMaxBytes cannot be raised far enough to undo the bulk of this wave
+// without a second, deliberate, reviewable edit to this constant.
+//
+// Stated honestly rather than hidden: the two largest (3,739 net, landing at
+// 28,997) WOULD still fit. That is the cost of headroom big enough to be useful,
+// and it is why the byte ceiling is no longer the thing standing between this
+// file and a restored body — see the 🔴 note on agentsMaxBytes. The structural
+// guards catch a re-inline at one item, not three.
 //
 // 🔴 IT MOVES DOWN WITH THE ACHIEVED SIZE, OR IT STOPS BOUNDING ANYTHING. Left
-// at the 64,000 that was ~19% above the PRE-wave-3 size, it would sit ~50% above
-// the achieved one — enough slack to re-inline all five items just moved out
-// (54,231) and still pass, which is the same "a ceiling nobody bounds" failure
-// one level up. Whoever completes the next wave re-derives this from the new
+// at the 48,600 that was ~14% above the PRE-wave-4 size, it would sit ~92% above
+// the achieved one — enough slack to re-inline every body this wave moved out
+// and still pass, which is the same "a ceiling nobody bounds" failure one level
+// up. Whoever changes the shape of this file again re-derives this from the new
 // achieved size in the same commit.
-const agentsMaxBytesCeiling = 48_600
+const agentsMaxBytesCeiling = 30_600
 
 // agentsMinBytes is the POSITIVE CONTROL. A truncated, empty or wrongly-located
 // AGENTS.md is comfortably under any ceiling, and "0 bytes, well within budget"
 // is the reassuring-zero shape: the guard reports success having measured a file
-// that no longer contains the content it is guarding. 20,000 is far below the
-// achieved size and far above anything a truncation would leave.
+// that no longer contains the content it is guarding.
+//
+// It was set when the achieved size was 42,635 and is deliberately UNCHANGED at
+// 25,258, which makes it tighter than it was — it now catches any truncation of
+// more than 21%. That is a real bar rather than a formality, and the cost is
+// explicit: a future change that legitimately takes this file below 20,000 (the
+// only lever left is the prose sections) has to lower this constant on purpose,
+// which is exactly the review that shrinking the file that far deserves. It is
+// also the floor baseDocFor applies to a BASE commit's AGENTS.md, all four of
+// which are 45 kB or larger.
 const agentsMinBytes = 20_000
 
 // evidencePathRe recognises an item that has ALREADY been evicted, so the
@@ -217,14 +244,21 @@ func evictionPlaybook(t *testing.T, size int) string {
 		fmt.Fprintf(&b, "  item %-2d %7d bytes  %-25s  %s\n", s.num, s.bytes, state, title)
 		shown++
 	}
-	fmt.Fprintf(&b, "\nTo evict an item:\n"+
+	fmt.Fprintf(&b, "\n🔴 THE LIST IS A TRIGGER INDEX, SO AN ITEM OVER ~%d BYTES IS ALREADY THE BUG.\n"+
+		"Every item but 2 and 4 is one routing question plus a pointer. If the ranking above\n"+
+		"shows a large item, convert it; if it shows only trigger-sized ones, the growth is in\n"+
+		"the PROSE sections and no eviction will fix it — see the note on agentsMaxBytes.\n"+
+		"\nTo convert an item:\n"+
 		"  1. Move its BODY verbatim to %s/NN-<slug>.md — byte-for-byte, nothing\n"+
 		"     summarised and nothing dropped. The measurements, mutation matrices,\n"+
 		"     retractions and residuals are the point of the item; the size problem is\n"+
 		"     PLACEMENT, not existence.\n"+
-		"  2. Leave a 4–8 line stub in AGENTS.md: the `NN. **…**` heading with its thesis\n"+
-		"     sentence (lift it from the item's own opening), then a final line reading\n"+
-		"     `→ evidence: %s/NN-<slug>.md`.\n"+
+		"  2. Leave a TRIGGER in AGENTS.md: `NN. **…?**` — ONE question asking whether the\n"+
+		"     reader is about to do what the item governs, naming EVERY situation it\n"+
+		"     governs rather than the most obvious one — then a line reading\n"+
+		"     `→ evidence: %s/NN-<slug>.md`. It is not a label and not a thesis: derive it\n"+
+		"     from the item's own argument, and remember an over-narrow trigger HIDES the\n"+
+		"     item with every other guard still green. agents_trigger_test.go pins the shape.\n"+
 		"  3. Keep the NUMBER. The list is append-only and is never renumbered — 300+\n"+
 		"     cross-references point into it, and agents_xrefs_test.go enforces that.\n"+
 		"  4. Add the item to agents_split_preserved_test.go's table with the sha256 of\n"+
@@ -234,7 +268,7 @@ func evictionPlaybook(t *testing.T, size int) string {
 		"     base is fixed at the moment it was evicted and cannot be re-pointed.\n"+
 		"\nDo NOT raise agentsMaxBytes to make this pass. It is currently %d, the file is\n"+
 		"%d bytes, and agentsMaxBytesCeiling (%d) bounds how far it may ever be raised.\n",
-		evidenceDir, evidenceDir, agentsMaxBytes, size, agentsMaxBytesCeiling)
+		maxInlineItemBytes, evidenceDir, evidenceDir, agentsMaxBytes, size, agentsMaxBytesCeiling)
 	return b.String()
 }
 
@@ -371,6 +405,12 @@ func TestAgentsSizeGuardCanStillFire(t *testing.T) {
 		"append-only",
 		"Do NOT raise agentsMaxBytes",
 		"item ",
+		// The playbook has to teach the SHAPE, not just the mechanics: a
+		// maintainer who evicts a body and leaves a label behind has moved the
+		// bytes and hidden the item.
+		"TRIGGER",
+		"over-narrow trigger",
+		"agents_trigger_test.go",
 	} {
 		if !strings.Contains(pb, want) {
 			t.Errorf("the eviction playbook no longer mentions %q; a size failure that does not say where the bytes GO gets the ceiling raised instead\n---\n%s", want, pb)

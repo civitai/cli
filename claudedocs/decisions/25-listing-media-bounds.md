@@ -1,16 +1,35 @@
 # AGENTS.md item 25 — the listing-media dimension and aspect bounds stay prose in the README
 
 Evidence for item 25 of the *Intentional decisions that look wrong* list in
-[`AGENTS.md`](../../AGENTS.md). AGENTS.md keeps the stub — the thesis, plus
-enough to tell you whether this item bears on what you are about to change.
-Everything below the rule is that item's body, moved here VERBATIM: the
-measurements, mutation matrices, retractions and residuals are consulted when
-editing the code they are about, not on every session.
+[`AGENTS.md`](../../AGENTS.md). AGENTS.md carries only this item's TRIGGER —
+one line naming the situations that mean you should be reading this file.
+Everything below the rule is the item itself, moved here VERBATIM: the thesis,
+the measurements, the mutation matrices, the retractions and the enumerated
+residuals, consulted when editing the code they are about rather than on every
+session.
 
 The list is append-only and never renumbered, so this file's number is stable.
 Edit the body here, not in AGENTS.md; `agents_evidence_test.go` asserts the
-pointer and the file agree, and `agents_split_preserved_test.go` pins the body
-against the text it was moved from.
+pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
+routing question rather than a label, and `agents_split_preserved_test.go` pins
+the body against the text it was moved from.
+
+## The stub thesis this item's trigger replaced
+
+Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in
+AGENTS.md here. That stub was prose written for the split — a compression of the
+body below, not a slice of it — so the trigger index preserves it rather than
+deleting it:
+
+> 25. **The listing-media DIMENSION and ASPECT bounds live in the README as prose,
+>     and must NOT become a local check.** `civitai app listing set-icon` /
+>     `set-cover` / `add-screenshot` validate the **format** and the **byte size**
+>     of the source file and nothing else; the platform enforces a per-kind aspect
+>     range and a minimum dimension at ATTACH time. This is item 4's argument
+>     applied to a different constant set: stale *guidance* costs one round-trip,
+>     while a stale *gate* refuses valid images and the author cannot override it.
+>     🔴 Never scaffold a placeholder icon or cover — it passes every check and can
+>     reach a public store listing.
 
 ---
 
