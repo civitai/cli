@@ -830,7 +830,7 @@ caveats have bitten people, and neither shows up as an error:
   branching on `notOwned` — and note the shape below, which **fails closed**:
 
   ```bash
-  q=$(civitai generate "a cat" --checkpoint 128713 --dry-run --json) || exit $?
+  q=$(civitai generate "a cat" --dry-run --json) || exit $?
   case "$(printf '%s' "$q" | jq -r 'if has("ready") then .ready else "absent" end')" in
     false)   echo "resources unavailable" >&2; exit 1 ;;   # decisive: do not submit
     true)    ;;                                            # NOT a green light — see below
@@ -1610,8 +1610,10 @@ civitai generate "a cat wearing sunglasses" --dry-run --json
 # Generate, refusing if the estimate exceeds 50 Buzz
 civitai generate "a cat wearing sunglasses" --quantity 4 --max-cost 50
 
-# A specific checkpoint plus a LoRA at 0.8 strength
-civitai generate "a cat" --checkpoint 128713 --lora 250712:0.8
+# Your own checkpoint (a VERSION id) plus a LoRA — name the ecosystem that
+# checkpoint belongs to; it does NOT bring one with it. See below.
+civitai generate "a cat" --ecosystem <key> --checkpoint <version-id> \
+  --lora <version-id>:0.8 --dry-run
 
 # Wait for the result and write the images into ./out
 civitai generate "a cat" --yes --out-dir ./out
@@ -1676,6 +1678,43 @@ before submitting. It catches a `--quantity` typo. That is all it can do. Do not
 run an unattended loop believing it caps spend. (The per-API-key `buzzLimit` on
 your account does not bind this path either — the generator meters a separate
 server-minted subject, not your key.)
+
+### 🔴 A checkpoint does not carry its ecosystem
+
+`--checkpoint` selects a model **version** and nothing else. The settings the
+server generates with — engine, steps, cfg scale, sampler — follow the
+**ecosystem** (`--ecosystem`, or the server's default when you pass none), *not*
+the checkpoint you named. There is no `--steps` / `--cfg-scale` here to correct
+them either, deliberately — see
+[Raw graphs](#raw-graphs---print-input-and---input) for the route that does reach
+them, and [the content flags](#the-content-flags-and-why-there-arent-twelve) for
+why they are not flags.
+
+Pairing a checkpoint with an ecosystem it does not belong to is refused by
+**nothing** — not by this CLI, not by the estimator, not by the generator.
+Measured once, on a live token (2026-08-10): `--checkpoint 128713` with no
+`--ecosystem` submitted `diffuserModel: urn:air:sd1:checkpoint:civitai:4384@128713`
+(SD 1.5) beside `ecosystem: zImage`, `engine: sdcpp`, `steps: 9`, `cfgScale: 1`.
+It was charged 8 Buzz, queued 15 minutes, ran 4.5 minutes, and finished
+`Status: failed` with **0 deliverable outputs**. `--dry-run` had reported
+`Resources ready: true` beforehand. One paid observation, not independently
+reproduced — reproducing it costs Buzz.
+
+The two things that look like they should catch it do not:
+
+- the model-version lookup proves the id **exists**, not that it **fits**;
+- `Resources ready` reports resource availability, not coherence — it is
+  [not a promise of output](#generation---json), and this is now a second
+  measured case of `ready: true` preceding zero outputs.
+
+**Which ecosystem a given checkpoint belongs to is server knowledge this CLI does
+not hold and will not guess.** It is not vendored here for the reason
+[`AGENTS.md`](AGENTS.md) item 13 gives for the whole generation path: a local copy
+of server state goes stale and starts refusing valid *new* inputs, which is worse
+than the gap it closes. So if you name a checkpoint, name the `--ecosystem` it
+belongs to as well. Whether `--checkpoint` *should* carry an ecosystem with it —
+and whether anything pre-submit could see this — is an open design question,
+tracked at civitai/cli#352.
 
 ### 🔴 Silent model substitution
 
@@ -1821,11 +1860,20 @@ echoes the resolved **model name** so you approve a name rather than an integer.
 `--model` is deliberately absent: `civitai download --model` takes a *model* id,
 while this takes a *version* id.
 
+**`seed`, `steps`, `cfgScale` and `sampler` have no flags at all**, and the
+`steps 0` measurement above is why: a flag whose unset value could reach the
+request would buy a broken run at a discount. They are still reachable — through
+the graph, not a flag — and that is the only route to a **reproducible** run,
+because the seed lives there. See
+[Raw graphs](#raw-graphs---print-input-and---input) below.
+
 ### Raw graphs: `--print-input` and `--input`
 
 The five flags cover the common job. Everything else the generator understands
-lives in the **generation graph** — the JSON document the flags assemble. You can
-write that document yourself:
+lives in the **generation graph** — the JSON document the flags assemble. That
+includes **`seed`, `steps`, `cfgScale` and `sampler`**, none of which has a flag:
+a seed set in the graph is the only way to reproduce a run, and the graph is the
+only way to raise cfg or move steps. You can write that document yourself:
 
 ```bash
 # 1. Assemble it from flags, print it, and exit. No submit, no cost estimate,
@@ -1840,6 +1888,9 @@ civitai generate --input graph.json --yes
 
 # …or pipe it, with `-`
 jq '.prompt = "a dog"' graph.json | civitai generate --input - --dry-run
+
+# The same route is how you set a seed — there is no --seed flag.
+jq '.seed = 12345' graph.json | civitai generate --input - --yes
 ```
 
 `--print-input` reaches **no money seam**: not the submit, not the cost
