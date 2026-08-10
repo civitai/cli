@@ -55,26 +55,42 @@ with the sandbox environment, and appends to the audit log.
 
 ## The controls, and how strong each one actually is
 
-The distinction that matters is **who enforces it**. Three tiers:
+The distinction that matters is **who enforces it**. There are exactly **two**
+kernel-enforced controls, and they are both mount-namespace controls that exist
+only when the agent is launched through `dogfood-sandbox.sh enter`:
 
 | control | enforced by | strength |
 |---|---|---|
-| the repo checkout is not visible to the agent | Linux mount namespace (`bwrap`) | **kernel** |
-| the operator's real `~/.config/civitai` is not reachable | Linux mount namespace (`bwrap`) | **kernel** |
-| `upgrade` cannot replace the binary under evaluation | filesystem mode bits | **kernel** |
+| the repo checkout, `AGENTS.md` and both handoffs are not visible | Linux mount namespace (`bwrap`) | **kernel — only under `enter`** |
+| the operator's real `~/.config/civitai` is not reachable | Linux mount namespace (`bwrap`) | **kernel — only under `enter`** |
+| `upgrade` cannot replace the binary under evaluation | mode bits + the guard | convention |
 | credential isolation without the jail | `HOME` / `XDG_CONFIG_HOME` on the child | convention |
 | the per-invocation `--max-cost` ceiling | the guard script | convention |
-| the total spend cap | the guard script | convention |
+| the total spend cap and the meter | the guard script | convention |
 | `app submit` / listing media restricted to a throwaway app | the guard script | convention |
 | `withdraw` restricted to submissions this run created | the guard script | convention |
-| `login`, `dev-tunnel`, `dev-token` refused | the guard script | convention |
+| `login`, `dev-tunnel`, `dev-token`, unknown commands refused | the guard script | convention |
+| the audit ledger | the guard script | convention |
 
-"Convention" means: the agent runs as the same Unix user, so it *can* invoke
-`$ROOT/real/civitai` directly and bypass the guard entirely. It has no reason
-to, and the brief does not suggest it — but nothing stops it. **Run in the jail
-(`dogfood-sandbox.sh enter`) and the top two rows become kernel-enforced;
-without it they are convention too.** That is the single most important
-operational choice in this document.
+🔴 **The `upgrade` row moved from "kernel" to "convention", and the earlier
+version of this table was wrong about it.** The mode bits genuinely defeat the
+*command* — `selfupdate` `O_CREATE`s `.civitai.new` in a `0500` directory and
+gets `EACCES` — but they do not bind the *agent*, because a process owning an
+inode may always chmod it. Measured, **inside the jail, as uid 1000**:
+`chmod u+w $ROOT/real` → rc 0, then `touch $ROOT/real/.civitai.new` → rc 0, and
+overwriting the binary succeeds. The same is true of the harness script itself.
+So: the lockdown stops `civitai upgrade` from doing what it does; it does not
+stop an agent that decides to take the permission back.
+
+🔴 **Say the consequence plainly, because it is what the owner is actually
+approving: the agent holds your full-scope personal API key and an unrestricted
+network.** Everything in the "convention" rows is a property of a shell script
+running as you, next to a credential you can read and a binary you can execute
+directly. Measured inside the jail: the config file is readable, the harness is
+readable, `$ROOT/real/civitai` is directly invocable bypassing the guard, and
+DNS resolves. Nothing here bounds what the account can be made to do — it bounds
+what the *CLI under test* does when driven through the shim, which is a much
+smaller claim and the only one this harness can support.
 
 ### 1. Credential isolation
 
@@ -125,7 +141,7 @@ Calibration, measured against the live estimator during validation: a bare
 So the per-call ceiling of 100 is generous for realistic jobs and the total cap
 of 2000 is roughly 0.05% of the account's 4,187,454 Buzz.
 
-### 3. `upgrade` is blocked structurally, not by instruction
+### 3. `upgrade` is blocked at the command, not at the agent
 
 `minio/selfupdate`'s `Apply` writes `.civitai.new` into
 `filepath.Dir(targetPath)` with `os.OpenFile(O_CREATE|…)` (`apply.go:67–72`)
@@ -140,6 +156,11 @@ would have left a hole.
 The guard also refuses `upgrade` outright, so the agent gets a clear message
 rather than a confusing `EACCES` from inside the CLI. Both are present; neither
 is redundant.
+
+🔴 **But neither is kernel-enforced against the agent** — see the table above.
+`chmod u+w` undoes the mode bits from inside the jail, and calling
+`$ROOT/real/civitai` directly bypasses the guard. This blocks the command; it
+does not bind the agent.
 
 ### 4. A dedicated throwaway app
 
@@ -311,30 +332,134 @@ warns about, hit while validating a harness. The audit log was the tiebreaker.
 An ad-hoc `grep -o '"total":[0-9]*'` therefore matches **nothing**, and
 `$(( B0 - B1 ))` turns two empty strings into a confident `0`. That is exactly
 what the first dry-run delta measurement reported, and it was meaningless. The
-harness's parser strips whitespace first, refuses to return a non-integer, and
+harness's parser strips whitespace first, is ANCHORED AT BOTH ENDS so it cannot
+return a truncated prefix (the audit's finding 5 — `{"total":1e9}` used to parse
+as `1`), rejects a negative, absurd or duplicated total, and
 is negative-controlled against a payload with no `total`. Re-measured properly:
 three real `--dry-run` estimates moved the balance by **0**
 (4187454 → 4187454).
 
 ### `selftest`
 
-`dogfood-sandbox.sh selftest` — 28 assertions, 28 pass. It covers every policy
+`make dogfood-check` runs `shellcheck -x` plus
+`dogfood-sandbox.sh selftest --offline` — **88 assertions, 88 pass**, no
+credential and no network required, so this is regression-testable in CI. The
+credentialed `selftest` (against a live sandbox) runs **79**, the same set minus
+the 13 stub-driven end-to-end rows plus 4 live lockdown/balance rows. It covers
+every policy
 branch (including `--max-cost=N` form parsing, `app submit -o <path>` not being
 mistaken for the project dir, and listing identity via `--slug` vs `--dir`),
 the balance parser's positive and negative controls, and the lockdown modes.
+
+## The hardening round (adversarial audit of #296)
+
+An independent audit attacked the first version. The bwrap jail held (uid 1000,
+host userns; a nested `unshare -Ur` confers nothing because `/home` is not
+mounted in it; `/` shows only `dev etc nix proc run tmp usr`). The gate did not.
+**Ten findings, all reproduced independently here before fixing, all fixed, each
+with a selftest row that goes red when the fix is reverted.**
+
+The two that matter most were not attacks — they were the stated threat model
+("read `--help`, try things, mis-type flags") landing on the gate:
+
+| # | what | measured before | after |
+|---|---|---|---|
+| 1 | a root persistent flag before the subcommand — `--no-color generate … --yes` — hid the command from a positional classifier | **ALLOW**, stub charged 37, meter 0; `--no-update-check upgrade` also ALLOW | DENY, and for the *right reason* |
+| 2 | pflag takes the token after a value-taking flag as its VALUE, so `--negative-prompt --help` satisfied a "is `--help` present?" test | **ALLOW**, charged 37, meter 0 | DENY |
+| 3 | the gate failed OPEN on its own internal errors — one key deleted from the file the header tells the operator to edit | `--max-cost 99999` **submitted and charged** | DENY, policy validated on read |
+| 4 | the POST-call balance sample failed open silently | 5 submits, 185 truly spent, **meter 0** | worst case charged, `meter_broken` latched, all later spends refused |
+| 5 | the balance parser accepted a truncated prefix | `{"total":1e9}` → **1**, so every delta is 0 — a meter reading a constant forever | anchored at both ends; 8 reject cases |
+| 6 | the cap was race-defeatable by an ordinary background job | 8 concurrent → **8 ALLOW_SPEND**, counter lost 3 | `flock` + a reservation; 8 concurrent → **1** |
+| 7 | the audit record was forgeable by a multi-line prompt (a newline is legitimate in a prompt) | one invocation wrote **2** ledger rows | escaped; 1 row |
+| 8 | `upgrade` was documented as kernel-enforced | `chmod u+w` → rc 0 **inside the jail** | table and residual #1 corrected |
+| 9 | `app withdraw <non-pubreq id>` allowed on a false reason (`app_withdraw.go` does no format validation) | ALLOW | any id must be allowlisted |
+| 10 | the strength table and residual #1 overstated what is enforced | — | rewritten; see above |
+
+Plus the 🟡 set: `--max-cost` now reads the **last** occurrence (pflag does —
+verified on a free read, `--limit 1 --limit 3` returns three results, so
+`--max-cost 5 --max-cost 99999` used to show the gate a 5 while the CLI enforced
+99999); `CIVITAI_BASE_URL`/`CIVITAI_TOKEN` are pinned and cleared, because the
+meter's oracle was an environment variable the agent controls; the balance read
+is bounded by `timeout 60`; a malformed ledger scalar is a refusal rather than a
+disabled cap; and `init --force` now **supersedes** the previous run root
+instead of deleting the ledger before the new credential has been validated.
+
+**Two additional defects found here, not in the audit.** The same
+value-eats-the-next-token bug aimed at the *dangerous* direction:
+`--negative-prompt --dry-run` made the gate see a free preview while the CLI
+submitted and charged. And an unknown subcommand (`app frobnicate`,
+`app listing frobnicate`) resolved to the empty string, which was
+indistinguishable from a bare `civitai app` and therefore ALLOWED. Both are now
+denied, and the gate fails closed on any command outside its closed vocabulary.
+
+### Mutation matrix
+
+Every fix was reverted to its pre-hardening spelling, checksum-gated (target
+must occur; file hash must change; mutant must parse) and re-run:
+
+```
+BASELINE                                          88 passed, 0 failed
+F1  command resolved positionally             KILLED  4 failures
+F2  blanket --help short-circuit              KILLED  5
+F5  unanchored balance parser                 KILLED  2
+F7  tsv_escape is identity                    KILLED  3
+F6  ledger lock removed                       KILLED  2
+F4  lost post-sample silently ignored         KILLED  1
+F4b meter_broken latch removed                KILLED  2
+F3  policy numeric validation removed         KILLED  3
+F3b unset-before-source removed               KILLED  1
+MC  flag_value returns FIRST not LAST         KILLED  2
+F9  withdraw only gates pubreq_-shaped ids    KILLED  2
+SUB unknown app subcommand allowed            KILLED  1
+SUB2 unknown listing verb allowed             KILLED  1
+NULL comment-only                             SURVIVED (as required)
+```
+
+🔴 **F1 initially killed only ONE row, and that was the interesting result.**
+With the command resolved positionally again, `--no-color generate … --yes`
+still DENIED — as an unrecognised command *called* `--no-color` — so every
+verdict-only assertion for that bypass stayed green while the gate was blind.
+A bystander branch was carrying the control. The finding-1 rows now assert the
+**reason**, and the mutant kills four.
+
+Two further guards were added because the classifier being right says nothing
+about whether the guard acts on it: `selftest --offline` now drives the **real
+guard** end-to-end against a stub binary that charges a known amount (13 rows,
+including the concurrency race, the newline-forgery row, the `meter_broken`
+latch, an unrecognised command, and a malformed policy refusing even a read).
+It needs no credential and no network, which is what makes it runnable in CI.
+
+**The empty-verdict backstop needed a two-stage mutant**, because no valid input
+can reach it — only an internal bug can. Measured, with the real binary
+instrumented to log whether it ran at all:
+
+```
+stage 0  unmutated                                        rc=126  binary ran: 0
+stage A  branch returns without setting VERDICT           rc=126  binary ran: 0   <- backstop caught it
+stage B  stage A + the backstop deleted                   rc=0    binary ran: 1   <- executed
+```
+
+That is the whole failure mode of the original `verdict=$(policy_verdict …)`
+subshell, reproduced deliberately: an internal error left the verdict empty and
+`"" != "DENY"` ran the command.
 
 ## What this does not protect against
 
 An unrecorded residual is indistinguishable from a bug nobody noticed. These
 are the ones being shipped knowingly.
 
-1. **Same Unix user. The guard is a shell script, not a sandbox.** The agent can
-   read `$ROOT/harness/dogfood-sandbox.sh`, see every rule, invoke
-   `$ROOT/real/civitai` directly and bypass all of it — and it can rewrite
-   `$ROOT/ledger/*`, corrupting both the spend meter and the audit trail. Only
-   the mount-namespace and mode-bit controls are outside its reach. Real
-   isolation needs a second UID or a container; neither is available here
-   without root.
+1. 🔴 **THE AGENT HAS YOUR FULL-SCOPE PERSONAL API KEY AND AN UNRESTRICTED
+   NETWORK, AND NOTHING HERE CHANGES THAT.** Everything except the two
+   mount-namespace rows is convention: the agent runs as the same Unix user, so
+   it can read the seeded credential, read `$ROOT/harness/dogfood-sandbox.sh`
+   and see every rule, invoke `$ROOT/real/civitai` directly to bypass the gate
+   entirely, `chmod u+w` the "read-only" binary, and rewrite `$ROOT/ledger/*` to
+   corrupt both the spend meter and the audit trail. All of that was measured
+   inside the jail as uid 1000. **The caps bound what the CLI under test does
+   when driven through the shim. They do not bound what the account can be made
+   to do.** Real isolation needs a second UID or a container; neither is
+   available here without root. If that residual is unacceptable, the answer is
+   a scoped or low-balance credential, not a better shell script.
 2. **`--max-cost` does not cap spend, so neither does the total cap, exactly.**
    The cap is evaluated *before* each submit, so a submit can always start while
    the cumulative figure is one Buzz under the limit, and the realized charge
@@ -354,15 +479,31 @@ are the ones being shipped knowingly.
    works only while `pending`. See the non-reversible list in §4 — an approved
    app is live, a rejected one is terminal, and the blockId is consumed
    permanently either way.
-7. **The gate re-implements argv parsing; it is not Cobra.** It understands
-   `--flag V` and `--flag=V` and the value-taking flags of the commands it
-   gates. A spelling Cobra accepts that the gate parses differently could
-   mis-resolve a project directory and, in the worst case, let a foreign app
-   through. It fails closed on `generate` (an unrecognised `--max-cost` is a
-   refusal) but the identity checks fail closed only when they can tell they are
-   confused. There is also a TOCTOU window between reading the manifest and
-   exec'ing the CLI; irrelevant for a cooperative agent, real in principle.
-8. **The ledger is not concurrency-safe.** One agent at a time.
+7. **The gate re-implements argv parsing; it is not Cobra — and that is where
+   every one of the audit's two worst findings came from.** It now resolves
+   commands against a CLOSED VOCABULARY and tokenizes flags with per-command
+   knowledge of which ones consume the next token, but it is still a
+   re-implementation. Known costs, deliberately taken:
+   - **An unknown command or subcommand is REFUSED, not passed through.** A new
+     `civitai` verb, or a typo, produces a `SANDBOX POLICY` line rather than the
+     CLI's own error. That is the fail-closed direction, and it means the gate's
+     vocabulary has to be updated when the CLI grows a command.
+   - **On `generate`, an unrecognised flag is assumed to consume the next
+     token.** That biases toward refusal: `--mystery --dry-run` is treated as a
+     submit, not a preview. A false refusal, never a false allow.
+   - **`civitai generate "prompt" --help` is refused**, because `--help` after a
+     bare positional cannot be distinguished from `--help` as a flag value under
+     an allowlist rule. Use `civitai generate --help`.
+   - A TOCTOU window remains between reading the manifest and exec'ing the CLI;
+     irrelevant for a cooperative agent, real in principle.
+8. **Concurrency is bounded, not eliminated.** The cap check, the counter bump
+   and the reservation are one `flock`-held section, and a submit reserves its
+   `--max-cost` for the duration — measured, 8 concurrent submits against 10
+   Buzz of headroom now yield exactly 1. But the reservation is the ESTIMATE
+   ceiling, not the realized charge, so N concurrent jobs can still overshoot by
+   the same "realized exceeds estimate" margin as residual 2. **If `flock` is
+   absent the lock silently degrades to a no-op** — `selftest` asserts it is
+   present precisely so that degradation is visible rather than assumed.
 9. **Four deliberate fidelity distortions the agent will see, none of which the
    real CLI does:** refusals prefixed `SANDBOX POLICY` with exit code 126; a
    mandatory `--max-cost` on any real generation; `login` refused entirely; and
@@ -383,6 +524,16 @@ are the ones being shipped knowingly.
 ## Go / no-go checklist
 
 Read time ~2 minutes. Everything below is verifiable in one command each.
+
+**The one sentence to read first**
+
+> 🔴 **The agent will hold your full-scope personal API key and an unrestricted
+> network connection, running as your Unix user.** Every spend cap, submit cap
+> and forbidden-command rule in this harness is a shell script it can read and
+> step around; only the repo-invisibility and config-unreachability are enforced
+> by the kernel, and only under `enter`. What the caps bound is what the CLI
+> under test does when driven through the shim — not what the account can be
+> made to do. Approve on that basis or not at all.
 
 **Facts to confirm before approving**
 
@@ -426,7 +577,8 @@ scripts/dogfood-sandbox.sh init --binary ./bin/civitai --token-file ~/.dogfood-t
 shred -u ~/.dogfood-token
 
 # 3. confirm the harness is honest before trusting it
-scripts/dogfood-sandbox.sh selftest        # expect 28/28
+scripts/dogfood-sandbox.sh selftest        # expect 79/79 against the live sandbox
+make dogfood-check                         # shellcheck + 88/88, no credential needed
 
 # 4. run the agent blind, inside the jail, cwd $ROOT/workspace,
 #    given only: the `civitai` on PATH, README.md, --help, and AGENT-BRIEF.md
