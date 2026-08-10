@@ -6,6 +6,30 @@
 # three places. This job runs `bump-pins` (which rewrites the literals in the
 # template + README + the scaffold_test.go canary), validates the result IN THIS
 # JOB, and opens a PR when anything changed — so the hand-fix never recurs.
+#
+# A RED RUN OF THIS WORKFLOW NOW FILES ITS OWN ISSUE — see the `classify` and
+# `signal` jobs. A failing SCHEDULED run notifies almost nobody (GitHub mails
+# only whoever last edited the `cron` line, through that person's own per-user
+# Actions setting), which is how `bump-flake-vendorhash.yml` failed every run
+# for three weeks with nobody noticing (#316). This workflow was green
+# throughout — so was that one, right up until it wasn't. The reporting
+# mechanism is the shared `failure-issue.yml`; read its header for the anti-spam
+# rules it enforces (one open issue, a repeat failure rewrites the body rather
+# than commenting, a green run closes the issue).
+#
+# BOTH jobs below report, and that is the point: `ready-ack-runtime` is an
+# independent drift alarm on `main` that could go red on its own for weeks
+# without `bump` noticing, or vice versa. `classify` is where the two verdicts
+# are combined into the one message `failure-issue.yml` files.
+#
+# ERREXIT NOTE, because this is the trap that caused #316 and #313. GitHub runs
+# every `run:` block as `bash -e {0}`, so errexit is ON before the first line and
+# `set -uo pipefail` does NOT clear it. Audited: NO step in this workflow runs a
+# command that is expected to fail as part of its logic — every `go`, `npm` and
+# `git` invocation here is expected to succeed, and the one deliberate failure
+# (the fire drill) exits explicitly rather than leaning on the shell. So errexit
+# is welcome here. If you add a command that IS expected to fail, handle its
+# status where you write it; do not leave it to the shell.
 name: bump-scaffold-pins
 
 on:
@@ -34,7 +58,17 @@ on:
     # `detect changes` gates every downstream step, so an already-current sweep
     # is just checkout + setup-go + the bumper's npm metadata reads.
     - cron: "17 7 * * *"
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      drill:
+        description: "Fire drill: fail one or both jobs on purpose so the FAILURE path and the issue it files can be rehearsed. Opens a REAL issue — close it when you are done. It cannot open a PR or rewrite a pin: the drill fails at the bumper step, which is upstream of every step that writes anything."
+        type: choice
+        default: none
+        options:
+          - none
+          - bump
+          - ready-ack
+          - both
 
 permissions:
   contents: write
@@ -57,6 +91,9 @@ jobs:
   # interaction, a node bump, an npm-side change), and is deliberately
   # independent of the `bump` job below so it runs on every sweep, including the
   # usual no-op ones where the pins are already current.
+  #
+  # "Surface up to 24h later" was itself optimistic until now: nothing read this
+  # job's colour. It reports through `classify` → `signal` below.
   ready-ack-runtime:
     runs-on: ubuntu-latest
     permissions:
@@ -77,12 +114,54 @@ jobs:
       # both driven through the same assertions and must be rejected) rather than
       # just an exit code.
       - name: scaffolded ready-ack actually fires
+        id: readyack
         env:
           CIVITAI_CHECK_SCAFFOLD_RUNTIME: "1"
-        run: go test ./internal/scaffold -run TestScaffoldedReadyAckActuallyFires -count=1 -v
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || 'none' }}
+        run: |
+          set -uo pipefail
+
+          if [ "$DRILL" = "ready-ack" ] || [ "$DRILL" = "both" ]; then
+            # Fire drill. Failing this step is the SAME input the classifier
+            # reads on a real regression — there is no sub-verdict here to stub,
+            # so the rehearsal drives the genuine path rather than a mock of it.
+            echo "⚠️  FIRE DRILL — failing the ready-ack runtime check on purpose to rehearse the reporting path."
+            echo "    No test was run and nothing on disk was touched."
+            exit 1
+          fi
+
+          go test ./internal/scaffold -run TestScaffoldedReadyAckActuallyFires -count=1 -v 2>&1 \
+            | tee "$RUNNER_TEMP/ready-ack.log"
+
+          # POSITIVE CONTROL, and it is not decoration. `go test -run <name>`
+          # exits 0 when the pattern matches NOTHING — it prints "testing:
+          # warning: no tests to run" and "ok … [no tests to run]" — and this
+          # test body additionally only runs behind the
+          # CIVITAI_CHECK_SCAFFOLD_RUNTIME gate. So a renamed test, a moved
+          # file, or a changed env-var name turns this whole job into a green
+          # that checked nothing, and a check whose red can never be seen is
+          # exactly what the reporting below is for. Require the test's own PASS
+          # line, so this job's colour is a claim about the ack.
+          if ! grep -q -- '--- PASS: TestScaffoldedReadyAckActuallyFires' "$RUNNER_TEMP/ready-ack.log"; then
+            echo "::error::the ready-ack runtime check exited 0 without running TestScaffoldedReadyAckActuallyFires — the -run pattern matched no test (renamed? moved? CIVITAI_CHECK_SCAFFOLD_RUNTIME gate changed?). A green here would have been a claim about nothing."
+            exit 1
+          fi
 
   bump:
     runs-on: ubuntu-latest
+    # Read by `classify` to describe WHICH phase went wrong. These are the raw
+    # step outcomes, deliberately not prose: ALL the wording lives in one place
+    # (`classify`), so the two jobs' verdicts cannot end up worded by two
+    # different authors. Every one of these is EMPTY when the job died before
+    # the step existed — which `classify` resolves to its own `bump-unknown`
+    # state rather than borrowing a verdict it never reached.
+    outputs:
+      r_bump: ${{ steps.bump.outcome }}
+      r_changed: ${{ steps.changed.outcome }}
+      r_pins: ${{ steps.validate_pins.outcome }}
+      r_suite: ${{ steps.validate_suite.outcome }}
+      r_build: ${{ steps.validate_build.outcome }}
+      r_pr: ${{ steps.pr.outcome }}
     steps:
       - uses: actions/checkout@v4
 
@@ -92,7 +171,20 @@ jobs:
           cache: true
 
       - name: bump stale @civitai/* scaffold pins
-        run: go run ./internal/scaffold/cmd/bump-pins
+        id: bump
+        env:
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || 'none' }}
+        run: |
+          set -u
+          if [ "$DRILL" = "bump" ] || [ "$DRILL" = "both" ]; then
+            # Fire drill, placed here on purpose: this step is upstream of
+            # `detect changes` and of every step that writes anything, so a
+            # drill can neither rewrite a pin nor open a PR.
+            echo "⚠️  FIRE DRILL — failing the pin bumper on purpose to rehearse the reporting path."
+            echo "    No npm lookup was made and no pin was rewritten."
+            exit 1
+          fi
+          go run ./internal/scaffold/cmd/bump-pins
 
       # Only validate + open a PR when the bumper actually rewrote something — a
       # no-op run (pins already current) skips everything downstream.
@@ -114,12 +206,14 @@ jobs:
       # else regressed (incl. the scaffold_test.go pin assertions the bumper
       # rewrote).
       - name: validate — pins now satisfy published (network guard)
+        id: validate_pins
         if: steps.changed.outputs.changed == 'true'
         env:
           CIVITAI_CHECK_PUBLISHED_PINS: "1"
         run: go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -v
 
       - name: validate — full scaffold suite (offline)
+        id: validate_suite
         if: steps.changed.outputs.changed == 'true'
         run: go test ./internal/scaffold/...
 
@@ -135,6 +229,7 @@ jobs:
           node-version: "22"
 
       - name: validate — scaffold builds against the bumped SDK
+        id: validate_build
         if: steps.changed.outputs.changed == 'true'
         run: |
           go run ./cmd/civitai app init "Bump Validation" --dir "$RUNNER_TEMP/bump-validate" --template page-money
@@ -144,6 +239,7 @@ jobs:
           npm run build
 
       - name: open PR if pins changed
+        id: pr
         if: steps.changed.outputs.changed == 'true'
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
@@ -182,3 +278,158 @@ jobs:
             suite, AND a fresh `civitai app init` scaffold that installs +
             typechecks + **builds** against the bumped SDK (catching a
             removed/renamed export).
+
+  # Compose ONE report out of the two independent jobs above.
+  #
+  # It is a separate job rather than a step inside `bump` because it has to see
+  # BOTH results, and it is the only place that writes prose — `bump` exports
+  # raw step outcomes precisely so there is a single author for the message.
+  #
+  # `always()` so it still runs after a failed job; `!= 'cancelled'` on both
+  # needs so a hand cancellation is not filed as a defect.
+  classify:
+    needs: [ready-ack-runtime, bump]
+    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.bump.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      state: ${{ steps.classify.outputs.state }}
+      title: ${{ steps.classify.outputs.title }}
+      body: ${{ steps.classify.outputs.body }}
+    steps:
+      - name: classify the outcome
+        id: classify
+        env:
+          J_READY: ${{ needs.ready-ack-runtime.result }}
+          J_BUMP: ${{ needs.bump.result }}
+          R_BUMP: ${{ needs.bump.outputs.r_bump }}
+          R_CHANGED: ${{ needs.bump.outputs.r_changed }}
+          R_PINS: ${{ needs.bump.outputs.r_pins }}
+          R_SUITE: ${{ needs.bump.outputs.r_suite }}
+          R_BUILD: ${{ needs.bump.outputs.r_build }}
+          R_PR: ${{ needs.bump.outputs.r_pr }}
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || 'none' }}
+        run: |
+          set -uo pipefail
+
+          # ---- the ready-ack drift runner's verdict ---------------------------
+          ready_state=""
+          ready_title=""
+          ready_detail=""
+          if [ "$J_READY" != "success" ]; then
+            ready_state=ready-ack-failed
+            ready_title="the scaffolded ready-ack handshake no longer fires on \`main\`"
+            ready_detail="The \`ready-ack-runtime\` job failed. It runs the vendored emitter in node against a fake host and asserts one correctly-addressed \`{type:'BLOCK_READY',payload:{height:0}}\` goes out — the ONLY check in the repo that proves the handshake actually fires rather than that the file is present.
+
+          A red here means a \`page\` app scaffolded from \`main\` today may never reach \`ready\` in the host and would end at a failure card, which is issue #206 all over again. It can also mean the job's own positive control fired: it refuses to pass unless \`--- PASS: TestScaffoldedReadyAckActuallyFires\` is in the output, so a renamed/moved test reports here too. **The run log distinguishes them.**"
+          fi
+
+          # ---- the pin bumper's verdict ---------------------------------------
+          bump_state=""
+          bump_title=""
+          bump_detail=""
+          if [ "$J_BUMP" != "success" ]; then
+            if [ "$R_BUMP" = "failure" ]; then
+              bump_state=bump-failed
+              bump_title="the scaffold pin bumper could not run the bumper"
+              bump_detail="The \`bump stale @civitai/* scaffold pins\` step failed — \`go run ./internal/scaffold/cmd/bump-pins\` exited non-zero. It exits 2 only on a hard error (the template holds no \`@civitai/*\` pins at all, or one of the three literal sites could not be read/written); a transient npm lookup failure is a per-package SKIP inside the tool, not a failure, so this is not a network blip."
+            elif [ "$R_CHANGED" = "failure" ]; then
+              bump_state=detect-failed
+              bump_title="the scaffold pin bumper failed while checking for changes"
+              bump_detail="The \`detect changes\` step failed, which is unusual — it only runs \`git status\`."
+            elif [ "$R_PINS" = "failure" ]; then
+              bump_state=validate-pins-failed
+              bump_title="the scaffold pin bumper produced pins that still do not satisfy npm"
+              bump_detail="Pins were rewritten, but the network guard (\`CIVITAI_CHECK_PUBLISHED_PINS=1 go test -run TestScaffoldPinsSatisfyPublished\`) then said they still do not admit npm's published latest. **No PR was opened.** Either \`scaffold.DesiredPin\` and \`CaretAdmits\` disagree, or a package published again mid-run."
+            elif [ "$R_SUITE" = "failure" ]; then
+              bump_state=validate-suite-failed
+              bump_title="the scaffold pin bumper broke the offline scaffold suite"
+              bump_detail="Pins were rewritten and satisfy npm, but \`go test ./internal/scaffold/...\` then failed. **No PR was opened.** The usual cause is the bumper rewriting only some of the three literal sites, leaving the \`scaffold_test.go\` \`mustContain\` canary disagreeing with the template."
+            elif [ "$R_BUILD" = "failure" ]; then
+              bump_state=validate-build-failed
+              bump_title="the newly-published @civitai/* SDK no longer builds the scaffold"
+              bump_detail="Pins were rewritten and satisfy npm, but a fresh \`civitai app init … --template page-money\` then failed to install, typecheck or build against them. **No PR was opened**, on purpose — this is the removed/renamed SDK export case, and it is a real upstream break rather than a bot bug. Every newly-scaffolded page-money app is affected until the template is adapted or the SDK is fixed."
+            elif [ "$R_PR" = "failure" ]; then
+              bump_state=pr-failed
+              bump_title="the scaffold pin bumper could not open its PR"
+              bump_detail="The pins were bumped and fully validated, but opening the PR failed — usually \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` being expired or missing. **The fix is still un-merged**, so \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red and blocks EVERY open PR regardless of its content, until someone bumps the pins by hand or repairs the token."
+            else
+              # No step recorded a failure, yet the job is not green: it died
+              # before/outside its own steps (runner failure, checkout failure,
+              # setup-go failure). That is a real and different state.
+              bump_state=bump-unknown
+              bump_title="the scaffold pin bumper could not run"
+              bump_detail="The \`bump\` job did not succeed, but none of its steps recorded a failure — so it died before or outside them. The usual causes are the runner dying, the checkout failing, or \`setup-go\` failing. Check the run log."
+            fi
+          fi
+
+          # ---- combine ---------------------------------------------------------
+          if [ -n "$ready_state" ] && [ -n "$bump_state" ]; then
+            state="$ready_state+$bump_state"
+            title="both scheduled scaffold checks are failing"
+            detail="**Two independent failures in one run.** They are unrelated jobs; treat them as two problems.
+
+          ## 1. ready-ack runtime
+
+          $ready_detail
+
+          ## 2. pin bumper
+
+          $bump_detail"
+          elif [ -n "$ready_state" ]; then
+            state="$ready_state"
+            title="$ready_title"
+            detail="$ready_detail"
+          elif [ -n "$bump_state" ]; then
+            state="$bump_state"
+            title="$bump_title"
+            detail="$bump_detail"
+          else
+            state=green
+            title=""
+            detail=""
+          fi
+
+          DRILL_NOTE=""
+          if [ "$DRILL" != "none" ]; then
+            DRILL_NOTE="> ⚠️ **This is a fire drill**, dispatched by hand with \`drill=$DRILL\`. The named job(s) were failed on purpose before doing any work — no npm lookup, no test, no pin rewritten — so this is NOT a real failure of the bot. It exists to prove this reporting path works. Close it when you are done."
+          fi
+
+          echo "state=$state"
+          {
+            echo "state=$state"
+            echo "title=[scaffold-pins-bot] $title"
+            echo "body<<SCAFFOLD_PINS_BODY_EOF"
+            if [ -n "$DRILL_NOTE" ]; then
+              echo "$DRILL_NOTE"
+              echo
+            fi
+            echo "$detail"
+            echo
+            echo "---"
+            echo "This workflow runs two independent daily checks: \`ready-ack-runtime\` (does the scaffolded handshake still fire on \`main\`) and \`bump\` (are the template's \`@civitai/*\` pins still current). Either one failing files this issue."
+            echo "SCAFFOLD_PINS_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+  # File a report when either check is broken, and close it when both recover.
+  # See `failure-issue.yml` for why this is an issue rather than email, and for
+  # the rules that stop it becoming noise.
+  #
+  # `failing` is computed from the JOB results rather than from `classify`'s
+  # output, so a `classify` job that itself dies still reports — as `unknown`,
+  # which is a real state and not silence. "The check could not run" must be as
+  # visible as "the check failed".
+  signal:
+    needs: [ready-ack-runtime, bump, classify]
+    if: always() && needs.ready-ack-runtime.result != 'cancelled' && needs.bump.result != 'cancelled' && needs.classify.result != 'cancelled'
+    uses: ./.github/workflows/failure-issue.yml
+    permissions:
+      contents: read
+      issues: write
+    with:
+      marker: "[scaffold-pins-bot]"
+      failing: ${{ needs.ready-ack-runtime.result != 'success' || needs.bump.result != 'success' || needs.classify.result != 'success' }}
+      state: ${{ needs.classify.outputs.state || 'unknown' }}
+      title: "${{ needs.classify.outputs.title || '[scaffold-pins-bot] the scaffold bots failed and could not say why' }}"
+      body: "${{ needs.classify.outputs.body || 'The `classify` job did not produce a verdict, so this report cannot name which of `ready-ack-runtime` / `bump` went wrong, or how. Open the run and read both jobs. This state is itself a defect in the reporting path — `classify` only runs a shell script over the two job results.' }}"
