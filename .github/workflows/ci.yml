@@ -23,6 +23,48 @@ on:
 permissions:
   contents: read
 
+# ─────────────────────────────────────────────────────────────────────────────
+# VACUOUS GREEN — the shared rationale every positive control below points at.
+#
+# A job here is a merge gate, and a gate that reports success without having
+# checked anything is worse than no gate: it trains everyone to trust it. Every
+# `run:` block in this file that reads a tool's verdict therefore has to answer
+# "could this have gone green without the thing it checks having run?" The three
+# shapes that have actually appeared in this repo:
+#
+#   (1) `go test -run <name>` EXITS 0 WHEN THE PATTERN MATCHES NOTHING.
+#       Measured on this tree:
+#         $ go test -run 'TestThisPatternMatchesNothingAtAll' ./internal/scaffold/
+#         ok  github.com/civitai/cli/internal/scaffold  0.003s [no tests to run]
+#         rc=0
+#       With -v it prints "testing: warning: no tests to run" and a bare `PASS`
+#       — so a control keyed on the word PASS is satisfied by that bystander
+#       line. Every such site here now requires the TEST'S OWN result line,
+#       `--- PASS: <Name>`, anchored to the line start. Renaming the test, moving
+#       the file, or changing the env-var gate its body sits behind then reds the
+#       job instead of silently emptying it.
+#
+#   (2) A TOOL'S SILENCE IS NOT A CLEAN VERDICT. `gofmt -s -l .` over zero files
+#       and `go test ./...` over zero packages both print nothing useful and exit
+#       0, exactly like a clean tree. Those sites carry a count FLOOR (did it
+#       look at our code?) and, where cheap, a NEGATIVE control (can it still go
+#       red at all?).
+#
+#   (3) A `-count=1`-LESS TEST CAN BE REPLAYED FROM GOCACHE, which
+#       `actions/setup-go` with `cache: true` restores across runs. That matters
+#       for the NETWORK guards, whose entire value is the round-trip; see the
+#       measurement at `pins-vs-published`.
+#
+# ERREXIT NOTE, the trap behind #316 and #313: GitHub runs every `run:` block as
+# `bash -e {0}`, so errexit is ON before the first line and `set -uo pipefail`
+# does NOT clear it. Two consequences relied on below. A `cmd | tee log` whose
+# `cmd` fails kills the step AT THE PIPE — which is what we want for a genuine
+# test failure (the test's own output is already in the log), but it means the
+# `::error::` annotation after it only ever prints for the vacuous case it is
+# about. And `n=$(… | grep …)` DIES when grep matches nothing, so every counting
+# grep here ends in `|| true` and is judged by its floor, never by its status.
+# ─────────────────────────────────────────────────────────────────────────────
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
@@ -37,8 +79,34 @@ jobs:
       - name: go vet
         run: go vet ./...
 
+      # Shape (2): `gofmt -s -l .` prints NOTHING and exits 0 both when every
+      # file is clean AND when it walked zero files, so its silence is not by
+      # itself evidence about this repo. Two controls, closing different halves.
       - name: gofmt
         run: |
+          set -uo pipefail
+
+          # POSITIVE CONTROL — did it look at our code? Measured on this tree:
+          # 340 .go files. The floor is deliberately loose; it exists to catch
+          # "walked the wrong tree / walked nothing", not to track a count.
+          n=$(find . -path ./.git -prune -o -name '*.go' -print 2>/dev/null | wc -l || true)
+          echo "gofmt scope: $n .go file(s) under ."
+          if [ "$n" -lt 100 ]; then
+            echo "::error::gofmt found only $n .go file(s) to check — it is not looking at this repo, so a clean verdict here would be a statement about nothing"
+            exit 1
+          fi
+
+          # NEGATIVE CONTROL — can it still go red? A tool that reports nothing
+          # whatever you feed it is indistinguishable from a clean tree. The
+          # control file lives in RUNNER_TEMP, outside the '.' walk below, so it
+          # cannot contaminate the real verdict.
+          ctl="$RUNNER_TEMP/gofmt-control.go"
+          printf 'package ctl\n\nfunc F(  ) {\n}\n' > "$ctl"
+          if [ -z "$(gofmt -s -l "$ctl" || true)" ]; then
+            echo "::error::gofmt did not flag a deliberately mis-formatted file — the tool is not working, so its silence about this repo means nothing"
+            exit 1
+          fi
+
           unformatted=$(gofmt -s -l .)
           if [ -n "$unformatted" ]; then
             echo "These files are not gofmt-ed:"
@@ -46,8 +114,31 @@ jobs:
             exit 1
           fi
 
+      # Shape (2) again: `go test ./...` is green over ZERO packages, and a
+      # package with no test files reports `?  … [no test files]` — also green.
+      # So the exit code cannot tell "the suite passed" from "the suite did not
+      # run", which is the state a broken build tag, a bad -tags flag or a
+      # mis-scoped pattern produces. Count what actually reported ok.
+      #
+      # `go vet ./...` and `go build ./...` are deliberately left bare: both are
+      # whole-module walks with no name pattern and no silence-means-clean
+      # ambiguity of their own, and the floor below already proves the module
+      # resolves to ~19 real packages in this same job. A third floor would
+      # assert the same fact a third time.
       - name: test
-        run: go test ./...
+        run: |
+          set -uo pipefail
+
+          go test ./... 2>&1 | tee "$RUNNER_TEMP/gotest.log"
+
+          # Measured on this tree: 19 packages report ok, 1 has no test files.
+          # The floor sits below that so ordinary churn does not trip it.
+          ok=$(grep -c '^ok' "$RUNNER_TEMP/gotest.log" || true)
+          echo "packages reporting ok: $ok"
+          if [ "$ok" -lt 15 ]; then
+            echo "::error::only $ok package(s) reported ok — the suite exited 0 without running, so this green is not a claim about the code"
+            exit 1
+          fi
 
       - name: build
         run: go build ./...
@@ -101,7 +192,47 @@ jobs:
       - name: check scaffold pins vs npm latest
         env:
           CIVITAI_CHECK_PUBLISHED_PINS: "1"
-        run: go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -v
+        run: |
+          set -uo pipefail
+
+          # 🔴 `-count=1` IS LOAD-BEARING HERE, NOT HYGIENE — shape (3). Measured
+          # locally, this exact command run twice in a row:
+          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
+          #     ok  github.com/civitai/cli/internal/scaffold  0.460s
+          #     --- PASS: TestScaffoldPinsSatisfyPublished (0.46s)
+          #     ok  github.com/civitai/cli/internal/scaffold  (cached)
+          # The second run contacted npm ZERO times and replayed the first run's
+          # timing and PASS line verbatim out of GOCACHE — which `setup-go` with
+          # `cache: true` restores across runs, keyed on go.sum. Go's test cache
+          # tracks the env vars a test reads; it does NOT track what npm
+          # published. So the NETWORK half of the scaffold guard — a required
+          # check whose whole value is the round-trip — could report green on a
+          # pin that had already gone stale.
+          #
+          # Note the two devices close DIFFERENT holes and neither substitutes
+          # for the other: a cached result replays the `--- PASS:` line too, so
+          # the control below cannot see a stale cache, and `-count=1` cannot see
+          # a renamed test.
+          go test ./internal/scaffold -run TestScaffoldPinsSatisfyPublished -count=1 -v 2>&1 \
+            | tee "$RUNNER_TEMP/pins.log"
+
+          # POSITIVE CONTROL — shape (1). Require the test's own result line.
+          #
+          # SKIP is accepted here, and ONLY here in this file: this guard skips
+          # by design when npm is unreachable (pins_guard_test.go returns a
+          # t.Skipf rather than false-failing on DNS/timeout/5xx/429). What is
+          # NOT acceptable is neither line appearing, which is what a rename, a
+          # moved file or a changed CIVITAI_CHECK_PUBLISHED_PINS gate produces.
+          if ! grep -Eq -- '^ *--- (PASS|SKIP): TestScaffoldPinsSatisfyPublished( |/|$)' "$RUNNER_TEMP/pins.log"; then
+            echo "::error::the pins guard exited 0 without running TestScaffoldPinsSatisfyPublished — the -run pattern matched no test (renamed? moved? CIVITAI_CHECK_PUBLISHED_PINS gate changed?). A green here would have been a claim about nothing."
+            exit 1
+          fi
+
+          # A skip is a legitimate green, but it is not a statement about the
+          # pins — say so in the run rather than letting the colour imply it.
+          if grep -Eq -- '^ *--- SKIP: TestScaffoldPinsSatisfyPublished' "$RUNNER_TEMP/pins.log"; then
+            echo "::notice title=pins-vs-published::the guard SKIPPED — npm was unreachable, so this green says nothing about whether the scaffold pins still admit npm's published latest. Re-run later."
+          fi
 
   # Guard B for the block->host ready-ack (issue #206) — the RUNTIME half.
   #
@@ -146,7 +277,36 @@ jobs:
       - name: scaffolded ready-ack actually fires
         env:
           CIVITAI_CHECK_SCAFFOLD_RUNTIME: "1"
-        run: go test ./internal/scaffold -run TestScaffoldedReadyAckActuallyFires -count=1 -v
+        run: |
+          set -uo pipefail
+
+          go test ./internal/scaffold -run TestScaffoldedReadyAckActuallyFires -count=1 -v 2>&1 \
+            | tee "$RUNNER_TEMP/ready-ack.log"
+
+          # 🔴 POSITIVE CONTROL — shape (1), and this is the one job in the file
+          # where the consequence is a repeat of #206. `go test -run <name>`
+          # exits 0 when the pattern matches NOTHING, and this test body sits
+          # behind the CIVITAI_CHECK_SCAFFOLD_RUNTIME gate on top of that. So a
+          # renamed test, a moved file, or a changed env-var name turns a
+          # REQUIRED merge gate permanently, silently green — and this is Guard
+          # B, the only check in the repo that proves the handshake FIRES rather
+          # than that the emitter file is present (Guard A cannot: an inverted
+          # `event.source` check passes every static assertion while being
+          # completely inert). Disarming it would remove the last thing standing
+          # between `main` and a page app that never reaches `ready`.
+          #
+          # A SKIP is a FAILURE here, unlike pins-vs-published: there is no
+          # legitimate skip path when the gate env var is set — the test even
+          # t.Fatal()s rather than skipping when node is missing, on purpose.
+          # Requiring PASS specifically is what encodes that.
+          #
+          # Same control as the daily drift runner in bump-scaffold-pins.yml
+          # (#332). Two copies on purpose: they guard two different runners, and
+          # the daily one cannot block a merge.
+          if ! grep -Eq -- '^ *--- PASS: TestScaffoldedReadyAckActuallyFires( |/|$)' "$RUNNER_TEMP/ready-ack.log"; then
+            echo "::error::the ready-ack runtime check exited 0 without running TestScaffoldedReadyAckActuallyFires — the -run pattern matched no test (renamed? moved? CIVITAI_CHECK_SCAFFOLD_RUNTIME gate changed?). A green here would have been a claim about nothing, on the only check that proves the scaffolded handshake actually fires (issue #206)."
+            exit 1
+          fi
 
   # Rot-guard: build the page-vite template. It is the only SDK-free template
   # with a build step, and nothing else in CI builds it — `template-page-money`
@@ -333,7 +493,25 @@ jobs:
       - name: anti-pattern scan (scaffolded app)
         env:
           CIVITAI_ANTIPATTERN_SCAN_DIR: ${{ github.workspace }}/_ci-currency
-        run: go test ./internal/antipattern -run TestScanDirFromEnv -count=1 -v
+        run: |
+          set -uo pipefail
+
+          go test ./internal/antipattern -run TestScanDirFromEnv -count=1 -v 2>&1 \
+            | tee "$RUNNER_TEMP/antipattern.log"
+
+          # POSITIVE CONTROL — shape (1), with a SECOND way in. Besides the
+          # `-run` pattern matching nothing, `TestScanDirFromEnv` SKIPS when
+          # CIVITAI_ANTIPATTERN_SCAN_DIR is EMPTY (so the default `go test ./...`
+          # stays hermetic). So a renamed env key, or a `github.workspace` that
+          # expands to nothing, produces `--- SKIP` at exit 0: the scan never
+          # opens the scaffolded app and this required job goes green anyway.
+          # Requiring PASS rather than PASS-or-SKIP is what makes that visible —
+          # unlike pins-vs-published, this check has no network to be
+          # unreachable and no legitimate reason to skip once CI has set the var.
+          if ! grep -Eq -- '^ *--- PASS: TestScanDirFromEnv( |/|$)' "$RUNNER_TEMP/antipattern.log"; then
+            echo "::error::the anti-pattern scan exited 0 without PASSing TestScanDirFromEnv — either the -run pattern matched no test (renamed? moved?) or the test SKIPPED because CIVITAI_ANTIPATTERN_SCAN_DIR was empty. Either way the scaffolded app was never scanned."
+            exit 1
+          fi
 
       # (b) Build against the LATEST published SDK, not just the pinned caret.
       #     Probe npm first; if the registry is unreachable (network/DNS/5xx/429)
@@ -353,6 +531,33 @@ jobs:
           else
             echo "reachable=false" >> "$GITHUB_OUTPUT"
             echo "::notice title=scaffold-currency::skipped latest-SDK build check — npm registry unreachable (HTTP $code); not a real failure, re-run later"
+          fi
+
+      # 🔴 A GATE IS A PLACE A REQUIRED JOB CAN GO GREEN HAVING DONE NOTHING.
+      # The four steps below are all `if:`-gated on one output of one step. If
+      # that key is ever renamed or misspelled, or the probe step dies before
+      # reaching its `>> "$GITHUB_OUTPUT"` lines, the condition is false for a
+      # reason that has nothing to do with npm: all four SKIP, GitHub paints
+      # them grey, and this required job reports success having run only the
+      # offline anti-pattern scan — permanently, and looking exactly like a
+      # normal npm outage. The skip-on-unreachable contract is deliberate (see
+      # the job header); "skipped because the probe is broken" is not, and
+      # nothing else in the job could tell them apart.
+      #
+      # Assert the probe actually published one of its two verdicts. This does
+      # NOT re-decide reachability — it only refuses the third state.
+      - name: the reachability verdict exists
+        env:
+          REACHABLE: ${{ steps.npmprobe.outputs.reachable }}
+        run: |
+          set -uo pipefail
+          echo "npm reachability verdict: '$REACHABLE'"
+          if [ "$REACHABLE" != "true" ] && [ "$REACHABLE" != "false" ]; then
+            echo "::error::the npm reachability probe published no verdict (got '$REACHABLE'). The four latest-SDK steps are gated on it and would ALL have skipped silently, leaving this required job green having run only the offline anti-pattern scan."
+            exit 1
+          fi
+          if [ "$REACHABLE" != "true" ]; then
+            echo "::notice title=scaffold-currency::the latest-SDK build check did not run this time — npm was unreachable. This job's green is a statement about the offline anti-pattern scan only."
           fi
 
       - name: install (pinned)
