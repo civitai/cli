@@ -792,21 +792,26 @@ rule exists; confirm on a release, not the config:
 `gh release view v0.1.90 --json assets`). It stamps version/commit/date ldflags,
 produces archives + the bare `civitai-raw` binaries + `checksums.txt`, creates
 the GitHub Release (**`draft: true`** —
-publish manually after sanity-checking artifacts), and updates the **Homebrew
-cask** in `civitai/homebrew-tap` (goreleaser v2 uses `homebrew_casks:`, not the
-old `brews:`; needs the `HOMEBREW_TAP_GITHUB_TOKEN` secret with write to the
-tap). Validate config without releasing: `goreleaser check` and
+publish manually after sanity-checking artifacts), and RENDERS the Homebrew
+cask without pushing it (`skip_upload: true`).
+Validate config without releasing: `goreleaser check` and
 `goreleaser release --snapshot --clean` (dry-run into `./dist`).
 
-🔴 **TWO CHANNELS: PUBLISHING THE DRAFT IS WHAT FIRES THE SECOND.**
-`release-npm.yml` triggers on `release: types: [published]` and publishes the
-`npm/` wrapper **`@civitai/cli`**. So clicking "Publish release" is not the last
-step of the GitHub release — it is also, in the same click, an npm publish, and
-npm unpublish is restricted, so a bad version is fixed by publishing another, not
-by taking it back. Auth is **OIDC trusted publishing**: no `NPM_TOKEN`, and the
-trust is bound to repo + *that workflow file path*, so moving or renaming it
-breaks publishing and no secret rotation fixes it. Its own comments carry the
-rest (the `npm@11.18.0` pin, the raw-asset precondition) — read them there.
+🔴 **THREE CHANNELS, AND PUBLISHING THE DRAFT IS WHAT FIRES THE OTHER TWO.**
+`release-npm.yml` (**`@civitai/cli`**) and `release-homebrew.yml` (the cask in
+`civitai/homebrew-tap`) both trigger on `release: types: [published]`. So
+clicking "Publish release" is also an npm publish and a tap push — and npm
+unpublish is restricted, so a bad version is fixed by publishing another, not
+by taking it back. **NOTHING DOWNSTREAM MAY ACT ON A TAG ALONE.** Until #306
+goreleaser pushed the cask beside the DRAFT, so `brew install` named archives
+that 404: ~2h broken on 2026-08-09, while npm, already on `published`, stayed
+correct. Rejected: dropping `draft: true` for an automated pre-publish smoke
+test — it deletes the human gate for a test that cannot pre-check what it
+ships. `tools/caskcheck` asserts it daily over real UNAUTHENTICATED HTTP — a
+draft is visible to any repo token. npm auth is **OIDC trusted publishing**: no
+`NPM_TOKEN`, bound to repo + *that workflow file path*, so moving or renaming
+it breaks publishing and no secret rotation fixes it. Each workflow's comments
+carry the rest.
 
 ## License
 

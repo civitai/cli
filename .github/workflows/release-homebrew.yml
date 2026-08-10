@@ -1,0 +1,212 @@
+name: Release Homebrew cask
+
+# THE HOMEBREW CHANNEL WAITS FOR THE RELEASE TO BE PUBLISHED. THAT IS THE WHOLE
+# POINT OF THIS FILE.
+#
+# `.goreleaser.yaml` sets `release.draft: true` deliberately — the maintainer
+# sanity-checks the artifacts before anyone can download them. But until
+# 2026-08-09 the SAME goreleaser run that created the draft also pushed the cask
+# bump to civitai/homebrew-tap, so the cask named a version whose assets 404 for
+# everybody. Measured that day, with v0.1.91 tagged at 01:09Z and still a draft
+# hours later:
+#
+#   cask Casks/civitai.rb          version "0.1.91"
+#   GET .../download/v0.1.91/civitai_0.1.91_linux_amd64.tar.gz   404
+#   GET .../download/v0.1.90/civitai_0.1.90_linux_amd64.tar.gz   200
+#   npm @civitai/cli                                             0.1.90 (correct)
+#
+# `brew install civitai/tap/civitai` failed for every user for ~2 hours. npm was
+# correct throughout for exactly one reason: `release-npm.yml` triggers on
+# `release: types: [published]`. This workflow makes Homebrew behave the same
+# way, so the two channels are consistent and neither can jump the draft.
+#
+# 🔴 IT PUSHES THE CASK GORELEASER ALREADY RENDERED — IT DOES NOT RENDER ONE.
+# The cask is built at TAG time by `goreleaser` and attached to the release as
+# `civitai.rb` (see release.yml); this job downloads that exact file and commits
+# it. Two alternatives were rejected, both measured:
+#
+#   * Re-running goreleaser here. The cask carries a sha256 per archive, and the
+#     builds are NOT reproducible — `-X main.date={{ .Date }}` stamps the build
+#     time, so two runs of the same tree produce different binaries. Measured on
+#     2026-08-09: two consecutive `goreleaser release --snapshot` runs over an
+#     identical tree rendered FOUR different sha256 values. A re-render would
+#     therefore publish checksums that do not match the uploaded archives, and
+#     `brew install` verifies them — trading a 404 for a checksum failure.
+#   * Rendering the cask here from `checksums.txt`. That is a second copy of
+#     goreleaser's cask template (the on_macos/on_intel structure, the postflight
+#     quarantine hook, livecheck, desc/homepage) to keep in lockstep by hand.
+#     Moving a file goreleaser wrote duplicates nothing.
+
+on:
+  release:
+    types: [published]
+  # Daily invariant check. The `verify` job below runs on this trigger with
+  # `push-cask` skipped, so a cask that has drifted out of step for ANY reason —
+  # a hand edit to the tap, a failed run nobody read, a future change to this
+  # pipeline — is caught within a day rather than by a user's failed install.
+  schedule:
+    - cron: "23 13 * * *"
+  # Recovery path, in the shape release.yml and ci.yml already use: an Actions
+  # incident can drop the `release` webhook, and this is the only trigger that
+  # does not ride one. It cannot be back-applied, so it will look unused until
+  # the day it is not. Do not prune it.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Published release tag to push the cask for, with the leading v — e.g. v0.1.92. Leave empty to only run the verify job."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+# One tap writer at a time. Two releases published minutes apart would otherwise
+# race on a git push to the same file.
+concurrency:
+  group: homebrew-cask
+  cancel-in-progress: false
+
+jobs:
+  # NOT filtered on `prerelease`. goreleaser's cask pipe pushed on every tag
+  # regardless (its `skip_upload: "auto"` prerelease skip was never enabled
+  # here), so this preserves the existing behaviour rather than quietly adding a
+  # rule; this repo has never cut a prerelease. If that changes, decide it
+  # deliberately — a prerelease moving the cask would ship it to every `brew`
+  # user.
+  push-cask:
+    # A scheduled run has no release to push; it exists to run `verify` only.
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.tag != '')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: t
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then TAG="$INPUT_TAG"; else TAG="$RELEASE_TAG"; fi
+          if [ -z "$TAG" ]; then
+            echo "::error::no tag resolved — refusing to guess which release to push a cask for."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      # Belt and braces on a dispatch: `release: published` cannot fire for a
+      # draft, but a hand-typed tag can name one, and pushing a cask for a draft
+      # is precisely the bug this workflow exists to end.
+      - name: Refuse a release that is not published
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          set -euo pipefail
+          draft="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)"
+          if [ "$draft" != "false" ]; then
+            echo "::error::release $TAG is still a DRAFT (isDraft=$draft). Its assets 404 for users, so the cask must not name it. Publish the release first."
+            exit 1
+          fi
+
+      - name: Download the cask goreleaser rendered for this tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p rendered
+          if ! gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'civitai.rb' --dir rendered; then
+            echo "::error::release $TAG carries no civitai.rb asset. That asset is uploaded by release.yml right after goreleaser renders it; a release tagged before that step existed cannot be pushed by this workflow. Re-run release.yml for $TAG (workflow_dispatch) to produce it."
+            exit 1
+          fi
+          test -s rendered/civitai.rb
+
+      # The asset is addressed by tag, and a dispatch can name the wrong one.
+      # A cask whose version does not match the tag would ship users a formula
+      # for a different release, so this is a refusal, not a warning.
+      - name: Verify the cask names this tag's version
+        env:
+          VERSION: ${{ steps.t.outputs.version }}
+        run: |
+          set -euo pipefail
+          got="$(sed -n 's/^[[:space:]]*version "\([^"]*\)".*/\1/p' rendered/civitai.rb | head -1)"
+          if [ -z "$got" ]; then
+            echo "::error::rendered/civitai.rb has no version stanza — refusing to push a cask this workflow cannot read."
+            exit 1
+          fi
+          if [ "$got" != "$VERSION" ]; then
+            echo "::error::the downloaded cask names version '$got' but the tag is '$VERSION'. Refusing to push a mismatched cask."
+            exit 1
+          fi
+          echo "cask version $got matches tag."
+
+      - name: Push the cask to civitai/homebrew-tap
+        env:
+          # PAT with write access to the tap. Same secret goreleaser used when it
+          # pushed from the tag-time run; nothing else changed about the auth.
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_GITHUB_TOKEN }}
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAP_TOKEN:-}" ]; then
+            echo "::error::HOMEBREW_TAP_GITHUB_TOKEN is not set; cannot write to the tap."
+            exit 1
+          fi
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/civitai/homebrew-tap.git" tap
+          mkdir -p tap/Casks
+          cp rendered/civitai.rb tap/Casks/civitai.rb
+          cd tap
+          # Author and message match what goreleaser committed for every release
+          # up to v0.1.91, so the tap's history stays one continuous series
+          # (`commit_author` in .goreleaser.yaml, and goreleaser's own default
+          # `Brew cask update for {{ .ProjectName }} version {{ .Tag }}`).
+          git config user.name "civitai-bot"
+          git config user.email "bot@civitai.com"
+          # 🔴 STAGE FIRST, THEN ASK. `git diff --quiet -- <path>` reports NO
+          # DIFF for an UNTRACKED file, so the obvious spelling would announce
+          # "already matches; nothing to push" for a tap that does not carry the
+          # cask at all — a silent no-op wearing a success message. Caught in a
+          # local rehearsal against a fake remote, not in review.
+          git add Casks/civitai.rb
+          if git diff --cached --quiet -- Casks/civitai.rb; then
+            echo "Casks/civitai.rb already matches this release; nothing to push."
+            exit 0
+          fi
+          git commit -m "Brew cask update for civitai version ${TAG}"
+          git push
+
+  # The invariant assertion. It is separate from the mechanism above on purpose:
+  # a mechanism can regress, and this asks the question a user asks — does the
+  # URL in the cask actually serve a file? — over real, UNAUTHENTICATED HTTP.
+  #
+  # 🔴 It must not be able to pass by not running. `always()` here is scoped so
+  # that a skipped `push-cask` (the scheduled run) still verifies, while a
+  # cancelled one does not silently report clean. A FAILED push-cask deliberately
+  # still verifies: if the push failed, the invariant is what tells you whether
+  # users are affected.
+  verify:
+    needs: [push-cask]
+    if: always() && needs.push-cask.result != 'cancelled'
+    runs-on: ubuntu-latest
+    steps:
+      # 🔴 THE DEFAULT BRANCH, NOT THE RELEASE'S COMMIT. A `release` event
+      # checks out the tag by default, and a release tagged before this checker
+      # existed does not contain it — the job would fail to build rather than
+      # report on the tap. The question here is about the CURRENT state of the
+      # world, so it is always asked with the CURRENT checker.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+      - name: Cask names a publicly downloadable version
+        env:
+          # Used for the releases-API lookup only (rate limit). The archive
+          # probes deliberately carry no credential — a draft release IS visible
+          # to a repo token, so an authenticated probe would be answered by the
+          # very object whose invisibility to users is the outage.
+          GITHUB_TOKEN: ${{ github.token }}
+        run: go run ./tools/caskcheck

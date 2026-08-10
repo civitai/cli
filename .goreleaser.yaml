@@ -68,10 +68,39 @@ changelog:
 
 # Homebrew tap (cask). goreleaser v2 replaced `brews:` with `homebrew_casks:`.
 # ENABLED 2026-06-24: `civitai/homebrew-tap` is PUBLIC (audited clean) and the
-# HOMEBREW_TAP_GITHUB_TOKEN repo secret (write to the tap) is set, so goreleaser
-# pushes the updated cask formula to the tap on each tag.
+# HOMEBREW_TAP_GITHUB_TOKEN repo secret (write to the tap) is set.
+#
+# 🔴 GORELEASER RENDERS THE CASK AND MUST NEVER PUSH IT — see `skip_upload`.
 homebrew_casks:
   - name: civitai
+    # THE TAP PUSH DOES NOT BELONG TO THE TAG-TIME RUN, BECAUSE `release.draft`
+    # BELOW IS TRUE. Until 2026-08-09 this run pushed the cask at the same moment
+    # it created the DRAFT release, so the cask named a version whose archives
+    # 404 for everybody. Measured, v0.1.91 tagged 01:09Z and still a draft hours
+    # later: the cask said `version "0.1.91"` while
+    # `.../download/v0.1.91/civitai_0.1.91_linux_amd64.tar.gz` answered 404 and
+    # the v0.1.90 archive answered 200. `brew install civitai/tap/civitai` was
+    # broken for ~2 hours. npm was unaffected because `release-npm.yml` waits for
+    # `release: published`; `.github/workflows/release-homebrew.yml` now makes
+    # the Homebrew channel wait for the same event.
+    #
+    # 🔴 THIS IS `true`, NOT `"auto"`, AND "auto" WOULD NOT HAVE HELPED.
+    # Verified in goreleaser's source (v2.17.1, internal/pipe/cask/cask.go,
+    # doPublish): "auto" skips only when `ctx.Semver.Prerelease != ""`. It does
+    # not consult `release.draft` at all — no reference to it exists in that
+    # pipe — so "auto" would have pushed the cask on 2026-08-09 exactly as the
+    # unset default did.
+    #
+    # 🔴 THE CASK IS STILL RENDERED. `skip_upload` is read in doPublish only;
+    # doRun writes `dist/homebrew/Casks/civitai.rb` regardless (goreleaser's own
+    # comment in publishAll: "this is needed so we actually create the
+    # `dist/foo.rb` file"). release.yml attaches that file to the release, and
+    # release-homebrew.yml pushes those exact bytes once the release is
+    # published. Do not "fix" this by deleting the line: that restores the
+    # outage. Do not "fix" it by re-rendering the cask later either — the builds
+    # are not reproducible (`-X main.date={{ .Date }}`), so a second render
+    # produces different sha256 values than the archives that were uploaded.
+    skip_upload: true
     # Pin the cask to the tar.gz archive only. Without this, the added
     # `civitai-raw` (bare binary) archive gives two archives per OS/Arch and
     # goreleaser errors ("one tap can handle only one archive of an OS/Arch
@@ -98,6 +127,10 @@ homebrew_casks:
           end
 
 release:
+  # Publishing this draft is what releases the CLI on BOTH downstream channels:
+  # `release-npm.yml` publishes `@civitai/cli` and `release-homebrew.yml` pushes
+  # the Homebrew cask, both on `release: types: [published]`. Nothing downstream
+  # of this file may act on a tag alone.
   draft: true
   footer: |
     ## Install
