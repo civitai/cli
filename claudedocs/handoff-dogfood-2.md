@@ -245,7 +245,7 @@ ceiling. That is a design task, not a prompt.
    shipped all three. Close the three issues; see the follow-ups table.
 2. 🔴 **`AGENTS.md` is 201 bytes from its hard ceiling** — 67,799 of 68,000
    (`agents_size_test.go`). **The next person who needs an item cannot add one**, and #294 hit
-   this for real: it wrote an item 28, found it did not fit, and correctly refused to fake an
+   this for real: it drafted a new item (which would have been the 28th), found it did not fit, and correctly refused to fake an
    eviction (the playbook requires pinning a `sha256` at `agentsSplitBase`, where the new item
    never existed, so claiming a verbatim move would be false). Its rationale lives in code doc
    comments instead. Unblocking means deliberately evicting item 19 or 10 (~7.8 kB each, both
