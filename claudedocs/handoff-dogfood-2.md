@@ -243,14 +243,24 @@ ceiling. That is a design task, not a prompt.
 
 1. ~~**#283 + #285 as one small PR**~~ — **DONE**, and #284 came with them: PR #294 (`9862c1e`)
    shipped all three. Close the three issues; see the follow-ups table.
-2. 🔴 **`AGENTS.md` is 201 bytes from its hard ceiling** — 67,799 of 68,000
-   (`agents_size_test.go`). **The next person who needs an item cannot add one**, and #294 hit
+2. ✅ **DONE — `AGENTS.md` was 201 bytes from its hard ceiling** — 67,799 of 68,000
+   (`agents_size_test.go`). **The next person who needed an item could not add one**, and #294 hit
    this for real: it drafted a new item (which would have been the 28th), found it did not fit, and correctly refused to fake an
    eviction (the playbook requires pinning a `sha256` at `agentsSplitBase`, where the new item
    never existed, so claiming a verbatim move would be false). Its rationale lives in code doc
-   comments instead. Unblocking means deliberately evicting item 19 or 10 (~7.8 kB each, both
-   at the split base, so the playbook works) — a change on its own, never folded into an
-   unrelated PR.
+   comments instead. Closed by PR #305, which evicted BOTH items 10 and 19.
+   **The figures above are the pre-#297 state**; #297 then compressed the file to 67,213 and
+   lowered the ceiling to 67,500, and #305 took it from there to **53,950 bytes** (−13,263,
+   19.7%) with the ceiling re-pinned to **54,250** and `agentsMaxBytesCeiling` to **64,000**.
+   🔴 **The parenthetical here — "both at the split base, so the playbook works" — was FALSE by
+   the time it was read**, and it is left visible rather than deleted because it is the reason
+   that PR's shape changed. #297's compression pass had already rewritten both items (10 by 22
+   bytes, 19 by 77), so neither was byte-identical to `agentsSplitBase` and a digest taken there
+   would have pinned text that was not what was moved. `agents_size_test.go` carried the same
+   false claim in its own comment. The fix was a **per-item `base` field** on the splitItems
+   table — a body's base commit is fixed at the moment it is evicted, and after wave 1 the nine
+   moved bodies do not exist in `AGENTS.md` at ANY later commit, so one global constant was
+   never going to survive a second wave.
 3. 🔴 **#267 shipped a breaking change under a `fix:` subject with no `!`.** It refuses
    non-ASCII names that previously scaffolded. `.goreleaser.yaml` filters release notes on
    subjects, so the `BREAKING CHANGE:` footer in the commit body will **not** surface. The

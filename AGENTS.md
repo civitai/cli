@@ -322,12 +322,16 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
    `AI workflow submits` there and as `workflow:submit` / `ai:write:budgeted`
    here (`app_metrics.go`, the `Top endpoints` / `Top scopes` sections). That was
    a **deliberate non-mirror**, decided when the web labels landed: reproducing
-   them would add a THIRD vendored mapping to keep in lockstep with the server
-   (alongside `schema/` and the slot registry), and unlike those two it buys no
+   them would add a FIFTH vendored mapping to keep in lockstep with the server
+   (alongside `schema/`, the slot registry, item 10's dev-tunnel dotenv mirror
+   and item 11's ready-ack emitter), and unlike those four it buys no
    correctness — a raw token is accurate, just terse, and the values are already
    bounded so they aggregate readably. The raw form is arguably *better* for the
    CLI's scripting audience, and `--json` must keep emitting raw tokens
-   regardless.
+   regardless. 🔴 The count was stale and read "a THIRD … (alongside `schema/`
+   and the slot registry)": this item predates items 10 and 11, and neither
+   recounted it. Four is the number the closing paragraph and both of those
+   items already state — check it there before quoting it here again.
    Cost to know about: an author reading the same range on both surfaces sees two
    vocabularies, and a legacy pre-bounding row shows here as
    `workflow:submit:<id>` where the web shows `Generations (<id>)`. If you decide
@@ -388,107 +392,19 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
 
 10. **The `dev-tunnel` embeddability preflight WARNS and never blocks, and its
     two halves have deliberately different evidentiary strength.**
-    `internal/devtunnel/embedcheck.go` catches the failure mode where the tunnel
-    is perfectly healthy but the browser refuses to run the app — the host
-    iframes the dev server sandboxed (`allow-scripts allow-forms`, no
-    `allow-same-origin`), so it runs at an opaque `null` origin.
-    `CheckEmbeddable` is **evidence**: it GETs `/@vite/client` with
-    `Origin: null` through the same `DialLocalDevServer` the proxy uses, and
-    reads real response headers. `CheckParentOrigins` is a **heuristic** —
-    `VITE_BLOCK_ALLOWED_PARENT_ORIGINS` is inlined into the bundle at transform
-    time and cannot be observed over HTTP, so it is a **vendored mirror** (one of
-    four — `schema/`, the slot registry, this, and item 11's ready-ack emitter):
-    `resolveViteEnv` reproduces Vite's dev env resolution, where `.env.<mode>`
-    beats `.env` and a REAL process env var beats every file (dotenv does not
-    overwrite existing vars) — getting that last rule backwards warns at authors
-    who exported the value in their shell. It is gated to dirs holding a manifest
-    AND a package.json depending on `@civitai/app-sdk`, because `dev-tunnel`
-    takes an explicit blockId and runs from anywhere. Neither check is ever
-    fatal: one HTTP response cannot rule out a proxy, a non-Vite dev server or a
-    deliberately exotic setup, and hard-failing would regress flows that work
-    today — so a check that cannot observe returns NO findings rather than
-    manufacturing advice. Measured on Vite **6.4.3 and 8.2.0 alike**: a stock dev
-    server answers a null-origin module fetch `200` with **no**
-    `Access-Control-Allow-Origin`, and 403s a `dev-*.civit.ai` Host. Two traps if
-    you touch it: the probe's baseline `Host` MUST be the real `host:port` (a
-    placeholder authority trips Vite's own DNS-rebinding check and manufactures
-    findings for a healthy server), and the CLI predicate is pinned to the
-    page-money template by the seam guards in
-    `internal/scaffold/dev_embed_contract_test.go`, which render the real
-    template, extract the values it emits and require the CLI's own check to
-    accept them — so drift on EITHER side fails loudly.
-    Four rules are counter-intuitive and were each measured after a first draft
-    got them wrong — every one produced a FALSE WARNING at a correctly configured
-    project, the worst outcome for advisory output because it teaches authors to
-    ignore it:
-    (a) **`frame-ancestors` OBSOLETES `X-Frame-Options`** (CSP L3) — when both are
-    present browsers enforce frame-ancestors and IGNORE XFO, so XFO is only
-    consulted when NO frame-ancestors directive is present. (b) **Only a 2xx
-    baseline is interpretable**: a 401/403/5xx came from something other than the
-    app (auth proxy, deny gate), so its headers say nothing — reading CORS off
-    one blamed healthy servers, and reading the follow-up 403 blamed
-    `allowedHosts` for a proxy that refuses everything identically. A 3xx is NOT
-    in that list: see (e). (c) **`'none'` is decisive only as the SOLE source**,
-    and every `Content-Security-Policy` header must be evaluated
-    (`Header.Values`, not `Get`) because policies combine restrictively.
-    (d) The **dotenv mirror is verified DIFFERENTIALLY against Vite's own
-    `loadEnv`**, not against assumptions. `KEY: value` is VERSION-DEPENDENT —
-    Vite 8 (dotenv 17) resolves it to nothing while Vite 6 (dotenv 16) accepts
-    it — and the mirror deliberately does not accept it, matching the `vite ^8`
-    that page-money pins; page-vite pins `vite ^6` but carries no SDK, so the
-    parent-origins check is gated off there and the divergence is unreachable.
-    Also established by that differential: an unresolved `${NOPE}` expands to the
-    EMPTY string rather than its own text; backtick quoting is supported; an
-    unquoted `#` starts a comment ANYWHERE, not only after a space; the mirror
-    MERGES every env file before expanding once (`.env` may define what
-    `.env.development` interpolates, and expanding per file resolved that to
-    nothing); a reference resolves against the PROCESS env before the file
-    values; `${X:-default}` is supported; and a self-reference (`K=${K}x`)
-    resolves to the process value or empty, which is what makes it terminate. If
-    you change the parser, re-run that differential — a same-process dotenv
-    harness silently CONTAMINATES itself, because dotenv-expand writes resolved
-    values into `process.env` and later cases then read the earlier answer.
-    (e) The 2xx gate must NOT be reached by refusing redirects. A Vite project
-    with a `base` path 404s `/@vite/client` and 302s `/`, so "don't follow
-    redirects" plus "only 2xx is interpretable" made a genuinely un-embeddable
-    server report CLEAN — the over-strict correction to (b). Same-host redirects
-    are followed (bounded) and the FINAL response is judged; a cross-host
-    Location is never followed, because the transport always dials the local dev
-    server and would just send someone else's Host to it. Two consequences that
-    are easy to get wrong: a 200 reached VIA a redirect is not evidence about the
-    path you asked for (`isVite` must re-check `finalPath`, or an SPA dev server
-    that bounces unknown paths to an index gets classified Vite and handed
-    vite.config.ts advice), and `net/http` DROPS a custom `Request.Host` across an
-    absolute redirect, which silently turns the tunnel-Host probe into an ordinary
-    loopback request unless it is re-applied.
-    🔴 **The findings are printed TWICE on purpose, and the duplicate is the
-    fix — not an oversight to collapse.** Printing them once, immediately before
-    the "open this URL" block, is the right placement — the last thing on screen
-    before the URL should be the reason the URL won't work — but insufficient,
-    because the readiness wait sits in front of it. Measured over three runs
-    against the live endpoint (#226): >60 s (killed), >3:00 (never resolved),
-    ~2:30–3:00 — and the 45-second run produced **zero** preflight output,
-    because the author killed an apparently-hung command. So the check with the
-    best diagnostics in the product was invisible to the user most likely to need
-    it: the silent failure it exists to end, reproduced by the placement meant to
-    fix it. Moving the print EARLIER just swaps which failure you get — on a slow
-    tunnel it scrolls away behind minutes of heartbeat lines. Hence both, and the
-    duplicate is the accepted cost. It was chosen over a "re-print only if the
-    wait was slow" threshold specifically because it carries **no timing
-    dependency**: nothing to tune, no clock to mock, and both placements are
-    pinned by ordering assertions against the injected `probePublic` seam rather
-    than by wall-clock timing. `--no-wait` is the ONE exception and it drops the
-    EARLY print, not the late one — there is no wait to scroll behind, so a
-    second copy would only duplicate an eight-line `vite.config.ts` block a few
-    seconds apart.
-    Related, same issue: the DNS-pending heartbeat's estimate is now the single
-    constant `dnsPublishNote`, shared by the TTY spinner and the non-TTY
-    heartbeat because they held two hand-copied copies of it. It used to say
-    "usually <1 min", which **0 of 3** measured runs met. An estimate the wait
-    routinely blows past is what makes a working command read as a hang — which
-    is what got the run killed in the first place — so it states a range and
-    says longer is normal. Three runs do not support a percentile; do not
-    replace it with one you have not measured.
+    `internal/devtunnel/embedcheck.go` catches the failure where the tunnel is
+    healthy but the browser refuses to run the app, because the host iframes the
+    dev server sandboxed, at an opaque `null` origin. `CheckEmbeddable` reads
+    real response headers off a real probe and is **evidence**;
+    `CheckParentOrigins` cannot observe a value inlined at transform time, so it
+    is a **heuristic** — and one of the four vendored mirrors, reproducing
+    Vite's dotenv resolution. Neither is ever fatal: a check that cannot observe
+    returns NO findings rather than manufacturing advice. That doctrine — cited
+    across this repo as "the failure item 10 spent four measured corrections
+    avoiding" — is what those four corrections bought, each having produced a
+    FALSE WARNING at a correctly configured project, the worst outcome for
+    advisory output because it teaches authors to ignore all of it.
+    → evidence: claudedocs/decisions/10-dev-tunnel-embeddability.md
 
 11. **The scaffold VENDORS the block→host ready-ack (`internal/blockproto/`),
     and it is the FOURTH vendored mirror.** A `page` app is not shown by the
@@ -686,114 +602,15 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
 
 19. **img2img sends `workflow: "txt2img"` PLUS `images[]`, requires
     `--ecosystem`, and uploads with NO credential — three things that each read
-    like a bug.**
-
-    (a) **The workflow value stays `txt2img`.** There is no `--workflow` flag and
-    `generateWorkflow` is still the constant `"txt2img"` even when `--image` is
-    present. The server does the promotion itself: `normalizeImageWorkflow`
-    (`civitai/civitai → src/server/services/orchestrator/orchestration-new.service.ts`)
-    rewrites `txt2img` + non-empty `images` to `img2img:edit` *before* graph
-    validation. Sending `img2img:edit` ourselves would mean vendoring which
-    ecosystems offer it (18 of them, gated by `isWorkflowAvailable`) — item 13's
-    prohibition exactly. `--input` still refuses a non-`txt2img` workflow, and
-    that refusal must stay.
-
-    (b) 🔴 **`--image` REFUSES to run without `--ecosystem`, and that refusal is
-    not the local validation item 13 forbids.** It checks a FLAG COMBINATION the
-    CLI owns; it asserts nothing about which ecosystems exist or what any of them
-    allows, and `--ecosystem` itself is passed through unexamined. It is a hard
-    error because without it the flag is a **guaranteed no-op that still
-    charges**: `normalizeImageWorkflow` reads `ecosystem` off the RAW request
-    body, *before* the graph applies its own ecosystem default, so an absent
-    ecosystem skips the promotion — and then the default ecosystem
-    (`ZImageTurbo`) has no `images` node at all, so the graph engine
-    (`data-graph.ts` `_evaluate` → `if (def.when === false)`) **deletes the key
-    with zero diagnostics** and `_buildValidationResult` records no error.
-    Measured against civitai.com: `{workflow:txt2img, images:[<real image>]}`
-    with no ecosystem priced **8** with factors `{base,pixels,steps,quantity}` —
-    byte-identical to the same graph carrying no images, HTTP 200 throughout.
-
-    🔴 **And the CLI still cannot tell you whether the promotion actually
-    fired.** The whatIf reply carries `{ready, cost, transactions,
-    allowMatureContent}` — plus, since item 21, `modelSubstitutions` — and no
-    detector — "did a `factors.images` key appear?" — is WRONG, and a
-    differential estimate ("does the price change when I add the images?") is
-    wrong the same way: measured, `Flux1Kontext`, `NanoBanana` and `Seedream`
-    are all genuinely edit-capable and all price **byte-identically with and
-    without images**, because their cost model is a flat `base`. Only `Qwen`
-    grows an `images` factor. So both detectors would refuse valid img2img on the
-    three most obvious edit ecosystems. **Do not add either one.** The command
-    prints an explicit caveat at the confirmation instead, which is the honest
-    answer: an ecosystem with no images node drops them and bills a plain
-    txt2img, and nothing observable distinguishes that from a real edit job.
-
-    (c) **The reference-image cap is ONE global ceiling (7), not a per-ecosystem
-    table — and the sub-ceiling gap is deliberate, not unfinished.** Real limits
-    span 1..7 and live only inside the per-engine graph files. The server's own
-    helper for this (`src/shared/data-graph/generation/images-limit.ts`) says in
-    its header that a flat constant "would simultaneously over-allow the 1-image
-    ecosystems and under-allow the 7-image ones" and that copying the spread
-    yields "a parallel table that rots the moment a graph file changes" — so it
-    instantiates the real graph. The CLI cannot, and `getImagesLimit` is not
-    exposed over any API, so there is no live lookup to make either. Above 7 the
-    array is truncated for *every* ecosystem, so refusing there cannot block a
-    valid request; below it the CLI genuinely does not know and warns instead.
-    🔴 The truncation is what makes this matter: `imagesNode`'s input transform
-    does `arr.slice(0, max)` **before** the output schema's `.max()` check, so an
-    over-limit list can never trip the server's own "Maximum N images allowed"
-    message — the extras are simply gone and the truncated job is billed.
-    Measured on `Qwen` (max 3): 4, 5, 6 and 12 images all priced 60 with an
-    identical `images: 1.2` factor, byte-identical to 3.
-
-    (d) **`GraphImage.Width`/`Height` are VALUE ints with no `omitempty`, which
-    contradicts item 14 on every other field.** Opposite situation: the server
-    *requires* both. The images node takes them as optional on INPUT and then
-    validates the transformed array against an output schema where both are
-    required numbers, so omitting them is a hard 400 — measured:
-    `images:[{"url":"…"}]` returns `Validation failed: images: Invalid input:
-    expected number, received undefined`. A **bare URL string** fails identically
-    even though the input union accepts one, because the transform turns it into
-    `{url}` with no dimensions. There is no server-side dimension probe on this
-    path (the only `getImageDimensions` is a browser `Image()` loader used by
-    React components). So there is no "unset" state to preserve, and `omitempty`
-    would additionally erase a legitimate 0.
-    Dimensions come from `image.DecodeConfig` — **header only, never `Decode`**,
-    which would materialise every pixel to learn two integers — and the upload's
-    Content-Type comes from the DECODED format, not the filename extension.
-
-    (e) 🔴 **The presigned upload carries NO credential, and item 17 carries the
-    full argument — read it there rather than re-deriving it here.**
-    `UploadPresigned` (`pkg/civitai/upload.go`) is a near-duplicate of
-    `DownloadPresigned` and will attract the same "fold it back in behind a
-    bool". The upload URL is **server-supplied** and lives on a `*.civitai.com`
-    host (observed: `orchestration-new.civitai.com`), which
-    `isTrustedDownloadHost` **matches**, so a token-carrying path would hand a
-    25-scope personal API key to a request its own signature already authorizes.
-    The WILDCARD is the load-bearing fact and the subdomain is incidental. Here
-    the safety is structural rather than conditional: the interface has no token
-    parameter and consults no `TokenSource`. `genapi.UploadImageBlob`'s two hops
-    differ on purpose — hop 1 (presign) is authed, hop 2 (upload) is not — and
-    the test asserts BOTH, since "hop 2 had no auth" alone cannot distinguish
-    correctness from a recorder wired to nothing.
-    Everything genuinely shared IS shared: `UploadPresigned` reuses
-    `downloadHTTPClient()` wholesale (SSRF dial guard, redirect policy,
-    `ResponseHeaderTimeout`) and the https check is the single
-    `requireHTTPSTransfer` predicate the download path also calls — the verb is a
-    message parameter, not a second implementation. Two details that are not
-    style: the method is **POST** (`POST /v2/consumer/blobs`, not PUT), and the
-    body is a `[]byte` rather than a reader so the request carries a real
-    `Content-Length` and is replayable.
-    One more: `getConsumerBlobUploadUrl` is **REST, not tRPC** — the one
-    generation-adjacent route that is. It is a plain GET returning a bare
-    `{uploadUrl, expiresAt}`, so it must never go through `unwrapTRPC`, and
-    reading item 12 as "everything here is tRPC" produces a 404.
-
-    (f) **`--dry-run` and `--print-input` DO upload local `--image` files.** An
-    estimate built on a graph with no `images[]` prices a plain txt2img, and
-    `--print-input` must emit a document `--input` can submit, which means real
-    blob URLs rather than local paths. An upload spends no Buzz, but it is a
-    network write — so `--print-input`'s "reaches no money seam" claim is still
-    true while its "no request at all" claim is not, with `--image`.
+    like a bug.** The server promotes `txt2img` + non-empty `images` to
+    `img2img:edit` itself, so sending the edit workflow would mean vendoring
+    which ecosystems offer it — item 13's prohibition exactly. `--image`
+    without `--ecosystem` is a hard error because the promotion reads the
+    ecosystem off the RAW request body, so an absent one silently skips it and
+    the flag becomes a guaranteed no-op THAT STILL CHARGES. The presigned upload
+    carries no credential, for item 17's reason. 🔴 And the CLI still cannot
+    tell you whether the promotion actually fired — do not add a detector.
+    → evidence: claudedocs/decisions/19-img2img-workflow-and-upload.md
 
 20. **The ready-ack advisory has TWO TIERS, the message names which one ran, and
     that disclosure is the fix — not a nicety.** `validate`'s page-without-ack

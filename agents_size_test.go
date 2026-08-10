@@ -36,39 +36,58 @@ import (
 
 // agentsMaxBytes is the ceiling on AGENTS.md.
 //
-// Achieved size: 67,213 bytes. The ceiling is 67,500 — 287 bytes of headroom,
-// deliberately far tighter than the 4,937 it replaced, because a COMPRESSION
-// PASS measured that the old headroom's premise no longer holds.
+// Achieved size: 53,950 bytes, after wave 2 of the evidence split moved items 10
+// and 19 out (13,263 bytes net, 19.7% of the file, in one change). The ceiling is
+// 54,250 — 300 bytes of headroom, the same deliberate tightness as the 287 it
+// replaces and for the same measured reason.
 //
-// 🔴 THE HEADROOM IS SMALL BECAUSE SQUEEZING IS NO LONGER AN OPTION. The old
+// 🔴 THE HEADROOM IS SMALL BECAUSE SQUEEZING IS NO LONGER AN OPTION. An earlier
 // number assumed that when the file got close, prose could be tightened to make
 // room. That was measured and it is false: a full lossless compression pass over
 // every unsplit item and every prose section recovered 586 bytes — 0.86% — and
 // most of that came from ONE genuine cross-item duplication (item 19(e) restated
-// item 17's credential argument in full). Mechanically, the file holds only 23
-// repeated 7-word n-grams in 67 kB, and every one is a deliberate parallel
-// construction rather than accidental redundancy. The prose is at its floor.
+// item 17's credential argument in full). Mechanically the file held only 23
+// repeated 7-word n-grams in 67 kB, every one a deliberate parallel construction
+// rather than accidental redundancy. The prose is at its floor; EVICTION is the
+// only lever with anything left in it, and wave 2 recovered ~25x what the
+// compression pass did.
 //
-// So headroom here no longer means "slack to grow into". It means: THE BUDGET
+// So headroom here does not mean "slack to grow into". It means: THE BUDGET
 // BEFORE AN EVICTION IS MANDATORY.
 //
-//   - 287 bytes absorbs a re-measured number or a corrected sentence.
+//   - 300 bytes absorbs a re-measured number or a corrected sentence.
 //   - It does NOT absorb a new retraction paragraph (300–800 bytes), a new stub
 //     (~600–700), or a new item written as a full body (8.5–28 kB).
 //   - Anything in that second list must be paid for by MOVING a body out, not by
 //     raising this constant. The failure message prints the eviction playbook and
-//     ranks the candidates; items 10 (7,795 bytes) and 19 (7,801) are the two
-//     largest still inline, and both are byte-identical to agentsSplitBase, so
-//     their digests can be taken straight from `git show <base>:AGENTS.md`.
+//     ranks the candidates.
+//
+// 🔴 THE CANDIDATE LIST THAT USED TO SIT HERE IS DELETED RATHER THAN UPDATED,
+// AND THAT IS THE LESSON. It named items 10 and 19 with their byte sizes and
+// asserted "both are byte-identical to agentsSplitBase, so their digests can be
+// taken straight from `git show <base>:AGENTS.md`". By the time anyone read it
+// that was FALSE — #297's compression pass had rewritten both, 22 bytes and 77
+// bytes respectively — so the shortcut it offered would have pinned text that
+// was not what was being moved. A hand-maintained ranking in a comment goes
+// stale silently while reading as current; evictionPlaybook() computes the same
+// ranking from the live file at the moment of failure, which is the copy that
+// cannot rot. Do not reintroduce one here.
 //
 // Do not raise this to make a large item fit. Split the item.
-const agentsMaxBytes = 67_500
+const agentsMaxBytes = 54_250
 
-// agentsMaxBytesCeiling bounds agentsMaxBytes itself. 80,000 is ~19% above the
+// agentsMaxBytesCeiling bounds agentsMaxBytes itself. 64,000 is ~19% above the
 // achieved size: past that the numbered list is back to being a per-session cost
 // large enough that the split bought nothing, so raising agentsMaxBytes beyond
 // it is a decision about the whole approach, not a bump.
-const agentsMaxBytesCeiling = 80_000
+//
+// 🔴 IT MOVES DOWN WITH THE ACHIEVED SIZE, OR IT STOPS BOUNDING ANYTHING. Left
+// at the 80,000 that was ~19% above the PRE-wave-2 size, it would sit ~48% above
+// the achieved one — enough slack to re-inline both items just moved out and
+// still pass, which is the same "a ceiling nobody bounds" failure one level up.
+// Whoever completes the next wave re-derives this from the new achieved size in
+// the same commit.
+const agentsMaxBytesCeiling = 64_000
 
 // agentsMinBytes is the POSITIVE CONTROL. A truncated, empty or wrongly-located
 // AGENTS.md is comfortably under any ceiling, and "0 bytes, well within budget"
@@ -167,7 +186,9 @@ func evictionPlaybook(t *testing.T, size int) string {
 		"     cross-references point into it, and agents_xrefs_test.go enforces that.\n"+
 		"  4. Add the item to agents_split_preserved_test.go's table with the sha256 of\n"+
 		"     its non-blank body lines at the commit you moved it from, so the move is\n"+
-		"     proven lossless rather than asserted.\n"+
+		"     proven lossless rather than asserted. That commit goes in the row's own\n"+
+		"     `base` field — it is NOT shared with the earlier waves, because a body's\n"+
+		"     base is fixed at the moment it was evicted and cannot be re-pointed.\n"+
 		"\nDo NOT raise agentsMaxBytes to make this pass. It is currently %d, the file is\n"+
 		"%d bytes, and agentsMaxBytesCeiling (%d) bounds how far it may ever be raised.\n",
 		evidenceDir, evidenceDir, agentsMaxBytes, size, agentsMaxBytesCeiling)
