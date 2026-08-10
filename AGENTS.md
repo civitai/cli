@@ -802,7 +802,7 @@ Validate config without releasing: `goreleaser check` and
 `civitai/homebrew-tap`) both trigger on `release: types: [published]`. So
 clicking "Publish release" is also an npm publish and a tap push — and npm
 unpublish is restricted, so a bad version is fixed by publishing another, not
-by taking it back. **NOTHING DOWNSTREAM MAY ACT ON A TAG ALONE.** Until #306
+by taking it back. **NOTHING DOWNSTREAM MAY ACT ON A TAG ALONE.** Until #308
 goreleaser pushed the cask beside the DRAFT, so `brew install` named archives
 that 404: ~2h broken on 2026-08-09, while npm, already on `published`, stayed
 correct. Rejected: dropping `draft: true` for an automated pre-publish smoke

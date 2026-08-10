@@ -2189,7 +2189,7 @@ unpublish is restricted**: a bad version is corrected by publishing another one,
 not by taking it back.
 
 🔴 **Nothing downstream may act on a tag alone, and the Homebrew channel used
-to.** Until [#306](https://github.com/civitai/cli/pull/306), the same goreleaser
+to.** Until [#308](https://github.com/civitai/cli/pull/308), the same goreleaser
 run that created the *draft* release also pushed the cask bump, so the cask
 named a version whose archives 404 for everyone until a human clicked "Publish
 release". Measured on 2026-08-09, with v0.1.91 tagged at 01:09Z and still a
