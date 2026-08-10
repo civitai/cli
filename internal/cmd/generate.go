@@ -1326,12 +1326,36 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 		// ledger, so it cannot confirm any figure it might quote. It therefore
 		// states the outcome and names the command that can answer the money
 		// question. See AGENTS.md item 28.
+		//
+		// 🔴 #346 ADDED THE ONE CASE WHERE IT DOES NOT HAVE TO SAY THAT. The
+		// workflow this poll just read back carries the orchestrator's own
+		// per-workflow transactions; where it does, they are printed and the
+		// disclaimer is replaced by a pointer at them. This is a SUBTRACTION —
+		// the CLI stops disclaiming knowledge it is holding — and it asserts no
+		// refund rule either way: an absent record still prints the note, because
+		// "no entries returned" is not evidence that no money moved.
+		//
+		// Both go to STDERR, never stdout: this branch returns an error, and with
+		// --json a caller's stdout must stay machine-clean.
+		fate := buzzLedgerUnknownNote
+		if reportWorkflowSettlement(errw, errw, wf) {
+			fate = workflowSettlementPrintedNote
+		}
 		return fmt.Errorf("the generation finished with status %q and produced no usable result; %s. Inspect the run with `civitai workflows get %s` (%s)",
-			safeTerm(wf.Status), buzzLedgerUnknownNote, safeTerm(workflowID), noFailureReasonNote)
+			safeTerm(wf.Status), fate, safeTerm(workflowID), noFailureReasonNote)
 	}
 
 	kept, excluded := genapi.PartitionOutputs(wf)
-	reportExcludedOutputs(errw, excluded)
+	// The settlement is printed here only when there is an exclusion note to
+	// qualify — that note is the one place this path speaks to the fate of the
+	// charge. A run that delivered everything it was charged for gets no new
+	// block; #346 is about a disclaimer contradicting the payload, not about
+	// adding a money screen to the happy path.
+	settled := false
+	if len(excluded) > 0 {
+		settled = reportWorkflowSettlement(errw, errw, wf)
+	}
+	reportExcludedOutputs(errw, excluded, settled)
 	requested := 0
 	if o.quantitySet {
 		requested = o.quantity

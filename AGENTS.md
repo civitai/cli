@@ -385,7 +385,8 @@ item must carry a trigger that is a routing question rather than a label
     → evidence: claudedocs/decisions/27-blockid-derivation-refuses.md
 
 28. **Wording anything about a charge — readiness, refunds, cancel — adding a
-    surface that prints one, or reaching for a banned-phrase guard?**
+    surface that prints one, rendering a workflow's OWN transactions, or
+    reaching for a banned-phrase guard?**
     → evidence: claudedocs/decisions/28-no-claims-about-unobservable-spend.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with

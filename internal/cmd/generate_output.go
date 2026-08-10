@@ -166,7 +166,12 @@ func planOutputTarget(tmpl, outDir, workflowID string, n int, rawURL string) (st
 // them out silently: the visible symptom of doing so is "the command said it
 // worked and I got two files instead of the four I paid for", with nothing on
 // screen explaining the gap.
-func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output) {
+//
+// `settled` reports that the caller has ALREADY printed this workflow's own
+// transaction record immediately above (see reportWorkflowSettlement). It comes
+// in as the return value of that print rather than being re-derived here, so the
+// "printed above" pointer cannot claim a block that was never rendered.
+func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled bool) {
 	if len(excluded) == 0 {
 		return
 	}
@@ -187,9 +192,23 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output) {
 	// the Buzz ledger and cannot tell the two exclusion kinds apart from the
 	// payload, so it must not settle the refund question in either direction.
 	// See AGENTS.md item 28 and #278.
-	fmt.Fprintln(errw, st.Dim(
-		"These were part of the workflow you were charged for. Whether any of that charge comes back depends on why each output was excluded and is decided server-side; "+
-			buzzLedgerUnknownNote+"."))
+	//
+	// 🔴 #346 SPLIT THIS SENTENCE IN TWO, AND THE SPLIT IS A SUBTRACTION. When the
+	// caller has just printed the workflow's own debits and credits, telling the
+	// user that this CLI cannot see the ledger and pointing them at
+	// /user/transactions is false in context — the workflow-level record is on
+	// screen. The replacement still answers nothing: it states what this CLI does
+	// not do (map a charge onto individual outputs — a claim about this program,
+	// which is checkable) and points at the entries. It does NOT say the server
+	// has no per-output record; that would be a claim about a payload this build
+	// has only seen one shape of. Where no settlement was printed, the original
+	// sentence is unchanged.
+	fate := "Whether any of that charge comes back depends on why each output was excluded and is decided server-side; " +
+		buzzLedgerUnknownNote + "."
+	if settled {
+		fate = "This CLI does not map a charge onto individual outputs; " + workflowSettlementPrintedNote + "."
+	}
+	fmt.Fprintln(errw, st.Dim("These were part of the workflow you were charged for. "+fate))
 }
 
 // reportOutputCountMismatch warns when fewer deliverable outputs came back than

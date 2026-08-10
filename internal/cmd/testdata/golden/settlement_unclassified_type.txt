@@ -1,0 +1,1 @@
+Buzz transactions for this workflow (3 recorded) debit 12 (2 entries) hold 3 net (not computed) net is not computed: this build does not know which way "hold" moves Buzz, so the entries above are listed without a total.

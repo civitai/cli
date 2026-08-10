@@ -321,7 +321,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
-| `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
+| `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs, and the Buzz transactions the server recorded for it. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching) and [Reading a workflow's Buzz transactions](#reading-a-workflows-buzz-transactions). |
 | `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**; the orchestrator re-prices the rest server-side and this CLI cannot report the figure. Cancel because you no longer want the output. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai upgrade [--force]` | **Self-update this binary in place** — resolve the latest GitHub release, verify its SHA-256 against `checksums.txt`, and replace the running executable. A Homebrew install delegates to `brew upgrade` instead; `--force` reinstalls anyway (and self-replaces a Homebrew install). See [Upgrading](#upgrading). |
 | `civitai version` | Print version / commit / build date. |
@@ -1591,14 +1591,28 @@ generator.
 > back — not `--timeout`, not Ctrl-C, not `civitai workflows cancel`. Price it
 > with `--dry-run` first — that calls the cost estimator and spends nothing.
 
-> 🔴 **What the LEDGER does with a charge is not something this CLI reports, in
-> either direction.** If a run fails, expires, or you cancel it, whether any
-> Buzz comes back is decided server-side; this CLI cannot see your Buzz ledger — `civitai buzz` reports a balance, not a history, so settle it against your Buzz transaction history (`/user/transactions`). The CLI states the outcome and
-> stops there. It does **not** tell you the charge stands, and it does **not**
-> tell you it was refunded — earlier versions asserted the first, which the
-> platform's own client contradicts for `failed`/`expired`/`canceled`. The rule
-> itself lives in the orchestrator service and is not readable from the civitai
-> monorepo, so neither claim is made. Tracked at civitai/cli#307.
+> 🔴 **The CLI states no RULE about what becomes of a charge, in either
+> direction — but it does report the transactions the server hands it.** Two
+> different things, and the difference is the whole point:
+>
+> - **Your account Buzz ledger** is not readable from here. `civitai buzz`
+>   reports a balance, not a history, so a balance alone cannot settle "did
+>   *this* run come back" unless you noted it beforehand. Where no per-workflow
+>   record is available the CLI says exactly that and points you at your
+>   [transaction history](https://civitai.com/user/transactions).
+> - **One workflow's own transactions** often *are* in the payload. When they
+>   are, `civitai workflows get <id>` — and `civitai generate` on a failed run —
+>   print them: each `debit` and `credit` the server recorded for that workflow,
+>   and the net. See [Reading a workflow's Buzz
+>   transactions](#reading-a-workflows-buzz-transactions).
+>
+> The CLI does **not** tell you the charge stands, and does **not** tell you it
+> was refunded — earlier versions asserted the first, which the platform's own
+> client contradicts for `failed`/`expired`/`canceled`. Reading civitai/cli#307
+> established the server RE-PRICES a failed or cancelled run by the share of its
+> outputs that never landed; the CLI still promises no *amount*, because the
+> amount depends on how far the run got. Tracked at civitai/cli#307 and
+> civitai/cli#346.
 
 ```bash
 # Price it. Spends nothing.
@@ -1998,9 +2012,12 @@ the per-output reason.
 > So cancel a job because you no longer want its *output*. How much of the
 > charge that leaves you paying depends on how far the run had got — the
 > settlement is server-side and happens once the workflow reaches its final
-> state, not when the command returns, and **this CLI never sees your Buzz
-> ledger**, so it reports no figure. Settle it against your
-> [transaction history](https://civitai.com/user/transactions).
+> state, not when the command returns, and **this CLI never sees your account
+> Buzz ledger**, so `cancel` itself reports no figure. Once the workflow reaches
+> its final state, `civitai workflows get <id>` shows the transactions the
+> server recorded for it — see [Reading a workflow's Buzz
+> transactions](#reading-a-workflows-buzz-transactions). Otherwise settle it
+> against your [transaction history](https://civitai.com/user/transactions).
 >
 > (This is also why `--timeout` and Ctrl-C deliberately do **not** cancel: they
 > stop the wait, not the job.)
@@ -2032,6 +2049,44 @@ read and the cancel a workflow can reach a final status on its own; that is
 harmless, since cancelling a finished workflow is a server-side no-op.
 
 <sub>Until civitai/cli#341, `civitai workflows cancel not-a-real-workflow-zzz --yes` printed *"Cancelled workflow not-a-real-workflow-zzz"* and exited `0` — while `civitai workflows get` on the same id correctly reported a 404.</sub>
+
+### Reading a workflow's Buzz transactions
+
+`orchestrator.getWorkflow` often returns the orchestrator's own money record for
+that one workflow. When it does, `civitai workflows get <id>` prints it — and so
+does `civitai generate` when a run it waited on ends `failed`, `expired` or
+`canceled`:
+
+```
+Buzz transactions for this workflow (2 recorded)
+  debit   8
+  credit  8
+  net     0
+```
+
+**These are entries the server returned, not a rule the CLI is asserting.** The
+block reports what is recorded against *this* workflow id and nothing more —
+`net` is simply `debit` minus `credit` over the rows above it. It is **not**
+your account balance (`civitai buzz` reports that), it is **not** your account
+transaction history, and it does not tell you what a failure or a cancel does in
+general. Where the payload carries no record, the CLI says so and points you at
+your [transaction history](https://civitai.com/user/transactions) instead — an
+absent record is *"nothing to report"*, never *"no money moved"*.
+
+A transaction `type` this build does not recognise makes the net **unreportable**
+rather than dropping the entry out of the arithmetic:
+
+```
+Buzz transactions for this workflow (3 recorded)
+  debit  12  (2 entries)
+  hold   3
+  net    (not computed)
+```
+
+`--json` is unaffected: it has always passed the raw payload through, including
+the `transactions` object with every field this CLI does not model.
+
+<sub>Until civitai/cli#346, `civitai workflows get` on a failed run printed *"this CLI cannot see your Buzz ledger … settle it against your Buzz transaction history"* while holding `{"type":"debit","amount":8}` and `{"type":"credit","amount":8}` from that very run — and `civitai workflows list` was already rendering the same settlement as `COST 0`.</sub>
 
 ### Exit codes specific to `generate`
 

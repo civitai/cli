@@ -150,6 +150,20 @@ func printWorkflow(out, errw io.Writer, wf *genapi.Workflow) {
 	// the ONLY surviving evidence that a different checkpoint was billed.
 	reportModelSubstitutions(errw, wf.Substitutions(), substitutionOnRead)
 
+	// 🔴 #346: THIS VIEW HELD THE ANSWER AND PRINTED THE DISCLAIMER. The payload
+	// this command has already parsed itemises the workflow's own debits and
+	// credits, and the excluded-output note below used to answer "what became of
+	// the charge" with "this CLI cannot see your Buzz ledger … settle it against
+	// /user/transactions" — sending the user to a website for numbers that were
+	// on their screen. `civitai workflows list` had been rendering the same
+	// settlement as its COST column all along.
+	//
+	// The block prints for ANY status, terminal or not, because it is a RECORD of
+	// what the server has entered so far and not a claim that the run is over —
+	// unlike the excluded-output report below, which is gated on IsTerminalStatus
+	// precisely because it does make a claim about a job that ran (#280).
+	settled := reportWorkflowSettlement(out, errw, wf)
+
 	kept, excluded := genapi.PartitionOutputs(wf)
 	fmt.Fprintf(out, "\n%s\n", ui.For(out).Bold(fmt.Sprintf("Outputs (%d deliverable, %d excluded)", len(kept), len(excluded))))
 	if len(kept) == 0 && len(excluded) == 0 {
@@ -194,7 +208,7 @@ func printWorkflow(out, errw io.Writer, wf *genapi.Workflow) {
 			"This workflow has not finished. Re-run this command to check again — it is a read and spends nothing."))
 		return
 	}
-	reportExcludedOutputs(errw, excluded)
+	reportExcludedOutputs(errw, excluded, settled)
 	if len(kept) > 0 {
 		fmt.Fprintln(errw, ui.For(errw).Dim(
 			"Output URLs are presigned and expire — fetch them promptly, or re-run this command for fresh links."))
