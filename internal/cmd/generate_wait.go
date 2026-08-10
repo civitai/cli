@@ -45,7 +45,26 @@ const (
 	// defaultWaitTimeout bounds the default wait. It is a WAITING bound: an
 	// unattended run must not block forever, and the re-attach path
 	// (`civitai workflows get <id>`) makes giving up recoverable.
-	defaultWaitTimeout = 10 * time.Minute
+	//
+	// 🔴 IT MUST OUTLAST THE QUEUE, NOT JUST THE EXECUTION — and it did not.
+	// This was 10m, and the blind dogfood run of 2026-08-07 measured a healthy
+	// job sitting in `scheduled` for 11m41s BEFORE execution began (created
+	// 17:17:25.589Z, started 17:29:06.848Z, completed 17:31:11.339Z — 13m46s
+	// end-to-end). So the default gave up 2m5s before the job even started,
+	// and per this command's own help — "--timeout STOPS WAITING. IT DOES NOT
+	// STOP PAYING" — the charge stood. The default put a user in exactly the
+	// state the help exists to warn about, on nothing more unusual than a busy
+	// queue. 30m is ~2.2x the measured p100. See civitai/cli#326.
+	//
+	// 🔴 REJECTED: excluding time spent in `scheduled` from the budget (the
+	// dogfood report's other suggestion). The budget exists to stop an
+	// unattended run blocking forever, and a job that never leaves the queue is
+	// precisely the case that would then never time out — it removes the bound
+	// in the one situation that motivated changing it. Raise the number; keep
+	// the bound a bound. Both halves are pinned by
+	// TestPollWorkflow_DefaultTimeoutOutlastsTheMeasuredQueueLatency and
+	// TestPollWorkflow_DefaultTimeoutIsStillABound.
+	defaultWaitTimeout = 30 * time.Minute
 )
 
 // pollConfig is the poll loop's cadence, with the clock and the sleep injected

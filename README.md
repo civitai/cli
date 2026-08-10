@@ -1878,6 +1878,11 @@ collision is refused *before any bytes move*.
 
 - `--no-wait` submits, prints the workflow id and exits `0`.
 - `--no-download` waits and prints the output URLs instead of writing files.
+- `--timeout` bounds how long the CLI waits, and defaults to **30m**. That is
+  deliberately generous: the wait has to outlast the **queue**, not just the
+  execution. A healthy job has been measured sitting in `scheduled` for
+  **11m41s** before execution even began, so a shorter default walks away from a
+  run that has already been charged.
 - `civitai workflows get <workflow-id>` shows a workflow at any time. It is the
   re-attach path for every case where the CLI stopped early, and it spends
   nothing.
