@@ -80,12 +80,58 @@ func exitCodeContractClaims() []contractClaim {
 		},
 		{
 			code:    2,
-			name:    "the missing-vs-unreadable split covers every local path flag, not just images",
-			phrases: []string{"every local path a flag names", "generate --input"},
-			why: "stated generally because it was NOT general: --input was the counterexample, and a " +
-				"rule written only about images is one a future path flag can be added beside without " +
-				"anyone noticing it disagrees",
-			pinnedBy: "TestGenerateInputExitCodes (cmd/civitai) + TestReadGraphInputClassification",
+			name:    "the missing-vs-unreadable split holds for a flag's value and a positional alike",
+			phrases: []string{"a flag's value and a positional argument alike", "generate --input"},
+			why: "the shape of the rule, not its extent: a rule written only about images is one a future " +
+				"path flag can be added beside without anyone noticing it disagrees, and --input was that " +
+				"counterexample. It said \"every local path a FLAG names\" for a release, and the two " +
+				"commands that broke it — `app validate <dir>` / `app submit <dir>`, issue #256 — take the " +
+				"path POSITIONALLY, so the sentence excluded exactly the cases that disagreed with it. " +
+				"🔴 The replacement then over-corrected to \"every local path the CLI is HANDED\", which is " +
+				"ALSO false and has a live counterexample INSIDE its own scope: `app listing --dir <missing>` " +
+				"exits 1, measured identical on base and on this branch. So the sentence now publishes the " +
+				"shape over an enumerated ledger and states the residual, rather than quantifying over " +
+				"paths nobody has audited",
+			pinnedBy: "TestGenerateInputExitCodes (cmd/civitai) + TestReadGraphInputClassification + " +
+				"TestProjectDirExitCodes + TestUngatedPathFlagsAreNotUsageErrors (the residual)",
+		},
+		{
+			code:    2,
+			name:    "a project path that does not exist, or is not a directory, is 2",
+			phrases: []string{"app validate <dir>", "app submit <dir>", "or is not a directory"},
+			why: "issue #256: `app validate /nope` reported the missing path as \"a project root without a " +
+				"manifest\" and exited 1, so a script could not tell a typo'd path from an app that " +
+				"genuinely fails validation — the one distinction the exit-code contract exists to draw",
+			pinnedBy: "TestProjectDirExitCodes + TestResolveProjectDirClassification",
+		},
+		{
+			code: 1,
+			name: "a validation VERDICT is 1, and a manifest-less directory is a verdict",
+			phrases: []string{"validation verdict", "app validate", "no `block.manifest.json` at its root",
+				"app validate --json"},
+			why: "the counterweight to the #256 fix: it would be easy to \"tidy\" the manifest-less " +
+				"directory onto 2 alongside the nonexistent path. It must stay 1 — the user pointed at a " +
+				"real place, so the invocation was right and the project is wrong, and that is the " +
+				"answer `--json`'s `ok` field reports",
+			pinnedBy: "TestProjectDirExitCodes (the control rows)",
+		},
+		{
+			code: 1,
+			name: "`app validate --json` publishes a result only when it produced one",
+			phrases: []string{"When validation produces a result", "nothing on stdout",
+				"branch on the exit code before parsing"},
+			why: "the note said `--json` \"prints the full result … so a script never has to read stderr\", " +
+				"full stop — and that is false for the failures that produce no Result at all. Measured on " +
+				"this branch: `app validate <mode-000 project> --json` exits 1 with stdout EMPTY, because " +
+				"validate.Dir returns an error rather than a Result for a non-ENOENT stat failure and for a " +
+				"schema() failure. An unqualified promise here is worse than silence: it tells a script " +
+				"author they may parse stdout unconditionally, on the one command whose whole job is to be " +
+				"machine-read. 🔴 The first scoping was ALSO wrong, in the other direction: it read \"for a " +
+				"project directory it could READ\", which still promises an object for the schema() arm — a " +
+				"directory the CLI can read perfectly well that yields no Result. The condition is whether " +
+				"validation PRODUCED a result, which is the thing the code actually branches on, so that is " +
+				"what the sentence now says",
+			pinnedBy: "TestValidateJSONOnlyEmitsAResultItActuallyProduced (+ its readable-dir positive control)",
 		},
 		{
 			code:     5,

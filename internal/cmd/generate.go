@@ -179,6 +179,13 @@ CREDENTIAL: generation needs the AI Services scopes. Two credentials carry them:
 (` + "`civitai login`" + ` with no --scopes) does NOT carry them and is refused — and
 re-running plain ` + "`civitai login`" + ` will not fix that. Check yours with
 ` + "`civitai whoami`" + `.
+The ONE exception is --print-input: it assembles the graph and exits before the
+estimator, the submit and the balance read, so it needs no credential. Two
+caveats, and they are NOT the same caveat. With --image it does need one, because
+it uploads each local file first and that upload is authenticated. With
+--checkpoint or --lora it still needs none — the model-version lookup is a public
+read — but it is not OFFLINE: that lookup is a real request and fails without a
+network. Only a bare --print-input needs neither a credential nor a network.
 
 --max-cost IS AN ESTIMATE CHECK, NOT A SPENDING CAP. The cost this command shows
 is an estimate, not a quote: the server's estimator returns no quote id, no
@@ -313,7 +320,42 @@ interpreted, so nothing in it is checked before you pay for it.`,
 			if err != nil {
 				return err
 			}
-			if cfg.Token() == "" {
+			// 🔴 ONE credential gate, and it stays here — before every seam is
+			// built, not pushed down into the call sites. `--print-input` is the
+			// single exception, and only when it reaches no AUTHED request: it
+			// assembles the graph and exits before the estimator, the submit and
+			// the balance read, so with no `--image` it sends nothing that
+			// carries a credential, and refusing it contradicted the invariant
+			// stated at the --print-input short-circuit below. Issue #257.
+			//
+			// 🔴 "NO AUTHED REQUEST" IS NOT "NO REQUEST", AND THE TWO MUST NOT
+			// BE COLLAPSED — an earlier revision of this comment said "makes NO
+			// request of any kind", which is the wording that belongs at the
+			// short-circuit (where it is guarded by "with no
+			// --checkpoint/--lora") and is false here. `--checkpoint`/`--lora`
+			// still perform the public model-version READ, so they need no
+			// credential but DO need a network. Measured against a dead
+			// endpoint, no credential: bare `--print-input` returns nil and
+			// prints the graph; `--print-input --checkpoint <id>` and
+			// `--print-input --lora <id>` both fail as transport errors (exit 5)
+			// after the read's 4 attempts. Only a bare `--print-input` needs
+			// neither.
+			//
+			// 🔴 The condition is `--image`, NOT `--checkpoint`/`--lora`, and
+			// the difference is which hop needs a credential. `--image` with a
+			// local file UPLOADS before printing (item 19(f)) and hop 1 of that
+			// upload — `getConsumerBlobUploadUrl` — is AUTHED (item 19(e)), so
+			// the flag genuinely needs a token even on this path. An https
+			// `--image` reaches only the credential-free fetch, but a token is
+			// still required for the whole flag rather than per value: the
+			// narrower rule buys nothing, and "some --image values need a
+			// credential" is a worse contract than "--image does".
+			// `--checkpoint`/`--lora` resolve through the PUBLIC
+			// `GET /api/v1/model-versions/{id}` (item 13, "free,
+			// unauthenticated-capable"), so gating on them would keep refusing
+			// a case that demonstrably works with no credential.
+			needsCredential := !o.printInput || len(o.images) > 0
+			if needsCredential && cfg.Token() == "" {
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf(
 					"no token configured — generation needs a credential with the AI Services scopes: "+
 						spendCredentialRoutes+". Or set CIVITAI_TOKEN"))
@@ -850,6 +892,10 @@ func runGenerate(cmd *cobra.Command, deps generateDeps, o generateOpts) error {
 		// make --print-input emit a document that --input then cannot submit,
 		// destroying the round-trip that is the whole feature. With no
 		// --checkpoint/--lora there is no request of any kind.
+		//
+		// That last sentence is what the credential gate in RunE now honours:
+		// `--print-input` without `--image` needs no token, because nothing on
+		// this path sends one. Issue #257 — the command used to refuse offline.
 		return printAssembledGraph(out, built.graph)
 	}
 

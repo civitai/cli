@@ -25,6 +25,40 @@ func lockManifest(buildCommand string) string {
 	}`
 }
 
+// npmLockBody is a REAL package-lock.json: the shape `npm install` writes,
+// trimmed to what matters here.
+//
+// 🔴 These fixtures used to be the literal `{}`, and that was WRONG about the
+// platform in the direction that hid issue #255. Measured on npm 11.17.0
+// against a project with a real dependency, `npm ci` over `{}` exits 1 — not
+// with the empty file's "lockfileVersion >= 1" EUSAGE (it parses, so it clears
+// that gate) but with the sync failure "…are in sync… Missing: <pkg> from lock
+// file". Different reason, same rc. A fixture that stands in for "the author
+// ran the install" has to carry what the install writes, or every "this passes"
+// assertion below is asserting that a build-breaking project validates clean.
+const npmLockBody = `{
+  "name": "lock-block",
+  "version": "0.1.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {"": {"name": "lock-block", "version": "0.1.0"}}
+}
+`
+
+// lockBody returns a real, package-manager-written body for the named lockfile.
+func lockBody(name string) string {
+	switch name {
+	case "package-lock.json":
+		return npmLockBody
+	case "pnpm-lock.yaml":
+		return "lockfileVersion: '9.0'\n"
+	case "yarn.lock":
+		return "# yarn lockfile v1\n"
+	default:
+		panic("lockBody: unknown lockfile " + name)
+	}
+}
+
 // project writes a manifest plus the given extra files (name -> contents) into a
 // temp dir and validates it.
 func project(t *testing.T, manifestJSON string, files map[string]string) Result {
@@ -134,7 +168,7 @@ func TestLockfileMatchingLockfilePasses(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			res := project(t, lockManifest(tc.build), map[string]string{
 				"package.json": `{"name":"lock-block","private":true}`,
-				tc.lockfile:    "{}\n",
+				tc.lockfile:    lockBody(tc.lockfile),
 			})
 			if !res.OK() {
 				t.Fatalf("should validate clean, got: %v", res.Errors)
@@ -192,7 +226,7 @@ func TestLockfileMismatchIsFatalForEveryPairing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			res := project(t, lockManifest(tc.build), map[string]string{
 				"package.json": `{"name":"lock-block","private":true}`,
-				tc.lockfile:    "{}\n",
+				tc.lockfile:    lockBody(tc.lockfile),
 			})
 			if res.OK() {
 				t.Fatal("mismatched lockfile must be a hard error")
@@ -340,7 +374,7 @@ func TestLockfileSymlinkedLockfileIsNotAccepted(t *testing.T) {
 	// A REAL lockfile outside the project, symlinked in — the shape that used to
 	// pass because os.Stat follows symlinks.
 	outside := filepath.Join(t.TempDir(), "package-lock.json")
-	if err := os.WriteFile(outside, []byte("{}\n"), 0o600); err != nil {
+	if err := os.WriteFile(outside, []byte(npmLockBody), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	link := filepath.Join(dir, "package-lock.json")
@@ -398,7 +432,7 @@ func TestLockfileSymlinkedPackageJSONIsTreatedAsStatic(t *testing.T) {
 func TestLockfileMultipleWithRequiredPresentIsWarning(t *testing.T) {
 	res := project(t, lockManifest("npm run build"), map[string]string{
 		"package.json":      `{"name":"lock-block","private":true}`,
-		"package-lock.json": "{}\n",
+		"package-lock.json": npmLockBody,
 		"pnpm-lock.yaml":    "lockfileVersion: '9.0'\n",
 	})
 	if !res.OK() {

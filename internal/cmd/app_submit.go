@@ -65,6 +65,19 @@ Defaults to the current directory.`,
 			}
 			out := cmd.OutOrStdout()
 
+			// 0. Classify the path the USER named. Same gate `app validate`
+			// uses — one rule, one place (resolveProjectDir, project_dir.go):
+			// a nonexistent path or a file exits 2, a real directory with no
+			// manifest keeps its validation verdict and exit 1.
+			//
+			// It runs UNCONDITIONALLY, ahead of --skip-validate, because it is
+			// not a validation check: `--skip-validate` waives our opinion of
+			// the manifest, not the question of whether the directory the user
+			// typed exists at all.
+			if err := resolveProjectDir(dir); err != nil {
+				return err
+			}
+
 			// 1. Validate first — never submit a known-bad manifest.
 			if !skipValidate {
 				res, err := validate.Dir(dir)
@@ -75,7 +88,13 @@ Defaults to the current directory.`,
 					errw := cmd.ErrOrStderr()
 					fmt.Fprintln(errw, ui.For(errw).ErrorMsg(fmt.Sprintf("validation failed (%d error(s)) — fix before submitting, or pass --skip-validate:", len(res.Errors))))
 					for _, e := range res.Errors {
-						fmt.Fprintf(errw, "  - %s\n", e.Message)
+						// printFinding, not a raw Fprintf: `printWarnings` below
+						// wraps, so a bare one here printed a 400-char unwrapped
+						// error and a wrapped warning in the SAME run — two
+						// layouts on the highest-traffic path. It was the fourth
+						// print site and the one that made "one place fixes
+						// every long message" false.
+						printFinding(errw, e.Message)
 					}
 					// Warnings are useful context on a failure too, and this is
 					// the last moment before the app would have gone to review.

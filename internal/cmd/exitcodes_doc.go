@@ -75,6 +75,7 @@ var exitCodeDocs = []ExitCodeDoc{
 		Summary: "Generic / unclassified error.",
 		Notes: []string{
 			"A **filesystem failure** lands here — a file that exists but cannot be read, an unwritable config directory, an I/O error. It is neither a mistake about the invocation (`2`) nor a transport failure (`5`), and there is no filesystem-specific code.",
+			"A **validation verdict** lands here, and deliberately not on `2`: `civitai app validate` exits `1` when the manifest is invalid, and likewise when the directory you named is a real directory with no `block.manifest.json` at its root — you pointed at a real place, so the invocation was right and the project is wrong. (A path that does **not exist**, or that is not a directory, is the invocation being wrong, and exits `2`.) **When validation produces a result**, `civitai app validate --json` prints it in full and its `ok` field is the structured form of the same answer; a failure that produces no result at all — an unreadable manifest, say — still exits `1` with **nothing on stdout**, so branch on the exit code before parsing.",
 			"A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval.",
 		},
 	},
@@ -84,10 +85,13 @@ var exitCodeDocs = []ExitCodeDoc{
 		Notes: []string{
 			"This does not depend on where the refusal happens: a mistake the CLI catches locally and one the server rejects both exit `2`.",
 			"A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is " + joinPhrases(imageUsageRefusals) + " — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and exits `1`, not `2`.",
-			"That split is the rule for **every local path a flag names**, not just images: `civitai generate --input <file>` likewise exits `2` for a path that is not there or is a directory, and `1` when the file is there and the read fails.",
+			"That split is not images-only and it is not flags-only — it holds for **a flag's value and a positional argument alike**, over the paths listed here: `civitai generate --input <file>` likewise exits `2` for a path that is not there or is a directory, and `1` when the file is there and the read fails.",
+			"The project commands take a positional path and refuse it the same way: `civitai app validate <dir>` and `civitai app submit <dir>` exit `2` when the path does not exist **or is not a directory**, because both are mistakes about the invocation. A directory that **does** exist but holds no `block.manifest.json` is a validation verdict instead, and exits `1`.",
 		},
 		Extra: []string{
 			"`app listing set-cover` and `app listing add-screenshot` take the same positional `<file>` and refuse it the same way. (The CLI has no `--file` image flag at all: the only `--file` is `civitai download --file`, which picks a file *inside* a model version.)",
+			"**Paths outside that list are not covered, and mostly exit `1`.** `civitai app listing … --dir <missing>` exits `1` (it reports \"no `block.manifest.json` found in …\", the same way it does for a directory that is really there but holds no manifest), and so does `civitai app submit … --out <path under a directory that does not exist>`. Both are stated rather than promised: this is a ledger of the paths the split is published for, not a claim about every path in the CLI.",
+			"A usage error emits **no JSON object**, in every mode. `civitai app validate /nope --json` therefore writes nothing to stdout and exits `2`; it used to print `{\"ok\": false, …}` and exit `1`, which reported a nonexistent path as a validation result. Scripts that parsed that object must branch on the exit code first.",
 		},
 	},
 	{

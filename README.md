@@ -59,6 +59,7 @@ contract, and **packages/submits** it for review.
   - [The `--json` result shape](#the---json-result-shape)
 - [Submit & auth](#submit--auth)
   - [After you submit: review → approve → deploy](#after-you-submit-review--approve--deploy)
+  - [Listing media requirements](#listing-media-requirements)
 - [Submission status](#submission-status)
   - [Deployed is not the same as listed in the store](#deployed-is-not-the-same-as-listed-in-the-store)
 - [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
@@ -221,10 +222,18 @@ civitai app status
 # 7. Attach the store-listing media. An icon AND a cover are REQUIRED before the
 #    listing can publish — do it now, while the app is in review; it carries
 #    forward on approval. `listing status` shows what's still missing.
+#    The scaffold creates `assets/` and a README of the requirements, but NO
+#    images — save your own icon.png and cover.png in there first.
 civitai app listing set-icon ./assets/icon.png
 civitai app listing set-cover ./assets/cover.png
 civitai app listing status
 ```
+
+> **Step 7 needs artwork you supply.** Every template scaffolds an `assets/`
+> directory with a README of the requirements, and deliberately **no placeholder
+> images** — a placeholder passes every check and uploads cleanly, which is how a
+> stub icon reaches a public listing. Sizes, formats and aspect ratios are in
+> [Listing media requirements](#listing-media-requirements).
 
 > Want to drive the **real** backend (real Buzz/compute) before submitting? Mint
 > a dev token with `civitai app dev-token` and run `npm run dev:live` — see
@@ -278,10 +287,10 @@ README. For the end-to-end walkthrough, see
 | `civitai app init [name] [dir] [...]` | Same scaffolder as `create` with a no-build `static` default (back-compat alias). |
 | `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`.** `--spend` must be asked for explicitly to request real-Buzz spend — without it the CLI filters `ai:write:budgeted` out of the mint request. `--env` prints a paste-ready `VITE_LIVE_BLOCK_TOKEN=<token>`. See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app dev-tunnel [blockId] [--port] [--tunnel-endpoint] [--idle-timeout]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Pre-flights whether the host can actually **embed** your dev server and warns (never fatally) when it cannot. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
-| `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message` — **`field` is always present and never `null`**) for scriptable parsing — still exits non-zero on failure. See [Validate fidelity](#validate-fidelity) and [The `--json` result shape](#the---json-result-shape). |
+| `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message` — **`field` is always present and never `null`**) for scriptable parsing — still exits non-zero on failure. 🔴 **BREAKING:** a `[dir]` that does not exist, or is not a directory, is now a **usage error** — exit `2` with **no JSON object** on stdout, where it used to print `{"ok": false, …}` and exit `1`. See [Validate fidelity](#validate-fidelity) and [The `--json` result shape](#the---json-result-shape). |
 | `civitai app submit [dir] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
-| `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. See [After you submit](#after-you-submit-review--approve--deploy). |
+| `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
 | `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
@@ -342,6 +351,11 @@ bytes from the blockId *and* write them into `block.manifest.json`).
   (never raw `postMessage`). Ships a `dev:harness` mock host, `.env.*` allowed
   parent-origin config, and a unit-test stub. Run `npm run dev:harness` (plain
   `npm run dev` renders blank without a host).
+
+Every template also scaffolds an **`assets/`** directory holding a README of the
+store-listing media requirements — and no images, so the `set-icon` / `set-cover`
+step fails loudly until you supply real artwork. See
+[Listing media requirements](#listing-media-requirements).
 
 ### The host handshake (`BLOCK_READY`)
 
@@ -829,6 +843,19 @@ mismatch or a missing lockfile is a hard `validate` error; an *extra* unused
 lockfile is a warning. Apps with no `package.json` are static — the platform
 never installs for them and they are never flagged.
 
+The lockfile also has to **be** one, not merely exist. A `package-lock.json`
+must parse as JSON and declare a numeric `"lockfileVersion"` of 1 or more; a
+`pnpm-lock.yaml` or `yarn.lock` must be non-empty. That version rule is
+deliberately **stricter than `npm ci` measures** — npm states it as a
+precondition but will happily install from an otherwise-intact lockfile whose
+version key is `0`, a string, `null` or absent — and `validate` keeps it because
+npm never *writes* those shapes, so a file carrying one was made by hand.
+An **empty** lockfile fails the platform build exactly like a missing one, so
+`touch package-lock.json` is not a fix — run the package manager and commit what
+it writes. If the lockfile cannot be read, or is implausibly large, `validate`
+says nothing rather than guessing: it never blocks a submit on a file it could
+not inspect.
+
 Finally it emits one **advisory** about the
 [host handshake](#the-host-handshake-block_ready): if your manifest declares a
 `page` surface and **nothing your app loads posts `BLOCK_READY`**, `validate`
@@ -937,8 +964,36 @@ omitting the key:
 
 `ok` already accounts for `--strict`: it is `false` when there are hard errors,
 and also when `--strict` is passed and there are warnings. The process exit code
-matches, and the JSON still goes to **stdout** while the failure is reported on
-**stderr** — so `civitai app validate --json | jq` works on a failing project.
+matches, and the JSON goes to **stdout** while the failure is reported on
+**stderr** — so `civitai app validate --json | jq` works on a project that fails
+*validation*.
+
+🔴 **BREAKING — a refused path now emits no object at all.** This object is
+written only when validation actually produced a result. A path that does **not
+exist**, or that is not a directory, is a mistake about the invocation: it writes
+**nothing** to stdout and exits `2`. It used to print
+`{"ok": false, "dir": "/nope", "errors": [ … ]}` and exit `1` — a fabricated
+validation result, complete with a finding about a manifest nobody could have
+written. A failure that produces **no validation result at all** likewise emits
+no object and exits `1` — an unreadable manifest or a permissions error, and in
+principle an internal schema failure, which is a directory the CLI *can* read
+that still yields nothing to print.
+
+**So branch on the exit code before parsing:**
+
+| exit | stdout |
+| --- | --- |
+| `0` | the object, `"ok": true` |
+| `1` | the object with `"ok": false` for a validation **verdict** — but **nothing** when validation produced no result at all (an unreadable manifest; also an internal schema failure, which a released binary should never hit) |
+| `2` | **nothing** — the path does not exist, or is not a directory |
+
+```bash
+out=$(civitai app validate ./my-block --json); rc=$?
+case $rc in
+  2) echo "bad path — check the argument"; exit 2 ;;
+  0|1) [ -n "$out" ] && jq -e .ok <<<"$out" || echo "no result to parse (rc=$rc)" ;;
+esac
+```
 
 ## Submit & auth
 
@@ -1032,17 +1087,33 @@ Screenshots:     0
   Add one:  civitai app listing set-icon <file>
   Add one:  civitai app listing set-cover <file>
 
-$ civitai app listing set-icon ./assets/icon.png    # square-ish, ≤2 MiB
-$ civitai app listing set-cover ./assets/cover.png  # landscape hero, ≤4 MiB
-$ civitai app listing add-screenshot ./shot.png --caption "Grid view"   # optional, up to 8
+$ civitai app listing set-icon ./assets/icon.png    # png/jpeg/webp, ≤2 MiB
+$ civitai app listing set-cover ./assets/cover.png  # png/jpeg/webp, ≤4 MiB
+$ civitai app listing add-screenshot ./assets/screenshot-1.png --caption "Grid view"   # optional, up to 8
 ```
+
+`assets/` is scaffolded by every template, with a README of the requirements and
+**no placeholder images** — the files above are ones you supply.
 
 Details worth knowing before you start:
 
 - **Source images** are png/jpeg/webp and are size-checked **locally before any
-  upload** — icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB. Each attach then
-  waits for the platform content scan (a blocked image is rejected, not
-  attached).
+  upload** — icon ≤2 MiB, cover ≤4 MiB, screenshot ≤2 MiB. That is the whole of
+  what the CLI **enforces**.
+- **Dimension and aspect rules are the platform's, and it states them.** The CLI
+  does not enforce them locally — a copied number goes stale and starts refusing
+  valid images — but it does *document* the current bounds, as guidance rather
+  than as a gate: see
+  [Listing media requirements](#listing-media-requirements). It uploads,
+  **attaches, and then waits for the content scan** — in that order, because the
+  platform validates dimensions, aspect and format at the *attach* step. So a
+  wrongly-shaped image comes back in a couple of seconds with the platform's own
+  message naming the bound and your value
+  (e.g. `icon must be square-ish (aspect 2.00 outside 0.9–1.1)`), instead of
+  after the scan has finished.
+- **A blocked image never goes live.** The scan verdict is still waited on, so
+  these commands never report success on a pending or blocked scan; a failure
+  tells you what state the listing was left in.
 - **The app is resolved from `block.manifest.json`** in the current directory;
   pass `--slug <blockId>` (with `--dir` if you prefer) to run it from anywhere.
 - **On a listing that is already LIVE**, attaching media does not edit the live
@@ -1067,6 +1138,62 @@ $ civitai app submit                          # resubmit the new bundle
 pending publish request. It is **idempotent** (an already-withdrawn request still
 returns success) and only a **`pending`** request can be withdrawn — an already
 approved/rejected one cannot.
+
+### Listing media requirements
+
+Two different things check your listing images, and it is worth knowing which is
+which before you open an image editor.
+
+**What the CLI checks, locally, before anything is uploaded:** the file's
+**format** and its **byte size**. That is all.
+
+| kind | how many | format | byte cap (the file you pass) |
+| --- | --- | --- | --- |
+| **icon** | 1, required | png / jpeg / webp | ≤ 2 MiB |
+| **cover** | 1, required | png / jpeg / webp | ≤ 4 MiB |
+| **screenshot** | up to 8, optional | png / jpeg / webp | ≤ 2 MiB |
+
+**What the platform checks, server-side, when the image is attached:** the
+dimensions and the aspect ratio. The CLI does not reproduce these, so this table
+is *guidance* — the server is the authority and its rejection names the bound and
+your value (`icon must be square-ish (aspect 2.00 outside 0.9–1.1)`).
+
+| kind | aspect (width ÷ height) | minimum size |
+| --- | --- | --- |
+| **icon** | 0.9 – 1.1 — square-ish, not exactly square | 128 px on the shorter side |
+| **cover** | 1.3 – 2.4 — landscape, ~4:3 to ~21:9 | 640 px wide |
+| **screenshot** | 0.4 – 2.6 — either orientation | 320 px on the shorter side |
+
+Easy starting points: a **512 × 512** icon and a **1600 × 900** cover.
+
+Three behaviours that are not obvious from the numbers:
+
+- **Icons are re-encoded server-side.** Whatever you upload is downscaled to at
+  most **1024 px** on its longer side and re-encoded to PNG — aspect preserved,
+  and **never enlarged**. So an oversized icon is harmless, but an undersized one
+  is not: the 128 px floor still bites, because nothing is ever scaled up.
+  One consequence to know about: the platform also caps the **re-encoded** icon
+  at 1 MiB, and that is a different measurement from the 2 MiB the CLI applies to
+  the file you pass. A detailed photographic icon can clear the local check and
+  still be refused for the size of the PNG the server made from it — the message
+  quotes bytes, not pixels. Flat, simple artwork re-encodes far smaller.
+- **Covers and screenshots are not rescaled.** What you upload is what the store
+  renders, so ship them at the size you want shown.
+- **A wrong image is rejected, not quietly accepted, and it comes back fast.**
+  The CLI attaches *before* it waits on the content scan, so the platform's
+  verdict on shape arrives in a couple of seconds rather than after a scan that
+  can take two minutes — and always before a moderator sees it. The message names
+  the requirement. A source image above ~16 megapixels (say 5000 × 5000) is the
+  one exception with an unhelpful message: it fails the icon decoder with
+  *"That icon couldn't be read"* rather than a dimension error. Downscale it and
+  retry.
+
+> **Why the CLI does not enforce the second table.** These are platform
+> constants that can move. Stale *guidance* costs you one rejection that carries
+> the current bound; a stale local *gate* refuses valid images and cannot be
+> argued with. The asymmetry is the reason the split exists — please don't
+> "helpfully" promote these numbers into a local check (see
+> [`AGENTS.md`](AGENTS.md) item 25).
 
 ## Submission status
 
@@ -1390,6 +1517,21 @@ civitai generate --input graph.json --dry-run
 `civitai login --scopes generate`. A **default** OAuth browser login
 (`civitai login`, no `--scopes`) does **not** carry them and is refused.
 `civitai whoami` shows the capability as **Spend Buzz (AI Services)**.
+
+The one exception is `--print-input`: it assembles the graph and exits before the
+estimator, the submit and the balance read, so it needs no credential — useful
+for building a graph to edit before you have logged in. Two caveats, and they are
+**not** the same caveat:
+
+- `--print-input` **with `--image`** does need a credential, because it uploads
+  each local file first and that upload is authenticated.
+- `--print-input` **with `--checkpoint` or `--lora`** needs none — the
+  model-version lookup is a public read — but it is **not offline**: that lookup
+  is a real request, and with no network it fails (exit `5`) rather than printing
+  a graph. Measured against a dead endpoint: bare `--print-input` exits `0`;
+  `--print-input --checkpoint <id>` exits `5` after the read's retries.
+
+So only a **bare** `--print-input` needs neither a credential nor a network.
 
 ### 🔴 `--max-cost` is an estimate check, not a spending cap
 
@@ -1759,8 +1901,8 @@ by this — only `echo $?` differs.
 | Code | Meaning |
 | --- | --- |
 | `0` | Success. |
-| `1` | Generic / unclassified error. A **filesystem failure** lands here — a file that exists but cannot be read, an unwritable config directory, an I/O error. It is neither a mistake about the invocation (`2`) nor a transport failure (`5`), and there is no filesystem-specific code. A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval. |
-| `2` | Usage error — a bad flag, a **missing required flag or argument** (e.g. `civitai app withdraw` with no publish-request id), a bad flag **value** (`--limit` out of range, a non-integer id, `--template nope`), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum). This does not depend on where the refusal happens: a mistake the CLI catches locally and one the server rejects both exit `2`. A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is missing, empty, a directory, over the size cap, or not a PNG/JPEG/WebP — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and exits `1`, not `2`. That split is the rule for **every local path a flag names**, not just images: `civitai generate --input <file>` likewise exits `2` for a path that is not there or is a directory, and `1` when the file is there and the read fails. `app listing set-cover` and `app listing add-screenshot` take the same positional `<file>` and refuse it the same way. (The CLI has no `--file` image flag at all: the only `--file` is `civitai download --file`, which picks a file *inside* a model version.) |
+| `1` | Generic / unclassified error. A **filesystem failure** lands here — a file that exists but cannot be read, an unwritable config directory, an I/O error. It is neither a mistake about the invocation (`2`) nor a transport failure (`5`), and there is no filesystem-specific code. A **validation verdict** lands here, and deliberately not on `2`: `civitai app validate` exits `1` when the manifest is invalid, and likewise when the directory you named is a real directory with no `block.manifest.json` at its root — you pointed at a real place, so the invocation was right and the project is wrong. (A path that does **not exist**, or that is not a directory, is the invocation being wrong, and exits `2`.) **When validation produces a result**, `civitai app validate --json` prints it in full and its `ok` field is the structured form of the same answer; a failure that produces no result at all — an unreadable manifest, say — still exits `1` with **nothing on stdout**, so branch on the exit code before parsing. A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval. |
+| `2` | Usage error — a bad flag, a **missing required flag or argument** (e.g. `civitai app withdraw` with no publish-request id), a bad flag **value** (`--limit` out of range, a non-integer id, `--template nope`), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum). This does not depend on where the refusal happens: a mistake the CLI catches locally and one the server rejects both exit `2`. A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is missing, empty, a directory, over the size cap, or not a PNG/JPEG/WebP — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and exits `1`, not `2`. That split is not images-only and it is not flags-only — it holds for **a flag's value and a positional argument alike**, over the paths listed here: `civitai generate --input <file>` likewise exits `2` for a path that is not there or is a directory, and `1` when the file is there and the read fails. The project commands take a positional path and refuse it the same way: `civitai app validate <dir>` and `civitai app submit <dir>` exit `2` when the path does not exist **or is not a directory**, because both are mistakes about the invocation. A directory that **does** exist but holds no `block.manifest.json` is a validation verdict instead, and exits `1`. `app listing set-cover` and `app listing add-screenshot` take the same positional `<file>` and refuse it the same way. (The CLI has no `--file` image flag at all: the only `--file` is `civitai download --file`, which picks a file *inside* a model version.) **Paths outside that list are not covered, and mostly exit `1`.** `civitai app listing … --dir <missing>` exits `1` (it reports "no `block.manifest.json` found in …", the same way it does for a directory that is really there but holds no manifest), and so does `civitai app submit … --out <path under a directory that does not exist>`. Both are stated rather than promised: this is a ledger of the paths the split is published for, not a claim about every path in the CLI. A usage error emits **no JSON object**, in every mode. `civitai app validate /nope --json` therefore writes nothing to stdout and exits `2`; it used to print `{"ok": false, …}` and exit `1`, which reported a nonexistent path as a validation result. Scripts that parsed that object must branch on the exit code first. |
 | `3` | Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured). **`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as "bad flags". See [Generate](#exit-codes-specific-to-generate). |
 | `4` | Not found — the requested resource does not exist. Usually an HTTP 404, but not always: some lookups answer `200` with an empty result set instead (`civitai app status <slug>` for an unregistered slug, `civitai users get` for an unknown username), and those exit `4` too. The same question therefore exits the same way however the API happens to phrase the miss. |
 | `5` | Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries. This is the code to **retry** on, so a **filesystem** failure never lands here however retryable its errno looks: a permissions or I/O problem does not fix itself, and a loop that sleeps and re-runs would never terminate. Those exit `1`. |

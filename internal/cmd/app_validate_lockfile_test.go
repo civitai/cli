@@ -19,11 +19,30 @@ func scaffoldWithLockfiles(t *testing.T, lockfiles ...string) string {
 	}
 	dir := filepath.Join(tmp, "lock-block")
 	for _, name := range lockfiles {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("{}\n"), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(lockfileBodyFor(name)), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
 	return dir
+}
+
+// lockfileBodyFor returns a body the named package manager would actually WRITE.
+//
+// These fixtures were all the literal `{}`, which is not a lockfile: measured on
+// npm 11.17.0, `npm ci` over `{}` exits 1 on any project with a dependency — via
+// the sync check ("Missing: <pkg> from lock file"), NOT the empty file's
+// "lockfileVersion >= 1" EUSAGE — and validate rejects it too (issue #255). A
+// `{}` body under `package-lock.json` would make the PASS-expecting tests below
+// assert that a build-breaking project validates clean.
+func lockfileBodyFor(name string) string {
+	switch name {
+	case "package-lock.json":
+		return `{"name":"lock-block","version":"0.1.0","lockfileVersion":3,"requires":true,"packages":{}}` + "\n"
+	case "pnpm-lock.yaml":
+		return "lockfileVersion: '9.0'\n"
+	default:
+		return "# yarn lockfile v1\n"
+	}
 }
 
 // The headline case, end to end through the CLI: a pnpm lockfile under the
@@ -45,7 +64,12 @@ func TestAppValidateFailsOnPnpmLockWithNpmBuildCommand(t *testing.T) {
 		`"outputDir"`,
 		"npm install",
 	} {
-		if !strings.Contains(stderr, want) {
+		// unwrapFinding because the printer WRAPS a finding to the terminal
+		// width (validate_print.go) — the message is one line on the wire and
+		// several on screen, so a raw substring test here is really asserting
+		// where the layout chose to break. `"buildCommand": "pnpm run build"`
+		// straddled a break the moment wrapping landed.
+		if !strings.Contains(unwrapFinding(stderr), want) {
 			t.Errorf("validate stderr missing %q:\n%s", want, stderr)
 		}
 	}

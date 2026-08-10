@@ -623,6 +623,19 @@ excludes build artifacts (`*.zip`) and dev-local / secret-bearing dotenv files
 `.env.production` (public `VITE_` origins only) ARE included — the production
 build reads `.env.production`.
 
+## Store-listing media (`assets/`)
+
+Your store listing **cannot publish without an icon and a cover**, and both are
+settable while the app is in review. `assets/` is scaffolded for them and ships
+with no images on purpose — see [`assets/README.md`](assets/README.md) for the
+size, format and aspect requirements, then:
+
+```bash
+civitai app listing set-icon  ./assets/icon.png
+civitai app listing set-cover ./assets/cover.png
+civitai app listing status
+```
+
 ## Submission lifecycle
 
 After `civitai app submit`, your publish request is `pending` review — a
