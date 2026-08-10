@@ -61,8 +61,9 @@ only when the agent is launched through `dogfood-sandbox.sh enter`:
 
 | control | enforced by | strength |
 |---|---|---|
-| the repo checkout, `AGENTS.md` and both handoffs are not visible | Linux mount namespace (`bwrap`) | **kernel — only under `enter`, and see §5** |
-| the operator's real `~/.config/civitai` is not reachable | Linux mount namespace (`bwrap`) | **kernel — only under `enter`** |
+| the repo checkout, `AGENTS.md` and both handoffs are not visible | Linux mount namespace (`bwrap`) | **kernel — under `enter`** |
+| the operator's real `~/.config/civitai` is not reachable | Linux mount namespace (`bwrap`) | **kernel — under `enter`** |
+| the host `~/.claude/projects` transcripts are not reachable | Linux mount namespace (`bwrap`) | **kernel — under `enter --with-claude`** |
 | an argv means the same thing to the gate as to the CLI | cobra's own parser (`internal/dogfoodguard`) | **structural** |
 | `upgrade` cannot replace the binary under evaluation | mode bits + the guard | convention |
 | credential isolation without the jail | `HOME` / `XDG_CONFIG_HOME` on the child | convention |
@@ -343,7 +344,7 @@ three real `--dry-run` estimates moved the balance by **0**
 ### `selftest`
 
 `make dogfood-check` runs `shellcheck -x` plus
-`dogfood-sandbox.sh selftest --offline` — **88 assertions, 88 pass**, no
+`dogfood-sandbox.sh selftest --offline` — **225 assertions, 225 pass**, no
 credential and no network required, so this is regression-testable in CI. The
 credentialed `selftest` (against a live sandbox) runs **79**, the same set minus
 the 13 stub-driven end-to-end rows plus 4 live lockdown/balance rows. It covers
@@ -522,7 +523,7 @@ again. Five 🔴 plus a 🟡 list. All reproduced here before fixing.
 | 2 | `--ro-bind /nix /nix` re-exposed the repo — `nix build` copies the tree to a world-readable `/nix/store/<hash>-source` | **4** readable copies of this repo's `AGENTS.md` inside the jail | the jail binds only the tool CLOSURE; measured inside: **0** `AGENTS.md`, **0** `claudedocs`, **0** `-source` dirs, **0** handoffs, and it refuses to start rather than fall back to binding `/nix` |
 | 3 | `enter` cannot host a Claude Code process | `claude` not on PATH inside; `HOME` rewritten so no `~/.claude` | measured: `claude --version` **does** run inside a jail carrying its 31-path closure — but a real session needs credentials, and the obvious way to supply them re-imports `~/.claude/projects`, i.e. this repo's transcripts. **Not shipped.** The checklist now states the run will be outside the jail and that neither kernel row applies then |
 | 4 | the meter assumed `buzz` reflects the charge by return; a stale-but-successful read was a silent zero | 3 submits, meter **0**, balance really moved 111, nothing latched | a zero or negative delta now latches `meter_broken` and charges the worst case. Re-measured: stale → **1** allowed then latched; credit-masked → latched. `--no-wait` refused by default; `calibrate` (one deliberate, operator-watched generation) is required before any spend |
-| 5 | the caps were pinned by roughly one assertion between them | 6 checksum-gated mutants surviving 88/0 — total cap, remaining budget, generate cap, app cap, empty `SLUG_PREFIX`, negative-delta clamp | each has an isolated, reason-pinned row; all six now killed |
+| 5 | the caps were pinned by roughly one assertion between them | 6 checksum-gated mutants surviving 88/0 — total cap, remaining budget, generate cap, app cap, empty `SLUG_PREFIX`, negative-delta clamp | isolated rows added — 🔴 **but the claim made here was itself falsified next round: the rows asserted only the REASON, so a `deny`→`allow` flip with an identical message still survived. See round 3 below.** |
 
 🟡 also fixed: `workflows` closed like `app` (`cancel` of a workflow this run did
 not create is refused — it **does not refund**); listing revisions counted and
@@ -573,6 +574,75 @@ shape that would reach the readback is a write that succeeds and does not
 persist — `/dev/null` is the obvious one, and `read_scalar` rejects that as
 malformed one step earlier. It is kept as cheap defence-in-depth and recorded
 here as knowingly unpinned rather than deleted or pretended-about.
+
+## The third hardening round (blind re-audit #2)
+
+A second blind auditor built a recording origin server that observes the real
+`generateFromGraph`, positive- and negative-controlled it, and ran a 40-row
+differential. **Zero rows where the gate said plain ALLOW and the binary spent.**
+Its verdict was still no — *"not because the sandbox is unsafe, but because two
+defects make the run fail at its purpose and one makes the evidence unreliable"*.
+All reproduced here first.
+
+| # | what | measured before | after |
+|---|---|---|---|
+| 1 | a non-spending FAILURE latched the meter and killed the run | `--max-cost 5` against an estimate of 8 → rc 2, delta 0, **latched**, 5 Buzz credited that never moved, every later generate rc 126 | the latch is rc-aware; re-measured: failed generate rc 2, no latch, 0 credited, 0 submits burned, next generate works |
+| 2 | no node/npm, and app submits burned by LOCAL failures | `app validate` rc 1 (`npm ci` hard-fails) with no lockfile — the agent could never produce a submittable app; 3 rejected submits consumed all 3 slots | node+npm in the closure; re-measured **inside the jail**: `npm install` rc 0, lockfile written, `validate` rc 0, `package-only` rc 0. Counters bump on SUCCESS |
+| 3 | `st_reason` asserted the reason but never the VERDICT | 5 of 5 `deny`→`allow` flips with byte-identical messages survived 177/177 | `st_reason` asserts both; the flip class now kills 25 mutants |
+| 4 | both id-recording paths broken, in opposite directions | `app status` human table has no id column → `pubreq.allow` never populated, `withdraw` ALWAYS denied; workflow ids filtered by SHAPE over the account-wide list | `app status <slug> --json`, scoped to the submitted app; workflow ids by before/after PROVENANCE |
+
+🟡 also fixed: `--timeout` gated beside `--no-wait` (it stops the waiting, not
+the charge); unknown subcommands asked of cobra (`hassubcommands` + argc)
+instead of a hand-written parent list — the old table missed `models`, `images`,
+`users`, `tags`, all of which the binary rejects with exit 2; the manifest
+parsed by `encoding/json` in the classifier, because a grep took the FIRST
+`blockId` and Go takes the LAST (measured: gate ALLOW, CLI would submit
+`someones-real-app`); provenance hashes VERIFIED at guard time, not merely
+recorded; a deleted counter is malformed; an interrupted spend is reconciled
+from an `inflight` record on the next invocation; `sandbox_env` and an empty
+`for` loop deleted.
+
+**Three defects found here, not by the auditor.** `command -v printf` returns
+the shell BUILTIN, so the jail's closure computation fed `readlink -f` a bogus
+path and `nix-store` failed on the whole list. Adding node/npm to the closure
+was necessary but NOT sufficient — `readlink -f` collapses npm's launcher
+symlink, so node looked for `npm-prefix.js` beside the *node* binary and
+`npm install` still exited 1; explicit shims fixed it. And the `assert_writable`
+pre-flight had to be added, because moving the counter bump to after-success
+would otherwise have let an unwritable ledger stop blocking.
+
+### Mutation matrix — 52 mutants, all checksum-gated
+
+```
+BASELINE                                          225 passed, 0 failed
+25 deny->allow flips (byte-identical reason)      ALL KILLED
+rc-aware latch / counters-on-success              KILLED
+provenance verify / provenance compares nothing   KILLED
+assert_writable / reconcile_inflight / inflight   KILLED
+hassubcommands / argserr / resolve_block_id       KILLED
+GUARD_BIN reset / record_pubreq / workflow prov.  KILLED
+read_scalar EMPTY / MISSING, latches, parser, …   KILLED
+ledger lock removed                               KILLED (see below)
+write_scalar readback removed                     SURVIVED — declared
+NULL comment-only                                 SURVIVED — as required
+TOTALS: killed=50 survived=2 invalid=0
+```
+
+🔴 **The concurrency row was flaky and is now replaced.** With `flock` deleted,
+the 8-concurrent test reported **1, 2 and 5** allowed submits on three
+consecutive runs — it passed a third of the time, because process startup
+staggers the racers by more than the critical section takes. A guard that is
+right two times in three is worse than none, so mutual exclusion is now pinned
+as a PRIMITIVE (`__locktest`: one process holds, a second must be blocked, then
+acquires once released) and the end-to-end row is kept only as a
+ledger-consistency smoke test.
+
+🔴 **Two process errors of mine, recorded because both produced green that meant
+nothing.** I ran the mutation matrix in the BACKGROUND while editing the same
+file — its restore trap silently reverted an edit I had just made. And
+overwriting the classifier binary to test substitution hits **ETXTBSY**, so the
+write failed silently and the row passed against the *real* classifier; `rm`
+first, and assert the substitution actually happened.
 
 ## What this does not protect against
 
@@ -661,6 +731,35 @@ are the ones being shipped knowingly.
     meter is verified" — nothing here has yet observed a real charge.**
 12. **Nothing here bounds rate limits, account flags, or platform-side
     consequences** of a real submission (moderation attention, reputation).
+13. 🔴 **`npm install` IS ARBITRARY CODE EXECUTION INSIDE THE JAIL, AND IT IS
+    NEW.** node/npm are in the closure because without them the run cannot reach
+    its own purpose — measured, `app validate` fails on a missing lockfile and
+    no app is ever submittable. The cost: `npm install` reaches
+    `registry.npmjs.org` and **runs package lifecycle scripts**. Closure size
+    went from 69 to **168** store paths (181 with `--with-claude`). The jail
+    still has no repo, no operator `$HOME` and no real credential store, so the
+    blast radius is the sandbox plus the network — which is not nothing.
+14. 🔴 **A SECOND CREDENTIAL IS NOW AT REST IN THE SANDBOX, AND IT IS NOT THE
+    CIVITAI KEY.** `enter --with-claude` copies `~/.claude/.credentials.json`
+    into the run root. It is an OAuth token pair whose scopes are
+    `user:inference`, `user:mcp_servers`, `user:file_upload`, `user:profile`,
+    `user:sessions:claude_code` on a `max` subscription — so reading it lets
+    someone spend the owner's Claude quota and reach their account connectors.
+    Whatever can read the Civitai key can read this one.
+    - **ACCEPTED BY THE OWNER:** the claude.ai MCP connectors ride the
+      CREDENTIAL, not the filesystem. Measured — a jailed session with a
+      completely fresh `$HOME` still initialised `claude.ai proxy transport for
+      server mcpsrv_012…` against `mcp-proxy.anthropic.com`, a **Gmail**
+      connector. A fresh HOME does not remove it; only a differently-scoped
+      token would.
+    - **ACCEPTED BY THE OWNER:** the run uses the live session credential rather
+      than a dedicated minted token, so it must be kept SHORT and inside the
+      token's validity window. `expiresAt` was ~5.5 h out when measured; a run
+      crossing it triggers a refresh *inside the sandbox*, and whether that
+      rotates the refresh token and logs the operator out is **unmeasured** —
+      deliberately, because the test is the damage. `claude setup-token` would
+      mint an independent, revocable token; it is one owner action and was not
+      taken.
 
 ## Go / no-go checklist
 
@@ -700,23 +799,24 @@ Read time ~2 minutes. Everything below is verifiable in one command each.
 
 **Where the run actually happens — read this, the earlier version was wrong**
 
-- [ ] 🔴 **Decide, and know what you are choosing.** `enter` gives a jail in
-      which the repo genuinely does not exist (measured: 0 `AGENTS.md`, 0
-      handoffs, 0 `-source` copies) and the operator's config is unreachable.
-      **But it cannot host a Claude Code process today.** `claude --version`
-      runs inside it, so hosting is not impossible — a real session needs
-      credentials, and the natural way to supply them mounts `~/.claude`, whose
-      `projects/` holds transcripts of this very repo. That would hand the
-      agent the source it is supposed to be blind to, so it is **not shipped**.
-- [ ] **Therefore, unless you build that plumbing yourself, the agent runs
-      OUTSIDE the jail and NEITHER kernel row applies.** Blindness is then
-      procedural: the agent is launched with its cwd in `$ROOT/workspace`, given
-      only `AGENT-BRIEF.md`, the `civitai` on PATH and `README.md`, and told not
-      to go looking. That is exactly how dogfood runs 1 and 2 were kept blind,
-      and it worked — but it is an instruction, not a boundary.
-- [ ] Use `enter` at minimum to *verify* the sandbox (it is what the blindness
-      and isolation measurements above were taken in), and prefer it for any
-      shell-driven agent that does not need Claude Code.
+- [ ] 🔴 **RUN IT IN THE JAIL — `dogfood-sandbox.sh enter --with-claude`.** An
+      earlier version of this checklist said the run would happen outside and
+      that neither kernel row applied. That is **superseded**: the jail now
+      hosts a real Claude Code session with a FRESH `$HOME` seeded with only
+      `.claude/.credentials.json`. The host `~/.claude` is never bound, so its
+      `projects/` — 34 project directories including this repo's own
+      transcripts and both prior dogfood runs — stays unreachable, and the
+      session creates its own `projects/` inside the sandbox.
+- [ ] **Blindness, measured inside that jail with a real session running:**
+      `AGENTS.md` 0 · `claudedocs` files 0 · `*-source` trees 0 ·
+      `handoff-dogfood-*.md` 0 · host `~/.claude/projects` 0 · civitai `.go`
+      sources 0. **Positive-controlled**: the same rig with deliberately wrong
+      mounts reports 120 / 1320 / 324 / 3 / 1, with `find` and `wc` present in
+      both runs — so the zeros are a measurement, not a rig wired to nothing.
+- [ ] Accept the two credential residuals (13 and 14 above): `npm install`
+      executes package lifecycle scripts inside the jail, and a second
+      credential — your Claude OAuth token, carrying Gmail connector access —
+      is at rest in the run root for the duration.
 
 **Calibrate the meter before the agent starts**
 
@@ -741,7 +841,7 @@ shred -u ~/.dogfood-token
 
 # 3. confirm the harness is honest before trusting it
 scripts/dogfood-sandbox.sh selftest        # against the live sandbox
-make dogfood-check                         # shellcheck -x + 177/177, no credential needed
+make dogfood-check                         # shellcheck -x + 225/225, no credential needed
 
 # 4b. calibrate the meter — ONE deliberate generation, spends real Buzz
 scripts/dogfood-sandbox.sh calibrate --yes
