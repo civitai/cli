@@ -44,6 +44,29 @@ on:
   # `push-cask` skipped, so a cask that has drifted out of step for ANY reason —
   # a hand edit to the tap, a failed run nobody read, a future change to this
   # pipeline — is caught within a day rather than by a user's failed install.
+  #
+  # 🔴 A RED SCHEDULED RUN REACHES ALMOST NOBODY, WHICH IS WHY THE `signal` JOB
+  # EXISTS. Measured on this repo on 2026-08-10, before that job was added:
+  #
+  #   * GitHub's documented rule is that "notifications for scheduled workflows
+  #     are sent to the user who initially created the workflow. If a different
+  #     user updates the cron syntax, in the `schedule` event in the workflow
+  #     file, subsequent notifications will be sent to that user instead."
+  #     (docs.github.com → Actions → Notifications for workflow runs.) So the
+  #     entire audience for a red daily run is ONE account — whoever last
+  #     touched the cron above — reached through that person's own per-user
+  #     Actions notification setting, which is theirs to mute and which nobody
+  #     else can see. No org, team, CODEOWNERS or repo-level Actions failure
+  #     notification exists to widen it.
+  #   * That is not a theoretical gap here. `bump-flake-vendorhash.yml` is a
+  #     scheduled workflow in this same repo, and every one of its scheduled
+  #     runs has FAILED — 2026-07-20, 2026-07-27 and 2026-08-03, three for
+  #     three, a genuine non-zero exit in its "recompute flake vendorHash"
+  #     step — across three weeks in which this repo's tracker accumulated 30+
+  #     hand-filed issues and not one of them was about that. A red scheduled
+  #     run in this repo has a measured track record of reaching nobody.
+  #
+  # So the daily check now files its own report. See the `signal` job.
   schedule:
     - cron: "23 13 * * *"
   # Recovery path, in the shape release.yml and ci.yml already use: an Actions
@@ -56,6 +79,22 @@ on:
         description: "Published release tag to push the cask for, with the leading v — e.g. v0.1.92. Leave empty to only run the verify job."
         required: false
         type: string
+      # 🔴 THE FIRE DRILL. A notification path nobody has watched work is the
+      # same class of defect as a guard that cannot fail, so this makes the
+      # failing path runnable on demand, at any time, by anyone with dispatch
+      # rights — including after a future edit to the `signal` job below.
+      #
+      # It changes ONLY which cask `caskcheck` is pointed at (and, for
+      # `lagging`, its threshold). It cannot reach the tap: `push-cask` is
+      # gated on a non-empty `tag`, and the first step of this job refuses a
+      # drill that names one. Everything downstream — the classification, the
+      # dedupe, the issue text — is the same code the 13:23Z run takes.
+      drill:
+        description: "Rehearse the failure path against a fixture instead of the real tap. Opens a REAL issue, exactly as a real failure would; close it when you are done. Refuses to run alongside a tag."
+        required: false
+        default: "off"
+        type: choice
+        options: ["off", "broken", "lagging", "unmeasurable"]
 
 permissions:
   contents: read
@@ -78,6 +117,16 @@ jobs:
     if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.tag != '')
     runs-on: ubuntu-latest
     steps:
+      # A drill must never be able to reach the tap. `push-cask`'s own `if`
+      # already requires a non-empty tag, so a drill-only dispatch skips this
+      # job entirely; this refuses the one combination that would run BOTH, so
+      # nobody can rehearse a failure and push a cask in the same click.
+      - name: A drill may not push a cask
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.drill != 'off' }}
+        run: |
+          echo "::error::drill=${{ inputs.drill }} was dispatched together with tag='${{ inputs.tag }}'. A drill rehearses the failure REPORT; it must not also write to civitai/homebrew-tap. Dispatch them separately."
+          exit 1
+
       - name: Resolve tag
         id: t
         env:
@@ -189,24 +238,344 @@ jobs:
     needs: [push-cask]
     if: always() && needs.push-cask.result != 'cancelled'
     runs-on: ubuntu-latest
+    outputs:
+      # One of caskcheck's kinds, or `unknown`. The `signal` job branches on it.
+      kind: ${{ steps.check.outputs.kind }}
     steps:
       # 🔴 THE DEFAULT BRANCH, NOT THE RELEASE'S COMMIT. A `release` event
       # checks out the tag by default, and a release tagged before this checker
       # existed does not contain it — the job would fail to build rather than
       # report on the tap. The question here is about the CURRENT state of the
       # world, so it is always asked with the CURRENT checker.
+      #
+      # A DRILL is the one exception, and it has to be: a drill exists to prove
+      # THIS revision's reporting path works, and checking out the default
+      # branch would silently rehearse main's copy of it instead — which is the
+      # "verified the deployed copy, not the branch" mistake, built in.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.repository.default_branch }}
+          ref: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill != 'off') && github.ref || github.event.repository.default_branch }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
           cache: true
+
+      # 🔴 THIS STEP DOES NOT FAIL THE JOB — the step after it does.
+      #
+      # It has to capture a verdict AND still be observable, and a step that
+      # exits non-zero cannot be relied on to have published its outputs. So the
+      # verdict is captured here and the job is failed one step later, from that
+      # captured value. The job still goes red; nothing about the badge changes.
       - name: Cask names a publicly downloadable version
+        id: check
         env:
           # Used for the releases-API lookup only (rate limit). The archive
           # probes deliberately carry no credential — a draft release IS visible
           # to a repo token, so an authenticated probe would be answered by the
           # very object whose invisibility to users is the outage.
           GITHUB_TOKEN: ${{ github.token }}
-        run: go run ./tools/caskcheck
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || 'off' }}
+          # Fixtures are read from the SHA this run is checked out at, so a
+          # drill on a branch rehearses that branch's fixtures.
+          DRILL_BASE: https://raw.githubusercontent.com/${{ github.repository }}/${{ github.sha }}/tools/caskcheck/testdata
+        run: |
+          set -uo pipefail
+          KIND_FILE="$RUNNER_TEMP/caskcheck.kind"
+          OUT_FILE="$RUNNER_TEMP/caskcheck.out"
+
+          args=(-kind-file "$KIND_FILE")
+          case "$DRILL" in
+            off) ;;
+            # A refused connection: "we could not ask the tap", which must never
+            # look like "we asked and it was fine".
+            unmeasurable) args+=(-cask-url "http://127.0.0.1:1/drill-there-is-no-tap-here") ;;
+            # A cask naming a version that has never been released, so its real
+            # github.com archive URLs 404 — the 2026-08-09 shape.
+            broken) args+=(-cask-url "$DRILL_BASE/drill-broken-cask.rb") ;;
+            # A cask naming a real, downloadable, OLD version. Every archive
+            # probe is green; only the lag finding fires. The 1s threshold is
+            # what makes today's newest release count as "published long ago".
+            lagging) args+=(-cask-url "$DRILL_BASE/drill-lagging-cask.rb" -lag-threshold 1s) ;;
+            *) echo "::error::unknown drill mode '$DRILL'"; exit 1 ;;
+          esac
+
+          # No pipe. `cmd | tee` reports tee's status, and this exit code is the
+          # thing being measured.
+          go run ./tools/caskcheck "${args[@]}" >"$OUT_FILE" 2>&1
+          rc=$?
+          cat "$OUT_FILE"
+
+          # The kind is read from a FILE, not from the exit code, because on
+          # go1.25.12 `go run` collapses every non-zero exit to 1 — measured:
+          # os.Exit(3) and os.Exit(11) both give rc=1 through `go run`, while
+          # the same program built with `go build` propagates 3 and 11. Reading
+          # a kind off the exit code here would report every verdict as the
+          # same one. caskcheck's package comment carries the same note.
+          kind=unknown
+          if [ -s "$KIND_FILE" ]; then
+            raw="$(tr -d '[:space:]' <"$KIND_FILE")"
+            case "$raw" in
+              # An ALLOWLIST, for two reasons: it is the only thing standing
+              # between a file's contents and a shell variable, and a kind this
+              # workflow does not know about becomes `unknown` — which is true —
+              # instead of being passed through as a verdict nobody wrote words
+              # for.
+              green|broken|lagging|unmeasurable|unclassified) kind="$raw" ;;
+              *) echo "::warning::caskcheck wrote an unrecognised kind; treating this run as unknown" ;;
+            esac
+          fi
+
+          # A consistency control. rc and kind are produced by the same process
+          # and must agree; if they do not, something ran that is not the
+          # caskcheck this workflow thinks it ran, and the honest answer is that
+          # nothing was measured.
+          if { [ "$rc" -eq 0 ] && [ "$kind" != "green" ]; } || { [ "$rc" -ne 0 ] && [ "$kind" = "green" ]; }; then
+            echo "::warning::caskcheck exited $rc but classified itself '$kind'; these disagree, so this run is unknown"
+            kind=unknown
+          fi
+
+          echo "kind=$kind" >>"$GITHUB_OUTPUT"
+          {
+            echo "### Homebrew cask check: \`$kind\`"
+            echo
+            echo '```'
+            cat "$OUT_FILE"
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      # The output is uploaded rather than passed through a job output on
+      # purpose: it is arbitrary text (URLs and OS error strings read off the
+      # network), and the `signal` job pastes it into an issue body. Going via a
+      # file means it is never interpolated into a shell command or into a
+      # `$GITHUB_OUTPUT` heredoc, neither of which is safe for text this job
+      # does not author.
+      - name: Keep the check's output for the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: caskcheck-output
+          path: ${{ runner.temp }}/caskcheck.out
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Fail unless the check was green
+        if: steps.check.outputs.kind != 'green'
+        run: |
+          echo "::error::the Homebrew cask check is not green (kind=${{ steps.check.outputs.kind }}). See the job summary, and the issue the signal job files."
+          exit 1
+
+  # 🔴 THE PART THAT MAKES ANY OF THE ABOVE MATTER.
+  #
+  # Everything before this line answers "is the Homebrew channel healthy?".
+  # This answers "does anyone find out?", which on a SCHEDULED run is a
+  # different question with, by default, a much worse answer — see the measured
+  # note on the `schedule:` trigger at the top of this file.
+  #
+  # Mechanism: a GitHub issue in this repo. Chosen over email/Slack/a webhook
+  # because it needs no new secret, no external service and no per-user
+  # setting — it is visible to anyone who opens the repo, it is where this
+  # project already tracks defects (30+ issues filed by hand in the days around
+  # this change), and it survives the 90-day expiry of the run log it links to.
+  #
+  # It must not spam, and this is exactly how it does not:
+  #   * ONE open issue at a time, found by the `[cask-check]` title marker over
+  #     a plain issue LIST — never a search query, whose index is eventually
+  #     consistent and would let two runs each conclude "there isn't one yet".
+  #   * A repeat failure REWRITES that issue's body. Editing a body notifies
+  #     nobody, so a check that fails every day for a week produces one issue,
+  #     zero comments, and a body that always describes the latest run.
+  #   * A comment — the one notifying update — is posted only when the KIND
+  #     changes (green→broken, broken→lagging, …), because that is the only
+  #     change that alters what a human should do about it. The previous kind
+  #     is read back out of a marker in the issue body, not out of the title, so
+  #     renaming the issue by hand does not trigger a spurious "it changed".
+  #   * A green run CLOSES the issue and says so. That is not cosmetic: it is
+  #     what resets the mechanism, so the NEXT failure opens a fresh issue and
+  #     notifies again instead of silently deduping into a stale one.
+  signal:
+    needs: [push-cask, verify]
+    if: always() && needs.verify.result != 'cancelled' && needs.push-cask.result != 'cancelled'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The only elevated permission in this file besides the tap PAT, and it is
+      # scoped to this job rather than to the workflow.
+      issues: write
+    steps:
+      - name: Fetch the check's output
+        id: art
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: caskcheck-output
+          path: ${{ runner.temp }}/art
+
+      - name: Open, update or close the report issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # Empty when `verify` never reached the step that sets it — which is
+          # itself a state, resolved to `unknown` below.
+          KIND: ${{ needs.verify.outputs.kind || 'unknown' }}
+          VERIFY_RESULT: ${{ needs.verify.result }}
+          PUSH_RESULT: ${{ needs.push-cask.result }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || 'off' }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          ART_DIR: ${{ runner.temp }}/art
+        run: |
+          set -euo pipefail
+
+          MARKER="[cask-check]"
+          KIND_MARK_PREFIX="<!-- cask-check-kind:"
+
+          # `verify` can fail without ever producing a kind — the runner dying,
+          # the checkout failing, setup-go failing, the module not building.
+          # That is a real and different state ("the check could not run") and
+          # it must not borrow the wording of any verdict the check produces.
+          kind="${KIND:-unknown}"
+          if [ "$VERIFY_RESULT" != "success" ] && [ "$VERIFY_RESULT" != "failure" ]; then kind=unknown; fi
+          if [ -z "$kind" ]; then kind=unknown; fi
+
+          # State resolution. The check's own verdict wins wherever it has one,
+          # because it is the user-facing question; a failed tap push is
+          # reported on its own only when the invariant itself is fine.
+          state="$kind"
+          if [ "$PUSH_RESULT" = "failure" ] && [ "$kind" = "green" ]; then state=push-failed; fi
+
+          case "$state" in
+            green)        title="" ;;
+            broken)       title="$MARKER brew install is broken: the cask names a version whose archives are not downloadable" ;;
+            lagging)      title="$MARKER the Homebrew cask has not followed the latest published release" ;;
+            unmeasurable) title="$MARKER the Homebrew cask check could not measure anything" ;;
+            unclassified) title="$MARKER the Homebrew cask check failed in a way it could not classify" ;;
+            push-failed)  title="$MARKER pushing the cask to civitai/homebrew-tap failed" ;;
+            unknown|*)    state=unknown; title="$MARKER the Homebrew cask check could not run" ;;
+          esac
+
+          # ONE open issue, found by listing rather than searching. The list API
+          # is exact; GitHub's search index is not, and a run that failed to
+          # find yesterday's issue would open a second one.
+          existing="$(gh issue list --state open --limit 500 --json number,title \
+            --jq "[.[] | select(.title | startswith(\"$MARKER\"))] | first | .number // empty")"
+
+          if [ "$state" = "green" ]; then
+            if [ -n "$existing" ]; then
+              cat >"$RUNNER_TEMP/recovered.md" <<EOF
+          ✅ The Homebrew cask check is green again as of [this run]($RUN_URL) (trigger: \`$EVENT_NAME\`).
+
+          Closing. The next failure will open a **new** issue rather than reusing this one — that is deliberate,
+          so a fresh failure notifies rather than silently deduping into a closed-then-reopened thread.
+          EOF
+              gh issue comment "$existing" --body-file "$RUNNER_TEMP/recovered.md"
+              gh issue close "$existing" --reason completed
+              echo "closed #$existing"
+            else
+              echo "green, and no open report issue — nothing to do."
+            fi
+            exit 0
+          fi
+
+          # ---- not green ----------------------------------------------------
+          detail="$ART_DIR/caskcheck.out"
+          {
+            echo "$KIND_MARK_PREFIX $state -->"
+            echo "<!-- This body is REWRITTEN by every failing run of release-homebrew.yml."
+            echo "     Put notes in a comment; anything typed here is overwritten within a day. -->"
+            echo
+            if [ "$DRILL" != "off" ]; then
+              echo "> ⚠️ **This is a fire drill** (\`drill=$DRILL\`), dispatched by hand against a fixture — not a real"
+              echo "> failure of the live pipeline. It exists to prove this reporting path works. Close it when done."
+              echo
+            fi
+            echo "**State:** \`$state\`  "
+            echo "**Run:** [$RUN_URL]($RUN_URL)  "
+            echo "**Trigger:** \`$EVENT_NAME\`  "
+            echo "**Jobs:** \`push-cask\` = \`$PUSH_RESULT\`, \`verify\` = \`$VERIFY_RESULT\`"
+            echo
+            case "$state" in
+              broken)
+                echo "\`brew install civitai/tap/civitai\` is failing for every user right now: the cask in"
+                echo "\`civitai/homebrew-tap\` names a version whose release archives answer non-200 to an"
+                echo "**unauthenticated** request. This is the 2026-08-09 outage shape (#308)."
+                echo
+                echo "If a draft release is sitting unpublished, publishing it resolves this. If the cask was"
+                echo "moved by something other than \`release-homebrew.yml\`, that is the regression."
+                ;;
+              lagging)
+                echo "Nobody's install is broken — the version the cask names *is* downloadable. What has not"
+                echo "happened is the cask following a release that was **published** over a day ago, and the"
+                echo "only thing allowed to move the cask is the \`release: published\` job in this workflow."
+                echo "A dropped \`release\` webhook, a failed push nobody read, or an expired"
+                echo "\`HOMEBREW_TAP_GITHUB_TOKEN\` all look exactly like this."
+                echo
+                echo "Re-run the push for a specific release with:"
+                echo '```'
+                echo "gh workflow run release-homebrew.yml -f tag=vX.Y.Z"
+                echo '```'
+                ;;
+              unmeasurable)
+                echo "🔴 **This is not a clean bill of health — it is the absence of one.** The check could not"
+                echo "read the tap, or could not read a version or any archive URLs out of the cask, so it"
+                echo "measured nothing. The Homebrew channel may be perfectly fine or completely broken; this"
+                echo "run cannot tell you which, and a check that cannot ask must never look like a check that"
+                echo "asked and was satisfied."
+                ;;
+              unclassified)
+                echo "The check failed with an error carrying none of its own sentinels. That is a defect in"
+                echo "\`tools/caskcheck\` rather than a verdict about the pipeline: someone added a failure path"
+                echo "without giving it a kind. Treat the Homebrew channel as **unverified** until this is fixed."
+                ;;
+              push-failed)
+                echo "The invariant itself is fine, but the job that pushes the rendered cask to"
+                echo "\`civitai/homebrew-tap\` failed. Until it succeeds, Homebrew users stay on the previous"
+                echo "version — which works, so nothing else will notice. Check the run log for the cause"
+                echo "(a missing \`civitai.rb\` asset, an expired \`HOMEBREW_TAP_GITHUB_TOKEN\`, a tap conflict)."
+                ;;
+              unknown)
+                echo "🔴 **The check did not produce a verdict at all** — \`verify\` ended as"
+                echo "\`$VERIFY_RESULT\` without writing a classification. That is a failure of the checking"
+                echo "machinery (checkout, toolchain, runner, a build error), not a statement about the"
+                echo "Homebrew channel, which is currently **unverified**."
+                ;;
+            esac
+            echo
+            echo "<details><summary>caskcheck output</summary>"
+            echo
+            echo '```'
+            if [ -f "$detail" ]; then cat "$detail"; else echo "(no output was captured — the check did not get far enough to produce any)"; fi
+            echo '```'
+            echo
+            echo "</details>"
+            echo
+            echo "---"
+            echo "Filed automatically by \`.github/workflows/release-homebrew.yml\`. It files one issue at a time and"
+            echo "rewrites this body on every failing run; it comments only when the state changes, and closes this"
+            echo "issue when the check goes green."
+          } >"$RUNNER_TEMP/body.md"
+
+          if [ -z "$existing" ]; then
+            num="$(gh issue create --title "$title" --body-file "$RUNNER_TEMP/body.md" | sed 's#.*/##')"
+            echo "opened #$num ($state)"
+            exit 0
+          fi
+
+          # Read the PREVIOUS state before overwriting the body with the new one.
+          prev="$(gh issue view "$existing" --json body --jq .body \
+            | sed -n "s/^$KIND_MARK_PREFIX \\([a-z-]*\\) -->.*/\\1/p" | head -1 || true)"
+          gh issue edit "$existing" --body-file "$RUNNER_TEMP/body.md" >/dev/null
+
+          if [ "$prev" = "$state" ]; then
+            echo "#$existing already reports '$state'; body refreshed, no comment (this is the no-spam path)."
+            exit 0
+          fi
+
+          gh issue edit "$existing" --title "$title" >/dev/null
+          cat >"$RUNNER_TEMP/changed.md" <<EOF
+          The state of this check **changed**: \`${prev:-unrecorded}\` → \`$state\`, in [this run]($RUN_URL).
+
+          The issue body above has been updated to describe the new state. This comment is posted only on a
+          state change — a check that keeps failing the same way updates the body silently and says nothing here.
+          EOF
+          gh issue comment "$existing" --body-file "$RUNNER_TEMP/changed.md"
+          echo "#$existing: $prev -> $state (commented)"

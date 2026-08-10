@@ -2208,6 +2208,39 @@ Homebrew channel now waits for the same event, and `tools/caskcheck` asserts the
 invariant — the cask must never name a version that is not publicly
 downloadable — on every publish and once a day, over real unauthenticated HTTP.
 
+🔴 **A failing scheduled run notifies almost nobody, so the daily check files
+its own report.** GitHub sends scheduled-workflow notifications only to the one
+account that last edited the `cron` line, through that person's own per-user
+Actions setting — there is no org-, team- or repo-level failure notification.
+Measured in this repo: every scheduled run of `bump-flake-vendorhash.yml` failed
+on 2026-07-20, 2026-07-27 and 2026-08-03, and no issue was ever filed about it.
+So `release-homebrew.yml` opens a **GitHub issue** titled `[cask-check] …` when
+the check is not green, rewrites that one issue's body on each subsequent
+failure (an edit notifies nobody, so a week of failures is one issue and zero
+comments), comments only when the *kind* of failure changes, and **closes** the
+issue when the check goes green — which is what makes the next failure notify
+again. It distinguishes "the check failed" from "the check could not run": an
+unreachable tap, an unreadable cask, an unclassifiable error and a `verify` job
+that died before producing a verdict each get their own wording, and none of
+them is allowed to read as a clean bill of health.
+
+`gh workflow run release-homebrew.yml -f drill=broken|lagging|unmeasurable` is a
+**fire drill**: it points the check at a fixture, opens a real issue exactly as a
+real failure would, and cannot touch the tap. Run it after changing any of this —
+a notification path nobody has watched work is not a notification path.
+
+A cask that merely **lags** a published release is green for the first 24h,
+because that is the normal state right after a publish and a permanently-red
+check is worse than none. After that it is a finding of its own, distinct from
+the 404 outage above and explicitly *not* claiming users are broken: the only
+thing allowed to move the cask is that `release: published` job, so a cask still
+lagging a day later means the event never reached it — a dropped webhook, an
+expired `HOMEBREW_TAP_GITHUB_TOKEN`, a failed push nobody read. The threshold is
+measured, not guessed: across the 30 most recent releases the gap from
+`published_at` to the tap commit is ~1 minute, and the tag→publish gap (a
+strictly larger window) has a median of ~2m30s and a worst case of 1h55m — the
+2026-08-09 incident itself.
+
 Authentication for that job is **OIDC trusted publishing** — there is no
 `NPM_TOKEN` secret. The trust is bound to the repository *and to that workflow
 file's path*, so moving or renaming `release-npm.yml` breaks publishing, and no
