@@ -57,7 +57,7 @@ func listingHelpNodes(t *testing.T) map[string]*cobra.Command {
 //
 // The cross-kind assertions are separate and are not redundant with the
 // per-kind ones: icon and screenshot share a cap (2 MiB), so "set-cover quotes
-// 4.0 MB" is satisfied by a body that ALSO quotes the icon's — the shape a
+// 4.0 MiB" is satisfied by a body that ALSO quotes the icon's — the shape a
 // copy-paste between the two bodies produces.
 func TestListingHelpQuotesTheEnforcedCaps(t *testing.T) {
 	nodes := listingHelpNodes(t)
@@ -106,7 +106,7 @@ func TestListingHelpQuotesTheEnforcedCaps(t *testing.T) {
 	// 🔴 THE GROUP ASSERTION MUST BE CAP-IN-CONTEXT, NOT CAP-ALONE.
 	//
 	// `humanBytes(maxIconBytes)` and `humanBytes(maxScreenshotBytes)` are the SAME
-	// STRING today ("2.0 MB"), so three bare Contains checks over three strings —
+	// STRING today ("2.0 MiB"), so three bare Contains checks over three strings —
 	// two of them byte-identical — enforce only TWO of the three caps. Measured:
 	// deleting the icon cap from the group body, and deleting the screenshot cap
 	// from it, BOTH survived a green suite, because the other one's identical
@@ -130,7 +130,7 @@ func TestListingHelpQuotesTheEnforcedCaps(t *testing.T) {
 }
 
 // TestListingHelpNamesTheKindItDescribes closes the other half of the shared-cap
-// hole: a per-kind body asserted only to contain "2.0 MB" is satisfied by the
+// hole: a per-kind body asserted only to contain "2.0 MiB" is satisfied by the
 // OTHER 2 MiB kind's sentence.
 //
 // Measured: swapping `set-cover`'s `listingSourceRule(kindCover)` to `kindIcon`
@@ -141,7 +141,7 @@ func TestListingHelpQuotesTheEnforcedCaps(t *testing.T) {
 // 🔴 THE ICON <-> SCREENSHOT SWAP IS A DECLARED **EQUIVALENT MUTANT**, NOT A
 // SURVIVING HOLE, AND THE DIFFERENCE MATTERS TO WHOEVER EDITS THIS NEXT.
 // `humanBytes(maxIconBytes)` and `humanBytes(maxScreenshotBytes)` are both
-// "2.0 MB" today, so swapping `kindScreenshot` -> `kindIcon` produces a DIFFERENT
+// "2.0 MiB" today, so swapping `kindScreenshot` -> `kindIcon` produces a DIFFERENT
 // BINARY and BYTE-IDENTICAL rendered help — measured, `cmp` on the two `--help`
 // outputs, with the differing binaries as the negative control. There is nothing
 // for any assertion to observe, which is why `foreign` deliberately names COVER
@@ -150,7 +150,7 @@ func TestListingHelpQuotesTheEnforcedCaps(t *testing.T) {
 // The protection against the swap MATTERING is elsewhere and was measured too —
 // set maxScreenshotBytes to 3 MiB under that mutation and
 // TestListingHelpQuotesTheEnforcedCaps reddens with "does not quote the cap it
-// enforces (3.0 MB)". So the swap is invisible exactly while it is harmless.
+// enforces (3.0 MiB)". So the swap is invisible exactly while it is harmless.
 func TestListingHelpNamesTheKindItDescribes(t *testing.T) {
 	nodes := listingHelpNodes(t)
 	cases := []struct {

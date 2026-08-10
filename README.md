@@ -1166,7 +1166,7 @@ your value (`icon must be square-ish (aspect 2.00 outside 0.9–1.1)`).
 
 Easy starting points: a **512 × 512** icon and a **1600 × 900** cover.
 
-Three behaviours that are not obvious from the numbers:
+Four behaviours that are not obvious from the numbers:
 
 - **Icons are re-encoded server-side.** Whatever you upload is downscaled to at
   most **1024 px** on its longer side and re-encoded to PNG — aspect preserved,
@@ -1177,16 +1177,21 @@ Three behaviours that are not obvious from the numbers:
   the file you pass. A detailed photographic icon can clear the local check and
   still be refused for the size of the PNG the server made from it — the message
   quotes bytes, not pixels. Flat, simple artwork re-encodes far smaller.
+- **An icon's upper bound is a PIXEL count, not a file size.** The decoder that
+  re-encodes it refuses a source above roughly **16 megapixels** — about
+  4096 × 4096 — and it refuses it *regardless of how small the file is*. A flat
+  5000 × 5000 PNG compresses to a few hundred KB, so it clears every byte cap in
+  the first table and is still rejected. Downscale before you upload:
+  **1024 × 1024** is plenty, because that is what the server re-encodes to
+  anyway.
 - **Covers and screenshots are not rescaled.** What you upload is what the store
   renders, so ship them at the size you want shown.
 - **A wrong image is rejected, not quietly accepted, and it comes back fast.**
   The CLI attaches *before* it waits on the content scan, so the platform's
   verdict on shape arrives in a couple of seconds rather than after a scan that
   can take two minutes — and always before a moderator sees it. The message names
-  the requirement. A source image above ~16 megapixels (say 5000 × 5000) is the
-  one exception with an unhelpful message: it fails the icon decoder with
-  *"That icon couldn't be read"* rather than a dimension error. Downscale it and
-  retry.
+  the bound it applied and the value it measured — read it rather than guessing
+  which limit you crossed.
 
 > **Why the CLI does not enforce the second table.** These are platform
 > constants that can move. Stale *guidance* costs you one rejection that carries

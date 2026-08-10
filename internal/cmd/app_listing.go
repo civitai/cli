@@ -47,7 +47,7 @@ const listingImageFormats = "png, jpeg or webp"
 // 🔴 IT IS COMPUTED FROM THE CAP CONSTANTS AND MUST STAY THAT WAY — the number
 // in the help has to be the number loadAndValidateImage enforces, and it is
 // rendered through the SAME humanBytes the refusal message uses, so `--help`
-// predicts the error text byte-for-byte ("larger than the 2.0 MB max") instead
+// predicts the error text byte-for-byte ("larger than the 2.0 MiB max") instead
 // of quoting a differently-rounded prose figure. A hand-typed "2 MiB" here is a
 // second copy of a constant: it reads fine, it survives every test that only
 // greps for a cap being mentioned, and it goes stale the day a cap moves.
