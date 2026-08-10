@@ -73,6 +73,22 @@ Defaults to the current directory.`,
 			out := cmd.OutOrStdout()
 			errw := cmd.ErrOrStderr()
 
+			// Classify the path the USER named before validating anything.
+			// A path that is not there, or that is not a directory, is a
+			// mistake about the invocation (exit 2) — not a validation
+			// verdict. See resolveProjectDir (project_dir.go) for why the
+			// branch is here and not in internal/validate.
+			//
+			// 🔴 It runs BEFORE the --json block on purpose, and that is a
+			// deliberate wire break: `app validate /nope --json` used to print
+			// {"ok":false,"errors":[…]} and exit 1. It now prints NOTHING on
+			// stdout and exits 2, because a path that does not exist produced
+			// no validation result to report. That matches the CLI-wide
+			// convention that a usage error emits no JSON object.
+			if err := resolveProjectDir(dir); err != nil {
+				return err
+			}
+
 			res, err := validate.Dir(dir)
 			if err != nil {
 				return err
