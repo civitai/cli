@@ -340,55 +340,14 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
    `recordScopeInvocation` call sites, and note that `pending` is a "no id
    captured" sentinel — **not** a status.
 9. **`views.unavailable` is a SECOND unavailability discriminator, and it is not
-   redundant with `notOwned`.** The `App loads` section of `app metrics` is the
-   only part of the payload the server reads from **ClickHouse** (`blockRenders`)
-   rather than Postgres, so its store can be unconfigured, SLOW (the server-side
-   read is time-bounded and a timeout degrades to this flag) or down while every
-   other counter in the same response is genuinely measured. Hence the flag is
-   per-SECTION: flagging the whole payload would discard good data, and dropping
-   it would recreate the fabricated zero item 6 exists to prevent — an author
-   reading `Impressions 0` as "nobody looked at my app" when the truth is "we
-   could not ask". `printAppMetrics` therefore prints `unavailable` plus an
-   explicit caveat instead of any number, and `--json` passes the field through
-   while **still exiting 0**, so a script must branch on `views.unavailable`
-   exactly as it must already branch on `notOwned`. Whoever changes the server
-   payload has to keep the field
-   (`civitai/civitai → src/server/services/blocks/app-views.service.ts`).
-   🔴 `AppAnalytics.Views` is a **pointer** for the same reason and must stay
-   one: there are THREE states, not two — measured, unavailable, and *absent*
-   (a server predating the impressions reader omits the key). A value type
-   collapses "absent" into "measured zero", because `encoding/json` leaves the
-   zero value in place and the renderer then prints `Impressions 0`. That was
-   **measured, not theorised** — the value-typed version rendered exactly
-   `Impressions     0` for a payload with no `views` key. So `nil` means unknown
-   and renders like `unavailable`, never as `0`.
-   Related gotcha: unique viewers deliberately do **not** dedup on
-   `blockInstanceId`. Despite the name it is not per-mount — it is
-   `page_apb_<ULID>`, roughly one per app (measured on prod: 28 distinct ids
-   across 27 distinct apps) — so deduping on it would report ~1 viewer per app.
-   Anonymous rows all carry `userId = 0`, so the server sums distinct authed
-   `userId` with distinct anon `ip`.
-   🔴 **`installs` has a THIRD state too, and it is a different KIND of flag.**
-   `installs.notApplicable` means "the question does not apply", not "we could
-   not ask": a page app is stateless by design and has no install slot, so a
-   subscription record cannot exist for it. Rendering `0` there reads as "nobody
-   installed my app" when the truth is "installs do not exist for this app
-   type" — the same fabricated-zero class as items 6 and 9, from a third
-   direction. The distinction that matters when editing this: a TRUTHFUL zero
-   (an installable app nobody has installed yet) arrives with the flag ABSENT
-   and must keep printing `0`. The server owns that call — do NOT re-derive it
-   in the CLI from the counters, because `total == 0` is true in both states.
-   Measured on prod: every approved app is a page app (0 installs possible),
-   while the model-slot apps that CAN be installed hold real rows, so the two
-   populations are disjoint and the bare `0` was never a measurement of user
-   behaviour.
-   Two more things the label has to keep straight, both of which read wrong if
-   you shorten them: `AnonCount` is signed-out **LOADS**, not viewers, and is
-   NOT a subset of `UniqueViewers` — one anonymous visitor reloading ten times
-   is 10 there and 1 unique viewer, so it can legitimately be the larger number.
-   And the section is called **App loads**, not Views, because the server writes
-   a row even when a mount FAILS (a failed launch's only beacon) and the table
-   has no status column — so a permanently-broken app still reports loads.
+   redundant with `notOwned`.** The `App loads` section is the only part of the
+   payload the server reads from **ClickHouse** rather than Postgres, so its
+   store can be unconfigured, slow or down while every other counter in the
+   same response is genuinely measured — which is why the flag is per-SECTION.
+   🔴 `AppAnalytics.Views` is a **pointer** because there are THREE states, not
+   two, and `installs.notApplicable` is a third state of a different KIND. All
+   of it exists to stop the fabricated zero item 6 exists to prevent.
+   → evidence: claudedocs/decisions/09-views-unavailable-discriminator.md
 
 10. **The `dev-tunnel` embeddability preflight WARNS and never blocks, and its
     two halves have deliberately different evidentiary strength.**
@@ -441,45 +400,13 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
 13. **The CLI deliberately validates NOTHING about the generation graph, and
     that is the feature.** `internal/genapi/graph.go` models a handful of fields
     and `--input` passes a caller's graph through byte-for-byte. It does not
-    vendor, and must never vendor: the ecosystem keys, the ~51 per-engine
-    graphs, the sampler enum, the resolution/aspect-ratio buckets, the
-    per-ecosystem defaults, the tier limits, or any cost table. The server
-    re-derives every one of them at submit time from state the CLI cannot see —
-    a caller's usable (non-disabled, non-memberOnly) ecosystem set, for one, so
-    even the *default* model differs between a free and a member account — so a
-    vendored copy buys no correctness, goes stale, and starts **refusing valid
-    new inputs**, which is worse than the gap it closes. This is the same
-    anti-mirror judgement as item 8, with money on it.
-    Two consequences that look like missing features:
-    (a) `KnownGraphKeys()` (`graph.go`) is derived by REFLECTION over the struct
-    tags, never hand-listed, and it answers *"does the CLI model this key?"* —
-    **not** *"does the server accept it?"*. `unknownKeyWarning`
-    (`internal/cmd/generate_input.go`) is worded to say exactly that and must
-    stay worded that way; a warning phrased as "invalid key" would be a
-    validation claim this CLI has no authority to make.
-    (b) The one bounded exception is `serverQuantityClamp` in
-    `internal/cmd/generate.go` — a **warn-only** constant, currently 10, that
-    **fails soft**: it warns and sends anyway. It exists because the server
-    silently CLAMPS an out-of-range quantity (measured: 10000 → 10, −5 → 1) with
-    no error, so a `--quantity 40` typo charges for 10 and gives the user no
-    signal at all. Because it only warns, a stale number produces a needless
-    note, never a blocked valid request. Do not promote it to validation, and do
-    not add siblings for the other clamped fields without the same fail-soft
-    shape.
-    **Live lookups are not mirrors**, which is why one is allowed:
-    `ResolveModelVersion` (`internal/genapi/versions.go`) resolves
-    `--checkpoint` / `--lora` ids against the existing public
-    `GET /api/v1/model-versions/{id}` before submitting. It is a round-trip, so
-    it carries no drift cost, and it buys two things nothing else can. A
-    **nonexistent** checkpoint id is otherwise accepted with HTTP 200, the
-    ecosystem default silently substituted, and **billed** (measured on one
-    ecosystem: the correct id priced 160, while a nonexistent id, a
-    foreign-ecosystem id, and no model at all ALL priced 60 — the server's own
-    comment says this correction is visible on-site and invisible through a
-    non-browser path). And `Graph.Resources` entries **require** `model:{type}`,
-    which is not derivable from a version id — a bare id and `{id}` alone are
-    both 400s, while a *wrong* type is silently accepted. The type must come
-    from the lookup, never a guess.
+    vendor, and must never vendor, the ecosystem keys, the ~51 per-engine
+    graphs, the sampler enum, the buckets, the per-ecosystem defaults, the tier
+    limits or any cost table: the server re-derives every one of them from state
+    the CLI cannot see, so a vendored copy buys no correctness and starts
+    **refusing valid new inputs**. Live lookups are not mirrors, which is why
+    `ResolveModelVersion` is allowed.
+    → evidence: claudedocs/decisions/13-generation-graph-not-validated.md
 
 14. **Unset flags must be ABSENT from the payload, never Go zero values.** Every
     optional field on `genapi.Graph` is a pointer or carries `omitempty`. This
@@ -557,38 +484,13 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
 
 17. **`DownloadPresigned` exists so a blob fetch carries NO credential, and it is
     the thing in this feature most likely to be "simplified" away.** It is a
-    near-duplicate of `DownloadFile` in `pkg/civitai/download.go` differing only
-    in passing an empty token, and every instinct says to fold it back in behind
-    a bool. 🔴 Doing that leaks a full-scope personal API key.
-    `isTrustedDownloadHost` attaches the bearer token to `civitai.com` and to
-    **any** `*.civitai.com` subdomain — correct for the model-download route it
-    was written for — and orchestrator output blobs are served from a
-    `*.civitai.com` host (observed: `orchestration-new.civitai.com`), which
-    **matches**. So `DownloadFile` would send a 25-scope key (including
-    `ModelsDelete` and `VaultWrite`) to the orchestrator, on a request already
-    authorized by its own signature that needs no token whatsoever.
-    🔴 **The specific subdomain is incidental to the argument, and must not be
-    written as if it were the load-bearing fact.** An earlier revision of this
-    item named `orchestration.civitai.com`; the host observed in a real upload
-    reply is `orchestration-new.civitai.com`. BOTH match the `*.civitai.com`
-    wildcard, so the credential-free seam is required either way — which is why
-    the reasoning is stated over the wildcard rather than over a hostname a
-    server-side rename can invalidate. Do not "fix" this seam because the
-    subdomain you see does not match the one written here.
-    Weakening `isTrustedDownloadHost` is not the alternative: `civitai download`
-    depends on it attaching the token. The fix is a **seam that never has a
-    credential to attach** — `DownloadPresigned` passes `""` to `doDownload`,
-    whose guard is `token != "" && isTrustedDownloadHost(...)`, so the empty
-    token short-circuits before the host predicate is consulted. That ordering is
-    deliberate: it cannot be defeated by a change to the predicate. Everything
-    genuinely shared is still shared — the SSRF dial guard, the
-    https-per-redirect-hop policy and 10-hop cap, the `ResponseHeaderTimeout` —
-    so there is no duplicated security logic to drift. It also skips the
-    401-refresh replay on purpose: there is no credential to refresh, and a 401
-    from a presigned URL means the signature is wrong or **expired**, which a
-    token would not fix. `internal/cmd/generate.go` wires
-    `deps.downloadBlob = reader.DownloadPresigned`; if you ever see that wired to
-    `DownloadFile`, it is a credential leak, not a cleanup.
+    near-duplicate of `DownloadFile` differing only in passing an empty token,
+    and every instinct says to fold it back in behind a bool. 🔴 Doing that
+    leaks a full-scope personal API key: `isTrustedDownloadHost` attaches the
+    token to **any** `*.civitai.com` subdomain, which is where orchestrator
+    output blobs live. The fix is a seam that never HAS a credential to attach —
+    the empty token short-circuits before the host predicate is consulted.
+    → evidence: claudedocs/decisions/17-download-presigned-no-credential.md
 
 18. **The ready-ack checks for EXISTING apps are two deliberately different
     tiers, and neither is allowed to be a hard failure.** #206 fixed the
@@ -635,51 +537,15 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
 
 22. **`--input` refuses every workflow but `txt2img`, and that refusal is NOT the
     local validation item 13 forbids — it is a CONTENT-AUDIT gate over a
-    CONFIRMED server-side gap.** This is the item most likely to be read as an
-    unfinished feature, because item 13 says in bold that the CLI validates
-    nothing about the graph and `--input` exists precisely to pass one through
-    untouched. The reconciliation: item 13 forbids reproducing the server's
-    *judgement* about which graphs are valid, and this check makes no such
-    claim — it is the same shape as item 19(b), a flag combination the CLI owns,
-    asserting nothing about which ecosystems exist or what any of them allows.
-
-    🔴 **THE GAP IS CONFIRMED, NOT SUSPECTED, AND A PRIOR SESSION RECORDED THE
-    OPPOSITE.** The server audits at `'prompt' in data && typeof data.prompt ===
-    'string'` (`orchestration-new.service.ts:1460`) over a `data` REBUILT FROM
-    DECLARED GRAPH NODES ONLY. An earlier revision of the code comment called
-    exploitability an open question; a later handoff went further and wrote
-    "ruled out — no known bypass", reasoning that graphs lacking a `prompt` node
-    *compose* a shared `promptGraph`. True of the image graphs, and false as a
-    generalisation — it says nothing about graphs that opt out of the shared node
-    names. Verified at `civitai@a7e0bcd668`, two shipped ecosystems do:
-    **Hunyuan3D declares no `prompt` node at all**, only `hunyuanPrompt`
-    (`hunyuan3d-graph.ts:71`, prefixed because the bare names "collide with the
-    standard image Controllers in `GenerationForm.tsx`"), so the audit never runs
-    — and the handler then maps it back for the generator,
-    `prompt: hunyuanPrompt ? hunyuanPrompt : undefined`
-    (`hunyuan3d-graph.handler.ts:58`). **PolyGen's `texturePrompt`**
-    (`polygen-graph.ts:162`) is covered by no audit block at all, and on
-    `img2model3d` is the only text in the request because that workflow's
-    `prompt` node is gated `when: workflow.startsWith('txt')` and is deleted.
-    Sweep basis: all 79 declared node keys under
-    `src/shared/data-graph/generation`, every node whose input is a bare
-    `z.string()`. Note both are MULTI-LINE `.node(\n  'name',` declarations that
-    a single-line grep misses. Tracked at civitai/civitai#3667.
-
-    🔴 **KEEP THE CLAIM THIS SIZE — the overclaim and the dismissal are both
-    available and both wrong.** The CLI is not what holds the line: the same
-    fields are reachable from the first-party form and from any direct tRPC
-    caller with a personal API key, so the gate stops accidents, not adversaries.
-    That is an argument for fixing the platform, **not** for opening `--input`.
-    What the gate buys is that we do not add a second client to a confirmed
-    unaudited path while it is open. Equally, no live generation probe has been
-    run — this is reachability by code path, not a demonstrated exploit, and
-    writing it up as a shipped vulnerability would be the overclaim.
-
-    **Lift it when the server closes the coverage, not when the next workflow
-    looks like it would work.** Unblocking the other ~50 ecosystems through
-    `--input` is the single biggest capability unlock left in this command, which
-    is exactly why the bar is written down rather than left to judgement.
+    CONFIRMED server-side gap.** Item 13 forbids reproducing the server's
+    *judgement* about which graphs are valid; this claims nothing of the kind,
+    and is the same shape as item 19(b) — a flag combination the CLI owns.
+    🔴 The gap is confirmed, not suspected: two shipped ecosystems declare
+    prompt nodes the audit never runs over (civitai/civitai#3667). Keep the
+    claim that size — the gate stops accidents, not adversaries — and lift it
+    when the server closes the coverage, not when the next workflow looks like
+    it would work.
+    → evidence: claudedocs/decisions/22-input-refuses-non-txt2img.md
 23. **A validation finding is a `Finding{Field, Message}`, and the Field is
     carried from the CHECK — never re-derived at the printer.** `validate.Result`
     holds `[]Finding`, not `[]string`. This looks like ceremony around what used
@@ -701,39 +567,13 @@ ledger (`agents_evidence_test.go`); and this file has a byte ceiling
 25. **The listing-media DIMENSION and ASPECT bounds live in the README as prose,
     and must NOT become a local check.** `civitai app listing set-icon` /
     `set-cover` / `add-screenshot` validate the **format** and the **byte size**
-    of the source file (`maxIconBytes` / `maxCoverBytes` /
-    `maxScreenshotBytes`) and nothing else. The platform additionally enforces a
-    per-kind aspect range and a minimum dimension at ATTACH time
-    (`civitai/civitai → src/server/schema/blocks/app-listing.schema.ts`,
-    `validateListingImage`), returning a `BAD_REQUEST` that names the bound and
-    the measured value. Those numbers are documented in README →
-    *Listing media requirements* and in the scaffolded `assets/README.md`, and
-    that is deliberately as far as they go.
-    - **Why prose and not a check.** This is item 4's argument, applied to a
-      different constant set: stale *guidance* costs one round-trip carrying the
-      server's current bound, while a stale *gate* refuses valid images and the
-      author cannot override it. A local dimension check would also have to
-      re-derive the icon rescale below to avoid being wrong on day one. So do
-      not add a `LISTING_ICON_ASPECT_MIN` to `internal/cmd`, and do not "fix"
-      the docs by promoting the table into `internal/validate`. The CLI already
-      decodes width/height (`appapi.DecodeImageInfo`) — the omission is a
-      decision, not a missing feature.
-    - **The icon byte cap and the server's icon byte cap measure DIFFERENT
-      bytes, and the docs must not conflate them.** `maxIconBytes` (2 MiB) is
-      the SOURCE file, mirroring the server's `INLINE_ICON_MAX_DECODED_BYTES`
-      on the data-URI path the icon rides. The listing schema's
-      `MAX_LISTING_ICON_SIZE_BYTES` (1 MiB) is checked against
-      `Image.metadata.size`, which for that path is the byte length of the
-      **re-encoded** PNG the server produces after downscaling to ≤1024 px on
-      the longer side (`listing-meta.service.ts`) — not the file the author
-      passed. Cover and screenshot take the full-res path, where the CLI sends
-      `sizeBytes: len(data)`, so there the two caps DO describe the same bytes.
-    - **Never scaffold a placeholder icon or cover.** A placeholder passes every
-      format and byte check and uploads cleanly, so it can reach a public store
-      listing; a missing file fails loudly at the step that can still fix it.
-      `assets/` therefore ships with a README and no images, and
-      `internal/scaffold/assets_dir_test.go` fails if an image file appears
-      under it.
+    of the source file and nothing else; the platform enforces a per-kind aspect
+    range and a minimum dimension at ATTACH time. This is item 4's argument
+    applied to a different constant set: stale *guidance* costs one round-trip,
+    while a stale *gate* refuses valid images and the author cannot override it.
+    🔴 Never scaffold a placeholder icon or cover — it passes every check and can
+    reach a public store listing.
+    → evidence: claudedocs/decisions/25-listing-media-bounds.md
 
 26. **`civitai app validate <dir>` / `app submit <dir>` CLASSIFY THE PATH THE
     USER NAMED BEFORE VALIDATING ANYTHING, and that gate is deliberately NOT
