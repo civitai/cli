@@ -2021,6 +2021,18 @@ destructive path in this feature is:
 Nothing is cancelled when the confirmation is refused — the gate runs before the
 request goes out.
 
+**An id the server does not know is refused, not reported as cancelled.** The
+cancel procedure answers the same empty success for a typo as for a real
+workflow, so `cancel` reads the workflow back first: an unknown id exits **`4`**
+— the same code `civitai workflows get` gives it — and **no cancel request is
+sent at all**. If that read fails for any *other* reason (a timeout, a 5xx, a
+rate limit, an auth failure) the cancel is still sent, because a flaky read must
+never be what stops you halting a job that is spending your Buzz. Between the
+read and the cancel a workflow can reach a final status on its own; that is
+harmless, since cancelling a finished workflow is a server-side no-op.
+
+<sub>Until civitai/cli#341, `civitai workflows cancel not-a-real-workflow-zzz --yes` printed *"Cancelled workflow not-a-real-workflow-zzz"* and exited `0` — while `civitai workflows get` on the same id correctly reported a 404.</sub>
+
 ### Exit codes specific to `generate`
 
 `generate` follows the [global exit-code table](#exit-codes), with one

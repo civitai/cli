@@ -301,4 +301,27 @@ func TestGoldenSpendCopy(t *testing.T) {
 		}
 		assertGolden(t, "cancel_result_note", errb.String())
 	})
+
+	// 🔴 THE UNKNOWN-ID REFUSAL, ADDED BY #341. It is here for the reason item
+	// 28 records as the residual of all three guards: a NEW surface on the cancel
+	// path is invisible to every one of them until it is pinned. This one prints
+	// no figure and makes no refund claim today — it says only that the id is
+	// unknown and that nothing was cancelled, which is a statement about the
+	// MUTATION (none was issued) and not about the ledger. Pinning it now is what
+	// makes a later "…so you were not charged" fail in review instead of ship.
+	t.Run("cancel_unknown_id_refusal", func(t *testing.T) {
+		cancels := 0
+		c, _, _ := genCmd("")
+		err := runWorkflowsCancel(c, workflowsCancelDeps{
+			cancelWorkflow: countingCancel(&cancels),
+			getWorkflow:    notFoundRead(t, nil),
+		}, workflowsCancelOpts{assumeYes: true}, "01JABCXYZ")
+		if err == nil {
+			t.Fatal("CONTROL failure: an unknown id reported success, so there is no refusal copy to pin")
+		}
+		if cancels != 0 {
+			t.Fatalf("CONTROL failure: the refusal issued %d cancel(s), so it is not the pre-mutation path", cancels)
+		}
+		assertGolden(t, "cancel_unknown_id_refusal", err.Error())
+	})
 }

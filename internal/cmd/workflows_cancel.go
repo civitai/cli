@@ -24,12 +24,27 @@ type workflowsCancelOpts struct {
 	assumeYes bool
 }
 
-// workflowsCancelDeps is the single network seam.
+// workflowsCancelDeps is the network seam PAIR this command needs.
 //
 // 🔴 cancelWorkflow is a MUTATION. A test must never point this at a real
 // server; every test in this repo drives it through httptest.
+//
+// 🔴 getWorkflow is here because THE MUTATION'S OWN REPLY CARRIES NO EVIDENCE
+// (#341). `orchestrator.cancelWorkflow` answers HTTP 200 with an empty body for
+// an id the server has never heard of, exactly as it does for a real one — the
+// procedure returns `undefined` either way (see genapi.CancelWorkflow on why 200
+// is the only success signal it has). So `civitai workflows cancel
+// not-a-real-workflow-zzz --yes` printed "Cancelled workflow …", printed the
+// settlement note, and exited 0: it told the user the money-burning job had been
+// stopped when nothing had been stopped, and the note implied the server had
+// acted. It accepted `../../etc/passwd` the same way. The read is what supplies
+// the evidence the mutation does not, and it is the SAME route `workflows get`
+// uses, so both commands answer "is this a workflow of mine?" identically.
 type workflowsCancelDeps struct {
 	cancelWorkflow func(ctx context.Context, workflowID string) (json.RawMessage, error)
+	// getWorkflow establishes that the id names a workflow the caller can see.
+	// It is a READ: it spends nothing and mutates nothing.
+	getWorkflow getWorkflowFn
 }
 
 func newWorkflowsCancelCmd() *cobra.Command {
@@ -67,7 +82,14 @@ This needs the same AI Services scopes that ` + "`civitai generate`" + ` needs:
 CONFIRMATION: cancelling is IRREVERSIBLE — it throws away whatever the run had
 not produced yet — so an interactive run asks first. Pass ` + "`--yes`" + ` to skip the
 prompt in a script; a non-interactive shell without ` + "`--yes`" + ` REFUSES rather than
-cancelling silently.`,
+cancelling silently.
+
+UNKNOWN IDS ARE REFUSED, NOT REPORTED AS CANCELLED. The cancel procedure answers
+the same empty success for an id the server has never heard of as for a real one,
+so this command reads the workflow back first: an id the server does not know
+exits 4 and no cancel request is sent. If that read fails for any OTHER reason —
+a timeout, a 5xx, a rate limit — the cancel is still sent, because a flaky read
+must never be what stops you halting a job that is spending your Buzz.`,
 		Example: `  civitai workflows cancel 01JABCXYZ
   civitai workflows cancel 01JABCXYZ --yes
   civitai workflows cancel 01JABCXYZ --json --yes`,
@@ -84,7 +106,10 @@ cancelling silently.`,
 			}
 			o.baseURL = cfg.BaseURL()
 			gen := genapi.NewWithSource(cfg.BaseURL(), auth.New(cfg))
-			return runWorkflowsCancel(cmd, workflowsCancelDeps{cancelWorkflow: gen.CancelWorkflow}, o, args[0])
+			return runWorkflowsCancel(cmd, workflowsCancelDeps{
+				cancelWorkflow: gen.CancelWorkflow,
+				getWorkflow:    gen.GetWorkflow,
+			}, o, args[0])
 		},
 	}
 	cmd.Flags().BoolVar(&o.jsonOut, "json", false, "emit the raw server reply on stdout (scriptable)")
@@ -145,6 +170,73 @@ func confirmCancel(cmd *cobra.Command, workflowID string, assumeYes bool) error 
 	}
 }
 
+// requireWorkflowExists refuses a cancel whose target the server does not know
+// (#341), and is deliberately the ONLY thing that can refuse on this evidence.
+//
+// # WHY A SEPARATE READ AT ALL
+//
+// Because the mutation is mute. `orchestrator.cancelWorkflow` returns
+// `undefined` on success, so HTTP 200 is the whole reply — and it is the reply
+// for a bogus id too. There is no field to branch on, no id echoed back, nothing
+// that differs between "stopped your running job" and "did nothing at all". A
+// command whose only stop-the-spend action reports success on both is reassuring
+// in the one direction that costs the user money.
+//
+// # WHY BEFORE THE MUTATION AND NOT AFTER IT
+//
+// A read AFTER the cancel would also detect a bogus id (cancelling does not
+// delete a workflow, so a 404 on the way out means it never existed). It was
+// rejected because it answers the question having already fired an irreversible
+// mutation, and because a non-404 read failure would then leave the command with
+// a mutation issued and nothing honest to print. Checking first means the
+// refusal path issues NO request: "nothing was cancelled" is structurally true,
+// not a claim.
+//
+// # THE RACE, STATED
+//
+// Between the read and the cancel the workflow can reach a final status on its
+// own. That is benign and pre-existing: cancelling a finished workflow is a
+// documented server-side no-op that deletes no outputs, and the wording this
+// command prints afterwards ("you are billed for what it already delivered")
+// stays true of a run that delivered everything. The inverse race — an id that
+// starts existing between the two calls — cannot happen, because a workflow id
+// is minted by a submit the caller has already made. What this ordering
+// therefore CANNOT promise is that the id was still cancellable at the instant
+// the mutation landed; it promises only that it was real.
+//
+// # FAIL-OPEN ON EVERYTHING THAT IS NOT A 404
+//
+// 🔴 Only civitai.ErrNotFound refuses. A timeout, a 5xx, a 429, a transport
+// error or an auth failure on the READ lets the cancel through untouched, and
+// the cancel's own error (if any) is what the user sees. This is the whole
+// difference between fixing #341 and breaking the case #341 exists to protect:
+// `cancel` is the only lever that stops a job burning Buzz, so a check bolted in
+// front of it must not be able to hold that lever shut. A read that cannot
+// answer is not evidence that the id is bad.
+//
+// Residual, accepted: if the `orchestrator.getWorkflow` route itself were to
+// 404 server-side, every cancel would be refused. That is the same route
+// `civitai workflows get` is built on, so the failure would be loud and
+// repo-wide rather than silent — the trade this guard is willing to make,
+// because the alternative it replaces is a false success.
+func requireWorkflowExists(ctx context.Context, get getWorkflowFn, id string) error {
+	if get == nil {
+		// Not reachable from the command tree — newWorkflowsCancelCmd wires both
+		// seams — but a nil seam that SKIPPED the check would silently restore the
+		// #341 behaviour for whoever forgot to wire it, so it is loud instead.
+		return fmt.Errorf("internal error: `workflows cancel` was built without its read seam, so it cannot tell whether %s exists — refusing to cancel", safeTerm(id))
+	}
+	if _, _, err := get(ctx, id); err != nil {
+		if !errors.Is(err, civitai.ErrNotFound) {
+			return nil
+		}
+		return civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
+			"no such workflow %s — nothing was cancelled: the server does not know that id. Check it with `civitai workflows list`",
+			safeTerm(id)))
+	}
+	return nil
+}
+
 // runWorkflowsCancel is the testable core.
 //
 // 🔴 WHAT A CANCEL DOES TO THE CHARGE — TRACED, NOT ASSUMED (#307). Until the
@@ -191,6 +283,12 @@ func runWorkflowsCancel(cmd *cobra.Command, deps workflowsCancelDeps, o workflow
 	ctx := cmd.Context()
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	// 🔴 #341: the cancel reply cannot tell a real id from a typo, so establish
+	// the target exists BEFORE the mutation. Only a 404 refuses; see the
+	// function's comment for the ordering, the race and the fail-open rule.
+	if err := requireWorkflowExists(ctx, deps.getWorkflow, id); err != nil {
+		return err
 	}
 	raw, err := deps.cancelWorkflow(ctx, id)
 	if err != nil {
