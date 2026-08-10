@@ -12,9 +12,16 @@
 # change, the mutant must still parse), so a pattern that stops matching is
 # reported INVALID rather than silently scored as a survivor.
 #
+# 🔴 KNOWN LIMITATION: the gate cannot see a mutation whose REPLACEMENT text is
+# malformed. Measured once — perl interpolated `${ROOT}` and `$(...)` in a
+# replacement, so the mutant wrote to `/home/.config/...` instead of the run
+# root, changed the file, parsed cleanly, and read as a SURVIVOR. Escape every
+# `$` on the replacement side, and when a mutant survives, read the mutated
+# region before believing it.
+#
 #   ./scripts/dogfood-mutate.sh          # full battery
 #
-# Expected on a clean tree: killed=53 survived=2 invalid=0, the two survivors
+# Expected on a clean tree: killed=62 survived=2 invalid=0, the two survivors
 # being the NULL control and write_scalar's readback (declared redundant in
 # claudedocs/dogfood-3-sandbox.md).
 # Every mutation is a perl program in SINGLE quotes: the `$`-expressions inside
@@ -79,8 +86,8 @@ flip "unknown command"        "the CLI does not recognise this command"
 
 echo
 echo "--- structural: this round's fixes ---"
-run "rc-aware latch removed (latch on any zero delta)" \
-  P 's/\tif \[ "\$\{rc\}" != 0 \]; then/\tif false; then/'
+run "rc-aware suppression removed entirely" \
+  P 's/\tif \[ -n "\$\{after\}" \] \&\& \[ "\$\{before\}" = "\$\{after\}" \] \&\& \[ "\$\{rc\}" != 0 \]; then/\tif false; then/'
 run "app counter bumps regardless of rc" \
   P 's/\t\t\tif \[ "\$\{rc\}" = 0 \]; then\n\t\t\t\tlocal a/\t\t\tif true; then\n\t\t\t\tlocal a/' 
 run "provenance verification removed" \
@@ -121,11 +128,11 @@ run "tsv_escape drops newlines" \
 run "unanchored balance parser" \
   P "s/'\"total\":-\\\\\?\[0-9\]\[0-9\]\*\[,\}\]'/'\"total\":-\\\\?[0-9][0-9]*'/g"
 run "zero-delta latch removed" \
-  P 's/\t\telif \[ "\$\{delta\}" = 0 \]; then/\t\telif false; then/'
+  P 's/\tif \[ "\$\{delta\}" = 0 \]; then/\tif false; then/'
 run "negative-delta latch removed" \
-  P 's/\t\tif \[ "\$\{delta\}" -lt 0 \]; then/\t\tif false; then/'
+  P 's/\tif \[ "\$\{delta\}" -lt 0 \]; then/\tif false; then/'
 run "failed-read latch removed" \
-  P 's/\tif \[ -z "\$\{after\}" \]; then/\tif false; then/'
+  P 's/\tif \[ -z "\$\{before\}" \] \|\| \[ -z "\$\{after\}" \]; then/\tif false; then/'
 run "SLUG_PREFIX empty-check removed" \
   P 's/\tif \[ -z "\$\{SLUG_PREFIX:-\}" \]; then\n\t\tPOLICY_ERROR="policy key SLUG_PREFIX is missing or empty"; return 1\n\tfi\n//'
 run "classifier failure fails OPEN" \
@@ -137,12 +144,12 @@ run "free-preview keyed on presence not value" \
 
 echo
 echo "--- structural: round 5 ---"
-run "rc-aware suppression swallows a FAILED post-read" \
-  P 's/\tif \[ -z "\$\{after\}" \]; then/\tif [ -z "${after}" ] \&\& [ "${rc}" = 0 ]; then/'
-run "rc-aware suppression swallows a NEGATIVE delta" \
-  P 's/\t\tif \[ "\$\{delta\}" -lt 0 \]; then/\t\tif [ "${delta}" -lt 0 ] \&\& [ "${rc}" = 0 ]; then/'
+run "rc suppression widened to any non-zero exit" \
+  P 's/\tif \[ -n "\$\{after\}" \] \&\& \[ "\$\{before\}" = "\$\{after\}" \] \&\& \[ "\$\{rc\}" != 0 \]; then/\tif [ "${rc}" != 0 ]; then/'
+run "rc suppression drops the readable-balance guard" \
+  P 's/\tif \[ -n "\$\{after\}" \] \&\& \[ "\$\{before\}" = "\$\{after\}" \] \&\& \[ "\$\{rc\}" != 0 \]; then/\tif [ "${before}" = "${after}" ] \&\& [ "${rc}" != 0 ]; then/'
 run "inflight liveness check removed" \
-  P 's/\tif \[ -n "\$\{pid\}" \] \&\& kill -0 "\$\{pid\}" 2>\/dev\/null; then\n\t\treturn 0\n\tfi\n//'
+  P 's/\t\tif ! flock -x -n 7; then/\t\tif false; then/'
 run "concurrent-generate refusal removed" \
   P 's/\t\t\t\tif \[ -n "\$\{inflight_pid\}" \] \&\& kill -0 "\$\{inflight_pid\}" 2>\/dev\/null; then/\t\t\t\tif false; then/'
 run "inflight record omits the pid" \
@@ -151,6 +158,16 @@ run "meter file writability not asserted" \
   P 's/\t\t                  assert_writable observed_spend "\$\{scrubbed\}"\n//'
 run "meter_write_failed does not latch" \
   P 's/meter_write_failed\(\) \{\n\tbreak_meter/meter_write_failed() {\n\treturn 0\n\tbreak_meter/'
+run "reconcile does not share apply_settlement" \
+  P 's/\tdelta=\$\(apply_settlement "\$\{before\}" "\$\{now\}" "\$\{mc\}" "reconcile"\)/\tdelta=0/'
+run "credential written into HOME again" \
+  P 's/\trm -f "\$\{ROOT\}\/home\/.config\/civitai\/config.yaml"/\tmkdir -p "\$\{ROOT\}\/home\/.config\/civitai" \&\& cp "\$\{ROOT\}\/ledger\/credential" "\$\{ROOT\}\/home\/.config\/civitai\/config.yaml"/'
+run "app pull prefix gate removed" \
+  P 's/\t\t\t\t\*\) deny "\\`\$\{pull_app\}\\` is outside/\t\t\t\t*) allow "${pull_app} is outside/'
+run "audit-log appendability not asserted" \
+  P 's/\t\t                  assert_appendable invocations.tsv "\$\{scrubbed\}"\n//'
+run "calibrate bypasses the gate again" \
+  P 's/\t"\$\{ROOT\}\/bin\/civitai" generate "a plain grey square, calibration" --yes/\treal_cli generate "a plain grey square, calibration" --yes/'
 
 echo
 echo "--- null control (MUST survive) ---"

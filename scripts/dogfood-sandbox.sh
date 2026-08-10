@@ -57,6 +57,9 @@ DEFAULT_MAX_APP_SUBMITS=3
 DEFAULT_MAX_LISTING_MUTATIONS=10
 # Seconds to wait before re-sampling when a submit reports a zero delta.
 DEFAULT_METER_SETTLE_SECONDS=5
+# Calibration prices a MINIMAL job, not the per-call ceiling: it exists to prove
+# the meter observes a charge, not to spend the maximum allowed.
+CALIBRATE_MAX_COST="${CALIBRATE_MAX_COST:-25}"
 # Require `calibrate` (one deliberate, operator-watched generation) before the
 # agent may spend, so the meter's core assumption is measured, not assumed.
 DEFAULT_REQUIRE_CALIBRATION=1
@@ -212,14 +215,36 @@ write_scalar() {
 # seeded config file is the only credential.
 # ---------------------------------------------------------------------------
 
+# 🔴 THE CREDENTIAL IS INJECTED, NEVER LEFT ON DISK IN $HOME. `README.md` — one
+# of the three things the blind agent is given — says `npm install -g
+# @civitai/cli`, and node/npm are in the closure, so a SECOND, UNGATED CLI is
+# one documented command away. While a `config.yaml` sat in the sandbox $HOME
+# that second binary authenticated with it: measured, `npx -y @civitai/cli
+# whoami` returned 401 against a deliberately fake seeded value, which is
+# positive proof it read and sent the file. It would then have spent with no
+# --max-cost, no cap, no counter, no bracketing, no ledger row and no latch —
+# and no defeat-intent is required, it is the documented install command.
+#
+# So the token lives in ledger/credential (0600) and reaches only the child this
+# gate execs. A second binary starts unauthenticated and every ungated path is
+# inert. Residual, stated in the doc: the file is readable by the same UID, so
+# an agent that goes looking can still find it — but that is intent, not the
+# README.
+sandbox_credential() {
+	local f="${ROOT}/ledger/credential"
+	[ -r "${f}" ] || return 0
+	head -c 4096 "${f}" | tr -d '\r\n'
+}
+
 real_cli() {
-	env -u CIVITAI_TOKEN -u CIVITAI_SUBMIT_PATH -u CIVITAI_ANTIPATTERN_SCAN_DIR \
+	env -u CIVITAI_SUBMIT_PATH -u CIVITAI_ANTIPATTERN_SCAN_DIR \
 		-u CIVITAI_CHECK_SUBMISSIONS_CAP -u CIVITAI_CHECK_PUBLISHED_PINS \
 		"HOME=${ROOT}/home" \
 		"XDG_CONFIG_HOME=${ROOT}/home/.config" \
 		"XDG_CACHE_HOME=${ROOT}/home/.cache" \
 		"CIVITAI_NO_UPDATE_CHECK=1" \
 		"CIVITAI_BASE_URL=${BASE_URL:-${DEFAULT_BASE_URL}}" \
+		"CIVITAI_TOKEN=$(sandbox_credential)" \
 		"${ROOT}/real/civitai" "$@"
 }
 
@@ -488,12 +513,12 @@ POLICY
 	chmod 0600 "${ROOT}/ledger/policy.env"
 	load_policy || die "init: the policy just written does not validate: ${POLICY_ERROR}"
 
-	real_cli login --token "${token}" >/dev/null 2>&1 \
-		|| die "init: seeding the credential failed — check the token"
+	(umask 077; printf '%s' "${token}" > "${ROOT}/ledger/credential") \
+		|| die "init: could not store the credential"
+	chmod 0600 "${ROOT}/ledger/credential"
 	token=""
-	[ -f "${ROOT}/home/.config/civitai/config.yaml" ] \
-		|| die "init: no config written at ${ROOT}/home/.config/civitai/config.yaml"
-	chmod 0600 "${ROOT}/home/.config/civitai/config.yaml"
+	# Nothing may write a config into the sandbox HOME — see sandbox_credential.
+	rm -f "${ROOT}/home/.config/civitai/config.yaml"
 
 	real_cli whoami >/dev/null 2>&1 || die "init: whoami failed with the seeded credential"
 
@@ -526,6 +551,11 @@ cmd_write_brief() {
 
 You have a \`civitai\` binary on your PATH, its \`README.md\`, and \`--help\`.
 Work only inside \`${ROOT}/workspace\`.
+
+🔴 **The \`civitai\` on your PATH is the only one in scope.** The README suggests
+\`npm install -g @civitai/cli\`; do NOT install or run a second copy. It would not
+be the build under evaluation, it is not covered by the safety gate, and any
+finding from it tells the authors nothing about this binary.
 
 This is a real, credentialed account. \`civitai generate\` **spends real money**.
 A sandbox policy gate sits in front of the CLI and refuses some invocations; a
@@ -589,6 +619,10 @@ GHASSUB=""; GARGSERR=""
 # classifier of its own.
 GUARD_BIN=""
 
+# escape() writes \\ first, then \n/\r/\t; undoing it must therefore take the
+# single-character escapes FIRST and the backslash LAST, or a literal "\\n" in
+# a prompt round-trips to a newline. Every current consumer fails closed on the
+# difference, but the asymmetry was real.
 unescape() {
 	local s="$1"
 	s="${s//\\t/$'\t'}"
@@ -765,6 +799,24 @@ policy_verdict() {
 				deny "the app-submission cap for this run (${MAX_APP_SUBMITS}) is already used"; return 0
 			fi
 			VERDICT="ALLOW_APP_SUBMIT"; VERDICT_REASON="submitting ${id}"; VERDICT_SLUG="${id}"; return 0 ;;
+
+		"app pull")
+			# 🔴 `app pull` REACHES THE ACCOUNT'S REAL APPS AND PROVISIONS A
+			# THIRD CREDENTIAL. It hits an owner-only endpoint, lazily creates a
+			# Forgejo identity, and git writes an access token into
+			# `.git/config` — and `git` is in the closure. SLUG_PREFIX exists to
+			# stop this run touching real apps; it covered submit and listing
+			# and not this.
+			local pull_app
+			pull_app=$(gstr app)
+			if [ -z "${pull_app}" ]; then
+				allow "pull with no --app (a usage error the CLI reports)"; return 0
+			fi
+			case "${pull_app}" in
+				"${SLUG_PREFIX}"*) allow "pull of this run's own app"; return 0 ;;
+				*) deny "\`${pull_app}\` is outside the sanctioned prefix \`${SLUG_PREFIX}\` — \`app pull\` reaches a real app and writes a git credential into .git/config"
+				   return 0 ;;
+			esac ;;
 
 		"app listing status")
 			allow "listing read"; return 0 ;;
@@ -963,7 +1015,13 @@ cmd_guard() {
 		# computed from, so they are what must be writable before a spend.
 		ALLOW_SPEND)      assert_writable generate_submits "${scrubbed}"
 		                  assert_writable observed_spend "${scrubbed}"
-		                  assert_writable reserved "${scrubbed}" ;;
+		                  assert_writable reserved "${scrubbed}"
+		                  # The audit trail is the deliverable: with
+		                  # invocations.tsv at 0444 a generate charged 37 and
+		                  # wrote ZERO rows. Disk-full is the realistic trigger,
+		                  # and ${ROOT} also holds the npm cache.
+		                  assert_appendable invocations.tsv "${scrubbed}"
+		                  assert_appendable spend.tsv "${scrubbed}" ;;
 		ALLOW_APP_SUBMIT) assert_writable app_submits "${scrubbed}" ;;
 		ALLOW_LISTING)    assert_writable listing_mutations "${scrubbed}" ;;
 	esac
@@ -977,6 +1035,11 @@ cmd_guard() {
 		# A crash between here and the reconciliation must not lose the charge.
 		printf '%s\t%s\t%s\t%s\t%s\n' "$(now_iso)" "${mc}" "${before}" "$$" "${scrubbed}" \
 			> "${ROOT}/ledger/inflight"
+		# Held for the lifetime of THIS process, so a later invocation can tell
+		# a running spend from a crashed one without consulting a pid.
+		if command -v flock >/dev/null 2>&1; then
+			exec 8>"${ROOT}/ledger/inflight.lock" && flock -x -n 8
+		fi
 		workflow_snapshot
 	fi
 
@@ -984,13 +1047,14 @@ cmd_guard() {
 
 	local t0 t1 rc
 	t0=$(date +%s%N)
-	env -u CIVITAI_TOKEN -u CIVITAI_SUBMIT_PATH -u CIVITAI_ANTIPATTERN_SCAN_DIR \
+	env -u CIVITAI_SUBMIT_PATH -u CIVITAI_ANTIPATTERN_SCAN_DIR \
 		-u CIVITAI_CHECK_SUBMISSIONS_CAP -u CIVITAI_CHECK_PUBLISHED_PINS \
 		"HOME=${ROOT}/home" \
 		"XDG_CONFIG_HOME=${ROOT}/home/.config" \
 		"XDG_CACHE_HOME=${ROOT}/home/.cache" \
 		"CIVITAI_NO_UPDATE_CHECK=1" \
 		"CIVITAI_BASE_URL=${BASE_URL}" \
+		"CIVITAI_TOKEN=$(sandbox_credential)" \
 		"${ROOT}/real/civitai" "${argv[@]+"${argv[@]}"}"
 	rc=$?
 	t1=$(date +%s%N)
@@ -1048,9 +1112,8 @@ cmd_guard() {
 #     real charge. Measured: a +100 grant alongside a 37 charge recorded 0.
 #     Clamping to zero is what made that silent, so it no longer clamps.
 settle_spend() {
-	local before="$1" mc="$2" rc="${3:-0}" after res cum delta
-	res=$(read_scalar reserved)      || res="${mc}"
-	cum=$(read_scalar observed_spend) || cum=0
+	local before="$1" mc="$2" rc="${3:-0}" after res delta
+	res=$(read_scalar reserved) || res="${mc}"
 
 	after=$(sample_balance "post-generate") || after=""
 
@@ -1060,53 +1123,23 @@ settle_spend() {
 	fi
 
 	# 🔴 THE rc-AWARE SUPPRESSION APPLIES TO EXACTLY ONE CASE: THE READ WORKED
-	# AND THE DELTA REALLY IS 0.
-	#
-	# Suppressing on rc alone was too strong in both directions, and both were
-	# measured. A zero delta on a non-zero exit IS expected — the CLI's own
-	# `--max-cost` refusal, a bad `--input`, an `--ecosystem` typo — and
-	# latching on it killed the run at the agent's first likely mistake. But a
-	# generate can charge and THEN fail: AGENTS item 28(b) refuses to assert
-	# what becomes of a charge, and #279 records submits that quoted `ready` and
-	# produced no outputs. Measured control pair, rc=1 throughout:
-	#   read fails  -> 37 really moved, meter 0, no latch   <- the hole
-	#   credit hides -> 37 really moved, meter 0, no latch   <- the hole
-	#   read healthy -> 37 metered                           <- correct
-	# So an UNREADABLE balance and a NEGATIVE delta latch whatever the exit code
-	# was; only the observable zero is trusted, and only then.
-	if [ -z "${after}" ]; then
-		write_scalar observed_spend "$(( cum + mc ))" || meter_write_failed
-		printf '%s\tgenerate\t%s\tUNREADABLE\tassumed-%s (rc=%s)\n' "$(now_iso)" "${before}" "${mc}" "${rc}" \
+	# AND THE DELTA REALLY IS 0. Suppressing on rc alone was wrong in both
+	# directions and both were measured. A zero delta on a non-zero exit IS
+	# expected — the CLI's own `--max-cost` refusal, a bad `--input`, an
+	# `--ecosystem` typo — and latching on it killed the run at the agent's
+	# first likely mistake. But a generate can charge and THEN fail (AGENTS item
+	# 28(b); #279), and with rc≠0 a failed read or a credit-masked charge left
+	# 37 Buzz unmetered and unlatched. So this is the ONLY case rc suppresses;
+	# everything else goes through apply_settlement, which both this path and
+	# the crash path share.
+	if [ -n "${after}" ] && [ "${before}" = "${after}" ] && [ "${rc}" != 0 ]; then
+		printf '%s\tgenerate\t%s\t%s\t0 (rc=%s, no charge)\n' "$(now_iso)" "${before}" "${after}" "${rc}" \
 			>> "${ROOT}/ledger/spend.tsv"
-		break_meter "the post-submit balance read failed (rc=${rc}); ${mc} Buzz charged to the ledger as a worst case"
-		delta="unknown"
+		delta=0
 	else
-		delta=$(( before - after ))
-		if [ "${delta}" -lt 0 ]; then
-			write_scalar observed_spend "$(( cum + mc ))" || meter_write_failed
-			printf '%s\tgenerate\t%s\t%s\tNEGATIVE(%s)-assumed-%s (rc=%s)\n' "$(now_iso)" "${before}" "${after}" "${delta}" "${mc}" "${rc}" \
-				>> "${ROOT}/ledger/spend.tsv"
-			break_meter "the balance went UP across a submit (delta ${delta}, rc=${rc}); a credit can hide a real charge, so ${mc} Buzz was charged as a worst case"
-			delta="negative:${delta}"
-		elif [ "${delta}" = 0 ]; then
-			if [ "${rc}" != 0 ]; then
-				# Observably nothing moved and the command failed: benign.
-				printf '%s\tgenerate\t%s\t%s\t0 (rc=%s, no charge)\n' "$(now_iso)" "${before}" "${after}" "${rc}" \
-					>> "${ROOT}/ledger/spend.tsv"
-				delta=0
-			else
-				write_scalar observed_spend "$(( cum + mc ))" || meter_write_failed
-				printf '%s\tgenerate\t%s\t%s\tZERO-assumed-%s\n' "$(now_iso)" "${before}" "${after}" "${mc}" \
-					>> "${ROOT}/ledger/spend.tsv"
-				break_meter "a submitted generation moved the balance by 0, so the meter is not seeing charges; ${mc} Buzz charged as a worst case"
-				delta="zero"
-			fi
-		else
-			write_scalar observed_spend "$(( cum + delta ))" || meter_write_failed
-			printf '%s\tgenerate\t%s\t%s\t%s (rc=%s)\n' "$(now_iso)" "${before}" "${after}" "${delta}" "${rc}" \
-				>> "${ROOT}/ledger/spend.tsv"
-		fi
+		delta=$(apply_settlement "${before}" "${after}" "${mc}" "generate")
 	fi
+
 	write_scalar reserved "$(( res - mc < 0 ? 0 : res - mc ))" || true
 	printf '%s' "${delta}"
 }
@@ -1127,6 +1160,13 @@ assert_writable() {
 	local name="$1" scrubbed="$2" v
 	v=$(read_scalar "${name}") || refuse "the ${name} counter is unreadable or malformed" "${scrubbed}"
 	write_scalar "${name}" "${v}" || refuse "the ${name} counter is not writable, so this run could not be counted — refusing" "${scrubbed}"
+}
+
+# Prove an append-only ledger file can actually be appended to.
+assert_appendable() {
+	local name="$1" scrubbed="$2"
+	printf '' >> "${ROOT}/ledger/${name}" 2>/dev/null \
+		|| refuse "the ${name} audit log is not writable, so this run could not be recorded — refusing" "${scrubbed}"
 }
 
 PROVENANCE_ERROR=""
@@ -1160,40 +1200,95 @@ verify_provenance() {
 reconcile_inflight() {
 	local f="${ROOT}/ledger/inflight"
 	[ -f "${f}" ] || return 0
-	local ts mc before pid now cum res delta
-	IFS=$'\t' read -r ts mc before pid _ < "${f}"
 
-	# 🔴 A RUNNING GENERATE IS NOT A CRASHED ONE, AND THIS COULD NOT TELL THEM
-	# APART. The record was one file with no liveness check, so ANY invocation
-	# arriving mid-generate consumed it — deleted the record, released the
-	# reservation and wrote a false RECONCILED row. It takes one read command
-	# inside the window, and a real generate waits up to the 10-minute
-	# `--timeout` default. Measured 3/3 with a `whoami` at t=1s of a 3-second
-	# generate: a RECONCILED row every time. With 8 racers the meter reported
-	# 2064 where 37 had actually moved — one charge counted twice, once by the
-	# bystander and once by the real settlement.
-	if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
-		return 0
+	# 🔴 LIVENESS BY LOCK, NOT BY PID. The pid check was namespace-unsafe:
+	# `enter` runs `--unshare-pid`, so the first command in the jail has $$ = 1
+	# or 2, and a stale record carrying either was NEVER reconciled — measured,
+	# pid 1 and pid 2 both left the record in place, leaked the reservation, and
+	# then made every later generate refuse with "another generation is still
+	# running". One interrupted generate bricked the spend path for the whole
+	# run, and `--die-with-parent` makes that routine. The writer instead holds
+	# an exclusive flock for the duration of its child; if we can take it, the
+	# writer is gone.
+	if command -v flock >/dev/null 2>&1; then
+		exec 7>"${ROOT}/ledger/inflight.lock" || return 0
+		if ! flock -x -n 7; then
+			exec 7>&- 2>/dev/null
+			return 0
+		fi
+		flock -u 7 2>/dev/null; exec 7>&- 2>/dev/null
 	fi
+
+	local ts mc before _pid
+	IFS=$'\t' read -r ts mc before _pid _ < "${f}"
 	rm -f "${f}"
 	case "${mc}" in ''|*[!0-9]*) mc=0 ;; esac
 	case "${before}" in ''|*[!0-9]*) before="" ;; esac
-	cum=$(read_scalar observed_spend) || cum=0
-	res=$(read_scalar reserved) || res=0
+
+	local now delta
 	now=$(sample_balance "reconcile") || now=""
-	if [ -n "${before}" ] && [ -n "${now}" ]; then
-		delta=$(( before - now ))
-		[ "${delta}" -lt 0 ] && delta=0
-	else
-		delta="${mc}"
-	fi
-	write_scalar observed_spend "$(( cum + delta ))" || true
-	write_scalar reserved "$(( res - mc < 0 ? 0 : res - mc ))" || true
+
+	# 🔴 ONE RULE, ONE PLACE. This used to carry its own arithmetic and
+	# regenerated all three defects settle_spend had just had removed:
+	# measured, a reconcile with delta 0 recorded 0 and did not latch, a
+	# NEGATIVE delta was clamped to 0 (with settle_spend's own comment saying
+	# clamping "is what made that silent" twelve lines away), and an unwritable
+	# meter was ignored — after which the run simply continued. Ctrl-C on a slow
+	# generate is the likeliest trigger and lands on the delta-0 row. Both paths
+	# now call apply_settlement.
+	delta=$(apply_settlement "${before}" "${now}" "${mc}" "reconcile")
+
+	write_scalar reserved "$(( $(read_scalar reserved || printf 0) - mc < 0 ? 0 : $(read_scalar reserved || printf 0) - mc ))" || true
 	printf '%s\tRECONCILED\t0\t0\t%s\t%s\n' "$(now_iso)" \
 		"$(tsv_escape "an earlier generation did not finish cleanly (started ${ts})")" \
 		"$(tsv_escape "delta=${delta}")" >> "${ROOT}/ledger/invocations.tsv"
 	printf '%s: %s\n' "${SANDBOX_TAG}" \
-		"an earlier generation was interrupted; ${delta} Buzz reconciled into the ledger" >&2
+		"an earlier generation was interrupted; ${delta} reconciled into the ledger" >&2
+}
+
+# The settlement arithmetic, shared by the live path and the crash path.
+#
+# before/after are balances ("" when unreadable), mc is the worst case the
+# estimate allowed, phase names the caller for the spend log. Echoes the delta
+# it recorded. Latches meter_broken on every shape it cannot trust: an
+# unreadable balance, a negative delta, or a zero delta the caller says should
+# have moved money.
+apply_settlement() {
+	local before="$1" after="$2" mc="$3" phase="$4" cum delta
+	cum=$(read_scalar observed_spend) || cum=0
+
+	if [ -z "${before}" ] || [ -z "${after}" ]; then
+		write_scalar observed_spend "$(( cum + mc ))" || meter_write_failed
+		printf '%s\t%s\t%s\tUNREADABLE\tassumed-%s\n' "$(now_iso)" "${phase}" "${before:-UNKNOWN}" "${mc}" \
+			>> "${ROOT}/ledger/spend.tsv"
+		break_meter "a balance read failed during ${phase}; ${mc} Buzz charged to the ledger as a worst case"
+		printf '%s' "unknown"
+		return 0
+	fi
+
+	delta=$(( before - after ))
+	if [ "${delta}" -lt 0 ]; then
+		write_scalar observed_spend "$(( cum + mc ))" || meter_write_failed
+		printf '%s\t%s\t%s\t%s\tNEGATIVE(%s)-assumed-%s\n' "$(now_iso)" "${phase}" "${before}" "${after}" "${delta}" "${mc}" \
+			>> "${ROOT}/ledger/spend.tsv"
+		break_meter "the balance went UP across ${phase} (delta ${delta}); a credit can hide a real charge, so ${mc} Buzz was charged as a worst case"
+		printf '%s' "negative:${delta}"
+		return 0
+	fi
+
+	if [ "${delta}" = 0 ]; then
+		write_scalar observed_spend "$(( cum + mc ))" || meter_write_failed
+		printf '%s\t%s\t%s\t%s\tZERO-assumed-%s\n' "$(now_iso)" "${phase}" "${before}" "${after}" "${mc}" \
+			>> "${ROOT}/ledger/spend.tsv"
+		break_meter "${phase} saw the balance move by 0 for a generation that was submitted, so the meter is not seeing charges; ${mc} Buzz charged as a worst case"
+		printf '%s' "zero"
+		return 0
+	fi
+
+	write_scalar observed_spend "$(( cum + delta ))" || meter_write_failed
+	printf '%s\t%s\t%s\t%s\t%s\n' "$(now_iso)" "${phase}" "${before}" "${after}" "${delta}" \
+		>> "${ROOT}/ledger/spend.tsv"
+	printf '%s' "${delta}"
 }
 
 break_meter() {
@@ -1303,9 +1398,22 @@ cmd_calibrate() {
 	before=$(sample_balance "calibrate-before") || die "calibrate: could not read the opening balance"
 	note "balance before: ${before}"
 
-	note "submitting one generation (--max-cost ${PER_CALL_MAX_COST}) …"
-	real_cli generate "a plain grey square, calibration" --yes --max-cost "${PER_CALL_MAX_COST}" \
-		--no-download >/dev/null 2>&1
+	# 🔴 CALIBRATE GOES THROUGH THE GATE. It used to call real_cli directly, so
+	# the one spend the go/no-go MAKES MANDATORY bypassed the lock, the caps,
+	# the meter, the counter and the ledger entirely — measured: 37 Buzz moved,
+	# observed_spend 0, submits 0, ledger rows 0, and `finish` then reported
+	# "observed 37 / MEASURED TOTAL SPEND 74". The doc lists a disagreement
+	# between those two figures as an ABORT CONDITION, so the prescribed
+	# procedure guaranteed the alarm fired every run — a permanently-red gate
+	# that trains the operator to explain away the only signal that catches an
+	# escaped charge.
+	#
+	# The gate refuses to spend until calibration.ok exists, so it is written
+	# provisionally and removed again if the run does not prove the meter.
+	printf 'provisional %s\n' "$(now_iso)" > "${ROOT}/ledger/calibration.ok"
+	note "submitting one generation through the gate (--max-cost ${CALIBRATE_MAX_COST}) …"
+	"${ROOT}/bin/civitai" generate "a plain grey square, calibration" --yes \
+		--max-cost "${CALIBRATE_MAX_COST}" --no-download >/dev/null 2>&1
 	local rc=$?
 
 	after=$(sample_balance "calibrate-after") || die "calibrate: could not read the closing balance"
@@ -1313,9 +1421,11 @@ cmd_calibrate() {
 	note "balance after:  ${after}   delta=${delta}   (generate rc=${rc})"
 
 	if [ "${rc}" != 0 ]; then
+		rm -f "${ROOT}/ledger/calibration.ok"
 		die "calibrate: the generation itself failed (rc=${rc}); fix that before calibrating"
 	fi
 	if [ "${delta}" -le 0 ]; then
+		rm -f "${ROOT}/ledger/calibration.ok"
 		printf '%s\n' "calibration FAILED: the balance did not move by the time generate returned (delta ${delta})" \
 			> "${ROOT}/ledger/meter_broken"
 		die "calibrate: the balance did NOT move by the time the command returned (delta ${delta}). The meter cannot count spend on this account/endpoint — do not run the dogfood until that is understood."
@@ -1361,6 +1471,9 @@ cmd_finish() {
 		case "$1" in --root) root="$2"; shift 2 ;; *) shift ;; esac
 	done
 	ROOT="${root}"; load_policy || die "${POLICY_ERROR}"
+	# An outstanding crash record would otherwise leave the two figures
+	# disagreeing for a reason the report never explains.
+	lock_ledger && { reconcile_inflight; unlock_ledger; }
 	local start end
 	start=$(read_scalar start_balance) || die "finish: no usable opening balance recorded"
 	if ! end=$(sample_balance "end"); then
@@ -1584,7 +1697,15 @@ cmd_teardown() {
 # difference between "deleted" and "deleted and overwritten once".
 shred_secrets() {
 	local root="$1" f
-	for f in "${root}/home/.config/civitai/config.yaml" \
+	# Three credentials can exist in a run root: the Civitai token, the Anthropic
+	# OAuth token under --with-claude, and any git access token `app pull` wrote
+	# into a workspace .git/config.
+	local gitcfg
+	while IFS= read -r gitcfg; do
+		[ -n "${gitcfg}" ] && rm -f "${gitcfg}" 2>/dev/null
+	done < <(find "${root}/workspace" -name config -path '*/.git/*' 2>/dev/null)
+	for f in "${root}/ledger/credential" \
+	         "${root}/home/.config/civitai/config.yaml" \
 	         "${root}/home/.claude/.credentials.json"; do
 		[ -f "${f}" ] || continue
 		if command -v shred >/dev/null 2>&1; then
@@ -1884,6 +2005,14 @@ printf "ok\t1\npath\tapp submit\nhassubcommands\tfalse\nargserr\t\nbool.package-
 	st_reason "--timeout refused by default" "DENY" "stops the CLI waiting" generate cat --yes --max-cost 5 --timeout 1s
 	st_check  "no --timeout is fine"         "ALLOW_SPEND" "$(vd generate cat --yes --max-cost 5)"
 
+	note "--- 🔴 app pull reaches REAL apps and provisions a git credential ---"
+	st_reason "pull of a foreign app denied" "DENY" "outside the sanctioned prefix" \
+		app pull --app someones-real-app
+	st_check  "pull of our own app allowed" "ALLOW" "$(vd app pull --app "${SLUG_PREFIX}mine")"
+	# --app is a REQUIRED flag, so the classifier reports it and the gate denies
+	# — which is what the binary does too (exit 2). Not a distortion.
+	st_reason "pull with no --app denied as the CLI would" "DENY" "would reject these arguments" app pull
+
 	note "--- withdraw + workflows cancel allowlists ---"
 	st_reason "unknown pubreq denied"          "DENY" "not created by this sandbox" app withdraw pubreq_UNKNOWN
 	st_reason "non-pubreq-shaped id denied"    "DENY" "not created by this sandbox" app withdraw NOT-A-PUBREQ-ID
@@ -1959,6 +2088,7 @@ printf "ok\t1\npath\tapp submit\nhassubcommands\tfalse\nargserr\t\nbool.package-
 
 	if [ "${offline}" = 1 ]; then
 		selftest_e2e "${ROOT}/real/dogfoodguard"
+		selftest_init_contract "${ROOT}/real/dogfoodguard"
 		note ""
 		note "--- offline mode: the credentialed checks below were skipped ---"
 		rm -rf "${ROOT}"
@@ -1977,13 +2107,77 @@ printf "ok\t1\npath\tapp submit\nhassubcommands\tfalse\nargserr\t\nbool.package-
 		st_check "binary dir not writable"  "no" "$([ -w "${ROOT}/real" ] && printf yes || printf no)"
 		st_check "binary file not writable" "no" "$([ -w "${ROOT}/real/civitai" ] && printf yes || printf no)"
 		st_check "classifier present"       "yes" "$([ -x "${ROOT}/real/dogfoodguard" ] && printf yes || printf no)"
-		st_check "sandbox config exists"    "yes" "$([ -f "${ROOT}/home/.config/civitai/config.yaml" ] && printf yes || printf no)"
+		st_check "credential is NOT on disk in HOME" "no" \
+			"$([ -f "${ROOT}/home/.config/civitai/config.yaml" ] && printf yes || printf no)"
+		st_check "credential is held for injection"  "yes" \
+			"$([ -s "${ROOT}/ledger/credential" ] && printf yes || printf no)"
 		st_reset_ledger
 	fi
 
 	note ""
 	note "selftest: ${SELFTEST_PASS} passed, ${SELFTEST_FAIL} failed"
 	[ "${SELFTEST_FAIL}" = 0 ]
+}
+
+# ---------------------------------------------------------------------------
+# init + calibrate, driven by a stub binary. No credential, no network.
+# ---------------------------------------------------------------------------
+selftest_init_contract() {
+	local base="${TMPDIR:-/tmp}/dogfood-init-$$"
+	local guard_src="$1"
+	rm -rf "${base}"; mkdir -p "${base}"
+	local stub="${base}/civitai-stub"
+	cat > "${stub}" <<'STUB'
+#!/usr/bin/env bash
+set -u
+: "${XDG_CACHE_HOME:=${HOME}/.cache}"
+mkdir -p "${XDG_CACHE_HOME}"
+BAL="${XDG_CACHE_HOME}/bal"; [ -f "${BAL}" ] || echo 10000 > "${BAL}"
+a=(); for x in "$@"; do case "${x}" in --no-color|--color|--no-update-check) ;; *) a+=("${x}") ;; esac; done
+set -- "${a[@]+"${a[@]}"}"
+case "${1:-}" in
+  buzz)   [ -n "${CIVITAI_TOKEN:-}" ] || { echo "unauthorized (401)" >&2; exit 3; }
+          printf '{\n  "total": %s\n}\n' "$(cat "${BAL}")" ;;
+  whoami) [ -n "${CIVITAI_TOKEN:-}" ] || { echo "unauthorized (401)" >&2; exit 3; }
+          echo authed ;;
+  generate) [ -n "${CIVITAI_TOKEN:-}" ] || { echo "unauthorized (401)" >&2; exit 3; }
+          echo $(( $(cat "${BAL}") - 37 )) > "${BAL}"; echo generated ;;
+  *) : ;;
+esac
+exit 0
+STUB
+	chmod 0755 "${stub}"
+
+	local run="${base}/run"
+	CIVITAI_DOGFOOD_TOKEN=stub-token bash "$(readlink -f "$0")" init \
+		--root "${run}" --binary "${stub}" --guard "${guard_src}" \
+		--slug-prefix "sanctioned-" --settle-seconds 0 >/dev/null 2>&1
+
+	note "--- 🔴 init leaves NO credential in the sandbox HOME ---"
+	st_check "init wrote no civitai config" "no" \
+		"$([ -f "${run}/home/.config/civitai/config.yaml" ] && printf yes || printf no)"
+	st_check "init stored the credential for injection" "yes" \
+		"$([ -s "${run}/ledger/credential" ] && printf yes || printf no)"
+	st_check "the credential file is owner-only" "600" \
+		"$(stat -c '%a' "${run}/ledger/credential" 2>/dev/null)"
+	# POSITIVE CONTROL: an UNGATED binary in the same HOME is unauthenticated,
+	# while the gated one works — otherwise "no config" proves nothing.
+	HOME="${run}/home" XDG_CONFIG_HOME="${run}/home/.config" \
+		XDG_CACHE_HOME="${run}/home/.cache" "${stub}" whoami >/dev/null 2>&1
+	st_check "an UNGATED binary is unauthenticated" "3" "$?"
+	"${run}/bin/civitai" whoami >/dev/null 2>&1
+	st_check "the GATED binary is authenticated"    "0" "$?"
+
+	note "--- 🔴 calibrate spends THROUGH the gate ---"
+	bash "$(readlink -f "$0")" calibrate --root "${run}" --yes >/dev/null 2>&1
+	st_check "calibrate moved the meter"          "37" "$(cat "${run}/ledger/observed_spend" 2>/dev/null)"
+	st_check "calibrate counted a submission"     "1"  "$(cat "${run}/ledger/generate_submits" 2>/dev/null)"
+	st_check "calibrate wrote a ledger row"       "1"  "$(grep -c ALLOW_SPEND "${run}/ledger/invocations.tsv" 2>/dev/null || true)"
+	st_check "calibrate recorded its verdict"     "yes" \
+		"$([ -f "${run}/ledger/calibration.ok" ] && printf yes || printf no)"
+
+	chmod -R u+w "${base}" 2>/dev/null
+	rm -rf "${base}"
 }
 
 # ---------------------------------------------------------------------------
@@ -2342,6 +2536,63 @@ POL
 	STUB_WORKFLOWS=1 "${C}" generate cat --yes --max-cost 50 >/dev/null 2>&1
 	st_check "e2e only the NEW workflow id is allowlisted" "wf-new" \
 		"$(tr -d ' \n' < "${base}/ledger/workflow.allow" 2>/dev/null)"
+
+	note "--- 🔴 the crash path settles by the SAME rule as the live path ---"
+	# Each row drives reconcile_inflight through the shim by leaving a record
+	# whose writer is gone, then asserts the meter AND the latch.
+	stale_record() {  # $1 = mc, $2 = before-balance
+		printf '%s\t%s\t%s\t999999\t stale\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" \
+			> "${base}/ledger/inflight"
+		rm -f "${base}/ledger/inflight.lock"
+	}
+	e2e_reset; printf '9963\n' > "${base}/home/.cache/bal"
+	stale_record 50 10000
+	"${C}" whoami >/dev/null 2>&1
+	st_check "e2e reconcile: a real delta is metered"   "37" "$(cat "${base}/ledger/observed_spend")"
+	st_check "e2e reconcile: a real delta does not latch" "no" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+
+	e2e_reset
+	stale_record 50 10000   # balance unchanged => delta 0
+	"${C}" whoami >/dev/null 2>&1
+	st_check "e2e reconcile: a ZERO delta charges the worst case" "50" "$(cat "${base}/ledger/observed_spend")"
+	st_check "e2e reconcile: a ZERO delta LATCHES"                "yes" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+
+	e2e_reset; printf '10100\n' > "${base}/home/.cache/bal"
+	stale_record 50 10000   # balance went UP
+	"${C}" whoami >/dev/null 2>&1
+	st_check "e2e reconcile: a NEGATIVE delta charges the worst case" "50" "$(cat "${base}/ledger/observed_spend")"
+	st_check "e2e reconcile: a NEGATIVE delta LATCHES"                "yes" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+
+	e2e_reset; printf '9963\n' > "${base}/home/.cache/bal"
+	stale_record 50 10000
+	chmod 0444 "${base}/ledger/observed_spend"
+	"${C}" whoami >/dev/null 2>&1
+	chmod 0644 "${base}/ledger/observed_spend"
+	st_check "e2e reconcile: an unwritable meter LATCHES" "yes" \
+		"$([ -f "${base}/ledger/meter_broken" ] && printf yes || printf no)"
+
+	note "--- 🔴 the audit trail must be writable before a spend ---"
+	e2e_reset
+	chmod 0444 "${base}/ledger/invocations.tsv"
+	"${C}" generate cat --yes --max-cost 50 >/dev/null 2>&1; rc=$?
+	chmod 0644 "${base}/ledger/invocations.tsv"
+	st_check "e2e an unwritable audit log refuses a spend" "126"   "${rc}"
+	st_check "e2e that refusal spent nothing"              "10000" "$(cat "${base}/home/.cache/bal")"
+
+	note "--- 🔴 the sandbox HOME holds NO credential ---"
+	st_check "e2e no civitai config on disk" "no" \
+		"$([ -f "${base}/home/.config/civitai/config.yaml" ] && printf yes || printf no)"
+
+	note "--- 🔴 concurrency OUTCOME, not just ledger consistency ---"
+	e2e_reset; printf '1990\n' > "${base}/ledger/observed_spend"
+	for i in 1 2 3 4 5 6 7 8; do STUB_SLOW_BUZZ=1 "${C}" generate "c${i}" --yes --max-cost 10 >/dev/null 2>&1 & done
+	wait
+	st_check "e2e 8 racers, 10 Buzz headroom => exactly 1 allowed" "1" \
+		"$(grep -c ALLOW_SPEND "${base}/ledger/invocations.tsv" 2>/dev/null || true)"
+	st_check "e2e 8 racers write no reconcile rows" "0" "$(reconciled_rows "${base}")"
 
 	note "--- calibration gate, end to end ---"
 	e2e_policy 1; e2e_reset

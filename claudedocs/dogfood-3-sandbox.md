@@ -352,7 +352,7 @@ three real `--dry-run` estimates moved the balance by **0**
 ### `selftest`
 
 `make dogfood-check` runs `shellcheck -x` plus
-`dogfood-sandbox.sh selftest --offline` — **241 assertions, 241 pass**, no
+`dogfood-sandbox.sh selftest --offline` — **266 assertions, 266 pass**, no
 credential and no network required, so this is regression-testable in CI. The
 credentialed `selftest` (against a live sandbox) runs **79**, the same set minus
 the 13 stub-driven end-to-end rows plus 4 live lockdown/balance rows. It covers
@@ -698,11 +698,39 @@ am reporting the numbers I measured rather than the ones I was handed.
 
 ### The matrix is now a committed artifact
 
-`scripts/dogfood-mutate.sh` — 59 checksum-gated mutants, runnable on demand.
+`scripts/dogfood-mutate.sh` — 64 checksum-gated mutants, runnable on demand.
 Three rounds reported mutation results that the next round had to take on trust
 and could not re-derive, and one of those tables was later falsified.
 `scripts/mutate.sh` covers Go packages only, so the shell gate — where the money
 decisions live — had no re-runnable evidence until now.
+
+## The fifth hardening round (blind re-audit #4)
+
+This one **settled the concurrency adjudication**: both earlier measurements were
+of pre-fix code, the variable was generate *duration*, and at HEAD it measured 24
+runs across four fixtures with **zero variance — 1 allowed / 7 denied, meter
+exactly 2027**. It then mutated out the two fixes and reproduced both earlier
+results byte-for-byte. Three 🔴 remained.
+
+| # | what | measured before | after |
+|---|---|---|---|
+| 1 | **the README hands the agent an ungated second CLI holding the same credential** | `README.md:115` says `npm install -g @civitai/cli`, and node/npm are in the closure. `npx -y @civitai/cli whoami` returned **401** — positive proof it read the `config.yaml` in the sandbox `$HOME` and authenticated with it. With the real key it would spend with no cap, no counter, no ledger row and no latch. **No defeat-intent: it is the documented install command** | the credential is no longer written to `$HOME` at all. It lives in `ledger/credential` (0600) and is injected as `CIVITAI_TOKEN` into the gated child only. Re-measured: ungated CLI **rc 3 (unauthenticated)**, gated **rc 0**, positive control (same call with a token in env) **rc 0** |
+| 2 | `reconcile_inflight` regenerated the three defects removed from `settle_spend` | delta 0 → recorded 0, no latch; NEGATIVE delta → clamped to 0, twelve lines from the comment saying clamping "is what made that silent"; unwritable meter → ignored; and the ledger asserted *"0 Buzz reconciled"* | both paths now call one `apply_settlement`. Re-measured: real delta **37/no latch**, zero **50/LATCH**, negative **50/LATCH**, unwritable meter **LATCH** |
+| 2b | the liveness check used a PID, and `enter` runs `--unshare-pid` | a stale record carrying pid **1 or 2** was never reconciled: charge escaped, reservation leaked, and every later generate refused with *"another generation is still running (pid 1)"* — **one interrupted generate bricked the spend path** | liveness is an `flock` held for the child's lifetime. Re-measured: stale pid 1 and pid 2 both reconcile (meter 37, record cleared, reserved 0) |
+| 3 | mandatory `calibrate` spent **outside** the meter | 37 moved, `observed_spend` 0, submits 0, ledger rows 0; `finish` then reported *observed 37 / MEASURED 74*. The doc lists that disagreement as an ABORT CONDITION, so the prescribed procedure guaranteed the alarm fired every run — **a permanently-red gate** | `calibrate` runs through the shim. Re-measured: meter **37**, submits **1**, rows **1**, and `finish` reports **observed 37 / MEASURED 37** |
+
+🟡 also: `app pull` is now gated by `SLUG_PREFIX` — it reaches an owner-only
+endpoint, lazily provisions a Forgejo identity and git writes an access token
+into `.git/config` (a **third** credential, now in `shred_secrets`); the audit
+files themselves (`invocations.tsv`, `spend.tsv`) are asserted appendable before
+a spend, because with `invocations.tsv` at 0444 a generate charged and wrote
+**zero** rows; `finish` reconciles before reporting; the concurrency **outcome**
+(exactly 1 of 8) is now asserted in CI rather than only ledger consistency;
+`unescape` undoes `escape` in the reverse order.
+
+🔴 **`AGENT-BRIEF.md` now names the `civitai` on PATH as the only one in scope**
+and tells the agent not to install a second copy. Nothing said so before, and
+the README actively suggests otherwise.
 
 ## What this does not protect against
 
@@ -803,8 +831,17 @@ are the ones being shipped knowingly.
     went from 69 to **168** store paths (181 with `--with-claude`). The jail
     still has no repo, no operator `$HOME` and no real credential store, so the
     blast radius is the sandbox plus the network — which is not nothing.
-14. 🔴 **A SECOND CREDENTIAL IS NOW AT REST IN THE SANDBOX, AND IT IS NOT THE
-    CIVITAI KEY.** `enter --with-claude` copies `~/.claude/.credentials.json`
+14. 🔴 **CREDENTIAL INVENTORY — THERE ARE THREE, NOT TWO.** (a) the Civitai
+    token, now in `ledger/credential` (0600) and injected rather than written
+    into `$HOME`; (b) under `--with-claude`, the Anthropic OAuth token in
+    `home/.claude/.credentials.json`; (c) any git access token `app pull` writes
+    into a workspace `.git/config`. All three are shredded by `teardown`.
+    🔴 **The residual that remains after the injection fix:** `ledger/credential`
+    is readable by the same UID, so an agent that goes looking can still find it
+    and hand it to an ungated binary. What changed is that this now requires
+    INTENT — before, the README's own `npm install -g @civitai/cli` was enough,
+    with the second CLI authenticating straight off the config file.
+15. 🔴 **THE ANTHROPIC TOKEN, AND WHAT IT GRANTS.** `enter --with-claude` copies `~/.claude/.credentials.json`
     into the run root. It is an OAuth token pair whose scopes are
     `user:inference`, `user:mcp_servers`, `user:file_upload`, `user:profile`,
     `user:sessions:claude_code` on a `max` subscription — so reading it lets
@@ -825,14 +862,14 @@ are the ones being shipped knowingly.
       mint an independent, revocable token; it is one owner action and was not
       taken.
 
-15. 🔴 **The unknown-verdict backstop in `cmd_guard` survives deletion, and
+16. 🔴 **The unknown-verdict backstop in `cmd_guard` survives deletion, and
     that is now DECLARED rather than merely true.** No valid input can reach it —
     `policy_verdict` always sets a verdict — so only an internal bug can, which
     is what it is for. Its value was shown by a two-stage mutant (make a branch
     return without setting `VERDICT`, then delete the backstop: rc 126 → rc 0,
     binary ran) and it is listed here alongside `write_scalar`'s readback as a
     knowingly-unpinned guard, because the previous round left it undeclared.
-16. **`make dogfood-check` is still not in CI, and `internal/dogfoodguard` shows
+17. **`make dogfood-check` is still not in CI, and `internal/dogfoodguard` shows
     `[no test files]` under `make ci`.** The classifier — the component three
     audits have now agreed is the load-bearing one — is pinned only by a suite CI
     never runs. Workflow files are ask-first, so this is flagged rather than
@@ -919,7 +956,7 @@ shred -u ~/.dogfood-token
 
 # 3. confirm the harness is honest before trusting it
 scripts/dogfood-sandbox.sh selftest        # against the live sandbox
-make dogfood-check                         # shellcheck -x + 241/241, no credential needed
+make dogfood-check                         # shellcheck -x + 266/266, no credential needed
 
 # 4b. calibrate the meter — ONE deliberate generation, spends real Buzz
 scripts/dogfood-sandbox.sh calibrate --yes

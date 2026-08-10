@@ -72,7 +72,7 @@ var reportedBools = []string{
 var reportedInts = []string{"max-cost", "quantity"}
 
 // Strings the sandbox policy branches on (identity of the thing being mutated).
-var reportedStrings = []string{"slug", "dir", "id", "out", "external-id", "input"}
+var reportedStrings = []string{"slug", "dir", "id", "out", "external-id", "input", "app"}
 
 // Flags reported as their raw string value, whatever their type.
 var reportedRaw = []string{"timeout"}
