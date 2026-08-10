@@ -75,7 +75,7 @@ func TestDownloadOutputs_SendsNoAuthorizationHeader(t *testing.T) {
 	}
 
 	paths, err := downloadOutputs(context.Background(), presignedFetcher(t, srv.URL, "secret-api-key"),
-		io.Discard, io.Discard, "wf_123", kept, dir, false)
+		io.Discard, io.Discard, "wf_123", kept, dir, "", false)
 	if err != nil {
 		t.Fatalf("downloadOutputs: %v", err)
 	}
@@ -120,7 +120,7 @@ func TestDownloadOutputs_HappyPathNamesFilesByWorkflowAndIndex(t *testing.T) {
 	kept, _ := genapi.PartitionOutputs(succeededWorkflow(srv.URL, 3))
 
 	var out bytes.Buffer
-	paths, err := downloadOutputs(context.Background(), presignedFetcher(t, srv.URL, ""), &out, io.Discard, "wf_123", kept, dir, false)
+	paths, err := downloadOutputs(context.Background(), presignedFetcher(t, srv.URL, ""), &out, io.Discard, "wf_123", kept, dir, "", false)
 	if err != nil {
 		t.Fatalf("downloadOutputs: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestDownloadOutputs_CollisionWithoutForceRefusesBeforeAnyTransfer(t *testin
 		t.Fatal(err)
 	}
 
-	_, err := downloadOutputs(context.Background(), presignedFetcher(t, srv.URL, ""), io.Discard, io.Discard, "wf_123", kept, dir, false)
+	_, err := downloadOutputs(context.Background(), presignedFetcher(t, srv.URL, ""), io.Discard, io.Discard, "wf_123", kept, dir, "", false)
 	if err == nil {
 		t.Fatal("collision without --force: want a refusal, got nil")
 	}
@@ -185,7 +185,7 @@ func TestDownloadOutputs_ForceOverwrites(t *testing.T) {
 	if err := os.WriteFile(target, []byte("stale"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := downloadOutputs(context.Background(), presignedFetcher(t, srv.URL, ""), io.Discard, io.Discard, "wf_123", kept, dir, true); err != nil {
+	if _, err := downloadOutputs(context.Background(), presignedFetcher(t, srv.URL, ""), io.Discard, io.Discard, "wf_123", kept, dir, "", true); err != nil {
 		t.Fatalf("--force: %v", err)
 	}
 	b, err := os.ReadFile(target)
@@ -259,11 +259,11 @@ func TestBlobStatusError_PointsAtTheExpiryRemedy(t *testing.T) {
 }
 
 // The workflow id is server-supplied, so it must not be able to steer the write.
-func TestBlobFileName_RejectsAHostileWorkflowId(t *testing.T) {
-	if _, err := blobFileName("/", 1, "https://x/a.jpeg"); err == nil {
+func TestRenderOutName_RejectsAHostileWorkflowId(t *testing.T) {
+	if _, err := renderOutName("", "/", 1, "https://x/a.jpeg"); err == nil {
 		t.Error("a degenerate workflow id must be rejected")
 	}
-	got, err := blobFileName("../../etc/passwd", 1, "https://x/a.jpeg")
+	got, err := renderOutName("", "../../etc/passwd", 1, "https://x/a.jpeg")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

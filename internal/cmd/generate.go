@@ -188,6 +188,11 @@ type generateOpts struct {
 	timeout time.Duration
 	// outDir is the directory outputs are written into.
 	outDir string
+	// outName is the --out-name template for each output's file name. Empty
+	// means defaultOutNameTemplate. It is USER-supplied input on the path that
+	// decides where bytes land, so it is validated (rendered against a probe and
+	// containment-checked) in validateGenerateOpts, BEFORE anything is submitted.
+	outName string
 	// noDownload waits for the result but writes no files.
 	noDownload bool
 	// force overwrites existing output files.
@@ -262,10 +267,17 @@ be charged and return nothing. Treat ` + "`ready: false`" + ` as "do not submit"
 read ` + "`ready: true`" + ` as a green light.
 
 WAITING AND DOWNLOADING: by default the command waits for the job to finish and
-writes every deliverable output into --out-dir as <workflow-id>-<n>.<ext>. Pass
---no-wait to print the workflow id and exit immediately, and pick the results up
-later with ` + "`civitai workflows get <workflow-id>`" + `. Output URLs are PRESIGNED AND
-EXPIRE, so download promptly; re-read the workflow for fresh links.
+writes every deliverable output into --out-dir as <workflow-id>-<n>.<ext>.
+--out-name <template> names them instead: {workflow}, {n} (1-based) and {ext}
+(with its leading dot) expand, everything else is literal. The rendered value
+must be a plain file name inside --out-dir — a path separator or ".." is REFUSED,
+not stripped — and the template is checked before anything is submitted, so a bad
+one costs nothing. A template that would give two outputs the same name is
+refused before any byte is downloaded rather than overwriting your own results,
+so include {n} for a batch. Pass --no-wait to print the workflow id and exit
+immediately, and pick the results up later with
+` + "`civitai workflows get <workflow-id>`" + `. Output URLs are PRESIGNED AND EXPIRE, so
+download promptly; re-read the workflow for fresh links.
 
 🔴 --timeout STOPS WAITING. IT DOES NOT STOP THE JOB. The generation keeps
 running server-side after the CLI gives up, and finishes and bills exactly as if
@@ -340,6 +352,9 @@ interpreted, so nothing in it is checked before you pay for it.`,
 
   # Wait, and write the images into ./out
   civitai generate "a cat" --yes --out-dir ./out
+
+  # …naming the files yourself — {n} keeps a batch from colliding
+  civitai generate "a cat" --yes --quantity 4 --out-dir ./out --out-name 'cat-{n}{ext}'
 
   # Fire and forget; collect the results later
   civitai generate "a cat" --yes --no-wait
@@ -526,7 +541,14 @@ interpreted, so nothing in it is checked before you pay for it.`,
 		"how long to WAIT for the generation to finish (e.g. 5m, 0 waits indefinitely). This stops the CLI waiting; "+
 			"it does NOT stop the generation and does NOT stop the charge — the job continues server-side to completion")
 	cmd.Flags().StringVar(&o.outDir, "out-dir", ".",
-		"directory to write the generated files into (created if needed); named <workflow-id>-<n>.<ext>")
+		"directory to write the generated files into (created if needed); named <workflow-id>-<n>.<ext> unless --out-name says otherwise")
+	// NOTE: no back-quotes in this usage string either — see the note above.
+	cmd.Flags().StringVar(&o.outName, "out-name", "",
+		"template for each output's file name inside --out-dir, e.g. 'img-{n}{ext}'. Placeholders: {workflow} (the workflow id), "+
+			"{n} (1-based output number), {ext} (the extension, WITH its leading dot); everything else is literal. "+
+			"Default '{workflow}-{n}{ext}'. It names a plain file: a path separator or '..' is REFUSED, not stripped, and the "+
+			"template is checked before anything is submitted. A template that would name two outputs the same is refused before "+
+			"anything is downloaded, so include {n} for a batch")
 	cmd.Flags().BoolVar(&o.noDownload, "no-download", false,
 		"wait for the result and print the output URLs, but write no files")
 	cmd.Flags().BoolVar(&o.force, "force", false, "overwrite existing output files instead of refusing")
@@ -579,6 +601,14 @@ func graphInputFlags(o generateOpts) []string {
 	return used
 }
 
+// The stand-in workflow id and blob URL --out-name is rendered against before a
+// run is submitted. They are only ever used to prove the TEMPLATE renders to a
+// contained plain file name; nothing is written and no request is made.
+const (
+	outNameProbeWorkflowID = "wf_probe"
+	outNameProbeURL        = "https://example.invalid/probe.jpeg"
+)
+
 // validateGenerateOpts rejects impossible invocations BEFORE any network call,
 // the way validateDownloadFlags does — every failure here is a local mistake, so
 // it is a usage error (exit 2).
@@ -586,7 +616,7 @@ func validateGenerateOpts(o *generateOpts) error {
 	usingInput := strings.TrimSpace(o.inputPath) != ""
 	if usingInput {
 		// Mutual exclusion, not a merge. Execution flags (--dry-run, --yes,
-		// --max-cost, --out-dir, --timeout, --no-wait, --json, --force,
+		// --max-cost, --out-dir, --out-name, --timeout, --no-wait, --json, --force,
 		// --external-id) stay valid: they govern HOW the request is made and
 		// what happens to the result, and none of them writes to the graph.
 		if used := graphInputFlags(*o); len(used) > 0 {
@@ -632,6 +662,22 @@ func validateGenerateOpts(o *generateOpts) error {
 		// documented default rather than erroring: an empty path would silently
 		// become a relative write anyway.
 		o.outDir = "."
+	}
+	// 🔴 The --out-name template is checked HERE, before the estimator, the
+	// submit and any charge. A template that cannot render is a local mistake,
+	// and discovering it after the generation has been billed leaves the user
+	// holding presigned URLs and no files.
+	//
+	// Probe values stand in for the real ones because every placeholder is
+	// bounded: {workflow} is a sanitised basename, {n} is a decimal integer and
+	// {ext} is blobExtension's output, so nothing a real run substitutes can turn
+	// a template that renders safely here into one that escapes there. It goes
+	// through planOutputTarget — the same function the download loop uses — so
+	// the pre-spend answer and the on-disk answer cannot drift apart.
+	if o.outName != "" {
+		if _, err := planOutputTarget(o.outName, o.outDir, outNameProbeWorkflowID, 1, outNameProbeURL); err != nil {
+			return asUsageError(err)
+		}
 	}
 	for _, raw := range o.loras {
 		if _, err := parseLoraFlag(raw); err != nil {
@@ -1288,7 +1334,7 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 		if o.jsonOut {
 			saveW = errw
 		}
-		paths, derr := downloadOutputs(ctx, deps.downloadBlob, saveW, errw, workflowID, kept, o.outDir, o.force)
+		paths, derr := downloadOutputs(ctx, deps.downloadBlob, saveW, errw, workflowID, kept, o.outDir, o.outName, o.force)
 		if derr != nil {
 			if len(paths) > 0 {
 				fmt.Fprintln(errw, ui.For(errw).Warn(fmt.Sprintf("%d of %d output(s) were saved before this failed", len(paths), len(kept))))
