@@ -19,10 +19,11 @@ type getWorkflowFn func(ctx context.Context, workflowID string) (*genapi.Workflo
 // errWaitTimeout is returned by pollWorkflow when --timeout elapsed before the
 // workflow reached a terminal status.
 //
-// 🔴 It means the CLI STOPPED WAITING. It does NOT mean the job stopped, and it
-// does NOT mean the money came back: the generation keeps running server-side
-// and the charge stands (a mid-run cancel bills the accrued cost, and the CLI
-// cannot cancel from here anyway). Every message built from this must say so.
+// 🔴 It means the CLI STOPPED WAITING. It does NOT mean the job stopped: the
+// generation keeps running server-side and finishes and bills exactly as if the
+// wait had continued, and this path does not cancel anything. Every message
+// built from this must say so. (What a deliberate `workflows cancel` then does
+// to the charge is a different question, traced in runWorkflowsCancel — #307.)
 var errWaitTimeout = errors.New("timed out waiting for the generation to finish")
 
 // Poll cadence defaults.

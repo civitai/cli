@@ -46,42 +46,152 @@ func TestWorkflowsCancel_Success(t *testing.T) {
 		t.Errorf("stdout does not confirm the cancelled id:\n%s", out.String())
 	}
 	// 🔴 The billing truth must be stated at the point of use, not only in
-	// --help. What is TRUE is that the accrued cost has been billed and stopping
-	// the job does not call it back; what nobody has evidenced is that nothing
-	// ever comes back, so this asserts the first and refuses the second (#278,
-	// AGENTS.md item 28 — civitai/cli#307 owns the substance).
+	// --help. #307 read the orchestrator and CHANGED what that truth is: the
+	// delivered half is billed, the undelivered half is re-priced off, and the
+	// settlement is server-side. So this asserts the half that IS certain (you
+	// are billed for what was delivered) and still refuses any promise about an
+	// amount, which the CLI cannot observe (AGENTS.md item 28).
 	stderr := errb.String()
-	if !strings.Contains(stderr, "did NOT undo the charge") {
-		t.Errorf("stderr does not say the accrued cost still stands:\n%s", stderr)
+	if !strings.Contains(stderr, "billed for what it already delivered") {
+		t.Errorf("stderr does not say the delivered work is billed:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, "re-prices the rest") {
+		t.Errorf("stderr does not say the rest is re-priced server-side:\n%s", stderr)
 	}
 	if !strings.Contains(stderr, buzzLedgerUnknownNote) {
 		t.Errorf("stderr does not render the shared non-observability note:\n%s", stderr)
 	}
-	for _, forbidden := range []string{"saved", "refund" + "ed you", "you will not be charged"} {
+	for _, forbidden := range []string{"you will not be charged", "fully refunded", "free"} {
 		if strings.Contains(strings.ToLower(stderr), strings.ToLower(forbidden)) {
-			t.Errorf("stderr implies cancelling saves money (%q):\n%s", forbidden, stderr)
+			t.Errorf("stderr promises an amount the CLI cannot observe (%q):\n%s", forbidden, stderr)
+		}
+	}
+	// 🔴 THE RETRACTED SENTENCES, PINNED SO THEY CANNOT RETURN. This is NOT the
+	// guard on this copy — the golden in generate_golden_copy_test.go is, because
+	// a phrase list loses to the next paraphrase (item 28's two dead guards). It
+	// is the item-3-style retraction check: these exact wordings were measured
+	// FALSE against the orchestrator source in #307, so a re-introduction is a
+	// revert rather than a rewording and deserves to name itself.
+	assertNoRetractedCancelClaims(t, "the post-cancel note", stderr)
+}
+
+// retractedCancelClaims are the sentences #307 disproved. Each asserted that a
+// cancel returns NOTHING; the orchestrator re-prices a cancelled workflow to the
+// work it actually did and refunds the difference
+// (`civitai/civitai-orchestration` → `WorkflowStepManager.CalculateCostAsync`'s
+// undelivered-fraction subtraction, settled by
+// `WorkflowGrain.EnsureCorrectBuzzChargedAsync(true)` on the final workflow
+// event). See runWorkflowsCancel for the full chain.
+var retractedCancelClaims = []string{
+	"does not undo the charge",
+	"did not undo the charge",
+	"does not undo its cost",
+	"bills the accrued cost",
+	"bills the cost already accrued",
+	"does not call that back",
+	"is not a way to save money",
+	"does not undo the buzz already spent",
+	"already paid for",
+	"non-refundab",
+}
+
+// assertNoRetractedCancelClaims fails when a cancel surface has grown back one of
+// the wordings #307 retracted.
+func assertNoRetractedCancelClaims(t *testing.T, surface, got string) {
+	t.Helper()
+	if strings.TrimSpace(got) == "" {
+		t.Fatalf("CONTROL failure, not a finding: %s rendered nothing, so this scan reads no copy at all", surface)
+	}
+	lower := strings.ToLower(strings.Join(strings.Fields(got), " "))
+	for _, claim := range retractedCancelClaims {
+		if strings.Contains(lower, claim) {
+			t.Errorf("%s carries the RETRACTED claim %q. It asserts that a cancel returns nothing, which #307 measured "+
+				"false against the orchestrator source: a cancelled workflow is re-priced to the work it actually did and "+
+				"the difference is refunded. Say what is billed, not what is lost.\n%s", surface, claim, got)
 		}
 	}
 }
 
-// 🔴 The help text is part of the money contract: `cancel` must never read as a
-// way to stop paying. It is asserted structurally rather than by eyeball,
-// because this is precisely the sentence a later edit would "tidy".
+// 🔴 The help text is part of the money contract. It is asserted structurally
+// rather than by eyeball, because this is precisely the sentence a later edit
+// would "tidy".
+//
+// 🔴 WHAT IT ASSERTS WAS INVERTED BY #307. It used to require "is not a way to
+// save money", "bills the accrued cost" and "does not call that back" — three
+// wordings the orchestrator source contradicts, held in place by this test. A
+// test that pins a false claim is worse than no test: it is why the claim
+// survived two rounds of copy review. What survives is the half that is still
+// true — delivered work is billed — plus the re-pricing that replaces the rest.
 func TestWorkflowsCancel_HelpStatesTheBillingTruth(t *testing.T) {
 	// Normalised: the claim is about the SENTENCE, not about where the help text
 	// happens to wrap or which case it shouts in. A guard that broke on a re-wrap
 	// would be deleted the first time someone reflowed the paragraph.
 	long := strings.ToLower(strings.Join(strings.Fields(newWorkflowsCancelCmd().Long), " "))
-	// "does not get your buzz back" and "non-refundab" were pinned here and are
-	// deliberately gone: both assert that NOTHING comes back, which no source in
-	// this repo establishes. The accrued-cost half is what survives.
-	for _, want := range []string{"is not a way to save money", "bills the accrued cost", "does not call that back"} {
+	for _, want := range []string{
+		"charged up front",
+		"re-prices the workflow",
+		"already delivered is billed",
+		"cannot see from here",
+	} {
 		if !strings.Contains(long, want) {
 			t.Errorf("`workflows cancel --help` is missing %q:\n%s", want, long)
 		}
 	}
-	if !strings.Contains(newWorkflowsCancelCmd().Short, "DOES NOT UNDO THE CHARGE") {
-		t.Errorf("the one-line summary must carry the warning too: %q", newWorkflowsCancelCmd().Short)
+	assertNoRetractedCancelClaims(t, "`workflows cancel --help`", newWorkflowsCancelCmd().Long)
+	assertNoRetractedCancelClaims(t, "the `workflows` group --help", newWorkflowsCmd().Long)
+	if !strings.Contains(newWorkflowsCancelCmd().Short, "billed for what it delivered") {
+		t.Errorf("the one-line summary must carry the billing half too: %q", newWorkflowsCancelCmd().Short)
+	}
+}
+
+// TestRetractedCancelClaimScannerCanFire is the POSITIVE CONTROL on the
+// retraction scanner. Without it, a typo in a pattern, a normalisation that
+// lower-cases nothing, or a scan wired to an empty string reports a serene pass
+// over every surface — the "reassuring zero" this repo has now been bitten by
+// repeatedly.
+//
+// It runs the REAL predicate over the exact sentences that shipped before #307,
+// each of which MUST be rejected, and over the current copy, which MUST be
+// accepted. The rejected corpus is built from the pre-fix strings, not from the
+// pattern list, so a pattern that has stopped matching its own target fails here.
+func TestRetractedCancelClaimScannerCanFire(t *testing.T) {
+	rejects := func(s string) bool {
+		lower := strings.ToLower(strings.Join(strings.Fields(s), " "))
+		for _, claim := range retractedCancelClaims {
+			if strings.Contains(lower, claim) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Verbatim from the pre-#307 tree.
+	mustReject := map[string]string{
+		"the old Short":            "Cancel a running generation workflow (DOES NOT UNDO THE CHARGE)",
+		"the old --help lead":      "🔴 CANCELLING IS NOT A WAY TO SAVE MONEY. A mid-run cancel BILLS THE ACCRUED COST, orchestrator-side: by the time a workflow is running the money has already moved, and stopping it does not call that back.",
+		"the old prompt warning":   "This does NOT undo the charge — a mid-run cancel bills the cost already accrued.",
+		"the old prompt deterrent": "You are throwing away a job you have already paid for. It cannot be un-cancelled.",
+		"the old post-cancel note": "This did NOT undo the charge — a mid-run cancel bills the cost already accrued.",
+		"the old non-TTY refusal":  "cancelling wf_1 is irreversible and does not undo the Buzz already spent on it.",
+		"the old group help":       "`cancel` stops a job but does not undo its cost — a mid-run cancel bills what has already accrued.",
+		"an older phrasing still":  "a mid-run cancel is non-refundable",
+	}
+	for name, text := range mustReject {
+		if !rejects(text) {
+			t.Errorf("CONTROL failure: the scanner accepts %s, which is one of the sentences #307 retracted:\n  %s", name, text)
+		}
+	}
+	// And it must ACCEPT what ships now — a scanner that rejects everything would
+	// be satisfied by deleting the copy.
+	for name, text := range map[string]string{
+		"the cancel --help":      newWorkflowsCancelCmd().Long,
+		"the cancel Short":       newWorkflowsCancelCmd().Short,
+		"the workflows --help":   newWorkflowsCmd().Long,
+		"the shared ledger note": buzzLedgerUnknownNote,
+	} {
+		if rejects(text) {
+			t.Errorf("CONTROL failure: the scanner rejects %s, which is the copy it is written to accept:\n  %s", name, text)
+		}
 	}
 }
 

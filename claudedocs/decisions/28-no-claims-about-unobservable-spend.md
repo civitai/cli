@@ -14,6 +14,62 @@ pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
 routing question rather than a label, and `agents_split_preserved_test.go` pins
 the body against the text it was moved from.
 
+## 🔴 (b)'s CANCEL CLAUSE IS SUPERSEDED — civitai/cli#307 SETTLED IT
+
+**Read this before acting on (b).** The body below is byte-pinned against the
+commit it was moved from, so it cannot be edited in place; this header is where
+its one superseded clause is recorded. Everything else in the item stands.
+
+(b) says *"No fate-of-charge copy asserts a direction, cancel included"* and
+closes with *"Cancel keeps the accrued-cost half; civitai/cli#307 owns the
+substance."* #307 has now been answered, and the accrued-cost half **did not
+survive**. The premise under it — *"the rule living in the orchestrator SERVICE,
+absent from the monorepo"* — was true of the **monorepo** and false as a claim
+about the world: the orchestrator is its own repository,
+`github.com/civitai/civitai-orchestration`, and it was read.
+
+**What the source says.** `orchestrator.cancelWorkflow` →
+`updateWorkflow({status:'canceled'})` → the orchestrator's v2 consumer
+`WorkflowsController.UpdateAsync` → `IWorkflowGrain.CancelAsync`.
+
+- `WorkflowManager.CancelAsync` cancels only **non-final** steps; a step that
+  already finished is skipped and keeps its full cost.
+- Each cancelled job raises `JobEventType.Canceled`; `WorkflowStepManager`
+  recomputes the step cost on every final non-success job event, and
+  `CalculateCostAsync` subtracts `job.Cost * undeliveredFraction` per
+  failed/cancelled job — the fraction being
+  `(expected blobs − delivered blobs) / expected blobs`. A job that delivered
+  nothing subtracts in full; a job whose blob set is unknown also subtracts in
+  full. Fixed costs, tips and licence fees prorate the same way.
+- On the final workflow event, `WorkflowGrain`'s observer calls
+  `EnsureCorrectBuzzChargedAsync(true)`, which refunds
+  `charged − recomputed total` via `BuzzClient.RefundBuzzAsync`
+  (`TransactionType.Refund`).
+- A second, corroborating path exists for consumer-charged jobs:
+  `ConsumerGrain.OnJobEventAsync` schedules a **full** pending refund for any
+  job that completes non-`Succeeded`, and a `Canceled` job triggers the *quick*
+  refund timer specifically.
+
+**So the rule is RE-PRICING**, not "nothing comes back" and not "you get it
+back". Two conditions the copy must not flatten away: a post-billing step
+handler (`CustomComfy`, `HasPostBilling => true`) re-prices from measured
+runtime instead of blob delivery, and a job a worker has already claimed that is
+not claim-cancellable runs to completion and bills.
+
+**What did NOT change, and is the reason the rest of item 28 stands.** The CLI
+still cannot observe the ledger, so it may state the server's *rule* and must
+still promise no *amount*. `buzzLedgerUnknownNote` is unchanged, renders on
+every one of these surfaces, and its call-site ledger is unchanged (3/1/3). The
+cancel surfaces' copy now states what is billed rather than what is lost, is
+pinned by golden files — **including a new `cancel_result_note`, the post-cancel
+screen that was the one runtime spend surface the golden set had missed** — and
+the retracted sentences are pinned against return by
+`retractedCancelClaims` / `assertNoRetractedCancelClaims` in
+`internal/cmd/workflows_cancel_test.go`. That list is a **retraction check, not
+the guard**: the golden is the guard, for the reason (b) itself gives.
+
+The traced chain also lives at the code, in `runWorkflowsCancel`'s comment.
+
 ---
 
 28. **The CLI must not make CLAIMS about a spend it cannot observe.** Same shape

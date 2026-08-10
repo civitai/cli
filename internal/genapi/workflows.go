@@ -16,7 +16,7 @@ import (
 //	cancelWorkflow       POST  {"json":{"workflowId":"…"}}         MUTATION
 //
 // 🔴 cancelWorkflow is a MUTATION and must never be pointed at a live server
-// from a test. It does not undo the charge — see CancelWorkflow.
+// from a test. What it does to the charge is not "nothing" — see CancelWorkflow.
 const (
 	// QueryWorkflowsPath is the paged list of the caller's own workflows.
 	QueryWorkflowsPath = "/api/trpc/orchestrator.queryGeneratedImages"
@@ -164,14 +164,22 @@ func (c *Client) QueryWorkflows(ctx context.Context, opts ListOptions) (*Workflo
 	return &out, payload, nil
 }
 
-// CancelWorkflow cancels one workflow. 🔴 IT IS A MUTATION, AND IT DOES NOT
-// REFUND ANYTHING.
+// CancelWorkflow cancels one workflow. 🔴 IT IS A MUTATION.
 //
-// The server-side handler resolves to `updateWorkflow({status:'canceled'})` and
-// a mid-run cancel BILLS THE ACCRUED COST orchestrator-side. What the ledger
-// does with it afterwards is not readable from this repo (AGENTS.md item 28).
-// Cancelling is how you stop a job you no longer want the *output* of; it is
-// never a way to get Buzz back, and no caller of this may present it as one.
+// 🔴 "AND IT DOES NOT REFUND ANYTHING" IS RETRACTED (#307). It stood here on the
+// strength of the orchestrator being unreadable from this repo; the orchestrator
+// service (`civitai/civitai-orchestration`) is a SEPARATE repo, and reading it
+// settled the question the other way. The server-side handler still resolves to
+// `updateWorkflow({status:'canceled'})`, but the orchestrator then RE-PRICES the
+// workflow to the work it actually did and refunds the difference — per job, by
+// the share of its outputs that never landed. Delivered work is billed;
+// undelivered work is not.
+//
+// The traced chain, the two conditions that keep it from being a clean refund,
+// and what callers may therefore say, are in `internal/cmd`'s
+// runWorkflowsCancel. Cancelling is still how you stop a job you no longer want
+// the *output* of, and no caller may present it as a way to get a KNOWN amount
+// of Buzz back: this CLI never sees the ledger (AGENTS.md item 28).
 //
 // 🔴 It deliberately does NOT go through unwrapTRPC. The server procedure
 // returns `undefined` (its service function awaits the orchestrator call and

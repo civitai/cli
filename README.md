@@ -322,7 +322,7 @@ README. For the end-to-end walkthrough, see
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps and outputs. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching). |
-| `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **This does not undo the charge** — a mid-run cancel bills the cost already accrued. Cancel because you no longer want the output, never to save money. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
+| `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**; the orchestrator re-prices the rest server-side and this CLI cannot report the figure. Cancel because you no longer want the output. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai upgrade [--force]` | **Self-update this binary in place** — resolve the latest GitHub release, verify its SHA-256 against `checksums.txt`, and replace the running executable. A Homebrew install delegates to `brew upgrade` instead; `--force` reinstalls anyway (and self-replaces a Homebrew install). See [Upgrading](#upgrading). |
 | `civitai version` | Print version / commit / build date. |
 | `civitai completion [shell]` | Generate a shell-completion script. |
@@ -1882,12 +1882,14 @@ collision is refused *before any bytes move*.
   re-attach path for every case where the CLI stopped early, and it spends
   nothing.
 
-> 🔴 **`--timeout` stops *waiting*. It does not stop *paying*.** When the
+> 🔴 **`--timeout` stops *waiting*. It does not stop the *job*.** When the
 > deadline passes (or you press Ctrl-C) the generation keeps running
-> server-side, and cancelling it does not stop the cost already accrued — a
-> mid-run cancel bills that. Both cases exit **non-zero**,
-> print the workflow id, the idempotency key and the exact `civitai workflows
-> get …` command, and never report success.
+> server-side, and finishes and bills exactly as if you had stayed — neither
+> case cancels anything. Both exit **non-zero**, print the workflow id, the
+> idempotency key and the exact `civitai workflows get …` command, and never
+> report success. `civitai workflows cancel` is the only thing that stops the
+> remaining work; see [cancel](#listing-and-cancelling-workflows) for what that
+> does to the charge.
 
 **Output URLs are presigned and expire.** Download promptly; re-read the
 workflow for fresh links. The blob fetch deliberately carries **no credential**
@@ -1936,18 +1938,29 @@ blocked by moderation, never landed, or you hid it on the website — so
 which is a very different fact from `0/0`. `civitai workflows get <id>` shows
 the per-output reason.
 
-> 🔴 **`cancel` does not undo the charge.** A mid-run cancel **bills the cost
-> already accrued**, orchestrator-side: by the time a workflow is running the
-> money has moved, and stopping it does not call that back. Cancel a job because
-> you no longer want its *output* — never as a way to save Buzz, and never to
-> undo a submit. Whether the ledger returns anything afterwards is the
-> server's call and this CLI does not report it either way (civitai/cli#307). (This is also why `--timeout` and Ctrl-C deliberately
-> do **not** cancel: stopping the wait costs nothing, while stopping the job
-> would cost the same as letting it finish and throw the result away.)
+> 🔴 **`cancel` is not a clean refund — and it is not a total loss either.**
+> Buzz is charged **up front**, when the orchestrator schedules the run.
+> Cancelling stops the steps that have not finished; the orchestrator then
+> **re-prices the workflow against the work it actually did** and settles the
+> difference against what it took. What the run already delivered is billed: a
+> step that had already finished keeps its full cost, and a job a worker has
+> already started and cannot interrupt runs to completion and is billed for.
+>
+> So cancel a job because you no longer want its *output*. How much of the
+> charge that leaves you paying depends on how far the run had got — the
+> settlement is server-side and happens once the workflow reaches its final
+> state, not when the command returns, and **this CLI never sees your Buzz
+> ledger**, so it reports no figure. Settle it against your
+> [transaction history](https://civitai.com/user/transactions).
+>
+> (This is also why `--timeout` and Ctrl-C deliberately do **not** cancel: they
+> stop the wait, not the job.)
+>
+> <sub>This paragraph used to read *"`cancel` does not undo the charge … stopping it does not call that back"*. That was **wrong**, and wrong in the direction that costs you: it was written when the orchestrator service could not be read, and reading it (civitai/cli#307) showed a cancelled workflow is re-priced by the share of each job's outputs that never landed, with the difference refunded.</sub>
 
 `cancel` **asks for confirmation**, matching `civitai generate` and
-`civitai app submit`. It is the one irreversible action here, and it destroys a
-job you have already paid for, so it is gated the same way every other
+`civitai app submit`. It is the one irreversible action here — it throws away
+whatever the run has not produced yet — so it is gated the same way every other
 destructive path in this feature is:
 
 - `--yes` / `-y` proceeds without prompting;
