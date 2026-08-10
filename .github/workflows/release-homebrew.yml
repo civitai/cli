@@ -248,13 +248,16 @@ jobs:
       # report on the tap. The question here is about the CURRENT state of the
       # world, so it is always asked with the CURRENT checker.
       #
-      # A DRILL is the one exception, and it has to be: a drill exists to prove
-      # THIS revision's reporting path works, and checking out the default
-      # branch would silently rehearse main's copy of it instead — which is the
-      # "verified the deployed copy, not the branch" mistake, built in.
+      # A HAND DISPATCH is the one exception, and it has to be: `workflow_dispatch`
+      # names a ref explicitly, and the reason to dispatch this against a branch
+      # is to exercise that branch's checker — a drill above all. Pinning the
+      # default branch there would silently rehearse main's copy instead, which
+      # is the "verified the deployed copy, not the branch" mistake built into
+      # the workflow. Dispatching from main (the recovery path's normal use)
+      # resolves to the same commit either way.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill != 'off') && github.ref || github.event.repository.default_branch }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.ref || github.event.repository.default_branch }}
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
