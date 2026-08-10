@@ -45,6 +45,39 @@ it now reads `at most 2.0 MiB` with no edit to any help body. Verified on
 `c5c3817`: all five listing guards still exist and **86 subtests pass**. A
 hand-typed "2 MiB" would have silently disagreed with the code instead.
 
+## The scoping answer (kept — next steps still depend on it)
+
+Measured across all 53 command nodes by dumping the real cobra tree as JSON, not
+by parsing help text:
+
+| Fact | Measured |
+|---|---|
+| Nodes carrying an `Annotations` map | **0 of 53** |
+| Nodes with NO `Long` at all | 8 → **now 0** (#274, #276) |
+| Nodes with a `Long` under 400 chars | 16 → mostly closed |
+| README table cells, 16 matched rows | 6,255 chars |
+| `Long` on those same 16 nodes | **19,017 chars** |
+
+`Long` was already ~3× richer than the README table for the App-authoring
+commands, so that half of the "migration" was mostly already done. The real gap
+was the public read-API group — no table row at all — which #276 closed.
+
+### 🔴 `Annotations` CANNOT reach the docs site — measured, not inferred
+
+The generator captures exactly two channels per node (`civitai <path> --help` and
+`civitai __complete <path> ""`) and parses the text. Cobra's default help template
+renders `Annotations` in neither. Probe on `workflows get` with
+`Annotations{"probe:visible-in-help": "ZZPROBEZZ"}`:
+
+- `strings <binary> | grep -c ZZPROBEZZ` → **1** (the probe really applied)
+- in `--help` → **0**; in `__complete` → **0**
+- positive control, a word that IS in that help (`PRESIGNED`) → **1**
+- `workflows get --help` byte-identical with and without it (1512 both)
+
+So an `Annotations` half is a no-op for docs unless a custom help template renders
+them — at which point they are `Long` with extra steps and cost the same terminal
+space. **The surviving split is `Long` (prose, budgeted) vs the guide.**
+
 ## SHIPPED — the pipeline is end-to-end (2026-08-09)
 
 Eight PRs merged; the loop this workstream was about is closed AND guarded.
