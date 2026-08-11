@@ -47,7 +47,7 @@ func TestAppWithdrawSuccess(t *testing.T) {
 	t.Setenv("CIVITAI_TOKEN", "tok-1")
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)
 
-	out, _, err := run(t, "app", "withdraw", "pubreq_01H")
+	out, _, err := run(t, "app", "withdraw", "pubreq_01H", "--yes")
 	if err != nil {
 		t.Fatalf("app withdraw: %v", err)
 	}
@@ -68,9 +68,14 @@ func TestAppWithdrawSuccess(t *testing.T) {
 	}
 }
 
-// TestAppWithdrawYesFlagAccepted proves `withdraw <id> --yes` is accepted (no
-// "unknown flag") for symmetry with `app submit`. Withdraw is non-interactive, so
-// --yes is a no-op that must still parse and complete the withdraw cleanly.
+// TestAppWithdrawYesFlagAccepted proves both spellings of the flag are accepted
+// (no "unknown flag") and complete the withdraw cleanly.
+//
+// 🔴 --yes IS NO LONGER A NO-OP (#350). It used to be one — withdraw never
+// prompted, and the flag existed only so the same scripted invocation worked on
+// `app submit` and `app withdraw`. It is now the real bypass for a confirmation
+// gate, which is why every test in this file that expects the withdraw to LAND
+// has to pass it. See app_withdraw_confirm_test.go for the gate's own matrix.
 func TestAppWithdrawYesFlagAccepted(t *testing.T) {
 	var rec withdrawRec
 	srv := withdrawServer(t, map[string]any{"ok": true}, http.StatusOK, &rec)
@@ -105,7 +110,7 @@ func TestAppWithdrawByIDFlag(t *testing.T) {
 	t.Setenv("CIVITAI_TOKEN", "tok")
 	t.Setenv("CIVITAI_BASE_URL", srv.URL)
 
-	if _, _, err := run(t, "app", "withdraw", "--id", "pubreq_flag"); err != nil {
+	if _, _, err := run(t, "app", "withdraw", "--id", "pubreq_flag", "--yes"); err != nil {
 		t.Fatalf("app withdraw --id: %v", err)
 	}
 	if rec.publishRequestID != "pubreq_flag" {
@@ -153,6 +158,11 @@ func TestAppWithdrawArgAndFlagErrors(t *testing.T) {
 	}
 }
 
+// Deliberately WITHOUT --yes: the token check runs before the #350 confirmation
+// gate, so this also pins that ordering. A run with no credential must say so
+// rather than prompting the author to approve a destruction it could never have
+// performed — the assertion below is on the token message, so a gate that jumped
+// the queue would turn this red.
 func TestAppWithdrawMissingTokenErrors(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	t.Setenv("CIVITAI_TOKEN", "")
@@ -185,7 +195,7 @@ func TestAppWithdrawErrorMapping(t *testing.T) {
 		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 		t.Setenv("CIVITAI_TOKEN", "tok")
 		t.Setenv("CIVITAI_BASE_URL", srv.URL)
-		_, _, err := run(t, "app", "withdraw", "pubreq_01H")
+		_, _, err := run(t, "app", "withdraw", "pubreq_01H", "--yes")
 		srv.Close()
 		if err == nil {
 			t.Fatalf("status %d: expected error", tc.status)

@@ -87,10 +87,10 @@ that goes back to moderator review (the live listing is untouched until the
 revision is approved); pass --changelog to describe the change.
 
 The app is resolved from block.manifest.json in the current directory (or pass
---slug). Your store listing is created as a DRAFT when you run
-` + "`civitai app submit`" + `, so you can set its media WHILE your app is pending review
-— the media you attach carries forward when a moderator approves it. Set it
-early to clear the publish floor before you go live.
+--slug). ` + "`civitai app submit`" + ` mints your listing as a DRAFT, so its media is
+settable while pending review. It will
+` + strings.Join(wrapRunes(withdrawListingCaveat+".", 78), "\n") + `
+Do not hand-caption a set you may withdraw.
 
 Source files are checked locally BEFORE any upload — ` + listingImageFormats + `, at most
 ` + humanBytes(maxIconBytes) + ` for an icon, ` + humanBytes(maxCoverBytes) + ` for a cover, ` + humanBytes(maxScreenshotBytes) + ` for a screenshot.

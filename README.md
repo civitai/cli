@@ -319,7 +319,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
-| `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
+| `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. **Also deletes a first-version app's store listing — icon, cover and every captioned screenshot**, so it asks first and needs `--yes` in a script. Idempotent for the submission only; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs, the Buzz transactions the server recorded for it, and **the account the orchestrator recorded** for the run where there is one (printed under *The server reported:*). This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with why they were excluded** rather than omitted — and where the excluded outputs died of *different* server-reported causes, each line names its own. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching) and [Reading a workflow's Buzz transactions](#reading-a-workflows-buzz-transactions). |
@@ -1246,7 +1246,9 @@ guide.
 listing **cannot go live without an icon AND a cover**. `civitai app submit`
 mints your listing as a **draft** and prints this reminder inline — which is the
 moment to act on it, because the media is settable **while the app is in review**
-and carries forward when a moderator approves it. Attach it without the browser:
+and will carry forward on APPROVAL only — withdrawing the submission, or a
+moderator rejecting it, deletes the listing and everything on it. Attach it
+without the browser:
 
 ```text
 $ civitai app listing status                        # what's attached vs. required
@@ -1317,14 +1319,29 @@ first to free the slug, then resubmit:
 
 ```text
 $ civitai app status                          # find the pubreq_ id
-$ civitai app withdraw pubreq_01HZX           # frees the slug
-$ civitai app submit                          # resubmit the new bundle
+$ civitai app withdraw pubreq_01HZX           # frees the slug — and DELETES the store listing
+$ civitai app submit                          # resubmit the new bundle (listing starts EMPTY)
+$ civitai app listing set-icon ./assets/icon.png    # re-attach the media
 ```
 
+> **⚠ Withdrawing a first-version submission deletes that app's store listing**
+> — its icon, its cover and **every screenshot with its caption**. That is
+> server-side and the CLI cannot opt out of it: the withdraw route takes the
+> publish-request id and nothing else. Resubmitting mints an **empty** listing;
+> the media does not come back, and neither do the captions. The same discard
+> happens when a moderator **rejects** a first-version submission. A withdraw on
+> an app whose listing is already **approved** (a subsequent version) leaves the
+> live listing alone.
+>
+> Because that is irreversible, `civitai app withdraw` **asks first** on a
+> terminal, and **refuses** in a non-interactive shell unless you pass `--yes`.
+
 `civitai app withdraw <pubreq-id>` (or `--id <pubreq>`) withdraws **your own**
-pending publish request. It is **idempotent** (an already-withdrawn request still
-returns success) and only a **`pending`** request can be withdrawn — an already
-approved/rejected one cannot.
+pending publish request. It is **idempotent with respect to the submission**
+(an already-withdrawn request still returns success) and only a **`pending`**
+request can be withdrawn — an already approved/rejected one cannot. The
+idempotency does **not** extend to the listing: the first withdraw deletes it,
+and a second call does not bring it back.
 
 ### Listing media requirements
 
@@ -2590,6 +2607,7 @@ credited it to the wrong command.)
 | `nothing index.html loads reaches it` | The **strong** tier: the emitter is in your project but nothing the browser loads reaches it — an orphan file. Copying `civitai-host.js` in is only half the fix; it has to be referenced too. | [The host handshake](#the-host-handshake-block_ready) |
 | `no lockfile is committed` / `is not a lockfile` | The platform build installs **strictly** from the committed lockfile, so a missing one — or a zero-byte one created with `touch` — fails the build server-side. A lockfile is generated by the package manager, never hand-written. | [Validate fidelity](#validate-fidelity) |
 | `refusing to submit without --yes` | A submit that would really upload asked for confirmation and found no TTY. Pass `--yes` in CI, or `--package-only` to just write the .zip. | [Command reference](#command-reference) |
+| `refusing to withdraw without --yes` | A withdraw asked for confirmation and found no TTY. It gates because withdrawing a **first-version** submission deletes that app's store listing — icon, cover and every captioned screenshot. Pass `--yes` once you have accepted that; nothing was withdrawn and no request was sent. 🔴 **BREAKING:** this refusal is new — a scripted `civitai app withdraw <id>` that used to exit `0` now exits `1` until you add `--yes`. | [After you submit](#after-you-submit-review--approve--deploy) |
 
 ### Generating
 

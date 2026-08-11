@@ -247,10 +247,21 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 // store listing won't publish without an icon + cover, with the exact commands
 // to add them. Kept static (no server call) so it works even pre-first-listing.
 // This submit MINTED the store listing as a draft, so the media is settable NOW —
-// no need to wait for approval (it carries forward when the app is approved).
+// no need to wait for approval.
+//
+// 🔴 THE "CARRIES FORWARD" LINE CARRIES ITS CAVEAT (#350). This was one of the
+// three surfaces that promised the media survives, unqualified, and it is the
+// worst of them: it is printed at the exact moment the author decides to spend
+// an afternoon on artwork, and it was reprinted verbatim over an emptied listing
+// after a withdraw→resubmit. See withdrawListingCaveat.
 func printListingFloorHeadsUp(out io.Writer) {
 	fmt.Fprintln(out, "\nStore listing: your listing needs an icon AND a cover before it can publish.")
-	fmt.Fprintln(out, "You can add them NOW, while the app is in review — they carry forward on approval:")
+	// Wrapped at 78 so the caveat does not arrive as one 130-column line that a
+	// standard terminal breaks mid-clause; the rest of this block is already
+	// under 80.
+	for _, line := range wrapRunes("You can add them NOW, while the app is in review — they "+withdrawListingCaveat+":", 78) {
+		fmt.Fprintln(out, line)
+	}
 	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-icon <file>"))
 	fmt.Fprintf(out, "  %s\n", ui.Code("civitai app listing set-cover <file>"))
 	fmt.Fprintf(out, "  %s   # what's attached vs. required\n", ui.Code("civitai app listing status"))
