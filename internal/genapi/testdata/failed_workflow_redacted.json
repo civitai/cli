@@ -1,0 +1,89 @@
+{
+  "id": "redacted-20260810223715659",
+  "createdAt": "2026-08-10T22:37:15.659Z",
+  "transactions": {
+    "list": [
+      { "type": "debit", "amount": 60, "id": "00000000-0000-0000-0000-00000000debi", "accountType": "blue" },
+      { "type": "credit", "amount": 60, "id": "00000000-0000-0000-0000-0000000credi", "accountType": "blue" }
+    ]
+  },
+  "metadata": {
+    "params": {
+      "workflow": "img2img:edit",
+      "priority": "low",
+      "outputFormat": "jpeg",
+      "ecosystem": "NanoBanana",
+      "images": [
+        { "url": "https://images.example.invalid/1024x1024.png", "width": 1024, "height": 1024 }
+      ],
+      "seed": 1105986134,
+      "prompt": "make the background solid white",
+      "quantity": 1
+    },
+    "resources": [{ "id": 2154472, "model": { "type": "Checkpoint" } }],
+    "isPrivateGeneration": false
+  },
+  "status": "failed",
+  "startedAt": "2026-08-10T22:37:16.732Z",
+  "completedAt": "2026-08-10T22:37:17.157Z",
+  "tags": ["civitai", "NanoBanana", "gen", "green", "img2img:edit", "img"],
+  "arguments": {},
+  "steps": [
+    {
+      "$type": "imageGen",
+      "input": {
+        "images": ["https://blobs.example.invalid/v2/consumer/blobs/redacted-input.png?sig=REDACTED"],
+        "quantity": 1,
+        "prompt": "make the background solid white",
+        "engine": "gemini",
+        "outputFormat": "jpeg",
+        "imageMetadata": "{\"workflow\":\"img2img:edit\",\"priority\":\"low\",\"outputFormat\":\"jpeg\",\"ecosystem\":\"NanoBanana\",\"seed\":1105986134,\"prompt\":\"make the background solid white\",\"quantity\":1,\"resources\":[{\"modelVersionId\":2154472,\"type\":\"Checkpoint\"}]}"
+      },
+      "output": {
+        "images": [
+          {
+            "width": 1024,
+            "height": 1024,
+            "previewUrl": "https://blobs.example.invalid/v2/consumer/blobs/redacted-0.jpg?sig=REDACTED",
+            "previewUrlExpiresAt": "2027-08-11T00:15:34.18504Z",
+            "id": "redacted-0.jpg",
+            "available": false,
+            "url": "https://blobs.example.invalid/v2/consumer/blobs/redacted-0.jpg?sig=REDACTED",
+            "urlExpiresAt": "2027-08-11T00:15:34.1849856Z"
+          }
+        ],
+        "errors": [
+          "Could not generate images with the given prompts and images. Please try again with different inputs."
+        ]
+      },
+      "name": "$0",
+      "priority": "low",
+      "timeout": "00:20:00",
+      "jobs": [
+        {
+          "id": "redacted-job",
+          "status": "failed",
+          "startedAt": "2026-08-10T22:37:16.732Z",
+          "completedAt": "2026-08-10T22:37:17.156Z",
+          "cost": 60,
+          "estimatedProgressRate": 0.0007575944444444444
+        }
+      ],
+      "status": "failed",
+      "startedAt": "2026-08-10T22:37:16.732Z",
+      "completedAt": "2026-08-10T22:37:17.157Z",
+      "metadata": {}
+    }
+  ],
+  "callbacks": [
+    { "url": "https://signals.example.invalid/users/redacted/signals/orchestrator:text-to-image-update", "type": ["step:*"] }
+  ],
+  "tips": { "civitai": 0, "creators": 0 },
+  "cost": { "base": 0, "factors": { "base": 60, "quantity": 1 }, "tips": { "civitai": 0, "creators": 0 }, "total": 0 },
+  "experimental": true,
+  "allowMatureContent": false,
+  "upgradeMode": "manual",
+  "currencies": ["blue", "green"],
+  "forceRefunded": false,
+  "externalId": "redacted-00000000-0000-0000-0000-00000000extl"
+}

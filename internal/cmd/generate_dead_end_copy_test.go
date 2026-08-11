@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/civitai/cli/internal/genapi"
-	"github.com/civitai/cli/pkg/civitai"
 )
 
 // #331 / dogfood finding F13 — THE TWO DEAD-END ERRORS MAY NOT PROMISE A
@@ -146,22 +145,5 @@ func assertDeadEndCopy(t *testing.T, err error) {
 	// classification sentinel at all. The terminal-status error already has this
 	// pin in generate_wait_test.go; the succeeded-but-empty error had NONE until
 	// this change edited its text, which is exactly the seam item 7 names.
-	for _, k := range []struct {
-		sentinel error
-		name     string
-	}{
-		{civitai.ErrBadRequest, "ErrBadRequest"},
-		{civitai.ErrUnauthorized, "ErrUnauthorized"},
-		{civitai.ErrNotFound, "ErrNotFound"},
-		{civitai.ErrRateLimited, "ErrRateLimited"},
-		{civitai.ErrNetwork, "ErrNetwork"},
-	} {
-		if errors.Is(err, k.sentinel) {
-			t.Errorf("this error is now classified %s, which changes its published exit code. Rewording a message must "+
-				"not reclassify it.", k.name)
-		}
-	}
-	if errors.Is(err, ErrUsage) {
-		t.Errorf("this error is now cmd.ErrUsage (exit 2) — a generation that produced nothing is not a usage mistake")
-	}
+	assertGenericExitCode(t, err)
 }

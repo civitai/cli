@@ -1,0 +1,1 @@
+Workflow ID: wf_123 Status: failed Created: 2026-08-10T22:37:15Z The server reported: - the model refused the request for FIXTURE reasons Outputs (0 deliverable, 1 excluded)

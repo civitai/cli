@@ -153,13 +153,31 @@ func printWorkflow(out, errw io.Writer, wf *genapi.Workflow) {
 	//
 	// It renders OUTSIDE the tabwriter block on purpose: safeTerm keeps newlines
 	// and tabs, so a multi-line server string inside that block would re-align
-	// every column above it. It is not gated on IsTerminalStatus — a reason the
-	// server has already recorded is a RECORD, not a claim that the run is over,
-	// the same reasoning the settlement block below is printed under.
+	// every column above it. Continuation lines are indented for a sharper
+	// reason — see indentContinuation; this is the CLI's first unbounded
+	// server-supplied free-text field, and a flush-left continuation line forges
+	// a header.
+	//
+	// 🔴 IT IS NOT GATED ON STATUS, AND THE HEADING SAYS SO. A reason the server
+	// has already recorded is a RECORD, not a claim that the run is over — the
+	// same reasoning the settlement block below is printed under. The heading is
+	// therefore "The server reported:", which is true whatever the status, and
+	// deliberately NOT "Why it failed": nothing here has established that the
+	// server populates `errors` only on failure.
+	//
+	// 🔴 THE LIMIT OF WHAT WAS MEASURED, STATED SO NOBODY RE-DERIVES IT AS PROOF.
+	// Across 40 real workflows — 33 `succeeded` with 0 errors, 5 `failed` with 1,
+	// 1 `failed` with 0, 1 `canceled` with 0 — no `succeeded` workflow carried a
+	// reason. But EVERY ONE of those 40 was single-step and single-job, so the
+	// sample is structurally incapable of exhibiting the case that would matter:
+	// a `succeeded` workflow in which one of several jobs failed and recorded
+	// why. That case is UNTESTED, not disproven. Printing the record under a
+	// status-neutral heading is the reading that stays correct either way, which
+	// is why the gate was not added.
 	if reasons := wf.FailureReasons(); len(reasons) > 0 {
 		fmt.Fprintf(out, "\n%s\n", ui.For(out).Bold("The server reported:"))
 		for _, r := range reasons {
-			fmt.Fprintf(out, "  - %s\n", safeTerm(r))
+			fmt.Fprintf(out, "  - %s\n", indentContinuation(safeTerm(r), "    "))
 		}
 	}
 
@@ -227,7 +245,11 @@ func printWorkflow(out, errw io.Writer, wf *genapi.Workflow) {
 			"This workflow has not finished. Re-run this command to check again — it is a read and spends nothing."))
 		return
 	}
-	reportExcludedOutputs(errw, excluded, settled)
+	// The reasons the block above already printed are handed on, so the same
+	// server sentence is not repeated once per excluded output underneath it —
+	// at `--quantity 10` that was eleven copies of one string. See
+	// reportExcludedOutputs.
+	reportExcludedOutputs(errw, excluded, settled, wf.FailureReasons())
 	if len(kept) > 0 {
 		fmt.Fprintln(errw, ui.For(errw).Dim(
 			"Output URLs are presigned and expire — fetch them promptly, or re-run this command for fresh links."))

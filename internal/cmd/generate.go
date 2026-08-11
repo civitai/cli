@@ -1482,7 +1482,19 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 	if len(excluded) > 0 {
 		settled = reportWorkflowSettlement(errw, errw, wf)
 	}
-	reportExcludedOutputs(errw, excluded, settled)
+	// 🔴 WHAT THIS PATH WILL SAY LATER DECIDES WHAT THE LIST REPEATS NOW. The
+	// only surface here carrying the workflow-level reason is the
+	// zero-deliverables error below, and it is reached exactly when
+	// len(kept) == 0 — which is already known. So the list suppresses the reason
+	// precisely when the error is about to state it, and keeps it when the list
+	// is the ONLY carrier: a partial run (some outputs saved, others excluded)
+	// returns no error at all, and losing the reason there would be a
+	// regression, not a de-duplication.
+	var reasonsCarriedByTheError []string
+	if len(kept) == 0 {
+		reasonsCarriedByTheError = wf.FailureReasons()
+	}
+	reportExcludedOutputs(errw, excluded, settled, reasonsCarriedByTheError)
 	requested := 0
 	if o.quantitySet {
 		requested = o.quantity

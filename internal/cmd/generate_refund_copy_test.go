@@ -171,7 +171,7 @@ func TestBuzzLedgerNote_IsRenderedOnEverySpendOutcomeSurface(t *testing.T) {
 		// settled=false: this guard is about the surface that has NO per-workflow
 		// record to point at, which is the one the constant exists for. The
 		// settled counterpart is asserted in generate_output_test.go.
-		reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, false)
+		reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, false, nil)
 		if b.Len() == 0 {
 			t.Fatal("CONTROL failure: reportExcludedOutputs printed nothing")
 		}

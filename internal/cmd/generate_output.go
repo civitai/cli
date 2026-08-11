@@ -171,15 +171,50 @@ func planOutputTarget(tmpl, outDir, workflowID string, n int, rawURL string) (st
 // transaction record immediately above (see reportWorkflowSettlement). It comes
 // in as the return value of that print rather than being re-derived here, so the
 // "printed above" pointer cannot claim a block that was never rendered.
-func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled bool) {
+//
+// 🔴 `reportedElsewhere` IS WHY THE SAME SENTENCE IS NOT PRINTED ELEVEN TIMES
+// (civitai/cli#367 review). The server records its failure reason on the STEP,
+// so every output of a failed step carries the identical string; a `--quantity
+// 10` run that produced nothing rendered it once per excluded output, plus once
+// in the caller's own block or error — eleven copies of one sentence, burying
+// anything that differed. That is the same argument genapi.FailureReasons makes
+// for collapsing byte-identical repeats, applied to this surface.
+//
+// The rule is: a server reason is printed AT MOST ONCE on this screen, and not
+// at all when the caller says it has already rendered it. `seen` is seeded with
+// what the caller printed and grows as outputs are listed, so the FIRST output
+// carrying a given reason states it and later ones fall back to the categorical
+// wording. That keeps per-output attribution where it discriminates — two steps
+// that died for different reasons still show both, against their own outputs —
+// and drops it only where it is pure repetition.
+//
+// The fallback wording is not spelled here: the output is copied with its step
+// reasons cleared and handed back to genapi.ExclusionReason, so the two
+// renderings cannot drift into two different sentences.
+func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled bool, reportedElsewhere []string) {
 	if len(excluded) == 0 {
 		return
 	}
 	st := ui.For(errw)
 	fmt.Fprintln(errw, st.Warn(fmt.Sprintf(
 		"%d output(s) will NOT be saved — they are not deliverable results:", len(excluded))))
+	seen := make(map[string]bool, len(reportedElsewhere))
+	for _, r := range reportedElsewhere {
+		seen[r] = true
+	}
 	for _, o := range excluded {
-		fmt.Fprintf(errw, "    - %s: %s\n", safeTerm(dashIfEmpty(o.ID)), safeTerm(genapi.ExclusionReason(o)))
+		if allSeen(o.StepErrors, seen) {
+			o.StepErrors = nil
+		} else {
+			for _, r := range o.StepErrors {
+				seen[r] = true
+			}
+		}
+		// The reason is SERVER free text and safeTerm keeps newlines, so a
+		// multi-line one is indented to stay visibly inside this list item —
+		// see indentContinuation.
+		fmt.Fprintf(errw, "    - %s: %s\n", safeTerm(dashIfEmpty(o.ID)),
+			indentContinuation(safeTerm(genapi.ExclusionReason(o)), "      "))
 	}
 	// 🔴 The second half of this line used to read "a blocked or missing output
 	// is not refunded". That is true of a HARD block and false of the commonest
@@ -209,6 +244,23 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled boo
 		fate = "This CLI does not map a charge onto individual outputs; " + workflowSettlementPrintedNote + "."
 	}
 	fmt.Fprintln(errw, st.Dim("These were part of the workflow you were charged for. "+fate))
+}
+
+// allSeen reports whether EVERY reason in rs has already been rendered on this
+// screen. It is false for an empty rs, so an output with no step reason is never
+// treated as "already reported" — there is nothing to suppress, and returning
+// true there would be a vacuous suppression that no test could tell apart from a
+// real one.
+func allSeen(rs []string, seen map[string]bool) bool {
+	if len(rs) == 0 {
+		return false
+	}
+	for _, r := range rs {
+		if !seen[r] {
+			return false
+		}
+	}
+	return true
 }
 
 // reportOutputCountMismatch warns when fewer deliverable outputs came back than
