@@ -343,10 +343,32 @@ func TestPullReviewAdviceCallScannerIsCalibrated(t *testing.T) {
 // landed in that same swallowed literal, so the guard weakened as the ledger
 // grew. Measured before the fix: pull body 3062 bytes / metrics body 6013.
 //
-// Truncating on a column-0 `}` assumes gofmt (nested braces are indented), which
-// `make ci` enforces. A raw string literal holding a line that is exactly `}`
-// would end the body early — that direction is SAFE: the fragment goes missing
-// and the ledger fails loudly, rather than matching something it should not see.
+// Truncating on a column-0 `}` assumes gofmt, which nests braces under indent.
+// 🔴 THAT IS NOT ENFORCED BY `make ci` — it runs `tidy vet test build` and no
+// formatter. The gofmt gate is CI's `build-test` job (`gofmt -s -l .`) and
+// `make lint` (golangci-lint `formatters: gofmt`). AGENTS.md carries a 🔴 about
+// exactly this misattribution and #287 removed the same false claim from
+// AGENTS.md itself; naming the wrong enforcer here would just re-introduce it.
+//
+// Two shapes defeat the column-0 brace, in OPPOSITE directions, and only one of
+// them is safe:
+//
+//   - A raw string literal holding a line that is exactly `}` ends the body
+//     EARLY. Measured: the func's own argv drops out, so the ledger fails loudly.
+//     Safe — it cannot match something it should not see.
+//   - `} // trailing comment` on the closing brace over-includes SILENTLY, which
+//     is the NEW-1 direction, and it is gofmt-clean, so no gate catches it.
+//     Measured on this file: the metrics body grows 2727 → 5260 bytes, running
+//     through the `newestFirstSite` type declaration but stopping BEFORE
+//     `var newestFirstAdviceSites` — so the binding still holds today and the
+//     re-bind mutant still fails.
+//
+// 🔴 But it holds on the DECLARATION ORDER between these tests and the ledger
+// var, and nothing pins that order. Moving `var newestFirstAdviceSites` above
+// the pinning tests, or adding a trailing comment plus a reorder, is what would
+// reopen NEW-1. If you reorder this file, re-run the re-bind mutant (repoint one
+// entry's pinnedBy at the other's test, keep its `exercises`) and confirm it
+// still reddens.
 func testFuncBody(src, name string) string {
 	decl := "\nfunc " + name + "("
 	i := strings.Index("\n"+src, decl)
