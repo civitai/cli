@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -401,6 +402,221 @@ func TestAppStatusErrorMapping(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("status %d: error %q should contain %q", tc.status, err.Error(), tc.want)
 		}
+	}
+}
+
+// ----------------------------------------------------------------------------
+// --limit (display-side)
+// ----------------------------------------------------------------------------
+//
+// 🔴 --limit here is NOT --limit on `app list`. `app list` pages server-side and
+// sends its limit on the wire; this route accepts no limit, no cursor and no
+// page (that is exactly what the cap caveat says), so this flag trims what is
+// PRINTED and nothing else. Every test below asserts that distinction from a
+// different direction, because a future "optimisation" that forwards it as a
+// query parameter would silently do nothing on a server that ignores unknown
+// params — and would look like it worked.
+
+// TestAppStatusLimitTrimsTheTable: the newest N rows, and only those.
+func TestAppStatusLimitTrimsTheTable(t *testing.T) {
+	var rec struct{ auth, path, id, blockID string }
+	srv := statusServer(t, map[string]any{"submissions": submissionRows(5)}, http.StatusOK, &rec)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, _, err := run(t, "app", "status", "--limit", "2")
+	if err != nil {
+		t.Fatalf("app status --limit 2: %v", err)
+	}
+	// submissionRows emits newest first (app-005 … app-001), and the route
+	// returns them in that order, so --limit keeps the HEAD of the list —
+	// the newest submissions, which is the question the flag exists to answer.
+	for _, want := range []string{"app-005", "app-004"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--limit 2 dropped %q, one of the two NEWEST rows:\n%s", want, out)
+		}
+	}
+	for _, gone := range []string{"app-003", "app-002", "app-001"} {
+		if strings.Contains(out, gone) {
+			t.Errorf("--limit 2 still printed %q:\n%s", gone, out)
+		}
+	}
+	if n := strings.Count(out, "app-"); n != 2 {
+		t.Errorf("--limit 2 printed %d rows, want 2:\n%s", n, out)
+	}
+}
+
+// TestAppStatusLimitIsDisplaySideOnly pins the flag OFF the wire. The route
+// takes no limit parameter; sending one would be a fabricated contract.
+func TestAppStatusLimitIsDisplaySideOnly(t *testing.T) {
+	var query string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		_ = json.NewEncoder(w).Encode(map[string]any{"submissions": submissionRows(5)})
+	}))
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	if _, _, err := run(t, "app", "status", "--limit", "2"); err != nil {
+		t.Fatalf("app status --limit 2: %v", err)
+	}
+	if strings.Contains(query, "limit") {
+		t.Errorf("--limit reached the wire as %q — this route accepts no limit and would ignore it, "+
+			"so a forwarded value is a promise the server never keeps", query)
+	}
+}
+
+// TestAppStatusLimitAppliesToJSON: --json is the scriptable rendering of the
+// same listing, so `--limit 2 --json` must emit 2 records. A limit that trimmed
+// only the table would make the two views disagree about what was asked for.
+func TestAppStatusLimitAppliesToJSON(t *testing.T) {
+	srv := statusServer(t, map[string]any{"submissions": submissionRows(5)}, http.StatusOK, nil)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, _, err := run(t, "app", "status", "--limit", "2", "--json")
+	if err != nil {
+		t.Fatalf("app status --limit 2 --json: %v", err)
+	}
+	var got struct {
+		Submissions []map[string]any `json:"submissions"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not the documented JSON shape (%v):\n%s", err, out)
+	}
+	if len(got.Submissions) != 2 {
+		t.Errorf("--limit 2 --json emitted %d submissions, want 2", len(got.Submissions))
+	}
+}
+
+// TestAppStatusLimitDoesNotSuppressTheCapCaveat is the interaction that is
+// easiest to get wrong. The caveat is about what the API RETURNED, not about
+// what the CLI chose to print, so it must be computed before the trim: with
+// `--limit 5` against an at-cap page, older submissions still exist and the
+// user must still be told.
+func TestAppStatusLimitDoesNotSuppressTheCapCaveat(t *testing.T) {
+	srv := statusServer(t, map[string]any{"submissions": submissionRows(appapi.ListSubmissionsCap)}, http.StatusOK, nil)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, errOut, err := run(t, "app", "status", "--limit", "5")
+	if err != nil {
+		t.Fatalf("app status --limit 5: %v", err)
+	}
+	if !strings.Contains(errOut, truncationNote) {
+		t.Errorf("--limit must not hide the API cap caveat — the server still capped the page; stderr:\n%s", errOut)
+	}
+	if want := fmt.Sprintf("newest %d submissions", appapi.ListSubmissionsCap); !strings.Contains(errOut, want) {
+		t.Errorf("the caveat must still quote what the SERVER returned (%q), not the display limit; stderr:\n%s", want, errOut)
+	}
+	if n := strings.Count(out, "app-"); n != 5 {
+		t.Errorf("--limit 5 printed %d rows, want 5", n)
+	}
+}
+
+// TestAppStatusLimitAboveTheListPrintsEverything — asking for more than exists
+// is not an error and drops nothing.
+func TestAppStatusLimitAboveTheListPrintsEverything(t *testing.T) {
+	srv := statusServer(t, map[string]any{"submissions": submissionRows(3)}, http.StatusOK, nil)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, errOut, err := run(t, "app", "status", "--limit", "50")
+	if err != nil {
+		t.Fatalf("app status --limit 50: %v", err)
+	}
+	if n := strings.Count(out, "app-"); n != 3 {
+		t.Errorf("--limit 50 over a 3-row listing printed %d rows, want 3:\n%s", n, out)
+	}
+	if strings.Contains(errOut, truncationNote) {
+		t.Errorf("a short listing must not draw the cap caveat; stderr:\n%s", errOut)
+	}
+}
+
+// TestAppStatusLimitRejectsNonPositive mirrors `app list`'s rule: an unset
+// --limit means "everything", so only an EXPLICIT non-positive value is a
+// mistake — and it is refused before the network, classified as a usage error
+// so the published exit code holds (AGENTS.md item 7).
+func TestAppStatusLimitRejectsNonPositive(t *testing.T) {
+	for _, v := range []string{"0", "-1"} {
+		requests := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"submissions": submissionRows(3)})
+		}))
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv("CIVITAI_TOKEN", "tok")
+		t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+		_, _, err := run(t, "app", "status", "--limit", v)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("--limit %s must be refused", v)
+		}
+		if !errors.Is(err, ErrUsage) {
+			t.Errorf("--limit %s: errors.Is(err, ErrUsage) = false (got %v) — the exit code is pinned by kind, not text", v, err)
+		}
+		if requests != 0 {
+			t.Errorf("--limit %s was refused but still made %d request(s)", v, requests)
+		}
+	}
+}
+
+// TestAppStatusLimitRefusedOnTheDetailView — a single submission cannot be
+// "limited". Silently ignoring the flag is the papercut this whole issue is
+// about, so it is refused with a message naming the fix.
+func TestAppStatusLimitRefusedOnTheDetailView(t *testing.T) {
+	for _, args := range [][]string{
+		{"app", "status", "my-block", "--limit", "2"},
+		{"app", "status", "--id", "pubreq_1", "--limit", "2"},
+	} {
+		requests := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"submissions": submissionRows(1)})
+		}))
+		t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+		t.Setenv("CIVITAI_TOKEN", "tok")
+		t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+		_, _, err := run(t, args...)
+		srv.Close()
+		if err == nil {
+			t.Fatalf("%v: --limit on a single-submission lookup must be refused, not ignored", args)
+		}
+		if !errors.Is(err, ErrUsage) {
+			t.Errorf("%v: errors.Is(err, ErrUsage) = false (got %v)", args, err)
+		}
+		if requests != 0 {
+			t.Errorf("%v: refused but still made %d request(s)", args, requests)
+		}
+	}
+}
+
+// TestAppStatusHelpDocumentsLimit — the flag has to be discoverable, and its
+// help must not read like `app list`'s server-side one.
+func TestAppStatusHelpDocumentsLimit(t *testing.T) {
+	out, _, err := run(t, "app", "status", "--help")
+	if err != nil {
+		t.Fatalf("app status --help: %v", err)
+	}
+	if !strings.Contains(out, "--limit") {
+		t.Errorf("app status --help does not mention --limit:\n%s", out)
 	}
 }
 

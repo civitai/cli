@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"strings"
 	"testing"
 )
@@ -365,4 +366,133 @@ func TestGenerateImage_SingleImageDoesNotWarn(t *testing.T) {
 	if strings.Contains(errBuf.String(), "DROPS the extras silently") {
 		t.Errorf("a single image must not warn about truncation, got:\n%s", errBuf.String())
 	}
+}
+
+// --- the workflow label on the spend surfaces --------------------------------
+//
+// 🔴 THESE ARE ABOUT WHAT IS PRINTED, NOT WHAT IS SENT. The wire value stays
+// `txt2img` with --image (AGENTS.md item 19(a)) and TestGenerateImage_GraphShape
+// is what pins that. What was wrong is that the two screens preceding an
+// irreversible spend printed the bare word `txt2img` beside a warning saying the
+// server may IGNORE the images — the most alarming line on the screen, with
+// nothing explaining it.
+
+// TestGenerateImage_DryRunWorkflowLineExplainsThePromotion — the --dry-run
+// quote's Workflow row.
+func TestGenerateImage_DryRunWorkflowLineExplainsThePromotion(t *testing.T) {
+	dir := t.TempDir()
+	local := writeFixture(t, dir, "cat.png", pngBytes(t, 100, 200))
+
+	s := &genSeams{}
+	o := imgOpts("Flux1Kontext", local)
+	o.dryRun = true
+	out, _, err := runImg(t, s, o)
+	if err != nil {
+		t.Fatalf("runGenerate: %v", err)
+	}
+	line := lineContaining(out.String(), "Workflow:")
+	if line == "" {
+		t.Fatalf("CONTROL failure: the quote printed no Workflow row, so there is nothing to annotate:\n%s", out.String())
+	}
+	if !strings.Contains(line, generateWorkflow) {
+		t.Errorf("the row must still show the WIRE value %q — item 19(a) depends on it staying visible: %q",
+			generateWorkflow, line)
+	}
+	if !strings.Contains(line, imagePromotionNote) {
+		t.Errorf("`Workflow: %s` with --image set is unexplained on the screen a user approves a charge from.\n got: %q\nwant it to carry: %q",
+			generateWorkflow, line, imagePromotionNote)
+	}
+}
+
+// TestGenerate_WorkflowLineIsUnannotatedWithoutImages is the other direction,
+// and it is the one that keeps the annotation honest: a plain text-to-image job
+// really is txt2img, and telling that user about an image-editing promotion
+// would be noise at best and a false claim at worst.
+func TestGenerate_WorkflowLineIsUnannotatedWithoutImages(t *testing.T) {
+	var s genSeams
+	o := baseOpts()
+	o.dryRun = true
+	cmd, out, _ := genCmd("")
+	if err := runGenerate(cmd, s.deps(t), o); err != nil {
+		t.Fatalf("runGenerate: %v", err)
+	}
+	line := lineContaining(out.String(), "Workflow:")
+	if line == "" {
+		t.Fatalf("CONTROL failure: no Workflow row:\n%s", out.String())
+	}
+	if strings.Contains(line, "image editing") || strings.Contains(line, imagePromotionNote) {
+		t.Errorf("a job with no --image must not be told about an image-editing promotion: %q", line)
+	}
+}
+
+// TestGenerateImage_ConfirmationWorkflowLineExplainsThePromotion — the
+// interactive confirmation is the OTHER screen naming the workflow, and it is
+// the one immediately in front of the irreversible spend. It declines the
+// prompt, so nothing is submitted.
+func TestGenerateImage_ConfirmationWorkflowLineExplainsThePromotion(t *testing.T) {
+	withStdinTTY(t, true)
+	dir := t.TempDir()
+	local := writeFixture(t, dir, "cat.png", pngBytes(t, 100, 200))
+
+	s := &genSeams{}
+	o := imgOpts("Flux1Kontext", local)
+	cmd, _, errb := genCmd("n\n")
+	if err := runGenerate(cmd, s.deps(t), o); err == nil {
+		t.Fatal("declining the prompt must not report success")
+	}
+	if s.submitCalls != 0 {
+		t.Fatalf("🔴 the declined run submitted %d time(s)", s.submitCalls)
+	}
+	line := lineContaining(errb.String(), "About to generate with")
+	if line == "" {
+		t.Fatalf("CONTROL failure: the confirmation printed no workflow line:\n%s", errb.String())
+	}
+	if !strings.Contains(line, generateWorkflow) {
+		t.Errorf("the confirmation must still name the WIRE value %q: %q", generateWorkflow, line)
+	}
+	if !strings.Contains(line, imagePromotionNote) {
+		t.Errorf("the confirmation names the workflow with no explanation of why it is %q with --image set: %q",
+			generateWorkflow, line)
+	}
+}
+
+// TestWorkflowLabelCallSiteLedger is item 28's second guard shape applied to
+// this constant: an asserted, BIDIRECTIONAL ledger of the surfaces that name
+// the workflow. It fails when the set GROWS (a new spend surface prints the raw
+// constant and skips the explanation) and when it SHRINKS (a surface stops
+// using the helper and hand-rolls the label again).
+func TestWorkflowLabelCallSiteLedger(t *testing.T) {
+	src, err := os.ReadFile("generate.go")
+	if err != nil {
+		t.Fatalf("read generate.go: %v", err)
+	}
+	body := string(src)
+
+	// Every surface that renders the workflow name goes through workflowLabel.
+	if got, want := strings.Count(body, "workflowLabel(built)"), 2; got != want {
+		t.Errorf("workflowLabel is called at %d site(s), want %d (the --dry-run quote and the interactive confirmation). "+
+			"A new site is a new screen that must explain the promotion; a lost one is a screen that stopped.", got, want)
+	}
+	// And no surface interpolates the bare constant into user-facing text any
+	// more. `generateWorkflow` still appears — in the graph builder, in help
+	// text and inside workflowLabel itself — so the assertion is on the
+	// FORMATTING verbs the two surfaces used.
+	for _, banned := range []string{
+		`"Workflow:\t%s\n", generateWorkflow`,
+		`"About to generate with %s at %s.\n", generateWorkflow`,
+	} {
+		if strings.Contains(body, banned) {
+			t.Errorf("a spend surface still prints the bare wire value: %s", banned)
+		}
+	}
+}
+
+// lineContaining returns the first line of s holding sub, or "".
+func lineContaining(s, sub string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if strings.Contains(l, sub) {
+			return l
+		}
+	}
+	return ""
 }

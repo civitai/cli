@@ -566,7 +566,9 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s staged on a revision — pending moderator review (%s).", capitalize(string(kind)), rev.PublishRequestID)))
 		fmt.Fprintln(out, "Your live listing is unchanged until a moderator approves the revision.")
 	} else {
-		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s set ✓", capitalize(string(kind)))))
+		// No trailing ✓ here (nor on the two sibling lines below): ui.Success
+		// already prefixes one, and spelling a second rendered `✓ Icon set ✓`.
+		fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s set", capitalize(string(kind)))))
 	}
 
 	// 8. Print the resulting floor state (best-effort — the attach already succeeded).
@@ -695,7 +697,7 @@ direct screenshot edits are only possible while a revision is open.`,
 			if err := client.RemoveScreenshot(ctx, args[0]); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), ui.Success("Screenshot removed ✓"))
+			fmt.Fprintln(cmd.OutOrStdout(), ui.Success("Screenshot removed"))
 			return nil
 		},
 	}
@@ -731,7 +733,7 @@ gallery. There is no "move one" form — read the current order out of
 			if err := client.ReorderScreenshots(ctx, ref.AppListingID, args); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), ui.Success(fmt.Sprintf("Reordered %d screenshots ✓", len(args))))
+			fmt.Fprintln(cmd.OutOrStdout(), ui.Success(fmt.Sprintf("Reordered %d screenshots", len(args))))
 			return nil
 		},
 	}

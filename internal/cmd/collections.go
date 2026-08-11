@@ -241,9 +241,23 @@ func dashIfEmpty(s string) string {
 	return s
 }
 
+// truncate shortens s to at most max characters, appending an ellipsis.
+//
+// 🔴 The cut is on RUNE boundaries, not bytes. `s[:max]` sliced bytes, so a
+// truncation landing inside a multi-byte rune emitted that rune's leading bytes
+// alone — rendered as U+FFFD in every terminal. Taglines, descriptions and base
+// model names are user-supplied and routinely non-ASCII, so this was reachable
+// output corruption rather than a theoretical one. The cheap byte-length check
+// stays first: it is exact for ASCII and a safe lower bound otherwise (a string
+// whose BYTE length fits can never need cutting), so the []rune conversion only
+// happens on the values that might.
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "…"
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "…"
 }

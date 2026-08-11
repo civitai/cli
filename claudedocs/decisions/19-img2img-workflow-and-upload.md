@@ -14,6 +14,49 @@ pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
 routing question rather than a label, and `agents_split_preserved_test.go` pins
 the body against the text it was moved from.
 
+## 🔴 (a) IS UNCHANGED, BUT THE SPEND SCREENS NOW EXPLAIN IT — civitai/cli#365
+
+**Read this before editing the workflow line on any generate surface.** Nothing
+about the wire value moved. What moved is what the user is TOLD about it.
+
+**What was found.** A blind credentialed dogfood run (2026-08-10, run 3) priced
+an img2img job and read, on the screen it was being asked to approve a charge
+from:
+
+```
+  Ecosystem:  Flux1Kontext
+  Image:      ./probe.png (512x512) → https://…/blobs/…
+If this ecosystem does not support image editing, the server IGNORES the images
+above, generates from the prompt alone and still charges …
+Workflow:         txt2img
+```
+
+`txt2img` is correct — (a) below is why — but sitting one line under a warning
+that the server may IGNORE your images, it is the most alarming thing on the
+screen, and nothing on that screen explained it.
+
+**What was built.** One constant, `imagePromotionNote`, and one helper,
+`workflowLabel(built)`, used by the two surfaces that name the workflow: the
+`--dry-run` quote's `Workflow:` row and `confirmGenerate`'s *"About to generate
+with …"* line. With no `--image` the label is the bare wire value and those
+screens are byte-identical to before.
+
+**The constraint the wording is under, and it is item 28's.** The note states
+the server's RULE — image editing is *requested as* `txt2img` plus `--image`,
+and the server does the promotion — and never that the promotion FIRED. The CLI
+cannot observe that, and (b) below records why no detector is possible. The
+caveat `printImageDisclosure` prints on the same screen carries the other half.
+🔴 Do not "improve" it into a claim, and do not rename the field: the wire value
+must stay visible for (a)'s reason.
+
+**The guards, in item 28's three shapes.** (1) one constant; (2) an asserted
+bidirectional call-site ledger (`TestWorkflowLabelCallSiteLedger`, 2 sites, and
+it also bans the two surfaces' old bare-constant format strings); (3) golden
+pinning of both branches (`generate_workflow_label_with_image`,
+`generate_workflow_label_without_image`) plus behavioural cases on both real
+screens. Residual, unchanged from item 28's: a NEW surface that prints its own
+workflow line without touching either symbol is invisible to all of them.
+
 ## The stub thesis this item's trigger replaced
 
 Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in

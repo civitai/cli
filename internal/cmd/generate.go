@@ -1531,6 +1531,35 @@ func printReattach(errw io.Writer, o generateOpts, workflowID, externalID, statu
 	fmt.Fprintln(errw, st.Dim(fmt.Sprintf("Or watch it at %s/generate", strings.TrimRight(o.baseURL, "/"))))
 }
 
+// imagePromotionNote explains, on the screens that precede a spend, why the
+// workflow is still named `txt2img` when reference images were attached.
+//
+// 🔴 IT IS A DISPLAY FIX, NOT A BEHAVIOUR ONE — do not "correct" the wire value
+// it annotates. `generateWorkflow` stays `txt2img` deliberately: the server
+// rewrites `txt2img` + non-empty `images` to `img2img:edit` itself, and sending
+// the edit workflow from here would mean vendoring which ecosystems offer it,
+// which is item 13's prohibition exactly (AGENTS.md item 19(a)).
+//
+// 🔴 AND IT MUST NOT CLAIM THE PROMOTION FIRED. The CLI cannot observe that,
+// and no detector is possible (item 19(b): the three most obvious edit
+// ecosystems price byte-identically with and without images). So the sentence
+// states the server's RULE and attributes it to the server — it says how image
+// editing is REQUESTED, never that this job became one. The caveat
+// printImageDisclosure prints on the same screen carries the other half: an
+// ecosystem with no images node drops them and bills a plain txt2img.
+const imagePromotionNote = "(image editing is requested AS txt2img plus --image; the server does the promotion, not this CLI)"
+
+// workflowLabel is what a spend surface calls the workflow. Without --image it
+// is the bare wire value; with it, the value plus the note above — because
+// `Workflow: txt2img` on the screen that also warns the server may IGNORE your
+// images is the most alarming thing on that screen, and nothing explained it.
+func workflowLabel(built *resolvedGraph) string {
+	if built == nil || len(built.images) == 0 {
+		return generateWorkflow
+	}
+	return generateWorkflow + " " + imagePromotionNote
+}
+
 // confirmGenerate gates the spend. It mirrors confirmSubmit, with a stronger
 // case: `app submit` gates a REVERSIBLE action and still prompts, while this
 // charges Buzz that cannot be refunded.
@@ -1580,7 +1609,7 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 
 	errw := cmd.ErrOrStderr()
 	st := ui.For(errw)
-	fmt.Fprintf(errw, "About to generate with %s at %s.\n", generateWorkflow, strings.TrimRight(o.baseURL, "/"))
+	fmt.Fprintf(errw, "About to generate with %s at %s.\n", workflowLabel(built), strings.TrimRight(o.baseURL, "/"))
 	if built.inputPath != "" {
 		// With --input the CLI has deliberately not interpreted the graph, so it
 		// names the file rather than echoing fields it did not parse. Printing a
@@ -1655,7 +1684,7 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 		"The prompt is not sent with the estimate, so --dry-run cannot tell you whether it passes moderation — a submit can still be refused for prompt content."))
 
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "Workflow:\t%s\n", generateWorkflow)
+	fmt.Fprintf(tw, "Workflow:\t%s\n", workflowLabel(built))
 	if built.inputPath != "" {
 		fmt.Fprintf(tw, "Graph:\t%s (sent as-is)\n", safeTerm(built.inputPath))
 	} else {

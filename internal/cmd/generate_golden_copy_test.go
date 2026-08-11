@@ -174,6 +174,27 @@ func TestGoldenSpendCopy(t *testing.T) {
 		assertGolden(t, "generate_input_fail_on_substitution_coverage_note", note)
 	})
 
+	// 🔴 THE img2img WORKFLOW LABEL. This is the sentence a user reads beside
+	// `Workflow: txt2img` on the screen they approve a charge from, and it sits
+	// one line from a caveat saying the server may IGNORE their images — so it
+	// is money copy in the sense this file's header means. It is also the copy
+	// most at risk of being "improved" into a claim the CLI cannot make: that
+	// the promotion to image-to-image actually happened. It cannot observe
+	// that, and item 19(b) records why no detector is possible.
+	//
+	// Rendered from the function, over both branches, so the pinned text is the
+	// copy itself and the no-image branch is proved to add nothing.
+	t.Run("generate_workflow_label_with_image", func(t *testing.T) {
+		got := workflowLabel(&resolvedGraph{images: []string{"./cat.png (512x512) → https://blobs.example/abc"}})
+		if got == generateWorkflow {
+			t.Fatal("CONTROL failure: the --image branch rendered the bare wire value, so there is no annotation to pin")
+		}
+		assertGolden(t, "generate_workflow_label_with_image", got)
+	})
+	t.Run("generate_workflow_label_without_image", func(t *testing.T) {
+		assertGolden(t, "generate_workflow_label_without_image", workflowLabel(&resolvedGraph{}))
+	})
+
 	// --- the interactive spend confirmation ---------------------------------
 	t.Run("generate_confirmation", func(t *testing.T) {
 		withStdinTTY(t, true)

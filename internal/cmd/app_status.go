@@ -19,6 +19,7 @@ import (
 func newAppStatusCmd() *cobra.Command {
 	var idFlag string
 	var jsonOut bool
+	var limit int
 
 	cmd := &cobra.Command{
 		Use:   "status [blockId]",
@@ -35,13 +36,41 @@ With no argument it lists all your submissions (newest first). Pass a blockId
 (app slug) or --id <pubreq_id> to see a single submission in detail, including the
 rejection reason (if rejected) and the live URL (if approved + deployed).
 
+--limit N shows only the newest N of them. It is a DISPLAY limit, not a page
+size: this route accepts no limit and no cursor (that is what the cap note is
+about), so the CLI always fetches the same page and prints fewer rows of it.
+--limit therefore cannot reach submissions the API did not return.
+
 Note: a submission's <blockId>.civit.ai surface only serves AFTER it is approved
 and deployed (deployState 'live').`,
 		Example: `  civitai app status                 # list all your submissions
+  civitai app status --limit 5       # just the newest five
   civitai app status my-block        # detail for the my-block app
   civitai app status --id pubreq_01H # detail by publish-request id
   civitai app status --json          # raw JSON (scriptable)`,
 		Args: cobra.MaximumNArgs(1),
+		PreRunE: func(c *cobra.Command, args []string) error {
+			f := c.Flags().Lookup("limit")
+			if f == nil || !f.Changed {
+				return nil
+			}
+			// An unset --limit means "everything", so only an EXPLICIT
+			// non-positive value is a mistake — the same rule `app list`
+			// applies to its own (server-side) --limit.
+			if limit < 1 {
+				return asUsageError(fmt.Errorf(
+					"--limit must be a positive integer (got %d); omit --limit to list every submission the API returned", limit))
+			}
+			// 🔴 Refused rather than ignored on the detail view. A single
+			// submission cannot be limited, and a flag that is silently
+			// accepted and does nothing is precisely the papercut this flag
+			// was added to fix.
+			if idFlag != "" || len(args) == 1 {
+				return asUsageError(fmt.Errorf(
+					"--limit applies to the submission LISTING, but a single submission was requested — drop --limit, or drop the blockId/--id to list"))
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
 			if err != nil {
@@ -82,25 +111,37 @@ and deployed (deployState 'live').`,
 			// dropped. Say so instead of presenting a truncated list as the whole
 			// truth. STDERR (like the other API-limitation notes in this CLI) so
 			// --json stdout stays pure; exit stays 0.
+			// 🔴 Computed from what the SERVER returned, before --limit trims
+			// anything. The caveat is a statement about the API's cap, not
+			// about how many rows the CLI chose to print — deriving it from
+			// the trimmed slice would let `--limit 5` silently claim a capped
+			// listing was complete.
 			if submissionsListTruncated(len(subs)) {
 				fmt.Fprintf(cmd.ErrOrStderr(),
 					"note: showing the newest %d submissions — the API caps this listing and offers no way to page, "+
 						"so older submissions may exist but are not listed. "+
 						"Look up a specific app with `civitai app status <blockId>`.\n", len(subs))
 			}
-			if jsonOut {
-				return writeJSON(out, map[string]any{"submissions": subs})
+			// Display-side only: the route takes no limit parameter, so the
+			// trim happens here and NOTHING about it goes on the wire.
+			shown := subs
+			if limit > 0 && limit < len(shown) {
+				shown = shown[:limit]
 			}
-			if len(subs) == 0 {
+			if jsonOut {
+				return writeJSON(out, map[string]any{"submissions": shown})
+			}
+			if len(shown) == 0 {
 				fmt.Fprintf(out, "No submissions yet — run %s to create one.\n", ui.Code("civitai app submit"))
 				return nil
 			}
-			printSubmissionTable(out, subs)
+			printSubmissionTable(out, shown)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&idFlag, "id", "", "look up a single submission by publish-request id (pubreq_...)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON (scriptable)")
+	cmd.Flags().IntVar(&limit, "limit", 0, "show only the newest N submissions (display-side; the API pages nothing)")
 	return cmd
 }
 

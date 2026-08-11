@@ -949,6 +949,53 @@ func TestAppListingHelpPendingWording(t *testing.T) {
 	}
 }
 
+// successLine returns the first line of s containing sub, or "" if none does.
+func successLine(s, sub string) string {
+	for _, l := range strings.Split(s, "\n") {
+		if strings.Contains(l, sub) {
+			return l
+		}
+	}
+	return ""
+}
+
+// TestAppListingSuccessLinesCarryOneCheckGlyph — `ui.Success` already prefixes
+// "✓ ", and three call sites in app_listing.go appended a second one to their
+// format string, so the rendered line read `✓ Icon set ✓`.
+//
+// The assertion is on the COUNT, not on the absence of a trailing glyph: a fix
+// that moved the duplicate somewhere else in the line would still be wrong, and
+// requiring exactly one also fails if someone later drops the ui.Success
+// prefix, which is the other way this line can go wrong.
+func TestAppListingSuccessLinesCarryOneCheckGlyph(t *testing.T) {
+	log := &callLog{}
+	h := listingHandler{
+		log:     log,
+		imageID: 12,
+		setIcon: func(w http.ResponseWriter) {
+			trpcData(w, map[string]any{"status": "attached", "iconId": 12})
+		},
+		scanStat: alwaysPendingScan(12),
+	}
+	srv := httptest.NewServer(h.serve(t))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	out, _, err := run(t, "app", "listing", "set-icon", writePNG(t, 256, 256), "--slug", "my-app")
+	if err != nil {
+		t.Fatalf("set-icon: %v", err)
+	}
+	line := successLine(out, "Icon set")
+	if line == "" {
+		// CONTROL: without the success line there is nothing to count, and a
+		// zero would read as a pass.
+		t.Fatalf("CONTROL failure: no \"Icon set\" line in the output, so there is no glyph to count:\n%s", out)
+	}
+	if n := strings.Count(line, "✓"); n != 1 {
+		t.Errorf("success line %q carries %d ✓ glyphs, want exactly 1 — ui.Success already prefixes one", line, n)
+	}
+}
+
 // readBodyJSON decodes a request body into a generic map.
 func readBodyJSON(r *http.Request) (map[string]any, error) {
 	var m map[string]any
