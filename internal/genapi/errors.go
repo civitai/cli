@@ -71,6 +71,27 @@ type APIError struct {
 func (e *APIError) Error() string { return e.err.Error() }
 func (e *APIError) Unwrap() error { return e.err }
 
+// workflowIDProcs are the generation procedures whose request carries a workflow
+// ID, so a 404 from them is "no workflow with that id" rather than a missing
+// route. Every other proc addresses a fixed route.
+//
+// It says nothing about WHOSE id it is: `getWorkflow` is reached both by
+// `civitai workflows get <id>` (the user typed it) and by `generate`'s status
+// poll (the CLI minted it, after the charge moved). The 404 arm below is worded
+// for both — see there.
+//
+// 🔴 This is a ledger of THIS package's own call sites (the `proc` labels passed
+// to generateError below), not a vendored claim about the server, so item 13's
+// no-mirroring rule does not apply — but it is a ledger, and
+// TestWorkflowIDProcsCoverEveryIDCarryingCallSite fails if a call site is added
+// or renamed without updating it. The failure mode without that guard is silent:
+// a new id-taking proc simply falls back to the generic route message, and
+// nothing is red.
+var workflowIDProcs = map[string]bool{
+	"getWorkflow":    true, // civitai workflows get / generate's status poll
+	"cancelWorkflow": true, // civitai workflows cancel
+}
+
 // generateError turns a non-200 from an orchestrator generation procedure into
 // an actionable error, classified by HTTP status via civitai.TagStatus so the
 // process exit code is pinned by errors.Is and never by message text.
@@ -113,7 +134,22 @@ func generateError(proc string, status int, raw []byte) (err error) {
 	case http.StatusBadRequest:
 		return fmt.Errorf("the server rejected the generation request (400): %s", msg)
 	case http.StatusNotFound:
-		return fmt.Errorf("no such generation procedure or resource (404): %s", msg)
+		if workflowIDProcs[proc] {
+			// 🔴 NOT "check the id you typed". getWorkflow has two callers with
+			// opposite blame: `civitai workflows get <id>`, where the user typed
+			// the id, and `generate`'s status poll, where the CLI minted it and
+			// the charge has already moved. Telling the second user to check an
+			// id they never typed is the same wrong-answer class this arm exists
+			// to fix, so the wording names the lookup without assigning blame.
+			return fmt.Errorf("no such workflow (404): %s — `civitai workflows list` shows the workflows this account can read", msg)
+		}
+		// "nothing you passed can cause this" would be a claim about SERVER
+		// semantics the CLI cannot make: `generate --input <graph>` ships a
+		// user-authored graph with no local checking at all (internal/cmd/
+		// generate.go), so a bad reference inside it could plausibly surface
+		// here. Say what is likely, not what is certain (AGENTS.md item 13 —
+		// this path mirrors nothing and must not pretend to know the server).
+		return fmt.Errorf("the server has no such generation route (404): %s — this is unlikely to be something you passed; update the CLI with `civitai upgrade` and report it if it persists", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited (429): %s — back off before retrying", msg)
 	case http.StatusServiceUnavailable:

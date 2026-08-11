@@ -139,7 +139,7 @@ func (c *Client) trpcQuery(ctx context.Context, path string, input any, out any)
 		return err
 	}
 	if status != http.StatusOK {
-		return listingError(status, raw, path)
+		return listingError(status, raw, path, listingOpRead)
 	}
 	return decodeTRPCData(raw, out, path)
 }
@@ -164,7 +164,7 @@ func (c *Client) trpcMutation(ctx context.Context, path string, input any, out a
 		return err
 	}
 	if status != http.StatusOK {
-		return listingError(status, raw, path)
+		return listingError(status, raw, path, listingOpChange)
 	}
 	if out == nil {
 		return nil
@@ -268,7 +268,7 @@ func (c *Client) MintImageUpload(ctx context.Context) (id, uploadURL string, err
 		return "", "", err
 	}
 	if status != http.StatusOK {
-		return "", "", listingError(status, raw, ImageUploadPath)
+		return "", "", listingError(status, raw, ImageUploadPath, listingOpUpload)
 	}
 	var out struct {
 		ID        string `json:"id"`
@@ -410,10 +410,24 @@ func trpcName(path string) string {
 	return path
 }
 
+// listingOp is WHAT THE CALLER WAS DOING, which the tRPC path alone does not
+// say. listingError serves three kinds of request — a read (trpcQuery), a change
+// (trpcMutation) and the presigned-upload mint (MintImageUpload) — and a 400
+// that tells a user their "store-listing change" was rejected is simply false
+// for the first two: a read changed nothing, and an upload-URL mint does not
+// touch a listing at all (civitai/cli#363's fix, over-generalised).
+type listingOp int
+
+const (
+	listingOpRead listingOp = iota
+	listingOpChange
+	listingOpUpload
+)
+
 // listingError maps a non-200 listing-media response to an actionable CLI error.
 // tRPC error bodies are {error:{json:{message,code}}}; the HTTP status carries
 // the mapped code (403 scope/cohort, 404 no listing, 400 attach/scan rejection).
-func listingError(status int, raw []byte, path string) (err error) {
+func listingError(status int, raw []byte, path string, op listingOp) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
 	var env struct {
 		Error struct {
@@ -439,7 +453,24 @@ func listingError(status int, raw []byte, path string) (err error) {
 	case http.StatusNotFound:
 		return fmt.Errorf("no store listing found for this app (404): %s — a store listing is created when you run `civitai app submit` and is settable while the app is pending review; submit the app first, then these commands will work", msg)
 	case http.StatusBadRequest:
-		return fmt.Errorf("%s rejected the request (400): %s", name, msg)
+		// 🔴 NOT `name` here. A 400 is the user's input being refused, and
+		// leading with the tRPC method ("appListings.setIcon rejected the
+		// request") reads as "the CLI is calling something that does not
+		// exist" — the tool looks broken instead of the input (civitai/cli#363).
+		// The default: arm below keeps the method name, which is where a
+		// genuinely unexpected status makes it worth reporting.
+		//
+		// The SUBJECT comes from op, not from the status: naming the operation
+		// keeps the error identifiable without the proc name, and a read or an
+		// upload mint must not be reported as a change that did not happen.
+		switch op {
+		case listingOpRead:
+			return fmt.Errorf("the server rejected this store-listing lookup (400): %s — nothing was changed; check the app you named (list your apps with `civitai app status`)", msg)
+		case listingOpUpload:
+			return fmt.Errorf("the server rejected the image-upload request (400): %s — no listing was changed; check the image and retry", msg)
+		default:
+			return fmt.Errorf("the server rejected this store-listing change (400): %s — fix the value and retry; `civitai app listing status` shows the listing as it stands", msg)
+		}
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:

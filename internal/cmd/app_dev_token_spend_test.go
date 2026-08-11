@@ -416,8 +416,10 @@ func TestSpendFilteredNoticeWording(t *testing.T) {
 }
 
 // TestAppDevTokenDefaultDeclaredSpendPrintsNotice: the notice must actually
-// reach stderr on the real command path, BEFORE the mint, so the developer sees
-// it instead of discovering the change via a 403.
+// reach stderr on the real command path — before the token is pasted anywhere,
+// so the developer sees it instead of discovering the change via a 403. (It is
+// emitted just AFTER the mint, not before: the mint can rename the slug, and the
+// notice names a re-mint command that has to work. See app_dev_token.go.)
 func TestAppDevTokenDefaultDeclaredSpendPrintsNotice(t *testing.T) {
 	writeManifestWithScopes(t, `["user:read:self","ai:write:budgeted"]`)
 
@@ -494,7 +496,7 @@ func TestAppDevTokenNoManifestPrintsNoFilteredNotice(t *testing.T) {
 // rather than asserting OAuth can never spend; and the manifest-cause branch
 // must offer --spend.
 func TestReadOnlyTokenWarningPointsAtTheNewFixes(t *testing.T) {
-	oauth := readOnlyTokenWarning(ui.For(io.Discard), false, "oauth", "my-block")
+	oauth := readOnlyTokenWarning(ui.For(io.Discard), false, "oauth", "my-block", false)
 	if !strings.Contains(oauth, "civitai login --scopes generate") {
 		t.Errorf("OAuth read-only warning must offer --scopes generate; got:\n%s", oauth)
 	}
@@ -502,7 +504,7 @@ func TestReadOnlyTokenWarningPointsAtTheNewFixes(t *testing.T) {
 		t.Errorf("warning must not assert OAuth can NEVER spend; got:\n%s", oauth)
 	}
 
-	canSpend := readOnlyTokenWarning(ui.For(io.Discard), true, "token", "my-block")
+	canSpend := readOnlyTokenWarning(ui.For(io.Discard), true, "token", "my-block", false)
 	if !strings.Contains(canSpend, "--spend") {
 		t.Errorf("the credential-can-spend branch must offer --spend; got:\n%s", canSpend)
 	}

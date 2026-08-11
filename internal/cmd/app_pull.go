@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,6 +20,12 @@ import (
 // cloneInfoFetcher is the seam the pull command calls to get the tokened clone
 // info. Defaulted to the real API client; tests swap it to avoid the network.
 type cloneInfoFetcher func(ctx context.Context, app string) (*appapi.ForgejoCloneInfo, error)
+
+// submissionLister is the seam pull uses to DISAMBIGUATE a not-found clone-info
+// answer. It reads the caller's own submissions for a slug — the same route
+// `civitai app status` reads — so a 404 that means "your app is still in review"
+// can stop claiming the app does not exist.
+type submissionLister func(ctx context.Context, blockID string) ([]appapi.Submission, error)
 
 // gitRunner runs a git subcommand in `dir` (empty = current dir). It's a package
 // var so tests can stub the exec without a real git/repo. Output is forwarded to
@@ -77,7 +84,35 @@ approved; before then the command tells you so instead of failing obscurely.`,
 		Example: `  civitai app pull --app my-block               # clone into ./my-block
   civitai app pull ./my-block --app my-block    # clone/sync into ./my-block
   civitai app pull . --app my-block             # sync the current directory`,
-		Args: cobra.MaximumNArgs(1),
+		// The slug is a FLAG here and the positional is the DIRECTORY — the
+		// inverse of every other `app` subcommand, so the natural first attempt
+		// (`app pull <slug>`) is a mistake worth naming. Cobra's own count
+		// validator says "accepts at most 1 arg(s)" and its required-flag check
+		// says `required flag(s) "app" not set`; neither tells a user who typed
+		// the slug positionally what the two slots ARE. enforceUsageExitCodes
+		// runs this before cobra's required-flag validator (root.go), so these
+		// messages win, and it tags them ErrUsage → exit 2, unchanged.
+		//
+		// The NO-ARGUMENT case is in here too: a bare `civitai app pull` is the
+		// most likely first-contact invocation, and leaving it to cobra's
+		// required-flag check answered it with `required flag(s) "app" not set`
+		// — the one message that never says the positional is the directory.
+		// The two-positional message is conditional for the same reason: with
+		// --app already set, "the app goes in --app" is a non sequitur, and the
+		// only thing wrong is the extra positional.
+		Args: func(cmd *cobra.Command, args []string) error {
+			hasApp := cmd.Flags().Changed("app")
+			if len(args) > 1 {
+				if hasApp {
+					return fmt.Errorf("accepts at most 1 arg (the target DIRECTORY), received %d: `civitai app pull [dir] --app <slug>`", len(args))
+				}
+				return fmt.Errorf("accepts at most 1 arg (the target DIRECTORY), received %d — the app goes in --app: `civitai app pull [dir] --app <slug>`", len(args))
+			}
+			if !hasApp {
+				return fmt.Errorf("--app is required, and the positional argument is the DIRECTORY, not the app: `civitai app pull [dir] --app <slug>` (find the slug with `civitai app status`)")
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			app := strings.TrimSpace(appFlag)
 			if app == "" {
@@ -93,8 +128,8 @@ approved; before then the command tells you so instead of failing obscurely.`,
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)"))
 			}
 
-			fetch := defaultCloneInfoFetcher(cfg)
-			return runAppPull(cmd, fetch, app, args)
+			client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+			return runAppPull(cmd, client.GetForgejoCloneInfo, client.ListSubmissions, app, args)
 		},
 	}
 	cmd.Flags().StringVar(&appFlag, "app", "", "the app slug (repo name) or appBlockId to pull (required)")
@@ -102,19 +137,106 @@ approved; before then the command tells you so instead of failing obscurely.`,
 	return cmd
 }
 
-// defaultCloneInfoFetcher wires the real API client.
-func defaultCloneInfoFetcher(cfg *config.Config) cloneInfoFetcher {
-	client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
-	return client.GetForgejoCloneInfo
+// explainMissingApp replaces the clone-info 404's "no such app for your account"
+// when the CLI can prove the app DOES exist and simply has no approved version.
+//
+// 🔴 The server's 404 is UNCONDITIONAL for both causes. `getMyForgejoCloneInfo`
+// answers 404 for "no such app" AND for "your app exists but nothing is approved
+// yet", so `cloneInfoError` (internal/appapi/appblocks.go) cannot tell them
+// apart, and runAppPull's own NotYetAvailable branch — which needs a 200 — is
+// therefore UNREACHABLE for a never-approved app. That is why the command told
+// users to run `civitai app status`, which then listed the app the error had
+// just denied.
+//
+// The disambiguation is client-side and uses only the caller's own submissions:
+// rows exist for the slug, but none carries an appBlockId (the server nulls it
+// until a version is APPROVED — see resolveAppBlockID in app_metrics.go, which
+// answers the identical precondition and whose wording this mirrors).
+//
+// Every uncertainty falls back to `orig`: a disambiguation that cannot be made
+// must never REPLACE the server's answer. The not-found classification is
+// re-applied verbatim, so the exit code (4) is unchanged — AGENTS.md item 7.
+//
+// 🔴 SO "no such app for your account" DOES NOT MEAN "no submission matches".
+// It is the answer whenever the CLI cannot prove otherwise, which is FOUR
+// states, three of them with a matching submission: the lookup itself failed, a
+// version IS approved, or `--app` carried an appBlockId rather than the slug.
+// The README section for this command must describe it that way — it once
+// promised the narrow reading, which is false in every one of those states.
+//
+// The appBlockId case is inherent, not an oversight: ListSubmissions filters on
+// `blockId`, which IS the slug (appapi.Submission.BlockID), so an appBlockId
+// selector returns no rows and falls back. It cannot cost anyone the good
+// message, because the server nulls `appBlockId` until a version is APPROVED —
+// a never-approved app has no appBlockId for the user to type. `--app` still
+// accepts one for the clone-info call itself, which resolves either spelling.
+//
+// The lookup is one extra request on an ALREADY-FAILING path, bounded by the
+// appapi client's 30s timeout (appapi.defaultTimeout); appapi.ListSubmissionsCap
+// documents why the row cap cannot hide the answer here — the listing is
+// filtered to this one slug, far below the cap.
+func explainMissingApp(ctx context.Context, list submissionLister, app string, orig error) error {
+	if list == nil || !errors.Is(orig, civitai.ErrNotFound) {
+		return orig
+	}
+	subs, err := list(ctx, app)
+	if err != nil || len(subs) == 0 {
+		// Lookup failed, or the slug really matches nothing of yours — the
+		// server's own message is the correct one.
+		return orig
+	}
+	for i := range subs {
+		if subs[i].AppBlockID != nil && *subs[i].AppBlockID != "" {
+			// Something IS approved, so "not approved yet" would be a new false
+			// explanation replacing the old one.
+			return orig
+		}
+	}
+	// Newest first (ListSubmissions), so subs[0] is the state to report.
+	latest := ""
+	if state := strings.TrimSpace(strings.TrimSpace(subs[0].Version) + " " + strings.TrimSpace(subs[0].Status)); state != "" {
+		latest = " (latest submission: " + state + ")"
+	}
+	return civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
+		"app %q has no approved version yet — `civitai app pull` clones the repo that only exists once a submitted version is approved%s; %s",
+		app, latest, pullReviewAdvice(app, subs[0].Status)))
+}
+
+// pullReviewAdvice is the next step for an app with nothing approved. The state
+// is in hand (`Submission.Status`), so a TERMINAL one must not be described as
+// in progress: "check where it is in review" was printed for `rejected` and
+// `withdrawn` rows, where there is nothing in review to check — the next step is
+// a new submission.
+//
+// 🔴 TWO CALLERS, ONE RULE. `app metrics` (resolveAppBlockID, app_metrics.go)
+// reaches the SAME precondition by a different route — submissions exist, none
+// carries an appBlockId — and it open-coded the same sentence, so a rejected app
+// was told to check a review by one command and told nothing is in review by the
+// other, out of one binary. Anything state-dependent about "nothing is approved
+// yet" belongs here, not at a call site.
+//
+// It returns a STRING and no error classification on purpose: the two callers
+// publish different exit codes for this state (pull 4, metrics 1 — AGENTS.md
+// item 7), so the shared piece must be incapable of moving either.
+func pullReviewAdvice(app, status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "rejected":
+		return fmt.Sprintf("that submission was REJECTED, so nothing is in review — read why with `civitai app status %s`, then submit a new version with `civitai app submit`", app)
+	case "withdrawn":
+		return fmt.Sprintf("that submission was WITHDRAWN, so nothing is in review — submit a new version with `civitai app submit` (the history is in `civitai app status %s`)", app)
+	default:
+		return fmt.Sprintf("check where it is in review with `civitai app status %s`", app)
+	}
 }
 
 // runAppPull is the testable core: resolve the clone info, then clone (fresh
 // dir) or pull (existing checkout). Pure of config/flag plumbing; git runs
 // through gitRunner so tests can stub it.
-func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, app string, args []string) error {
-	info, err := fetch(context.Background(), app)
+func runAppPull(cmd *cobra.Command, fetch cloneInfoFetcher, list submissionLister, app string, args []string) error {
+	ctx := context.Background()
+	info, err := fetch(ctx, app)
 	if err != nil {
-		return err
+		return explainMissingApp(ctx, list, app, err)
 	}
 	if info.NotYetAvailable {
 		msg := info.Message
