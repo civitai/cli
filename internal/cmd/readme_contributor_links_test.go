@@ -145,11 +145,19 @@ func TestREADMEDoesNotLinkContributorDocsRelatively(t *testing.T) {
 	t.Logf("checked %d relative link target(s) against %d contributor-only doc(s)", checkedTargets, len(contributorOnlyDocs))
 }
 
-// TestContributorOnlyDocsAreReallyNotShipped is the LEDGER behind the list
-// above: the rule is "not in either shipping artifact", and a doc that starts
-// being shipped should stop being on the list rather than quietly stay on it.
-// It reads the two manifests that decide, so the premise is checked rather than
-// remembered.
+// TestContributorOnlyDocsAreReallyNotShipped is the BIDIRECTIONAL LEDGER behind
+// the list above, and it exists because the list is the guard's whole reach: a
+// doc missing from it is a doc the check above cannot see, which is exactly how
+// `CONTRIBUTING.md` was linked relatively four lines from a link the same change
+// had just fixed.
+//
+// 🔴 IT MUST FAIL IN BOTH DIRECTIONS, AND ONLY ONE OF THEM IS OBVIOUS. Growing
+// the list wrongly (a doc that IS shipped) is caught by reading the two
+// manifests. SHRINKING it is the silent one: deleting `"CONTRIBUTING.md"` from
+// the slice leaves every assertion above satisfied and the hazard reopened — a
+// surviving mutant, measured. So the list is derived-and-compared rather than
+// merely sanity-checked: every markdown file at the repo root that neither
+// shipping manifest carries MUST be on it.
 func TestContributorOnlyDocsAreReallyNotShipped(t *testing.T) {
 	root := repoRootDir(t)
 	shipping := map[string]string{
@@ -171,13 +179,49 @@ func TestContributorOnlyDocsAreReallyNotShipped(t *testing.T) {
 				"reading the wrong file, so every 'not shipped' conclusion below is unfounded", name)
 		}
 	}
-	for _, doc := range contributorOnlyDocs {
-		for name, body := range shipping {
+
+	shipped := func(doc string) bool {
+		for _, body := range shipping {
 			if strings.Contains(body, doc) {
-				t.Errorf("%s now ships %s, so a relative README link to it is no longer broken — "+
-					"remove it from contributorOnlyDocs (and re-check the link) rather than leaving a stale rule", name, doc)
+				return true
 			}
 		}
+		return false
+	}
+
+	// Direction 1 — nothing on the list may actually be shipped.
+	listed := map[string]bool{}
+	for _, doc := range contributorOnlyDocs {
+		listed[doc] = true
+		if shipped(doc) {
+			t.Errorf("a shipping manifest now carries %s, so a relative README link to it is no longer broken — "+
+				"remove it from contributorOnlyDocs (and re-check the link) rather than leaving a stale rule", doc)
+		}
+	}
+
+	// Direction 2 — every unshipped root markdown file must BE on the list.
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read repo root: %v", err)
+	}
+	rootDocs := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".md") {
+			continue
+		}
+		rootDocs++
+		if shipped(name) || listed[name] {
+			continue
+		}
+		t.Errorf("%s sits at the repo root, is in NEITHER shipping manifest, and is not in contributorOnlyDocs — "+
+			"so a relative README link to it 404s for every installed user and no test would notice. Add it to the list.", name)
+	}
+	// CONTROL: a ReadDir that found no markdown at all (wrong root) would make
+	// direction 2 vacuous while direction 1 stayed green.
+	if rootDocs < 2 {
+		t.Fatalf("CONTROL failure: only %d markdown file(s) found at %s — the repo root has several, so this "+
+			"walk is looking in the wrong place and direction 2 checked nothing", rootDocs, root)
 	}
 }
 

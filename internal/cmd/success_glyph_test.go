@@ -63,15 +63,15 @@ const minStyledCalls = 55
 // counterpart in the first repair — a `ui.Styler` PARAMETER
 // (`func spendFilteredNotice(sty ui.Styler, …)`, three call sites in
 // app_dev_token.go). A walk that knows only the first two lands on 58 of 61.
-func stylerBindings(file *ast.File) map[string]bool {
-	bound := map[string]bool{}
+func stylerBindings(file *ast.File) map[string]string {
+	bound := map[string]string{}
 	record := func(lhs, rhs []ast.Expr) {
 		for i, r := range rhs {
 			if i >= len(lhs) || !isUIForCall(r) {
 				continue
 			}
 			if id, ok := lhs[i].(*ast.Ident); ok {
-				bound[id.Name] = true
+				bound[id.Name] = bindingAssigned
 			}
 		}
 	}
@@ -85,7 +85,7 @@ func stylerBindings(file *ast.File) map[string]bool {
 				continue
 			}
 			for _, nm := range f.Names {
-				bound[nm.Name] = true
+				bound[nm.Name] = bindingTyped
 			}
 		}
 	}
@@ -101,15 +101,16 @@ func stylerBindings(file *ast.File) map[string]bool {
 			record(lhs, s.Values)
 			if isUIStylerType(s.Type) {
 				for _, nm := range s.Names {
-					bound[nm.Name] = true
+					bound[nm.Name] = bindingTyped
 				}
 			}
 		case *ast.FuncDecl:
+			// ONLY the receiver. Params and results hang off s.Type, which
+			// ast.Inspect visits as a child and the *ast.FuncType case below
+			// handles — covering them here too would make each branch a
+			// no-op-if-deleted, so no mutation could kill either one and the
+			// family control would be untestable. (Measured: it survived.)
 			recordTyped(s.Recv)
-			if s.Type != nil {
-				recordTyped(s.Type.Params)
-				recordTyped(s.Type.Results)
-			}
 		case *ast.FuncType:
 			recordTyped(s.Params)
 			recordTyped(s.Results)
@@ -143,23 +144,36 @@ func isUIForCall(e ast.Expr) bool {
 	return ok && id.Name == "ui"
 }
 
+// The four RECEIVER FAMILIES this walk must reach. They are named constants and
+// asserted individually because a COUNT cannot tell "all four scanned" from
+// "three scanned and one silently dropped": deleting the typed-declaration
+// branch above costs 3 of 61 sites, which sails past any plausible minimum. That
+// mutant survived until each family got its own assertion.
+const (
+	familyPackage   = "ui.X"           // ui.Warn(s)
+	familyInline    = "ui.For(w).X"    // ui.For(w).Warn(s)
+	bindingAssigned = "st := ui.For()" // st := ui.For(w); st.Warn(s)
+	bindingTyped    = "ui.Styler decl" // func f(sty ui.Styler); sty.Warn(s)
+)
+
 // styledCallReceiver classifies the receiver of a glyph-prefixing call and
-// returns a human name for it, or "" if this is not one of the known spellings.
-func styledCallReceiver(sel *ast.SelectorExpr, bound map[string]bool) string {
+// returns its family plus a human name for it, or "" if this is not one of the
+// known spellings.
+func styledCallReceiver(sel *ast.SelectorExpr, bound map[string]string) (family, name string) {
 	switch x := sel.X.(type) {
 	case *ast.Ident:
 		if x.Name == "ui" {
-			return "ui." + sel.Sel.Name // package function
+			return familyPackage, "ui." + sel.Sel.Name
 		}
-		if bound[x.Name] {
-			return x.Name + "." + sel.Sel.Name // styler bound to a local
+		if origin, ok := bound[x.Name]; ok {
+			return origin, x.Name + "." + sel.Sel.Name
 		}
 	case *ast.CallExpr:
 		if isUIForCall(x) {
-			return "ui.For(…)." + sel.Sel.Name // styler used inline
+			return familyInline, "ui.For(…)." + sel.Sel.Name
 		}
 	}
-	return ""
+	return "", ""
 }
 
 func TestStyledHelpersAreNotHandedTheirOwnGlyph(t *testing.T) {
@@ -171,6 +185,7 @@ func TestStyledHelpersAreNotHandedTheirOwnGlyph(t *testing.T) {
 
 	calls := 0
 	byShape := map[string]int{}
+	byFamily := map[string]int{}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -194,12 +209,13 @@ func TestStyledHelpersAreNotHandedTheirOwnGlyph(t *testing.T) {
 			if !ok {
 				return true
 			}
-			shape := styledCallReceiver(sel, bound)
-			if shape == "" {
+			family, shape := styledCallReceiver(sel, bound)
+			if family == "" {
 				return true
 			}
 			calls++
 			byShape[shape]++
+			byFamily[family]++
 			// Every string literal ANYWHERE under the call — including
 			// inside a nested fmt.Sprintf — is part of what gets rendered.
 			for _, arg := range call.Args {
@@ -223,36 +239,23 @@ func TestStyledHelpersAreNotHandedTheirOwnGlyph(t *testing.T) {
 		})
 	}
 
-	// 🔴 SHAPE CONTROL. The count alone cannot tell "both spellings scanned"
-	// from "one spelling scanned twice as often": the blind version of this walk
-	// found 26 real call sites and reported a perfectly plausible number. Each
-	// receiver shape must be observed at least once, or the walk has gone blind
-	// to a whole family again.
-	for _, shape := range []string{"ui.", "ui.For(…).", ""} {
-		found := 0
-		for k, n := range byShape {
-			if shape == "" {
-				// The `st := ui.For(w)` binding: neither of the two prefixes above.
-				if !strings.HasPrefix(k, "ui.") {
-					found += n
-				}
-				continue
-			}
-			if strings.HasPrefix(k, shape) && (shape != "ui." || !strings.HasPrefix(k, "ui.For")) {
-				found += n
-			}
-		}
-		if found == 0 {
-			t.Errorf("CONTROL failure: the walk matched no call of the %q receiver shape. That family is now invisible "+
-				"to this guard, which is exactly how the doubled-glyph bug survived it once already. Shapes seen: %v",
-				shape, byShape)
+	// 🔴 FAMILY CONTROL, PER FAMILY. The count alone cannot tell "every spelling
+	// scanned" from "one spelling scanned more often": the receiver-blind version
+	// of this walk found 26 real call sites and reported a perfectly plausible
+	// number, and dropping only the typed-declaration branch costs 3 of 61 —
+	// invisible to any minimum worth setting. Each family gets its own assertion.
+	for _, family := range []string{familyPackage, familyInline, bindingAssigned, bindingTyped} {
+		if byFamily[family] == 0 {
+			t.Errorf("CONTROL failure: the walk matched no call of the %q receiver family. That family is now invisible "+
+				"to this guard, which is exactly how the doubled-glyph bug survived it once already. Families seen: %v; shapes: %v",
+				family, byFamily, byShape)
 		}
 	}
 
 	if calls < minStyledCalls {
 		t.Fatalf("CONTROL failure: the walk found only %d styled-helper call sites, want >= %d. "+
-			"A scan that finds nothing validates nothing and would otherwise report a serene pass. Shapes seen: %v",
-			calls, minStyledCalls, byShape)
+			"A scan that finds nothing validates nothing and would otherwise report a serene pass. Families seen: %v; shapes: %v",
+			calls, minStyledCalls, byFamily, byShape)
 	}
-	t.Logf("checked %d styled-helper call sites across %d receiver shapes: %v", calls, len(byShape), byShape)
+	t.Logf("checked %d styled-helper call sites across %d receiver families %v (shapes: %v)", calls, len(byFamily), byFamily, byShape)
 }

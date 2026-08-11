@@ -1,6 +1,7 @@
 package pkgzip
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -212,5 +213,63 @@ func TestDotenvRuleIsACatchAllAndTheREADMESaysSo(t *testing.T) {
 		t.Errorf("the README section enumerates the listed names and stops, so a reader holding one of %v "+
 			"concludes it ships — it does not. State the catch-all and name at least one file it is the only "+
 			"thing covering.", catchAllProbes)
+	}
+}
+
+// updateDotenvGolden re-approves the pinned section below.
+var updateDotenvGolden = flag.Bool("update", false, "rewrite the pinned README dotenv section")
+
+const dotenvGoldenPath = "testdata/readme_dotenv_section.golden.txt"
+
+// 🔴 TestREADMEDotenvSectionIsTheReviewedCopy PINS THE SECTION WHOLE, because
+// the thing that has been wrong here twice is the EXPLANATION, and no ledger
+// can check an explanation.
+//
+// This section shipped, in successive revisions, two false safety claims about a
+// file the CLI UPLOADS: that `.env.production` "by construction cannot hold a
+// secret" (wrong — Vite inlines only `VITE_`-prefixed variables, so a plain
+// `API_SECRET=…` is neither public nor excluded, and this repo itself treats the
+// VITE_-prefixed `VITE_LIVE_BLOCK_TOKEN` as a spending secret), and that
+// `.env.example` / `.env.sample` hold "no secret" (the allow-list is by NAME;
+// `page-money/env.example.tmpl` invites pasting a live token into one).
+//
+// A banned-phrase list loses to the next phrasing — item 28 records five audit
+// paraphrases beating two such lists. What IS computable is whether the prose is
+// EXACTLY what was reviewed, so an edit here fails until someone re-approves it
+// and puts the diff in the review:
+//
+//	go test ./internal/pkgzip -run TestREADMEDotenvSectionIsTheReviewedCopy -update
+//
+// READ that diff. The question it must answer is not "does this read well" but
+// "does this sentence assert a property of the FILE'S CONTENTS that nothing in
+// isExcludedFile checks". If it does, it is wrong however it is worded.
+//
+// Residual: comparison is whitespace-collapsed, so a pure re-wrap passes. That
+// carries no claim, which is why it is acceptable here.
+func TestREADMEDotenvSectionIsTheReviewedCopy(t *testing.T) {
+	got := strings.Join(strings.Fields(dotenvSection(t)), " ")
+	if got == "" {
+		t.Fatal("CONTROL failure: the section normalised to nothing, so an empty golden would match it forever")
+	}
+	if *updateDotenvGolden {
+		if err := os.MkdirAll(filepath.Dir(dotenvGoldenPath), 0o755); err != nil {
+			t.Fatalf("create testdata: %v", err)
+		}
+		if err := os.WriteFile(dotenvGoldenPath, []byte(got+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", dotenvGoldenPath, err)
+		}
+		t.Logf("updated %s — READ THE DIFF", dotenvGoldenPath)
+		return
+	}
+	want, err := os.ReadFile(dotenvGoldenPath)
+	if err != nil {
+		t.Fatalf("read %s: %v\n\nRe-approve deliberately with -update and review the file it writes.", dotenvGoldenPath, err)
+	}
+	if strings.TrimSpace(string(want)) != got {
+		t.Errorf("the README's dotenv section changed.\n\n  want: %s\n\n  got:  %s\n\n"+
+			"🔴 This section tells an author what reaches the platform, and it has carried a FALSE safety claim "+
+			"twice. Re-approve with `-update` only after checking the new text asserts nothing about the CONTENTS "+
+			"of a file that `isExcludedFile` allow-lists by NAME.",
+			strings.TrimSpace(string(want)), got)
 	}
 }
