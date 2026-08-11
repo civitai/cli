@@ -9,12 +9,17 @@
 //   - File names (isExcludedFile): build artifacts (*.zip) and EVERY file whose
 //     BASE NAME starts with ".env" — dotted or not, so `.envrc` (direnv, which
 //     routinely holds exported credentials) goes too — except a three-name
-//     allow-list. The scaffolded page-money template documents pasting a real,
-//     Buzz-spending block token into .env.development (VITE_LIVE_BLOCK_TOKEN)
-//     for `dev:live`; bundling that file would leak the token to the server, the
-//     moderator reviewer, and the built image. We KEEP .env.example /
-//     .env.sample (meant to hold documented placeholders) and .env.production
-//     (the server build's `vite build` runs in mode=production and reads it).
+//     allow-list. The scaffolded page-money template points a real,
+//     Buzz-spending block token (VITE_LIVE_BLOCK_TOKEN) at the git-ignored
+//     .env.development.local for `dev:live` — vite's dev-local override, which
+//     the catch-all drops; bundling any of vite's dev-local files would leak the
+//     token to the server, the moderator reviewer, and the built image.
+//     (This said ".env.development" until #380. The scaffolded .env.development
+//     never carried that instruction; the file that did was .env.example — and
+//     that one is ALLOW-LISTED and UPLOADED, see keptEnvFiles.) We KEEP
+//     .env.example / .env.sample (meant to hold documented placeholders) and
+//     .env.production (the server build's `vite build` runs in mode=production
+//     and reads it).
 //     Those three are allow-listed BY NAME — nothing reads their contents, so
 //     keeping one is not a claim that it holds no secret. See isExcludedFile and
 //     keptEnvFiles for the full rule + rationale.
@@ -79,9 +84,9 @@ var excludedFilePatterns = []string{
 	// without this, the next package recursively sweeps that zip back in (a real
 	// dogfood regression: 22 files/93 KB vs the correct 21 files/47 KB).
 	"*.zip",
-	// Dev-local / secret-bearing dotenv files. The page-money template tells devs
-	// to paste a real VITE_LIVE_BLOCK_TOKEN into .env.development for `dev:live`;
-	// these must never reach the server / reviewer / built image.
+	// Dev-local / secret-bearing dotenv files. The page-money template points a
+	// real VITE_LIVE_BLOCK_TOKEN at the git-ignored .env.development.local for
+	// `dev:live`; these must never reach the server / reviewer / built image.
 	".env",
 	".env.local",
 	".env.*.local", // e.g. .env.development.local, .env.production.local
@@ -113,10 +118,11 @@ var excludedFilePatterns = []string{
 // That argument is wrong twice over: Vite inlines ONLY the VITE_-prefixed ones,
 // so a plain `API_SECRET=…` in this file is not public and is still uploaded;
 // and this repo itself treats a VITE_-prefixed value as a spending secret —
-// VITE_LIVE_BLOCK_TOKEN is exactly why .env.development is on the exclusion list
-// above. So do not re-derive a content guarantee from the prefix rule, and do
-// not widen this list on the strength of one. What the CLI can honestly tell an
-// author is WHERE the file goes; deciding what belongs in it is theirs.
+// VITE_LIVE_BLOCK_TOKEN is exactly why the dev-local dotenv files are on the
+// exclusion list above. So do not re-derive a content guarantee from the prefix
+// rule, and do not widen this list on the strength of one. What the CLI can
+// honestly tell an author is WHERE the file goes; deciding what belongs in it is
+// theirs.
 var keptEnvFiles = map[string]struct{}{
 	".env.example":    {},
 	".env.sample":     {},
