@@ -36,6 +36,42 @@ func safeTerm(s string) string {
 	return b.String()
 }
 
+// indentContinuation prefixes every line of s AFTER the first with pad, so a
+// multi-line SERVER string stays visibly inside the list item or block that
+// introduced it.
+//
+// 🔴 THIS IS THE SECOND HALF OF safeTerm, NOT COSMETICS (civitai/cli#367
+// review). safeTerm keeps `\n` deliberately — legitimate layout — which means a
+// server-supplied string is free to contain them, and until #367 no server field
+// this CLI printed was unbounded free text. It now is: the orchestrator's
+// failure reason. A reason of
+//
+//	"Workflow ID:\tspoofed\nStatus:\tsucceeded"
+//
+// rendered its continuation flush against the left margin, where it was
+// indistinguishable from the real `civitai workflows get` header two lines
+// above — output forgery achieved without a single control byte, so safeTerm
+// cannot see it. Indenting is what makes a continuation line unable to occupy
+// column zero, and therefore unable to impersonate a line the CLI itself wrote.
+//
+// It deliberately does NOT collapse the newlines: the reason is passed through
+// verbatim (AGENTS.md item 13), so the fix is where the text SITS, not what it
+// says. A trailing newline is left alone rather than padded into a line of
+// whitespace.
+func indentContinuation(s, pad string) string {
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	for i := 1; i < len(lines); i++ {
+		if lines[i] == "" {
+			continue
+		}
+		lines[i] = pad + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
 // isStrippedControl reports whether r is a terminal control character safeTerm
 // removes: any C0 control or DEL (other than newline and tab), or any C1 control
 // (U+0080–U+009F).

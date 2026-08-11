@@ -493,7 +493,7 @@ func TestReportExcludedOutputs_DoesNotSettleTheRefund(t *testing.T) {
 	blocked := "minor"
 	id := "out_1"
 	var b bytes.Buffer
-	reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: id, BlockedReason: &blocked}}}, false)
+	reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: id, BlockedReason: &blocked}}}, false, nil)
 	got := b.String()
 
 	if got == "" {
@@ -525,7 +525,7 @@ func TestReportExcludedOutputs_DoesNotSettleTheRefund(t *testing.T) {
 func TestReportExcludedOutputs_SettledPointsAtTheRecordAndStillDecidesNothing(t *testing.T) {
 	blocked := "minor"
 	var b bytes.Buffer
-	reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, true)
+	reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, true, nil)
 	got := b.String()
 
 	if got == "" {

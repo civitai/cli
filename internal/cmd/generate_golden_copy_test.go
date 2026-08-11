@@ -345,6 +345,35 @@ func TestGoldenSpendCopy(t *testing.T) {
 		})
 	}
 
+	// --- the terminal-status error when the SERVER SAID WHY (#367) ----------
+	//
+	// 🔴 A SECOND RENDERING OF AN ALREADY-PINNED SURFACE, WHICH IS THE HOLE THIS
+	// FILE'S HEADER DESCRIBES. #367 made the tail of this error conditional: a
+	// reason where the orchestrator supplied one, the #339 caveat where it did
+	// not. The three `terminal_status_*` goldens above pin the caveat branch
+	// only, so without this one a sentence could be added to the reason branch —
+	// including a claim about the charge — while every pinned rendering stayed
+	// byte-identical.
+	//
+	// The fixture reason is deliberately not a real server message: nothing here
+	// may come to depend on the platform's wording.
+	t.Run("terminal_status_failed_with_reason", func(t *testing.T) {
+		clock := newFakeClock()
+		calls := 0
+		var s genSeams
+		s.poll = clock.cfg()
+		s.getWorkflow = scriptedWorkflows(&calls, wfFailedJSON(genapi.StatusFailed, `["`+serverSaid+`"]`))
+		c, _, _ := genCmd("")
+		err := runGenerate(c, s.deps(t), waitOpts(t.TempDir()))
+		if err == nil {
+			t.Fatal("a failed workflow must not report success")
+		}
+		if !strings.Contains(err.Error(), serverSaid) {
+			t.Fatalf("CONTROL failure: the reason branch did not render, so this surface pins the wrong copy:\n%s", err.Error())
+		}
+		assertGolden(t, "terminal_status_failed_with_reason", err.Error())
+	})
+
 	// --- the excluded-outputs note, BOTH modes ------------------------------
 	//
 	// 🔴 #346 gave this surface a second rendering, and an unpinned second
@@ -354,14 +383,60 @@ func TestGoldenSpendCopy(t *testing.T) {
 	t.Run("excluded_outputs_note", func(t *testing.T) {
 		blocked := "minor"
 		var b bytes.Buffer
-		reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, false)
+		reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, false, nil)
 		assertGolden(t, "excluded_outputs_note", b.String())
 	})
 	t.Run("excluded_outputs_note_settled", func(t *testing.T) {
 		blocked := "minor"
 		var b bytes.Buffer
-		reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, true)
+		reportExcludedOutputs(&b, []genapi.Output{{Blob: genapi.Blob{ID: "out_1", BlockedReason: &blocked}}}, true, nil)
 		assertGolden(t, "excluded_outputs_note_settled", b.String())
+	})
+
+	// 🔴 THE THIRD RENDERING OF THIS SURFACE, ADDED BY #367 — AND IT SHIPPED
+	// UNPINNED IN THE FIRST CUT, WHICH IS THIS FILE'S OWN HEADER COMING TRUE FOR
+	// A FOURTH TIME. Both branches above render the *blocked* exclusion; the
+	// server-reason branch renders a different sentence on the same money screen,
+	// and it was measured that appending a refund claim beside it left the entire
+	// suite green. Item 28 records golden pinning as the ONLY guard that closes
+	// the ADDITION class; the other two guards survive it "unless it lands on a
+	// golden surface". This is what lands it there.
+	t.Run("excluded_outputs_note_server_reason", func(t *testing.T) {
+		var b bytes.Buffer
+		reportExcludedOutputs(&b, []genapi.Output{
+			{Blob: genapi.Blob{ID: "out_1"}, StepErrors: []string{serverSaid}},
+		}, false, nil)
+		if !strings.Contains(b.String(), serverSaid) {
+			t.Fatalf("CONTROL failure: the server-reason branch did not render, so this surface pins the wrong copy:\n%s", b.String())
+		}
+		assertGolden(t, "excluded_outputs_note_server_reason", b.String())
+	})
+
+	// 🔴 THE `workflows get` REASON BLOCK, ALSO ADDED BY #367 AND ALSO UNPINNED
+	// IN THE FIRST CUT. It renders in printWorkflow, the same view that prints
+	// the settlement, so a sentence added under this heading sits directly beside
+	// the workflow's debits and credits — the most expensive place on this
+	// command to add an unreviewed claim. Measured: appending
+	// "Nothing is refunded." under the heading left `internal/cmd` and
+	// `internal/genapi` both green before this existed.
+	//
+	// The whole stdout rendering is pinned, not just the block, so an addition
+	// anywhere in this view is caught — the same reasoning generate_help_long
+	// pins the whole Long rather than a chosen paragraph.
+	t.Run("workflows_get_server_reason_block", func(t *testing.T) {
+		payload := `{"id":"wf_123","status":"failed","createdAt":"2026-08-10T22:37:15Z",
+		  "steps":[{"$type":"imageGen","name":"$0","status":"failed","metadata":{},
+		  "output":{"images":[{"id":"out_1","type":"image","available":false}],
+		  "errors":["` + serverSaid + `"]}}]}`
+		c, out, _ := genCmd("")
+		if err := runWorkflowsGet(c, wfGetDeps(payload, nil),
+			workflowsGetOpts{baseURL: "https://civitai.com"}, "wf_123"); err != nil {
+			t.Fatalf("workflows get: %v", err)
+		}
+		if !strings.Contains(out.String(), serverSaid) {
+			t.Fatalf("CONTROL failure: the reason block did not render, so this surface pins nothing:\n%s", out.String())
+		}
+		assertGolden(t, "workflows_get_server_reason_block", out.String())
 	})
 
 	// --- the per-workflow settlement block (#346) ---------------------------

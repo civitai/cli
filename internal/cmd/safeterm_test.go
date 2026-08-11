@@ -61,6 +61,69 @@ func TestSafeTermRemovesEveryControlRune(t *testing.T) {
 	}
 }
 
+// indentContinuation is the guard for the forgery class safeTerm CANNOT see:
+// safeTerm keeps `\n`, so a server string is free to start a new line at column
+// zero, where this CLI writes its own banners and headers. Every clause of the
+// implementation is pinned here, because each one was separately mutable
+// without any caller-level test noticing (civitai/cli#367, review round 3).
+func TestIndentContinuation(t *testing.T) {
+	const pad = "  "
+
+	t.Run("the first line is never padded", func(t *testing.T) {
+		// It is already positioned by whatever printed it — "  - id: <here>" —
+		// so padding it would push it out of its own list item.
+		if got := indentContinuation("only one line", pad); got != "only one line" {
+			t.Errorf("a single-line string was modified: %q", got)
+		}
+		got := indentContinuation("first\nsecond", pad)
+		if !strings.HasPrefix(got, "first\n") {
+			t.Errorf("the first line was padded: %q", got)
+		}
+	})
+
+	t.Run("EVERY continuation line is padded, not just the second", func(t *testing.T) {
+		// A `break` after the first continuation leaves line 3 at column zero —
+		// which is a forgery slot, and a two-line fixture cannot see it.
+		got := indentContinuation("a\nb\nc\nd", pad)
+		lines := strings.Split(got, "\n")
+		if len(lines) != 4 {
+			t.Fatalf("CONTROL failure, not a finding: %d lines, want 4: %q", len(lines), got)
+		}
+		for i, ln := range lines[1:] {
+			if !strings.HasPrefix(ln, pad) {
+				t.Errorf("continuation line %d is at column zero: %q (full: %q)", i+2, ln, got)
+			}
+		}
+	})
+
+	t.Run("an empty continuation line is left alone", func(t *testing.T) {
+		// Padding it would emit a line of trailing whitespace, and the docstring
+		// promises a trailing newline is not turned into one.
+		if got := indentContinuation("a\n", pad); got != "a\n" {
+			t.Errorf("a trailing newline was padded into whitespace: %q", got)
+		}
+		if got := indentContinuation("a\n\nb", pad); got != "a\n\n"+pad+"b" {
+			t.Errorf("a blank interior line was padded: %q", got)
+		}
+	})
+
+	t.Run("the pad is what the caller asked for", func(t *testing.T) {
+		if got := indentContinuation("a\nb", "\t\t"); got != "a\n\t\tb" {
+			t.Errorf("pad not applied verbatim: %q", got)
+		}
+	})
+
+	t.Run("the text itself is unchanged", func(t *testing.T) {
+		// AGENTS.md item 13: the reason passes through verbatim. This moves
+		// where it sits, never what it says.
+		in := "Résumé — 字\ttab\nsecond"
+		got := indentContinuation(in, pad)
+		if strings.ReplaceAll(got, "\n"+pad, "\n") != in {
+			t.Errorf("indentContinuation altered the text: %q -> %q", in, got)
+		}
+	})
+}
+
 // controlBytes are the raw terminal-control byte sequences that must never
 // survive into human-renderer output.
 var controlBytes = []string{"\x1b", "\u009b", "\x07", "\x00", "\x7f"}

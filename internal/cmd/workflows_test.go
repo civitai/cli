@@ -211,7 +211,7 @@ func excludedOutputReport(t *testing.T, payload string) string {
 	// that GAINED a record would make this derivation stop matching the real
 	// stderr, which fails LOUD ("must still get the excluded-output report")
 	// rather than passing silently.
-	reportExcludedOutputs(&b, excluded, false)
+	reportExcludedOutputs(&b, excluded, false, nil)
 	block := b.String()
 	if strings.TrimSpace(block) == "" {
 		t.Fatalf("positive control failed: reportExcludedOutputs printed nothing for %d excluded output(s)", len(excluded))

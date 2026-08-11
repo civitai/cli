@@ -81,6 +81,7 @@ contract, and **packages/submits** it for review.
   - [Raw graphs: `--print-input` and `--input`](#raw-graphs---print-input-and---input)
   - [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching)
   - [Listing and cancelling workflows](#listing-and-cancelling-workflows)
+  - [What the server says went wrong](#what-the-server-says-went-wrong)
   - [Exit codes specific to `generate`](#exit-codes-specific-to-generate)
 - [Scripting with `--json`](#scripting-with---json)
   - [Cursor pagination loop](#cursor-pagination-loop)
@@ -321,7 +322,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
-| `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs, and the Buzz transactions the server recorded for it. This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with the reason** rather than omitted. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching) and [Reading a workflow's Buzz transactions](#reading-a-workflows-buzz-transactions). |
+| `civitai workflows get <workflow-id> [--json]` | **Look up one generation workflow** — status, steps, outputs, the Buzz transactions the server recorded for it, and **the account the orchestrator recorded** for the run where there is one (printed under *The server reported:*). This is how you re-attach after `--no-wait`, a `--timeout` expiry or a Ctrl-C. Outputs that are blocked, unavailable or hidden are listed **with why they were excluded** rather than omitted — and where the excluded outputs died of *different* server-reported causes, each line names its own. Output URLs are presigned and expire; re-run for fresh links. Reading spends nothing. See [Generate](#waiting-downloading-and-re-attaching) and [Reading a workflow's Buzz transactions](#reading-a-workflows-buzz-transactions). |
 | `civitai workflows cancel <workflow-id> [--yes] [--json]` | **Stop a running generation.** 🔴 **You are billed for what it already delivered**; the orchestrator re-prices the rest server-side and this CLI cannot report the figure. Cancel because you no longer want the output. Asks for confirmation (default **no**); `--yes` skips the prompt and a non-TTY without it refuses. See [Generate](#listing-and-cancelling-workflows). |
 | `civitai upgrade [--force]` | **Self-update this binary in place** — resolve the latest GitHub release, verify its SHA-256 against `checksums.txt`, and replace the running executable. A Homebrew install delegates to `brew upgrade` instead; `--force` reinstalls anyway (and self-replaces a Homebrew install). See [Upgrading](#upgrading). |
 | `civitai version` | Print version / commit / build date. |
@@ -2283,6 +2284,41 @@ harmless, since cancelling a finished workflow is a server-side no-op.
 
 <sub>Until civitai/cli#341, `civitai workflows cancel not-a-real-workflow-zzz --yes` printed *"Cancelled workflow not-a-real-workflow-zzz"* and exited `0` — while `civitai workflows get` on the same id correctly reported a 404.</sub>
 
+### What the server says went wrong
+
+When a generation ends badly the orchestrator often records an account of what
+happened on the step. `civitai generate` puts it at the end of the error, and
+`civitai workflows get <id>` prints it under **The server reported:** —
+
+```console
+Workflow ID:  wf_abc123
+Status:       failed
+
+The server reported:
+  - Could not generate images with the given prompts and images. Please try again with different inputs.
+```
+
+Three things it is not:
+
+- **It is not this CLI's opinion.** The text is the server's, passed through
+  unchanged. Nothing here classifies it, matches on its wording, or maps it to a
+  list of known messages — so a message the platform adds tomorrow arrives
+  intact rather than being swallowed by a stale table.
+- **It is not always there.** Some failures record nothing. In that case the
+  error says so instead: *"the orchestrator often supplies no failure reason, so
+  it may not say why"*. That is a measured case, not a gap in the CLI, and there
+  is no further detail to go and look for.
+- **It is not a statement about your Buzz.** Whether a charge stands, is
+  re-priced or comes back is decided server-side and reported separately — see
+  [Reading a workflow's Buzz
+  transactions](#reading-a-workflows-buzz-transactions).
+
+The heading is *"The server reported"* rather than *"Why it failed"* on purpose:
+the CLI prints the record whatever the workflow's status, and it has not
+established that the orchestrator populates it only on failure.
+
+<sub>Until civitai/cli#367 this was discarded at parse time — the field existed on the wire and the CLI had no place to put it — so every failure printed the same generic sentence no matter what caused it, and `civitai workflows get` answered a failed run with a status and nothing else.</sub>
+
 ### Reading a workflow's Buzz transactions
 
 `orchestrator.getWorkflow` often returns the orchestrator's own money record for
@@ -2563,6 +2599,8 @@ credited it to the wrong command.)
 | `--image requires --ecosystem` | Without an ecosystem the server never promotes the job to image-to-image: your images are silently dropped and you are billed for a plain text-to-image run. Hence a refusal rather than a warning. | [Image-to-image](#image-to-image---image-and---ecosystem) |
 | `interrupted while waiting` | **The generation is still running and has already been charged.** Ctrl-C stopped the wait, not the job. Re-attach with `civitai workflows get <id>`. | [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching) |
 | `model substituted` | The server ran a **different checkpoint** than you asked for and billed for what ran. Warned by default; `--fail-on-substitution` turns it into a refusal on the estimate, before any spend. | [Silent model substitution](#-silent-model-substitution) |
+| `The server reported: …` | The orchestrator recorded an account of what happened, and what follows is the server's own words, passed through unchanged. The CLI does not interpret them and does not know whether the failure is retryable. Printed on the `generate` error and by `civitai workflows get`. | [What the server says went wrong](#what-the-server-says-went-wrong) |
+| `the orchestrator often supplies no failure reason, so it may not say why` | The same failure with **no** account recorded — a real, measured case, not a CLI limitation. `civitai workflows get <id>` will not say why either. | [What the server says went wrong](#what-the-server-says-went-wrong) |
 
 ### Everything else
 
