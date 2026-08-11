@@ -17,7 +17,7 @@ func TestListingBadRequestDoesNotLeakTheProcedureName(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"error": map[string]any{"json": map[string]any{"message": "This listing is live"}},
 	})
-	err := listingError(http.StatusBadRequest, body, trpcSetIcon, listingOpChange)
+	err := listingError(http.StatusBadRequest, body, trpcSetIcon)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -25,7 +25,7 @@ func TestListingBadRequestDoesNotLeakTheProcedureName(t *testing.T) {
 
 	// Structural, not spelled: assert the tRPC METHOD NAME the CLI called is
 	// absent, whatever it happens to be, rather than one hard-coded spelling.
-	if name := trpcName(trpcSetIcon); strings.Contains(msg, name) {
+	if name := trpcSetIcon.name(); strings.Contains(msg, name) {
 		t.Errorf("internal procedure name %q leaked into a 400: %s", name, msg)
 	}
 	if !strings.Contains(msg, "This listing is live") {
@@ -42,43 +42,52 @@ func TestListingBadRequestDoesNotLeakTheProcedureName(t *testing.T) {
 // (trpcMutation) and the presigned-upload mint alike. "The server rejected this
 // store-listing change" is then false twice over: a read changed nothing, and an
 // upload-URL mint touches no listing.
+//
+// This is the WORDING of each arm, held against a route chosen by hand. It says
+// nothing about which routes reach which arm — that is
+// TestListingBadRequestSubjectIsReachablePerRoute (listing_op_test.go), and
+// civitai/cli#374 is what happens when only this half exists.
 func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"error": map[string]any{"json": map[string]any{"message": "Invalid input"}},
 	})
 	for _, tc := range []struct {
 		name    string
-		op      listingOp
-		path    string
+		route   listingRoute
 		want    []string
 		notWant []string
 	}{
 		{
 			name:    "read",
-			op:      listingOpRead,
-			path:    trpcGetMyListingForApp,
+			route:   trpcGetMyListingForApp,
 			want:    []string{"lookup", "nothing was changed"},
 			notWant: []string{"store-listing change", "fix the value"},
 		},
 		{
 			name:    "upload mint",
-			op:      listingOpUpload,
-			path:    ImageUploadPath,
+			route:   imageUploadRoute,
 			want:    []string{"image-upload", "no listing was changed"},
 			notWant: []string{"store-listing change"},
+		},
+		{
+			// The other ingest shape: a tRPC POST that creates an Image row and
+			// attaches it to nothing. Same story as the mint above (#374).
+			name:    "data-uri ingest",
+			route:   trpcIngestAssetFromDataURI,
+			want:    []string{"image-upload", "no listing was changed"},
+			notWant: []string{"store-listing change", "fix the value"},
 		},
 		{
 			// The control: a real mutation IS a store-listing change, and the
 			// wording civitai/cli#363 asked for must survive for it.
 			name:    "change",
-			op:      listingOpChange,
-			path:    trpcSetIcon,
+			route:   trpcSetIcon,
 			want:    []string{"store-listing change", "civitai app listing status"},
 			notWant: []string{"nothing was changed"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := listingError(http.StatusBadRequest, body, tc.path, tc.op)
+			err := listingError(http.StatusBadRequest, body, tc.route)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -97,7 +106,7 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 			// server's own reason survives. (Scoped to the tRPC paths: the
 			// upload route is a plain REST path whose last segment IS the
 			// user-facing name of the operation, not an internal proc.)
-			if name := trpcName(tc.path); strings.HasPrefix(tc.path, "/api/trpc/") && strings.Contains(msg, name) {
+			if name := tc.route.name(); strings.HasPrefix(tc.route.path, "/api/trpc/") && strings.Contains(msg, name) {
 				t.Errorf("internal procedure name %q leaked: %s", name, msg)
 			}
 			if !strings.Contains(msg, "Invalid input") {
@@ -111,7 +120,8 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 // dead code: a 400 on the ENTRY read (`civitai app listing status` →
 // appListings.getMyListingForApp, a trpcQuery) must arrive worded as a lookup.
 // Without this, listingOpRead could be passed nowhere and every test above would
-// still pass.
+// still pass. Kept alongside listing_op_test.go's per-route table, which
+// generalises it to every route the client can call.
 func TestListingReadBadRequestIsReachableAsARead(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -136,11 +146,11 @@ func TestListingReadBadRequestIsReachableAsARead(t *testing.T) {
 // unexpected status is exactly where the method name earns its place — a
 // blanket strip would have removed the only clue in a bug report.
 func TestListingUnexpectedStatusKeepsTheProcedureName(t *testing.T) {
-	err := listingError(http.StatusTeapot, []byte(`{}`), trpcSetIcon, listingOpChange)
+	err := listingError(http.StatusTeapot, []byte(`{}`), trpcSetIcon)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	if name := trpcName(trpcSetIcon); !strings.Contains(err.Error(), name) {
+	if name := trpcSetIcon.name(); !strings.Contains(err.Error(), name) {
 		t.Errorf("an unexpected status must still report which call failed (%q); got: %s", name, err.Error())
 	}
 }
