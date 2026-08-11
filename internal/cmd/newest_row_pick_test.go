@@ -65,10 +65,25 @@ package cmd
 //     decision on the day it is written, rather than waiting for an audit.
 //   - Only then does the reader walk run, over that derived-and-checked set.
 //
-// What it still cannot see is stated rather than implied: a reader that obtains a
-// submission WITHOUT touching this route (handed one by another function, or a
-// new route entirely). The gateway assertion narrows that to "a new route", which
-// is a visible, deliberate act rather than a silent inheritance.
+// 🔴 WHAT IT STILL CANNOT SEE — MEASURED, NOT ESTIMATED. An earlier draft claimed
+// the gateway assertion narrows the blind spot to "a new route". It does not, and
+// an audit found three SAME-ROUTE evasions; two are now closed and the rest are
+// named here rather than implied away.
+//
+// Closed since: the gateway taken as a METHOD VALUE (`mk := c.submissionsURL`) —
+// the derivation matches the bare identifier, not `submissionsURL(`; a helper
+// between the gateway and the accessor — the derivation follows unexported chains
+// and reports the exported boundary; a CMD-package file using the exported
+// `appapi.SubmissionsPath`, or the path as a whole string literal, with raw http —
+// the gateway scan covers both ledgered packages and matches the quoted literal.
+//
+// STILL OPEN, and cheap to reach on purpose: a path assembled from FRAGMENTS
+// (`"/api/v1/blocks/" + "submissions"`), reflection, or a submission obtained
+// without touching this route at all — handed over by another function, cached, or
+// read from a new route. The last is the visible, deliberate act; the first is
+// not, and no line-based scanner closes it. What bounds the damage is that all of
+// them still have to PICK a row, and the four behavioural cases above pin the
+// picks that exist today.
 //
 // The two ledgers therefore overlap by design and answer different questions:
 // #384's asks "does every caller of the shared advice have a case proving it
@@ -529,6 +544,167 @@ func enclosingFuncsReferencing(src, needle string) []string {
 
 func isSpaceByte(b byte) bool { return b == ' ' || b == '\t' }
 
+// referencesIdent reports whether code mentions name as a WHOLE identifier —
+// with a non-identifier byte on each side — so `submissionsURL` does not match
+// `mySubmissionsURLThing`, and a METHOD VALUE (`mk := c.submissionsURL`, no
+// parenthesis) matches just as a call does. Matching the bare identifier rather
+// than `name(` is deliberate: requiring the parenthesis let a method value slip
+// past the derivation entirely.
+func referencesIdent(code, name string) bool {
+	for i := 0; ; {
+		j := strings.Index(code[i:], name)
+		if j < 0 {
+			return false
+		}
+		start, end := i+j, i+j+len(name)
+		beforeOK := start == 0 || !isIdentByte(code[start-1])
+		afterOK := end >= len(code) || !isIdentByte(code[end])
+		if beforeOK && afterOK {
+			return true
+		}
+		i = end
+	}
+}
+
+// topLevelFuncBodies maps each top-level func in src to its body, comments
+// stripped and its own declaration line excluded. Line-based, on gofmt's
+// guarantee that a top-level declaration starts at column 0.
+func topLevelFuncBodies(src string) map[string]string {
+	out := map[string]string{}
+	cur := ""
+	var b strings.Builder
+	flush := func() {
+		if cur != "" {
+			out[cur] += b.String()
+		}
+		b.Reset()
+	}
+	for _, line := range strings.Split(src, "\n") {
+		if m := funcDecl.FindStringSubmatch(line); m != nil {
+			flush()
+			cur = m[1]
+			if _, ok := out[cur]; !ok {
+				out[cur] = ""
+			}
+			continue // the decl line is not part of the body
+		}
+		if len(line) > 0 && !isSpaceByte(line[0]) && !strings.HasPrefix(line, "}") && !strings.HasPrefix(line, "//") {
+			flush()
+			cur = ""
+			continue
+		}
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	flush()
+	return out
+}
+
+func isExportedName(s string) bool { return s != "" && s[0] >= 'A' && s[0] <= 'Z' }
+
+// deriveSubmissionsRouteAccessors returns the EXPORTED boundary funcs that reach
+// the route gateway, following chains of UNEXPORTED helpers and stopping at the
+// first exported func.
+//
+// 🔴 "THE FUNCS THAT CALL THE GATEWAY" IS THE WRONG RULE, AND IT FAILED IN THE
+// DIRECTION THAT DISARMS THE GUARD. Put one private helper between the gateway
+// and an accessor — a one-step refactor —
+//
+//	func (c *Client) subsEndpoint(id, b string) string { return c.submissionsURL(id, b) }
+//	func (c *Client) LatestSubmission(...)             { u := c.subsEndpoint("", slug) … }
+//
+// and the direct-call rule derives {subsEndpoint}: it fails loudly, but names the
+// HELPER. A maintainer doing exactly what the message said — ledger subsEndpoint —
+// went green with LatestSubmission unledgered and cmd files picking Submissions[0]
+// off it, because the reader walk only looks for names in the accessor set. The
+// correct remediation was the one the guard rejected. Following the chain and
+// reporting the exported boundary names LatestSubmission instead, which is both
+// the accessor and the name the reader walk needs.
+//
+// Stopping AT the first exported func is what keeps the set meaningful: without
+// it, recoverTimedOutSubmit → SubmitVersion and everything above them would join,
+// and an "accessor set" containing half the package pins nothing.
+func deriveSubmissionsRouteAccessors(bodies map[string]string) []string {
+	reached := map[string]bool{submissionsRouteGateway: true}
+	frontier := []string{submissionsRouteGateway}
+	for len(frontier) > 0 {
+		g := frontier[len(frontier)-1]
+		frontier = frontier[:len(frontier)-1]
+		// Only the gateway and UNEXPORTED links propagate; an exported func is a
+		// boundary, not a conduit.
+		if g != submissionsRouteGateway && isExportedName(g) {
+			continue
+		}
+		for fn, body := range bodies {
+			if reached[fn] || fn == g {
+				continue
+			}
+			if referencesIdent(body, g) {
+				reached[fn] = true
+				frontier = append(frontier, fn)
+			}
+		}
+	}
+	var out []string
+	for fn := range reached {
+		if fn != submissionsRouteGateway && isExportedName(fn) {
+			out = append(out, fn)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestDeriveSubmissionsRouteAccessorsIsCalibrated is the instrument control for
+// the derivation, including the indirection that defeated its first version.
+func TestDeriveSubmissionsRouteAccessorsIsCalibrated(t *testing.T) {
+	direct := topLevelFuncBodies("package appapi\n\n" +
+		"func (c *Client) submissionsURL(id, b string) string {\n\treturn c.BaseURL + SubmissionsPath\n}\n\n" +
+		"func (c *Client) ListSubmissions(ctx context.Context, b string) ([]Submission, error) {\n\tu := c.submissionsURL(\"\", b)\n\treturn nil, nil\n}\n\n" +
+		"func (c *Client) Unrelated() error {\n\treturn nil\n}\n")
+	if got := deriveSubmissionsRouteAccessors(direct); !equalStrings(got, []string{"ListSubmissions"}) {
+		t.Errorf("direct call: derived %v, want [ListSubmissions]", got)
+	}
+
+	// 🔴 THE CASE THAT DISARMED THE GUARD: one private helper in between. The
+	// derivation must name the EXPORTED accessor, never the helper.
+	indirect := topLevelFuncBodies("package appapi\n\n" +
+		"func (c *Client) submissionsURL(id, b string) string {\n\treturn c.BaseURL + SubmissionsPath\n}\n\n" +
+		"func (c *Client) subsEndpoint(id, b string) string {\n\treturn c.submissionsURL(id, b)\n}\n\n" +
+		"func (c *Client) LatestSubmission(ctx context.Context, s string) (*Submission, error) {\n\tu := c.subsEndpoint(\"\", s)\n\treturn nil, nil\n}\n")
+	got := deriveSubmissionsRouteAccessors(indirect)
+	if !equalStrings(got, []string{"LatestSubmission"}) {
+		t.Errorf("through a private helper: derived %v, want [LatestSubmission] — the guard must name the ACCESSOR, "+
+			"not the gateway-adjacent helper, or its own remediation advice disarms it", got)
+	}
+
+	// A METHOD VALUE is a reference too — requiring `name(` let this slip past.
+	methodValue := topLevelFuncBodies("package appapi\n\n" +
+		"func (c *Client) submissionsURL(id, b string) string {\n\treturn \"\"\n}\n\n" +
+		"func (c *Client) PeekSubmissions(ctx context.Context) error {\n\tmk := c.submissionsURL\n\t_ = mk\n\treturn nil\n}\n")
+	if got := deriveSubmissionsRouteAccessors(methodValue); !equalStrings(got, []string{"PeekSubmissions"}) {
+		t.Errorf("method value: derived %v, want [PeekSubmissions]", got)
+	}
+
+	// STOPPING AT THE EXPORTED BOUNDARY: a caller of an exported accessor is not
+	// itself an accessor, or the set swells until it pins nothing.
+	chain := topLevelFuncBodies("package appapi\n\n" +
+		"func (c *Client) submissionsURL(id, b string) string {\n\treturn \"\"\n}\n\n" +
+		"func (c *Client) ListSubmissions(ctx context.Context, b string) error {\n\tu := c.submissionsURL(\"\", b)\n\treturn nil\n}\n\n" +
+		"func (c *Client) SubmitVersion(ctx context.Context) error {\n\treturn c.ListSubmissions(ctx, \"\")\n}\n")
+	if got := deriveSubmissionsRouteAccessors(chain); !equalStrings(got, []string{"ListSubmissions"}) {
+		t.Errorf("chain: derived %v, want [ListSubmissions] — an exported accessor is a boundary, not a conduit", got)
+	}
+
+	// Positive control: the derivation can come back empty.
+	if got := deriveSubmissionsRouteAccessors(topLevelFuncBodies("package appapi\n\nfunc lonely() {}\n")); len(got) != 0 {
+		t.Errorf("a package that never reaches the gateway derived %v", got)
+	}
+}
+
 // countSubmissionsRouteRefs counts references to any of the route's accessors in
 // one Go source: a `.`-qualified use of the name, whether CALLED
 // (`c.ListSubmissions(ctx, slug)`) or taken as a function value
@@ -654,11 +830,15 @@ func equalStrings(a, b []string) bool {
 	return true
 }
 
-// appapiSources returns every non-test .go source in internal/appapi, keyed by
-// file name, with a floor so an empty read cannot pass as "nothing found".
-func appapiSources(t *testing.T) map[string]string {
+// submissionsPkgSources returns every non-test .go source in one of the ledgered
+// package directories, keyed by file name, with the CHECKED floor so an empty or
+// partial read cannot pass as "nothing found".
+func submissionsPkgSources(t *testing.T, prefix string) map[string]string {
 	t.Helper()
-	dir := submissionsLedgerDirs["appapi"]
+	dir, ok := submissionsLedgerDirs[prefix]
+	if !ok {
+		t.Fatalf("no ledgered directory for %q", prefix)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("reading %s: %v", dir, err)
@@ -675,40 +855,72 @@ func appapiSources(t *testing.T) map[string]string {
 		}
 		out[name] = string(b)
 	}
-	if len(out) < submissionsLedgerFloors["appapi"] {
-		t.Fatalf("only %d non-test .go files found in %s — the read is wrong or partial", len(out), dir)
+	// 🔴 THE CHECKED FLOOR, NOT A RAW MAP READ. A raw `floors[prefix]` yields 0 on
+	// a missing key, so `len(out) < 0` never fires and this positive control is
+	// silently off — the same shape as the walk's floor, surviving at a SECOND
+	// call site. Measured before the fix: with the key dropped and the directory
+	// pointed at a .go-free path, TestSubmissionsRouteHasOneGateway PASSED over a
+	// completely empty scan, and that test is the chokepoint with no backup.
+	if floor := submissionsLedgerFloorFor(t, prefix); len(out) < floor {
+		t.Fatalf("only %d non-test .go files found in %s (floor %d) — the read is wrong or partial, "+
+			"so an empty result means nothing", len(out), dir, floor)
 	}
 	return out
 }
 
-// TestSubmissionsRouteHasOneGateway asserts that SubmissionsPath is referenced
-// ONLY by submissionsURL.
+// submissionsRoutePathLiteral is the route path written as a WHOLE string
+// literal, quotes included. The gateway check matches both the SubmissionsPath
+// identifier and this, because grepping only the identifier let a func spell the
+// path out instead.
+//
+// 🔴 THE QUOTES ARE LOAD-BEARING, AND MATCHING THE BARE PATH DOES NOT WORK. The
+// route path appears inside longer strings all over both packages for entirely
+// correct reasons — `"unexpected /api/v1/blocks/submissions response: %s"` in
+// both accessors, and the `GET /api/v1/blocks/submissions` in a Cobra Long
+// description — so a bare-substring match flags three legitimate sites and the
+// guard becomes noise. Requiring the path to BE the whole literal separates
+// "names the route in a message" from "builds a URL to the route".
+const submissionsRoutePathLiteral = `"/api/v1/blocks/submissions"`
+
+// TestSubmissionsRouteHasOneGateway asserts that the submissions route is reached
+// ONLY through submissionsURL — scanning BOTH packages, and matching the path
+// identifier AND the literal.
 //
 // 🔴 THIS IS WHAT MAKES THE DERIVED ACCESSOR SET COMPLETE. Deriving accessors as
-// "funcs referencing submissionsURL" is only sound while submissionsURL is the
-// sole way to reach the route; a func that pasted the path together itself would
-// be an accessor the derivation cannot see — the same blind spot as before, one
-// level down. This fails the day someone opens that second door.
+// "funcs that reach submissionsURL" is only sound while submissionsURL is the sole
+// way to the route; a func that assembled the URL itself would be an accessor the
+// derivation cannot see — the same blind spot as before, one level down.
+//
+// Its scope was originally narrower than its claim, so both gaps are closed here:
+// scanning only internal/appapi missed a cmd-package file using the EXPORTED
+// appapi.SubmissionsPath with raw http, and matching only the identifier missed a
+// path written as a string literal.
 func TestSubmissionsRouteHasOneGateway(t *testing.T) {
 	var offenders []string
-	for name, src := range appapiSources(t) {
-		for _, fn := range enclosingFuncsReferencing(src, "SubmissionsPath") {
-			if fn == submissionsRouteGateway {
-				continue
+	for prefix := range submissionsLedgerDirs {
+		for name, src := range submissionsPkgSources(t, prefix) {
+			for _, needle := range []string{"SubmissionsPath", submissionsRoutePathLiteral} {
+				for _, fn := range enclosingFuncsReferencing(src, needle) {
+					if fn == submissionsRouteGateway {
+						continue
+					}
+					// The const's own declaration sits outside any func, and it
+					// necessarily holds both needles.
+					if fn == "" && strings.Contains(src, "const SubmissionsPath") {
+						continue
+					}
+					offenders = append(offenders, prefix+"/"+name+":"+fn)
+				}
 			}
-			// The const's own declaration sits outside any func.
-			if fn == "" && strings.Contains(src, "const SubmissionsPath") {
-				continue
-			}
-			offenders = append(offenders, name+":"+fn)
 		}
 	}
 	if len(offenders) > 0 {
-		t.Errorf("SubmissionsPath is referenced outside %s by %v.\n"+
-			"The accessor set this ledger derives is 'every func that goes through %s', so a func reaching the "+
-			"submissions route another way is an accessor the derivation CANNOT see — which is exactly how "+
-			"GetSubmission hid from the first version of this ledger. Route it through the gateway, or widen the "+
-			"derivation deliberately and say so here.", submissionsRouteGateway, offenders, submissionsRouteGateway)
+		sort.Strings(offenders)
+		t.Errorf("the submissions route is reached outside %s by %v.\n"+
+			"The accessor set this ledger derives is 'every exported func that reaches %s', so code reaching the route "+
+			"another way is an accessor the derivation CANNOT see — which is how GetSubmission hid from the first "+
+			"version of this ledger. Route it through the gateway, or widen the derivation deliberately and say so here.",
+			submissionsRouteGateway, offenders, submissionsRouteGateway)
 	}
 }
 
@@ -717,34 +929,38 @@ func TestSubmissionsRouteHasOneGateway(t *testing.T) {
 // new accessor therefore forces a ledger decision on the day it is written
 // instead of waiting for an audit to find it.
 func TestSubmissionsRouteAccessorsAreLedgered(t *testing.T) {
-	derived := map[string]bool{}
-	for _, src := range appapiSources(t) {
-		for _, fn := range enclosingFuncsReferencing(src, submissionsRouteGateway+"(") {
-			if fn == submissionsRouteGateway || fn == "" {
-				continue
-			}
-			derived[fn] = true
+	bodies := map[string]string{}
+	for name, src := range submissionsPkgSources(t, "appapi") {
+		for fn, body := range topLevelFuncBodies(src) {
+			bodies[fn] += body
+			_ = name
 		}
 	}
+	derived := deriveSubmissionsRouteAccessors(bodies)
 	// Positive control before comparing: a derivation wired to nothing would
 	// otherwise agree with any ledger that happened to be empty.
 	if len(derived) == 0 {
 		t.Fatalf("derived NO accessors of the submissions route — the derivation is wired to nothing, "+
 			"so agreement with %v would mean nothing", submissionsRouteAccessors)
 	}
+	inDerived := map[string]bool{}
+	for _, fn := range derived {
+		inDerived[fn] = true
+	}
 	ledgered := map[string]bool{}
 	for _, a := range submissionsRouteAccessors {
 		ledgered[a] = true
 	}
-	for fn := range derived {
+	for _, fn := range derived {
 		if !ledgered[fn] {
 			t.Errorf("appapi.%s reaches the submissions route and is NOT in submissionsRouteAccessors.\n"+
-				"Every accessor hands its caller a row out of a list documented newest-first, so add it here AND "+
-				"re-run the reader walk — a new accessor makes previously-invisible files into readers (#390).", fn)
+				"It is the EXPORTED boundary that hands a caller a row out of a list documented newest-first — add "+
+				"THAT name here (not any private helper it goes through, which the reader walk cannot search for) "+
+				"AND re-run the reader walk, because a new accessor turns previously-invisible files into readers (#390).", fn)
 		}
 	}
 	for fn := range ledgered {
-		if !derived[fn] {
+		if !inDerived[fn] {
 			t.Errorf("submissionsRouteAccessors names appapi.%s, which no longer reaches the submissions route "+
 				"through %s. If it was renamed, rename it here; if it went away, drop it.", fn, submissionsRouteGateway)
 		}
