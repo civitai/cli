@@ -268,7 +268,10 @@ const dotenvGoldenPath = "testdata/readme_dotenv_section.golden.txt"
 // `API_SECRET=…` is neither public nor excluded, and this repo itself treats the
 // VITE_-prefixed `VITE_LIVE_BLOCK_TOKEN` as a spending secret), and that
 // `.env.example` / `.env.sample` hold "no secret" (the allow-list is by NAME;
-// `page-money/env.example.tmpl` invites pasting a live token into one).
+// `page-money/env.example.tmpl` INVITED pasting a live token into one until
+// #380 pointed that instruction at `.env.development.local` — and nothing here
+// stops an author pasting one in anyway, which is why the claim was false about
+// the FILE and not just about the template).
 //
 // A banned-phrase list loses to the next phrasing — item 28 records five audit
 // paraphrases beating two such lists. What IS computable is whether the prose is

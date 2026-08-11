@@ -69,7 +69,9 @@ export type LiveConfig =
  * unless a dev block token (`VITE_LIVE_BLOCK_TOKEN`) is present — returning
  * `{ ready: false }` with a clear reason otherwise. The token is a short-lived
  * RS256 JWT minted by the server dev-token endpoint (`POST /api/v1/blocks/dev-token`,
- * invite-gated); paste it into `VITE_LIVE_BLOCK_TOKEN` (never commit it).
+ * invite-gated); it goes in `VITE_LIVE_BLOCK_TOKEN` in the git-ignored
+ * `.env.development.local` — never in `.env.example` or `.env.production`, which
+ * `civitai app submit` UPLOADS. `civitai app dev-token <slug> --env >> .env.development.local`.
  */
 export function resolveLiveConfig(): LiveConfig {
   const token = import.meta.env.VITE_LIVE_BLOCK_TOKEN as string | undefined;

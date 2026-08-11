@@ -1201,8 +1201,8 @@ enumeration the table below might otherwise read as:
 
 | file | in the bundle? | why |
 | --- | --- | --- |
-| `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, dotted or not: `.env.staging`, `.env-local`, and `.envrc` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template tells you to paste a real `VITE_LIVE_BLOCK_TOKEN` into `.env.development`; `.envrc` is the direnv convention and routinely holds exported credentials. |
-| `.env.example`, `.env.sample` | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` has a `VITE_LIVE_BLOCK_TOKEN=` line it invites you to fill in |
+| `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, dotted or not: `.env.staging`, `.env-local`, and `.envrc` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template points a real `VITE_LIVE_BLOCK_TOKEN` at the git-ignored `.env.development.local`; `.envrc` is the direnv convention and routinely holds exported credentials. |
+| `.env.example`, `.env.sample` | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` carries an empty `VITE_LIVE_BLOCK_TOKEN=` line whose comment sends the real token to `.env.development.local` **because this file is uploaded**. Nothing enforces that — it is documentation, not a check |
 | `.env.production` | **included** | the platform build runs `vite build` in production mode, which reads it |
 
 🔴 **The allow-list is by FILE NAME. Nothing inspects what is inside those three
