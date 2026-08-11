@@ -379,6 +379,184 @@ func TestReportExcludedOutputs_EachOutputNamesItsOwnCause(t *testing.T) {
 	}
 }
 
+// 🔴 THE SUBSET SHAPE — WHERE ONE OUTPUT'S SET IS CONTAINED IN ANOTHER'S. It is
+// the shape no other test uses, and it is what distinguishes "the gate reads the
+// EXCLUDED OUTPUTS" from "the gate reads something else that happens to
+// correlate". Two mutants live only here, and being handed the wrong data is
+// exactly how the round-2 regression was introduced:
+//
+//   - keying the gate on `len(reportedElsewhere)` instead of the outputs, which
+//     is nil on this call (and on every printWorkflow call), so the gate reads
+//     false and out_2 loses its own cause;
+//   - keying a reason set on `StepErrors[0]`, which is "A" for both outputs, so
+//     they read as one set.
+//
+// Both leave every other test in this file green.
+func TestReportExcludedOutputs_SubsetReasonSetsStillDiscriminate(t *testing.T) {
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, []genapi.Output{
+		{Blob: genapi.Blob{ID: "out_1"}, StepErrors: []string{"FIXTURE A", "FIXTURE B"}},
+		{Blob: genapi.Blob{ID: "out_2"}, StepErrors: []string{"FIXTURE A"}},
+	}, false, nil)
+	for _, line := range strings.Split(b.String(), "\n") {
+		switch {
+		case strings.Contains(line, "- out_1:"):
+			for _, want := range []string{"FIXTURE A", "FIXTURE B"} {
+				if !strings.Contains(line, want) {
+					t.Errorf("out_1 lost %q from its own set:\n  %s", want, line)
+				}
+			}
+		case strings.Contains(line, "- out_2:"):
+			if !strings.Contains(line, "FIXTURE A") {
+				t.Errorf("out_2 does not name its own cause — a set that is a SUBSET of another output's is still "+
+					"a different cause, and this output's line is the only place it is attributable:\n  %s", line)
+			}
+			if strings.Contains(line, "FIXTURE B") {
+				t.Errorf("out_2 names a cause that belongs only to out_1:\n  %s", line)
+			}
+		}
+	}
+}
+
+// 🔴 THE GATE'S KEY MUST BE INJECTIVE — AGAINST EVERY SEPARATOR, NOT ONE.
+// A key built by joining elements on a delimiter collides whenever that
+// delimiter can occur inside an element, and the elements here are server free
+// text. Two separators are exercised, and the SPACE is the sharper of the two:
+//
+//   - a SPACE needs no claim about the server at all. Orchestrator prose
+//     contains spaces; `%v`, `fmt.Sprint` and `strings.Join(…, " ")` are all
+//     plausible tidying edits of this line, and every one of them collides
+//     ["A B"] with ["A","B"].
+//   - a NUL is the case that motivated the change: JSON permits a \\u0000
+//     escape, encoding/json decodes it to a real NUL, and safeTerm strips it
+//     only at RENDER. That proves the FORMAT permits it — it is NOT an
+//     observation that the orchestrator emits one, and nothing here should be
+//     read as one.
+//
+// The first version of this test pinned only the NUL, and `%q` → `%v` survived
+// it. A test that rejects one spelling of a hazard has not rejected the hazard.
+//
+// 🔴 `reportedElsewhere` IS SEEDED, AND WITHOUT THAT THIS TEST IS VACUOUS. An
+// earlier version passed nil and the NUL-join mutant SURVIVED: with an empty
+// seed nothing is suppressed whatever the gate decides, because the intra-call
+// `seen` map keys on INDIVIDUAL reasons and still tells the two sets apart. The
+// collision only has consequences once a caller has reported the union — which
+// is exactly what waitAndCollect passes, and what is seeded here.
+func TestReportExcludedOutputs_ReasonKeyIsInjectiveAgainstASeparatorInTheText(t *testing.T) {
+	for _, c := range []struct{ name, sep string }{
+		{"space", " "},
+		{"nul", "\x00"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			joined := "FIXTURE A" + c.sep + "FIXTURE B"
+			outs := []genapi.Output{
+				{Blob: genapi.Blob{ID: "out_1"}, StepErrors: []string{joined}},
+				{Blob: genapi.Blob{ID: "out_2"}, StepErrors: []string{"FIXTURE A", "FIXTURE B"}},
+			}
+			var b bytes.Buffer
+			reportExcludedOutputs(&b, outs, false, []string{joined, "FIXTURE A", "FIXTURE B"})
+			got := b.String()
+
+			// POSITIVE CONTROL: a reason really did render. Asserting only that
+			// the generic sentence is ABSENT is a reassuring zero — it cannot be
+			// told apart from "no reason rendered at all", which is how a
+			// stubbed-out ExclusionReason passed the first version of this test.
+			if !strings.Contains(got, "the server reported") {
+				t.Fatalf("CONTROL failure, not a finding: no reason rendered at all, so the absence "+
+					"asserted below proves nothing:\n%s", got)
+			}
+			for _, id := range []string{"out_1", "out_2"} {
+				if !strings.Contains(got, id) {
+					t.Fatalf("CONTROL failure, not a finding: %s did not render:\n%s", id, got)
+				}
+			}
+			// Two DISTINCT sets, so the gate must discriminate and neither
+			// output may fall back to the categorical sentence.
+			if n := strings.Count(got, "the job finished without producing a usable file"); n != 0 {
+				t.Errorf("%d output(s) fell back to the generic sentence. The two sets are different causes "+
+					"that render differently, so they collided on the gate's key — joining on %q is not "+
+					"injective when %q can occur in the text:\n%s", n, c.sep, c.sep, got)
+			}
+		})
+	}
+}
+
+// 🔴 INJECTIVITY AS A PROPERTY OF THE KEY, NOT AS A LIST OF SPELLINGS. The
+// render-level test above pins two separators, and pinning separators one at a
+// time is the losing shape this repo has already documented twice (AGENTS.md
+// item 28's two dead phrase lists): a join on "\x00\x00" survived a fixture that
+// only used "\x00". So this asserts the property directly on the key function —
+// N pairwise-distinct reason sets must produce N distinct keys.
+//
+// The table is built so that EVERY fixed-separator join collides on at least one
+// pair: for each candidate separator, ["A"+sep+"B"] and ["A","B"] are different
+// sets that any join on that separator maps together. Extending the separator
+// list is cheap; a key that is not a join (%q, or any escaping encoder) passes
+// all of them at once, which is the point.
+func TestDistinctReasonSets_KeyIsInjective(t *testing.T) {
+	sets := [][]string{
+		{"A", "B"},
+		{"A"},
+		{"B"},
+		{"A", ""},
+	}
+	// One "looks like the joined form" element per plausible separator.
+	for _, sep := range []string{
+		" ", "  ", ",", ", ", ";", "; ", "|", "\t", "\n", "\x00", "\x00\x00", "\x1f", "-", "_", "",
+	} {
+		sets = append(sets, []string{"A" + sep + "B"})
+	}
+
+	// The table must be pairwise distinct AS SLICES, or the expectation below is
+	// wrong rather than the code. This is the control on the fixture itself.
+	for i := range sets {
+		for j := i + 1; j < len(sets); j++ {
+			if fmt.Sprintf("%q", sets[i]) == fmt.Sprintf("%q", sets[j]) {
+				t.Fatalf("CONTROL failure, not a finding: table entries %d and %d are the same value %q — "+
+					"the expected count below would be wrong", i, j, sets[i])
+			}
+		}
+	}
+
+	var outs []genapi.Output
+	for i, s := range sets {
+		outs = append(outs, genapi.Output{
+			Blob: genapi.Blob{ID: fmt.Sprintf("out_%d", i)}, StepErrors: s,
+		})
+	}
+	if got := distinctReasonSets(outs); got != len(sets) {
+		t.Errorf("distinctReasonSets = %d over %d pairwise-distinct sets — the key maps two different causes to "+
+			"one, so an output would be told another output's story or lose its own. A key built by joining "+
+			"elements on ANY fixed separator collides as soon as that separator appears in an element, and "+
+			"these are server free text.", got, len(sets))
+	}
+}
+
+// Order is part of the rendering, so it is part of the identity of a reason set:
+// joinReasons emits the slice in order. Unasserted, a "tidying" sort would
+// quietly merge two outputs that said different things.
+//
+// (Repetition is significant to the key too, but is currently UNREACHABLE —
+// Step.failureReasons dedupes and is the only producer of StepErrors — so it is
+// not asserted here. See distinctReasonSets' comment.)
+func TestReportExcludedOutputs_ReasonSetIdentityIsOrderSensitive(t *testing.T) {
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, []genapi.Output{
+		{Blob: genapi.Blob{ID: "out_1"}, StepErrors: []string{"FIXTURE A", "FIXTURE B"}},
+		{Blob: genapi.Blob{ID: "out_2"}, StepErrors: []string{"FIXTURE B", "FIXTURE A"}},
+	}, false, nil)
+	got := b.String()
+	// POSITIVE CONTROL, same reason: the absence below must not be satisfiable
+	// by nothing having rendered.
+	if !strings.Contains(got, "the server reported") {
+		t.Fatalf("CONTROL failure, not a finding: no reason rendered at all:\n%s", got)
+	}
+	if n := strings.Count(got, "the job finished without producing a usable file"); n != 0 {
+		t.Errorf("a reversed set was treated as the same cause, but joinReasons renders the two in different "+
+			"orders — they are different sentences:\n%s", got)
+	}
+}
+
 // Where the outputs AGREE, attribution is vacuous and the sentence collapses to
 // one copy — the eleven-copies rule. The line for every other output survives.
 func TestReportExcludedOutputs_CollapsesOneSharedReason(t *testing.T) {

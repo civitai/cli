@@ -277,16 +277,44 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled boo
 //
 // The set, not the individual reason, is the unit — two outputs disagree when
 // their lists differ, even if they share an entry.
+//
+// ORDER is significant, and that is a live property: joinReasons emits the slice
+// in order, so ["A","B"] and ["B","A"] produce two different sentences and the
+// outputs carrying them have not said the same thing.
+//
+// REPETITION is significant too, but it is currently UNREACHABLE, and calling it
+// "asserted in both directions" was an overstatement in this PR's description.
+// `Output.StepErrors` has exactly one producer — `Step.failureReasons`, which
+// this change made dedupe — so no payload can put a repeated entry in a reason
+// set. Treating repetition as significant here is therefore DEFENSIVE against a
+// second producer appearing, not a behaviour any input exercises today. If one
+// ever does, this key already does the right thing.
+//
+// 🔴 THE KEY MUST BE INJECTIVE, AND A JOIN ON A SEPARATOR IS NOT.
+// An earlier version joined on "\x00" under a comment asserting that a NUL
+// "cannot appear in the key material … these strings reach us from JSON". That
+// was FALSE and the comment was the bug: a JSON \u0000 escape is legal,
+// encoding/json decodes it to a real NUL, Step.failureReasons only TrimSpaces
+// (NUL is not whitespace), and safeTerm strips it at RENDER — long after this
+// gate has already decided. Measured: a reason written "A\u0000B" survives decode
+// intact at length 3, and ["A\x00B"] then keys identically to ["A","B"]. Two
+// outputs that died of different, differently-rendering causes would collapse to
+// the generic sentence: the regression this gate exists to prevent, reached
+// through server-controlled text, in the silent direction.
+//
+// 🔴 Reachability, stated precisely: this proves the payload FORMAT permits a
+// NUL. It is NOT an observation that the orchestrator ever emits one, and
+// nothing here should be read as one. %q is used because correctness must not
+// rest on a claim about the server's output that nobody has measured.
 func distinctReasonSets(excluded []genapi.Output) int {
 	seen := make(map[string]bool, len(excluded))
 	for _, o := range excluded {
 		if len(o.StepErrors) == 0 {
 			continue
 		}
-		// \x00 cannot appear in the key material: safeTerm's caller aside, these
-		// strings reach us from JSON, and a NUL would make the joined key
-		// ambiguous rather than merely ugly.
-		seen[strings.Join(o.StepErrors, "\x00")] = true
+		// %q quotes and escapes every element, so no element's content can be
+		// confused with the delimiters between elements.
+		seen[fmt.Sprintf("%q", o.StepErrors)] = true
 	}
 	return len(seen)
 }
@@ -294,17 +322,28 @@ func distinctReasonSets(excluded []genapi.Output) int {
 // allSeen reports whether EVERY reason in rs has already been rendered on this
 // stream.
 //
-// 🔴 TWO OF ITS THREE BRANCHES ARE UNOBSERVABLE, AND SAYING SO IS THE POINT —
-// an earlier draft of this comment claimed a test pinned the ALL/ANY choice, and
-// it does not.
+// 🔴 THIS COMMENT HAS NOW OVER-CLAIMED TWICE; THE THIRD VERSION STATES A
+// PRECONDITION INSTEAD OF AN EQUIVALENCE. Draft one said a test pinned the
+// ALL/ANY choice (no test did). Draft two said the two quantifiers "agree on
+// every reachable input" — also false: with `seen` seeded by a STRICT SUBSET of
+// the outputs' set (reportedElsewhere ["A"], every output ["A","B"]) ANY returns
+// true where ALL returns false, and the reason then prints ZERO times.
 //
-//   - ALL vs ANY cannot be observed from any caller. The only call site is
-//     guarded by `!attributionDiscriminates`, which means every excluded output
-//     carries an IDENTICAL reason set — so the set is either wholly seen or
-//     wholly unseen and the two quantifiers agree on every reachable input. ALL
-//     is written because it is what the name says; a mutation to ANY is
-//     genuinely equivalent, not an uncovered gap. If the gate is ever removed,
-//     this becomes live and needs its own test.
+// So the honest form is a precondition on the CALLER, not a property of this
+// function:
+//
+//	`reportedElsewhere` must be a set the caller has ALREADY RENDERED IN FULL on
+//	this same stream — never a partial or unrelated selection.
+//
+// Both call sites satisfy it by construction: waitAndCollect passes the whole
+// `wf.FailureReasons()` (the exact set its error is about to print) or nil, and
+// printWorkflow passes nil. Under that precondition, plus the
+// `!attributionDiscriminates` gate — which means every excluded output carries
+// an identical set — the set is wholly seen or wholly unseen and ALL and ANY
+// agree, so a mutation to ANY is equivalent FOR THOSE CALLERS. It is not
+// equivalent in general. A new caller passing a partial set makes this live, and
+// ALL is the safe quantifier there: it re-states a sentence the reader may not
+// have seen rather than suppressing one they have not.
 //   - The empty-rs branch is documentation. With `rs` empty the caller's
 //     else-branch is a no-op loop and `o.StepErrors = nil` a no-op assignment,
 //     so both answers produce byte-identical output. It is written out because

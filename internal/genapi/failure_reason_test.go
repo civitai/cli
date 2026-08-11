@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // civitai/cli#367 — THE ORCHESTRATOR RECORDS WHY A STEP FAILED AND THE CLI
@@ -129,6 +130,111 @@ func TestFailureReasons_EveryStepIsReportedInOrder(t *testing.T) {
 	if joined := wf.FailureReasonText(); joined != strings.Join(want, "; ") {
 		t.Errorf("FailureReasonText() = %q, want %q", joined, strings.Join(want, "; "))
 	}
+}
+
+// 🔴 THE TWO RENDERINGS MUST AGREE ON WHAT ONE STEP SAID. Workflow.FailureReasons
+// deduped across steps while Step.failureReasons did not dedupe within one, so a
+// single step carrying ["A","A"] rendered `the server reported: A; A` on the
+// per-output line (which reads the step) and a single `A` in the `workflows get`
+// block (which reads the workflow) — same payload, same screen, two answers.
+// 🔴 THE FIXTURE CARRIES WHITESPACE VARIANTS, BECAUSE WITHOUT THEM IT CANNOT
+// SEE WHICH STRING IS DEDUPED. Keying the `seen` map on the RAW entry instead of
+// the TRIMMED one survives an all-exact fixture: " A" and "A " are different raw
+// strings that trim to the same reason, so the mutant emits ["A","A","A"] and
+// re-creates the very "same payload, two answers on one screen" defect this test
+// exists to close. Trim-then-dedupe is the order that matters.
+func TestFailureReasons_OneStepRepeatingItselfIsCollapsedForBothReaders(t *testing.T) {
+	payload := `{"id":"wf_1","status":"failed","steps":[{"$type":"imageGen","name":"$0","status":"failed",
+	  "metadata":{},"output":{"images":[{"id":"out_1","available":false}],"errors":["A"," A","B","A ","A"]}}]}`
+	var wf Workflow
+	if err := json.Unmarshal([]byte(payload), &wf); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	want := []string{"A", "B"}
+	if got := wf.FailureReasons(); !equalStrings(got, want) {
+		t.Errorf("Workflow.FailureReasons() = %#v, want %#v", got, want)
+	}
+	outs := wf.Outputs()
+	if len(outs) != 1 {
+		t.Fatalf("CONTROL failure, not a finding: %d outputs, want 1", len(outs))
+	}
+	if got := outs[0].StepErrors; !equalStrings(got, want) {
+		t.Errorf("Output.StepErrors = %#v, want %#v — the per-output line would render %q while the "+
+			"workflow block rendered %q", got, want, joinReasons(got), joinReasons(want))
+	}
+	if got := ExclusionReason(outs[0]); strings.Contains(got, "A; A") {
+		t.Errorf("the excluded-output sentence repeats one step's reason: %s", got)
+	}
+}
+
+// 🔴 A REASON WITH NO PRINTABLE CONTENT IS NOT A REASON. It is representable for
+// exactly the argument this file makes about a NUL: the format permits control
+// bytes and TrimSpace does not remove them. Kept, it reaches the renderer, which
+// strips them, and the user is shown `not available (the server reported: )` —
+// an empty parenthetical that DISPLACES the categorical fallback and says
+// strictly less than it did.
+//
+// This is emptiness, not meaning: nothing reads the words (AGENTS.md item 13),
+// and a reason with a single printable rune survives, as the control below
+// proves.
+func TestFailureReasons_AReasonWithNoPrintableContentIsDropped(t *testing.T) {
+	payload := `{"id":"wf_1","status":"failed","steps":[{"$type":"imageGen","name":"$0","status":"failed",
+	  "metadata":{},"output":{"images":[{"id":"out_1","available":false}],
+	  "errors":["\u0000\u001b\u0007","\u0000x\u0000"]}}]}`
+	var wf Workflow
+	if err := json.Unmarshal([]byte(payload), &wf); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	got := wf.FailureReasons()
+	// POSITIVE CONTROL: the second entry has ONE printable rune and must
+	// survive, so this is not "control bytes anywhere means drop".
+	if len(got) != 1 {
+		t.Fatalf("FailureReasons() = %q, want exactly the one entry carrying a printable rune", got)
+	}
+	if !strings.ContainsRune(got[0], 'x') {
+		t.Errorf("the surviving reason is not the one with printable content: %q", got[0])
+	}
+
+	outs := wf.Outputs()
+	if len(outs) != 1 {
+		t.Fatalf("CONTROL failure, not a finding: %d outputs, want 1", len(outs))
+	}
+	// The rendered sentence must carry the surviving reason and nothing that
+	// would render as an empty parenthetical. Checked on the STRIPPED form,
+	// because that is what a terminal shows.
+	rendered := stripControlRunes(ExclusionReason(outs[0]))
+	if strings.Contains(rendered, "reported: )") {
+		t.Errorf("an all-control reason produced an empty parenthetical, which says less than the categorical "+
+			"sentence it displaced: %q", rendered)
+	}
+	if !strings.Contains(rendered, "reported: x)") {
+		t.Errorf("the surviving reason did not reach the sentence: %q", rendered)
+	}
+}
+
+// stripControlRunes mirrors what a terminal renderer removes, so a test can
+// assert on what the user actually sees. It is a TEST helper: the production
+// stripper is internal/cmd's safeTerm, and genapi deliberately does not own one.
+func stripControlRunes(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		if !unicode.IsControl(r) {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // De-duplication is EXACT-MATCH ONLY. A four-step run that died the same way
