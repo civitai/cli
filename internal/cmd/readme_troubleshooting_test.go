@@ -184,6 +184,278 @@ func TestREADMETroubleshootingSymptomsExistInTheSource(t *testing.T) {
 	}
 }
 
+// ----------------------------------------------------------------------------
+// Attribution — issue #361
+// ----------------------------------------------------------------------------
+//
+// 🔴 THE GUARD ABOVE ASKS "DOES THIS STRING EXIST?", WHICH IS NOT THE QUESTION A
+// READER OF THE INDEX IS ASKING. They are holding an error from ONE command and
+// want the row for THAT command.
+//
+// Measured drift (#361): the row for `is this an App project?` said it came from
+// `civitai app validate` and linked to Validate fidelity. `app validate` has
+// never printed it — it produces its own finding, `block.manifest.json not found
+// at project root <dir>`, which the index did not carry at all. The string is
+// real (`internal/manifest`, reached by `app submit` / `app listing` /
+// `app dev-token` / `app dev-tunnel`), so the existence guard stayed green the
+// whole time, and the one message a new author is most likely to hit was the one
+// the index could not resolve.
+//
+// So this is a RELATIONSHIP guard, not a component one: for a curated set of
+// rows it drives the REAL command through NewRootCmd and asserts the row's
+// fragment is in what that command actually emitted — plus, where two rows are
+// confusable, that the OTHER command does not emit it. A row can only pass by
+// being about the command it claims.
+//
+// It is deliberately a ledger of a few rows rather than every row: proving
+// reachability means driving each command into its failure mode, and several of
+// them need a live server. Ledger membership is the claim "these rows are worth
+// the run", and the confusable pair from #361 is why the ledger exists.
+
+// attributionRun is one real invocation, driven through the same NewRootCmd path
+// a user gets. `args` is a function so a row can point the command at a scratch
+// directory the harness makes.
+type attributionRun struct {
+	name string
+	args func(emptyProject, scratch string) []string
+	env  map[string]string
+}
+
+// symptomAttribution is one Troubleshooting row and the commands it belongs to.
+type symptomAttribution struct {
+	// fragment is the row's first column, verbatim after the extractor's
+	// backtick/ellipsis trim — i.e. exactly what documentedSymptoms returns.
+	fragment string
+	// anchor must appear in the row's "Where to read more" cell, and must be a
+	// heading that exists. A right string under a wrong link is still a row that
+	// sends the reader somewhere that does not explain their error.
+	anchor string
+	// emittedBy must each really print fragment.
+	emittedBy []attributionRun
+	// notEmittedBy must each really NOT print it. This is the half that names
+	// the defect: `app validate` printing `is this an App project?` is precisely
+	// the world the old row described.
+	notEmittedBy []attributionRun
+	why          string
+}
+
+func symptomAttributions() []symptomAttribution {
+	appValidate := func(name string) attributionRun {
+		return attributionRun{
+			name: name,
+			args: func(empty, _ string) []string { return []string{"app", "validate", empty} },
+		}
+	}
+	return []symptomAttribution{
+		{
+			fragment: "not found at project root",
+			anchor:   "#validate-fidelity",
+			emittedBy: []attributionRun{
+				appValidate("app validate"),
+				{
+					// --package-only never contacts the server, and this row
+					// never gets that far anyway: validation fails first. It is
+					// here because the README row claims `app submit` validates
+					// first, and an unmeasured claim in the index is the thing
+					// this file exists to stop.
+					name: "app submit --package-only",
+					args: func(empty, scratch string) []string {
+						return []string{"app", "submit", empty, "--package-only", "--out", filepath.Join(scratch, "b.zip")}
+					},
+				},
+			},
+			why: "the manifest-missing verdict is the most likely error in the whole tool, and until #361 " +
+				"the index did not contain it in any form",
+		},
+		{
+			fragment: "is this an App project?",
+			anchor:   "#listing-media-requirements",
+			emittedBy: []attributionRun{
+				{
+					// The slug resolve fails on the manifest before any request
+					// is built, so the token only has to be non-empty to get
+					// past the credential gate.
+					name: "app listing status",
+					args: func(empty, _ string) []string {
+						return []string{"app", "listing", "status", "--dir", empty}
+					},
+					env: map[string]string{"CIVITAI_TOKEN": "not-a-real-token"},
+				},
+			},
+			notEmittedBy: []attributionRun{
+				appValidate("app validate"),
+				{
+					// `app submit` DOES call manifest.Load — but only after
+					// validation has passed, so a missing manifest never reaches
+					// it. Listing the caller is not the same as measuring the
+					// message, and this row is the difference: the first draft of
+					// this fix credited `app submit`, `app dev-token` and
+					// `app dev-tunnel` from a grep of manifest.Load callers, and
+					// none of the three prints it for a missing manifest.
+					name: "app submit --package-only",
+					args: func(empty, scratch string) []string {
+						return []string{"app", "submit", empty, "--package-only", "--out", filepath.Join(scratch, "b.zip")}
+					},
+				},
+			},
+			why: "#361 itself: the row credited this string to `app validate`, which has never printed it, " +
+				"and sent the reader to a section that does not explain it",
+		},
+	}
+}
+
+// runAttribution executes one invocation and returns everything the user would
+// see: stdout, stderr, and the error text `main` prints as `Error: …`.
+func runAttribution(t *testing.T, r attributionRun, empty, scratch string) string {
+	t.Helper()
+	// Never let a README guard reach the network for a version check.
+	t.Setenv("CIVITAI_NO_UPDATE_CHECK", "1")
+	for k, v := range r.env {
+		t.Setenv(k, v)
+	}
+	stdout, stderr, err := run(t, r.args(empty, scratch)...)
+	var b strings.Builder
+	b.WriteString(stdout)
+	b.WriteString(stderr)
+	if err != nil {
+		b.WriteString(err.Error())
+	}
+	return b.String()
+}
+
+// TestREADMETroubleshootingRowsAreAttributedToTheEmittingCommand is the #361
+// guard: existence -> attribution.
+//
+// Red/green matrix, measured: with README.md at `origin/main` and this file at
+// HEAD, both ledger rows fail — the first because no row quotes the string at
+// all, the second because its link cell says `#validate-fidelity`. Both pass
+// with the README fix. The `notEmittedBy` half is an INVARIANT guard rather than
+// regression coverage: `app validate` did not print the string before the fix
+// either. It is here so a future "helpfully" shared manifest loader cannot make
+// the old row retroactively true.
+func TestREADMETroubleshootingRowsAreAttributedToTheEmittingCommand(t *testing.T) {
+	md := readREADME(t)
+	section := readmeTroubleshootingSection(t)
+	ledger := symptomAttributions()
+
+	// Positive control on the ledger itself: an empty (or accidentally emptied)
+	// ledger passes every assertion below while checking nothing.
+	if len(ledger) < 2 {
+		t.Fatalf("the attribution ledger holds %d rows — it must at least cover the confusable pair from #361", len(ledger))
+	}
+
+	for _, a := range ledger {
+		t.Run(a.fragment, func(t *testing.T) {
+			row, ok := troubleshootingRowFor(section, a.fragment)
+			if !ok {
+				t.Fatalf("the Troubleshooting index has no row whose first column quotes %q.\n"+
+					"Why it matters: %s.\n"+
+					"A reader searching this page for the error in front of them finds nothing.", a.fragment, a.why)
+			}
+			if len(row) < 3 {
+				t.Fatalf("row for %q has %d cells, want 3: %v", a.fragment, len(row), row)
+			}
+			if !strings.Contains(row[2], "("+a.anchor+")") {
+				t.Errorf("the row for %q links to %q, but must point at %s.\n"+
+					"Why it matters: %s.\n"+
+					"A row whose string is right and whose link is wrong still lands the reader on a "+
+					"section that does not explain their error — which is the #361 defect exactly.",
+					a.fragment, strings.TrimSpace(row[2]), a.anchor, a.why)
+			}
+			// The link has to go somewhere. GitHub renders a dead anchor as a
+			// silent no-op, so this cannot be left to review.
+			if !readmeHasAnchor(md, a.anchor) {
+				t.Errorf("the row for %q points at %s, which is not a heading in README.md", a.fragment, a.anchor)
+			}
+
+			for _, r := range a.emittedBy {
+				t.Run("emitted by "+r.name, func(t *testing.T) {
+					out := runAttribution(t, r, t.TempDir(), t.TempDir())
+					// Positive control on the runner: a command that printed
+					// nothing would satisfy notEmittedBy below unconditionally.
+					if strings.TrimSpace(out) == "" {
+						t.Fatalf("`civitai %s` emitted nothing at all — this harness is not observing the command",
+							strings.Join(r.args("<dir>", "<scratch>"), " "))
+					}
+					if !strings.Contains(out, a.fragment) {
+						t.Errorf("README credits %q to `%s`, but that command did not print it.\n"+
+							"Why it matters: %s.\nWhat it printed:\n%s", a.fragment, r.name, a.why, out)
+					}
+				})
+			}
+			for _, r := range a.notEmittedBy {
+				t.Run("not emitted by "+r.name, func(t *testing.T) {
+					out := runAttribution(t, r, t.TempDir(), t.TempDir())
+					if strings.TrimSpace(out) == "" {
+						t.Fatalf("`civitai %s` emitted nothing at all — the absence below would be a fact "+
+							"about the harness, not about the command",
+							strings.Join(r.args("<dir>", "<scratch>"), " "))
+					}
+					if strings.Contains(out, a.fragment) {
+						t.Errorf("`%s` prints %q, which the README attributes elsewhere.\n"+
+							"Either the row is now wrong or this ledger is: %s\nWhat it printed:\n%s",
+							r.name, a.fragment, a.why, out)
+					}
+				})
+			}
+		})
+	}
+}
+
+// troubleshootingRowFor returns the cells of the first Troubleshooting row whose
+// FIRST column quotes fragment. Matching on the first column only is the point:
+// a fragment mentioned in another row's prose must not satisfy the lookup.
+func troubleshootingRowFor(section, fragment string) ([]string, bool) {
+	for _, line := range strings.Split(section, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "|") || !strings.HasSuffix(line, "|") {
+			continue
+		}
+		cells := strings.Split(strings.Trim(line, "|"), "|")
+		for i := range cells {
+			cells[i] = strings.TrimSpace(cells[i])
+		}
+		if len(cells) == 0 {
+			continue
+		}
+		if strings.Contains(cells[0], fragment) && strings.Contains(cells[0], "`") {
+			return cells, true
+		}
+	}
+	return nil, false
+}
+
+// readmeHasAnchor reports whether a GitHub-style `#anchor` resolves to a heading
+// in md. The slug rules mirror GitHub's: lowercase, drop everything that is not
+// alphanumeric/space/hyphen, spaces to hyphens — which is why a 🔴 heading's
+// anchor carries a leading hyphen.
+func readmeHasAnchor(md, anchor string) bool {
+	want := strings.TrimPrefix(anchor, "#")
+	for _, line := range strings.Split(md, "\n") {
+		if !strings.HasPrefix(line, "#") {
+			continue
+		}
+		text := strings.TrimSpace(strings.TrimLeft(line, "#"))
+		if githubAnchorSlug(text) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func githubAnchorSlug(heading string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(heading) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-':
+			b.WriteRune(r)
+		case r == ' ':
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
+}
+
 // TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit pins the FLOOR of
 // what the section must cover, independently of the guard above.
 //

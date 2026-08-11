@@ -805,9 +805,21 @@ func TestREADME_DryRunTranscriptMatchesRealOutput(t *testing.T) {
 	readme := string(raw)
 
 	// The exact fixture the README's transcript uses.
+	//
+	// The ids changed with #360: the transcript used to invoke
+	// `--checkpoint 999999999`, an id that does NOT exist — and `generate`
+	// resolves every --checkpoint against the public model-version API before it
+	// prices anything, so that command 404s locally (exit 4) and never reaches
+	// the estimate this block claims to show. The documented invocation is now a
+	// REAL version id in the wrong model family, which is what actually
+	// substitutes; these constants are its measured requested/applied pair.
+	const (
+		readmeRequestedVersion = 128713
+		readmeAppliedVersion   = 1892509
+	)
 	var buf bytes.Buffer
 	reportModelSubstitutions(&buf, []genapi.ModelSubstitution{
-		{Requested: 999999999, Applied: 2436219, Reason: genapi.SubstitutionUnrecognized},
+		{Requested: readmeRequestedVersion, Applied: readmeAppliedVersion, Reason: genapi.SubstitutionUnrecognized},
 	}, substitutionAtEstimate)
 
 	// The id line is the one that rotted: it carries the ids, the tense and the
@@ -832,9 +844,23 @@ func TestREADME_DryRunTranscriptMatchesRealOutput(t *testing.T) {
 
 	// 🔴 And the stale form must be GONE, not merely joined by the correct one.
 	// A README that shows both would still be teaching the wrong thing.
-	if strings.Contains(readme, "-> ran version 2436219") {
-		t.Errorf("README still shows the pre-tense-fix estimate line (`-> ran version 2436219`), " +
-			"which contradicts the lead above it saying nothing has been charged yet")
+	staleTense := fmt.Sprintf("-> ran version %d", readmeAppliedVersion)
+	if strings.Contains(readme, staleTense) {
+		t.Errorf("README still shows the pre-tense-fix estimate line (`%s`), "+
+			"which contradicts the lead above it saying nothing has been charged yet", staleTense)
+	}
+
+	// 🔴 And the invocation ABOVE the transcript must be one that can reach it.
+	// #360's defect was not the rendered line — that half was already pinned by
+	// the assertion above and was green — it was the `$ civitai generate …`
+	// command, which 404'd on a nonexistent id long before anything was priced.
+	// A block whose output is byte-perfect under a command that cannot produce it
+	// is exactly as misleading as a stale line, and nothing could see it.
+	if strings.Contains(readme, "--checkpoint 999999999 --dry-run") {
+		t.Errorf("the README substitution transcript is introduced by " +
+			"`--checkpoint 999999999 --dry-run`. That id does not exist, so " +
+			"ResolveModelVersion refuses it with `not found (404)` and exit 4 before the " +
+			"estimate is priced — the block below it can never be produced by the command above it (#360).")
 	}
 }
 

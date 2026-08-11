@@ -1778,26 +1778,43 @@ default checkpoint, runs the job, and bills you for **what actually ran**. Until
 recently the reply was indistinguishable from success — a nonexistent version id
 came back `200 OK` at the default price.
 
-The server now reports each swap, and `civitai generate` surfaces it:
+The server now reports each swap, and `civitai generate` surfaces it. A version
+id that is perfectly real but belongs to a *different* model family is the
+easiest way to see it — here an SD 1.5 checkpoint sent to a Flux ecosystem:
 
 ```console
-$ civitai generate "a cat" --checkpoint 999999999 --dry-run
-⚠ The server will NOT use the checkpoint you asked for. It has substituted a
-  different model, and this estimate prices the SUBSTITUTE. Nothing has
-  been submitted or charged yet.
-    requested version 999999999 -> will run version 2436219  (reason: unrecognized)
-      the server does not offer that version in this model family at all …
+$ civitai generate "a cat" --ecosystem Flux1Kontext --checkpoint 128713 --dry-run
+⚠ The server will NOT use the checkpoint you asked for. It has substituted a different model, and this estimate prices the SUBSTITUTE. Nothing has been submitted or charged yet.
+    requested version 128713 -> will run version 1892509  (reason: unrecognized)
+      the server does not offer that version in this model family at all — it may be a community checkpoint that was never offered for generation, or a version retired since this command was written. Check it with `civitai model-versions get <id>` and pin a version that is still offered
+To refuse a run like this instead of being told about it, pass --fail-on-substitution.
 ```
 
 The checkpoint line in the summary you approve is annotated too, so the model
 that will *not* run is never the last one you read before saying yes:
 
 ```console
-Checkpoint:   DreamShaper — 8 (Checkpoint, id 128713)  [SUPERSEDED — the server will run version 2436219 instead; see the warning above]
+Checkpoint:       DreamShaper — 8 (Checkpoint, id 128713)  [SUPERSEDED — the server will run version 1892509 instead; see the warning above]
 ```
 
 Your own id stays on the line: the CLI marks it, it never quietly substitutes
 the applied one.
+
+Two things about that transcript, so you can tell a *reproduction* from a
+*mismatch*:
+
+- **The applied id is the server's current answer, not a constant.** `1892509`
+  is whatever that family's default was when this was run; yours will differ,
+  and so will the price. What reproduces is the *shape* — a warning naming both
+  ids and a `reason`, and a `[SUPERSEDED …]` note on the checkpoint line.
+- **A version id that does not exist at all will NOT get you here.** `generate`
+  resolves every `--checkpoint` against the public model-version API before it
+  prices anything, so `--checkpoint 999999999` fails locally with
+  `--checkpoint 999999999: not found (404): Model not found` and exit `4` — no
+  estimate, no submit, nothing charged. That is the [deliberate live
+  lookup](#-a-checkpoint-does-not-carry-its-ecosystem) doing its job: it is the
+  *nonexistent* id it closes off, and it cannot tell you whether an id that does
+  exist belongs to the family you are generating with.
 
 It is reported **on the estimate** (`--dry-run`, and before the confirmation
 prompt on a real run — while you can still back out), **again after the submit**
@@ -2270,11 +2287,12 @@ release and prints a one-line notice; `--no-update-check` (or
 
 ## Global flags
 
-These are accepted by **every** command:
+Four of these are accepted by **every** command. `-v` / `--version` is the
+exception — it is **root-only**:
 
 | Flag | What it does |
 | --- | --- |
-| `-v`, `--version` | Print the version and exit. (`civitai version` prints version + commit + build date.) |
+| `-v`, `--version` | **On the root command only.** `civitai --version` prints the version and exits; on a subcommand it is not a flag at all — `civitai app validate --version` fails with `unknown flag: --version` and exits `2`. From a script, use `civitai version` (version + commit + build date), which works from anywhere. |
 | `-h`, `--help` | Help for any command. `civitai --help` also prints the [exit-code](#exit-codes) contract. |
 | `--no-color` | Disable all colour and styling. Also via `NO_COLOR` or `CIVITAI_NO_COLOR`. |
 | `--color` | Force colour **even when stdout is not a TTY**. Also via `CLICOLOR_FORCE` or `CIVITAI_COLOR`. |
@@ -2399,7 +2417,10 @@ fi
 string this CLI really prints, so searching this page for a few words of your
 error should land you on the right row. (A test asserts that each of these
 strings still exists in the source, so the index cannot quietly go stale the way
-a hand-written list does.)
+a hand-written list does — and for the rows most easily confused with one
+another, a second test runs the command the row names and checks it really
+prints that string, because "the string exists somewhere" was green while a row
+credited it to the wrong command.)
 
 ### Credentials and access
 
@@ -2427,7 +2448,8 @@ a hand-written list does.)
 
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
-| `is this an App project?` | There is no `block.manifest.json` at the path you named. The path itself was fine — which is why this exits `1` and not `2`. | [Validate fidelity](#validate-fidelity) |
+| `… not found at project root …` | **`civitai app validate`** (and `app submit`, which validates first) found no `block.manifest.json` in the directory you named — the full line is `block.manifest.json not found at project root <dir>`. The path itself was fine — which is why this exits `1` and not `2`. | [Validate fidelity](#validate-fidelity) |
+| `is this an App project?` | A **different** message with the same cause, from a different command: `civitai app listing …`, which has to work out *which* app you mean from the working directory. `app validate` and `app submit` never print it — they report the row above. Run `app listing` from the app directory, or name the app with `--slug` / `--dir`. | [Listing media requirements](#listing-media-requirements) |
 | `no such directory — pass the path to an App project root` | The path does not exist. This is a **usage** error: exit `2`, and `--json` prints nothing at all. | [Exit codes](#exit-codes) |
 | `is not a directory — pass the App project ROOT` | You pointed at a file — often the manifest itself. Pass the directory holding it. Exit `2`. | [Exit codes](#exit-codes) |
 | `it did NOT check that the file is loaded` | The `BLOCK_READY` advisory on its **weak** tier: it could not resolve what your `index.html` loads, so it only checked whether *some* file mentions the message. The lines that follow name what it could not follow. | [The host handshake](#the-host-handshake-block_ready) |
