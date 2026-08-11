@@ -3,7 +3,7 @@
 > 🔴 **2026-08-11 — THE HARNESS DESCRIBED BELOW NO LONGER EXISTS. This document
 > is a historical record, not a description of the tree.** `scripts/dogfood-sandbox.sh`,
 > `scripts/dogfood-mutate.sh`, `internal/dogfoodguard/` and the `make dogfood-check`
-> target were deleted in PR #TBD. Every command, path and `make` target named
+> target were deleted in PR #394. Every command, path and `make` target named
 > below is therefore dead — do not try to run them.
 >
 > **Why:** 7 rounds and 5 blind audits produced ~24 🔴 findings, none of which
