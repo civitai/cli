@@ -1232,6 +1232,20 @@ $ civitai app listing add-screenshot ./assets/screenshot-1.png --caption "Grid v
 `assets/` is scaffolded by every template, with a README of the requirements and
 **no placeholder images** — the files above are ones you supply.
 
+**Every `app listing` subcommand has to work out *which* app you mean, and it
+does that from the working directory** — it reads `blockId` out of the
+`block.manifest.json` next to you. Run from somewhere else and there is no
+manifest to read, so it stops before it builds a request:
+
+```text
+$ cd /tmp && civitai app listing status
+Error: could not resolve the app — run this from your app directory (with block.manifest.json) or pass --slug: no block.manifest.json found in . — is this an App project? run `civitai app init` to create one
+```
+
+Two flags name the app instead: **`--slug <blockId>`** skips the manifest
+entirely, and **`--dir <path>`** points at the app directory from wherever you
+are. Both work on every `listing` subcommand.
+
 Details worth knowing before you start:
 
 - **Source images** are png/jpeg/webp and are size-checked **locally before any
@@ -2448,8 +2462,8 @@ credited it to the wrong command.)
 
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
-| `… not found at project root …` | **`civitai app validate`** (and `app submit`, which validates first) found no `block.manifest.json` in the directory you named — the full line is `block.manifest.json not found at project root <dir>`. The path itself was fine — which is why this exits `1` and not `2`. | [Validate fidelity](#validate-fidelity) |
-| `is this an App project?` | A **different** message with the same cause, from a different command: `civitai app listing …`, which has to work out *which* app you mean from the working directory. `app validate` and `app submit` never print it — they report the row above. Run `app listing` from the app directory, or name the app with `--slug` / `--dir`. | [Listing media requirements](#listing-media-requirements) |
+| `… not found at project root …` | **`civitai app validate`** found no `block.manifest.json` in the directory you named — the finding reads `block.manifest.json not found at project root <dir>`, which the terminal wraps onto a second line for a long path (`--json` carries it as one `message` string). `app submit` prints it too, because it validates first. `app submit --skip-validate` never prints it, because it waives the validation that produces it — that run fails on the row below instead. The path itself was fine, which is why this exits `1` and not `2`. | [Exit code 1](#exit-code-1) |
+| `is this an App project?` | The same cause, reported by a command that did not validate first: `civitai app listing …`, which has to work out *which* app you mean from the working directory, and `app submit --skip-validate`, which waived the check that produces the row above. `app validate` and a plain `app submit` never print it, because validation reports the row above first. Run `app listing` from the app directory, or name the app with `--slug` / `--dir`. | [After you submit](#after-you-submit-review--approve--deploy) |
 | `no such directory — pass the path to an App project root` | The path does not exist. This is a **usage** error: exit `2`, and `--json` prints nothing at all. | [Exit codes](#exit-codes) |
 | `is not a directory — pass the App project ROOT` | You pointed at a file — often the manifest itself. Pass the directory holding it. Exit `2`. | [Exit codes](#exit-codes) |
 | `it did NOT check that the file is loaded` | The `BLOCK_READY` advisory on its **weak** tier: it could not resolve what your `index.html` loads, so it only checked whether *some* file mentions the message. The lines that follow name what it could not follow. | [The host handshake](#the-host-handshake-block_ready) |

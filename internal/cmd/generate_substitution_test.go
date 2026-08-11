@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -839,15 +840,22 @@ func TestREADME_DryRunTranscriptMatchesRealOutput(t *testing.T) {
 	if !strings.Contains(readme, idLine) {
 		t.Errorf("README's --dry-run transcript does not match real output.\n"+
 			"  renderer emits: %q\n"+
-			"  README does not contain that line — update the transcript in README.md", idLine)
+			"  no line in README.md is that line.\n"+
+			"  The RENDERER is the authority here: move the README transcript onto this line "+
+			"(and if the ids changed, move readmeRequestedVersion/readmeAppliedVersion with it).", idLine)
 	}
 
 	// 🔴 And the stale form must be GONE, not merely joined by the correct one.
 	// A README that shows both would still be teaching the wrong thing.
-	staleTense := fmt.Sprintf("-> ran version %d", readmeAppliedVersion)
-	if strings.Contains(readme, staleTense) {
+	//
+	// Matched on the SHAPE, not on today's applied id: binding this to
+	// readmeAppliedVersion silently dropped cover for the historical stale text
+	// (`-> ran version 2436219`), which is the string this assertion was written
+	// for. Any id in the past tense is the defect.
+	staleTenseRe := regexp.MustCompile(`->\s*ran version \d+`)
+	if m := staleTenseRe.FindString(readme); m != "" {
 		t.Errorf("README still shows the pre-tense-fix estimate line (`%s`), "+
-			"which contradicts the lead above it saying nothing has been charged yet", staleTense)
+			"which contradicts the lead above it saying nothing has been charged yet", m)
 	}
 
 	// 🔴 And the invocation ABOVE the transcript must be one that can reach it.
@@ -856,12 +864,79 @@ func TestREADME_DryRunTranscriptMatchesRealOutput(t *testing.T) {
 	// command, which 404'd on a nonexistent id long before anything was priced.
 	// A block whose output is byte-perfect under a command that cannot produce it
 	// is exactly as misleading as a stale line, and nothing could see it.
-	if strings.Contains(readme, "--checkpoint 999999999 --dry-run") {
-		t.Errorf("the README substitution transcript is introduced by " +
-			"`--checkpoint 999999999 --dry-run`. That id does not exist, so " +
-			"ResolveModelVersion refuses it with `not found (404)` and exit 4 before the " +
-			"estimate is priced — the block below it can never be produced by the command above it (#360).")
+	//
+	// 🔴 STRUCTURAL, not spelled. The first repair was
+	// `strings.Contains(readme, "--checkpoint 999999999 --dry-run")` — a search
+	// of the WHOLE FILE for one literal, unanchored to the transcript. Measured:
+	// `--checkpoint 999999998` in the fence passed, the same flags reordered
+	// passed, and a CORRECT README whose caveat bullet happened to spell the
+	// banned literal FAILED, naming the wrong location. So: find the fence the
+	// real id line lives in, read the `$ civitai generate …` line that introduces
+	// it, and require ITS --checkpoint to be the id the block is rendered from.
+	inv := readmeTranscriptInvocation(readme, idLine)
+	if inv == "" {
+		t.Fatalf("the README block containing %q has no `$ civitai generate …` line above it — "+
+			"a transcript with no invocation cannot be checked for reachability at all (#360)", idLine)
 	}
+	got, ok := invocationCheckpoint(inv)
+	switch {
+	case !ok:
+		t.Errorf("the invocation introducing the substitution transcript passes no --checkpoint:\n  %s\n"+
+			"The block below it shows a checkpoint substitution, so it cannot be produced by that command (#360).", inv)
+	case got != readmeRequestedVersion:
+		t.Errorf("the invocation introducing the substitution transcript asks for --checkpoint %d, "+
+			"but the block below it is the rendering of a substitution REQUESTED for %d:\n  %s\n"+
+			"The output shown cannot be produced by the command shown. (#360 was this exactly, with "+
+			"999999999 — an id that does not exist, so ResolveModelVersion refuses it with "+
+			"`not found (404)` and exit 4 before anything is priced.)", got, readmeRequestedVersion, inv)
+	}
+	if !strings.Contains(inv, "--dry-run") {
+		t.Errorf("the substitution transcript is rendered at the ESTIMATE phase "+
+			"(substitutionAtEstimate), but its invocation is not a --dry-run:\n  %s", inv)
+	}
+}
+
+// readmeTranscriptInvocation returns the `$ civitai generate …` line that
+// introduces the fenced block containing idLine, or "" if the walk leaves the
+// fence without finding one. Anchoring to the fence is the point: a literal
+// searched for across the whole file answers a question about the page, not
+// about the transcript.
+func readmeTranscriptInvocation(readme, idLine string) string {
+	lines := strings.Split(readme, "\n")
+	target := -1
+	for i, ln := range lines {
+		if strings.Contains(ln, idLine) {
+			target = i
+			break
+		}
+	}
+	if target < 0 {
+		return ""
+	}
+	for i := target - 1; i >= 0; i-- {
+		ln := strings.TrimSpace(lines[i])
+		if strings.HasPrefix(ln, "```") {
+			return "" // walked out of the fence with no invocation in it
+		}
+		if strings.HasPrefix(ln, "$ civitai generate") {
+			return ln
+		}
+	}
+	return ""
+}
+
+var invocationCheckpointRe = regexp.MustCompile(`--checkpoint[=\s]+(\d+)`)
+
+func invocationCheckpoint(invocation string) (int, bool) {
+	m := invocationCheckpointRe.FindStringSubmatch(invocation)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // --- the flag hint ------------------------------------------------------------
