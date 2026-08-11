@@ -494,7 +494,7 @@ func TestAppDevTokenNoManifestPrintsNoFilteredNotice(t *testing.T) {
 // rather than asserting OAuth can never spend; and the manifest-cause branch
 // must offer --spend.
 func TestReadOnlyTokenWarningPointsAtTheNewFixes(t *testing.T) {
-	oauth := readOnlyTokenWarning(ui.For(io.Discard), false, "oauth", "my-block")
+	oauth := readOnlyTokenWarning(ui.For(io.Discard), false, "oauth", "my-block", false)
 	if !strings.Contains(oauth, "civitai login --scopes generate") {
 		t.Errorf("OAuth read-only warning must offer --scopes generate; got:\n%s", oauth)
 	}
@@ -502,7 +502,7 @@ func TestReadOnlyTokenWarningPointsAtTheNewFixes(t *testing.T) {
 		t.Errorf("warning must not assert OAuth can NEVER spend; got:\n%s", oauth)
 	}
 
-	canSpend := readOnlyTokenWarning(ui.For(io.Discard), true, "token", "my-block")
+	canSpend := readOnlyTokenWarning(ui.For(io.Discard), true, "token", "my-block", false)
 	if !strings.Contains(canSpend, "--spend") {
 		t.Errorf("the credential-can-spend branch must offer --spend; got:\n%s", canSpend)
 	}

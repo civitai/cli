@@ -135,6 +135,15 @@ func spendFilteredFromManifest(manifestScopes []string, spend bool) bool {
 	if spend {
 		return false
 	}
+	return manifestDeclaresBudgetedSpend(manifestScopes)
+}
+
+// manifestDeclaresBudgetedSpend reports whether the local manifest's `scopes`
+// already ask for budgeted spend. Kept as ONE predicate because two places read
+// it for opposite reasons — spendFilteredFromManifest ("the CLI dropped a scope
+// you declared") and readOnlyTokenWarning ("don't tell them to declare a scope
+// they already declared") — and a second copy would drift.
+func manifestDeclaresBudgetedSpend(manifestScopes []string) bool {
 	for _, s := range manifestScopes {
 		if s == budgetedScope {
 			return true
@@ -215,11 +224,20 @@ func tokenCanSpend(jwt string) bool {
 //     key) is the fix.
 //   - credential can't spend + personal key → that key lacks AI Services.
 //
-// It's a pure function (canSpend from whoami, authKind from config) so the
-// branch logic is unit-testable without a network round-trip. The header glyph +
-// color are resolved against sty's writer (the command's stderr) so color
-// follows that stream independently of stdout.
-func readOnlyTokenWarning(sty ui.Styler, canSpend bool, authKind, slug string) string {
+// It's a pure function (canSpend from whoami, authKind from config, and
+// manifestDeclaresSpend from the local manifest) so the branch logic is
+// unit-testable without a network round-trip. The header glyph + color are
+// resolved against sty's writer (the command's stderr) so color follows that
+// stream independently of stdout.
+//
+// 🔴 EVERY COMMAND THIS BLOCK PRINTS MUST LEAVE THE STATE IT COMPLAINS ABOUT.
+// `remint` is the plain re-mint — no `--spend` — and it is the right follow-up
+// ONLY for the two credential-fix branches, where the user changes the
+// CREDENTIAL and then re-mints. It used to be appended to the canSpend branch
+// too, which made the LAST and most-recently-read command in a warning about a
+// missing `--spend` the one that omits `--spend`: copy it and you are back where
+// you started (civitai/cli#362). Do not re-add it there.
+func readOnlyTokenWarning(sty ui.Styler, canSpend bool, authKind, slug string, manifestDeclaresSpend bool) string {
 	header := "\n" + sty.Warn("This token is READ-ONLY (no `ai:write:budgeted` scope) — "+
 		"`npm run dev:live` will NOT spend Buzz or generate; Generate dead-ends silently.")
 	remint := "     civitai app dev-token " + slug + " --env >> .env.development.local   # re-mint, then restart dev:live"
@@ -228,11 +246,17 @@ func readOnlyTokenWarning(sty ui.Styler, canSpend bool, authKind, slug string) s
 	case canSpend:
 		// The stored credential CAN spend, so the token is read-only because the
 		// mint request didn't carry the scope — pass --spend, or declare it in the
-		// manifest so every mint asks for it.
+		// manifest so every mint asks for it. Offer the manifest only when it does
+		// NOT already declare the scope: when it does, the CLI found it and
+		// deliberately filtered it out (spendFilteredFromManifest), so "add it to
+		// scopes" is a step the user has already taken.
+		alsoManifest := " (or add it to `scopes` in block.manifest.json)"
+		if manifestDeclaresSpend {
+			alsoManifest = ""
+		}
 		return header + "\n" +
-			"   Cause: your credential CAN spend, but `ai:write:budgeted` wasn't requested — re-mint with `--spend` (or add it to `scopes` in block.manifest.json):\n" +
-			"     civitai app dev-token " + slug + " --spend --env >> .env.development.local\n" +
-			remint
+			"   Cause: your credential CAN spend, but `ai:write:budgeted` wasn't requested — re-mint with `--spend`" + alsoManifest + ":\n" +
+			"     civitai app dev-token " + slug + " --spend --env >> .env.development.local"
 	case authKind == config.AuthKindOAuth:
 		return header + "\n" +
 			"   Cause: you're signed in with an OAuth login that did NOT opt into generation, so it can't spend Buzz. Re-login asking for it:\n" +
@@ -404,9 +428,11 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 			}
 			// Announce the FILTER before the mint, so the developer learns why
 			// dev:live won't generate here rather than from the server's 403.
-			if spendFilteredFromManifest(manifestScopes, spend) {
+			spendFiltered := spendFilteredFromManifest(manifestScopes, spend)
+			if spendFiltered {
 				fmt.Fprintln(errOut, spendFilteredNotice(ui.For(errOut), slug))
 			}
+			manifestDeclaresSpend := manifestDeclaresBudgetedSpend(manifestScopes)
 			token, slug, err := mintDevTokenWithRename(context.Background(), client, errOut, ".", slug, scopes, buzzBudget, spend)
 			if err != nil {
 				return err
@@ -436,7 +462,17 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 				if id, whoErr := client.WhoAmI(context.Background()); whoErr == nil {
 					canSpend = id.CanSpendBuzz()
 				}
-				fmt.Fprintln(errOut, readOnlyTokenWarning(ui.For(errOut), canSpend, cfg.AuthKind(), slug))
+				// 🔴 SAY IT ONCE. spendFilteredNotice already fired BEFORE the
+				// mint, and when the credential can spend it named the same
+				// cause and the same `--spend` re-mint this warning would. The
+				// token is printed to stdout in between, so emitting both put
+				// the identical advice on either side of the token
+				// (civitai/cli#362). Suppress only for that exact overlap —
+				// when the credential CANNOT spend, this warning names a cause
+				// (the credential) the pre-mint notice never mentions.
+				if !(spendFiltered && canSpend) {
+					fmt.Fprintln(errOut, readOnlyTokenWarning(ui.For(errOut), canSpend, cfg.AuthKind(), slug, manifestDeclaresSpend))
+				}
 			}
 			return nil
 		},

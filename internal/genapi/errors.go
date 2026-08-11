@@ -71,6 +71,23 @@ type APIError struct {
 func (e *APIError) Error() string { return e.err.Error() }
 func (e *APIError) Unwrap() error { return e.err }
 
+// workflowIDProcs are the generation procedures whose request carries a
+// USER-SUPPLIED workflow id, so a 404 from them means "no workflow with that
+// id" — the input is wrong, not the CLI. Every other proc addresses a fixed
+// route, where a 404 really does mean the route is gone.
+//
+// 🔴 This is a ledger of THIS package's own call sites (the `proc` labels passed
+// to generateError below), not a vendored claim about the server, so item 13's
+// no-mirroring rule does not apply — but it is a ledger, and
+// TestWorkflowIDProcsCoverEveryIDCarryingCallSite fails if a call site is added
+// or renamed without updating it. The failure mode without that guard is silent:
+// a new id-taking proc simply falls back to the generic route message, and
+// nothing is red.
+var workflowIDProcs = map[string]bool{
+	"getWorkflow":    true, // civitai workflows get / generate's status poll
+	"cancelWorkflow": true, // civitai workflows cancel
+}
+
 // generateError turns a non-200 from an orchestrator generation procedure into
 // an actionable error, classified by HTTP status via civitai.TagStatus so the
 // process exit code is pinned by errors.Is and never by message text.
@@ -113,7 +130,10 @@ func generateError(proc string, status int, raw []byte) (err error) {
 	case http.StatusBadRequest:
 		return fmt.Errorf("the server rejected the generation request (400): %s", msg)
 	case http.StatusNotFound:
-		return fmt.Errorf("no such generation procedure or resource (404): %s", msg)
+		if workflowIDProcs[proc] {
+			return fmt.Errorf("no such workflow (404): %s — check the id with `civitai workflows list`", msg)
+		}
+		return fmt.Errorf("the server has no such generation route (404): %s — nothing you passed can cause this; update the CLI with `civitai upgrade` and report it if it persists", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited (429): %s — back off before retrying", msg)
 	case http.StatusServiceUnavailable:

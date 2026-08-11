@@ -102,11 +102,12 @@ func TestAppDevTokenSpendableNoWarn(t *testing.T) {
 // The warning must name the ACTUAL cause, not presume OAuth.
 func TestReadOnlyTokenWarning(t *testing.T) {
 	cases := []struct {
-		name      string
-		canSpend  bool
-		authKind  string
-		wantHas   []string
-		wantNotHa []string
+		name                  string
+		canSpend              bool
+		authKind              string
+		manifestDeclaresSpend bool
+		wantHas               []string
+		wantNotHa             []string
 	}{
 		{
 			name:      "credential can spend → blame the manifest",
@@ -114,6 +115,17 @@ func TestReadOnlyTokenWarning(t *testing.T) {
 			authKind:  config.AuthKindToken,
 			wantHas:   []string{"credential CAN spend", "block.manifest.json", "re-mint"},
 			wantNotHa: []string{"OAuth", "lacks the AI Services", "civitai login --token"},
+		},
+		{
+			// Same branch, but the manifest already declares the scope: the
+			// manifest route is a step the user has taken, so only --spend is
+			// left to offer (civitai/cli#362).
+			name:                  "credential can spend, manifest already declares → only --spend",
+			canSpend:              true,
+			authKind:              config.AuthKindToken,
+			manifestDeclaresSpend: true,
+			wantHas:               []string{"credential CAN spend", "re-mint with `--spend`"},
+			wantNotHa:             []string{"add it to `scopes`", "OAuth", "lacks the AI Services"},
 		},
 		{
 			name:      "oauth login → blame OAuth",
@@ -132,7 +144,7 @@ func TestReadOnlyTokenWarning(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := readOnlyTokenWarning(ui.For(io.Discard), tc.canSpend, tc.authKind, "my-block")
+			got := readOnlyTokenWarning(ui.For(io.Discard), tc.canSpend, tc.authKind, "my-block", tc.manifestDeclaresSpend)
 			if !strings.Contains(got, "READ-ONLY") {
 				t.Errorf("missing READ-ONLY header; got:\n%s", got)
 			}

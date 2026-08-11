@@ -81,7 +81,21 @@ engagement section — that is expected, not a bug.`,
   civitai app metrics my-block --from 2026-05-01 --to 2026-08-03
   civitai app metrics my-block --from 2026-05-01T00:00:00Z
   civitai app metrics my-block --json`,
-		Args: cobra.ExactArgs(1),
+		// cobra.ExactArgs(1) answers a bare `civitai app metrics` with "accepts 1
+		// arg(s), received 0" — correct, and it names neither what the argument
+		// IS nor where to find one. `app dev-token` / `app dev-tunnel` already
+		// answer the same mistake by naming the slug and the command that lists
+		// slugs; this matches them (civitai/cli#363). enforceUsageExitCodes tags
+		// whatever this returns ErrUsage, so the exit code stays 2.
+		Args: func(cmd *cobra.Command, args []string) error {
+			switch {
+			case len(args) == 0:
+				return fmt.Errorf("an app slug is required — e.g. `civitai app metrics my-block` (list yours with `civitai app status`)")
+			case len(args) > 1:
+				return fmt.Errorf("accepts 1 app slug, received %d — `civitai app metrics <slug>` reports on one app at a time", len(args))
+			}
+			return nil
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			from, to, err := parseMetricsWindow(fromFlag, toFlag)
 			if err != nil {

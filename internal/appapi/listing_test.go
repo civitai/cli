@@ -279,7 +279,7 @@ func TestListingErrorMapping(t *testing.T) {
 		{http.StatusForbidden, "Your API key does not have the required scope for this action", "Apps submit scope", true},
 		{http.StatusForbidden, "Apps authoring is not enabled", "Apps-author access", true},
 		{http.StatusNotFound, "no listing found", "no store listing found", true},
-		{http.StatusBadRequest, "This listing is live", "rejected the request", true},
+		{http.StatusBadRequest, "This listing is live", "the server rejected this store-listing change", true},
 	}
 	for _, tc := range cases {
 		body, _ := json.Marshal(map[string]any{"error": map[string]any{"json": map[string]any{"message": tc.msg}}})

@@ -439,7 +439,13 @@ func listingError(status int, raw []byte, path string) (err error) {
 	case http.StatusNotFound:
 		return fmt.Errorf("no store listing found for this app (404): %s — a store listing is created when you run `civitai app submit` and is settable while the app is pending review; submit the app first, then these commands will work", msg)
 	case http.StatusBadRequest:
-		return fmt.Errorf("%s rejected the request (400): %s", name, msg)
+		// 🔴 NOT `name` here. A 400 is the user's input being refused, and
+		// leading with the tRPC method ("appListings.setIcon rejected the
+		// request") reads as "the CLI is calling something that does not
+		// exist" — the tool looks broken instead of the input (civitai/cli#363).
+		// The default: arm below keeps the method name, which is where a
+		// genuinely unexpected status makes it worth reporting.
+		return fmt.Errorf("the server rejected this store-listing change (400): %s — fix the value and retry; `civitai app listing status` shows the listing as it stands", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)
 	case http.StatusServiceUnavailable:

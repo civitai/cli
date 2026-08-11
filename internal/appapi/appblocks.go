@@ -800,10 +800,33 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 		// rather than a 404, so this is resolved client-side and never reaches
 		// submissionsError's TagStatus. Tag it here or the exit code silently
 		// differs from the `?id=` spelling of the same question (which does 404
-		// and maps to exit 4). The message is unchanged — Tag adds no text.
-		return nil, civitai.Tag(civitai.ErrNotFound, fmt.Errorf("no such submission"))
+		// and maps to exit 4). Tag adds no text of its own.
+		//
+		// This is the FIRST wall a user hits after `app create`: `app listing
+		// status` and `app status <slug>` both land here before anything has been
+		// submitted, and a bare "no such submission" named no next command in a
+		// tool whose house style always does (civitai/cli#363). The submission —
+		// and with it the draft store listing the listing commands need — is
+		// created by `app submit`, so that is the step to name.
+		return nil, civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
+			"no such submission for %s — run `civitai app submit` first; the submission and its draft store listing are created at submit time (list what you have submitted with `civitai app status`)",
+			submissionSubject(id, blockID)))
 	}
 	return &list.Submissions[0], nil
+}
+
+// submissionSubject names WHICH lookup came back empty, using the selector the
+// caller actually passed (GetSubmission takes either a pubreq id or a slug, and
+// id wins when both are set — mirror that order here or the error names a
+// selector the request did not use).
+func submissionSubject(id, blockID string) string {
+	if s := strings.TrimSpace(id); s != "" {
+		return fmt.Sprintf("submission id %q", s)
+	}
+	if s := strings.TrimSpace(blockID); s != "" {
+		return fmt.Sprintf("app %q", s)
+	}
+	return "this app"
 }
 
 // withdrawBody is the POST /api/v1/blocks/withdraw request body.
@@ -1463,7 +1486,10 @@ func submissionsError(status int, raw []byte) (err error) {
 	case http.StatusForbidden:
 		return fmt.Errorf("apps access required — invite-only beta (403): %s", msg)
 	case http.StatusNotFound:
-		return fmt.Errorf("no such submission (404): %s", msg)
+		// Same dead end as GetSubmission's empty-list arm, reached by the `?id=`
+		// spelling — name the same next command so one question answered two ways
+		// gives one answer (civitai/cli#363).
+		return fmt.Errorf("no such submission (404): %s — run `civitai app submit` first; the submission and its draft store listing are created at submit time (list what you have submitted with `civitai app status`)", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited (429): %s — wait a moment and retry", msg)
 	case http.StatusServiceUnavailable:

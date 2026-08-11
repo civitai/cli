@@ -143,8 +143,12 @@ func TestGetSubmissionEmptyListIsNotFound(t *testing.T) {
 	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("empty-list miss must classify as not-found (exit 4), got %T: %v", err, err)
 	}
-	// Tag adds no visible text.
-	if err.Error() != "no such submission" {
+	// Tag adds no visible text. The literal is written out rather than rebuilt
+	// from the implementation, so an accidental edit to either side shows up.
+	const want = "no such submission for app \"ghost\" — run `civitai app submit` first; " +
+		"the submission and its draft store listing are created at submit time " +
+		"(list what you have submitted with `civitai app status`)"
+	if err.Error() != want {
 		t.Errorf("classification must not change the message, got %q", err.Error())
 	}
 }

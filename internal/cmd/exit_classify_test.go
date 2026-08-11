@@ -161,7 +161,7 @@ func TestAppStatusBySlugUnknownIsNotFoundTagged(t *testing.T) {
 	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("`app status <slug>` on an unknown slug must classify as not-found (exit 4), got %T: %v", err, err)
 	}
-	if err.Error() != "no such submission" {
+	if err.Error() != wantNoSubmissionMsg("no-such-app-xyz") {
 		t.Errorf("classification must not change the message, got %q", err.Error())
 	}
 }
@@ -177,7 +177,7 @@ func TestAppListingStatusUnknownSlugIsNotFoundTagged(t *testing.T) {
 	if !errors.Is(err, civitai.ErrNotFound) {
 		t.Errorf("`app listing status --slug` on an unknown slug must classify as not-found (exit 4), got %T: %v", err, err)
 	}
-	if err.Error() != "no such submission" {
+	if err.Error() != wantNoSubmissionMsg("no-such-app-xyz") {
 		t.Errorf("classification must not change the message, got %q", err.Error())
 	}
 }
@@ -287,8 +287,18 @@ func TestMissingArgsAndBadFlagValuesAreUsageTagged(t *testing.T) {
 			// invisible to SetFlagErrorFunc — `--app` omitted exited 1 while the
 			// unknown flag `--nope` exited 2. Message is cobra's, unchanged.
 			name:    "app pull with --app omitted entirely (cobra's required-flag error)",
-			args:    []string{"app", "pull", "."},
+			args:    []string{"app", "pull"},
 			wantMsg: `required flag(s) "app" not set`,
+		},
+		{
+			// With a POSITIONAL present the command's own Args validator runs
+			// first (enforceUsageExitCodes calls it ahead of cobra's
+			// required-flag check) and says which slot is which — cobra's
+			// message never did, and a user who typed the slug positionally had
+			// no way to learn the positional is the directory (civitai/cli#363).
+			name:    "app pull with a positional and no --app",
+			args:    []string{"app", "pull", "."},
+			wantMsg: "--app is required, and the positional argument is the DIRECTORY, not the app: `civitai app pull [dir] --app <slug>` (find the slug with `civitai app status`)",
 		},
 		{
 			// The command's OWN check, reachable once the flag is present but

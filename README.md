@@ -1446,7 +1446,14 @@ provisions a scoped, read-only Forgejo identity** for you and returns a clone UR
 with a pull token embedded.
 
 The repo only exists once your **first version has been submitted as a ZIP and
-approved**; before then the command tells you so rather than failing obscurely.
+approved**; before then the command tells you so rather than failing obscurely —
+`app <slug> has no approved version yet …`, naming the latest submission's state
+and pointing at `civitai app status <slug>`. It says *no such app for your
+account* only when the slug really matches none of your submissions.
+
+`--app` is also where the app goes, and the positional is the **directory**:
+`civitai app pull my-block` (slug typed positionally) is refused with a message
+saying so, not a bare framework error.
 
 > ⚠️ **SECURITY — TOKEN-IN-URL LEAKAGE.** The clone URL embeds your access token
 > as HTTP-Basic credentials (`https://<user>:<token>@…`).
@@ -2449,7 +2456,9 @@ a hand-written list does.)
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
 | `has no approved App Block yet` | The slug is right and the app exists — its analytics do not, because the version is still in review. Exit `1`, not `4`. | [App metrics](#app-metrics) |
-| `no such app for your account` | The slug matches none of your submissions. List them with `civitai app status`. | [Submission status](#submission-status) |
+| `no such app for your account` | The slug matches none of your submissions. List them with `civitai app status`. If `app status` *does* list it, you will see the message below instead — the app exists and is simply not approved. | [Submission status](#submission-status) |
+| `has no approved version yet` | `civitai app pull` clones a repository that only exists once a submitted version has been **approved**. The app is real and still in review; `civitai app status <slug>` shows where. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
+| `no such submission` | Nothing has been submitted for that app yet. `civitai app submit` creates the submission **and** the draft store listing the `app listing` commands read. | [Submit & auth](#submit--auth) |
 | `is ambiguous — it matches` | A model version has several files sharing that name. Select one by its numeric file id with `--file <id>`. | [Download model files](#download-model-files) |
 | `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. | [Download model files](#download-model-files) |
 | `checksum mismatch for` | The same, during `civitai upgrade`. The binary was **not** replaced. | [Upgrading](#upgrading) |
