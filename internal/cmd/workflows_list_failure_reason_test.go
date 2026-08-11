@@ -192,6 +192,27 @@ func TestWorkflowsList_AMultiLineReasonCannotForgeARow(t *testing.T) {
 	}
 }
 
+// The OTHER half of the same hazard: the reason is server-origin text bound for
+// a terminal, so a raw escape introducer in it could move the cursor over a line
+// the CLI wrote — forgery without a newline. safeTerm is what strips those, and
+// nothing on this surface asserted it until #382 put unbounded provider text
+// here.
+func TestWorkflowsList_ReasonCannotCarryTerminalControlBytes(t *testing.T) {
+	// \u001b[1A\u001b[2K is cursor-up + clear-line: overwrite the row above.
+	// U+009B is the 8-bit CSI. Both are JSON escapes in a raw Go literal, so
+	// encoding/json hands the renderer real control bytes.
+	stdout, stderr := renderList(t, listPage(
+		listRow("wf_bad", "failed", `["FIXTURE \u001b[1A\u001b[2Khijacked \u009b2K and \u0007bell"]`),
+	))
+	// POSITIVE CONTROL: the reason rendered, so the absence below is about the
+	// bytes and not about nothing having been printed.
+	if !strings.Contains(stdout, "hijacked") {
+		t.Fatalf("CONTROL failure, not a finding: the reason never rendered:\n%q", stdout)
+	}
+	assertNoControlBytes(t, "workflows list stdout", stdout)
+	assertNoControlBytes(t, "workflows list stderr", stderr)
+}
+
 // A tab in a reason is its own alignment hazard next to a tabwriter. It is safe
 // only because the reason is written straight to stdout and never through the
 // tabwriter — so the table above must be byte-identical to the same table
