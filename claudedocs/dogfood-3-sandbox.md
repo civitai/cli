@@ -1,11 +1,30 @@
 # Dogfood run 3 — the credentialed sandbox
 
+> 🔴 **2026-08-11 — THE HARNESS DESCRIBED BELOW NO LONGER EXISTS. This document
+> is a historical record, not a description of the tree.** `scripts/dogfood-sandbox.sh`,
+> `scripts/dogfood-mutate.sh`, `internal/dogfoodguard/` and the `make dogfood-check`
+> target were deleted in PR #TBD. Every command, path and `make` target named
+> below is therefore dead — do not try to run them.
+>
+> **Why:** 7 rounds and 5 blind audits produced ~24 🔴 findings, none of which
+> were about the CLI. Every "money control" here turned out to be convention
+> rather than enforcement — a shell script running as the agent's own uid, beside
+> a credential it could read and a binary it could execute directly — and the
+> complex shipped four known 🔴 defects of its own, including `selftest` bricking
+> a live sandbox. `claudedocs/handoff-dogfood-3.md` carries the full verdict and
+> the reasoning for deleting all three pieces together rather than keeping any
+> one of them; they were coupled (the mutation battery targets the sandbox, and
+> `dogfoodguard`'s only consumer was the sandbox).
+>
+> Kept because it is the record of what was tried, what it cost, and why a future
+> credentialed-dogfood attempt should not be rebuilt this way.
+
 Design + validation record for `scripts/dogfood-sandbox.sh`, the harness that
 makes a **credentialed** blind dogfood run of the `civitai` CLI survivable and
 auditable.
 
-Status: **built and validated on the free surface. Not yet run. Awaiting the
-go/no-go at the end of this document.**
+Status: **REMOVED (see the note above). Was: built and validated on the free
+surface, never run, awaiting the go/no-go at the end of this document.**
 
 ## Why this exists
 
