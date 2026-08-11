@@ -188,12 +188,15 @@ func TestAppMetricsAdviceNamesTheNewestSubmission(t *testing.T) {
 			if rec.trpcReached {
 				t.Error("a null appBlockId must not reach the analytics query")
 			}
-			// 🔴 WHAT THE README MAY CLAIM ABOUT THIS MESSAGE. `app metrics`
-			// prints NO `(latest submission: …)` — so for a PENDING app it names
-			// no state at all, and prose saying it "names the latest submission's
-			// state" is false for the commonest case. The section says "the next
-			// step FOR the latest submission's own state" instead; this is the
-			// measurement that wording rests on.
+			// 🔴 WHAT THE README MAY CLAIM ABOUT THIS MESSAGE, AND NO MORE.
+			// `app metrics` prints NO `(latest submission: …)` pair — so for a
+			// PENDING app it names no state at all, and prose saying it "names
+			// the latest submission's state" is false for the commonest case.
+			// The section says "the next step FOR the latest submission's own
+			// state" instead, and its parenthetical is scoped to THIS pair,
+			// because the status word itself IS printed (uppercased) in the
+			// rejected and withdrawn branches. Widening that sentence past what
+			// this assertion measures is how it went wrong the first time.
 			if m := latestParenthetical.FindString(msg); m != "" {
 				t.Errorf("`app metrics` printed %q — if it now reports the state itself, the README "+
 					"`App metrics` section says it does not, and moves with this", m)
@@ -324,10 +327,26 @@ func TestPullReviewAdviceCallScannerIsCalibrated(t *testing.T) {
 	}
 }
 
-// testFuncBody returns the source of the top-level func named name, from its
-// declaration to the next top-level `func`, or "" when it is not declared.
-// Bodies are compared, not just names, so a ledger entry cannot be satisfied by
-// an unrelated test that merely exists.
+// testFuncBody returns the source of the top-level func named name — from its
+// declaration to its own closing brace — or "" when it is not declared. Bodies
+// are compared, not just names, so a ledger entry cannot be satisfied by an
+// unrelated test that merely exists.
+//
+// 🔴 IT ENDS AT THE CLOSING BRACE, NOT AT THE NEXT `func`, AND THE DIFFERENCE
+// WAS A LIVE HOLE. Ending at the next top-level func swallowed everything
+// between them — for TestAppMetricsAdviceNamesTheNewestSubmission that was 6013
+// bytes reaching past `var newestFirstAdviceSites`, i.e. THE LEDGER'S OWN
+// `exercises` LITERALS. So the metrics test's "body" contained the string
+// `run(t, "app", "pull"` (the ledger data, not the test), and repointing
+// app_pull.go's entry at the metrics test stayed green: a stale re-bind, exactly
+// what this binding exists to catch. Every future `exercises` value would have
+// landed in that same swallowed literal, so the guard weakened as the ledger
+// grew. Measured before the fix: pull body 3062 bytes / metrics body 6013.
+//
+// Truncating on a column-0 `}` assumes gofmt (nested braces are indented), which
+// `make ci` enforces. A raw string literal holding a line that is exactly `}`
+// would end the body early — that direction is SAFE: the fragment goes missing
+// and the ledger fails loudly, rather than matching something it should not see.
 func testFuncBody(src, name string) string {
 	decl := "\nfunc " + name + "("
 	i := strings.Index("\n"+src, decl)
@@ -335,8 +354,18 @@ func testFuncBody(src, name string) string {
 		return ""
 	}
 	body := ("\n" + src)[i+1:]
+	// Upper bound, and REDUNDANT under gofmt — stated rather than sold as a
+	// second guard. gofmt always ends a file with a newline, so the column-0
+	// brace below always matches first. Measured: deleting this line alone
+	// leaves the suite green (an equivalent mutant on gofmt'd input); deleting
+	// BOTH truncations goes red on the calibration battery. It is kept only as a
+	// bound for input with no column-0 closing brace at all.
 	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
 		body = body[:j+1]
+	}
+	// The real end: this func's own closing brace, at column 0.
+	if j := strings.Index(body, "\n}\n"); j >= 0 {
+		body = body[:j+2]
 	}
 	return body
 }
@@ -365,6 +394,42 @@ func TestTestFuncBodyIsCalibrated(t *testing.T) {
 	// A prefix must not match a longer name (TestAlphaExtra != TestAlpha).
 	if got := testFuncBody("func TestAlphaExtra(t *testing.T) {}\n", "TestAlpha"); got != "" {
 		t.Errorf("a name prefix must not bind, got %q", got)
+	}
+
+	// 🔴 THE CASE THAT HID THE REAL BUG: a func followed by a top-level
+	// declaration that is NOT a func. The battery above is func→func only, so an
+	// extractor ending at "the next func" passed every case here while swallowing
+	// `var newestFirstAdviceSites` in the real file — and that var holds the very
+	// `exercises` literals the binding searches for, making it self-satisfying.
+	for _, decl := range []struct{ name, src string }{
+		{"var", "var newestFirstAdviceSites = map[string]newestFirstSite{\n\t\"x\": {exercises: `run(t, \"app\", \"metrics\"`},\n}\n"},
+		{"type", "type other struct {\n\tf string // run(t, \"app\", \"metrics\"\n}\n"},
+		{"const", "const other = `run(t, \"app\", \"metrics\"`\n"},
+	} {
+		t.Run("stops before a top-level "+decl.name, func(t *testing.T) {
+			src := "package cmd\n\nfunc TestOnly(t *testing.T) {\n\trun(t, \"app\", \"pull\")\n}\n\n" + decl.src
+			body := testFuncBody(src, "TestOnly")
+			if !strings.Contains(body, `run(t, "app", "pull")`) {
+				t.Fatalf("the extractor lost TestOnly's own body: %q", body)
+			}
+			if strings.Contains(body, `run(t, "app", "metrics"`) {
+				t.Errorf("the extractor ran past TestOnly's closing brace into the following %s, "+
+					"so a ledger literal declared there would satisfy the binding it is supposed to check: %q", decl.name, body)
+			}
+		})
+	}
+
+	// The LAST func in a file has no following declaration to stop at — it must
+	// still extract, or the binding silently depends on file order.
+	last := testFuncBody("package cmd\n\nfunc TestLast(t *testing.T) {\n\trun(t, \"app\", \"pull\")\n}\n", "TestLast")
+	if !strings.Contains(last, `run(t, "app", "pull")`) {
+		t.Errorf("the last func in a file must still extract, got %q", last)
+	}
+
+	// Nested braces are indented under gofmt, so they must not end the body.
+	nested := testFuncBody("package cmd\n\nfunc TestNested(t *testing.T) {\n\tif x {\n\t\ty()\n\t}\n\trun(t, \"app\", \"pull\")\n}\n", "TestNested")
+	if !strings.Contains(nested, `run(t, "app", "pull")`) {
+		t.Errorf("an indented closing brace must not end the body, got %q", nested)
 	}
 }
 
@@ -436,8 +501,17 @@ func TestNewestFirstAdviceCallSitesAreLedgered(t *testing.T) {
 		// swapped ledger actively misdirects — its shrink-direction message
 		// names the wrong test to delete.
 		if !strings.Contains(body, site.exercises) {
-			t.Errorf("internal/cmd/%s is ledgered as pinned by %s, whose body never runs %s — "+
-				"the ledger is bound to the wrong test, so its failure messages name the wrong coverage",
+			// The message states the REQUIREMENT, not a diagnosis. Two very
+			// different things reach here: a stale re-bind (the hazard), and a
+			// legitimate refactor that moved the argv into a helper (not a
+			// hazard at all). Asserting "bound to the wrong test" is false in
+			// the second case and sends the reader hunting for a mistake nobody
+			// made, so name what the guard needs instead of guessing why.
+			t.Errorf("internal/cmd/%s is ledgered as pinned by %s, but that test's body does not contain %s.\n"+
+				"This binding requires the argv fragment LITERALLY in the pinning test's own body, so the "+
+				"ledger cannot be satisfied by an unrelated test that merely exists. Either the entry now names "+
+				"the wrong test (re-point it), or the invocation moved into a helper (inline it in the test, or "+
+				"update this entry's `exercises` to a fragment that is still literally there).",
 				name, site.pinnedBy, site.exercises)
 		}
 	}

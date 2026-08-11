@@ -1620,7 +1620,8 @@ app still in review reports that instead of an empty dashboard. Like `app pull`,
 the message names the next step **for** the latest submission's own state: where
 it is in review, or — for a **rejected** or **withdrawn** submission — that
 nothing is in review and a new `civitai app submit` is what moves it. (Unlike
-`app pull`, it does not print the submission's version and status themselves.)
+`app pull`, it does not print the `(latest submission: <version> <status>)` pair
+— a **pending** app is told where to look, without its version being named.)
 
 ```text
 $ civitai app metrics gen-matrix --from 2026-05-01 --to 2026-08-03
