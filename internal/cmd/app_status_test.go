@@ -524,6 +524,26 @@ func TestAppStatusLimitDoesNotSuppressTheCapCaveat(t *testing.T) {
 	if n := strings.Count(out, "app-"); n != 5 {
 		t.Errorf("--limit 5 printed %d rows, want 5", n)
 	}
+
+	// 🔴 THE TWO STREAMS MUST NOT CONTRADICT EACH OTHER. Computing the caveat
+	// before the trim is the right ORDER — it is what keeps the cap visible —
+	// but the first version of this sentence then described the server's number
+	// with a display verb: stdout showed 5 rows while stderr said "showing the
+	// newest 100 submissions". Same run, same terminal, two incompatible claims.
+	//
+	// Literal expectations on both halves, because the regression is a
+	// paraphrase and a paraphrase is exactly what a derived expectation would
+	// follow. The attribution assertion is the positive control for the ban:
+	// deleting the caveat entirely satisfies the ban and fails the attribution.
+	wantAttribution := fmt.Sprintf("the server returned the newest %d submissions", appapi.ListSubmissionsCap)
+	if !strings.Contains(errOut, wantAttribution) {
+		t.Errorf("the caveat must attribute the count to the API — want %q; stderr:\n%s", wantAttribution, errOut)
+	}
+	if banned := fmt.Sprintf("showing the newest %d", appapi.ListSubmissionsCap); strings.Contains(errOut, banned) {
+		t.Errorf("🔴 stderr claims to be %q while stdout printed %d rows. The count is what the API RETURNED, "+
+			"not what the CLI displayed — fix the noun, not the order the caveat is computed in; stderr:\n%s",
+			banned, strings.Count(out, "app-"), errOut)
+	}
 }
 
 // TestAppStatusLimitAboveTheListPrintsEverything — asking for more than exists

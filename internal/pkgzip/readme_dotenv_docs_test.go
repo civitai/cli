@@ -3,6 +3,7 @@ package pkgzip
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -13,60 +14,127 @@ import (
 // inference. Deciding what to put in a file is a decision an author can only
 // make if they know where the file goes.
 //
-// This is a BIDIRECTIONAL ledger between the packager's two lists and the
-// README, in the direction that matters: every dotenv file the packager treats
-// specially must be NAMED in the README. Adding a new kept file, or a new
-// excluded dotenv pattern, without documenting it fails here.
+// This is a BIDIRECTIONAL ledger between the packager and the README, in the
+// direction that matters: every dotenv file the packager treats specially must
+// be NAMED in the README. Adding a new kept file, or a new excluded dotenv
+// pattern, without documenting it fails here.
+//
+// 🔴 IT IS BOUND TO `isExcludedFile`, THE AUTHORITATIVE MATCHER — NOT TO
+// `excludedFilePatterns`. The first revision of this guard read only the latter,
+// which pkgzip.go's own comment labels "human-readable … for CLI messaging",
+// so it was structurally blind to a change in the rule that actually decides
+// what ships: the enumerated names could stay word-for-word while
+// `isExcludedFile` started shipping every unlisted `.env*`, and this test would
+// have reported a serene pass. The probes below are the repair — they are names
+// in NEITHER list, so they can only be answered by the catch-all itself, and the
+// README's claim to BE a catch-all is checked against what the matcher does with
+// them.
 //
 // What it deliberately does NOT do: assert the README's *explanation* is
-// correct. Only reading the code against the prose does that.
+// correct. Only reading the code against the prose does that. (The explanation
+// has been wrong here before — see the 🔴 note on `keptEnvFiles`.)
 
 // readmeDotenvSection is the heading the documentation lives under. Asserting
 // the section exists (rather than searching the whole README) is what stops an
 // unrelated mention elsewhere in a 2,500-line file from satisfying the check.
 const readmeDotenvHeading = "#### Which dotenv files end up in the bundle"
 
+// catchAllProbes are `.env*` base names that appear in NEITHER keptEnvFiles NOR
+// excludedFilePatterns, and that NO other requirement in this file mentions.
+// They exist because an enumeration and a catch-all agree on every enumerated
+// name and disagree only here: these are the only inputs that can tell "the rule
+// is `.env*` minus an allow-list" apart from "the rule is these five names".
+//
+// 🔴 `.env.production.local` and `.env.development.local` are deliberately NOT
+// here, even though the matcher does answer them by the catch-all. The first is
+// separately REQUIRED to appear in the README by check (3) of the ledger test,
+// and the second is a concrete instance of the enumerated `.env.*.local`
+// pattern — so either of them would satisfy the documentation half of this test
+// for a reason that has nothing to do with the catch-all. Measured, not
+// theorised: with `.env.production.local` in this list, reverting the README to
+// its enumeration-only wording left this test GREEN. They are probed as
+// `catchAllMatcherOnlyProbes` below instead.
+var catchAllProbes = []string{
+	".env.staging",
+	".env.ci",
+	".env.example.bak",
+}
+
+// catchAllMatcherOnlyProbes are answered by the catch-all too, but are named in
+// the README for other reasons, so they check the MATCHER only.
+var catchAllMatcherOnlyProbes = []string{
+	".env.production.local",
+	".env.development.local",
+}
+
+// repoRoot resolves the checkout root from THIS FILE's location rather than the
+// process working directory, so the test does not depend on how it was invoked.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller failed — cannot locate the repository root")
+	}
+	return filepath.Join(filepath.Dir(file), "..", "..")
+}
+
 func readmeBody(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	b, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
 	if err != nil {
 		t.Fatalf("read README.md: %v", err)
 	}
 	return string(b)
 }
 
-func TestREADMEDocumentsEveryDotenvFileThePackagerKeeps(t *testing.T) {
+// dotenvSection returns the body of the README's dotenv subsection.
+func dotenvSection(t *testing.T) string {
+	t.Helper()
 	body := readmeBody(t)
 	i := strings.Index(body, readmeDotenvHeading)
 	if i < 0 {
 		t.Fatalf("README.md has no %q section — the packager's dotenv rule is undocumented, "+
 			"which is the bug this guard exists for", readmeDotenvHeading)
 	}
-	// The section runs to the next heading of the same or higher level.
 	rest := body[i+len(readmeDotenvHeading):]
-	if j := strings.Index(rest, "\n## "); j >= 0 {
-		rest = rest[:j]
-	}
-	if k := strings.Index(rest, "\n### "); k >= 0 {
-		rest = rest[:k]
+	// The section runs to the next heading of ANY level. `####` is included
+	// because this section is itself a `####`: stopping only at `##`/`###` let a
+	// following sibling subsection be read as part of this one.
+	for _, h := range []string{"\n## ", "\n### ", "\n#### "} {
+		if j := strings.Index(rest, h); j >= 0 {
+			rest = rest[:j]
+		}
 	}
 	if strings.TrimSpace(rest) == "" {
 		t.Fatal("CONTROL failure: the section heading exists but has no body, so every check below is vacuous")
 	}
+	return rest
+}
 
-	// (1) Everything the packager deliberately KEEPS must be named.
+func TestREADMEDocumentsEveryDotenvFileThePackagerKeeps(t *testing.T) {
+	rest := dotenvSection(t)
+
+	// (1) Everything the AUTHORITATIVE matcher lets through must be named.
+	//     Iterated over keptEnvFiles but asserted through isExcludedFile, so the
+	//     two cannot drift apart silently.
 	if len(keptEnvFiles) == 0 {
 		t.Fatal("CONTROL failure: keptEnvFiles is empty, so this half of the ledger checks nothing")
 	}
 	for name := range keptEnvFiles {
+		if isExcludedFile(name) {
+			t.Errorf("🔴 SEAM: %s is in keptEnvFiles but isExcludedFile(%q) = true. The matcher decides what "+
+				"ships; the map is what the README is documented from. They must agree.", name, name)
+			continue
+		}
 		if !strings.Contains(rest, name) {
 			t.Errorf("the packager SHIPS %s but the README section does not name it. "+
 				"A file the author never learns is uploaded is a file they cannot decide what to put in.", name)
 		}
 	}
 
-	// (2) Every dotenv pattern it EXCLUDES must be named too — otherwise the
-	// section reads as a complete account while omitting half the rule.
+	// (2) Every dotenv pattern on the human-readable list must be named in the
+	//     README AND actually excluded by the matcher. The second half is the
+	//     seam: excludedFilePatterns is documentation, isExcludedFile is the rule.
 	dotenvExclusions := 0
 	for _, p := range excludedFilePatterns {
 		if !strings.HasPrefix(p, ".env") {
@@ -76,13 +144,19 @@ func TestREADMEDocumentsEveryDotenvFileThePackagerKeeps(t *testing.T) {
 		if !strings.Contains(rest, p) {
 			t.Errorf("the packager EXCLUDES %q but the README section does not name it", p)
 		}
+		// `.env.*.local` is a glob in the human list; probe a concrete instance.
+		concrete := strings.ReplaceAll(p, "*", "development")
+		if !isExcludedFile(concrete) {
+			t.Errorf("🔴 SEAM: excludedFilePatterns lists %q but isExcludedFile(%q) = false, so the file "+
+				"the README calls excluded is actually UPLOADED. The pattern list is messaging; the matcher ships.", p, concrete)
+		}
 	}
 	if dotenvExclusions == 0 {
 		t.Fatal("CONTROL failure: excludedFilePatterns holds no .env pattern, so this half checks nothing")
 	}
 
 	// (3) The one file that is neither: `.env.production.local` is caught by the
-	// `.env.*.local` rule, which is exactly the distinction a reader gets wrong.
+	//     catch-all, which is exactly the distinction a reader gets wrong.
 	if !strings.Contains(rest, ".env.production.local") {
 		t.Error("the section must call out `.env.production.local` — a reader who learns `.env.production` " +
 			"ships will assume its `.local` override does too, and that one carries secrets")
@@ -90,5 +164,53 @@ func TestREADMEDocumentsEveryDotenvFileThePackagerKeeps(t *testing.T) {
 	if _, kept := keptEnvFiles[".env.production.local"]; kept {
 		t.Error("🔴 .env.production.local is in keptEnvFiles — `.local` is the dev-local override " +
 			"convention and must never be uploaded")
+	}
+}
+
+// TestDotenvRuleIsACatchAllAndTheREADMESaysSo is the half bound to nothing but
+// `isExcludedFile`. The names it probes are in neither list, so the enumerated
+// checks above are all satisfied whichever way the matcher answers them — which
+// is precisely why an enumeration-shaped README (and an enumeration-bound guard)
+// could both be green while `.env.staging` shipped.
+func TestDotenvRuleIsACatchAllAndTheREADMESaysSo(t *testing.T) {
+	rest := dotenvSection(t)
+
+	// CONTROL, both directions: isExcludedFile must be able to answer BOTH ways,
+	// or every assertion below passes on a constant.
+	if !isExcludedFile(".env") {
+		t.Fatal("CONTROL failure: isExcludedFile(\".env\") = false — the matcher excludes nothing, so the checks below are vacuous")
+	}
+	if isExcludedFile(".env.example") {
+		t.Fatal("CONTROL failure: isExcludedFile(\".env.example\") = true — the matcher excludes everything, so the checks below are vacuous")
+	}
+
+	for _, name := range append(append([]string{}, catchAllProbes...), catchAllMatcherOnlyProbes...) {
+		// Guard the premise: a probe that has been added to either list no longer
+		// discriminates, and silently passing it would hollow this test out.
+		if _, kept := keptEnvFiles[name]; kept {
+			t.Errorf("CONTROL failure: probe %q is now in keptEnvFiles, so it no longer tests the catch-all — "+
+				"replace it with a name in neither list (and document the new kept file)", name)
+			continue
+		}
+		if !isExcludedFile(name) {
+			t.Errorf("🔴 %s is UPLOADED. It is on no list, so only the catch-all can have excluded it — the rule "+
+				"has become an enumeration, and every unrecognised dotenv file now ships to the platform.", name)
+		}
+	}
+
+	// And the README must document the rule as a catch-all rather than as the
+	// five names it happens to enumerate: a reader with `.env.staging` must be
+	// able to answer the question from this section. Asserted by requiring the
+	// section to name a file that ONLY the catch-all excludes.
+	documented := 0
+	for _, name := range catchAllProbes {
+		if strings.Contains(rest, name) {
+			documented++
+		}
+	}
+	if documented == 0 {
+		t.Errorf("the README section enumerates the listed names and stops, so a reader holding one of %v "+
+			"concludes it ships — it does not. State the catch-all and name at least one file it is the only "+
+			"thing covering.", catchAllProbes)
 	}
 }

@@ -1188,23 +1188,35 @@ only credential carrying the rest of the Full scope mask.
 #### Which dotenv files end up in the bundle
 
 "The CLI excludes dotenv files" is the natural reading of the `.env.development*`
-sentence above, and it is **not** what the packager does. The rule is
-allow-listed, not blanket:
+sentence above, and it is **not** what the packager does. The rule is a
+**three-name allow-list with a catch-all**, not a blanket exclusion and not the
+enumeration the table below might otherwise read as:
+
+> **Every file whose base name starts with `.env` is excluded — except
+> `.env.example`, `.env.sample` and `.env.production`, which are always
+> included.**
 
 | file | in the bundle? | why |
 | --- | --- | --- |
-| `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` | **excluded** | dev-local and secret-bearing — the money template tells you to paste a real `VITE_LIVE_BLOCK_TOKEN` into one of these |
-| `.env.example`, `.env.sample` | **included** | documented placeholders, no secret, useful to the reviewer |
+| `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, e.g. `.env.staging` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template tells you to paste a real `VITE_LIVE_BLOCK_TOKEN` into `.env.development`. |
+| `.env.example`, `.env.sample` | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` has a `VITE_LIVE_BLOCK_TOKEN=` line it invites you to fill in |
 | `.env.production` | **included** | the platform build runs `vite build` in production mode, which reads it |
 
-`.env.production` being **shipped** is the one worth knowing about. It is
-deliberate: the server-side build needs it, and by construction it cannot hold a
-secret — Vite inlines every `VITE_`-prefixed variable into the client bundle, so
-anything in there is public the moment your app loads. The scaffolded file holds
-only `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. Do not put a token in it; put nothing
-in it you would not paste into a public page. `.env.production.local` is *not*
-kept — `.local` is the dev-local override convention and is excluded with the
-rest.
+🔴 **The allow-list is by FILE NAME. Nothing inspects what is inside those three
+files, so nothing stops one of them carrying a secret to the platform.** Whatever
+you put in `.env.example`, `.env.sample` or `.env.production` is packaged and
+uploaded verbatim. **Do not put a token in any of them** — not a `VITE_`-prefixed
+one (Vite inlines those into the client bundle, so they are public the moment
+your app loads) and not a plain unprefixed one either (Vite leaves that out of
+the bundle, but the CLI still ships the file). Put nothing in the three kept
+files you would not paste into a public page.
+
+`.env.production` being **shipped** is the one worth knowing about, because it is
+the least expected: the server-side build needs it, and the scaffolded file holds
+one public value, `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. That is what the
+*scaffolded* file holds — it is not a guarantee about yours.
+`.env.production.local` is *not* kept: `.local` is the dev-local override
+convention and falls to the catch-all with everything else.
 
 ### After you submit: review → approve → deploy
 
@@ -1415,7 +1427,7 @@ were dropped. When a full-length page comes back the CLI says so on **stderr**
 rather than presenting it as your complete history:
 
 ```text
-note: showing the newest 100 submissions — the API caps this listing and offers no way to page, so older submissions may exist but are not listed. Look up a specific app with `civitai app status <blockId>`.
+note: the server returned the newest 100 submissions — the API caps this listing and offers no way to page, so older submissions may exist but are not listed. Look up a specific app with `civitai app status <blockId>`.
 ```
 
 That is an inference (a page that is exactly full is indistinguishable from one
@@ -2532,7 +2544,8 @@ anything.
   [Viper](https://github.com/spf13/viper) (config).
 - **Layout / conventions / how to add a command / release process:** see
   [`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md).
-- **Contributing:** see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- **Contributing:** see
+  [`CONTRIBUTING.md`](https://github.com/civitai/cli/blob/main/CONTRIBUTING.md).
 
 **CI is eight jobs, not four steps.** `.github/workflows/ci.yml` runs
 `build-test` (vet + `gofmt -s -l .` + test + build), `lint`, `schema-drift`,

@@ -1547,17 +1547,28 @@ func printReattach(errw io.Writer, o generateOpts, workflowID, externalID, statu
 // editing is REQUESTED, never that this job became one. The caveat
 // printImageDisclosure prints on the same screen carries the other half: an
 // ecosystem with no images node drops them and bills a plain txt2img.
-const imagePromotionNote = "(image editing is requested AS txt2img plus --image; the server does the promotion, not this CLI)"
+const imagePromotionNote = "Image editing is requested AS txt2img plus --image; the server does the promotion, not this CLI."
 
-// workflowLabel is what a spend surface calls the workflow. Without --image it
-// is the bare wire value; with it, the value plus the note above — because
-// `Workflow: txt2img` on the screen that also warns the server may IGNORE your
-// images is the most alarming thing on that screen, and nothing explained it.
-func workflowLabel(built *resolvedGraph) string {
+// workflowLines returns what a spend surface calls the workflow, and — when
+// reference images are attached — the note explaining it, as a SEPARATE line.
+//
+// 🔴 SEPARATE IS THE POINT, AND IT IS NOT CosmETIC. The first revision returned
+// one string, `txt2img (image editing is requested AS …)`, which the interactive
+// confirmation interpolated mid-sentence: "About to generate with txt2img
+// (image editing is requested AS txt2img plus --image; the server does the
+// promotion, not this CLI) at https://civitai.com." — 152 characters, so at an
+// 80-column terminal the verb and its object were split and `at
+// https://civitai.com` orphaned onto line 2. That is the screen a user reads
+// immediately before spending Buzz irreversibly. The note belongs beside the
+// workflow line, not inside a sentence.
+//
+// The empty note is the no-image signal; callers must not print an empty line
+// for it.
+func workflowLines(built *resolvedGraph) (label, note string) {
 	if built == nil || len(built.images) == 0 {
-		return generateWorkflow
+		return generateWorkflow, ""
 	}
-	return generateWorkflow + " " + imagePromotionNote
+	return generateWorkflow, imagePromotionNote
 }
 
 // confirmGenerate gates the spend. It mirrors confirmSubmit, with a stronger
@@ -1609,7 +1620,11 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 
 	errw := cmd.ErrOrStderr()
 	st := ui.For(errw)
-	fmt.Fprintf(errw, "About to generate with %s at %s.\n", workflowLabel(built), strings.TrimRight(o.baseURL, "/"))
+	label, note := workflowLines(built)
+	fmt.Fprintf(errw, "About to generate with %s at %s.\n", label, strings.TrimRight(o.baseURL, "/"))
+	if note != "" {
+		fmt.Fprintln(errw, st.Dim(note))
+	}
 	if built.inputPath != "" {
 		// With --input the CLI has deliberately not interpreted the graph, so it
 		// names the file rather than echoing fields it did not parse. Printing a
@@ -1684,7 +1699,14 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 		"The prompt is not sent with the estimate, so --dry-run cannot tell you whether it passes moderation — a submit can still be refused for prompt content."))
 
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "Workflow:\t%s\n", workflowLabel(built))
+	label, note := workflowLines(built)
+	fmt.Fprintf(tw, "Workflow:\t%s\n", label)
+	if note != "" {
+		// Its own row, in the VALUE column, so the note reads as an annotation on
+		// the workflow rather than as part of it. See workflowLines for why the
+		// two are not one string.
+		fmt.Fprintf(tw, "\t%s\n", note)
+	}
 	if built.inputPath != "" {
 		fmt.Fprintf(tw, "Graph:\t%s (sent as-is)\n", safeTerm(built.inputPath))
 	} else {

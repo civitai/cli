@@ -70,3 +70,51 @@ func TestTruncateLeavesShortValuesAlone(t *testing.T) {
 		}
 	}
 }
+
+// 🔴 TestTruncateInTheByteOverRuneUnderWindow IS THE CASE EVERY OTHER TEST HERE
+// MISSES, AND ITS ABSENCE LEFT A SURVIVING MUTANT.
+//
+// `truncate` short-circuits on BYTE length first, then measures RUNES. Between
+// those two bounds sits a window — `len(s) > max >= len([]rune(s))` — reachable
+// only by a non-ASCII string just over the byte bound. Every case above is
+// either far past both bounds (the truncation cases) or far under both
+// (max=200 over ≤200-byte inputs), so all of them returned at the FIRST check
+// and the rune-length branch never executed. Measured: replacing it with
+// `if false && len(r) <= max` left the whole package green while
+// `truncate("café", 4)` returned `"café…"` — an ellipsis appended to a value
+// that fits.
+//
+// The implementation now closes the window with a single walk rather than a
+// second branch, so this test is what proves the walk (not just the byte
+// short-circuit) gets the answer right. It is also the mutation target: break
+// the loop's bound and this is the case that goes red.
+func TestTruncateInTheByteOverRuneUnderWindow(t *testing.T) {
+	cases := []struct {
+		in       string
+		max      int
+		want     string
+		whyInWin string
+	}{
+		// 5 bytes, 4 runes.
+		{"café", 4, "café", "byte len 5 > 4 >= rune len 4"},
+		// 6 bytes, 2 runes.
+		{"漢字", 2, "漢字", "byte len 6 > 2 >= rune len 2"},
+		// 8 bytes, 2 runes.
+		{"🐈🐈", 2, "🐈🐈", "byte len 8 > 2 >= rune len 2"},
+		// Exactly one rune past the window: it MUST be cut, which is what stops
+		// a "never truncate anything non-ASCII" fix from passing this test.
+		{"漢字漢", 2, "漢字…", "rune len 3 > max 2 — outside the window, must cut"},
+	}
+	for _, tc := range cases {
+		// CONTROL: assert the fixture really is where the comment claims. A
+		// fixture that drifted out of the window would exercise the byte
+		// short-circuit and pass while proving nothing.
+		if len(tc.in) <= tc.max {
+			t.Fatalf("CONTROL failure: %q has %d bytes, which is not > max=%d — this case no longer reaches "+
+				"past the byte short-circuit (%s)", tc.in, len(tc.in), tc.max, tc.whyInWin)
+		}
+		if got := truncate(tc.in, tc.max); got != tc.want {
+			t.Errorf("truncate(%q, %d) = %q, want %q (%s)", tc.in, tc.max, got, tc.want, tc.whyInWin)
+		}
+	}
+}

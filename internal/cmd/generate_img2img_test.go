@@ -379,6 +379,12 @@ func TestGenerateImage_SingleImageDoesNotWarn(t *testing.T) {
 
 // TestGenerateImage_DryRunWorkflowLineExplainsThePromotion — the --dry-run
 // quote's Workflow row.
+//
+// The note is on the row BELOW, not inside the row (see workflowLines), so this
+// asserts adjacency: the value line carries the wire value and nothing else, and
+// the next line carries the explanation. Adjacency is the property that makes it
+// read as an annotation; a note anywhere else on the screen would pass a
+// whole-output `Contains` and fail a reader.
 func TestGenerateImage_DryRunWorkflowLineExplainsThePromotion(t *testing.T) {
 	dir := t.TempDir()
 	local := writeFixture(t, dir, "cat.png", pngBytes(t, 100, 200))
@@ -390,7 +396,7 @@ func TestGenerateImage_DryRunWorkflowLineExplainsThePromotion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runGenerate: %v", err)
 	}
-	line := lineContaining(out.String(), "Workflow:")
+	line, next := lineContainingAndNext(out.String(), "Workflow:")
 	if line == "" {
 		t.Fatalf("CONTROL failure: the quote printed no Workflow row, so there is nothing to annotate:\n%s", out.String())
 	}
@@ -398,9 +404,59 @@ func TestGenerateImage_DryRunWorkflowLineExplainsThePromotion(t *testing.T) {
 		t.Errorf("the row must still show the WIRE value %q — item 19(a) depends on it staying visible: %q",
 			generateWorkflow, line)
 	}
-	if !strings.Contains(line, imagePromotionNote) {
-		t.Errorf("`Workflow: %s` with --image set is unexplained on the screen a user approves a charge from.\n got: %q\nwant it to carry: %q",
-			generateWorkflow, line, imagePromotionNote)
+	if strings.Contains(line, imagePromotionNote) {
+		t.Errorf("the note is back INSIDE the Workflow row (%q). It belongs on its own line — folded in, the "+
+			"confirmation screen's version of this reached 152 characters and split the verb from its object", line)
+	}
+	if !strings.Contains(next, imagePromotionNote) {
+		t.Errorf("`Workflow: %s` with --image set is unexplained on the screen a user approves a charge from.\n row:  %q\n next: %q\nwant the NEXT line to carry: %q",
+			generateWorkflow, line, next, imagePromotionNote)
+	}
+}
+
+// 🔴 TestGenerateImage_SpendScreenLinesStayReadable is the guard for the defect
+// itself rather than for the wording. The first fix folded the note into the
+// confirmation sentence, producing a 152-character line that wraps at any normal
+// terminal width and orphans `at https://civitai.com` onto a second line — on
+// the screen immediately before an irreversible charge. Long PROSE lines wrap
+// harmlessly (the image disclosure is 181 chars and always has been); a wrapped
+// LABEL line is what makes a screen unreadable, so the bound is on the lines
+// that carry a field, and on the sentence a user is answering.
+func TestGenerateImage_SpendScreenLinesStayReadable(t *testing.T) {
+	const maxCols = 100 // generous: the bug produced 152 on an 80-col terminal
+
+	withStdinTTY(t, true)
+	dir := t.TempDir()
+	local := writeFixture(t, dir, "cat.png", pngBytes(t, 100, 200))
+
+	s := &genSeams{}
+	o := imgOpts("Flux1Kontext", local)
+	cmd, _, errb := genCmd("n\n")
+	if err := runGenerate(cmd, s.deps(t), o); err == nil {
+		t.Fatal("declining the prompt must not report success")
+	}
+
+	// CONTROL: the sentence under test must be on the screen at all.
+	if !strings.Contains(errb.String(), "About to generate with") {
+		t.Fatalf("CONTROL failure: the confirmation printed no \"About to generate with\" line:\n%s", errb.String())
+	}
+	checked := 0
+	for _, l := range strings.Split(errb.String(), "\n") {
+		// The field rows (`  Prompt:     …`) carry user data of unbounded length
+		// — a long prompt is the user's own doing. What must stay short is the
+		// CLI's own framing sentence.
+		if !strings.HasPrefix(l, "About to generate with") {
+			continue
+		}
+		checked++
+		if n := len([]rune(l)); n > maxCols {
+			t.Errorf("🔴 the spend-confirmation sentence is %d columns:\n  %s\nAt 80 columns it wraps and the "+
+				"destination orphans onto a second line. Move the addition to its own line instead of folding it "+
+				"into the sentence.", n, l)
+		}
+	}
+	if checked == 0 {
+		t.Fatal("CONTROL failure: no framing sentence was measured, so the bound above checked nothing")
 	}
 }
 
@@ -443,16 +499,20 @@ func TestGenerateImage_ConfirmationWorkflowLineExplainsThePromotion(t *testing.T
 	if s.submitCalls != 0 {
 		t.Fatalf("🔴 the declined run submitted %d time(s)", s.submitCalls)
 	}
-	line := lineContaining(errb.String(), "About to generate with")
+	line, next := lineContainingAndNext(errb.String(), "About to generate with")
 	if line == "" {
 		t.Fatalf("CONTROL failure: the confirmation printed no workflow line:\n%s", errb.String())
 	}
 	if !strings.Contains(line, generateWorkflow) {
 		t.Errorf("the confirmation must still name the WIRE value %q: %q", generateWorkflow, line)
 	}
-	if !strings.Contains(line, imagePromotionNote) {
-		t.Errorf("the confirmation names the workflow with no explanation of why it is %q with --image set: %q",
-			generateWorkflow, line)
+	if strings.Contains(line, imagePromotionNote) {
+		t.Errorf("the note is folded back into the sentence (%q) — that is the 152-column line "+
+			"TestGenerateImage_SpendScreenLinesStayReadable exists for", line)
+	}
+	if !strings.Contains(next, imagePromotionNote) {
+		t.Errorf("the confirmation names the workflow with no explanation of why it is %q with --image set.\n line: %q\n next: %q",
+			generateWorkflow, line, next)
 	}
 }
 
@@ -468,10 +528,17 @@ func TestWorkflowLabelCallSiteLedger(t *testing.T) {
 	}
 	body := string(src)
 
-	// Every surface that renders the workflow name goes through workflowLabel.
-	if got, want := strings.Count(body, "workflowLabel(built)"), 2; got != want {
-		t.Errorf("workflowLabel is called at %d site(s), want %d (the --dry-run quote and the interactive confirmation). "+
+	// Every surface that renders the workflow name goes through workflowLines.
+	if got, want := strings.Count(body, "workflowLines(built)"), 2; got != want {
+		t.Errorf("workflowLines is called at %d site(s), want %d (the --dry-run quote and the interactive confirmation). "+
 			"A new site is a new screen that must explain the promotion; a lost one is a screen that stopped.", got, want)
+	}
+	// And both of them must PRINT the note, not merely receive it: a caller that
+	// takes the pair and drops the second half restores the unexplained
+	// `Workflow: txt2img` while leaving the ledger above satisfied.
+	if got, want := strings.Count(body, "if note != \"\" {"), 2; got != want {
+		t.Errorf("%d of the %d workflowLines callers guard on the note, want 2 — a caller that receives the note "+
+			"and never prints it is a screen back to showing a bare %q", got, want, generateWorkflow)
 	}
 	// And no surface interpolates the bare constant into user-facing text any
 	// more. `generateWorkflow` still appears — in the graph builder, in help
@@ -489,10 +556,23 @@ func TestWorkflowLabelCallSiteLedger(t *testing.T) {
 
 // lineContaining returns the first line of s holding sub, or "".
 func lineContaining(s, sub string) string {
-	for _, l := range strings.Split(s, "\n") {
-		if strings.Contains(l, sub) {
-			return l
+	line, _ := lineContainingAndNext(s, sub)
+	return line
+}
+
+// lineContainingAndNext returns the first line of s holding sub and the line
+// immediately after it. The pair is what lets a test assert ADJACENCY — the note
+// must be the next line, not merely somewhere in the output.
+func lineContainingAndNext(s, sub string) (line, next string) {
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		if !strings.Contains(l, sub) {
+			continue
 		}
+		if i+1 < len(lines) {
+			return l, lines[i+1]
+		}
+		return l, ""
 	}
-	return ""
+	return "", ""
 }

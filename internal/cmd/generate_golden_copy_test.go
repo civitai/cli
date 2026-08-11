@@ -185,14 +185,84 @@ func TestGoldenSpendCopy(t *testing.T) {
 	// Rendered from the function, over both branches, so the pinned text is the
 	// copy itself and the no-image branch is proved to add nothing.
 	t.Run("generate_workflow_label_with_image", func(t *testing.T) {
-		got := workflowLabel(&resolvedGraph{images: []string{"./cat.png (512x512) → https://blobs.example/abc"}})
-		if got == generateWorkflow {
-			t.Fatal("CONTROL failure: the --image branch rendered the bare wire value, so there is no annotation to pin")
+		label, note := workflowLines(&resolvedGraph{images: []string{"./cat.png (512x512) → https://blobs.example/abc"}})
+		if note == "" {
+			t.Fatal("CONTROL failure: the --image branch rendered no note, so there is no annotation to pin")
 		}
-		assertGolden(t, "generate_workflow_label_with_image", got)
+		assertGolden(t, "generate_workflow_label_with_image", label+"\n"+note)
 	})
 	t.Run("generate_workflow_label_without_image", func(t *testing.T) {
-		assertGolden(t, "generate_workflow_label_without_image", workflowLabel(&resolvedGraph{}))
+		label, note := workflowLines(&resolvedGraph{})
+		if note != "" {
+			t.Fatalf("a job with no --image must carry no promotion note, got %q", note)
+		}
+		assertGolden(t, "generate_workflow_label_without_image", label)
+	})
+
+	// 🔴 THE TWO COMPOSED SCREENS, WITH --image. THE FUNCTION-LEVEL GOLDENS
+	// ABOVE ARE NOT A SUBSTITUTE FOR THESE, AND AN AUDIT PROVED IT: they pin
+	// workflowLines' RETURN VALUE in isolation, so nothing pinned what the user
+	// actually reads. The first revision of this feature interpolated the note
+	// into the confirmation sentence, producing a 152-column line that split the
+	// verb from its object — reviewed output that no golden covered, on the
+	// screen immediately before an irreversible charge. "Verified in isolation"
+	// is the failure mode; the seam is the composition.
+	//
+	// 🔴 WHAT THESE STILL CANNOT SEE, so the green is not over-read: comparison
+	// is whitespace-collapsed (see this file's header), so a golden pins the
+	// WORDS and their ORDER, never the line breaks. The line breaks are the
+	// point of this particular fix, and they are pinned elsewhere —
+	// TestGenerateImage_SpendScreenLinesStayReadable bounds the confirmation
+	// sentence's width, and the two `…ExplainsThePromotion` tests assert the note
+	// is the ADJACENT line rather than part of the value. Three guards, three
+	// different properties; none of them is redundant.
+	//
+	// The local image path is a t.TempDir() value, so it is substituted out
+	// before comparison — the only non-deterministic token on either screen, and
+	// the substitution is asserted to have happened.
+	stableImagePath := func(t *testing.T, s, local string) string {
+		t.Helper()
+		if !strings.Contains(s, local) {
+			t.Fatalf("CONTROL failure: the rendered screen does not carry the image path %q, so the "+
+				"normalisation below is hiding nothing and the fixture is not an --image run:\n%s", local, s)
+		}
+		return strings.ReplaceAll(s, local, "<image>")
+	}
+
+	t.Run("generate_confirmation_with_image", func(t *testing.T) {
+		withStdinTTY(t, true)
+		dir := t.TempDir()
+		local := writeFixture(t, dir, "cat.png", pngBytes(t, 512, 512))
+		var s genSeams
+		s.whatIf = func(context.Context, genapi.Graph) (*genapi.WhatIfResult, json.RawMessage, error) {
+			return okQuote(12), okQuoteRaw(12), nil
+		}
+		o := imgOpts("Flux1Kontext", local)
+		c, _, errb := genCmd("n\n")
+		if err := runGenerate(c, s.deps(t), o); err == nil {
+			t.Fatal("declining must not report success")
+		}
+		if s.submitCalls != 0 {
+			t.Fatalf("🔴 the declined run submitted %d time(s)", s.submitCalls)
+		}
+		assertGolden(t, "generate_confirmation_with_image", stableImagePath(t, errb.String(), local))
+	})
+
+	t.Run("generate_dry_run_with_image_streams", func(t *testing.T) {
+		dir := t.TempDir()
+		local := writeFixture(t, dir, "cat.png", pngBytes(t, 512, 512))
+		var s genSeams
+		o := imgOpts("Flux1Kontext", local)
+		o.dryRun = true
+		c, out, errb := genCmd("")
+		if err := runGenerate(c, s.deps(t), o); err != nil {
+			t.Fatalf("--dry-run with --image: %v", err)
+		}
+		if s.submitCalls != 0 {
+			t.Fatalf("🔴 --dry-run submitted %d time(s)", s.submitCalls)
+		}
+		assertGolden(t, "generate_dry_run_with_image_stdout", out.String())
+		assertGolden(t, "generate_dry_run_with_image_stderr", stableImagePath(t, errb.String(), local))
 	})
 
 	// --- the interactive spend confirmation ---------------------------------

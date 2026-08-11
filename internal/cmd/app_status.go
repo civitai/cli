@@ -116,9 +116,17 @@ and deployed (deployState 'live').`,
 			// about how many rows the CLI chose to print — deriving it from
 			// the trimmed slice would let `--limit 5` silently claim a capped
 			// listing was complete.
+			//
+			// 🔴 AND THAT IS WHY THE NOUN IS "the server returned", NOT
+			// "showing". The order above is right and the number is right;
+			// what was wrong was the verb. With `--limit 5` against an at-cap
+			// page the table below prints FIVE rows while this line said
+			// "showing the newest 100 submissions" — two contradicting claims
+			// on two streams of the same run. The count belongs to the API; the
+			// sentence must attribute it there.
 			if submissionsListTruncated(len(subs)) {
 				fmt.Fprintf(cmd.ErrOrStderr(),
-					"note: showing the newest %d submissions — the API caps this listing and offers no way to page, "+
+					"note: the server returned the newest %d submissions — the API caps this listing and offers no way to page, "+
 						"so older submissions may exist but are not listed. "+
 						"Look up a specific app with `civitai app status <blockId>`.\n", len(subs))
 			}

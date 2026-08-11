@@ -20,14 +20,83 @@ import (
 // The rule is therefore: a README link into a contributor-only file must be an
 // ABSOLUTE URL. The link text may stay `AGENTS.md`.
 //
+// 🔴 THE SET, AND WHY IT IS THREE. `CONTRIBUTING.md` was missing from the first
+// version of this list, and the README linked it relatively FOUR LINES below one
+// of the links this test had just fixed — an instance of the very bug, shipped
+// beside the fix. It is in neither shipping artifact either: `npm/package.json`
+// ships `["bin/","lib/","README.md","LICENSE"]` and `.goreleaser.yaml`'s archive
+// carries `README.md` + `LICENSE`. Before adding a doc here, check it is
+// genuinely NOT shipped; before adding a README link to a repo file, check it is.
+//
 // Scope, stated so a green is not over-read: this checks the LINK TARGET, not
 // whether routing a user through a contributor doc was the right call in the
 // first place. Where the fact itself belongs in the README, inline it.
-var contributorOnlyDocs = []string{"AGENTS.md", "CLAUDE.md"}
+var contributorOnlyDocs = []string{"AGENTS.md", "CLAUDE.md", "CONTRIBUTING.md"}
 
-// relativeMDLinkRe matches a markdown link whose target is a bare repo-relative
-// path (no scheme, no anchor-only target).
+// relativeMDLinkRe matches an inline markdown link target.
 var relativeMDLinkRe = regexp.MustCompile(`\]\(([^)\s]+)\)`)
+
+// refDefMDLinkRe matches a reference-style link DEFINITION (`[label]: target`).
+// It is a second shape entirely: the first version of this guard read only
+// inline links, so `[agents]: AGENTS.md` plus `[agents]` in the prose would have
+// rendered the same 404 and passed.
+var refDefMDLinkRe = regexp.MustCompile(`(?m)^\[[^\]]+\]:[ \t]+(\S+)`)
+
+// normaliseLinkTarget reduces a relative markdown target to the repo-root file
+// name it resolves to, or "" if it is absolute.
+//
+// 🔴 THIS IS WHAT MAKES THE GUARD STRUCTURAL RATHER THAN SPELLED. Comparing the
+// raw target to "AGENTS.md" accepts `./AGENTS.md` and `../AGENTS.md`, which are
+// the same 404 written differently — a guard that can be walked around by
+// respelling the hazard is the failure mode this repo has recorded before.
+func normaliseLinkTarget(target string) string {
+	if strings.Contains(target, "://") || strings.HasPrefix(target, "#") ||
+		strings.HasPrefix(target, "mailto:") || strings.HasPrefix(target, "/") {
+		return ""
+	}
+	// Drop a trailing #anchor / ?query, then any ./ and ../ prefixes.
+	if i := strings.IndexAny(target, "#?"); i >= 0 {
+		target = target[:i]
+	}
+	target = strings.TrimPrefix(target, "<")
+	target = strings.TrimSuffix(target, ">")
+	for {
+		switch {
+		case strings.HasPrefix(target, "./"):
+			target = target[2:]
+		case strings.HasPrefix(target, "../"):
+			target = target[3:]
+		default:
+			return target
+		}
+	}
+}
+
+// TestNormaliseLinkTargetSeesEverySpelling is the POSITIVE CONTROL for the
+// normaliser: a matcher that silently stopped recognising `../` would make the
+// guard below pass over the exact link it exists to reject, and nothing else in
+// this file would notice. Every form here must reduce to the same file name, and
+// the absolute form must reduce to nothing.
+func TestNormaliseLinkTargetSeesEverySpelling(t *testing.T) {
+	relative := []string{
+		"AGENTS.md", "./AGENTS.md", "../AGENTS.md", "../../AGENTS.md",
+		"AGENTS.md#layout", "./AGENTS.md#layout", "<AGENTS.md>",
+	}
+	for _, in := range relative {
+		if got := normaliseLinkTarget(in); got != "AGENTS.md" {
+			t.Errorf("normaliseLinkTarget(%q) = %q, want %q — this spelling of the hazard is invisible to the guard", in, got, "AGENTS.md")
+		}
+	}
+	for _, in := range []string{
+		"https://github.com/civitai/cli/blob/main/AGENTS.md",
+		"http://example.com/AGENTS.md",
+		"#anchor-only",
+	} {
+		if got := normaliseLinkTarget(in); got != "" {
+			t.Errorf("normaliseLinkTarget(%q) = %q, want \"\" — an absolute or in-page link must not be flagged", in, got)
+		}
+	}
+}
 
 func TestREADMEDoesNotLinkContributorDocsRelatively(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRootDir(t), "README.md"))
@@ -43,27 +112,73 @@ func TestREADMEDoesNotLinkContributorDocsRelatively(t *testing.T) {
 		t.Fatalf("CONTROL failure: found only %d markdown links in README.md, want >= 20 — "+
 			"the pattern %s has stopped matching, so every check below is vacuous", len(links), relativeMDLinkRe)
 	}
+	links = append(links, refDefMDLinkRe.FindAllStringSubmatch(body, -1)...)
 
 	checkedTargets := 0
 	for _, m := range links {
-		target := m[1]
-		if strings.Contains(target, "://") {
+		target := normaliseLinkTarget(m[1])
+		if target == "" {
 			continue
 		}
 		checkedTargets++
 		for _, doc := range contributorOnlyDocs {
-			if target == doc || strings.HasPrefix(target, doc+"#") {
-				t.Errorf("README.md links %s relatively (`](%s)`). That file is not in the npm package "+
-					"or the Homebrew cask, so the link 404s for everyone who did not install from a git "+
-					"checkout — use the absolute https://github.com/civitai/cli/blob/main/%s URL, or inline "+
-					"the fact the reader was being sent for.", doc, target, doc)
+			if target != doc {
+				continue
+			}
+			t.Errorf("README.md links %s relatively (`%s`). That file is not in the npm package "+
+				"or the Homebrew cask, so the link 404s for everyone who did not install from a git "+
+				"checkout — use the absolute https://github.com/civitai/cli/blob/main/%s URL, or inline "+
+				"the fact the reader was being sent for.", doc, m[0], doc)
+		}
+	}
+	// POSITIVE CONTROL on the NORMALISER, not just the regex. Most of the
+	// README's ~150 inline links are in-page `#anchor` targets, which
+	// normaliseLinkTarget correctly discards — so the count that matters here is
+	// the handful of real repo-relative file links (`examples/`, `LICENSE`,
+	// `schema/…`). A normaliser that started returning "" for everything would
+	// leave this at zero while the regex control above stayed happy.
+	if checkedTargets < 3 {
+		t.Fatalf("CONTROL failure: only %d relative FILE link target(s) survived normalisation, want >= 3. "+
+			"The README has several (examples/, schema/, LICENSE); a lower count means normaliseLinkTarget is "+
+			"discarding targets it should be checking, and every assertion above is vacuous", checkedTargets)
+	}
+	t.Logf("checked %d relative link target(s) against %d contributor-only doc(s)", checkedTargets, len(contributorOnlyDocs))
+}
+
+// TestContributorOnlyDocsAreReallyNotShipped is the LEDGER behind the list
+// above: the rule is "not in either shipping artifact", and a doc that starts
+// being shipped should stop being on the list rather than quietly stay on it.
+// It reads the two manifests that decide, so the premise is checked rather than
+// remembered.
+func TestContributorOnlyDocsAreReallyNotShipped(t *testing.T) {
+	root := repoRootDir(t)
+	shipping := map[string]string{
+		"npm/package.json": "",
+		".goreleaser.yaml": "",
+	}
+	for name := range shipping {
+		b, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		shipping[name] = string(b)
+	}
+	// CONTROL: the manifests must actually name the file that IS shipped, or a
+	// "not mentioned" verdict below means "wrong file read", not "not shipped".
+	for name, body := range shipping {
+		if !strings.Contains(body, "README.md") {
+			t.Fatalf("CONTROL failure: %s does not mention README.md, which IS shipped — this test is "+
+				"reading the wrong file, so every 'not shipped' conclusion below is unfounded", name)
+		}
+	}
+	for _, doc := range contributorOnlyDocs {
+		for name, body := range shipping {
+			if strings.Contains(body, doc) {
+				t.Errorf("%s now ships %s, so a relative README link to it is no longer broken — "+
+					"remove it from contributorOnlyDocs (and re-check the link) rather than leaving a stale rule", name, doc)
 			}
 		}
 	}
-	if checkedTargets == 0 {
-		t.Fatal("CONTROL failure: no relative link targets were examined at all")
-	}
-	t.Logf("checked %d relative link target(s) against %d contributor-only doc(s)", checkedTargets, len(contributorOnlyDocs))
 }
 
 // TestREADMEIconAspectDoesNotForbidASquareIcon — the aspect table said
