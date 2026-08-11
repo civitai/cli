@@ -32,9 +32,12 @@ package cmd
 // set grows or shrinks, because a structural count is the only thing that
 // notices a third CALLER OF THAT HELPER arriving with no behavioural case of its
 // own. Its scope is the helper's callers and NOT every site that reads one row
-// from a newest-first list — three such sites exist today that it cannot see,
-// enumerated on newestFirstAdviceSites. Read that before treating a green run
-// here as "the row-pick assumption is covered".
+// from a newest-first list — three such sites exist that it cannot see. They are
+// enumerated on newestFirstAdviceSites and covered since #390 by a SECOND ledger
+// (submissionsListReaders, newest_row_pick_test.go) keyed on references to
+// appapi's ListSubmissions. Read both before treating a green run here as "the
+// row-pick assumption is covered"; neither verifies that the SERVER really
+// returns the list newest-first, which nothing client-side can.
 
 import (
 	"errors"
@@ -231,25 +234,30 @@ func TestAppMetricsAdviceNamesTheNewestSubmission(t *testing.T) {
 // NEWEST-FIRST LIST", AND THE DIFFERENCE IS NOT HYPOTHETICAL. The scanner is
 // keyed on the helper's name, so it sees a new caller of THAT helper and nothing
 // else. An earlier version of this comment claimed it catches "a third command
-// open-coding the same row pick"; it does not, and three sites read one row from
-// a newest-first list today that it cannot see — each of which survives reversal
-// with the whole suite green:
+// open-coding the same row pick"; it does not. Three sites read one row from a
+// newest-first list without calling this helper, each of which survived reversal
+// with the whole suite green, and #390 fixed all three:
 //
-//   - internal/cmd/apps.go, ownedSubmission — returns the first slug-matching
-//     row and prints its Status/DeployState verbatim; its fixture
-//     (ownedSubmissionBody) is ONE row, which is this PR's defect under a
-//     different name. Filed as its own issue rather than fixed here.
+//   - internal/cmd/apps.go, ownedSubmission — the first slug-matching row, whose
+//     Status/DeployState are printed verbatim.
 //   - internal/cmd/app_metrics.go, the first-non-null appBlockId pick five lines
-//     above the call this ledger covers. TestAppMetricsPicksNewestNonNullAppBlockID
-//     says "newest" in its name but has one non-null row, so it is vacuous for
-//     the property it names.
-//   - internal/appapi/appblocks.go, the "newest-first, so the first match is
-//     latest" scan — outside this package, so outside the walk entirely.
+//     above the call this ledger covers.
+//   - internal/appapi/appblocks.go, latestMatchingSubmission — outside this
+//     package, so outside this walk entirely.
 //
-// Widening the scanner to the row-pick SHAPE was rejected: any pattern over
-// `subs[0]` is spelled rather than structural (it turns on a variable name) and
-// would be a new unvalidated claim. So the ledger states the narrow thing it can
-// actually check, and the residual is enumerated here rather than implied away.
+// Widening THIS scanner to the row-pick SHAPE was rejected and still is: any
+// pattern over `subs[0]` is spelled rather than structural (it turns on a
+// variable name). #390 did not widen it either — it added a SECOND ledger,
+// submissionsListReaders in newest_row_pick_test.go, keyed on a different and
+// structural predicate: a reference to appapi's ListSubmissions, which is the
+// only way to obtain the list and is an exported name rather than a local
+// spelling. That ledger spans internal/cmd AND internal/appapi and covers all
+// five readers, so app_pull.go and app_metrics.go appear in both maps on purpose.
+// The two answer different questions — this one asks whether every caller of the
+// SHARED ADVICE proves it describes the newest row; that one asks whether every
+// reader of the LIST declares which end it reads. Do not merge them: adding the
+// other three files here would fail this ledger's own shrink-direction check,
+// since they do not call pullReviewAdvice at all.
 //
 // Within that scope it is asserted in BOTH directions: a shrunk set means a call
 // site lost its coverage, a grown one means a new caller arrived with no

@@ -606,6 +606,23 @@ func (c *Client) recoverTimedOutSubmit(ctx context.Context, slug, version string
 // latestMatchingSubmission returns the first submission matching slug+version in
 // a non-terminal (pending/submitted) state, falling back to any slug+version
 // match. Submissions are returned newest-first, so the first match is latest.
+//
+// 🔴 TWO TIERS, AND THE TIER DECIDES BEFORE RECENCY DOES: a non-terminal match
+// wins outright even when a NEWER terminal row matched, and recency only orders
+// rows within a tier. It is not a plain "newest row" rule, so do not describe it
+// as one.
+//
+// The row picked here becomes the PublishRequestID `app submit` prints and the
+// user hands to `civitai app withdraw`, so the wrong end aims a withdrawal at
+// the wrong submission. Unpinned until #390 — every fixture was a single row,
+// where the first and last match are the same row, so reversing this loop left
+// the whole suite green (3786 RUN, 0 FAIL). Pinned now by
+// TestRecoverTimedOutSubmitReadsTheNewestMatchingRow (both tiers) and the reader
+// ledger in internal/cmd/newest_row_pick_test.go, which spans this package for
+// exactly this site. That the SERVER orders the list newest-first is an
+// unverified dependency on the route's contract: ListSubmissions does not sort
+// and nothing here can check it, so a change on that side would leave every one
+// of those guards green while this answer went wrong.
 func latestMatchingSubmission(subs []Submission, slug, version string) *Submission {
 	var anyMatch *Submission
 	for i := range subs {

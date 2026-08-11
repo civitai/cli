@@ -56,10 +56,29 @@ func appViewServer(t *testing.T, subs func(w http.ResponseWriter, r *http.Reques
 	return &probes
 }
 
-const ownedSubmissionBody = `{"submissions":[{
-  "id":"pubreq_01H","blockId":"buzz-generator","version":"0.1.1","status":"approved",
-  "deployState":"live","submittedAt":"2026-07-28T10:00:00Z","updatedAt":"2026-07-28T10:00:00Z",
-  "createdAt":"2026-07-28T10:00:00Z","liveUrl":"https://buzz-generator.civit.ai/"}]}`
+// ownedSubmissionBody is the owned-slug listing the probe reads, newest first.
+//
+// 🔴 IT HAS TWO ROWS THAT DISAGREE ON EVERY FIELD THE ADVICE PRINTS, and that is
+// the point (#390). It used to be ONE row, where `subs[0]` and
+// `subs[len(subs)-1]` are the same row — so ownedSubmission's choice of row was
+// unobservable here, and reversing that choice left the whole suite green
+// (measured on this branch's parent: 3786 RUN, 0 FAIL, 4 SKIP-of-others).
+//
+// The newest row is an un-deployed resubmission over an approved/live
+// predecessor, because that is the state a user is actually in when `app view`
+// 404s on an app they own — and it is the state whose two ends give OPPOSITE
+// answers to "is your deploy broken?".
+//
+// id, version, status, deployState, submittedAt and liveUrl all differ between
+// the rows. A field shared across rows cannot tell the ends apart, so sharing
+// one would silently re-open this hole on whichever axis an assertion uses.
+const ownedSubmissionBody = `{"submissions":[
+  {"id":"pubreq_02H","blockId":"buzz-generator","version":"0.2.0","status":"pending",
+   "deployState":"building","submittedAt":"2026-07-29T10:00:00Z","updatedAt":"2026-07-29T10:00:00Z",
+   "createdAt":"2026-07-29T10:00:00Z","liveUrl":null},
+  {"id":"pubreq_01H","blockId":"buzz-generator","version":"0.1.1","status":"approved",
+   "deployState":"live","submittedAt":"2026-07-28T10:00:00Z","updatedAt":"2026-07-28T10:00:00Z",
+   "createdAt":"2026-07-28T10:00:00Z","liveUrl":"https://buzz-generator.civit.ai/"}]}`
 
 // (a) 404 on a slug the caller OWNS → the actionable message, and rc is STILL 4.
 func TestAppViewNotFoundOnOwnedSlugExplains(t *testing.T) {
@@ -88,13 +107,21 @@ func TestAppViewNotFoundOnOwnedSlugExplains(t *testing.T) {
 			t.Errorf("owned-slug advice missing %q, got: %v", want, err)
 		}
 	}
-	// It must report what the submissions route actually said, and name the
-	// listing command with the slug so the next step is copy-pasteable.
-	for _, want := range []string{"approved", "live", "civitai app listing status --slug buzz-generator", "civitai app status buzz-generator"} {
+	// It must name the listing command with the slug so the next step is
+	// copy-pasteable.
+	for _, want := range []string{"civitai app listing status --slug buzz-generator", "civitai app status buzz-generator"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("owned-slug advice missing %q, got: %v", want, err)
 		}
 	}
+	// And it must report what the submissions route actually said — asserted on
+	// the `(submission status: X, deploy: Y)` PAIR rather than on the bare words,
+	// because the prose around it already contains "the live URL": a
+	// `Contains(msg, "live")` check passes on a message that never read the
+	// deployState at all, which is the spelled-guard shape. These two values are
+	// written out by hand from ownedSubmissionBody's NEWEST row, not read back
+	// from the row the implementation picked.
+	assertOwnedStatePair(t, msg, "pending", "building")
 }
 
 // (b) 404 on a slug the caller does NOT own → the plain not-found, no claim about

@@ -244,6 +244,19 @@ func ownedSubmission(ctx context.Context, slug string) *appapi.Submission {
 	// submission's blockId IS the slug, and a server that ignored the filter
 	// would otherwise hand back someone else's newest row and turn this into a
 	// confident false claim of ownership.
+	//
+	// 🔴 THE FIRST MATCH, NEVER THE LAST. The list is newest-first and
+	// appViewOwnedAdvice prints THIS row's Status and DeployState VERBATIM, so an
+	// older row's state reads as plain fact about the newest submission: an author
+	// whose newest version is pending over an older approved/live one would be
+	// told the wrong deploy state of their own app, with nothing on screen to mark
+	// it wrong. Unpinned until #390 — the fixture was a single row, where both
+	// ends ARE the same row, so reversing this loop left the whole suite green
+	// (3786 RUN, 0 FAIL). Pinned now by
+	// TestAppViewOwnedAdviceNamesTheNewestSubmission plus the reader ledger in
+	// newest_row_pick_test.go. That the SERVER orders the list newest-first is an
+	// unverified dependency on the route's contract, stated in the ledger rather
+	// than closed — nothing here can check it.
 	for i := range subs {
 		if subs[i].BlockID == slug {
 			return &subs[i]
