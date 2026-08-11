@@ -36,8 +36,9 @@ package cmd
 // enumerated on newestFirstAdviceSites and covered since #390 by a SECOND ledger
 // (submissionsListReaders, newest_row_pick_test.go) keyed on references to
 // appapi's ListSubmissions. Read both before treating a green run here as "the
-// row-pick assumption is covered"; neither verifies that the SERVER really
-// returns the list newest-first, which nothing client-side can.
+// row-pick assumption is covered". Neither verifies that the SERVER really
+// returns the list newest-first — a check no one has written, rather than one
+// that cannot exist: every row carries SubmittedAt.
 
 import (
 	"errors"

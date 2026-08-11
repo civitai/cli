@@ -1,18 +1,31 @@
 package cmd
 
-// THE NEWEST-FIRST ROW PICK, PINNED AT EVERY READER OF THE LIST — issue #390.
+// THE NEWEST-FIRST ROW PICK, PINNED AT EVERY READER OF THE SUBMISSIONS ROUTE —
+// issue #390.
 //
 // GET /api/v1/blocks/submissions returns the caller's submissions NEWEST FIRST,
-// and five non-test files read that list. Three of them picked ONE row out of it
+// and six non-test files read it. Four of them picked ONE row out of that list
 // and pinned nothing about WHICH end they read, because every fixture they had
 // was a single row — where `subs[0]` and `subs[len(subs)-1]` are the same row, so
-// the choice cannot be observed. Measured on this branch's parent (d9f9c67),
-// reversing each pick ALONE left the entire suite green:
+// the choice cannot be observed. Measured by reversing each pick ALONE:
 //
-//	site                                        mutated to            result
-//	internal/cmd/apps.go ownedSubmission        last matching row     3786 RUN, 0 FAIL
-//	internal/cmd/app_metrics.go appBlockId scan last non-null row     3786 RUN, 0 FAIL
-//	internal/appapi/appblocks.go latestMatching last matching row     3786 RUN, 0 FAIL
+//	site                                         mutated to           result
+//	internal/cmd/apps.go ownedSubmission         last matching row    3786 RUN, 0 FAIL
+//	internal/cmd/app_metrics.go appBlockId scan  last non-null row    3786 RUN, 0 FAIL
+//	internal/appapi/appblocks.go latestMatching  last matching row    3786 RUN, 0 FAIL
+//	internal/appapi/appblocks.go GetSubmission   Submissions[len-1]   3812 RUN, 0 FAIL
+//
+// The first three were measured on d9f9c67; the fourth on the merged tree that
+// had already fixed them, which is the point — it was found by the adversarial
+// audit of the PR that fixed the other three, and it is why this ledger's
+// predicate is what it is. The first version of this file keyed on a
+// `.ListSubmissions` reference: the predicate that was easy to grep, not the
+// property that matters. `GetSubmission` reaches the SAME route and picks
+// `Submissions[0]` out of the SAME newest-first list while making no
+// `ListSubmissions` reference at all, so the ledger was blind to it BY
+// CONSTRUCTION — and `internal/cmd/app_listing.go`, which consumes that row to
+// resolve the listing every `app listing` subcommand mutates, was in no ledger at
+// all.
 //
 // `ownedSubmission` is the one that matters: `appViewOwnedAdvice` prints its
 // row's Status and DeployState VERBATIM ("submission status: %s, deploy: %s").
@@ -31,13 +44,31 @@ package cmd
 // on the wrong predicate is not the same rule.
 //
 // So this ledger is keyed on a different, and structural, thing: PROVENANCE OF
-// THE LIST — a reference to appapi's ListSubmissions, the only way to obtain it.
-// That is a package-level exported name, not a local spelling: #384 rejected a
-// scanner over the row-pick SHAPE precisely because any pattern matching `subs[0]`
-// turns on a variable name a rename defeats. `ListSubmissions` cannot be renamed
-// without renaming it here too, and it catches a reference taken as a FUNCTION
-// VALUE (`listSubmissions: client.ListSubmissions`) — which is how both
-// `app pull` and `app metrics` actually reach the list.
+// THE ROW — a reference to any accessor of the submissions ROUTE. #384 rejected a
+// scanner over the row-pick SHAPE, and that judgement still stands: any pattern
+// matching `subs[0]` turns on a variable name a rename defeats. The accessors are
+// exported method names, and the scanner also catches one taken as a FUNCTION
+// VALUE (`listSubmissions: client.ListSubmissions`), which is how `app pull` and
+// `app metrics` actually reach the list.
+//
+// 🔴 AND THE ACCESSOR SET IS DERIVED FROM THE CODE, NOT HAND-PICKED — that is the
+// repair for the blind spot above, and what stops this from recurring a third
+// time. A hand-written list of names has exactly the failure the audit found: it
+// covers the accessors somebody thought of. Instead:
+//
+//   - Every accessor must build its URL through `submissionsURL`, and
+//     TestSubmissionsRouteHasOneGateway asserts `SubmissionsPath` is referenced
+//     nowhere else — so a new accessor cannot reach the route around the side.
+//   - TestSubmissionsRouteAccessorsAreLedgered DERIVES the accessor set as "every
+//     appapi func referencing submissionsURL" and fails if it differs from
+//     submissionsRouteAccessors. A third accessor therefore forces a ledger
+//     decision on the day it is written, rather than waiting for an audit.
+//   - Only then does the reader walk run, over that derived-and-checked set.
+//
+// What it still cannot see is stated rather than implied: a reader that obtains a
+// submission WITHOUT touching this route (handed one by another function, or a
+// new route entirely). The gateway assertion narrows that to "a new route", which
+// is a visible, deliberate act rather than a silent inheritance.
 //
 // The two ledgers therefore overlap by design and answer different questions:
 // #384's asks "does every caller of the shared advice have a case proving it
@@ -45,26 +76,40 @@ package cmd
 // list declare, and pin, which end it reads?". app_pull.go and app_metrics.go
 // appear in both.
 //
-// 🔴 WHAT NEITHER LEDGER CAN CHECK, RESTATED RATHER THAN CLOSED. Every guard here
-// asserts what the CLI does with a list the TEST SERVER hands back in
-// newest-first order. Nothing client-side verifies that the real server orders it
-// that way: `ListSubmissions` does not sort, and the route sends no field these
-// guards could check an ordering against. So if that server-side contract ever
-// changed, every test in this file would stay green while every message went
-// wrong together. That residual is NOT closeable from here — closing it means
-// either sorting client-side on `submittedAt` (a behaviour change, and one that
-// would need its own decision because `app status --limit` and the cap caveat
-// both inherit the server's order) or a server-side guarantee. Neither is in
-// scope for #390; what is in scope is that the CLI's OWN half is now pinned, so a
-// future breakage is attributable to the server rather than hidden by an untested
-// client.
+// 🔴 WHAT NEITHER LEDGER CHECKS, AND — PRECISELY — WHY. Every guard here asserts
+// what the CLI does with a list the TEST SERVER hands back in newest-first order.
+// Nothing client-side verifies that order today: `ListSubmissions` does not sort
+// and no caller inspects the sequence, so if the server's ordering changed, every
+// test in this file would stay green while every message went wrong together.
+//
+// That is a statement about what the CLI DOES, not about what it COULD do, and an
+// earlier version of this comment got that wrong — it claimed "the route sends no
+// field these guards could check an ordering against" and then, six lines later,
+// proposed sorting on `submittedAt`. Both cannot be true. Every row carries
+// `SubmittedAt` (plus `CreatedAt`/`UpdatedAt`), so a client-side sort, or an
+// assertion that the returned list IS ordered, is entirely possible. It is
+// UNDONE, not impossible — a behaviour change needing its own decision, because
+// `app status --limit` and the cap caveat both inherit the server's order today,
+// and because it would move the CLI from reporting the server's answer to
+// overriding it.
+//
+// The genuinely unverifiable half is narrower and worth keeping separate: whether
+// the SERVER's intended recency order is the one `submittedAt` expresses. A
+// resubmission's `submittedAt` is the CLI's inference about which row is newer,
+// not a guarantee the route makes. Conflating "we have not checked" with "we
+// cannot check" is how a closeable residual stays open forever, so: the CLI's own
+// half is pinned here; the ordering check is unwritten and could be written; the
+// server's intent behind the order is the part no client can settle.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -117,6 +162,12 @@ type ownedRow struct {
 // with an extra row. #384's own fixture was flagged in audit for carrying an
 // identical submittedAt across its rows, so every identifying field is checked
 // here, not just the ones a given case asserts on.
+//
+// Scope of the guard, stated so it is not read as wider than it is: it covers the
+// five fields the caller supplies. `blockId` is shared by construction (both rows
+// describe the SAME app — that is the point) and `liveUrl` is hard-coded null
+// here, so neither discriminates in a fixture from this builder. The
+// ownedSubmissionBody const does differ on liveUrl; this builder does not.
 func twoRowOwnedBody(t *testing.T, slug string, newest, oldest ownedRow) string {
 	t.Helper()
 	for _, f := range []struct{ name, a, b string }{
@@ -220,7 +271,23 @@ func TestAppViewOwnedAdviceNamesTheNewestSubmission(t *testing.T) {
 // (version, status, appBlockId) triples; an empty id emits a null appBlockId.
 // Every row gets its own id and submittedAt derived from its position, so no two
 // rows of a fixture can collide on an identifying field.
-func metricsRowsBody(slug string, rows ...[3]string) string {
+func metricsRowsBody(t *testing.T, slug string, rows ...[3]string) string {
+	t.Helper()
+	// Fixture control, matching twoRowOwnedBody's: the NON-NULL appBlockIds are
+	// what every assertion turns on, so two rows carrying the same one would
+	// collapse the ends exactly as a single row does. Versions are checked too,
+	// since they are what a reader uses to see which row is which.
+	seenID, seenVer := map[string]bool{}, map[string]bool{}
+	for _, r := range rows {
+		if r[2] != "" && seenID[r[2]] {
+			t.Fatalf("two rows carry appBlockId %q — the ends of this fixture are indistinguishable "+
+				"on the field this test asserts (#390)", r[2])
+		}
+		if seenVer[r[0]] {
+			t.Fatalf("two rows carry version %q — the rows are not separable", r[0])
+		}
+		seenID[r[2]], seenVer[r[0]] = r[2] != "", true
+	}
 	out := make([]string, 0, len(rows))
 	for i, r := range rows {
 		blockID := "null"
@@ -260,7 +327,7 @@ func TestAppMetricsUsesTheNewestNonNullAppBlockID(t *testing.T) {
 			// Two approved versions, both carrying a block id. Only recency
 			// separates them, which is the property under test.
 			name:    "two non-null rows",
-			body:    metricsRowsBody(slug, [3]string{"0.2.0", "approved", "apb_newest"}, [3]string{"0.1.0", "approved", "apb_oldest"}),
+			body:    metricsRowsBody(t, slug, [3]string{"0.2.0", "approved", "apb_newest"}, [3]string{"0.1.0", "approved", "apb_oldest"}),
 			want:    "apb_newest",
 			mustNot: []string{"apb_oldest"},
 		},
@@ -269,7 +336,7 @@ func TestAppMetricsUsesTheNewestNonNullAppBlockID(t *testing.T) {
 			// "the last non-null" differ, and so do "the row after the null" and
 			// either of them.
 			name: "a null row between two non-null rows",
-			body: metricsRowsBody(slug,
+			body: metricsRowsBody(t, slug,
 				[3]string{"0.3.0", "approved", "apb_head"},
 				[3]string{"0.2.0", "pending", ""},
 				[3]string{"0.1.0", "approved", "apb_tail"}),
@@ -282,7 +349,7 @@ func TestAppMetricsUsesTheNewestNonNullAppBlockID(t *testing.T) {
 			// case the old fixture nearly covered — it stopped at the first
 			// non-null and had no second one to get wrong.
 			name: "a null newest row above two non-null rows",
-			body: metricsRowsBody(slug,
+			body: metricsRowsBody(t, slug,
 				[3]string{"0.3.0", "pending", ""},
 				[3]string{"0.2.0", "approved", "apb_second"},
 				[3]string{"0.1.0", "approved", "apb_third"}),
@@ -324,94 +391,179 @@ func TestAppMetricsUsesTheNewestNonNullAppBlockID(t *testing.T) {
 // The ledger
 // ---------------------------------------------------------------------------
 
-// submissionsListReader is one non-test file that obtains the newest-first
-// submissions list.
-type submissionsListReader struct {
-	// reads states, in words, WHICH part of the list this file consumes. It is
-	// documentation for the next reader — the checked part is pinnedBy.
-	reads string
-	// pinnedBy names the behavioural test(s) proving that claim. More than one
-	// when a file makes more than one independent pick.
-	pinnedBy []string
-	// exercises is a fragment that must appear LITERALLY in each pinning test's
-	// own body, naming the command or API this file implements. Without it the
+// submissionsPin binds one behavioural test to the site it proves.
+type submissionsPin struct {
+	// test is the behavioural test's name.
+	test string
+	// exercises is a fragment that must appear LITERALLY in that test's own
+	// body, naming the command or API the site implements. Without it the
 	// binding is satisfied by any test in the package that merely exists, and a
 	// stale re-bind stays green — measured as a live hole in #384.
+	//
+	// 🔴 It is per-PIN, not per-file, and that is not cosmetic: a file with two
+	// independent picks has two tests driving two DIFFERENT surfaces, so one
+	// shared fragment could only be something weak enough to match both — which
+	// is precisely the "satisfied by any test that exists" hole this field
+	// exists to close.
 	exercises string
 }
 
+// submissionsListReader is one non-test file that reads the submissions route.
+type submissionsListReader struct {
+	// reads states, in words, WHICH row(s) this file consumes and what it does
+	// with them. It is documentation for the next reader — the CHECKED part is
+	// pinnedBy — so it must name EVERY independent read in the file, not just
+	// the one that prompted the entry.
+	reads string
+	// pinnedBy names the behavioural test(s) proving that claim: one per
+	// independent pick, each bound to its own surface.
+	pinnedBy []submissionsPin
+}
+
 // submissionsListReaders is the ledger. Its key is `<package>/<file>.go`, since
-// the walk spans two packages: internal/appapi holds a reader too, and #384's
-// ledger walked only internal/cmd, which is why that site was outside it
+// the walk spans two packages: internal/appapi holds readers too, and #384's
+// ledger walked only internal/cmd, which is why those sites were outside it
 // entirely.
 var submissionsListReaders = map[string]submissionsListReader{
 	"cmd/apps.go": {
-		reads:     "the newest row whose blockId matches the slug (ownedSubmission); its status and deployState are printed verbatim",
-		pinnedBy:  []string{"TestAppViewOwnedAdviceNamesTheNewestSubmission"},
-		exercises: `run(t, "app", "view"`,
+		reads: "the newest row whose blockId matches the slug (ownedSubmission); its status and deployState are printed verbatim",
+		pinnedBy: []submissionsPin{
+			{"TestAppViewOwnedAdviceNamesTheNewestSubmission", `run(t, "app", "view"`},
+		},
 	},
 	"cmd/app_metrics.go": {
 		reads: "TWO independent picks: the newest non-null appBlockId, and the newest row's status for the not-approved advice",
-		pinnedBy: []string{
-			"TestAppMetricsUsesTheNewestNonNullAppBlockID",
-			"TestAppMetricsAdviceNamesTheNewestSubmission",
+		pinnedBy: []submissionsPin{
+			{"TestAppMetricsUsesTheNewestNonNullAppBlockID", `run(t, "app", "metrics"`},
+			{"TestAppMetricsAdviceNamesTheNewestSubmission", `run(t, "app", "metrics"`},
 		},
-		exercises: `run(t, "app", "metrics"`,
 	},
 	"cmd/app_pull.go": {
-		reads:     "the newest row's status for the not-approved advice (explainMissingApp)",
-		pinnedBy:  []string{"TestAppPullAdviceNamesTheNewestSubmission"},
-		exercises: `run(t, "app", "pull"`,
+		reads: "the newest row's status for the not-approved advice (explainMissingApp)",
+		pinnedBy: []submissionsPin{
+			{"TestAppPullAdviceNamesTheNewestSubmission", `run(t, "app", "pull"`},
+		},
 	},
 	"cmd/app_status.go": {
-		reads: "every row, and `--limit N` keeps the HEAD of the list — i.e. the newest N, which is what the flag's help promises",
-		// Not a new test: `--limit` was already pinned against five rows with
-		// distinct blockIds, asserting the two newest survive and the three
-		// oldest do not. Ledgered so the coverage is visible from here rather
-		// than rediscovered.
-		pinnedBy:  []string{"TestAppStatusLimitTrimsTheTable"},
-		exercises: `run(t, "app", "status", "--limit", "2"`,
+		reads: "TWO independent reads: the LIST view keeps every row and `--limit N` trims the HEAD (the newest N, which is what the flag help promises); " +
+			"the DETAIL view takes GetSubmission's single row and prints its version, status and deploy state",
+		pinnedBy: []submissionsPin{
+			// `--limit` was already pinned against five rows with distinct
+			// blockIds; ledgered so that coverage is visible from here rather
+			// than rediscovered. The detail view had no multi-row case until the
+			// audit of #390 found GetSubmission unpinned.
+			{"TestAppStatusLimitTrimsTheTable", `run(t, "app", "status", "--limit", "2"`},
+			{"TestAppStatusDetailShowsTheNewestSubmission", `run(t, "app", "status", slug)`},
+		},
+	},
+	"cmd/app_listing.go": {
+		reads: "GetSubmission's single row, for the appBlockId resolveListing hands to GetMyListingForApp — i.e. WHICH listing every `app listing` subcommand reads and mutates",
+		pinnedBy: []submissionsPin{
+			// Found by the adversarial audit of the PR that fixed the other
+			// three sites: the previous predicate (a `.ListSubmissions`
+			// reference) could not see this file at all, because it reaches the
+			// route through GetSubmission.
+			{"TestAppListingResolvesTheNewestSubmissionsBlock", `run(t, "app", "listing", "status"`},
+		},
 	},
 	"appapi/appblocks.go": {
-		reads:     "the newest slug+version match, preferring a non-terminal row (latestMatchingSubmission), for the id `app submit` reports",
-		pinnedBy:  []string{"TestRecoverTimedOutSubmitReadsTheNewestMatchingRow"},
-		exercises: `SubmitVersion(context.Background()`,
+		reads: "TWO independent picks: latestMatchingSubmission takes the newest slug+version match preferring a non-terminal row (the id `app submit` reports), " +
+			"and GetSubmission's `?blockId=` fallback takes Submissions[0] out of the narrowed list",
+		pinnedBy: []submissionsPin{
+			{"TestRecoverTimedOutSubmitReadsTheNewestMatchingRow", `SubmitVersion(context.Background()`},
+			{"TestGetSubmissionByBlockIDTakesTheNewestRow", `c.GetSubmission(context.Background()`},
+		},
 	},
 }
 
-// countListSubmissionsRefs counts references to appapi's ListSubmissions in one
-// Go source: a `.`-qualified use of the name, whether CALLED (`c.ListSubmissions(
-// ctx, slug)`) or taken as a function value (`listSubmissions: client.ListSubmissions,`).
-// Anything after a `//` is ignored.
+// submissionsRouteGateway is the ONE method every accessor of the submissions
+// route must build its URL through. It is the anchor the accessor set is derived
+// from, so an accessor cannot exist without being discoverable.
+const submissionsRouteGateway = "submissionsURL"
+
+// submissionsRouteAccessors is the ledgered set of appapi methods that talk to
+// the submissions route. It is ASSERTED against the set derived from the code
+// (TestSubmissionsRouteAccessorsAreLedgered), never trusted on its own — a
+// hand-written name list is exactly what let GetSubmission hide from the first
+// version of this ledger.
+var submissionsRouteAccessors = []string{"GetSubmission", "ListSubmissions"}
+
+// funcDecl matches a top-level func declaration, with or without a receiver, and
+// captures the func's own name.
+var funcDecl = regexp.MustCompile(`^func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+
+// enclosingFuncsReferencing returns the names of the top-level funcs whose
+// bodies mention needle, ignoring anything after a `//`. A reference outside any
+// func (a const or var initialiser) is reported as "" so the caller can see it
+// rather than silently attributing it to the preceding func.
+//
+// It is line-based, not AST-based, and its assumptions are gofmt's: a top-level
+// declaration starts at column 0. That is enough here because both scanned
+// packages are gofmt-clean (CI's build-test job runs `gofmt -s -l .`), and the
+// calibration battery below pins the shapes that would otherwise mis-attribute.
+func enclosingFuncsReferencing(src, needle string) []string {
+	var out []string
+	seen := map[string]bool{}
+	cur := ""
+	for _, line := range strings.Split(src, "\n") {
+		if m := funcDecl.FindStringSubmatch(line); m != nil {
+			cur = m[1]
+		} else if len(line) > 0 && !isSpaceByte(line[0]) && !strings.HasPrefix(line, "}") && !strings.HasPrefix(line, "//") {
+			// A top-level declaration that is NOT a func (const/var/type) ends
+			// the previous func's scope. Without this a `const X = SubmissionsPath`
+			// after a func would be attributed to that func.
+			cur = ""
+		}
+		code := line
+		if i := strings.Index(code, "//"); i >= 0 {
+			code = code[:i]
+		}
+		if strings.Contains(code, needle) && !seen[cur] {
+			seen[cur] = true
+			out = append(out, cur)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func isSpaceByte(b byte) bool { return b == ' ' || b == '\t' }
+
+// countSubmissionsRouteRefs counts references to any of the route's accessors in
+// one Go source: a `.`-qualified use of the name, whether CALLED
+// (`c.ListSubmissions(ctx, slug)`) or taken as a function value
+// (`listSubmissions: client.ListSubmissions,`). Anything after a `//` is ignored.
 //
 // The `.` qualifier is what makes it a use rather than a declaration: it excludes
-// both `func (c *Client) ListSubmissions(` and the interface's method line, which
-// declare the API instead of consuming it. The trailing-character test excludes
-// `appapi.ListSubmissionsCap`, a different exported name that shares the prefix
-// and is `.`-qualified.
+// both `func (c *Client) ListSubmissions(` and the interface's method lines,
+// which declare the API instead of consuming it. The trailing-character test
+// excludes `appapi.ListSubmissionsCap`, a different exported name that shares a
+// prefix and is `.`-qualified.
 //
 // Stated blind spot, in the under-reporting direction: like #384's scanner it
 // strips from the first `//` regardless of string context, so a reference written
 // inside a string literal after a `//` is invisible. No such shape exists in
 // either package today, and the walk below asserts a floor so an
 // everything-invisible scanner cannot read as "no drift".
-func countListSubmissionsRefs(src string) int {
-	const name = ".ListSubmissions"
+func countSubmissionsRouteRefs(src string, accessors []string) int {
 	n := 0
 	for _, line := range strings.Split(src, "\n") {
 		if i := strings.Index(line, "//"); i >= 0 {
 			line = line[:i]
 		}
-		for i := 0; ; {
-			j := strings.Index(line[i:], name)
-			if j < 0 {
-				break
+		for _, a := range accessors {
+			name := "." + a
+			for i := 0; ; {
+				j := strings.Index(line[i:], name)
+				if j < 0 {
+					break
+				}
+				end := i + j + len(name)
+				if end >= len(line) || !isIdentByte(line[end]) {
+					n++
+				}
+				i = end
 			}
-			end := i + j + len(name)
-			if end >= len(line) || !isIdentByte(line[end]) {
-				n++
-			}
-			i = end
 		}
 	}
 	return n
@@ -421,35 +573,181 @@ func isIdentByte(b byte) bool {
 	return b == '_' || (b >= '0' && b <= '9') || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
-// TestListSubmissionsRefScannerIsCalibrated validates the INSTRUMENT before the
+// TestSubmissionsRouteRefScannerIsCalibrated validates the INSTRUMENT before the
 // ledger reads a verdict from it, in both directions: a scanner that can never
 // count and one that counts declarations too are each indistinguishable from a
 // green ledger.
-func TestListSubmissionsRefScannerIsCalibrated(t *testing.T) {
+func TestSubmissionsRouteRefScannerIsCalibrated(t *testing.T) {
+	acc := []string{"GetSubmission", "ListSubmissions"}
 	for _, tc := range []struct {
 		name string
 		src  string
 		want int
 	}{
-		// Positive controls: it can observe the two shapes that actually occur.
+		// Positive controls: it can observe the shapes that actually occur.
 		{"a call", "subs, err := c.ListSubmissions(ctx, slug)\n", 1},
 		{"a function value", "listSubmissions: client.ListSubmissions,\n", 1},
-		{"two uses on separate lines", "a := c.ListSubmissions(ctx, \"\")\nb := d.ListSubmissions(ctx, s)\n", 2},
+		{"the OTHER accessor", "sub, err := client.GetSubmission(ctx, \"\", slug)\n", 1},
+		{"two uses on separate lines", "a := c.ListSubmissions(ctx, \"\")\nb := d.GetSubmission(ctx, i, s)\n", 2},
 		// Negative controls: declarations are not uses.
 		{"the method declaration", "func (c *Client) ListSubmissions(ctx context.Context, blockID string) ([]Submission, error) {\n", 0},
-		{"an interface method line", "\tListSubmissions(ctx context.Context, blockID string) ([]Submission, error)\n", 0},
-		// A different exported name that shares the prefix AND the dot.
+		{"an interface method line", "\tGetSubmission(ctx context.Context, id, blockID string) (*Submission, error)\n", 0},
+		// A different exported name that shares a prefix AND the dot.
 		{"the row cap constant", "if n >= appapi.ListSubmissionsCap {\n", 0},
-		{"the cap in a comparison chain", "return n >= appapi.ListSubmissionsCap\n", 0},
-		{"a comment mentioning a call", "// c.ListSubmissions(ctx, slug) is newest-first\n", 0},
+		{"a comment mentioning a call", "// c.GetSubmission(ctx, id, slug) takes the first row\n", 0},
 		{"a trailing comment beside code", "y := 1 // c.ListSubmissions(ctx, slug)\n", 0},
 		{"an unrelated file", "package cmd\n\nfunc other() {}\n", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := countListSubmissionsRefs(tc.src); got != tc.want {
-				t.Errorf("countListSubmissionsRefs(%q) = %d, want %d", tc.src, got, tc.want)
+			if got := countSubmissionsRouteRefs(tc.src, acc); got != tc.want {
+				t.Errorf("countSubmissionsRouteRefs(%q) = %d, want %d", tc.src, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestEnclosingFuncsReferencingIsCalibrated is the instrument control for the
+// accessor DERIVATION. An extractor that attributed a reference to the wrong func
+// would ledger the wrong accessor set, and one that found nothing would make both
+// derivation tests below pass vacuously.
+func TestEnclosingFuncsReferencingIsCalibrated(t *testing.T) {
+	const src = "package appapi\n\n" +
+		"func (c *Client) submissionsURL(id, blockID string) string {\n\tu := c.BaseURL + SubmissionsPath\n\treturn u\n}\n\n" +
+		"func (c *Client) ListSubmissions(ctx context.Context, b string) ([]Submission, error) {\n\turl := c.submissionsURL(\"\", b)\n\treturn nil, nil\n}\n\n" +
+		"func unrelated() string {\n\treturn \"x\"\n}\n"
+
+	if got := enclosingFuncsReferencing(src, "submissionsURL"); !equalStrings(got, []string{"ListSubmissions", "submissionsURL"}) {
+		// submissionsURL matches its own declaration line; the caller filters it.
+		t.Errorf("derivation = %v, want [ListSubmissions submissionsURL]", got)
+	}
+	// A func that does NOT reference the needle must not be attributed.
+	for _, bad := range enclosingFuncsReferencing(src, "submissionsURL") {
+		if bad == "unrelated" {
+			t.Error("a func with no reference was attributed the needle")
+		}
+	}
+	// Positive control: the extractor can come back empty for a real absence.
+	if got := enclosingFuncsReferencing(src, "NoSuchIdentifier"); len(got) != 0 {
+		t.Errorf("a needle that does not occur returned %v", got)
+	}
+	// 🔴 The mis-attribution shape: a top-level declaration AFTER a func must end
+	// that func's scope, or a const holding the needle is credited to the
+	// preceding func and the derived set silently gains a member.
+	const trailing = "package appapi\n\nfunc alpha() {\n\tx := 1\n}\n\nconst other = SubmissionsPath\n"
+	got := enclosingFuncsReferencing(trailing, "SubmissionsPath")
+	for _, g := range got {
+		if g == "alpha" {
+			t.Errorf("a top-level const referencing the needle was attributed to the preceding func: %v", got)
+		}
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// appapiSources returns every non-test .go source in internal/appapi, keyed by
+// file name, with a floor so an empty read cannot pass as "nothing found".
+func appapiSources(t *testing.T) map[string]string {
+	t.Helper()
+	dir := submissionsLedgerDirs["appapi"]
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("reading %s: %v", dir, err)
+	}
+	out := map[string]string{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Clean(filepath.Join(dir, name)))
+		if err != nil {
+			t.Fatalf("reading %s/%s: %v", dir, name, err)
+		}
+		out[name] = string(b)
+	}
+	if len(out) < submissionsLedgerFloors["appapi"] {
+		t.Fatalf("only %d non-test .go files found in %s — the read is wrong or partial", len(out), dir)
+	}
+	return out
+}
+
+// TestSubmissionsRouteHasOneGateway asserts that SubmissionsPath is referenced
+// ONLY by submissionsURL.
+//
+// 🔴 THIS IS WHAT MAKES THE DERIVED ACCESSOR SET COMPLETE. Deriving accessors as
+// "funcs referencing submissionsURL" is only sound while submissionsURL is the
+// sole way to reach the route; a func that pasted the path together itself would
+// be an accessor the derivation cannot see — the same blind spot as before, one
+// level down. This fails the day someone opens that second door.
+func TestSubmissionsRouteHasOneGateway(t *testing.T) {
+	var offenders []string
+	for name, src := range appapiSources(t) {
+		for _, fn := range enclosingFuncsReferencing(src, "SubmissionsPath") {
+			if fn == submissionsRouteGateway {
+				continue
+			}
+			// The const's own declaration sits outside any func.
+			if fn == "" && strings.Contains(src, "const SubmissionsPath") {
+				continue
+			}
+			offenders = append(offenders, name+":"+fn)
+		}
+	}
+	if len(offenders) > 0 {
+		t.Errorf("SubmissionsPath is referenced outside %s by %v.\n"+
+			"The accessor set this ledger derives is 'every func that goes through %s', so a func reaching the "+
+			"submissions route another way is an accessor the derivation CANNOT see — which is exactly how "+
+			"GetSubmission hid from the first version of this ledger. Route it through the gateway, or widen the "+
+			"derivation deliberately and say so here.", submissionsRouteGateway, offenders, submissionsRouteGateway)
+	}
+}
+
+// TestSubmissionsRouteAccessorsAreLedgered derives the accessor set from the code
+// and fails when it differs from submissionsRouteAccessors, in BOTH directions. A
+// new accessor therefore forces a ledger decision on the day it is written
+// instead of waiting for an audit to find it.
+func TestSubmissionsRouteAccessorsAreLedgered(t *testing.T) {
+	derived := map[string]bool{}
+	for _, src := range appapiSources(t) {
+		for _, fn := range enclosingFuncsReferencing(src, submissionsRouteGateway+"(") {
+			if fn == submissionsRouteGateway || fn == "" {
+				continue
+			}
+			derived[fn] = true
+		}
+	}
+	// Positive control before comparing: a derivation wired to nothing would
+	// otherwise agree with any ledger that happened to be empty.
+	if len(derived) == 0 {
+		t.Fatalf("derived NO accessors of the submissions route — the derivation is wired to nothing, "+
+			"so agreement with %v would mean nothing", submissionsRouteAccessors)
+	}
+	ledgered := map[string]bool{}
+	for _, a := range submissionsRouteAccessors {
+		ledgered[a] = true
+	}
+	for fn := range derived {
+		if !ledgered[fn] {
+			t.Errorf("appapi.%s reaches the submissions route and is NOT in submissionsRouteAccessors.\n"+
+				"Every accessor hands its caller a row out of a list documented newest-first, so add it here AND "+
+				"re-run the reader walk — a new accessor makes previously-invisible files into readers (#390).", fn)
+		}
+	}
+	for fn := range ledgered {
+		if !derived[fn] {
+			t.Errorf("submissionsRouteAccessors names appapi.%s, which no longer reaches the submissions route "+
+				"through %s. If it was renamed, rename it here; if it went away, drop it.", fn, submissionsRouteGateway)
+		}
 	}
 }
 
@@ -467,19 +765,39 @@ var submissionsLedgerDirs = map[string]string{
 // real count (55 and 6 at the time of writing) is what makes a PARTIAL walk fail
 // too. appapi's floor is loose because that package is small and actively
 // changing.
+//
+// 🔴 A MISSING KEY IS A FAILURE, NOT A ZERO. Read as `floors[prefix]` a directory
+// with no entry yields 0, and `scanned < 0` never fires — so adding a directory
+// to submissionsLedgerDirs and forgetting its floor silently turns that
+// directory's positive control OFF, in exactly the direction the floor exists to
+// prevent. submissionsLedgerFloorFor fails instead.
 var submissionsLedgerFloors = map[string]int{"cmd": 40, "appapi": 4}
 
+func submissionsLedgerFloorFor(t *testing.T, prefix string) int {
+	t.Helper()
+	floor, ok := submissionsLedgerFloors[prefix]
+	if !ok {
+		t.Fatalf("submissionsLedgerDirs has %q but submissionsLedgerFloors does not — without a floor its "+
+			"positive control is off, and an empty or partial scan of that directory would read as 'no drift'", prefix)
+	}
+	if floor < 1 {
+		t.Fatalf("the floor for %q is %d — a floor below 1 cannot fail, so it is not a control", prefix, floor)
+	}
+	return floor
+}
+
 // TestSubmissionsListReadersAreLedgered fails when the set of files reading the
-// newest-first list grows or shrinks, and when a ledgered file's pinning test is
+// submissions route grows or shrinks, and when a ledgered file's pinning test is
 // missing or does not actually drive that file's surface.
 //
-// The grow direction is the one that matters: a new command reading this list
-// inherits an assumption it cannot see, which is exactly how `app metrics` and
-// then `app view` each acquired it.
+// The grow direction is the one that matters: a new command reading this route
+// inherits an assumption it cannot see, which is how `app metrics`, then
+// `app view`, then `app listing` each acquired it.
 func TestSubmissionsListReadersAreLedgered(t *testing.T) {
 	found := map[string]int{}
 	var tests strings.Builder
 	for prefix, dir := range submissionsLedgerDirs {
+		floor := submissionsLedgerFloorFor(t, prefix)
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			t.Fatalf("reading %s: %v", dir, err)
@@ -499,34 +817,34 @@ func TestSubmissionsListReadersAreLedgered(t *testing.T) {
 				continue
 			}
 			scanned++
-			if n := countListSubmissionsRefs(string(b)); n > 0 {
+			if n := countSubmissionsRouteRefs(string(b), submissionsRouteAccessors); n > 0 {
 				found[prefix+"/"+name] = n
 			}
 		}
-		if scanned < submissionsLedgerFloors[prefix] {
-			t.Fatalf("only %d non-test .go files scanned in %s — the walk is wrong or partial, so an empty result means nothing",
-				scanned, dir)
+		if scanned < floor {
+			t.Fatalf("only %d non-test .go files scanned in %s (floor %d) — the walk is wrong or partial, so an empty result means nothing",
+				scanned, dir, floor)
 		}
 	}
 	// Positive control on the walk itself, separate from the file floor: a
 	// scanner wired to nothing yields an empty set from a complete walk.
 	if len(found) == 0 {
-		t.Fatal("the scan found NO references to ListSubmissions at all — the ledger is wired to nothing")
+		t.Fatal("the scan found NO references to any submissions-route accessor — the ledger is wired to nothing")
 	}
 
 	for name := range found {
 		if _, ok := submissionsListReaders[name]; !ok {
-			t.Errorf("internal/%s reads the submissions list and is NOT in submissionsListReaders.\n"+
-				"That list is documented newest-first and nothing client-side verifies it, so any single row this file "+
-				"picks out of it is an untested assumption (#378, #390). Add it to the ledger together with a behavioural "+
-				"case over a MULTI-ROW fixture whose rows differ on every field the case asserts (see twoRowOwnedBody).", name)
+			t.Errorf("internal/%s reads the submissions route and is NOT in submissionsListReaders.\n"+
+				"That route answers with a list documented newest-first, and nothing client-side verifies the order, so any "+
+				"single row this file takes out of it is an untested assumption (#378, #390). Add it to the ledger together "+
+				"with a behavioural case over a MULTI-ROW fixture whose rows differ on every field the case asserts "+
+				"(see twoRowOwnedBody).", name)
 		}
 	}
 	for name, site := range submissionsListReaders {
 		if _, ok := found[name]; !ok {
-			t.Errorf("submissionsListReaders names internal/%s, which no longer references ListSubmissions. "+
-				"If the read moved, move the ledger entry with it; if it went away, drop the entry and %s.",
-				name, strings.Join(site.pinnedBy, " + "))
+			t.Errorf("submissionsListReaders names internal/%s, which no longer references a submissions-route accessor. "+
+				"If the read moved, move the ledger entry with it; if it went away, drop the entry and its pinning tests.", name)
 			continue
 		}
 		if len(site.pinnedBy) == 0 {
@@ -534,23 +852,155 @@ func TestSubmissionsListReadersAreLedgered(t *testing.T) {
 			continue
 		}
 		for _, pin := range site.pinnedBy {
-			body := testFuncBody(tests.String(), pin)
+			body := testFuncBody(tests.String(), pin.test)
 			if body == "" {
 				t.Errorf("internal/%s is ledgered as pinned by %s, which is not a test in either scanned package — "+
-					"the ledger names coverage that does not exist", name, pin)
+					"the ledger names coverage that does not exist", name, pin.test)
 				continue
 			}
 			// THE BINDING: the pinning test must drive THIS file's surface.
 			// Existence alone leaves entries swappable, and a swapped ledger
 			// actively misdirects — its shrink-direction message then names the
 			// wrong test to delete.
-			if !strings.Contains(body, site.exercises) {
+			if !strings.Contains(body, pin.exercises) {
 				t.Errorf("internal/%s is ledgered as pinned by %s, but that test's body does not contain %s.\n"+
 					"This binding requires the fragment LITERALLY in the pinning test's own body, so the ledger cannot be "+
 					"satisfied by an unrelated test that merely exists. Either the entry names the wrong test (re-point it), "+
-					"or the invocation moved into a helper (inline it, or update this entry's `exercises`).",
-					name, pin, site.exercises)
+					"or the invocation moved into a helper (inline it, or update this pin's `exercises`).",
+					name, pin.test, pin.exercises)
 			}
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Site 5 + 6: GetSubmission's single row — internal/cmd/app_status.go (detail
+// view) and internal/cmd/app_listing.go (resolveListing)
+// ---------------------------------------------------------------------------
+
+// detailField reads one `Label: value` line out of the tabwriter-aligned detail
+// block, so assertions name the FIELD rather than searching the whole page for a
+// word. `app status <slug>` prints the version, status and deploy state of ONE
+// row, and a bare Contains would be satisfied by any of them appearing anywhere.
+func detailField(t *testing.T, out, label string) string {
+	t.Helper()
+	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(label) + `:\s+(.*?)\s*$`)
+	m := re.FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("no %q line in the detail output — there is nothing to check the row pick against:\n%s", label, out)
+	}
+	return m[1]
+}
+
+// twoRowDetailBody is a newest-first, `?blockId=`-narrowed listing whose two rows
+// disagree on every field the detail view prints.
+func twoRowDetailBody(slug string) map[string]any {
+	return map[string]any{
+		"submissions": []map[string]any{
+			{"id": "pubreq_02H", "blockId": slug, "version": "0.2.0", "status": "pending",
+				"deployState": "building", "submittedAt": "2026-07-29T10:00:00.000Z", "liveUrl": nil},
+			{"id": "pubreq_01H", "blockId": slug, "version": "0.1.1", "status": "approved",
+				"deployState": "live", "submittedAt": "2026-07-28T10:00:00.000Z",
+				"liveUrl": "https://" + slug + ".civit.ai/"},
+		},
+	}
+}
+
+// TestAppStatusDetailShowsTheNewestSubmission pins GetSubmission's row through
+// the surface that PRINTS it.
+//
+// 🔴 THIS IS THE SAME HARM AS `app view`, ON A FOURTH SURFACE, AND IT WAS FOUND
+// ONLY BY THE ADVERSARIAL AUDIT OF THE PR THAT FIXED THE OTHER THREE. Reversing
+// GetSubmission's `Submissions[len-1]` pick left the whole merged-tree suite
+// green (3812 RUN, 0 FAIL) while `app status <slug>` reported an OLDER row's
+// version, status and deploy state as plain fact — "0.1.1 / approved / live" for
+// an app whose newest submission is 0.2.0 and still building.
+func TestAppStatusDetailShowsTheNewestSubmission(t *testing.T) {
+	const slug = "buzz-generator"
+	var rec struct{ auth, path, id, blockID string }
+	srv := statusServer(t, twoRowDetailBody(slug), http.StatusOK, &rec)
+	defer srv.Close()
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	out, _, err := run(t, "app", "status", slug)
+	if err != nil {
+		t.Fatalf("app status <slug>: %v", err)
+	}
+	// REACHABILITY: this must be the narrowed DETAIL lookup, not the list view —
+	// they render differently and only one of them goes through GetSubmission.
+	if rec.blockID != slug {
+		t.Fatalf("blockId query = %q, want %q — the detail lookup did not run, so nothing below is about its row pick", rec.blockID, slug)
+	}
+	// Expected values written by hand from twoRowDetailBody's NEWEST row.
+	for _, f := range []struct{ label, want string }{
+		{"Version", "0.2.0"},
+		{"Publish request", "pubreq_02H"},
+		{"Status", "pending"},
+		{"Deploy state", "building"},
+	} {
+		if got := detailField(t, out, f.label); got != f.want {
+			t.Errorf("%s: = %q, want %q — the NEWEST row's value.\n"+
+				"An older row's deploy state printed as fact is #390's harm; here it reaches `app status` itself.\n%s",
+				f.label, got, f.want, out)
+		}
+	}
+}
+
+// TestAppListingResolvesTheNewestSubmissionsBlock pins the OTHER consumer of
+// GetSubmission's row: resolveListing takes its AppBlockID and hands it to
+// GetMyListingForApp, so the row picked here decides WHICH listing every
+// `app listing` subcommand reads and mutates. That is the "real data for a
+// DIFFERENT version" harm, on the write path.
+func TestAppListingResolvesTheNewestSubmissionsBlock(t *testing.T) {
+	const slug = "my-app"
+	var listingInput string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
+			// Newest first, two APPROVED rows carrying DIFFERENT block ids, so
+			// only recency separates them.
+			_ = json.NewEncoder(w).Encode(map[string]any{"submissions": []map[string]any{
+				{"id": "pubreq_02H", "blockId": slug, "version": "0.2.0", "status": "approved",
+					"appBlockId": "block_newest", "submittedAt": "2026-07-29T10:00:00.000Z"},
+				{"id": "pubreq_01H", "blockId": slug, "version": "0.1.0", "status": "approved",
+					"appBlockId": "block_oldest", "submittedAt": "2026-07-28T10:00:00.000Z"},
+			}})
+		case strings.Contains(r.URL.Path, "getMyListingForApp"):
+			listingInput = r.URL.RawQuery
+			trpcData(w, map[string]any{"appListingId": "listing_1", "status": "draft", "contentRating": "g", "hasPendingRevision": false})
+		case strings.Contains(r.URL.Path, "getMyListingForEdit"):
+			trpcData(w, map[string]any{
+				"parentId": "listing_1", "slug": slug, "status": "draft", "hasPendingRevision": false, "shadowId": nil,
+				"assets": map[string]any{
+					"icon":        map[string]any{"imageId": 11, "url": "http://x/i.png"},
+					"cover":       map[string]any{"imageId": nil, "url": nil},
+					"screenshots": []any{},
+				},
+			})
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	if _, _, err := run(t, "app", "listing", "status", "--slug", slug); err != nil {
+		t.Fatalf("app listing status: %v", err)
+	}
+	// REACHABILITY: the listing resolve must have happened, or "the older id is
+	// absent" is trivially true of an empty string.
+	if listingInput == "" {
+		t.Fatal("getMyListingForApp was never called, so no appBlockId was resolved — nothing below is about the row pick")
+	}
+	// Hand-written from the fixture's newest row, not read back from it.
+	if !strings.Contains(listingInput, "block_newest") {
+		t.Errorf("the listing was resolved with the wrong block id.\nwant %q in the query; got: %s", "block_newest", listingInput)
+	}
+	if strings.Contains(listingInput, "block_oldest") {
+		t.Errorf("`app listing` resolved the OLDER version's block — every subcommand would then read and MUTATE "+
+			"the wrong listing (#390).\ngot: %s", listingInput)
 	}
 }

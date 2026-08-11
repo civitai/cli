@@ -621,8 +621,10 @@ func (c *Client) recoverTimedOutSubmit(ctx context.Context, slug, version string
 // ledger in internal/cmd/newest_row_pick_test.go, which spans this package for
 // exactly this site. That the SERVER orders the list newest-first is an
 // unverified dependency on the route's contract: ListSubmissions does not sort
-// and nothing here can check it, so a change on that side would leave every one
-// of those guards green while this answer went wrong.
+// and no caller inspects the sequence, so a change on that side would leave every
+// one of those guards green while this answer went wrong. Not checked is not the
+// same as not checkable — every row carries SubmittedAt, so verifying (or
+// imposing) the order is possible and simply unwritten.
 func latestMatchingSubmission(subs []Submission, slug, version string) *Submission {
 	var anyMatch *Submission
 	for i := range subs {
@@ -806,6 +808,19 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 	if err := json.Unmarshal(raw, &single); err == nil && single.Submission != nil {
 		return single.Submission, nil
 	}
+	// 🔴 THE `?blockId=` FORM IS A NARROWED LIST, NOT A SINGLE ROW, and the row
+	// taken below is `Submissions[0]` — NEVER `Submissions[len-1]`. Every
+	// submission ever made for that slug comes back, newest first. That one row
+	// is printed verbatim by `app status <slug>` (version, status, deploy state)
+	// and is where resolveListing takes the appBlockId deciding WHICH listing
+	// every `app listing` subcommand reads and MUTATES. Unpinned until the
+	// adversarial audit of #390's first fix: every fixture here was one row,
+	// where both ends ARE the same row, so reversing the pick left the whole
+	// suite green (3812 RUN, 0 FAIL). Pinned now by
+	// TestGetSubmissionByBlockIDTakesTheNewestRow, the two per-surface cases in
+	// internal/cmd, and the reader ledger in newest_row_pick_test.go. Whether the
+	// SERVER really orders it newest-first is not checked client-side today —
+	// every row carries SubmittedAt, so such a check is possible, just unwritten.
 	var list struct {
 		Submissions []Submission `json:"submissions"`
 	}

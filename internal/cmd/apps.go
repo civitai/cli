@@ -256,7 +256,8 @@ func ownedSubmission(ctx context.Context, slug string) *appapi.Submission {
 	// TestAppViewOwnedAdviceNamesTheNewestSubmission plus the reader ledger in
 	// newest_row_pick_test.go. That the SERVER orders the list newest-first is an
 	// unverified dependency on the route's contract, stated in the ledger rather
-	// than closed — nothing here can check it.
+	// than closed. Unverified, not unverifiable: every row carries SubmittedAt, so
+	// a client-side check or sort is possible — it is simply not written.
 	for i := range subs {
 		if subs[i].BlockID == slug {
 			return &subs[i]
