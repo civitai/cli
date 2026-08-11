@@ -131,6 +131,47 @@ func TestFailureReasons_EveryStepIsReportedInOrder(t *testing.T) {
 	}
 }
 
+// 🔴 THE TWO RENDERINGS MUST AGREE ON WHAT ONE STEP SAID. Workflow.FailureReasons
+// deduped across steps while Step.failureReasons did not dedupe within one, so a
+// single step carrying ["A","A"] rendered `the server reported: A; A` on the
+// per-output line (which reads the step) and a single `A` in the `workflows get`
+// block (which reads the workflow) — same payload, same screen, two answers.
+func TestFailureReasons_OneStepRepeatingItselfIsCollapsedForBothReaders(t *testing.T) {
+	payload := `{"id":"wf_1","status":"failed","steps":[{"$type":"imageGen","name":"$0","status":"failed",
+	  "metadata":{},"output":{"images":[{"id":"out_1","available":false}],"errors":["A","A","B","A"]}}]}`
+	var wf Workflow
+	if err := json.Unmarshal([]byte(payload), &wf); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	want := []string{"A", "B"}
+	if got := wf.FailureReasons(); !equalStrings(got, want) {
+		t.Errorf("Workflow.FailureReasons() = %#v, want %#v", got, want)
+	}
+	outs := wf.Outputs()
+	if len(outs) != 1 {
+		t.Fatalf("CONTROL failure, not a finding: %d outputs, want 1", len(outs))
+	}
+	if got := outs[0].StepErrors; !equalStrings(got, want) {
+		t.Errorf("Output.StepErrors = %#v, want %#v — the per-output line would render %q while the "+
+			"workflow block rendered %q", got, want, joinReasons(got), joinReasons(want))
+	}
+	if got := ExclusionReason(outs[0]); strings.Contains(got, "A; A") {
+		t.Errorf("the excluded-output sentence repeats one step's reason: %s", got)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // De-duplication is EXACT-MATCH ONLY. A four-step run that died the same way
 // repeats one string per step; two reasons that differ at all are both kept.
 func TestFailureReasons_DedupesExactRepeatsAndNothingElse(t *testing.T) {

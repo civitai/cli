@@ -171,12 +171,23 @@ type Step struct {
 
 // failureReasons returns the step's server-supplied reasons, trimmed, with
 // blank entries dropped. The words themselves are untouched.
+// 🔴 IT DEDUPES, BECAUSE Workflow.FailureReasons DOES AND THE TWO ARE RENDERED
+// SIDE BY SIDE. They were not consistent: a single step carrying ["A","A"]
+// produced `the server reported: A; A` on the per-output line (which reads this)
+// and a single `A` in the `workflows get` block (which reads FailureReasons,
+// deduping across the whole workflow). Same payload, same screen, two answers.
+// The de-duplication argument does not become weaker inside one step than across
+// two, so it is applied here and FailureReasons inherits it.
 func (s Step) failureReasons() []string {
 	var out []string
+	seen := make(map[string]bool)
 	for _, e := range s.Output.Errors {
-		if t := strings.TrimSpace(e); t != "" {
-			out = append(out, t)
+		t := strings.TrimSpace(e)
+		if t == "" || seen[t] {
+			continue
 		}
+		seen[t] = true
+		out = append(out, t)
 	}
 	return out
 }
