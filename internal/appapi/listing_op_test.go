@@ -462,9 +462,18 @@ func TestChangeArmPresumesNoUserSuppliedValue(t *testing.T) {
 				// The whole point, asserted on the route that proves it: this
 				// 400 may not blame a value, because none was sent.
 				msg := err.Error()
+				// 🔴 A spelled list, and spelled lists are defeatable by a
+				// synonym — so it is NOT what carries this test. The pin below
+				// it is: whatever wording arrives, the arm must still say what
+				// it means, and a sentence cannot both satisfy that and be a
+				// bare "go fix your value". This list is the cheap second net,
+				// and it was widened to the four rewordings measured against it
+				// ("correct the value", "what you passed", "what you sent",
+				// "your input") rather than to the one that shipped.
 				for _, blame := range []string{
 					"fix the value", "the value you", "check the value",
 					"correct the value", "what you passed", "you supplied",
+					"what you sent", "your input", "the value and retry",
 				} {
 					if strings.Contains(strings.ToLower(msg), blame) {
 						t.Errorf("%s sends only CLI-minted fields (%v), but its 400 blames a value the author never supplied (%q):\n  %s",
