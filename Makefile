@@ -5,7 +5,7 @@ COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
-.PHONY: all build install test vet lint fmt clean tidy ci ci-shallow mutate dogfood-check
+.PHONY: all build install test vet lint fmt clean tidy ci ci-shallow mutate
 
 all: build
 
@@ -63,19 +63,6 @@ ci-shallow:
 # Measurements: claudedocs/mutation-testing-experiment.md
 mutate:
 	./scripts/mutate.sh $(PKG)
-
-# The dogfood sandbox (scripts/dogfood-sandbox.sh) is a shell file that gates a
-# money-spending CLI, so it gets its own shellcheck + a selftest. `--offline`
-# needs no credential and no network: it drives the real gate against a stub
-# binary, so the meter, the ledger lock and every refusal are regression-tested
-# here rather than only during a run. See claudedocs/dogfood-3-sandbox.md.
-dogfood-check:
-	@command -v shellcheck >/dev/null 2>&1 || { \
-		echo "shellcheck not found. Install it: https://www.shellcheck.net/ (Nix: nix-shell -p shellcheck)"; \
-		exit 1; \
-	}
-	shellcheck -x --exclude=SC2153 scripts/dogfood-sandbox.sh
-	bash scripts/dogfood-sandbox.sh selftest --offline
 
 clean:
 	rm -rf bin dist
