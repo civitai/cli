@@ -276,15 +276,24 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled boo
 // server's account ambiguous, because only one of them has an account.
 //
 // The set, not the individual reason, is the unit — two outputs disagree when
-// their lists differ, even if they share an entry. Order and repetition are
-// significant, because they are significant in the rendering: joinReasons emits
-// the slice in order, so ["A","B"] and ["B","A"] genuinely produce two different
-// sentences and outputs carrying them have not said the same thing.
+// their lists differ, even if they share an entry.
+//
+// ORDER is significant, and that is a live property: joinReasons emits the slice
+// in order, so ["A","B"] and ["B","A"] produce two different sentences and the
+// outputs carrying them have not said the same thing.
+//
+// REPETITION is significant too, but it is currently UNREACHABLE, and calling it
+// "asserted in both directions" was an overstatement in this PR's description.
+// `Output.StepErrors` has exactly one producer — `Step.failureReasons`, which
+// this change made dedupe — so no payload can put a repeated entry in a reason
+// set. Treating repetition as significant here is therefore DEFENSIVE against a
+// second producer appearing, not a behaviour any input exercises today. If one
+// ever does, this key already does the right thing.
 //
 // 🔴 THE KEY MUST BE INJECTIVE, AND A JOIN ON A SEPARATOR IS NOT.
 // An earlier version joined on "\x00" under a comment asserting that a NUL
 // "cannot appear in the key material … these strings reach us from JSON". That
-// was FALSE and the comment was the bug: JSON's “ escape is legal,
+// was FALSE and the comment was the bug: a JSON \u0000 escape is legal,
 // encoding/json decodes it to a real NUL, Step.failureReasons only TrimSpaces
 // (NUL is not whitespace), and safeTerm strips it at RENDER — long after this
 // gate has already decided. Measured: a reason written "A\u0000B" survives decode

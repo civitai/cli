@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode"
 )
 
 // GetWorkflowPath is the read-back query for one workflow.
@@ -178,18 +179,52 @@ type Step struct {
 // deduping across the whole workflow). Same payload, same screen, two answers.
 // The de-duplication argument does not become weaker inside one step than across
 // two, so it is applied here and FailureReasons inherits it.
+//
+// 🔴 "BLANK" MEANS NO PRINTABLE CONTENT, NOT JUST NO WHITESPACE. TrimSpace alone
+// kept a reason made entirely of control bytes, which is representable for
+// exactly the reason this file already argues a NUL is: the payload format
+// permits it and TrimSpace does not treat it as space. The terminal renderer
+// then strips those bytes and the user is shown
+//
+//   - out_1: not available (the server reported: )
+//
+// — an empty parenthetical that displaces, and is strictly less informative
+// than, the categorical fallback it replaced. So a reason carrying no printable
+// rune is dropped HERE, where "does this string say anything at all" is a
+// question about content.
+//
+// This is NOT terminal sanitisation and does not duplicate safeTerm's table:
+// safeTerm decides what is safe to WRITE to a terminal and stays in internal/cmd
+// (`--json` never passes through it). This decides whether there is anything to
+// say, which is true of any medium. The two overlap without either owning the
+// other, and unicode.IsControl is the weaker, self-contained test.
+//
+// 🔴 It is emptiness, never meaning: item 13 forbids judging what a reason SAYS,
+// and nothing here reads the words. A reason with one printable rune survives.
 func (s Step) failureReasons() []string {
 	var out []string
 	seen := make(map[string]bool)
 	for _, e := range s.Output.Errors {
 		t := strings.TrimSpace(e)
-		if t == "" || seen[t] {
+		if t == "" || !hasPrintableContent(t) || seen[t] {
 			continue
 		}
 		seen[t] = true
 		out = append(out, t)
 	}
 	return out
+}
+
+// hasPrintableContent reports whether s contains at least one rune that is not a
+// control character — i.e. whether it would still say something after a renderer
+// has removed the bytes no terminal should receive.
+func hasPrintableContent(s string) bool {
+	for _, r := range s {
+		if !unicode.IsControl(r) {
+			return true
+		}
+	}
+	return false
 }
 
 // FailureReasons returns every server-supplied reason on the workflow, in step
