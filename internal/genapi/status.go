@@ -201,10 +201,35 @@ type Step struct {
 //
 // 🔴 It is emptiness, never meaning: item 13 forbids judging what a reason SAYS,
 // and nothing here reads the words. A reason with one printable rune survives.
-func (s Step) failureReasons() []string {
+func (s Step) failureReasons() []string { return dedupeReasons(s.Output.Errors) }
+
+// dedupeReasons is THE rule for turning a server-supplied `errors` array into
+// the reasons a renderer may show: trim, drop what says nothing, drop an EXACT
+// repeat of a reason already collected, keep everything else in wire order and
+// byte-for-byte.
+//
+// 🔴 IT IS ONE FUNCTION BECAUSE THERE IS ONE RULE, AND THE LAST TIME THERE WERE
+// TWO COPIES THEY DISAGREED. Before #381 `Step.failureReasons` did not dedupe
+// while `Workflow.FailureReasons` did, so one payload rendered `A; A` on the
+// per-output line and a single `A` in the `workflows get` block — same screen,
+// two answers. `workflows list` (civitai/cli#382) reads a DIFFERENT wire path
+// (`steps[].errors`, a sibling of `output`, not `steps[].output.errors`) and
+// would have been the third copy; it calls this instead.
+//
+// The four callers are the two step types' failureReasons and the two
+// workflow-level FailureReasons. The workflow-level ones run it over every
+// step's raw array at once, which is exactly per-step dedupe followed by
+// cross-step dedupe: trimming, the emptiness drop and the exact-repeat drop are
+// all order-preserving and idempotent.
+//
+// 🔴 It is emptiness, never meaning: item 13 forbids judging what a reason SAYS,
+// and nothing here reads the words. A reason with one printable rune survives,
+// and two reasons that differ at all are both kept — no normalising, no
+// canonicalising, no classifying.
+func dedupeReasons(raw []string) []string {
 	var out []string
-	seen := make(map[string]bool)
-	for _, e := range s.Output.Errors {
+	seen := make(map[string]bool, len(raw))
+	for _, e := range raw {
 		t := strings.TrimSpace(e)
 		if t == "" || !hasPrintableContent(t) || seen[t] {
 			continue
@@ -240,18 +265,11 @@ func hasPrintableContent(s string) bool {
 // trimmed string byte-for-byte; it does not normalise, canonicalise or classify,
 // so two reasons that differ at all are both kept (AGENTS.md item 13).
 func (w *Workflow) FailureReasons() []string {
-	var out []string
-	seen := make(map[string]bool)
+	var raw []string
 	for _, st := range w.Steps {
-		for _, r := range st.failureReasons() {
-			if seen[r] {
-				continue
-			}
-			seen[r] = true
-			out = append(out, r)
-		}
+		raw = append(raw, st.Output.Errors...)
 	}
-	return out
+	return dedupeReasons(raw)
 }
 
 // reasonJoin is the ONE separator used when several server reasons have to share

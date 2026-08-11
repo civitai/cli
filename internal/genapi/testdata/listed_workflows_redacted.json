@@ -1,0 +1,134 @@
+{
+  "items": [
+    {
+      "id": "redacted-20260810223715659",
+      "status": "failed",
+      "createdAt": "2026-08-10T22:37:15.659Z",
+      "transactions": [
+        { "type": "debit", "amount": 60, "id": "00000000-0000-0000-0000-00000000debi", "accountType": "blue" },
+        { "type": "credit", "amount": 60, "id": "00000000-0000-0000-0000-0000000credi", "accountType": "blue" }
+      ],
+      "cost": { "base": 0, "factors": { "base": 60, "quantity": 1 }, "tips": { "civitai": 0, "creators": 0 }, "total": 0 },
+      "tags": ["civitai", "NanoBanana", "gen", "green", "img2img:edit", "img"],
+      "allowMatureContent": false,
+      "duration": 0,
+      "metadata": {
+        "params": {
+          "workflow": "img2img:edit",
+          "priority": "low",
+          "outputFormat": "jpeg",
+          "ecosystem": "NanoBanana",
+          "images": [{ "url": "https://images.example.invalid/1024x1024.png", "width": 1024, "height": 1024 }],
+          "seed": 1105986134,
+          "prompt": "make the background solid white",
+          "quantity": 1
+        },
+        "resources": [{ "id": 2154472, "name": "REDACTED", "model": { "id": 1903424, "name": "REDACTED", "type": "Checkpoint" } }]
+      },
+      "steps": [
+        {
+          "$type": "imageGen",
+          "name": "$0",
+          "status": "failed",
+          "timeout": "00:20:00",
+          "completedAt": "2026-08-10T22:37:17.157Z",
+          "queuePosition": null,
+          "metadata": {},
+          "output": [
+            {
+              "id": "redacted-0.jpg",
+              "seed": 1105986134,
+              "available": false,
+              "urlExpiresAt": "2027-08-11T20:24:40.3423514Z",
+              "nsfwLevel": null,
+              "blockedReason": null,
+              "type": "image",
+              "url": "https://blobs.example.invalid/v2/consumer/blobs/redacted-0.jpg?sig=REDACTED",
+              "width": 1024,
+              "height": 1024,
+              "aspect": 1,
+              "previewUrl": "https://blobs.example.invalid/v2/consumer/blobs/redacted-0.jpg?sig=REDACTED",
+              "previewUrlExpiresAt": "2027-08-11T20:24:40.3423987Z"
+            }
+          ],
+          "images": [
+            {
+              "id": "redacted-0.jpg",
+              "seed": 1105986134,
+              "available": false,
+              "urlExpiresAt": "2027-08-11T20:24:40.3423514Z",
+              "nsfwLevel": null,
+              "blockedReason": null,
+              "type": "image",
+              "url": "https://blobs.example.invalid/v2/consumer/blobs/redacted-0.jpg?sig=REDACTED",
+              "width": 1024,
+              "height": 1024,
+              "aspect": 1,
+              "previewUrl": "https://blobs.example.invalid/v2/consumer/blobs/redacted-0.jpg?sig=REDACTED",
+              "previewUrlExpiresAt": "2027-08-11T20:24:40.3423987Z"
+            }
+          ],
+          "errors": [
+            "Google Gemini: Could not generate images with the given prompts and images. Please try again with different inputs."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "redacted-20260810224136984",
+      "status": "succeeded",
+      "createdAt": "2026-08-10T22:41:36.984Z",
+      "transactions": [
+        { "type": "debit", "amount": 104, "id": "00000000-0000-0000-0000-0000000debi2", "accountType": "blue" }
+      ],
+      "cost": { "base": 0, "factors": { "base": 104, "quantity": 1 }, "tips": { "civitai": 0, "creators": 0 }, "total": 104 },
+      "tags": ["civitai", "gen", "green", "txt2img", "img"],
+      "allowMatureContent": false,
+      "duration": 12,
+      "metadata": { "params": { "workflow": "txt2img", "quantity": 1 } },
+      "steps": [
+        {
+          "$type": "textToImage",
+          "name": "$0",
+          "status": "succeeded",
+          "timeout": "00:20:00",
+          "completedAt": "2026-08-10T22:41:49.000Z",
+          "queuePosition": null,
+          "metadata": { "params": { "seed": 12345 } },
+          "output": [
+            {
+              "id": "redacted-ok-0.jpeg",
+              "seed": 12345,
+              "available": true,
+              "urlExpiresAt": "2027-08-11T20:24:40.3423514Z",
+              "nsfwLevel": "PG",
+              "blockedReason": null,
+              "type": "image",
+              "url": "https://blobs.example.invalid/v2/consumer/blobs/redacted-ok-0.jpeg?sig=REDACTED",
+              "width": 1024,
+              "height": 1024,
+              "aspect": 1
+            }
+          ],
+          "images": [
+            {
+              "id": "redacted-ok-0.jpeg",
+              "seed": 12345,
+              "available": true,
+              "urlExpiresAt": "2027-08-11T20:24:40.3423514Z",
+              "nsfwLevel": "PG",
+              "blockedReason": null,
+              "type": "image",
+              "url": "https://blobs.example.invalid/v2/consumer/blobs/redacted-ok-0.jpeg?sig=REDACTED",
+              "width": 1024,
+              "height": 1024,
+              "aspect": 1
+            }
+          ],
+          "errors": null
+        }
+      ]
+    }
+  ],
+  "nextCursor": "redacted-cursor"
+}

@@ -124,6 +124,122 @@ func TestIndentContinuation(t *testing.T) {
 	})
 }
 
+// wrapServerText is the third half of the same guard (civitai/cli#382): it
+// exists because the TERMINAL wraps a line the CLI left too long, and the spill
+// lands at column zero where indentContinuation has no newline to act on.
+func TestWrapServerText(t *testing.T) {
+	t.Run("no line exceeds the width", func(t *testing.T) {
+		in := strings.TrimSpace(strings.Repeat("word ", 200))
+		got := wrapServerText(in, 40)
+		lines := strings.Split(got, "\n")
+		if len(lines) < 5 {
+			t.Fatalf("CONTROL failure, not a finding: %d rune input produced %d line(s), so nothing is being "+
+				"wrapped", len([]rune(in)), len(lines))
+		}
+		for _, l := range lines {
+			if n := len([]rune(l)); n > 40 {
+				t.Errorf("line of %d runes exceeds the 40-rune budget: %q", n, l)
+			}
+		}
+	})
+
+	t.Run("nothing is truncated", func(t *testing.T) {
+		in := "FIXTURE alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu"
+		if got := unwrapFinding(wrapServerText(in, 12)); got != in {
+			t.Errorf("wrapping lost text — it must break lines, never drop them:\n want %q\n got  %q", in, got)
+		}
+	})
+
+	t.Run("the string's own line breaks survive", func(t *testing.T) {
+		// A wrapper that collapsed the whole reason into one paragraph would
+		// flatten a server message that had deliberately separated two
+		// statements. Layout may be added; structure may not be removed.
+		got := wrapServerText("FIXTURE first\nFIXTURE second", 80)
+		if got != "FIXTURE first\nFIXTURE second" {
+			t.Errorf("the reason's own line break did not survive: %q", got)
+		}
+	})
+
+	// 🔴 THIS ASSERTION IS THE REVERSE OF THE ONE IT REPLACED, AND THE REVERSAL
+	// IS THE POINT. It used to pin that an over-long token is left WHOLE —
+	// "overflowing one line is the lesser harm" — reasoning about a corrupted id
+	// being worse than a long line. That was wrong, and it contradicted the
+	// forgery invariant asserted three files over: an over-long token already
+	// breaks the layout, so the real choice was "silently overflow into a
+	// forgeable column" versus "a visibly broken token". See hardSplitOverlong
+	// for the demonstrated counterexample.
+	t.Run("a token longer than the width is hard-split", func(t *testing.T) {
+		in := strings.Repeat("x", 50)
+		got := wrapServerText(in, 10)
+		for _, l := range strings.Split(got, "\n") {
+			if n := len([]rune(l)); n > 10 {
+				t.Errorf("an over-long token was left whole: a %d-rune line survives the wrap, and the "+
+					"TERMINAL will break it — at column zero, where a forged row goes: %q", n, l)
+			}
+		}
+		if unwrapFinding(strings.ReplaceAll(got, "\n", "")) != in {
+			t.Errorf("splitting lost or reordered content: %q -> %q", in, got)
+		}
+	})
+
+	// 🔴 THE PROPERTY, NOT THE FIXTURE. The guard that shipped first was
+	// fixture-shaped — it handled the payloads it had been shown — and the
+	// hazard arrived in a shape nobody had listed. What must hold for ARBITRARY
+	// reason material is a single invariant: no emitted line exceeds the budget.
+	// U+2800 is present because it is the measured counterexample, not because
+	// the rule is about U+2800.
+	t.Run("no emitted line exceeds the budget, for any input", func(t *testing.T) {
+		const blank = "⠀" // BRAILLE PATTERN BLANK: printable, not a space, above U+009F
+		atoms := []string{
+			"word", "a", "", blank, strings.Repeat(blank, 40), strings.Repeat("x", 90),
+			"https://example.invalid/" + strings.Repeat("p", 60), "\t", "\n",
+			strings.Repeat("字", 40), "wf_forged  succeeded  0  4/4", "-", strings.Repeat("é", 33),
+		}
+		for _, width := range []int{1, 2, 7, 40, listReasonWrapWidth} {
+			for i, a := range atoms {
+				for j, b := range atoms {
+					for _, sep := range []string{"", " ", blank, "\n"} {
+						in := a + sep + b
+						got := wrapServerText(in, width)
+						for _, l := range strings.Split(got, "\n") {
+							if n := len([]rune(l)); n > width {
+								t.Fatalf("wrapServerText(width=%d) emitted a %d-rune line from atoms %d+%d "+
+									"joined by %q: %q\n\nEvery emitted line must fit the budget, or the "+
+									"TERMINAL breaks it and the spill lands at column zero.",
+									width, n, i, j, sep, l)
+							}
+						}
+					}
+				}
+			}
+		}
+	})
+
+	// The width clamp is REACHABLE, not decorative: hard-splitting at width 0
+	// would slice zero runes off an over-long token forever. A caller passing a
+	// pad wider than the budget is one arithmetic slip away, and a hang is a
+	// worse failure than a narrow line.
+	t.Run("a non-positive width clamps instead of hanging", func(t *testing.T) {
+		for _, w := range []int{0, -5} {
+			got := wrapServerText("abcdef ghi", w)
+			for _, l := range strings.Split(got, "\n") {
+				if n := len([]rune(l)); n > 1 {
+					t.Errorf("width %d produced a %d-rune line %q; it must clamp to 1", w, n, l)
+				}
+			}
+			if unwrapFinding(strings.ReplaceAll(got, "\n", "")) != "abcdefghi" {
+				t.Errorf("width %d lost content: %q", w, got)
+			}
+		}
+	})
+
+	t.Run("an empty string stays one empty line", func(t *testing.T) {
+		if got := wrapServerText("", 40); got != "" {
+			t.Errorf("wrapServerText(\"\") = %q, want \"\"", got)
+		}
+	})
+}
+
 // controlBytes are the raw terminal-control byte sequences that must never
 // survive into human-renderer output.
 var controlBytes = []string{"\x1b", "\u009b", "\x07", "\x00", "\x7f"}

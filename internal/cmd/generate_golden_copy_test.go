@@ -439,6 +439,39 @@ func TestGoldenSpendCopy(t *testing.T) {
 		assertGolden(t, "workflows_get_server_reason_block", out.String())
 	})
 
+	// 🔴 THE `workflows list` ROWS AND THEIR REASON LINES (#382). This view was
+	// not on the golden set before, and #382 gave it a NEW user-facing sentence
+	// (listReasonLegend) on a screen that already prints a COST column — exactly
+	// the residual item 28 names: a surface printing its own copy is invisible to
+	// the constant guard and the call-site ledger unless it lands on a golden.
+	//
+	// stdout AND stderr are pinned together, because the legend goes to stderr
+	// while the rows it explains go to stdout, and a claim added to either sits
+	// beside the same COST numbers.
+	//
+	// 🔴 WHAT THIS GOLDEN CANNOT SEE, so nobody reads a green here as the
+	// forgery guard: assertGolden compares whitespace-COLLAPSED text, so the
+	// indent that stops a reason line impersonating a row is invisible to it.
+	// TestWorkflowsList_AMultiLineReasonCannotForgeARow is that guard.
+	t.Run("workflows_list_with_reason", func(t *testing.T) {
+		payload := `{"items":[
+		  {"id":"wf_ok","status":"succeeded","createdAt":"2026-08-10T22:41:36Z","cost":{"total":104},
+		   "steps":[{"$type":"imageGen","name":"$0","status":"succeeded",
+		     "output":[{"id":"out_1","available":true}],"errors":null}]},
+		  {"id":"wf_bad","status":"failed","createdAt":"2026-08-10T22:37:15Z","cost":{"total":0},
+		   "steps":[{"$type":"imageGen","name":"$0","status":"failed",
+		     "output":[{"id":"out_2","available":false}],"errors":["` + serverSaid + `"]}]}
+		],"nextCursor":null}`
+		c, out, errb := genCmd("")
+		if err := runWorkflowsList(c, wfListDeps(payload, nil, nil, nil), workflowsListOpts{}); err != nil {
+			t.Fatalf("workflows list: %v", err)
+		}
+		if !strings.Contains(unwrapFinding(out.String()), serverSaid) {
+			t.Fatalf("CONTROL failure: no reason line rendered, so this surface pins the wrong copy:\n%s", out.String())
+		}
+		assertGolden(t, "workflows_list_with_reason", out.String()+errb.String())
+	})
+
 	// --- the per-workflow settlement block (#346) ---------------------------
 	//
 	// It is the surface that REPLACES the disclaimer, so it is money copy by
