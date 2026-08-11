@@ -66,9 +66,13 @@ func exitCodeContractClaims() []contractClaim {
 			pinnedBy: "TestAppMetricsNoApprovedBlockYet (negative) + TestAppMetricsUnknownSlugIsActionableNotFound (positive control)",
 		},
 		{
-			code:    1,
-			name:    "the not-ready 1 is not always \"wait for approval\"",
-			phrases: []string{"**rejected** or **withdrawn**", "nothing is in review", "civitai app submit"},
+			code: 1,
+			name: "the not-ready 1 is not always \"wait for approval\"",
+			// Bare nouns, no markdown emphasis: `**rejected**` would redden on a
+			// meaning-preserving reword to `*rejected*`, and this file's own header
+			// says a row is the load-bearing NOUNS, not incidental wording. The
+			// bare word is a substring of the emphasised one either way.
+			phrases: []string{"rejected", "withdrawn", "nothing is in review", "civitai app submit"},
 			why: "the row above frames the whole state as \"still in review\", which was measured on the only " +
 				"state anyone exercised (pending) and is false for the two the CLI can also be handed. " +
 				"`app metrics` printed \"check where it is in review\" for a REJECTED app — a review that is " +

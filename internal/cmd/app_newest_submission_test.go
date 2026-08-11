@@ -28,12 +28,17 @@ package cmd
 // whose ends disagree, asserting the advice matches the NEWEST row, plus for
 // `app pull` the relationship the mutant breaks — the state named in the
 // parenthetical and the state the advice describes are the same state — and
-// (b) a LEDGER of the call sites that consume the ordering, which fails when
-// that set grows or shrinks, because a structural count is the only thing that
-// notices a THIRD caller arriving with no behavioural case of its own.
+// (b) a LEDGER of the files that CALL pullReviewAdvice, which fails when that
+// set grows or shrinks, because a structural count is the only thing that
+// notices a third CALLER OF THAT HELPER arriving with no behavioural case of its
+// own. Its scope is the helper's callers and NOT every site that reads one row
+// from a newest-first list — three such sites exist today that it cannot see,
+// enumerated on newestFirstAdviceSites. Read that before treating a green run
+// here as "the row-pick assumption is covered".
 
 import (
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -53,9 +58,14 @@ func twoRowNotApprovedBody(t *testing.T, slug, newest, oldest string) string {
 		t.Fatalf("statuses %q and %q produce the SAME advice, so this fixture cannot tell "+
 			"the newest row from the oldest — pick states in different pullReviewAdvice branches", newest, oldest)
 	}
+	// Every field that could identify a row differs between the two — id,
+	// version, status AND submittedAt. Identical timestamps would leave the rows
+	// indistinguishable on the one axis that separates "trusts the server's
+	// order" from "sorts client-side", so a future client-side sort could not be
+	// told from the current behaviour.
 	return `{"submissions":[
-		{"id":"p2","blockId":"` + slug + `","appBlockId":null,"version":"0.1.1","status":"` + newest + `"},
-		{"id":"p1","blockId":"` + slug + `","appBlockId":null,"version":"0.1.0","status":"` + oldest + `"}
+		{"id":"p2","blockId":"` + slug + `","appBlockId":null,"version":"0.1.1","status":"` + newest + `","submittedAt":"2026-06-21T08:00:00.000Z"},
+		{"id":"p1","blockId":"` + slug + `","appBlockId":null,"version":"0.1.0","status":"` + oldest + `","submittedAt":"2026-06-20T08:00:00.000Z"}
 	]}`
 }
 
@@ -92,7 +102,7 @@ func TestAppPullAdviceNamesTheNewestSubmission(t *testing.T) {
 	const slug = "my-block"
 	for _, tc := range newestFirstCases() {
 		t.Run(tc.name, func(t *testing.T) {
-			srv := pullDisambiguationServer(t, twoRowNotApprovedBody(t, slug, tc.newest, tc.oldest), 0)
+			srv := pullDisambiguationServer(t, twoRowNotApprovedBody(t, slug, tc.newest, tc.oldest), http.StatusOK)
 			defer srv.Close()
 			pullEnv(t, srv)
 
@@ -160,8 +170,8 @@ func TestAppMetricsAdviceNamesTheNewestSubmission(t *testing.T) {
 	for _, tc := range newestFirstCases() {
 		t.Run(tc.name, func(t *testing.T) {
 			var rec metricsRec
-			srv := metricsServer(t, twoRowNotApprovedBody(t, slug, tc.newest, tc.oldest), 0,
-				trpcEnvelope(verifiedAnalyticsPayload), 0, &rec)
+			srv := metricsServer(t, twoRowNotApprovedBody(t, slug, tc.newest, tc.oldest), http.StatusOK,
+				trpcEnvelope(verifiedAnalyticsPayload), http.StatusOK, &rec)
 			defer srv.Close()
 			setupMetricsEnv(t, srv.URL)
 
@@ -177,6 +187,16 @@ func TestAppMetricsAdviceNamesTheNewestSubmission(t *testing.T) {
 			}
 			if rec.trpcReached {
 				t.Error("a null appBlockId must not reach the analytics query")
+			}
+			// 🔴 WHAT THE README MAY CLAIM ABOUT THIS MESSAGE. `app metrics`
+			// prints NO `(latest submission: …)` — so for a PENDING app it names
+			// no state at all, and prose saying it "names the latest submission's
+			// state" is false for the commonest case. The section says "the next
+			// step FOR the latest submission's own state" instead; this is the
+			// measurement that wording rests on.
+			if m := latestParenthetical.FindString(msg); m != "" {
+				t.Errorf("`app metrics` printed %q — if it now reports the state itself, the README "+
+					"`App metrics` section says it does not, and moves with this", m)
 			}
 
 			if want := pullReviewAdvice(slug, tc.newest); !strings.Contains(msg, want) {
@@ -200,23 +220,69 @@ func TestAppMetricsAdviceNamesTheNewestSubmission(t *testing.T) {
 	}
 }
 
-// newestFirstAdviceSites is the LEDGER: every non-test file that turns a
-// newest-first submissions list into the "nothing is approved yet" next step,
-// mapped to the behavioural test that proves it reads the NEWEST row.
+// newestFirstAdviceSites is the LEDGER of every non-test file that CALLS
+// pullReviewAdvice, mapped to the behavioural test proving that call reads the
+// NEWEST row, plus the argv fragment that test must actually drive.
 //
-// It is asserted in BOTH directions on purpose. A shrunk set means a call site
-// lost its coverage; a GROWN set is the case a behavioural test cannot see at
-// all — a third command open-coding the same row pick, arriving green because
-// no fixture of its own ever had two rows. That is exactly how this defect got
-// in: `app metrics` was the second caller, and it inherited the untested
-// assumption along with the sentence.
-var newestFirstAdviceSites = map[string]string{
-	"app_pull.go":    "TestAppPullAdviceNamesTheNewestSubmission",
-	"app_metrics.go": "TestAppMetricsAdviceNamesTheNewestSubmission",
+// 🔴 ITS SCOPE IS "CALLERS OF pullReviewAdvice", NOT "READS ONE ROW OUT OF A
+// NEWEST-FIRST LIST", AND THE DIFFERENCE IS NOT HYPOTHETICAL. The scanner is
+// keyed on the helper's name, so it sees a new caller of THAT helper and nothing
+// else. An earlier version of this comment claimed it catches "a third command
+// open-coding the same row pick"; it does not, and three sites read one row from
+// a newest-first list today that it cannot see — each of which survives reversal
+// with the whole suite green:
+//
+//   - internal/cmd/apps.go, ownedSubmission — returns the first slug-matching
+//     row and prints its Status/DeployState verbatim; its fixture
+//     (ownedSubmissionBody) is ONE row, which is this PR's defect under a
+//     different name. Filed as its own issue rather than fixed here.
+//   - internal/cmd/app_metrics.go, the first-non-null appBlockId pick five lines
+//     above the call this ledger covers. TestAppMetricsPicksNewestNonNullAppBlockID
+//     says "newest" in its name but has one non-null row, so it is vacuous for
+//     the property it names.
+//   - internal/appapi/appblocks.go, the "newest-first, so the first match is
+//     latest" scan — outside this package, so outside the walk entirely.
+//
+// Widening the scanner to the row-pick SHAPE was rejected: any pattern over
+// `subs[0]` is spelled rather than structural (it turns on a variable name) and
+// would be a new unvalidated claim. So the ledger states the narrow thing it can
+// actually check, and the residual is enumerated here rather than implied away.
+//
+// Within that scope it is asserted in BOTH directions: a shrunk set means a call
+// site lost its coverage, a grown one means a new caller arrived with no
+// behavioural case of its own — which is how `app metrics` inherited the
+// untested assumption along with the sentence.
+type newestFirstSite struct {
+	// pinnedBy is the behavioural test that proves this file reads subs[0].
+	pinnedBy string
+	// exercises is a fragment of that test's OWN BODY, naming the command this
+	// file implements. Without it the binding is satisfied by any test in the
+	// package, so swapping two pinnedBy values stayed green — and the
+	// shrink-direction message then tells a maintainer to delete the wrong test.
+	exercises string
+}
+
+var newestFirstAdviceSites = map[string]newestFirstSite{
+	"app_pull.go": {
+		pinnedBy:  "TestAppPullAdviceNamesTheNewestSubmission",
+		exercises: `run(t, "app", "pull"`,
+	},
+	"app_metrics.go": {
+		pinnedBy:  "TestAppMetricsAdviceNamesTheNewestSubmission",
+		exercises: `run(t, "app", "metrics"`,
+	},
 }
 
 // countPullReviewAdviceCalls counts CALL sites of pullReviewAdvice in one Go
 // source, ignoring its own declaration and anything after a `//`.
+//
+// Its two known blind spots both fail SILENT-GREEN, so they are stated rather
+// than implied: it strips from the first `//` regardless of string context (a
+// call written after a `//` inside a string literal is invisible), and it counts
+// the identifier followed by `(`, so a call reached through a function value
+// (`f := pullReviewAdvice; f(app, s)`) is not counted. Neither shape exists in
+// this package today; if one appears, the ledger under-reports rather than
+// erroring, which is why the walk below also asserts a floor.
 func countPullReviewAdviceCalls(src string) int {
 	n := 0
 	for _, line := range strings.Split(src, "\n") {
@@ -258,9 +324,53 @@ func TestPullReviewAdviceCallScannerIsCalibrated(t *testing.T) {
 	}
 }
 
+// testFuncBody returns the source of the top-level func named name, from its
+// declaration to the next top-level `func`, or "" when it is not declared.
+// Bodies are compared, not just names, so a ledger entry cannot be satisfied by
+// an unrelated test that merely exists.
+func testFuncBody(src, name string) string {
+	decl := "\nfunc " + name + "("
+	i := strings.Index("\n"+src, decl)
+	if i < 0 {
+		return ""
+	}
+	body := ("\n" + src)[i+1:]
+	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+		body = body[:j+1]
+	}
+	return body
+}
+
+// TestTestFuncBodyIsCalibrated is the instrument control for the binding below:
+// an extractor that returned "" for everything would make every `exercises`
+// check fail loudly, but one that returned the WHOLE FILE would make every one
+// of them pass — the silent-green direction, and the one that matters.
+func TestTestFuncBodyIsCalibrated(t *testing.T) {
+	const src = "package cmd\n\n" +
+		"func TestAlpha(t *testing.T) {\n\trun(t, \"app\", \"pull\")\n}\n\n" +
+		"func TestBeta(t *testing.T) {\n\trun(t, \"app\", \"metrics\")\n}\n"
+
+	alpha := testFuncBody(src, "TestAlpha")
+	if !strings.Contains(alpha, `run(t, "app", "pull")`) {
+		t.Errorf("the extractor lost TestAlpha's own body: %q", alpha)
+	}
+	// THE POINT: it must STOP at the next func, or the binding is satisfied by
+	// any test anywhere in the file.
+	if strings.Contains(alpha, `run(t, "app", "metrics")`) {
+		t.Errorf("the extractor ran past the end of TestAlpha into TestBeta: %q", alpha)
+	}
+	if got := testFuncBody(src, "TestGamma"); got != "" {
+		t.Errorf("a func that is not declared must extract to \"\", got %q", got)
+	}
+	// A prefix must not match a longer name (TestAlphaExtra != TestAlpha).
+	if got := testFuncBody("func TestAlphaExtra(t *testing.T) {}\n", "TestAlpha"); got != "" {
+		t.Errorf("a name prefix must not bind, got %q", got)
+	}
+}
+
 // TestNewestFirstAdviceCallSitesAreLedgered fails when the set of call sites
-// grows or shrinks, and when a ledgered site names a behavioural test that is
-// not in the package.
+// grows or shrinks, and when a ledgered site's pinning test is missing or does
+// not actually drive that site's command.
 func TestNewestFirstAdviceCallSitesAreLedgered(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	if err != nil {
@@ -290,8 +400,11 @@ func TestNewestFirstAdviceCallSitesAreLedgered(t *testing.T) {
 	}
 	// Positive control on the walk: a mis-set working directory, or a filter
 	// that matched nothing, would otherwise report an empty set as "no drift".
-	if scanned < 10 {
-		t.Fatalf("only %d non-test .go files scanned in internal/cmd — the walk is wrong, so an empty result means nothing", scanned)
+	// The floor is near the real count (55 non-test files at the time of
+	// writing), because a floor far below it passes a PARTIAL walk — which is
+	// the same silent green with extra steps.
+	if scanned < 40 {
+		t.Fatalf("only %d non-test .go files scanned in internal/cmd — the walk is wrong or partial, so an empty result means nothing", scanned)
 	}
 	if len(found) == 0 {
 		t.Fatal("the scan found NO pullReviewAdvice call sites at all — the ledger is wired to nothing")
@@ -305,16 +418,27 @@ func TestNewestFirstAdviceCallSitesAreLedgered(t *testing.T) {
 				"over a multi-row fixture whose ends disagree (see twoRowNotApprovedBody).", name)
 		}
 	}
-	for name, pinnedBy := range newestFirstAdviceSites {
+	for name, site := range newestFirstAdviceSites {
 		if _, ok := found[name]; !ok {
 			t.Errorf("newestFirstAdviceSites names internal/cmd/%s, which no longer calls pullReviewAdvice. "+
 				"If the call moved, move the ledger entry with it; if it went away, drop the entry and %s.",
-				name, pinnedBy)
+				name, site.pinnedBy)
 			continue
 		}
-		if !strings.Contains(tests.String(), "func "+pinnedBy+"(") {
+		body := testFuncBody(tests.String(), site.pinnedBy)
+		if body == "" {
 			t.Errorf("internal/cmd/%s is ledgered as pinned by %s, which is not a test in this package — "+
-				"the ledger names coverage that does not exist", name, pinnedBy)
+				"the ledger names coverage that does not exist", name, site.pinnedBy)
+			continue
+		}
+		// THE BINDING, not merely the name: the pinning test must drive THIS
+		// file's command. Existence alone left the two entries swappable, and a
+		// swapped ledger actively misdirects — its shrink-direction message
+		// names the wrong test to delete.
+		if !strings.Contains(body, site.exercises) {
+			t.Errorf("internal/cmd/%s is ledgered as pinned by %s, whose body never runs %s — "+
+				"the ledger is bound to the wrong test, so its failure messages name the wrong coverage",
+				name, site.pinnedBy, site.exercises)
 		}
 	}
 }
