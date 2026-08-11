@@ -193,6 +193,17 @@ func explainMissingApp(ctx context.Context, list submissionLister, app string, o
 		}
 	}
 	// Newest first (ListSubmissions), so subs[0] is the state to report.
+	//
+	// 🔴 BOTH READS BELOW MUST NAME THE SAME ROW, AND NOTHING NOTICED WHEN THEY
+	// DID NOT (#378). The parenthetical and the advice are two reads of one list;
+	// pointing the advice at subs[len(subs)-1] here (and at the twin in
+	// resolveAppBlockID) left the entire suite green while this sentence
+	// contradicted itself out loud — "(latest submission: 0.1.1 pending); that
+	// submission was WITHDRAWN, so nothing is in review". Every fixture had one
+	// row, where the two ends coincide. Pinned by
+	// TestAppPullAdviceNamesTheNewestSubmission, which derives the expected
+	// advice FROM the parenthetical, and by the call-site ledger in
+	// app_newest_submission_test.go.
 	latest := ""
 	if state := strings.TrimSpace(strings.TrimSpace(subs[0].Version) + " " + strings.TrimSpace(subs[0].Status)); state != "" {
 		latest = " (latest submission: " + state + ")"

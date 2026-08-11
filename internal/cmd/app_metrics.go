@@ -241,6 +241,15 @@ func resolveAppBlockID(ctx context.Context, list func(context.Context, string) (
 		}
 	}
 	// Newest first, so subs[0] is the state whose next step to name.
+	//
+	// 🔴 subs[0], NEVER subs[len(subs)-1] — and it was unpinned here and in
+	// explainMissingApp alike until #378: mutating BOTH to the last row left the
+	// whole suite green (3653 RUN, 0 FAIL), because every fixture had one row,
+	// where the two ends are the same row. This command prints no "latest
+	// submission" parenthetical, so reading the wrong end is invisible — the
+	// oldest row's advice simply reads as the truth. Pinned by
+	// TestAppMetricsAdviceNamesTheNewestSubmission and the call-site ledger in
+	// app_newest_submission_test.go.
 	return "", fmt.Errorf("app %q has no approved App Block yet — analytics only exist once a submitted version is approved; %s",
 		slug, pullReviewAdvice(slug, subs[0].Status))
 }

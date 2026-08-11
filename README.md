@@ -1616,7 +1616,10 @@ civitai app view my-cool-app --json
 `civitai app metrics <slug>` shows the owner-only analytics for one of **your**
 App Blocks. The slug is resolved to its `appBlockId` through your own
 submissions, so analytics exist only once a version has been **approved** — an
-app still in review reports that instead of an empty dashboard.
+app still in review reports that instead of an empty dashboard. Like `app pull`,
+the message names the latest submission's own state and the next step for it:
+where it is in review, or — for a **rejected** or **withdrawn** submission — that
+nothing is in review and a new `civitai app submit` is what moves it.
 
 ```text
 $ civitai app metrics gen-matrix --from 2026-05-01 --to 2026-08-03
