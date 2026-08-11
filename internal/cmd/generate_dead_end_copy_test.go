@@ -31,6 +31,14 @@ import (
 // constant on purpose: a test that imports the constant it is checking passes by
 // construction, and cannot be watched to fail against the pre-#331 tree because
 // it would not compile there.
+//
+// 🔴 #367 MADE THE CAVEAT CONDITIONAL, AND THIS FILE NOW COVERS ONE BRANCH OF
+// IT. Every fixture below carries no `steps[].output.errors`, which is the
+// measured branch where the orchestrator genuinely supplied nothing and the
+// sentence is still true. Where it DID supply a reason the reason is printed
+// instead, and asserting the caveat there would be asserting a falsehood — that
+// direction lives in generate_failure_reason_test.go. Do not "repair" this file
+// by making its assertion unconditional.
 const deadEndReasonCaveat = "the orchestrator often supplies no failure reason"
 
 // The exact pre-#331 wording of both errors, kept as the POSITIVE CONTROL for

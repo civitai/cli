@@ -144,6 +144,25 @@ func printWorkflow(out, errw io.Writer, wf *genapi.Workflow) {
 	}
 	_ = tw.Flush()
 
+	// 🔴 #367: THE ANSWER TO "WHY DID IT FAIL", WHICH THIS VIEW USED TO DISCARD.
+	// The orchestrator records the reason on the step (`steps[].output.errors`)
+	// and `Step` had no field for it, so it was dropped at unmarshal and this
+	// command — the one `civitai generate` sends a user to after a failure —
+	// printed `Status: failed` and nothing else. Measured across 8 real
+	// workflows, 5 of 6 failures carried a reason.
+	//
+	// It renders OUTSIDE the tabwriter block on purpose: safeTerm keeps newlines
+	// and tabs, so a multi-line server string inside that block would re-align
+	// every column above it. It is not gated on IsTerminalStatus — a reason the
+	// server has already recorded is a RECORD, not a claim that the run is over,
+	// the same reasoning the settlement block below is printed under.
+	if reasons := wf.FailureReasons(); len(reasons) > 0 {
+		fmt.Fprintf(out, "\n%s\n", ui.For(out).Bold("The server reported:"))
+		for _, r := range reasons {
+			fmt.Fprintf(out, "  - %s\n", safeTerm(r))
+		}
+	}
+
 	// 🔴 THIS IS THE LAST CHANCE TO LEARN IT. `civitai generate --no-wait` prints
 	// a workflow id and tells the user to collect the results here, so for that
 	// documented flow the submit reply is long gone and this persisted record is

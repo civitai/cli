@@ -108,6 +108,25 @@ type stepOutput struct {
 	Images []Blob `json:"images"`
 	Blobs  []Blob `json:"blobs"`
 	Blob   *Blob  `json:"blob"`
+	// Errors is the orchestrator's own account of why the step failed, and it is
+	// a SIBLING OF `images` INSIDE `output` — not a field on the step, and not an
+	// array of objects. Measured across 8 real workflows (civitai/cli#367): the
+	// key is always present; 5 of 6 `failed` workflows carried a populated array,
+	// 1 carried an empty one, and the `canceled`/`succeeded` pair carried empty
+	// ones. So a failed workflow with NO reason is a real, measured branch, not a
+	// defensive one — see noFailureReasonNote in internal/cmd.
+	//
+	// 🔴 The strings are the SERVER's, and they are passed through verbatim. This
+	// CLI does not classify them, map them to a table, enumerate the known ones
+	// or match on their wording: that would be the vendored server table AGENTS.md
+	// item 13 forbids on the generation path. All five populated samples were the
+	// same reproduction, so they prove only that the field is populated and
+	// readable — nothing about how the wording varies by cause.
+	//
+	// It is read independently of which blob container the step used, because it
+	// is not part of the container union: an `imageGen` step fills `images` and a
+	// `comfy` step fills `blobs`, and either can carry `errors` alongside.
+	Errors []string `json:"errors"`
 }
 
 // stepMetadata is the per-step user metadata. It carries the two fields the raw
@@ -149,6 +168,57 @@ type Step struct {
 	Metadata stepMetadata `json:"metadata"`
 	Output   stepOutput   `json:"output"`
 }
+
+// failureReasons returns the step's server-supplied reasons, trimmed, with
+// blank entries dropped. The words themselves are untouched.
+func (s Step) failureReasons() []string {
+	var out []string
+	for _, e := range s.Output.Errors {
+		if t := strings.TrimSpace(e); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// FailureReasons returns every server-supplied reason on the workflow, in step
+// order.
+//
+// 🔴 HOW SEVERAL STEPS ARE JOINED, because "print the first one" is the wrong
+// answer and silently so. Every step's array is read and the entries are
+// concatenated in step order, so a four-step workflow that failed for two
+// different reasons reports both. The only entries dropped are blank ones and
+// EXACT duplicates of a reason already collected — a run whose steps all died
+// the same way repeats one string per step, and printing it four times adds no
+// information while burying anything that differs. De-duplication compares the
+// trimmed string byte-for-byte; it does not normalise, canonicalise or classify,
+// so two reasons that differ at all are both kept (AGENTS.md item 13).
+func (w *Workflow) FailureReasons() []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, st := range w.Steps {
+		for _, r := range st.failureReasons() {
+			if seen[r] {
+				continue
+			}
+			seen[r] = true
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// reasonJoin is the ONE separator used when several server reasons have to share
+// a single line. It lives here, next to FailureReasons, so the human renderer and
+// the error messages cannot drift into two different join rules.
+const reasonJoin = "; "
+
+// joinReasons renders reasons as one line, or "" when there are none.
+func joinReasons(reasons []string) string { return strings.Join(reasons, reasonJoin) }
+
+// FailureReasonText renders every server-supplied reason as a single line, or ""
+// when the workflow carries none. See FailureReasons for the join rule.
+func (w *Workflow) FailureReasonText() string { return joinReasons(w.FailureReasons()) }
 
 // blobs returns the step's outputs from whichever container the step populated.
 func (s Step) blobs() []Blob {
@@ -203,6 +273,11 @@ type Output struct {
 	// Seed is the step's seed offset by Index, or nil when the step recorded
 	// none.
 	Seed *int64
+	// StepErrors is the producing step's server-supplied failure reasons (may be
+	// empty). It is per-STEP, not per-output: the orchestrator records the reason
+	// beside the whole step's `images` array, so every output of a failed step
+	// carries the same list. ExclusionReason is what turns it into a sentence.
+	StepErrors []string
 }
 
 // Outputs flattens every step's outputs, folding in the step-derived `hidden`
@@ -211,6 +286,7 @@ func (w *Workflow) Outputs() []Output {
 	var out []Output
 	for _, st := range w.Steps {
 		blobs := st.blobs()
+		reasons := st.failureReasons()
 		for i, b := range blobs {
 			o := Output{
 				Blob:       b,
@@ -218,6 +294,7 @@ func (w *Workflow) Outputs() []Output {
 				StepStatus: st.Status,
 				Index:      i,
 				Hidden:     st.Metadata.hiddenFor(b.ID),
+				StepErrors: reasons,
 			}
 			if s := st.Metadata.Params.Seed; s != nil {
 				v := *s + int64(i)
@@ -253,9 +330,22 @@ func hasBlockedReason(o Output) bool {
 // ExclusionReason returns why an output is NOT deliverable, or "" when it is.
 // The reasons are checked in the same order the predicate ANDs them, so an
 // output failing several reports the first — the one closest to the cause.
+//
+// 🔴 THE `!Available` BRANCH PREFERS THE SERVER'S OWN ACCOUNT (civitai/cli#367).
+// Its generic parenthetical is what the CLI can say when nothing else is known;
+// it was printed for every failure because the reason the orchestrator DOES
+// record was being discarded at unmarshal. Where a reason is in hand it is
+// substituted verbatim, and the generic sentence is not appended beside it — two
+// explanations of one exclusion is one explanation too many. The other two
+// branches are unchanged: a moderation block and a user deletion already carry
+// their own specific cause, and a step-level failure reason does not explain
+// either of them.
 func ExclusionReason(o Output) string {
 	switch {
 	case !o.Available:
+		if r := joinReasons(o.StepErrors); r != "" {
+			return "not available (the server reported: " + r + ")"
+		}
 		return "not available (the job finished without producing a usable file)"
 	case hasBlockedReason(o):
 		return "blocked by moderation: " + strings.TrimSpace(*o.BlockedReason)

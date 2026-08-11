@@ -100,7 +100,42 @@ const buzzLedgerUnknownNote = "this CLI cannot see your Buzz ledger — `civitai
 // AGENTS.md item 28's rule — but the surfaces it lands on are golden-pinned
 // spend surfaces, so an edit here has to be re-approved with
 // `go test ./internal/cmd -run TestGoldenSpendCopy -update` and the diff read.
+//
+// 🔴 #367 MADE THIS THE CONDITIONAL FALLBACK, AND DID NOT DELETE IT. The
+// dogfood observation above is real, but it was made THROUGH a struct that had
+// no field for `output.errors`, so it could not tell "the server sent no reason"
+// apart from "the CLI threw the reason away". Measured across 8 real workflows:
+// 5 of 6 `failed` ones DID carry a reason and the CLI discarded every one of
+// them; 1 carried an empty array. So the sentence below is false whenever a
+// reason is in hand — serverReasonSuffix prints the reason instead — and true
+// for the empty-array case, which is measured and therefore keeps it verbatim.
+// Do not re-word it into something unconditional in either direction.
 const noFailureReasonNote = "the orchestrator often supplies no failure reason, so it may not say why"
+
+// serverReasonSuffix is the tail of both dead-end errors below: either the
+// orchestrator's own account of the failure, or the caveat that it supplied
+// none.
+//
+// 🔴 ONE RULE, ONE PLACE. Both call sites end by handing the user
+// `civitai workflows get <id>`, and both used to qualify that pointer
+// unconditionally. Selecting between the two sentences in each message would be
+// the same predicate written twice, and the branch that goes stale is always the
+// second copy.
+//
+// The reason is SERVER-ORIGIN text on its way to a terminal, so it goes through
+// safeTerm (which strips C0/C1 control bytes and DEL, keeping tabs and newlines).
+// Nothing else is done to it: it is not truncated, re-cased, re-punctuated or
+// matched against any table — see AGENTS.md item 13. That the server's sentence
+// may end in a full stop, unlike this repo's own error copy, is the accepted
+// cost of passing it through verbatim.
+func serverReasonSuffix(wf *genapi.Workflow) string {
+	if wf != nil {
+		if reason := wf.FailureReasonText(); reason != "" {
+			return ". The server reported: " + safeTerm(reason)
+		}
+	}
+	return " (" + noFailureReasonNote + ")"
+}
 
 // Classification sentinels for generation failures that the HTTP-status mapping
 // alone gets wrong. They carry NO user-visible text: they are ATTACHED via
@@ -1426,8 +1461,15 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 		if reportWorkflowSettlement(errw, errw, wf) {
 			fate = workflowSettlementPrintedNote
 		}
-		return fmt.Errorf("the generation finished with status %q and produced no usable result; %s. Inspect the run with `civitai workflows get %s` (%s)",
-			safeTerm(wf.Status), fate, safeTerm(workflowID), noFailureReasonNote)
+		//
+		// 🔴 #367: THE TAIL IS NOW THE REASON WHEN THERE IS ONE. The orchestrator
+		// records why on the step (`steps[].output.errors`), and this struct had no
+		// field for it, so every failure read identically no matter what caused it.
+		// The reason says nothing about the charge — it explains the OUTCOME — so
+		// the fate sentence above is untouched and still selects between the
+		// disclaimer and the printed settlement.
+		return fmt.Errorf("the generation finished with status %q and produced no usable result; %s. Inspect the run with `civitai workflows get %s`%s",
+			safeTerm(wf.Status), fate, safeTerm(workflowID), serverReasonSuffix(wf))
 	}
 
 	kept, excluded := genapi.PartitionOutputs(wf)
@@ -1453,8 +1495,13 @@ func waitAndCollect(ctx context.Context, cmd *cobra.Command, deps generateDeps, 
 	reportOutputCountMismatch(errw, requested, len(kept))
 
 	if len(kept) == 0 {
-		return fmt.Errorf("the generation succeeded but produced no deliverable outputs — it was charged; inspect it with `civitai workflows get %s` (%s)",
-			safeTerm(workflowID), noFailureReasonNote)
+		// The same conditional tail (#367). A `succeeded` workflow whose outputs
+		// never landed is the case where the CLI is least able to explain itself,
+		// so if the server did record something on the step it is printed here too.
+		// The one measured `succeeded` workflow carried an empty array, which is
+		// why this reads exactly as it did before on that path.
+		return fmt.Errorf("the generation succeeded but produced no deliverable outputs — it was charged; inspect it with `civitai workflows get %s`%s",
+			safeTerm(workflowID), serverReasonSuffix(wf))
 	}
 
 	if o.noDownload {

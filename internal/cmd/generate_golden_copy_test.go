@@ -254,6 +254,35 @@ func TestGoldenSpendCopy(t *testing.T) {
 		})
 	}
 
+	// --- the terminal-status error when the SERVER SAID WHY (#367) ----------
+	//
+	// 🔴 A SECOND RENDERING OF AN ALREADY-PINNED SURFACE, WHICH IS THE HOLE THIS
+	// FILE'S HEADER DESCRIBES. #367 made the tail of this error conditional: a
+	// reason where the orchestrator supplied one, the #339 caveat where it did
+	// not. The three `terminal_status_*` goldens above pin the caveat branch
+	// only, so without this one a sentence could be added to the reason branch —
+	// including a claim about the charge — while every pinned rendering stayed
+	// byte-identical.
+	//
+	// The fixture reason is deliberately not a real server message: nothing here
+	// may come to depend on the platform's wording.
+	t.Run("terminal_status_failed_with_reason", func(t *testing.T) {
+		clock := newFakeClock()
+		calls := 0
+		var s genSeams
+		s.poll = clock.cfg()
+		s.getWorkflow = scriptedWorkflows(&calls, wfFailedJSON(genapi.StatusFailed, `["`+serverSaid+`"]`))
+		c, _, _ := genCmd("")
+		err := runGenerate(c, s.deps(t), waitOpts(t.TempDir()))
+		if err == nil {
+			t.Fatal("a failed workflow must not report success")
+		}
+		if !strings.Contains(err.Error(), serverSaid) {
+			t.Fatalf("CONTROL failure: the reason branch did not render, so this surface pins the wrong copy:\n%s", err.Error())
+		}
+		assertGolden(t, "terminal_status_failed_with_reason", err.Error())
+	})
+
 	// --- the excluded-outputs note, BOTH modes ------------------------------
 	//
 	// 🔴 #346 gave this surface a second rendering, and an unpinned second
