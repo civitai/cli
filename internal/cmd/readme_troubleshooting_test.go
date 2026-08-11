@@ -872,6 +872,9 @@ func TestREADMETroubleshootingCoversTheRefusalsAuthorsActuallyHit(t *testing.T) 
 	}{
 		{"refusing to submit without --yes",
 			"the CI-blocking refusal; a scripted `app submit` cannot get past it and the README never mentioned it"},
+		{"refusing to withdraw without --yes",
+			"the #350 gate, and the only refusal in this index that BROKE a working script — a scripted " +
+				"`app withdraw` used to exit 0, so an author who never reads --help meets it as a CI failure"},
 		{"cannot derive a slug from",
 			"the blockId refusal — it stops `app create` dead, and the identity it guards can never be renamed"},
 		{"no such directory — pass the path to an App project root",
