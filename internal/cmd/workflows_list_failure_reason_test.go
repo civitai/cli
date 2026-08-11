@@ -222,6 +222,35 @@ func TestWorkflowsList_ReasonsDoNotDisturbTheTable(t *testing.T) {
 	if withReasons == without {
 		t.Fatalf("CONTROL failure, not a finding: adding a reason changed nothing at all:\n%s", withReasons)
 	}
+
+	// (1) EVERY ROW AGREES ON WHERE THE COLUMNS START. This is the half a
+	// baseline comparison structurally cannot see: a renderer that flushed the
+	// tabwriter per row — or per group of rows either side of a reason — would
+	// degrade the baseline in exactly the same way, so the two would still match
+	// while every column jumped on screen.
+	rowsOf := columnZeroLines(withReasons)
+	if len(rowsOf) < 4 {
+		t.Fatalf("CONTROL failure, not a finding: %d column-zero lines, want a header and 3 rows:\n%s",
+			len(rowsOf), withReasons)
+	}
+	at := strings.Index(rowsOf[0], "STATUS")
+	if at < 0 {
+		t.Fatalf("CONTROL failure, not a finding: no STATUS header to measure against:\n%s", withReasons)
+	}
+	for _, r := range rowsOf[1:] {
+		if got := len(strings.TrimRight(strings.SplitN(r, " ", 2)[0], " ")); got >= at {
+			continue // an id wider than the header legitimately pushes the column
+		}
+		if !strings.HasPrefix(r[at:], "succeeded") && !strings.HasPrefix(r[at:], "failed") {
+			t.Errorf("row %q does not put its STATUS at column %d, where the header does — the rows are not "+
+				"in one alignment block:\n%s", r, at, withReasons)
+		}
+	}
+
+	// (2) AND THE ROWS ARE BYTE-IDENTICAL TO THE SAME TABLE WITH NO REASON IN
+	// IT, which is the half a self-consistency check cannot see: a renderer
+	// whose row text depended on whether a reason existed would still be
+	// internally consistent.
 	if got, want := columnZeroLines(withReasons), columnZeroLines(without); len(got) != len(want) {
 		t.Fatalf("row count changed: %d vs %d", len(got), len(want))
 	} else {
