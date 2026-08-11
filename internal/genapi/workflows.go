@@ -61,6 +61,65 @@ type ListedStep struct {
 	// a fallback so a server that has finished the rollout and one that has not
 	// both count correctly.
 	Images []Blob `json:"images"`
+	// Errors is the server's account of why the step failed.
+	//
+	// 🔴 IT IS A SIBLING OF `output`, NOT A FIELD INSIDE IT — THE OPPOSITE OF THE
+	// `getWorkflow` SHAPE, AND ASSUMING SYMMETRY IS WHY #367 MISSED IT. On the
+	// raw orchestrator workflow the reason sits at `steps[].output.errors` and
+	// `output` is an OBJECT (see stepOutput in status.go). Here `output` is the
+	// normalized output ARRAY, so `output.errors` cannot exist: the normalizer
+	// (`civitai/civitai -> formatGenerationResponse2` ->
+	// `formatStepOutputs`) lifts the reasons to the step. Measured step keys, on
+	// a real listing payload:
+	//
+	//	["$type","completedAt","errors","images","metadata","name","output",
+	//	 "queuePosition","status","timeout"]
+	//
+	// Measured over 30 real workflows (2026-08-11, a read; spends nothing):
+	// 5 `failed` carried one reason each, 1 `failed` carried none, 1 `canceled`
+	// and 23 `succeeded` carried none. So a failed workflow with NO reason is a
+	// real, measured branch — the listing renderer emits nothing for it rather
+	// than an empty label.
+	//
+	// 🔴 "NONE" ARRIVES AS `null`, NOT AS `[]`, and that is the server's own
+	// shape, not an accident: `formatGenerationResponse2` emits
+	// `errors: errors.length > 0 ? errors : undefined`. All 25 unpopulated steps
+	// in that sample were the literal `"errors": null`. Both decode to a nil
+	// slice here, as does the key being absent, so nothing downstream branches on
+	// which of the three arrived.
+	//
+	// 🔴 The strings are the SERVER's and are passed through verbatim — not
+	// classified, mapped to a table, enumerated or matched on (AGENTS.md item
+	// 13). In particular the `Google Gemini: ` prefix this endpoint's strings
+	// carry is server text, not a field to parse: `sanitizeProviderError`
+	// composes it from the step's engine, and the CLI must not reproduce that
+	// 16-entry provider table.
+	//
+	// It is read INDEPENDENTLY of which blob array the step populated, because it
+	// is not part of that union — see blobs().
+	Errors []string `json:"errors"`
+}
+
+// FailureReasons returns every server-supplied reason on the listed workflow, in
+// step order, with blanks and exact repeats dropped. It applies the SAME rule as
+// the `getWorkflow` shape's Workflow.FailureReasons — literally the same
+// function, dedupeReasons — so one payload cannot render two ways.
+//
+// 🔴 THE CROSS-STEP DE-DUPLICATION IS NOT DEFENSIVE HERE. The normalizer dedupes
+// WITHIN a step (`extractStepErrors` ends in `Array.from(new Set(...))`) and not
+// across them, so a multi-step workflow whose steps died the same way hands this
+// the same sentence once per step. Printing it N times under one table row adds
+// nothing and buries whatever differs.
+//
+// The measured sample was 30 single-step workflows, so the multi-step case is
+// UNTESTED against a real payload, not disproven — which is the same standing
+// this repo gives the equivalent claim on the `getWorkflow` side.
+func (w ListedWorkflow) FailureReasons() []string {
+	var raw []string
+	for _, st := range w.Steps {
+		raw = append(raw, st.Errors...)
+	}
+	return dedupeReasons(raw)
 }
 
 // blobs returns the step's outputs from whichever array the server populated.

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -15,6 +16,28 @@ import (
 	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
+
+// listReasonIndent is the pad EVERY line of a server-supplied reason carries
+// under its table row — the first line and, via indentContinuation, each one
+// after it. It is one constant because the two have to agree: a first line
+// padded four columns and a continuation padded two would still be a block that
+// starts where nothing else on the screen starts, but only the invariant
+// "no reason line begins at column zero" makes row forgery impossible, and that
+// is what the guards assert.
+const listReasonIndent = "    "
+
+// listReasonWrapWidth is the text budget one reason line gets, so that indent +
+// text lands on findingWrapWidth — the same total the CLI's other long-prose
+// surface wraps to. The CLI's prose surfaces should not disagree about how wide
+// a terminal is.
+const listReasonWrapWidth = findingWrapWidth - len(listReasonIndent)
+
+// listReasonLegend explains the indented lines, and is printed only when at
+// least one was. It says where the text came from and stops there: it does not
+// say the workflow failed (the CLI has not established that the orchestrator
+// records `errors` only on failure) and it says nothing about the charge
+// (AGENTS.md item 28).
+const listReasonLegend = "An indented line under a row is what the server recorded for that workflow, printed as it arrived."
 
 // workflowsListOpts is the parsed `workflows list` invocation.
 type workflowsListOpts struct {
@@ -52,6 +75,10 @@ was blocked by moderation, never landed, or was hidden on the website — a
 workflow you were charged for can legitimately have fewer usable results than it
 produced, and collapsing the two numbers would hide that. Use
 ` + "`civitai workflows get <id>`" + ` for the per-output reasons and the URLs.
+
+WHERE THE SERVER RECORDED AN ACCOUNT of what happened to a workflow, it is
+printed on indented lines under that workflow's row, in the server's own words
+and in full. Not every workflow has one; nothing is printed for those.
 
 Reading SPENDS NOTHING. It needs the same AI Services scopes that
 ` + "`civitai generate`" + ` needs: ` + spendCredentialRoutes + `.`,
@@ -128,24 +155,94 @@ func printWorkflowList(out, errw io.Writer, page *genapi.WorkflowPage, o workflo
 		return
 	}
 
-	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
+	// 🔴 THE TABLE IS ALIGNED IN A BUFFER AND EMITTED AFTERWARDS, BECAUSE THE
+	// REASON LINES CANNOT GO THROUGH THE TABWRITER. A tabwriter aligns a column
+	// block, and a line carrying no tab ENDS that block: interleaving reason
+	// lines directly would re-align every group of rows independently, so the
+	// columns would jump around the failures. Writing every row into one block
+	// first, then splicing the reason lines into the flushed text, keeps all rows
+	// in a single alignment block — the same "render it outside the tabwriter"
+	// answer printWorkflow reached, adapted to a body that has to interleave.
+	var aligned bytes.Buffer
+	tw := tabwriter.NewWriter(&aligned, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "WORKFLOW ID\tSTATUS\tCREATED\tCOST\tOUTPUTS")
-	for _, w := range page.Items {
+	// rowLines[i] is how many OUTPUT lines item i's row occupies. It is almost
+	// always 1; it is not 1 when a server-origin cell contains a newline, which
+	// safeTerm deliberately preserves. tabwriter never adds or removes line
+	// breaks — it only pads cells — so counting them on the way IN is what keeps
+	// the splice below attached to the right row. Pairing by index instead would
+	// hand one workflow's reason to another's row the moment an id contained a
+	// newline, which is a worse failure than the ragged column that id already
+	// produces today.
+	rowLines := make([]int, len(page.Items))
+	for i, w := range page.Items {
 		total, deliverable := w.OutputCounts()
 		cost := "-"
 		if w.Cost != nil {
 			cost = buzzAmount(w.Cost.Total)
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d/%d\n",
+		row := fmt.Sprintf("%s\t%s\t%s\t%s\t%d/%d",
 			safeTerm(dashIfEmpty(w.ID)),
 			safeTerm(dashIfEmpty(w.Status)),
 			safeTerm(dashIfEmpty(w.CreatedAt)),
 			cost,
 			deliverable, total)
+		rowLines[i] = 1 + strings.Count(row, "\n")
+		fmt.Fprintln(tw, row)
 	}
 	_ = tw.Flush()
 
+	lines := strings.Split(strings.TrimSuffix(aligned.String(), "\n"), "\n")
+	next := 0
+	emit := func(n int) {
+		for ; n > 0 && next < len(lines); n-- {
+			fmt.Fprintln(out, lines[next])
+			next++
+		}
+	}
+	emit(1) // the header row
+	reported := false
+	for i, w := range page.Items {
+		emit(rowLines[i])
+		// 🔴 #382: THE ANSWER TO "WHY DID IT FAIL", WHICH THIS VIEW ALSO DISCARDED.
+		// The listing endpoint hands the reason back on the SAME response that
+		// renders `failed … 0/1`, at `steps[].errors` — a different path from the
+		// one #367 fixed on `workflows get`, which is why that PR ruled this
+		// surface out of scope. `ListedStep` had no field for it, so it was
+		// dropped at unmarshal.
+		//
+		// 🔴 EVERY LINE IS INDENTED, AND THAT IS A SECURITY PROPERTY, NOT LAYOUT.
+		// This is external-provider free text printed directly beneath a table of
+		// rows, and safeTerm keeps `\n` on purpose, so a reason containing one
+		// would otherwise put attacker-chosen text at column zero — where it is
+		// indistinguishable from a row the CLI wrote, complete with a fake id,
+		// status and cost. indentContinuation pads every line after the first;
+		// the Fprintf pads the first. No continuation line can occupy column
+		// zero, and every real row does, so a reason cannot impersonate one.
+		// A tab in a reason is harmless for the same reason the block sits here:
+		// it is written straight to `out`, never to the tabwriter, so it cannot
+		// re-align the table above.
+		//
+		// It is NOT gated on status, for the reason printWorkflow gives at
+		// length: a reason the server has already recorded is a RECORD, and
+		// nothing has established that the orchestrator populates `errors` only
+		// on failure. It is gated on there BEING one — a `failed` workflow
+		// carrying none is a measured branch, and an empty label under it would
+		// be noise.
+		for _, r := range w.FailureReasons() {
+			reported = true
+			fmt.Fprintf(out, "%s%s\n", listReasonIndent,
+				indentContinuation(wrapServerText(safeTerm(r), listReasonWrapWidth), listReasonIndent))
+		}
+	}
+	// Nothing should remain, but emitting the tail rather than dropping it means
+	// a miscount would show as a misplaced row and never as a vanished workflow.
+	emit(len(lines) - next)
+
 	st := ui.For(errw)
+	if reported {
+		fmt.Fprintln(errw, st.Dim(listReasonLegend))
+	}
 	if page.NextCursor != nil && *page.NextCursor != "" {
 		// The cursor goes to STDOUT: it is data a pipeline consumes, and this
 		// repo's convention keeps machine-usable values off stderr.

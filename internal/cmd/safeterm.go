@@ -72,6 +72,39 @@ func indentContinuation(s, pad string) string {
 	return strings.Join(lines, "\n")
 }
 
+// wrapServerText hard-wraps a SERVER string to width runes per line, preserving
+// the line breaks the string already contains, and returns the result as one
+// string ready for indentContinuation.
+//
+// 🔴 IT IS THE THIRD HALF OF safeTerm, AND THE HAZARD IS THE TERMINAL'S OWN SOFT
+// WRAP. indentContinuation stops a `\n` in server text from starting a line at
+// column zero — but a single line longer than the terminal is wrapped by the
+// TERMINAL, and the part that spills over starts at column zero too, with no
+// newline anywhere in the string for indentContinuation to see. Under a table
+// that is the same forgery: attacker-chosen text at the column every real row
+// begins at. Breaking the lines here is what makes the indent hold for a reason
+// of any length.
+//
+// It reuses wrapTokens (validate_print.go), the CLI's one greedy line filler, so
+// the wrapped surfaces cannot disagree about how a line is broken.
+//
+// 🔴 WHAT IT CHANGES ABOUT THE TEXT, STATED PRECISELY: within a line, runs of
+// whitespace collapse to one space (strings.Fields), and line breaks are
+// inserted. The WORDS are untouched — nothing here reads them, classifies them,
+// truncates on what they say or matches their wording (AGENTS.md item 13). The
+// string's OWN newlines survive as line breaks, so its paragraph structure is
+// not flattened. This is deliberately more than printWorkflow does with the same
+// text (that surface keeps whitespace verbatim): a reason there sits under a
+// heading, while here it sits under a TABLE, where a tab is an alignment hazard
+// and a soft wrap is a forgery one.
+func wrapServerText(s string, width int) string {
+	var lines []string
+	for _, line := range strings.Split(s, "\n") {
+		lines = append(lines, wrapTokens(strings.Fields(line), width)...)
+	}
+	return strings.Join(lines, "\n")
+}
+
 // isStrippedControl reports whether r is a terminal control character safeTerm
 // removes: any C0 control or DEL (other than newline and tab), or any C1 control
 // (U+0080–U+009F).

@@ -124,6 +124,59 @@ func TestIndentContinuation(t *testing.T) {
 	})
 }
 
+// wrapServerText is the third half of the same guard (civitai/cli#382): it
+// exists because the TERMINAL wraps a line the CLI left too long, and the spill
+// lands at column zero where indentContinuation has no newline to act on.
+func TestWrapServerText(t *testing.T) {
+	t.Run("no line exceeds the width", func(t *testing.T) {
+		in := strings.TrimSpace(strings.Repeat("word ", 200))
+		got := wrapServerText(in, 40)
+		lines := strings.Split(got, "\n")
+		if len(lines) < 5 {
+			t.Fatalf("CONTROL failure, not a finding: %d rune input produced %d line(s), so nothing is being "+
+				"wrapped", len([]rune(in)), len(lines))
+		}
+		for _, l := range lines {
+			if n := len([]rune(l)); n > 40 {
+				t.Errorf("line of %d runes exceeds the 40-rune budget: %q", n, l)
+			}
+		}
+	})
+
+	t.Run("nothing is truncated", func(t *testing.T) {
+		in := "FIXTURE alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu"
+		if got := unwrapFinding(wrapServerText(in, 12)); got != in {
+			t.Errorf("wrapping lost text — it must break lines, never drop them:\n want %q\n got  %q", in, got)
+		}
+	})
+
+	t.Run("the string's own line breaks survive", func(t *testing.T) {
+		// A wrapper that collapsed the whole reason into one paragraph would
+		// flatten a server message that had deliberately separated two
+		// statements. Layout may be added; structure may not be removed.
+		got := wrapServerText("FIXTURE first\nFIXTURE second", 80)
+		if got != "FIXTURE first\nFIXTURE second" {
+			t.Errorf("the reason's own line break did not survive: %q", got)
+		}
+	})
+
+	t.Run("a word longer than the width is not split", func(t *testing.T) {
+		// Truncating or hyphenating an over-long token would corrupt an id or a
+		// URL a user is meant to copy. Overflowing one line is the lesser harm,
+		// and it is stated here so the residual is not rediscovered as a bug.
+		in := strings.Repeat("x", 50)
+		if got := wrapServerText(in, 10); got != in {
+			t.Errorf("an unbreakable token was altered: %q", got)
+		}
+	})
+
+	t.Run("an empty string stays one empty line", func(t *testing.T) {
+		if got := wrapServerText("", 40); got != "" {
+			t.Errorf("wrapServerText(\"\") = %q, want \"\"", got)
+		}
+	})
+}
+
 // controlBytes are the raw terminal-control byte sequences that must never
 // survive into human-renderer output.
 var controlBytes = []string{"\x1b", "\u009b", "\x07", "\x00", "\x7f"}
