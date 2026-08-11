@@ -1,10 +1,11 @@
-package scaffold
+package scaffold_test
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
-	"path"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/civitai/cli/internal/pkgzip"
+	"github.com/civitai/cli/internal/scaffold"
 )
 
 // 🔴 A DOTENV FILE THE PACKAGER UPLOADS MUST NOT BE THE PLACE ITS OWN SECRET
@@ -24,18 +26,25 @@ import (
 // reviewer (issue #380). The warning it carried — "never commit one" — is about
 // git, which is the channel that was NOT the problem.
 //
-// The test builds the REAL package from a REAL render, so "is this file
-// uploaded?" is answered by `pkgzip.Build`'s file list rather than by a name
-// this test hardcodes. Add a template, add a dotenv file, or rename a kept
-// dotenv name and this follows automatically.
+// 🔴 EVERY LEG IS ANSWERED BY THE REAL IMPLEMENTATION, NEVER BY A MODEL OF IT.
+// "Is this file uploaded?" is `pkgzip.Build`'s own file list; "is it git-ignored?"
+// is `git check-ignore` run against the rendered tree. Both were reimplementations
+// once and both lied: a hand-rolled `path.Match` loop over the `.gitignore` lines
+// silently ignored NEGATION, so appending `!.env.development.local` left this
+// suite green while real git reported the secret's destination NOT IGNORED.
+// A guard that reimplements the thing it is guarding tests the reimplementation.
 //
 // 🔴 WHAT IT IS NOT. It does not read the prose. A comment block that carries a
 // correct destination annotation AND also invites a paste into the uploaded file
 // passes here — item 28 records two banned-phrase ledgers losing to the next
-// paraphrase, so no word list is attempted. What is computable is (1) that every
-// key in an uploaded dotenv file is CLASSIFIED, and (2) that every secret one
-// names a destination the packager EXCLUDES and the scaffold's own `.gitignore`
-// IGNORES. `TestUploadedDotenvIsTheReviewedCopy` closes the addition half.
+// paraphrase, so no word list is attempted. What is computable is: (1) every key
+// in an uploaded dotenv file is CLASSIFIED; (2) every secret one names a
+// destination the packager EXCLUDES and `git check-ignore` IGNORES; (3) every
+// secret one is declared EMPTY in the uploaded file — the single deterministic
+// check that makes a real token in an uploaded file impossible rather than
+// discouraged; and (4) no UNDOTTED `env.*` file reaches the package, since
+// `pkgzip` recognises dotenv files by the leading dot alone.
+// `TestUploadedDotenvIsTheReviewedCopy` closes the addition half.
 
 // secretEnvKeys are the keys in the scaffolded dotenv files whose value is a
 // live credential: a real one spends the author's money or reads their account.
@@ -60,11 +69,12 @@ var (
 	}
 )
 
-// assignmentRE matches an uncommented `KEY=` declaration line. Deliberately not
-// restricted to SHOUTING_CASE: dotenv keys are uppercase by convention only, and
-// a convention is not a rule the ledger below may rely on — a lower-case key
-// would otherwise be invisible to every check in this file.
-var assignmentRE = regexp.MustCompile(`(?m)^([A-Za-z_][A-Za-z0-9_]*)=`)
+// assignmentRE matches an uncommented `KEY=VALUE` declaration line, capturing
+// both halves. Deliberately not restricted to SHOUTING_CASE: dotenv keys are
+// uppercase by convention only, and a convention is not a rule the ledger below
+// may rely on — a lower-case key would otherwise be invisible to every check in
+// this file.
+var assignmentRE = regexp.MustCompile(`(?m)^([A-Za-z_][A-Za-z0-9_]*)=(.*)$`)
 
 // destinationRE matches the destination annotation: a commented-out example
 // assignment carrying the file the real value belongs in. It is the shape the
@@ -82,10 +92,10 @@ func destinationRE(key string) *regexp.Regexp {
 
 // renderedProject renders one template and returns its directory plus the
 // archive-relative paths `civitai app submit` would UPLOAD.
-func renderedProject(t *testing.T, tmpl Template) (string, map[string]struct{}) {
+func renderedProject(t *testing.T, tmpl scaffold.Template) (string, map[string]struct{}) {
 	t.Helper()
 	dir := t.TempDir()
-	if _, err := Render(tmpl, dir, Data{Slug: "demo-block", Name: "Demo Block"}); err != nil {
+	if _, err := scaffold.Render(tmpl, dir, scaffold.Data{Slug: "demo-block", Name: "Demo Block"}); err != nil {
 		t.Fatalf("render %s: %v", tmpl, err)
 	}
 	res, err := pkgzip.Build(dir)
@@ -102,31 +112,82 @@ func renderedProject(t *testing.T, tmpl Template) (string, map[string]struct{}) 
 	return dir, uploaded
 }
 
-// gitignorePatterns reads the rendered .gitignore's patterns (base-name globs;
-// that is all the scaffolded files use).
-func gitignorePatterns(t *testing.T, dir string) []string {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join(dir, ".gitignore"))
-	if err != nil {
-		t.Fatalf("read rendered .gitignore: %v", err)
-	}
-	var pats []string
-	for _, line := range strings.Split(string(b), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		pats = append(pats, strings.TrimSuffix(line, "/"))
-	}
-	return pats
+// ignoreOracle answers "would git ignore this path in the rendered project?"
+// using git itself.
+//
+// 🔴 THIS USED TO BE A `path.Match` LOOP OVER THE `.gitignore` LINES, AND THAT
+// SHAPE CANNOT BE MADE CORRECT. `.gitignore` is not a glob list: it has negation
+// (`!pattern` re-includes), anchoring (a leading or embedded `/`), directory-only
+// patterns (`dir/`), `**`, and last-match-wins ordering. The reimplementation
+// silently dropped all of it, so appending `!.env.development.local` to the
+// scaffolded template left this test asserting "ignored" about a file real git
+// reports as NOT ignored — the guard's git leg lying in the reassuring
+// direction, about the destination it had just told authors to trust.
+type ignoreOracle struct {
+	dir string
+	env []string
 }
 
-func gitIgnores(pats []string, name string) bool {
-	for _, p := range pats {
-		if ok, err := path.Match(p, name); err == nil && ok {
-			return true
-		}
+// newIgnoreOracle initialises a throwaway repository in the rendered project so
+// `git check-ignore` has something to answer against. It runs with global and
+// system config neutralised, so a developer's own `core.excludesFile` cannot
+// change the verdict here or in CI.
+func newIgnoreOracle(t *testing.T, dir string) *ignoreOracle {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Fatalf("git is not on PATH (%v) — this guard's second leg is 'the destination is git-ignored', "+
+			"and the only honest way to answer that is to ask git. It is not skipped: a skipped safety leg "+
+			"is the vacuous green this whole file exists to avoid.", err)
 	}
+	// Drop the inherited GIT_* pointers before adding ours: a GIT_DIR or
+	// GIT_WORK_TREE in the environment (a git hook, a wrapper script) would
+	// redirect `git init` and `git check-ignore` at some OTHER repository, and
+	// the answer would look perfectly normal.
+	var env []string
+	for _, kv := range os.Environ() {
+		switch strings.SplitN(kv, "=", 2)[0] {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_CEILING_DIRECTORIES":
+			continue
+		}
+		env = append(env, kv)
+	}
+	o := &ignoreOracle{
+		dir: dir,
+		env: append(env,
+			"GIT_CONFIG_GLOBAL=/dev/null",
+			"GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_CONFIG_NOSYSTEM=1",
+			"HOME="+t.TempDir(),
+			"XDG_CONFIG_HOME="+t.TempDir(),
+		),
+	}
+	cmd := exec.Command("git", "init", "-q")
+	cmd.Dir = dir
+	cmd.Env = o.env
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init in the rendered project: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return o
+}
+
+// ignores reports git's verdict for name. Exit 0 = ignored, 1 = not ignored;
+// anything else is a broken oracle and fails the test rather than resolving to
+// a boolean nobody measured.
+func (o *ignoreOracle) ignores(t *testing.T, name string) bool {
+	t.Helper()
+	cmd := exec.Command("git", "check-ignore", "-q", "--no-index", "--", name)
+	cmd.Dir = o.dir
+	cmd.Env = o.env
+	err := cmd.Run()
+	if err == nil {
+		return true
+	}
+	var ee *exec.ExitError
+	if errors.As(err, &ee) && ee.ExitCode() == 1 {
+		return false
+	}
+	t.Fatalf("git check-ignore %q returned an unusable status (%v) — the oracle is broken, so neither "+
+		"answer below may be believed", name, err)
 	return false
 }
 
@@ -164,24 +225,37 @@ func TestUploadedDotenvNeverPointsASecretAtAnUploadedFile(t *testing.T) {
 	seenKeys := map[string]bool{}
 	uploadedDotenvFiles := 0
 
-	for _, tmpl := range AllTemplates() {
+	for _, tmpl := range scaffold.AllTemplates() {
 		dir, uploaded := renderedProject(t, tmpl)
-		ignores := gitignorePatterns(t, dir)
+		oracle := newIgnoreOracle(t, dir)
 
-		// CONTROL for the .gitignore matcher, both directions.
-		if len(ignores) > 0 {
-			if !gitIgnores(ignores, ".env.development.local") && tmpl == PageMoney {
-				t.Errorf("%s: the scaffolded .gitignore does NOT ignore .env.development.local — the file the "+
-					"templates send secrets to is committable", tmpl)
-			}
-			if gitIgnores(ignores, ".env.example") {
-				t.Errorf("%s: CONTROL failure: the scaffolded .gitignore ignores .env.example, so the ignore "+
-					"check below cannot discriminate", tmpl)
-			}
+		// CONTROL for the ignore oracle, both directions: it must be able to say
+		// IGNORED and NOT IGNORED in this very tree, or every verdict below is a
+		// constant. `.env.development.local` is the destination the templates
+		// name; `.env.example` is the file they must never name.
+		if !oracle.ignores(t, ".env.development.local") && tmpl == scaffold.PageMoney {
+			t.Errorf("%s: git does NOT ignore .env.development.local in the scaffolded project — the file the "+
+				"templates send secrets to is committable", tmpl)
+		}
+		if oracle.ignores(t, ".env.example") {
+			t.Errorf("%s: CONTROL failure: git ignores .env.example in the scaffolded project, so the ignore "+
+				"check below cannot discriminate", tmpl)
 		}
 
 		for rel := range uploaded {
-			if !strings.HasPrefix(filepath.Base(rel), ".env") {
+			base := filepath.Base(rel)
+			// 🔴 THE SEAM WITH `outputName`. `pkgzip` recognises a dotenv file by
+			// its LEADING DOT, and the scaffold's embedded templates carry
+			// undotted names (go:embed cannot embed a dot-leading file), so a
+			// rewrite that misses one ships a dotenv file the packager never
+			// classified — and it would slip past the `.env` filter just below
+			// too, i.e. invisible to this entire test.
+			if strings.HasPrefix(base, "env.") {
+				t.Errorf("🔴 %s: %s is UPLOADED with an UNDOTTED name. `scaffold.outputName` must rewrite "+
+					"`env.*` to `.env.*`: as %q it is not a dotenv file to `pkgzip.isExcludedFile`, so it ships "+
+					"whatever it holds, and no check in this file would ever look at it.", tmpl, rel, base)
+			}
+			if !strings.HasPrefix(base, ".env") {
 				continue
 			}
 			uploadedDotenvFiles++
@@ -192,7 +266,7 @@ func TestUploadedDotenvNeverPointsASecretAtAnUploadedFile(t *testing.T) {
 			body := string(b)
 
 			for _, m := range assignmentRE.FindAllStringSubmatch(body, -1) {
-				key := m[1]
+				key, value := m[1], strings.TrimSpace(m[2])
 				seenKeys[key] = true
 				_, secret := secretEnvKeys[key]
 				_, public := publicEnvKeys[key]
@@ -209,6 +283,20 @@ func TestUploadedDotenvNeverPointsASecretAtAnUploadedFile(t *testing.T) {
 				}
 				if !secret {
 					continue
+				}
+
+				// 🔴 THE ONE DETERMINISTIC CHECK: the declaration in an UPLOADED
+				// file must be EMPTY. Everything else in this test is about where
+				// the documentation points; this is about what the shipped bytes
+				// hold, and it is the only assertion here that a real credential
+				// in a real upload cannot survive. It is not implied by any of
+				// them — a token pasted after the `=` with the destination
+				// annotation left intact passed every other check in this file.
+				if value != "" {
+					t.Errorf("🔴 %s/%s declares %s=%s — a NON-EMPTY value for %s in a file `civitai app submit` "+
+						"UPLOADS to the platform and to a human moderator reviewer. The scaffolded declaration must "+
+						"be bare `%s=`; the real value belongs in the destination its comment names.",
+						tmpl, rel, key, value, secretEnvKeys[key], key)
 				}
 
 				block, ok := commentBlockFor(body, key)
@@ -232,19 +320,28 @@ func TestUploadedDotenvNeverPointsASecretAtAnUploadedFile(t *testing.T) {
 						"The destination for a live credential must be a file the packager excludes.",
 						tmpl, rel, key, dest)
 				}
+				// Corroboration, not an independent leg: a destination the
+				// matcher excludes cannot be in this render's file list, so this
+				// only fires when the two disagree — which would mean the
+				// packager's name rule and its walk had come apart.
 				if _, alsoUploaded := uploaded[dest]; alsoUploaded {
 					t.Errorf("🔴 %s/%s: %s is sent to %q, which is IN THE PACKAGE this render produced",
 						tmpl, rel, key, dest)
 				}
-				if !gitIgnores(ignores, dest) {
-					t.Errorf("🔴 %s/%s: %s is sent to %q, which the scaffolded .gitignore does NOT ignore — "+
-						"the advice is safe against the upload and unsafe against a commit",
+				if !oracle.ignores(t, dest) {
+					t.Errorf("🔴 %s/%s: %s is sent to %q, which `git check-ignore` says is NOT ignored in the "+
+						"scaffolded project — the advice is safe against the upload and unsafe against a commit",
 						tmpl, rel, key, dest)
 				}
 			}
 		}
 	}
 
+	// Count floor. NOTE its reachability honestly: removing `.env.example` from
+	// `keptEnvFiles` is caught EARLIER, by the matcher control at the top of this
+	// function, so that mutation never gets here. What reaches this line is the
+	// other way of emptying the set — the templates ceasing to render an uploaded
+	// dotenv file at all (delete `env.example.tmpl` + `env.production.tmpl`).
 	if uploadedDotenvFiles == 0 {
 		t.Fatal("CONTROL failure: no template rendered a dotenv file that the packager uploads, so every " +
 			"assertion above ran zero times. Either the templates stopped shipping .env.example (fine — delete " +
@@ -356,9 +453,13 @@ const uploadedDotenvGoldenPath = "testdata/uploaded_dotenv.golden.txt"
 //
 //	go test ./internal/scaffold -run TestUploadedDotenvIsTheReviewedCopy -update
 //
-// READ the diff. The question it must answer is not "does this read well" but
-// "does any sentence invite a live credential into a file `civitai app submit`
-// uploads, or warn only about git when the upload is the wider channel".
+// READ the diff, and ask it of the VALUES as well as the prose: "does any
+// sentence invite a live credential into a file `civitai app submit` uploads,
+// warn only about git when the upload is the wider channel, or has a
+// declaration acquired a value?" That last question is not left to a reader's
+// diligence — `TestUploadedDotenvNeverPointsASecretAtAnUploadedFile` fails on a
+// non-empty secret declaration — but the earlier phrasing of this instruction
+// asked only about SENTENCES, and a bare `KEY=<token>` is not a sentence.
 //
 // Comparison strips comment markers and collapses whitespace, so a pure re-wrap
 // passes — that carries no claim. (Measured: without the marker strip a rewrap
@@ -370,7 +471,7 @@ const uploadedDotenvGoldenPath = "testdata/uploaded_dotenv.golden.txt"
 func TestUploadedDotenvIsTheReviewedCopy(t *testing.T) {
 	var b strings.Builder
 	files := 0
-	for _, tmpl := range AllTemplates() {
+	for _, tmpl := range scaffold.AllTemplates() {
 		dir, uploaded := renderedProject(t, tmpl)
 		var rels []string
 		for rel := range uploaded {

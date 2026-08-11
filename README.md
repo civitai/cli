@@ -1202,7 +1202,7 @@ enumeration the table below might otherwise read as:
 | file | in the bundle? | why |
 | --- | --- | --- |
 | `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, dotted or not: `.env.staging`, `.env-local`, and `.envrc` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template points a real `VITE_LIVE_BLOCK_TOKEN` at the git-ignored `.env.development.local`; `.envrc` is the direnv convention and routinely holds exported credentials. |
-| `.env.example`, `.env.sample` | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` carries an empty `VITE_LIVE_BLOCK_TOKEN=` line whose comment sends the real token to `.env.development.local` **because this file is uploaded**. Nothing enforces that — it is documentation, not a check |
+| `.env.example`, `.env.sample` | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` carries an empty `VITE_LIVE_BLOCK_TOKEN=` line whose comment sends the real token to `.env.development.local` **because this file is uploaded**. A test pins the *scaffolded* line empty; nothing checks the copy in **your** project, so the packager will upload whatever you put there |
 | `.env.production` | **included** | the platform build runs `vite build` in production mode, which reads it |
 
 🔴 **The allow-list is by FILE NAME. Nothing inspects what is inside those three
@@ -1213,6 +1213,15 @@ one (Vite inlines those into the client bundle, so they are public the moment
 your app loads) and not a plain unprefixed one either (Vite leaves that out of
 the bundle, but the CLI still ships the file). Put nothing in the three kept
 files you would not paste into a public page.
+
+⚠️ **If your project was scaffolded before this was documented, check it by
+hand.** The money template's `.env.example` used to say *"Paste it here"* next to
+`VITE_LIVE_BLOCK_TOKEN`. Templates apply at `civitai app create` only — an
+existing project keeps whatever text (and whatever value) it already has, and
+nothing in `validate` or `submit` inspects a dotenv file's contents. Open
+`.env.example`, make sure that line is bare, and if a real token was ever there,
+treat it as disclosed and mint a new one (`civitai app dev-token <slug> --env >>
+.env.development.local`).
 
 `.env.production` being **shipped** is the one worth knowing about, because it is
 the least expected: the server-side build needs it, and the scaffolded file holds

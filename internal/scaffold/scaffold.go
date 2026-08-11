@@ -98,17 +98,27 @@ type Data struct {
 // outputName maps an embedded template filename to its on-disk name.
 // `.tmpl` is stripped; some names are rewritten because go:embed cannot embed
 // files whose names begin with a dot:
-//   - `gitignore`        -> `.gitignore`
-//   - `env.development`  -> `.env.development`
-//   - `env.production`   -> `.env.production`
-//   - `env.example`      -> `.env.example`
+//   - `gitignore`  -> `.gitignore`
+//   - `env.<any>`  -> `.env.<any>` (e.g. `env.development`, `env.production`,
+//     `env.example`)
+//
+// 🔴 THE DOTENV REWRITE IS A RULE, NOT THE THREE NAMES IT HAPPENS TO MATCH
+// TODAY. It enumerated `env.development` / `env.production` / `env.example`
+// until #380, and the enumeration was a live hazard rather than a tidiness
+// point: `internal/pkgzip` decides what to upload from a base name starting
+// with `.env`, so an `env.sample.tmpl` would have rendered as the UNDOTTED
+// `env.sample`, sailed past `isExcludedFile`, and shipped to the platform and
+// to a human moderator reviewer — while `.env.sample` sits on that package's
+// keptEnvFiles allow-list for a name the scaffold could not even emit.
+// `TestUploadedDotenvNeverPointsASecretAtAnUploadedFile` fails on any UNDOTTED
+// `env.*` file that reaches the package, so the two ends stay tied.
 func outputName(rel string) string {
 	rel = strings.TrimSuffix(rel, ".tmpl")
 	base := filepath.Base(rel)
 	switch {
 	case base == "gitignore":
 		rel = filepath.Join(filepath.Dir(rel), ".gitignore")
-	case base == "env.development" || base == "env.production" || base == "env.example":
+	case strings.HasPrefix(base, "env."):
 		rel = filepath.Join(filepath.Dir(rel), "."+base)
 	}
 	return rel
