@@ -58,8 +58,31 @@ func exitCodeContractClaims() []contractClaim {
 			phrases: []string{"exists but is not ready", "app metrics", "still in review", "app status"},
 			why: "4 promises the resource does not exist. For an app awaiting approval the slug is RIGHT " +
 				"and the app IS there — only its analytics are not — so collapsing the two onto 4 destroys " +
-				"the only actionable distinction: fix your slug versus wait for approval",
+				"the only actionable distinction: fix your slug versus wait for approval. " +
+				"🔴 THIS ROW IS THE 1-vs-4 SPLIT ONLY, NOT THE WHOLE OF WHAT 1 PROMISES HERE: its phrases " +
+				"say \"still in review\", which is the PENDING case, and code 1 also covers a rejected or " +
+				"withdrawn latest submission, where there is no review to wait for. The row below carries " +
+				"that half (issue #378)",
 			pinnedBy: "TestAppMetricsNoApprovedBlockYet (negative) + TestAppMetricsUnknownSlugIsActionableNotFound (positive control)",
+		},
+		{
+			code: 1,
+			name: "the not-ready 1 is not always \"wait for approval\"",
+			// Bare nouns, no markdown emphasis: `**rejected**` would redden on a
+			// meaning-preserving reword to `*rejected*`, and this file's own header
+			// says a row is the load-bearing NOUNS, not incidental wording. The
+			// bare word is a substring of the emphasised one either way.
+			phrases: []string{"rejected", "withdrawn", "nothing is in review", "civitai app submit"},
+			why: "the row above frames the whole state as \"still in review\", which was measured on the only " +
+				"state anyone exercised (pending) and is false for the two the CLI can also be handed. " +
+				"`app metrics` printed \"check where it is in review\" for a REJECTED app — a review that is " +
+				"not happening — until pullReviewAdvice became shared with `app pull`, so what exit 1 " +
+				"promises for this state is a next step chosen FROM the latest submission's own state, not a " +
+				"blanket instruction to wait. Ledgered separately because the sentence above is verbatim " +
+				"pre-split text that TestEveryPreSplitClauseSurvives forbids rewriting in place",
+			pinnedBy: "TestAppMetricsTerminalSubmissionIsNotDescribedAsInReview + " +
+				"TestAppMetricsAdviceNamesTheNewestSubmission (which row) + " +
+				"TestPullAndMetricsGiveTheSameNextStepForTheSameState (the seam)",
 		},
 		{
 			code:    2,

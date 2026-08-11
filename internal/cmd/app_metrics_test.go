@@ -694,18 +694,39 @@ func TestAppMetricsNoApprovedBlockYet(t *testing.T) {
 	}
 }
 
-// notApprovedSubmissionsBody is a one-row, never-approved submissions list
-// (appBlockId null) carrying an explicit review state. submissionsBody hard-codes
+// notApprovedSubmissionsBody is a never-approved submissions list (appBlockId
+// null) whose NEWEST row carries status. submissionsBody hard-codes
 // `"status":"approved"`, which is exactly the row that CANNOT exercise the
 // state-dependent advice — with a null appBlockId it is also incoherent — so the
 // terminal-state guards need their own fixture.
-func notApprovedSubmissionsBody(slug, status string) string {
-	b, _ := json.Marshal(map[string]any{"submissions": []any{
-		map[string]any{
-			"id": "pubreq_1", "blockId": slug, "version": "0.2.0", "status": status,
+//
+// 🔴 IT IS TWO ROWS, AND THE SECOND ONE IS THE WHOLE POINT (issue #378). It used
+// to be one row, where `subs[0]` and `subs[len(subs)-1]` are the SAME row — so
+// every guard built on it, including the cross-command seam guard below, was
+// structurally unable to see which end of the list the advice came from.
+// Mutating both call sites to the last row left the entire suite green. The
+// older row's state is chosen to land in a DIFFERENT pullReviewAdvice branch, so
+// reading the wrong end produces a different sentence rather than the same one.
+func notApprovedSubmissionsBody(t *testing.T, slug, status string) string {
+	t.Helper()
+	older := "rejected"
+	if pullReviewAdvice(slug, older) == pullReviewAdvice(slug, status) {
+		older = "withdrawn"
+	}
+	if pullReviewAdvice(slug, older) == pullReviewAdvice(slug, status) {
+		t.Fatalf("no decoy state produces advice different from %q — this fixture cannot "+
+			"distinguish the newest row from the oldest", status)
+	}
+	row := func(id, version, st string) map[string]any {
+		return map[string]any{
+			"id": id, "blockId": slug, "version": version, "status": st,
 			"submittedAt": "2026-06-20T08:00:00.000Z", "updatedAt": "2026-06-20T08:00:00.000Z",
 			"createdAt": "2026-06-20T08:00:00.000Z", "appBlockId": nil,
-		},
+		}
+	}
+	b, _ := json.Marshal(map[string]any{"submissions": []any{
+		row("pubreq_2", "0.2.0", status), // newest — the state under test
+		row("pubreq_1", "0.1.0", older),  // older — must not be the one answered
 	}})
 	return string(b)
 }
@@ -734,7 +755,7 @@ func TestAppMetricsTerminalSubmissionIsNotDescribedAsInReview(t *testing.T) {
 		t.Run(tc.status, func(t *testing.T) {
 			var rec metricsRec
 			srv := metricsServer(t,
-				notApprovedSubmissionsBody("stuck-app", tc.status), http.StatusOK,
+				notApprovedSubmissionsBody(t, "stuck-app", tc.status), http.StatusOK,
 				trpcEnvelope(verifiedAnalyticsPayload), http.StatusOK, &rec)
 			defer srv.Close()
 			setupMetricsEnv(t, srv.URL)
@@ -783,12 +804,20 @@ func TestAppMetricsTerminalSubmissionIsNotDescribedAsInReview(t *testing.T) {
 // state, the sentence `app metrics` prints and the sentence `app pull` prints
 // must be the same sentence. It reddens when either call site re-opens its own
 // copy, in either direction.
+//
+// 🔴 IT SHIPPED WITH A ONE-ROW BODY, WHICH IT CANNOT BE (issue #378). Agreement
+// between two commands says nothing about WHICH ROW they agree on: a one-row
+// fixture makes `subs[0]` and `subs[len(subs)-1]` the same row, so mutating both
+// sites to the last row kept this guard — and the whole suite — green while both
+// answered the wrong submission. notApprovedSubmissionsBody now carries a second,
+// differently-stated row; the per-site "which row" property is
+// TestAppPullAdviceNamesTheNewestSubmission and its `app metrics` twin.
 func TestPullAndMetricsGiveTheSameNextStepForTheSameState(t *testing.T) {
 	for _, status := range []string{"rejected", "withdrawn", "pending"} {
 		t.Run(status, func(t *testing.T) {
 			// The advice is per-app-name, so both runs must use one slug.
 			const slug = "shared-app"
-			body := notApprovedSubmissionsBody(slug, status)
+			body := notApprovedSubmissionsBody(t, slug, status)
 
 			var rec metricsRec
 			msrv := metricsServer(t, body, http.StatusOK, trpcEnvelope(verifiedAnalyticsPayload), http.StatusOK, &rec)
