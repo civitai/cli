@@ -70,7 +70,9 @@ func newAppWithdrawCmd() *cobra.Command {
 		Long: `Withdraw your own pending App submission so you can resubmit a new bundle
 for the same slug.
 
-🔴 THIS IS NOT A FREE REPAIR — IT DESTROYS YOUR STORE LISTING. ` + withdrawDiscardsListing + `.
+🔴 THIS IS NOT A FREE REPAIR —
+` + strings.Join(wrapRunes(withdrawDiscardsListing+".", 78), "\n") + `
+
 That is server-side and this command cannot opt out of it: the withdraw route
 takes the publish-request id and nothing else. So attach your listing media
 AFTER the submission you intend to keep, not before a withdraw — and if a

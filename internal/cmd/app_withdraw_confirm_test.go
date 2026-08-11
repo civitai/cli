@@ -399,14 +399,26 @@ func TestWithdrawHelpRetractsTheFreeRepairFraming(t *testing.T) {
 // It cannot be run against pre-#350 code: the constant does not exist there, so
 // the package does not compile. That is a statement about the test, not evidence
 // about the fix — the behavioural red-at-base claims live in the tests above.
+//
+// Whitespace is normalised on both sides. The help hard-wraps the constant at 78
+// columns (cobra does not wrap `Long`, so an unwrapped 190-column paragraph would
+// break mid-clause in a standard terminal) while the refusal emits it as one
+// line. Pinning the bytes would therefore pin the LINE BREAKS, and this guard
+// exists to pin the CLAIM.
 func TestWithdrawHelpQuotesTheDestructionConstant(t *testing.T) {
+	norm := func(s string) string { return strings.Join(strings.Fields(s), " ") }
 	out, _, err := run(t, "app", "withdraw", "--help")
 	if err != nil {
 		t.Fatalf("app withdraw --help: %v", err)
 	}
-	if !strings.Contains(out, withdrawDiscardsListing) {
-		t.Errorf("`app withdraw --help` no longer quotes withdrawDiscardsListing verbatim, so the "+
+	if !strings.Contains(norm(out), norm(withdrawDiscardsListing)) {
+		t.Errorf("`app withdraw --help` no longer states withdrawDiscardsListing, so the "+
 			"help, the prompt and the refusal can now disagree about what is destroyed:\n%s", out)
+	}
+	// NEGATIVE CONTROL: whitespace normalisation must not have turned the check
+	// into one that matches anything.
+	if strings.Contains(norm(out), norm(withdrawDiscardsListing)+" and pigs fly") {
+		t.Error("the normalised matcher cannot report a miss, so its hit proves nothing")
 	}
 }
 
