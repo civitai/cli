@@ -425,10 +425,22 @@ func trpcName(path string) string {
 	return path
 }
 
-// listingOp is WHAT THE ROUTE DOES — a lookup, a write to the listing, or the
-// ingest of an image that is not attached to anything yet. A 400 is worded from
-// it, so getting it wrong makes the CLI state something false about the user's
-// data.
+// listingOp is WHAT THE CALLER ASKED THIS ROUTE FOR — a lookup, a write to the
+// listing, or the ingest of an image that is attached to nothing yet. A 400 is
+// worded from it, so getting it wrong makes the CLI state something false about
+// the user's data.
+//
+// 🔴 The rule is the CALLER'S REQUEST, deliberately not "every write the server
+// performs", and `getMyListingForEdit` is the entry that makes the difference
+// visible: it is classified `read` because the user asked to look, while the
+// server documents a side effect — for an APPROVED parent it idempotently opens
+// a shadow revision (see GetMyListingForEdit). Classifying it `change` would
+// tell someone whose `listingId` was rejected to go fix a value they never sent.
+// The residual is real and stated rather than papered over: this CLI cannot see
+// whether the server opened a revision before rejecting the input, so "nothing
+// was changed" is a claim about the REQUEST, not a proof about the database.
+// Tracked as civitai/cli#389, which names the measurement that would settle it;
+// do not "fix" it by re-labelling the route before that measurement exists.
 //
 // 🔴 IT IS NOT THE HTTP VERB, and civitai/cli#374 is what that cost: keying it
 // on the verb at the three call sites (trpcQuery → read, trpcMutation → change,
@@ -463,13 +475,17 @@ const (
 
 // listingRoute is a listing-media route: its path AND what it does, in one
 // value. They travel together so the op is stated ONCE, where the route is
-// declared, instead of being re-derived at each call site — a predicate
-// open-coded at three sites was wrong at two of them, in the same direction.
+// declared, instead of being re-derived at each call site. Open-coded, the
+// predicate was wrong at ONE of its three sites (`trpcMutation`) — but that one
+// site answered for two routes, and `MintImageUpload` was right, which is
+// exactly why nobody spotted it: two of the three sites read correctly.
 //
 // The compiler does not force you to fill in `op` (a keyed literal may omit
-// it), so what enforces classification is the pair of guards in
-// listing_op_test.go: the ledger fails on a declared route with no behavioural
-// case, and the case's own hand-written `wantOp` fails on one classified wrong.
+// it), so what enforces classification is three guards that must AGREE:
+// listing_op_test.go's ledger (no declared route without a behavioural case),
+// its per-case hand-written `wantOp`, and procname_leak_test.go's spelled-out
+// wording table — the last deliberately in another file, because editing the
+// first two together is a two-line re-label that used to go green.
 type listingRoute struct {
 	path string
 	op   listingOp
@@ -528,11 +544,11 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		default:
 			// An UNCLASSIFIED route. Every other arm asserts something about
 			// the user's listing; none of them is safe to guess, so this one
-			// says only what happened and names the call so a bug report can
-			// find it. The proc name is a deliberate exception to the #363 rule
-			// above, for the same reason the `default:` status arm keeps it: a
-			// route nobody classified is a CLI bug, not bad user input.
-			return fmt.Errorf("%s rejected the request (HTTP 400): %s", name, msg)
+			// says only what happened, names the call, and asks for the report
+			// that is the actual next step — a route nobody classified is a CLI
+			// bug, not bad user input, which is also why the proc name is a
+			// deliberate exception to the #363 rule above.
+			return fmt.Errorf("%s rejected the request (HTTP 400): %s — this is a CLI bug (the route is unclassified); please report it at https://github.com/civitai/cli/issues", name, msg)
 		}
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)

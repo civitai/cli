@@ -43,47 +43,123 @@ func TestListingBadRequestDoesNotLeakTheProcedureName(t *testing.T) {
 // store-listing change" is then false twice over: a read changed nothing, and an
 // upload-URL mint touches no listing.
 //
-// This is the WORDING of each arm, held against a route chosen by hand. It says
-// nothing about which routes reach which arm — that is
-// TestListingBadRequestSubjectIsReachablePerRoute (listing_op_test.go), and
-// civitai/cli#374 is what happens when only this half exists.
+// 🔴 This table covers EVERY route, and its phrases are spelled out per case
+// rather than looked up from the op. That is the whole point of it. The
+// per-route reachability table in listing_op_test.go checks its expectation
+// against a `wantOp` sitting three lines from `route.op`, so editing BOTH
+// re-labels a route under a green suite — measured: six of the seven `change`
+// routes survived exactly that two-line edit, and only `setIcon` died, because
+// `setIcon` was the only one this table used to name. Every route now has a
+// hand-written sentence here, in a different file, that a re-label must
+// contradict.
+//
+// What this table does NOT prove is that any route REACHES its arm through the
+// real client — that is listing_op_test.go's job, and civitai/cli#374 is what
+// happens when only one of the two halves exists.
 func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"error": map[string]any{"json": map[string]any{"message": "Invalid input"}},
 	})
+	// A lookup: it read, so it changed nothing.
+	const readSubject = "store-listing lookup"
+	// An image ingest: it created an Image row attached to no listing.
+	const ingestSubject = "image-upload request"
+	// A listing write: it may have PARTIALLY APPLIED, so `app listing status` is
+	// the authority on what is attached now.
+	const changeSubject = "store-listing change"
+
 	for _, tc := range []struct {
 		name    string
 		route   listingRoute
 		want    []string
 		notWant []string
 	}{
+		// ---- reads: the caller asked to look ----
 		{
-			name:    "read",
+			name:    "getMyListingForApp is a lookup",
 			route:   trpcGetMyListingForApp,
-			want:    []string{"lookup", "nothing was changed"},
-			notWant: []string{"store-listing change", "fix the value"},
+			want:    []string{readSubject, "nothing was changed"},
+			notWant: []string{changeSubject, ingestSubject, "fix the value"},
 		},
 		{
-			name:    "upload mint",
+			name:    "getMyListingForEdit is a lookup",
+			route:   trpcGetMyListingForEdit,
+			want:    []string{readSubject, "nothing was changed"},
+			notWant: []string{changeSubject, ingestSubject, "fix the value"},
+		},
+		{
+			name:    "getAssetScanStatuses is a lookup",
+			route:   trpcGetAssetScanStatuses,
+			want:    []string{readSubject, "nothing was changed"},
+			notWant: []string{changeSubject, ingestSubject, "fix the value"},
+		},
+
+		// ---- ingests: an Image row, attached to nothing ----
+		{
+			name:    "the presigned mint changes no listing",
 			route:   imageUploadRoute,
-			want:    []string{"image-upload", "no listing was changed"},
-			notWant: []string{"store-listing change"},
+			want:    []string{ingestSubject, "no listing was changed"},
+			notWant: []string{changeSubject, readSubject, "fix the value"},
 		},
 		{
-			// The other ingest shape: a tRPC POST that creates an Image row and
-			// attaches it to nothing. Same story as the mint above (#374).
-			name:    "data-uri ingest",
+			// A tRPC POST that creates an Image row and attaches it to nothing.
+			// Same story as the mint above (#374).
+			name:    "the data-uri ingest changes no listing",
 			route:   trpcIngestAssetFromDataURI,
-			want:    []string{"image-upload", "no listing was changed"},
-			notWant: []string{"store-listing change", "fix the value"},
+			want:    []string{ingestSubject, "no listing was changed"},
+			notWant: []string{changeSubject, readSubject, "fix the value"},
 		},
 		{
-			// The control: a real mutation IS a store-listing change, and the
-			// wording civitai/cli#363 asked for must survive for it.
-			name:    "change",
+			// Step 3 of the same user action the mint starts.
+			name:    "persistAssetImage changes no listing",
+			route:   trpcPersistAssetImage,
+			want:    []string{ingestSubject, "no listing was changed"},
+			notWant: []string{changeSubject, readSubject, "fix the value"},
+		},
+
+		// ---- changes: each writes the listing, so none of them may say
+		// "nothing was changed" — a 400 here may have partially applied ----
+		{
+			name:    "setIcon attaches an icon to the listing",
 			route:   trpcSetIcon,
-			want:    []string{"store-listing change", "civitai app listing status"},
-			notWant: []string{"nothing was changed"},
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "setCover attaches a cover to the listing",
+			route:   trpcSetCover,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "addScreenshot appends to the listing",
+			route:   trpcAddScreenshot,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "removeScreenshot deletes from the listing",
+			route:   trpcRemoveScreenshot,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "reorderScreenshots rewrites the listing's order",
+			route:   trpcReorderScreenshots,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "beginListingRevision opens a shadow revision",
+			route:   trpcBeginListingRevision,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "submitListingRevision sends the revision to review",
+			route:   trpcSubmitListingRevision,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

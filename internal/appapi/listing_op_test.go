@@ -3,12 +3,12 @@ package appapi
 import (
 	"context"
 	"errors"
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -404,10 +404,10 @@ func TestEveryListingRouteHasAReachabilityCase(t *testing.T) {
 	// Positive control on the PARSER: a walker that silently matches nothing
 	// would make this test pass with an empty ledger.
 	if len(declared) < 13 {
-		t.Fatalf("parser found only %d listingRoute declarations in listing.go — it is not reading what it thinks", len(declared))
+		t.Fatalf("parser found only %d listingRoute declarations in %s — it is not reading what it thinks", len(declared), mustGetwd(t))
 	}
 	for _, must := range []string{"/api/trpc/appListings.setIcon", ImageUploadPath} {
-		if !declared[must] {
+		if _, ok := declared[must]; !ok {
 			t.Fatalf("parser did not find %q among %v — instrument is wrong", must, keysOf(declared))
 		}
 	}
@@ -425,19 +425,85 @@ func TestEveryListingRouteHasAReachabilityCase(t *testing.T) {
 		}
 	}
 
-	for p := range declared {
+	for p, d := range declared {
 		if !exercised[p] {
-			t.Errorf("route %q is declared but no case in listingRouteCases() drives a 400 through it — its op is unpinned", p)
+			t.Errorf("route %q (declared at %s) has no case in listingRouteCases() driving a 400 through it — its op is unpinned", p, d.file)
 		}
 	}
 	for p := range exercised {
-		if strings.HasPrefix(p, "/api/") && !declared[p] {
+		if _, ok := declared[p]; strings.HasPrefix(p, "/api/") && !ok {
 			t.Errorf("a case reached %q, which is not a declared listingRoute", p)
 		}
 	}
 }
 
-func keysOf(m map[string]bool) []string {
+// TestListingRouteOpsAreExactlyThisSpelledSet is the THIRD, independent opinion
+// on the classification — and the one a coordinated edit cannot quietly satisfy.
+//
+// 🔴 Why it exists: `listingRouteCases()`'s `wantOp` is checked against
+// `route.op`, so editing BOTH re-labels a route with a green suite. Six of the
+// seven `change` routes were vulnerable to exactly that. This ledger is read
+// from the SOURCE TEXT by the AST parser and compared to a set spelled out here,
+// in a different file from `wantOp`, so a re-label has to be written down three
+// times before anything goes green — and each of those places states why it
+// matters.
+//
+// If you are here because you deliberately re-classified a route: this ledger is
+// not the thing to fix first. Fix the wording tests, confirm the new subject is
+// TRUE of that route (a `change` that 400s may have partially applied; an
+// `ingest` and a `read` may not claim it did), and only then record it here.
+func TestListingRouteOpsAreExactlyThisSpelledSet(t *testing.T) {
+	// Spelled out, deliberately not derived from the route vars.
+	want := map[string]string{
+		"/api/trpc/appListings.getMyListingForApp":   "listingOpRead",
+		"/api/trpc/appListings.getMyListingForEdit":  "listingOpRead",
+		"/api/trpc/appListings.getAssetScanStatuses": "listingOpRead",
+
+		"/api/v1/image-upload":                         "listingOpIngest",
+		"/api/trpc/appListings.ingestAssetFromDataUri": "listingOpIngest",
+		"/api/trpc/appListings.persistAssetImage":      "listingOpIngest",
+
+		"/api/trpc/appListings.setIcon":               "listingOpChange",
+		"/api/trpc/appListings.setCover":              "listingOpChange",
+		"/api/trpc/appListings.addScreenshot":         "listingOpChange",
+		"/api/trpc/appListings.removeScreenshot":      "listingOpChange",
+		"/api/trpc/appListings.reorderScreenshots":    "listingOpChange",
+		"/api/trpc/appListings.beginListingRevision":  "listingOpChange",
+		"/api/trpc/appListings.submitListingRevision": "listingOpChange",
+	}
+	declared := declaredListingRoutes(t)
+	if len(declared) < len(want) {
+		t.Fatalf("the parser found %d routes but this ledger names %d — the instrument is under-reading", len(declared), len(want))
+	}
+	for path, wantOp := range want {
+		d, ok := declared[path]
+		if !ok {
+			t.Errorf("this ledger names route %q, which is no longer declared — delete the entry if the route is gone", path)
+			continue
+		}
+		if d.opName != wantOp {
+			got := d.opName
+			if got == "" {
+				got = "(no op given)"
+			}
+			t.Errorf("route %q is declared %s at %s, but this ledger says %s.\n"+
+				"A wrong op makes the CLI state something false about the user's listing after a 400: "+
+				"a `change` may have partially applied, an `ingest` and a `read` may not claim it did.",
+				path, got, d.file, wantOp)
+		}
+	}
+	for path, d := range declared {
+		if _, ok := want[path]; !ok {
+			got := d.opName
+			if got == "" {
+				got = "(no op given)"
+			}
+			t.Errorf("route %q (declared %s at %s) is not in this ledger — classify it here, and give it a case in listingRouteCases()", path, got, d.file)
+		}
+	}
+}
+
+func keysOf(m map[string]declaredRoute) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
 		out = append(out, k)
@@ -445,68 +511,167 @@ func keysOf(m map[string]bool) []string {
 	return out
 }
 
-// declaredListingRoutes parses listing.go and returns the path of every
-// `listingRoute{...}` composite literal in it. Reading the SOURCE, not a
-// hand-kept list, is what makes the ledger notice a route added tomorrow.
-func declaredListingRoutes(t *testing.T) map[string]bool {
+// declaredRoute is one `listingRoute{…}` composite literal as WRITTEN in the
+// source: its path, and the identifier its op was spelled with ("" when the op
+// was left off entirely).
+type declaredRoute struct {
+	path   string
+	opName string
+	file   string
+}
+
+// declaredListingRoutes parses EVERY non-test .go file in this package and
+// returns one entry per `listingRoute{…}` composite literal. Reading the SOURCE,
+// not a hand-kept list, is what makes the ledger notice a route added tomorrow —
+// and it reads the whole package, not just listing.go, because a route declared
+// in a sibling file of the same package is exactly as reachable and would
+// otherwise be invisible to the one guard whose job is to see it.
+func declaredListingRoutes(t *testing.T) map[string]declaredRoute {
 	t.Helper()
 	fset := token.NewFileSet()
-	f, err := parser.ParseFile(fset, "listing.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parsing listing.go: %v", err)
-	}
 
-	// String consts in the same file, so a route declared as
-	// `listingRoute{ImageUploadPath, …}` resolves.
-	consts := map[string]string{}
-	for _, d := range f.Decls {
-		gd, ok := d.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("reading the package directory: %v", err)
+	}
+	var files []*ast.File
+	var names []string
+	for _, e := range entries {
+		n := e.Name()
+		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
 			continue
 		}
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
+		f, err := parser.ParseFile(fset, n, nil, 0)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", n, err)
+		}
+		files = append(files, f)
+		names = append(names, n)
+	}
+	// Positive control on the file sweep itself: a wrong cwd or a filter that
+	// matches nothing would make every ledger below vacuous.
+	if len(files) < 2 {
+		t.Fatalf("the package sweep found %d non-test .go files in %q — it is not reading what it thinks", len(files), mustGetwd(t))
+	}
+
+	// String consts anywhere in the package, so a route declared as
+	// `listingRoute{ImageUploadPath, …}` resolves.
+	consts := map[string]string{}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
 				continue
 			}
-			for i, n := range vs.Names {
-				if i >= len(vs.Values) {
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
 					continue
 				}
-				if bl, ok := vs.Values[i].(*ast.BasicLit); ok && bl.Kind == token.STRING {
-					if v, err := strconv.Unquote(bl.Value); err == nil {
-						consts[n.Name] = v
+				for i, n := range vs.Names {
+					if i >= len(vs.Values) {
+						continue
+					}
+					if bl, ok := vs.Values[i].(*ast.BasicLit); ok && bl.Kind == token.STRING {
+						if v, err := strconv.Unquote(bl.Value); err == nil {
+							consts[n.Name] = v
+						}
 					}
 				}
 			}
 		}
 	}
 
-	out := map[string]bool{}
-	ast.Inspect(f, func(n ast.Node) bool {
-		cl, ok := n.(*ast.CompositeLit)
-		if !ok {
-			return true
-		}
-		id, ok := cl.Type.(*ast.Ident)
-		if !ok || id.Name != "listingRoute" || len(cl.Elts) == 0 {
-			return true
-		}
-		switch e := cl.Elts[0].(type) {
+	// resolvePath reads a path expression: a string literal, or an identifier
+	// naming a string const in this package.
+	resolvePath := func(e ast.Expr, where string) (string, bool) {
+		switch v := e.(type) {
 		case *ast.BasicLit:
-			if v, err := strconv.Unquote(e.Value); err == nil {
-				out[v] = true
+			if v.Kind != token.STRING {
+				break
 			}
+			s, err := strconv.Unquote(v.Value)
+			if err != nil {
+				break
+			}
+			return s, true
 		case *ast.Ident:
-			if v, ok := consts[e.Name]; ok {
-				out[v] = true
-			} else {
-				t.Errorf("listingRoute path %s is not a string const in listing.go — the ledger cannot resolve it", e.Name)
+			if s, ok := consts[v.Name]; ok {
+				return s, true
 			}
-		default:
-			t.Errorf("unresolvable listingRoute path expression %s", fmt.Sprintf("%T", e))
+			t.Errorf("%s: listingRoute path %s is not a string const in this package.\n"+
+				"Remedy: give the route a literal path, or declare the const in %s.",
+				where, v.Name, "internal/appapi")
+			return "", false
 		}
-		return true
-	})
+		t.Errorf("%s: this ledger cannot read a listingRoute path written as %T.\n"+
+			"Remedy: write the path as a string literal or as an identifier naming a string const in this package — "+
+			"or teach resolvePath in listing_op_test.go to read this form. Do NOT delete the ledger: "+
+			"it is the only guard that notices a route added with no reachability case.", where, e)
+		return "", false
+	}
+
+	out := map[string]declaredRoute{}
+	for i, f := range files {
+		fileName := names[i]
+		ast.Inspect(f, func(n ast.Node) bool {
+			cl, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			id, ok := cl.Type.(*ast.Ident)
+			if !ok || id.Name != "listingRoute" || len(cl.Elts) == 0 {
+				return true
+			}
+			where := fileName + ":" + strconv.Itoa(fset.Position(cl.Pos()).Line)
+
+			var path, opName string
+			var gotPath bool
+			if _, keyed := cl.Elts[0].(*ast.KeyValueExpr); keyed {
+				// `listingRoute{path: "…", op: listingOpChange}` — correct,
+				// idiomatic Go, and the exact form listingOpUnclassified exists
+				// for. Read it by key; a missing `op` key is what leaves opName
+				// empty, which the op ledger reports.
+				for _, elt := range cl.Elts {
+					kv, ok := elt.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					key, ok := kv.Key.(*ast.Ident)
+					if !ok {
+						continue
+					}
+					switch key.Name {
+					case "path":
+						path, gotPath = resolvePath(kv.Value, where)
+					case "op":
+						if v, ok := kv.Value.(*ast.Ident); ok {
+							opName = v.Name
+						}
+					}
+				}
+			} else {
+				path, gotPath = resolvePath(cl.Elts[0], where)
+				if len(cl.Elts) > 1 {
+					if v, ok := cl.Elts[1].(*ast.Ident); ok {
+						opName = v.Name
+					}
+				}
+			}
+			if gotPath {
+				out[path] = declaredRoute{path: path, opName: opName, file: where}
+			}
+			return true
+		})
+	}
 	return out
+}
+
+func mustGetwd(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	return wd
 }
