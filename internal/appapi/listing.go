@@ -22,24 +22,39 @@ import (
 // `{"json":<input>}`. The success envelope is `{result:{data:{json:<result>}}}`.
 // Mirrors the existing `blocks.*` plumbing in appblocks.go.
 
-const (
-	trpcGetMyListingForApp     = "/api/trpc/appListings.getMyListingForApp"
-	trpcGetMyListingForEdit    = "/api/trpc/appListings.getMyListingForEdit"
-	trpcGetAssetScanStatuses   = "/api/trpc/appListings.getAssetScanStatuses"
-	trpcIngestAssetFromDataURI = "/api/trpc/appListings.ingestAssetFromDataUri"
-	trpcPersistAssetImage      = "/api/trpc/appListings.persistAssetImage"
-	trpcSetIcon                = "/api/trpc/appListings.setIcon"
-	trpcSetCover               = "/api/trpc/appListings.setCover"
-	trpcAddScreenshot          = "/api/trpc/appListings.addScreenshot"
-	trpcRemoveScreenshot       = "/api/trpc/appListings.removeScreenshot"
-	trpcReorderScreenshots     = "/api/trpc/appListings.reorderScreenshots"
-	trpcBeginListingRevision   = "/api/trpc/appListings.beginListingRevision"
-	trpcSubmitListingRevision  = "/api/trpc/appListings.submitListingRevision"
+// ImageUploadPath mints a presigned PUT URL for a full-resolution asset
+// (cover / screenshot). Bearer-authed; returns {id, uploadURL}. The `id` (a
+// uuid) is the key persistAssetImage stores.
+const ImageUploadPath = "/api/v1/image-upload"
 
-	// ImageUploadPath mints a presigned PUT URL for a full-resolution asset
-	// (cover / screenshot). Bearer-authed; returns {id, uploadURL}. The `id` (a
-	// uuid) is the key persistAssetImage stores.
-	ImageUploadPath = "/api/v1/image-upload"
+// The listing-media routes. Each one carries its own listingOp — see the
+// listingRoute doc for why the classification cannot live at the call site.
+var (
+	// Reads. Note getMyListingForEdit has a server-side shadow-revision side
+	// effect (see GetMyListingForEdit); it is still a read from the caller's
+	// point of view — the user asked to look, not to change.
+	trpcGetMyListingForApp   = listingRoute{"/api/trpc/appListings.getMyListingForApp", listingOpRead}
+	trpcGetMyListingForEdit  = listingRoute{"/api/trpc/appListings.getMyListingForEdit", listingOpRead}
+	trpcGetAssetScanStatuses = listingRoute{"/api/trpc/appListings.getAssetScanStatuses", listingOpRead}
+
+	// 🔴 INGEST, not change — and both are POSTs, which is exactly why the verb
+	// is not the answer. Each creates an Image row and touches NO listing;
+	// setIcon/setCover/addScreenshot is what attaches it. `imageUploadRoute` is
+	// step 1 of the same user action `trpcPersistAssetImage` ends, so the two
+	// must tell one story.
+	imageUploadRoute           = listingRoute{ImageUploadPath, listingOpIngest}
+	trpcIngestAssetFromDataURI = listingRoute{"/api/trpc/appListings.ingestAssetFromDataUri", listingOpIngest}
+	trpcPersistAssetImage      = listingRoute{"/api/trpc/appListings.persistAssetImage", listingOpIngest}
+
+	// Changes: these write the listing (or its shadow revision), so a rejection
+	// may have PARTIALLY applied and must never be worded as "nothing changed".
+	trpcSetIcon               = listingRoute{"/api/trpc/appListings.setIcon", listingOpChange}
+	trpcSetCover              = listingRoute{"/api/trpc/appListings.setCover", listingOpChange}
+	trpcAddScreenshot         = listingRoute{"/api/trpc/appListings.addScreenshot", listingOpChange}
+	trpcRemoveScreenshot      = listingRoute{"/api/trpc/appListings.removeScreenshot", listingOpChange}
+	trpcReorderScreenshots    = listingRoute{"/api/trpc/appListings.reorderScreenshots", listingOpChange}
+	trpcBeginListingRevision  = listingRoute{"/api/trpc/appListings.beginListingRevision", listingOpChange}
+	trpcSubmitListingRevision = listingRoute{"/api/trpc/appListings.submitListingRevision", listingOpChange}
 )
 
 // ListingRef is the result of getMyListingForApp — the entry read that resolves
@@ -123,14 +138,14 @@ type SubmitRevisionResult struct {
 }
 
 // trpcQuery issues a tRPC GET query and decodes result.data.json into out.
-func (c *Client) trpcQuery(ctx context.Context, path string, input any, out any) error {
+func (c *Client) trpcQuery(ctx context.Context, route listingRoute, input any, out any) error {
 	inputJSON, err := json.Marshal(map[string]any{"json": input})
 	if err != nil {
 		return err
 	}
 	q := url.Values{}
 	q.Set("input", string(inputJSON))
-	reqURL := c.BaseURL + path + "?" + q.Encode()
+	reqURL := c.BaseURL + route.path + "?" + q.Encode()
 	build := func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	}
@@ -139,20 +154,20 @@ func (c *Client) trpcQuery(ctx context.Context, path string, input any, out any)
 		return err
 	}
 	if status != http.StatusOK {
-		return listingError(status, raw, path, listingOpRead)
+		return listingError(status, raw, route)
 	}
-	return decodeTRPCData(raw, out, path)
+	return decodeTRPCData(raw, out, route)
 }
 
 // trpcMutation issues a tRPC POST mutation and decodes result.data.json into out
 // (out may be nil to ignore the result).
-func (c *Client) trpcMutation(ctx context.Context, path string, input any, out any) error {
+func (c *Client) trpcMutation(ctx context.Context, route listingRoute, input any, out any) error {
 	body, err := json.Marshal(map[string]any{"json": input})
 	if err != nil {
 		return err
 	}
 	build := func() (*http.Request, error) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+route.path, bytes.NewReader(body))
 		if err != nil {
 			return nil, err
 		}
@@ -164,16 +179,16 @@ func (c *Client) trpcMutation(ctx context.Context, path string, input any, out a
 		return err
 	}
 	if status != http.StatusOK {
-		return listingError(status, raw, path, listingOpChange)
+		return listingError(status, raw, route)
 	}
 	if out == nil {
 		return nil
 	}
-	return decodeTRPCData(raw, out, path)
+	return decodeTRPCData(raw, out, route)
 }
 
 // decodeTRPCData pulls result.data.json out of a tRPC success envelope.
-func decodeTRPCData(raw []byte, out any, path string) error {
+func decodeTRPCData(raw []byte, out any, route listingRoute) error {
 	var env struct {
 		Result struct {
 			Data struct {
@@ -182,10 +197,10 @@ func decodeTRPCData(raw []byte, out any, path string) error {
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(raw, &env); err != nil || len(env.Result.Data.JSON) == 0 {
-		return fmt.Errorf("unexpected %s response: %s", trpcName(path), string(raw))
+		return fmt.Errorf("unexpected %s response: %s", route.name(), string(raw))
 	}
 	if err := json.Unmarshal(env.Result.Data.JSON, out); err != nil {
-		return fmt.Errorf("unexpected %s payload: %s", trpcName(path), string(raw))
+		return fmt.Errorf("unexpected %s payload: %s", route.name(), string(raw))
 	}
 	return nil
 }
@@ -261,14 +276,14 @@ func (c *Client) IngestAssetFromDataURI(ctx context.Context, data []byte, mimeTy
 // MintImageUpload mints a presigned PUT URL for a full-resolution asset upload.
 func (c *Client) MintImageUpload(ctx context.Context) (id, uploadURL string, err error) {
 	build := func() (*http.Request, error) {
-		return http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+ImageUploadPath, nil)
+		return http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+imageUploadRoute.path, nil)
 	}
 	status, raw, err := c.authedDo(ctx, build)
 	if err != nil {
 		return "", "", err
 	}
 	if status != http.StatusOK {
-		return "", "", listingError(status, raw, ImageUploadPath, listingOpUpload)
+		return "", "", listingError(status, raw, imageUploadRoute)
 	}
 	var out struct {
 		ID        string `json:"id"`
@@ -410,24 +425,79 @@ func trpcName(path string) string {
 	return path
 }
 
-// listingOp is WHAT THE CALLER WAS DOING, which the tRPC path alone does not
-// say. listingError serves three kinds of request — a read (trpcQuery), a change
-// (trpcMutation) and the presigned-upload mint (MintImageUpload) — and a 400
-// that tells a user their "store-listing change" was rejected is simply false
-// for the first two: a read changed nothing, and an upload-URL mint does not
-// touch a listing at all (civitai/cli#363's fix, over-generalised).
+// listingOp is WHAT THE CALLER ASKED THIS ROUTE FOR — a lookup, a write to the
+// listing, or the ingest of an image that is attached to nothing yet. A 400 is
+// worded from it, so getting it wrong makes the CLI state something false about
+// the user's data.
+//
+// 🔴 The rule is the CALLER'S REQUEST, deliberately not "every write the server
+// performs", and `getMyListingForEdit` is the entry that makes the difference
+// visible: it is classified `read` because the user asked to look, while the
+// server documents a side effect — for an APPROVED parent it idempotently opens
+// a shadow revision (see GetMyListingForEdit). Classifying it `change` would
+// tell someone whose `listingId` was rejected to go fix a value they never sent.
+// The residual is real and stated rather than papered over: this CLI cannot see
+// whether the server opened a revision before rejecting the input, so "nothing
+// was changed" is a claim about the REQUEST, not a proof about the database.
+// Tracked as civitai/cli#389, which names the measurement that would settle it;
+// do not "fix" it by re-labelling the route before that measurement exists.
+//
+// 🔴 IT IS NOT THE HTTP VERB, and civitai/cli#374 is what that cost: keying it
+// on the verb at the three call sites (trpcQuery → read, trpcMutation → change,
+// MintImageUpload → upload) put both ingest routes on the wrong side.
+// `ingestAssetFromDataUri` and `persistAssetImage` are POSTs that create an
+// Image row and touch NO listing, yet reported "the server rejected this
+// store-listing change … `civitai app listing status` shows the listing as it
+// stands" — and in `IngestAssetFullRes` ONE user action told two stories, "no
+// listing was changed" if the mint 400s and "fix the value" if the persist
+// 400s, three lines later.
+//
+// The mirror is the dangerous direction: setIcon / setCover / addScreenshot may
+// have PARTIALLY APPLIED when they 400, so wording one as a lookup asserts
+// "nothing was changed" about a change that might have happened.
 type listingOp int
 
 const (
-	listingOpRead listingOp = iota
+	// listingOpUnclassified is the ZERO value, and it is deliberately NOT
+	// `read`: `listingRoute{path: "…"}` with the op left off is a keyed literal
+	// Go accepts happily, and if the zero meant "read" that route would ship
+	// silently telling users "nothing was changed" — #374's dangerous direction,
+	// regenerated. Its 400 arm claims nothing instead.
+	listingOpUnclassified listingOp = iota
+	// listingOpRead looks something up and writes nothing.
+	listingOpRead
+	// listingOpChange writes the listing (or its shadow revision).
 	listingOpChange
-	listingOpUpload
+	// listingOpIngest creates or uploads an Image row that is attached to
+	// nothing yet — the presigned mint, the data-URI ingest, the persist.
+	listingOpIngest
 )
+
+// listingRoute is a listing-media route: its path AND what it does, in one
+// value. They travel together so the op is stated ONCE, where the route is
+// declared, instead of being re-derived at each call site. Open-coded, the
+// predicate was wrong at ONE of its three sites (`trpcMutation`) — but that one
+// site answered for two routes, and `MintImageUpload` was right, which is
+// exactly why nobody spotted it: two of the three sites read correctly.
+//
+// The compiler does not force you to fill in `op` (a keyed literal may omit
+// it), so what enforces classification is three guards that must AGREE:
+// listing_op_test.go's ledger (no declared route without a behavioural case),
+// its per-case hand-written `wantOp`, and procname_leak_test.go's spelled-out
+// wording table — the last deliberately in another file, because editing the
+// first two together is a two-line re-label that used to go green.
+type listingRoute struct {
+	path string
+	op   listingOp
+}
+
+// name renders the route as its bare proc name for error messages.
+func (r listingRoute) name() string { return trpcName(r.path) }
 
 // listingError maps a non-200 listing-media response to an actionable CLI error.
 // tRPC error bodies are {error:{json:{message,code}}}; the HTTP status carries
 // the mapped code (403 scope/cohort, 404 no listing, 400 attach/scan rejection).
-func listingError(status int, raw []byte, path string, op listingOp) (err error) {
+func listingError(status int, raw []byte, route listingRoute) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
 	var env struct {
 		Error struct {
@@ -441,7 +511,7 @@ func listingError(status int, raw []byte, path string, op listingOp) (err error)
 	if json.Unmarshal(raw, &env) == nil && env.Error.JSON.Message != "" {
 		msg = env.Error.JSON.Message
 	}
-	name := trpcName(path)
+	name := route.name()
 	switch status {
 	case http.StatusUnauthorized:
 		return fmt.Errorf("not logged in (401) — run `civitai login` (or set CIVITAI_TOKEN)")
@@ -460,16 +530,25 @@ func listingError(status int, raw []byte, path string, op listingOp) (err error)
 		// The default: arm below keeps the method name, which is where a
 		// genuinely unexpected status makes it worth reporting.
 		//
-		// The SUBJECT comes from op, not from the status: naming the operation
-		// keeps the error identifiable without the proc name, and a read or an
-		// upload mint must not be reported as a change that did not happen.
-		switch op {
+		// The SUBJECT comes from the ROUTE's op, not from the status and not
+		// from the HTTP verb: naming the operation keeps the error identifiable
+		// without the proc name, and a read or an image ingest must not be
+		// reported as a change that did not happen.
+		switch route.op {
 		case listingOpRead:
 			return fmt.Errorf("the server rejected this store-listing lookup (400): %s — nothing was changed; check the app you named (list your apps with `civitai app status`)", msg)
-		case listingOpUpload:
+		case listingOpIngest:
 			return fmt.Errorf("the server rejected the image-upload request (400): %s — no listing was changed; check the image and retry", msg)
-		default:
+		case listingOpChange:
 			return fmt.Errorf("the server rejected this store-listing change (400): %s — fix the value and retry; `civitai app listing status` shows the listing as it stands", msg)
+		default:
+			// An UNCLASSIFIED route. Every other arm asserts something about
+			// the user's listing; none of them is safe to guess, so this one
+			// says only what happened, names the call, and asks for the report
+			// that is the actual next step — a route nobody classified is a CLI
+			// bug, not bad user input, which is also why the proc name is a
+			// deliberate exception to the #363 rule above.
+			return fmt.Errorf("%s rejected the request (HTTP 400): %s — this is a CLI bug (the route is unclassified); please report it at https://github.com/civitai/cli/issues", name, msg)
 		}
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited, try again shortly (429): %s", msg)

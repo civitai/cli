@@ -17,7 +17,7 @@ func TestListingBadRequestDoesNotLeakTheProcedureName(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"error": map[string]any{"json": map[string]any{"message": "This listing is live"}},
 	})
-	err := listingError(http.StatusBadRequest, body, trpcSetIcon, listingOpChange)
+	err := listingError(http.StatusBadRequest, body, trpcSetIcon)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
@@ -25,7 +25,7 @@ func TestListingBadRequestDoesNotLeakTheProcedureName(t *testing.T) {
 
 	// Structural, not spelled: assert the tRPC METHOD NAME the CLI called is
 	// absent, whatever it happens to be, rather than one hard-coded spelling.
-	if name := trpcName(trpcSetIcon); strings.Contains(msg, name) {
+	if name := trpcSetIcon.name(); strings.Contains(msg, name) {
 		t.Errorf("internal procedure name %q leaked into a 400: %s", name, msg)
 	}
 	if !strings.Contains(msg, "This listing is live") {
@@ -42,43 +42,128 @@ func TestListingBadRequestDoesNotLeakTheProcedureName(t *testing.T) {
 // (trpcMutation) and the presigned-upload mint alike. "The server rejected this
 // store-listing change" is then false twice over: a read changed nothing, and an
 // upload-URL mint touches no listing.
+//
+// 🔴 This table covers EVERY route, and its phrases are spelled out per case
+// rather than looked up from the op. That is the whole point of it. The
+// per-route reachability table in listing_op_test.go checks its expectation
+// against a `wantOp` sitting three lines from `route.op`, so editing BOTH
+// re-labels a route under a green suite — measured: six of the seven `change`
+// routes survived exactly that two-line edit, and only `setIcon` died, because
+// `setIcon` was the only one this table used to name. Every route now has a
+// hand-written sentence here, in a different file, that a re-label must
+// contradict.
+//
+// What this table does NOT prove is that any route REACHES its arm through the
+// real client — that is listing_op_test.go's job, and civitai/cli#374 is what
+// happens when only one of the two halves exists.
 func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"error": map[string]any{"json": map[string]any{"message": "Invalid input"}},
 	})
+	// A lookup: it read, so it changed nothing.
+	const readSubject = "store-listing lookup"
+	// An image ingest: it created an Image row attached to no listing.
+	const ingestSubject = "image-upload request"
+	// A listing write: it may have PARTIALLY APPLIED, so `app listing status` is
+	// the authority on what is attached now.
+	const changeSubject = "store-listing change"
+
 	for _, tc := range []struct {
 		name    string
-		op      listingOp
-		path    string
+		route   listingRoute
 		want    []string
 		notWant []string
 	}{
+		// ---- reads: the caller asked to look ----
 		{
-			name:    "read",
-			op:      listingOpRead,
-			path:    trpcGetMyListingForApp,
-			want:    []string{"lookup", "nothing was changed"},
-			notWant: []string{"store-listing change", "fix the value"},
+			name:    "getMyListingForApp is a lookup",
+			route:   trpcGetMyListingForApp,
+			want:    []string{readSubject, "nothing was changed"},
+			notWant: []string{changeSubject, ingestSubject, "fix the value"},
 		},
 		{
-			name:    "upload mint",
-			op:      listingOpUpload,
-			path:    ImageUploadPath,
-			want:    []string{"image-upload", "no listing was changed"},
-			notWant: []string{"store-listing change"},
+			name:    "getMyListingForEdit is a lookup",
+			route:   trpcGetMyListingForEdit,
+			want:    []string{readSubject, "nothing was changed"},
+			notWant: []string{changeSubject, ingestSubject, "fix the value"},
 		},
 		{
-			// The control: a real mutation IS a store-listing change, and the
-			// wording civitai/cli#363 asked for must survive for it.
-			name:    "change",
-			op:      listingOpChange,
-			path:    trpcSetIcon,
-			want:    []string{"store-listing change", "civitai app listing status"},
-			notWant: []string{"nothing was changed"},
+			name:    "getAssetScanStatuses is a lookup",
+			route:   trpcGetAssetScanStatuses,
+			want:    []string{readSubject, "nothing was changed"},
+			notWant: []string{changeSubject, ingestSubject, "fix the value"},
+		},
+
+		// ---- ingests: an Image row, attached to nothing ----
+		{
+			name:    "the presigned mint changes no listing",
+			route:   imageUploadRoute,
+			want:    []string{ingestSubject, "no listing was changed"},
+			notWant: []string{changeSubject, readSubject, "fix the value"},
+		},
+		{
+			// A tRPC POST that creates an Image row and attaches it to nothing.
+			// Same story as the mint above (#374).
+			name:    "the data-uri ingest changes no listing",
+			route:   trpcIngestAssetFromDataURI,
+			want:    []string{ingestSubject, "no listing was changed"},
+			notWant: []string{changeSubject, readSubject, "fix the value"},
+		},
+		{
+			// Step 3 of the same user action the mint starts.
+			name:    "persistAssetImage changes no listing",
+			route:   trpcPersistAssetImage,
+			want:    []string{ingestSubject, "no listing was changed"},
+			notWant: []string{changeSubject, readSubject, "fix the value"},
+		},
+
+		// ---- changes: each writes the listing, so none of them may say
+		// "nothing was changed" — a 400 here may have partially applied ----
+		{
+			name:    "setIcon attaches an icon to the listing",
+			route:   trpcSetIcon,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "setCover attaches a cover to the listing",
+			route:   trpcSetCover,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "addScreenshot appends to the listing",
+			route:   trpcAddScreenshot,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "removeScreenshot deletes from the listing",
+			route:   trpcRemoveScreenshot,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "reorderScreenshots rewrites the listing's order",
+			route:   trpcReorderScreenshots,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "beginListingRevision opens a shadow revision",
+			route:   trpcBeginListingRevision,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
+			name:    "submitListingRevision sends the revision to review",
+			route:   trpcSubmitListingRevision,
+			want:    []string{changeSubject, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := listingError(http.StatusBadRequest, body, tc.path, tc.op)
+			err := listingError(http.StatusBadRequest, body, tc.route)
 			if err == nil {
 				t.Fatal("expected an error")
 			}
@@ -97,7 +182,7 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 			// server's own reason survives. (Scoped to the tRPC paths: the
 			// upload route is a plain REST path whose last segment IS the
 			// user-facing name of the operation, not an internal proc.)
-			if name := trpcName(tc.path); strings.HasPrefix(tc.path, "/api/trpc/") && strings.Contains(msg, name) {
+			if name := tc.route.name(); strings.HasPrefix(tc.route.path, "/api/trpc/") && strings.Contains(msg, name) {
 				t.Errorf("internal procedure name %q leaked: %s", name, msg)
 			}
 			if !strings.Contains(msg, "Invalid input") {
@@ -111,7 +196,8 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 // dead code: a 400 on the ENTRY read (`civitai app listing status` →
 // appListings.getMyListingForApp, a trpcQuery) must arrive worded as a lookup.
 // Without this, listingOpRead could be passed nowhere and every test above would
-// still pass.
+// still pass. Kept alongside listing_op_test.go's per-route table, which
+// generalises it to every route the client can call.
 func TestListingReadBadRequestIsReachableAsARead(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
@@ -136,11 +222,11 @@ func TestListingReadBadRequestIsReachableAsARead(t *testing.T) {
 // unexpected status is exactly where the method name earns its place — a
 // blanket strip would have removed the only clue in a bug report.
 func TestListingUnexpectedStatusKeepsTheProcedureName(t *testing.T) {
-	err := listingError(http.StatusTeapot, []byte(`{}`), trpcSetIcon, listingOpChange)
+	err := listingError(http.StatusTeapot, []byte(`{}`), trpcSetIcon)
 	if err == nil {
 		t.Fatal("expected an error")
 	}
-	if name := trpcName(trpcSetIcon); !strings.Contains(err.Error(), name) {
+	if name := trpcSetIcon.name(); !strings.Contains(err.Error(), name) {
 		t.Errorf("an unexpected status must still report which call failed (%q); got: %s", name, err.Error())
 	}
 }
