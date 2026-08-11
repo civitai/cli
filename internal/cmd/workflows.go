@@ -245,11 +245,16 @@ func printWorkflow(out, errw io.Writer, wf *genapi.Workflow) {
 			"This workflow has not finished. Re-run this command to check again — it is a read and spends nothing."))
 		return
 	}
-	// The reasons the block above already printed are handed on, so the same
-	// server sentence is not repeated once per excluded output underneath it —
-	// at `--quantity 10` that was eleven copies of one string. See
-	// reportExcludedOutputs.
-	reportExcludedOutputs(errw, excluded, settled, wf.FailureReasons())
+	// 🔴 nil, NOT wf.FailureReasons() — AND THAT WAS A REGRESSION FOR ONE ROUND.
+	// Handing this the whole workflow's reason set made every output's set a
+	// subset of it, so the fallback fired for EVERY output and this list stopped
+	// naming which paid output died of what — on the one command `generate`
+	// sends a user to after a failure. It is also the wrong stream: the block
+	// above goes to stdout and this list to stderr, so
+	// `civitai workflows get X >file` would leave the terminal holding only the
+	// generic sentence. reportExcludedOutputs collapses repeats within its own
+	// output on its own.
+	reportExcludedOutputs(errw, excluded, settled, nil)
 	if len(kept) > 0 {
 		fmt.Fprintln(errw, ui.For(errw).Dim(
 			"Output URLs are presigned and expire — fetch them promptly, or re-run this command for fresh links."))

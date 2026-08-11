@@ -123,7 +123,17 @@ const noFailureReasonNote = "the orchestrator often supplies no failure reason, 
 // second copy.
 //
 // The reason is SERVER-ORIGIN text on its way to a terminal, so it goes through
-// safeTerm (which strips C0/C1 control bytes and DEL, keeping tabs and newlines).
+// safeTerm (which strips C0/C1 control bytes and DEL, keeping tabs and newlines)
+// AND through indentContinuation.
+//
+// 🔴 BOTH, NOT JUST safeTerm — THIS SITE SHIPPED WITH ONLY THE FIRST. safeTerm
+// keeps `\n` on purpose, so a multi-line reason rendered its continuation flush
+// against the left margin of the terminal, one line below `Error: `. A reason
+// containing "\n✓ Generation submitted — workflow wf_x\nCharged 0 Buzz" then
+// forges this CLI's own success banner and a money line, using no control byte
+// at all, which is exactly the class safeTerm cannot see. Indenting is what
+// denies a server string column zero.
+//
 // Nothing else is done to it: it is not truncated, re-cased, re-punctuated or
 // matched against any table — see AGENTS.md item 13. That the server's sentence
 // may end in a full stop, unlike this repo's own error copy, is the accepted
@@ -131,7 +141,7 @@ const noFailureReasonNote = "the orchestrator often supplies no failure reason, 
 func serverReasonSuffix(wf *genapi.Workflow) string {
 	if wf != nil {
 		if reason := wf.FailureReasonText(); reason != "" {
-			return ". The server reported: " + safeTerm(reason)
+			return ". The server reported: " + indentContinuation(safeTerm(reason), "  ")
 		}
 	}
 	return " (" + noFailureReasonNote + ")"

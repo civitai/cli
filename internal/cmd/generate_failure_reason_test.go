@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"testing"
@@ -89,7 +90,6 @@ func runToTerminal(t *testing.T, payload string) error {
 // one nobody edited — a sentinel added to `pkg/civitai` would have had to be
 // remembered in two files. `assertDeadEndCopy` now calls this.
 func assertGenericExitCode(t *testing.T, err error) {
-	t.Helper()
 	t.Helper()
 	for _, k := range []struct {
 		sentinel error
@@ -255,6 +255,56 @@ func TestGenerate_ServerReasonIsPrintedOnceNotOncePerOutput(t *testing.T) {
 	}
 }
 
+// 🔴 THE CALLER'S DECISION, PINNED THROUGH THE CALLER (F4). waitAndCollect
+// suppresses the list's copy only when `len(kept) == 0`, i.e. only when the
+// error it is about to return will state the reason on the SAME stream. The
+// direct-call tests below pass `reportedElsewhere` themselves and so cannot
+// observe that choice at all: an "always suppress" mutant there prints the
+// reason ZERO times anywhere on a partial run, which is the regression
+// generate.go's own comment forbids.
+//
+// A PARTIAL run: one deliverable output that downloads, one that never landed.
+func TestGenerate_PartialRunStillNamesTheReasonSomewhere(t *testing.T) {
+	payload := `{"id":"wf_123","status":"succeeded","steps":[{"$type":"imageGen","name":"$0","status":"failed",
+	  "metadata":{},"output":{"images":[
+	    {"id":"out_ok","type":"image","available":true,"url":"https://blobs.example/a.jpeg"},
+	    {"id":"out_gone","type":"image","available":false}],
+	  "errors":["` + serverSaid + `"]}}]}`
+	withStdinTTY(t, false)
+	clock := newFakeClock()
+	calls := 0
+	var s genSeams
+	s.poll = clock.cfg()
+	s.getWorkflow = scriptedWorkflows(&calls, payload)
+	fetched := 0
+	s.downloadBlob = func(context.Context, string) (*http.Response, error) {
+		fetched++
+		return &http.Response{
+			StatusCode:    http.StatusOK,
+			Body:          io.NopCloser(strings.NewReader("PNGDATA")),
+			ContentLength: 7,
+		}, nil
+	}
+	c, _, errb := genCmd("")
+	err := runGenerate(c, s.deps(t), waitOpts(t.TempDir()))
+	if err != nil {
+		t.Fatalf("a partial run must still succeed for what it delivered: %v", err)
+	}
+	// POSITIVE CONTROLS: this really is the partial path — something downloaded,
+	// and no error was returned, so the error tail cannot be the carrier.
+	if fetched != 1 {
+		t.Fatalf("CONTROL failure, not a finding: %d blob(s) fetched, want 1 — this is not the partial-run path", fetched)
+	}
+	stderr := errb.String()
+	if !strings.Contains(stderr, "out_gone") {
+		t.Fatalf("CONTROL failure, not a finding: the excluded output was not reported:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, serverSaid) {
+		t.Errorf("nothing on this run carries the server's reason: no error is returned and the list suppressed it. "+
+			"That is a regression, not a de-duplication.\n%s", stderr)
+	}
+}
+
 // The other half of the rule: where NOTHING else carries the reason, the
 // per-output line must still state it. A partial run — some outputs saved,
 // others excluded — returns no error, so this list is the only carrier.
@@ -294,26 +344,183 @@ func TestReportExcludedOutputs_SuppressesAReasonTheCallerAlreadyPrinted(t *testi
 	}
 }
 
-// 🔴 SUPPRESSION MUST NOT COST ATTRIBUTION. Two steps that died for DIFFERENT
-// reasons are the case where a per-output reason carries information the
-// workflow-level list cannot: which paid output died of what. Both survive, each
-// against its own output, and each still only once.
-func TestReportExcludedOutputs_KeepsDISTINCTReasonsPerOutput(t *testing.T) {
-	var b bytes.Buffer
-	reportExcludedOutputs(&b, []genapi.Output{
-		{Blob: genapi.Blob{ID: "out_1"}, StepErrors: []string{"FIXTURE reason one"}},
-		{Blob: genapi.Blob{ID: "out_2"}, StepErrors: []string{"FIXTURE reason one"}},
-		{Blob: genapi.Blob{ID: "out_3"}, StepErrors: []string{"FIXTURE reason two"}},
-	}, false, nil)
-	got := b.String()
-	for _, want := range []string{"FIXTURE reason one", "FIXTURE reason two"} {
-		if n := strings.Count(got, want); n != 1 {
-			t.Errorf("reason %q appears %d times, want exactly 1 — distinct reasons are kept, repeats are not:\n%s", want, n, got)
+// 🔴 SUPPRESSION MUST NOT COST ATTRIBUTION, AND FOR ONE ROUND IT DID.
+// `reportedElsewhere` was fed the whole workflow's reason set, every output's
+// set is a subset of that by construction, so EVERY line fell back to the
+// generic sentence — on a workflow whose steps died of two different causes.
+// This is the shape that can see it: each excluded output must name ITS OWN
+// cause, and must not name another output's.
+func TestReportExcludedOutputs_EachOutputNamesItsOwnCause(t *testing.T) {
+	outs := []genapi.Output{
+		{Blob: genapi.Blob{ID: "out_1"}, StepErrors: []string{"FIXTURE reason ALPHA"}},
+		{Blob: genapi.Blob{ID: "out_2"}, StepErrors: []string{"FIXTURE reason BETA"}},
+	}
+	// Passed the whole workflow's reasons, exactly as the regression did.
+	for _, reported := range [][]string{nil, {"FIXTURE reason ALPHA", "FIXTURE reason BETA"}} {
+		var b bytes.Buffer
+		reportExcludedOutputs(&b, outs, false, reported)
+		for _, line := range strings.Split(b.String(), "\n") {
+			for _, c := range []struct{ id, own, other string }{
+				{"out_1", "FIXTURE reason ALPHA", "FIXTURE reason BETA"},
+				{"out_2", "FIXTURE reason BETA", "FIXTURE reason ALPHA"},
+			} {
+				if !strings.Contains(line, "- "+c.id+":") {
+					continue
+				}
+				if !strings.Contains(line, c.own) {
+					t.Errorf("reportedElsewhere=%v: %s does not name its own cause %q — a user cannot tell which "+
+						"paid output died of what:\n  %s", reported, c.id, c.own, line)
+				}
+				if strings.Contains(line, c.other) {
+					t.Errorf("reportedElsewhere=%v: %s names another output's cause %q:\n  %s", reported, c.id, c.other, line)
+				}
+			}
 		}
 	}
-	// The output that shares the first reason keeps its line and falls back.
-	if !strings.Contains(got, "out_2") {
-		t.Errorf("the output sharing a reason lost its line:\n%s", got)
+}
+
+// Where the outputs AGREE, attribution is vacuous and the sentence collapses to
+// one copy — the eleven-copies rule. The line for every other output survives.
+func TestReportExcludedOutputs_CollapsesOneSharedReason(t *testing.T) {
+	var outs []genapi.Output
+	for i := 1; i <= 10; i++ {
+		outs = append(outs, genapi.Output{
+			Blob: genapi.Blob{ID: fmt.Sprintf("out_%d", i)}, StepErrors: []string{serverSaid},
+		})
+	}
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, outs, false, nil)
+	got := b.String()
+	if n := strings.Count(got, serverSaid); n != 1 {
+		t.Errorf("one shared reason across ten outputs appears %d times, want 1:\n%s", n, got)
+	}
+	for _, id := range []string{"out_1", "out_10"} {
+		if !strings.Contains(got, id) {
+			t.Errorf("collapsing the reason removed %s's line entirely:\n%s", id, got)
+		}
+	}
+}
+
+// 🔴 A REASONLESS OUTPUT IS NOT A SECOND OPINION. A moderation-blocked output
+// beside ones that never landed carries no server account at all, so it must not
+// count as a differing cause — counting it flips `attributionDiscriminates` and
+// restores the eleven copies for every mixed list, which is the commonest shape
+// of all. The collapse fixture above is all-reasoned and cannot see this.
+func TestReportExcludedOutputs_AReasonlessOutputDoesNotDefeatTheCollapse(t *testing.T) {
+	blocked := "minor"
+	outs := []genapi.Output{
+		{Blob: genapi.Blob{ID: "out_blocked", Available: true, BlockedReason: &blocked}},
+	}
+	for i := 1; i <= 5; i++ {
+		outs = append(outs, genapi.Output{
+			Blob: genapi.Blob{ID: fmt.Sprintf("out_%d", i)}, StepErrors: []string{serverSaid},
+		})
+	}
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, outs, false, nil)
+	got := b.String()
+	if n := strings.Count(got, serverSaid); n != 1 {
+		t.Errorf("one shared reason appears %d times, want 1 — the reasonless output must not count as a "+
+			"differing cause:\n%s", n, got)
+	}
+	// POSITIVE CONTROLS: both kinds really are in the list.
+	if !strings.Contains(got, "blocked by moderation: minor") {
+		t.Errorf("CONTROL failure, not a finding: the blocked output lost its own reason:\n%s", got)
+	}
+	if !strings.Contains(got, "out_5") {
+		t.Errorf("CONTROL failure, not a finding: the last reasoned output lost its line:\n%s", got)
+	}
+}
+
+// Overlapping-but-different sets: [R1,R2] and [R2,R3] disagree, so both are
+// stated in full and R2 is printed twice. That is the documented consequence of
+// allSeen being ALL rather than ANY — pinned in both directions so the choice
+// cannot be flipped silently.
+func TestReportExcludedOutputs_OverlappingReasonSets(t *testing.T) {
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, []genapi.Output{
+		{Blob: genapi.Blob{ID: "out_1"}, StepErrors: []string{"FIXTURE R1", "FIXTURE R2"}},
+		{Blob: genapi.Blob{ID: "out_2"}, StepErrors: []string{"FIXTURE R2", "FIXTURE R3"}},
+	}, false, nil)
+	got := b.String()
+	if n := strings.Count(got, "FIXTURE R2"); n != 2 {
+		t.Errorf("the shared entry appears %d times, want 2 — differing sets are each stated in full, because "+
+			"there is no rendering for 'the part you have not read yet':\n%s", n, got)
+	}
+	for _, want := range []string{"FIXTURE R1", "FIXTURE R3"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the distinguishing reason %q was dropped:\n%s", want, got)
+		}
+	}
+}
+
+// 🔴 END-TO-END, THROUGH THE COMMAND, ON THE STREAM A USER READS. The unit tests
+// above call the presenter directly and so cannot see what printWorkflow decides
+// to pass it — which is precisely where the regression lived.
+func TestWorkflowsGet_ExcludedOutputsStillNameTheirOwnCause(t *testing.T) {
+	payload := `{"id":"wf_123","status":"failed","createdAt":"2026-08-10T22:37:15Z","steps":[
+	  {"$type":"imageGen","name":"$0","status":"failed","metadata":{},
+	   "output":{"images":[{"id":"out_1","type":"image","available":false}],"errors":["FIXTURE reason ALPHA"]}},
+	  {"$type":"imageGen","name":"$1","status":"failed","metadata":{},
+	   "output":{"images":[{"id":"out_2","type":"image","available":false}],"errors":["FIXTURE reason BETA"]}}]}`
+	c, out, errb := genCmd("")
+	if err := runWorkflowsGet(c, wfGetDeps(payload, nil), workflowsGetOpts{baseURL: "https://civitai.com"}, "wf_123"); err != nil {
+		t.Fatalf("workflows get: %v", err)
+	}
+	stderr := errb.String()
+	// POSITIVE CONTROL: the excluded list rendered on stderr at all.
+	if !strings.Contains(stderr, "out_1") || !strings.Contains(stderr, "out_2") {
+		t.Fatalf("CONTROL failure, not a finding: the excluded-output list did not render:\n%s", stderr)
+	}
+	for _, want := range []string{"FIXTURE reason ALPHA", "FIXTURE reason BETA"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("stderr does not carry %q. The block naming it goes to STDOUT, so `civitai workflows get X >file` "+
+				"leaves the terminal with nothing but the generic sentence:\n%s", want, stderr)
+		}
+	}
+	// And stdout still carries the block, so this is not a case of the reason
+	// having simply moved streams.
+	if !strings.Contains(out.String(), "FIXTURE reason ALPHA") {
+		t.Errorf("the stdout reason block lost its content:\n%s", out.String())
+	}
+}
+
+// 🔴 THE CROSS-STREAM CASE, WHICH IS WHERE THE REGRESSION ACTUALLY SURVIVES A
+// DIFFERING-CAUSES TEST. When every excluded output died of the SAME cause,
+// attribution is vacuous and the list is allowed to collapse the sentence — so
+// the differing-causes test above passes even if printWorkflow hands over the
+// whole workflow's reason set. What it must NOT do is collapse it against a
+// block printed on a DIFFERENT STREAM: stdout and stderr are independently
+// redirectable, and `civitai workflows get X >file` would then leave the
+// terminal holding nothing but "the job finished without producing a usable
+// file".
+func TestWorkflowsGet_StderrCarriesTheReasonEvenWhenStdoutAlreadyDid(t *testing.T) {
+	payload := `{"id":"wf_123","status":"failed","createdAt":"2026-08-10T22:37:15Z","steps":[
+	  {"$type":"imageGen","name":"$0","status":"failed","metadata":{},
+	   "output":{"images":[
+	     {"id":"out_1","type":"image","available":false},
+	     {"id":"out_2","type":"image","available":false}],
+	    "errors":["` + serverSaid + `"]}}]}`
+	c, out, errb := genCmd("")
+	if err := runWorkflowsGet(c, wfGetDeps(payload, nil), workflowsGetOpts{baseURL: "https://civitai.com"}, "wf_123"); err != nil {
+		t.Fatalf("workflows get: %v", err)
+	}
+	// POSITIVE CONTROL: stdout really did print the block, so this is the
+	// "already reported" situation and not a workflow with no reason at all.
+	if !strings.Contains(out.String(), serverSaid) {
+		t.Fatalf("CONTROL failure, not a finding: the stdout block did not render:\n%s", out.String())
+	}
+	stderr := errb.String()
+	if !strings.Contains(stderr, "out_1") {
+		t.Fatalf("CONTROL failure, not a finding: the excluded list did not render on stderr:\n%s", stderr)
+	}
+	if !strings.Contains(stderr, serverSaid) {
+		t.Errorf("stderr suppressed the reason against a block printed on STDOUT. Redirect stdout and the terminal "+
+			"is left with only the categorical sentence:\n%s", stderr)
+	}
+	// …and it is still collapsed WITHIN stderr: two outputs, one cause, one copy.
+	if n := strings.Count(stderr, serverSaid); n != 1 {
+		t.Errorf("the shared reason appears %d times on stderr, want 1:\n%s", n, stderr)
 	}
 }
 
@@ -418,8 +625,12 @@ func TestReportExcludedOutputs_ReasonIsSanitized(t *testing.T) {
 // left, where it is indistinguishable from a line `civitai workflows get` wrote
 // itself — here, its own `Workflow ID:` / `Status:` header two lines above.
 // Continuation lines are indented so they cannot occupy column zero.
+//
+// The fixture is THREE lines, not two: a guard measured at one continuation
+// point is a guard that a `break`-after-the-first-line implementation passes,
+// and that mutant survived a 2-line fixture.
 func TestWorkflowsGet_MultiLineReasonCannotForgeAHeaderLine(t *testing.T) {
-	forgery := "Workflow ID:\tspoofed\nStatus:\tsucceeded"
+	forgery := "Workflow ID:\tspoofed\nStatus:\tsucceeded\nCompleted:\tnever"
 	payload, err := json.Marshal(map[string]any{
 		"id": "wf_123", "status": "failed",
 		"steps": []any{map[string]any{
@@ -454,6 +665,9 @@ func TestWorkflowsGet_MultiLineReasonCannotForgeAHeaderLine(t *testing.T) {
 		if strings.HasPrefix(line, "Workflow ID:") && strings.Contains(line, "spoofed") {
 			forged = append(forged, line)
 		}
+		if strings.HasPrefix(line, "Completed:") && strings.Contains(line, "never") {
+			forged = append(forged, line)
+		}
 	}
 	if len(forged) > 0 {
 		t.Errorf("a server-supplied reason produced %d flush-left line(s) impersonating this command's own header — "+
@@ -463,6 +677,89 @@ func TestWorkflowsGet_MultiLineReasonCannotForgeAHeaderLine(t *testing.T) {
 	// And the real Status line must still say what it really is.
 	if !strings.Contains(stdout, "Status:") || !strings.Contains(stdout, "failed") {
 		t.Errorf("CONTROL failure, not a finding: the genuine header is missing:\n%s", stdout)
+	}
+}
+
+// 🔴 THE OTHER TWO SITES THAT PRINT THIS TEXT, EACH OF WHICH SHIPPED WITHOUT
+// THE INDENT GUARD OR WITHOUT A TEST FOR IT. `firstColumnLines` is the shared
+// predicate: no line a SERVER string produced may begin at column zero, because
+// that is where this CLI writes its own banners, headers and money lines.
+//
+// Golden pinning does not close this — the goldens' fixture reasons are
+// single-line, so a runtime injection happens below the golden's resolution.
+func firstColumnLines(s string, needles ...string) []string {
+	var out []string
+	for _, line := range strings.Split(s, "\n") {
+		if line == "" || strings.HasPrefix(line, " ") {
+			continue
+		}
+		for _, n := range needles {
+			if strings.HasPrefix(line, n) {
+				out = append(out, line)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// The `generate` dead-end error: it had safeTerm and NO indentContinuation at
+// all, so a multi-line reason rendered flush left one line under `Error: `,
+// forging this CLI's own success banner and a money line.
+func TestGenerate_MultiLineReasonCannotForgeTheSuccessBanner(t *testing.T) {
+	forgery := "real failure\n✓ Generation submitted — workflow wf_999\nCharged 0 Buzz"
+	payload, err := json.Marshal(map[string]any{
+		"id": "wf_123", "status": "failed",
+		"steps": []any{map[string]any{
+			"$type": "imageGen", "name": "$0", "status": "failed", "metadata": map[string]any{},
+			"output": map[string]any{"errors": []string{forgery}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+	msg := runToTerminal(t, string(payload)).Error()
+	if !strings.Contains(msg, "real failure") {
+		t.Fatalf("CONTROL failure, not a finding: the reason never reached the error:\n%s", msg)
+	}
+	if forged := firstColumnLines(msg, "✓", "Charged"); len(forged) > 0 {
+		t.Errorf("a server reason produced %d flush-left line(s) forging this CLI's own output:\n  %s\nfull error:\n%s",
+			len(forged), strings.Join(forged, "\n  "), msg)
+	}
+}
+
+// The excluded-output line: it HAD indentContinuation, and removing it left the
+// whole package green.
+func TestReportExcludedOutputs_MultiLineReasonCannotForgeARefundClaim(t *testing.T) {
+	forgery := "real failure\nNothing is refunded.\nCharged 0 Buzz"
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, []genapi.Output{
+		{Blob: genapi.Blob{ID: "out_1"}, StepErrors: []string{forgery}},
+	}, false, nil)
+	got := b.String()
+	if !strings.Contains(got, "real failure") {
+		t.Fatalf("CONTROL failure, not a finding: the reason never rendered:\n%s", got)
+	}
+	if forged := firstColumnLines(got, "Nothing is refunded", "Charged"); len(forged) > 0 {
+		t.Errorf("a server reason produced %d flush-left line(s) beside the charge copy — a refund claim the CLI "+
+			"never wrote and no golden can see:\n  %s\nfull output:\n%s", len(forged), strings.Join(forged, "\n  "), got)
+	}
+}
+
+// F10: the output ID is server-origin too, and it is on the same line as the
+// reason. The claim that every site printing server text is covered here has to
+// include it.
+func TestReportExcludedOutputs_OutputIDIsSanitized(t *testing.T) {
+	var b bytes.Buffer
+	reportExcludedOutputs(&b, []genapi.Output{
+		{Blob: genapi.Blob{ID: "out\x1b[2K_1"}},
+	}, false, nil)
+	got := b.String()
+	if strings.ContainsRune(got, 0x1b) {
+		t.Errorf("an ESC byte in the SERVER-supplied output id survived into the terminal: %q", got)
+	}
+	if !strings.Contains(got, "out") || !strings.Contains(got, "_1") {
+		t.Errorf("CONTROL failure, not a finding: the id did not render at all: %q", got)
 	}
 }
 

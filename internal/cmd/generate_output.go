@@ -172,21 +172,40 @@ func planOutputTarget(tmpl, outDir, workflowID string, n int, rawURL string) (st
 // in as the return value of that print rather than being re-derived here, so the
 // "printed above" pointer cannot claim a block that was never rendered.
 //
-// 🔴 `reportedElsewhere` IS WHY THE SAME SENTENCE IS NOT PRINTED ELEVEN TIMES
-// (civitai/cli#367 review). The server records its failure reason on the STEP,
-// so every output of a failed step carries the identical string; a `--quantity
-// 10` run that produced nothing rendered it once per excluded output, plus once
-// in the caller's own block or error — eleven copies of one sentence, burying
-// anything that differed. That is the same argument genapi.FailureReasons makes
-// for collapsing byte-identical repeats, applied to this surface.
+// 🔴 THE REPETITION RULE, AND THE ATTRIBUTION IT MUST NOT COST
+// (civitai/cli#367, review rounds 2 and 3). The server records its failure
+// reason on the STEP, so every output of a failed step carries the identical
+// string; a `--quantity 10` run that produced nothing printed it once per
+// excluded output plus once in the caller's own error — eleven copies of one
+// sentence, burying anything that differed.
 //
-// The rule is: a server reason is printed AT MOST ONCE on this screen, and not
-// at all when the caller says it has already rendered it. `seen` is seeded with
-// what the caller printed and grows as outputs are listed, so the FIRST output
-// carrying a given reason states it and later ones fall back to the categorical
-// wording. That keeps per-output attribution where it discriminates — two steps
-// that died for different reasons still show both, against their own outputs —
-// and drops it only where it is pure repetition.
+// 🔴 ROUND 2 FIXED THAT BY OVER-SUPPRESSING, AND THE FIX WAS WORSE THAN THE BUG.
+// `reportedElsewhere` was fed the WHOLE workflow's reason set, and every output's
+// step reasons are by construction a subset of it — so the fallback fired for
+// every output on every multi-step failure and the list read
+//
+//   - out_1: not available (the job finished without producing a usable file)
+//   - out_2: not available (the job finished without producing a usable file)
+//
+// on a workflow whose two steps died of two DIFFERENT causes. Which paid output
+// died of what is the one thing this list knows and the workflow-level block
+// does not; trading it for one line is not a de-duplication.
+//
+// So the rule is keyed on whether attribution carries INFORMATION, not on
+// whether a string has been seen:
+//
+//   - Several DISTINCT reasons among the excluded outputs -> every output states
+//     its own, always. A reason shared by two differing outputs is therefore
+//     printed twice; that is deliberate, because the alternative is a list that
+//     cannot be read per-row.
+//   - Exactly ONE distinct reason -> attribution is vacuous (they all died of
+//     the same thing), so it is printed once: on the first output, or not at all
+//     when `reportedElsewhere` says the caller has already rendered it.
+//
+// `reportedElsewhere` is therefore ONLY for a caller writing to THIS SAME
+// STREAM. printWorkflow passes nil deliberately: its block goes to stdout and
+// this list to stderr, so `civitai workflows get X >file` would otherwise leave
+// the terminal holding nothing but the generic sentence.
 //
 // The fallback wording is not spelled here: the output is copied with its step
 // reasons cleared and handed back to genapi.ExclusionReason, so the two
@@ -198,12 +217,17 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled boo
 	st := ui.For(errw)
 	fmt.Fprintln(errw, st.Warn(fmt.Sprintf(
 		"%d output(s) will NOT be saved — they are not deliverable results:", len(excluded))))
+
+	// Does naming a reason per output tell the reader anything they could not
+	// get from one line? Only if the outputs disagree about it.
+	attributionDiscriminates := distinctReasonSets(excluded) > 1
+
 	seen := make(map[string]bool, len(reportedElsewhere))
 	for _, r := range reportedElsewhere {
 		seen[r] = true
 	}
 	for _, o := range excluded {
-		if allSeen(o.StepErrors, seen) {
+		if !attributionDiscriminates && allSeen(o.StepErrors, seen) {
 			o.StepErrors = nil
 		} else {
 			for _, r := range o.StepErrors {
@@ -212,7 +236,7 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled boo
 		}
 		// The reason is SERVER free text and safeTerm keeps newlines, so a
 		// multi-line one is indented to stay visibly inside this list item —
-		// see indentContinuation.
+		// see indentContinuation. The id is server-origin too.
 		fmt.Fprintf(errw, "    - %s: %s\n", safeTerm(dashIfEmpty(o.ID)),
 			indentContinuation(safeTerm(genapi.ExclusionReason(o)), "      "))
 	}
@@ -246,11 +270,46 @@ func reportExcludedOutputs(errw io.Writer, excluded []genapi.Output, settled boo
 	fmt.Fprintln(errw, st.Dim("These were part of the workflow you were charged for. "+fate))
 }
 
+// distinctReasonSets counts how many DIFFERENT step-reason sets the excluded
+// outputs carry. Outputs with no reason at all are not counted: a
+// moderation-blocked output alongside one that never landed does not make the
+// server's account ambiguous, because only one of them has an account.
+//
+// The set, not the individual reason, is the unit — two outputs disagree when
+// their lists differ, even if they share an entry.
+func distinctReasonSets(excluded []genapi.Output) int {
+	seen := make(map[string]bool, len(excluded))
+	for _, o := range excluded {
+		if len(o.StepErrors) == 0 {
+			continue
+		}
+		// \x00 cannot appear in the key material: safeTerm's caller aside, these
+		// strings reach us from JSON, and a NUL would make the joined key
+		// ambiguous rather than merely ugly.
+		seen[strings.Join(o.StepErrors, "\x00")] = true
+	}
+	return len(seen)
+}
+
 // allSeen reports whether EVERY reason in rs has already been rendered on this
-// screen. It is false for an empty rs, so an output with no step reason is never
-// treated as "already reported" — there is nothing to suppress, and returning
-// true there would be a vacuous suppression that no test could tell apart from a
-// real one.
+// stream.
+//
+// 🔴 TWO OF ITS THREE BRANCHES ARE UNOBSERVABLE, AND SAYING SO IS THE POINT —
+// an earlier draft of this comment claimed a test pinned the ALL/ANY choice, and
+// it does not.
+//
+//   - ALL vs ANY cannot be observed from any caller. The only call site is
+//     guarded by `!attributionDiscriminates`, which means every excluded output
+//     carries an IDENTICAL reason set — so the set is either wholly seen or
+//     wholly unseen and the two quantifiers agree on every reachable input. ALL
+//     is written because it is what the name says; a mutation to ANY is
+//     genuinely equivalent, not an uncovered gap. If the gate is ever removed,
+//     this becomes live and needs its own test.
+//   - The empty-rs branch is documentation. With `rs` empty the caller's
+//     else-branch is a no-op loop and `o.StepErrors = nil` a no-op assignment,
+//     so both answers produce byte-identical output. It is written out because
+//     "an output with no reason is not 'already reported'" is the sentence a
+//     reader needs.
 func allSeen(rs []string, seen map[string]bool) bool {
 	if len(rs) == 0 {
 		return false
