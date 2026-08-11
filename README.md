@@ -496,8 +496,10 @@ npm run dev:live
 
 `dev-token` reads the scopes to request from your **local**
 `block.manifest.json`, so it works on a slug you have never submitted.
-`.env.development*` is never committed (`submit` excludes it) and the token is
-short-lived (~4h) — re-run `dev-token` when it expires. For real generation mint
+`.env.development.local` is the git-ignored one (the scaffold's `.gitignore`
+covers `.env.*.local`; `.env.development` itself is tracked, and holds no secret
+as scaffolded). `submit` excludes both, and the token is short-lived (~4h) —
+re-run `dev-token` when it expires. For real generation mint
 with a spend-capable credential (**full-scope personal API key** or
 `civitai login --scopes generate`) **and** add `--spend`: the CLI never asks for
 budgeted spend implicitly — **even when your manifest declares it** (the
@@ -1198,7 +1200,7 @@ enumeration the table below might otherwise read as:
 
 | file | in the bundle? | why |
 | --- | --- | --- |
-| `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, e.g. `.env.staging` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template tells you to paste a real `VITE_LIVE_BLOCK_TOKEN` into `.env.development`. |
+| `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, dotted or not: `.env.staging`, `.env-local`, and `.envrc` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template tells you to paste a real `VITE_LIVE_BLOCK_TOKEN` into `.env.development`; `.envrc` is the direnv convention and routinely holds exported credentials. |
 | `.env.example`, `.env.sample` | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` has a `VITE_LIVE_BLOCK_TOKEN=` line it invites you to fill in |
 | `.env.production` | **included** | the platform build runs `vite build` in production mode, which reads it |
 

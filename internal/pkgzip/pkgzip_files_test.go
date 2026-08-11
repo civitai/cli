@@ -26,7 +26,9 @@ func TestBuildExcludesEnvAndZip(t *testing.T) {
 	writeFile(t, dir, ".env", "VITE_LIVE_BLOCK_TOKEN=root-secret\n")
 	writeFile(t, dir, ".env.development.local", "VITE_LIVE_BLOCK_TOKEN=local-override\n")
 
-	// Template — must be KEPT (no secret, useful to the reviewer).
+	// Template — must be KEPT. Allow-listed BY NAME, not because anything read
+	// it: this fixture's own body is the `VITE_LIVE_BLOCK_TOKEN=` line the
+	// page-money template invites an author to fill in.
 	writeFile(t, dir, ".env.example", "VITE_LIVE_BLOCK_TOKEN=\n")
 
 	// Stray build artifact from a prior --package-only run — must be excluded.
@@ -63,7 +65,7 @@ func TestBuildExcludesEnvAndZip(t *testing.T) {
 		included[g] = true
 	}
 	if !included[".env.example"] {
-		t.Error(".env.example (template, no secret) should be INCLUDED")
+		t.Error(".env.example (allow-listed BY NAME) should be INCLUDED")
 	}
 	if !included["src/App.tsx"] {
 		t.Error("source file should be INCLUDED")
@@ -135,6 +137,12 @@ func TestIsExcludedFileRule(t *testing.T) {
 		"prev-package.zip", "a/b.zip",
 		".env", ".env.local", ".env.development", ".env.test",
 		".env.development.local", ".env.production.local", ".env.staging",
+		// 🔴 UNDOTTED `.env`-prefixed names. Every row above is `.env.`-dotted,
+		// so this table agreed with a matcher keyed on `.env.` and with one keyed
+		// on `.env` — it could not tell them apart, and the narrower one uploaded
+		// `.envrc` (direnv; routinely holds exported credentials) to the platform
+		// and to a human moderator reviewer.
+		".envrc", ".env-local", ".envprod", ".environment",
 	}
 	for _, n := range drop {
 		// IsExcludedFile matches on base name; strip dir for the path-y cases.
@@ -150,6 +158,12 @@ func TestIsExcludedFileRule(t *testing.T) {
 		".env.example", ".env.sample", ".env.production",
 		"src/App.tsx", "package.json", "block.manifest.json", "vite.config.ts",
 		"zipper.ts", // contains "zip" but is not a .zip
+		// The other side of the widened prefix. Two directions are pinned here:
+		// the leading DOT is still load bearing (a source file merely named
+		// after the environment ships), and the prefix stops at ".env" — the
+		// dotfiles a Vite project actually carries must survive it.
+		"envrc", "env.ts", "environment.ts", "src/env.d.ts",
+		".eslintrc.json", ".editorconfig", ".gitignore", ".npmrc", ".prettierrc",
 	}
 	for _, n := range keep {
 		base := n

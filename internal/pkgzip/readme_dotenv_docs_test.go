@@ -55,10 +55,21 @@ const readmeDotenvHeading = "#### Which dotenv files end up in the bundle"
 // theorised: with `.env.production.local` in this list, reverting the README to
 // its enumeration-only wording left this test GREEN. They are probed as
 // `catchAllMatcherOnlyProbes` below instead.
+//
+// 🔴 THE UNDOTTED ROWS ARE THE BOUNDARY, AND THEY ARE WHY THIS LIST GREW. Every
+// probe here was `.env.`-DOTTED, so the matcher's real boundary — is the prefix
+// `.env` or `.env.`? — was pinned by nothing: a mutant narrowing the match back
+// to `name == ".env" || HasPrefix(name, ".env.")` was GREEN on the whole
+// package, while `.envrc` (direnv, routinely holding exported credentials) was
+// packaged and uploaded to the platform and to a human moderator reviewer,
+// under a README sentence promising it was not. `.envrc` and `.env-local` are
+// the rows that go red for that mutant.
 var catchAllProbes = []string{
 	".env.staging",
 	".env.ci",
 	".env.example.bak",
+	".envrc",
+	".env-local",
 }
 
 // catchAllMatcherOnlyProbes are answered by the catch-all too, but are named in
@@ -213,6 +224,32 @@ func TestDotenvRuleIsACatchAllAndTheREADMESaysSo(t *testing.T) {
 		t.Errorf("the README section enumerates the listed names and stops, so a reader holding one of %v "+
 			"concludes it ships — it does not. State the catch-all and name at least one file it is the only "+
 			"thing covering.", catchAllProbes)
+	}
+
+	// 🔴 And it must name an UNDOTTED one. Every name in the section was
+	// `.env.`-dotted, so the sentence "every file whose base name starts with
+	// `.env`" was illustrated exclusively by examples that are ALSO consistent
+	// with a `.env.`-prefix rule — the reader with `.envrc` in the project could
+	// not answer their question from it, which is the only question this section
+	// exists to answer for a name it does not list.
+	var undottedProbes, undottedDocumented []string
+	for _, name := range catchAllProbes {
+		if strings.HasPrefix(name, ".env.") {
+			continue
+		}
+		undottedProbes = append(undottedProbes, name)
+		if strings.Contains(rest, name) {
+			undottedDocumented = append(undottedDocumented, name)
+		}
+	}
+	if len(undottedProbes) == 0 {
+		t.Fatal("CONTROL failure: catchAllProbes holds no undotted `.env`-prefixed name, so the boundary " +
+			"between a `.env` prefix and a `.env.` prefix is pinned by nothing above and unasserted here")
+	}
+	if len(undottedDocumented) == 0 {
+		t.Errorf("every `.env` name the README section shows is `.env.`-dotted, so it illustrates a rule "+
+			"narrower than the one it states. Name an undotted one (%v) — `.envrc` is the direnv convention "+
+			"and routinely holds exported credentials, and it is EXCLUDED.", undottedProbes)
 	}
 }
 

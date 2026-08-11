@@ -529,9 +529,21 @@ func TestWorkflowLabelCallSiteLedger(t *testing.T) {
 	body := string(src)
 
 	// Every surface that renders the workflow name goes through workflowLines.
-	if got, want := strings.Count(body, "workflowLines(built)"), 2; got != want {
-		t.Errorf("workflowLines is called at %d site(s), want %d (the --dry-run quote and the interactive confirmation). "+
-			"A new site is a new screen that must explain the promotion; a lost one is a screen that stopped.", got, want)
+	//
+	// 🔴 COUNTED WITHOUT THE ARGUMENT. This read `workflowLines(built)` — the
+	// literal the two existing callers happen to use — so a third spend surface
+	// calling `workflowLines(g)` and printing only the label was GREEN, inside
+	// the reach this ledger advertises ("a new site is a new screen that must
+	// explain the promotion"). `workflowLines(` matches any argument name, so
+	// the definition is counted too: 1 declaration + 2 call sites.
+	if got, want := strings.Count(body, "func workflowLines("), 1; got != want {
+		t.Fatalf("CONTROL failure: %d declaration(s) of workflowLines in generate.go, want %d — the total below "+
+			"is calls + declarations, so a moved or duplicated declaration silently reprices it", got, want)
+	}
+	if got, want := strings.Count(body, "workflowLines("), 3; got != want {
+		t.Errorf("workflowLines appears at %d site(s), want %d (1 declaration + the --dry-run quote + the "+
+			"interactive confirmation). A new site is a new screen that must explain the promotion; a lost one "+
+			"is a screen that stopped.", got, want)
 	}
 	// And both of them must PRINT the note, not merely receive it: a caller that
 	// takes the pair and drops the second half restores the unexplained
@@ -542,7 +554,7 @@ func TestWorkflowLabelCallSiteLedger(t *testing.T) {
 	}
 	// And no surface interpolates the bare constant into user-facing text any
 	// more. `generateWorkflow` still appears — in the graph builder, in help
-	// text and inside workflowLabel itself — so the assertion is on the
+	// text and inside workflowLines itself — so the assertion is on the
 	// FORMATTING verbs the two surfaces used.
 	for _, banned := range []string{
 		`"Workflow:\t%s\n", generateWorkflow`,
