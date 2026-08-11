@@ -562,11 +562,21 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 			// have landed IN PART before the refusal. That was previously only
 			// implied, by the absence of "nothing was changed". The next command
 			// is unchanged — `app listing status` is still the only way to see
-			// what is attached now — and the routes that do have a value to fix
-			// get that advice where the CLI can name it concretely
-			// (attachRejectionAdvice prints the bytes and pixel dimensions of
-			// the file the author sent), not from a generic sentence that has to
-			// guess whether a value was sent at all.
+			// what is attached now.
+			//
+			// 🔴 And this arm is ALL that three of the seven get, which is why
+			// it may not promise more. Concrete follow-on advice comes from
+			// `attachRejectionAdvice`, reached from exactly three flows —
+			// set-icon, set-cover, add-screenshot (app_listing.go's ingest and
+			// attach steps) — and it names the FILE: bytes, pixel dimensions,
+			// MIME. It never names a `--caption`. `rm-screenshot` and `reorder`
+			// return this error bare, as do both revision steps. Measured
+			// through the real command tree: set-icon renders 7 lines,
+			// rm-screenshot and reorder render 1. So "the routes with a value
+			// get advice elsewhere" is true of three routes, not of the five
+			// that carry an author-controlled field — do not restate it as the
+			// latter, which an earlier draft of this comment and of README's
+			// Troubleshooting row both did.
 			return fmt.Errorf("the server rejected this store-listing change (400): %s — the change may have partially applied; `civitai app listing status` shows the listing as it stands", msg)
 		default:
 			// An UNCLASSIFIED route. Every other arm asserts something about

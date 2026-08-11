@@ -226,16 +226,52 @@ func listingStubServer(badPath, badMsg string, log *reqLog) *httptest.Server {
 	}))
 }
 
+// valueBlame is the remedy the change arm carried until civitai/cli#391, kept
+// as a PROHIBITION on the read and ingest arms rather than deleted with it.
+// #374's ingest arm is exactly the one that used to tell two stories, one of
+// which was this phrase; substituting the new remedy for it in these notWant
+// sets — instead of adding alongside — would have retired that guard silently.
+const valueBlame = "fix the value"
+
+// exactForOp is the WHOLE message each 400 arm must produce, byte for byte,
+// once the server's own reason is spliced in.
+//
+// 🔴 Substring want/notWant checks pin PRESENCE, and presence cannot exclude an
+// ADDED clause. Measured: `… — the change may have partially applied — amend the
+// parameter and retry; …` carries every required phrase, blames a value that was
+// never sent, and passed the whole package green. A spelled list of blame
+// phrasings is not a fix for that, because the next synonym is always outside
+// the list. Equality is: there is exactly one sentence each arm may say, and
+// anything appended, inserted or re-ordered fails here regardless of wording.
+//
+// This is the guard to update when an arm is deliberately re-worded — and
+// updating it is the moment to re-read whether the new sentence is TRUE of every
+// route that reaches the arm, which is the mistake #391 was filed for.
+func exactForOp(op listingOp, serverMsg string) string {
+	switch op {
+	case listingOpRead:
+		return "the server rejected this store-listing lookup (400): " + serverMsg +
+			" — nothing was changed; check the app you named (list your apps with `civitai app status`)"
+	case listingOpIngest:
+		return "the server rejected the image-upload request (400): " + serverMsg +
+			" — no listing was changed; check the image and retry"
+	case listingOpChange:
+		return "the server rejected this store-listing change (400): " + serverMsg +
+			" — the change may have partially applied; `civitai app listing status` shows the listing as it stands"
+	}
+	return ""
+}
+
 // wantForOp is the pinned WORDING of each 400 arm — literal strings, not
 // derived from listing.go. want must all appear, notWant must not.
 func wantForOp(op listingOp) (want, notWant []string) {
 	switch op {
 	case listingOpRead:
 		return []string{"store-listing lookup", "nothing was changed"},
-			[]string{"store-listing change", "image-upload", "partially applied"}
+			[]string{"store-listing change", "image-upload", "partially applied", valueBlame}
 	case listingOpIngest:
 		return []string{"image-upload request", "no listing was changed"},
-			[]string{"store-listing change", "store-listing lookup", "partially applied"}
+			[]string{"store-listing change", "store-listing lookup", "partially applied", valueBlame}
 	case listingOpChange:
 		// 🔴 "fix the value" is in notWant, not in want, and civitai/cli#391 is
 		// why: this ONE arm answers for all seven change routes, and
@@ -329,6 +365,16 @@ func TestListingBadRequestSubjectIsReachablePerRoute(t *testing.T) {
 					t.Errorf("must not claim %q; got: %s", w, msg)
 				}
 			}
+			// 🔴 The pin the two loops above CANNOT be: they check presence and
+			// absence of phrases, so a clause appended to an otherwise-correct
+			// sentence satisfies both. Equality admits exactly one sentence per
+			// arm. See exactForOp.
+			if exact := exactForOp(tc.wantOp, tc.serverMsg); msg != exact {
+				t.Errorf("route %s does not produce its arm's exact message.\n  got:  %s\n  want: %s\n"+
+					"If you re-worded this arm on purpose, update exactForOp — and while you are there, "+
+					"confirm the new sentence is true of EVERY route that reaches the arm (civitai/cli#391).",
+					tc.route.path, msg, exact)
+			}
 			// Item 7: the published exit code is pinned by errors.Is, never by
 			// message text — re-wording a 400 must not move it off exit 2.
 			if !errors.Is(err, civitai.ErrBadRequest) {
@@ -374,9 +420,20 @@ var authorControlledFields = map[string][]string{
 // author never types. Together the two must cover every key the wire carries,
 // so a field added to a change route cannot slip in unclassified and quietly
 // move the premise this test's conclusion rests on.
-var cliMintedFields = map[string]bool{
-	"listingId": true,
-	"shadowId":  true,
+//
+// 🔴 Keyed PER ROUTE, deliberately. A flat set of field names would be a
+// route-agnostic silencer: adding one entry to shut up the route you are working
+// on would also pre-authorise that field on the other six, so the next route to
+// grow it would pass unnoticed. The whole point of this ledger is that a field
+// appearing where it did not before is loud.
+var cliMintedFields = map[string][]string{
+	"setIcon":               {"listingId"},
+	"setCover":              {"listingId"},
+	"addScreenshot":         {"listingId"},
+	"removeScreenshot":      {},
+	"reorderScreenshots":    {"listingId"},
+	"beginListingRevision":  {"listingId"},
+	"submitListingRevision": {"shadowId"},
 }
 
 // TestChangeArmPresumesNoUserSuppliedValue is civitai/cli#391's regression
@@ -437,8 +494,9 @@ func TestChangeArmPresumesNoUserSuppliedValue(t *testing.T) {
 
 			// Bidirectional: every key on the wire is classified, and every
 			// classified author-controlled key is really on the wire.
+			minted := cliMintedFields[tc.name]
 			for key := range env.JSON {
-				if cliMintedFields[key] {
+				if containsStr(minted, key) {
 					continue
 				}
 				if !containsStr(ledger, key) {
@@ -462,14 +520,16 @@ func TestChangeArmPresumesNoUserSuppliedValue(t *testing.T) {
 				// The whole point, asserted on the route that proves it: this
 				// 400 may not blame a value, because none was sent.
 				msg := err.Error()
-				// 🔴 A spelled list, and spelled lists are defeatable by a
-				// synonym — so it is NOT what carries this test. The pin below
-				// it is: whatever wording arrives, the arm must still say what
-				// it means, and a sentence cannot both satisfy that and be a
-				// bare "go fix your value". This list is the cheap second net,
-				// and it was widened to the four rewordings measured against it
-				// ("correct the value", "what you passed", "what you sent",
-				// "your input") rather than to the one that shipped.
+				// 🔴 A SPELLED list, and it is defeatable by the next synonym —
+				// this comment used to claim "a sentence cannot both satisfy
+				// [the required phrases] and be a bare 'go fix your value'",
+				// which is simply false: `… may have partially applied — amend
+				// the parameter and retry; …` did both and the package stayed
+				// green. What actually forecloses an added clause is the
+				// EQUALITY pin in TestListingBadRequestSubjectIsReachablePerRoute
+				// (see exactForOp); this list survives only because it names the
+				// specific hazard when it fires, which an equality diff does
+				// not. Treat it as a message, not as the guard.
 				for _, blame := range []string{
 					"fix the value", "the value you", "check the value",
 					"correct the value", "what you passed", "you supplied",
@@ -806,6 +866,19 @@ func declaredListingRoutes(t *testing.T) map[string]declaredRoute {
 		case err != nil:
 			t.Fatalf("deciding whether %s is in this build: %v", n, err)
 		case !ok:
+			// 🔴 Excluding the file trades an over-demand for a possible SILENT
+			// UNDER-READ, and under-reading is the direction that hid #374. On
+			// linux a route in `foo_windows.go` would simply vanish from every
+			// ledger with no diagnostic. So: skipping is fine only for a file
+			// that cannot matter. If an excluded file so much as mentions the
+			// type, say so and fail rather than quietly seeing less.
+			if src, readErr := os.ReadFile(n); readErr == nil && strings.Contains(string(src), "listingRoute") {
+				t.Errorf("%s is excluded from this build (GOOS=%s GOARCH=%s) but mentions listingRoute.\n"+
+					"This sweep can only see the files the current build selects, so any route declared there is "+
+					"invisible on this platform — the ledgers would under-read with no diagnostic at all.\n"+
+					"Remedy: declare listing routes only in unconstrained files, or teach this sweep to parse "+
+					"each build configuration you ship.", n, build.Default.GOOS, build.Default.GOARCH)
+			}
 			continue
 		}
 		f, err := parser.ParseFile(fset, n, nil, 0)
@@ -891,20 +964,32 @@ func declaredListingRoutes(t *testing.T) map[string]declaredRoute {
 	// that ARE listingRoute — the alias form `type X = listingRoute` and the
 	// defined form `type X listingRoute` — and match against that set rather
 	// than against one spelling.
+	//
+	// 🔴 To a FIXPOINT, not one hop: `type lr2 = lr1` where `lr1 = listingRoute`
+	// is a chain, and a single pass would resolve lr1 and stay blind to lr2 —
+	// silently, which is the property that made this worth closing at all.
+	// Iterating until the set stops growing is bounded by the number of type
+	// declarations in the package.
 	routeTypeNames := map[string]bool{"listingRoute": true}
-	for _, f := range files {
-		for _, d := range f.Decls {
-			gd, ok := d.(*ast.GenDecl)
-			if !ok || gd.Tok != token.TYPE {
-				continue
-			}
-			for _, spec := range gd.Specs {
-				ts, ok := spec.(*ast.TypeSpec)
-				if !ok {
+	for grew := true; grew; {
+		grew = false
+		for _, f := range files {
+			for _, d := range f.Decls {
+				gd, ok := d.(*ast.GenDecl)
+				if !ok || gd.Tok != token.TYPE {
 					continue
 				}
-				if id, ok := ts.Type.(*ast.Ident); ok && id.Name == "listingRoute" {
+				for _, spec := range gd.Specs {
+					ts, ok := spec.(*ast.TypeSpec)
+					if !ok {
+						continue
+					}
+					id, ok := ts.Type.(*ast.Ident)
+					if !ok || !routeTypeNames[id.Name] || routeTypeNames[ts.Name.Name] {
+						continue
+					}
 					routeTypeNames[ts.Name.Name] = true
+					grew = true
 				}
 			}
 		}
@@ -921,16 +1006,20 @@ func declaredListingRoutes(t *testing.T) map[string]declaredRoute {
 		}
 		return false
 	}
-	// isRouteContainer reports whether an expression is a slice/array/map OF
-	// routes. Its element literals may omit the type entirely
+	// isRouteContainer reports whether an expression is a slice/array/map whose
+	// elements bottom out in routes. Element literals may omit the type entirely
 	// (`[]listingRoute{{"…", op}}`), so they are never seen by the type match
 	// above — the same silent shape as the alias, reached a different way.
-	isRouteContainer := func(e ast.Expr) bool {
+	//
+	// Recursive, so `map[string][]listingRoute{…}` and deeper nestings are seen
+	// too; a one-level check would have left exactly that shape silent.
+	var isRouteContainer func(ast.Expr) bool
+	isRouteContainer = func(e ast.Expr) bool {
 		switch v := e.(type) {
 		case *ast.ArrayType:
-			return isRouteType(v.Elt)
+			return isRouteType(v.Elt) || isRouteContainer(v.Elt)
 		case *ast.MapType:
-			return isRouteType(v.Value)
+			return isRouteType(v.Value) || isRouteContainer(v.Value)
 		}
 		return false
 	}
@@ -1000,28 +1089,51 @@ func declaredListingRoutes(t *testing.T) map[string]declaredRoute {
 		out[path] = declaredRoute{path: path, opName: opName, file: where}
 	}
 
+	// elemTypeOf gives a container's element type, so an element literal that
+	// elides its own type still has one to be judged against.
+	elemTypeOf := func(e ast.Expr) ast.Expr {
+		switch v := e.(type) {
+		case *ast.ArrayType:
+			return v.Elt
+		case *ast.MapType:
+			return v.Value
+		}
+		return nil
+	}
+	// walkLit descends a literal against the type it is KNOWN to have, which is
+	// the only way to read an element that spells no type of its own. Recursing
+	// (rather than looking one level down) is what makes
+	// `map[string][]listingRoute{…}` visible.
+	var walkLit func(cl *ast.CompositeLit, typ ast.Expr, fileName string)
+	walkLit = func(cl *ast.CompositeLit, typ ast.Expr, fileName string) {
+		switch {
+		case isRouteType(typ):
+			record(cl, fileName)
+		case isRouteContainer(typ):
+			elem := elemTypeOf(typ)
+			for _, elt := range cl.Elts {
+				v := elt
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					v = kv.Value
+				}
+				inner, ok := v.(*ast.CompositeLit)
+				if !ok {
+					continue
+				}
+				it := inner.Type
+				if it == nil {
+					it = elem
+				}
+				walkLit(inner, it, fileName)
+			}
+		}
+	}
+
 	for i, f := range files {
 		fileName := names[i]
 		ast.Inspect(f, func(n ast.Node) bool {
-			cl, ok := n.(*ast.CompositeLit)
-			if !ok {
-				return true
-			}
-			switch {
-			case isRouteType(cl.Type):
-				record(cl, fileName)
-			case isRouteContainer(cl.Type):
-				for _, elt := range cl.Elts {
-					v := elt
-					if kv, ok := elt.(*ast.KeyValueExpr); ok {
-						v = kv.Value
-					}
-					// An element literal either spells its type or elides it;
-					// both are this container's element type.
-					if inner, ok := v.(*ast.CompositeLit); ok && (inner.Type == nil || isRouteType(inner.Type)) {
-						record(inner, fileName)
-					}
-				}
+			if cl, ok := n.(*ast.CompositeLit); ok && cl.Type != nil {
+				walkLit(cl, cl.Type, fileName)
 			}
 			return true
 		})
