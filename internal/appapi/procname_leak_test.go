@@ -56,42 +56,57 @@ func TestListingBadRequestDoesNotLeakTheProcedureName(t *testing.T) {
 // What this table does NOT prove is that any route REACHES its arm through the
 // real client — that is listing_op_test.go's job, and civitai/cli#374 is what
 // happens when only one of the two halves exists.
-func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
-	body, _ := json.Marshal(map[string]any{
-		"error": map[string]any{"json": map[string]any{"message": "Invalid input"}},
-	})
-	// A lookup: it read, so it changed nothing.
-	const readSubject = "store-listing lookup"
-	// An image ingest: it created an Image row attached to no listing.
-	const ingestSubject = "image-upload request"
-	// A listing write: it may have PARTIALLY APPLIED, so `app listing status` is
-	// the authority on what is attached now.
-	const changeSubject = "store-listing change"
+// listingWordingRow is one route's hand-written sentence.
+type listingWordingRow struct {
+	name    string
+	route   listingRoute
+	want    []string
+	notWant []string
+}
 
-	for _, tc := range []struct {
-		name    string
-		route   listingRoute
-		want    []string
-		notWant []string
-	}{
+// A lookup: it read, so it changed nothing.
+const readSubject = "store-listing lookup"
+
+// An image ingest: it created an Image row attached to no listing.
+const ingestSubject = "image-upload request"
+
+// A listing write: it may have PARTIALLY APPLIED, so `app listing status` is
+// the authority on what is attached now.
+const changeSubject = "store-listing change"
+
+// 🔴 The change arm's REMEDY, spelled here so that a read or an ingest cannot
+// borrow it. It used to be "fix the value and retry", which civitai/cli#391
+// measured FALSE for `beginListingRevision`: that request carries only a listing
+// id the CLI minted from a lookup that had already returned 200, so its author
+// has no value to fix. This phrase presumes nothing about what was sent, and
+// states the one thing every change route has in common.
+const changeRemedy = "may have partially applied"
+
+// listingWordingRows is the third guard's table, lifted out of its test so the
+// set of routes it covers can itself be checked. See
+// TestEveryListingRouteHasAWordingRow: without that, the table was enforced only
+// in the DELETE direction — a route ADDED with no row here was green, which
+// quietly made the "three independent guards" claim two for any new route.
+func listingWordingRows() []listingWordingRow {
+	return []listingWordingRow{
 		// ---- reads: the caller asked to look ----
 		{
 			name:    "getMyListingForApp is a lookup",
 			route:   trpcGetMyListingForApp,
 			want:    []string{readSubject, "nothing was changed"},
-			notWant: []string{changeSubject, ingestSubject, "fix the value"},
+			notWant: []string{changeSubject, ingestSubject, changeRemedy, valueBlame},
 		},
 		{
 			name:    "getMyListingForEdit is a lookup",
 			route:   trpcGetMyListingForEdit,
 			want:    []string{readSubject, "nothing was changed"},
-			notWant: []string{changeSubject, ingestSubject, "fix the value"},
+			notWant: []string{changeSubject, ingestSubject, changeRemedy, valueBlame},
 		},
 		{
 			name:    "getAssetScanStatuses is a lookup",
 			route:   trpcGetAssetScanStatuses,
 			want:    []string{readSubject, "nothing was changed"},
-			notWant: []string{changeSubject, ingestSubject, "fix the value"},
+			notWant: []string{changeSubject, ingestSubject, changeRemedy, valueBlame},
 		},
 
 		// ---- ingests: an Image row, attached to nothing ----
@@ -99,7 +114,7 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 			name:    "the presigned mint changes no listing",
 			route:   imageUploadRoute,
 			want:    []string{ingestSubject, "no listing was changed"},
-			notWant: []string{changeSubject, readSubject, "fix the value"},
+			notWant: []string{changeSubject, readSubject, changeRemedy, valueBlame},
 		},
 		{
 			// A tRPC POST that creates an Image row and attaches it to nothing.
@@ -107,14 +122,14 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 			name:    "the data-uri ingest changes no listing",
 			route:   trpcIngestAssetFromDataURI,
 			want:    []string{ingestSubject, "no listing was changed"},
-			notWant: []string{changeSubject, readSubject, "fix the value"},
+			notWant: []string{changeSubject, readSubject, changeRemedy, valueBlame},
 		},
 		{
 			// Step 3 of the same user action the mint starts.
 			name:    "persistAssetImage changes no listing",
 			route:   trpcPersistAssetImage,
 			want:    []string{ingestSubject, "no listing was changed"},
-			notWant: []string{changeSubject, readSubject, "fix the value"},
+			notWant: []string{changeSubject, readSubject, changeRemedy, valueBlame},
 		},
 
 		// ---- changes: each writes the listing, so none of them may say
@@ -122,46 +137,53 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 		{
 			name:    "setIcon attaches an icon to the listing",
 			route:   trpcSetIcon,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "setCover attaches a cover to the listing",
 			route:   trpcSetCover,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "addScreenshot appends to the listing",
 			route:   trpcAddScreenshot,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "removeScreenshot deletes from the listing",
 			route:   trpcRemoveScreenshot,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "reorderScreenshots rewrites the listing's order",
 			route:   trpcReorderScreenshots,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "beginListingRevision opens a shadow revision",
 			route:   trpcBeginListingRevision,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "submitListingRevision sends the revision to review",
 			route:   trpcSubmitListingRevision,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
-	} {
+	}
+}
+
+func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
+	body, _ := json.Marshal(map[string]any{
+		"error": map[string]any{"json": map[string]any{"message": "Invalid input"}},
+	})
+	for _, tc := range listingWordingRows() {
 		t.Run(tc.name, func(t *testing.T) {
 			err := listingError(http.StatusBadRequest, body, tc.route)
 			if err == nil {
@@ -215,6 +237,49 @@ func TestListingReadBadRequestIsReachableAsARead(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "lookup") {
 		t.Errorf("the read arm must be what answers a query 400; got: %s", err.Error())
+	}
+}
+
+// TestEveryListingRouteHasAWordingRow closes the ADD direction of this table.
+//
+// 🔴 Measured gap (civitai/cli#391 audit): the cry-wolf control that added a
+// legitimate 14th route with every other edit the guards demand, but NO row
+// here, exited 0. So this table was enforced only when a row was DELETED — a
+// route added without a sentence was silently uncovered, which reduced "three
+// independent guards that must agree" to two for exactly the routes most likely
+// to be misclassified: the new ones.
+//
+// It compares against the SOURCE-TEXT ledger rather than against
+// listingRouteCases(), so this stays a genuinely separate opinion: the case
+// table and this table can now only agree by both being right about the set of
+// routes that exists.
+func TestEveryListingRouteHasAWordingRow(t *testing.T) {
+	declared := declaredListingRoutes(t)
+	if len(declared) == 0 {
+		t.Fatalf("the sweep found no routes at all — this comparison would be vacuous")
+	}
+
+	covered := map[string]string{}
+	for _, row := range listingWordingRows() {
+		if prev, dup := covered[row.route.path]; dup {
+			t.Errorf("route %q has two rows in this table (%q and %q) — one sentence per route, "+
+				"or a re-label only has to contradict whichever row is read first", row.route.path, prev, row.name)
+		}
+		covered[row.route.path] = row.name
+	}
+	for path, d := range declared {
+		if _, ok := covered[path]; !ok {
+			t.Errorf("route %q (declared at %s) has no wording row in listingWordingRows().\n"+
+				"Write the sentence its 400 must produce, by hand, from what the route DOES — not by copying "+
+				"a neighbour and not from route.op. This table is the third of the three guards that must "+
+				"agree, and it is worth nothing for a route it does not mention.", path, d.file)
+		}
+	}
+	for path, name := range covered {
+		if _, ok := declared[path]; !ok {
+			t.Errorf("this table has a row %q for route %q, which is not declared anywhere — "+
+				"delete the row if the route was retired, or fix the path it names", name, path)
+		}
 	}
 }
 

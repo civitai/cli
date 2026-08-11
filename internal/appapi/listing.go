@@ -450,7 +450,9 @@ func trpcName(path string) string {
 // store-listing change … `civitai app listing status` shows the listing as it
 // stands" — and in `IngestAssetFullRes` ONE user action told two stories, "no
 // listing was changed" if the mint 400s and "fix the value" if the persist
-// 400s, three lines later.
+// 400s, three lines later. (Both quotes are the wording OF THAT DAY; the change
+// arm no longer says "fix the value" at all — see civitai/cli#391 at the arm
+// itself. They are kept verbatim because they are what the bug printed.)
 //
 // The mirror is the dangerous direction: setIcon / setCover / addScreenshot may
 // have PARTIALLY APPLIED when they 400, so wording one as a lookup asserts
@@ -540,7 +542,42 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		case listingOpIngest:
 			return fmt.Errorf("the server rejected the image-upload request (400): %s — no listing was changed; check the image and retry", msg)
 		case listingOpChange:
-			return fmt.Errorf("the server rejected this store-listing change (400): %s — fix the value and retry; `civitai app listing status` shows the listing as it stands", msg)
+			// 🔴 IT DOES NOT SAY "fix the value and retry", and civitai/cli#391
+			// is why. That remedy presumes the request carried something the
+			// author supplied, and this ONE arm answers for all seven change
+			// routes. Re-derived per route against the call sites: five do carry
+			// such a value (setIcon/setCover from the file argument,
+			// addScreenshot also from --caption, removeScreenshot from the
+			// screenshot id typed as argv, reorderScreenshots from the id list
+			// typed as argv). `beginListingRevision` sends ONLY `listingId` —
+			// minted by the CLI from a lookup that already returned 200 (the
+			// live branch of runSetMedia), never typed — and
+			// `submitListingRevision`'s `changelog` is CLI-minted whenever the
+			// author passed --yes rather than --changelog. So the remedy was
+			// false for one route and unproven for a second: the wrong-subject
+			// class #374 exists to remove.
+			//
+			// What replaces it is true of EVERY change route, and is the whole
+			// reason this arm is not the read or the ingest arm: the write may
+			// have landed IN PART before the refusal. That was previously only
+			// implied, by the absence of "nothing was changed". The next command
+			// is unchanged — `app listing status` is still the only way to see
+			// what is attached now.
+			//
+			// 🔴 And this arm is ALL that three of the seven get, which is why
+			// it may not promise more. Concrete follow-on advice comes from
+			// `attachRejectionAdvice`, reached from exactly three flows —
+			// set-icon, set-cover, add-screenshot (app_listing.go's ingest and
+			// attach steps) — and it names the FILE: bytes, pixel dimensions,
+			// MIME. It never names a `--caption`. `rm-screenshot` and `reorder`
+			// return this error bare, as do both revision steps. Measured
+			// through the real command tree: set-icon renders 7 lines,
+			// rm-screenshot and reorder render 1. So "the routes with a value
+			// get advice elsewhere" is true of three routes, not of the five
+			// that carry an author-controlled field — do not restate it as the
+			// latter, which an earlier draft of this comment and of README's
+			// Troubleshooting row both did.
+			return fmt.Errorf("the server rejected this store-listing change (400): %s — the change may have partially applied; `civitai app listing status` shows the listing as it stands", msg)
 		default:
 			// An UNCLASSIFIED route. Every other arm asserts something about
 			// the user's listing; none of them is safe to guess, so this one
