@@ -134,6 +134,98 @@ func TestDevTokenSaysTheSameThingOnceAroundTheToken(t *testing.T) {
 	}
 }
 
+// devTokenSuggestedSlugs returns the slug argument of every suggested
+// `civitai app dev-token <slug> …` line in s.
+//
+// Structural, like devTokenCommandLines: the defect below is not a word but a
+// suggested command that names the WRONG slug, and a substring check on the
+// slug cannot see it (the renamed slug CONTAINS the stale one, "my-block" ⊂
+// "my-block-abc12").
+func devTokenSuggestedSlugs(s string) []string {
+	var out []string
+	for _, l := range devTokenCommandLines(s) {
+		f := strings.Fields(l)
+		for i, w := range f {
+			if w == "dev-token" && i+1 < len(f) {
+				out = append(out, f[i+1])
+			}
+		}
+	}
+	return out
+}
+
+// TestDevTokenSuppressionNeverLeavesAStaleSlugCommand is the repair to defect 3's
+// suppression: it silences the post-mint warning, which is the ONLY line printed
+// after a rename — so on a rename the surviving advice named the PRE-rename slug,
+// which block.manifest.json no longer contains. Copying it re-collides and mints
+// yet another suffixed slug, i.e. the remedy does not leave the state it
+// complains about — the thing readOnlyTokenWarning's own 🔴 comment forbids.
+//
+// The assertion is the RELATIONSHIP (every suggested slug is the one on disk),
+// not a spelling, so it holds however the rename suffix comes out.
+func TestDevTokenSuppressionNeverLeavesAStaleSlugCommand(t *testing.T) {
+	prev := devTokenSuffixGen
+	devTokenSuffixGen = func() string { return "abc12" }
+	defer func() { devTokenSuffixGen = prev }()
+
+	// The credential CAN spend (so the suppression's other condition holds) and
+	// the first mint collides, forcing mintDevTokenWithRename.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/me") {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"username": "u", "id": 1,
+				"tokenScope": appapi.ScopeAIServicesWrite | appapi.ScopeUserRead,
+			})
+			return
+		}
+		var body struct {
+			Slug string `json:"slug"`
+		}
+		raw, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(raw, &body)
+		if body.Slug == "my-block" {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"message": "App not found"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"token": makeJWT(t, []string{"user:read:self"})})
+	}))
+	defer srv.Close()
+
+	dir := t.TempDir()
+	writeDevTokenManifest(t, dir, `{
+  "blockId": "my-block",
+  "version": "0.1.0",
+  "name": "My Block",
+  "scopes": ["ai:write:budgeted"]
+}`)
+	chdir(t, dir)
+
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	t.Setenv("CIVITAI_BASE_URL", srv.URL)
+
+	_, errOut, err := run(t, "app", "dev-token", "my-block", "--env")
+	if err != nil {
+		t.Fatalf("app dev-token: %v\n%s", err, errOut)
+	}
+
+	onDisk := readBlockID(t, dir)
+	if onDisk == "my-block" {
+		t.Fatalf("the mint must have renamed the slug for this test to mean anything; manifest still says %q", onDisk)
+	}
+	suggested := devTokenSuggestedSlugs(errOut)
+	// Positive control: a run that suggests NOTHING would satisfy the loop below.
+	if len(suggested) == 0 {
+		t.Fatalf("no `civitai app dev-token …` command was suggested at all; stderr:\n%s", errOut)
+	}
+	for _, slug := range suggested {
+		if slug != onDisk {
+			t.Errorf("suggested command names slug %q but block.manifest.json now says %q — copying it re-collides and mints ANOTHER renamed slug; stderr:\n%s", slug, onDisk, errOut)
+		}
+	}
+}
+
 // TestDevTokenReadOnlyWarningSurvivesWhenTheCauseDiffers is the negative control
 // for the suppression: when the credential CANNOT spend, the post-token warning
 // names a cause the pre-mint notice never mentions, so suppressing it would lose

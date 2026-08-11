@@ -1448,12 +1448,23 @@ with a pull token embedded.
 The repo only exists once your **first version has been submitted as a ZIP and
 approved**; before then the command tells you so rather than failing obscurely —
 `app <slug> has no approved version yet …`, naming the latest submission's state
-and pointing at `civitai app status <slug>`. It says *no such app for your
-account* only when the slug really matches none of your submissions.
+and the next step for it (where it is in review, or — for a **rejected** or
+**withdrawn** submission — that nothing is in review and a new `civitai app
+submit` is what moves it).
+
+That better message needs a submission the CLI can *see*, so it is not the
+answer in every case. **`no such app for your account` is what you get whenever
+the CLI cannot prove otherwise** — the slug matches none of your submissions,
+**or** the submissions lookup itself failed, **or** a version *is* approved (so
+the repo is missing for some other reason), **or** you passed `--app
+<appBlockId>` instead of the slug (the check reads your submissions by slug; an
+`appBlockId` only exists once a version is approved, so it is never the
+not-approved case). Either way `civitai app status` is the command that settles
+it.
 
 `--app` is also where the app goes, and the positional is the **directory**:
 `civitai app pull my-block` (slug typed positionally) is refused with a message
-saying so, not a bare framework error.
+saying so, not a bare framework error — as is a bare `civitai app pull`.
 
 > ⚠️ **SECURITY — TOKEN-IN-URL LEAKAGE.** The clone URL embeds your access token
 > as HTTP-Basic credentials (`https://<user>:<token>@…`).
@@ -2456,9 +2467,9 @@ a hand-written list does.)
 | You saw | What it means | Where to read more |
 | --- | --- | --- |
 | `has no approved App Block yet` | The slug is right and the app exists — its analytics do not, because the version is still in review. Exit `1`, not `4`. | [App metrics](#app-metrics) |
-| `no such app for your account` | The slug matches none of your submissions. List them with `civitai app status`. If `app status` *does* list it, you will see the message below instead — the app exists and is simply not approved. | [Submission status](#submission-status) |
-| `has no approved version yet` | `civitai app pull` clones a repository that only exists once a submitted version has been **approved**. The app is real and still in review; `civitai app status <slug>` shows where. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
-| `no such submission` | Nothing has been submitted for that app yet. `civitai app submit` creates the submission **and** the draft store listing the `app listing` commands read. | [Submit & auth](#submit--auth) |
+| `no such app for your account` | The server did not recognise the app for your account — exit `4`. From `civitai app pull` it means, more precisely, that the CLI could not prove the app is yours-but-unapproved: no submission matches the slug, **or** the submissions lookup itself failed, **or** a version *is* approved, **or** you passed an `appBlockId` rather than the slug. Settle it with `civitai app status`; if that lists the app as unapproved, `app pull` says so with the message below instead. | [Submission status](#submission-status) |
+| `has no approved version yet` | `civitai app pull` clones a repository that only exists once a submitted version has been **approved**. The app is real; the message names the latest submission's state and the next step for it. Exit `4`. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
+| `no such submission` | For a **slug**: nothing has been submitted for that app yet — `civitai app submit` creates the submission **and** the draft store listing the `app listing` commands read. For an `--id`: no publish request with that id, so check the id itself. | [Submit & auth](#submit--auth) |
 | `is ambiguous — it matches` | A model version has several files sharing that name. Select one by its numeric file id with `--file <id>`. | [Download model files](#download-model-files) |
 | `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. | [Download model files](#download-model-files) |
 | `checksum mismatch for` | The same, during `civitai upgrade`. The binary was **not** replaced. | [Upgrading](#upgrading) |

@@ -757,7 +757,7 @@ func (c *Client) ListSubmissions(ctx context.Context, blockID string) ([]Submiss
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, submissionsError(status, raw)
+		return nil, submissionsError(status, raw, "", blockID)
 	}
 	var out struct {
 		Submissions []Submission `json:"submissions"`
@@ -779,7 +779,7 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 		return nil, err
 	}
 	if status != http.StatusOK {
-		return nil, submissionsError(status, raw)
+		return nil, submissionsError(status, raw, id, blockID)
 	}
 	// An `?id=` lookup returns {submission: {...}}; an `?blockId=` lookup returns
 	// {submissions: [...]} (narrowed list) — handle both so either selector works.
@@ -818,7 +818,9 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 // submissionSubject names WHICH lookup came back empty, using the selector the
 // caller actually passed (GetSubmission takes either a pubreq id or a slug, and
 // id wins when both are set — mirror that order here or the error names a
-// selector the request did not use).
+// selector the request did not use). The id-first order is REACHABLE and pinned
+// by TestSubmissionSelectorPrecedenceMirrorsTheRequest: `civitai app status --id
+// <id> <slug>` passes both, and submissionsURL sends only the id.
 func submissionSubject(id, blockID string) string {
 	if s := strings.TrimSpace(id); s != "" {
 		return fmt.Sprintf("submission id %q", s)
@@ -827,6 +829,19 @@ func submissionSubject(id, blockID string) string {
 		return fmt.Sprintf("app %q", s)
 	}
 	return "this app"
+}
+
+// submissionNotFoundAdvice is the next step for a 404 from the submissions
+// route, keyed on the SELECTOR — see submissionsError's 404 arm for why the two
+// answers must differ. Same precedence as submissionSubject (id wins).
+func submissionNotFoundAdvice(id, blockID string) string {
+	if strings.TrimSpace(id) != "" {
+		return "check the publish-request id: `civitai app status <blockId>` shows the id for one app, and `civitai app status --json` lists them all"
+	}
+	if strings.TrimSpace(blockID) != "" {
+		return "run `civitai app submit` first; the submission and its draft store listing are created at submit time (list what you have submitted with `civitai app status`)"
+	}
+	return "list what you have submitted with `civitai app status`"
 }
 
 // withdrawBody is the POST /api/v1/blocks/withdraw request body.
@@ -1476,8 +1491,10 @@ func withdrawError(status int, raw []byte) (err error) {
 }
 
 // submissionsError maps a non-2xx submissions response to a clear, actionable
-// error, with Apps-specific guidance for 403/404/429/503.
-func submissionsError(status int, raw []byte) (err error) {
+// error, with Apps-specific guidance for 403/404/429/503. id and blockID are the
+// selectors the failing request carried (both empty for the unfiltered listing);
+// only the 404 arm reads them — see the comment there.
+func submissionsError(status int, raw []byte, id, blockID string) (err error) {
 	defer func() { err = civitai.TagStatus(status, err) }()
 	msg := serverMessage(raw)
 	switch status {
@@ -1486,10 +1503,16 @@ func submissionsError(status int, raw []byte) (err error) {
 	case http.StatusForbidden:
 		return fmt.Errorf("apps access required — invite-only beta (403): %s", msg)
 	case http.StatusNotFound:
-		// Same dead end as GetSubmission's empty-list arm, reached by the `?id=`
-		// spelling — name the same next command so one question answered two ways
-		// gives one answer (civitai/cli#363).
-		return fmt.Errorf("no such submission (404): %s — run `civitai app submit` first; the submission and its draft store listing are created at submit time (list what you have submitted with `civitai app status`)", msg)
+		// 🔴 THE TWO SELECTORS DO NOT MEAN THE SAME THING HERE, and only one of
+		// them can realistically reach this arm. A `?blockId=` miss answers 200
+		// with an EMPTY LIST, resolved client-side in GetSubmission above — so a
+		// real 404 is almost always the `?id=` spelling, i.e. a mistyped or stale
+		// publish-request id. "Run `civitai app submit` first" is confidently
+		// wrong for that user: they have submitted, they just named the wrong
+		// request. Key the advice on the selector the request actually used, the
+		// same way submissionSubject does for the empty-list arm
+		// (civitai/cli#363).
+		return fmt.Errorf("no such submission (404): %s — %s", msg, submissionNotFoundAdvice(id, blockID))
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited (429): %s — wait a moment and retry", msg)
 	case http.StatusServiceUnavailable:

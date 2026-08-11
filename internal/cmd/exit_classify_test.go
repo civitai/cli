@@ -285,10 +285,13 @@ func TestMissingArgsAndBadFlagValuesAreUsageTagged(t *testing.T) {
 			// Cobra's REQUIRED-flag validator, not the command's own check.
 			// Cobra runs it after Args and after the PreRun hooks, so it is
 			// invisible to SetFlagErrorFunc — `--app` omitted exited 1 while the
-			// unknown flag `--nope` exited 2. Message is cobra's, unchanged.
-			name:    "app pull with --app omitted entirely (cobra's required-flag error)",
+			// unknown flag `--nope` exited 2. The command's own Args validator now
+			// answers this shape too (a BARE `civitai app pull` is the most likely
+			// first-contact invocation, and cobra's message never says the
+			// positional is the directory), so cobra's text no longer appears.
+			name:    "app pull with --app omitted entirely",
 			args:    []string{"app", "pull"},
-			wantMsg: `required flag(s) "app" not set`,
+			wantMsg: "--app is required, and the positional argument is the DIRECTORY, not the app: `civitai app pull [dir] --app <slug>` (find the slug with `civitai app status`)",
 		},
 		{
 			// With a POSITIONAL present the command's own Args validator runs

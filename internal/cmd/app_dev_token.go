@@ -426,16 +426,29 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 			if spendNarrowsToBudgetedOnly(manifestScopes, spend) {
 				fmt.Fprintln(errOut, spendNarrowingNotice(ui.For(errOut)))
 			}
-			// Announce the FILTER before the mint, so the developer learns why
-			// dev:live won't generate here rather than from the server's 403.
 			spendFiltered := spendFilteredFromManifest(manifestScopes, spend)
-			if spendFiltered {
-				fmt.Fprintln(errOut, spendFilteredNotice(ui.For(errOut), slug))
-			}
 			manifestDeclaresSpend := manifestDeclaresBudgetedSpend(manifestScopes)
 			token, slug, err := mintDevTokenWithRename(context.Background(), client, errOut, ".", slug, scopes, buzzBudget, spend)
 			if err != nil {
 				return err
+			}
+
+			// 🔴 AFTER THE MINT, BECAUSE THE MINT CAN RENAME THE SLUG. This
+			// notice carries a copy-pasteable `--spend` re-mint, and
+			// mintDevTokenWithRename rewrites block.manifest.json's blockId on
+			// an anti-shadow collision — so emitting it BEFORE (which it used
+			// to) printed a command naming a slug that no longer exists, and
+			// copying it re-collided and minted ANOTHER renamed slug. Every
+			// command this command prints must leave the state it complains
+			// about; only the post-mint slug can.
+			//
+			// It still lands before the token reaches stdout and long before
+			// `npm run dev:live` runs, so the developer still learns why
+			// dev:live won't generate here rather than from the server's 403.
+			// A FAILED mint now prints no notice at all — there is no token for
+			// it to be about, and the mint's own error is the actionable one.
+			if spendFiltered {
+				fmt.Fprintln(errOut, spendFilteredNotice(ui.For(errOut), slug))
 			}
 
 			// Token to stdout (pipeable); the paste hint to stderr so it never
@@ -470,6 +483,14 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 				// (civitai/cli#362). Suppress only for that exact overlap —
 				// when the credential CANNOT spend, this warning names a cause
 				// (the credential) the pre-mint notice never mentions.
+				//
+				// 🔴 THE SUPPRESSION IS SOUND ONLY BECAUSE THE SURVIVING NOTICE
+				// IS EMITTED ABOVE, AFTER THE MINT. Silencing this warning makes
+				// spendFilteredNotice the only remaining advice, so it must
+				// carry the FINAL slug; move it back before the mint and a
+				// rename leaves the user with a command that re-collides.
+				// TestDevTokenSuppressionNeverLeavesAStaleSlugCommand pins that
+				// relationship end-to-end.
 				if !(spendFiltered && canSpend) {
 					fmt.Fprintln(errOut, readOnlyTokenWarning(ui.For(errOut), canSpend, cfg.AuthKind(), slug, manifestDeclaresSpend))
 				}

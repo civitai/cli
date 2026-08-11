@@ -416,8 +416,10 @@ func TestSpendFilteredNoticeWording(t *testing.T) {
 }
 
 // TestAppDevTokenDefaultDeclaredSpendPrintsNotice: the notice must actually
-// reach stderr on the real command path, BEFORE the mint, so the developer sees
-// it instead of discovering the change via a 403.
+// reach stderr on the real command path — before the token is pasted anywhere,
+// so the developer sees it instead of discovering the change via a 403. (It is
+// emitted just AFTER the mint, not before: the mint can rename the slug, and the
+// notice names a re-mint command that has to work. See app_dev_token.go.)
 func TestAppDevTokenDefaultDeclaredSpendPrintsNotice(t *testing.T) {
 	writeManifestWithScopes(t, `["user:read:self","ai:write:budgeted"]`)
 

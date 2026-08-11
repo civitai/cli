@@ -66,6 +66,46 @@ func TestNotFoundOnAFixedRouteIsNotBlamedOnTheUser(t *testing.T) {
 	}
 }
 
+// TestWorkflowNotFoundDoesNotBlameTheTypist: `getWorkflow` has TWO callers with
+// opposite blame — `civitai workflows get <id>` (the user typed the id) and
+// `generate`'s status poll (the CLI minted it; 404 is non-retryable, so the poll
+// aborts to this message AFTER the charge moved). "Check the id you typed" is
+// addressed to a user who typed none.
+func TestWorkflowNotFoundDoesNotBlameTheTypist(t *testing.T) {
+	err := generateError("getWorkflow", 404, []byte(`{"error":{"json":{"message":"Not Found"}}}`))
+	msg := err.Error()
+	for _, blaming := range []string{"check the id", "the id you", "you typed"} {
+		if strings.Contains(strings.ToLower(msg), blaming) {
+			t.Errorf("this message also reaches a poll whose id the CLI minted — %q blames the wrong party: %s", blaming, msg)
+		}
+	}
+	// It still has to be actionable for the caller who DID type an id.
+	if !strings.Contains(msg, "civitai workflows list") {
+		t.Errorf("the lookup must still name where the readable ids are; got: %s", msg)
+	}
+}
+
+// TestFixedRouteNotFoundMakesNoClaimAboutTheInput: "nothing you passed can cause
+// this" is a claim about SERVER semantics the CLI cannot make. `generate --input
+// <graph>` ships a user-authored graph with nothing checked locally (AGENTS.md
+// item 13), so a bad reference inside it plausibly surfaces as a 404 — and this
+// message would then send that user to `civitai upgrade` and a bug report
+// instead of to their own file.
+func TestFixedRouteNotFoundMakesNoClaimAboutTheInput(t *testing.T) {
+	err := generateError("generateFromGraph", 404, []byte(`{"error":{"json":{"message":"Not Found"}}}`))
+	msg := err.Error()
+	if strings.Contains(msg, "nothing you passed") {
+		t.Errorf("the CLI cannot rule the caller's own graph out: %s", msg)
+	}
+	if !strings.Contains(msg, "unlikely") {
+		t.Errorf("the likely cause is still worth saying — say it as a likelihood; got: %s", msg)
+	}
+	// The actionable half must survive the softening.
+	if !strings.Contains(msg, "civitai upgrade") {
+		t.Errorf("the next command must survive; got: %s", msg)
+	}
+}
+
 // TestWorkflowIDProcsCoverEveryIDCarryingCallSite is the ledger guard on
 // workflowIDProcs.
 //
@@ -90,7 +130,14 @@ func TestWorkflowIDProcsCoverEveryIDCarryingCallSite(t *testing.T) {
 		t.Fatal(err)
 	}
 	re := regexp.MustCompile(`generateError\("([A-Za-z]+)"`)
+	// Every invocation, literal label or not. The ledger regex above can only see
+	// a STRING LITERAL: a call site passing a variable (`generateError(proc, …)`)
+	// is invisible to it, so the ledger would stay green while an unclassified
+	// proc reached the 404 arm. Counting both and comparing is what makes the
+	// literal scan's blindness visible.
+	anyCall := regexp.MustCompile(`generateError\(`)
 	found := map[string]bool{}
+	literalCalls, allCalls := 0, 0
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -100,15 +147,23 @@ func TestWorkflowIDProcsCoverEveryIDCarryingCallSite(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, m := range re.FindAllStringSubmatch(string(src), -1) {
+		text := string(src)
+		for _, m := range re.FindAllStringSubmatch(text, -1) {
 			found[m[1]] = true
+			literalCalls++
 		}
+		allCalls += len(anyCall.FindAllString(text, -1))
+		// The definition itself matches `generateError(`; it is not a call site.
+		allCalls -= strings.Count(text, "func generateError(")
 	}
 
 	// Positive control: the scan must actually find something, or an empty set
 	// would satisfy every check below for the wrong reason.
 	if len(found) == 0 {
 		t.Fatal("the source scan found no generateError call sites — the pattern is wrong, not the code")
+	}
+	if literalCalls != allCalls {
+		t.Errorf("%d generateError call sites but only %d pass a string literal — a call site passing a VARIABLE is invisible to this ledger, so it cannot vouch for the set; give it a literal label or teach the scan to resolve it", allCalls, literalCalls)
 	}
 
 	for proc := range found {

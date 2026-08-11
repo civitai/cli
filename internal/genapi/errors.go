@@ -71,10 +71,14 @@ type APIError struct {
 func (e *APIError) Error() string { return e.err.Error() }
 func (e *APIError) Unwrap() error { return e.err }
 
-// workflowIDProcs are the generation procedures whose request carries a
-// USER-SUPPLIED workflow id, so a 404 from them means "no workflow with that
-// id" — the input is wrong, not the CLI. Every other proc addresses a fixed
-// route, where a 404 really does mean the route is gone.
+// workflowIDProcs are the generation procedures whose request carries a workflow
+// ID, so a 404 from them is "no workflow with that id" rather than a missing
+// route. Every other proc addresses a fixed route.
+//
+// It says nothing about WHOSE id it is: `getWorkflow` is reached both by
+// `civitai workflows get <id>` (the user typed it) and by `generate`'s status
+// poll (the CLI minted it, after the charge moved). The 404 arm below is worded
+// for both — see there.
 //
 // 🔴 This is a ledger of THIS package's own call sites (the `proc` labels passed
 // to generateError below), not a vendored claim about the server, so item 13's
@@ -131,9 +135,21 @@ func generateError(proc string, status int, raw []byte) (err error) {
 		return fmt.Errorf("the server rejected the generation request (400): %s", msg)
 	case http.StatusNotFound:
 		if workflowIDProcs[proc] {
-			return fmt.Errorf("no such workflow (404): %s — check the id with `civitai workflows list`", msg)
+			// 🔴 NOT "check the id you typed". getWorkflow has two callers with
+			// opposite blame: `civitai workflows get <id>`, where the user typed
+			// the id, and `generate`'s status poll, where the CLI minted it and
+			// the charge has already moved. Telling the second user to check an
+			// id they never typed is the same wrong-answer class this arm exists
+			// to fix, so the wording names the lookup without assigning blame.
+			return fmt.Errorf("no such workflow (404): %s — `civitai workflows list` shows the workflows this account can read", msg)
 		}
-		return fmt.Errorf("the server has no such generation route (404): %s — nothing you passed can cause this; update the CLI with `civitai upgrade` and report it if it persists", msg)
+		// "nothing you passed can cause this" would be a claim about SERVER
+		// semantics the CLI cannot make: `generate --input <graph>` ships a
+		// user-authored graph with no local checking at all (internal/cmd/
+		// generate.go), so a bad reference inside it could plausibly surface
+		// here. Say what is likely, not what is certain (AGENTS.md item 13 —
+		// this path mirrors nothing and must not pretend to know the server).
+		return fmt.Errorf("the server has no such generation route (404): %s — this is unlikely to be something you passed; update the CLI with `civitai upgrade` and report it if it persists", msg)
 	case http.StatusTooManyRequests:
 		return fmt.Errorf("rate limited (429): %s — back off before retrying", msg)
 	case http.StatusServiceUnavailable:

@@ -124,6 +124,62 @@ func TestAppPullPositionalSlugNamesTheTwoSlots(t *testing.T) {
 	}
 }
 
+// TestAppPullBareInvocationNamesTheTwoSlots: `civitai app pull` with nothing at
+// all is the most likely FIRST-CONTACT invocation, and it was the one shape the
+// new validator did not cover — cobra's required-flag check answered it with
+// `required flag(s) "app" not set`, which never says the positional is the
+// directory.
+func TestAppPullBareInvocationNamesTheTwoSlots(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	_, _, err := run(t, "app", "pull")
+	if err == nil {
+		t.Fatal("expected a usage error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, `required flag(s) "app" not set`) {
+		t.Errorf("the raw cobra message is the regression: %q", msg)
+	}
+	for _, want := range []string{"--app", "DIRECTORY", "civitai app pull [dir] --app <slug>"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %q; got: %s", want, msg)
+		}
+	}
+	if !errors.Is(err, ErrUsage) {
+		t.Errorf("want a usage error (exit 2), got %T: %v", err, err)
+	}
+}
+
+// TestAppPullTooManyArgsWithTheFlagSetDoesNotBlameTheFlag: with `--app` already
+// present, "the app goes in --app" is a non sequitur — the app IS in --app, and
+// the only thing wrong is the extra positional.
+func TestAppPullTooManyArgsWithTheFlagSetDoesNotBlameTheFlag(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("CIVITAI_TOKEN", "tok-1")
+	_, _, err := run(t, "app", "pull", "a", "b", "--app", "my-block")
+	if err == nil {
+		t.Fatal("expected a usage error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "the app goes in --app") {
+		t.Errorf("--app was passed; got: %s", msg)
+	}
+	for _, want := range []string{"at most 1 arg", "DIRECTORY", "civitai app pull [dir] --app <slug>"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %q; got: %s", want, msg)
+		}
+	}
+	if !errors.Is(err, ErrUsage) {
+		t.Errorf("want a usage error (exit 2), got %T: %v", err, err)
+	}
+
+	// Control: WITHOUT --app the pointer to the flag is the whole point.
+	_, _, err = run(t, "app", "pull", "a", "b")
+	if err == nil || !strings.Contains(err.Error(), "the app goes in --app") {
+		t.Errorf("with no --app the message must still name where the app goes; got: %v", err)
+	}
+}
+
 // TestAppPullWithDirAndFlagIsAccepted is the negative control: the correct
 // invocation must still parse (the Args validator only rejects the shapes that
 // mean the user swapped the two slots).

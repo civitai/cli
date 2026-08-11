@@ -87,6 +87,110 @@ func TestAppPullNotApprovedSaysSoInsteadOfDenyingTheApp(t *testing.T) {
 	}
 }
 
+// TestAppPullTerminalSubmissionIsNotDescribedAsInReview: the CLI has
+// `subs[0].Status` in hand, so a submission that is REJECTED or WITHDRAWN — no
+// review pending, nothing arriving — must not be answered with "check where it
+// is in review". The next step there is a new submission.
+func TestAppPullTerminalSubmissionIsNotDescribedAsInReview(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		want   string
+	}{
+		{"rejected", "REJECTED"},
+		{"withdrawn", "WITHDRAWN"},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			srv := pullDisambiguationServer(t, `{"submissions":[
+				{"id":"p1","blockId":"my-block","appBlockId":null,"version":"0.2.0","status":"`+tc.status+`"}
+			]}`, http.StatusOK)
+			defer srv.Close()
+			pullEnv(t, srv)
+
+			_, _, err := run(t, "app", "pull", "--app", "my-block")
+			if err == nil {
+				t.Fatal("expected an error when nothing is approved yet")
+			}
+			msg := err.Error()
+			if strings.Contains(msg, "check where it is in review") {
+				t.Errorf("a %s submission is not in review; got: %s", tc.status, msg)
+			}
+			for _, want := range []string{tc.want, "civitai app submit"} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("missing %q; got: %s", want, msg)
+				}
+			}
+			if !errors.Is(err, civitai.ErrNotFound) {
+				t.Errorf("want not-found classification (exit 4), got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestAppPullPendingSubmissionStillPointsAtReview is the negative control for
+// the guard above: a PENDING submission genuinely is in review, and the review
+// pointer must not have been stripped for everyone.
+func TestAppPullPendingSubmissionStillPointsAtReview(t *testing.T) {
+	srv := pullDisambiguationServer(t, `{"submissions":[
+		{"id":"p1","blockId":"my-block","appBlockId":null,"version":"0.1.1","status":"pending"}
+	]}`, http.StatusOK)
+	defer srv.Close()
+	pullEnv(t, srv)
+
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "check where it is in review with `civitai app status my-block`") {
+		t.Errorf("a pending submission IS in review; got: %v", err)
+	}
+}
+
+// TestAppPullBlankSubmissionStateDropsTheParenthetical: the row's version and
+// status are server-supplied and can both be blank, which rendered the literal
+// `(latest submission:  )` — a field the CLI is telling the user to read, with
+// nothing in it.
+func TestAppPullBlankSubmissionStateDropsTheParenthetical(t *testing.T) {
+	srv := pullDisambiguationServer(t, `{"submissions":[
+		{"id":"p1","blockId":"my-block","appBlockId":null,"version":"","status":""}
+	]}`, http.StatusOK)
+	defer srv.Close()
+	pullEnv(t, srv)
+
+	_, _, err := run(t, "app", "pull", "--app", "my-block")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "latest submission") {
+		t.Errorf("with no version and no status there is nothing to report; got: %s", msg)
+	}
+	if !strings.Contains(msg, "no approved version yet") {
+		t.Errorf("the explanation itself must survive a blank row; got: %s", msg)
+	}
+}
+
+// TestAppPullAppBlockIDSelectorKeepsTheServerAnswer is an INVARIANT GUARD, not
+// regression coverage: it pins a known, deliberate limit rather than a fixed
+// defect. `--app` accepts a slug OR an appBlockId, but ListSubmissions filters on
+// `blockId` (which IS the slug), so an appBlockId matches no row and the
+// disambiguation declines. That costs nothing — the server nulls `appBlockId`
+// until a version is APPROVED, so a never-approved app has no appBlockId to
+// type — and the README says so. If someone later resolves the selector, this
+// test is what tells them the README paragraph moves with it.
+func TestAppPullAppBlockIDSelectorKeepsTheServerAnswer(t *testing.T) {
+	srv := pullDisambiguationServer(t, `{"submissions":[]}`, http.StatusOK)
+	defer srv.Close()
+	pullEnv(t, srv)
+
+	_, _, err := run(t, "app", "pull", "--app", "ab_0192abc")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !strings.Contains(err.Error(), "no such app for your account") {
+		t.Errorf("an appBlockId selector cannot be disambiguated by a slug-keyed lookup; got: %v", err)
+	}
+}
+
 // TestAppPullUnknownSlugKeepsTheServerAnswer is the negative control: with no
 // submissions at all the original message is the CORRECT one, and must survive.
 // Without this, "always say not-approved" would pass the test above.

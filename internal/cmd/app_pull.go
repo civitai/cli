@@ -92,11 +92,23 @@ approved; before then the command tells you so instead of failing obscurely.`,
 		// the slug positionally what the two slots ARE. enforceUsageExitCodes
 		// runs this before cobra's required-flag validator (root.go), so these
 		// messages win, and it tags them ErrUsage → exit 2, unchanged.
+		//
+		// The NO-ARGUMENT case is in here too: a bare `civitai app pull` is the
+		// most likely first-contact invocation, and leaving it to cobra's
+		// required-flag check answered it with `required flag(s) "app" not set`
+		// — the one message that never says the positional is the directory.
+		// The two-positional message is conditional for the same reason: with
+		// --app already set, "the app goes in --app" is a non sequitur, and the
+		// only thing wrong is the extra positional.
 		Args: func(cmd *cobra.Command, args []string) error {
+			hasApp := cmd.Flags().Changed("app")
 			if len(args) > 1 {
+				if hasApp {
+					return fmt.Errorf("accepts at most 1 arg (the target DIRECTORY), received %d: `civitai app pull [dir] --app <slug>`", len(args))
+				}
 				return fmt.Errorf("accepts at most 1 arg (the target DIRECTORY), received %d — the app goes in --app: `civitai app pull [dir] --app <slug>`", len(args))
 			}
-			if len(args) == 1 && !cmd.Flags().Changed("app") {
+			if !hasApp {
 				return fmt.Errorf("--app is required, and the positional argument is the DIRECTORY, not the app: `civitai app pull [dir] --app <slug>` (find the slug with `civitai app status`)")
 			}
 			return nil
@@ -144,6 +156,25 @@ approved; before then the command tells you so instead of failing obscurely.`,
 // Every uncertainty falls back to `orig`: a disambiguation that cannot be made
 // must never REPLACE the server's answer. The not-found classification is
 // re-applied verbatim, so the exit code (4) is unchanged — AGENTS.md item 7.
+//
+// 🔴 SO "no such app for your account" DOES NOT MEAN "no submission matches".
+// It is the answer whenever the CLI cannot prove otherwise, which is FOUR
+// states, three of them with a matching submission: the lookup itself failed, a
+// version IS approved, or `--app` carried an appBlockId rather than the slug.
+// The README section for this command must describe it that way — it once
+// promised the narrow reading, which is false in every one of those states.
+//
+// The appBlockId case is inherent, not an oversight: ListSubmissions filters on
+// `blockId`, which IS the slug (appapi.Submission.BlockID), so an appBlockId
+// selector returns no rows and falls back. It cannot cost anyone the good
+// message, because the server nulls `appBlockId` until a version is APPROVED —
+// a never-approved app has no appBlockId for the user to type. `--app` still
+// accepts one for the clone-info call itself, which resolves either spelling.
+//
+// The lookup is one extra request on an ALREADY-FAILING path, bounded by the
+// appapi client's 30s timeout (appapi.defaultTimeout); appapi.ListSubmissionsCap
+// documents why the row cap cannot hide the answer here — the listing is
+// filtered to this one slug, far below the cap.
 func explainMissingApp(ctx context.Context, list submissionLister, app string, orig error) error {
 	if list == nil || !errors.Is(orig, civitai.ErrNotFound) {
 		return orig
@@ -162,9 +193,29 @@ func explainMissingApp(ctx context.Context, list submissionLister, app string, o
 		}
 	}
 	// Newest first (ListSubmissions), so subs[0] is the state to report.
+	latest := ""
+	if state := strings.TrimSpace(strings.TrimSpace(subs[0].Version) + " " + strings.TrimSpace(subs[0].Status)); state != "" {
+		latest = " (latest submission: " + state + ")"
+	}
 	return civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
-		"app %q has no approved version yet — `civitai app pull` clones the repo that only exists once a submitted version is approved (latest submission: %s %s); check where it is in review with `civitai app status %s`",
-		app, subs[0].Version, subs[0].Status, app))
+		"app %q has no approved version yet — `civitai app pull` clones the repo that only exists once a submitted version is approved%s; %s",
+		app, latest, pullReviewAdvice(app, subs[0].Status)))
+}
+
+// pullReviewAdvice is the next step for an app with nothing approved. The state
+// is in hand (`Submission.Status`), so a TERMINAL one must not be described as
+// in progress: "check where it is in review" was printed for `rejected` and
+// `withdrawn` rows, where there is nothing in review to check — the next step is
+// a new submission.
+func pullReviewAdvice(app, status string) string {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "rejected":
+		return fmt.Sprintf("that submission was REJECTED, so nothing is in review — read why with `civitai app status %s`, then submit a new version with `civitai app submit`", app)
+	case "withdrawn":
+		return fmt.Sprintf("that submission was WITHDRAWN, so nothing is in review — submit a new version with `civitai app submit` (the history is in `civitai app status %s`)", app)
+	default:
+		return fmt.Sprintf("check where it is in review with `civitai app status %s`", app)
+	}
 }
 
 // runAppPull is the testable core: resolve the clone info, then clone (fresh

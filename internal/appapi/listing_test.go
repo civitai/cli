@@ -283,7 +283,7 @@ func TestListingErrorMapping(t *testing.T) {
 	}
 	for _, tc := range cases {
 		body, _ := json.Marshal(map[string]any{"error": map[string]any{"json": map[string]any{"message": tc.msg}}})
-		err := listingError(tc.status, body, trpcSetIcon)
+		err := listingError(tc.status, body, trpcSetIcon, listingOpChange)
 		if err == nil {
 			t.Fatalf("status %d: expected error", tc.status)
 		}
@@ -302,7 +302,7 @@ func TestListingErrorMapping(t *testing.T) {
 // entrypoint maps it to exit 4.
 func TestListingError404IsNotFoundAndApprovalWorded(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{"error": map[string]any{"json": map[string]any{"message": "no listing found"}}})
-	err := listingError(http.StatusNotFound, body, trpcSetIcon)
+	err := listingError(http.StatusNotFound, body, trpcSetIcon, listingOpChange)
 	if err == nil {
 		t.Fatal("expected an error for 404")
 	}
