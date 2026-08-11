@@ -694,6 +694,140 @@ func TestAppMetricsNoApprovedBlockYet(t *testing.T) {
 	}
 }
 
+// notApprovedSubmissionsBody is a one-row, never-approved submissions list
+// (appBlockId null) carrying an explicit review state. submissionsBody hard-codes
+// `"status":"approved"`, which is exactly the row that CANNOT exercise the
+// state-dependent advice — with a null appBlockId it is also incoherent — so the
+// terminal-state guards need their own fixture.
+func notApprovedSubmissionsBody(slug, status string) string {
+	b, _ := json.Marshal(map[string]any{"submissions": []any{
+		map[string]any{
+			"id": "pubreq_1", "blockId": slug, "version": "0.2.0", "status": status,
+			"submittedAt": "2026-06-20T08:00:00.000Z", "updatedAt": "2026-06-20T08:00:00.000Z",
+			"createdAt": "2026-06-20T08:00:00.000Z", "appBlockId": nil,
+		},
+	}})
+	return string(b)
+}
+
+// TestAppMetricsTerminalSubmissionIsNotDescribedAsInReview is the `app metrics`
+// half of the fix `app pull` got first.
+//
+// resolveAppBlockID reaches the identical precondition — submissions exist, none
+// carries an appBlockId — and open-coded "check where it is in review". So
+// `civitai app metrics my-block` on a REJECTED app told the author to check a
+// review that is not happening, while `civitai app pull my-block`, on the same
+// app in the same state, correctly said nothing is in review. Two adjacent
+// commands, one binary, contradictory answers.
+//
+// Red at the parent commit (4d69421): both subtests fail on the "check where it
+// is in review" assertion and on the missing REJECTED/WITHDRAWN + `civitai app
+// submit` strings.
+func TestAppMetricsTerminalSubmissionIsNotDescribedAsInReview(t *testing.T) {
+	for _, tc := range []struct {
+		status string
+		want   string
+	}{
+		{"rejected", "REJECTED"},
+		{"withdrawn", "WITHDRAWN"},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			var rec metricsRec
+			srv := metricsServer(t,
+				notApprovedSubmissionsBody("stuck-app", tc.status), http.StatusOK,
+				trpcEnvelope(verifiedAnalyticsPayload), http.StatusOK, &rec)
+			defer srv.Close()
+			setupMetricsEnv(t, srv.URL)
+
+			_, _, err := run(t, "app", "metrics", "stuck-app")
+			if err == nil {
+				t.Fatal("expected an error when every submission has a null appBlockId")
+			}
+			msg := err.Error()
+			if strings.Contains(msg, "check where it is in review") {
+				t.Errorf("a %s submission is not in review; got: %s", tc.status, msg)
+			}
+			for _, want := range []string{
+				"no approved App Block yet", // the precondition is unchanged
+				tc.want,                     // the state the CLI had in hand all along
+				"civitai app submit",        // the step that actually moves it
+			} {
+				if !strings.Contains(msg, want) {
+					t.Errorf("missing %q; got: %s", want, msg)
+				}
+			}
+			if rec.trpcReached {
+				t.Error("a null appBlockId must not reach the analytics query")
+			}
+
+			// 🔴 AGENTS.md item 7 — sharing the ADVICE must not move the CODE.
+			// This case is published under exit 1 (a resource that exists but is
+			// not ready); `app pull`'s twin is ErrNotFound → 4. A shared helper
+			// that returned an error instead of a string is exactly how one
+			// would silently acquire the other's classification.
+			if errors.Is(err, civitai.ErrNotFound) {
+				t.Errorf("a %s submission still means the app EXISTS — exit 4 promises it does not; got %T: %v", tc.status, err, err)
+			}
+			if errors.Is(err, ErrUsage) {
+				t.Errorf("a terminal submission is not a mistake about the invocation (exit 2); got %T: %v", err, err)
+			}
+		})
+	}
+}
+
+// TestPullAndMetricsGiveTheSameNextStepForTheSameState is the SEAM guard for the
+// shared predicate, and it is the assertion neither command's own tests can make.
+//
+// Both files above are green with two independent copies of the advice — that is
+// the world this fix found. The property is a RELATIONSHIP: for one app in one
+// state, the sentence `app metrics` prints and the sentence `app pull` prints
+// must be the same sentence. It reddens when either call site re-opens its own
+// copy, in either direction.
+func TestPullAndMetricsGiveTheSameNextStepForTheSameState(t *testing.T) {
+	for _, status := range []string{"rejected", "withdrawn", "pending"} {
+		t.Run(status, func(t *testing.T) {
+			// The advice is per-app-name, so both runs must use one slug.
+			const slug = "shared-app"
+			body := notApprovedSubmissionsBody(slug, status)
+
+			var rec metricsRec
+			msrv := metricsServer(t, body, http.StatusOK, trpcEnvelope(verifiedAnalyticsPayload), http.StatusOK, &rec)
+			defer msrv.Close()
+			setupMetricsEnv(t, msrv.URL)
+			_, _, mErr := run(t, "app", "metrics", slug)
+			if mErr == nil {
+				t.Fatal("app metrics: expected an error")
+			}
+
+			psrv := pullDisambiguationServer(t, body, http.StatusOK)
+			defer psrv.Close()
+			pullEnv(t, psrv)
+			_, _, pErr := run(t, "app", "pull", "--app", slug)
+			if pErr == nil {
+				t.Fatal("app pull: expected an error")
+			}
+
+			advice := pullReviewAdvice(slug, status)
+			// Positive control on the comparison: an advice string that is empty,
+			// or that no longer varies with the state, would make the two
+			// Contains checks below pass over anything.
+			if len(advice) < 30 || !strings.Contains(advice, slug) {
+				t.Fatalf("the shared advice is not a usable discriminator: %q", advice)
+			}
+			if status != "pending" && !strings.Contains(advice, "civitai app submit") {
+				t.Fatalf("a terminal state's advice must name the next submission: %q", advice)
+			}
+
+			if !strings.Contains(mErr.Error(), advice) {
+				t.Errorf("app metrics does not print the shared next step.\nwant substring: %s\ngot: %v", advice, mErr)
+			}
+			if !strings.Contains(pErr.Error(), advice) {
+				t.Errorf("app pull does not print the shared next step.\nwant substring: %s\ngot: %v", advice, pErr)
+			}
+		})
+	}
+}
+
 func TestAppMetricsPicksNewestNonNullAppBlockID(t *testing.T) {
 	var rec metricsRec
 	// Newest-first list whose newest row is an un-approved (null) resubmission —

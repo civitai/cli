@@ -209,6 +209,19 @@ func runAppMetrics(cmd *cobra.Command, deps appMetricsDeps, slug, from, to strin
 // submissions. `appBlockId` is null until a version is APPROVED, so a slug with
 // only pending/rejected submissions resolves to nothing — which is a distinct,
 // separately-actionable condition from "no such app".
+//
+// 🔴 THE "NOTHING APPROVED" NEXT STEP IS SHARED WITH `app pull`, NOT COPIED.
+// explainMissingApp (app_pull.go) answers the IDENTICAL precondition — rows
+// exist, none carries an appBlockId — and this function open-coded its own
+// "check where it is in review", so the same user with the same REJECTED app got
+// two contradictory answers from adjacent commands: `app pull` said nothing is
+// in review, `app metrics` sent them to check a review that is not happening.
+// One rule, one place: both call pullReviewAdvice.
+//
+// AGENTS.md item 7: only the ADVICE is shared. pullReviewAdvice returns a
+// string and carries no classification, so this error stays UNTAGGED — the
+// generic exit 1, a resource that exists but is not ready — while `app pull`'s
+// stays civitai.ErrNotFound (exit 4). Sharing it cannot move either code.
 func resolveAppBlockID(ctx context.Context, list func(context.Context, string) ([]appapi.Submission, error), slug string) (string, error) {
 	if slug == "" {
 		return "", asUsageError(fmt.Errorf("an app slug is required — list yours with `civitai app status`"))
@@ -227,8 +240,9 @@ func resolveAppBlockID(ctx context.Context, list func(context.Context, string) (
 			return *subs[i].AppBlockID, nil
 		}
 	}
-	return "", fmt.Errorf("app %q has no approved App Block yet — analytics only exist once a submitted version is approved; "+
-		"check where it is in review with `civitai app status %s`", slug, slug)
+	// Newest first, so subs[0] is the state whose next step to name.
+	return "", fmt.Errorf("app %q has no approved App Block yet — analytics only exist once a submitted version is approved; %s",
+		slug, pullReviewAdvice(slug, subs[0].Status))
 }
 
 // writeRawJSON pretty-prints the server payload verbatim (no re-marshalling, so

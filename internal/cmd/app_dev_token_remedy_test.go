@@ -102,8 +102,10 @@ func TestReadOnlyWarningDropsSatisfiedManifestAdvice(t *testing.T) {
 
 // TestDevTokenSaysTheSameThingOnceAroundTheToken is defect 3, end-to-end: the
 // manifest declares the scope, --spend is absent and the credential CAN spend,
-// so the pre-mint notice and the post-token warning had the identical cause and
-// the identical remedy — printed either side of the token on stdout.
+// so spendFilteredNotice and the post-token warning had the identical cause and
+// the identical remedy — printed either side of the token on stdout. (That
+// notice is emitted after the mint and before the token; it was pre-mint until
+// the rename fix, and calling it "the pre-mint notice" is now wrong.)
 func TestDevTokenSaysTheSameThingOnceAroundTheToken(t *testing.T) {
 	writeManifestWithScopes(t, `["user:read:self","ai:write:budgeted"]`)
 	srv := spendCapableDevTokenServer(t, makeJWT(t, []string{"user:read:self"}))
@@ -122,10 +124,10 @@ func TestDevTokenSaysTheSameThingOnceAroundTheToken(t *testing.T) {
 		t.Errorf("the --spend re-mint must be printed exactly once, got %d times:\n%s", n, errOut)
 	}
 	if !strings.Contains(errOut, "does NOT request budgeted spend") {
-		t.Errorf("the surviving notice must still be the pre-mint one that names the manifest; got:\n%s", errOut)
+		t.Errorf("the surviving notice must still be spendFilteredNotice, which names the manifest; got:\n%s", errOut)
 	}
 	if strings.Contains(errOut, "READ-ONLY") {
-		t.Errorf("the post-token READ-ONLY warning repeats the pre-mint notice's cause and remedy here; got:\n%s", errOut)
+		t.Errorf("the post-token READ-ONLY warning repeats spendFilteredNotice's cause and remedy here; got:\n%s", errOut)
 	}
 	for _, l := range devTokenCommandLines(errOut) {
 		if !strings.Contains(l, "--spend") {
@@ -228,7 +230,7 @@ func TestDevTokenSuppressionNeverLeavesAStaleSlugCommand(t *testing.T) {
 
 // TestDevTokenReadOnlyWarningSurvivesWhenTheCauseDiffers is the negative control
 // for the suppression: when the credential CANNOT spend, the post-token warning
-// names a cause the pre-mint notice never mentions, so suppressing it would lose
+// names a cause spendFilteredNotice never mentions, so suppressing it would lose
 // the only line that says "fix your credential".
 func TestDevTokenReadOnlyWarningSurvivesWhenTheCauseDiffers(t *testing.T) {
 	writeManifestWithScopes(t, `["user:read:self","ai:write:budgeted"]`)

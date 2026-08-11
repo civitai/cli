@@ -19,16 +19,43 @@ import (
 // submissions is written straight to the wire so a row can carry a NULL
 // appBlockId, which is the actual discriminator: the server nulls it until a
 // version is APPROVED.
+//
+// 🔴 IT FILTERS ON `?blockId=`, LIKE THE REAL ROUTE, AND THAT IS LOAD-BEARING.
+// It used to ignore the query and hand its fixture back for any request, which
+// made TestAppPullAppBlockIDSelectorKeepsTheServerAnswer vacuous: that test's
+// fixture is empty, so the run took the len(subs)==0 branch and was
+// byte-identical to TestAppPullUnknownSlugKeepsTheServerAnswer below — the
+// appBlockId in `--app` decided nothing. The real route's zod query schema
+// accepts only `id` and `blockId` (see appapi.ListSubmissionsCap), and `blockId`
+// IS the slug, so only a filtering fake can tell a slug selector from an
+// appBlockId one.
 func pullDisambiguationServer(t *testing.T, submissions string, submissionsStatus int) *httptest.Server {
 	t.Helper()
+	return pullDisambiguationServerRec(t, submissions, submissionsStatus, nil)
+}
+
+// pullDisambiguationServerRec is the same server, additionally recording every
+// `?blockId=` filter it was asked for (in order) into seen. The REQUEST is the
+// only place the selector's spelling is observable — the reply for an appBlockId
+// is empty either way — so a test that wants to pin "the appBlockId went out
+// verbatim as the slug filter" has to read it here.
+func pullDisambiguationServerRec(t *testing.T, submissions string, submissionsStatus int, seen *[]string) *httptest.Server {
+	t.Helper()
+	// Parsed HERE, on the test goroutine: a t.Fatalf inside the handler would
+	// run on the server's goroutine, where FailNow is not allowed.
+	rows := parseSubmissionRows(t, submissions)
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/blocks/submissions") {
+			filter := r.URL.Query().Get("blockId")
+			if seen != nil {
+				*seen = append(*seen, filter)
+			}
 			if submissionsStatus != 0 && submissionsStatus != http.StatusOK {
 				w.WriteHeader(submissionsStatus)
 				_ = json.NewEncoder(w).Encode(map[string]string{"message": "nope"})
 				return
 			}
-			_, _ = w.Write([]byte(submissions))
+			_, _ = w.Write([]byte(filterSubmissionRows(rows, filter)))
 			return
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -36,6 +63,54 @@ func pullDisambiguationServer(t *testing.T, submissions string, submissionsStatu
 			"error": map[string]any{"json": map[string]any{"message": "App block not found", "code": 404}},
 		})
 	}))
+}
+
+// parseSubmissionRows splits a fixture envelope into its rows, kept as raw JSON.
+// Rows are NEVER round-tripped through appapi.Submission: that would render a
+// null appBlockId as Go's zero value, and the null is the discriminator every
+// test in this file turns on.
+func parseSubmissionRows(t *testing.T, body string) []json.RawMessage {
+	t.Helper()
+	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	var wrap struct {
+		Submissions []json.RawMessage `json:"submissions"`
+	}
+	if err := json.Unmarshal([]byte(body), &wrap); err != nil {
+		t.Fatalf("submissions fixture is not a `{\"submissions\":[…]}` envelope: %v\n%s", err, body)
+	}
+	for _, row := range wrap.Submissions {
+		var only struct {
+			BlockID string `json:"blockId"`
+		}
+		if err := json.Unmarshal(row, &only); err != nil {
+			t.Fatalf("submissions fixture row is not an object: %v\n%s", err, row)
+		}
+	}
+	return wrap.Submissions
+}
+
+// filterSubmissionRows applies the route's own `where.slug` filter. An empty
+// blockID is the UNFILTERED listing the route also allows.
+func filterSubmissionRows(rows []json.RawMessage, blockID string) string {
+	kept := make([]json.RawMessage, 0, len(rows))
+	for _, row := range rows {
+		if blockID == "" {
+			kept = append(kept, row)
+			continue
+		}
+		var only struct {
+			BlockID string `json:"blockId"`
+		}
+		// Parsed at construction time, so this cannot fail here.
+		_ = json.Unmarshal(row, &only)
+		if only.BlockID == blockID {
+			kept = append(kept, row)
+		}
+	}
+	out, _ := json.Marshal(map[string]any{"submissions": kept})
+	return string(out)
 }
 
 func pullEnv(t *testing.T, srv *httptest.Server) {
@@ -177,8 +252,33 @@ func TestAppPullBlankSubmissionStateDropsTheParenthetical(t *testing.T) {
 // until a version is APPROVED, so a never-approved app has no appBlockId to
 // type — and the README says so. If someone later resolves the selector, this
 // test is what tells them the README paragraph moves with it.
+//
+// 🔴 IT PINS THE REQUEST, BECAUSE THE REPLY CANNOT DISCRIMINATE. The first
+// version asserted only the message, against a `{"submissions":[]}` fixture and
+// a fake that ignored the query — so it took the len(subs)==0 branch and was
+// byte-identical to TestAppPullUnknownSlugKeepsTheServerAnswer below. Measured:
+// a mutant implementing the very future fix this comment says it would catch,
+// PLUS swapping `ab_0192abc` for a plain unknown slug, left all 33 TestAppPull*
+// tests passing. Nothing about the appBlockId was load-bearing.
+//
+// Note what CANNOT be pinned, so nobody re-derives it: the OUTCOME can never
+// differ. Any world where a user can type an appBlockId is a world where some
+// row carries one, and explainMissingApp scans every row and defers to `orig`
+// the moment it finds one — so "resolve the selector" reaches the same fallback
+// by a different route. The observable that does move is the REQUEST: today the
+// `--app` value goes out verbatim as `?blockId=`, untranslated. That is the
+// mechanism the README paragraph describes, and reading it is what makes both
+// the selector's spelling and the future fix visible to this test.
 func TestAppPullAppBlockIDSelectorKeepsTheServerAnswer(t *testing.T) {
-	srv := pullDisambiguationServer(t, `{"submissions":[]}`, http.StatusOK)
+	// A REAL app with nothing approved — the state the good message exists for.
+	// The empty fixture this replaces gave the server nothing to give ANYONE,
+	// which is what made a passing run meaningless.
+	const fixture = `{"submissions":[
+		{"id":"p1","blockId":"my-block","appBlockId":null,"version":"0.3.0","status":"pending"}
+	]}`
+
+	var seen []string
+	srv := pullDisambiguationServerRec(t, fixture, http.StatusOK, &seen)
 	defer srv.Close()
 	pullEnv(t, srv)
 
@@ -186,8 +286,30 @@ func TestAppPullAppBlockIDSelectorKeepsTheServerAnswer(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error")
 	}
+	// THE MECHANISM: the appBlockId left as the slug filter, verbatim.
+	if len(seen) != 1 || seen[0] != "ab_0192abc" {
+		t.Errorf("the disambiguation is keyed on the SLUG and must send `--app` verbatim as `?blockId=`; "+
+			"the lookup asked for %q. If the selector is now resolved, the README paragraph for "+
+			"`app pull` moves with it — it tells readers an appBlockId is never the not-approved case.", seen)
+	}
+	// THE CONSEQUENCE: a slug-keyed lookup matches no row, so the server's answer stands.
 	if !strings.Contains(err.Error(), "no such app for your account") {
 		t.Errorf("an appBlockId selector cannot be disambiguated by a slug-keyed lookup; got: %v", err)
+	}
+	if strings.Contains(err.Error(), "no approved version yet") {
+		t.Errorf("the disambiguation must decline for an appBlockId selector, not guess; got: %v", err)
+	}
+
+	// POSITIVE CONTROL, on the SAME server: the fixture really can produce the
+	// other answer, reached by the slug. Without it, both assertions above are
+	// equally satisfied by a server with nothing to give anyone.
+	seen = nil
+	_, _, slugErr := run(t, "app", "pull", "--app", "my-block")
+	if slugErr == nil || !strings.Contains(slugErr.Error(), "no approved version yet") {
+		t.Fatalf("the fixture cannot produce the good message for ANY selector — the assertions above are vacuous; got: %v", slugErr)
+	}
+	if len(seen) != 1 || seen[0] != "my-block" {
+		t.Fatalf("the positive control did not reach the lookup with the slug; asked for %q", seen)
 	}
 }
 

@@ -125,6 +125,14 @@ var exitCodeDocs = []ExitCodeDoc{
 			"A **validation verdict** lands here, and deliberately not on `2`: `civitai app validate` exits `1` when the manifest is invalid, and likewise when the directory you named is a real directory with no `block.manifest.json` at its root — you pointed at a real place, so the invocation was right and the project is wrong. (A path that does **not exist**, or that is not a directory, is the invocation being wrong, and exits `2`.)",
 			"**When validation produces a result**, `civitai app validate --json` prints it in full and its `ok` field is the structured form of the same answer; a failure that produces no result at all — a project directory the CLI cannot **stat**, say, because it is unreadable or because a path component below it is not a directory — still exits `1` with **nothing on stdout**, so branch on the exit code before parsing. The full exit→stdout table is in [The `--json` result shape](#the---json-result-shape).",
 			"A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval.",
+			// 🔴 ADDED, NOT MERGED INTO THE BULLET ABOVE. That bullet is verbatim
+			// pre-split text and TestEveryPreSplitClauseSurvives requires both its
+			// sentences to stay published word for word, so the correction has to
+			// arrive beside them. "Wait for approval" was true for the only state
+			// anyone had measured (pending) and false for the two the CLI can also
+			// be handed, and `app metrics` printed "check where it is in review"
+			// for all three until pullReviewAdvice became shared.
+			"**\"Wait for approval\" is the *pending* case only.** The same `1` covers an app whose latest submission was **rejected** or **withdrawn** — nothing is in review there, so `civitai app metrics <slug>` says so and names a new `civitai app submit` as the next step instead of a review to wait for. What separates `1` from `4` is unchanged: the slug is right and the app exists.",
 		},
 	},
 	{

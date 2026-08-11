@@ -207,6 +207,17 @@ func explainMissingApp(ctx context.Context, list submissionLister, app string, o
 // in progress: "check where it is in review" was printed for `rejected` and
 // `withdrawn` rows, where there is nothing in review to check — the next step is
 // a new submission.
+//
+// 🔴 TWO CALLERS, ONE RULE. `app metrics` (resolveAppBlockID, app_metrics.go)
+// reaches the SAME precondition by a different route — submissions exist, none
+// carries an appBlockId — and it open-coded the same sentence, so a rejected app
+// was told to check a review by one command and told nothing is in review by the
+// other, out of one binary. Anything state-dependent about "nothing is approved
+// yet" belongs here, not at a call site.
+//
+// It returns a STRING and no error classification on purpose: the two callers
+// publish different exit codes for this state (pull 4, metrics 1 — AGENTS.md
+// item 7), so the shared piece must be incapable of moving either.
 func pullReviewAdvice(app, status string) string {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "rejected":

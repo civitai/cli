@@ -475,14 +475,14 @@ which reads like a broken graph. Budget for the seconds the graph needs.`,
 				if id, whoErr := client.WhoAmI(context.Background()); whoErr == nil {
 					canSpend = id.CanSpendBuzz()
 				}
-				// 🔴 SAY IT ONCE. spendFilteredNotice already fired BEFORE the
-				// mint, and when the credential can spend it named the same
-				// cause and the same `--spend` re-mint this warning would. The
-				// token is printed to stdout in between, so emitting both put
-				// the identical advice on either side of the token
-				// (civitai/cli#362). Suppress only for that exact overlap —
-				// when the credential CANNOT spend, this warning names a cause
-				// (the credential) the pre-mint notice never mentions.
+				// 🔴 SAY IT ONCE. spendFilteredNotice already fired ABOVE —
+				// after the mint, before the token — and when the credential
+				// can spend it named the same cause and the same `--spend`
+				// re-mint this warning would. The token is printed to stdout in
+				// between, so emitting both put the identical advice on either
+				// side of the token (civitai/cli#362). Suppress only for that
+				// exact overlap — when the credential CANNOT spend, this warning
+				// names a cause (the credential) that notice never mentions.
 				//
 				// 🔴 THE SUPPRESSION IS SOUND ONLY BECAUSE THE SURVIVING NOTICE
 				// IS EMITTED ABOVE, AFTER THE MINT. Silencing this warning makes
