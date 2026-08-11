@@ -280,7 +280,7 @@ func wantForOp(op listingOp) (want, notWant []string) {
 		// what is true of every change route — the write may have landed in
 		// part. See listingError's change arm for the per-route derivation.
 		return []string{"store-listing change", "may have partially applied", "civitai app listing status"},
-			[]string{"nothing was changed", "image-upload", "store-listing lookup", "fix the value"}
+			[]string{"nothing was changed", "image-upload", "store-listing lookup", valueBlame}
 	}
 	return nil, nil
 }
@@ -603,7 +603,7 @@ func TestUnclassifiedRouteClaimsNothing(t *testing.T) {
 		// Both stay listed: an unclassified route may claim NEITHER, and a
 		// forbidden phrase that no arm can produce is a dead assertion, so the
 		// live one has to be the one in the code today.
-		"fix the value", "partially applied",
+		valueBlame, changeRemedy,
 	} {
 		if strings.Contains(msg, forbidden) {
 			t.Errorf("an unclassified route must claim nothing about the listing, but says %q: %s", forbidden, msg)
