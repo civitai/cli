@@ -60,8 +60,11 @@ var (
 	}
 )
 
-// assignmentRE matches an uncommented `KEY=` declaration line.
-var assignmentRE = regexp.MustCompile(`(?m)^([A-Z][A-Z0-9_]*)=`)
+// assignmentRE matches an uncommented `KEY=` declaration line. Deliberately not
+// restricted to SHOUTING_CASE: dotenv keys are uppercase by convention only, and
+// a convention is not a rule the ledger below may rely on — a lower-case key
+// would otherwise be invisible to every check in this file.
+var assignmentRE = regexp.MustCompile(`(?m)^([A-Za-z_][A-Za-z0-9_]*)=`)
 
 // destinationRE matches the destination annotation: a commented-out example
 // assignment carrying the file the real value belongs in. It is the shape the
