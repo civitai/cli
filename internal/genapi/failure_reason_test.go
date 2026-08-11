@@ -6,7 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"unicode"
+
+	"github.com/civitai/cli/internal/saferune"
 )
 
 // civitai/cli#367 — THE ORCHESTRATOR RECORDS WHY A STEP FAILED AND THE CLI
@@ -212,18 +213,54 @@ func TestFailureReasons_AReasonWithNoPrintableContentIsDropped(t *testing.T) {
 	}
 }
 
-// stripControlRunes mirrors what a terminal renderer removes, so a test can
-// assert on what the user actually sees. It is a TEST helper: the production
-// stripper is internal/cmd's safeTerm, and genapi deliberately does not own one.
-func stripControlRunes(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		if !unicode.IsControl(r) {
-			b.WriteRune(r)
-		}
+// 🔴 THE SAME RULE FOR RUNES `unicode.IsControl` CANNOT SEE — civitai/cli#393.
+// The test above uses NUL and ESC, which are Cc, so it passed both before and
+// after the fix and is structurally blind to the class that motivated it. These
+// three reasons carry no Cc byte at all: a zero-width space, a braille blank
+// and a right-to-left override, each of which renders as nothing (or as a
+// reordering) and each of which the old predicate counted as content.
+//
+// The mixed entry is the positive control and it is deliberately last in the
+// array: a fix that dropped everything, or that stopped at the first entry,
+// fails here rather than passing for the wrong reason.
+func TestFailureReasons_AReasonOfOnlyInvisibleRunesIsDropped(t *testing.T) {
+	payload := `{"id":"wf_1","status":"failed","steps":[{"$type":"imageGen","name":"$0","status":"failed",
+	  "metadata":{},"output":{"images":[{"id":"out_1","available":false}],
+	  "errors":["\u200b\u200b","⠀⠀⠀","\u202e\u202c","\u200bFIXTURE x\u202e"]}}]}`
+	var wf Workflow
+	if err := json.Unmarshal([]byte(payload), &wf); err != nil {
+		t.Fatalf("fixture: %v", err)
 	}
-	return b.String()
+	got := wf.FailureReasons()
+	if len(got) != 1 {
+		t.Fatalf("FailureReasons() = %q, want exactly the one entry that renders as something", got)
+	}
+	if !strings.Contains(got[0], "FIXTURE x") {
+		t.Errorf("the surviving reason is not the one with visible content: %q", got[0])
+	}
+
+	outs := wf.Outputs()
+	if len(outs) != 1 {
+		t.Fatalf("CONTROL failure, not a finding: %d outputs, want 1", len(outs))
+	}
+	rendered := stripControlRunes(ExclusionReason(outs[0]))
+	if strings.Contains(rendered, "reported: )") {
+		t.Errorf("an all-invisible reason produced an empty parenthetical: %q", rendered)
+	}
+	if !strings.Contains(rendered, "reported: FIXTURE x)") {
+		t.Errorf("the surviving reason did not reach the sentence: %q", rendered)
+	}
 }
+
+// stripControlRunes is what a terminal renderer removes, so a test can assert
+// on what the user actually sees.
+//
+// 🔴 IT DELEGATES, AND IT USED TO MIRROR. Its own copy of the rule was
+// `!unicode.IsControl` — which is Cc-only, so this helper's idea of "what the
+// user sees" kept U+200B and the test could not see the empty parenthetical
+// civitai/cli#393 is about. A test helper that re-implements the thing under
+// test is a third table, and it drifted exactly like the second one did.
+func stripControlRunes(s string) string { return saferune.Strip(s) }
 
 func equalStrings(a, b []string) bool {
 	if len(a) != len(b) {

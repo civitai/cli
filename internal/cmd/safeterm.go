@@ -1,39 +1,41 @@
 package cmd
 
-import "strings"
+import (
+	"strings"
 
-// safeTerm strips terminal control characters from a SERVER-ORIGIN string before
-// it is printed to the user's terminal, so a malicious uploader cannot inject
-// ANSI/OSC escape sequences through model/version names, usernames, tags,
-// creators, base-model labels, descriptions, download/image URLs, article
-// titles/authors, trained words, or file names.
+	"github.com/civitai/cli/internal/saferune"
+)
+
+// safeTerm strips the runes a SERVER-ORIGIN string may not put on the user's
+// terminal, before it is printed, so a malicious uploader cannot inject
+// ANSI/OSC escape sequences — or invisible and direction-altering characters —
+// through model/version names, usernames, tags, creators, base-model labels,
+// descriptions, download/image URLs, article titles/authors, trained words,
+// file names, or an orchestrator failure reason.
 //
 // Without this, a hostile field can perform terminal OUTPUT FORGERY: cursor
 // moves + line-clears (\x1b[1A\x1b[2K) to overwrite the CLI's own "SHA256
 // verified" line or hide a warning, an OSC-52 clipboard-set (\x1b]52;c;...\x07),
 // or a window-title spoof.
 //
-// Removed: every C0 control byte (0x00–0x1F) and DEL (0x7F) EXCEPT newline and
-// tab (legitimate layout), plus the C1 control range (U+0080–U+009F) — the 8-bit
-// forms of the CSI/OSC escape introducers (0x9B = CSI, 0x9D = OSC, …). Ordinary
-// printable and multibyte UTF-8 text passes through byte-for-byte.
+// 🔴 IT IS THE ONE GATE, AND WHAT IT REMOVES IS DEFINED ONE LAYER DOWN.
+// `internal/saferune` owns the class — every C0 control and DEL except newline
+// and tab, the C1 range (the 8-bit CSI/OSC introducers), all of `unicode.Cf`
+// (zero-width spaces and joiners, the bidi overrides/embeddings/isolates that
+// reverse the DISPLAYED order of a line) and the handful of runes that render
+// as blank while Unicode calls them a letter or a symbol. Read that package's
+// doc comment before changing what is stripped: it states what is deliberately
+// KEPT (combining marks, right-to-left script, private-use, whitespace
+// separators) and the cost the strip knowingly accepts. Do not add a second
+// table here — civitai/cli#393 was two tables that disagreed.
+//
+// Ordinary printable and multibyte UTF-8 text passes through byte-for-byte.
 //
 // Only the HUMAN (table/detail) renderers call this. `--json` output is emitted
 // RAW: control characters are already \uXXXX-escaped in spec-compliant JSON, so a
 // pipe is safe and sanitizing would corrupt machine-readable bytes.
 func safeTerm(s string) string {
-	if !strings.ContainsFunc(s, isStrippedControl) {
-		return s
-	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, ch := range s {
-		if isStrippedControl(ch) {
-			continue
-		}
-		b.WriteRune(ch)
-	}
-	return b.String()
+	return saferune.Strip(s)
 }
 
 // indentContinuation prefixes every line of s AFTER the first with pad, so a
@@ -93,10 +95,11 @@ func indentContinuation(s, pad string) string {
 // and nothing here can prevent it. The residual is stated in the README too.
 //
 // A second, narrower case of the same gap: the budget counts RUNES, and a rune
-// is not a display cell. 38 East Asian wide runes occupy 76 columns, so a line
-// this function considers 38 wide is 76 wide on screen. Fixing that needs a
-// character-width table (a new dependency, or a hand-rolled one) and is filed
-// separately rather than smuggled in here.
+// is not a display cell. Measured at listReasonWrapWidth: 75 CJK runes occupy
+// 150 columns, so a line this function considers inside a 75-wide budget is
+// twice that on screen. Fixing it needs a character-width table (a new direct
+// dependency, or a hand-rolled one) and is civitai/cli#397 — filed separately
+// rather than smuggled in here.
 //
 // It reuses wrapTokens (validate_print.go), the CLI's one greedy line filler, so
 // the wrapped surfaces cannot disagree about how a line is broken.
@@ -133,10 +136,19 @@ func wrapServerText(s string, width int) string {
 // "silently overflowing into a column an attacker can forge a row in, versus a
 // visibly broken token". Demonstrated, not hypothesised: a single token of
 // U+2800 BRAILLE PATTERN BLANK padding around row-shaped text renders as a
-// spaced table row, is ONE token to strings.Fields, is above U+009F so safeTerm
-// keeps it, and passes the server's own `isLikelySafeMessage` (under 300 chars,
-// single line, matches no unsafe pattern) — so it arrives verbatim, produced a
-// 266-rune emitted line, and the terminal placed its tail at column zero.
+// spaced table row, is ONE token to strings.Fields, and passes the server's own
+// `isLikelySafeMessage` (under 300 chars, single line, matches no unsafe
+// pattern) — so it arrived verbatim, produced a 266-rune emitted line, and the
+// terminal placed its tail at column zero.
+//
+// 🔴 THAT PARTICULAR PAYLOAD NO LONGER REACHES HERE, AND THIS IS STILL LOAD
+// BEARING. civitai/cli#393 added U+2800 (and every other invisible rune) to
+// what safeTerm strips, so the demonstration above now arrives as
+// `wf_forgedsucceeded` — one visibly-joined token, not a row. What it
+// demonstrated is unchanged: an over-long single token, which a 200-character
+// URL, an id or an unspaced foreign-script sentence produces without any
+// invisible rune at all. Deleting this because its original fixture was closed
+// upstream would reopen the overflow for every one of those.
 //
 // It is applied HERE and not in wrapTokens on purpose. wrapTokens is shared with
 // printFinding, where findingTokens deliberately keeps a quoted span whole so
@@ -161,15 +173,7 @@ func hardSplitOverlong(tokens []string, width int) []string {
 	return out
 }
 
-// isStrippedControl reports whether r is a terminal control character safeTerm
-// removes: any C0 control or DEL (other than newline and tab), or any C1 control
-// (U+0080–U+009F).
-func isStrippedControl(r rune) bool {
-	if r == '\n' || r == '\t' {
-		return false
-	}
-	if r < 0x20 || r == 0x7f {
-		return true
-	}
-	return r >= 0x80 && r <= 0x9f
-}
+// (isStrippedControl lived here. It WAS safeTerm's table; it is now
+// saferune.Stripped, so that internal/genapi can ask the same question and get
+// the same answer — civitai/cli#393 was two spellings of one rule that
+// disagreed.)

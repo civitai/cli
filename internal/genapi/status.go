@@ -8,7 +8,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"unicode"
+
+	"github.com/civitai/cli/internal/saferune"
 )
 
 // GetWorkflowPath is the read-back query for one workflow.
@@ -193,14 +194,18 @@ type Step struct {
 // rune is dropped HERE, where "does this string say anything at all" is a
 // question about content.
 //
-// This is NOT terminal sanitisation and does not duplicate safeTerm's table:
-// safeTerm decides what is safe to WRITE to a terminal and stays in internal/cmd
-// (`--json` never passes through it). This decides whether there is anything to
-// say, which is true of any medium. The two overlap without either owning the
-// other, and unicode.IsControl is the weaker, self-contained test.
+// This is NOT terminal sanitisation: safeTerm decides what is safe to WRITE to
+// a terminal and stays in internal/cmd (`--json` never passes through either of
+// them). This decides whether there is anything to say, which is true of any
+// medium. 🔴 BUT THE TWO MUST AGREE ABOUT WHICH RUNES RENDER AS NOTHING, AND
+// FOR ONE RELEASE THEY DID NOT — that is civitai/cli#393. This side used
+// `unicode.IsControl`, which is Cc-only, so a reason made entirely of U+200B
+// ZERO WIDTH SPACE counted as content, displaced the categorical fallback and
+// rendered as the empty parenthetical above anyway. Both sides now ask
+// `internal/saferune`, which is why it is a package and not a function.
 //
 // 🔴 It is emptiness, never meaning: item 13 forbids judging what a reason SAYS,
-// and nothing here reads the words. A reason with one printable rune survives.
+// and nothing here reads the words. A reason with one visible rune survives.
 func (s Step) failureReasons() []string { return dedupeReasons(s.Output.Errors) }
 
 // dedupeReasons is THE rule for turning a server-supplied `errors` array into
@@ -240,17 +245,15 @@ func dedupeReasons(raw []string) []string {
 	return out
 }
 
-// hasPrintableContent reports whether s contains at least one rune that is not a
-// control character — i.e. whether it would still say something after a renderer
-// has removed the bytes no terminal should receive.
-func hasPrintableContent(s string) bool {
-	for _, r := range s {
-		if !unicode.IsControl(r) {
-			return true
-		}
-	}
-	return false
-}
+// hasPrintableContent reports whether s would still say something once a
+// renderer has removed the runes no terminal should receive — i.e. whether what
+// survives is more than whitespace.
+//
+// It delegates rather than deciding, and the delegation IS the fix for
+// civitai/cli#393: the answer has to be the complement of what safeTerm strips,
+// and any local re-statement of that here is a second table that will drift
+// from the first. See internal/saferune.
+func hasPrintableContent(s string) bool { return saferune.HasVisibleContent(s) }
 
 // FailureReasons returns every server-supplied reason on the workflow, in step
 // order.

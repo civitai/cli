@@ -143,6 +143,11 @@ These go beyond the global defaults because this repo's release pipeline
   `pkg/civitai` (that is the public read/download SDK) because generation is a
   money-spending surface whose wire shape is not a public contract. Read
   items 12–17, 19, 21 and 22 before touching it.
+- `internal/saferune` — the ONE rule about which runes SERVER-supplied text may
+  put in front of a user: C0/C1, all of `unicode.Cf` (zero-width, the bidi
+  overrides) and six blank-but-graphic runes. `cmd`'s `safeTerm` and `genapi`'s
+  `hasPrintableContent` both call it; #393 was two tables that disagreed. Its
+  doc comment states what is deliberately KEPT and what the strip costs.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to
   `go:embed` the vendored `schema/` and `examples/`. It is not the executable.
 - `npm/` — the `@civitai/cli` wrapper (postinstall downloads the matching raw
