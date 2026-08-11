@@ -316,7 +316,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). **A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`** — `civitai app submit --yes` is the CI form. (The refusal is reached only when there is a token to upload with: `--package-only`, and the no-token fallback that just writes the .zip, never submit and so never ask.) |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
-| `civitai app status [blockId] [--id <pubreq>] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
+| `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. Idempotent; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
@@ -496,8 +496,10 @@ npm run dev:live
 
 `dev-token` reads the scopes to request from your **local**
 `block.manifest.json`, so it works on a slug you have never submitted.
-`.env.development*` is never committed (`submit` excludes it) and the token is
-short-lived (~4h) — re-run `dev-token` when it expires. For real generation mint
+`.env.development.local` is the git-ignored one (the scaffold's `.gitignore`
+covers `.env.*.local`; `.env.development` itself is tracked, and holds no secret
+as scaffolded). `submit` excludes both, and the token is short-lived (~4h) —
+re-run `dev-token` when it expires. For real generation mint
 with a spend-capable credential (**full-scope personal API key** or
 `civitai login --scopes generate`) **and** add `--spend`: the CLI never asks for
 budgeted spend implicitly — **even when your manifest declares it** (the
@@ -1041,7 +1043,7 @@ does not block on them.
 
 The **durable fix** is a server-side `civitai app validate` endpoint that calls
 the real `BlockManifestValidator` (the faithful contract), with this schema
-published as the syntactic half. See [`AGENTS.md`](AGENTS.md) for the full
+published as the syntactic half. See [`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) for the full
 caveat and how the vendored schema + Go checks are kept in sync.
 
 ### The `--json` result shape
@@ -1185,6 +1187,39 @@ only credential carrying the rest of the Full scope mask.
 
 `--package-only` always just writes the `.zip` and stops.
 
+#### Which dotenv files end up in the bundle
+
+"The CLI excludes dotenv files" is the natural reading of the `.env.development*`
+sentence above, and it is **not** what the packager does. The rule is a
+**three-name allow-list with a catch-all**, not a blanket exclusion and not the
+enumeration the table below might otherwise read as:
+
+> **Every file whose base name starts with `.env` is excluded — except
+> `.env.example`, `.env.sample` and `.env.production`, which are always
+> included.**
+
+| file | in the bundle? | why |
+| --- | --- | --- |
+| `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, dotted or not: `.env.staging`, `.env-local`, and `.envrc` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template tells you to paste a real `VITE_LIVE_BLOCK_TOKEN` into `.env.development`; `.envrc` is the direnv convention and routinely holds exported credentials. |
+| `.env.example`, `.env.sample` | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` has a `VITE_LIVE_BLOCK_TOKEN=` line it invites you to fill in |
+| `.env.production` | **included** | the platform build runs `vite build` in production mode, which reads it |
+
+🔴 **The allow-list is by FILE NAME. Nothing inspects what is inside those three
+files, so nothing stops one of them carrying a secret to the platform.** Whatever
+you put in `.env.example`, `.env.sample` or `.env.production` is packaged and
+uploaded verbatim. **Do not put a token in any of them** — not a `VITE_`-prefixed
+one (Vite inlines those into the client bundle, so they are public the moment
+your app loads) and not a plain unprefixed one either (Vite leaves that out of
+the bundle, but the CLI still ships the file). Put nothing in the three kept
+files you would not paste into a public page.
+
+`.env.production` being **shipped** is the one worth knowing about, because it is
+the least expected: the server-side build needs it, and the scaffolded file holds
+one public value, `VITE_BLOCK_ALLOWED_PARENT_ORIGINS`. That is what the
+*scaffolded* file holds — it is not a guarantee about yours.
+`.env.production.local` is *not* kept: `.local` is the dev-local override
+convention and falls to the catch-all with everything else.
+
 ### After you submit: review → approve → deploy
 
 A successful `submit` does **not** publish your app — it queues it for
@@ -1318,7 +1353,7 @@ your value (`icon must be square-ish (aspect 2.00 outside 0.9–1.1)`).
 
 | kind | aspect (width ÷ height) | minimum size |
 | --- | --- | --- |
-| **icon** | 0.9 – 1.1 — square-ish, not exactly square | 128 px on the shorter side |
+| **icon** | 0.9 – 1.1 — square or near-square (1:1 is fine) | 128 px on the shorter side |
 | **cover** | 1.3 – 2.4 — landscape, ~4:3 to ~21:9 | 640 px wide |
 | **screenshot** | 0.4 – 2.6 — either orientation | 320 px on the shorter side |
 
@@ -1362,7 +1397,7 @@ Four behaviours that are not obvious from the numbers:
 > the current bound; a stale local *gate* refuses valid images and cannot be
 > argued with. The asymmetry is the reason the split exists — please don't
 > "helpfully" promote these numbers into a local check (see
-> [`AGENTS.md`](AGENTS.md) item 25).
+> [`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) item 25).
 
 ## Submission status
 
@@ -1408,13 +1443,35 @@ were dropped. When a full-length page comes back the CLI says so on **stderr**
 rather than presenting it as your complete history:
 
 ```text
-note: showing the newest 100 submissions — the API caps this listing and offers no way to page, so older submissions may exist but are not listed. Look up a specific app with `civitai app status <blockId>`.
+note: the server returned the newest 100 submissions — the API caps this listing and offers no way to page, so older submissions may exist but are not listed. Look up a specific app with `civitai app status <blockId>`.
 ```
 
 That is an inference (a page that is exactly full is indistinguishable from one
 that was cut off), so it says *may*. A per-app lookup — `civitai app status
 <blockId>` — is **not** affected: the server narrows to the slug before applying
 the cap.
+
+`--limit N` shows only the newest **N** of the submissions that came back:
+
+```text
+$ civitai app status --limit 5
+BLOCK_ID    VERSION  STATUS    DEPLOY    SUBMITTED   URL
+gen-matrix  0.6.0    approved  live      2026-06-22  https://gen-matrix.civit.ai/
+…
+```
+
+It is a **display** limit, not a page size — unlike `civitai app list --limit`,
+which is sent to the server. This route accepts no limit and no cursor (that is
+what the cap note above is about), so the CLI fetches the same page either way
+and simply prints fewer rows of it. Two consequences worth stating:
+
+- `--limit` **cannot reach submissions the API did not return**, and it does not
+  suppress the cap note — if the server capped the page, you are still told.
+- It applies to `--json` too, so `--limit 5 --json` emits five records.
+
+`--limit 0` (or negative) is refused as a usage mistake, and so is `--limit`
+alongside a `blockId`/`--id` — a single submission cannot be limited, and
+silently ignoring the flag would be worse than saying so.
 
 `--json` emits the raw response for scripting. An empty list prints a friendly
 "run `civitai app submit`" hint; with no token it points you at `civitai login`.
@@ -1795,7 +1852,7 @@ The two things that look like they should catch it do not:
 
 **Which ecosystem a given checkpoint belongs to is server knowledge this CLI does
 not hold and will not guess.** It is not vendored here for the reason
-[`AGENTS.md`](AGENTS.md) item 13 gives for the whole generation path: a local copy
+[`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) item 13 gives for the whole generation path: a local copy
 of server state goes stale and starts refusing valid *new* inputs, which is worse
 than the gap it closes. So if you name a checkpoint, name the `--ecosystem` it
 belongs to as well. Whether `--checkpoint` *should* carry an ecosystem with it —
@@ -1921,6 +1978,14 @@ jpeg are supported — webp would need a new third-party decoder dependency.
 > alone, and charges you the full amount** — HTTP 200, no error, no warning.
 > Measured: the same graph with and without `images[]` priced byte-identically.
 
+**The workflow on screen still says `txt2img`, and that is correct.** Image
+editing is *requested* as `txt2img` plus your images — the server does the
+promotion itself, from the request body. So the `--dry-run` quote and the spend
+confirmation both name `txt2img` and, when `--image` is set, say why on the same
+line. The CLI does not rename the field, because the value it sends really is
+`txt2img`; and it does not claim the promotion *happened*, because it cannot see
+that (the note below is the honest half of it).
+
 Two more things the CLI genuinely cannot check for you, so it says them instead
 of pretending:
 
@@ -1939,7 +2004,7 @@ of pretending:
   images all priced identically to 3. The CLI refuses **more than 7** (no
   ecosystem accepts more, so that refusal can never block a valid request) and
   **warns** for anything above 1. It deliberately does not vendor the
-  per-ecosystem table — see [`AGENTS.md`](AGENTS.md) items 13 and 19(c).
+  per-ecosystem table — see [`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) items 13 and 19(c).
 
 `--ecosystem` is sent to the server **verbatim and is not checked locally**;
 an unknown value comes back as the server's own `unknown ecosystem` error.
@@ -2537,8 +2602,9 @@ anything.
 - **Language:** Go 1.25, [Cobra](https://github.com/spf13/cobra) (commands) +
   [Viper](https://github.com/spf13/viper) (config).
 - **Layout / conventions / how to add a command / release process:** see
-  [`AGENTS.md`](AGENTS.md).
-- **Contributing:** see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+  [`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md).
+- **Contributing:** see
+  [`CONTRIBUTING.md`](https://github.com/civitai/cli/blob/main/CONTRIBUTING.md).
 
 **CI is eight jobs, not four steps.** `.github/workflows/ci.yml` runs
 `build-test` (vet + `gofmt -s -l .` + test + build), `lint`, `schema-drift`,
@@ -2550,7 +2616,7 @@ plain `go test` cannot see.
 
 **Running and gating are different questions**, and fewer of those jobs gate a
 merge than run. The measured set of required status checks, and the instruction
-to re-measure rather than trust a written copy, live in [`AGENTS.md`](AGENTS.md)
+to re-measure rather than trust a written copy, live in [`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md)
 item 11 — deliberately in one place, because a second copy is how the original
 claim went stale. Notably `lint` reports without blocking, which is another
 reason to run it locally.
@@ -2569,7 +2635,7 @@ This cross-compiles for linux/darwin/windows × amd64/arm64, stamps
 version/commit/date, and creates a **draft** GitHub Release with archives +
 `checksums.txt`. It also *renders* the Homebrew cask and attaches it to the
 release, but does not push it to the tap — see below. See
-[`AGENTS.md`](AGENTS.md) for the full process. The tap-write secret
+[`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) for the full process. The tap-write secret
 (`HOMEBREW_TAP_GITHUB_TOKEN`) belongs to
 `.github/workflows/release-homebrew.yml`, which runs at *publish* time; the
 tag-time run holds no credential that can write to the tap.

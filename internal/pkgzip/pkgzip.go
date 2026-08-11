@@ -6,16 +6,18 @@
 //
 //   - Directory names (excludedDirs): VCS metadata, dependency installs, build
 //     output, tooling caches — see that var.
-//   - File names (isExcludedFile): build artifacts (*.zip) and dev-local /
-//     secret-bearing dotenv files (.env, .env.local, .env.development,
-//     .env.*.local). The scaffolded page-money template documents pasting a
-//     real, Buzz-spending block token into .env.development
-//     (VITE_LIVE_BLOCK_TOKEN) for `dev:live`; bundling that file would leak the
-//     token to the server, the moderator reviewer, and the built image. We KEEP
-//     .env.example / .env.sample (templates, no secrets — useful to the
-//     reviewer) and .env.production (the server build's `vite build` runs in
-//     mode=production and reads it; it carries only public VITE_ origins, never
-//     a secret). See isExcludedFile for the full rule + rationale.
+//   - File names (isExcludedFile): build artifacts (*.zip) and EVERY file whose
+//     BASE NAME starts with ".env" — dotted or not, so `.envrc` (direnv, which
+//     routinely holds exported credentials) goes too — except a three-name
+//     allow-list. The scaffolded page-money template documents pasting a real,
+//     Buzz-spending block token into .env.development (VITE_LIVE_BLOCK_TOKEN)
+//     for `dev:live`; bundling that file would leak the token to the server, the
+//     moderator reviewer, and the built image. We KEEP .env.example /
+//     .env.sample (meant to hold documented placeholders) and .env.production
+//     (the server build's `vite build` runs in mode=production and reads it).
+//     Those three are allow-listed BY NAME — nothing reads their contents, so
+//     keeping one is not a claim that it holds no secret. See isExcludedFile and
+//     keptEnvFiles for the full rule + rationale.
 package pkgzip
 
 import (
@@ -85,17 +87,36 @@ var excludedFilePatterns = []string{
 	".env.*.local", // e.g. .env.development.local, .env.production.local
 	".env.development",
 	".env.test",
+	// 🔴 THE CATCH-ALL, AND THE REASON THE FIVE NAMES ABOVE ARE ILLUSTRATION
+	// RATHER THAN THE RULE. isExcludedFile drops every base name starting with
+	// ".env", dotted or not — `.envrc`, `.env-local`, `.env.staging`. Printing
+	// only the enumeration let a reader conclude an unlisted name ships; it
+	// does not. Keep this LAST so the message reads "these, and everything else
+	// like them".
+	".env*",
 }
 
-// keptEnvFiles are .env* files we deliberately INCLUDE despite the broad dotenv
-// exclusion below. They carry no secret and are useful server- or reviewer-side:
-//   - .env.example / .env.sample: templates (documented placeholders, no token).
+// keptEnvFiles are .env* files we deliberately INCLUDE despite the broad
+// ".env"-prefix exclusion below. They are allow-listed BY NAME:
+//   - .env.example / .env.sample: templates meant to hold documented
+//     placeholders a reviewer reads.
 //   - .env.production: the server build runs `vite build` (mode=production),
-//     which reads .env.production; it holds only the PUBLIC
-//     VITE_BLOCK_ALLOWED_PARENT_ORIGINS (Vite inlines every VITE_ var into the
-//     client bundle by design, so by construction it cannot hold a secret).
+//     which reads .env.production; the SCAFFOLDED file holds one public value,
+//     VITE_BLOCK_ALLOWED_PARENT_ORIGINS.
 //   - .env.production.local is NOT kept — `.local` is the dev-local override
 //     convention and is caught by the `.env.*.local` rule above.
+//
+// 🔴 THIS IS A NAME ALLOW-LIST, NOT A SAFETY PROPERTY, AND NOTHING HERE READS
+// THE CONTENTS. An earlier version of this comment (and of the README section it
+// backs) argued that .env.production "by construction cannot hold a secret"
+// because Vite inlines every VITE_-prefixed variable into the client bundle.
+// That argument is wrong twice over: Vite inlines ONLY the VITE_-prefixed ones,
+// so a plain `API_SECRET=…` in this file is not public and is still uploaded;
+// and this repo itself treats a VITE_-prefixed value as a spending secret —
+// VITE_LIVE_BLOCK_TOKEN is exactly why .env.development is on the exclusion list
+// above. So do not re-derive a content guarantee from the prefix rule, and do
+// not widen this list on the strength of one. What the CLI can honestly tell an
+// author is WHERE the file goes; deciding what belongs in it is theirs.
 var keptEnvFiles = map[string]struct{}{
 	".env.example":    {},
 	".env.sample":     {},
@@ -104,9 +125,27 @@ var keptEnvFiles = map[string]struct{}{
 
 // isExcludedFile reports whether a regular file (by base name) must be left out
 // of the package. The rule is deliberately CONSERVATIVE toward "never upload a
-// secret": every .env* is dropped UNLESS it is explicitly an allow-listed,
-// secret-free file (keptEnvFiles). Build-time config for the server must come
-// from the manifest / build recipe, not an uploaded dotenv.
+// secret": every base name starting with ".env" is dropped UNLESS it is one of
+// the three names on the keptEnvFiles allow-list. Build-time config for the
+// server must come from the manifest / build recipe, not an uploaded dotenv.
+//
+// 🔴 THE PREFIX IS ".env", NOT ".env." — UNDOTTED NAMES ARE EXCLUDED TOO. The
+// match was `name == ".env" || HasPrefix(name, ".env.")` until the README
+// started (correctly) telling authors "every file whose base name starts with
+// `.env` is excluded". That left `.envrc` — the direnv convention, which
+// routinely holds exported credentials — UPLOADED to the platform and to a human
+// moderator reviewer, while the sentence an author reads said it was not. The
+// prefix now matches the sentence. Widening cost nothing: no file the scaffold
+// writes and no file tracked in this repo has a `.env`-prefixed base name that
+// is not `.env.`-dotted (`.env.development` / `.env.production` /
+// `.env.example` are all it emits). Residual, accepted: a base name that merely
+// begins with those four bytes for an unrelated reason (`.envoy.yaml`) is
+// dropped too. The failure mode of the other direction is a silent credential
+// upload; this one is a missing file the author can rename.
+//
+// Note keptEnvFiles is an allow-list BY NAME. Nothing here reads a file's
+// contents, so "kept" is a statement about WHERE the file goes, never a claim
+// that it holds no secret — see the 🔴 note on keptEnvFiles.
 func isExcludedFile(name string) bool {
 	// Build artifacts.
 	if strings.HasSuffix(name, ".zip") {
@@ -114,7 +153,7 @@ func isExcludedFile(name string) bool {
 	}
 	// Dotenv handling: allow-list the known-safe template / production files,
 	// drop everything else that starts with ".env".
-	if name == ".env" || strings.HasPrefix(name, ".env.") {
+	if strings.HasPrefix(name, ".env") {
 		if _, keep := keptEnvFiles[name]; keep {
 			return false
 		}

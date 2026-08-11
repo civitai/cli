@@ -241,9 +241,41 @@ func dashIfEmpty(s string) string {
 	return s
 }
 
+// truncate shortens s to at most max RUNES, appending an ellipsis.
+//
+// 🔴 The cut is on RUNE boundaries, not bytes. `s[:max]` sliced bytes, so a
+// truncation landing inside a multi-byte rune emitted that rune's leading bytes
+// alone — rendered as U+FFFD in every terminal. Taglines, descriptions and base
+// model names are user-supplied and routinely non-ASCII, so this was reachable
+// output corruption rather than a theoretical one. The cheap byte-length check
+// stays first: it is exact for ASCII and a safe lower bound otherwise (a string
+// whose BYTE length fits can never need cutting), so the walk below only runs on
+// the values that might.
+//
+// 🔴 The walk replaced a second `if len([]rune(s)) <= max` guard, which was
+// UNREACHABLE-ISH in the tests that existed for it: every case either failed the
+// byte check outright or was far under `max`, so disabling that branch left the
+// package green while `truncate("café", 4)` returned `"café…"`. A single pass
+// closes the window structurally — a string with at most `max` runes falls out
+// of the loop and is returned whole — and it drops the 4×len allocation
+// `[]rune(s)` made on every server-supplied description.
+//
+// Residual, stated so no reader over-reads it: this is rune-safe, NOT
+// grapheme-safe. Cutting a ZWJ emoji sequence mid-cluster yields valid UTF-8
+// with a dangling joiner (`"👩‍👩‍👧"` + `"…"`), which renders oddly but emits no
+// U+FFFD. The callers are terminal columns for names, taglines, descriptions and
+// base models; a grapheme segmenter is a dependency this repo does not carry for
+// that. Do not add a comment claiming more than the loop does.
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "…"
+	n := 0
+	for i := range s { // i is the BYTE index of each rune start
+		if n == max {
+			return s[:i] + "…"
+		}
+		n++
+	}
+	return s
 }

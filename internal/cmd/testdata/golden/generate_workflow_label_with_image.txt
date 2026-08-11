@@ -1,0 +1,1 @@
+txt2img Image editing is requested AS txt2img plus --image; the server does the promotion, not this CLI.

@@ -6,7 +6,10 @@ dist/
 
 # Local secrets — a pasted VITE_LIVE_BLOCK_TOKEN spends REAL Buzz; never commit it.
 # `civitai app dev-token <slug> --env >> .env.development.local` writes here.
-# The committed .env.development / .env.example / .env.production hold only
-# non-secret VITE_ values and ARE tracked.
+# .env.development / .env.example / .env.production ARE tracked. As scaffolded
+# they hold only non-secret VITE_ values — that is a fact about the files you
+# were given, not a property git or the CLI enforces about the ones you edit.
+# `civitai app submit` UPLOADS .env.example and .env.production verbatim (it
+# excludes .env.development), so keep secrets out of all three.
 .env.local
 .env.*.local

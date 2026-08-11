@@ -466,8 +466,9 @@ To use it:
 2. If you printed the token instead of using `--env >> …`, paste it into
    `.env.development.local` as `VITE_LIVE_BLOCK_TOKEN=<token>`. Keep the secret in
    `.env.development.local` (git-ignored), NOT the committed `.env.development`.
-   (Never commit it; `submit` excludes every dotenv but `.env.example` /
-   `.env.production` anyway.)
+   (Never commit it. `submit` excludes every `.env`-prefixed file but
+   `.env.example`, `.env.sample` and `.env.production` — and those three it
+   UPLOADS, so keep the token out of them too. See "Validate & submit".)
 3. `npm run dev:live` — a minimal **host nav** sits at the top (your profile name,
    Buzz balance, and a persistent **LIVE · spends real Buzz** pill); a successful
    Generate spends your own real Buzz.
@@ -617,11 +618,23 @@ civitai app submit
 
 `submit` packages the SOURCE tree (manifest + src + build config), excluding
 `.git`, `node_modules`, and `dist` — the platform rebuilds from source. It also
-excludes build artifacts (`*.zip`) and dev-local / secret-bearing dotenv files
-(`.env`, `.env.local`, `.env.development`, `.env.*.local`) so a pasted
-`VITE_LIVE_BLOCK_TOKEN` can never leak into the upload. `.env.example` and
-`.env.production` (public `VITE_` origins only) ARE included — the production
-build reads `.env.production`.
+excludes build artifacts (`*.zip`) and, as a **catch-all**, every file whose base
+name starts with `.env` — dotted or not, so `.env.development`,
+`.env.development.local`, `.env.staging` and `.envrc` all stay out. That is what
+keeps a `VITE_LIVE_BLOCK_TOKEN` you pasted into `.env.development.local` from
+being uploaded.
+
+Three names are **allow-listed and ARE uploaded**: `.env.example`, `.env.sample`
+and `.env.production` (the production build reads the last one).
+
+> 🔴 **The allow-list is by FILE NAME — nothing reads what is inside.** Whatever
+> you put in those three is packaged and uploaded verbatim, to the platform and
+> to a human moderator reviewer. That includes a `VITE_`-prefixed value (Vite
+> inlines those into the client bundle, so they are public the moment your app
+> loads) *and* a plain unprefixed one (Vite leaves that out of the bundle, but
+> the CLI still ships the file). Put nothing in them you would not paste into a
+> public page — a real `VITE_LIVE_BLOCK_TOKEN` belongs in the git-ignored
+> `.env.development.local`, which the catch-all above excludes.
 
 ## Store-listing media (`assets/`)
 

@@ -14,6 +14,96 @@ pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
 routing question rather than a label, and `agents_split_preserved_test.go` pins
 the body against the text it was moved from.
 
+## 🔴 (a) IS UNCHANGED, BUT THE SPEND SCREENS NOW EXPLAIN IT — civitai/cli#365
+
+**Read this before editing the workflow line on any generate surface.** Nothing
+about the wire value moved. What moved is what the user is TOLD about it.
+
+**What was found.** A blind credentialed dogfood run (2026-08-10, run 3) priced
+an img2img job and read, on the screen it was being asked to approve a charge
+from:
+
+```
+  Ecosystem:  Flux1Kontext
+  Image:      ./probe.png (512x512) → https://…/blobs/…
+If this ecosystem does not support image editing, the server IGNORES the images
+above, generates from the prompt alone and still charges …
+Workflow:         txt2img
+```
+
+`txt2img` is correct — (a) below is why — but sitting one line under a warning
+that the server may IGNORE your images, it is the most alarming thing on the
+screen, and nothing on that screen explained it.
+
+**What was built.** One constant, `imagePromotionNote`, and one helper,
+`workflowLines(built)`, used by the two surfaces that name the workflow: the
+`--dry-run` quote's `Workflow:` row and `confirmGenerate`'s *"About to generate
+with …"* line. With no `--image` the note is empty and those screens are
+byte-identical to before.
+
+🔴 **THE NOTE IS ITS OWN LINE, AND THAT IS A CORRECTION, NOT A PREFERENCE.** The
+first revision returned one string and the confirmation interpolated it
+mid-sentence:
+
+```
+About to generate with txt2img (image editing is requested AS txt2img plus --image; the server does the promotion, not this CLI) at https://civitai.com.
+```
+
+152 characters — at 80 columns the verb is split from its object and `at
+https://civitai.com` orphans onto line 2, on the screen immediately before an
+irreversible charge. `workflowLines` therefore returns *(label, note)* and each
+caller prints the note on the following line; its doc comment carries the
+measurement. Do not fold them back into one string.
+
+**The constraint the wording is under, and it is item 28's.** The note states
+the server's RULE — image editing is *requested as* `txt2img` plus `--image`,
+and the server does the promotion — and never that the promotion FIRED. The CLI
+cannot observe that, and (b) below records why no detector is possible. The
+caveat `printImageDisclosure` prints on the same screen carries the other half.
+🔴 Do not "improve" it into a claim, and do not rename the field: the wire value
+must stay visible for (a)'s reason.
+
+**The guards, in item 28's three shapes — and be precise about what each one
+covers.** An earlier draft of this paragraph implied the two REAL screens were
+golden-pinned with `--image`; they were not, and an audit found the 152-column
+line in output no golden had ever seen. The inventory now, stated at the scope
+actually measured:
+
+- **One constant** — `imagePromotionNote`.
+- **An asserted bidirectional call-site ledger** — `TestWorkflowLabelCallSiteLedger`:
+  `workflowLines(built)` at exactly 2 sites, both of them guarding on a
+  non-empty note (a caller that takes the pair and drops the second half
+  restores the unexplained `Workflow: txt2img` while satisfying a
+  call-site-only count), plus a ban on the two surfaces' old bare-constant
+  format strings.
+- **Golden pinning at two levels.** The helper's own two branches
+  (`generate_workflow_label_with_image` / `_without_image`) AND — added by the
+  audit fix — the two COMPOSED screens rendered with `--image`:
+  `generate_confirmation_with_image`, `generate_dry_run_with_image_stdout`,
+  `generate_dry_run_with_image_stderr`. The function-level pair was not a
+  substitute: pinning a return value in isolation is exactly how a defect in
+  the composition ships. The `t.TempDir()` image path is substituted out, and
+  the substitution is asserted to have happened.
+- **Two properties no golden can see**, because comparison is
+  whitespace-collapsed: `TestGenerateImage_SpendScreenLinesStayReadable` bounds
+  the confirmation sentence's column width, and the two
+  `…ExplainsThePromotion` tests assert the note is the ADJACENT line rather
+  than part of the value.
+
+**Residuals, enumerated rather than implied:**
+
+- A NEW surface that prints its own workflow line without touching either symbol
+  is invisible to all of them (item 28's residual, unchanged).
+- **`--input` with a hand-written graph carrying an `images` array prints a bare
+  `Workflow: txt2img` and no note.** The note keys off `built.images`, which the
+  `--input` path never populates because the CLI deliberately does not interpret
+  that graph (see the `Graph: … (sent as-is; this CLI did not interpret it)`
+  line right beside it). Reading the array to decide would be interpreting it.
+  Known and accepted, not overlooked.
+- The goldens are whitespace-collapsed, so they pin words and order, never line
+  breaks — which is why the width bound and the adjacency assertions above are
+  separate guards rather than redundant ones.
+
 ## The stub thesis this item's trigger replaced
 
 Waves 1–3 of the evidence split (#290, #305, #310) left a multi-line STUB in
