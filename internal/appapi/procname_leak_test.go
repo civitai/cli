@@ -67,6 +67,14 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 	// A listing write: it may have PARTIALLY APPLIED, so `app listing status` is
 	// the authority on what is attached now.
 	const changeSubject = "store-listing change"
+	// 🔴 The change arm's REMEDY, spelled here so that a read or an ingest
+	// cannot borrow it. It used to be "fix the value and retry", which
+	// civitai/cli#391 measured FALSE for `beginListingRevision`: that request
+	// carries only a listing id the CLI minted from a lookup that had already
+	// returned 200, so its author has no value to fix. This phrase presumes
+	// nothing about what was sent, and states the one thing every change route
+	// has in common.
+	const changeRemedy = "may have partially applied"
 
 	for _, tc := range []struct {
 		name    string
@@ -79,19 +87,19 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 			name:    "getMyListingForApp is a lookup",
 			route:   trpcGetMyListingForApp,
 			want:    []string{readSubject, "nothing was changed"},
-			notWant: []string{changeSubject, ingestSubject, "fix the value"},
+			notWant: []string{changeSubject, ingestSubject, changeRemedy},
 		},
 		{
 			name:    "getMyListingForEdit is a lookup",
 			route:   trpcGetMyListingForEdit,
 			want:    []string{readSubject, "nothing was changed"},
-			notWant: []string{changeSubject, ingestSubject, "fix the value"},
+			notWant: []string{changeSubject, ingestSubject, changeRemedy},
 		},
 		{
 			name:    "getAssetScanStatuses is a lookup",
 			route:   trpcGetAssetScanStatuses,
 			want:    []string{readSubject, "nothing was changed"},
-			notWant: []string{changeSubject, ingestSubject, "fix the value"},
+			notWant: []string{changeSubject, ingestSubject, changeRemedy},
 		},
 
 		// ---- ingests: an Image row, attached to nothing ----
@@ -99,7 +107,7 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 			name:    "the presigned mint changes no listing",
 			route:   imageUploadRoute,
 			want:    []string{ingestSubject, "no listing was changed"},
-			notWant: []string{changeSubject, readSubject, "fix the value"},
+			notWant: []string{changeSubject, readSubject, changeRemedy},
 		},
 		{
 			// A tRPC POST that creates an Image row and attaches it to nothing.
@@ -107,14 +115,14 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 			name:    "the data-uri ingest changes no listing",
 			route:   trpcIngestAssetFromDataURI,
 			want:    []string{ingestSubject, "no listing was changed"},
-			notWant: []string{changeSubject, readSubject, "fix the value"},
+			notWant: []string{changeSubject, readSubject, changeRemedy},
 		},
 		{
 			// Step 3 of the same user action the mint starts.
 			name:    "persistAssetImage changes no listing",
 			route:   trpcPersistAssetImage,
 			want:    []string{ingestSubject, "no listing was changed"},
-			notWant: []string{changeSubject, readSubject, "fix the value"},
+			notWant: []string{changeSubject, readSubject, changeRemedy},
 		},
 
 		// ---- changes: each writes the listing, so none of them may say
@@ -122,43 +130,43 @@ func TestListingBadRequestSubjectFollowsTheOperation(t *testing.T) {
 		{
 			name:    "setIcon attaches an icon to the listing",
 			route:   trpcSetIcon,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "setCover attaches a cover to the listing",
 			route:   trpcSetCover,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "addScreenshot appends to the listing",
 			route:   trpcAddScreenshot,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "removeScreenshot deletes from the listing",
 			route:   trpcRemoveScreenshot,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "reorderScreenshots rewrites the listing's order",
 			route:   trpcReorderScreenshots,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "beginListingRevision opens a shadow revision",
 			route:   trpcBeginListingRevision,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 		{
 			name:    "submitListingRevision sends the revision to review",
 			route:   trpcSubmitListingRevision,
-			want:    []string{changeSubject, "civitai app listing status"},
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
 			notWant: []string{"nothing was changed", readSubject, ingestSubject},
 		},
 	} {

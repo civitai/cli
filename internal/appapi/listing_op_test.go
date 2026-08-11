@@ -2,13 +2,17 @@ package appapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/token"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -179,6 +183,7 @@ func listingRouteCases() []listingRouteCase {
 type reqLog struct {
 	paths  []string
 	method map[string]string // path -> the verb it was requested with
+	body   map[string][]byte // path -> the request body it was sent with
 }
 
 func (l *reqLog) saw(path string) bool {
@@ -200,6 +205,12 @@ func listingStubServer(badPath, badMsg string, log *reqLog) *httptest.Server {
 			log.method = map[string]string{}
 		}
 		log.method[r.URL.Path] = r.Method
+		if log.body == nil {
+			log.body = map[string][]byte{}
+		}
+		if raw, err := io.ReadAll(r.Body); err == nil {
+			log.body[r.URL.Path] = raw
+		}
 		switch {
 		case r.URL.Path == badPath:
 			trpcErr(w, http.StatusBadRequest, badMsg)
@@ -221,13 +232,19 @@ func wantForOp(op listingOp) (want, notWant []string) {
 	switch op {
 	case listingOpRead:
 		return []string{"store-listing lookup", "nothing was changed"},
-			[]string{"store-listing change", "image-upload"}
+			[]string{"store-listing change", "image-upload", "partially applied"}
 	case listingOpIngest:
 		return []string{"image-upload request", "no listing was changed"},
-			[]string{"store-listing change", "store-listing lookup", "fix the value"}
+			[]string{"store-listing change", "store-listing lookup", "partially applied"}
 	case listingOpChange:
-		return []string{"store-listing change", "fix the value", "civitai app listing status"},
-			[]string{"nothing was changed", "image-upload", "store-listing lookup"}
+		// 🔴 "fix the value" is in notWant, not in want, and civitai/cli#391 is
+		// why: this ONE arm answers for all seven change routes, and
+		// `beginListingRevision` sends only a CLI-minted listing id, so that
+		// remedy named a value its author never sent. What the arm may claim is
+		// what is true of every change route — the write may have landed in
+		// part. See listingError's change arm for the per-route derivation.
+		return []string{"store-listing change", "may have partially applied", "civitai app listing status"},
+			[]string{"nothing was changed", "image-upload", "store-listing lookup", "fix the value"}
 	}
 	return nil, nil
 }
@@ -240,7 +257,14 @@ func wantForOp(op listingOp) (want, notWant []string) {
 func TestListingBadRequestSubjectIsReachablePerRoute(t *testing.T) {
 	cases := listingRouteCases()
 	if len(cases) < 13 {
-		t.Fatalf("positive control: expected the case table to cover every route, got %d", len(cases))
+		// civitai/cli#391 N3: the floor is a positive control against a table
+		// that quietly emptied, NOT a claim that thirteen is forever. Retiring a
+		// route is a legitimate reason to see twelve, so the message says which
+		// edit is expected instead of only reporting the count.
+		t.Fatalf("positive control: this table drives %d routes, and %d were expected.\n"+
+			"If a route was RETIRED, lower this floor in the same commit that deletes its case, "+
+			"its entry in TestListingRouteOpsAreExactlyThisSpelledSet and its row in procname_leak_test.go. "+
+			"If nothing was retired, the table lost a case.", len(cases), 13)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -314,6 +338,178 @@ func TestListingBadRequestSubjectIsReachablePerRoute(t *testing.T) {
 	}
 }
 
+// authorControlledFields is civitai/cli#391's ledger: for each CHANGE route,
+// the fields of the request whose value the author can change by re-running the
+// command differently. Everything else in the payload is minted by the CLI from
+// a lookup that already succeeded, and is therefore not something a rejection
+// can sensibly ask them to "fix".
+//
+// Derived per route from the call sites in internal/cmd/app_listing.go, NOT
+// inherited from the #386 review that assumed all seven carried one:
+//
+//   - setIcon / setCover: `imageId` is minted by the CLI, but it is the ingest
+//     of the FILE the author named positionally, and the server validates that
+//     image's geometry/aspect/MIME/bytes at attach — a different file gives a
+//     different verdict, so it is author-controlled.
+//   - addScreenshot: the same, plus `caption` from --caption.
+//   - removeScreenshot: `screenshotId` is argv (`rm-screenshot alsc_…`).
+//   - reorderScreenshots: `orderedIds` is argv.
+//   - beginListingRevision: NOTHING. `listingId` comes from resolveListing, a
+//     getMyListingForApp that returned 200 before this call was made.
+//   - submitListingRevision: `changelog` only, and only when the author passed
+//     --changelog; under --yes (or a TTY "y") confirmLiveRevision mints the
+//     default "Update listing <kind> via civitai CLI" and the author supplied
+//     nothing either.
+var authorControlledFields = map[string][]string{
+	"setIcon":               {"imageId"},
+	"setCover":              {"imageId"},
+	"addScreenshot":         {"imageId", "caption"},
+	"removeScreenshot":      {"screenshotId"},
+	"reorderScreenshots":    {"orderedIds"},
+	"beginListingRevision":  {},
+	"submitListingRevision": {"changelog"},
+}
+
+// cliMintedFields is the other half of the same ledger — payload fields the
+// author never types. Together the two must cover every key the wire carries,
+// so a field added to a change route cannot slip in unclassified and quietly
+// move the premise this test's conclusion rests on.
+var cliMintedFields = map[string]bool{
+	"listingId": true,
+	"shadowId":  true,
+}
+
+// TestChangeArmPresumesNoUserSuppliedValue is civitai/cli#391's regression
+// guard, and it pins a RELATIONSHIP rather than a component: what the CLI SENDS
+// on a change route against what the CLI is allowed to SAY when that route
+// 400s.
+//
+// The defect: the change arm advised "fix the value and retry", which presumes
+// the request carried a value the author supplied. Measured from the wire,
+// `beginListingRevision` carries none — so a 400 opening a shadow revision told
+// the author to go fix something they never sent. That is #374's wrong-subject
+// class, in the one arm #374 left alone.
+//
+// 🔴 It reads the PAYLOAD, not the wording, to establish the premise. A test
+// that only grepped the message for "fix the value" would pass the day someone
+// re-words it to "correct what you passed"; and it would say nothing about WHY
+// the phrase is wrong. This one fails if the premise moves in either direction:
+// a change route growing an author-controlled field, or a field appearing in
+// neither half of the ledger.
+func TestChangeArmPresumesNoUserSuppliedValue(t *testing.T) {
+	// Selected by the table's INDEPENDENT opinion of what each route does, not
+	// by route.op — reading route.op here would make the selection follow the
+	// declaration this file exists to check.
+	var changeRoutes int
+	valueless := map[string]bool{}
+
+	for _, tc := range listingRouteCases() {
+		if tc.wantOp != listingOpChange {
+			continue
+		}
+		changeRoutes++
+		t.Run(tc.name, func(t *testing.T) {
+			ledger, ok := authorControlledFields[tc.name]
+			if !ok {
+				t.Fatalf("change route %q has no entry in authorControlledFields — "+
+					"record which of its request fields the author can change by re-running the command, "+
+					"then re-read listingError's change arm: its wording may no longer be true", tc.name)
+			}
+
+			var log reqLog
+			srv := listingStubServer(tc.route.path, tc.serverMsg, &log)
+			defer srv.Close()
+			err := tc.call(context.Background(), New(srv.URL, "tok", ""))
+			if err == nil {
+				t.Fatalf("expected a 400 from %s", tc.route.path)
+			}
+			raw, ok := log.body[tc.route.path]
+			if !ok {
+				t.Fatalf("no request body was recorded for %s (paths hit: %v) — the instrument saw nothing", tc.route.path, log.paths)
+			}
+			// tRPC mutations send `{"json": <input>}`.
+			var env struct {
+				JSON map[string]json.RawMessage `json:"json"`
+			}
+			if jsonErr := json.Unmarshal(raw, &env); jsonErr != nil || env.JSON == nil {
+				t.Fatalf("could not read %s's request payload (%v): %s", tc.name, jsonErr, string(raw))
+			}
+
+			// Bidirectional: every key on the wire is classified, and every
+			// classified author-controlled key is really on the wire.
+			for key := range env.JSON {
+				if cliMintedFields[key] {
+					continue
+				}
+				if !containsStr(ledger, key) {
+					t.Errorf("%s sends field %q, which is in neither half of civitai/cli#391's ledger.\n"+
+						"Classify it: author-controlled (authorControlledFields) or CLI-minted (cliMintedFields). "+
+						"If it is author-controlled, the change arm may be able to say more than it does today; "+
+						"if it is CLI-minted, it must not.", tc.name, key)
+				}
+			}
+			for _, key := range ledger {
+				if _, sent := env.JSON[key]; !sent {
+					// addScreenshot's caption and submitListingRevision's
+					// changelog are omitted when empty; the cases pass both, so
+					// this is a real absence.
+					t.Errorf("%s is recorded as carrying the author-controlled field %q, but the request did not send it: %s",
+						tc.name, key, string(raw))
+				}
+			}
+			if len(ledger) == 0 {
+				valueless[tc.name] = true
+				// The whole point, asserted on the route that proves it: this
+				// 400 may not blame a value, because none was sent.
+				msg := err.Error()
+				for _, blame := range []string{
+					"fix the value", "the value you", "check the value",
+					"correct the value", "what you passed", "you supplied",
+				} {
+					if strings.Contains(strings.ToLower(msg), blame) {
+						t.Errorf("%s sends only CLI-minted fields (%v), but its 400 blames a value the author never supplied (%q):\n  %s",
+							tc.name, keysOfRaw(env.JSON), blame, msg)
+					}
+				}
+				// What it must say instead stays pinned, so "say nothing" is
+				// not an accepted way to satisfy the check above.
+				for _, keep := range []string{"store-listing change", "may have partially applied", "civitai app listing status"} {
+					if !strings.Contains(msg, keep) {
+						t.Errorf("%s's 400 lost %q — the arm still has to name the operation, the partial-write risk and the next command:\n  %s",
+							tc.name, keep, msg)
+					}
+				}
+			}
+		})
+	}
+
+	// Positive control on the selection: a filter that matched nothing would
+	// make every subtest above vacuous.
+	if changeRoutes != 7 {
+		t.Errorf("expected 7 change routes to check, got %d — if a change route was added or retired, "+
+			"give it an authorControlledFields entry and update this count in the same commit", changeRoutes)
+	}
+	// The conclusion the change arm's wording rests on. If this ever goes empty
+	// — because every change route grew an author-supplied field — the arm MAY
+	// legitimately advise fixing a value again, and this is where to re-derive
+	// it rather than assume.
+	if len(valueless) == 0 {
+		t.Errorf("no change route sends a payload of only CLI-minted fields any more.\n" +
+			"civitai/cli#391 removed \"fix the value and retry\" from the change arm BECAUSE " +
+			"`beginListingRevision` was such a route. Re-derive the wording against the call sites " +
+			"before restoring that advice — do not restore it just because this check went quiet.")
+	}
+}
+
+func keysOfRaw(m map[string]json.RawMessage) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // TestUnclassifiedRouteClaimsNothing pins the zero value. `listingRoute{path:
 // "…"}` is a keyed literal Go accepts with no op, and if the zero op meant
 // `read` that route would ship telling every user "nothing was changed" —
@@ -332,7 +528,13 @@ func TestUnclassifiedRouteClaimsNothing(t *testing.T) {
 	msg := err.Error()
 	for _, forbidden := range []string{
 		"nothing was changed", "no listing was changed",
-		"store-listing change", "store-listing lookup", "fix the value",
+		"store-listing change", "store-listing lookup",
+		// The change arm's remedy, whichever wording it carries. "fix the
+		// value" was it until civitai/cli#391; "partially applied" is it now.
+		// Both stay listed: an unclassified route may claim NEITHER, and a
+		// forbidden phrase that no arm can produce is a dead assertion, so the
+		// live one has to be the one in the code today.
+		"fix the value", "partially applied",
 	} {
 		if strings.Contains(msg, forbidden) {
 			t.Errorf("an unclassified route must claim nothing about the listing, but says %q: %s", forbidden, msg)
@@ -353,8 +555,10 @@ func TestUnclassifiedRouteClaimsNothing(t *testing.T) {
 // case. ONE user action (`app listing set-cover`) runs mint → PUT → persist. A
 // 400 at step 1 and a 400 at step 3 used to produce contradictory errors: "no
 // listing was changed" versus "fix the value and retry; `civitai app listing
-// status` shows the listing as it stands". Neither step touches a listing, so
-// both must say the same thing.
+// status` shows the listing as it stands" (the change arm's wording of that
+// day — civitai/cli#391 has since replaced "fix the value and retry"; the quote
+// is kept because it is what the bug printed). Neither step touches a listing,
+// so both must say the same thing.
 func TestIngestFullResTellsOneStoryAtEitherStep(t *testing.T) {
 	tell := func(badPath, badMsg string) string {
 		t.Helper()
@@ -402,13 +606,17 @@ func TestEveryListingRouteHasAReachabilityCase(t *testing.T) {
 	declared := declaredListingRoutes(t)
 
 	// Positive control on the PARSER: a walker that silently matches nothing
-	// would make this test pass with an empty ledger.
+	// would make this test pass with an empty ledger. civitai/cli#391 N3: a
+	// count short of 13 also happens when a route is legitimately retired, so
+	// the message names that reading too rather than only blaming the sweep.
 	if len(declared) < 13 {
-		t.Fatalf("parser found only %d listingRoute declarations in %s — it is not reading what it thinks", len(declared), mustGetwd(t))
+		t.Fatalf("the sweep found %d listingRoute declarations in %s, and %d were expected.\n"+
+			"If a route was RETIRED, lower this floor in the commit that removes it. "+
+			"Otherwise the sweep is not reading what it thinks it is.", len(declared), mustGetwd(t), 13)
 	}
 	for _, must := range []string{"/api/trpc/appListings.setIcon", ImageUploadPath} {
 		if _, ok := declared[must]; !ok {
-			t.Fatalf("parser did not find %q among %v — instrument is wrong", must, keysOf(declared))
+			t.Fatalf("the sweep did not find %q among %v — instrument is wrong", must, keysOf(declared))
 		}
 	}
 
@@ -444,9 +652,21 @@ func TestEveryListingRouteHasAReachabilityCase(t *testing.T) {
 // `route.op`, so editing BOTH re-labels a route with a green suite. Six of the
 // seven `change` routes were vulnerable to exactly that. This ledger is read
 // from the SOURCE TEXT by the AST parser and compared to a set spelled out here,
-// in a different file from `wantOp`, so a re-label has to be written down three
-// times before anything goes green — and each of those places states why it
-// matters.
+// in a different file from `wantOp`, so a re-label has to be contradicted in
+// three places — and each of those places states why it matters.
+//
+// 🔴 What that is NOT, corrected by civitai/cli#391 N1. This used to claim a
+// re-label "has to be written down three times before anything goes green",
+// which asserted that each of the three guards is individually
+// tamper-resistant. It is not. This one reads source TEXT, so it is defeatable
+// on its own terms: a decoy literal for a path that is already declared used to
+// SHADOW the real declaration (last-write-wins), and a route declared through a
+// type alias used to be invisible entirely. Both are closed now — duplicates
+// are reported, and the type set is resolved rather than spelled — but the
+// honest statement of the guarantee is that the three guards are independent
+// IN PRACTICE, defeating them together takes three coordinated edits in two
+// files, and no one of them is claimed to be un-defeatable alone. If you find a
+// fourth way past this one, that is a finding, not a paradox.
 //
 // If you are here because you deliberately re-classified a route: this ledger is
 // not the thing to fix first. Fix the wording tests, confirm the new subject is
@@ -472,13 +692,37 @@ func TestListingRouteOpsAreExactlyThisSpelledSet(t *testing.T) {
 		"/api/trpc/appListings.submitListingRevision": "listingOpChange",
 	}
 	declared := declaredListingRoutes(t)
-	if len(declared) < len(want) {
-		t.Fatalf("the parser found %d routes but this ledger names %d — the instrument is under-reading", len(declared), len(want))
+	// 🔴 civitai/cli#391 N3: this used to be `len(declared) < len(want)` and
+	// FATAL, which made the actionable branch below — the one that names the
+	// route and says what to do about it — unreachable in the exact situation it
+	// was written for. Retiring a route legitimately shrinks `declared` below
+	// `len(want)`, so a maintainer deleting a retired route got "the instrument
+	// is under-reading", which blames the parser, and the test aborted before it
+	// could say WHICH route.
+	//
+	// The floor it replaces still has a job — a walker wired to nothing must not
+	// look like a clean run — but the honest threshold for "wired to nothing" is
+	// zero, and zero does not move when a route is retired. Under-reading short
+	// of zero is diagnosed by the loop below, which now names both mechanisms
+	// instead of assuming one.
+	if len(declared) == 0 {
+		t.Fatalf("the sweep found NO listingRoute declarations at all in %s — the instrument is wired to nothing, "+
+			"so every comparison below would be vacuous", mustGetwd(t))
 	}
 	for path, wantOp := range want {
 		d, ok := declared[path]
 		if !ok {
-			t.Errorf("this ledger names route %q, which is no longer declared — delete the entry if the route is gone", path)
+			// 🔴 An absence cannot distinguish its two mechanisms, so this names
+			// both rather than guessing: the route was retired, or the parser
+			// stopped seeing a declaration that is still there. The found set is
+			// printed because that is the signal the two disagree about — a
+			// plausible list one short reads "retired"; a list missing unrelated
+			// routes reads "instrument".
+			t.Errorf("this ledger names route %q, but the sweep found no declaration of it.\n"+
+				"  If the platform RETIRED the route: delete this entry, its case in listingRouteCases() "+
+				"and its row in procname_leak_test.go, in one commit.\n"+
+				"  If the route IS still declared: the sweep stopped seeing it — fix declaredListingRoutes, do not delete the entry.\n"+
+				"  The sweep found %d routes: %v", path, len(declared), keysOf(declared))
 			continue
 		}
 		if d.opName != wantOp {
@@ -539,6 +783,20 @@ func declaredListingRoutes(t *testing.T) map[string]declaredRoute {
 	for _, e := range entries {
 		n := e.Name()
 		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
+			continue
+		}
+		// civitai/cli#391 N4: ask the BUILD what is in this package, not the
+		// filename. `parser.ParseFile` happily reads a file behind a
+		// `//go:build never` constraint or a `_windows.go` suffix, so a route
+		// declared in a file that is not compiled would be counted as declared
+		// and would then demand a reachability case for a route no caller can
+		// reach. MatchFile applies the same constraints the toolchain does.
+		// (Over-demanding is the safe direction, which is why this was 🟢 — but
+		// the honest sweep is the one that matches the build.)
+		switch ok, err := build.Default.MatchFile(".", n); {
+		case err != nil:
+			t.Fatalf("deciding whether %s is in this build: %v", n, err)
+		case !ok:
 			continue
 		}
 		f, err := parser.ParseFile(fset, n, nil, 0)
@@ -611,7 +869,128 @@ func declaredListingRoutes(t *testing.T) map[string]declaredRoute {
 		return "", false
 	}
 
+	// civitai/cli#391 N2: the walk used to match the identifier SPELLING
+	// "listingRoute", so `type lroute = listingRoute` made every route declared
+	// through the alias invisible — no ledger entry, no reachability case
+	// demanded, no wording row demanded, and a fully GREEN silent suite. That is
+	// the only defeat found that produced no diagnostic at all, and "silent" is
+	// the property that made #374 expensive.
+	//
+	// Resolving through go/types would be the textbook answer; it would mean
+	// type-checking the package, and x/tools is a dependency this repo has not
+	// taken (AGENTS.md: ask first). The cheap equivalent is to collect the names
+	// that ARE listingRoute — the alias form `type X = listingRoute` and the
+	// defined form `type X listingRoute` — and match against that set rather
+	// than against one spelling.
+	routeTypeNames := map[string]bool{"listingRoute": true}
+	for _, f := range files {
+		for _, d := range f.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				if id, ok := ts.Type.(*ast.Ident); ok && id.Name == "listingRoute" {
+					routeTypeNames[ts.Name.Name] = true
+				}
+			}
+		}
+	}
+	// isRouteType reports whether an expression names listingRoute (or anything
+	// declared as it), through a pointer if need be.
+	var isRouteType func(ast.Expr) bool
+	isRouteType = func(e ast.Expr) bool {
+		switch v := e.(type) {
+		case *ast.Ident:
+			return routeTypeNames[v.Name]
+		case *ast.StarExpr:
+			return isRouteType(v.X)
+		}
+		return false
+	}
+	// isRouteContainer reports whether an expression is a slice/array/map OF
+	// routes. Its element literals may omit the type entirely
+	// (`[]listingRoute{{"…", op}}`), so they are never seen by the type match
+	// above — the same silent shape as the alias, reached a different way.
+	isRouteContainer := func(e ast.Expr) bool {
+		switch v := e.(type) {
+		case *ast.ArrayType:
+			return isRouteType(v.Elt)
+		case *ast.MapType:
+			return isRouteType(v.Value)
+		}
+		return false
+	}
+
 	out := map[string]declaredRoute{}
+	recorded := map[token.Pos]bool{}
+	record := func(cl *ast.CompositeLit, fileName string) {
+		if len(cl.Elts) == 0 || recorded[cl.Pos()] {
+			return
+		}
+		recorded[cl.Pos()] = true
+		where := fileName + ":" + strconv.Itoa(fset.Position(cl.Pos()).Line)
+
+		var path, opName string
+		var gotPath bool
+		if _, keyed := cl.Elts[0].(*ast.KeyValueExpr); keyed {
+			// `listingRoute{path: "…", op: listingOpChange}` — correct,
+			// idiomatic Go, and the exact form listingOpUnclassified exists
+			// for. Read it by key; a missing `op` key is what leaves opName
+			// empty, which the op ledger reports.
+			for _, elt := range cl.Elts {
+				kv, ok := elt.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok := kv.Key.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				switch key.Name {
+				case "path":
+					path, gotPath = resolvePath(kv.Value, where)
+				case "op":
+					if v, ok := kv.Value.(*ast.Ident); ok {
+						opName = v.Name
+					}
+				}
+			}
+		} else {
+			path, gotPath = resolvePath(cl.Elts[0], where)
+			if len(cl.Elts) > 1 {
+				if v, ok := cl.Elts[1].(*ast.Ident); ok {
+					opName = v.Name
+				}
+			}
+		}
+		if !gotPath {
+			return
+		}
+		// civitai/cli#391 N1: this ledger keys on the PATH, and the assignment
+		// used to be last-write-wins. A second literal for the same route —
+		// `var _ = listingRoute{"…setIcon", listingOpChange}` left further down
+		// a file — therefore SHADOWED the real declaration, and the op ledger
+		// read the decoy's classification instead of the one that ships. (The
+		// mutant still died, via wantOp and the wording table; this is the third
+		// guard being individually honest rather than leaning on the other two.)
+		// A duplicate path is a defect in its own right regardless: two literals
+		// for one route means two places to keep the op right.
+		if prev, dup := out[path]; dup {
+			t.Errorf("route %q is declared twice — at %s and at %s.\n"+
+				"This ledger keys on the path, so the second literal SHADOWS the first and the op "+
+				"reported for the route would be whichever the sweep happened to read last. "+
+				"Delete the duplicate; a route's op must be stated exactly once.",
+				path, prev.file, where)
+			return
+		}
+		out[path] = declaredRoute{path: path, opName: opName, file: where}
+	}
+
 	for i, f := range files {
 		fileName := names[i]
 		ast.Inspect(f, func(n ast.Node) bool {
@@ -619,47 +998,21 @@ func declaredListingRoutes(t *testing.T) map[string]declaredRoute {
 			if !ok {
 				return true
 			}
-			id, ok := cl.Type.(*ast.Ident)
-			if !ok || id.Name != "listingRoute" || len(cl.Elts) == 0 {
-				return true
-			}
-			where := fileName + ":" + strconv.Itoa(fset.Position(cl.Pos()).Line)
-
-			var path, opName string
-			var gotPath bool
-			if _, keyed := cl.Elts[0].(*ast.KeyValueExpr); keyed {
-				// `listingRoute{path: "…", op: listingOpChange}` — correct,
-				// idiomatic Go, and the exact form listingOpUnclassified exists
-				// for. Read it by key; a missing `op` key is what leaves opName
-				// empty, which the op ledger reports.
+			switch {
+			case isRouteType(cl.Type):
+				record(cl, fileName)
+			case isRouteContainer(cl.Type):
 				for _, elt := range cl.Elts {
-					kv, ok := elt.(*ast.KeyValueExpr)
-					if !ok {
-						continue
+					v := elt
+					if kv, ok := elt.(*ast.KeyValueExpr); ok {
+						v = kv.Value
 					}
-					key, ok := kv.Key.(*ast.Ident)
-					if !ok {
-						continue
-					}
-					switch key.Name {
-					case "path":
-						path, gotPath = resolvePath(kv.Value, where)
-					case "op":
-						if v, ok := kv.Value.(*ast.Ident); ok {
-							opName = v.Name
-						}
+					// An element literal either spells its type or elides it;
+					// both are this container's element type.
+					if inner, ok := v.(*ast.CompositeLit); ok && (inner.Type == nil || isRouteType(inner.Type)) {
+						record(inner, fileName)
 					}
 				}
-			} else {
-				path, gotPath = resolvePath(cl.Elts[0], where)
-				if len(cl.Elts) > 1 {
-					if v, ok := cl.Elts[1].(*ast.Ident); ok {
-						opName = v.Name
-					}
-				}
-			}
-			if gotPath {
-				out[path] = declaredRoute{path: path, opName: opName, file: where}
 			}
 			return true
 		})
