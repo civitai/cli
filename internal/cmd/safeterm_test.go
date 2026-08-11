@@ -215,6 +215,24 @@ func TestWrapServerText(t *testing.T) {
 		}
 	})
 
+	// The width clamp is REACHABLE, not decorative: hard-splitting at width 0
+	// would slice zero runes off an over-long token forever. A caller passing a
+	// pad wider than the budget is one arithmetic slip away, and a hang is a
+	// worse failure than a narrow line.
+	t.Run("a non-positive width clamps instead of hanging", func(t *testing.T) {
+		for _, w := range []int{0, -5} {
+			got := wrapServerText("abcdef ghi", w)
+			for _, l := range strings.Split(got, "\n") {
+				if n := len([]rune(l)); n > 1 {
+					t.Errorf("width %d produced a %d-rune line %q; it must clamp to 1", w, n, l)
+				}
+			}
+			if unwrapFinding(strings.ReplaceAll(got, "\n", "")) != "abcdefghi" {
+				t.Errorf("width %d lost content: %q", w, got)
+			}
+		}
+	})
+
 	t.Run("an empty string stays one empty line", func(t *testing.T) {
 		if got := wrapServerText("", 40); got != "" {
 			t.Errorf("wrapServerText(\"\") = %q, want \"\"", got)
