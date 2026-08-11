@@ -235,6 +235,39 @@ func TestWorkflowsList_ReasonsDoNotDisturbTheTable(t *testing.T) {
 	}
 }
 
+// 🔴 THE SPLICE IS PAIRED BY LINE COUNT, NOT BY INDEX, AND THIS IS THE CASE
+// THAT DISTINGUISHES THEM. safeTerm keeps `\n` in every server-origin cell, ids
+// included, so one row can occupy two output lines. Pairing reason blocks with
+// rows by position in the flushed buffer would then hand this workflow's reason
+// to the next workflow's row — a wrong cause attached to the wrong id, silently.
+// The ragged column an embedded newline produces is pre-existing and is not what
+// this asserts.
+func TestWorkflowsList_AReasonStaysWithItsRowWhenAnIDSpansTwoLines(t *testing.T) {
+	stdout, _ := renderList(t, listPage(
+		listRow(`wf_split\nsecond_half`, "succeeded", `null`),
+		listRow("wf_bad", "failed", `["FIXTURE A"]`),
+	))
+	lines := strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")
+	// CONTROL: the id really did span two lines, or this test is the ordinary
+	// case wearing a different name.
+	if !strings.Contains(stdout, "second_half") {
+		t.Fatalf("CONTROL failure, not a finding: the embedded newline did not render:\n%s", stdout)
+	}
+	rowAt, reasonAt := -1, -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "wf_bad") {
+			rowAt = i
+		}
+		if strings.Contains(l, "FIXTURE A") {
+			reasonAt = i
+		}
+	}
+	if rowAt < 0 || reasonAt != rowAt+1 {
+		t.Errorf("the reason landed at line %d and wf_bad's row at line %d. A reason attached to another "+
+			"workflow's row tells the user the wrong cause for the wrong run:\n%s", reasonAt, rowAt, stdout)
+	}
+}
+
 // --- attribution ------------------------------------------------------------
 
 // 🔴 THE #381 SHAPE, ASKED AT THIS SURFACE. There, two excluded outputs whose
