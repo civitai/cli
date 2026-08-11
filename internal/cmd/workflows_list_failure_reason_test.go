@@ -213,6 +213,61 @@ func TestWorkflowsList_ReasonCannotCarryTerminalControlBytes(t *testing.T) {
 	assertNoControlBytes(t, "workflows list stderr", stderr)
 }
 
+// 🔴 THE FORGERY INVARIANT AS A PROPERTY OF THE RENDERED SURFACE, WHICH IS THE
+// SHAPE THE FIRST VERSION OF THIS FILE DID NOT HAVE. TestWorkflowsList_AMulti…
+// inspects the LOGICAL lines the CLI emits, and every one of them starts with
+// the indent — so it is a complete guard for the `\n` vector and STRUCTURALLY
+// BLIND to the overflow one: an emitted line longer than the wrap budget is
+// broken by the TERMINAL, and its second physical row lands at column zero
+// where no assertion over emitted lines can look.
+//
+// The measured counterexample: a single token of U+2800 BRAILLE PATTERN BLANK
+// padding around row-shaped text. It is printable, is not a space (so
+// strings.Fields sees ONE token), is above U+009F (so safeTerm keeps it) and
+// passes the server's own `isLikelySafeMessage`, so it arrives verbatim — and
+// before hardSplitOverlong it produced a 266-rune line from a 79-column budget.
+//
+// So the invariant asserted here is the one that survives arbitrary input: every
+// line this command emits fits the budget. The material is generated from
+// adversarial atoms rather than listed, because the previous guard failed by
+// handling exactly the payloads it had been shown.
+func TestWorkflowsList_NoEmittedLineCanOverflowIntoColumnZero(t *testing.T) {
+	const blank = "⠀" // BRAILLE PATTERN BLANK
+	rowShaped := "wf_forged  succeeded  2026-08-05T12:00:00Z  0  4/4"
+	atoms := []string{
+		strings.Repeat(blank, 70) + rowShaped,
+		strings.Repeat(blank, 70) + rowShaped + strings.Repeat(blank, 70) + rowShaped,
+		strings.Repeat("x", 200),
+		"https://example.invalid/" + strings.Repeat("p", 120),
+		strings.Repeat("字", 60),
+		"FIXTURE ordinary prose that simply runs on and on and needs several lines to say what it says " +
+			"and then keeps going for good measure",
+		"FIXTURE first\n" + rowShaped + "\n" + rowShaped + "\n" + rowShaped,
+		strings.Repeat("é", 100),
+	}
+	for i, a := range atoms {
+		stdout, _ := renderList(t, listPage(
+			listRow("wf_real", "failed", `["`+strings.ReplaceAll(a, "\n", `\n`)+`"]`),
+		))
+		// CONTROL: the material reached the screen, so the invariant below is
+		// about where it sits and not about it having been dropped.
+		if len(stdout) <= len("WORKFLOW ID") {
+			t.Fatalf("CONTROL failure, not a finding: atom %d rendered nothing:\n%q", i, stdout)
+		}
+		for _, l := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
+			if n := len([]rune(l)); n > findingWrapWidth {
+				t.Errorf("atom %d produced an emitted line of %d runes against a %d-column budget. The "+
+					"terminal wraps it and the spill lands at COLUMN ZERO, where a forged row goes — and "+
+					"where an assertion over emitted lines cannot see it:\n%q", i, n, findingWrapWidth, l)
+			}
+			if strings.TrimSpace(l) != "" && !strings.HasPrefix(l, listReasonIndent) &&
+				!strings.HasPrefix(l, "WORKFLOW ID") && !strings.HasPrefix(l, "wf_real") {
+				t.Errorf("atom %d put a line at column zero: %q", i, l)
+			}
+		}
+	}
+}
+
 // A tab in a reason is its own alignment hazard next to a tabwriter. It is safe
 // only because the reason is written straight to stdout and never through the
 // tabwriter — so the table above must be byte-identical to the same table

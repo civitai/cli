@@ -160,13 +160,58 @@ func TestWrapServerText(t *testing.T) {
 		}
 	})
 
-	t.Run("a word longer than the width is not split", func(t *testing.T) {
-		// Truncating or hyphenating an over-long token would corrupt an id or a
-		// URL a user is meant to copy. Overflowing one line is the lesser harm,
-		// and it is stated here so the residual is not rediscovered as a bug.
+	// 🔴 THIS ASSERTION IS THE REVERSE OF THE ONE IT REPLACED, AND THE REVERSAL
+	// IS THE POINT. It used to pin that an over-long token is left WHOLE —
+	// "overflowing one line is the lesser harm" — reasoning about a corrupted id
+	// being worse than a long line. That was wrong, and it contradicted the
+	// forgery invariant asserted three files over: an over-long token already
+	// breaks the layout, so the real choice was "silently overflow into a
+	// forgeable column" versus "a visibly broken token". See hardSplitOverlong
+	// for the demonstrated counterexample.
+	t.Run("a token longer than the width is hard-split", func(t *testing.T) {
 		in := strings.Repeat("x", 50)
-		if got := wrapServerText(in, 10); got != in {
-			t.Errorf("an unbreakable token was altered: %q", got)
+		got := wrapServerText(in, 10)
+		for _, l := range strings.Split(got, "\n") {
+			if n := len([]rune(l)); n > 10 {
+				t.Errorf("an over-long token was left whole: a %d-rune line survives the wrap, and the "+
+					"TERMINAL will break it — at column zero, where a forged row goes: %q", n, l)
+			}
+		}
+		if unwrapFinding(strings.ReplaceAll(got, "\n", "")) != in {
+			t.Errorf("splitting lost or reordered content: %q -> %q", in, got)
+		}
+	})
+
+	// 🔴 THE PROPERTY, NOT THE FIXTURE. The guard that shipped first was
+	// fixture-shaped — it handled the payloads it had been shown — and the
+	// hazard arrived in a shape nobody had listed. What must hold for ARBITRARY
+	// reason material is a single invariant: no emitted line exceeds the budget.
+	// U+2800 is present because it is the measured counterexample, not because
+	// the rule is about U+2800.
+	t.Run("no emitted line exceeds the budget, for any input", func(t *testing.T) {
+		const blank = "⠀" // BRAILLE PATTERN BLANK: printable, not a space, above U+009F
+		atoms := []string{
+			"word", "a", "", blank, strings.Repeat(blank, 40), strings.Repeat("x", 90),
+			"https://example.invalid/" + strings.Repeat("p", 60), "\t", "\n",
+			strings.Repeat("字", 40), "wf_forged  succeeded  0  4/4", "-", strings.Repeat("é", 33),
+		}
+		for _, width := range []int{1, 2, 7, 40, listReasonWrapWidth} {
+			for i, a := range atoms {
+				for j, b := range atoms {
+					for _, sep := range []string{"", " ", blank, "\n"} {
+						in := a + sep + b
+						got := wrapServerText(in, width)
+						for _, l := range strings.Split(got, "\n") {
+							if n := len([]rune(l)); n > width {
+								t.Fatalf("wrapServerText(width=%d) emitted a %d-rune line from atoms %d+%d "+
+									"joined by %q: %q\n\nEvery emitted line must fit the budget, or the "+
+									"TERMINAL breaks it and the spill lands at column zero.",
+									width, n, i, j, sep, l)
+							}
+						}
+					}
+				}
+			}
 		}
 	})
 

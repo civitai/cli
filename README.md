@@ -2361,8 +2361,15 @@ CLI's doing.** `workflows list` reads the platform's *normalized* feed, which
 runs each message through a server-side sanitiser that names the provider —
 *"Google Gemini: Could not generate images…"*. `workflows get` reads the
 orchestrator's raw workflow, where the same message has no such prefix. So the
-list can be the more specific of the two. The CLI reproduces neither transform;
-it prints what each endpoint sent.
+list can be the more specific of the two.
+
+**It can also be the less specific one, and that is the half worth knowing when
+you are debugging.** The same server-side sanitiser *replaces* any message it
+cannot vouch for — one carrying a URL, a path, a stack frame, an infra name, or
+running past 300 characters or one line — with a generic *"… reported a system
+error"*. `workflows get` applies none of that, so where the two disagree the raw
+one can be the more informative. **When a failure is worth chasing, read both.**
+The CLI reproduces neither transform; it prints what each endpoint sent.
 
 <sub>Until civitai/cli#367 this was discarded at parse time — the field existed on the wire and the CLI had no place to put it — so every failure printed the same generic sentence no matter what caused it, and `civitai workflows get` answered a failed run with a status and nothing else. `civitai workflows list` kept discarding it until civitai/cli#382, at a different wire path.</sub>
 
@@ -2648,7 +2655,7 @@ credited it to the wrong command.)
 | `interrupted while waiting` | **The generation is still running and has already been charged.** Ctrl-C stopped the wait, not the job. Re-attach with `civitai workflows get <id>`. | [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching) |
 | `model substituted` | The server ran a **different checkpoint** than you asked for and billed for what ran. Warned by default; `--fail-on-substitution` turns it into a refusal on the estimate, before any spend. | [Silent model substitution](#-silent-model-substitution) |
 | `The server reported: …` | The orchestrator recorded an account of what happened, and what follows is the server's own words, passed through unchanged. The CLI does not interpret them and does not know whether the failure is retryable. Printed on the `generate` error and by `civitai workflows get`. | [What the server says went wrong](#what-the-server-says-went-wrong) |
-| `An indented line under a row is what the server recorded` | The same record, on `civitai workflows list`: the indented lines beneath a workflow's row are the server's own words for that workflow, wrapped but never shortened. The indent is not decoration — it is what keeps server text from occupying the column a real row starts in. | [What the server says went wrong](#what-the-server-says-went-wrong) |
+| `An indented line under a row is what the server recorded` | The same record, on `civitai workflows list`: the indented lines beneath a workflow's row are the server's own words for that workflow, wrapped but never shortened. The indent is not decoration — it keeps server text out of the column a real row starts in, so a message cannot pose as a workflow of yours. It holds for the line breaks the CLI makes: the CLI wraps to a fixed 79 columns and never asks how wide your terminal is, so in a **narrower** terminal — or with wide (CJK) characters — your terminal re-wraps and the overflow can still reach column zero. | [What the server says went wrong](#what-the-server-says-went-wrong) |
 | `the orchestrator often supplies no failure reason, so it may not say why` | The same failure with **no** account recorded — a real, measured case, not a CLI limitation. Neither `civitai workflows get <id>` nor `civitai workflows list` will say why either. | [What the server says went wrong](#what-the-server-says-went-wrong) |
 
 ### Everything else

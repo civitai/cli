@@ -223,6 +223,17 @@ func TestListedWorkflow_DoesNotReadTheGetShapesNestedPath(t *testing.T) {
 // one payload rendered two ways on one screen (#381). This asserts the property
 // on both entry points at once rather than trusting that dedupeReasons is called
 // from both.
+//
+// 🟢 KNOWN GUARD-SHAPE LIMIT, recorded rather than left to be rediscovered: this
+// is FIXTURE-shaped, not property-shaped. It proves the two agree on ONE piece
+// of reason material chosen to exercise trimming, the emptiness drop and
+// de-duplication at once — it does not quantify over reason material, so a
+// divergence that only appears on some other input would pass. It does fire (a
+// mutant making the list shape skip the shared rule is killed here), so this is
+// about how much the guard covers, not whether it works. The property version
+// would generate material and compare the two shapes over all of it; the reason
+// it was not written that way is that the two now call the SAME function, which
+// makes divergence a refactor away rather than an input away.
 func TestBothWorkflowShapesApplyTheSameReasonRule(t *testing.T) {
 	// Identical reason material, expressed at each shape's own wire path.
 	const reasons = `["  FIXTURE A  ","FIXTURE A","","FIXTURE B"]`

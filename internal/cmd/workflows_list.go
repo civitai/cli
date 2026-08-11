@@ -217,8 +217,22 @@ func printWorkflowList(out, errw io.Writer, page *genapi.WorkflowPage, o workflo
 		// would otherwise put attacker-chosen text at column zero — where it is
 		// indistinguishable from a row the CLI wrote, complete with a fake id,
 		// status and cost. indentContinuation pads every line after the first;
-		// the Fprintf pads the first. No continuation line can occupy column
-		// zero, and every real row does, so a reason cannot impersonate one.
+		// the Fprintf pads the first; wrapServerText breaks a line long enough
+		// that the TERMINAL would wrap it, which is the same vector with no
+		// newline in it.
+		//
+		// 🔴 THE SCOPE OF THAT CLAIM, BECAUSE AN ABSOLUTE VERSION OF IT SHIPPED
+		// AND WAS FALSE. It read "no continuation line can occupy column zero,
+		// and every real row does, so a reason cannot impersonate one". What
+		// actually holds is narrower: no line the CLI EMITS starts at column
+		// zero, and none exceeds the CLI's fixed wrap budget. The CLI never
+		// measures the terminal (`x/term.GetSize` is nowhere in this repo), so
+		// in a terminal narrower than that budget the terminal soft-wraps and
+		// the spill lands at column zero regardless — as it does for a line that
+		// is within budget in RUNES but over it in display CELLS. Both residuals
+		// are stated at wrapServerText and in the README; neither is closable
+		// here.
+		//
 		// A tab in a reason is harmless for the same reason the block sits here:
 		// it is written straight to `out`, never to the tabwriter, so it cannot
 		// re-align the table above.

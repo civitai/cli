@@ -82,8 +82,21 @@ func indentContinuation(s, pad string) string {
 // TERMINAL, and the part that spills over starts at column zero too, with no
 // newline anywhere in the string for indentContinuation to see. Under a table
 // that is the same forgery: attacker-chosen text at the column every real row
-// begins at. Breaking the lines here is what makes the indent hold for a reason
-// of any length.
+// begins at.
+//
+// 🔴 WHAT THIS BUYS, STATED AT THE SCOPE IT WAS MEASURED — IT IS NOT "ANY REASON
+// OF ANY LENGTH IS SAFE", AND AN EARLIER VERSION OF THIS COMMENT SAID THAT. The
+// CLI never asks the terminal how wide it is (`x/term.GetSize` appears nowhere
+// in this repo); it wraps to a FIXED budget. So this guarantees only that the
+// CLI emits no logical line longer than the budget. In a terminal NARROWER than
+// the budget, the terminal still soft-wraps and text still reaches column zero,
+// and nothing here can prevent it. The residual is stated in the README too.
+//
+// A second, narrower case of the same gap: the budget counts RUNES, and a rune
+// is not a display cell. 38 East Asian wide runes occupy 76 columns, so a line
+// this function considers 38 wide is 76 wide on screen. Fixing that needs a
+// character-width table (a new dependency, or a hand-rolled one) and is filed
+// separately rather than smuggled in here.
 //
 // It reuses wrapTokens (validate_print.go), the CLI's one greedy line filler, so
 // the wrapped surfaces cannot disagree about how a line is broken.
@@ -98,11 +111,54 @@ func indentContinuation(s, pad string) string {
 // heading, while here it sits under a TABLE, where a tab is an alignment hazard
 // and a soft wrap is a forgery one.
 func wrapServerText(s string, width int) string {
+	if width < 1 {
+		width = 1
+	}
 	var lines []string
 	for _, line := range strings.Split(s, "\n") {
-		lines = append(lines, wrapTokens(strings.Fields(line), width)...)
+		lines = append(lines, wrapTokens(hardSplitOverlong(strings.Fields(line), width), width)...)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// hardSplitOverlong breaks any token wider than width into width-rune chunks, so
+// that wrapTokens — which never splits a token — cannot be handed one it must
+// overflow with.
+//
+// 🔴 THIS REVERSES A DELIBERATE CHOICE, AND THE CHOICE WAS WRONG. The first cut
+// left an over-long token whole and pinned that as "overflowing one line is the
+// lesser harm", reasoning about a truncated id being worse than a long line.
+// That framing missed the actual trade: an over-long token ALREADY breaks the
+// layout, so the choice was never "clean line versus corrupted id" — it was
+// "silently overflowing into a column an attacker can forge a row in, versus a
+// visibly broken token". Demonstrated, not hypothesised: a single token of
+// U+2800 BRAILLE PATTERN BLANK padding around row-shaped text renders as a
+// spaced table row, is ONE token to strings.Fields, is above U+009F so safeTerm
+// keeps it, and passes the server's own `isLikelySafeMessage` (under 300 chars,
+// single line, matches no unsafe pattern) — so it arrives verbatim, produced a
+// 266-rune emitted line, and the terminal placed its tail at column zero.
+//
+// It is applied HERE and not in wrapTokens on purpose. wrapTokens is shared with
+// printFinding, where findingTokens deliberately keeps a quoted span whole so
+// remedy text stays pasteable; that surface renders the CLI's OWN findings and
+// does not sit under a table. Splitting there would corrupt text a user is meant
+// to copy in order to fix a hazard that only exists on this path.
+//
+// Residual, stated rather than rediscovered: a chunk boundary can fall inside a
+// grapheme cluster, so a combining mark can be separated from its base. That is
+// a rendering blemish on hostile input; it is not a forgery vector, and the
+// display-width gap above is the more consequential of the two.
+func hardSplitOverlong(tokens []string, width int) []string {
+	out := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		r := []rune(t)
+		for len(r) > width {
+			out = append(out, string(r[:width]))
+			r = r[width:]
+		}
+		out = append(out, string(r))
+	}
+	return out
 }
 
 // isStrippedControl reports whether r is a terminal control character safeTerm
