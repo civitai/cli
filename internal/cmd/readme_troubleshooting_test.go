@@ -840,8 +840,14 @@ func TestGithubAnchorSlugKeepsUnderscores(t *testing.T) {
 		t.Error("readmeHasAnchor found a heading that does not exist — it cannot report a miss")
 	}
 	// And a `#` line inside a fenced block is not a heading.
-	if readmeHasAnchor("```sh\n# not a heading\n```\n", "#-not-a-heading") {
-		t.Error("readmeHasAnchor counted a shell comment inside a code fence as a heading")
+	const fenced = "## Real Heading\n\n```sh\n# not a heading\n```\n"
+	if !readmeHasAnchor(fenced, "#real-heading") {
+		t.Error("POSITIVE CONTROL FAILED: readmeHasAnchor cannot see a heading outside a fence, " +
+			"so the negative below would be a fact about the walk")
+	}
+	if readmeHasAnchor(fenced, "#not-a-heading") {
+		t.Error("readmeHasAnchor counted a shell comment inside a code fence as a heading — " +
+			"README.md really contains such lines (`# …` inside ```sh blocks), so a dead anchor could pass")
 	}
 }
 
