@@ -97,6 +97,12 @@ follows is specific to this repo's toolchain.
   - Fix: require every check to hold a **terminal** conclusion
     (`SUCCESS|FAILURE|CANCELLED|TIMED_OUT|NEUTRAL|SKIPPED`) and assert a
     minimum expected check count.
+- 🔴 **`./scripts/ci-shallow.sh` reads COMMITTED state only** — it clones the
+  branch at its tip, so running it on a dirty tree measures the **previous**
+  commit and reports green about code you did not write. Its result is a claim
+  about `HEAD`, never about the working tree: commit first, and confirm the SHA
+  it cloned is the one you meant. This bit three separate agents in one session,
+  each time in the reassuring direction.
 
 ## Git rules
 
