@@ -1,12 +1,31 @@
-# v0.1.94 — release notes draft (for maintainer review)
+# v0.1.94 — SHIPPED
 
-**3 commits since `v0.1.93`** (`v0.1.93..f99fafc`). Not tagged. Tagging and
-publishing are maintainer-only.
+**This release is out.** Tagged at `3a717b8`, published 2026-08-12T19:41:17Z,
+`@civitai/cli@0.1.94` on npm, Homebrew cask bumped to 0.1.94, 14 assets (the
+full cross product, windows/arm64 included).
 
-Counted `<prev-tag>..<head>`, and that anchor is the point: v0.1.93's notes were
-measured twice against `main` instead of against a tag, once before the tag
-existed and once after, and were wrong both times in opposite directions. `main`
-moves; a tag does not.
+**4 commits** (`v0.1.93..v0.1.94`): 0 excluded by the changelog filter, **3
+leaking**, 1 genuinely user-facing.
+
+🔴 **This file said "3 commits" until the moment it shipped, and that is the
+THIRD time this document family has miscounted the same way.** It was written
+against `v0.1.93..f99fafc` while #406 was still open; #406 then merged and
+became part of the release, so the range grew under a number already written
+down. v0.1.93's notes made the same error twice — once measured before the last
+commits landed, once measured past the tag.
+
+The pattern, stated so the next person stops re-deriving it: **a range that ends
+at anything other than the release tag is a number with an expiry date.** Any
+head — `main`, a SHA, "current" — keeps moving after you write it. So the count
+is only trustworthy when computed as `<prev-tag>..<this-tag>`, which means
+**after tagging, not before**. A pre-tag draft may describe the CHANGES; it
+cannot state a total. Every count in this file was recomputed after the tag
+existed.
+
+Verified before publishing, not after: the built `linux_amd64` artifact was
+downloaded from the draft, checksum-verified against `checksums.txt`, and run
+against the #400 scenario on the real platform — it printed the staged message
+and exited `0`. The release was published only then.
 
 ## The one user-facing change: an exit code
 
@@ -56,12 +75,14 @@ below.
 
 ## ⚠️ Inherited from v0.1.93, still unfixed
 
-1. **The changelog filter is unscoped.** `.goreleaser.yaml` excludes `^docs:`,
-   `^test:`, `^chore:` with no scope group, and omits `ci:` entirely. It let 15
-   non-user-facing commits into the published v0.1.93 changelog. On this
-   3-commit range it leaks **2 of 3** — both docs commits above — leaving one
-   genuine entry. Widening it is a `.goreleaser.yaml` change, which AGENTS.md
-   puts under **⚠ Ask first**:
+1. **The changelog filter is unscoped — and it did leak here.**
+   `.goreleaser.yaml` excludes `^docs:`, `^test:`, `^chore:` with no scope
+   group, and omits `ci:` entirely. It let 15 non-user-facing commits into the
+   published v0.1.93 changelog, and **3 of this release's 4** entries are
+   `docs(...)` commits about the release process itself, leaving one genuine
+   line (#403) that a reader has to find among them. Check the published body if
+   you want to see it. Widening it is a `.goreleaser.yaml` change, which
+   AGENTS.md puts under **⚠ Ask first** and which was NOT made before this tag:
 
    ```yaml
    changelog:
@@ -78,12 +99,18 @@ below.
    drops it under today's config, but any bang-based tooling will miss it.
    History is immutable; this is a note for whoever adds bang-grouping.
 
-## Release mechanics (maintainer only)
+## Release mechanics — what happened
 
-Per AGENTS.md: `git tag` then push builds via goreleaser into a **draft**
-release. Publishing that draft is a *separate* consent — it also fires
-`release-npm.yml` (**`@civitai/cli`**, OIDC trusted publishing) and
-`release-homebrew.yml` (the cask). **npm unpublish is restricted**, so a bad
-version is fixed by publishing another, not by taking it back. Sanity-check the
-draft's artifacts first — the full cross product, windows/arm64 included.
-v0.1.93 carried 14 assets; expect the same shape.
+The tag push built into a **draft**, and publishing it fired `release-npm.yml`
+(**`@civitai/cli`**, OIDC trusted publishing) and `release-homebrew.yml` (the
+cask). Both succeeded; npm reports 0.1.94 and the tap cask reads
+`version "0.1.94"`. The release assets were confirmed fetchable
+**unauthenticated** — that is the #308 failure mode, where the cask pointed at a
+draft and `brew install` 404'd for ~2h.
+
+🔴 **The first build FAILED and it was not our code.** goreleaser's own tarball
+could not be downloaded from the GitHub release CDN (`socket hang up`, three
+retries) before the config was ever read. No release object was created and the
+tag was untouched, so re-running the failed job was the whole fix. Worth knowing
+before anyone deletes a tag to "retry cleanly": check whether the failure
+happened before goreleaser started.
