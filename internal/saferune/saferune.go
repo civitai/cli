@@ -2,14 +2,23 @@
 // SERVER-SUPPLIED string may put in front of a user, and nothing else.
 //
 // 🔴 SERVER-SUPPLIED. NOT "EVERY STRING THE CLI PRINTS". The CLI does not
-// sanitise what the USER typed — a prompt, a flag value, a path, a workflow id
-// the user passed on the command line is echoed back byte-for-byte, because the
-// screen that precedes an irreversible spend has to show what will actually be
-// sent. The first cut of civitai/cli#393 got this wrong: `safeTerm` was applied
+// sanitise what the USER typed on the command line — a prompt, a flag value, a
+// path, a workflow id is echoed back byte-for-byte, because the screen that
+// precedes an irreversible spend has to show what will actually be sent.
+//
+// Two documented exceptions, both away from that screen, both stated here
+// because "server text only" is the tempting over-claim: a value read out of an
+// `--input` FILE is filtered (a graph file can be downloaded or generated, so
+// it is not "what the user typed"), and `download`'s target path is filtered
+// because the same variable holds `--out` verbatim in one branch and a
+// SERVER-chosen file name in the others — see targetPath's comment for the
+// trade and the papercut it accepts. The first cut of civitai/cli#393 got this wrong: `safeTerm` was applied
 // to `o.prompt`, so a typed Persian prompt (`می‌روم`, held apart by a ZWNJ)
 // rendered joined on the approval screen while the graph on the wire carried
 // the original. The screen stopped showing the job. Call sites are audited in
-// both directions and pinned by TestApprovalScreenEchoesTypedInput_AndStripsServerText.
+// both directions and pinned by internal/cmd's TestSafeTermIsNeverAppliedToUserTypedInput
+// (structural, over every call site) and TestSameBytesTypedAndReceived_AreEchoedAndStripped
+// (behavioural, the same bytes typed and received).
 //
 // 🔴 IT IS A PACKAGE RATHER THAN A FUNCTION BECAUSE TWO PACKAGES ASK THE SAME
 // QUESTION AND MUST NOT ANSWER IT DIFFERENTLY. `internal/cmd`'s safeTerm asks

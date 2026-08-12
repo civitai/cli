@@ -1708,7 +1708,8 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 	// the prompt through safeTerm and a typed Persian prompt (`می‌روم`, held apart
 	// by a ZWNJ) rendered joined while the graph on the wire carried the original
 	// — the approval screen stopped describing the job it was approving.
-	// TestApprovalScreenEchoesTypedInput_AndStripsServerText pins it.
+	// TestSameBytesTypedAndReceived_AreEchoedAndStripped pins it, and
+	// TestSafeTermIsNeverAppliedToUserTypedInput pins the call sites.
 	if built.inputPath != "" {
 		// With --input the CLI has deliberately not interpreted the graph, so it
 		// names the file rather than echoing fields it did not parse. Printing a

@@ -18,16 +18,21 @@ import (
 // verified" line or hide a warning, an OSC-52 clipboard-set (\x1b]52;c;...\x07),
 // or a window-title spoof.
 //
-// 🔴 IT IS THE ONE GATE, AND WHAT IT REMOVES IS DEFINED ONE LAYER DOWN.
-// `internal/saferune` owns the class — every C0 control and DEL except newline
-// and tab, the C1 range (the 8-bit CSI/OSC introducers), all of `unicode.Cf`
-// (zero-width spaces and joiners, the bidi overrides/embeddings/isolates that
-// reverse the DISPLAYED order of a line) and the handful of runes that render
-// as blank while Unicode calls them a letter or a symbol. Read that package's
-// doc comment before changing what is stripped: it states what is deliberately
-// KEPT (combining marks, right-to-left script, private-use, whitespace
-// separators) and the cost the strip knowingly accepts. Do not add a second
-// table here — civitai/cli#393 was two tables that disagreed.
+// 🔴 IT IS THE ONE GATE, AND WHAT IT REMOVES IS DEFINED ONE LAYER DOWN — READ
+// IT THERE, NOT HERE. `internal/saferune` owns the class: `Cc` (every C0
+// control and DEL except newline and tab, plus the C1 range — the 8-bit CSI/OSC
+// introducers), Unicode's `Default_Ignorable_Code_Point` property, one
+// documented exception, and two runes the property cannot reach.
+//
+// This paragraph deliberately does NOT restate the membership rule, and the
+// version that did is why: it said "all of `unicode.Cf` … and the handful of
+// runes that render as blank", was written when the class WAS `Cf`, and stayed
+// behind when the class moved to the property — so it ended up false in both
+// directions (32 `Cf` runes are kept; most of what is stripped is not `Cf`)
+// while its own last sentence forbade keeping a second table. A summary of a
+// rule is a copy of it. The rule, the derivation, what is deliberately KEPT and
+// what the strip costs are all in saferune's package doc; read that before
+// changing anything about what is stripped, and add nothing here.
 //
 // Ordinary printable and multibyte UTF-8 text passes through byte-for-byte.
 //

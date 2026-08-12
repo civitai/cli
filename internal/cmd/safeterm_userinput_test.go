@@ -49,6 +49,40 @@ var userTypedArgs = map[string]string{
 	"o.negativePrompts": "reserved: any future typed field",
 }
 
+// 🔴 bareIdentArgs IS THE OTHER HALF OF THE GUARD, AND IT EXISTS BECAUSE THE
+// FIRST HALF WAS BLIND TO A NAMING CONVENTION.
+//
+// userTypedArgs above pins argument SHAPES (`o.prompt`, `built.inputPath`). A
+// delta audit found that `safeTerm(target)` in `download.go` carries the user's
+// own `--out` path — `targetPath` returns `o.out` verbatim — and no assertion
+// could see it, because the argument is spelled as a bare local. A guard that
+// only understands one naming convention is the reason that survived.
+//
+// So every bare-identifier argument must be classified HERE. The ledger does
+// not decide whether sanitising is right; it makes the decision impossible to
+// skip. A new bare identifier fails this test until someone writes down where
+// its bytes come from, which is the thinking that was missing for `target`.
+//
+// It fails in both directions: an unclassified name (the set grew) and a
+// classified name that no longer appears (the set shrank, so the note is stale
+// and the next reader would trust it).
+var bareIdentArgs = map[string]string{
+	"workflowID": "SERVER: the id from the submit reply / poll, not the one the user typed",
+	"target":     "MIXED: --out verbatim, else filepath.Base(SERVER file name). Sanitised for the server half — see targetPath",
+	"w":          "SERVER-derived: a download warning, or an image-metadata weight",
+	"status":     "SERVER: a workflow status string",
+	"r":          "SERVER: an orchestrator failure reason",
+	"note":       "SERVER-derived: a routing note built from the server's file name",
+	"k":          "SERVER cost-map key, and (generate_input.go) a key out of the user's own --input file",
+	"workflow":   "the workflow value out of the user's --input FILE — the documented file-content exception",
+	"t":          "SERVER: a trained word",
+	"sha":        "SERVER: a published hash",
+	"reason":     "SERVER: an orchestrator failure reason",
+	"name":       "SERVER: a published file name",
+	"h":          "SERVER: a hash out of image metadata",
+	"baseModel":  "SERVER: a base-model label",
+}
+
 // minSafeTermCallsScanned is the POSITIVE CONTROL. A parser that has stopped
 // finding calls — a moved package, a renamed helper, the wrong directory —
 // scans nothing, finds no violation and reports a serene pass. There are 150
@@ -65,7 +99,8 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 	}
 	fset := token.NewFileSet()
 	scanned, files := 0, 0
-	var bad []string
+	var bad, unclassified []string
+	seenBare := map[string]bool{}
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -90,6 +125,12 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 			if why, forbidden := userTypedArgs[arg]; forbidden {
 				bad = append(bad, fmt.Sprintf("%s: safeTerm(%s) — %s", fset.Position(ce.Lparen), arg, why))
 			}
+			if _, bare := ce.Args[0].(*ast.Ident); bare {
+				if _, known := bareIdentArgs[arg]; !known {
+					unclassified = append(unclassified, fmt.Sprintf("%s: safeTerm(%s)", fset.Position(ce.Lparen), arg))
+				}
+				seenBare[arg] = true
+			}
 			return true
 		})
 	}
@@ -107,7 +148,20 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 			"screen stop describing the job it is approving — civitai/cli#393. See internal/saferune's package doc.",
 			len(bad), strings.Join(bad, "\n  "))
 	}
-	t.Logf("scanned %d safeTerm call site(s); %d forbidden argument shapes are pinned", scanned, len(userTypedArgs))
+	if len(unclassified) > 0 {
+		t.Errorf("%d safeTerm call site(s) pass a bare local whose ORIGIN is not written down:\n  %s\n\n"+
+			"Add it to bareIdentArgs saying where its bytes come from. A bare name hides the answer — "+
+			"`safeTerm(target)` carries the user's own --out path and no guard could see it until this "+
+			"ledger existed.", len(unclassified), strings.Join(unclassified, "\n  "))
+	}
+	for name := range bareIdentArgs {
+		if !seenBare[name] {
+			t.Errorf("bareIdentArgs classifies %q, which is no longer passed to safeTerm anywhere. A stale "+
+				"note reads as coverage; delete it or fix the name.", name)
+		}
+	}
+	t.Logf("scanned %d safeTerm call site(s) across %d file(s); %d forbidden shapes and %d bare-identifier "+
+		"origins are pinned", scanned, files, len(userTypedArgs), len(bareIdentArgs))
 }
 
 // renderExpr prints the small set of expression shapes safeTerm arguments take.

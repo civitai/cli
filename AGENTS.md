@@ -146,7 +146,9 @@ These go beyond the global defaults because this repo's release pipeline
 - `internal/saferune` — the ONE rule about which runes SERVER-supplied text may
   put in front of a user: `Cc` plus Unicode's `Default_Ignorable_Code_Point`,
   less U+FE0F, plus two blank-but-graphic runes. It is NOT applied to what the
-  USER typed. `cmd`'s `safeTerm` and `genapi`'s `hasPrintableContent` both call
+  USER typed on the command line — two documented exceptions, `--input` file
+  content and `download`'s mixed-origin target path.
+  `cmd`'s `safeTerm` and `genapi`'s `hasPrintableContent` both call
   it; #393 was two tables that disagreed, and its first fix drew the class on a
   category instead of the property and was wrong in both directions. Read its
   doc comment before changing the class: it states the derivation, the one
