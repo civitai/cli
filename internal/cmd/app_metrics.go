@@ -235,6 +235,19 @@ func resolveAppBlockID(ctx context.Context, list func(context.Context, string) (
 			"no submissions found for app %q — check the slug with `civitai app status`", slug))
 	}
 	// Newest first, so the first non-null appBlockId is the current block.
+	//
+	// 🔴 THE FIRST NON-NULL, NEVER THE LAST — a SECOND row pick, independent of
+	// the one below and unpinned separately until #390. The id chosen here is the
+	// key the analytics query is issued for, so an older block's id returns a
+	// real, plausible dashboard belonging to a DIFFERENT version: wrong numbers
+	// with nothing on screen to mark them wrong. The test that looked like it
+	// covered this said "PicksNewestNonNull" in its NAME while its fixture held
+	// one non-null row — first and last non-null were the same row, so reversing
+	// this loop left the whole suite green (3786 RUN, 0 FAIL). Pinned now by
+	// TestAppMetricsUsesTheNewestNonNullAppBlockID (two non-null rows with
+	// different ids) plus the reader ledger in newest_row_pick_test.go; the
+	// renamed TestAppMetricsSkipsNullAppBlockIDRows keeps the skip-a-null half.
+	// That the SERVER orders the list newest-first stays unverified client-side.
 	for i := range subs {
 		if subs[i].AppBlockID != nil && *subs[i].AppBlockID != "" {
 			return *subs[i].AppBlockID, nil

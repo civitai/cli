@@ -104,9 +104,18 @@ func TestGetSubmissionByIDParsesSingle(t *testing.T) {
 	}
 }
 
+// TestGetSubmissionByBlockIDFallsBackToList pins the SHAPE change only: a
+// `?blockId=` lookup answers `{submissions:[…]}` rather than `{submission:{…}}`,
+// and GetSubmission unwraps the list form.
+//
+// 🔴 ITS COMMENT CLAIMED "GetSubmission should take the FIRST element" OVER A
+// ONE-ROW FIXTURE — where first and last ARE the same row, so the claim was
+// untestable here and reversing the pick left it green. That is the same vacuous
+// shape as TestAppMetricsPicksNewestNonNullAppBlockID, one package away, and it
+// is why the row pick survived the first fix for #390. The "first element" half
+// now lives in TestGetSubmissionByBlockIDTakesTheNewestRow; this test keeps the
+// unwrapping, which is real and is what its name says.
 func TestGetSubmissionByBlockIDFallsBackToList(t *testing.T) {
-	// A `?blockId=` lookup returns {submissions:[...]} — GetSubmission should take
-	// the first element.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"submissions": []Submission{sampleSubmission("alpha", "approved")},
@@ -121,6 +130,62 @@ func TestGetSubmissionByBlockIDFallsBackToList(t *testing.T) {
 	}
 	if sub.Status != "approved" {
 		t.Errorf("unexpected submission: %+v", sub)
+	}
+}
+
+// TestGetSubmissionByBlockIDTakesTheNewestRow is the behavioural case for
+// GetSubmission's row pick — the fourth site of #390, and the one its first fix
+// missed entirely.
+//
+// A `?blockId=` lookup is a NARROWED LIST, not a single row: every submission for
+// that slug comes back, newest first, and GetSubmission returns `Submissions[0]`.
+// Two surfaces consume it — `app status <slug>` prints that row's
+// version/status/deploy state verbatim, and resolveListing takes its appBlockId
+// to decide which listing `app listing` reads and MUTATES — so the wrong end is a
+// wrong fact on one surface and a wrong target on the other.
+//
+// Measured on the merged tree that had already fixed the other three sites:
+// returning `Submissions[len-1]` left the entire suite green, 3812 RUN / 0 FAIL.
+func TestGetSubmissionByBlockIDTakesTheNewestRow(t *testing.T) {
+	newest := Submission{
+		ID: "pubreq_02H", BlockID: "alpha", Version: "0.2.0", Status: "pending",
+		SubmittedAt: "2026-07-29T10:00:00.000Z",
+	}
+	oldest := Submission{
+		ID: "pubreq_01H", BlockID: "alpha", Version: "0.1.1", Status: "approved",
+		SubmittedAt: "2026-07-28T10:00:00.000Z",
+	}
+	// Fixture control: the rows must differ on every field asserted below, or the
+	// ends of the list cannot be told apart — which is how this pick, and the
+	// three before it, went untested.
+	if newest.ID == oldest.ID || newest.Version == oldest.Version ||
+		newest.Status == oldest.Status || newest.SubmittedAt == oldest.SubmittedAt {
+		t.Fatal("the two rows share an asserted field, so this fixture cannot observe which end was read")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("blockId"); got != "alpha" {
+			t.Errorf("blockId query = %q, want alpha", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"submissions": []Submission{newest, oldest}})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", "")
+	sub, err := c.GetSubmission(context.Background(), "", "alpha")
+	if err != nil {
+		t.Fatalf("GetSubmission: %v", err)
+	}
+	// Written out by hand, not read back from whichever row the code returned.
+	for _, f := range []struct{ name, got, want string }{
+		{"ID", sub.ID, "pubreq_02H"},
+		{"Version", sub.Version, "0.2.0"},
+		{"Status", sub.Status, "pending"},
+	} {
+		if f.got != f.want {
+			t.Errorf("%s = %q, want %q — the NEWEST row's value. A `?blockId=` lookup is a narrowed LIST, so "+
+				"returning any other element reports an older submission as the current one (#390).", f.name, f.got, f.want)
+		}
 	}
 }
 

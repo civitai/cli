@@ -606,6 +606,25 @@ func (c *Client) recoverTimedOutSubmit(ctx context.Context, slug, version string
 // latestMatchingSubmission returns the first submission matching slug+version in
 // a non-terminal (pending/submitted) state, falling back to any slug+version
 // match. Submissions are returned newest-first, so the first match is latest.
+//
+// 🔴 TWO TIERS, AND THE TIER DECIDES BEFORE RECENCY DOES: a non-terminal match
+// wins outright even when a NEWER terminal row matched, and recency only orders
+// rows within a tier. It is not a plain "newest row" rule, so do not describe it
+// as one.
+//
+// The row picked here becomes the PublishRequestID `app submit` prints and the
+// user hands to `civitai app withdraw`, so the wrong end aims a withdrawal at
+// the wrong submission. Unpinned until #390 — every fixture was a single row,
+// where the first and last match are the same row, so reversing this loop left
+// the whole suite green (3786 RUN, 0 FAIL). Pinned now by
+// TestRecoverTimedOutSubmitReadsTheNewestMatchingRow (both tiers) and the reader
+// ledger in internal/cmd/newest_row_pick_test.go, which spans this package for
+// exactly this site. That the SERVER orders the list newest-first is an
+// unverified dependency on the route's contract: ListSubmissions does not sort
+// and no caller inspects the sequence, so a change on that side would leave every
+// one of those guards green while this answer went wrong. Not checked is not the
+// same as not checkable — every row carries SubmittedAt, so verifying (or
+// imposing) the order is possible and simply unwritten.
 func latestMatchingSubmission(subs []Submission, slug, version string) *Submission {
 	var anyMatch *Submission
 	for i := range subs {
@@ -789,6 +808,19 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 	if err := json.Unmarshal(raw, &single); err == nil && single.Submission != nil {
 		return single.Submission, nil
 	}
+	// 🔴 THE `?blockId=` FORM IS A NARROWED LIST, NOT A SINGLE ROW, and the row
+	// taken below is `Submissions[0]` — NEVER `Submissions[len-1]`. Every
+	// submission ever made for that slug comes back, newest first. That one row
+	// is printed verbatim by `app status <slug>` (version, status, deploy state)
+	// and is where resolveListing takes the appBlockId deciding WHICH listing
+	// every `app listing` subcommand reads and MUTATES. Unpinned until the
+	// adversarial audit of #390's first fix: every fixture here was one row,
+	// where both ends ARE the same row, so reversing the pick left the whole
+	// suite green (3812 RUN, 0 FAIL). Pinned now by
+	// TestGetSubmissionByBlockIDTakesTheNewestRow, the two per-surface cases in
+	// internal/cmd, and the reader ledger in newest_row_pick_test.go. Whether the
+	// SERVER really orders it newest-first is not checked client-side today —
+	// every row carries SubmittedAt, so such a check is possible, just unwritten.
 	var list struct {
 		Submissions []Submission `json:"submissions"`
 	}

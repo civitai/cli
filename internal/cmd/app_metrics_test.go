@@ -857,7 +857,18 @@ func TestPullAndMetricsGiveTheSameNextStepForTheSameState(t *testing.T) {
 	}
 }
 
-func TestAppMetricsPicksNewestNonNullAppBlockID(t *testing.T) {
+// TestAppMetricsSkipsNullAppBlockIDRows pins what this fixture can actually
+// measure: a row whose appBlockId is null is stepped over rather than resolving
+// to nothing.
+//
+// 🔴 IT WAS CALLED TestAppMetricsPicksNewestNonNullAppBlockID, AND THAT NAME WAS
+// A CLAIM IT COULD NOT SUPPORT (#390). The list below holds exactly ONE non-null
+// row, so the FIRST non-null and the LAST non-null are the same row — reversing
+// the scan direction left this test green. The "newest" half of the claim now
+// lives in TestAppMetricsUsesTheNewestNonNullAppBlockID, over fixtures with two
+// non-null rows carrying different ids. This one keeps the skip-a-null property,
+// which is real and is not covered there for the null-newest case alone.
+func TestAppMetricsSkipsNullAppBlockIDRows(t *testing.T) {
 	var rec metricsRec
 	// Newest-first list whose newest row is an un-approved (null) resubmission —
 	// the resolver must fall through to the approved one rather than giving up.
