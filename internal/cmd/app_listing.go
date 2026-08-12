@@ -51,6 +51,22 @@ var (
 // disagree with each other.
 const listingImageFormats = "png, jpeg or webp"
 
+// liveRevisionHelp is what the three attach commands tell you about a LIVE
+// listing. Stated once because it was stated three times and the three copies
+// have to agree: the below-floor sentence was added after #400 shipped the
+// behaviour, and three separate paragraphs are three chances to update two.
+//
+// It carries the floor exception because `--help` is the contract a reader has
+// OFFLINE, and without it the help asserts a moderator re-review that a
+// below-floor listing deliberately does not get. It is ONE SENTENCE because
+// TestListingHelpStaysWithinTheBudget caps each Long at 1400 chars and
+// add-screenshot had ~100 to spare — the full explanation belongs in the README,
+// which is where that budget exists to send it.
+const liveRevisionHelp = `On a listing that is already LIVE this opens a REVISION for moderator re-review
+instead of changing the live listing — pass --changelog to describe the change,
+-y to skip the confirmation. On a DRAFT listing it attaches directly. Below the
+publish floor it stages WITHOUT submitting, and exits 0.`
+
 // listingSourceRule renders the one sentence describing what a source file for
 // `kind` may be.
 //
@@ -325,9 +341,7 @@ measurement from the cap above, which is on your file. A detailed 1024x1024
 icon can pass here and be refused there; the lever is smaller pixel dimensions.
 See "Listing media requirements" in the README for the platform's bounds.
 
-On a listing that is already LIVE this opens a REVISION for moderator re-review
-instead of changing the live listing — pass --changelog to describe the change,
--y to skip the confirmation. On a DRAFT listing it attaches directly.
+` + liveRevisionHelp + `
 
 Run ` + "`civitai app listing status`" + ` to see what the publish floor still needs.`,
 		Example: `  civitai app listing set-icon ./assets/icon.png
@@ -360,9 +374,7 @@ image's dimensions and aspect at the ATTACH step, so a wrongly-shaped image is
 refused in seconds rather than after the scan.
 See "Listing media requirements" in the README for the platform's bounds.
 
-On a listing that is already LIVE this opens a REVISION for moderator re-review
-instead of changing the live listing — pass --changelog to describe the change,
--y to skip the confirmation. On a DRAFT listing it attaches directly.
+` + liveRevisionHelp + `
 
 Run ` + "`civitai app listing status`" + ` to see what the publish floor still needs.`,
 		Example: `  civitai app listing set-cover ./assets/cover.png
@@ -407,9 +419,7 @@ this CLI's: nothing here counts the gallery before uploading, so hitting the
 ceiling surfaces as a server refusal after the ingest rather than as a local
 usage error.
 
-On a listing that is already LIVE this opens a REVISION for moderator re-review
-instead of changing the live listing — pass --changelog to describe the change,
--y to skip the confirmation. On a DRAFT listing it attaches directly.`,
+` + liveRevisionHelp + ``,
 		Example: `  civitai app listing add-screenshot ./shot.png
   civitai app listing add-screenshot ./grid.png --caption "Grid view"
   civitai app listing add-screenshot ./shot.png --slug my-app`,
@@ -562,7 +572,7 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 			// reason which is not a failure of the command that ran: a listing
 			// below the publish floor cannot go to review YET, and clearing the
 			// floor takes a second command. See reportStagedBelowFloor (#400).
-			if reportStagedBelowFloor(ctx, out, client, ref.AppListingID, kind, res) {
+			if reportStagedBelowFloor(ctx, out, client, ref.AppListingID, kind, imageID, res, err) {
 				return nil
 			}
 			return err
@@ -654,16 +664,29 @@ func scanFailure(out io.Writer, err error, kind mediaKind, live bool, res *appap
 // already met means the refusal was about something else, and an asset that did
 // not land means the 400 is all the user has.
 //
-// The residual, stated rather than hidden: a submit that fails for some OTHER
-// reason WHILE the floor is also unmet is reported as progress, and its reason
-// is not shown. It is bounded rather than silent — the next set-/add- command
-// reuses this same shadow and submits it again, so once the floor is met that
-// reason surfaces as a normal error. It is not worth the spelled guard that
-// distinguishing it would require.
+// 🔴 AND THE REFUSAL MUST BE A REFUSAL — only a 400 can be the floor talking. A
+// 500, a 503, a 429 or a dropped connection says nothing about the listing, so
+// swallowing one would report success during an outage: the below-floor state is
+// by #186's premise the NORMAL state of every CLI-authored app's first media
+// command, so "any submit error" would have made a platform failure invisible on
+// the busiest path this command has. `errors.Is` against the status sentinel is
+// structural — `civitai.TagStatus` attaches it from the HTTP status, never from
+// the body — so this costs nothing the design's refusal to match server PROSE
+// was protecting.
 //
-// A read failure here returns false: the CLI cannot show that the attach landed,
-// so it must not claim it did.
-func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.Client, appListingID string, kind mediaKind, res *appapi.AttachResult) bool {
+// The residual that remains, stated rather than hidden: a 400 refusing the
+// submit for some OTHER reason while the floor is also unmet is reported as
+// progress, and its reason is not shown. It is bounded rather than silent — the
+// next set-/add- command reuses this same shadow and submits it again, so once
+// the floor is met that reason surfaces as a normal error. Distinguishing it
+// would need the spelled guard this design exists to avoid.
+//
+// A read failure returns false: the CLI cannot show that the attach landed, so
+// it must not claim it did.
+func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.Client, appListingID string, kind mediaKind, imageID int, res *appapi.AttachResult, submitErr error) bool {
+	if !errors.Is(submitErr, civitai.ErrBadRequest) {
+		return false // not a refusal, so the floor cannot be what happened
+	}
 	view, err := client.GetMyListingForEdit(ctx, appListingID)
 	if err != nil {
 		return false
@@ -671,7 +694,7 @@ func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.C
 	if view.Assets.Icon.Present() && view.Assets.Cover.Present() {
 		return false // the floor is met, so it cannot be why this was refused
 	}
-	if !attachLanded(view, kind, res) {
+	if !attachLanded(view, kind, imageID, res) {
 		return false
 	}
 
@@ -681,25 +704,42 @@ func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.C
 	fmt.Fprintln(out, "Your live listing is unchanged; nothing reaches a moderator until the publish floor is met.")
 	printFloorLine(out, view)
 	// Name the command that clears the floor, not a placeholder — at least one
-	// of the two slots is empty here, or we would have returned false above.
+	// of the two slots is empty here, or we would have returned false above. The
+	// icon is named first when BOTH are empty; the floor line above has already
+	// said that two things are missing, so this is the next step, not the whole
+	// remaining list.
 	next := "civitai app listing set-icon <file>"
 	if view.Assets.Icon.Present() {
 		next = "civitai app listing set-cover <file>"
 	}
-	fmt.Fprintf(out, "Add the rest with %s — it reuses this revision and submits it once the floor is met.\n", ui.Code(next))
+	fmt.Fprintf(out, "Next: %s — it reuses this revision and submits it once the floor is met.\n", ui.Code(next))
 	return true
 }
 
 // attachLanded reports whether the asset THIS command attached is present in the
-// listing view — the icon or cover by its slot, a screenshot by the id the attach
-// returned (screenshots are not part of the floor, so identity is the only way to
-// tell this command's row from one that was already there).
-func attachLanded(view *appapi.ListingEditView, kind mediaKind, res *appapi.AttachResult) bool {
+// listing view — BY IDENTITY, for every kind.
+//
+// 🔴 "THE SLOT IS NON-EMPTY" IS NOT "MY IMAGE IS THERE", and the difference is
+// the whole value of this check. A live listing being re-branded already HAS an
+// icon, so a presence-only test is satisfied by the image the author is
+// replacing: the CLI would report the new icon staged while looking at the old
+// one, which is the same false report — a claim about what the CLI cannot see —
+// that this file exists to remove. Measured: with a presence-only test, an
+// attach of image 501 whose re-read still showed 999 in the slot printed
+// `✓ Icon staged` and exited 0.
+//
+// The id compared against is the one the ATTACH echoed (`iconId`/`coverId`),
+// falling back to the ingested image id when the server omitted it. The echo is
+// preferred deliberately: it is the server's own statement of what it wrote, so
+// it stays correct if the platform ever stores a re-encoded derivative under a
+// new id, where the ingested id would not match and this would fail CLOSED —
+// the user would simply get the submit error, which is what they get today.
+func attachLanded(view *appapi.ListingEditView, kind mediaKind, imageID int, res *appapi.AttachResult) bool {
 	switch kind {
 	case kindIcon:
-		return view.Assets.Icon.Present()
+		return slotHolds(view.Assets.Icon, attachedID(imageID, resIconID(res)))
 	case kindCover:
-		return view.Assets.Cover.Present()
+		return slotHolds(view.Assets.Cover, attachedID(imageID, resCoverID(res)))
 	default:
 		if res == nil || res.ID == "" {
 			return false
@@ -711,6 +751,34 @@ func attachLanded(view *appapi.ListingEditView, kind mediaKind, res *appapi.Atta
 		}
 		return false
 	}
+}
+
+// attachedID picks the id to prove landed: what the attach echoed, else what was
+// ingested. A zero echo means the server said nothing, not that it wrote a zero.
+func attachedID(imageID int, echoed *int) int {
+	if echoed != nil && *echoed > 0 {
+		return *echoed
+	}
+	return imageID
+}
+
+func resIconID(res *appapi.AttachResult) *int {
+	if res == nil {
+		return nil
+	}
+	return res.IconID
+}
+
+func resCoverID(res *appapi.AttachResult) *int {
+	if res == nil {
+		return nil
+	}
+	return res.CoverID
+}
+
+// slotHolds reports whether a floor slot holds exactly the given image.
+func slotHolds(slot appapi.ListingAsset, imageID int) bool {
+	return slot.Present() && imageID > 0 && *slot.ImageID == imageID
 }
 
 // printFloorAfter reads the listing media and prints the remaining floor gap.
