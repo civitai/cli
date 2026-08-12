@@ -58,14 +58,16 @@ const listingImageFormats = "png, jpeg or webp"
 //
 // It carries the floor exception because `--help` is the contract a reader has
 // OFFLINE, and without it the help asserts a moderator re-review that a
-// below-floor listing deliberately does not get. It is ONE SENTENCE because
-// TestListingHelpStaysWithinTheBudget caps each Long at 1400 chars and
-// add-screenshot had ~100 to spare — the full explanation belongs in the README,
-// which is where that budget exists to send it.
+// below-floor listing deliberately does not get. It is ONE CLAUSE because
+// TestListingHelpStaysWithinTheBudget caps each Long at 1400 runes and this
+// constant is paid by THREE bodies at once — measured on this tree,
+// add-screenshot sits at ~1372 of 1400, so roughly 28 runes of headroom decide
+// whether the next edit here reddens the suite. Lengthen the README instead;
+// that budget exists to send prose there.
 const liveRevisionHelp = `On a listing that is already LIVE this opens a REVISION for moderator re-review
 instead of changing the live listing — pass --changelog to describe the change,
--y to skip the confirmation. On a DRAFT listing it attaches directly. Below the
-publish floor it stages WITHOUT submitting, and exits 0.`
+-y to skip the confirmation — but a live listing still below the publish floor
+stages WITHOUT submitting, and exits 0. On a DRAFT listing it attaches directly.`
 
 // listingSourceRule renders the one sentence describing what a source file for
 // `kind` may be.
@@ -419,7 +421,7 @@ this CLI's: nothing here counts the gallery before uploading, so hitting the
 ceiling surfaces as a server refusal after the ingest rather than as a local
 usage error.
 
-` + liveRevisionHelp + ``,
+` + liveRevisionHelp,
 		Example: `  civitai app listing add-screenshot ./shot.png
   civitai app listing add-screenshot ./grid.png --caption "Grid view"
   civitai app listing add-screenshot ./shot.png --slug my-app`,
@@ -654,15 +656,19 @@ func scanFailure(out io.Writer, err error, kind mediaKind, live bool, res *appap
 // Matching the 400's TEXT would have been the cheap fix and it is the wrong one:
 // a message match goes silently false the day the server rewords, and it fails
 // in the REASSURING direction — a genuine rejection would start exiting 0. So
-// this re-reads the listing and asks two structural questions, on the same
-// `Present()` predicate `status` and the floor line already use:
+// this asks three structural questions instead:
 //
-//  1. Did the asset this command attached actually land?
-//  2. Is the floor still unmet — i.e. can the floor even BE the reason?
+//  1. Was this a REFUSAL at all? See the gate below — only a 400 can be the
+//     floor talking.
+//  2. Did the asset this command attached actually land, BY IMAGE ID? See
+//     attachLanded: `Present()` alone is not this question, because a listing
+//     being re-branded already has an icon.
+//  3. Is the floor still unmet — i.e. can the floor even BE the reason? This
+//     one IS the `Present()` predicate `status` and the floor line use.
 //
-// Both must hold. Either alone is an error the user still needs: a floor that is
-// already met means the refusal was about something else, and an asset that did
-// not land means the 400 is all the user has.
+// All three must hold. Any one alone is an error the user still needs: a floor
+// that is already met means the refusal was about something else, and an asset
+// that did not land means the 400 is all the user has.
 //
 // 🔴 AND THE REFUSAL MUST BE A REFUSAL — only a 400 can be the floor talking. A
 // 500, a 503, a 429 or a dropped connection says nothing about the listing, so
@@ -728,18 +734,30 @@ func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.C
 // attach of image 501 whose re-read still showed 999 in the slot printed
 // `✓ Icon staged` and exited 0.
 //
-// The id compared against is the one the ATTACH echoed (`iconId`/`coverId`),
-// falling back to the ingested image id when the server omitted it. The echo is
-// preferred deliberately: it is the server's own statement of what it wrote, so
-// it stays correct if the platform ever stores a re-encoded derivative under a
-// new id, where the ingested id would not match and this would fail CLOSED —
-// the user would simply get the submit error, which is what they get today.
+// Either the id the ATTACH echoed (`iconId`/`coverId`) or the id that was
+// INGESTED counts, because the server is free to answer with either and both
+// name an image this command put there. A pre-existing image matches neither.
+//
+// 🔴 THE RESIDUAL IS STATED BECAUSE IT DECIDES WHETHER THIS FIX APPLIES AT ALL,
+// and it is unmeasured. If the platform stores a re-encoded DERIVATIVE under a
+// NEW image id — this repo already documents that it re-encodes icons from
+// decoded pixels (#295 / #344, see app_listing_reencode_test.go) — while
+// echoing back the id it was GIVEN, then the re-read reports an id this CLI has
+// never seen and cannot recognise. The check then fails CLOSED: the user gets
+// the same submit error they get today, so this is a fix that did not apply,
+// never a new false report. Widening it to "the slot is non-empty" would trade
+// that for the opposite failure — a listing being re-branded already HAS an
+// icon, so presence alone would certify the image the author is REPLACING.
+// The measurement that settles it is one credentialed run against a live
+// listing: compare `setIcon`'s echoed `iconId` with what
+// `getMyListingForEdit` then reports in the slot. Until someone runs it, do not
+// restate this comment as if the derivative case were handled.
 func attachLanded(view *appapi.ListingEditView, kind mediaKind, imageID int, res *appapi.AttachResult) bool {
 	switch kind {
 	case kindIcon:
-		return slotHolds(view.Assets.Icon, attachedID(imageID, resIconID(res)))
+		return slotHolds(view.Assets.Icon, imageID, derefID(resIconID(res)))
 	case kindCover:
-		return slotHolds(view.Assets.Cover, attachedID(imageID, resCoverID(res)))
+		return slotHolds(view.Assets.Cover, imageID, derefID(resCoverID(res)))
 	default:
 		if res == nil || res.ID == "" {
 			return false
@@ -753,13 +771,13 @@ func attachLanded(view *appapi.ListingEditView, kind mediaKind, imageID int, res
 	}
 }
 
-// attachedID picks the id to prove landed: what the attach echoed, else what was
-// ingested. A zero echo means the server said nothing, not that it wrote a zero.
-func attachedID(imageID int, echoed *int) int {
-	if echoed != nil && *echoed > 0 {
-		return *echoed
+// derefID reads an optional echoed id; 0 means the server said nothing, which
+// is not the same as it having written a zero.
+func derefID(echoed *int) int {
+	if echoed == nil {
+		return 0
 	}
-	return imageID
+	return *echoed
 }
 
 func resIconID(res *appapi.AttachResult) *int {
@@ -776,9 +794,18 @@ func resCoverID(res *appapi.AttachResult) *int {
 	return res.CoverID
 }
 
-// slotHolds reports whether a floor slot holds exactly the given image.
-func slotHolds(slot appapi.ListingAsset, imageID int) bool {
-	return slot.Present() && imageID > 0 && *slot.ImageID == imageID
+// slotHolds reports whether a floor slot holds any of the given images. A zero
+// id is "the server did not say" and can never match.
+func slotHolds(slot appapi.ListingAsset, ids ...int) bool {
+	if !slot.Present() {
+		return false
+	}
+	for _, id := range ids {
+		if id > 0 && *slot.ImageID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // printFloorAfter reads the listing media and prints the remaining floor gap.

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/civitai/cli/pkg/civitai"
+	"github.com/spf13/cobra"
 )
 
 // civitai/cli#400. A LIVE listing that is still below the publish floor cannot
@@ -61,6 +62,8 @@ func TestSetMediaBelowFloorOnLiveListing(t *testing.T) {
 		// echoID is the image id setIcon/setCover echo back; 0 means "echo the
 		// ingested id", which is what a server that stores what it was given does.
 		echoID int
+		// omitEcho drops the echoed id from the attach reply entirely.
+		omitEcho bool
 		// readFails makes the post-submit re-read itself fail.
 		readFails bool
 		// wantErr is whether the user gets an error at all.
@@ -141,6 +144,37 @@ func TestSetMediaBelowFloorOnLiveListing(t *testing.T) {
 			why:     "the server's own statement of what it wrote is the authority, not the id the CLI sent",
 		},
 		{
+			// The same asymmetry the rows above warn about, in the OTHER slot:
+			// with only an icon fixture for this, resCoverID could read
+			// res.IconID and the whole suite stays green.
+			name: "cover attach echo also wins over the ingested id",
+			cmd:  "set-cover", submitStatus: 400, echoID: 888, viewCover: 888,
+			wantOut: []string{"staged", "Next: civitai app listing set-icon <file>"},
+			why:     "a per-kind check is wrong at one kind at a time, so each kind needs the fixture",
+		},
+		{
+			// 🔴 The INGESTED id is the only proof left when the server echoes
+			// nothing, and every other fixture supplies an echo — so without
+			// this row the fallback (and the whole imageID parameter) can be
+			// replaced by a literal 0 with the suite still green. If the live
+			// server omits iconId, this fallback is the entire fix.
+			name: "the ingested id proves it when the attach echoes nothing",
+			cmd:  "set-icon", submitStatus: 400, omitEcho: true, viewIcon: ingested,
+			wantOut: []string{"staged", "Next: civitai app listing set-cover <file>"},
+			why:     "an absent echo must fall back to what was ingested, not to nothing",
+		},
+		{
+			// "The server said nothing" must never become a candidate id. This
+			// is the same claim the whole file makes about the exit code, one
+			// level down: an absent value is not evidence, and a check that
+			// quietly substitutes a placeholder for it can match by accident.
+			// The fixture uses image id 1 because a placeholder is most likely
+			// to collide with a small id.
+			name: "an absent echo never matches by accident",
+			cmd:  "set-icon", submitStatus: 400, omitEcho: true, viewIcon: 1, wantErr: true,
+			why: "with no echo the ingested id is the only candidate, and it does not match",
+		},
+		{
 			name: "floor met is a failure",
 			cmd:  "set-icon", submitStatus: 400, viewIcon: ingested, viewCover: 777, wantErr: true,
 			why: "the floor cannot be why this was refused, so the 400 is a genuine rejection and must survive",
@@ -180,7 +214,8 @@ func TestSetMediaBelowFloorOnLiveListing(t *testing.T) {
 			srv := belowFloorStub(t, belowFloorState{
 				ingested: ingested, submitStatus: tc.submitStatus,
 				icon: tc.viewIcon, cover: tc.viewCover, shots: tc.viewShots,
-				attachedShotID: tc.attachedShotID, echoID: tc.echoID, readFails: tc.readFails,
+				attachedShotID: tc.attachedShotID, echoID: tc.echoID, omitEcho: tc.omitEcho,
+				readFails: tc.readFails,
 			})
 			defer srv.Close()
 			listingEnv(t, srv.URL)
@@ -252,6 +287,7 @@ type belowFloorState struct {
 	shots          []string
 	attachedShotID string
 	echoID         int
+	omitEcho       bool
 	readFails      bool
 }
 
@@ -291,8 +327,16 @@ func belowFloorStub(t *testing.T, st belowFloorState) *httptest.Server {
 		case strings.Contains(p, "beginListingRevision"):
 			trpcData(w, map[string]any{"shadowId": "shadow_1", "created": true})
 		case strings.Contains(p, "setIcon"):
+			if st.omitEcho {
+				trpcData(w, map[string]any{"status": "attached"})
+				return
+			}
 			trpcData(w, map[string]any{"status": "attached", "iconId": st.echo()})
 		case strings.Contains(p, "setCover"):
+			if st.omitEcho {
+				trpcData(w, map[string]any{"status": "attached"})
+				return
+			}
 			trpcData(w, map[string]any{"status": "attached", "coverId": st.echo()})
 		case strings.Contains(p, "addScreenshot"):
 			trpcData(w, map[string]any{"status": "attached", "id": st.attachedShotID, "order": 0})
@@ -334,4 +378,57 @@ func slotJSON(imageID int) map[string]any {
 		return map[string]any{"imageId": nil}
 	}
 	return map[string]any{"imageId": imageID}
+}
+
+// 🔴 The below-floor sentence in `--help` is the OFFLINE contract, and nothing
+// pinned it: deleting it left the whole package green, so the one deliverable of
+// folding three help paragraphs into one constant was unverified. `--help` is
+// where a reader without the README learns that this command can exit 0 having
+// submitted nothing, so it is asserted on the RENDERED body of every command
+// that can reach that path — not on the constant, which would pass while a
+// command stopped using it.
+func TestAttachHelpStatesTheBelowFloorException(t *testing.T) {
+	root := NewRootCmd()
+	for _, name := range []string{"set-icon", "set-cover", "add-screenshot"} {
+		t.Run(name, func(t *testing.T) {
+			cmd := findListingLeaf(t, root, name)
+			// Rendered, and rune-normalised for the line wrap: the sentence is
+			// split across two lines in the source, so a naive Contains on the
+			// whole phrase reads 0 whether or not the text is there.
+			body := strings.Join(strings.Fields(cmd.Long), " ")
+			for _, want := range []string{
+				"below the publish floor",
+				"stages WITHOUT submitting, and exits 0",
+			} {
+				if !strings.Contains(body, want) {
+					t.Errorf("`app listing %s` --help does not say %q — a reader offline "+
+						"cannot learn that this command can exit 0 having submitted nothing:\n%s",
+						name, want, cmd.Long)
+				}
+			}
+		})
+	}
+}
+
+// findListingLeaf returns the named `app listing` subcommand, failing loudly
+// rather than silently checking nothing if the tree is reshaped.
+func findListingLeaf(t *testing.T, root *cobra.Command, name string) *cobra.Command {
+	t.Helper()
+	for _, app := range root.Commands() {
+		if app.Name() != "app" {
+			continue
+		}
+		for _, listing := range app.Commands() {
+			if listing.Name() != "listing" {
+				continue
+			}
+			for _, leaf := range listing.Commands() {
+				if leaf.Name() == name {
+					return leaf
+				}
+			}
+		}
+	}
+	t.Fatalf("no `app listing %s` command found — the tree moved and this test is checking nothing", name)
+	return nil
 }
