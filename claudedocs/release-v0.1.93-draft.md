@@ -1,13 +1,30 @@
-# v0.1.93 — release notes draft (for maintainer review)
+# v0.1.93 — SHIPPED
 
-39 commits since `v0.1.92` (`b923e45` at time of writing). Not tagged — tagging
-and publishing are maintainer-only.
+**This release is out and immutable.** Tagged at `a228062`, GitHub release
+published 2026-08-12T03:49:10Z, `@civitai/cli@0.1.93` on npm at 03:49:32Z, 14
+assets. Nothing here is a decision any more; it is the record of what went out.
+The filename keeps `-draft` only so links from #402 and #405 still resolve.
 
-**Re-measured, not carried forward.** This draft was first written at `600984d`
-over a 35-commit range; four commits landed after it (#401, #402, #403, #404),
-one of which changes a published exit code. Every count below is against the
-current range. A release note that quietly describes an older range is the same
-failure class as the changelog filter it flags at the bottom.
+**37 commits** (`v0.1.92..v0.1.93`): 1 excluded by the changelog filter, **15
+leaking**, 21 genuinely user-facing.
+
+🔴 **Two earlier counts in this file were wrong, in opposite directions, and the
+reason is worth more than the numbers.** The first draft said *35 commits, 13
+leaking* — measured at `600984d`, before #401 and #402 landed, so it undercounted
+what the tag would capture. #405 then said *39 / 16* — measured against
+`origin/main` **after** the tag, so it counted three commits that shipped in no
+release at all. Both were re-measurements; neither anchored to the endpoint that
+defines the release. **A release count is `<prev-tag>..<this-tag>`, never
+`..main`** — `main` moves, a tag does not, and once a tag exists "since v0.1.92"
+stops meaning "in this release".
+
+🔴 **#403 is NOT in v0.1.93.** #405 added a section to this file describing the
+`app listing` exit-code change as part of this release. It is not: #403 merged
+at 05:31Z, an hour and 42 minutes **after** the release was published. That
+section has been moved to
+[`release-v0.1.94-draft.md`](release-v0.1.94-draft.md), where it belongs. This
+is the same failure the changelog filter below is flagged for — a note asserting
+something about a range it did not measure.
 
 ## 🔴 Three breaking changes — all three need to be in the notes
 
@@ -24,35 +41,6 @@ failure class as the changelog filter it flags at the bottom.
    (#291 / #333). Previously such names were silently truncated at 40 chars —
    two names sharing a prefix could mint the same un-renameable id. Now a hard
    refusal; pass `--slug <slug>` to choose the id yourself.
-
-## One more exit-code change — not breaking, but scripts see it
-
-**`civitai app listing set-icon` / `set-cover` / `add-screenshot` now exit `0`
-when they stage media on a live listing that is still below the publish floor**
-(#400 / #403). A revision cannot go to a moderator until the listing has both an
-icon and a cover, and clearing that floor takes two commands — so the first one
-attached its image, and then reported the server's refusal of the *submit* as
-the command failing. It exited `2`, which this CLI publishes as *a mistake about
-the invocation*. The natural scripted form broke on it:
-
-```bash
-civitai app listing set-icon icon.png && civitai app listing set-cover cover.png
-#                                     ^^ aborted here, having succeeded
-```
-
-It now prints `staged on an open revision — not submitted for review yet`, says
-what is still missing, and exits `0`. This is listed apart from the three above
-because it moves in the *permissive* direction — work that used to abort now
-continues — so nothing that worked before stops working. A script that
-deliberately branched on the old failure is the only thing affected, and that
-failure was the bug.
-
-Narrow by construction: it applies only when the server actually **refused**
-(HTTP 400), the image the command attached is verifiably in the listing *by
-image id*, and the floor is genuinely unmet. An outage (`500`/`503`), a listing
-the CLI cannot read back, or a rejection for any other reason still fails with
-its usual exit code. Verified against the live platform before release, not only
-in tests (#404).
 
 ## Security / data-loss fixes worth calling out
 
@@ -90,20 +78,18 @@ Docs: several published-contract claims corrected (#360, #361, #364), the
 
 ---
 
-## ⚠️ Two things to fix or accept BEFORE publishing
+## ⚠️ Two things were flagged before publishing — both SHIPPED AS-IS
 
-### 1. The changelog filter lets 16 non-user-facing commits through
+Neither was acted on before the tag, so both are live in v0.1.93 and carry
+forward to the next release.
+
+### 1. The changelog filter let 15 non-user-facing commits through
 
 `.goreleaser.yaml` excludes `^docs:`, `^test:`, `^chore:` — **unscoped anchors**.
-Every scoped commit slips past, and `ci:` is not in the list at all. Re-measured
-against the current 39-commit range: **1 commit excluded, 16 leaking, 22
-genuinely user-facing**. The leak breaks down as five handoff/release docs,
-three internal test PRs, two `ci:` commits that no anchor can match, and six
-other scoped `docs(...)` commits.
-
-(The earlier draft said 13, measured over 35 commits. The number moved because
-the range moved — which is the point: it is a property of the filter, so it
-grows with every scoped docs commit until the anchors are fixed.)
+Every scoped commit slips past, and `ci:` is not in the list at all. Measured
+over what actually shipped (`v0.1.92..v0.1.93`, 37 commits): **1 excluded, 15
+leaking, 21 genuinely user-facing**. So the published v0.1.93 changelog carries
+15 entries no user needs.
 
 Either widen the filters:
 
@@ -117,8 +103,9 @@ changelog:
       - "^ci(\\(.+\\))?:"
 ```
 
-…or hand-write the notes for this release. Widening is a `.goreleaser.yaml`
-change, which AGENTS.md puts under **⚠ Ask first**.
+…or hand-write the notes. Widening is a `.goreleaser.yaml` change, which
+AGENTS.md puts under **⚠ Ask first** — still unmade, so the next release
+inherits this unless it is done first.
 
 ### 2. One breaking change has its `!` in the wrong position
 
@@ -131,13 +118,15 @@ just make sure the release notes name all three.
 
 ---
 
-## Release mechanics (maintainer only)
+## Release mechanics — what actually happened
 
-Per AGENTS.md: `git tag v0.1.93 && git push origin v0.1.93` builds via
-goreleaser into a **draft** release. Publishing that draft is a *separate*
-consent — it also fires `release-npm.yml` (**`@civitai/cli`**, OIDC trusted
-publishing) and `release-homebrew.yml` (the cask). **npm unpublish is
-restricted**, so a bad version is fixed by publishing another, not by taking it
-back. Sanity-check the draft's artifacts first — the full cross product should
-be present, windows/arm64 included:
-`gh release view v0.1.93 --json assets`.
+Per AGENTS.md, tagging built via goreleaser into a **draft**, and publishing that
+draft was a *separate* consent that also fired `release-npm.yml`
+(**`@civitai/cli`**, OIDC trusted publishing) and `release-homebrew.yml` (the
+cask). Both fired: npm shows `0.1.93` at 2026-08-12T03:49:32Z, 23 seconds after
+the GitHub release was published, and the release carries 14 assets.
+
+**npm unpublish is restricted**, which is why the #403 mislabelling noted at the
+top mattered enough to correct rather than quietly edit: a version that is out
+cannot be taken back, only superseded, so the record of what it contained has to
+be right.
