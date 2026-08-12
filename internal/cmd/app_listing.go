@@ -558,6 +558,13 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 	if live {
 		rev, err := client.SubmitListingRevision(ctx, shadowID, changelog)
 		if err != nil {
+			// The submit is the ONE step in this flow that can refuse for a
+			// reason which is not a failure of the command that ran: a listing
+			// below the publish floor cannot go to review YET, and clearing the
+			// floor takes a second command. See reportStagedBelowFloor (#400).
+			if reportStagedBelowFloor(ctx, out, client, ref.AppListingID, kind, res) {
+				return nil
+			}
 			return err
 		}
 		// submitListingRevision is idempotent: a shadow that already had a pending
@@ -617,6 +624,95 @@ func scanFailure(out io.Writer, err error, kind mediaKind, live bool, res *appap
 	return err
 }
 
+// reportStagedBelowFloor decides whether a FAILED revision submit is actually
+// progress, and prints that outcome if so. It reports whether it handled the
+// error — true means the caller must return nil, because nothing failed.
+//
+// 🔴 THE DISCRIMINATOR IS THE LISTING'S STATE, NOT THE SERVER'S PROSE, and that
+// is the whole design. `submitListingRevision` refuses a listing below the
+// publish floor with a 400 whose message names what is missing, and issue #400
+// is what that cost: `set-icon` on a live app that has no cover yet attached the
+// icon, polled a clean scan, and then reported the submit's 400 as the command's
+// error — so the ONE thing that could not have happened yet, by design, was
+// reported as the command failing. #186's framing is that CLI-authored apps are
+// born below the floor, so clearing it takes two commands and the first of them
+// cannot be a failure for the second not having run. The natural scripted form
+// is exactly the one that broke:
+//
+//	civitai app listing set-icon icon.png && civitai app listing set-cover cover.png
+//
+// Matching the 400's TEXT would have been the cheap fix and it is the wrong one:
+// a message match goes silently false the day the server rewords, and it fails
+// in the REASSURING direction — a genuine rejection would start exiting 0. So
+// this re-reads the listing and asks two structural questions, on the same
+// `Present()` predicate `status` and the floor line already use:
+//
+//  1. Did the asset this command attached actually land?
+//  2. Is the floor still unmet — i.e. can the floor even BE the reason?
+//
+// Both must hold. Either alone is an error the user still needs: a floor that is
+// already met means the refusal was about something else, and an asset that did
+// not land means the 400 is all the user has.
+//
+// The residual, stated rather than hidden: a submit that fails for some OTHER
+// reason WHILE the floor is also unmet is reported as progress, and its reason
+// is not shown. It is bounded rather than silent — the next set-/add- command
+// reuses this same shadow and submits it again, so once the floor is met that
+// reason surfaces as a normal error. It is not worth the spelled guard that
+// distinguishing it would require.
+//
+// A read failure here returns false: the CLI cannot show that the attach landed,
+// so it must not claim it did.
+func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.Client, appListingID string, kind mediaKind, res *appapi.AttachResult) bool {
+	view, err := client.GetMyListingForEdit(ctx, appListingID)
+	if err != nil {
+		return false
+	}
+	if view.Assets.Icon.Present() && view.Assets.Cover.Present() {
+		return false // the floor is met, so it cannot be why this was refused
+	}
+	if !attachLanded(view, kind, res) {
+		return false
+	}
+
+	// No "pending moderator review" and no request id: there is no review. The
+	// revision is open, holds this asset, and is deliberately unsubmitted.
+	fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s staged on an open revision — not submitted for review yet.", capitalize(string(kind)))))
+	fmt.Fprintln(out, "Your live listing is unchanged; nothing reaches a moderator until the publish floor is met.")
+	printFloorLine(out, view)
+	// Name the command that clears the floor, not a placeholder — at least one
+	// of the two slots is empty here, or we would have returned false above.
+	next := "civitai app listing set-icon <file>"
+	if view.Assets.Icon.Present() {
+		next = "civitai app listing set-cover <file>"
+	}
+	fmt.Fprintf(out, "Add the rest with %s — it reuses this revision and submits it once the floor is met.\n", ui.Code(next))
+	return true
+}
+
+// attachLanded reports whether the asset THIS command attached is present in the
+// listing view — the icon or cover by its slot, a screenshot by the id the attach
+// returned (screenshots are not part of the floor, so identity is the only way to
+// tell this command's row from one that was already there).
+func attachLanded(view *appapi.ListingEditView, kind mediaKind, res *appapi.AttachResult) bool {
+	switch kind {
+	case kindIcon:
+		return view.Assets.Icon.Present()
+	case kindCover:
+		return view.Assets.Cover.Present()
+	default:
+		if res == nil || res.ID == "" {
+			return false
+		}
+		for _, s := range view.Assets.Screenshots {
+			if s.ID == res.ID {
+				return true
+			}
+		}
+		return false
+	}
+}
+
 // printFloorAfter reads the listing media and prints the remaining floor gap.
 // Best-effort: a read failure after a successful attach is not fatal.
 func printFloorAfter(ctx context.Context, out io.Writer, client *appapi.Client, appListingID string) {
@@ -624,6 +720,12 @@ func printFloorAfter(ctx context.Context, out io.Writer, client *appapi.Client, 
 	if err != nil {
 		return
 	}
+	printFloorLine(out, view)
+}
+
+// printFloorLine prints the remaining floor gap for an ALREADY-READ view, so a
+// caller that has one does not fetch it twice.
+func printFloorLine(out io.Writer, view *appapi.ListingEditView) {
 	iconOK := view.Assets.Icon.Present()
 	coverOK := view.Assets.Cover.Present()
 	switch {
