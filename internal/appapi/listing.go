@@ -89,6 +89,16 @@ type ListingScreenshot struct {
 // to render `status` + the trailing floor line). For an APPROVED parent the
 // server resolves the media from the in-flight shadow revision (an idempotent
 // begin), so the assets reflect the pending revision, not the live listing.
+//
+// 🔴 THAT SHADOW IS SEEDED FROM THE LIVE LISTING, NOT EMPTY — measured
+// 2026-08-12 against an approved listing whose shadow this very read had just
+// opened: it reported the live icon and cover ids, not two empty slots. The CLI
+// depends on it. `reportStagedBelowFloor` (#400) decides whether the publish
+// floor is met by reading THIS view, so an empty-seeded shadow would make every
+// live listing look below-floor and would route a genuine rejection down the
+// "this is only the floor" path. The same read also reported
+// `hasPendingRevision: false` while that shadow existed, so the flag means
+// SUBMITTED, not "a shadow exists".
 type ListingEditView struct {
 	ParentID           string  `json:"parentId"`
 	Slug               string  `json:"slug"`
