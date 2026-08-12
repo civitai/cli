@@ -291,6 +291,13 @@ func printListingStatus(w io.Writer, slug string, ref *appapi.ListingRef, view *
 			fmt.Fprintf(w, "  Add one:  %s\n", ui.Code("civitai app listing set-cover <file>"))
 		}
 	}
+	// `hasPendingRevision` means SUBMITTED, not "a shadow exists" — measured
+	// 2026-08-12 on an approved listing carrying an open shadow
+	// (`shadowId: apl_01KZVG3M…`, media attached, never submitted): the server
+	// still reported `hasPendingRevision: false`. That matters because #400's
+	// below-floor path deliberately LEAVES such a shadow open, and if the flag
+	// tracked existence instead this line would tell the author a moderator was
+	// reviewing something that had not been sent. It does not.
 	if view.HasPendingRevision {
 		fmt.Fprintln(w, "\nA revision is currently under moderator review.")
 	} else if ref.Status == "approved" {
@@ -738,20 +745,28 @@ func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.C
 // INGESTED counts, because the server is free to answer with either and both
 // name an image this command put there. A pre-existing image matches neither.
 //
-// 🔴 THE RESIDUAL IS STATED BECAUSE IT DECIDES WHETHER THIS FIX APPLIES AT ALL,
-// and it is unmeasured. If the platform stores a re-encoded DERIVATIVE under a
-// NEW image id — this repo already documents that it re-encodes icons from
-// decoded pixels (#295 / #344, see app_listing_reencode_test.go) — while
-// echoing back the id it was GIVEN, then the re-read reports an id this CLI has
-// never seen and cannot recognise. The check then fails CLOSED: the user gets
-// the same submit error they get today, so this is a fix that did not apply,
-// never a new false report. Widening it to "the slot is non-empty" would trade
-// that for the opposite failure — a listing being re-branded already HAS an
-// icon, so presence alone would certify the image the author is REPLACING.
-// The measurement that settles it is one credentialed run against a live
-// listing: compare `setIcon`'s echoed `iconId` with what
-// `getMyListingForEdit` then reports in the slot. Until someone runs it, do not
-// restate this comment as if the derivative case were handled.
+// 🔴 THE ONE ASSUMPTION THIS RESTS ON IS NOW MEASURED, and it holds. The worry
+// was that the platform might store a re-encoded DERIVATIVE under a NEW image
+// id — this repo documents that it re-encodes icons from decoded pixels
+// (#295 / #344, see app_listing_reencode_test.go) — while echoing back the id
+// it was GIVEN. The re-read would then report an id this CLI has never seen,
+// the check would fail CLOSED, and the whole #400 fix would silently not apply.
+//
+// Measured 2026-08-12 against the live platform, one `set-icon` on an approved
+// listing (`sensei`), reading the wire: `ingestAssetFromDataUri` minted image
+// 139517683, `setIcon` echoed `iconId` 139517683, and `getMyListingForEdit`
+// then reported 139517683 in the slot. ALL THREE AGREE — the Image row is
+// created at INGEST and the slot references that same row; the re-encode is a
+// URL TRANSFORM (`…/width=320/…` in the asset URL), not a second row. So the
+// echo and the ingested id are the same value in practice, and accepting either
+// is belt-and-braces rather than the load-bearing part.
+//
+// What is still NOT proven is that they must always agree — one listing, one
+// kind, one day. Hence both candidates stay. If this ever regresses the failure
+// is the safe one: the user gets the submit error they got before #400, never a
+// false success. Widening to "the slot is non-empty" would trade that for the
+// opposite failure — a listing being re-branded already HAS an icon, so
+// presence alone would certify the image the author is REPLACING.
 func attachLanded(view *appapi.ListingEditView, kind mediaKind, imageID int, res *appapi.AttachResult) bool {
 	switch kind {
 	case kindIcon:
