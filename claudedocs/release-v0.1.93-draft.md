@@ -1,7 +1,13 @@
 # v0.1.93 — release notes draft (for maintainer review)
 
-35 commits since `v0.1.92` (`600984d` at time of writing). Not tagged — tagging
+39 commits since `v0.1.92` (`b923e45` at time of writing). Not tagged — tagging
 and publishing are maintainer-only.
+
+**Re-measured, not carried forward.** This draft was first written at `600984d`
+over a 35-commit range; four commits landed after it (#401, #402, #403, #404),
+one of which changes a published exit code. Every count below is against the
+current range. A release note that quietly describes an older range is the same
+failure class as the changelog filter it flags at the bottom.
 
 ## 🔴 Three breaking changes — all three need to be in the notes
 
@@ -18,6 +24,35 @@ and publishing are maintainer-only.
    (#291 / #333). Previously such names were silently truncated at 40 chars —
    two names sharing a prefix could mint the same un-renameable id. Now a hard
    refusal; pass `--slug <slug>` to choose the id yourself.
+
+## One more exit-code change — not breaking, but scripts see it
+
+**`civitai app listing set-icon` / `set-cover` / `add-screenshot` now exit `0`
+when they stage media on a live listing that is still below the publish floor**
+(#400 / #403). A revision cannot go to a moderator until the listing has both an
+icon and a cover, and clearing that floor takes two commands — so the first one
+attached its image, and then reported the server's refusal of the *submit* as
+the command failing. It exited `2`, which this CLI publishes as *a mistake about
+the invocation*. The natural scripted form broke on it:
+
+```bash
+civitai app listing set-icon icon.png && civitai app listing set-cover cover.png
+#                                     ^^ aborted here, having succeeded
+```
+
+It now prints `staged on an open revision — not submitted for review yet`, says
+what is still missing, and exits `0`. This is listed apart from the three above
+because it moves in the *permissive* direction — work that used to abort now
+continues — so nothing that worked before stops working. A script that
+deliberately branched on the old failure is the only thing affected, and that
+failure was the bug.
+
+Narrow by construction: it applies only when the server actually **refused**
+(HTTP 400), the image the command attached is verifiably in the listing *by
+image id*, and the floor is genuinely unmet. An outage (`500`/`503`), a listing
+the CLI cannot read back, or a rejection for any other reason still fails with
+its usual exit code. Verified against the live platform before release, not only
+in tests (#404).
 
 ## Security / data-loss fixes worth calling out
 
@@ -57,12 +92,18 @@ Docs: several published-contract claims corrected (#360, #361, #364), the
 
 ## ⚠️ Two things to fix or accept BEFORE publishing
 
-### 1. The changelog filter lets 13 non-user-facing commits through
+### 1. The changelog filter lets 16 non-user-facing commits through
 
 `.goreleaser.yaml` excludes `^docs:`, `^test:`, `^chore:` — **unscoped anchors**.
-Every scoped commit slips past, and `ci:` is not in the list at all. Measured
-against this range: **1 commit excluded, 13 leaking**, including three handoff
-docs and two internal test PRs.
+Every scoped commit slips past, and `ci:` is not in the list at all. Re-measured
+against the current 39-commit range: **1 commit excluded, 16 leaking, 22
+genuinely user-facing**. The leak breaks down as five handoff/release docs,
+three internal test PRs, two `ci:` commits that no anchor can match, and six
+other scoped `docs(...)` commits.
+
+(The earlier draft said 13, measured over 35 commits. The number moved because
+the range moved — which is the point: it is a property of the filter, so it
+grows with every scoped docs commit until the anchors are fixed.)
 
 Either widen the filters:
 
