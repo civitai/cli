@@ -188,6 +188,8 @@ without --yes REFUSES rather than deleting a listing silently.`,
 // the server's `appBlockId: null, status:'draft'` predicate in the CLI to decide
 // whether to warn at all. The residual, accepted: the prompt says WHAT is
 // destroyed and under WHICH condition, but not how many screenshots you have.
+// The id is the user's own positional argument and is echoed exactly, not
+// sanitised — same rule as confirmCancel (civitai/cli#393).
 func confirmWithdraw(cmd *cobra.Command, publishRequestID string, assumeYes bool) error {
 	if assumeYes {
 		return nil
@@ -195,12 +197,12 @@ func confirmWithdraw(cmd *cobra.Command, publishRequestID string, assumeYes bool
 	if !stdinIsTTY() {
 		return fmt.Errorf("refusing to withdraw without --yes in a non-interactive shell — %s. "+
 			"Pass --yes to confirm, or `civitai app listing status` to see what %s would take with it",
-			withdrawDiscardsListing, safeTerm(publishRequestID))
+			withdrawDiscardsListing, publishRequestID)
 	}
 
 	errw := cmd.ErrOrStderr()
 	st := ui.For(errw)
-	fmt.Fprintf(errw, "About to withdraw %s.\n", safeTerm(publishRequestID))
+	fmt.Fprintf(errw, "About to withdraw %s.\n", publishRequestID)
 	fmt.Fprintln(errw, st.Warn("This is not just a resubmit: "+withdrawDiscardsListing+"."))
 	fmt.Fprintln(errw, st.Dim("The media only survives a moderator APPROVING the app — not a withdraw, and not a rejection."))
 	fmt.Fprintln(errw, st.Dim("Copy any captions you want to keep before answering; `civitai app listing status` prints them."))

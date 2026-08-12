@@ -2350,12 +2350,43 @@ The server reported:
   - Could not generate images with the given prompts and images. Please try again with different inputs.
 ```
 
-Three things it is not:
+Five things it is not:
 
-- **It is not this CLI's opinion.** The text is the server's, passed through
-  unchanged. Nothing here classifies it, matches on its wording, or maps it to a
-  list of known messages — so a message the platform adds tomorrow arrives
-  intact rather than being swallowed by a stale table.
+- **It is not this CLI's opinion.** The text is the server's. Nothing here
+  classifies it, matches on its wording, or maps it to a list of known messages
+  — so a message the platform adds tomorrow arrives intact rather than being
+  swallowed by a stale table.
+- **It is not quite byte-for-byte, on the terminal.** Before printing any
+  server-supplied text, the CLI removes escape and control bytes plus every
+  character Unicode marks **default-ignorable** — the zero-width spaces and
+  joiners, the bidi overrides that reverse the order a line is *displayed* in,
+  the variation selectors (except the one that keeps an emoji looking like an
+  emoji) — plus two runes that paint nothing while Unicode files them as a
+  symbol and a mark, and four Hangul *fillers* that paint nothing while Unicode
+  files them as letters. Punctuation, accents, CJK, emoji, ordinary letters and
+  right-to-left *script* survive, as do the format characters Unicode says must
+  be drawn (Arabic end-of-ayah, the Syriac abbreviation mark, ruby annotation
+  marks).
+  🔴 **Every removed character is invisible on its own, but some of them change
+  how their NEIGHBOURS are drawn**, so this is not free: an emoji built from a
+  zero-width joiner renders as its components, a subdivision flag falls back to
+  🏴, and text that uses the join controls to make a distinction loses it —
+  Persian/Arabic (`می‌روم` renders joined), Malayalam (the chillu `ണ്‍` becomes
+  `ണ്`, a different letter), Devanagari, Bengali, Tamil, Kannada, Sinhala and
+  Mongolian. **`--json` is not filtered at all** — it is a raw passthrough, so a
+  script sees exactly what the server sent.
+- **It is not applied to the prompt you typed.** The filter is for text the
+  server sent. Your prompt, your negative prompt, `--aspect-ratio`,
+  `--ecosystem`, the paths you pass to `--image` / `--input`, and the ids you
+  give `workflows cancel` / `app withdraw` are all echoed back exactly as typed
+  — most importantly on the confirmation screen before a spend, which has to
+  show what will really be sent. **Two deliberate exceptions**, both outside
+  that screen: a value read out of an `--input` *file* is filtered like server
+  text (a graph file can come from anywhere), and `civitai download` filters the
+  path it reports even when you set it with `--out`, because the same variable
+  usually holds a filename the **server** chose — so an `--out` path containing
+  an invisible character is reported without it while the file is written to the
+  path you gave.
 - **It is not always there.** Some failures record nothing. In that case the
   error says so instead: *"the orchestrator often supplies no failure reason, so
   it may not say why"*. That is a measured case, not a gap in the CLI, and there
@@ -2383,7 +2414,8 @@ cannot vouch for — one carrying a URL, a path, a stack frame, an infra name, o
 running past 300 characters or one line — with a generic *"… reported a system
 error"*. `workflows get` applies none of that, so where the two disagree the raw
 one can be the more informative. **When a failure is worth chasing, read both.**
-The CLI reproduces neither transform; it prints what each endpoint sent.
+The CLI reproduces neither transform; it prints what each endpoint sent, less the
+invisible characters described above.
 
 <sub>Until civitai/cli#367 this was discarded at parse time — the field existed on the wire and the CLI had no place to put it — so every failure printed the same generic sentence no matter what caused it, and `civitai workflows get` answered a failed run with a status and nothing else. `civitai workflows list` kept discarding it until civitai/cli#382, at a different wire path.</sub>
 
@@ -2672,8 +2704,8 @@ credited it to the wrong command.)
 | `--image requires --ecosystem` | Without an ecosystem the server never promotes the job to image-to-image: your images are silently dropped and you are billed for a plain text-to-image run. Hence a refusal rather than a warning. | [Image-to-image](#image-to-image---image-and---ecosystem) |
 | `interrupted while waiting` | **The generation is still running and has already been charged.** Ctrl-C stopped the wait, not the job. Re-attach with `civitai workflows get <id>`. | [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching) |
 | `model substituted` | The server ran a **different checkpoint** than you asked for and billed for what ran. Warned by default; `--fail-on-substitution` turns it into a refusal on the estimate, before any spend. | [Silent model substitution](#-silent-model-substitution) |
-| `The server reported: …` | The orchestrator recorded an account of what happened, and what follows is the server's own words, passed through unchanged. The CLI does not interpret them and does not know whether the failure is retryable. Printed on the `generate` error and by `civitai workflows get`. | [What the server says went wrong](#what-the-server-says-went-wrong) |
-| `An indented line under a row is what the server recorded` | The same record, on `civitai workflows list`: the indented lines beneath a workflow's row are the server's own words for that workflow, wrapped but never shortened. The indent is not decoration — it keeps server text out of the column a real row starts in, so a message cannot pose as a workflow of yours. It holds for the line breaks the CLI makes: the CLI wraps to a fixed 79 columns and never asks how wide your terminal is, so in a **narrower** terminal — or with wide (CJK) characters — your terminal re-wraps and the overflow can still reach column zero. | [What the server says went wrong](#what-the-server-says-went-wrong) |
+| `The server reported: …` | The orchestrator recorded an account of what happened, and what follows is the server's own words. The CLI does not interpret them and does not know whether the failure is retryable; the only thing it changes is that invisible and direction-reversing characters are removed before the text reaches your terminal (`--json` is unfiltered). Printed on the `generate` error and by `civitai workflows get`. | [What the server says went wrong](#what-the-server-says-went-wrong) |
+| `An indented line under a row is what the server recorded` | The same record, on `civitai workflows list`: the indented lines beneath a workflow's row are the server's own words for that workflow, wrapped but never abbreviated (the invisible characters above are removed, and wrapping collapses runs of whitespace and breaks a token longer than the line — no words are dropped). The indent is not decoration — it keeps server text out of the column a real row starts in, so a message cannot pose as a workflow of yours. It holds for the line breaks the CLI makes: the CLI wraps to a fixed 79 columns and never asks how wide your terminal is, so in a **narrower** terminal — or with wide (CJK) characters — your terminal re-wraps and the overflow can still reach column zero. | [What the server says went wrong](#what-the-server-says-went-wrong) |
 | `the orchestrator often supplies no failure reason, so it may not say why` | The same failure with **no** account recorded — a real, measured case, not a CLI limitation. Neither `civitai workflows get <id>` nor `civitai workflows list` will say why either. | [What the server says went wrong](#what-the-server-says-went-wrong) |
 
 ### Everything else

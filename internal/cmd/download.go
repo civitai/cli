@@ -722,6 +722,18 @@ func checkTargetCollisions(files []civitai.ModelVersionFile, o *downloadOpts) er
 // pass a relative or absolute path). A basename that degenerates to ".", "/", or
 // ".." (empty or all-slashes server name) is unusable and errors rather than
 // writing to a junk path.
+// 🔴 THE RETURNED PATH IS MIXED-ORIGIN, WHICH IS WHY ITS PRINT SITES SANITISE
+// IT EVEN THOUGH #393 SAYS USER INPUT IS ECHOED EXACTLY. With `--out` it is the
+// user's own bytes, verbatim; without it, it is built from
+// `filepath.Base(f.Name)` — the SERVER's file name, which safeTerm's own
+// docstring names as a forgery vector. One value, two origins, and the callers
+// cannot tell them apart, so the safe treatment wins: printing it raw would let
+// a hostile uploader forge the `Saved … (SHA256 verified)` line for a
+// papercut's worth of fidelity. The cost, stated rather than hidden: an `--out`
+// path containing an invisible rune is echoed without it, so a user copying
+// that line gets a path that does not exist. Separating the two would mean
+// threading the origin out of here; it is not worth it on this path, and the
+// README says what the CLI actually does.
 func targetPath(f civitai.ModelVersionFile, o *downloadOpts) (string, string, error) {
 	if o.out != "" {
 		return o.out, "", nil
