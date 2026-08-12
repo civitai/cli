@@ -1022,10 +1022,17 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 	// only those cannot be matched back to the files on disk — which is the whole
 	// point of showing them before a spend.
 	// resolveImages preserves order, so imgs[i] is o.images[i].
+	//
+	// 🔴 TWO ORIGINS ON ONE LINE, AND ONLY ONE OF THEM IS SANITISED. `o.images[i]`
+	// is what the USER typed on the command line and is echoed exactly — this
+	// line's whole purpose is to let them match the blob back to the file they
+	// named, which a rewritten path defeats. `img.URL` came back from the SERVER
+	// (an opaque blob URL after upload) and goes through safeTerm. Collapsing the
+	// two into one treatment is the mistake civitai/cli#393's first cut made.
 	for i, img := range imgs {
 		src := ""
 		if i < len(o.images) {
-			src = safeTerm(o.images[i]) + " "
+			src = o.images[i] + " "
 		}
 		out.images = append(out.images, fmt.Sprintf("%s(%dx%d) → %s", src, img.Width, img.Height, safeTerm(img.URL)))
 	}
@@ -1663,7 +1670,8 @@ func workflowLines(built *resolvedGraph) (label, note string) {
 // never showed it.
 func printImageDisclosure(errw io.Writer, o generateOpts, built *resolvedGraph) {
 	if o.ecosystem != "" {
-		fmt.Fprintf(errw, "  Ecosystem:  %s\n", safeTerm(o.ecosystem))
+		// User-typed flag value, echoed exactly — see confirmGenerate.
+		fmt.Fprintf(errw, "  Ecosystem:  %s\n", o.ecosystem)
 	}
 	for _, img := range built.images {
 		fmt.Fprintf(errw, "  Image:      %s\n", img)
@@ -1694,16 +1702,23 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 	if note != "" {
 		fmt.Fprintln(errw, st.Dim(note))
 	}
+	// 🔴 NOTHING ON THIS SCREEN THAT THE USER TYPED IS SANITISED, AND THAT IS THE
+	// POINT OF THE SCREEN. It is the last thing shown before an irreversible
+	// spend, so it has to show what will actually be SENT. #393's first cut ran
+	// the prompt through safeTerm and a typed Persian prompt (`می‌روم`, held apart
+	// by a ZWNJ) rendered joined while the graph on the wire carried the original
+	// — the approval screen stopped describing the job it was approving.
+	// TestApprovalScreenEchoesTypedInput_AndStripsServerText pins it.
 	if built.inputPath != "" {
 		// With --input the CLI has deliberately not interpreted the graph, so it
 		// names the file rather than echoing fields it did not parse. Printing a
 		// partial summary would imply the CLI had checked the rest.
-		fmt.Fprintf(errw, "  Graph:      %s (sent as-is; this CLI did not interpret it)\n", safeTerm(built.inputPath))
+		fmt.Fprintf(errw, "  Graph:      %s (sent as-is; this CLI did not interpret it)\n", built.inputPath)
 	} else {
-		fmt.Fprintf(errw, "  Prompt:     %s\n", safeTerm(o.prompt))
+		fmt.Fprintf(errw, "  Prompt:     %s\n", o.prompt)
 	}
 	if o.negativePrompt != "" {
-		fmt.Fprintf(errw, "  Negative:   %s\n", safeTerm(o.negativePrompt))
+		fmt.Fprintf(errw, "  Negative:   %s\n", o.negativePrompt)
 	}
 	if o.quantitySet {
 		fmt.Fprintf(errw, "  Quantity:   %d\n", o.quantity)
@@ -1777,7 +1792,8 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 		fmt.Fprintf(tw, "\t%s\n", note)
 	}
 	if built.inputPath != "" {
-		fmt.Fprintf(tw, "Graph:\t%s (sent as-is)\n", safeTerm(built.inputPath))
+		// User-typed path, echoed exactly — see confirmGenerate.
+		fmt.Fprintf(tw, "Graph:\t%s (sent as-is)\n", built.inputPath)
 	} else {
 		// NOT safeTerm(o.prompt) — see the disclosure above. The interactive
 		// confirmation in confirmGenerate DOES echo the real prompt and must keep
@@ -1797,7 +1813,7 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 		fmt.Fprintf(tw, "Quantity:\t%d\n", o.quantity)
 	}
 	if o.aspectRatio != "" {
-		fmt.Fprintf(tw, "Aspect ratio:\t%s\n", safeTerm(o.aspectRatio))
+		fmt.Fprintf(tw, "Aspect ratio:\t%s\n", o.aspectRatio)
 	}
 	if built.checkpoint != "" {
 		fmt.Fprintf(tw, "Checkpoint:\t%s%s\n", built.checkpoint, built.checkpointNote)

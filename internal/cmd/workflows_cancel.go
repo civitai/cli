@@ -142,6 +142,12 @@ must never be what stops you halting a job that is spending your Buzz.`,
 // everything else — including a bare Enter — cancels. Rewriting it to enumerate
 // the refusing answers instead would turn `[y/N]` into `[Y/n]` and destroy a
 // paid-for job on a stray keystroke.
+// 🔴 THE ID IS NOT SANITISED, DELIBERATELY (civitai/cli#393). `workflowID` is
+// the positional argument the USER typed; this prompt exists so they can see
+// that it is the run they meant, which a rewritten id defeats. safeTerm is for
+// SERVER-supplied text — see internal/saferune's package doc for the rule and
+// for the residual it accepts (a hostile id pasted from elsewhere is echoed as
+// typed).
 func confirmCancel(cmd *cobra.Command, workflowID string, assumeYes bool) error {
 	if assumeYes {
 		return nil
@@ -149,12 +155,12 @@ func confirmCancel(cmd *cobra.Command, workflowID string, assumeYes bool) error 
 	if !stdinIsTTY() {
 		return fmt.Errorf("refusing to cancel without --yes in a non-interactive shell — cancelling %s is irreversible: it throws away whatever the run has not produced yet, and you are still billed for what it did produce. "+
 			"Pass --yes to confirm, or `civitai workflows get %s` to see what it has produced first",
-			safeTerm(workflowID), safeTerm(workflowID))
+			workflowID, workflowID)
 	}
 
 	errw := cmd.ErrOrStderr()
 	st := ui.For(errw)
-	fmt.Fprintf(errw, "About to cancel workflow %s.\n", safeTerm(workflowID))
+	fmt.Fprintf(errw, "About to cancel workflow %s.\n", workflowID)
 	fmt.Fprintln(errw, st.Warn("You are billed for what this run has already delivered; the server re-prices the rest."))
 	fmt.Fprintln(errw, st.Dim("What the ledger ends up doing is decided server-side — "+buzzLedgerUnknownNote+"."))
 	fmt.Fprintln(errw, st.Dim("Outputs it has not produced yet are lost. It cannot be un-cancelled."))
@@ -224,7 +230,7 @@ func requireWorkflowExists(ctx context.Context, get getWorkflowFn, id string) er
 		// Not reachable from the command tree — newWorkflowsCancelCmd wires both
 		// seams — but a nil seam that SKIPPED the check would silently restore the
 		// #341 behaviour for whoever forgot to wire it, so it is loud instead.
-		return fmt.Errorf("internal error: `workflows cancel` was built without its read seam, so it cannot tell whether %s exists — refusing to cancel", safeTerm(id))
+		return fmt.Errorf("internal error: `workflows cancel` was built without its read seam, so it cannot tell whether %s exists — refusing to cancel", id)
 	}
 	if _, _, err := get(ctx, id); err != nil {
 		if !errors.Is(err, civitai.ErrNotFound) {
@@ -232,7 +238,7 @@ func requireWorkflowExists(ctx context.Context, get getWorkflowFn, id string) er
 		}
 		return civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
 			"no such workflow %s — nothing was cancelled: the server does not know that id. Check it with `civitai workflows list`",
-			safeTerm(id)))
+			id))
 	}
 	return nil
 }
@@ -304,13 +310,13 @@ func runWorkflowsCancel(cmd *cobra.Command, deps workflowsCancelDeps, o workflow
 		return writeRawJSON(cmd.OutOrStdout(), raw)
 	}
 	out, errw := cmd.OutOrStdout(), cmd.ErrOrStderr()
-	fmt.Fprintf(out, "Cancelled workflow %s\n", safeTerm(id))
+	fmt.Fprintf(out, "Cancelled workflow %s\n", id)
 	// 🔴 Repeated at the point of use, not just in --help: the one place a user
 	// is guaranteed to read is the line printed after the thing happened.
 	fmt.Fprintln(errw, ui.For(errw).Warn(
 		"You are billed for what it already delivered; the server re-prices the rest once the workflow settles."))
 	fmt.Fprintln(errw, ui.For(errw).Dim("What the ledger ends up doing is decided server-side — "+buzzLedgerUnknownNote+"."))
 	fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
-		"Check what it produced before stopping with `civitai workflows get %s`.", safeTerm(id))))
+		"Check what it produced before stopping with `civitai workflows get %s`.", id)))
 	return nil
 }

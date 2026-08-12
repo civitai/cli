@@ -2350,24 +2350,33 @@ The server reported:
   - Could not generate images with the given prompts and images. Please try again with different inputs.
 ```
 
-Four things it is not:
+Five things it is not:
 
 - **It is not this CLI's opinion.** The text is the server's. Nothing here
   classifies it, matches on its wording, or maps it to a list of known messages
   — so a message the platform adds tomorrow arrives intact rather than being
   swallowed by a stale table.
 - **It is not quite byte-for-byte, on the terminal.** Before printing any
-  server-supplied text, the CLI removes the characters a terminal cannot show
-  honestly: escape and control bytes, every Unicode *format* character
-  (zero-width spaces and joiners, and the bidi overrides that reverse the order
-  a line is **displayed** in), and the handful of runes that render as blank
-  while claiming to be letters. Words, punctuation, accents, CJK, emoji and
-  right-to-left *script* are untouched — only characters with no visible glyph
-  are dropped. Two knock-on effects worth knowing: an emoji built from a
-  zero-width joiner (a family, a subdivision flag) renders as its components,
-  and Persian/Arabic text that relies on a zero-width non-joiner renders joined.
-  **`--json` is not filtered at all** — it is a raw passthrough, so a script
-  sees exactly what the server sent.
+  server-supplied text, the CLI removes escape and control bytes plus every
+  character Unicode marks **default-ignorable** — the zero-width spaces and
+  joiners, the bidi overrides that reverse the order a line is *displayed* in,
+  the variation selectors (except the one that keeps an emoji looking like an
+  emoji) — and two runes that paint nothing while claiming to be a symbol.
+  Letters, punctuation, accents, CJK, emoji and right-to-left *script* survive,
+  as do the format characters Unicode says must be drawn (Arabic end-of-ayah,
+  the Syriac abbreviation mark, ruby annotation marks).
+  🔴 **Every removed character is invisible on its own, but some of them change
+  how their NEIGHBOURS are drawn**, so this is not free: an emoji built from a
+  zero-width joiner renders as its components, a subdivision flag falls back to
+  🏴, and text that uses the join controls to make a distinction loses it —
+  Persian/Arabic (`می‌روم` renders joined), Malayalam (the chillu `ണ്‍` becomes
+  `ണ്`, a different letter), Devanagari, Bengali, Tamil, Kannada, Sinhala and
+  Mongolian. **`--json` is not filtered at all** — it is a raw passthrough, so a
+  script sees exactly what the server sent.
+- **It is not applied to anything YOU typed.** This filter is for server text
+  only. Your prompt, your flag values and the ids you pass are echoed back
+  exactly as typed — most importantly on the confirmation screen before a spend,
+  which has to show what will really be sent.
 - **It is not always there.** Some failures record nothing. In that case the
   error says so instead: *"the orchestrator often supplies no failure reason, so
   it may not say why"*. That is a measured case, not a gap in the CLI, and there
@@ -2395,7 +2404,8 @@ cannot vouch for — one carrying a URL, a path, a stack frame, an infra name, o
 running past 300 characters or one line — with a generic *"… reported a system
 error"*. `workflows get` applies none of that, so where the two disagree the raw
 one can be the more informative. **When a failure is worth chasing, read both.**
-The CLI reproduces neither transform; it prints what each endpoint sent.
+The CLI reproduces neither transform; it prints what each endpoint sent, less the
+invisible characters described above.
 
 <sub>Until civitai/cli#367 this was discarded at parse time — the field existed on the wire and the CLI had no place to put it — so every failure printed the same generic sentence no matter what caused it, and `civitai workflows get` answered a failed run with a status and nothing else. `civitai workflows list` kept discarding it until civitai/cli#382, at a different wire path.</sub>
 

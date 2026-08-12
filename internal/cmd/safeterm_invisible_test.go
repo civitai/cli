@@ -47,7 +47,7 @@ func invisibleOrBidiRunes(s string) []string {
 const (
 	zwspReason = "FIXTURE alpha\u200b\u200b\u200bbeta"
 	rloReason  = "FIXTURE gamma\u202edelta\u202c"
-	blankOnly  = "\u200b⠀\u202e"
+	blankOnly  = "\u200b\u2800\u202e"
 )
 
 // wfWithReason builds a terminal-status workflow whose single step carries the
@@ -62,13 +62,20 @@ const (
 // battery. Only a payload whose bytes really are invisible can tell "not
 // filtered" from "nothing there to filter".
 //
-// Nothing in the fixtures needs escaping: none of them contains a quote or a
-// backslash, and an invisible rune is ordinary JSON string content.
+// `encoding/json` is what does the quoting, and it is the right tool for
+// exactly this reason: it escapes only what JSON cannot carry literally — the
+// C0 controls, a quote, a backslash — and leaves every rune in the invisible
+// class as RAW BYTES, which is the property the guard needs. `%q` would have
+// escaped those too, which is the trap above.
 func wfWithReason(reason string) string {
+	q, err := json.Marshal(reason)
+	if err != nil {
+		panic(err)
+	}
 	return `{"id":"wf_123","status":"failed","createdAt":"2026-08-05T12:00:00Z","steps":[
 	  {"$type":"imageGen","name":"$0","status":"failed","metadata":{},
 	   "output":{"images":[{"id":"out_1","type":"image","available":false}],
-	   "errors":["` + reason + `"]}}]}`
+	   "errors":[` + string(q) + `]}}]}`
 }
 
 // --- the gate itself ----------------------------------------------------------
@@ -82,7 +89,7 @@ func TestSafeTerm_StripsTheInvisibleAndBidiClass(t *testing.T) {
 		{"byte order mark", "a\ufeffb", "ab"},
 		{"right-to-left override", "a\u202eb", "ab"},
 		{"left-to-right isolate", "a\u2066b\u2069", "ab"},
-		{"braille pattern blank", "a⠀b", "ab"},
+		{"braille pattern blank", "a\u2800b", "ab"},
 		{"hangul filler", "a\u3164b", "ab"},
 		{"still keeps C0 behaviour", "a\x1b[2Kb", "a[2Kb"},
 		{"still keeps newline and tab", "a\tb\nc", "a\tb\nc"},

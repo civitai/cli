@@ -56,10 +56,16 @@ func safeTerm(s string) string {
 // cannot see it. Indenting is what makes a continuation line unable to occupy
 // column zero, and therefore unable to impersonate a line the CLI itself wrote.
 //
-// It deliberately does NOT collapse the newlines: the reason is passed through
-// verbatim (AGENTS.md item 13), so the fix is where the text SITS, not what it
-// says. A trailing newline is left alone rather than padded into a line of
-// whitespace.
+// It deliberately does NOT collapse the newlines: nothing here reads, matches
+// or rewrites the reason's WORDS (AGENTS.md item 13), so the fix is where the
+// text SITS, not what it says. A trailing newline is left alone rather than
+// padded into a line of whitespace.
+//
+// "Verbatim" is no longer the precise word for what reaches this function, and
+// it used to say so: since civitai/cli#393 the string has already lost its
+// invisible and direction-reversing runes to safeTerm. That is a change to the
+// BYTES, made without reading them; item 13's rule is about interpretation, and
+// it still holds.
 func indentContinuation(s, pad string) string {
 	if !strings.Contains(s, "\n") {
 		return s
