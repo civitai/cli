@@ -26,11 +26,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -218,16 +220,30 @@ func TestAppStatusWarnsWhenLocalManifestIsBehind(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the drift warning must not change the exit status of `app status`: %v", err)
 	}
-	if n := atomic.LoadInt32(&calls); n != 2 {
-		t.Fatalf("the drift check made %d request(s), want 2 (the detail lookup + the listing it compares against) — "+
-			"nothing below is about the comparison if the listing was never fetched", n)
+	// 🔴 ONE request, not two. The `?blockId=` detail lookup already returns the
+	// app's whole narrowed listing, so the drift check reads the rows it was
+	// handed instead of re-issuing the byte-identical GET. The count is asserted
+	// EXACTLY (not `>= 1`) because both directions are defects: 2 is the
+	// duplicate request this PR removed, and 0 would mean the detail lookup
+	// itself stopped happening.
+	//
+	// This case's reachability control is therefore no longer the request count
+	// but the warning itself, asserted immediately below: the comparison cannot
+	// have produced that sentence without running. The SILENT cases carry their
+	// own note about what replaced their control.
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Fatalf("the drift check made %d request(s), want 1 — the detail lookup's own response IS the listing, "+
+			"so comparing against it must cost no second round trip", n)
 	}
 	if !strings.Contains(errOut, driftWarnLine) {
 		t.Errorf("the drift warning is missing or reworded.\nwant line: %s\ngot stderr:\n%s", driftWarnLine, errOut)
 	}
 	for _, want := range []string{
 		"An approved version is what gets deployed, so submitting from this repo would replace newer code on approval.",
-		"Sync the released code (civitai app pull --app custom-generators) or raise the local version above 0.5.2 before civitai app submit.",
+		// 🔴 `pull .` — see TestDriftRemedyCommandIsRunnableFromTheWarningsOwnDirectory
+		// for why the dir argument is the difference between syncing THIS
+		// checkout and cloning a second copy inside it.
+		"Sync the released code (civitai app pull . --app custom-generators) or raise the local version above 0.5.2 before civitai app submit.",
 	} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("the warning must name the remedy — missing %q; stderr:\n%s", want, errOut)
@@ -268,6 +284,14 @@ func TestAppStatusDriftWarnsOnTheIDPathAndKeepsJSONPure(t *testing.T) {
 	out, errOut, err := run(t, "app", "status", "--id", "pubreq_07", "--json")
 	if err != nil {
 		t.Fatalf("app status --id --json: %v", err)
+	}
+	// 🔴 TWO here, and that is correct rather than a leftover. `?id=` answers
+	// with a single-row envelope and no listing at all, so this is the one path
+	// where the drift check has no rows to reuse and must ask. The slug path
+	// asserts ONE for the same reason — the two counts are the contract.
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Fatalf("the --id path made %d request(s), want 2 (the id lookup, then the listing it has no other way "+
+			"to see) — a reuse optimisation that also silenced this path would break the warning here", n)
 	}
 	if !strings.Contains(errOut, driftWarnLine) {
 		t.Errorf("the --id path must warn too — the trap is the repo, not the spelling of the lookup.\nstderr:\n%s", errOut)
@@ -353,8 +377,9 @@ func TestAppStatusDriftOrdersBySemverNotByString(t *testing.T) {
 			if err != nil {
 				t.Fatalf("app status: %v", err)
 			}
-			if n := atomic.LoadInt32(&calls); n != 2 {
-				t.Fatalf("the listing was not fetched (%d request(s)) — the comparison never happened", n)
+			if n := atomic.LoadInt32(&calls); n != 1 {
+				t.Fatalf("%d request(s), want 1 — the detail lookup's rows are the listing; a second GET is the "+
+					"duplicate this PR removed", n)
 			}
 			got := strings.Contains(errOut, driftWarnCore)
 			if got != tc.wantWarn {
@@ -387,12 +412,20 @@ func TestAppStatusDriftSilentWhenAheadOrEqual(t *testing.T) {
 			if err != nil {
 				t.Fatalf("app status: %v", err)
 			}
-			// REACHABILITY: the silence has to be a DECISION, not an early
-			// return. Without this the case would also pass against a drift
-			// check that was deleted outright.
-			if n := atomic.LoadInt32(&calls); n != 2 {
-				t.Fatalf("the drift check made %d request(s), want 2 — this case is only meaningful if the "+
-					"comparison actually ran and chose to stay quiet", n)
+			// 🔴 REACHABILITY MOVED, AND THIS COMMENT IS THE RECORD OF IT.
+			// This used to read `want 2`: the drift check's extra request was
+			// what proved the comparison ran, so a deleted check failed here.
+			// With the rows reused there is no second request to count, and
+			// the count can no longer tell "compared, then chose silence" from
+			// "never ran".
+			//
+			// What carries the reachability now is that the SAME fixture, with
+			// a local version BELOW the approved one, is the positive control
+			// in TestAppStatusWarnsWhenLocalManifestIsBehind — the path is
+			// demonstrably live there and only the RELATION differs here, so
+			// inverting the comparison (M1) still dies.
+			if n := atomic.LoadInt32(&calls); n != 1 {
+				t.Fatalf("the drift check made %d request(s), want 1 — the rows come from the detail lookup", n)
 			}
 			assertNoDriftWarning(t, "local "+local+" vs approved 0.5.2", out, errOut)
 		})
@@ -414,10 +447,14 @@ func TestAppStatusDriftSilentWithoutALocalManifest(t *testing.T) {
 		t.Fatalf("app status: %v", err)
 	}
 	assertNoDriftWarning(t, "no local manifest", out, errOut)
+	// On the SLUG path the count can no longer distinguish "the manifest gate
+	// declined" from "the check ran and found nothing" — both are 1 now that the
+	// rows are reused. The manifest-before-network property is pinned where it
+	// is still observable: TestAppStatusDriftManifestGateRunsBeforeTheNetwork
+	// drives the `--id` path, where declining really does save a request.
 	if n := atomic.LoadInt32(&calls); n != 1 {
-		t.Errorf("%d request(s) were made, want 1. With no local manifest there is nothing to compare, so the "+
-			"drift listing must not be fetched at all — otherwise every `app status <slug>` pays for a "+
-			"comparison it can never make", n)
+		t.Errorf("%d request(s) were made, want 1 — `app status <slug>` makes exactly one request, with or "+
+			"without a local manifest", n)
 	}
 }
 
@@ -542,8 +579,8 @@ func TestAppStatusDriftSilentWhenNothingIsApproved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app status: %v", err)
 	}
-	if n := atomic.LoadInt32(&calls); n != 2 {
-		t.Fatalf("the listing was not fetched (%d request(s)) — the status filter was never exercised", n)
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Fatalf("%d request(s), want 1 — the rows come from the detail lookup", n)
 	}
 	assertNoDriftWarning(t, "nothing approved", out, errOut)
 }
@@ -596,8 +633,7 @@ func TestAppStatusDriftSilentForADifferentApp(t *testing.T) {
 			}
 			assertNoDriftWarning(t, "manifest blockId="+blockID, out, errOut)
 			if n := atomic.LoadInt32(&calls); n != 1 {
-				t.Errorf("%d request(s), want 1 — a manifest for a DIFFERENT app is decided offline, "+
-					"before any listing is fetched", n)
+				t.Errorf("%d request(s), want 1 — the detail lookup and nothing else", n)
 			}
 		})
 	}
@@ -607,6 +643,14 @@ func TestAppStatusDriftSilentForADifferentApp(t *testing.T) {
 // can 403 (the route is invite-gated), 500, or time out. None of that is
 // evidence about the repo, and none of it may break a command that has already
 // produced its answer.
+//
+// 🔴 IT DRIVES THE `--id` PATH ON PURPOSE, and that is a consequence of the
+// row-reuse change: on the slug path the drift check no longer issues a request
+// of its own, so there is no longer a second call for the server to fail. Left
+// on the slug path this case would have kept passing while testing NOTHING —
+// the listing it "failed" would never have been requested. The `--id` path is
+// where a failing drift listing is still reachable, so that is where the
+// tolerance is pinned. The request count below is what makes that non-vacuous.
 func TestAppStatusDriftSilentWhenTheListingFails(t *testing.T) {
 	for _, code := range []int{http.StatusForbidden, http.StatusInternalServerError, http.StatusTooManyRequests} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
@@ -615,10 +659,14 @@ func TestAppStatusDriftSilentWhenTheListingFails(t *testing.T) {
 			writeDriftManifest(t, driftSlug, "0.4.0")
 			setupDriftEnv(t, srv.URL)
 
-			out, errOut, err := run(t, "app", "status", driftSlug)
+			out, errOut, err := run(t, "app", "status", "--id", "pubreq_07")
 			if err != nil {
 				t.Fatalf("a failed drift listing must not fail `app status` (the detail view already "+
 					"answered successfully): %v", err)
+			}
+			if n := atomic.LoadInt32(&calls); n != 2 {
+				t.Fatalf("%d request(s), want 2 — the failing listing must actually have been REQUESTED, or "+
+					"this case asserts silence about a call that never happened", n)
 			}
 			assertNoDriftWarning(t, fmt.Sprintf("listing returned %d", code), out, errOut)
 			if !strings.Contains(out, driftSlug) {
@@ -846,5 +894,542 @@ func TestAppStatusHelpDocumentsTheDriftWarning(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("app status --help does not mention %q:\n%s", want, out)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The remedy the warning prints must be the command a reader can RUN — #413
+// audit finding 1
+// ---------------------------------------------------------------------------
+
+// remedyFromWarning lifts the parenthesised command out of the rendered warning.
+//
+// It reads the command back out of the USER-FACING sentence rather than calling
+// driftRemedyCommand, so the test covers the whole path a reader takes: a
+// remedy that is correct in a helper but interpolated into the wrong sentence
+// still fails here.
+func remedyFromWarning(t *testing.T, msg string) string {
+	t.Helper()
+	const lead = "Sync the released code ("
+	i := strings.Index(msg, lead)
+	if i < 0 {
+		t.Fatalf("the warning no longer offers a remedy in the expected shape %q:\n%s", lead+"…)", msg)
+	}
+	rest := msg[i+len(lead):]
+	j := strings.Index(rest, ")")
+	if j < 0 {
+		t.Fatalf("the remedy is not closed by a %q:\n%s", ")", msg)
+	}
+	return strings.TrimSpace(rest[:j])
+}
+
+// parsedRemedy is what the real command tree made of a remedy string.
+type parsedRemedy struct {
+	path       string   // e.g. "civitai app pull"
+	positional []string // args left after flag parsing
+	app        string   // --app
+	argsErr    error    // the command's own Args validator on the positionals
+}
+
+// parseAsCommand runs a candidate command line through the REAL cobra tree.
+//
+// 🔴 THIS IS THE POINT OF THE TEST. A `strings.Contains(errOut, "civitai app
+// pull …")` assertion is satisfied by any string at all, including one this CLI
+// would reject or — worse — accept while doing something else. Resolving the
+// line against the actual command tree is what makes "runnable" a measured
+// property instead of a spelling.
+func parseAsCommand(t *testing.T, line string) parsedRemedy {
+	t.Helper()
+	fields := strings.Fields(line)
+	if len(fields) == 0 || fields[0] != "civitai" {
+		t.Fatalf("a remedy printed to a user must be a complete command line starting with the binary name; got %q", line)
+	}
+	root := NewRootCmd()
+	c, rest, err := root.Find(fields[1:])
+	if err != nil {
+		t.Fatalf("the remedy %q does not resolve to a command in this CLI: %v", line, err)
+	}
+	if err := c.ParseFlags(rest); err != nil {
+		t.Fatalf("the remedy %q does not parse against %s's flags: %v", line, c.CommandPath(), err)
+	}
+	app := ""
+	if f := c.Flags().Lookup("app"); f != nil {
+		app = f.Value.String()
+	}
+	pos := c.Flags().Args()
+	return parsedRemedy{path: c.CommandPath(), positional: pos, app: app, argsErr: c.ValidateArgs(pos)}
+}
+
+// TestDriftRemedyCommandIsRunnableFromTheWarningsOwnDirectory is #413 audit
+// finding 1.
+//
+// 🔴 THE WARNING CAN ONLY EVER PRINT FROM INSIDE THE APP CHECKOUT — the drift
+// check reads the manifest at driftManifestDir ("."), so cwd IS the repo that is
+// behind. That makes the remedy's directory argument load-bearing: `civitai app
+// pull --app <slug>` with no [dir] defaults its target to ./<slug>, so run
+// verbatim from where this line printed it clones a SECOND copy of the app
+// nested inside the user's repo and leaves the actual checkout exactly as behind
+// as it was. The user follows the advice, sees a success line, and submits the
+// downgrade anyway — the outcome #412 exists to prevent.
+//
+// The old remedy shipped that mistake. Nothing caught it because the tests only
+// asserted the literal string, which agrees with a wrong command as readily as a
+// right one. So this asserts the STRUCTURE, resolved against the real tree, and
+// carries its own control below.
+func TestDriftRemedyCommandIsRunnableFromTheWarningsOwnDirectory(t *testing.T) {
+	var sink strings.Builder
+	msg := versionDriftWarning(&sink, driftSlug, "0.4.0", "0.5.2")
+	if msg == "" {
+		t.Fatalf("the BEHIND case must render a warning — nothing below is meaningful without one")
+	}
+	got := parseAsCommand(t, remedyFromWarning(t, msg))
+
+	if got.path != "civitai app pull" {
+		t.Errorf("the remedy resolves to %q, want `civitai app pull` — syncing the released code is what an "+
+			"author who is BEHIND has to do", got.path)
+	}
+	if got.app != driftSlug {
+		t.Errorf("the remedy names --app %q, want %q", got.app, driftSlug)
+	}
+	if got.argsErr != nil {
+		t.Errorf("the remedy's positional arguments are rejected by the command it names (%v) — a remedy that "+
+			"exits 2 is worse than no remedy", got.argsErr)
+	}
+	// The whole finding, in one assertion: the target directory must be THIS
+	// one. app_pull.go's default target is ./<slug>, so an absent [dir] is not a
+	// harmless omission — it is a different, wrong command.
+	if len(got.positional) != 1 || got.positional[0] != "." {
+		t.Errorf("the remedy passes %v as [dir], want exactly [\".\"]. Without it `app pull` targets ./%s, so the "+
+			"command CLONES A SECOND COPY of the app inside the repo this warning was printed in and leaves the "+
+			"checkout still behind — the author then submits the downgrade believing they synced.",
+			got.positional, driftSlug)
+	}
+
+	// 🔴 CONTROL ON THE INSTRUMENT. The assertion above must be able to tell the
+	// two forms apart; if the parser reported [""] or ["."] for both, it would
+	// pass over the very bug it exists to catch. The pre-fix string is fed
+	// through the SAME parser and must come back with no [dir] at all.
+	old := parseAsCommand(t, "civitai app pull --app "+driftSlug)
+	if len(old.positional) != 0 {
+		t.Fatalf("the control parsed %v as positionals for the no-[dir] form, want none — this test cannot "+
+			"distinguish the fixed remedy from the broken one, so its verdict above means nothing", old.positional)
+	}
+	if old.path != "civitai app pull" || old.argsErr != nil {
+		t.Fatalf("the control must differ from the fixed form ONLY in [dir] (path=%q err=%v)", old.path, old.argsErr)
+	}
+}
+
+// TestAppStatusDriftRemedyReachesTheUser is the end-to-end half: the structural
+// test above proves the string is a runnable command, this proves that string is
+// what an author actually sees on stderr.
+func TestAppStatusDriftRemedyReachesTheUser(t *testing.T) {
+	var calls int32
+	srv := driftServer(t, driftFixture(t), &calls, 0)
+	writeDriftManifest(t, driftSlug, "0.4.0")
+	setupDriftEnv(t, srv.URL)
+
+	_, errOut, err := run(t, "app", "status", driftSlug)
+	if err != nil {
+		t.Fatalf("app status: %v", err)
+	}
+	want := "civitai app pull . --app " + driftSlug
+	if !strings.Contains(errOut, want) {
+		t.Errorf("the printed remedy is not %q:\n%s", want, errOut)
+	}
+	if strings.Contains(errOut, "app pull --app "+driftSlug) {
+		t.Errorf("the printed remedy still carries the no-[dir] form, which clones a second copy of the app "+
+			"inside the checkout instead of syncing it:\n%s", errOut)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The advisory check runs AFTER the answer is rendered — #413 audit finding 2
+// ---------------------------------------------------------------------------
+
+// orderedSink is one buffer standing in for BOTH streams, so the relative order
+// of stdout and stderr writes becomes observable. The mutex is not decoration:
+// the assertion in the `--id` arm reads it from the HTTP handler's goroutine
+// while the command is writing from its own.
+type orderedSink struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (s *orderedSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *orderedSink) snapshot() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+// runInto executes the root command with BOTH streams pointed at w.
+func runInto(t *testing.T, w io.Writer, args ...string) error {
+	t.Helper()
+	root := NewRootCmd()
+	root.SetOut(w)
+	root.SetErr(w)
+	root.SetArgs(args)
+	return root.Execute()
+}
+
+// TestAppStatusRendersTheAnswerBeforeTheAdvisoryDriftCheck is #413 audit
+// finding 2.
+//
+// The drift line is advisory and MAY NOT PRINT AT ALL, while the detail view is
+// the answer the user asked for and is already in hand. Running the check first
+// made every `app status` hold that answer back behind an optional second round
+// trip on a 30s client budget — a slow or hanging API delayed output the command
+// had already fetched.
+//
+// 🔴 IT IS AN ORDERING TEST, NOT A STREAM TEST, AND THE TWO ARE INDEPENDENT.
+// stdout/stderr purity is asserted elsewhere and is unaffected: pointing both
+// streams at one buffer here is exactly what makes ORDER — which the separate
+// buffers of the normal harness cannot see — observable at all.
+func TestAppStatusRendersTheAnswerBeforeTheAdvisoryDriftCheck(t *testing.T) {
+	t.Run("the rendered answer precedes the warning in the output stream", func(t *testing.T) {
+		var calls int32
+		srv := driftServer(t, driftFixture(t), &calls, 0)
+		writeDriftManifest(t, driftSlug, "0.4.0")
+		setupDriftEnv(t, srv.URL)
+
+		sink := &orderedSink{}
+		if err := runInto(t, sink, "app", "status", driftSlug); err != nil {
+			t.Fatalf("app status: %v", err)
+		}
+		all := sink.snapshot()
+		answer := strings.Index(all, "Block ID:")
+		warn := strings.Index(all, driftWarnCore)
+		if answer < 0 || warn < 0 {
+			t.Fatalf("this case needs BOTH the detail view and the warning to appear (answer=%d warn=%d) — "+
+				"otherwise the ordering below is read off a stream missing one of them:\n%s", answer, warn, all)
+		}
+		if answer > warn {
+			t.Errorf("the advisory drift warning was emitted BEFORE the answer the command was asked for. "+
+				"The warning is optional and costs a second round trip; the detail view is already in hand.\n%s", all)
+		}
+	})
+
+	// The stronger arm, and the one that actually pins the finding: the ordering
+	// above could be produced by buffering. This asserts the REQUEST goes out
+	// after the render, by looking at what had been written when it arrived.
+	// It uses `--id` because that is the path where the drift check still makes
+	// a request of its own (the slug path reuses rows — see the reuse test).
+	t.Run("the advisory request is issued after the answer is written", func(t *testing.T) {
+		sink := &orderedSink{}
+		var calls int32
+		var seenAtDrift string
+		var mu sync.Mutex
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&calls, 1)
+			if id := r.URL.Query().Get("id"); id != "" {
+				_ = json.NewEncoder(w).Encode(map[string]any{"submission": map[string]any{
+					"id": id, "blockId": driftSlug, "version": "0.7.0", "status": "withdrawn",
+					"deployState": nil, "submittedAt": "2026-08-03T10:00:00.000Z", "liveUrl": nil,
+				}})
+				return
+			}
+			if n > 1 {
+				mu.Lock()
+				seenAtDrift = sink.snapshot()
+				mu.Unlock()
+			}
+			_ = json.NewEncoder(w).Encode(driftFixture(t))
+		}))
+		defer srv.Close()
+		writeDriftManifest(t, driftSlug, "0.4.0")
+		setupDriftEnv(t, srv.URL)
+
+		if err := runInto(t, sink, "app", "status", "--id", "pubreq_07"); err != nil {
+			t.Fatalf("app status --id: %v", err)
+		}
+		if n := atomic.LoadInt32(&calls); n != 2 {
+			t.Fatalf("%d request(s), want 2 — without the advisory request there is no ordering to observe", n)
+		}
+		mu.Lock()
+		at := seenAtDrift
+		mu.Unlock()
+		if !strings.Contains(at, "Block ID:") {
+			t.Errorf("the advisory drift listing was requested while the answer was still unwritten. What had been "+
+				"emitted at that moment was:\n%q\nThe render must not wait on an optional lookup.", at)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// The drift check reuses the rows the detail lookup already read — #413 audit
+// finding 3
+// ---------------------------------------------------------------------------
+
+// urlRecordingServer answers both spellings and records every request URL, so a
+// test can assert not only HOW MANY requests were made but WHICH.
+func urlRecordingServer(t *testing.T, body map[string]any, urls *[]string, mu *sync.Mutex) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		*urls = append(*urls, r.URL.String())
+		mu.Unlock()
+		if id := r.URL.Query().Get("id"); id != "" {
+			rows, _ := body["submissions"].([]map[string]any)
+			for _, row := range rows {
+				if row["id"] == id {
+					_ = json.NewEncoder(w).Encode(map[string]any{"submission": row})
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Submission not found"})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(body)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// TestAppStatusDriftReusesTheRowsTheDetailLookupAlreadyRead is #413 audit
+// finding 3.
+//
+// 🔴 THE TWO REQUESTS WERE BYTE-IDENTICAL. `GetSubmission(ctx, "", slug)` and
+// `ListSubmissions(ctx, slug)` both build submissionsURL("", slug); the first
+// one already had the whole narrowed listing and threw everything but
+// Submissions[0] away, and the drift check then asked for it again. Same URL,
+// same auth, same page — pure latency and rate-limit budget (429 is a case this
+// command handles) for data already in memory.
+//
+// Both paths are asserted, because the fix must not be "make the second call
+// go away everywhere": the `--id` spelling answers with a single-row envelope
+// and no listing at all, so there it genuinely has to ask.
+func TestAppStatusDriftReusesTheRowsTheDetailLookupAlreadyRead(t *testing.T) {
+	t.Run("slug path: one request, and it is the detail lookup", func(t *testing.T) {
+		var mu sync.Mutex
+		var urls []string
+		srv := urlRecordingServer(t, driftFixture(t), &urls, &mu)
+		writeDriftManifest(t, driftSlug, "0.4.0")
+		setupDriftEnv(t, srv.URL)
+
+		_, errOut, err := run(t, "app", "status", driftSlug)
+		if err != nil {
+			t.Fatalf("app status: %v", err)
+		}
+		// The warning still has to be RIGHT — a reuse that silenced the check
+		// would also make the count 1.
+		if !strings.Contains(errOut, driftWarnLine) {
+			t.Fatalf("reusing the rows must not change the answer; want %q:\n%s", driftWarnLine, errOut)
+		}
+		mu.Lock()
+		got := append([]string(nil), urls...)
+		mu.Unlock()
+		if len(got) != 1 {
+			t.Fatalf("`app status <slug>` made %d requests (%v), want 1 — the drift check must read the rows the "+
+				"detail lookup already returned, not re-issue the identical GET", len(got), got)
+		}
+		if !strings.Contains(got[0], "blockId="+driftSlug) {
+			t.Errorf("the single request was %q, want the ?blockId= narrowing", got[0])
+		}
+	})
+
+	t.Run("--id path: two requests, because there is no listing to reuse", func(t *testing.T) {
+		var mu sync.Mutex
+		var urls []string
+		srv := urlRecordingServer(t, driftFixture(t), &urls, &mu)
+		writeDriftManifest(t, driftSlug, "0.4.0")
+		setupDriftEnv(t, srv.URL)
+
+		_, errOut, err := run(t, "app", "status", "--id", "pubreq_07")
+		if err != nil {
+			t.Fatalf("app status --id: %v", err)
+		}
+		if !strings.Contains(errOut, driftWarnLine) {
+			t.Fatalf("the --id path must still warn:\n%s", errOut)
+		}
+		mu.Lock()
+		got := append([]string(nil), urls...)
+		mu.Unlock()
+		if len(got) != 2 {
+			t.Fatalf("`app status --id` made %d requests (%v), want 2 — a `?id=` lookup returns ONE row and no "+
+				"listing, so the drift check has no rows to reuse and must fetch them", len(got), got)
+		}
+		if !strings.Contains(got[0], "id=pubreq_07") {
+			t.Errorf("first request %q should be the id lookup", got[0])
+		}
+		if !strings.Contains(got[1], "blockId="+driftSlug) || strings.Contains(got[1], "id=pubreq_07") {
+			t.Errorf("second request %q should be the ?blockId= listing the id lookup could not supply", got[1])
+		}
+	})
+}
+
+// TestAppStatusDriftManifestGateRunsBeforeTheNetwork keeps the "manifest first,
+// network second" property measurable after the row reuse.
+//
+// It used to be pinned on the slug path by a 1-vs-2 request count. Reusing the
+// rows makes that path 1 either way, so the property moved here, to the `--id`
+// path — the only path left where declining actually SAVES a request. Both arms
+// run against the same server so the difference is the manifest and nothing
+// else.
+func TestAppStatusDriftManifestGateRunsBeforeTheNetwork(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		manifest  string // "" = write no manifest at all
+		wantCalls int32
+		wantWarn  bool
+	}{
+		{name: "no manifest in cwd: the listing is never fetched", manifest: "", wantCalls: 1, wantWarn: false},
+		// 🔴 THE OFFLINE GATES ARE PLURAL, AND THIS ONE IS THE UNPARSEABLE
+		// VERSION. It is decided from the manifest alone, so it must also land
+		// before the network — and asserting it here is what gives that gate a
+		// killing mutation of its OWN. versionDriftWarning refuses an
+		// unparseable version too (audit finding 4), which means deleting this
+		// gate changes no OUTPUT anywhere: the mutant survives every text
+		// assertion in this file and dies only on the request count. Redundant
+		// guards need a reason each or one of them is untested.
+		{name: "an unparseable local version: still decided offline", manifest: "dev", wantCalls: 1, wantWarn: false},
+		{name: "a matching manifest: the listing is fetched", manifest: "0.4.0", wantCalls: 2, wantWarn: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int32
+			srv := driftServer(t, driftFixture(t), &calls, 0)
+			if tc.manifest != "" {
+				writeDriftManifest(t, driftSlug, tc.manifest)
+			} else {
+				t.Chdir(t.TempDir())
+			}
+			setupDriftEnv(t, srv.URL)
+
+			_, errOut, err := run(t, "app", "status", "--id", "pubreq_07")
+			if err != nil {
+				t.Fatalf("app status --id: %v", err)
+			}
+			if n := atomic.LoadInt32(&calls); n != tc.wantCalls {
+				t.Errorf("%d request(s), want %d — everything decidable from the local manifest is decided BEFORE "+
+					"the network, so a caller who is not standing in a comparable app directory pays nothing for "+
+					"a comparison that cannot be made", n, tc.wantCalls)
+			}
+			if got := strings.Contains(errOut, driftWarnCore); got != tc.wantWarn {
+				t.Errorf("warn=%v, want %v — the arms must differ in the WARNING as well as the count, or the "+
+					"count difference is not attributable to the gate.\nstderr:\n%s", got, tc.wantWarn, errOut)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The no-false-BEHIND property belongs to the FUNCTION — #413 audit finding 4
+// ---------------------------------------------------------------------------
+
+// TestVersionDriftWarningRefusesUnparseableVersionsItself is #413 audit
+// finding 4.
+//
+// 🔴 THE PROPERTY USED TO LIVE ONLY IN THE CALLER, AND THE FUNCTION IS THE
+// REUSABLE HALF. warnLocalVersionDrift gates on isParseableVersion, so no live
+// path could reach this — but called directly, the pre-fix function produced
+// exactly the two claims the whole feature is built to avoid:
+//
+//	versionDriftWarning(w, "custom-generators", "dev", "0.5.2")
+//	  -> "⚠ local block.manifest.json is dev — BEHIND the highest APPROVED version …"
+//	versionDriftWarning(w, "custom-generators", "", "0.5.2")
+//	  -> "⚠ local block.manifest.json is  — BEHIND …"   (a hole where the version goes)
+//
+// compareVersions treats an unparseable FIRST argument as OLDER — a deliberate
+// default for the self-update check, where any real release should surface —
+// and through this function it reads as a confident "your repo is BEHIND".
+// TestVersionDriftWarningIsThreeWay only ever fed it parseable pairs, so the
+// trap was unpinned and the next caller (the `app submit` guard is the known
+// one) would have inherited none of the caller's protection.
+//
+// Zero behaviour change today by construction; this is the case that keeps it
+// that way.
+func TestVersionDriftWarningRefusesUnparseableVersionsItself(t *testing.T) {
+	var sink strings.Builder
+	for _, tc := range []struct{ name, local, published string }{
+		{"unparseable local", "dev", "0.5.2"},
+		{"EMPTY local — the double-space hole", "", "0.5.2"},
+		{"unparseable published", "0.4.0", "nightly"},
+		{"both unparseable", "dev", "nightly"},
+		{"whitespace local", "   ", "0.5.2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := versionDriftWarning(&sink, driftSlug, tc.local, tc.published); got != "" {
+				t.Errorf("versionDriftWarning(%q, %q) stated a comparison it cannot make:\n%s\n"+
+					"A version this CLI cannot order is not evidence of drift, and the caller's gate is not "+
+					"this function's guarantee — the next caller does not inherit it.", tc.local, tc.published, got)
+			}
+		})
+	}
+	// Positive control: the guard must not have swallowed the real case.
+	if got := versionDriftWarning(&sink, driftSlug, "0.4.0", "0.5.2"); got == "" {
+		t.Fatalf("the parseable BEHIND case went silent — the guard above rejects input it must accept, so the " +
+			"silences it reports prove nothing")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// "approved" is matched the way every other reader in this binary matches it —
+// #413 audit nit 6
+// ---------------------------------------------------------------------------
+
+// TestHighestApprovedVersionNormalisesTheStatus is #413 audit nit 6.
+//
+// 🔴 A RAW `s.Status == "approved"` CANNOT FAIL LOUDLY. If the server ever
+// answers "Approved", the filter matches nothing, highestApprovedVersion reports
+// "nothing approved", and the drift warning goes permanently, silently inert —
+// the feature is off and every test still passes because every fixture spells it
+// lower-case. appblocks.go and app_pull.go's pullReviewAdvice both already fold
+// this field; this read is now aligned with them, which also shrinks the
+// consolidation delta against the `app submit` guard that will share the
+// predicate.
+func TestHighestApprovedVersionNormalisesTheStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status string
+		want   string
+		wantOK bool
+	}{
+		{name: "padded and capitalised", status: " Approved ", want: "0.5.2", wantOK: true},
+		{name: "shouted", status: "APPROVED", want: "0.5.2", wantOK: true},
+		{name: "tab-padded", status: "\tapproved\n", want: "0.5.2", wantOK: true},
+		// 🔴 The control on the normalisation itself: folding case and trimming
+		// space must not turn into a substring match. A status that merely
+		// CONTAINS the word is a different state and must not count.
+		{name: "not-approved must still not count", status: "not approved", want: "", wantOK: false},
+		{name: "preapproved must still not count", status: "preapproved", want: "", wantOK: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			in := driftSubs([3]string{driftSlug, "0.5.2", tc.status})
+			got, ok := highestApprovedVersion(in, driftSlug)
+			if got != tc.want || ok != tc.wantOK {
+				t.Errorf("highestApprovedVersion(status=%q) = (%q, %v), want (%q, %v)",
+					tc.status, got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+// TestAppStatusDriftWarnsOnACapitalisedApprovedStatus is the end-to-end half of
+// nit 6: the row goes through the real JSON decode and the real command.
+func TestAppStatusDriftWarnsOnACapitalisedApprovedStatus(t *testing.T) {
+	var calls int32
+	body := driftRows(t,
+		driftRow{"pubreq_06", "0.6.0", "pending", "building", "2026-08-02T10:00:00.000Z"},
+		driftRow{"pubreq_05", "0.5.2", " Approved ", "live", "2026-08-01T10:00:00.000Z"},
+	)
+	srv := driftServer(t, body, &calls, 0)
+	writeDriftManifest(t, driftSlug, "0.4.0")
+	setupDriftEnv(t, srv.URL)
+
+	_, errOut, err := run(t, "app", "status", driftSlug)
+	if err != nil {
+		t.Fatalf("app status: %v", err)
+	}
+	if !strings.Contains(errOut, "which is 0.5.2.") {
+		t.Errorf("a status of \" Approved \" was not recognised as approved, so the drift warning went silent. "+
+			"A case-sensitive filter fails this way and only this way — inert, never loud.\nstderr:\n%s", errOut)
+	}
+	if strings.Contains(errOut, "which is 0.6.0.") {
+		t.Errorf("the pending row was counted as approved:\n%s", errOut)
 	}
 }

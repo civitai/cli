@@ -789,16 +789,56 @@ func (c *Client) ListSubmissions(ctx context.Context, blockID string) ([]Submiss
 
 // GetSubmission returns a single submission. Exactly one of id (a pubreq id) or
 // blockID (an app slug) should be set; id takes precedence if both are given.
+//
+// It is the narrow spelling of GetSubmissionRows: identical request, identical
+// row pick, and the rest of the narrowed listing discarded.
 func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submission, error) {
+	s, _, err := c.getSubmissionRows(ctx, id, blockID)
+	return s, err
+}
+
+// GetSubmissionRows is GetSubmission plus the rows it read to answer.
+//
+// 🔴 IT EXISTS SO A CALLER DOES NOT HAVE TO ASK TWICE. The `?blockId=` spelling
+// of this route answers with the app's WHOLE narrowed listing and GetSubmission
+// throws all of it away but Submissions[0] — so `app status <slug>`'s drift
+// check used to re-issue the byte-identical GET (submissionsURL("", blockID))
+// just to see the rows this call already held. Same URL, same auth, same page;
+// only the latency and the rate-limit budget were extra.
+//
+// The second return is the row set BEHIND the answer, and it is nil — not empty
+// — whenever there is no such set to hand back. That distinction is the whole
+// contract: the `?id=` spelling answers with a single-row envelope and no
+// listing at all, so a caller that needs every row for the app must still fetch
+// it itself. A nil return therefore means "I did not read a listing", never
+// "the listing was empty"; the empty listing is a real, distinct answer (a slug
+// with no submissions) and it is reported as a not-found error above, not as
+// nil rows.
+//
+// Rows are returned as read (newest first, per the route) and are NOT filtered
+// or reordered here — highestApprovedVersion and friends do their own filtering
+// and must see exactly what the server sent.
+func (c *Client) GetSubmissionRows(ctx context.Context, id, blockID string) (*Submission, []Submission, error) {
+	return c.getSubmissionRows(ctx, id, blockID)
+}
+
+// getSubmissionRows is the single implementation both spellings above delegate
+// to. It is unexported ON PURPOSE: newest_row_pick_test.go's ledger derives
+// "every EXPORTED func that reaches submissionsURL" and follows unexported
+// chains, so keeping the body private makes the derivation report BOTH exported
+// boundaries — GetSubmission and GetSubmissionRows — instead of silently
+// dropping whichever one became a wrapper. A wrapper is still an accessor to
+// every caller that uses it.
+func (c *Client) getSubmissionRows(ctx context.Context, id, blockID string) (*Submission, []Submission, error) {
 	build := func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, c.submissionsURL(id, blockID), nil)
 	}
 	status, raw, err := c.authedDo(ctx, build)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if status != http.StatusOK {
-		return nil, submissionsError(status, raw, id, blockID)
+		return nil, nil, submissionsError(status, raw, id, blockID)
 	}
 	// An `?id=` lookup returns {submission: {...}}; an `?blockId=` lookup returns
 	// {submissions: [...]} (narrowed list) — handle both so either selector works.
@@ -806,7 +846,9 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 		Submission *Submission `json:"submission"`
 	}
 	if err := json.Unmarshal(raw, &single); err == nil && single.Submission != nil {
-		return single.Submission, nil
+		// No listing was read on this path — nil rows, deliberately (see the doc
+		// comment): a caller needing every row for the app must fetch it itself.
+		return single.Submission, nil, nil
 	}
 	// 🔴 THE `?blockId=` FORM IS A NARROWED LIST, NOT A SINGLE ROW, and the row
 	// taken below is `Submissions[0]` — NEVER `Submissions[len-1]`. Every
@@ -825,7 +867,7 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 		Submissions []Submission `json:"submissions"`
 	}
 	if err := json.Unmarshal(raw, &list); err != nil {
-		return nil, fmt.Errorf("unexpected /api/v1/blocks/submissions response: %s", string(raw))
+		return nil, nil, fmt.Errorf("unexpected /api/v1/blocks/submissions response: %s", string(raw))
 	}
 	if len(list.Submissions) == 0 {
 		// A `?blockId=` lookup for an unknown slug answers 200 with an EMPTY list
@@ -840,11 +882,11 @@ func (c *Client) GetSubmission(ctx context.Context, id, blockID string) (*Submis
 		// tool whose house style always does (civitai/cli#363). The submission —
 		// and with it the draft store listing the listing commands need — is
 		// created by `app submit`, so that is the step to name.
-		return nil, civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
+		return nil, nil, civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
 			"no such submission for %s — run `civitai app submit` first; the submission and its draft store listing are created at submit time (list what you have submitted with `civitai app status`)",
 			submissionSubject(id, blockID)))
 	}
-	return &list.Submissions[0], nil
+	return &list.Submissions[0], list.Submissions, nil
 }
 
 // submissionSubject names WHICH lookup came back empty, using the selector the

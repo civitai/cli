@@ -501,7 +501,15 @@ const submissionsRouteGateway = "submissionsURL"
 // (TestSubmissionsRouteAccessorsAreLedgered), never trusted on its own — a
 // hand-written name list is exactly what let GetSubmission hide from the first
 // version of this ledger.
-var submissionsRouteAccessors = []string{"GetSubmission", "ListSubmissions"}
+// 🔴 THREE NOW. GetSubmissionRows is the same route read as GetSubmission, with
+// the narrowed listing handed back instead of discarded — `app status <slug>`
+// takes the rows so the drift check does not re-issue the identical GET (#413).
+// Both exported spellings are ledgered because both hand a caller a row out of a
+// list documented newest-first: GetSubmission picks Submissions[0], and
+// GetSubmissionRows exposes the ordering itself to its caller. Their shared body
+// is deliberately UNEXPORTED so the derivation below reports both boundaries
+// rather than only whichever one still touches the gateway directly.
+var submissionsRouteAccessors = []string{"GetSubmission", "GetSubmissionRows", "ListSubmissions"}
 
 // funcDecl matches a top-level func declaration, with or without a receiver, and
 // captures the func's own name.

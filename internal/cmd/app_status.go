@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -99,19 +100,42 @@ and deployed (deployState 'live').`,
 
 			// Detail view when a blockId arg OR --id is given.
 			if idFlag != "" || blockID != "" {
-				sub, err := client.GetSubmission(ctx, idFlag, blockID)
+				// 🔴 …Rows, not GetSubmission: the `?blockId=` spelling of this
+				// route answers with the app's whole narrowed listing, which is
+				// byte-for-byte the request the drift check would otherwise
+				// issue a second time. Take the rows here and the drift check
+				// costs no request at all on the slug path. `rows` is nil on the
+				// `--id` path (a single-row envelope, no listing), and there the
+				// check does still have to ask — see driftLister.
+				sub, rows, err := client.GetSubmissionRows(ctx, idFlag, blockID)
 				if err != nil {
 					return err
 				}
-				// 🔴 BEFORE the --json early return, and on STDERR, exactly like
-				// the cap caveat above: the drift warning has to reach the human
-				// on both renderings while stdout stays a pure, parseable
-				// payload. It is advisory — it never changes the exit code.
-				warnLocalVersionDrift(ctx, client.ListSubmissions, cmd.ErrOrStderr(), sub)
+				// 🔴 RENDER FIRST. The drift line is ADVISORY and may not even
+				// print; the answer below is already in hand. Running the check
+				// ahead of the render made every `app status <slug>` wait on a
+				// second, optional round trip before showing an answer it had
+				// already fetched — on a hung or throttled API that is an
+				// arbitrary delay for a line the user may never see.
+				//
+				// The stderr/stdout split is untouched and is a separate
+				// property: the warning goes to STDERR on both renderings, so
+				// `--json` stdout stays a pure parseable payload. Ordering is
+				// about WHEN, purity is about WHICH STREAM — moving the call
+				// changes only the former.
 				if jsonOut {
-					return writeJSON(out, sub)
+					if err := writeJSON(out, sub); err != nil {
+						return err
+					}
+				} else {
+					printSubmissionDetail(out, sub)
 				}
-				printSubmissionDetail(out, sub)
+				// The advisory call gets its own, shorter deadline: the client's
+				// 30s budget is sized for the answer, and an optional extra is
+				// not allowed to hold the process open for it.
+				dctx, cancel := context.WithTimeout(ctx, driftLookupTimeout)
+				defer cancel()
+				warnLocalVersionDrift(dctx, driftLister(client, rows), cmd.ErrOrStderr(), sub)
 				return nil
 			}
 
@@ -280,6 +304,31 @@ func shortDate(ts string) string {
 // manifest.Load fails and the check says nothing.
 const driftManifestDir = "."
 
+// driftLookupTimeout bounds the drift check's own request, when it makes one.
+// The appapi client's budget (30s) is the budget for the ANSWER; this call is
+// advisory and runs after the answer has already been printed, so it gets a
+// tighter one — a hung listing must not keep the command alive for a line that
+// may not print.
+const driftLookupTimeout = 10 * time.Second
+
+// driftLister decides whether the drift check needs a request of its own.
+//
+// 🔴 THE SLUG PATH ALREADY HOLDS THE ROWS. `?blockId=` returns the app's whole
+// narrowed listing and GetSubmissionRows hands it back, so re-fetching it would
+// be the byte-identical GET (submissionsURL("", blockID)) a second time in one
+// command — pure latency and rate-limit budget for data in memory.
+//
+// rows == nil means no listing was read (the `?id=` path answers with a
+// single-row envelope), and there the real lister is the only way to see the
+// app's other versions. nil is NOT "the listing was empty": an empty listing on
+// the slug path is a not-found error and never reaches here.
+func driftLister(client *appapi.Client, rows []appapi.Submission) submissionLister {
+	if rows == nil {
+		return client.ListSubmissions
+	}
+	return func(context.Context, string) ([]appapi.Submission, error) { return rows, nil }
+}
+
 // warnLocalVersionDrift writes the #412 drift warning to errOut when the local
 // block.manifest.json is BEHIND the caller's highest APPROVED version of the
 // same app. It writes nothing in every other case.
@@ -352,7 +401,7 @@ func highestApprovedVersion(subs []appapi.Submission, blockID string) (string, b
 	best := ""
 	for i := range subs {
 		s := &subs[i]
-		if s.BlockID != blockID || s.Status != "approved" || !isParseableVersion(s.Version) {
+		if s.BlockID != blockID || !isApprovedStatus(s.Status) || !isParseableVersion(s.Version) {
 			continue
 		}
 		if best == "" || compareVersions(s.Version, best) > 0 {
@@ -360,6 +409,24 @@ func highestApprovedVersion(subs []appapi.Submission, blockID string) (string, b
 		}
 	}
 	return best, best != ""
+}
+
+// isApprovedStatus reports whether a submission row's status means APPROVED.
+//
+// 🔴 NORMALISED, NOT COMPARED RAW. `s.Status == "approved"` is a case- and
+// space-sensitive test against a value this CLI does not own: the server picks
+// the casing, and every other reader of the same field in this binary already
+// folds it (appblocks.go's deployState/status reads, app_pull.go's
+// pullReviewAdvice). A raw comparison does not fail loudly if the server ever
+// answers "Approved" — it silently matches NOTHING, the highest-approved lookup
+// finds no rows, and the drift warning goes permanently quiet. A check that can
+// only ever fail by going inert has to be the tolerant one.
+//
+// The companion `app submit` monotonic guard (#412's other half) folds the same
+// way; the two predicates are meant to be consolidated once both have landed,
+// and they cannot be if they disagree about what "approved" is.
+func isApprovedStatus(status string) bool {
+	return strings.EqualFold(strings.TrimSpace(status), "approved")
 }
 
 // versionDriftWarning renders the warning for a local version that is BEHIND
@@ -375,9 +442,18 @@ func highestApprovedVersion(subs []appapi.Submission, blockID string) (string, b
 //     about an action, not a description of a repo, and `status` describing a
 //     just-released repo as a problem would be noise on every run.)
 //
-// Both arguments must already be parseable semver; callers gate on that, and
-// this is why compareVersions' "unparseable current sorts older" fallback can
-// never reach here and turn a typo into a false BEHIND claim.
+// 🔴 BOTH ARGUMENTS MUST BE PARSEABLE SEMVER, AND THAT IS ENFORCED HERE, not
+// only at the call site. compareVersions treats an unparseable FIRST argument as
+// OLDER (so `civitai version` surfaces any real release), which through this
+// function reads as a confident "your repo is BEHIND" for a manifest carrying a
+// typo — and for an EMPTY version string it renders `local block.manifest.json
+// is  — BEHIND …`, with the hole where the version should be. warnLocalVersionDrift
+// gates on isParseableVersion before ever calling this, so the guard below is a
+// no-op on every path that exists today. It is here because THIS is the
+// reusable half: the property "no false BEHIND" belonged to the caller, which
+// meant the next caller — the `app submit` guard is the known one — inherited
+// none of it. Feeding this function garbage now returns the empty string
+// instead of an assertion nobody made.
 //
 // KNOWN LIMITATION, inherited from the shared comparator and left in place
 // deliberately: parseSemver drops any -prerelease/+build suffix, so the ordering
@@ -387,6 +463,9 @@ func highestApprovedVersion(subs []appapi.Submission, blockID string) (string, b
 // manifest string, never the reduced triple. Sharpening it means changing
 // parseSemver, which `civitai version` also depends on; that is its own change.
 func versionDriftWarning(w io.Writer, blockID, local, published string) string {
+	if !isParseableVersion(local) || !isParseableVersion(published) {
+		return ""
+	}
 	if compareVersions(local, published) >= 0 {
 		return ""
 	}
@@ -396,7 +475,28 @@ func versionDriftWarning(w io.Writer, blockID, local, published string) string {
 		manifest.Filename, local, blockID, published)) + "\n" +
 		"  An approved version is what gets deployed, so submitting from this repo would replace newer code on approval.\n" +
 		fmt.Sprintf("  Sync the released code (%s) or raise the local version above %s before %s.\n",
-			st.Code("civitai app pull --app "+blockID), published, st.Code("civitai app submit"))
+			st.Code(driftRemedyCommand(blockID)), published, st.Code("civitai app submit"))
+}
+
+// driftRemedyCommand is the pull invocation that syncs THE DIRECTORY THE
+// WARNING WAS PRINTED IN.
+//
+// 🔴 THE `.` IS THE WHOLE POINT AND IT IS NOT OPTIONAL. This warning can only
+// appear when cwd IS the app checkout (driftManifestDir is "."), so the remedy
+// is always "sync here". `civitai app pull --app <slug>` with no [dir] does
+// something else entirely: app_pull defaults the target to ./<slug>, so run
+// verbatim from where this line printed it CLONES A SECOND COPY OF THE APP
+// NESTED INSIDE THE REPO and leaves the actual checkout exactly as far behind as
+// it was. The user follows the advice, sees a success line, and submits the
+// downgrade anyway — the precise outcome #412 exists to prevent. (The nested
+// copy is not inert either: it is app source inside the packaged directory, so
+// the next `app submit` uploads the app twice.)
+//
+// Pinned by TestDriftRemedyCommandIsRunnableFromTheWarningsOwnDirectory, which
+// PARSES this string with the real command tree rather than spelling it out —
+// a literal assertion agrees with any string, including one no CLI would accept.
+func driftRemedyCommand(blockID string) string {
+	return "civitai app pull . --app " + blockID
 }
 
 // fullDate renders an RFC3339 timestamp in local time, minute precision.
