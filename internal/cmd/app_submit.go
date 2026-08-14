@@ -24,6 +24,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var packageOnly bool
 	var skipValidate bool
 	var assumeYes bool
+	var allowDowngrade bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -52,10 +53,18 @@ shown the app@version and asked to confirm. Pass --yes/-y to skip the prompt
 --yes is given, rather than hang or submit silently. --package-only is the safe
 preview — it never submits.
 
+Version guard:
+  A submit that would really upload first checks the app's own submissions and
+  REFUSES when the manifest version is not strictly above the highest APPROVED
+  version — submitting an older (or the same) version replaces the newer live
+  deployment on approval, which is what a repo that is behind what was last
+  released produces naturally. Pass --allow-downgrade for a deliberate rollback.
+
 Defaults to the current directory.`,
-		Example: `  civitai app submit                 # validate + package + confirm + submit
-  civitai app submit --yes           # skip the confirmation prompt (scripts/CI)
-  civitai app submit --package-only  # just write the .zip (safe preview, never submits)
+		Example: `  civitai app submit                    # validate + package + confirm + submit
+  civitai app submit --yes              # skip the confirmation prompt (scripts/CI)
+  civitai app submit --package-only     # just write the .zip (safe preview, never submits)
+  civitai app submit --allow-downgrade  # deliberate rollback below the approved version
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -131,8 +140,37 @@ Defaults to the current directory.`,
 			// here, then packages + submits below. The --package-only / no-token
 			// fallback path never submits, so it skips the gate and just packages.
 			canUpload := !packageOnly && cfg.Token() != ""
+			var client *appapi.Client
 			if canUpload {
+				client = appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
 				if err := confirmSubmit(cmd, m, cfg.BaseURL(), assumeYes); err != nil {
+					return err
+				}
+
+				// 2a. MONOTONIC-VERSION GUARD (issue #412), between the
+				// confirmation and the packaging.
+				//
+				// 🔴 THE ORDER IS DELIBERATE: the free LOCAL gate runs before
+				// the one that costs a network read. Putting the guard first
+				// would avoid prompting for a submit we are about to refuse —
+				// but it would also make a bare `civitai app submit` in a
+				// non-TTY shell (the accidental-footgun case, which refuses for
+				// lack of --yes) reach the API first, and
+				// TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall pins that
+				// invocation as touching nothing. The cost of this order is
+				// one confusing sequence on an interactive TTY — prompt, "y",
+				// then the refusal — which is strictly better than a
+				// confirmation gate that quietly acquired a network dependency.
+				//
+				// It runs only on the canUpload path: --package-only and the
+				// no-token fallback never reach the server, so nothing there can
+				// regress a live deployment. See app_submit_version_guard.go for
+				// every branch of the guard itself.
+				ctx := cmd.Context()
+				if ctx == nil {
+					ctx = context.Background()
+				}
+				if err := checkVersionNotRegression(ctx, client.ListSubmissions, cmd.ErrOrStderr(), m.BlockID, m.Version, allowDowngrade); err != nil {
 					return err
 				}
 			}
@@ -148,7 +186,6 @@ Defaults to the current directory.`,
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
 			// The gate above already confirmed (or --yes bypassed) it.
 			if canUpload {
-				client := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
 				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL())
 			}
 
@@ -175,6 +212,7 @@ Defaults to the current directory.`,
 	cmd.Flags().BoolVar(&packageOnly, "package-only", false, "only write the .zip; do not attempt submission")
 	cmd.Flags().BoolVar(&skipValidate, "skip-validate", false, "skip manifest validation before packaging")
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the confirmation prompt and submit (for scripts/CI)")
+	cmd.Flags().BoolVar(&allowDowngrade, "allow-downgrade", false, "submit even when the version is not above the highest approved one (deliberate rollback)")
 	return cmd
 }
 

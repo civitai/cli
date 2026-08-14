@@ -471,6 +471,21 @@ var submissionsListReaders = map[string]submissionsListReader{
 			{"TestAppStatusDetailShowsTheNewestSubmission", `run(t, "app", "status", slug)`},
 		},
 	},
+	"cmd/app_submit.go": {
+		// 🔴 THE ONE ENTRY IN THIS LEDGER THAT IS NOT A NEWEST-ROW PICK, and it
+		// is here for exactly the reason the ledger exists: the assumption it
+		// must NOT inherit is the one every neighbour above makes. The
+		// monotonic-version guard (#412) asks "what would this submit REPLACE on
+		// approval", and only an APPROVED row can be replaced — a later
+		// pending/withdrawn/rejected row for a higher version outranks the
+		// approved one by submittedAt while being nothing that is serving. So it
+		// scans every matching row for the highest approved version and never
+		// takes Submissions[0].
+		reads: "the HIGHEST APPROVED version for the slug (highestApprovedVersion, the monotonic-version guard) — deliberately NOT a newest-row pick, and it depends on no list ORDER at all",
+		pinnedBy: []submissionsPin{
+			{"TestAppSubmitRefusesARegressionAndNeverUploads", `run(t, "app", "submit"`},
+		},
+	},
 	"cmd/app_listing.go": {
 		reads: "GetSubmission's single row, for the appBlockId resolveListing hands to GetMyListingForApp — i.e. WHICH listing every `app listing` subcommand reads and mutates",
 		pinnedBy: []submissionsPin{
