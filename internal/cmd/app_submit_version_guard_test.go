@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -168,7 +169,7 @@ func TestVersionGuardRefusesBelowHighestApproved(t *testing.T) {
 	for _, want := range []string{
 		"refusing to submit custom-generators@0.4.1",
 		"0.5.2 is already approved and live",
-		"Submitting an older version replaces the newer deployment on approval.",
+		"Submitting an older version replaces the newer live deployment on approval.",
 		"--allow-downgrade",
 	} {
 		if !strings.Contains(msg, want) {
@@ -558,9 +559,21 @@ func TestVersionGuardEqualVersionThatIsNotLiveNeverClaimsItIsLive(t *testing.T) 
 		if !strings.Contains(msg, "approved but not live") {
 			t.Errorf("deployState=%q: the refusal should name the state it actually found, got:\n%s", deployState, msg)
 		}
-		if !strings.Contains(msg, "retry of a deploy that never landed") {
-			t.Errorf("deployState=%q: this is the deploy-failed RETRY path and the message should say so "+
+		if !strings.Contains(msg, "resubmit of a deploy that has not landed") {
+			t.Errorf("deployState=%q: this is the not-yet-landed RETRY path and the message should say so "+
 				"rather than calling it an accident, got:\n%s", deployState, msg)
+		}
+		// 🔴 "never landed" is FALSE for building/deploying — those are deploys
+		// IN PROGRESS, and this arm covers all three states with one sentence.
+		if strings.Contains(msg, "never landed") {
+			t.Errorf("deployState=%q: a deploy that is still building or deploying has not landed YET; "+
+				"claiming it never landed is a statement about the future:\n%s", deployState, msg)
+		}
+		// 🔴 The CLI packages whatever is on disk (#411: the tree may be dirty),
+		// so it cannot know the bundle is the same one that was submitted before.
+		if strings.Contains(msg, "unchanged") {
+			t.Errorf("deployState=%q: the CLI packages the working tree and cannot know the bundle is "+
+				"unchanged, so the advice must not claim it:\n%s", deployState, msg)
 		}
 		// The escape hatch still has to be reachable from the text.
 		if !strings.Contains(msg, "--allow-downgrade") {
@@ -963,6 +976,382 @@ func TestVersionGuardStaysSilentOnAGenuineFirstSubmitWithRows(t *testing.T) {
 	if warn != "" {
 		t.Errorf("these rows ARE for this app (one of them only differs in case) — an ordinary "+
 			"not-yet-approved app must stay silent, got:\n%s", warn)
+	}
+}
+
+// --- LIVENESS IS THE SERVER'S ANSWER, NOT deployState's (delta finding 1) ---
+//
+// 🔴 THE DEFECT THIS PINS WAS INTRODUCED BY THE PREVIOUS FIX ROUND, and it is
+// the worst shape available: a POSITIVE false claim that then recommends the
+// exact accident the guard exists to prevent.
+//
+// The server's shared predicate isApprovedAndServing
+// (civitai:src/shared/constants/app-block-deploy.constants.ts) returns TRUE for
+// an approved row whose deployState is NULL whenever it carries a
+// deployUpdatedAt, has no reviewedAt, or was reviewed before the tracking epoch
+// — every LEGACY approval that predates deploy-state tracking. shapeRow
+// (civitai:src/pages/api/v1/blocks/submissions.ts) emits `liveUrl` from exactly
+// that predicate, so `liveUrl != null` IS the server saying "serving", and it is
+// the ONLY field on this route that says it for those rows.
+//
+// A guard reading deployState alone therefore printed, for a row serving at a
+// real URL: "That version is approved but not live … pass --allow-downgrade to
+// resubmit it" — while `civitai app status` printed `Live at: <that url>` for
+// the same row, off the same field. Three failures in one message: it is false,
+// it contradicts the sibling command, and its advice inverts to the flag that
+// submits under an already-serving version.
+
+// liveByURLOnlyRow is the row shape the whole class turns on: approved, NO
+// deployState, and a liveUrl the server only emits when it considers the row to
+// be serving.
+func liveByURLOnlyRow(version string) appapi.Submission {
+	return appapi.Submission{
+		ID: "pubreq_legacy_live", BlockID: guardSlug, Version: version, Status: "approved",
+		DeployState: nil, // the legacy shape: tracking did not exist when it was approved
+		LiveURL:     strptr("https://custom-generators.civit.ai/"),
+		SubmittedAt: "2026-08-01T08:00:00Z",
+	}
+}
+
+// TestHighestApprovedVersionReadsLivenessFromLiveURLNotOnlyDeployState is the
+// unit half: peak.live must agree with the server.
+func TestHighestApprovedVersionReadsLivenessFromLiveURLNotOnlyDeployState(t *testing.T) {
+	peak := highestApprovedVersion([]appapi.Submission{liveByURLOnlyRow("0.5.2")}, guardSlug)
+	if !peak.found {
+		t.Fatal("the row is approved and must be found")
+	}
+	if !peak.live {
+		t.Error("the server emits liveUrl ONLY for a row its own isApprovedAndServing predicate calls " +
+			"serving, so a non-nil liveUrl means live even with deployState=null (the legacy approval " +
+			"shape). Reading deployState alone reports a serving app as not live.")
+	}
+	// Negative control: liveUrl is the SERVER's answer, so its ABSENCE must not
+	// be read as live — otherwise the fix widens into "every approved row is
+	// live" and the not-live arm becomes unreachable.
+	for _, name := range []string{"", "failed", "building", "deploying"} {
+		var ds *string
+		if name != "" {
+			ds = strptr(name)
+		}
+		rows := []appapi.Submission{{ID: "pubreq_nolive", BlockID: guardSlug, Version: "0.5.2",
+			Status: "approved", DeployState: ds, LiveURL: nil, SubmittedAt: "2026-08-01T08:00:00Z"}}
+		if peak := highestApprovedVersion(rows, guardSlug); peak.live {
+			t.Errorf("deployState=%q (empty = null) with no liveUrl must NOT read as live", name)
+		}
+	}
+	// An EMPTY liveUrl is not a URL. The server never emits one, but reading a
+	// blank string as "serving" would make the claim rest on the field being
+	// present rather than on what it holds.
+	blank := []appapi.Submission{{ID: "pubreq_blank", BlockID: guardSlug, Version: "0.5.2",
+		Status: "approved", LiveURL: strptr("  "), SubmittedAt: "2026-08-01T08:00:00Z"}}
+	if peak := highestApprovedVersion(blank, guardSlug); peak.live {
+		t.Error("an empty liveUrl is not the server saying the row is serving")
+	}
+}
+
+// TestVersionGuardNeverCallsAServingRowNotLive is the message half — the claim
+// the user actually reads, in both refusal directions.
+func TestVersionGuardNeverCallsAServingRowNotLive(t *testing.T) {
+	rows := []appapi.Submission{liveByURLOnlyRow("0.5.2")}
+
+	for _, tc := range []struct{ name, version, wantMiddle string }{
+		{"equal", "0.5.2", "Resubmitting the version that is already live is almost always an accident."},
+		{"lower", "0.4.1", "Submitting an older version replaces the newer live deployment on approval."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := guardRun(t, rows, tc.version, false)
+			if err == nil {
+				t.Fatalf("%s must still be refused against the approved 0.5.2", tc.version)
+			}
+			msg := err.Error()
+			// The false claim itself.
+			if strings.Contains(msg, "not live") {
+				t.Errorf("the server reports this row as serving (liveUrl is set), so the refusal must "+
+					"not tell the author it is not live — `civitai app status` prints `Live at:` for the "+
+					"SAME row off the SAME field:\n%s", msg)
+			}
+			if !strings.Contains(msg, "0.5.2 is already approved and live") {
+				t.Errorf("line 1 must claim live for a serving row, got:\n%s", msg)
+			}
+			if !strings.Contains(msg, tc.wantMiddle) {
+				t.Errorf("want middle line %q, got:\n%s", tc.wantMiddle, msg)
+			}
+			// 🔴 The consequence that makes this deploy-blocking: the not-live arm
+			// recommends --allow-downgrade as a RETRY, which submits under a
+			// version that is already serving — the #412 accident itself.
+			if strings.Contains(msg, "--allow-downgrade to submit this version again") {
+				t.Errorf("recommending --allow-downgrade as a retry of a deploy that has not landed is "+
+					"wrong here: the deploy DID land, and taking that advice resubmits under a serving "+
+					"version — the exact #412 accident:\n%s", msg)
+			}
+		})
+	}
+}
+
+// rawSubmitGuardServer is submitGuardServer with the submissions body written as
+// LITERAL JSON rather than encoded from appapi.Submission.
+//
+// 🔴 THAT DIFFERENCE IS THE WHOLE TEST, AND THE FIRST CUT OF IT WAS VACUOUS.
+// submitGuardServer marshals the very struct the CLI unmarshals, so a wrong or
+// missing `json:` tag is applied symmetrically on both sides and the round trip
+// still works — measured: renaming the tag to `live_url` left this test GREEN.
+// A fake that encodes with the same code under test can only ever prove the code
+// agrees with itself. The body below is spelled the way
+// civitai:src/pages/api/v1/blocks/submissions.ts shapeRow spells it.
+func rawSubmitGuardServer(t *testing.T, body string) (*httptest.Server, *bool) {
+	t.Helper()
+	submitted := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, appapi.SubmissionsPath) {
+			_, _ = io.WriteString(w, body)
+			return
+		}
+		submitted = true
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"publishRequestId": "pubreq_new", "slug": guardSlug, "version": "x", "status": "pending",
+		})
+	}))
+	t.Cleanup(srv.Close)
+	return srv, &submitted
+}
+
+// TestAppSubmitNeverCallsAServingRowNotLiveEndToEnd is the seam the two tests
+// above structurally CANNOT see: they build appapi.Submission in Go, so the
+// `liveUrl` field NAME is never exercised. A wrong or missing tag decodes to
+// nil, peak.live goes false, and every unit assertion above still passes while
+// the real binary prints the false claim. This drives the actual command over
+// HTTP against a body written in the SERVER's spelling.
+func TestAppSubmitNeverCallsAServingRowNotLiveEndToEnd(t *testing.T) {
+	withStdinTTY(t, false)
+	tmp := t.TempDir()
+	writeManifestVersion(t, tmp, guardSlug, "0.5.2")
+	// The legacy shape, as the route really emits it: approved, deployState
+	// null, and a liveUrl the server only writes when isApprovedAndServing.
+	srv, submitted := rawSubmitGuardServer(t, `{"submissions":[{
+		"id": "pubreq_legacy_live",
+		"blockId": "custom-generators",
+		"version": "0.5.2",
+		"status": "approved",
+		"deployState": null,
+		"deployUpdatedAt": "2026-07-01T08:00:00Z",
+		"submittedAt": "2026-08-01T08:00:00Z",
+		"reviewedAt": null,
+		"updatedAt": "2026-08-01T08:00:00Z",
+		"createdAt": "2026-08-01T08:00:00Z",
+		"liveUrl": "https://custom-generators.civit.ai/"
+	}]}`)
+	withGuardEnv(t, srv)
+
+	stdout, _, err := run(t, "app", "submit", tmp, "--yes")
+	if err == nil {
+		t.Fatalf("resubmitting the serving 0.5.2 must be refused; stdout:\n%s", stdout)
+	}
+	if !errors.Is(err, ErrVersionRegression) {
+		t.Errorf("the refusal must carry ErrVersionRegression, got %#v", err)
+	}
+	if *submitted {
+		t.Error("the submit route was hit — the guard must refuse before uploading")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "0.5.2 is already approved and live") {
+		t.Errorf("the row decoded from the wire carries liveUrl, so the refusal must claim live. "+
+			"A nil here means the `liveUrl` JSON tag did not decode — invisible to every unit test in "+
+			"this file, all of which build the struct directly:\n%s", msg)
+	}
+	if strings.Contains(msg, "not live") || strings.Contains(msg, "--allow-downgrade to submit this version again") {
+		t.Errorf("the server says this row is serving; calling it not live and offering "+
+			"--allow-downgrade as a retry is the #412 accident being recommended:\n%s", msg)
+	}
+}
+
+// --- NO blockId AT ALL: not a mismatch (delta finding 2) ---
+
+// TestVersionGuardWithNoBlockIdSaysSoInsteadOfCryingMismatch. manifest.Load does
+// not require blockId and `--skip-validate` waives the schema, so the guard can
+// be handed an EMPTY slug. Before this branch existed the empty slug produced an
+// UNNARROWED listing read (submissionsURL omits an empty blockId), every row
+// then failed sameSlug, and the mismatch announcement fired with the name
+// spliced in blank: "none of them for  — … If  is already published, this is a
+// blockId mismatch rather than a first submit." That misdiagnoses "your manifest
+// has no blockId" as "your blockId does not match the server's".
+func TestVersionGuardWithNoBlockIdSaysSoInsteadOfCryingMismatch(t *testing.T) {
+	rows := []appapi.Submission{
+		{ID: "pubreq_otherapp", BlockID: "gen-matrix", Version: "9.9.9", Status: "approved",
+			DeployState: strptr("live"), SubmittedAt: "2026-08-13T11:00:00Z"},
+	}
+	lister, calls := listerFor(rows)
+	var warn bytes.Buffer
+	if err := checkVersionNotRegression(context.Background(), lister, &warn, "", "0.1.0", false); err != nil {
+		t.Fatalf("a manifest with no blockId must not hard-fail the submit, got: %v", err)
+	}
+	s := warn.String()
+	if !strings.Contains(s, "no blockId") {
+		t.Errorf("the guard must name the real cause — the manifest declares no blockId — got:\n%s", s)
+	}
+	if strings.Contains(s, "blockId mismatch") {
+		t.Errorf("there is nothing to mismatch: the manifest named no app at all. Calling this a "+
+			"mismatch sends the author looking for a slug difference that does not exist:\n%s", s)
+	}
+	// The empty-splice artifact, asserted directly: the announcement interpolates
+	// the slug twice, so a blank one leaves "for  —" and "If  is".
+	for _, artifact := range []string{"none of them for  ", "If  is already published"} {
+		if strings.Contains(s, artifact) {
+			t.Errorf("the warning spliced an empty app name into its own sentence (%q):\n%s", artifact, s)
+		}
+	}
+	// And it must not pay for — or provoke — an unnarrowed listing read. An empty
+	// blockId asks the route for EVERY app's rows, which is the very read
+	// TestVersionGuardNarrowsTheListingToThisApp exists to prevent.
+	if *calls != 0 {
+		t.Errorf("the guard made %d submissions call(s) with an empty blockId; there is no app to "+
+			"compare against, and an empty blockId is not narrowed server-side", *calls)
+	}
+}
+
+// --- EVERY ARM STATES ONLY WHAT IT KNOWS (delta finding 7) ---
+
+// TestVersionRegressionArmsClaimOnlyWhatIsKnown is the four-way sweep the
+// three-arm switch could not express. The lower-version case used to be ONE arm
+// asserting "replaces the newer deployment on approval" whatever peak.live held
+// — the same false-claim class the equal arm had just been fixed for, left
+// standing one branch over. Against an approved row that is not serving there is
+// no deployment of that version to replace.
+func TestVersionRegressionArmsClaimOnlyWhatIsKnown(t *testing.T) {
+	live := []appapi.Submission{
+		{ID: "pubreq_live", BlockID: guardSlug, Version: "0.5.2", Status: "approved",
+			DeployState: strptr("live"), SubmittedAt: "2026-08-01T08:00:00Z"},
+	}
+	notLive := []appapi.Submission{
+		{ID: "pubreq_failed", BlockID: guardSlug, Version: "0.5.2", Status: "approved",
+			DeployState: strptr("failed"), SubmittedAt: "2026-08-01T08:00:00Z"},
+	}
+	for _, tc := range []struct {
+		name    string
+		rows    []appapi.Submission
+		version string
+		want    []string
+		never   []string
+	}{
+		{
+			name: "equal+live", rows: live, version: "0.5.2",
+			want:  []string{"0.5.2 is already approved and live", "almost always an accident"},
+			never: []string{"not live", "unchanged", "may be behind"},
+		},
+		{
+			name: "equal+not-live", rows: notLive, version: "0.5.2",
+			want: []string{"0.5.2 is already approved.", "approved but not live", "has not landed"},
+			// "unchanged" claims the bundle; "behind" is false (the repo is AT
+			// that version); "never landed" is false while a deploy is running.
+			never: []string{"unchanged", "may be behind", "never landed", "accident"},
+		},
+		{
+			name: "lower+live", rows: live, version: "0.4.1",
+			want:  []string{"0.5.2 is already approved and live", "replaces the newer live deployment on approval"},
+			never: []string{"not live", "accident", "unchanged"},
+		},
+		{
+			name: "lower+not-live", rows: notLive, version: "0.4.1",
+			want: []string{"0.5.2 is already approved.", "approved but not live", "deploys code older than the highest approved version"},
+			// 🔴 THE FINDING: nothing of 0.5.2 is deployed, so approval cannot
+			// replace a deployment of it.
+			never: []string{"replaces the newer", "deployment on approval", "accident", "unchanged"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := guardRun(t, tc.rows, tc.version, false)
+			if err == nil {
+				t.Fatalf("%s must be refused", tc.version)
+			}
+			msg := err.Error()
+			for _, w := range tc.want {
+				if !strings.Contains(msg, w) {
+					t.Errorf("missing %q in:\n%s", w, msg)
+				}
+			}
+			for _, n := range tc.never {
+				if strings.Contains(msg, n) {
+					t.Errorf("this arm cannot know %q is true — it is printed for a %s row:\n%s", n, tc.name, msg)
+				}
+			}
+		})
+	}
+}
+
+// TestVersionRegressionMessageLineOrderIsPinned. README:Troubleshooting tells the
+// reader "**The second line** tells you which case you are in", which is a claim
+// about ORDER that nothing pinned: swapping `middle` and `tail` in the
+// fmt.Errorf argument list survived the entire suite (mutant M17), because every
+// other assertion here is a whole-message Contains.
+func TestVersionRegressionMessageLineOrderIsPinned(t *testing.T) {
+	rowsFor := func(deployState *string) []appapi.Submission {
+		return []appapi.Submission{{ID: "pubreq_order", BlockID: guardSlug, Version: "0.5.2",
+			Status: "approved", DeployState: deployState, SubmittedAt: "2026-08-01T08:00:00Z"}}
+	}
+	for _, tc := range []struct {
+		name          string
+		rows          []appapi.Submission
+		version       string
+		second, third string
+	}{
+		{"equal+live", rowsFor(strptr("live")), "0.5.2",
+			"Resubmitting the version that is already live is almost always an accident.",
+			"Bump the version in your manifest, or pass --allow-downgrade if this is deliberate"},
+		{"equal+not-live", rowsFor(strptr("failed")), "0.5.2",
+			"That version is approved but not live, so this may be a deliberate resubmit of a deploy that has not landed.",
+			"Bump the version in your manifest, or pass --allow-downgrade to submit this version again"},
+		{"lower+live", rowsFor(strptr("live")), "0.4.1",
+			"Submitting an older version replaces the newer live deployment on approval.",
+			"Your repo may be behind what was last released. Pass --allow-downgrade if this is deliberate"},
+		{"lower+not-live", rowsFor(strptr("failed")), "0.4.1",
+			"That version is approved but not live, so approving an older one deploys code older than the highest approved version.",
+			"Your repo may be behind the highest approved version. Pass --allow-downgrade if this is deliberate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := guardRun(t, tc.rows, tc.version, false)
+			if err == nil {
+				t.Fatalf("%s must be refused", tc.version)
+			}
+			lines := strings.Split(err.Error(), "\n")
+			if len(lines) != 3 {
+				t.Fatalf("the refusal must be exactly 3 lines (the README indexes them by position), got %d:\n%s",
+					len(lines), err.Error())
+			}
+			if !strings.HasPrefix(lines[0], "refusing to submit ") {
+				t.Errorf("line 1 must be the refusal itself, got %q", lines[0])
+			}
+			if lines[1] != tc.second {
+				t.Errorf("line 2 (the README's \"which case you are in\" line) = %q, want %q", lines[1], tc.second)
+			}
+			if lines[2] != tc.third {
+				t.Errorf("line 3 (the remedy) = %q, want %q", lines[2], tc.third)
+			}
+		})
+	}
+}
+
+// TestVersionGuardAnnouncesWithExactlyOneForeignRow is the boundary the two-row
+// fixture in TestVersionGuardAnnouncesWhenTheListingHeldNoRowForThisApp cannot
+// see: with two rows, mutating `len(subs) > 0` to `len(subs) > 1` survives. ONE
+// foreign row is the smallest listing that is a mismatch rather than a first
+// submit, and it must announce.
+func TestVersionGuardAnnouncesWithExactlyOneForeignRow(t *testing.T) {
+	rows := []appapi.Submission{
+		{ID: "pubreq_otherapp", BlockID: "gen-matrix", Version: "9.9.9", Status: "approved",
+			DeployState: strptr("live"), SubmittedAt: "2026-08-13T11:00:00Z"},
+	}
+	warn, err := guardRun(t, rows, "0.1.0", false)
+	if err != nil {
+		t.Fatalf("an unmatched listing must not hard-fail the submit, got: %v", err)
+	}
+	if warn == "" {
+		t.Fatal("ONE row came back and it was not for this app — a `len(subs) > 1` off-by-one is silent " +
+			"here and only a single-row fixture can see it")
+	}
+	for _, want := range []string{"1 row(s)", guardSlug, "blockId mismatch"} {
+		if !strings.Contains(warn, want) {
+			t.Errorf("the announcement should carry %q, got:\n%s", want, warn)
+		}
 	}
 }
 
