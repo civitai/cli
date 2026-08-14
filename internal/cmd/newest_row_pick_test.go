@@ -482,11 +482,18 @@ var submissionsListReaders = map[string]submissionsListReader{
 		},
 	},
 	"appapi/appblocks.go": {
-		reads: "TWO independent picks: latestMatchingSubmission takes the newest slug+version match preferring a non-terminal row (the id `app submit` reports), " +
-			"and GetSubmission's `?blockId=` fallback takes Submissions[0] out of the narrowed list",
+		reads: "THREE independent picks: latestMatchingSubmission takes the newest slug+version match preferring a non-terminal row (the id `app submit` reports), " +
+			"GetSubmission's `?blockId=` fallback takes Submissions[0] out of the narrowed list, " +
+			"and GetSubmissionRows hands that WHOLE narrowed list back to its caller in the order it was read — the order itself is the value returned",
 		pinnedBy: []submissionsPin{
 			{"TestRecoverTimedOutSubmitReadsTheNewestMatchingRow", `SubmitVersion(context.Background()`},
 			{"TestGetSubmissionByBlockIDTakesTheNewestRow", `c.GetSubmission(context.Background()`},
+			// #413 delta-audit finding 1: the entry above already named
+			// GetSubmissionRows as an ACCESSOR, but nothing pinned the order it
+			// promises — reversing the returned slice left the suite green,
+			// because its only consumer (highestApprovedVersion) is a maximum
+			// and does not care which end it starts from.
+			{"TestGetSubmissionRowsHandsBackTheRowsInServedOrder", `c.GetSubmissionRows(context.Background()`},
 		},
 	},
 }
@@ -501,7 +508,15 @@ const submissionsRouteGateway = "submissionsURL"
 // (TestSubmissionsRouteAccessorsAreLedgered), never trusted on its own — a
 // hand-written name list is exactly what let GetSubmission hide from the first
 // version of this ledger.
-var submissionsRouteAccessors = []string{"GetSubmission", "ListSubmissions"}
+// 🔴 THREE NOW. GetSubmissionRows is the same route read as GetSubmission, with
+// the narrowed listing handed back instead of discarded — `app status <slug>`
+// takes the rows so the drift check does not re-issue the identical GET (#413).
+// Both exported spellings are ledgered because both hand a caller a row out of a
+// list documented newest-first: GetSubmission picks Submissions[0], and
+// GetSubmissionRows exposes the ordering itself to its caller. Their shared body
+// is deliberately UNEXPORTED so the derivation below reports both boundaries
+// rather than only whichever one still touches the gateway directly.
+var submissionsRouteAccessors = []string{"GetSubmission", "GetSubmissionRows", "ListSubmissions"}
 
 // funcDecl matches a top-level func declaration, with or without a receiver, and
 // captures the func's own name.
