@@ -63,6 +63,7 @@ contract, and **packages/submits** it for review.
   - [After you submit: review → approve → deploy](#after-you-submit-review--approve--deploy)
   - [Listing media requirements](#listing-media-requirements)
 - [Submission status](#submission-status)
+  - [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped)
   - [Deployed is not the same as listed in the store](#deployed-is-not-the-same-as-listed-in-the-store)
 - [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
 - [Browse the App store](#browse-the-app-store)

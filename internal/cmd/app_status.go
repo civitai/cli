@@ -309,7 +309,17 @@ const driftManifestDir = "."
 // advisory and runs after the answer has already been printed, so it gets a
 // tighter one — a hung listing must not keep the command alive for a line that
 // may not print.
-const driftLookupTimeout = 10 * time.Second
+//
+// 🔴 A `var`, not a `const`, and only so a test can SHRINK it. Setting it to 1ns
+// already killed a dozen tests, but that only proves the value is WIRED — the
+// removal direction (delete the WithTimeout, hand warnLocalVersionDrift the
+// parent ctx) survived the whole suite, because nothing observed that the
+// advisory request's deadline is SHORTER than the command's. Nothing else in the
+// binary writes this, and a deadline is not observable from the server side of
+// an httptest handler, so shrinking it in-process is the only way to tell a
+// dedicated 10s budget from an inherited one. Pinned by
+// TestAppStatusDriftLookupGetsADeadlineOfItsOwn.
+var driftLookupTimeout = 10 * time.Second
 
 // driftLister decides whether the drift check needs a request of its own.
 //
@@ -415,12 +425,23 @@ func highestApprovedVersion(subs []appapi.Submission, blockID string) (string, b
 //
 // 🔴 NORMALISED, NOT COMPARED RAW. `s.Status == "approved"` is a case- and
 // space-sensitive test against a value this CLI does not own: the server picks
-// the casing, and every other reader of the same field in this binary already
-// folds it (appblocks.go's deployState/status reads, app_pull.go's
-// pullReviewAdvice). A raw comparison does not fail loudly if the server ever
-// answers "Approved" — it silently matches NOTHING, the highest-approved lookup
-// finds no rows, and the drift warning goes permanently quiet. A check that can
-// only ever fail by going inert has to be the tolerant one.
+// the casing. A raw comparison does not fail loudly if the server ever answers
+// "Approved" — it silently matches NOTHING, the highest-approved lookup finds no
+// rows, and the drift warning goes permanently quiet. A check that can only ever
+// fail by going inert has to be the tolerant one.
+//
+// 🔴 THE FOLDING IS NOT UNIVERSAL IN THIS BINARY — do not read this comment as a
+// claim that it is (it did say so, wrongly, until #413's delta audit). Folded:
+// appblocks.go's latestMatchingSubmission (`strings.ToLower(s.Status)`) and
+// app_pull.go's pullReviewAdvice (`strings.ToLower(strings.TrimSpace(status))`).
+// Raw, and reachable: app_status.go's own `s.Status == "rejected"` render check
+// in printSubmissionDetail, and app_listing.go's `ref.Status == "approved"` at
+// two sites — the latter reading appapi.ListingRef.Status, a DIFFERENT field
+// with the same hazard rather than the same field. So in the very scenario this
+// predicate defends against (the server answers "Approved"), this check keeps
+// working while `app listing`'s live/not-live branch flips the wrong way. That
+// inconsistency is real and deliberately OUT OF SCOPE here — #413 is the drift
+// line, not a status-folding consolidation across the binary.
 //
 // The companion `app submit` monotonic guard (#412's other half) folds the same
 // way; the two predicates are meant to be consolidated once both have landed,

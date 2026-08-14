@@ -482,11 +482,18 @@ var submissionsListReaders = map[string]submissionsListReader{
 		},
 	},
 	"appapi/appblocks.go": {
-		reads: "TWO independent picks: latestMatchingSubmission takes the newest slug+version match preferring a non-terminal row (the id `app submit` reports), " +
-			"and GetSubmission's `?blockId=` fallback takes Submissions[0] out of the narrowed list",
+		reads: "THREE independent picks: latestMatchingSubmission takes the newest slug+version match preferring a non-terminal row (the id `app submit` reports), " +
+			"GetSubmission's `?blockId=` fallback takes Submissions[0] out of the narrowed list, " +
+			"and GetSubmissionRows hands that WHOLE narrowed list back to its caller in the order it was read — the order itself is the value returned",
 		pinnedBy: []submissionsPin{
 			{"TestRecoverTimedOutSubmitReadsTheNewestMatchingRow", `SubmitVersion(context.Background()`},
 			{"TestGetSubmissionByBlockIDTakesTheNewestRow", `c.GetSubmission(context.Background()`},
+			// #413 delta-audit finding 1: the entry above already named
+			// GetSubmissionRows as an ACCESSOR, but nothing pinned the order it
+			// promises — reversing the returned slice left the suite green,
+			// because its only consumer (highestApprovedVersion) is a maximum
+			// and does not care which end it starts from.
+			{"TestGetSubmissionRowsHandsBackTheRowsInServedOrder", `c.GetSubmissionRows(context.Background()`},
 		},
 	},
 }

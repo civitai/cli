@@ -35,6 +35,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/civitai/cli/internal/appapi"
 )
@@ -1431,5 +1432,143 @@ func TestAppStatusDriftWarnsOnACapitalisedApprovedStatus(t *testing.T) {
 	}
 	if strings.Contains(errOut, "which is 0.6.0.") {
 		t.Errorf("the pending row was counted as approved:\n%s", errOut)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The advisory request's OWN deadline — #413 delta-audit finding 2
+// ---------------------------------------------------------------------------
+
+// TestAppStatusDriftLookupGetsADeadlineOfItsOwn pins the REMOVAL direction of
+// driftLookupTimeout, which the rest of this suite could not see.
+//
+// 🔴 SETTING THE TIMEOUT TO 1ns KILLS A DOZEN TESTS AND STILL PROVES NOTHING
+// ABOUT THIS. That mutation only shows the value is wired to something; deleting
+// the `context.WithTimeout` outright and handing warnLocalVersionDrift the
+// command's own ctx survived the entire suite (measured on d1df4f5), because no
+// case observed how LONG a hung advisory listing may hold the command.
+//
+// 🔴 AND IT CANNOT BE PINNED THE OBVIOUS WAY — the advisory request's deadline
+// is not comparable to "the parent's", because `app status` builds its own
+// `ctx := context.Background()` and never reads cmd.Context(). A parent deadline
+// handed to root.ExecuteContext is therefore inherited by nothing, and a test
+// asserting the advisory budget is shorter than it would be comparing against a
+// context the command does not use. (Measured while writing this test: with the
+// WithTimeout deleted, the command ran 30s against a 4s "parent" — the wall
+// clocks are simply independent.) What actually bounds the request without the
+// dedicated deadline is the appapi client's own 30s ANSWER budget, so that is
+// the reference this case measures against.
+//
+// The construction: an advisory budget shrunk to 50ms and a drift listing that
+// NEVER answers. The only thing that can end that request is the client giving
+// up, so how long the command takes IS the deadline the advisory request
+// carried — bounded on BOTH sides, because a fast return alone would also be
+// produced by a check that declined to run. With the dedicated budget the
+// command returns just after 50ms; with it removed it sits for the client's
+// full 30s.
+//
+// It drives the `--id` path because that is the only path that still makes an
+// advisory request at all — on the slug path the rows are reused and the lister
+// never touches the context (#413's other half).
+func TestAppStatusDriftLookupGetsADeadlineOfItsOwn(t *testing.T) {
+	advisoryBudget := 50 * time.Millisecond
+	// The budget that bounds this request when the dedicated one is removed:
+	// appapi's unexported defaultTimeout, the client's budget for the ANSWER.
+	// Spelled out here because it is the thing being distinguished FROM; if it
+	// is ever lowered towards `ceiling` this case weakens and must be retuned.
+	clientAnswerBudget := 30 * time.Second
+	ceiling := 2 * time.Second
+	// Fixture control: the two budgets must be far enough apart that neither
+	// scheduling noise nor a slow machine can make one read as the other.
+	if ceiling < 20*advisoryBudget || clientAnswerBudget < 10*ceiling {
+		t.Fatalf("budgets %v / %v / %v are not separated enough to tell a dedicated deadline from the client's "+
+			"answer budget", advisoryBudget, ceiling, clientAnswerBudget)
+	}
+
+	orig := driftLookupTimeout
+	t.Cleanup(func() { driftLookupTimeout = orig })
+	driftLookupTimeout = advisoryBudget
+
+	var calls int32
+	var reachedTheHang, clientGaveUp atomic.Bool
+	rows, _ := driftFixture(t)["submissions"].([]map[string]any)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		if id := r.URL.Query().Get("id"); id != "" {
+			for _, row := range rows {
+				if row["id"] == id {
+					_ = json.NewEncoder(w).Encode(map[string]any{"submission": row})
+					return
+				}
+			}
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"message": "Submission not found"})
+			return
+		}
+		// The drift listing: answer never. Returning only once the request
+		// context dies means the server contributes no timing of its own.
+		reachedTheHang.Store(true)
+		<-r.Context().Done()
+		clientGaveUp.Store(true)
+	}))
+	t.Cleanup(srv.Close)
+
+	writeDriftManifest(t, driftSlug, "0.4.0")
+	setupDriftEnv(t, srv.URL)
+
+	start := time.Now()
+	out, errOut, err := run(t, "app", "status", "--id", "pubreq_07")
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("a drift listing that never answers must not fail `app status` — the detail view already "+
+			"rendered its answer: %v", err)
+	}
+	// REACHABILITY, both halves: the advisory request must have been ISSUED and
+	// must have reached the hang, or "it returned quickly" is trivially true of
+	// a check that declined to run.
+	if n := atomic.LoadInt32(&calls); n != 2 {
+		t.Fatalf("%d request(s), want 2 (the id lookup, then the advisory listing) — without the second call "+
+			"this case measures the deadline of a request that was never made", n)
+	}
+	if !reachedTheHang.Load() {
+		t.Fatalf("the advisory listing handler never reached its hang, so nothing here was bounded by a deadline")
+	}
+
+	// 🔴 THE DISCRIMINATOR, two-sided. The upper bound goes red the moment the
+	// dedicated deadline is deleted and the request falls back to the client's
+	// answer budget; the lower bound is what stops a command that returned
+	// instantly — for any reason other than this deadline — from reading as a
+	// pass.
+	if elapsed < advisoryBudget {
+		t.Errorf("`app status --id` returned in %v, sooner than the %v the advisory request was given against a "+
+			"listing that never answers — so whatever ended it, it was not this deadline, and this case is "+
+			"measuring something else.", elapsed, advisoryBudget)
+	}
+	if elapsed >= ceiling {
+		t.Errorf("`app status --id` took %v against a %v advisory budget. The drift check's request is optional "+
+			"and runs AFTER the answer is printed, so it gets its own, shorter deadline; without it the request "+
+			"falls back to the appapi client's %v ANSWER budget and a hung listing becomes an arbitrary wait for "+
+			"a line the user may never see (#412/#413).", elapsed, advisoryBudget, clientAnswerBudget)
+	}
+	// A listing that never answered cannot have produced a published version, so
+	// silence here is also a check that the timeout was reached rather than the
+	// request somehow succeeding.
+	assertNoDriftWarning(t, "the advisory listing timed out", out, errOut)
+
+	// Last, and POLLED rather than read once: the handler observes the client
+	// disconnect on its own goroutine, so an instantaneous read here races it —
+	// measured, that race made the removal mutant fail on THIS line instead of
+	// on the timing bounds above, which is a red for the wrong reason. It stays
+	// because it is the one check that says the CLIENT ended the request, but it
+	// runs after the discriminator and gives the server side time to notice.
+	deadline := time.Now().Add(ceiling)
+	for !clientGaveUp.Load() && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !clientGaveUp.Load() {
+		t.Errorf("the hanging request never ended with the client disconnecting — the server, not a deadline, "+
+			"decided when this finished, so %v is not evidence about the advisory budget", elapsed)
 	}
 }

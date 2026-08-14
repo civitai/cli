@@ -347,3 +347,125 @@ func TestListSubmissionsCapMirrorsServer(t *testing.T) {
 			"if the server page size really changed, update this literal too", ListSubmissionsCap)
 	}
 }
+
+// TestGetSubmissionRowsHandsBackTheRowsInServedOrder is the behavioural case for
+// GetSubmissionRows' SECOND return — #413 delta-audit finding 1.
+//
+// 🔴 THE ORDER IS THE CONTRACT, AND IT WAS UNPINNED. GetSubmissionRows'
+// doc comment promises rows "returned as read (newest first, per the route) …
+// NOT filtered or reordered", and newest_row_pick_test.go ledgers it precisely
+// because it "exposes the ordering itself to its caller" — yet reversing the
+// slice on the way out left the whole suite green (2409 RUN / 0 FAIL, measured
+// on d1df4f5). Its only consumer today is highestApprovedVersion, which takes a
+// maximum and is order-INDEPENDENT by construction, and no test in this package
+// called GetSubmissionRows at all. That is the exact shape that shipped #378 and
+// #390: a documented row order whose sole reader happens not to care, so the
+// next reader inherits a promise nothing enforces.
+//
+// This is the appapi-side pin: the served body, compared element by element
+// against a hand-written expectation.
+func TestGetSubmissionRowsHandsBackTheRowsInServedOrder(t *testing.T) {
+	// Newest first, the way the route answers. THREE rows, not two: with two, a
+	// reversal and a rotation are the same permutation, so a three-row fixture
+	// is what separates "the middle stayed put by luck" from "nothing moved".
+	served := []Submission{
+		{ID: "pubreq_03H", BlockID: "alpha", Version: "0.3.0", Status: "pending",
+			SubmittedAt: "2026-07-30T10:00:00.000Z"},
+		{ID: "pubreq_02H", BlockID: "alpha", Version: "0.2.1", Status: "withdrawn",
+			SubmittedAt: "2026-07-29T10:00:00.000Z"},
+		{ID: "pubreq_01H", BlockID: "alpha", Version: "0.1.1", Status: "approved",
+			SubmittedAt: "2026-07-28T10:00:00.000Z"},
+	}
+	// Fixture control, the same one TestGetSubmissionByBlockIDTakesTheNewestRow
+	// applies: the rows must be PAIRWISE distinct on every asserted field, or a
+	// permutation can coincide with the expectation and this case asserts
+	// nothing. Mechanical, because a hand-checked fixture is how the row picks
+	// before it went untested.
+	for _, field := range []struct {
+		name string
+		get  func(Submission) string
+	}{
+		{"ID", func(s Submission) string { return s.ID }},
+		{"Version", func(s Submission) string { return s.Version }},
+		{"Status", func(s Submission) string { return s.Status }},
+		{"SubmittedAt", func(s Submission) string { return s.SubmittedAt }},
+	} {
+		seen := map[string]bool{}
+		for _, s := range served {
+			if v := field.get(s); seen[v] {
+				t.Fatalf("two fixture rows carry %s=%q — a reordering of this fixture could not be observed", field.name, v)
+			} else {
+				seen[v] = true
+			}
+		}
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("blockId"); got != "alpha" {
+			t.Errorf("blockId query = %q, want alpha", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"submissions": served})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", "")
+	sub, rows, err := c.GetSubmissionRows(context.Background(), "", "alpha")
+	if err != nil {
+		t.Fatalf("GetSubmissionRows: %v", err)
+	}
+	// The single-row answer is still Submissions[0] — the two returns must agree
+	// about which end is the newest, or a caller reading both sees two orders.
+	if sub == nil || sub.ID != "pubreq_03H" {
+		t.Errorf("the single-row answer is %v, want the NEWEST row pubreq_03H — the two returns disagree about "+
+			"which end of the list is current", sub)
+	}
+	// Written out BY HAND in the order the server served, never read back from
+	// whatever the implementation returned.
+	want := []struct{ id, version, status, submittedAt string }{
+		{"pubreq_03H", "0.3.0", "pending", "2026-07-30T10:00:00.000Z"},
+		{"pubreq_02H", "0.2.1", "withdrawn", "2026-07-29T10:00:00.000Z"},
+		{"pubreq_01H", "0.1.1", "approved", "2026-07-28T10:00:00.000Z"},
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("GetSubmissionRows returned %d row(s), want %d — the second return is the listing BEHIND the "+
+			"answer, unfiltered and untrimmed", len(rows), len(want))
+	}
+	for i, w := range want {
+		got := rows[i]
+		if got.ID != w.id || got.Version != w.version || got.Status != w.status || got.SubmittedAt != w.submittedAt {
+			t.Errorf("row %d = {id:%s version:%s status:%s submittedAt:%s}, want {id:%s version:%s status:%s submittedAt:%s}.\n"+
+				"GetSubmissionRows hands back the rows AS READ — newest first, not filtered and not reordered. A caller "+
+				"that trusts that order (any reader of 'the newest submission') gets an older row silently (#390/#413).",
+				i, got.ID, got.Version, got.Status, got.SubmittedAt, w.id, w.version, w.status, w.submittedAt)
+		}
+	}
+}
+
+// TestGetSubmissionRowsReturnsNilRowsOnTheIDPath pins the OTHER half of the
+// second return's contract: nil means "I did not read a listing", never "the
+// listing was empty". `app status --id` branches on exactly that — nil sends the
+// drift check to fetch the listing itself, and a non-nil empty slice would
+// silence it permanently instead.
+func TestGetSubmissionRowsReturnsNilRowsOnTheIDPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("id"); got != "pubreq_01H" {
+			t.Errorf("id query = %q, want pubreq_01H", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"submission": sampleSubmission("alpha", "approved")})
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "tok", "")
+	sub, rows, err := c.GetSubmissionRows(context.Background(), "pubreq_01H", "")
+	if err != nil {
+		t.Fatalf("GetSubmissionRows: %v", err)
+	}
+	if sub == nil || sub.ID != "pubreq_01H" {
+		t.Fatalf("the `?id=` envelope did not unwrap to its row: %v", sub)
+	}
+	if rows != nil {
+		t.Errorf("rows = %v (len %d), want nil — the `?id=` spelling reads no listing at all, and an empty "+
+			"non-nil slice would read as 'this app has no submissions' to a caller that must instead go and ask",
+			rows, len(rows))
+	}
+}
