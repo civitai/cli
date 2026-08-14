@@ -11,6 +11,7 @@ import (
 	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/manifest"
 	"github.com/civitai/cli/internal/ui"
 	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
@@ -40,6 +41,13 @@ rejection reason (if rejected) and the live URL (if approved + deployed).
 size: this route accepts no limit and no cursor (that is what the cap note is
 about), so the CLI always fetches the same page and prints fewer rows of it.
 --limit therefore cannot reach submissions the API did not return.
+
+When a single submission is requested AND the current directory holds a
+block.manifest.json for that same app, the local manifest version is compared
+against your highest APPROVED version. If the repo is BEHIND, a warning is
+printed on stderr — a repo behind its own live deployment is how an accidental
+downgrade gets submitted. It is advisory only: the exit code never changes, and
+nothing is said when the versions cannot be compared.
 
 Note: a submission's <blockId>.civit.ai surface only serves AFTER it is approved
 and deployed (deployState 'live').`,
@@ -95,6 +103,11 @@ and deployed (deployState 'live').`,
 				if err != nil {
 					return err
 				}
+				// 🔴 BEFORE the --json early return, and on STDERR, exactly like
+				// the cap caveat above: the drift warning has to reach the human
+				// on both renderings while stdout stays a pure, parseable
+				// payload. It is advisory — it never changes the exit code.
+				warnLocalVersionDrift(ctx, client.ListSubmissions, cmd.ErrOrStderr(), sub)
 				if jsonOut {
 					return writeJSON(out, sub)
 				}
@@ -244,6 +257,146 @@ func shortDate(ts string) string {
 		return ts
 	}
 	return t.Format("2006-01-02")
+}
+
+// ---------------------------------------------------------------------------
+// Local-vs-published version drift (issue #412)
+// ---------------------------------------------------------------------------
+//
+// A repo can fall BEHIND its own live deployment — five first-party apps were in
+// that state when #412 was written — and nothing in the CLI said so. Submitting
+// from such a repo is accepted and, on approval, replaces newer code with older
+// code while the version number reads as an ordinary forward bump.
+//
+// This is the WARNING half of #412 (the refusal half lives in `app submit`). It
+// is advisory by construction: it prints and returns, and every failure to
+// establish the facts degrades to SILENCE. A false "your repo is behind" would
+// be worse than saying nothing, because the remedy it implies — do not submit,
+// go pull the released code — is expensive and wrong.
+
+// driftManifestDir is where the drift check looks for the local manifest.
+// `app status` takes no --dir/--path, so the check is scoped to exactly the
+// situation #412 describes: run from inside your app directory. Outside one,
+// manifest.Load fails and the check says nothing.
+const driftManifestDir = "."
+
+// warnLocalVersionDrift writes the #412 drift warning to errOut when the local
+// block.manifest.json is BEHIND the caller's highest APPROVED version of the
+// same app. It writes nothing in every other case.
+//
+// 🔴 THE ORDER OF THE GATES IS LOAD-BEARING, AND THE MANIFEST IS FIRST. Reading
+// the local manifest is free and offline; only once it exists, parses, names
+// THIS app and carries a comparable version does the check spend a second HTTP
+// round trip. So a caller who is not standing in the matching app directory —
+// which is most callers of `app status <slug>` — pays nothing at all, and the
+// command's request count is unchanged for them.
+//
+// Every branch below returns silently. That is the whole safety argument: no
+// manifest, an unreadable or malformed one, a manifest for a DIFFERENT app, an
+// unparseable version on either side, a failed or forbidden listing, or an app
+// with nothing approved yet all mean "we could not establish drift", which is
+// not the same thing as "there is none" — and only the first of those may be
+// stated.
+func warnLocalVersionDrift(ctx context.Context, lister submissionLister, errOut io.Writer, s *appapi.Submission) {
+	if s == nil || s.BlockID == "" {
+		return
+	}
+	m, err := manifest.Load(driftManifestDir)
+	if err != nil || m == nil {
+		return
+	}
+	// The manifest must be for THIS app. Without this, running `civitai app
+	// status some-other-app` from inside an unrelated project would compare two
+	// different apps' versions and report a fabricated regression.
+	if m.BlockID == "" || m.BlockID != s.BlockID {
+		return
+	}
+	if !isParseableVersion(m.Version) {
+		return
+	}
+	subs, err := lister(ctx, s.BlockID)
+	if err != nil {
+		return
+	}
+	published, ok := highestApprovedVersion(subs, s.BlockID)
+	if !ok {
+		return
+	}
+	if msg := versionDriftWarning(errOut, s.BlockID, m.Version, published); msg != "" {
+		fmt.Fprint(errOut, msg)
+	}
+}
+
+// highestApprovedVersion returns the greatest APPROVED version among subs for
+// blockID, by semver order.
+//
+// 🔴 APPROVED, NOT THE NEWEST ROW — and the two genuinely differ (#390). The
+// newest row by submittedAt can be a `pending` resubmission, or a `withdrawn`
+// duplicate that outranks the approved row by timestamp; neither is code anyone
+// is running. Approval is what puts a version into the deploy pipeline, so the
+// highest approved version is the thing a local repo can be BEHIND, and it is
+// also the reference `app submit`'s monotonic guard refuses against — the two
+// commands have to name the same number or they contradict each other.
+//
+// 🔴 AND IT IS ORDER-INDEPENDENT, unlike every other read of this route in this
+// package. A maximum over a filtered set does not care which end of the list it
+// starts from, so this pick cannot inherit the newest-first assumption the
+// submissions-route ledger exists to track. Pinned by a permuted-fixture case,
+// not merely asserted here.
+//
+// Rows for another blockId are skipped defensively (a server that ignored the
+// ?blockId= narrowing would otherwise contribute someone else's versions), and
+// so is any approved row whose version is not comparable semver — a value we
+// cannot order must not become the number a warning quotes.
+func highestApprovedVersion(subs []appapi.Submission, blockID string) (string, bool) {
+	best := ""
+	for i := range subs {
+		s := &subs[i]
+		if s.BlockID != blockID || s.Status != "approved" || !isParseableVersion(s.Version) {
+			continue
+		}
+		if best == "" || compareVersions(s.Version, best) > 0 {
+			best = s.Version
+		}
+	}
+	return best, best != ""
+}
+
+// versionDriftWarning renders the warning for a local version that is BEHIND
+// published, and the empty string for every other relation.
+//
+// THREE-WAY, and only one of the three speaks:
+//
+//   - BEHIND  — the #412 trap. Warn.
+//   - AHEAD   — the normal state of a repo about to release. Silence; warning
+//     here would train authors to ignore the line that matters.
+//   - EQUAL   — the healthy steady state right after a release. Silence.
+//     (`app submit` separately refuses an equal resubmit; that is a decision
+//     about an action, not a description of a repo, and `status` describing a
+//     just-released repo as a problem would be noise on every run.)
+//
+// Both arguments must already be parseable semver; callers gate on that, and
+// this is why compareVersions' "unparseable current sorts older" fallback can
+// never reach here and turn a typo into a false BEHIND claim.
+//
+// KNOWN LIMITATION, inherited from the shared comparator and left in place
+// deliberately: parseSemver drops any -prerelease/+build suffix, so the ordering
+// is over the numeric triple only. A local `0.5.2-rc1` therefore reads as EQUAL
+// to a published `0.5.2` and stays silent. That is the safe direction — it can
+// under-report drift, never invent it — and the message always quotes the RAW
+// manifest string, never the reduced triple. Sharpening it means changing
+// parseSemver, which `civitai version` also depends on; that is its own change.
+func versionDriftWarning(w io.Writer, blockID, local, published string) string {
+	if compareVersions(local, published) >= 0 {
+		return ""
+	}
+	st := ui.For(w)
+	return st.Warn(fmt.Sprintf(
+		"local %s is %s — BEHIND the highest APPROVED version of %s, which is %s.",
+		manifest.Filename, local, blockID, published)) + "\n" +
+		"  An approved version is what gets deployed, so submitting from this repo would replace newer code on approval.\n" +
+		fmt.Sprintf("  Sync the released code (%s) or raise the local version above %s before %s.\n",
+			st.Code("civitai app pull --app "+blockID), published, st.Code("civitai app submit"))
 }
 
 // fullDate renders an RFC3339 timestamp in local time, minute precision.
