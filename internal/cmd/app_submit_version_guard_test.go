@@ -627,9 +627,19 @@ func TestVersionGuardLowerVersionKeepsTheBehindWording(t *testing.T) {
 
 // TestHighestApprovedVersionNormalisesTheStatus — mutant (a): replacing
 // EqualFold+TrimSpace on Status with an exact `!= "approved"` compare. A server
-// that cases or pads the field turns the guard OFF, and off is silent.
+// that cases or pads the field turns BOTH halves of #412 OFF (this guard stops
+// refusing, `app status`'s drift line stops warning), and off is silent.
+//
+// 🔴 THIS IS THE MERGED SURVIVOR OF A DUPLICATE PAIR. #413 added a test of this
+// exact name against its own copy of the predicate; with one copy left
+// (approved_version.go) the two are the same assertion, so #413's distinct
+// fixtures were folded in here rather than kept as a second test — "\tapproved\n"
+// below, and "not approved"/"preapproved" in the negative control. Those last
+// two are the control on the NORMALISATION itself: folding case and trimming
+// space must not decay into a substring match. See the note where the duplicate
+// stood in app_status_drift_test.go.
 func TestHighestApprovedVersionNormalisesTheStatus(t *testing.T) {
-	for _, status := range []string{" Approved ", "APPROVED", "Approved", "approved\t"} {
+	for _, status := range []string{" Approved ", "APPROVED", "Approved", "approved\t", "\tapproved\n"} {
 		rows := []appapi.Submission{
 			{ID: "pubreq_cased", BlockID: guardSlug, Version: "0.5.2", Status: status,
 				DeployState: strptr("live"), SubmittedAt: "2026-08-01T08:00:00Z"},
@@ -651,8 +661,11 @@ func TestHighestApprovedVersionNormalisesTheStatus(t *testing.T) {
 		}
 	}
 	// Negative control: normalising the case must not make an UNRELATED status
-	// approved. Without this, `EqualFold(s.Status, "")`-style breakage passes.
-	for _, status := range []string{"pending", "Rejected", " withdrawn ", "approved-pending"} {
+	// approved, and must not decay into a SUBSTRING match. Without this,
+	// `EqualFold(s.Status, "")`-style breakage passes — and so does a
+	// `strings.Contains(…, "approved")`, which "not approved" and "preapproved"
+	// (folded in from #413's duplicate) are the two shapes that catch.
+	for _, status := range []string{"pending", "Rejected", " withdrawn ", "approved-pending", "not approved", "preapproved"} {
 		rows := []appapi.Submission{
 			{ID: "pubreq_other", BlockID: guardSlug, Version: "0.5.2", Status: status, SubmittedAt: "2026-08-01T08:00:00Z"},
 		}

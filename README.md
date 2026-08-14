@@ -63,6 +63,7 @@ contract, and **packages/submits** it for review.
   - [After you submit: review → approve → deploy](#after-you-submit-review--approve--deploy)
   - [Listing media requirements](#listing-media-requirements)
 - [Submission status](#submission-status)
+  - [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped)
   - [Deployed is not the same as listed in the store](#deployed-is-not-the-same-as-listed-in-the-store)
 - [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
 - [Browse the App store](#browse-the-app-store)
@@ -317,7 +318,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). **A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`** — `civitai app submit --yes` is the CI form. (The refusal is reached only when there is a token to upload with: `--package-only`, and the no-token fallback that just writes the .zip, never submit and so never ask.) **It also refuses a version that is not strictly above the highest APPROVED version of that app** — approving an older (or identical) version replaces the newer live deployment — with `--allow-downgrade` as the deliberate-rollback escape hatch. Both refusals are skipped on the routes that never reach the server. |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
-| `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). See [Submission status](#submission-status). |
+| `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). Run from **inside** an app checkout it also warns on **stderr** when your local `block.manifest.json` is **BEHIND** your highest approved version — advisory only, the exit code never changes. See [Submission status](#submission-status) and [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. **Also deletes a first-version app's store listing — icon, cover and every captioned screenshot**, so it asks first and needs `--yes` in a script. Idempotent for the submission only; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
@@ -1516,6 +1517,72 @@ silently ignoring the flag would be worse than saying so.
 "run `civitai app submit`" hint; with no token it points you at `civitai login`.
 Notes like the cap caveat go to stderr, so `--json` stdout stays pure and the
 exit code stays 0.
+
+### Is your repo behind what you shipped?
+
+A checkout can fall **behind its own live deployment** — you (or a teammate)
+released 0.5.2, then came back to a working copy still on 0.4.0. Submitting from
+there is accepted, and on approval it **replaces newer code with older code**
+while the version number reads like an ordinary forward bump.
+
+So when you ask about a single submission **from inside that app's directory**,
+`civitai app status` compares the local `block.manifest.json` against your
+**highest approved** version of the same app and says so on **stderr**:
+
+```text
+$ civitai app status custom-generators
+Block ID:         custom-generators
+Version:          0.7.0
+...
+
+⚠ local block.manifest.json is 0.4.0 — BEHIND the highest APPROVED version of custom-generators, which is 0.5.2.
+  An approved version is what gets deployed, so submitting from this repo would replace newer code on approval.
+  Sync the released code (civitai app pull . --app custom-generators) or raise the local version above 0.5.2 before civitai app submit.
+```
+
+The remedy is `civitai app pull . --app <slug>` — the `.` matters. Without a
+`[dir]`, `app pull` clones into `./<slug>` (see [Pull your app's
+repository](#pull-your-apps-repository-app-pull)), which from inside the checkout
+would create a **second copy nested in your repo** and leave the checkout itself
+just as far behind. The other way out is legitimate too: bump the local version
+above the published one, which is what you want when the local work really is
+newer.
+
+What it does **not** do:
+
+- **It never changes the exit code.** It is a warning, not a refusal — nothing
+  that scripts `app status` starts failing because a repo is out of date.
+- **It goes to stderr**, like the cap caveat above, so `--json` stdout stays a
+  pure, parseable payload on both renderings.
+- **It says nothing unless it is sure.** No local manifest, an unreadable one, a
+  manifest for a *different* app, a version on either side this CLI cannot order,
+  a listing that 403s/500s/429s, or nothing approved yet — every one of those is
+  silence. A false "your repo is behind" would send you to re-pull released code
+  for no reason, so the check only ever speaks when it has both numbers.
+- **It only speaks when you are BEHIND.** Being *ahead* is the normal state of a
+  repo about to release, and being *equal* is the healthy state right after one.
+- **It is scoped to the detail view** (`app status <blockId>` or `--id`). The
+  bare listing is many apps at once and has no single version line to attach to.
+
+The reference is your **highest approved** version, which is deliberately not the
+same thing as the newest row: the newest row can be a `pending` resubmission or a
+`withdrawn` duplicate, and neither is code anyone is running. It is also the
+version `civitai app submit` measures against — the two commands run the **same**
+predicate over the same rows, so they cannot quote different numbers for the same
+repo.
+
+**Pre-release and build metadata are not ordered at all.** A version carrying a
+`-rc1`, `-beta.2`, `-3-gabc123` or `+build.7` suffix is treated as *not
+comparable* rather than reduced to its numeric triple, because real semver ranks
+`0.5.0` **above** `0.5.0-beta.1` while a truncating compare calls them equal and
+ranks `0.6.0-rc.1` above `0.5.2`. So:
+
+- a **local** version with a suffix produces **no drift warning** — `app status`
+  stays quiet rather than guessing;
+- an **approved** version with a suffix is **skipped**, never quoted as "the
+  highest APPROVED version". `app submit` names the ones it skipped and carries
+  on; `app status` says nothing, which is its rule for every fact it could not
+  establish.
 
 ### Deployed is not the same as listed in the store
 
