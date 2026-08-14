@@ -80,6 +80,29 @@ type approvedPeak struct {
 	// skipped lists approved versions that could NOT be ordered (see
 	// comparableVersion). They are reported, never silently dropped.
 	skipped []string
+	// slugRows counts rows that matched the slug at all, BEFORE the status
+	// filter. It exists to tell two very different situations apart, both of
+	// which arrive as found=false: "this app has rows, none approved yet" (an
+	// ordinary first submit, and silent by design) and "rows came back, none of
+	// them for this app" (a blockId mismatch, which would make the guard a
+	// no-op with no signal — see checkVersionNotRegression).
+	slugRows int
+}
+
+// sameSlug compares a listing row's blockId to the manifest's slug.
+//
+// 🔴 IT NORMALISES, and that is a deliberate reversal of the original exact
+// match. Status and deployState were already compared case- and
+// whitespace-insensitively while the slug was compared byte-for-byte, and the
+// slug is the field whose mismatch is SILENT: a non-matching slug lands in the
+// "no approved rows" branch, which proceeds without a word because that is what
+// a genuine first submit looks like. So a server that cased blockId differently
+// from the manifest — which the CLI has never actually pinned on this route —
+// would turn the whole #412 guard off, on exactly the app it exists to protect,
+// with no output to notice. Normalising removes the likely half of that; the
+// announce branch in checkVersionNotRegression covers the residue.
+func sameSlug(rowBlockID, slug string) bool {
+	return strings.EqualFold(strings.TrimSpace(rowBlockID), strings.TrimSpace(slug))
 }
 
 // highestApprovedVersion answers "what version of <slug> is approved and would
@@ -93,7 +116,11 @@ func highestApprovedVersion(subs []appapi.Submission, slug string) approvedPeak 
 	var peak approvedPeak
 	for i := range subs {
 		s := subs[i]
-		if s.BlockID != slug || !strings.EqualFold(strings.TrimSpace(s.Status), "approved") {
+		if !sameSlug(s.BlockID, slug) {
+			continue
+		}
+		peak.slugRows++
+		if !strings.EqualFold(strings.TrimSpace(s.Status), "approved") {
 			continue
 		}
 		v, ok := comparableVersion(s.Version)
@@ -124,6 +151,16 @@ func highestApprovedVersion(subs []appapi.Submission, slug string) approvedPeak 
 // build metadata is declared NOT COMPARABLE and routed to the warn-and-proceed
 // branch, where the author is told the guard could not order it.
 func comparableVersion(s string) (semver, bool) {
+	// 🔴 THIS TRIM IS REDUNDANT, AND SAYING SO IS THE POINT. parseSemver does
+	// its own TrimSpace + TrimPrefix(…, "v"), so removing this line changes the
+	// answer for NO realistic input — measured over a 39-string corpus, 0
+	// diverge; the only class that differs is a doubled prefix ("vv0.5.2"),
+	// which this line accepts and parseSemver alone rejects. It is kept as a
+	// local guarantee that `t` below is prefix-free before the "-+" scan, but
+	// no test can pin it, and a reader must not mistake it for load-bearing:
+	// the v-prefix contract is pinned end-to-end by
+	// TestVersionGuardOrdersAVPrefixedApprovedVersion, which holds against
+	// either spelling.
 	t := strings.TrimPrefix(strings.TrimSpace(s), "v")
 	if strings.ContainsAny(t, "-+") {
 		return semver{}, false
@@ -166,6 +203,17 @@ func checkVersionNotRegression(ctx context.Context, lister submissionLister, war
 			len(peak.skipped), slug, strings.Join(peak.skipped, ", "))
 	}
 	if !peak.found {
+		// 🔴 THE ONE SILENT BRANCH, MADE CONDITIONAL. "No approved rows" is
+		// silent because a first submit is the normal case — but it is also
+		// what a slug that failed to match looks like, and that reading is a
+		// dead guard rather than a happy path. The two are distinguishable:
+		// a first submit has no rows FOR THIS APP, while a mismatch has rows
+		// that are for something else. Announce only the second.
+		if len(subs) > 0 && peak.slugRows == 0 {
+			warnf(warn, "the submissions listing returned %d row(s), none of them for %s — the version guard "+
+				"has nothing to compare against. If %s is already published, this is a blockId mismatch rather "+
+				"than a first submit.", len(subs), slug, slug)
+		}
 		return nil
 	}
 	local, ok := comparableVersion(version)
@@ -188,21 +236,45 @@ func warnf(w io.Writer, format string, a ...any) {
 	fmt.Fprintln(w, ui.For(w).Warn(fmt.Sprintf(format, a...)))
 }
 
-// versionRegressionError builds the refusal. The wording is the issue's, with
-// two adaptations: the middle line differs for the EQUAL case (nothing is being
-// replaced by something older there — the version is simply the one already
-// live), and "and live" is claimed only when the approved row's deployState
-// really says so.
+// versionRegressionError builds the refusal.
+//
+// 🔴 EVERY LINE IS CONDITIONAL ON WHAT IS ACTUALLY KNOWN — peak.live and
+// equal-vs-lower — because this message is read at the moment someone is
+// deciding whether the tool is right about their repo, and it used to
+// contradict itself inside three lines. The first line already dropped "and
+// live" for a non-live row, while the second hard-coded "the version that is
+// already live" and the third said "your repo may be behind what was last
+// released": against an approved row whose deploy FAILED, at the same local
+// version, line 1 said not-live, line 2 said live, and line 3 said behind when
+// the repo is exactly at it. That combination is not a corner case — it is the
+// approved-but-deploy-failed RETRY path, the one case in this whole guard where
+// resubmitting the same version is a plausible deliberate act rather than an
+// accident, and calling it an accident is precisely the wrong steer.
+//
+// It still REFUSES there: #412's contract is that the escape hatch is explicit,
+// and --allow-downgrade is the documented way to say "yes, again, on purpose".
+// What changes is that the text names the retry instead of denying it.
 func versionRegressionError(slug, version string, peak approvedPeak, equal bool) error {
 	state := "approved"
 	if peak.live {
 		state = "approved and live"
 	}
-	middle := "Submitting an older version replaces the newer deployment on approval."
-	if equal {
+	var middle, tail string
+	switch {
+	case equal && peak.live:
 		middle = "Resubmitting the version that is already live is almost always an accident."
+		tail = "Bump the version in your manifest, or pass --allow-downgrade if this is deliberate"
+	case equal:
+		// Approved, NOT live: a deploy that never landed. Do not call this an
+		// accident, and do not tell the author their repo is behind — it is at
+		// exactly the version the server holds.
+		middle = "That version is approved but not live, so this may be a deliberate retry of a deploy that never landed."
+		tail = "Bump the version in your manifest, or pass --allow-downgrade to resubmit it unchanged"
+	default:
+		middle = "Submitting an older version replaces the newer deployment on approval."
+		tail = "Your repo may be behind what was last released. Pass --allow-downgrade if this is deliberate"
 	}
 	return civitai.Tag(ErrVersionRegression, fmt.Errorf(
-		"refusing to submit %s@%s — %s is already %s.\n%s\nYour repo may be behind what was last released. Pass --allow-downgrade if this is deliberate",
-		slug, version, peak.version, state, middle))
+		"refusing to submit %s@%s — %s is already %s.\n%s\n%s",
+		slug, version, peak.version, state, middle, tail))
 }

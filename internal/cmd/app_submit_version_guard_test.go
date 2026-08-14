@@ -80,6 +80,19 @@ func failingLister(err error) submissionLister {
 	return func(_ context.Context, _ string) ([]appapi.Submission, error) { return nil, err }
 }
 
+// listerCapturing returns a submissionLister plus a pointer to the blockId
+// ARGUMENTS it was called with. listerFor discards them, which is why a mutation
+// of the narrowing argument to "" survived the original battery: every fixture
+// is filtered slug-side afterwards, so the RESULT is identical and only the
+// argument itself can tell the two apart.
+func listerCapturing(rows []appapi.Submission) (submissionLister, *[]string) {
+	var got []string
+	return func(_ context.Context, blockID string) ([]appapi.Submission, error) {
+		got = append(got, blockID)
+		return rows, nil
+	}, &got
+}
+
 // guardRun runs the guard over rows and returns (warnings-written, err).
 func guardRun(t *testing.T, rows []appapi.Submission, version string, allowDowngrade bool) (string, error) {
 	t.Helper()
@@ -502,6 +515,454 @@ func TestAppSubmitAllowsAForwardBumpEndToEnd(t *testing.T) {
 	}
 	if !*submitted {
 		t.Error("a forward bump must reach the submit route")
+	}
+}
+
+// --- MESSAGE ACCURACY: every line conditional on what is KNOWN ---
+//
+// 🔴 THE ORIGINAL BATTERY TESTED DECISIONS, NOT WORDING, and the wording had a
+// self-contradiction no decision test can see: the equal-version branch
+// hard-coded "the version that is already live" while line 1 had already
+// dropped "and live" for a non-live row. There was no equal + NOT-live fixture
+// anywhere in this file, which is exactly why it survived.
+
+// TestVersionGuardEqualVersionThatIsNotLiveNeverClaimsItIsLive is that missing
+// combination. An approved row whose deploy FAILED, resubmitted at the same
+// version, is the retry path — the one case in this guard where sending the
+// same version again is a plausible deliberate act. Every line must agree that
+// it is not live, and none may tell the author their repo is behind: the repo
+// is at exactly the version the server holds.
+func TestVersionGuardEqualVersionThatIsNotLiveNeverClaimsItIsLive(t *testing.T) {
+	for _, deployState := range []string{"failed", "building", "deploying"} {
+		rows := []appapi.Submission{
+			{ID: "pubreq_notlive", BlockID: guardSlug, Version: "0.5.2", Status: "approved",
+				DeployState: strptr(deployState), SubmittedAt: "2026-08-01T08:00:00Z"},
+		}
+		_, err := guardRun(t, rows, "0.5.2", false)
+		if err == nil {
+			t.Fatalf("deployState=%q: resubmitting the approved 0.5.2 must still be refused", deployState)
+		}
+		msg := err.Error()
+		// Line 1 already says "approved.", so nothing below it may say live.
+		for _, never := range []string{
+			"already live",
+			"approved and live",
+			"almost always an accident",
+			"Your repo may be behind what was last released",
+		} {
+			if strings.Contains(msg, never) {
+				t.Errorf("deployState=%q: the approved row is NOT live and the repo is not behind, "+
+					"so the refusal must not say %q:\n%s", deployState, never, msg)
+			}
+		}
+		if !strings.Contains(msg, "approved but not live") {
+			t.Errorf("deployState=%q: the refusal should name the state it actually found, got:\n%s", deployState, msg)
+		}
+		if !strings.Contains(msg, "retry of a deploy that never landed") {
+			t.Errorf("deployState=%q: this is the deploy-failed RETRY path and the message should say so "+
+				"rather than calling it an accident, got:\n%s", deployState, msg)
+		}
+		// The escape hatch still has to be reachable from the text.
+		if !strings.Contains(msg, "--allow-downgrade") {
+			t.Errorf("deployState=%q: the refusal must still name the escape hatch, got:\n%s", deployState, msg)
+		}
+	}
+}
+
+// TestVersionGuardEqualVersionThatIsLiveStillCallsItAnAccident is the other half
+// of the same switch — the negative control that keeps the fix from collapsing
+// both equal cases into one wording. Here "already live" is TRUE.
+func TestVersionGuardEqualVersionThatIsLiveStillCallsItAnAccident(t *testing.T) {
+	_, err := guardRun(t, regressionFixture(), "0.5.2", false)
+	if err == nil {
+		t.Fatal("resubmitting the live 0.5.2 must be refused")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "0.5.2 is already approved and live") {
+		t.Errorf("the winning row IS live and line 1 should say so, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "Resubmitting the version that is already live is almost always an accident.") {
+		t.Errorf("a live equal-version resubmit is the accident case, got:\n%s", msg)
+	}
+	if strings.Contains(msg, "approved but not live") {
+		t.Errorf("the not-live wording must not leak into the live case:\n%s", msg)
+	}
+}
+
+// TestVersionGuardLowerVersionKeepsTheBehindWording is the third arm: only the
+// LOWER case may say the repo is behind, because only there is it true.
+func TestVersionGuardLowerVersionKeepsTheBehindWording(t *testing.T) {
+	_, err := guardRun(t, regressionFixture(), "0.4.1", false)
+	if err == nil {
+		t.Fatal("0.4.1 under an approved 0.5.2 must be refused")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "Your repo may be behind what was last released") {
+		t.Errorf("a LOWER version is the case where the repo really may be behind, got:\n%s", msg)
+	}
+	if strings.Contains(msg, "approved but not live") || strings.Contains(msg, "almost always an accident") {
+		t.Errorf("neither equal-case wording belongs on the lower-version path:\n%s", msg)
+	}
+}
+
+// --- NORMALISATION: the layer the original battery left entirely unpinned ---
+//
+// 🔴 EACH OF THESE KILLS A MUTANT THAT SURVIVED THE WHOLE FILE. The guard
+// normalises status, deployState and the "v" prefix, and until these tests
+// existed every one of those normalisations was dead code as far as the suite
+// was concerned: strip it and 39/39 stayed green.
+
+// TestHighestApprovedVersionNormalisesTheStatus — mutant (a): replacing
+// EqualFold+TrimSpace on Status with an exact `!= "approved"` compare. A server
+// that cases or pads the field turns the guard OFF, and off is silent.
+func TestHighestApprovedVersionNormalisesTheStatus(t *testing.T) {
+	for _, status := range []string{" Approved ", "APPROVED", "Approved", "approved\t"} {
+		rows := []appapi.Submission{
+			{ID: "pubreq_cased", BlockID: guardSlug, Version: "0.5.2", Status: status,
+				DeployState: strptr("live"), SubmittedAt: "2026-08-01T08:00:00Z"},
+		}
+		peak := highestApprovedVersion(rows, guardSlug)
+		if !peak.found {
+			t.Errorf("Status=%q must count as approved — an exact compare here silently disables the guard", status)
+			continue
+		}
+		if peak.version != "0.5.2" {
+			t.Errorf("Status=%q: peak = %q, want 0.5.2", status, peak.version)
+		}
+		// And the whole way through the guard, not just the picker.
+		_, err := guardRun(t, rows, "0.4.1", false)
+		if err == nil {
+			t.Errorf("Status=%q: 0.4.1 under that approved 0.5.2 must be refused", status)
+		} else if !strings.Contains(err.Error(), "0.5.2 is already approved") {
+			t.Errorf("Status=%q: refusal should name 0.5.2, got:\n%s", status, err.Error())
+		}
+	}
+	// Negative control: normalising the case must not make an UNRELATED status
+	// approved. Without this, `EqualFold(s.Status, "")`-style breakage passes.
+	for _, status := range []string{"pending", "Rejected", " withdrawn ", "approved-pending"} {
+		rows := []appapi.Submission{
+			{ID: "pubreq_other", BlockID: guardSlug, Version: "0.5.2", Status: status, SubmittedAt: "2026-08-01T08:00:00Z"},
+		}
+		if peak := highestApprovedVersion(rows, guardSlug); peak.found {
+			t.Errorf("Status=%q must NOT count as approved, got peak %q", status, peak.version)
+		}
+	}
+}
+
+// TestHighestApprovedVersionNormalisesTheDeployState — mutant (e): replacing
+// EqualFold+TrimSpace on DeployState with an exact `== "live"`. The cost of that
+// mutant is not a wrong verdict, it is a wrong CLAIM: the refusal drops "and
+// live" for a row that really is serving, which is the exact understatement the
+// live flag was added to avoid.
+func TestHighestApprovedVersionNormalisesTheDeployState(t *testing.T) {
+	for _, ds := range []string{"live", "Live", "LIVE", " live "} {
+		rows := []appapi.Submission{
+			{ID: "pubreq_ds", BlockID: guardSlug, Version: "0.5.2", Status: "approved",
+				DeployState: strptr(ds), SubmittedAt: "2026-08-01T08:00:00Z"},
+		}
+		peak := highestApprovedVersion(rows, guardSlug)
+		if !peak.live {
+			t.Errorf("deployState=%q says the row is serving; peak.live must agree", ds)
+		}
+		_, err := guardRun(t, rows, "0.4.1", false)
+		if err == nil {
+			t.Fatalf("deployState=%q: 0.4.1 must be refused", ds)
+		}
+		if !strings.Contains(err.Error(), "0.5.2 is already approved and live") {
+			t.Errorf("deployState=%q: the refusal should claim live, got:\n%s", ds, err.Error())
+		}
+	}
+	// Negative control: a NON-live deploy state must still not be claimed live,
+	// so the normalisation cannot be widened into "any deployState is live".
+	for _, ds := range []string{"failed", "building", "deploying", "livewire"} {
+		rows := []appapi.Submission{
+			{ID: "pubreq_ds2", BlockID: guardSlug, Version: "0.5.2", Status: "approved",
+				DeployState: strptr(ds), SubmittedAt: "2026-08-01T08:00:00Z"},
+		}
+		if peak := highestApprovedVersion(rows, guardSlug); peak.live {
+			t.Errorf("deployState=%q is not live; peak.live must be false", ds)
+		}
+	}
+	// A nil deployState is the third shape and must not panic or claim live.
+	rows := []appapi.Submission{
+		{ID: "pubreq_nil", BlockID: guardSlug, Version: "0.5.2", Status: "approved", SubmittedAt: "2026-08-01T08:00:00Z"},
+	}
+	if peak := highestApprovedVersion(rows, guardSlug); peak.live {
+		t.Error("a nil deployState must not read as live")
+	}
+}
+
+// TestVersionGuardOrdersAVPrefixedApprovedVersion pins that a `v`-prefixed
+// version is ORDERABLE rather than routed to the unorderable warn-and-proceed
+// branch — the behaviour the TrimPrefix in comparableVersion exists for.
+//
+// 🔴 HONEST SCOPE: this does NOT kill mutant (d) ("drop TrimPrefix from
+// comparableVersion") on its own, because parseSemver (update_check.go) trims a
+// leading "v" as well — so for every realistic input the two spellings agree and
+// (d) is an EQUIVALENT mutant, not a surviving one. What this test does pin is
+// the observable contract both sites implement together: remove the prefix
+// handling from BOTH and this reddens. That is the claim worth making, and it is
+// stated here rather than left as a green line implying more than it proves.
+func TestVersionGuardOrdersAVPrefixedApprovedVersion(t *testing.T) {
+	rows := []appapi.Submission{
+		{ID: "pubreq_vpfx", BlockID: guardSlug, Version: "v0.5.2", Status: "approved",
+			DeployState: strptr("live"), SubmittedAt: "2026-08-01T08:00:00Z"},
+	}
+	if v, ok := comparableVersion("v0.5.2"); !ok {
+		t.Error("v0.5.2 must be comparable")
+	} else if plain, _ := comparableVersion("0.5.2"); v.compare(plain) != 0 {
+		t.Errorf("v0.5.2 and 0.5.2 must order equal, got compare = %d", v.compare(plain))
+	}
+
+	warn, err := guardRun(t, rows, "0.4.1", false)
+	if err == nil {
+		t.Fatal("0.4.1 under an approved v0.5.2 must be refused — a v-prefixed version is orderable")
+	}
+	if strings.Contains(warn, "ignoring") {
+		t.Errorf("v0.5.2 must not be reported as unorderable, got warning:\n%s", warn)
+	}
+	// The refusal reproduces the server's raw string verbatim, prefix included.
+	if !strings.Contains(err.Error(), "v0.5.2 is already approved and live") {
+		t.Errorf("the refusal should quote the server's own spelling, got:\n%s", err.Error())
+	}
+	// And the local side too: a v-prefixed forward bump is an ordinary submit.
+	if _, err := guardRun(t, rows, "v0.6.0", false); err != nil {
+		t.Errorf("v0.6.0 is above v0.5.2 and must be allowed, got: %v", err)
+	}
+}
+
+// --- THE TIE-BREAK AND THE LIVE FLAG: which ROW wins, and what it carries ---
+
+// TestHighestApprovedVersionKeepsTheFirstOfTwoEqualApprovedRows — mutant (b):
+// `v.compare(peak.parsed) <= 0` → `< 0`, i.e. a later EQUAL row replaces the
+// incumbent instead of losing the tie.
+//
+// It survived because no fixture had two approved rows at the same version. It
+// matters because the two rows can disagree about what is SERVING: the guard's
+// message claims "and live" from the winning row, so the tie-break decides
+// whether a true statement or a false one is printed. Both list orders are
+// asserted, with opposite expected answers, so "first wins" is pinned as a
+// direction rather than coincidentally satisfied.
+func TestHighestApprovedVersionKeepsTheFirstOfTwoEqualApprovedRows(t *testing.T) {
+	live := appapi.Submission{ID: "pubreq_eq_live", BlockID: guardSlug, Version: "0.5.2",
+		Status: "approved", DeployState: strptr("live"), SubmittedAt: "2026-08-05T08:00:00Z"}
+	// Same ordered version, DIFFERENT raw spelling and deploy state, so the
+	// winner is identifiable from either field.
+	failed := appapi.Submission{ID: "pubreq_eq_failed", BlockID: guardSlug, Version: "v0.5.2",
+		Status: "approved", DeployState: strptr("failed"), SubmittedAt: "2026-08-04T08:00:00Z"}
+
+	liveFirst := highestApprovedVersion([]appapi.Submission{live, failed}, guardSlug)
+	if liveFirst.version != "0.5.2" || !liveFirst.live {
+		t.Errorf("live-first: peak = %q live=%v, want \"0.5.2\" live=true — a later EQUAL row must lose the "+
+			"tie; taking it would swap the winner and print \"approved\" for a row that IS serving",
+			liveFirst.version, liveFirst.live)
+	}
+
+	failedFirst := highestApprovedVersion([]appapi.Submission{failed, live}, guardSlug)
+	if failedFirst.version != "v0.5.2" || failedFirst.live {
+		t.Errorf("failed-first: peak = %q live=%v, want \"v0.5.2\" live=false — the SAME tie-break in the "+
+			"other order; a later equal row winning here would print \"and live\" for a failed deploy",
+			failedFirst.version, failedFirst.live)
+	}
+
+	// The answers above are only meaningful if the two rows really tie.
+	a, okA := comparableVersion(live.Version)
+	b, okB := comparableVersion(failed.Version)
+	if !okA || !okB || a.compare(b) != 0 {
+		t.Fatalf("fixture broken: %q and %q must order EQUAL for this to test the tie-break",
+			live.Version, failed.Version)
+	}
+}
+
+// TestHighestApprovedVersionLiveFlagBelongsToTheWinningRow — mutant (c):
+// `peak.live = …` → `peak.live || …`, which makes the flag STICKY. Once any
+// approved row is live the message claims live forever, including for a higher
+// approved row whose deploy failed — the precise false claim the field's own
+// comment says it exists to prevent.
+//
+// The kill needs the live row to be seen FIRST, so the sticky value has
+// something to survive on; the fixture is ordered for that and says so.
+func TestHighestApprovedVersionLiveFlagBelongsToTheWinningRow(t *testing.T) {
+	rows := []appapi.Submission{
+		// Seen first, live, but LOWER — the value a sticky flag would keep.
+		{ID: "pubreq_low_live", BlockID: guardSlug, Version: "0.5.0", Status: "approved",
+			DeployState: strptr("live"), SubmittedAt: "2026-08-01T08:00:00Z"},
+		// Seen second, HIGHER, and its deploy failed — the actual winner.
+		{ID: "pubreq_high_failed", BlockID: guardSlug, Version: "0.6.0", Status: "approved",
+			DeployState: strptr("failed"), SubmittedAt: "2026-08-02T08:00:00Z"},
+	}
+	peak := highestApprovedVersion(rows, guardSlug)
+	if peak.version != "0.6.0" {
+		t.Fatalf("peak = %q, want 0.6.0", peak.version)
+	}
+	if peak.live {
+		t.Error("the winning row (0.6.0) has deployState=failed — peak.live must describe THAT row, " +
+			"not carry over from the lower 0.5.0 that happened to be live")
+	}
+	_, err := guardRun(t, rows, "0.4.1", false)
+	if err == nil {
+		t.Fatal("0.4.1 under an approved 0.6.0 must be refused")
+	}
+	if strings.Contains(err.Error(), "approved and live") {
+		t.Errorf("0.6.0's deploy failed, so the refusal must not claim it is live:\n%s", err.Error())
+	}
+	if !strings.Contains(err.Error(), "0.6.0 is already approved.") {
+		t.Errorf("the refusal should name 0.6.0 as approved-not-live, got:\n%s", err.Error())
+	}
+}
+
+// --- THE NARROWING ARGUMENT AND THE WARNING'S DESTINATION ---
+
+// TestVersionGuardNarrowsTheListingToThisApp — mutant (f): `lister(ctx, slug)` →
+// `lister(ctx, "")`. Every fixture is filtered slug-side afterwards, so the
+// VERDICT is unchanged and only the argument can catch it. Dropping the
+// narrowing is not cosmetic: the route caps at ListSubmissionsCap rows, so an
+// unnarrowed read of a busy account can page this app's approved row off the
+// end and silently disable the guard.
+func TestVersionGuardNarrowsTheListingToThisApp(t *testing.T) {
+	lister, got := listerCapturing(regressionFixture())
+	var warn bytes.Buffer
+	if err := checkVersionNotRegression(context.Background(), lister, &warn, guardSlug, "0.6.1", false); err != nil {
+		t.Fatalf("0.6.1 is above the approved 0.5.2 and must be allowed, got: %v", err)
+	}
+	if len(*got) != 1 {
+		t.Fatalf("the guard made %d submissions call(s), want exactly 1: %q", len(*got), *got)
+	}
+	if (*got)[0] != guardSlug {
+		t.Errorf("the guard read the submissions route with blockId=%q, want %q — an empty blockId asks "+
+			"for EVERY app's rows and can push this app's approved row past the server's row cap",
+			(*got)[0], guardSlug)
+	}
+}
+
+// TestAppSubmitGuardWarningsGoToStderrNotStdout — mutant (g): the warn writer at
+// the call site, `cmd.ErrOrStderr()` → `cmd.OutOrStdout()`.
+//
+// 🔴 THIS IS A MACHINE-CONSUMER CONTRACT, not tidiness. `app submit`'s stdout is
+// the parseable channel; a guard advisory landing there corrupts it for anything
+// reading the run. The unit tests all pass their own buffer, so the call site's
+// choice of writer was never observed by any of them — only an end-to-end run
+// with SEPARATE streams can see it.
+func TestAppSubmitGuardWarningsGoToStderrNotStdout(t *testing.T) {
+	withStdinTTY(t, false)
+	tmp := t.TempDir()
+	writeManifestVersion(t, tmp, guardSlug, "1.6.0")
+	// An approved row carrying pre-release metadata is unorderable, so the guard
+	// WARNS about it and still compares against the orderable 1.5.0 — a run that
+	// both emits a guard warning and succeeds.
+	rows := []appapi.Submission{
+		{ID: "pubreq_rc", BlockID: guardSlug, Version: "2.0.0-rc.1", Status: "approved",
+			DeployState: strptr("live"), SubmittedAt: "2026-08-10T10:00:00Z"},
+		{ID: "pubreq_ga", BlockID: guardSlug, Version: "1.5.0", Status: "approved",
+			DeployState: strptr("live"), SubmittedAt: "2026-08-05T09:00:00Z"},
+	}
+	srv, submitted := submitGuardServer(t, rows)
+	withGuardEnv(t, srv)
+
+	stdout, stderr, err := run(t, "app", "submit", tmp, "--yes")
+	if err != nil {
+		t.Fatalf("1.6.0 is above the approved 1.5.0 and must submit; got %v\nstdout:\n%s\nstderr:\n%s", err, stdout, stderr)
+	}
+	// POSITIVE CONTROL: without these the assertions below pass vacuously on a
+	// run that never warned at all.
+	if !*submitted {
+		t.Fatal("the run must reach the submit route, or the streams below prove nothing")
+	}
+	if !strings.Contains(stdout, "Packaged ") {
+		t.Fatalf("the run must have produced its ordinary stdout, got:\n%s", stdout)
+	}
+	for _, want := range []string{"ignoring 1 approved version(s)", "2.0.0-rc.1"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the guard warning must reach STDERR (missing %q), got stderr:\n%s", want, stderr)
+		}
+		if strings.Contains(stdout, want) {
+			t.Errorf("the guard warning leaked onto STDOUT (%q) — stdout is the machine-readable "+
+				"channel for this command, got stdout:\n%s", want, stdout)
+		}
+	}
+}
+
+// --- THE SLUG: normalised, and the mismatch no longer silent (finding 4) ---
+
+// TestHighestApprovedVersionNormalisesTheSlug — the slug used to be the ONE
+// field compared byte-for-byte while status and deployState were normalised.
+// That asymmetry is worse than it looks: a slug that fails to match lands in the
+// "no approved rows" branch, which is the single branch that proceeds SILENTLY
+// by design, so a casing difference would switch the whole guard off on the very
+// app it exists to protect and print nothing at all.
+func TestHighestApprovedVersionNormalisesTheSlug(t *testing.T) {
+	for _, blockID := range []string{"custom-generators", "Custom-Generators", "CUSTOM-GENERATORS", " custom-generators", "custom-generators "} {
+		rows := []appapi.Submission{
+			{ID: "pubreq_slug", BlockID: blockID, Version: "0.5.2", Status: "approved",
+				DeployState: strptr("live"), SubmittedAt: "2026-08-01T08:00:00Z"},
+		}
+		peak := highestApprovedVersion(rows, guardSlug)
+		if !peak.found {
+			t.Errorf("blockId=%q must match slug %q — an exact compare here disables the guard silently",
+				blockID, guardSlug)
+			continue
+		}
+		if peak.version != "0.5.2" {
+			t.Errorf("blockId=%q: peak = %q, want 0.5.2", blockID, peak.version)
+		}
+	}
+	// Negative control, and the reason normalising is safe: a DIFFERENT app is
+	// still a different app. Without this the mutation `sameSlug -> true` passes.
+	for _, blockID := range []string{"gen-matrix", "custom-generators-2", "custom", ""} {
+		rows := []appapi.Submission{
+			{ID: "pubreq_other", BlockID: blockID, Version: "9.9.9", Status: "approved",
+				DeployState: strptr("live"), SubmittedAt: "2026-08-13T11:00:00Z"},
+		}
+		if peak := highestApprovedVersion(rows, guardSlug); peak.found {
+			t.Errorf("blockId=%q is not %q and must not answer for it, got peak %q", blockID, guardSlug, peak.version)
+		}
+	}
+}
+
+// TestVersionGuardAnnouncesWhenTheListingHeldNoRowForThisApp is the other half
+// of finding 4. Normalising removes the LIKELY slug mismatch; it cannot remove
+// the residue (a server that returns a genuinely different identifier on this
+// route — which nothing in this CLI pins). So the residue now announces itself
+// instead of masquerading as a first submit.
+func TestVersionGuardAnnouncesWhenTheListingHeldNoRowForThisApp(t *testing.T) {
+	rows := []appapi.Submission{
+		{ID: "pubreq_otherapp", BlockID: "gen-matrix", Version: "9.9.9", Status: "approved",
+			DeployState: strptr("live"), SubmittedAt: "2026-08-13T11:00:00Z"},
+		{ID: "pubreq_otherapp2", BlockID: "gen-matrix", Version: "9.9.8", Status: "pending",
+			SubmittedAt: "2026-08-12T11:00:00Z"},
+	}
+	warn, err := guardRun(t, rows, "0.1.0", false)
+	if err != nil {
+		t.Fatalf("an unmatched listing must not hard-fail the submit, got: %v", err)
+	}
+	if warn == "" {
+		t.Fatal("rows came back and NONE was for this app — that is a blockId mismatch, not a first " +
+			"submit, and it must not proceed silently: the #412 trap would return with zero signal")
+	}
+	for _, want := range []string{"2 row(s)", guardSlug, "blockId mismatch"} {
+		if !strings.Contains(warn, want) {
+			t.Errorf("the announcement should carry %q so the cause is diagnosable, got:\n%s", want, warn)
+		}
+	}
+}
+
+// TestVersionGuardStaysSilentOnAGenuineFirstSubmitWithRows is the negative
+// control that keeps the announcement from becoming noise on the happy path: an
+// app whose rows ARE all its own, none approved yet, is an ordinary first
+// submit and must stay silent. Without this the announcement could be widened to
+// "no approved rows" and still look correct.
+func TestVersionGuardStaysSilentOnAGenuineFirstSubmitWithRows(t *testing.T) {
+	rows := []appapi.Submission{
+		{ID: "pubreq_p", BlockID: guardSlug, Version: "0.1.0", Status: "pending", SubmittedAt: "2026-08-12T09:00:00Z"},
+		{ID: "pubreq_r", BlockID: "Custom-Generators", Version: "0.0.9", Status: "rejected", SubmittedAt: "2026-07-20T07:00:00Z"},
+	}
+	warn, err := guardRun(t, rows, "0.2.0", false)
+	if err != nil {
+		t.Fatalf("no approved row means nothing to regress, got: %v", err)
+	}
+	if warn != "" {
+		t.Errorf("these rows ARE for this app (one of them only differs in case) — an ordinary "+
+			"not-yet-approved app must stay silent, got:\n%s", warn)
 	}
 }
 
