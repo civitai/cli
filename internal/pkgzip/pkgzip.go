@@ -5,8 +5,12 @@
 // Two kinds of exclusion are applied:
 //
 //   - Directory names (excludedDirs): VCS metadata, dependency installs, build
-//     output, tooling caches — see that var.
-//   - File names (isExcludedFile): build artifacts (*.zip) and EVERY file whose
+//     output, tooling caches — see that var. The VCS names among them
+//     (vcsMetadataNames) are excluded whether the entry is a directory or a
+//     regular file, because in a linked worktree or a submodule `.git` is a
+//     FILE — see that var for the incident.
+//   - File names (isExcludedFile): VCS metadata that is a regular file
+//     (a worktree's / submodule's `.git`), build artifacts (*.zip) and EVERY file whose
 //     BASE NAME starts with ".env" — dotted or not, so `.envrc` (direnv, which
 //     routinely holds exported credentials) goes too — except a three-name
 //     allow-list. The scaffolded page-money template points a real,
@@ -77,6 +81,47 @@ var excludedDirs = map[string]struct{}{
 	".turbo":        {},
 }
 
+// vcsMetadataNames are the excludedDirs entries whose exclusion is INDEPENDENT
+// OF FILE TYPE: they are dropped whether the entry is a directory or a regular
+// file, at any depth.
+//
+// 🔴 THE RULE USED TO BE KEYED ON TYPE, AND THAT IS ISSUE #409. `.git` was on
+// excludedDirs from the beginning, but the map was consulted only inside Build's
+// `if d.IsDir()` branch — so the exclusion held for the shape its author had in
+// mind (a clone) and silently did not hold for two shapes that are just as
+// ordinary. In a LINKED WORKTREE and in a SUBMODULE, `.git` is a regular file
+// holding `gitdir: <absolute path>`; it passed the directory gate (not a
+// directory) and the file gate (isExcludedFile knew only *.zip and .env*), and
+// was packaged. `app submit` from a worktree then died on a server error that
+// named nothing the author could act on — Forgejo 422, "path contains a
+// malformed path component [path: .git]" — while the same commit submitted from
+// a clone succeeded. The tell was the file count: 62 from the worktree, 61 from
+// the clone.
+//
+// 🔴 EXACT NAMES, NOT A PREFIX. `.gitignore`, `.gitattributes`, `.gitmodules`,
+// `.gitkeep` and a `.github/` directory are all project content that belongs in
+// the bundle; a prefix match on ".git" would delete every one of them from a
+// submission with no error anywhere. (Contrast the dotenv rule below, which IS a
+// prefix — there the failure mode of being too narrow is a leaked credential, so
+// it is aimed the other way on purpose.)
+//
+// 🔴 ONLY VCS METADATA IS PROMOTED, NOT ALL OF excludedDirs. The issue suggested
+// having isExcludedFile reject any name in excludedDirs; that would also drop a
+// regular file named `build`, `dist`, `out` or `coverage` — a build script
+// without an extension is a real thing, and dropping one is a silent content
+// loss with no server-side error to catch it. A regular file named exactly
+// `.git`, `.hg` or `.svn`, by contrast, is never author content: it is VCS
+// plumbing in every case, and the server rejects it outright.
+//
+// Every name here MUST also be in excludedDirs — the directory half of the rule
+// still runs through that map, and TestVCSMetadataNamesAreASubsetOfExcludedDirs
+// pins the two together.
+var vcsMetadataNames = map[string]struct{}{
+	".git": {},
+	".hg":  {},
+	".svn": {},
+}
+
 // excludedFilePatterns is the human-readable list of file-level exclusions, for
 // CLI messaging. The authoritative matcher is isExcludedFile — keep the two in
 // sync. These are matched on the file's BASE NAME anywhere in the tree.
@@ -131,10 +176,17 @@ var keptEnvFiles = map[string]struct{}{
 }
 
 // isExcludedFile reports whether a regular file (by base name) must be left out
-// of the package. The rule is deliberately CONSERVATIVE toward "never upload a
-// secret": every base name starting with ".env" is dropped UNLESS it is one of
-// the three names on the keptEnvFiles allow-list. Build-time config for the
-// server must come from the manifest / build recipe, not an uploaded dotenv.
+// of the package. Three rules, in order:
+//
+//   - VCS metadata by EXACT name (vcsMetadataNames): a linked worktree's or a
+//     submodule's `.git` is a regular file, and issue #409 is what happens when
+//     only the directory shape is excluded. See that var.
+//   - Build artifacts (*.zip).
+//   - Dotenv. That rule is deliberately CONSERVATIVE toward "never upload a
+//     secret": every base name starting with ".env" is dropped UNLESS it is one
+//     of the three names on the keptEnvFiles allow-list. Build-time config for
+//     the server must come from the manifest / build recipe, not an uploaded
+//     dotenv.
 //
 // 🔴 THE PREFIX IS ".env", NOT ".env." — UNDOTTED NAMES ARE EXCLUDED TOO. The
 // match was `name == ".env" || HasPrefix(name, ".env.")` until the README
@@ -154,6 +206,12 @@ var keptEnvFiles = map[string]struct{}{
 // contents, so "kept" is a statement about WHERE the file goes, never a claim
 // that it holds no secret — see the 🔴 note on keptEnvFiles.
 func isExcludedFile(name string) bool {
+	// VCS metadata that is a regular FILE, not a directory: a linked worktree's
+	// or a submodule's `.git` (issue #409). Matched on the EXACT name, so
+	// `.gitignore` / `.gitattributes` / `.gitmodules` still ship.
+	if _, vcs := vcsMetadataNames[name]; vcs {
+		return true
+	}
 	// Build artifacts.
 	if strings.HasSuffix(name, ".zip") {
 		return true
@@ -323,7 +381,10 @@ func IsExcluded(name string) bool {
 //     truncates the walk — everything under it is out.
 //   - the final component, when it is a FILE, is excluded by isExcludedFile.
 //     Build applies the directory rule only to directories, so a plain file
-//     named `dist` is bundle content, and so it is here.
+//     named `dist` is bundle content, and so it is here. The exception is
+//     vcsMetadataNames (`.git`/`.hg`/`.svn`), which isExcludedFile drops too —
+//     in a linked worktree or a submodule `.git` IS a regular file (#409), so
+//     for those three names the answer is the same either way.
 //
 // A trailing "/" marks the path as a DIRECTORY — git's porcelain spelling for an
 // untracked directory (`?? dist/`) — so the final component takes the directory
