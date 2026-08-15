@@ -132,6 +132,12 @@ var exitCodeDocs = []ExitCodeDoc{
 			// anyone had measured (pending) and false for the two the CLI can also
 			// be handed, and `app metrics` printed "check where it is in review"
 			// for all three until pullReviewAdvice became shared.
+			// 🔴 ADDED for the monotonic-version guard (issue #412). It belongs on
+			// 1 rather than 2 for the reason the validation-verdict bullet above
+			// already gives: the invocation is right (every flag, argument and
+			// path is well-formed) and the PROJECT is wrong relative to what is
+			// published. Pinned by TestVersionRegressionExitsGeneric.
+			"A **version regression** lands here for the same reason: `civitai app submit` refuses when the manifest version is not strictly **above the highest approved version** of that app, because approving an older (or identical) version replaces the newer live deployment. Nothing about the invocation is wrong, so it is a verdict about the project, not a `2`. `--allow-downgrade` is the deliberate-rollback escape hatch, and the guard is skipped entirely by `--package-only` or a run with no token — neither reaches the server.",
 			"**\"Wait for approval\" is the *pending* case only.** The same `1` covers an app whose latest submission was **rejected** or **withdrawn** — nothing is in review there, so `civitai app metrics <slug>` says so and names a new `civitai app submit` as the next step instead of a review to wait for. What separates `1` from `4` is unchanged: the slug is right and the app exists.",
 		},
 	},

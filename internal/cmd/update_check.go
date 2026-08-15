@@ -292,13 +292,26 @@ func compareVersions(current, latest string) int {
 	if !cok {
 		return -1 // unknown current => surface the latest as available.
 	}
+	return cv.compare(lv)
+}
+
+// compare orders two parsed triples: -1 if a < b, 0 if equal, 1 if a > b.
+//
+// This is the ONE numeric ordering in the CLI. It was open-coded inside
+// compareVersions until the monotonic-version guard (issue #412) needed the same
+// ordering with DIFFERENT handling of unparseable input — compareVersions'
+// -1/0 fallbacks are tuned for "should we advertise an update", which is the
+// wrong default for "may this submit replace what is live". Extracting the
+// comparison keeps the ordering shared and the policies separate, rather than
+// growing a second, subtly-different `if major != major` ladder.
+func (a semver) compare(b semver) int {
 	switch {
-	case cv.major != lv.major:
-		return cmpInt(cv.major, lv.major)
-	case cv.minor != lv.minor:
-		return cmpInt(cv.minor, lv.minor)
+	case a.major != b.major:
+		return cmpInt(a.major, b.major)
+	case a.minor != b.minor:
+		return cmpInt(a.minor, b.minor)
 	default:
-		return cmpInt(cv.patch, lv.patch)
+		return cmpInt(a.patch, b.patch)
 	}
 }
 

@@ -517,26 +517,42 @@ func TestAppStatusDriftSilentOnUnparseableVersions(t *testing.T) {
 	}
 }
 
-// TestAppStatusDriftPreReleaseComparesByTheNumericTriple documents an INHERITED
-// limitation rather than asserting a design of its own. parseSemver (shared with
-// the self-update check, and deliberately not modified here) drops any
-// `-prerelease`/`+build` suffix, so comparison is over the numeric triple only.
+// TestAppStatusDriftDeclinesToOrderAPreReleaseVersion pins the POLICY CHANGE
+// that consolidating #412's two halves forced, and it replaces a test
+// (TestAppStatusDriftPreReleaseComparesByTheNumericTriple) that asserted the
+// OPPOSITE. That test is not "adapted" — its first case is now false, so it is
+// recorded here as changed rather than quietly relaxed.
 //
-// The consequence is stated in both directions because only one of them is safe:
+// BEFORE: this path used isParseableVersion + compareVersions, which truncate at
+// the first '-'/'+'. A local `0.4.0-3-gabc123` was reduced to `0.4.0` and WARNED.
+// AFTER: comparableVersion — the strictness `app submit`'s guard already applied
+// — declares any pre-release/build-suffixed version NOT ORDERABLE, so the line
+// is SILENT.
 //
-//   - a suffixed local version BELOW the published one still warns, and the
-//     message quotes the RAW string the manifest holds — nothing is invented;
-//   - a `-rc` of the published version reads as EQUAL and stays silent. That is
-//     the conservative direction (it can under-report, never fabricate a
-//     BEHIND), and it is the reason this is recorded as a limitation instead of
-//     being papered over with a stricter local parser.
-func TestAppStatusDriftPreReleaseComparesByTheNumericTriple(t *testing.T) {
+// 🔴 THE REASON IS NOT TIDINESS, IT IS A CONTRADICTION THAT WAS LIVE. The two
+// commands read the same rows through two copies of one predicate, and the
+// copies disagreed: with an approved `0.6.0-rc.1` beside an approved `0.5.2`,
+// truncation ranked the rc FIRST, so `app status` would tell an author their
+// repo was behind `0.6.0-rc.1` while `app submit` — which refuses to rank it —
+// accepted `0.5.3` without complaint. The published-side subtest below is that
+// exact fixture. Losing the git-describe warning is the price; it was a true-ish
+// warning resting on an order this CLI cannot justify, and every other branch of
+// this feature already answers "could not establish" with silence.
+//
+// The cross-command agreement itself is pinned by
+// TestStatusAndSubmitNameTheSameVersion.
+func TestAppStatusDriftDeclinesToOrderAPreReleaseVersion(t *testing.T) {
 	for _, tc := range []struct {
 		name, local string
 		wantWarn    bool
 	}{
-		{"a git-describe below the published triple still warns", "0.4.0-3-gabc123", true},
-		{"an rc of the published version reads as equal and is silent", "0.5.2-rc1", false},
+		// 🔴 POSITIVE CONTROL FIRST. Three of the four cases below expect
+		// SILENCE, and a harness wired to nothing is silent too. This case must
+		// warn or the silences prove nothing about pre-release handling.
+		{"POSITIVE CONTROL: a plain lower version still warns", "0.4.0", true},
+		{"a git-describe is not orderable — CHANGED, this warned before", "0.4.0-3-gabc123", false},
+		{"an rc of the published version is not orderable", "0.5.2-rc1", false},
+		{"build metadata is not orderable either", "0.4.0+build.7", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var calls int32
@@ -559,6 +575,35 @@ func TestAppStatusDriftPreReleaseComparesByTheNumericTriple(t *testing.T) {
 			}
 		})
 	}
+
+	// The PUBLISHED side, which is the half that was actually dangerous: an
+	// approved pre-release must not become the number this line quotes, and must
+	// not outrank a real approved release.
+	t.Run("an approved pre-release never becomes the quoted peak", func(t *testing.T) {
+		var calls int32
+		body := driftRows(t,
+			driftRow{"pubreq_rc", "0.6.0-rc.1", "approved", "live", "2026-08-06T10:00:00.000Z"},
+			driftRow{"pubreq_05", "0.5.2", "approved", "live", "2026-08-01T10:00:00.000Z"},
+		)
+		srv := driftServer(t, body, &calls, 0)
+		writeDriftManifest(t, driftSlug, "0.4.0")
+		setupDriftEnv(t, srv.URL)
+
+		_, errOut, err := run(t, "app", "status", driftSlug)
+		if err != nil {
+			t.Fatalf("app status: %v", err)
+		}
+		if !strings.Contains(errOut, "which is 0.5.2.") {
+			t.Errorf("with an approved 0.6.0-rc.1 beside an approved 0.5.2, the peak must be 0.5.2 — the rc is "+
+				"not orderable and must be skipped, not ranked.\nstderr:\n%s", errOut)
+		}
+		if strings.Contains(errOut, "0.6.0-rc.1") {
+			t.Errorf("a truncating compare ranked 0.6.0-rc.1 ABOVE 0.5.2 and quoted it as the highest APPROVED "+
+				"version. `app submit` refuses to rank it at all, so the two commands then name different "+
+				"versions for the same rows — the contradiction consolidating #412 exists to remove."+
+				"\nstderr:\n%s", errOut)
+		}
+	})
 }
 
 // TestAppStatusDriftSilentWhenNothingIsApproved — an app whose every submission
@@ -760,10 +805,10 @@ func TestHighestApprovedVersion(t *testing.T) {
 		{name: "empty listing", in: nil, want: "", wantOK: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := highestApprovedVersion(tc.in, driftSlug)
-			if got != tc.want || ok != tc.wantOK {
+			peak := highestApprovedVersion(tc.in, driftSlug)
+			if peak.version != tc.want || peak.found != tc.wantOK {
 				t.Errorf("highestApprovedVersion = (%q, %v), want (%q, %v). %s",
-					got, ok, tc.want, tc.wantOK, tc.because)
+					peak.version, peak.found, tc.want, tc.wantOK, tc.because)
 			}
 		})
 	}
@@ -786,10 +831,10 @@ func TestHighestApprovedVersionIsOrderIndependent(t *testing.T) {
 	walk = func(cur, rest []appapi.Submission) {
 		if len(rest) == 0 {
 			perms++
-			got, ok := highestApprovedVersion(cur, driftSlug)
-			if got != "0.5.2" || !ok {
+			peak := highestApprovedVersion(cur, driftSlug)
+			if peak.version != "0.5.2" || !peak.found {
 				t.Fatalf("permutation %v gave (%q, %v), want (0.5.2, true) — the pick depends on row order",
-					versionsOf(cur), got, ok)
+					versionsOf(cur), peak.version, peak.found)
 			}
 			return
 		}
@@ -1372,43 +1417,24 @@ func TestVersionDriftWarningRefusesUnparseableVersionsItself(t *testing.T) {
 // "approved" is matched the way every other reader in this binary matches it —
 // #413 audit nit 6
 // ---------------------------------------------------------------------------
-
-// TestHighestApprovedVersionNormalisesTheStatus is #413 audit nit 6.
 //
-// 🔴 A RAW `s.Status == "approved"` CANNOT FAIL LOUDLY. If the server ever
-// answers "Approved", the filter matches nothing, highestApprovedVersion reports
-// "nothing approved", and the drift warning goes permanently, silently inert —
-// the feature is off and every test still passes because every fixture spells it
-// lower-case. appblocks.go and app_pull.go's pullReviewAdvice both already fold
-// this field; this read is now aligned with them, which also shrinks the
-// consolidation delta against the `app submit` guard that will share the
-// predicate.
-func TestHighestApprovedVersionNormalisesTheStatus(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		status string
-		want   string
-		wantOK bool
-	}{
-		{name: "padded and capitalised", status: " Approved ", want: "0.5.2", wantOK: true},
-		{name: "shouted", status: "APPROVED", want: "0.5.2", wantOK: true},
-		{name: "tab-padded", status: "\tapproved\n", want: "0.5.2", wantOK: true},
-		// 🔴 The control on the normalisation itself: folding case and trimming
-		// space must not turn into a substring match. A status that merely
-		// CONTAINS the word is a different state and must not count.
-		{name: "not-approved must still not count", status: "not approved", want: "", wantOK: false},
-		{name: "preapproved must still not count", status: "preapproved", want: "", wantOK: false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			in := driftSubs([3]string{driftSlug, "0.5.2", tc.status})
-			got, ok := highestApprovedVersion(in, driftSlug)
-			if got != tc.want || ok != tc.wantOK {
-				t.Errorf("highestApprovedVersion(status=%q) = (%q, %v), want (%q, %v)",
-					tc.status, got, ok, tc.want, tc.wantOK)
-			}
-		})
-	}
-}
+// 🔴 THE UNIT HALF OF THIS PAIR WAS MERGED AWAY, DELIBERATELY, AND NO ASSERTION
+// WAS DROPPED. #413 and #414 each added a
+// `TestHighestApprovedVersionNormalisesTheStatus` — a literal duplicate name
+// over two independent copies of one predicate. Now that there is ONE
+// highestApprovedVersion (approved_version.go) the two tests call the same
+// function with the same struct return, so they are the same test with different
+// fixtures. The survivor is the one in app_submit_version_guard_test.go, because
+// it also drives the refusal end-to-end; this file's fixtures that it did not
+// already cover — "\tapproved\n" on the positive side, "not approved" and
+// "preapproved" on the negative — were folded into it there, and its own
+// negative controls ("pending", "Rejected", " withdrawn ", "approved-pending")
+// are a superset of what was here.
+//
+// What stays HERE is the half that is genuinely about `app status`: the
+// end-to-end case below, which puts a capitalised status through the real JSON
+// decode and the real command, and would still catch a folding regression that
+// only manifests on the drift path.
 
 // TestAppStatusDriftWarnsOnACapitalisedApprovedStatus is the end-to-end half of
 // nit 6: the row goes through the real JSON decode and the real command.

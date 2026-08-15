@@ -460,8 +460,19 @@ var submissionsListReaders = map[string]submissionsListReader{
 		},
 	},
 	"cmd/app_status.go": {
-		reads: "TWO independent reads: the LIST view keeps every row and `--limit N` trims the HEAD (the newest N, which is what the flag help promises); " +
-			"the DETAIL view takes GetSubmission's single row and prints its version, status and deploy state",
+		// 🔴 THREE, NOT TWO — this entry said TWO until #412's two halves were
+		// consolidated, and the third read had been live since #413. The drift
+		// check is a whole-list scan for the highest APPROVED version, which is
+		// NOT a newest-row pick and depends on no list order at all, so it is
+		// exactly the kind of read this ledger exists to keep visible. It was
+		// missed because #413 added the reader without touching this map and the
+		// derivation below only checks that a FILE reaching the route is
+		// ledgered — a file already present can grow a new pick unnoticed. That
+		// is a real limit of the structural half, recorded here rather than
+		// implied.
+		reads: "THREE independent reads: the LIST view keeps every row and `--limit N` trims the HEAD (the newest N, which is what the flag help promises); " +
+			"the DETAIL view takes GetSubmission's single row and prints its version, status and deploy state; " +
+			"and the #412 drift check scans the WHOLE narrowed list for the highest APPROVED version (the shared highestApprovedVersion in approved_version.go) — order-independent, and deliberately NOT a newest-row pick",
 		pinnedBy: []submissionsPin{
 			// `--limit` was already pinned against five rows with distinct
 			// blockIds; ledgered so that coverage is visible from here rather
@@ -469,6 +480,28 @@ var submissionsListReaders = map[string]submissionsListReader{
 			// audit of #390 found GetSubmission unpinned.
 			{"TestAppStatusLimitTrimsTheTable", `run(t, "app", "status", "--limit", "2"`},
 			{"TestAppStatusDetailShowsTheNewestSubmission", `run(t, "app", "status", slug)`},
+			// The third read, pinned against a fixture whose newest APPROVED row
+			// is a LOWER version than the highest approved one — the only shape
+			// that separates the two predicates.
+			{"TestAppStatusDriftUsesHighestApprovedNotNewestApproved", `run(t, "app", "status", driftSlug)`},
+		},
+	},
+	"cmd/app_submit.go": {
+		// 🔴 ONE OF TWO ENTRIES IN THIS LEDGER THAT IS NOT A NEWEST-ROW PICK —
+		// and since #412's halves were consolidated it is literally the SAME
+		// pick as app_status.go's third read above, `highestApprovedVersion` in
+		// approved_version.go. (This comment claimed to be "THE ONE" until then;
+		// it was already wrong once #413 landed.) It is here for exactly the
+		// reason the ledger exists: the assumption it must NOT inherit is the
+		// one every neighbour above makes. The monotonic-version guard (#412)
+		// asks "what would this submit REPLACE on approval", and only an
+		// APPROVED row can be replaced — a later pending/withdrawn/rejected row
+		// for a higher version outranks the approved one by submittedAt while
+		// being nothing that is serving. So it scans every matching row for the
+		// highest approved version and never takes Submissions[0].
+		reads: "the HIGHEST APPROVED version for the slug (highestApprovedVersion, the monotonic-version guard) — deliberately NOT a newest-row pick, and it depends on no list ORDER at all",
+		pinnedBy: []submissionsPin{
+			{"TestAppSubmitRefusesARegressionAndNeverUploads", `run(t, "app", "submit"`},
 		},
 	},
 	"cmd/app_listing.go": {

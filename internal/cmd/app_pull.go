@@ -21,10 +21,18 @@ import (
 // info. Defaulted to the real API client; tests swap it to avoid the network.
 type cloneInfoFetcher func(ctx context.Context, app string) (*appapi.ForgejoCloneInfo, error)
 
-// submissionLister is the seam pull uses to DISAMBIGUATE a not-found clone-info
-// answer. It reads the caller's own submissions for a slug — the same route
-// `civitai app status` reads — so a 404 that means "your app is still in review"
-// can stop claiming the app does not exist.
+// submissionLister reads the caller's own submissions for a slug — the same
+// route `civitai app status` reads. It is the shared seam for every command that
+// needs those rows without the network in a test.
+//
+//   - `app pull` uses it to DISAMBIGUATE a not-found clone-info answer, so a 404
+//     that means "your app is still in review" stops claiming the app does not
+//     exist.
+//   - `app submit` uses it for the monotonic-version guard (issue #412), to find
+//     the highest APPROVED version this submit would replace.
+//
+// One type rather than two identical ones: the read is the same read, and the
+// two commands differ only in which rows they care about.
 type submissionLister func(ctx context.Context, blockID string) ([]appapi.Submission, error)
 
 // gitRunner runs a git subcommand in `dir` (empty = current dir). It's a package

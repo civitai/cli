@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -370,85 +369,49 @@ func warnLocalVersionDrift(ctx context.Context, lister submissionLister, errOut 
 	if m.BlockID == "" || m.BlockID != s.BlockID {
 		return
 	}
-	if !isParseableVersion(m.Version) {
+	// 🔴 comparableVersion, NOT isParseableVersion — the SAME strictness the
+	// `app submit` guard applies, and the reason the two commands can no longer
+	// disagree. isParseableVersion truncates at the first '-'/'+' (see
+	// approved_version.go), so a local `0.6.0-rc.1` would be ordered here as a
+	// bare `0.6.0` while the submit guard declares it unorderable and says so.
+	// One of those two answers has to go, and the truncating one is the one that
+	// invents an order.
+	if _, ok := comparableVersion(m.Version); !ok {
 		return
 	}
 	subs, err := lister(ctx, s.BlockID)
 	if err != nil {
 		return
 	}
-	published, ok := highestApprovedVersion(subs, s.BlockID)
-	if !ok {
+	// 🔴 THE SHARED PICK (approved_version.go). `peak.skipped` is deliberately
+	// NOT reported here, unlike in `app submit`: this line is advisory and its
+	// whole contract is that a fact it could not establish is not spoken, so an
+	// approved version it could not order is a silence, not a caveat. What
+	// matters is that both commands SKIP the same rows — the two agree on the
+	// number even where only one of them talks about the remainder.
+	peak := highestApprovedVersion(subs, s.BlockID)
+	// 🔴 OUTPUT-REDUNDANT, MEASURED, AND KEPT — with the reason stated instead of
+	// implied. Deleting this return SURVIVES the whole suite: peak.version is ""
+	// when found is false, and versionDriftWarning's own guard rejects "" (via
+	// comparableVersion -> parseSemver, which fails on the empty string), so the
+	// silence happens either way. It is an EQUIVALENT mutant, not a coverage hole
+	// — the mirror image of the guard inside versionDriftWarning, which is itself
+	// output-redundant against THIS line and is killable only at the direct-call
+	// seam. Neither is dead; each covers the other's caller, and only one of them
+	// is inherited by a future caller of versionDriftWarning.
+	if !peak.found {
 		return
 	}
-	if msg := versionDriftWarning(errOut, s.BlockID, m.Version, published); msg != "" {
+	if msg := versionDriftWarning(errOut, s.BlockID, m.Version, peak.version); msg != "" {
 		fmt.Fprint(errOut, msg)
 	}
 }
 
-// highestApprovedVersion returns the greatest APPROVED version among subs for
-// blockID, by semver order.
-//
-// 🔴 APPROVED, NOT THE NEWEST ROW — and the two genuinely differ (#390). The
-// newest row by submittedAt can be a `pending` resubmission, or a `withdrawn`
-// duplicate that outranks the approved row by timestamp; neither is code anyone
-// is running. Approval is what puts a version into the deploy pipeline, so the
-// highest approved version is the thing a local repo can be BEHIND, and it is
-// also the reference `app submit`'s monotonic guard refuses against — the two
-// commands have to name the same number or they contradict each other.
-//
-// 🔴 AND IT IS ORDER-INDEPENDENT, unlike every other read of this route in this
-// package. A maximum over a filtered set does not care which end of the list it
-// starts from, so this pick cannot inherit the newest-first assumption the
-// submissions-route ledger exists to track. Pinned by a permuted-fixture case,
-// not merely asserted here.
-//
-// Rows for another blockId are skipped defensively (a server that ignored the
-// ?blockId= narrowing would otherwise contribute someone else's versions), and
-// so is any approved row whose version is not comparable semver — a value we
-// cannot order must not become the number a warning quotes.
-func highestApprovedVersion(subs []appapi.Submission, blockID string) (string, bool) {
-	best := ""
-	for i := range subs {
-		s := &subs[i]
-		if s.BlockID != blockID || !isApprovedStatus(s.Status) || !isParseableVersion(s.Version) {
-			continue
-		}
-		if best == "" || compareVersions(s.Version, best) > 0 {
-			best = s.Version
-		}
-	}
-	return best, best != ""
-}
-
-// isApprovedStatus reports whether a submission row's status means APPROVED.
-//
-// 🔴 NORMALISED, NOT COMPARED RAW. `s.Status == "approved"` is a case- and
-// space-sensitive test against a value this CLI does not own: the server picks
-// the casing. A raw comparison does not fail loudly if the server ever answers
-// "Approved" — it silently matches NOTHING, the highest-approved lookup finds no
-// rows, and the drift warning goes permanently quiet. A check that can only ever
-// fail by going inert has to be the tolerant one.
-//
-// 🔴 THE FOLDING IS NOT UNIVERSAL IN THIS BINARY — do not read this comment as a
-// claim that it is (it did say so, wrongly, until #413's delta audit). Folded:
-// appblocks.go's latestMatchingSubmission (`strings.ToLower(s.Status)`) and
-// app_pull.go's pullReviewAdvice (`strings.ToLower(strings.TrimSpace(status))`).
-// Raw, and reachable: app_status.go's own `s.Status == "rejected"` render check
-// in printSubmissionDetail, and app_listing.go's `ref.Status == "approved"` at
-// two sites — the latter reading appapi.ListingRef.Status, a DIFFERENT field
-// with the same hazard rather than the same field. So in the very scenario this
-// predicate defends against (the server answers "Approved"), this check keeps
-// working while `app listing`'s live/not-live branch flips the wrong way. That
-// inconsistency is real and deliberately OUT OF SCOPE here — #413 is the drift
-// line, not a status-folding consolidation across the binary.
-//
-// The companion `app submit` monotonic guard (#412's other half) folds the same
-// way; the two predicates are meant to be consolidated once both have landed,
-// and they cannot be if they disagree about what "approved" is.
-func isApprovedStatus(status string) bool {
-	return strings.EqualFold(strings.TrimSpace(status), "approved")
-}
+// The highest-approved pick and the "is this row approved" predicate used to
+// live HERE, in a second copy written independently of `app submit`'s. Both are
+// now in approved_version.go, shared by both halves of #412 — see the header
+// there for why two copies of one predicate is the bug and not the tidiness nit
+// it looks like.
 
 // versionDriftWarning renders the warning for a local version that is BEHIND
 // published, and the empty string for every other relation.
@@ -463,31 +426,55 @@ func isApprovedStatus(status string) bool {
 //     about an action, not a description of a repo, and `status` describing a
 //     just-released repo as a problem would be noise on every run.)
 //
-// 🔴 BOTH ARGUMENTS MUST BE PARSEABLE SEMVER, AND THAT IS ENFORCED HERE, not
-// only at the call site. compareVersions treats an unparseable FIRST argument as
-// OLDER (so `civitai version` surfaces any real release), which through this
-// function reads as a confident "your repo is BEHIND" for a manifest carrying a
-// typo — and for an EMPTY version string it renders `local block.manifest.json
-// is  — BEHIND …`, with the hole where the version should be. warnLocalVersionDrift
-// gates on isParseableVersion before ever calling this, so the guard below is a
-// no-op on every path that exists today. It is here because THIS is the
-// reusable half: the property "no false BEHIND" belonged to the caller, which
-// meant the next caller — the `app submit` guard is the known one — inherited
-// none of it. Feeding this function garbage now returns the empty string
-// instead of an assertion nobody made.
+// 🔴 BOTH ARGUMENTS MUST BE ORDERABLE, AND THAT IS ENFORCED HERE, not only at
+// the call site. compareVersions treats an unparseable FIRST argument as OLDER
+// (so `civitai version` surfaces any real release), which through this function
+// reads as a confident "your repo is BEHIND" for a manifest carrying a typo —
+// and for an EMPTY version string it renders `local block.manifest.json is  —
+// BEHIND …`, with the hole where the version should be. warnLocalVersionDrift
+// gates before ever calling this, so the guard below is OUTPUT-REDUNDANT on
+// every path that exists today. It is not dead: it is here because THIS is the
+// reusable half, and the property "no false BEHIND" belonged to the caller,
+// which meant the next caller inherited none of it. Kept, and pinned directly by
+// TestVersionDriftWarningRefusesUnparseableVersionsItself — a guard nothing can
+// reach through the command has to be reachable through the seam, or it is a
+// comment pretending to be code.
 //
-// KNOWN LIMITATION, inherited from the shared comparator and left in place
-// deliberately: parseSemver drops any -prerelease/+build suffix, so the ordering
-// is over the numeric triple only. A local `0.5.2-rc1` therefore reads as EQUAL
-// to a published `0.5.2` and stays silent. That is the safe direction — it can
-// under-report drift, never invent it — and the message always quotes the RAW
-// manifest string, never the reduced triple. Sharpening it means changing
-// parseSemver, which `civitai version` also depends on; that is its own change.
+// 🔴 THE COMPARISON IS comparableVersion + semver.compare, NOT
+// isParseableVersion + compareVersions, AND THAT CHANGED THE BEHAVIOUR — the
+// note that used to sit here described the old policy and is now wrong, so it is
+// replaced rather than left standing. parseSemver (and therefore
+// compareVersions) truncates at the first '-'/'+', which reduced a
+// pre-release to its numeric triple and ORDERED it:
+//
+//   - it read a local `0.5.2-rc1` as EQUAL to a published `0.5.2` (silent — the
+//     safe direction, and the only part of the old behaviour that survives, now
+//     for the different reason that it is not orderable at all);
+//   - it read a local `0.4.0-3-gabc123` as `0.4.0` and WARNED that the repo was
+//     behind — an ordering it had no basis for;
+//   - and on the published side it would have quoted an approved `0.6.0-rc.1` as
+//     "the highest APPROVED version", ranking it above an approved `0.5.2`,
+//     which is the reverse of real semver.
+//
+// That last one is not hypothetical: `app submit`'s guard declares such a
+// version unorderable and refuses to rank it, so the two commands named
+// DIFFERENT versions for the same rows — exactly the contradiction the doc
+// comment on highestApprovedVersion warns about. Both now use comparableVersion.
+//
+// USER-VISIBLE CONSEQUENCE: where the highest approved version, or the local
+// one, carries a pre-release/build suffix, `app status` is now SILENT rather
+// than warning. That is a loss of one true-ish warning (the git-describe case
+// above) in exchange for never stating an order this CLI cannot justify, and it
+// is the direction the whole feature is built in — every fact it cannot
+// establish is a silence. `app submit` is louder in the same situation because
+// it is about to ACT: it names what it could not order and proceeds.
 func versionDriftWarning(w io.Writer, blockID, local, published string) string {
-	if !isParseableVersion(local) || !isParseableVersion(published) {
+	lv, lok := comparableVersion(local)
+	pv, pok := comparableVersion(published)
+	if !lok || !pok {
 		return ""
 	}
-	if compareVersions(local, published) >= 0 {
+	if lv.compare(pv) >= 0 {
 		return ""
 	}
 	st := ui.For(w)
