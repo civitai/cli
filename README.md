@@ -75,6 +75,7 @@ contract, and **packages/submits** it for review.
 - [Download model files](#download-model-files)
 - [Generate](#generate) — **spends real Buzz**
   - [`--max-cost` is an estimate check, not a spending cap](#---max-cost-is-an-estimate-check-not-a-spending-cap)
+  - [A checkpoint does not carry its ecosystem](#-a-checkpoint-does-not-carry-its-ecosystem)
   - [Silent model substitution](#-silent-model-substitution)
   - [Confirmation](#confirmation)
   - [Image-to-image: `--image` and `--ecosystem`](#image-to-image---image-and---ecosystem)
@@ -83,6 +84,7 @@ contract, and **packages/submits** it for review.
   - [Waiting, downloading, and re-attaching](#waiting-downloading-and-re-attaching)
   - [Listing and cancelling workflows](#listing-and-cancelling-workflows)
   - [What the server says went wrong](#what-the-server-says-went-wrong)
+  - [Reading a workflow's Buzz transactions](#reading-a-workflows-buzz-transactions)
   - [Exit codes specific to `generate`](#exit-codes-specific-to-generate)
 - [Scripting with `--json`](#scripting-with---json)
   - [Cursor pagination loop](#cursor-pagination-loop)
