@@ -665,6 +665,32 @@ func TestDirtyRefusalCapsThePathListAndSaysHowManyItHid(t *testing.T) {
 	}
 }
 
+// TestDirtyRefusalWithNoBlockIdStillReadsAsASentence — `manifest.Load` does not
+// require blockId and `--skip-validate` waives the schema, so the slug can
+// legitimately arrive EMPTY here. That is not a reason to skip the guard the way
+// the VERSION guard must (it has no app to compare against; this one has a work
+// tree either way), but it is a reason not to splice an empty string into the
+// first line: "refusing to submit @0.6.1" reads as a bug in the CLI.
+func TestDirtyRefusalWithNoBlockIdStillReadsAsASentence(t *testing.T) {
+	err := dirtyWorkTreeError("", "0.6.1", []gitStatusEntry{{code: "??", path: "src/App.tsx"}})
+	msg := err.Error()
+	if strings.Contains(msg, "submit @") || strings.Contains(msg, "submit  ") {
+		t.Errorf("an empty blockId was spliced in verbatim:\n%s", msg)
+	}
+	if !strings.Contains(msg, "refusing to submit this app from a dirty git work tree") {
+		t.Errorf("with no blockId the refusal should still name what it is refusing, got:\n%s", msg)
+	}
+	if !strings.Contains(msg, "src/App.tsx") || !strings.Contains(msg, "--allow-dirty") {
+		t.Errorf("the path and the escape hatch must survive the no-slug branch, got:\n%s", msg)
+	}
+	// NEGATIVE CONTROL: with a slug present the version IS attached, so the
+	// branch above is a branch and not the only behaviour.
+	withSlug := dirtyWorkTreeError(dirtySlug, "0.6.1", []gitStatusEntry{{code: "??", path: "x"}}).Error()
+	if !strings.Contains(withSlug, "custom-generators@0.6.1") {
+		t.Errorf("with a slug the refusal must name app@version, got:\n%s", withSlug)
+	}
+}
+
 // --- END TO END: the guard is actually WIRED into `civitai app submit` ---
 //
 // 🔴 A unit test on checkWorkTreeClean proves the predicate, never that the
