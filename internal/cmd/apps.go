@@ -258,8 +258,24 @@ func ownedSubmission(ctx context.Context, slug string) *appapi.Submission {
 	// unverified dependency on the route's contract, stated in the ledger rather
 	// than closed. Unverified, not unverifiable: every row carries SubmittedAt, so
 	// a client-side check or sort is possible — it is simply not written.
+	//
+	// 🔴 THE COMPARE IS THE SHARED appapi.SameSlug, not `==`. This site asks the
+	// same question the #412 guard asks — "is this row the app the caller
+	// named?" — and answered it differently until the four copies were
+	// consolidated; see internal/appapi/slug.go. The failure mode an exact
+	// compare has here is the same SILENT one: a row whose blockId differed only
+	// in case or padding would fall through to nil, and nil is deliberately
+	// indistinguishable from "not yours" and "could not ask", so `app view`
+	// would drop the ownership advice with nothing on screen to say why.
+	// Normalising can only join a mis-spelling to the one valid slug it
+	// mis-spells (valid slugs are lowercase and unpadded by schema), so the row
+	// it newly admits is always this app's row and never another's.
+	//
+	// What it does NOT change: appViewOwnedAdvice renders the caller's own
+	// `slug` argument, not this row's BlockID, so a normalised match cannot put
+	// the server's spelling — or the caller's — anywhere it was not already.
 	for i := range subs {
-		if subs[i].BlockID == slug {
+		if appapi.SameSlug(subs[i].BlockID, slug) {
 			return &subs[i]
 		}
 	}

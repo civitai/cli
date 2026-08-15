@@ -25,7 +25,7 @@ import (
 // computable here and no server change is involved.
 //
 // 🔴 THE PICK ITSELF IS NOT HERE. `highestApprovedVersion` and everything it is
-// built from (approvedPeak, sameSlug, isApprovedStatus, rowIsServing,
+// built from (approvedPeak, appapi.SameSlug, isApprovedStatus, rowIsServing,
 // comparableVersion) live in approved_version.go, because `civitai app status`'s
 // drift warning — #412's other half, #413 — has to name the SAME version for the
 // SAME rows or the two commands contradict each other. They briefly did: both
@@ -101,7 +101,7 @@ func checkVersionNotRegression(ctx context.Context, lister submissionLister, war
 	// live before this branch existed: submissionsURL omits an empty blockId, so
 	// the read is UNNARROWED and returns every app's rows (which the route caps,
 	// exactly the failure TestVersionGuardNarrowsTheListingToThisApp exists to
-	// prevent); and every one of those rows then fails sameSlug, so slugRows is 0
+	// prevent); and every one of those rows then fails appapi.SameSlug, so slugRows is 0
 	// and the mismatch announcement below fires with the app's name spliced in as
 	// an empty string — "none of them for  — … If  is already published, this is
 	// a blockId mismatch". That misdiagnoses a manifest with NO blockId as a

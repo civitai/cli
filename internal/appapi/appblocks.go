@@ -629,7 +629,20 @@ func latestMatchingSubmission(subs []Submission, slug, version string) *Submissi
 	var anyMatch *Submission
 	for i := range subs {
 		s := &subs[i]
-		if s.BlockID != slug || s.Version != version {
+		// 🔴 THE SLUG COMPARE IS SHARED (SameSlug, slug.go); THE VERSION COMPARE
+		// IS DELIBERATELY STILL EXACT. They are not the same question. The slug
+		// is the app's identity and has one canonical spelling per the manifest
+		// schema, so folding case and padding can only rejoin a mis-spelling to
+		// the app it names. A version is an ORDERED value whose spelling this
+		// function does not own: "0.2.0", " 0.2.0 " and "v0.2.0" are the same
+		// release, but deciding that is comparableVersion's job in
+		// internal/cmd/approved_version.go, which encodes a policy (a
+		// pre-release is NOT ORDERABLE) that a fold-and-trim compare would
+		// quietly contradict. Widening it here would also widen what a timed-out
+		// submit may report as "the row that landed", which is the id a user
+		// hands to `civitai app withdraw`. Out of scope for the slug
+		// consolidation, and named so it does not read as an oversight.
+		if !SameSlug(s.BlockID, slug) || s.Version != version {
 			continue
 		}
 		switch strings.ToLower(s.Status) {

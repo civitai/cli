@@ -366,7 +366,39 @@ func warnLocalVersionDrift(ctx context.Context, lister submissionLister, errOut 
 	// The manifest must be for THIS app. Without this, running `civitai app
 	// status some-other-app` from inside an unrelated project would compare two
 	// different apps' versions and report a fabricated regression.
-	if m.BlockID == "" || m.BlockID != s.BlockID {
+	//
+	// 🔴 THIS IS THE SHARED PREDICATE (appapi.SameSlug) ANSWERING A DIFFERENT
+	// QUESTION FROM THE OTHER THREE CALLERS, and the difference is worth stating
+	// because it is what decided the call. The other three ask "does this row
+	// match the slug the CALLER NAMED", request against server row. This one
+	// asks "is the project directory I am standing in the same app as this row"
+	// — LOCAL FILE against server row. It is the same underlying question ("are
+	// these two spellings the same slug?"), so it gets the same predicate.
+	//
+	// 🔴 AND IT IS THE CALLER WITH THE STRONGEST ARGUMENT FOR NORMALISING, not
+	// the weakest. At the other three the unnormalised value could only come
+	// from the server, which by its own route contract cannot emit one (see
+	// slug.go). Here it comes from block.manifest.json via manifest.Load, which
+	// is a bare json.Unmarshal with NO schema validation — so a hand-edited
+	// `"blockId": " Custom-Generators "` reaches this line today, with no server
+	// change required. Still not a demonstrated live break: a manifest spelled
+	// that way is rejected by `civitai app submit`'s own validation, so an
+	// author holding one has not successfully submitted under it.
+	//
+	// The failure it removes is the silent one. An exact compare returns here
+	// and the drift warning never prints, which is indistinguishable from
+	// "nothing is approved yet" — the #412 hazard exactly. The false-positive
+	// direction is closed by the schema: valid slugs are lowercase and unpadded,
+	// so a fold-and-trim match cannot join two DIFFERENT apps, only a
+	// mis-spelling to the app it mis-spells.
+	//
+	// The hand-written `m.BlockID == ""` clause this replaces is now
+	// SameSlug's own guarantee (it rejects an empty side, including
+	// empty-against-empty, and rejects all-whitespace too, which the old clause
+	// did not). Note also that what gets PRINTED below is s.BlockID — the
+	// server's spelling — so a mis-spelled manifest can never put its own
+	// spelling in the warning.
+	if !appapi.SameSlug(m.BlockID, s.BlockID) {
 		return
 	}
 	// 🔴 comparableVersion, NOT isParseableVersion — the SAME strictness the
