@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/civitai/cli/internal/pkgzip"
@@ -70,13 +72,72 @@ var errGitUnavailable = errors.New("git is not installed or not on PATH")
 // question whose whole answer is on stdout.
 type gitOutputFunc func(dir string, args ...string) (string, error)
 
+// gitEnvOverrides are the environment variables that RELOCATE git's idea of
+// which repository it is looking at. Every one of them BEATS `-C`, so leaving
+// them in place makes the "which directory's repo" decision above a lie.
+//
+// 🔴 THIS IS NOT HYPOTHETICAL: git EXPORTS GIT_DIR and GIT_INDEX_FILE to its
+// hooks. A release script that runs `civitai app submit` from a `pre-push` /
+// `post-commit` hook, or under `git rebase -x`, therefore inherits a GIT_DIR
+// pointing at the repo that invoked the hook. Measured on git 2.55.0: a dirty
+// app directory exits 1 with the refusal, and the SAME invocation with GIT_DIR
+// and GIT_WORK_TREE aimed at an unrelated clean repo exits 5 with zero
+// refusals. It is the "gitOutput dropped its -C" defect reached through the
+// environment instead of argv.
+//
+// 🔴 THEY MUST BE REMOVED FROM THE ENVIRONMENT, NEVER SET TO "". git does not
+// read an empty value as unset: `GIT_DIR= git status` fails with
+// `fatal: not a git repository` naming the empty string (measured, git 2.55.0),
+// which this guard
+// classifies as "no repo here" and proceeds — so the obvious one-line fix,
+// appending `GIT_DIR=` to os.Environ(), would fail the guard OPEN on EVERY
+// invocation while looking exactly like a hardening change.
+var gitEnvOverrides = []string{
+	"GIT_DIR",
+	"GIT_COMMON_DIR",
+	"GIT_WORK_TREE",
+	"GIT_INDEX_FILE",
+	"GIT_OBJECT_DIRECTORY",
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_CEILING_DIRECTORIES",
+}
+
+// gitScrubbedEnv drops gitEnvOverrides from env, leaving everything else — in
+// particular the user's git config, which this guard deliberately does NOT
+// neutralise: `status.renames`, `core.excludesFile` and friends are the user's
+// answer to what their own tree looks like.
+func gitScrubbedEnv(env []string) []string {
+	drop := make(map[string]struct{}, len(gitEnvOverrides))
+	for _, k := range gitEnvOverrides {
+		drop[k] = struct{}{}
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, ok := strings.Cut(kv, "=")
+		if ok {
+			if _, skip := drop[name]; skip {
+				continue
+			}
+		}
+		out = append(out, kv)
+	}
+	return out
+}
+
 // gitOutput is the real implementation, and the package var the submit command
 // reads — tests swap it (or pass their own func to checkWorkTreeClean directly).
+//
+// `--no-optional-locks` is what makes "every call here is read-only" true rather
+// than nearly true: `git status` otherwise takes the index lock to write back a
+// refreshed stat cache, which is a write to someone else's repository from a
+// command that only asked a question — and can fail on a tree another git
+// process holds.
 var gitOutput gitOutputFunc = func(dir string, args ...string) (string, error) {
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", errGitUnavailable
 	}
-	c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	c := exec.Command("git", append([]string{"-C", dir, "--no-optional-locks"}, args...)...)
+	c.Env = gitScrubbedEnv(os.Environ())
 	var stdout, stderr bytes.Buffer
 	c.Stdout = &stdout
 	c.Stderr = &stderr
@@ -165,19 +226,55 @@ func checkWorkTreeClean(git gitOutputFunc, warn io.Writer, dir, slug, version st
 	}
 	prefix := ""
 	if len(lines) > 1 {
-		prefix = strings.TrimSpace(lines[1])
+		// 🔴 TRIM THE LINE ENDING, NOT WHITESPACE. `--show-prefix` prints a path,
+		// and a path may legitimately BEGIN with a space: a package directory
+		// named ` spacey/app` yields the prefix " spacey/app/", which TrimSpace
+		// silently turns into "spacey/app/". Every real status path then fails the
+		// HasPrefix test in bundleDirtyPaths and is dropped — the guard reports
+		// CLEAN on a tree with uncommitted bundle files. Reproduced on git 2.55.0.
+		// Only \r can be here at all: \r\n was normalised above and Split ate the
+		// \n, so a lone \r from a CRLF-ish environment is the whole risk.
+		prefix = strings.TrimSuffix(lines[1], "\r")
 	}
 
-	// `-c status.relativePaths=false` pins the path spelling: `git status` shows
-	// paths relative to the CWD when status.relativePaths is on, and a user CAN
-	// turn it on in their config. Pinning it means the prefix arithmetic below is
-	// arithmetic and not a guess about someone's ~/.gitconfig.
+	// `-c status.relativePaths=false` pins the path spelling AS FUTURE-PROOFING,
+	// and the honest scope of that is narrower than it used to read here.
+	// MEASURED on git 2.55.0: `--porcelain` ignores status.relativePaths
+	// entirely — unset, `true` and `false` produce byte-identical output — so the
+	// flag buys nothing TODAY and removing it is an equivalent mutation. It stays
+	// because the prefix arithmetic below depends on repo-root-relative paths and
+	// nothing else in this file would notice if a future git honoured the setting.
+	// Do not restate it as a live hazard; do not delete it as dead weight.
 	//
 	// `-z` rather than plain --porcelain: the default format C-quotes any path
 	// with a space or a non-ASCII byte, so an author with `My Component.tsx`
 	// would see a mangled path in a refusal message. -z emits raw bytes.
 	//
-	// `-- .` scopes the answer to the packaged subtree (see the note above).
+	// 🔴 `-- .` SCOPES THE ANSWER TO THE PACKAGED SUBTREE, AND IT IS A
+	// CORRECTNESS FLAG, NOT A COST ONE. An earlier version of this comment (and
+	// of the test that recorded it) claimed the pathspec and the prefix filter in
+	// bundleDirtyPaths "select the same set — proven, measured". THAT CLAIM WAS
+	// FALSE. Without the pathspec, git's rename detection runs over the WHOLE
+	// repo and can pair a subtree file with a destination outside it. Measured on
+	// git 2.55.0, after `git mv packages/my-block/src/App.tsx packages/other/App.tsx`
+	// with the packaged dir at packages/my-block:
+	//
+	//	WITH `-- .` :  [D  packages/my-block/src/App.tsx]
+	//	WITHOUT     :  [R  packages/other/App.tsx][packages/my-block/src/App.tsx]
+	//
+	// The second spelling reports a path OUTSIDE the subtree, which the prefix
+	// filter drops — so the guard called a tree clean while the bundle had lost a
+	// file that is in HEAD. What made that survivable was that no fixture crossed
+	// the subtree boundary; TestDirtyGuardRefusesARenameOutOfThePackagedSubtree
+	// now does.
+	//
+	// 🔴 That hole is closed TWICE over as of the same change: bundleDirtyPaths
+	// now also judges a rename's ORIGINAL path, which catches the boundary
+	// crossing even without the pathspec (see its own note). So a mutation
+	// battery will report REMOVING THE PATHSPEC AS A SURVIVOR — measured, and
+	// expected. That is redundancy, not deadness: the pathspec is the only thing
+	// bounding the `--untracked-files=all` walk in a monorepo, and it is the
+	// mechanism that does not depend on getting rename records right. Keep both.
 	//
 	// 🔴 `--untracked-files=all`, NOT the default `normal`, and it is a
 	// CORRECTNESS choice rather than a verbosity one. `normal` COLLAPSES an
@@ -196,7 +293,7 @@ func checkWorkTreeClean(git gitOutputFunc, warn io.Writer, dir, slug, version st
 		return nil
 	}
 
-	dirty := bundleDirtyPaths(raw, prefix)
+	dirty := bundleDirtyPaths(raw, prefix, dir)
 	if len(dirty) > 0 {
 		return dirtyWorkTreeError(slug, version, dirty)
 	}
@@ -224,16 +321,70 @@ type gitStatusEntry struct {
 
 // bundleDirtyPaths parses `git status --porcelain -z` output and returns the
 // entries that are BUNDLE content, with paths made relative to the packaged
-// directory.
+// directory. dir is the packaged directory itself, used to ask the filesystem
+// what TYPE an entry is; pass "" to judge by path alone (the literal-record
+// tests do).
 //
 // The -z record is `XY<space><path>NUL`, and a rename/copy (`R`/`C` in either
 // column) appends the ORIGINAL path as its own NUL-terminated field — verified
 // against git 2.x rather than read off the man page, because getting it backwards
 // silently turns one rename into two bogus entries whose second path is a file
 // that no longer exists.
-func bundleDirtyPaths(raw, prefix string) []gitStatusEntry {
+//
+// 🔴 A RENAME HAS TWO SIDES AND BOTH ARE BUNDLE DIFFERENCES. Judging only the
+// destination made two real fail-opens, because a rename REMOVES bytes at the
+// original path while the destination decides the verdict. Measured on git
+// 2.55.0:
+//
+//	git mv src/App.tsx dist/App.tsx  →  [R  dist/App.tsx][src/App.tsx]
+//
+// `dist/App.tsx` is packager-excluded, so the entry was dropped and the guard
+// reported CLEAN — while `src/App.tsx` is in HEAD and is no longer in the
+// bundle. The same shape crossing the packaged subtree (`git mv
+// packages/my-block/src/App.tsx packages/other/App.tsx`) failed open the same
+// way through the prefix filter. So an `R` contributes BOTH paths.
+//
+// 🔴 A COPY CONTRIBUTES ONLY THE DESTINATION, and that is not symmetry for its
+// own sake. A copy leaves the original exactly as HEAD has it, so the original
+// is not a difference — and git's status copy detection only pairs against a
+// source that is ITSELF modified, in which case git emits a separate record for
+// it. Measured on git 2.55.0 with status.renames=copies:
+//
+//	[C  src/copy.html][src/index.html][M  src/index.html]
+//
+// Adding the source from the `C` record would therefore either double-count a
+// path git already reported (an inflated "N path(s)" count) or, in the case git
+// does not produce today, refuse over a file identical to HEAD. Entries are
+// de-duplicated by path for the same reason.
+func bundleDirtyPaths(raw, prefix, dir string) []gitStatusEntry {
 	fields := strings.Split(raw, "\x00")
 	var out []gitStatusEntry
+	seen := map[string]struct{}{}
+
+	add := func(code, path string) {
+		rel := path
+		if prefix != "" {
+			if !strings.HasPrefix(rel, prefix) {
+				// Outside the packaged subtree — a sibling package's work is not
+				// in this bundle. For a rename ORIGINAL this is also the arm that
+				// the `-- .` pathspec makes unreachable in practice.
+				return
+			}
+			rel = strings.TrimPrefix(rel, prefix)
+		}
+		if rel == "" || pkgzip.IsExcludedPath(rel) {
+			return
+		}
+		if !bundlesOnDisk(dir, code, rel) {
+			return
+		}
+		if _, dup := seen[rel]; dup {
+			return
+		}
+		seen[rel] = struct{}{}
+		out = append(out, gitStatusEntry{code: code, path: rel})
+	}
+
 	for i := 0; i < len(fields); i++ {
 		rec := fields[i]
 		// "XY " plus at least one path byte.
@@ -242,25 +393,53 @@ func bundleDirtyPaths(raw, prefix string) []gitStatusEntry {
 		}
 		code := rec[:2]
 		path := rec[3:]
+		orig := ""
 		if strings.ContainsAny(code, "RC") {
-			i++ // consume the original path; it is the same change, not a second one
-		}
-
-		rel := path
-		if prefix != "" {
-			if !strings.HasPrefix(rel, prefix) {
-				// Outside the packaged subtree. The pathspec should already have
-				// excluded it; this is the belt to that braces.
-				continue
+			// Consume the original path; it is the same change, not a second one.
+			i++
+			if i < len(fields) {
+				orig = fields[i]
 			}
-			rel = strings.TrimPrefix(rel, prefix)
 		}
-		if rel == "" || pkgzip.IsExcludedPath(rel) {
-			continue
+		add(code, path)
+		if strings.Contains(code, "R") && orig != "" {
+			add(code, orig)
 		}
-		out = append(out, gitStatusEntry{code: code, path: rel})
 	}
 	return out
+}
+
+// bundlesOnDisk is the FILE-TYPE half of "would the packager put this in the
+// bundle", which pkgzip.IsExcludedPath cannot answer from a string.
+//
+// 🔴 IT APPLIES ONLY TO PATHS THAT ARE IN NO COMMIT — untracked (`??`) or
+// staged-new (`A…`). For those, "the packager drops it" really does mean "not a
+// difference between the bundle and HEAD": an untracked symlink ships nowhere,
+// and refusing over it is a false refusal whose message ("path(s) that go into
+// the bundle") is factually wrong. For anything git reports as tracked the
+// opposite holds — a regular file replaced by a symlink (` T`) makes the bundle
+// LOSE content that is in HEAD, which is exactly the difference this guard
+// exists to catch, so the type check must not silence it.
+//
+// dir == "" means "no filesystem to ask" (the literal-record tests): judge by
+// path alone, which is what the caller already did.
+func bundlesOnDisk(dir, code, rel string) bool {
+	if dir == "" || !absentFromHEAD(code) {
+		return true
+	}
+	info, err := os.Lstat(filepath.Join(dir, filepath.FromSlash(rel)))
+	if err != nil {
+		// Gone, or unreadable. Not something to fail open over.
+		return true
+	}
+	return !pkgzip.IsExcludedEntry(rel, info.Mode())
+}
+
+// absentFromHEAD reports whether the porcelain code says this path exists in no
+// commit: `??` (untracked) or an `A` in the index column (added, incl. the `AA`
+// both-added conflict). Every other code implies HEAD has the path.
+func absentFromHEAD(code string) bool {
+	return strings.HasPrefix(code, "?") || strings.HasPrefix(code, "A")
 }
 
 // dirtyWorkTreeError builds the refusal.

@@ -1,6 +1,7 @@
 package pkgzip
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -81,6 +82,36 @@ func TestIsExcludedPathFileNames(t *testing.T) {
 	}
 }
 
+// TestIsExcludedEntryJudgesFileType pins the half IsExcludedPath structurally
+// cannot answer: Build drops every non-regular file, and no spelling of a path
+// reveals that it is a symlink.
+func TestIsExcludedEntryJudgesFileType(t *testing.T) {
+	// The same path, three types, three answers.
+	if IsExcludedEntry("src/App.tsx", 0) {
+		t.Error("a regular src/App.tsx is bundle content")
+	}
+	if !IsExcludedEntry("src/App.tsx", fs.ModeSymlink) {
+		t.Error("Build skips non-regular files, so a symlink is in NO bundle — the guard must not " +
+			"refuse a submit over one, and its message must not claim it 'goes into the bundle'")
+	}
+	for _, mode := range []fs.FileMode{fs.ModeSocket, fs.ModeNamedPipe, fs.ModeDevice, fs.ModeCharDevice} {
+		if !IsExcludedEntry("src/App.tsx", mode) {
+			t.Errorf("mode %v is not a regular file and is in no bundle", mode)
+		}
+	}
+	// A DIRECTORY takes the directory rule even without git's trailing slash.
+	if !IsExcludedEntry("dist", fs.ModeDir) {
+		t.Error("a directory named dist is excluded by name")
+	}
+	if IsExcludedEntry("src", fs.ModeDir) {
+		t.Error("an ordinary directory is not excluded")
+	}
+	// NEGATIVE CONTROL: type is not the ONLY rule — the path still decides.
+	if !IsExcludedEntry("dist/assets/app.js", 0) {
+		t.Error("a regular file under dist/ is still excluded by path")
+	}
+}
+
 // TestIsExcludedPathAgreesWithBuild is the SEAM guard.
 //
 // 🔴 IsExcludedPath reproduces Build's decisions rather than sharing them (Build
@@ -89,8 +120,19 @@ func TestIsExcludedPathFileNames(t *testing.T) {
 // files that are not in the bundle, or miss files that are. Verifying each side
 // in isolation cannot see that: the defect lives in the relationship.
 //
-// So this walks ONE tree twice — once through Build, once through
-// IsExcludedPath — and asserts the two file sets are identical.
+// So this walks ONE tree twice — once through Build, once through the
+// path-judging predicate — and asserts the two file sets are identical.
+//
+// 🔴 IT USED TO COPY Build'S OWN FILE-TYPE FILTER INTO ITS ORACLE, and that made
+// it structurally blind to the one dimension the real caller exercises. The
+// prediction walk skipped `!d.Type().IsRegular()` entries, so the fixture could
+// never contain a symlink that the two sides disagreed about — and they DID
+// disagree: Build drops a symlink, IsExcludedPath (a string predicate) cannot
+// know, and the dirty-tree guard refused a submit over an untracked symlink
+// that is in no zip. A seam guard that reproduces one side's filter in its
+// oracle is only testing the half it already agreed on. The oracle now walks
+// every non-directory entry and judges it with IsExcludedEntry, which is the
+// predicate that HAS the type.
 func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 	dir := t.TempDir()
 	files := []string{
@@ -118,6 +160,12 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 	for _, f := range files {
 		writeFile(t, dir, f, "x")
 	}
+	// A SYMLINK, which is the entry the oracle used to filter out of its own
+	// walk. Build drops it (non-regular); a string predicate cannot tell.
+	symlinked := false
+	if err := os.Symlink("src/App.tsx", filepath.Join(dir, "alias.tsx")); err == nil {
+		symlinked = true
+	}
 
 	res, err := Build(dir)
 	if err != nil {
@@ -126,14 +174,15 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 	built := append([]string{}, res.Files...)
 	sort.Strings(built)
 
-	// The same tree, judged only by IsExcludedPath.
+	// The same tree, judged only by the predicate — and WITHOUT reproducing
+	// Build's file-type filter here, which is what made this oracle blind.
 	var predicted []string
-	var walked int
+	var walked, nonRegular int
 	err = filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if d.IsDir() || !d.Type().IsRegular() {
+		if d.IsDir() {
 			return nil
 		}
 		rel, err := filepath.Rel(dir, p)
@@ -142,7 +191,10 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 		}
 		rel = filepath.ToSlash(rel)
 		walked++
-		if !IsExcludedPath(rel) {
+		if !d.Type().IsRegular() {
+			nonRegular++
+		}
+		if !IsExcludedEntry(rel, d.Type()) {
 			predicted = append(predicted, rel)
 		}
 		return nil
@@ -157,6 +209,12 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 	if walked <= len(built) {
 		t.Fatalf("the fixture excludes nothing (%d files on disk, %d in the bundle) — "+
 			"an agreement over it would be vacuous", walked, len(built))
+	}
+	// POSITIVE CONTROL on the WIDENING: a non-regular entry must really have
+	// reached the oracle, or this test is the blind one it used to be.
+	if symlinked && nonRegular == 0 {
+		t.Fatal("the oracle walked no non-regular entry although the fixture created a symlink — " +
+			"the file-type dimension is unobservable again")
 	}
 
 	if strings.Join(built, "\n") != strings.Join(predicted, "\n") {

@@ -98,6 +98,22 @@ func (f *gitFixture) git(args ...string) string {
 	return out.String()
 }
 
+// gitIn runs a git subcommand in an arbitrary directory INSIDE the fixture —
+// needed where the answer depends on which subdirectory you ask from
+// (`rev-parse --show-prefix`). Returns stdout with the trailing newline
+// stripped, and only that: a leading space in a path is meaningful here.
+func (f *gitFixture) gitIn(dir string, args ...string) string {
+	f.t.Helper()
+	c := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	var out, errb bytes.Buffer
+	c.Stdout = &out
+	c.Stderr = &errb
+	if err := c.Run(); err != nil {
+		f.t.Fatalf("git -C %s %s: %v\n%s", dir, strings.Join(args, " "), err, errb.String())
+	}
+	return strings.TrimRight(out.String(), "\r\n")
+}
+
 // write creates (or overwrites) a file at a repo-relative path.
 func (f *gitFixture) write(rel, content string) {
 	f.t.Helper()
@@ -254,11 +270,26 @@ func TestDirtyGuardRefusesEveryKindOfDifference(t *testing.T) {
 			// bare original path `index.html`, and a parser that reads it as a
 			// fresh entry takes its first two bytes as status letters and the
 			// rest as a path: `in ex.html`. Grepping for the original filename
-			// therefore finds nothing and the defect survives. Count instead.
+			// therefore finds nothing and the defect survives. So assert the
+			// COUNT and the exact spelling of both sides.
+			//
+			// A rename is ONE record and TWO bundle differences: the destination
+			// is not in HEAD, and the original is in HEAD but no longer in the
+			// bundle. Judging only the destination is the fail-open that let a
+			// `git mv src/App.tsx dist/App.tsx` submit silently.
 			if tc.name == "renamed file" {
-				if !strings.Contains(err.Error(), "1 path(s)") {
-					t.Errorf("a rename is ONE change; its -z record's second field is the original path, "+
-						"not a second entry. got:\n%s", err.Error())
+				msg := err.Error()
+				if !strings.Contains(msg, "2 path(s)") {
+					t.Errorf("a rename moves bundle content: the destination is new and the ORIGINAL is "+
+						"gone, so both are differences from HEAD. got:\n%s", msg)
+				}
+				if !strings.Contains(msg, "index.html") {
+					t.Errorf("the rename's ORIGINAL path must be named — it is in HEAD and is no longer "+
+						"in the bundle. got:\n%s", msg)
+				}
+				if strings.Contains(msg, "in ex.html") {
+					t.Errorf("the -z record's second field was read as a fresh record: its first two "+
+						"bytes became status letters. got:\n%s", msg)
 				}
 			}
 		})
@@ -277,54 +308,114 @@ func TestDirtyGuardRefusesEveryKindOfDifference(t *testing.T) {
 // Nothing a message-substring test looks for matches that. Here the entry list
 // itself is the assertion.
 //
-// It also pins the two filters that a repository fixture cannot separate,
-// because `git status -- .` never reports an out-of-subtree path in the first
-// place: see TestBundleDirtyPathsDropsPathsOutsideThePackagedSubtree.
+// 🔴 THE `C` RECORD IS HERE BECAUSE THE BRANCH IS REACHABLE IN PRODUCTION AND
+// NOTHING ELSE PINS IT. gitOutput deliberately does not scrub the user's git
+// config, and with the documented `status.renames=copies` git really emits a
+// two-field `C` record — measured on git 2.55.0:
+//
+//	[C  src/copy.html][src/index.html][M  src/index.html]
+//
+// Without a `C` case, narrowing `ContainsAny(code, "RC")` to just "R" survives
+// the whole suite, and that mutant reintroduces the mangled-path class the
+// rename half already cost a fix.
 func TestBundleDirtyPathsParsesTheZRecordLayout(t *testing.T) {
-	// Exactly the shape git emits: NUL-terminated records, the rename's ORIGINAL
-	// path following the new one as its own field.
+	// Exactly the shape git emits: NUL-terminated records, a rename's or a
+	// copy's ORIGINAL path following the new one as its own field.
 	raw := strings.Join([]string{
 		"R  entry.html\x00",
 		"index.html\x00",
+		"C  src/copy.html\x00",
+		"src/index.html\x00",
+		"M  src/index.html\x00", // git's own record for the copy's modified source
 		" M src/App.tsx\x00",
 		"?? notes.md\x00",
 		"?? dist/assets/app.js\x00", // excluded by the packager
 		"?? prev.zip\x00",           // excluded by the packager
 	}, "")
 
-	got := bundleDirtyPaths(raw, "")
+	got := bundleDirtyPaths(raw, "", "")
 	var paths []string
 	for _, e := range got {
 		paths = append(paths, e.code+"|"+e.path)
 	}
-	want := []string{"R |entry.html", " M|src/App.tsx", "??|notes.md"}
+	want := []string{
+		"R |entry.html",     // the rename's destination
+		"R |index.html",     // …and its ORIGINAL: the bundle lost a file HEAD has
+		"C |src/copy.html",  // a copy contributes its destination
+		"M |src/index.html", // …and its source only via git's OWN record for it
+		" M|src/App.tsx",
+		"??|notes.md",
+	}
 	if strings.Join(paths, ",") != strings.Join(want, ",") {
 		t.Errorf("bundleDirtyPaths =\n  %v\nwant\n  %v\n"+
-			"A rename is ONE entry (its second field is the original path, not a new record); "+
+			"A rename's second field is its ORIGINAL path — one record, but TWO bundle differences "+
+			"(the destination gained, the original lost). A copy's original is unchanged, so it "+
+			"contributes only the destination, and `M  src/index.html` must keep its own code. "+
 			"dist/ and *.zip are not bundle content.", paths, want)
+	}
+}
+
+// TestBundleDirtyPathsDoesNotCountACopySOURCE is the discriminating half of the
+// `C` case above, where the dedup cannot hide the difference: git has emitted NO
+// separate record for the source, so a parser that added a copy's original would
+// produce a second entry over a file that is byte-identical to HEAD — a false
+// refusal, which is the failure mode that teaches everyone to pass
+// --allow-dirty.
+func TestBundleDirtyPathsDoesNotCountACopySOURCE(t *testing.T) {
+	raw := "C  src/copy.html\x00src/index.html\x00"
+	got := bundleDirtyPaths(raw, "", "")
+	if len(got) != 1 || got[0].path != "src/copy.html" {
+		t.Errorf("bundleDirtyPaths(copy) = %v, want exactly [src/copy.html] — "+
+			"a copy leaves its ORIGINAL exactly as HEAD has it, so the original is not a "+
+			"difference between the bundle and HEAD", got)
+	}
+}
+
+// TestBundleDirtyPathsCountsARenameOriginalThePackagerWOULDDrop is the F3
+// fail-open as a literal record: the DESTINATION is packager-excluded, so
+// judging only the destination reported the tree CLEAN — while `src/App.tsx` is
+// in HEAD and is no longer in the bundle.
+func TestBundleDirtyPathsCountsARenameOriginalThePackagerWOULDDrop(t *testing.T) {
+	raw := "R  dist/App.tsx\x00src/App.tsx\x00"
+	got := bundleDirtyPaths(raw, "", "")
+	if len(got) != 1 || got[0].path != "src/App.tsx" {
+		t.Errorf("bundleDirtyPaths(rename into dist/) = %v, want exactly [src/App.tsx].\n"+
+			"dist/App.tsx is not bundle content, but the rename REMOVED src/App.tsx from the "+
+			"bundle and HEAD still has it — judging only the destination reports CLEAN.", got)
 	}
 }
 
 // TestBundleDirtyPathsDropsPathsOutsideThePackagedSubtree pins the prefix
 // filter on its own.
 //
-// 🔴 AND IT RECORDS A KNOWN REDUNDANCY. The `-- .` pathspec on the status call
-// and this prefix test select the SAME set — git's `.` pathspec means "paths
-// under the cwd", and `prefix` is that cwd spelled repo-root-relative — so
-// removing the pathspec is an EQUIVALENT mutation as far as the verdict goes,
-// and a mutation battery reports it as a survivor. Measured: with the pathspec
-// removed, all 2321 tests still pass. The pathspec is kept for COST (git stops
-// walking the rest of a monorepo), the prefix test for CORRECTNESS, and this
-// test is what keeps the correctness half from being deleted as "already
-// covered by the pathspec" — at which point the redundancy would be gone and
-// nothing would notice.
+// 🔴 IT USED TO CARRY A FALSE EQUIVALENCE, AND THE RETRACTION IS THE POINT.
+// This comment said the `-- .` pathspec and the prefix filter "select the SAME
+// set — measured, all 2321 tests still pass with the pathspec removed", and
+// therefore that the pathspec was a COST optimisation. That was wrong, and the
+// green suite that "proved" it only meant NO FIXTURE CROSSED THE SUBTREE
+// BOUNDARY. Measured on git 2.55.0, packaged dir packages/my-block, after
+// `git mv packages/my-block/src/App.tsx packages/other/App.tsx`:
+//
+//	WITH `-- .` :  [D  packages/my-block/src/App.tsx]            → refusal
+//	WITHOUT     :  [R  packages/other/App.tsx][packages/my-block/src/App.tsx]
+//
+// Repo-wide rename detection reports a NEW path outside the subtree; the prefix
+// filter dropped it, and the guard reported CLEAN while the bundle had lost a
+// file that is in HEAD. TestDirtyGuardRefusesARenameOutOfThePackagedSubtree is
+// that case as a real repository, and it is what makes the claim
+// un-re-derivable.
+//
+// A mutation battery may still report removing the pathspec as a survivor —
+// bundleDirtyPaths now judges a rename's ORIGINAL path too, which closes the
+// same hole a second way. That redundancy is deliberate and documented at the
+// status call; it is NOT licence to restate "equivalent — proven".
 func TestBundleDirtyPathsDropsPathsOutsideThePackagedSubtree(t *testing.T) {
 	raw := strings.Join([]string{
 		" M packages/my-block/src/App.tsx\x00",
 		" M packages/other/index.ts\x00",
 		"?? tools/script.sh\x00",
 	}, "")
-	got := bundleDirtyPaths(raw, "packages/my-block/")
+	got := bundleDirtyPaths(raw, "packages/my-block/", "")
 	if len(got) != 1 || got[0].path != "src/App.tsx" {
 		t.Errorf("bundleDirtyPaths(prefix=packages/my-block/) = %v, want exactly [src/App.tsx] — "+
 			"a sibling package is not in this bundle, and the surviving path must be relative to the packaged dir", got)
@@ -415,6 +506,183 @@ func TestDirtyGuardScopesToThePackagedSubtree(t *testing.T) {
 	}
 }
 
+// 🔴 TestDirtyGuardRefusesARenameOutOfThePackagedSubtree IS THE FIXTURE THAT
+// WAS MISSING, and its absence is the whole reason this file once published a
+// false "the pathspec and the prefix filter are equivalent — proven" claim: no
+// fixture crossed the subtree boundary, so the mutant that removes `-- .`
+// survived the entire suite.
+//
+// Measured on git 2.55.0, packaged dir packages/my-block:
+//
+//	WITH `-- .` :  [D  packages/my-block/src/App.tsx]
+//	WITHOUT     :  [R  packages/other/App.tsx][packages/my-block/src/App.tsx]
+//
+// Without the pathspec, repo-wide rename detection reports a NEW path outside
+// the packaged subtree. Judging only that path drops the entry — and the bundle
+// has silently LOST src/App.tsx, which is in HEAD.
+//
+// 🔴 WHAT THIS FIXTURE PINS, MEASURED RATHER THAN ASSUMED. Two independent
+// mechanisms now close that hole — the `-- .` pathspec, and bundleDirtyPaths
+// judging a rename's ORIGINAL — so the fixture kills their CONJUNCTION and
+// neither singleton:
+//
+//	pathspec removed only          → this test PASSES
+//	rename-original handling only  → this test PASSES
+//	BOTH removed (the pre-fix code) → this test FAILS
+//
+// Do not read the first two rows as "either mechanism is dead". They are the
+// redundancy, and the last row is the defect they redundantly prevent. The
+// pathspec has a second, non-redundant job (bounding the --untracked-files=all
+// walk) pinned structurally by
+// TestDirtyGuardScopesTheStatusCallToThePackagedSubtree; the rename-original
+// handling has one the pathspec cannot do at all, pinned by
+// TestDirtyGuardRefusesARenameIntoAPackagerExcludedDir.
+func TestDirtyGuardRefusesARenameOutOfThePackagedSubtree(t *testing.T) {
+	f := cleanAppFixture(t, "packages/my-block")
+	f.write("packages/my-block/src/App.tsx", "export default 1")
+	f.commit("app source", "packages/my-block/src/App.tsx")
+	mkdirAllT(t, f.appDir("packages/other"))
+	f.git("mv", "packages/my-block/src/App.tsx", "packages/other/App.tsx")
+
+	dir := f.appDir("packages/my-block")
+
+	// POSITIVE CONTROL on the fixture: src/App.tsx really is in HEAD and really
+	// is gone from the packaged directory, so "the bundle lost a committed file"
+	// is a fact about this tree and not an assumption.
+	if out := f.git("ls-tree", "-r", "--name-only", "HEAD"); !strings.Contains(out, "packages/my-block/src/App.tsx") {
+		t.Fatalf("control: HEAD must hold packages/my-block/src/App.tsx, got:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "src", "App.tsx")); !os.IsNotExist(err) {
+		t.Fatalf("control: the rename must have removed src/App.tsx from the packaged dir, stat err = %v", err)
+	}
+
+	_, err := guardOn(t, dir, false)
+	if err == nil {
+		t.Fatal("FAIL-OPEN: the bundle lost src/App.tsx (which is in HEAD) and the guard reports CLEAN")
+	}
+	if !errors.Is(err, ErrDirtyWorkTree) {
+		t.Errorf("refusal must carry ErrDirtyWorkTree, got %#v", err)
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "src/App.tsx") {
+		t.Errorf("the refusal must NAME the file the bundle lost, relative to the packaged dir, got:\n%s", msg)
+	}
+	if strings.Contains(msg, "packages/other") {
+		t.Errorf("the rename's destination is in no bundle and must not be named, got:\n%s", msg)
+	}
+}
+
+// TestDirtyGuardRefusesARenameIntoAPackagerExcludedDir is the same fail-open
+// WITHOUT the subtree boundary — the pathspec cannot help here, because the
+// whole rename is inside the packaged directory. `git mv src/App.tsx
+// dist/App.tsx` emits `R  dist/App.tsx` + the original; `dist/` is not bundle
+// content, so judging only the destination dropped the entry and reported
+// CLEAN, while src/App.tsx is in HEAD and is no longer in the zip.
+func TestDirtyGuardRefusesARenameIntoAPackagerExcludedDir(t *testing.T) {
+	f := cleanAppFixture(t, "")
+	f.write("src/App.tsx", "export default 1")
+	f.commit("app source", "src/App.tsx")
+	mkdirAllT(t, f.appDir("dist"))
+	f.git("mv", "src/App.tsx", "dist/App.tsx")
+
+	_, err := guardOn(t, f.root, false)
+	if err == nil {
+		t.Fatal("FAIL-OPEN: src/App.tsx is in HEAD and the rename moved it to a path the packager " +
+			"drops, so the bundle lost it — the guard must not report CLEAN")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "src/App.tsx") {
+		t.Errorf("the refusal must name the file the bundle lost, got:\n%s", msg)
+	}
+	// NEGATIVE CONTROL on the packager filter: the DESTINATION is not bundle
+	// content and must not be named, or this test is satisfied by a guard that
+	// stopped excluding dist/ altogether.
+	if strings.Contains(msg, "dist/App.tsx") {
+		t.Errorf("dist/ is not in the bundle and must not appear in the refusal, got:\n%s", msg)
+	}
+}
+
+// TestDirtyGuardHandlesAPackageDirWhoseNameBeginsWithASpace pins the
+// `--show-prefix` trimming.
+//
+// 🔴 A PATH MAY LEGITIMATELY BEGIN WITH A SPACE, so TrimSpace on rev-parse's
+// answer is not tidying — it CORRUPTS the prefix. With the package at
+// ` spacey/app`, git answers " spacey/app/" and TrimSpace makes it
+// "spacey/app/"; every status path then fails the HasPrefix test and the guard
+// reports a filthy tree CLEAN. Reproduced on git 2.55.0.
+func TestDirtyGuardHandlesAPackageDirWhoseNameBeginsWithASpace(t *testing.T) {
+	const appRel = " spacey/app"
+	f := cleanAppFixture(t, appRel)
+	dir := f.appDir(appRel)
+
+	// POSITIVE CONTROL: git really does answer with the leading space, so the
+	// case below is about the guard and not about a directory git renamed.
+	prefix := f.gitIn(dir, "rev-parse", "--show-prefix")
+	if !strings.HasPrefix(prefix, " spacey/") {
+		t.Fatalf("control: --show-prefix must answer with the leading space, got %q", prefix)
+	}
+
+	f.write(appRel+"/src/App.tsx", "uncommitted")
+	_, err := guardOn(t, dir, false)
+	if err == nil {
+		t.Fatal("an uncommitted src/App.tsx goes into the bundle and must be refused — " +
+			"trimming WHITESPACE (rather than the line ending) off --show-prefix drops every path")
+	}
+	if !strings.Contains(err.Error(), "src/App.tsx") {
+		t.Errorf("the refusal must name the path relative to the packaged dir, got:\n%s", err.Error())
+	}
+}
+
+// TestDirtyGuardScopesTheStatusCallToThePackagedSubtree is a STRUCTURAL pin,
+// and it says so.
+//
+// The `-- .` pathspec's behavioural effect is now redundant with
+// bundleDirtyPaths judging a rename's original path (see
+// TestDirtyGuardRefusesARenameOutOfThePackagedSubtree, which passes either
+// way), so no black-box fixture can kill a mutant that deletes it. What the
+// pathspec still buys is real but not a verdict: it is the only thing bounding
+// the `--untracked-files=all` walk to the packaged subtree in a monorepo, and
+// it closes the boundary case by a mechanism that does not depend on parsing
+// rename records correctly. This test exists so deleting it is a deliberate
+// act.
+func TestDirtyGuardScopesTheStatusCallToThePackagedSubtree(t *testing.T) {
+	var statusArgs []string
+	spy := func(dir string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "rev-parse" {
+			return "true\npackages/my-block/\n", nil
+		}
+		for _, a := range args {
+			if a == "status" {
+				statusArgs = append([]string{}, args...)
+				return "", nil
+			}
+		}
+		return "", nil
+	}
+	var warn bytes.Buffer
+	if err := checkWorkTreeClean(spy, &warn, "/some/dir", dirtySlug, "0.6.1", false); err != nil {
+		t.Fatalf("the stub reports a clean tree; got %v", err)
+	}
+	if len(statusArgs) < 2 || statusArgs[len(statusArgs)-2] != "--" || statusArgs[len(statusArgs)-1] != "." {
+		t.Errorf("the status call must end with the `-- .` pathspec, got %v.\n"+
+			"Without it git runs rename detection over the WHOLE repo and reports destinations "+
+			"outside the packaged subtree, and --untracked-files=all walks the whole monorepo.",
+			statusArgs)
+	}
+	if !containsArg(statusArgs, "--untracked-files=all") {
+		t.Errorf("the status call must pass --untracked-files=all, got %v", statusArgs)
+	}
+}
+
+func containsArg(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
 // --- WHAT COUNTS AS DIRTY: the packager's own exclusions ---
 
 // TestDirtyGuardIgnoresWhatTheBundleDoesNotCarry is decision 2's boundary. None
@@ -470,6 +738,221 @@ func TestDirtyGuardStillSeesWhatTheBundleDOESCarry(t *testing.T) {
 	}
 }
 
+// --- FILE TYPE: `git status` reports symlinks, the packager drops them ---
+
+// symlinkOrSkip creates a symlink in the fixture, skipping the test where the
+// filesystem or OS will not have one.
+func symlinkOrSkip(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		t.Skipf("cannot create a symlink here (%v) — this test is about file TYPE", err)
+	}
+}
+
+// 🔴 TestDirtyGuardIgnoresAnUntrackedSymlink is a FALSE REFUSAL over a message
+// that is factually wrong. pkgzip.Build skips every non-regular file, so a
+// symlink is in no zip; `git status` reports it anyway, and IsExcludedPath —
+// which takes a string — cannot tell. Measured against the built binary: a repo
+// clean but for one untracked symlink printed
+//
+//	1 path(s) that go into the bundle are not committed:
+//	  ?? alias.js
+//
+// and exited 1, while the zip that run would produce was
+// [app.js block.manifest.json index.html]. Release blocked over a path the
+// bundle does not carry.
+func TestDirtyGuardIgnoresAnUntrackedSymlink(t *testing.T) {
+	f := cleanAppFixture(t, "")
+	symlinkOrSkip(t, "index.html", filepath.Join(f.root, "alias.js"))
+
+	// POSITIVE CONTROL: git really does report the symlink, so a pass below is
+	// the guard's decision and not git's silence.
+	if out := f.git("status", "--porcelain", "--untracked-files=all"); !strings.Contains(out, "alias.js") {
+		t.Fatalf("control: git must report the untracked symlink, got:\n%s", out)
+	}
+
+	if _, err := guardOn(t, f.root, false); err != nil {
+		t.Fatalf("a symlink is in NO bundle (Build skips non-regular files), so it is not a "+
+			"difference between the bundle and HEAD; got: %v", err)
+	}
+}
+
+// TestDirtyGuardIgnoresAStagedSymlink is the `A` half of "in no commit".
+// `git add`ing the symlink changes the porcelain code from `??` to `A `, and a
+// filter that only understood `??` would refuse over the same non-bundled file
+// one `git add` later.
+func TestDirtyGuardIgnoresAStagedSymlink(t *testing.T) {
+	f := cleanAppFixture(t, "")
+	symlinkOrSkip(t, "index.html", filepath.Join(f.root, "alias.js"))
+	f.git("add", "--", "alias.js")
+
+	// POSITIVE CONTROL on the code letter: this arm must really be the `A` one,
+	// or it is a duplicate of the untracked test.
+	if out := f.git("status", "--porcelain", "--untracked-files=all"); !strings.Contains(out, "A  alias.js") {
+		t.Fatalf("control: the symlink must be STAGED (code `A `), got:\n%s", out)
+	}
+	if _, err := guardOn(t, f.root, false); err != nil {
+		t.Fatalf("a staged symlink is still in NO bundle; got: %v", err)
+	}
+}
+
+// TestBundleDirtyPathsReportsAPathOnce pins the de-duplication.
+//
+// The input is SYNTHETIC — git does not emit these two records together today,
+// because a copy's source is reported by its own record and a rename's original
+// is gone. It is here so that a future change routing a second path into the
+// same entry list (adding a copy's source, say) shows up as a wrong "N path(s)"
+// count instead of being absorbed silently.
+func TestBundleDirtyPathsReportsAPathOnce(t *testing.T) {
+	raw := "R  entry.html\x00src/App.tsx\x00 M src/App.tsx\x00"
+	got := bundleDirtyPaths(raw, "", "")
+	var paths []string
+	for _, e := range got {
+		paths = append(paths, e.path)
+	}
+	if len(got) != 2 {
+		t.Errorf("bundleDirtyPaths = %v (%d entries), want 2 — one path must be counted once, "+
+			"or the refusal's \"N path(s)\" total overstates what is uncommitted", paths, len(got))
+	}
+}
+
+// TestDirtyGuardStillRefusesARegularFileOfTheSameName is the negative control
+// on the test above: identical path, identical status record, the only
+// difference is the file TYPE. Without it, "ignores a symlink" is satisfied by a
+// guard that stopped seeing untracked files at all.
+func TestDirtyGuardStillRefusesARegularFileOfTheSameName(t *testing.T) {
+	f := cleanAppFixture(t, "")
+	f.write("alias.js", "export default 1")
+
+	_, err := guardOn(t, f.root, false)
+	if err == nil {
+		t.Fatal("an untracked REGULAR alias.js is packaged into the bundle and must be refused")
+	}
+	if !strings.Contains(err.Error(), "alias.js") {
+		t.Errorf("the refusal must name alias.js, got:\n%s", err.Error())
+	}
+}
+
+// 🔴 TestDirtyGuardRefusesATrackedFileReplacedByASymlink is the boundary the
+// file-type filter must NOT cross. Here the path IS in HEAD as a regular file
+// and is now a symlink on disk, so the bundle LOSES committed content — exactly
+// the divergence this guard exists to catch. A type check applied to tracked
+// paths would silence it, so it is applied only to paths that are in no commit.
+func TestDirtyGuardRefusesATrackedFileReplacedByASymlink(t *testing.T) {
+	f := cleanAppFixture(t, "")
+	f.write("assets/logo.svg", "<svg/>")
+	f.commit("logo", "assets/logo.svg")
+	p := filepath.Join(f.root, "assets", "logo.svg")
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	symlinkOrSkip(t, "../index.html", p)
+
+	_, err := guardOn(t, f.root, false)
+	if err == nil {
+		t.Fatal("assets/logo.svg is a regular file in HEAD and a symlink on disk — the packager " +
+			"drops the symlink, so the bundle no longer carries a file that IS committed")
+	}
+	if !strings.Contains(err.Error(), "assets/logo.svg") {
+		t.Errorf("the refusal must name the path the bundle lost, got:\n%s", err.Error())
+	}
+}
+
+// --- WHICH REPO: the environment beats `-C`, so it must be scrubbed ---
+
+// TestGitScrubbedEnvRemovesRelocatorsRatherThanEmptyingThem is the unit half.
+//
+// 🔴 THE "REMOVES, NOT EMPTIES" HALF IS THE LOAD-BEARING ONE. git does not read
+// an empty GIT_DIR as unset: `GIT_DIR= git status` fails with
+// `fatal: not a git repository` naming the empty string (measured, git 2.55.0),
+// which this guard
+// classifies as "no repo here" and proceeds. So the obvious one-liner —
+// appending "GIT_DIR=" to os.Environ() — would fail the guard OPEN on every
+// invocation while reading as a hardening change.
+func TestGitScrubbedEnvRemovesRelocatorsRatherThanEmptyingThem(t *testing.T) {
+	in := []string{
+		"PATH=/usr/bin",
+		"GIT_DIR=/elsewhere/.git",
+		"GIT_WORK_TREE=/elsewhere",
+		"GIT_INDEX_FILE=/elsewhere/.git/index",
+		"GIT_COMMON_DIR=/elsewhere/.git",
+		"GIT_OBJECT_DIRECTORY=/elsewhere/.git/objects",
+		"GIT_ALTERNATE_OBJECT_DIRECTORIES=/x",
+		"GIT_CEILING_DIRECTORIES=/",
+		// Config and identity are the USER's answer about their own tree and
+		// must survive — scrubbing them would change what `git status` reports.
+		"GIT_CONFIG_GLOBAL=/dev/null",
+		"GIT_AUTHOR_NAME=someone",
+		"GITHUB_TOKEN=keep-me",
+	}
+	got := gitScrubbedEnv(in)
+	for _, kv := range got {
+		name, _, _ := strings.Cut(kv, "=")
+		for _, banned := range gitEnvOverrides {
+			if name == banned {
+				t.Errorf("%s survived the scrub as %q — it must be REMOVED from the environment", banned, kv)
+			}
+		}
+	}
+	for _, want := range []string{"PATH=/usr/bin", "GIT_CONFIG_GLOBAL=/dev/null", "GIT_AUTHOR_NAME=someone", "GITHUB_TOKEN=keep-me"} {
+		if !containsArg(got, want) {
+			t.Errorf("the scrub dropped %q; it must remove only the variables that RELOCATE the repo", want)
+		}
+	}
+	// POSITIVE CONTROL on the loop: the scrub really did remove something, so
+	// the absences above are not a fact about an empty input.
+	if len(got) != len(in)-len(gitEnvOverrides) {
+		t.Errorf("scrub removed %d entries, want %d", len(in)-len(got), len(gitEnvOverrides))
+	}
+}
+
+// 🔴 TestDirtyGuardIsNotRelocatedByGIT_DIR is the same defect as "gitOutput
+// dropped its -C", reached through the ENVIRONMENT instead of argv — and it is
+// reachable in production because git exports GIT_DIR and GIT_INDEX_FILE to its
+// hooks. A release script running `civitai app submit` from a `pre-push` /
+// `post-commit` hook, or under `git rebase -x`, inherits them.
+func TestDirtyGuardIsNotRelocatedByGIT_DIR(t *testing.T) {
+	// Build BOTH fixtures before touching the environment — the fixture helper
+	// shells out to git too, and would be relocated as well.
+	target := cleanAppFixture(t, "")
+	target.write("src/App.tsx", "uncommitted")
+	other := newGitFixture(t)
+	other.write("readme.md", "x")
+	other.commit("init", "readme.md")
+
+	t.Setenv("GIT_DIR", filepath.Join(other.root, ".git"))
+	t.Setenv("GIT_WORK_TREE", other.root)
+
+	// 🔴 CONTROL ARM FIRST: prove the environment really does relocate git here,
+	// or the assertion below is a fact about a variable nothing reads. This
+	// runner is gitOutput WITHOUT the scrub.
+	unscrubbed := func(dir string, args ...string) (string, error) {
+		c := exec.Command("git", append([]string{"-C", dir, "--no-optional-locks"}, args...)...)
+		var out, errb bytes.Buffer
+		c.Stdout = &out
+		c.Stderr = &errb
+		if err := c.Run(); err != nil {
+			return out.String(), fmt.Errorf("git %s: %s", strings.Join(args, " "), strings.TrimSpace(errb.String()))
+		}
+		return out.String(), nil
+	}
+	var ctlWarn bytes.Buffer
+	if err := checkWorkTreeClean(unscrubbed, &ctlWarn, target.root, dirtySlug, "0.6.1", false); err != nil {
+		t.Fatalf("control: an UNSCRUBBED runner should be relocated by GIT_DIR and report clean; "+
+			"got a refusal, so this test cannot attribute anything to the scrub: %v", err)
+	}
+
+	// The real runner scrubs, so it must still see the packaged tree.
+	_, err := guardOn(t, target.root, false)
+	if err == nil {
+		t.Fatal("GIT_DIR/GIT_WORK_TREE pointed the guard at an unrelated CLEAN repo: the packaged " +
+			"tree is dirty and was not inspected at all")
+	}
+	if !strings.Contains(err.Error(), "src/App.tsx") {
+		t.Errorf("the refusal must name the PACKAGED tree's path, got:\n%s", err.Error())
+	}
+}
+
 // --- NEGATIVE CONTROLS: every case that must still SUCCEED ---
 
 // 🔴 TestDirtyGuardNoRepoAtAllProceedsSilently IS THE ONE THAT BREAKS THE
@@ -494,6 +977,32 @@ func TestDirtyGuardNoRepoAtAllProceedsSilently(t *testing.T) {
 	}
 	if warn != "" {
 		t.Errorf("no repo must be SILENT; a warning on every scaffolded submit is noise. got:\n%s", warn)
+	}
+}
+
+// TestDirtyGuardRefusesAFreshRepoWithNoCommits pins the row the issue's matrix
+// and the README both missed: `git init` with nothing committed yet.
+//
+// It is not a bug — nothing in the bundle is in a commit, which is literally
+// what the guard checks, and it is the state most likely to produce an
+// untraceable release. But it is not "repo, dirty" either: every path is
+// refused, including the manifest, which surprises anyone who reads the matrix.
+// So it is DOCUMENTED (README Troubleshooting) and pinned here, and the scaffold
+// path is unaffected because `civitai app scaffold` runs no `git init`.
+func TestDirtyGuardRefusesAFreshRepoWithNoCommits(t *testing.T) {
+	f := newGitFixture(t) // init only — never committed
+	writeManifestVersion(t, f.root, dirtySlug, "0.6.1")
+
+	_, err := guardOn(t, f.root, false)
+	if err == nil {
+		t.Fatal("a repository with no commits holds NOTHING in a commit, so every bundle path " +
+			"differs from HEAD and the submit must be refused")
+	}
+	msg := err.Error()
+	for _, want := range []string{"block.manifest.json", "index.html", "--allow-dirty"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal must name %q so the state is diagnosable, got:\n%s", want, msg)
+		}
 	}
 }
 
