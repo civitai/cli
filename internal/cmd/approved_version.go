@@ -111,7 +111,7 @@ func highestApprovedVersion(subs []appapi.Submission, slug string) approvedPeak 
 	var peak approvedPeak
 	for i := range subs {
 		s := subs[i]
-		if !sameSlug(s.BlockID, slug) {
+		if !appapi.SameSlug(s.BlockID, slug) {
 			continue
 		}
 		peak.slugRows++
@@ -132,30 +132,13 @@ func highestApprovedVersion(subs []appapi.Submission, slug string) approvedPeak 
 	return peak
 }
 
-// sameSlug compares a listing row's blockId to the manifest's slug.
-//
-// 🔴 IT NORMALISES, and that is a deliberate reversal of one copy's original
-// exact match — but it is DEFENCE IN DEPTH against an undocumented server
-// change, NOT a live hazard, and an earlier version of this comment claimed the
-// stronger thing. The route as it stands today cannot hand back a mis-cased
-// blockId: submissions.ts filters with `where.slug = blockId` (an exact Prisma
-// match) and echoes `blockId: row.slug` from the same non-nullable column, so
-// every row it returns matches the value asked for byte-for-byte. In the
-// mis-casing scenario the server returns ZERO rows, not mis-cased ones — which
-// is the announce branch's case, not this one.
-//
-// What the normalisation buys is the asymmetry: status and deployState were
-// already compared case- and whitespace-insensitively while the slug was
-// compared byte-for-byte, and the slug is the field whose mismatch is SILENT (a
-// non-matching slug lands in the "no approved rows" branch, which proceeds
-// without a word because that is what a genuine first submit looks like). So if
-// that server contract ever changed, the whole #412 feature would switch off on
-// exactly the app it exists to protect, with no output to notice. The check is
-// two string compares; keeping it is cheap insurance, and claiming it closes a
-// hazard that exists today is not true.
-func sameSlug(rowBlockID, slug string) bool {
-	return strings.EqualFold(strings.TrimSpace(rowBlockID), strings.TrimSpace(slug))
-}
+// The row-vs-slug compare used to live HERE, as this package's unexported
+// `sameSlug`, and it was the ONLY one of the four blockId comparisons in this
+// binary that normalised. It is now appapi.SameSlug — same two string compares,
+// same defence-in-depth claim, one definition. See internal/appapi/slug.go for
+// why it moved to appapi (that package owns Submission.BlockID and cannot
+// import internal/cmd) and what the normalisation is and is not a defence
+// against.
 
 // isApprovedStatus reports whether a submission row's status means APPROVED.
 //

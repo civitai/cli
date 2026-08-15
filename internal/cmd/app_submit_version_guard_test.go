@@ -933,7 +933,7 @@ func TestHighestApprovedVersionNormalisesTheSlug(t *testing.T) {
 		}
 	}
 	// Negative control, and the reason normalising is safe: a DIFFERENT app is
-	// still a different app. Without this the mutation `sameSlug -> true` passes.
+	// still a different app. Without this the mutation `appapi.SameSlug -> true` passes.
 	for _, blockID := range []string{"gen-matrix", "custom-generators-2", "custom", ""} {
 		rows := []appapi.Submission{
 			{ID: "pubreq_other", BlockID: blockID, Version: "9.9.9", Status: "approved",
@@ -1184,7 +1184,7 @@ func TestAppSubmitNeverCallsAServingRowNotLiveEndToEnd(t *testing.T) {
 // not require blockId and `--skip-validate` waives the schema, so the guard can
 // be handed an EMPTY slug. Before this branch existed the empty slug produced an
 // UNNARROWED listing read (submissionsURL omits an empty blockId), every row
-// then failed sameSlug, and the mismatch announcement fired with the name
+// then failed appapi.SameSlug, and the mismatch announcement fired with the name
 // spliced in blank: "none of them for  — … If  is already published, this is a
 // blockId mismatch rather than a first submit." That misdiagnoses "your manifest
 // has no blockId" as "your blockId does not match the server's".
