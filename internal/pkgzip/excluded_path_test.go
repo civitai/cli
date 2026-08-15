@@ -156,7 +156,20 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 		".env.local",
 		".envrc",
 		"nested/.env.development.local",
+		// 🔴 #409: a linked worktree's / submodule's `.git` is a regular FILE.
+		// It is here because the two sides used to AGREE about it — and agree
+		// that it ships. Both now drop it, and a fix applied to only one side
+		// (an inline check in Build's walk instead of in the shared
+		// isExcludedFile) makes this test red, which is what makes the fix
+		// observable through the seam rather than only through Build.
+		".git",
+		"sub/.git",
 	}
+	// The names that merely START with ".git" stay in the fixture as content:
+	// both sides must keep shipping them, and a prefix match would make Build
+	// and the predicate agree on a WRONG answer, which only the exact-name
+	// assertions in git_metadata_file_test.go can catch.
+	files = append(files, ".gitignore", ".gitattributes", "src/.gitkeep")
 	for _, f := range files {
 		writeFile(t, dir, f, "x")
 	}
