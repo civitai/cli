@@ -175,6 +175,7 @@ var exitCodeDocs = []ExitCodeDoc{
 		Detail: []string{
 			"Usually an HTTP 404, but not always: some lookups answer `200` with an empty result set instead (`civitai app status <slug>` for an unregistered slug, `civitai users get` for an unknown username), and those exit `4` too.",
 			"The same question therefore exits the same way however the API happens to phrase the miss.",
+			"**An app that EXISTS but is `offsite` also exits `4` here, and that is deliberate.** `civitai app status <slug>` and `civitai app listing …` resolve through the app's block submission, which an offsite app never has, so the *resource these commands look up* is genuinely absent even though the app is not. Only the message changes — it says the app is offsite and names a next step that can work, instead of `civitai app submit`, which cannot. This is **not** the `has no approved App Block yet` case on `1` above, which exits `1` because the thing looked up (analytics) is expected to appear later; an offsite app's block submission never will.",
 		},
 	},
 	{

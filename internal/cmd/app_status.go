@@ -108,7 +108,15 @@ and deployed (deployState 'live').`,
 				// check does still have to ask — see driftLister.
 				sub, rows, err := client.GetSubmissionRows(ctx, idFlag, blockID)
 				if err != nil {
-					return err
+					// civitai/cli#422 — see app_offsite.go. The selector mirrors
+					// submissionsURL/submissionSubject: the id WINS when both are
+					// given, and only a slug can name an app, so a `--id` lookup
+					// probes nothing (an empty slug makes offsiteApp a no-op).
+					probe := blockID
+					if idFlag != "" {
+						probe = ""
+					}
+					return explainOffsiteMiss(ctx, probe, err, offsiteStatusRefusal)
 				}
 				// 🔴 RENDER FIRST. The drift line is ADVISORY and may not even
 				// print; the answer below is already in hand. Running the check
