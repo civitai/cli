@@ -61,10 +61,21 @@ snapshot:
 changelog:
   sort: asc
   filters:
+    # 🔴 THE OPTIONAL SCOPE GROUP IS LOAD-BEARING. These anchors used to read
+    # "^docs:" / "^test:" / "^chore:", which match only the UNSCOPED
+    # conventional-commit form. This repo writes scoped subjects
+    # (`chore(scaffold):`, `docs(release):`), so every one of them landed in the
+    # published changelog anyway. That is the "leaking commits" number the
+    # release notes in claudedocs/ have re-derived BY HAND for three releases
+    # running (v0.1.93, v0.1.94, v0.1.95) without anyone tracing it to the
+    # regex. Confirmed against v0.1.95's generated body, which carries both
+    # `chore(scaffold): bump @civitai/* pins` and `docs(release): v0.1.94
+    # shipped`. Verify a change here on the NEXT release's body — a filter that
+    # matches nothing looks identical to a filter with nothing to match.
     exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore:"
+      - "^docs(\\(.*\\))?:"
+      - "^test(\\(.*\\))?:"
+      - "^chore(\\(.*\\))?:"
 
 # Homebrew tap (cask). goreleaser v2 replaced `brews:` with `homebrew_casks:`.
 # ENABLED 2026-06-24: `civitai/homebrew-tap` is PUBLIC (audited clean) and the
