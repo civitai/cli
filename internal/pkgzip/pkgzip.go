@@ -29,6 +29,7 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -298,6 +299,97 @@ func Build(dir string) (*Result, error) {
 func IsExcluded(name string) bool {
 	_, ok := excludedDirs[name]
 	return ok
+}
+
+// IsExcludedPath answers, for a whole project-relative PATH, the question Build
+// answers one walk step at a time: would this path be left OUT of the bundle?
+//
+// It exists because the dirty-tree guard (issue #411, app_submit_dirty_guard.go)
+// is handed paths by `git status`, not by a directory walk, and has to decide
+// whether each one is bundle content. A path git reports that the packager drops
+// — an untracked `dist/`, a stray `.zip` from a previous --package-only run, a
+// `.env.local` — is not a difference between the bundle and HEAD, and refusing a
+// submit over it would train everyone to pass --allow-dirty.
+//
+// 🔴 IT REPRODUCES Build'S DECISIONS RATHER THAN SHARING THEM, because Build
+// walks a live filesystem and this takes a string. That is a seam, and a seam is
+// where the two drift: adding an exclusion to Build without adding it here makes
+// the guard fire on files that are not in the bundle. TestIsExcludedPathAgreesWithBuild
+// pins the two against each other over one tree rather than trusting the
+// reading, and it fails when either side gains an exclusion the other lacks.
+//
+// The rules, matching Build exactly:
+//   - any DIRECTORY component is excluded by name (excludedDirs), and that
+//     truncates the walk — everything under it is out.
+//   - the final component, when it is a FILE, is excluded by isExcludedFile.
+//     Build applies the directory rule only to directories, so a plain file
+//     named `dist` is bundle content, and so it is here.
+//
+// A trailing "/" marks the path as a DIRECTORY — git's porcelain spelling for an
+// untracked directory (`?? dist/`) — so the final component takes the directory
+// rule instead of the file rule.
+//
+// 🔴 A PATH CANNOT ANSWER THE FILE-TYPE HALF OF Build'S RULE. Build also drops
+// every non-regular file, and no spelling of a path reveals that it is a
+// symlink. A caller that HAS the filesystem must use IsExcludedEntry instead —
+// this one answers "the packager keeps it" for a symlink the packager silently
+// drops.
+func IsExcludedPath(rel string) bool {
+	rel = strings.TrimPrefix(filepath.ToSlash(rel), "./")
+	isDir := strings.HasSuffix(rel, "/")
+	rel = strings.Trim(rel, "/")
+	if rel == "" {
+		return false
+	}
+	parts := strings.Split(rel, "/")
+	for i, p := range parts {
+		if p == "" || p == "." {
+			continue
+		}
+		if i < len(parts)-1 || isDir {
+			if IsExcluded(p) {
+				return true
+			}
+			continue
+		}
+		if isExcludedFile(p) {
+			return true
+		}
+	}
+	return false
+}
+
+// IsExcludedEntry answers IsExcludedPath's question for an entry whose FILE
+// TYPE is known, and it is the predicate a caller holding a real filesystem
+// should use.
+//
+// 🔴 IT EXISTS BECAUSE IsExcludedPath TAKES A STRING AND Build DOES NOT.
+// Build's walk drops every non-regular file — symlinks, sockets, fifos, devices
+// (pkgzip.go, "Skip non-regular files") — and a path alone cannot carry that.
+// `git status` DOES report a symlink, so the dirty-tree guard (#411) asking
+// IsExcludedPath about one was told "the packager bundles this" and refused a
+// submit over a file that is in no zip. Measured against the built binary: a
+// repo clean but for one untracked symlink `alias.js` printed
+// "1 path(s) that go into the bundle are not committed: ?? alias.js" and exited
+// 1, while the zip that run would have produced was
+// [app.js block.manifest.json index.html] — the refusal named a path the bundle
+// does not carry, so both the verdict and the sentence were wrong.
+//
+// mode is the entry's own mode as reported by Lstat/DirEntry.Type() — NOT the
+// mode of a symlink's target, because Build does not follow the link either.
+func IsExcludedEntry(rel string, mode fs.FileMode) bool {
+	if mode.IsDir() {
+		// Build applies the directory rule to directories; the trailing "/" is
+		// how IsExcludedPath is told to do the same.
+		if !strings.HasSuffix(rel, "/") {
+			rel += "/"
+		}
+		return IsExcludedPath(rel)
+	}
+	if !mode.IsRegular() {
+		return true
+	}
+	return IsExcludedPath(rel)
 }
 
 // ExcludedNames returns the excluded directory names, sorted.

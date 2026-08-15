@@ -25,6 +25,7 @@ func newAppSubmitCmd() *cobra.Command {
 	var skipValidate bool
 	var assumeYes bool
 	var allowDowngrade bool
+	var allowDirty bool
 
 	cmd := &cobra.Command{
 		Use:   "submit [dir]",
@@ -60,11 +61,21 @@ Version guard:
   deployment on approval, which is what a repo that is behind what was last
   released produces naturally. Pass --allow-downgrade for a deliberate rollback.
 
+Dirty-tree guard:
+  When the packaged directory is inside a git work tree, a submit that would
+  really upload REFUSES while files that go into the bundle are uncommitted —
+  the bundle is built from what is on disk, so approving one deploys code that
+  exists in no commit. Pass --allow-dirty to submit the tree as it is. This
+  degrades: a directory with no git repo (every scaffolded app starts that way)
+  submits exactly as before, and a clean tree whose HEAD is on no remote warns
+  rather than refusing.
+
 Defaults to the current directory.`,
 		Example: `  civitai app submit                    # validate + package + confirm + submit
   civitai app submit --yes              # skip the confirmation prompt (scripts/CI)
   civitai app submit --package-only     # just write the .zip (safe preview, never submits)
   civitai app submit --allow-downgrade  # deliberate rollback below the approved version
+  civitai app submit --allow-dirty      # submit uncommitted working-tree changes on purpose
   civitai app submit -o my-block.zip ./my-block`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -143,11 +154,35 @@ Defaults to the current directory.`,
 			var client *appapi.Client
 			if canUpload {
 				client = appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
+
+				// 2a. DIRTY-WORK-TREE GUARD (issue #411), BEFORE the
+				// confirmation prompt.
+				//
+				// 🔴 EARLIER THAN THE VERSION GUARD, AND THE DIFFERENCE IS THE
+				// NETWORK. checkVersionNotRegression sits after confirmSubmit
+				// because moving it earlier would give a bare non-TTY `civitai
+				// app submit` — the accidental-footgun invocation, which refuses
+				// for lack of --yes — an API read it does not have today, and
+				// TestAppSubmit_NonTTYRefusesWithoutYes_NoNetworkCall pins that.
+				// This guard reads only the local filesystem through `git`, so
+				// running it first acquires nothing: that test's invocation still
+				// touches no network, and it keeps the CLI from asking "Submit
+				// for review? [y/N]" about a submit it has already decided to
+				// refuse. Pinned by TestDirtyGuardRefusesBeforePrompting.
+				//
+				// It runs only on the canUpload path, for the same reason the
+				// version guard does: --package-only and the no-token fallback
+				// never reach the server, so nothing there can publish an
+				// untraceable bundle.
+				if err := checkWorkTreeClean(gitOutput, cmd.ErrOrStderr(), dir, m.BlockID, m.Version, allowDirty); err != nil {
+					return err
+				}
+
 				if err := confirmSubmit(cmd, m, cfg.BaseURL(), assumeYes); err != nil {
 					return err
 				}
 
-				// 2a. MONOTONIC-VERSION GUARD (issue #412), between the
+				// 2b. MONOTONIC-VERSION GUARD (issue #412), between the
 				// confirmation and the packaging.
 				//
 				// 🔴 THE ORDER IS DELIBERATE: the free LOCAL gate runs before
@@ -213,6 +248,7 @@ Defaults to the current directory.`,
 	cmd.Flags().BoolVar(&skipValidate, "skip-validate", false, "skip manifest validation before packaging")
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false, "skip the confirmation prompt and submit (for scripts/CI)")
 	cmd.Flags().BoolVar(&allowDowngrade, "allow-downgrade", false, "submit even when the version is not above the highest approved one (deliberate rollback)")
+	cmd.Flags().BoolVar(&allowDirty, "allow-dirty", false, "submit even when the packaged directory has uncommitted git changes")
 	return cmd
 }
 

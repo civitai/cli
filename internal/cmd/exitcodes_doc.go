@@ -138,6 +138,12 @@ var exitCodeDocs = []ExitCodeDoc{
 			// path is well-formed) and the PROJECT is wrong relative to what is
 			// published. Pinned by TestVersionRegressionExitsGeneric.
 			"A **version regression** lands here for the same reason: `civitai app submit` refuses when the manifest version is not strictly **above the highest approved version** of that app, because approving an older (or identical) version replaces the newer live deployment. Nothing about the invocation is wrong, so it is a verdict about the project, not a `2`. `--allow-downgrade` is the deliberate-rollback escape hatch, and the guard is skipped entirely by `--package-only` or a run with no token — neither reaches the server.",
+			// 🔴 ADDED for the dirty-work-tree guard (issue #411). Same code and
+			// the same argument as the version regression above it: the
+			// invocation is well-formed and the PROJECT is wrong — here, its
+			// working tree against its own history. Pinned by
+			// TestDirtyWorkTreeExitsGeneric.
+			"A **dirty git work tree** lands here too: `civitai app submit` refuses while files that go into the bundle are uncommitted, because the bundle is packaged from what is on disk and approving one deploys code that exists in no commit. `--allow-dirty` submits the tree as it is. It **degrades rather than enforcing** — a directory that is not in a git repo, or a machine with no `git` on `PATH`, submits exactly as before (scaffolded apps have no repo, and that path must keep working), and a clean tree whose `HEAD` is on no remote **warns** instead of refusing. Like the version guard it is skipped by `--package-only` and by a run with no token.",
 			"**\"Wait for approval\" is the *pending* case only.** The same `1` covers an app whose latest submission was **rejected** or **withdrawn** — nothing is in review there, so `civitai app metrics <slug>` says so and names a new `civitai app submit` as the next step instead of a review to wait for. What separates `1` from `4` is unchanged: the slug is right and the app exists.",
 		},
 	},
