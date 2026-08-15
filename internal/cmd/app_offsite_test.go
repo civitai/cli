@@ -30,6 +30,14 @@ import (
 // (the branch) AND in `kindData` (the rendered external URL), and the two
 // offsite rows differ from EACH OTHER in that URL — so a mutant that hardcodes
 // either the branch or the URL literal is killed rather than surviving green.
+//
+// 🔴 AND DISTINCT ON THE SLUG TOO, which the first cut missed. The store detail
+// body echoes a `slug`, and the fixtures set it equal to the slug the caller
+// typed — so swapping the message's `%s` from the caller's slug to the server's
+// `d.Slug` SURVIVED a fully green suite. It is exactly the case a fixture whose
+// two fields can only hold one value cannot see. serverEchoSlug now makes the
+// server's echo a value the caller's slug is not even a SUBSTRING of, and
+// TestOffsiteFixturesAreDistinctOnSlug is the control that keeps it that way.
 
 const (
 	// offsiteSlugA/B are two DIFFERENT offsite apps with two DIFFERENT external
@@ -56,19 +64,52 @@ type appProbeServer struct {
 	subCalls atomic.Int32
 }
 
+// serverEchoSlug is the `slug` the fake store route puts in the RESPONSE, and it
+// is deliberately NOT the slug the caller asked about — nor a string that
+// contains it. Every refusal must render the slug the USER typed (the one their
+// next command will work with); a body echoing the same value made that
+// unobservable, and the `d.Slug` mutant survived. The `zzz-srv-` prefix and the
+// dropped `-zzz` suffix are what make containment impossible in both directions.
+func serverEchoSlug(slug string) string {
+	return "zzz-srv-" + strings.TrimSuffix(slug, "-zzz")
+}
+
 // appDetailJSON renders a store-detail body. The onsite and offsite shapes carry
 // DIFFERENT kindData, mirroring the backend's discriminated union.
 func appDetailJSON(slug, kind, externalURL string) string {
+	echo := serverEchoSlug(slug)
 	if kind == "onsite" {
 		return fmt.Sprintf(`{"id":"apl_%s","slug":%q,"kind":"onsite","name":"Onsite %s",
 			"iconUrl":"https://img.zzz/icon-onsite.png","coverUrl":"https://img.zzz/cover-onsite.png",
 			"kindData":{"kind":"onsite","appBlockId":"apb_zzz_onsite","hasPage":true,"liveUrl":"https://%s.civit.ai/"}}`,
-			slug, slug, slug, slug)
+			slug, echo, slug, slug)
 	}
+	// externalUrl goes through jsonString (json.Marshal), NOT %q: Go's %q emits
+	// `\x1b` and `\a` for ESC and BEL, which are not JSON escapes at all, so a
+	// fixture carrying a control character would arrive as an unparseable body
+	// and the probe would collapse to "could not answer" — a green that means
+	// nothing. json.Marshal emits the spec-compliant \uXXXX form.
 	return fmt.Sprintf(`{"id":"apl_%s","slug":%q,"kind":%q,"name":"Offsite %s",
 		"iconUrl":"https://img.zzz/icon-%s.png","coverUrl":"https://img.zzz/cover-%s.png",
-		"kindData":{"kind":%q,"subKind":"connect","externalUrl":%q,"connectClientId":"cc_zzz"}}`,
-		slug, slug, kind, slug, slug, slug, kind, externalURL)
+		"kindData":{"kind":%q,"subKind":"connect","externalUrl":%s,"connectClientId":"cc_zzz"}}`,
+		slug, echo, kind, slug, slug, slug, kind, jsonString(externalURL))
+}
+
+// TestOffsiteFixturesAreDistinctOnSlug is the control ON the fixtures. Every
+// assertion that a refusal names the caller's slug is vacuous unless the server
+// echoes a DIFFERENT one, and "different" is not enough — a `Contains` assertion
+// passes for any echo the caller's slug is a substring of, which is what a naive
+// `slug + "-server"` echo would have been. This fails before any of those
+// assertions can pass for the wrong reason.
+func TestOffsiteFixturesAreDistinctOnSlug(t *testing.T) {
+	for _, slug := range []string{offsiteSlugA, offsiteSlugB, onsiteSlug} {
+		echo := serverEchoSlug(slug)
+		if echo == slug || strings.Contains(echo, slug) || strings.Contains(slug, echo) {
+			t.Errorf("the server echo %q must not equal or contain the caller's slug %q (nor be contained by it) — "+
+				"otherwise every `the message names the slug` assertion passes for a message rendering the server's value",
+				echo, slug)
+		}
+	}
 }
 
 // newAppProbeServer wires the fake and the environment. apps maps a slug to the
@@ -211,7 +252,7 @@ func TestAppStatusOffsiteRefusesPrecisely(t *testing.T) {
 // the plain truth that there are no submissions. A future "let's share the
 // string" refactor is exactly what this fails on.
 func TestOffsiteRefusalsDifferPerCommand(t *testing.T) {
-	d := &civitai.AppDetail{Slug: offsiteSlugA, Kind: "offsite"}
+	d := &civitai.AppDetail{Slug: serverEchoSlug(offsiteSlugA), Kind: "offsite"}
 	d.KindData.Kind = "offsite"
 	d.KindData.ExternalURL = offsiteURLA
 
@@ -251,8 +292,23 @@ func TestOffsiteRefusalRendersTheAppsOwnExternalURL(t *testing.T) {
 
 // TestOffsiteRegisteredAtRejectsUnsafeServerText — the external URL is SERVER
 // text spliced into the middle of a CLI error, and safeTerm deliberately keeps
-// `\n`. A value that could break the sentence across lines, or that is not an
-// absolute http(s) URL, is dropped and the message simply says less.
+// `\n` and `\t`. A value that could break the sentence across lines, or that is
+// not an absolute http(s) URL, is dropped and the message simply says less.
+//
+// 🔴 THE UNICODE ROWS ARE THE FIX FOR A GUARD THAT WAS SPELLED, NOT STRUCTURAL.
+// The first cut banned four ASCII bytes and its comment claimed "no whitespace
+// at all"; measured against that shipped function, U+00A0, U+2028, U+2029,
+// U+3000 and U+205F all RENDERED, and U+2028/U+2029 are line separators — the
+// exact sentence-breaking hazard the four-byte list was written to stop.
+// saferune cannot backstop it: it subtracts White_Space from its strip class on
+// purpose. Each row below is a rune that USED to render.
+//
+// 🔴 THE TWO REACHABILITY ROWS (`ftp` and `javascript://…`) EXIST BECAUSE THE
+// SCHEME CLAUSE WAS UNREACHED. `javascript:alert(1)` and `file:///etc/passwd`
+// both parse to an EMPTY Host, so `u.Host == ""` killed them first and deleting
+// `u.Scheme != "http" && u.Scheme != "https"` survived a green suite. These two
+// carry a real host, so the scheme clause is the ONLY thing that can reject
+// them — the "an earlier check always wins" mutant case, closed by construction.
 func TestOffsiteRegisteredAtRejectsUnsafeServerText(t *testing.T) {
 	for _, tc := range []struct {
 		name, url string
@@ -268,6 +324,27 @@ func TestOffsiteRegisteredAtRejectsUnsafeServerText(t *testing.T) {
 		{"no host", "https:///path", false},
 		{"javascript scheme", "javascript:alert(1)", false},
 		{"file scheme", "file:///etc/passwd", false},
+		// Rejected ONLY by the scheme clause — real host, URI-legal runes.
+		{"ftp scheme with a real host", "ftp://ok.example/x", false},
+		{"javascript scheme with a real host", "javascript://ok.example/%0aalert(1)", false},
+		// Every one of these rendered before the allowlist replaced the
+		// four-ASCII-byte ban. Written as numeric runes, never raw bytes.
+		{"U+00A0 no-break space", "https://ok.example/a" + string(rune(0x00A0)) + "b", false},
+		{"U+2028 line separator", "https://ok.example/a" + string(rune(0x2028)) + "b", false},
+		{"U+2029 paragraph separator", "https://ok.example/a" + string(rune(0x2029)) + "b", false},
+		{"U+3000 ideographic space", "https://ok.example/a" + string(rune(0x3000)) + "b", false},
+		{"U+205F medium mathematical space", "https://ok.example/a" + string(rune(0x205F)) + "b", false},
+		{"U+1680 ogham space mark", "https://ok.example/a" + string(rune(0x1680)) + "b", false},
+		{"U+2007 figure space", "https://ok.example/a" + string(rune(0x2007)) + "b", false},
+		// U+0085 NEXT LINE is deliberately NOT here. It is C1, so safeTerm
+		// removes it before this predicate ever sees it and the URL renders
+		// (without it) — a STRIP, not a rejection. Its row lives in
+		// TestOffsiteRefusalSanitizesControlChars, which asserts that.
+		// Measured, not assumed: asserting rejection here failed.
+		// Not whitespace at all, so `unicode.IsSpace` would have kept it: a
+		// full-width solidus that reads as a path separator it is not. The
+		// allowlist is what makes this a non-question.
+		{"U+FF0F fullwidth solidus", "https://ok.example" + string(rune(0xFF0F)) + "evil", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := &civitai.AppDetail{}
@@ -287,6 +364,70 @@ func TestOffsiteRegisteredAtRejectsUnsafeServerText(t *testing.T) {
 	msg := offsiteListingRefusal(offsiteSlugA, d)
 	if !strings.Contains(msg, "OFFSITE app,") || !strings.Contains(msg, "civitai app view") {
 		t.Errorf("with no printable target the message must still be whole:\n%s", msg)
+	}
+}
+
+// TestOffsiteRefusalSanitizesControlChars is the STRIPPING half, and it did not
+// exist until it was found missing: replacing `safeTerm(d.KindData.ExternalURL)`
+// with the raw field in offsiteRegisteredAt left the whole `internal/cmd` suite
+// green. TestOffsiteRegisteredAtRejectsUnsafeServerText only ever asserted
+// REJECTION — that a hostile value produces nothing — which a mutant that drops
+// the strip satisfies trivially, because dropping it makes MORE values reject.
+//
+// The property this pins is the opposite one: a value that is hostile ONLY in
+// runes safeTerm removes must still render, WITHOUT them. That is what makes the
+// call load-bearing, and it is the house pattern of the five
+// …SanitizesControlChars tests in sanitize_render_test.go.
+//
+// The mutant it kills, concretely: with the raw field, U+202E / U+200B / ESC are
+// not RFC 3986 runes, so isURIRune rejects the whole value and the ` (registered
+// at …)` clause vanishes — every `wantRendered` assertion below fails.
+func TestOffsiteRefusalSanitizesControlChars(t *testing.T) {
+	// Built from numeric rune values, never typed as raw bytes — the same rule
+	// sanitize_render_test.go's escRune/belRune/c1CSI follow, and the one
+	// staticcheck's ST1018 enforces.
+	const (
+		rtlOverride = string(rune(0x202E)) // RIGHT-TO-LEFT OVERRIDE — reverses what follows
+		zeroWidth   = string(rune(0x200B)) // ZERO WIDTH SPACE — invisible, splits a hostname
+	)
+	for _, tc := range []struct {
+		name, url, wantRendered string
+	}{
+		{"bidi override in the path", "https://ok.example/a" + rtlOverride + "b", "https://ok.example/ab"},
+		{"zero-width space in the host", "https://ok" + zeroWidth + ".example/x", "https://ok.example/x"},
+		{"ANSI colour introducer", "https://ok.example/x" + escRune + "[31m", "https://ok.example/x[31m"},
+		{"C1 CSI", "https://ok.example/y" + c1CSI + "[2K", "https://ok.example/y[2K"},
+		{"BEL terminating an OSC", "https://ok.example/z" + belRune, "https://ok.example/z"},
+		{"U+0085 next line", "https://ok.example/a" + string(rune(0x0085)) + "b", "https://ok.example/ab"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := &civitai.AppDetail{}
+			d.KindData.ExternalURL = tc.url
+			got := offsiteRegisteredAt(d)
+			want := " (registered at " + tc.wantRendered + ")"
+			if got != want {
+				t.Fatalf("offsiteRegisteredAt(%q) = %q, want %q — the hostile runes must be STRIPPED, "+
+					"not made to reject the whole URL", tc.url, got, want)
+			}
+			assertNoControlBytes(t, "the offsite registered-at clause", got)
+		})
+	}
+
+	// End to end, through the real command tree: the refusal a user actually
+	// sees carries the stripped URL and no control bytes.
+	fixtures := bothOffsiteAndOnsite()
+	hostile := "https://ok.example/live" + rtlOverride + escRune + "[1A" + escRune + "[2K"
+	fixtures[offsiteSlugA] = appDetailJSON(offsiteSlugA, "offsite", hostile)
+	newAppProbeServer(t, fixtures)
+
+	_, _, err := run(t, "app", "listing", "status", "--slug", offsiteSlugA)
+	if err == nil {
+		t.Fatal("expected an error for an offsite app")
+	}
+	msg := err.Error()
+	assertNoControlBytes(t, "the offsite refusal", msg)
+	if !strings.Contains(msg, "(registered at https://ok.example/live[1A[2K)") {
+		t.Errorf("the refusal must render the app's URL with the control runes removed; got:\n%q", msg)
 	}
 }
 
@@ -626,6 +767,13 @@ func TestAppStatusByIDDoesNotProbeTheStore(t *testing.T) {
 // for `app listing`, so every subcommand that resolves a slug must produce the
 // refusal, not just `status`. This is the reachability half of the mutation
 // check: the branch is not reached only by the one command a single case drives.
+//
+// 🔴 ALL SIX SUBCOMMANDS, NOT FOUR. The first cut drove `status`, `set-icon`,
+// `set-cover` and `rm-screenshot` and left `add-screenshot` (runSetMedia, the
+// same shared flow as set-icon/set-cover) and `reorder`
+// (resolveListingRefFromFlags, the same helper as rm-screenshot) unexercised —
+// so the claim "every subcommand" was two thirds measured. `app listing` has
+// exactly these six; if a seventh is added it belongs here.
 func TestOffsiteRefusalReachesEverySubcommand(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -640,8 +788,14 @@ func TestOffsiteRefusalReachesEverySubcommand(t *testing.T) {
 		{"set-cover", func(t *testing.T) []string {
 			return []string{"app", "listing", "set-cover", writePNG(t, 1600, 900), "--slug", offsiteSlugA, "-y"}
 		}},
+		{"add-screenshot", func(t *testing.T) []string {
+			return []string{"app", "listing", "add-screenshot", writePNG(t, 1600, 900), "--slug", offsiteSlugA, "-y"}
+		}},
 		{"rm-screenshot", func(*testing.T) []string {
 			return []string{"app", "listing", "rm-screenshot", "alsc_1", "--slug", offsiteSlugA}
+		}},
+		{"reorder", func(*testing.T) []string {
+			return []string{"app", "listing", "reorder", "alsc_2", "alsc_1", "--slug", offsiteSlugA}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

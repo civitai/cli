@@ -226,6 +226,105 @@ func TestEvidencePointersAndFilesAreTheSameSet(t *testing.T) {
 	t.Logf("evidence ledger: %d pointer(s) and %d file(s) agree", len(pointers), len(files))
 }
 
+// minSourceEvidenceCitations is the positive control for the source-citation
+// scan below. There are 27 today (26 provenance rows in
+// agents_split_preserved_test.go plus one prose citation in
+// internal/validate/lockfile.go). A floor of 20 catches a regex or a walk that
+// has quietly stopped finding most of the corpus, while leaving room to retire
+// a handful of citations without a test edit.
+const minSourceEvidenceCitations = 20
+
+// sourceEvidenceCiteRe is built from evidenceDir at RUNTIME rather than written
+// out as a literal, so this file cannot match itself and inflate the count with
+// a "citation" that is really the pattern.
+var sourceEvidenceCiteRe = regexp.MustCompile(regexp.QuoteMeta(evidenceDir) + `/[A-Za-z0-9._-]+\.md`)
+
+// skipDirsForSourceScan are trees that are not this repo's source.
+var skipDirsForSourceScan = map[string]bool{
+	".git": true, ".claude": true, "node_modules": true, "dist": true, "bin": true,
+}
+
+// TestSourceCitationsOfDecisionFilesResolve closes the gap the ledger above
+// cannot see.
+//
+// TestEvidencePointersAndFilesAreTheSameSet is set equality between AGENTS.md's
+// `→ evidence:` pointers and the files on disk — so it only ever looks at items
+// that CARRY a pointer. A Go source comment is free to cite
+// `claudedocs/decisions/NN-<slug>.md` for an item that has no pointer at all,
+// and nothing noticed. Not hypothetical: `internal/cmd/app_offsite.go` shipped
+// in civitai/cli#426 citing a `29-offsite-refusal.md` under the decisions
+// directory for an item that is deliberately INLINE in AGENTS.md, so the file
+// never existed. A reader following that citation finds nothing and cannot tell
+// whether the evidence was deleted or never written. (The path is described
+// here rather than written out: this scan reads `_test.go` files too, so
+// spelling it would make this comment its own first finding — which is how the
+// negative control was watched to work.)
+//
+// It is a one-directional check on purpose, and that is the difference from the
+// ledger: a decision file with no Go citation is perfectly normal (most items
+// are cited only from AGENTS.md), so requiring set equality here would fail on
+// correct content. What is never correct is a citation pointing at nothing.
+//
+// SCOPE, stated rather than implied: this reads `.go` files only. A dangling
+// citation in a Markdown doc is the same class and is NOT caught here.
+func TestSourceCitationsOfDecisionFilesResolve(t *testing.T) {
+	onDisk := map[string]bool{}
+	for _, f := range evidenceFilesOnDisk(t) {
+		onDisk[f] = true
+	}
+
+	type citation struct{ file, path string }
+	var found []citation
+	err := filepath.WalkDir(".", func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if skipDirsForSourceScan[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".go") {
+			return nil
+		}
+		b, rerr := os.ReadFile(p)
+		if rerr != nil {
+			return rerr
+		}
+		for _, m := range sourceEvidenceCiteRe.FindAllString(string(b), -1) {
+			found = append(found, citation{file: filepath.ToSlash(p), path: m})
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: walking the tree failed: %v", err)
+	}
+
+	if len(found) < minSourceEvidenceCitations {
+		t.Fatalf("CONTROL failure, not a finding: found %d citation(s) of %s in .go files, want >= %d.\n"+
+			"A scan that finds nothing validates nothing. Check sourceEvidenceCiteRe (%s) and that this test's "+
+			"working directory is the module root — do NOT delete citations on the strength of this failure.",
+			len(found), evidenceDir, minSourceEvidenceCitations, sourceEvidenceCiteRe)
+	}
+
+	var problems []string
+	for _, c := range found {
+		if !onDisk[c.path] {
+			problems = append(problems, fmt.Sprintf(
+				"  %s cites %q, which does not exist in %s", c.file, c.path, evidenceDir))
+		}
+	}
+	if len(problems) > 0 {
+		sort.Strings(problems)
+		t.Fatalf("%d dangling decision-file citation(s) in Go source:\n%s\n\n"+
+			"Either write the file, or cite where the item really lives (an inline AGENTS.md item is cited as "+
+			"`AGENTS.md item N`, not as a decisions path). A citation at nothing is worse than no citation: "+
+			"it asserts evidence exists.", len(problems), strings.Join(problems, "\n"))
+	}
+	t.Logf("source citations: %d citation(s) across .go files, all resolving", len(found))
+}
+
 // 🔴 TestEvidenceStubsCarryAThesisAndAPointer USED TO LIVE HERE, AND WAS
 // REPLACED RATHER THAN DELETED — agents_trigger_test.go is where it went.
 //

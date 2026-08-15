@@ -1337,18 +1337,27 @@ Details worth knowing before you start:
 - **Screenshots** are managed by id (the `alsc_…` ids `listing status` prints):
   `rm-screenshot <id>` removes one, and `reorder <id...>` takes **all** the
   current ids in the new order — a partial set is rejected.
-- 🔴 **`app listing` does not work for an OFFSITE app, and it says so rather
-  than sending you to `app submit`.** Every subcommand resolves which listing to
-  touch through the app's block **submission**, and an offsite app — a
-  registered URL rather than a block bundle — has none, so there is nothing for
-  the CLI to address. It still *has* a store listing: its icon and cover serve
-  publicly, `civitai app view <slug>` shows them, and the **App-store listing UI
-  on civitai.com** is where they are changed. The refusal names that, and
-  explicitly says `civitai app submit` is not the missing step, because it
-  cannot create a submission for such an app. Exit `4`, the same as any other
-  slug this command cannot resolve. Making these apps reachable from the CLI
-  needs a server-side change and is tracked upstream
+- 🔴 **`app listing` does not work for an OFFSITE app, and where it can tell,
+  it says so rather than sending you to `app submit`.** Every subcommand
+  resolves which listing to touch through the app's block **submission**, and an
+  offsite app — a registered URL rather than a block bundle — has none, so there
+  is nothing for the CLI to address. It still *has* a store listing: its icon
+  and cover serve publicly, `civitai app view <slug>` shows them, and the
+  **App-store listing UI on civitai.com** is where they are changed. The refusal
+  names that, and explicitly says `civitai app submit` is not the missing step,
+  because it cannot create a submission for such an app. Exit `4`, the same as
+  any other slug this command cannot resolve. Making these apps reachable from
+  the CLI needs a server-side change and is tracked upstream
   ([#422](https://github.com/civitai/cli/issues/422)).
+  **The wording is best-effort; the exit code is not.** Telling an offsite app
+  apart takes one extra lookup against the public store catalog
+  (`GET /api/v1/apps/{slug}`), which answers only for a **published** store
+  listing and is still behind a launch flag — until the catalog opens publicly
+  you see an app there only as a moderator or app-dev-tester. If that lookup
+  cannot answer (unpublished listing, no such access, or a network/5xx failure)
+  you get the generic `no such submission … run civitai app submit first`
+  message instead, still on exit `4`. The advice is wrong there in exactly the
+  way it was before this existed — never in a new way.
 
 **Need to change the bundle while a request is still `pending`?** Withdraw it
 first to free the slug, then resubmit:
@@ -1491,13 +1500,22 @@ Rejection reason:
 Not live yet — gen-matrix.civit.ai only serves after the app is approved and deployed (deployState 'live').
 ```
 
-**An OFFSITE app has no block submissions at all**, and asking about one says
-that instead of telling you to submit. `civitai app status` reads the
-block-submission pipeline; an offsite app is a registered URL, not a block
-bundle, so there is nothing there to be pending, approved or deployed — nothing
-is missing and `civitai app submit` would not create one. The message names
-`civitai app view <slug>` for what the CLI *can* show about it. Exit `4`, like
-any other slug this lookup cannot resolve.
+**An OFFSITE app has no block submissions at all**, and where the CLI can tell,
+asking about one says that instead of telling you to submit. `civitai app
+status` reads the block-submission pipeline; an offsite app is a registered URL,
+not a block bundle, so there is nothing there to be pending, approved or
+deployed — nothing is missing and `civitai app submit` would not create one. The
+message names `civitai app view <slug>` for what the CLI *can* show about it.
+Exit `4`, like any other slug this lookup cannot resolve.
+
+Recognising it takes one extra lookup against the public store catalog
+(`GET /api/v1/apps/{slug}`), and that route serves only a **published** store
+listing and is still behind a launch flag — until the catalog opens publicly you
+see an app there only as a moderator or app-dev-tester. So an offsite app whose
+listing is unpublished, a caller without that access, or a network/5xx failure
+of the lookup all still get the generic `no such submission … run civitai app
+submit first` message, on the same exit `4`. The wording is best-effort; the
+exit code is not.
 
 The unfiltered listing is **capped server-side at 100 rows**, and the API returns
 no cursor and no total — so there is no way to page and no way to know how many
@@ -2742,7 +2760,8 @@ fi
 
 - Usually an HTTP 404, but not always: some lookups answer `200` with an empty result set instead (`civitai app status <slug>` for an unregistered slug, `civitai users get` for an unknown username), and those exit `4` too.
 - The same question therefore exits the same way however the API happens to phrase the miss.
-- **An app that EXISTS but is `offsite` also exits `4` here, and that is deliberate.** `civitai app status <slug>` and `civitai app listing …` resolve through the app's block submission, which an offsite app never has, so the *resource these commands look up* is genuinely absent even though the app is not. Only the message changes — it says the app is offsite and names a next step that can work, instead of `civitai app submit`, which cannot. This is **not** the `has no approved App Block yet` case on `1` above, which exits `1` because the thing looked up (analytics) is expected to appear later; an offsite app's block submission never will.
+- **An app that EXISTS but is `offsite` also exits `4` here, and that is deliberate.** `civitai app status <slug>` and `civitai app listing …` resolve through the app's block submission, which an offsite app never has, so the *resource these commands look up* is genuinely absent even though the app is not. Only the message changes — where the CLI can tell, it says the app is offsite and names a next step that can work, instead of `civitai app submit`, which cannot. This is **not** the `has no approved App Block yet` case on `1` above, which exits `1` because the thing looked up (analytics) is expected to appear later; an offsite app's block submission never will.
+- **The offsite wording is best-effort, and the exit code is not.** Recognising an offsite app costs one extra lookup against the public store catalog (`GET /api/v1/apps/{slug}`), and that route answers only for a **published** store listing and is itself still behind a launch flag — until the catalog opens publicly you see an app there only as a moderator or app-dev-tester. So an offsite app whose listing is not published, a caller without that access, or any network/5xx failure of the lookup all keep the generic `no such submission … run civitai app submit first` message. **Exit `4` either way**, so a script branching on the code is unaffected; only the human-readable half degrades, and always in that direction.
 
 ### Exit code 5
 
@@ -2822,8 +2841,8 @@ credited it to the wrong command.)
 | `has no approved App Block yet` | The slug is right and the app exists — its analytics do not, because no submitted version has been **approved**. Like `app pull` below, the message names the next step for the latest submission's own state: where it is in review, or — for a **rejected** or **withdrawn** one — that nothing is in review and a new `civitai app submit` is what moves it. Exit `1`, not `4`. | [App metrics](#app-metrics) |
 | `no such app for your account` | The server did not recognise the app for your account — exit `4`. From `civitai app pull` it means, more precisely, that the CLI could not prove the app is yours-but-unapproved: no submission matches the slug, **or** the submissions lookup itself failed, **or** a version *is* approved, **or** you passed an `appBlockId` rather than the slug. Settle it with `civitai app status`; if that lists the app as unapproved, `app pull` says so with the message below instead. | [Submission status](#submission-status) |
 | `has no approved version yet` | `civitai app pull` clones a repository that only exists once a submitted version has been **approved**. The app is real; the message names the latest submission's state and the next step for it. Exit `4`. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
-| `no such submission` | For a **slug**: nothing has been submitted for that app yet — `civitai app submit` creates the submission **and** the draft store listing the `app listing` commands read. For an `--id`: no publish request with that id, so check the id itself. **One case never reaches this row**: an app that exists and is **offsite** gets the row below instead, because `app submit` cannot succeed for it. | [Submit & auth](#submit--auth) |
-| `is an OFFSITE app` | The slug is right, the app exists, and it is an **offsite** app — a registered URL rather than a block bundle — so it has no block submission for either command to resolve through. From `civitai app status` that is simply the truth: there is nothing to be pending, approved or deployed. From `civitai app listing` it is a CLI gap: the app *does* have a store listing (its icon and cover are serving), but no client-side route can address it, so the message points at the **App-store listing UI on civitai.com** and at `civitai app view <slug>` for what the CLI can show. Exit `4`. Neither message names `civitai app submit`, because that step cannot exist here. | [After you submit](#after-you-submit-review--approve--deploy) |
+| `no such submission` | For a **slug**: nothing has been submitted for that app yet — `civitai app submit` creates the submission **and** the draft store listing the `app listing` commands read. For an `--id`: no publish request with that id, so check the id itself. **One case usually gets the row below instead**: an app that exists and is **offsite**, for which `app submit` cannot succeed. That redirect depends on the store-catalog lookup answering, so an offsite app whose store listing is unpublished — or a caller who cannot see the catalog yet — still lands on *this* row, with advice that cannot work. | [Submit & auth](#submit--auth) |
+| `is an OFFSITE app` | The slug is right, the app exists, and it is an **offsite** app — a registered URL rather than a block bundle — so it has no block submission for either command to resolve through. From `civitai app status` that is simply the truth: there is nothing to be pending, approved or deployed. From `civitai app listing` it is a CLI gap: the app *does* have a store listing (its icon and cover are serving), but no client-side route can address it, so the message points at the **App-store listing UI on civitai.com** and at `civitai app view <slug>` for what the CLI can show. Exit `4`. Neither message names `civitai app submit`, because that step cannot exist here. **You only get this row when the CLI can see the app in the public store catalog** (`GET /api/v1/apps/{slug}`) — that route serves only a **published** listing and is still behind a launch flag, so an unpublished offsite app, or a caller without moderator/app-dev-tester access, gets the `no such submission` row above instead. Same exit `4`, worse advice. | [After you submit](#after-you-submit-review--approve--deploy) |
 | `is ambiguous — it matches` | A model version has several files sharing that name. Select one by its numeric file id with `--file <id>`. | [Download model files](#download-model-files) |
 | `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. | [Download model files](#download-model-files) |
 | `checksum mismatch for` | The same, during `civitai upgrade`. The binary was **not** replaced. | [Upgrading](#upgrading) |
