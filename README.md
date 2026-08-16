@@ -1208,6 +1208,37 @@ enumeration the table below might otherwise read as:
 | `.env.example`, `.env.sample` | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` carries an empty `VITE_LIVE_BLOCK_TOKEN=` line whose comment sends the real token to `.env.development.local` **because this file is uploaded**. A test pins the *scaffolded* line empty; nothing checks the copy in **your** project, so the packager will upload whatever you put there |
 | `.env.production` | **included** | the platform build runs `vite build` in production mode, which reads it |
 
+**Directories count too, and by a narrower rule.** A *directory* named `.env` or
+beginning with `.env.` — `.env.d/`, `.env.local/`, `.env.secrets/` — is excluded
+whole, at any depth, and so is one whose name ends in `.zip`. The three-name
+allow-list does **not** apply to directories: `vite build` reads a dotenv *file*,
+so a directory called `.env.production/` is dropped like any other.
+
+The directory rule deliberately stops at the dot, which the file rule does not,
+because matching too much here removes a whole subtree from your submission with
+nothing to tell you: `.environment/` and `.envoy/` still ship.
+
+🔴 **This closes one shape of the leak, not the class.** The packager matches
+*names*, never contents, so a secret still ships whenever neither name is dotenv-
+shaped. Measured, all of these are **packaged** today:
+
+| still uploaded | why it slips through |
+| --- | --- |
+| `db.env` at the project root | the base name does not start with `.env` |
+| `envs/prod.env`, `env/local.env` | neither the directory nor the file name is `.env`-dotted |
+| `.env-backup/db.env` | `.env-backup` is not `.env.`-dotted, so the directory rule does not apply |
+| `.env-backup/.env.production` | the three kept names are kept **by name**, wherever every directory above them is itself packaged |
+| `x.ZIP/`, `.ENV.local/` | both rules are case-sensitive |
+
+The mirror of the `.env-backup/.env.production` row: a kept name does **not**
+rescue its directory. `.env.d/.env.production` is dropped along with `.env.d/`,
+and so is `node_modules/pkg/.env.production` — the walk skips an excluded
+directory before it ever looks at a file name, at any depth beneath it.
+
+Keep secrets in a `.env`-dotted name — `.env.local`, `.env.d/` — and both rules
+drop them. Anything else is on you to check before you submit; `--package-only`
+writes the exact `.zip` that would be uploaded, so unzip it and look.
+
 🔴 **The allow-list is by FILE NAME. Nothing inspects what is inside those three
 files, so nothing stops one of them carrying a secret to the platform.** Whatever
 you put in `.env.example`, `.env.sample` or `.env.production` is packaged and
