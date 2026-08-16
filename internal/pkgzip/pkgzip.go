@@ -122,6 +122,85 @@ var vcsMetadataNames = map[string]struct{}{
 	".svn": {},
 }
 
+// isDotenvShaped reports whether a base name follows the dotenv NAMING
+// CONVENTION: exactly ".env", or ".env." followed by anything (".env.local",
+// ".env.d", ".env.development.local").
+//
+// 🔴 THIS IS NARROWER THAN isExcludedFile'S DOTENV RULE, ON PURPOSE, AND THE
+// DIFFERENCE IS THE WHOLE DESIGN OF issue #420. For a FILE the rule is the bare
+// ".env" prefix, undotted names included, because there the cost of matching too
+// much is one file the author renames and the cost of matching too little is an
+// uploaded credential — so it is aimed wide. A DIRECTORY inverts the first half:
+// matching too much removes an entire SUBTREE from the submission, silently,
+// with no server-side error to catch it. `.environment/` and `.envoy/` are
+// ordinary content directories whose names begin with those four bytes, and the
+// bare prefix would delete both.
+//
+// Requiring the dot keeps every conventional dotenv directory (`.env`,
+// `.env.d`, `.env.local`) and excludes no plausible content name, because a
+// directory named `.env.<something>` is a dotenv container in every case anyone
+// has produced.
+//
+// 🔴 RESIDUAL, ACCEPTED AND DELIBERATE: a directory named `.env-backup` or
+// `.envs` is NOT excluded, though the same name as a FILE would be. Its dotenv
+// FILES still go — a `.env.local` inside it is caught by isExcludedFile — but a
+// file named `db.env` inside it is not, because that base name does not start
+// with ".env". If a real case for those names appears, add the exact name to
+// excludedDirs rather than widening this predicate; that keeps the loss visible
+// in a list someone can read.
+func isDotenvShaped(name string) bool {
+	return name == ".env" || strings.HasPrefix(name, ".env.")
+}
+
+// isArchiveArtifact reports whether a base name is a packaged archive. One
+// predicate for both file types: a `--package-only` run drops `<app>-<ver>.zip`
+// in the project dir, and an author who unpacks one in place leaves a DIRECTORY
+// of the same shape. The platform rebuilds from source, so neither ships.
+func isArchiveArtifact(name string) bool {
+	return strings.HasSuffix(name, ".zip")
+}
+
+// isExcludedDir reports whether a DIRECTORY (by base name) must be left out of
+// the package, at any depth. Three rules:
+//
+//   - the fixed names in excludedDirs (VCS metadata, dependency installs, build
+//     output, tooling caches);
+//   - dotenv-shaped names (isDotenvShaped) — issue #420;
+//   - archive artifacts (isArchiveArtifact) — issue #420.
+//
+// 🔴 THE RULE USED TO BE KEYED ON TYPE, AND THAT IS ISSUE #420 — the same defect
+// as #409 with the shapes swapped. `.env.local` and `*.zip` were excluded as
+// FILES only, so the same names as DIRECTORIES had their contents packaged. It
+// is the credential-bearing direction: measured, a planted `.env.d/db.env`
+// holding `API_SECRET=leak` was packaged into a bundle that is committed to
+// Forgejo `civitai-apps/<slug>` and deployed, i.e. durably published.
+//
+// 🔴 THE FILE RULE DOES NOT COVER FOR THIS ONE. The conventional file names
+// inside a `.env.d/` are `db.env`, `api.env`, `local.env` — base names that do
+// NOT start with ".env", so isExcludedFile keeps every one of them. Excluding
+// the directory is the only thing that stops them.
+//
+// 🔴 keptEnvFiles DOES NOT APPLY HERE. That allow-list exists because the server
+// build's `vite build` READS `.env.production`, and because `.env.example` /
+// `.env.sample` are templates a human reviewer reads. Those are claims about
+// FILES; nothing reads a DIRECTORY named `.env.production`, so it is dotenv-
+// shaped like any other and goes.
+//
+// 🔴 NOT A BLANKET PROMOTION OF isExcludedFile. Doing that would also drop a
+// directory for every name isExcludedFile matches, and the mirror-image mistake
+// is real in the other direction too: #418 records that promoting excludedDirs
+// into the file rule wholesale would drop an extensionless `build` SCRIPT. Each
+// rule is decided per name, in the direction its failure mode points.
+func isExcludedDir(name string) bool {
+	if _, skip := excludedDirs[name]; skip {
+		return true
+	}
+	if isDotenvShaped(name) {
+		return true
+	}
+	return isArchiveArtifact(name)
+}
+
 // excludedFilePatterns is the human-readable list of file-level exclusions, for
 // CLI messaging. The authoritative matcher is isExcludedFile — keep the two in
 // sync. These are matched on the file's BASE NAME anywhere in the tree.
@@ -212,8 +291,10 @@ func isExcludedFile(name string) bool {
 	if _, vcs := vcsMetadataNames[name]; vcs {
 		return true
 	}
-	// Build artifacts.
-	if strings.HasSuffix(name, ".zip") {
+	// Build artifacts. Same predicate the directory rule uses (isExcludedDir),
+	// so the two shapes of one name cannot drift apart again — that drift is
+	// #409 and #420.
+	if isArchiveArtifact(name) {
 		return true
 	}
 	// Dotenv handling: allow-list the known-safe template / production files,
@@ -264,7 +345,7 @@ func Build(dir string) (*Result, error) {
 			if p == dir {
 				return nil
 			}
-			if _, skip := excludedDirs[d.Name()]; skip {
+			if isExcludedDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -352,12 +433,13 @@ func Build(dir string) (*Result, error) {
 	}, nil
 }
 
-// IsExcluded reports whether a path component would be excluded (exported for
-// tests + messaging).
-func IsExcluded(name string) bool {
-	_, ok := excludedDirs[name]
-	return ok
-}
+// IsExcluded reports whether a DIRECTORY component would be excluded (exported
+// for tests + messaging). See isExcludedDir for the rule — it is more than the
+// excludedDirs map, because dotenv-shaped and archive-shaped directory names go
+// too (#420). ExcludedNames, which feeds the CLI's help text, still lists only
+// the fixed names; the pattern rules are spelled in ExcludedFilePatterns, and
+// they now describe both shapes rather than files alone.
+func IsExcluded(name string) bool { return isExcludedDir(name) }
 
 // IsExcludedPath answers, for a whole project-relative PATH, the question Build
 // answers one walk step at a time: would this path be left OUT of the bundle?

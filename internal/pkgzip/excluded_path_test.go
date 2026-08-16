@@ -164,7 +164,28 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 		// observable through the seam rather than only through Build.
 		".git",
 		"sub/.git",
+		// 🔴 #420: the mirror of the line above, with the shapes swapped —
+		// `.env.local` and `*.zip` were excluded as FILES only, so the same
+		// names as DIRECTORIES shipped their contents. These are here for the
+		// same reason `.git` is: a fix applied to Build's walk alone, instead of
+		// to the shared isExcludedDir, makes this test red.
+		//
+		// Note the base names inside: `db.env` does NOT start with ".env", so
+		// isExcludedFile keeps it. The directory rule is the only thing that
+		// drops it, which is why a seam row for it is worth having.
+		// (`.env.local` cannot appear here as a directory — this fixture already
+		// plants it as a FILE above, and one tree cannot hold both shapes of one
+		// name. TestBuildExcludesDotenvShapedDirectories owns that shape, in its
+		// own tree. `.env.d` is the same rule with no such collision.)
+		".env.d/db.env",
+		"src/.env.d/api.env",
+		"artifact.zip/payload.bin",
 	}
+	// Near-miss DIRECTORY names that must keep shipping, for the same reason
+	// `.gitignore` is in the fixture below: both sides must agree they are
+	// content, and a directory rule widened to the bare ".env" prefix (correct
+	// for files) would delete both subtrees from a submission silently.
+	files = append(files, ".environment/config.yaml", ".envoy/bootstrap.yaml")
 	// The names that merely START with ".git" stay in the fixture as content:
 	// both sides must keep shipping them, and a prefix match would make Build
 	// and the predicate agree on a WRONG answer, which only the exact-name
