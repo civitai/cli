@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -585,7 +586,8 @@ func runSetMedia(cmd *cobra.Command, kind mediaKind, file, caption string, lc li
 			// reason which is not a failure of the command that ran: a listing
 			// below the publish floor cannot go to review YET, and clearing the
 			// floor takes a second command. See reportStagedBelowFloor (#400).
-			if reportStagedBelowFloor(ctx, out, client, ref.AppListingID, kind, imageID, res, err) {
+			if reportStagedBelowFloor(ctx, out, client, ref.AppListingID, capitalize(string(kind)),
+				func(v *appapi.ListingEditView) bool { return attachLanded(v, kind, imageID, res) }, err) {
 				return nil
 			}
 			return err
@@ -671,9 +673,13 @@ func scanFailure(out io.Writer, err error, kind mediaKind, live bool, res *appap
 //
 //  1. Was this a REFUSAL at all? See the gate below — only a 400 can be the
 //     floor talking.
-//  2. Did the asset this command attached actually land, BY IMAGE ID? See
-//     attachLanded: `Present()` alone is not this question, because a listing
-//     being re-branded already has an icon.
+//  2. Did what this command staged actually land, BY IDENTITY? The caller
+//     supplies that predicate, because the identity differs per path:
+//     attachLanded matches an icon/cover by IMAGE ID and a screenshot by its
+//     `alsc_…` row id; reorderLanded (civitai/cli#430) matches the revision's
+//     gallery against the order that was asked for. `Present()` alone is not
+//     this question, because a listing being re-branded already has an icon —
+//     and "a revision exists" is not it either, for the same reason.
 //  3. Is the floor still unmet — i.e. can the floor even BE the reason? This
 //     one IS the `Present()` predicate `status` and the floor line use.
 //
@@ -700,7 +706,7 @@ func scanFailure(out io.Writer, err error, kind mediaKind, live bool, res *appap
 //
 // A read failure returns false: the CLI cannot show that the attach landed, so
 // it must not claim it did.
-func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.Client, appListingID string, kind mediaKind, imageID int, res *appapi.AttachResult, submitErr error) bool {
+func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.Client, appListingID, subject string, landed func(*appapi.ListingEditView) bool, submitErr error) bool {
 	if !errors.Is(submitErr, civitai.ErrBadRequest) {
 		return false // not a refusal, so the floor cannot be what happened
 	}
@@ -711,13 +717,13 @@ func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.C
 	if view.Assets.Icon.Present() && view.Assets.Cover.Present() {
 		return false // the floor is met, so it cannot be why this was refused
 	}
-	if !attachLanded(view, kind, imageID, res) {
+	if !landed(view) {
 		return false
 	}
 
 	// No "pending moderator review" and no request id: there is no review. The
-	// revision is open, holds this asset, and is deliberately unsubmitted.
-	fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s staged on an open revision — not submitted for review yet.", capitalize(string(kind)))))
+	// revision is open, holds this change, and is deliberately unsubmitted.
+	fmt.Fprintln(out, ui.Success(fmt.Sprintf("%s staged on an open revision — not submitted for review yet.", subject)))
 	fmt.Fprintln(out, "Your live listing is unchanged; nothing reaches a moderator until the publish floor is met.")
 	printFloorLine(out, view)
 	// Name the command that clears the floor, not a placeholder — at least one
@@ -923,6 +929,7 @@ direct screenshot edits are only possible while a revision is open.`,
 
 func newAppListingReorderCmd() *cobra.Command {
 	var lc listingCommon
+	var changelog string
 	cmd := &cobra.Command{
 		Use:   "reorder <screenshotId...>",
 		Short: "Reorder screenshots (pass ALL current screenshot ids in the new order)",
@@ -932,29 +939,145 @@ unknown set is rejected.
 
 Ordering is positional: the first id becomes the first screenshot in the
 gallery. There is no "move one" form — read the current order out of
-` + "`civitai app listing status`" + ` and pass the whole list back.`,
+` + "`civitai app listing status`" + ` and pass the whole list back.
+
+On a listing that is already LIVE this opens a REVISION and submits it for
+moderator re-review instead of reordering the live gallery — pass --changelog
+to describe the change — but a live listing still below the publish floor
+stages WITHOUT submitting, and exits 0. A DRAFT listing is reordered directly.`,
 		Example: `  civitai app listing reorder alsc_02 alsc_01 alsc_03
   civitai app listing reorder alsc_02 alsc_01 --slug my-app`,
 		Args: cobra.MinimumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			client, err := newListingClient()
-			if err != nil {
-				return err
-			}
-			ref, err := resolveListingRefFromFlags(cmd, client, lc)
-			if err != nil {
-				return err
-			}
-			ctx := cmdCtx(cmd)
-			if err := client.ReorderScreenshots(ctx, ref.AppListingID, args); err != nil {
-				return err
-			}
-			fmt.Fprintln(cmd.OutOrStdout(), ui.Success(fmt.Sprintf("Reordered %d screenshots", len(args))))
-			return nil
+			return runReorder(cmd, args, lc, changelog)
 		},
 	}
 	lc.bind(cmd)
+	cmd.Flags().StringVar(&changelog, "changelog", "", "changelog for the moderator review (used only when the listing is already live)")
 	return cmd
+}
+
+// runReorder rewrites the screenshot order, branching on the listing status for
+// the live-listing shadow-revision path — the same shape runSetMedia uses.
+//
+// 🔴 THE ID SPACE IS THE WHOLE BUG (civitai/cli#430), AND IT IS INVISIBLE FROM
+// THE CALL SITE. `reorderScreenshots` takes a `listingId` AND the screenshot
+// ids, and the server checks the two for set-equality. `app listing status`
+// renders getMyListingForEdit, which for an APPROVED parent resolves media
+// through an idempotently-opened SHADOW revision — so the `apls_…` ids a user
+// can SEE belong to the shadow, while this command addressed the mutation to the
+// PARENT. Every reorder of a live listing was therefore refused with
+// `orderedIds must be exactly the listing's current screenshot ids`, naming the
+// ids the CLI itself had just printed, and the remedy that error suggests
+// (`app listing status`) printed those same ids again. Measured live in #430:
+// same ids, same order, seconds apart — parent id 400, shadow id 200.
+//
+// The sibling commands that WORK are the ones with no second id space to get
+// wrong: `rm-screenshot` sends only a `screenshotId`, so the server resolves the
+// owning listing from the row itself, and set-icon/set-cover/add-screenshot
+// already branch on `live` exactly as this now does.
+//
+// 🔴 AND THE REVISION IS SUBMITTED, not merely opened. `submitListingRevision`
+// has no standalone subcommand: a change staged in a shadow that nothing submits
+// is a change the public gallery NEVER sees, with a ✓ in front of it — which is
+// the trap `rm-screenshot` is still in (#430's follow-up comment measured it:
+// `✓ Screenshot removed`, exit 0, and `GET /api/v1/apps/<slug>` still serving
+// the screenshot). Opening a revision without submitting it would have traded
+// this bug's loud 400 for a silent false success.
+//
+// TWO CHEAPER-LOOKING ROUTES TO THE SHADOW ID ARE REJECTED, both of which read
+// as obvious once you are here. (a) Decoding `editTargetId` off the
+// getMyListingForApp reply — #430's own suggested fix; see the ListingRef doc
+// comment for why not, and note it would save a round-trip rather than enable
+// anything. (b) Reusing `ListingEditView.ShadowID`, which IS already decoded:
+// that would build this command on `getMyListingForEdit`, a route classified
+// `listingOpRead` while its own doc records that it OPENS a revision — the
+// contradiction tracked as civitai/cli#389. A fix resting on the side effect of
+// a route whose classification is an open question inherits that question.
+//
+// There is deliberately NO interactive confirmation here, unlike runSetMedia's
+// step 3. That gate refuses in a non-TTY without --changelog/--yes, and adding
+// it would mean the exact command #430 reports as broken still does not work
+// after the fix — it would fail differently. The user named the ids and the
+// order; what they get instead is the warning line below, before anything is
+// written, and an outcome line that never claims the live gallery moved.
+func runReorder(cmd *cobra.Command, orderedIDs []string, lc listingCommon, changelog string) error {
+	out := cmd.OutOrStdout()
+	client, err := newListingClient()
+	if err != nil {
+		return err
+	}
+	ref, err := resolveListingRefFromFlags(cmd, client, lc)
+	if err != nil {
+		return err
+	}
+	ctx := cmdCtx(cmd)
+	live := ref.Status == "approved"
+
+	// Draft/pending listings have no shadow, so the parent IS the edit target and
+	// opening a revision would be both wrong and an extra round-trip.
+	targetID := ref.AppListingID
+	var shadowID string
+	if live {
+		fmt.Fprintln(out, ui.Warn("This listing is live — reordering opens a revision for moderator re-review."))
+		if changelog == "" {
+			changelog = "Reorder listing screenshots via civitai CLI"
+		}
+		shadowID, _, err = client.BeginListingRevision(ctx, ref.AppListingID)
+		if err != nil {
+			return err
+		}
+		// 🔴 THIS ONE ASSIGNMENT IS THE FIX. `shadowID` stays separate from
+		// `targetID` — as it does in runSetMedia — so that reverting the retarget
+		// leaves the submit addressed at the revision and changes exactly one
+		// thing: which listing the reorder is validated against.
+		targetID = shadowID
+	}
+	if err := client.ReorderScreenshots(ctx, targetID, orderedIDs); err != nil {
+		return err
+	}
+	if !live {
+		fmt.Fprintln(out, ui.Success(fmt.Sprintf("Reordered %d screenshots", len(orderedIDs))))
+		return nil
+	}
+
+	rev, err := client.SubmitListingRevision(ctx, shadowID, changelog)
+	if err != nil {
+		// Same refusal-that-is-not-a-failure as the attach path (#400): a listing
+		// below the publish floor cannot go to review yet, and the reorder did
+		// land in the revision.
+		if reportStagedBelowFloor(ctx, out, client, ref.AppListingID, "New screenshot order",
+			func(v *appapi.ListingEditView) bool { return reorderLanded(v, orderedIDs) }, err) {
+			return nil
+		}
+		return err
+	}
+	fmt.Fprintln(out, ui.Success(fmt.Sprintf("New screenshot order staged on a revision — pending moderator review (%s).", rev.PublishRequestID)))
+	fmt.Fprintln(out, "Your live listing is unchanged until a moderator approves the revision.")
+	return nil
+}
+
+// reorderLanded reports whether the revision really holds the order this command
+// asked for — the reorder path's answer to attachLanded's identity question.
+//
+// "A revision exists" is not that question, and neither is "it has three
+// screenshots": a shadow whose gallery is untouched satisfies both while nothing
+// this command asked for is in it. The comparison is by ROW ID and POSITION,
+// against the list the user typed, read back out of the same view the floor
+// check uses. Sorted by the server's own `order` field rather than trusting the
+// array's arrangement, because the ordering is the very property under test.
+func reorderLanded(view *appapi.ListingEditView, want []string) bool {
+	if len(view.Assets.Screenshots) != len(want) {
+		return false
+	}
+	shots := append([]appapi.ListingScreenshot(nil), view.Assets.Screenshots...)
+	sort.SliceStable(shots, func(i, j int) bool { return shots[i].Order < shots[j].Order })
+	for i, s := range shots {
+		if s.ID != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func resolveListingRefFromFlags(cmd *cobra.Command, client *appapi.Client, lc listingCommon) (*appapi.ListingRef, error) {
