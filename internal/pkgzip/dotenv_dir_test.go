@@ -56,9 +56,15 @@ func TestBuildExcludesDotenvShapedDirectories(t *testing.T) {
 	// those paths are dropped while the bundle carries them, which is the
 	// credential direction.
 	//
-	// One row per directory RULE, since each reaches SkipDir by a different
-	// branch of isExcludedDir, and one nested row because the rule is about
-	// every ancestor, not only the parent.
+	// 🔴 THESE ARE NOT ONE-ROW-PER-BRANCH, and the difference matters to whoever
+	// prunes them. Measured by gating the rescue on one isExcludedDir branch at
+	// a time: `.env.d/…` dies to isDotenvShaped, `artifact.zip/…` to
+	// isArchiveArtifact, and THREE of them — both node_modules rows and
+	// `dist/…` — die to the same fixed-name branch. They are kept anyway because
+	// they are not redundant on the axis that is not the branch: one is nested
+	// (the rule is about every ancestor, not the parent), and `dist/.env.example`
+	// is the only coverage of a kept name that is not `.env.production`. Do not
+	// delete one on the strength of "another row covers that branch".
 	writeFile(t, dir, ".env.d/.env.production", leak)           // dotenv-shaped dir
 	writeFile(t, dir, "node_modules/.env.production", leak)     // fixed name
 	writeFile(t, dir, "node_modules/pkg/.env.production", leak) // …at depth
@@ -250,8 +256,11 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 	}
 
 	// 🔴 THE OTHER SIDE OF THE SAME SENTENCE. Both the help and
-	// DirectoryPatternSummary now say a kept dotenv name is uploaded "in any
-	// directory that is itself packaged" and NOT rescued from an excluded one.
+	// DirectoryPatternSummary say a kept dotenv name is uploaded only where
+	// every directory above it is itself packaged, and is NOT rescued from an
+	// excluded one. (Quoting neither verbatim on purpose: the exact strings are
+	// pinned by TestDirectoryPatternSummaryIsTheReviewedCopy and the help
+	// golden, and a paraphrase here went stale within one round.)
 	// The rows above pin the first half; without these, the sentence could be
 	// widened back to the false universal it replaced — "wherever they sit" —
 	// and stay green.

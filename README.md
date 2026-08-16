@@ -1227,7 +1227,7 @@ shaped. Measured, all of these are **packaged** today:
 | `db.env` at the project root | the base name does not start with `.env` |
 | `envs/prod.env`, `env/local.env` | neither the directory nor the file name is `.env`-dotted |
 | `.env-backup/db.env` | `.env-backup` is not `.env.`-dotted, so the directory rule does not apply |
-| `.env-backup/.env.production` | the three kept names are kept **by name**, in any directory that survives |
+| `.env-backup/.env.production` | the three kept names are kept **by name**, wherever every directory above them is itself packaged |
 | `x.ZIP/`, `.ENV.local/` | both rules are case-sensitive |
 
 The mirror of the `.env-backup/.env.production` row: a kept name does **not**
