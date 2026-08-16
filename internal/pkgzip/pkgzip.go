@@ -443,9 +443,19 @@ func Build(dir string) (*Result, error) {
 // ExcludedFilePatterns lists the FILE patterns and is matched against a file's
 // base name (see its own doc). So `JoinExcluded()` — the string the CLI's
 // `app submit` help prints — is not a complete account of what a directory walk
-// drops, and DirectoryPatternSummary exists to say the rest. If you add a
-// directory rule here, add it there too; TestDirectoryRuleIsDocumentedForAuthors
-// fails when the two disagree.
+// drops, and DirectoryPatternSummary exists to say the rest.
+//
+// 🔴 WHAT IS AND IS NOT GATED, precisely, because the previous wording here
+// overstated it and a maintainer would have trusted a gate that cannot see
+// their change:
+//   - A new FIXED name in excludedDirs needs no ledger: `app submit --help`
+//     prints ExcludedNames() verbatim, so it documents itself.
+//   - A new PATTERN rule does NOT document itself. Add it to
+//     DirectoryPatternSummary by hand. TestDirectoryRuleIsDocumentedForAuthors
+//     pins the summary against BEHAVIOUR for a fixed roster of names, so it
+//     catches a rule that changes the answer for one of those — it cannot see a
+//     brand-new pattern matching a name nobody listed. Add a roster row when you
+//     add a rule.
 func IsExcluded(name string) bool { return isExcludedDir(name) }
 
 // DirectoryPatternSummary is the human-readable account of the directory rules
@@ -461,12 +471,16 @@ func IsExcluded(name string) bool { return isExcludedDir(name) }
 // The wording is deliberately concrete about what still ships. This is the only
 // exclusion documentation most authors will ever read, and the direction that
 // costs them is believing a directory is dropped when it is uploaded.
+// Line-wrapped to sit under the rest of the command's Long text, which is hard
+// wrapped; TestDirectoryPatternSummaryIsTheReviewedCopy pins the whole string
+// NORMALISED, so re-wrapping it is free but rewording it is not.
 func DirectoryPatternSummary() string {
-	return "a DIRECTORY named .env or .env.<anything> (e.g. .env.d/, .env.local/, " +
-		".env.production/), or ending in .zip, is dropped whole at any depth. " +
-		"Directories whose names merely start with .env — .envrc/, .env-backup/, " +
-		".envs/ — are NOT dropped, and a secret-bearing file inside one (db.env, " +
-		"prod.env) is uploaded unless its own name starts with .env"
+	return "a DIRECTORY named .env or .env.<anything> (e.g.\n" +
+		"  .env.d/, .env.local/, .env.production/), or ending in .zip, is dropped\n" +
+		"  whole at any depth. Directories whose names merely start with .env —\n" +
+		"  .envrc/, .env-backup/, .envs/ — are NOT dropped, and a secret-bearing\n" +
+		"  file inside one (db.env, prod.env) is uploaded unless its own name\n" +
+		"  starts with .env"
 }
 
 // IsExcludedPath answers, for a whole project-relative PATH, the question Build

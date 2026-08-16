@@ -34,10 +34,18 @@ func newAppSubmitCmd() *cobra.Command {
 review.
 
 The package is the SOURCE tree (manifest + src + build config) — NOT a
-prebuilt dist. The platform rebuilds from source. These are excluded:
-  ` + pkgzip.JoinExcluded() + `
+prebuilt dist. The platform rebuilds from source.
 
-Those are matched against a FILE's name. For directories: ` + pkgzip.DirectoryPatternSummary() + `.
+Excluded DIRECTORIES, by name, at any depth:
+  ` + strings.Join(pkgzip.ExcludedNames(), ", ") + `
+...and by pattern: ` + pkgzip.DirectoryPatternSummary() + `.
+
+Excluded FILES, by base name:
+  ` + strings.Join(pkgzip.ExcludedFilePatterns(), ", ") + `
+
+The two lists are separate rules, so the shape matters: a regular file named
+build or dist IS packaged, and .git / .hg / .svn go either way (in a linked
+worktree or a submodule, .git is a file).
 
 Submission path:
   By default this uploads the bundle directly using your stored token to the

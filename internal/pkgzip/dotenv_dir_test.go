@@ -175,8 +175,7 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 	// NOT dropped — ordinary content, or the documented residual.
 	kept := []string{".envrc", ".env-backup", ".envs", ".environment", ".envoy"}
 
-	summary := DirectoryPatternSummary()
-	readme := readmeBody(t)
+	section := dotenvSection(t)
 
 	for _, n := range dropped {
 		if !IsExcluded(n) {
@@ -192,27 +191,70 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 		}
 	}
 
-	// The residual is the half that can cost a credential, so both surfaces must
-	// name it rather than describing only what IS dropped.
-	for _, phrase := range []string{".env.d", ".env-backup"} {
-		if !strings.Contains(summary, phrase) {
-			t.Errorf("DirectoryPatternSummary does not mention %q — the help text is the "+
-				"only exclusion doc most authors read", phrase)
-		}
-	}
+	// The residual is the half that can cost a credential, so the README must
+	// name it rather than describing only what IS dropped. Scoped to the dotenv
+	// SECTION, not the whole file: a mention anywhere in a 2,500-line README
+	// would satisfy a whole-file search without the rule being documented where
+	// an author reads about dotenv handling.
 	for _, phrase := range []string{".env.d/", ".env-backup/"} {
-		if !strings.Contains(readme, phrase) {
-			t.Errorf("README.md does not mention %q — the directory rule and its residual "+
-				"must both be documented where the dotenv rule is", phrase)
+		if !strings.Contains(section, phrase) {
+			t.Errorf("the README's dotenv section does not mention %q — the directory "+
+				"rule and its residual must both be documented where the dotenv rule is", phrase)
 		}
 	}
 
-	// CONTROL: an empty summary would satisfy neither loop above by accident,
-	// but it WOULD make the Contains checks the only thing standing, so pin that
-	// the summary is real prose rather than a stub someone emptied.
-	if len(strings.Fields(summary)) < 20 {
-		t.Errorf("DirectoryPatternSummary is %d words — too short to be the account "+
-			"the help text needs", len(strings.Fields(summary)))
+	// 🔴 EVERY ROW OF THE README'S "still uploaded" TABLE, PINNED TO BEHAVIOUR.
+	// Prose that lists what is NOT protected is the most dangerous kind to let
+	// rot: it rots in the safe-looking direction (code starts dropping a path
+	// the doc says ships), and the author's loss is a silently missing file.
+	// These paths are quoted from that table.
+	for _, p := range []string{
+		"db.env",             // root, base name does not start with ".env"
+		"envs/prod.env",      // neither name is dotenv-shaped
+		"env/local.env",      //
+		".env-backup/db.env", // directory is not ".env."-dotted
+		"x.ZIP/a.txt",        // the archive rule is case-sensitive
+		".ENV.local/b.txt",   // the dotenv rule is case-sensitive
+	} {
+		if IsExcludedPath(p) {
+			t.Errorf("%q is EXCLUDED, but the README's residual table tells authors it is "+
+				"still uploaded. Either the table is now wrong, or a rule widened without "+
+				"its documentation — fix whichever moved", p)
+		}
+	}
+}
+
+// 🔴 THE SUMMARY IS PROSE THE CLI PRINTS, SO PIN THE WHOLE NORMALISED STRING.
+//
+// The behavioural ledger above cannot see a REWORDING. Measured on the round
+// that added it: rewriting the tail from "are NOT dropped … is uploaded" to
+// "are ALSO dropped whole … is safely removed from the bundle for you" keeps
+// every token the ledger greps for, so the whole suite stayed green — while the
+// string the CLI prints had become false in the CREDENTIAL direction, which is
+// exactly the direction DirectoryPatternSummary's own doc calls the costly one.
+// A guard on WORDS is walkable by choosing different words.
+//
+// Comparison is whitespace-collapsed, so re-wrapping the source to fit the help
+// text costs nothing. Any other edit fails here and must be re-read against the
+// code before it is re-approved — which is the whole point.
+func TestDirectoryPatternSummaryIsTheReviewedCopy(t *testing.T) {
+	const want = "a DIRECTORY named .env or .env.<anything> (e.g. .env.d/, .env.local/, " +
+		".env.production/), or ending in .zip, is dropped whole at any depth. Directories " +
+		"whose names merely start with .env — .envrc/, .env-backup/, .envs/ — are NOT " +
+		"dropped, and a secret-bearing file inside one (db.env, prod.env) is uploaded " +
+		"unless its own name starts with .env"
+
+	got := strings.Join(strings.Fields(DirectoryPatternSummary()), " ")
+	if got == "" {
+		t.Fatal("CONTROL failure: the summary normalised to nothing, so an empty golden " +
+			"would match it forever")
+	}
+	if got != want {
+		t.Errorf("DirectoryPatternSummary changed.\n\n want: %s\n\n got:  %s\n\n"+
+			"🔴 This string is printed by `civitai app submit --help` and tells an author "+
+			"which directories are NOT protected. Re-approve only after checking the new "+
+			"wording is true of isExcludedDir — run the roster in "+
+			"TestDirectoryRuleIsDocumentedForAuthors against it.", want, got)
 	}
 }
 
