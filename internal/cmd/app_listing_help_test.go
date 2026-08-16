@@ -292,7 +292,11 @@ func minimalGIF(*testing.T) []byte {
 // The floor is asserted so a walk that found nothing cannot read as clean.
 func TestListingHelpBodiesAreComplete(t *testing.T) {
 	nodes := listingHelpNodes(t)
-	const wantNodes = 7 // the group + its six subcommands
+	// The group + its seven subcommands. `submit-revision` is the seventh
+	// (civitai/cli#436): before it, a change staged in a live listing's revision
+	// — a removal, and nothing else after #434 — could not be published by any
+	// command in this CLI.
+	const wantNodes = 8
 	if len(nodes) != wantNodes {
 		t.Fatalf("walked %d nodes under `app listing`, want %d — adding a command means "+
 			"documenting it, so update this floor deliberately", len(nodes), wantNodes)
@@ -359,8 +363,8 @@ func TestListingHelpStaysWithinTheBudget(t *testing.T) {
 			}
 		}
 	}
-	if checked < 7 {
-		t.Fatalf("only %d bodies were measured, want 7 — a body that is empty is not a body "+
+	if checked < 8 {
+		t.Fatalf("only %d bodies were measured, want 8 — a body that is empty is not a body "+
 			"that is within budget", checked)
 	}
 }
