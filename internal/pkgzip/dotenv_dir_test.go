@@ -154,6 +154,68 @@ func TestIsExcludedPathDotenvShapedDirectories(t *testing.T) {
 	}
 }
 
+// 🔴 THE LEDGER FOR THE DIRECTORY RULE — the thing this package does for every
+// other user-facing exclusion and that #420's first round shipped without.
+//
+// The README's dotenv section and the `app submit` help text both now tell an
+// author which DIRECTORIES are dropped and, more importantly, which are NOT.
+// Those sentences are a promise about behaviour, and prose cannot be trusted to
+// track code: the golden-snapshot test next door fails when the prose is EDITED
+// but cannot see prose and code DIVERGE, so widening isDotenvShaped left every
+// README guard green while the documented `.envrc/` and `.env-backup/` silently
+// started being deleted from submissions.
+//
+// This asserts the two against each other by BEHAVIOUR. The `kept` half is the
+// load-bearing one: it is what goes red when someone widens the directory rule
+// to the file rule's bare ".env" prefix, and the message points at the sentence
+// that would become a lie.
+func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
+	// Dropped whole, at any depth.
+	dropped := []string{".env", ".env.d", ".env.local", ".env.production", "artifact.zip"}
+	// NOT dropped — ordinary content, or the documented residual.
+	kept := []string{".envrc", ".env-backup", ".envs", ".environment", ".envoy"}
+
+	summary := DirectoryPatternSummary()
+	readme := readmeBody(t)
+
+	for _, n := range dropped {
+		if !IsExcluded(n) {
+			t.Errorf("directory %q ships, but DirectoryPatternSummary and the README "+
+				"tell authors it is dropped whole", n)
+		}
+	}
+	for _, n := range kept {
+		if IsExcluded(n) {
+			t.Errorf("directory %q is DROPPED, but DirectoryPatternSummary and the README "+
+				"tell authors it ships — an author who read either would lose that subtree "+
+				"from a submission with nothing printed to say so", n)
+		}
+	}
+
+	// The residual is the half that can cost a credential, so both surfaces must
+	// name it rather than describing only what IS dropped.
+	for _, phrase := range []string{".env.d", ".env-backup"} {
+		if !strings.Contains(summary, phrase) {
+			t.Errorf("DirectoryPatternSummary does not mention %q — the help text is the "+
+				"only exclusion doc most authors read", phrase)
+		}
+	}
+	for _, phrase := range []string{".env.d/", ".env-backup/"} {
+		if !strings.Contains(readme, phrase) {
+			t.Errorf("README.md does not mention %q — the directory rule and its residual "+
+				"must both be documented where the dotenv rule is", phrase)
+		}
+	}
+
+	// CONTROL: an empty summary would satisfy neither loop above by accident,
+	// but it WOULD make the Contains checks the only thing standing, so pin that
+	// the summary is real prose rather than a stub someone emptied.
+	if len(strings.Fields(summary)) < 20 {
+		t.Errorf("DirectoryPatternSummary is %d words — too short to be the account "+
+			"the help text needs", len(strings.Fields(summary)))
+	}
+}
+
 // bytesContain reports whether s appears in the CONTENT of any file stored in
 // the zip. Searching the raw archive buffer would be defeated by Deflate, so
 // this decompresses each entry — see TestSecretSearchCanFindAKeptFile for the

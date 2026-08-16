@@ -1216,10 +1216,22 @@ so a directory called `.env.production/` is dropped like any other.
 
 The directory rule deliberately stops at the dot, which the file rule does not,
 because matching too much here removes a whole subtree from your submission with
-nothing to tell you: `.environment/` and `.envoy/` still ship. The cost is a real
-gap — a directory named `.env-backup/` is **not** excluded, and a file named
-`db.env` inside one **is packaged**, because that base name does not start with
-`.env`. Keep secrets in a `.env`-dotted name and they are dropped by both rules.
+nothing to tell you: `.environment/` and `.envoy/` still ship.
+
+🔴 **This closes one shape of the leak, not the class.** The packager matches
+*names*, never contents, so a secret still ships whenever neither name is dotenv-
+shaped. Measured, all of these are **packaged** today:
+
+| still uploaded | why it slips through |
+| --- | --- |
+| `db.env` at the project root | the base name does not start with `.env` |
+| `envs/prod.env`, `env/local.env` | neither the directory nor the file name is `.env`-dotted |
+| `.env-backup/db.env` | `.env-backup` is not `.env.`-dotted, so the directory rule does not apply |
+| `x.ZIP/`, `.ENV.local/` | both rules are case-sensitive |
+
+Keep secrets in a `.env`-dotted name — `.env.local`, `.env.d/` — and both rules
+drop them. Anything else is on you to check before you submit; `--package-only`
+writes the exact `.zip` that would be uploaded, so unzip it and look.
 
 🔴 **The allow-list is by FILE NAME. Nothing inspects what is inside those three
 files, so nothing stops one of them carrying a secret to the platform.** Whatever

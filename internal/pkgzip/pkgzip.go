@@ -436,10 +436,38 @@ func Build(dir string) (*Result, error) {
 // IsExcluded reports whether a DIRECTORY component would be excluded (exported
 // for tests + messaging). See isExcludedDir for the rule — it is more than the
 // excludedDirs map, because dotenv-shaped and archive-shaped directory names go
-// too (#420). ExcludedNames, which feeds the CLI's help text, still lists only
-// the fixed names; the pattern rules are spelled in ExcludedFilePatterns, and
-// they now describe both shapes rather than files alone.
+// too (#420).
+//
+// 🔴 NEITHER ExcludedNames NOR ExcludedFilePatterns REPORTS THE DIRECTORY
+// PATTERN RULES. ExcludedNames lists the fixed excludedDirs entries;
+// ExcludedFilePatterns lists the FILE patterns and is matched against a file's
+// base name (see its own doc). So `JoinExcluded()` — the string the CLI's
+// `app submit` help prints — is not a complete account of what a directory walk
+// drops, and DirectoryPatternSummary exists to say the rest. If you add a
+// directory rule here, add it there too; TestDirectoryRuleIsDocumentedForAuthors
+// fails when the two disagree.
 func IsExcluded(name string) bool { return isExcludedDir(name) }
+
+// DirectoryPatternSummary is the human-readable account of the directory rules
+// that are PATTERNS rather than fixed names (#420), for CLI messaging.
+//
+// It exists because JoinExcluded() reads as a complete list and is not one: a
+// reader of `*.zip, .env, .env.local, …` in `app submit --help` reasonably
+// concludes those are the rules, and would be wrong twice — the entries there
+// are matched against FILE base names, so it understates (nothing says
+// `.env.d/` is dropped WHOLE) and overstates (`.env*` reads as covering
+// `.envrc/`, `.env-backup/` and `.envs/` as directories, and it does not).
+//
+// The wording is deliberately concrete about what still ships. This is the only
+// exclusion documentation most authors will ever read, and the direction that
+// costs them is believing a directory is dropped when it is uploaded.
+func DirectoryPatternSummary() string {
+	return "a DIRECTORY named .env or .env.<anything> (e.g. .env.d/, .env.local/, " +
+		".env.production/), or ending in .zip, is dropped whole at any depth. " +
+		"Directories whose names merely start with .env — .envrc/, .env-backup/, " +
+		".envs/ — are NOT dropped, and a secret-bearing file inside one (db.env, " +
+		"prod.env) is uploaded unless its own name starts with .env"
+}
 
 // IsExcludedPath answers, for a whole project-relative PATH, the question Build
 // answers one walk step at a time: would this path be left OUT of the bundle?

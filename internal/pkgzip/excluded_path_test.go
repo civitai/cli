@@ -181,10 +181,14 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 		"src/.env.d/api.env",
 		"artifact.zip/payload.bin",
 	}
-	// Near-miss DIRECTORY names that must keep shipping, for the same reason
-	// `.gitignore` is in the fixture below: both sides must agree they are
-	// content, and a directory rule widened to the bare ".env" prefix (correct
-	// for files) would delete both subtrees from a submission silently.
+	// Near-miss DIRECTORY names that must keep shipping — here for the same
+	// reason `.gitignore` is, and with the same limitation, stated honestly:
+	// this is an AGREEMENT oracle, so it catches an ASYMMETRIC change only. A
+	// directory rule widened to the bare ".env" prefix deletes both subtrees
+	// from every submission silently, and both sides would agree about it, so
+	// these rows stay GREEN through exactly that mistake. The guards that catch
+	// it are the near-miss rows in TestIsExcludedPathDotenvShapedDirectories and
+	// the `kept` half of TestDirectoryRuleIsDocumentedForAuthors.
 	files = append(files, ".environment/config.yaml", ".envoy/bootstrap.yaml")
 	// The names that merely START with ".git" stay in the fixture as content:
 	// both sides must keep shipping them, and a prefix match would make Build

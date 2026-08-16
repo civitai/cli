@@ -37,6 +37,8 @@ The package is the SOURCE tree (manifest + src + build config) — NOT a
 prebuilt dist. The platform rebuilds from source. These are excluded:
   ` + pkgzip.JoinExcluded() + `
 
+Those are matched against a FILE's name. For directories: ` + pkgzip.DirectoryPatternSummary() + `.
+
 Submission path:
   By default this uploads the bundle directly using your stored token to the
   token-authenticated submit route (POST /api/v1/blocks/submit-version). OAuth
