@@ -441,9 +441,15 @@ func Build(dir string) (*Result, error) {
 // 🔴 NEITHER ExcludedNames NOR ExcludedFilePatterns REPORTS THE DIRECTORY
 // PATTERN RULES. ExcludedNames lists the fixed excludedDirs entries;
 // ExcludedFilePatterns lists the FILE patterns and is matched against a file's
-// base name (see its own doc). So `JoinExcluded()` — the string the CLI's
-// `app submit` help prints — is not a complete account of what a directory walk
-// drops, and DirectoryPatternSummary exists to say the rest.
+// base name (see its own doc). So `JoinExcluded()`, which concatenates the two,
+// is not a complete account of what a directory walk drops, and
+// DirectoryPatternSummary exists to say the rest.
+//
+// (`app submit --help` no longer prints JoinExcluded() — it prints the two
+// lists separately under their own headings, because a flat list of both reads
+// as one rule and the help asserted the wrong shape for 15 of 18 entries. That
+// leaves JoinExcluded with no production caller; it is kept as messaging API,
+// not because anything currently renders it.)
 //
 // 🔴 WHAT IS AND IS NOT GATED, precisely, because the previous wording here
 // overstated it and a maintainer would have trusted a gate that cannot see
@@ -451,22 +457,25 @@ func Build(dir string) (*Result, error) {
 //   - A new FIXED name in excludedDirs needs no ledger: `app submit --help`
 //     prints ExcludedNames() verbatim, so it documents itself.
 //   - A new PATTERN rule does NOT document itself. Add it to
-//     DirectoryPatternSummary by hand. TestDirectoryRuleIsDocumentedForAuthors
-//     pins the summary against BEHAVIOUR for a fixed roster of names, so it
-//     catches a rule that changes the answer for one of those — it cannot see a
-//     brand-new pattern matching a name nobody listed. Add a roster row when you
-//     add a rule.
+//     DirectoryPatternSummary by hand. Two different guards then apply, and
+//     neither is a behavioural pin on this prose:
+//     TestDirectoryPatternSummaryIsTheReviewedCopy freezes the summary's exact
+//     normalised text, so any reword must be re-read against the code;
+//     TestDirectoryRuleIsDocumentedForAuthors pins a fixed ROSTER OF NAMES
+//     against isExcludedDir, so it catches a rule that changes the answer for
+//     one of those and cannot see a brand-new pattern matching a name nobody
+//     listed. Add a roster row when you add a rule.
 func IsExcluded(name string) bool { return isExcludedDir(name) }
 
 // DirectoryPatternSummary is the human-readable account of the directory rules
 // that are PATTERNS rather than fixed names (#420), for CLI messaging.
 //
-// It exists because JoinExcluded() reads as a complete list and is not one: a
-// reader of `*.zip, .env, .env.local, …` in `app submit --help` reasonably
-// concludes those are the rules, and would be wrong twice — the entries there
-// are matched against FILE base names, so it understates (nothing says
-// `.env.d/` is dropped WHOLE) and overstates (`.env*` reads as covering
-// `.envrc/`, `.env-backup/` and `.envs/` as directories, and it does not).
+// It exists because the file patterns read as a complete list and are not one:
+// a reader of `*.zip, .env, .env.local, …` reasonably concludes those are the
+// rules, and would be wrong twice — those entries are matched against FILE base
+// names, so they understate (nothing there says `.env.d/` is dropped WHOLE) and
+// overstate (`.env*` reads as covering `.envrc/`, `.env-backup/` and `.envs/`
+// as directories, and it does not).
 //
 // The wording is deliberately concrete about what still ships. This is the only
 // exclusion documentation most authors will ever read, and the direction that
@@ -479,8 +488,10 @@ func DirectoryPatternSummary() string {
 		"  .env.d/, .env.local/, .env.production/), or ending in .zip, is dropped\n" +
 		"  whole at any depth. Directories whose names merely start with .env —\n" +
 		"  .envrc/, .env-backup/, .envs/ — are NOT dropped, and a secret-bearing\n" +
-		"  file inside one (db.env, prod.env) is uploaded unless its own name\n" +
-		"  starts with .env"
+		"  file inside one (db.env, prod.env) is uploaded unless the FILE rule\n" +
+		"  below drops it. That rule KEEPS .env.example, .env.sample and\n" +
+		"  .env.production wherever they sit, so .env-backup/.env.production is\n" +
+		"  uploaded too"
 }
 
 // IsExcludedPath answers, for a whole project-relative PATH, the question Build
@@ -590,6 +601,28 @@ func ExcludedNames() []string {
 // IsExcludedFile reports whether a file would be excluded by base name
 // (exported for tests + messaging). See isExcludedFile for the rule.
 func IsExcludedFile(name string) bool { return isExcludedFile(name) }
+
+// KeptEnvFileNames returns the dotenv FILE names the packager deliberately
+// uploads despite the ".env" catch-all, sorted.
+//
+// 🔴 EXPORTED SO THE HELP CAN SAY IT. ExcludedFilePatterns ends at `.env*`,
+// which reads as "every dotenv file is dropped" — and `.env.production` being
+// SHIPPED is, in the README's words, "the one worth knowing about, because it
+// is the least expected". An author who reads only the exclusion list puts a
+// token in the one file that is uploaded.
+//
+// These are allow-listed BY NAME anywhere in the tree, so the exception also
+// crosses the directory rule: `.env-backup/.env.production` is uploaded, which
+// is measured and stated in DirectoryPatternSummary. Nothing reads their
+// contents — see keptEnvFiles for why that is not a safety property.
+func KeptEnvFileNames() []string {
+	out := make([]string, 0, len(keptEnvFiles))
+	for k := range keptEnvFiles {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // ExcludedFilePatterns returns the human-readable file-exclusion patterns, in
 // declaration order (build artifacts first, then dotenv).

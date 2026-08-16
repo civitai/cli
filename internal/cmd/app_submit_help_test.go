@@ -1,85 +1,145 @@
 package cmd
 
 import (
+	"flag"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/civitai/cli/internal/pkgzip"
 )
 
-// 🔴 THE HELP TEXT IS A SURFACE, AND UNTIL NOW NOTHING READ IT.
+var updateSubmitHelpGolden = flag.Bool("update-submit-help", false,
+	"re-approve the golden for `app submit --help`'s exclusion block")
+
+const submitHelpGoldenPath = "testdata/app_submit_help_exclusions.golden.txt"
+
+// 🔴 THE HELP TEXT IS A SURFACE, AND A SUBSTRING CHECK CANNOT GUARD PROSE.
 //
-// `app submit --help` is the only exclusion documentation most authors ever see.
-// It was measured, on the round that wrote it, that DELETING the entire
-// paragraph describing the directory rule left the full 20-package suite green —
-// the guards next door pin `pkgzip.DirectoryPatternSummary()`, which is a claim
-// about a FUNCTION, not about anything a user is shown. A guard scoped to the
-// producer cannot see the consumer drop it.
+// `app submit --help` is the only exclusion documentation most authors ever
+// see. Two rounds of guards failed here, in the same way, one after the other:
 //
-// It also caught a real inversion: the first version of this paragraph said
-// "Those are matched against a FILE's name" under a list whose first 18 entries
-// are DIRECTORY names, so it was false for 15 of the 18. A regular file named
-// `build` is packaged; a directory named `node_modules` is dropped. The rows
-// below pin both directions of that distinction, because getting it backwards
-// is what the sentence did.
-func TestSubmitHelpDocumentsBothExclusionShapes(t *testing.T) {
-	long := newAppSubmitCmd().Long
-	if strings.TrimSpace(long) == "" {
-		t.Fatal("CONTROL failure: the submit command has no Long text, so every check " +
-			"below would pass over an empty string")
+//   - Round 1 pinned nothing at all, so DELETING the whole paragraph left the
+//     full 20-package suite green.
+//   - Round 2 pinned `strings.Contains(long, DirectoryPatternSummary())` and
+//     each list entry — assertions against strings the help is CONCATENATED
+//     FROM, so they detect deletion and nothing else. Two wrong-but-passing
+//     help texts were constructed against it: one that SWAPPED the DIRECTORIES
+//     and FILES headings (re-creating the exact inversion the round was fixing)
+//     and one whose closing paragraph read "The two lists are ONE rule … it is
+//     a MYTH that a regular file named build or dist IS packaged". Both green.
+//
+// A guard on WORDS is walkable by choosing different words, so this pins the
+// WHOLE normalised exclusion block. That is the shape that already works for
+// `pkgzip.DirectoryPatternSummary` and for the README's dotenv section.
+//
+// Comparison is whitespace-collapsed, so re-wrapping the lists or the summary
+// costs nothing. Any other edit fails here and must be re-read against the
+// packager before it is re-approved:
+//
+//	go test ./internal/cmd -run TestSubmitHelpIsTheReviewedCopy -update-submit-help
+//
+// READ that diff. The question it must answer is not "does this read well" but
+// "is every sentence TRUE of pkgzip.Build" — checked by building a fixture, not
+// by reasoning. The claims that have been wrong here were wrong about which
+// SHAPE a rule applies to, and once in the credential direction.
+func TestSubmitHelpIsTheReviewedCopy(t *testing.T) {
+	got := strings.Join(strings.Fields(submitHelpExclusionBlock(t)), " ")
+	if got == "" {
+		t.Fatal("CONTROL failure: the exclusion block normalised to nothing, so an " +
+			"empty golden would match it forever")
 	}
 
-	// The directory PATTERN rules are not printed by any list, so the help must
-	// carry the summary itself.
-	if !strings.Contains(long, pkgzip.DirectoryPatternSummary()) {
-		t.Error("`app submit --help` does not carry pkgzip.DirectoryPatternSummary() — " +
-			"an author is told nothing about .env.d/ being dropped whole, nor about " +
-			".env-backup/ NOT being dropped, which is the credential-direction half")
-	}
-
-	// Both fixed lists must appear, each under its own shape. Sampled rather
-	// than exhaustive, but the samples are chosen to be the ones that read
-	// wrongly if the two lists are conflated.
-	for _, name := range pkgzip.ExcludedNames() {
-		if !strings.Contains(long, name) {
-			t.Errorf("`app submit --help` does not name the excluded directory %q", name)
+	if *updateSubmitHelpGolden {
+		if err := os.MkdirAll(filepath.Dir(submitHelpGoldenPath), 0o755); err != nil {
+			t.Fatalf("create testdata: %v", err)
 		}
-	}
-	for _, pat := range pkgzip.ExcludedFilePatterns() {
-		if !strings.Contains(long, pat) {
-			t.Errorf("`app submit --help` does not name the excluded file pattern %q", pat)
+		if err := os.WriteFile(submitHelpGoldenPath, []byte(got+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", submitHelpGoldenPath, err)
 		}
+		t.Logf("updated %s — READ THE DIFF", submitHelpGoldenPath)
+		return
 	}
 
-	// 🔴 The shape distinction itself. `build` appears in BOTH lists' vicinity,
-	// and it is the name whose two shapes behave oppositely, so the help has to
-	// say which is which rather than presenting one flat list.
-	if !strings.Contains(long, "DIRECTORIES") || !strings.Contains(long, "FILES") {
-		t.Error("`app submit --help` does not distinguish DIRECTORIES from FILES — " +
-			"the lists behave differently and a flat list reads as one rule")
+	want, err := os.ReadFile(submitHelpGoldenPath)
+	if err != nil {
+		t.Fatalf("read %s: %v\n\nRe-approve deliberately with -update-submit-help and "+
+			"review the file it writes.", submitHelpGoldenPath, err)
 	}
-
-	// Pin the fact the inverted sentence got wrong, in the direction that costs
-	// an author content rather than a secret.
-	if !strings.Contains(long, "a regular file named\nbuild or dist IS packaged") &&
-		!strings.Contains(long, "a regular file named build or dist IS packaged") {
-		t.Error("`app submit --help` no longer states that a regular FILE named build " +
-			"or dist is packaged — that is the half of the rule an author loses content to")
+	if strings.TrimSpace(string(want)) != got {
+		t.Errorf("`app submit --help`'s exclusion block changed.\n\n want: %s\n\n got:  %s\n\n"+
+			"🔴 This text tells an author what reaches the platform. It has been WRONG "+
+			"twice — once about which shape a rule applies to (a regular file named "+
+			"`build` is packaged; a directory named `node_modules` is not), and once in "+
+			"the credential direction. Re-approve with -update-submit-help only after "+
+			"checking every sentence against a real `Build` run.",
+			strings.TrimSpace(string(want)), got)
 	}
 }
 
-// The negative control for the assertions above: they must be capable of
-// failing. A help text that carried none of these would be caught — this proves
-// the strings are really being searched rather than the checks being satisfied
-// by something structural.
-func TestSubmitHelpChecksCanFail(t *testing.T) {
-	empty := ""
-	if strings.Contains(empty, pkgzip.DirectoryPatternSummary()) {
-		t.Fatal("an empty help text 'contains' the summary — the search is broken, so a " +
-			"green TestSubmitHelpDocumentsBothExclusionShapes would prove nothing")
+// The golden pins the WORDS. This pins the words to the CODE: every list the
+// help renders must be the one pkgzip actually exports, so a rule added to
+// pkgzip without touching the help fails here rather than shipping an
+// exclusion list that quietly omits it.
+func TestSubmitHelpRendersTheRealExclusionLists(t *testing.T) {
+	block := submitHelpExclusionBlock(t)
+
+	for _, name := range pkgzip.ExcludedNames() {
+		if !strings.Contains(block, name) {
+			t.Errorf("`app submit --help` does not name the excluded directory %q — "+
+				"a rule was added to pkgzip without updating the help", name)
+		}
 	}
-	if len(pkgzip.ExcludedNames()) == 0 || len(pkgzip.ExcludedFilePatterns()) == 0 {
-		t.Fatal("one of the exclusion lists is empty, so its loop above iterates zero " +
-			"times and asserts nothing")
+	for _, pat := range pkgzip.ExcludedFilePatterns() {
+		if !strings.Contains(block, pat) {
+			t.Errorf("`app submit --help` does not name the excluded file pattern %q", pat)
+		}
 	}
+	// The kept files are the credential-direction half: an author who reads only
+	// the exclusion list puts a token in the one dotenv file that IS uploaded.
+	for _, kept := range pkgzip.KeptEnvFileNames() {
+		if !strings.Contains(block, kept) {
+			t.Errorf("`app submit --help` does not say %q is KEPT and uploaded — that is "+
+				"the file an author is most likely to put a secret in", kept)
+		}
+	}
+	if !strings.Contains(block, pkgzip.DirectoryPatternSummary()) {
+		t.Error("`app submit --help` does not carry pkgzip.DirectoryPatternSummary() — " +
+			"the directory PATTERN rules are printed by no list, so dropping it leaves " +
+			"them undocumented")
+	}
+
+	// CONTROL: these loops assert nothing if the lists are empty.
+	if len(pkgzip.ExcludedNames()) == 0 || len(pkgzip.ExcludedFilePatterns()) == 0 ||
+		len(pkgzip.KeptEnvFileNames()) == 0 {
+		t.Fatal("an exclusion list is empty, so its loop above iterated zero times")
+	}
+}
+
+// submitHelpExclusionBlock is the part of the command's Long text that
+// describes what is packaged — from the opening sentence to the next section.
+// Scoped rather than whole-Long so unrelated edits to the submission-path prose
+// do not force a re-approval of the exclusion copy.
+func submitHelpExclusionBlock(t *testing.T) string {
+	t.Helper()
+	long := newAppSubmitCmd().Long
+	if strings.TrimSpace(long) == "" {
+		t.Fatal("CONTROL failure: the submit command has no Long text")
+	}
+	const start = "The package is the SOURCE tree"
+	const end = "Submission path:"
+	i := strings.Index(long, start)
+	if i < 0 {
+		t.Fatalf("`app submit --help` no longer contains %q — the exclusion block was "+
+			"renamed or removed, and this guard cannot see what replaced it", start)
+	}
+	rest := long[i:]
+	if j := strings.Index(rest, end); j >= 0 {
+		rest = rest[:j]
+	}
+	if strings.TrimSpace(rest) == "" {
+		t.Fatal("CONTROL failure: the exclusion block is empty")
+	}
+	return rest
 }

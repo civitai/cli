@@ -19,6 +19,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// wrapCommaList renders names as a comma-separated list broken every perLine
+// entries, indented to sit under a help-text heading. The 18 excluded directory
+// names ran to ~130 characters on one line, which wraps badly in an 80-column
+// terminal — and this list is the part of the help an author actually scans.
+//
+// Whitespace-only formatting: TestSubmitHelpIsTheReviewedCopy compares the help
+// NORMALISED, so re-wrapping is free and rewording is not.
+func wrapCommaList(names []string, perLine int) string {
+	var b strings.Builder
+	for i, n := range names {
+		if i > 0 {
+			if i%perLine == 0 {
+				b.WriteString(",\n  ")
+			} else {
+				b.WriteString(", ")
+			}
+		}
+		b.WriteString(n)
+	}
+	return b.String()
+}
+
 func newAppSubmitCmd() *cobra.Command {
 	var outFlag string
 	var packageOnly bool
@@ -37,11 +59,14 @@ The package is the SOURCE tree (manifest + src + build config) — NOT a
 prebuilt dist. The platform rebuilds from source.
 
 Excluded DIRECTORIES, by name, at any depth:
-  ` + strings.Join(pkgzip.ExcludedNames(), ", ") + `
-...and by pattern: ` + pkgzip.DirectoryPatternSummary() + `.
+  ` + wrapCommaList(pkgzip.ExcludedNames(), 6) + `
+...and by pattern: ` + pkgzip.DirectoryPatternSummary() + `
 
 Excluded FILES, by base name:
-  ` + strings.Join(pkgzip.ExcludedFilePatterns(), ", ") + `
+  ` + wrapCommaList(pkgzip.ExcludedFilePatterns(), 6) + `
+...but these three are KEPT and uploaded, wherever in the tree they sit:
+  ` + strings.Join(pkgzip.KeptEnvFileNames(), ", ") + `
+Nothing reads their contents, so put no token in any of them.
 
 The two lists are separate rules, so the shape matters: a regular file named
 build or dist IS packaged, and .git / .hg / .svn go either way (in a linked

@@ -215,6 +215,12 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 		".env-backup/db.env", // directory is not ".env."-dotted
 		"x.ZIP/a.txt",        // the archive rule is case-sensitive
 		".ENV.local/b.txt",   // the dotenv rule is case-sensitive
+		// 🔴 The keptEnvFiles allow-list crosses the directory rule: these three
+		// names are kept BY NAME wherever they sit, so an author who reads
+		// "files starting with .env are dropped" is wrong about the one file
+		// most likely to hold a token. DirectoryPatternSummary states this
+		// explicitly; this row is what stops that sentence rotting.
+		".env-backup/.env.production",
 	} {
 		if IsExcludedPath(p) {
 			t.Errorf("%q is EXCLUDED, but the README's residual table tells authors it is "+
@@ -238,11 +244,18 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 // text costs nothing. Any other edit fails here and must be re-read against the
 // code before it is re-approved — which is the whole point.
 func TestDirectoryPatternSummaryIsTheReviewedCopy(t *testing.T) {
+	// 🔴 The tail was reworded once already, in the credential direction, and the
+	// old wording is why: it said a file inside `.env-backup/` "is uploaded
+	// unless its own name starts with .env", which is FALSE for the three
+	// keptEnvFiles names. Measured — `.env-backup/.env.production` is packaged
+	// WITH its contents, while `.env-backup/.env.local` is dropped. An author
+	// reading the old sentence believed the wrong one was protected.
 	const want = "a DIRECTORY named .env or .env.<anything> (e.g. .env.d/, .env.local/, " +
 		".env.production/), or ending in .zip, is dropped whole at any depth. Directories " +
 		"whose names merely start with .env — .envrc/, .env-backup/, .envs/ — are NOT " +
 		"dropped, and a secret-bearing file inside one (db.env, prod.env) is uploaded " +
-		"unless its own name starts with .env"
+		"unless the FILE rule below drops it. That rule KEEPS .env.example, .env.sample " +
+		"and .env.production wherever they sit, so .env-backup/.env.production is uploaded too"
 
 	got := strings.Join(strings.Fields(DirectoryPatternSummary()), " ")
 	if got == "" {
