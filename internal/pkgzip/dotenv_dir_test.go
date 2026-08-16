@@ -44,6 +44,27 @@ func TestBuildExcludesDotenvShapedDirectories(t *testing.T) {
 	// Build artifact shaped as a directory.
 	writeFile(t, dir, "artifact.zip/payload.bin", "x")
 
+	// 🔴 KEPT NAMES INSIDE EXCLUDED DIRECTORIES — asserted against Build, not
+	// against the string predicate, because the two are a seam and only Build
+	// decides what is in the zip.
+	//
+	// Measured: a guard that pins only IsExcludedPath is BLIND here. Patching
+	// Build's walk to rescue keptEnvFiles names out of an excluded directory
+	// before SkipDir — i.e. restoring the "wherever they sit" behaviour this
+	// package retracted — leaves the FULL 20-package suite green while the zip
+	// uploads `.env.d/.env.production`. The help and README would then promise
+	// those paths are dropped while the bundle carries them, which is the
+	// credential direction.
+	//
+	// One row per directory RULE, since each reaches SkipDir by a different
+	// branch of isExcludedDir, and one nested row because the rule is about
+	// every ancestor, not only the parent.
+	writeFile(t, dir, ".env.d/.env.production", leak)           // dotenv-shaped dir
+	writeFile(t, dir, "node_modules/.env.production", leak)     // fixed name
+	writeFile(t, dir, "node_modules/pkg/.env.production", leak) // …at depth
+	writeFile(t, dir, "dist/.env.example", leak)                // fixed name, other kept file
+	writeFile(t, dir, "artifact.zip/.env.sample", leak)         // archive-shaped dir
+
 	// 🔴 NEGATIVE CONTROLS — content whose name merely BEGINS with ".env" and is
 	// NOT dotenv-shaped. These must SHIP. A rule widened to the bare ".env"
 	// prefix (which is correct for FILES, see isExcludedFile) would delete each
@@ -277,8 +298,8 @@ func TestDirectoryPatternSummaryIsTheReviewedCopy(t *testing.T) {
 		"dropped, and a secret-bearing file inside one (db.env, prod.env) is uploaded " +
 		"unless the FILE rule below drops it. That rule KEEPS .env.example, .env.sample " +
 		"and .env.production BY NAME — so .env-backup/.env.production is uploaded too — " +
-		"but only where the containing directory itself survives: a kept name inside " +
-		".env.d/ or node_modules/ goes with the directory."
+		"but only where every directory above it is itself packaged: a kept name anywhere " +
+		"under .env.d/ or node_modules/ goes with that directory."
 
 	got := strings.Join(strings.Fields(DirectoryPatternSummary()), " ")
 	if got == "" {

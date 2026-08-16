@@ -493,8 +493,9 @@ func DirectoryPatternSummary() string {
 		"  file inside one (db.env, prod.env) is uploaded unless the FILE rule\n" +
 		"  below drops it. That rule KEEPS .env.example, .env.sample and\n" +
 		"  .env.production BY NAME — so .env-backup/.env.production is uploaded\n" +
-		"  too — but only where the containing directory itself survives: a kept\n" +
-		"  name inside .env.d/ or node_modules/ goes with the directory."
+		"  too — but only where every directory above it is itself packaged: a\n" +
+		"  kept name anywhere under .env.d/ or node_modules/ goes with that\n" +
+		"  directory."
 }
 
 // IsExcludedPath answers, for a whole project-relative PATH, the question Build

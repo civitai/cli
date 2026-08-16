@@ -1230,9 +1230,10 @@ shaped. Measured, all of these are **packaged** today:
 | `.env-backup/.env.production` | the three kept names are kept **by name**, in any directory that survives |
 | `x.ZIP/`, `.ENV.local/` | both rules are case-sensitive |
 
-The mirror of that third row: a kept name does **not** rescue its directory.
-`.env.d/.env.production` is dropped along with `.env.d/`, because the walk skips
-an excluded directory before it ever looks at a file name.
+The mirror of the `.env-backup/.env.production` row: a kept name does **not**
+rescue its directory. `.env.d/.env.production` is dropped along with `.env.d/`,
+and so is `node_modules/pkg/.env.production` — the walk skips an excluded
+directory before it ever looks at a file name, at any depth beneath it.
 
 Keep secrets in a `.env`-dotted name — `.env.local`, `.env.d/` — and both rules
 drop them. Anything else is on you to check before you submit; `--package-only`

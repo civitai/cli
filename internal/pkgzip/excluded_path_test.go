@@ -179,6 +179,14 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 		// own tree. `.env.d` is the same rule with no such collision.)
 		".env.d/db.env",
 		"src/.env.d/api.env",
+		// 🔴 A KEPT dotenv name inside an EXCLUDED directory. Without this row
+		// the seam has no coverage of the interaction at all, and a Build-only
+		// change that rescues keptEnvFiles names out of an excluded directory
+		// passes the whole suite while the zip carries them (measured).
+		// isExcludedFile would keep these three names on their own; only the
+		// directory drops them, so the two sides must agree about that.
+		".env.d/.env.production",
+		"node_modules/.env.example",
 		"artifact.zip/payload.bin",
 	}
 	// Near-miss DIRECTORY names that must keep shipping — here for the same
