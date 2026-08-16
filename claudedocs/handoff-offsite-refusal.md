@@ -25,7 +25,8 @@ whether reaching those apps is possible at all.
   (`offsiteApp`) asked by both call sites (`app_listing.go:200` via `resolveListing`,
   `app_status.go:119`). Error path only, gated on `errors.Is(err, civitai.ErrNotFound)`,
   own 5s deadline, `client.Stderr = io.Discard` so retry notices cannot print above the
-  real error. Exit code stays **4**. AGENTS.md gains **item 29** (inline, no evidence file).
+  real error. Exit code stays **4**. AGENTS.md gains **item 29** — inline in #426, split to
+  `claudedocs/decisions/29-offsite-refusal.md` once that merge gave it a base commit.
 - **DONE — verified LIVE**, not just against fixtures (see *How to verify*).
 - **OPEN by design: #422 stays open.** Only outcome 2 (refuse precisely) shipped. Outcome 1
   (actually reach offsite apps) is blocked server-side — see the investigation below.
@@ -74,8 +75,13 @@ whether reaching those apps is possible at all.
     `httptest` fakes returning `{"appListingId":"apl_draft",…}` **unconditionally**. They
     pin the wire shape the CLI *sends*, never what the server *answers*.
 
-- **Leading hypothesis:** the server's slug selector is narrowed to draft/pending listings
-  and does not match approved ones — or it does not work at all and the comment is wrong.
+- ✅ **Hypothesis CONFIRMED from server source** (`civitai/civitai@07a1c537dc`,
+  `offsite-listing.service.ts:1705-1710`): the slug arm is real but scoped
+  `where: { slug, kind: 'onsite', appBlockId: null, status: 'draft' }`. Every row in the
+  table above is accounted for — the two approved onsite apps carry an `appBlockId` and fail
+  clauses 2 and 3; the offsite apps fail clause 1. So the comment is neither right nor
+  wrong: it is **over-general**. Suggested edit in the #424 thread — keep the slug argument
+  and both tests, narrow the prose to name the three conditions.
 
 - **🔴 The confound I could NOT eliminate:** the only two `appBlockId = nil` submissions I
   could find (`etag-probe-05773`, `dogfood-test-palette`) are **`withdrawn`**, not
@@ -97,27 +103,56 @@ whether reaching those apps is possible at all.
 - **Observed:** `getMyListingForApp` is addressable **only** by `appBlockId`; an offsite app
   has none — that is what `kind: offsite` means. Dropping the submission lookup and falling
   through with an empty `appBlockId` just moves the 404 one call later.
-- **Ruled out:** any client-side fix. This is not a scope cut; it is measured.
+- 🔴 **"Ruled out: any client-side fix" is RETRACTED (2026-08-16).** It was true of
+  `getMyListingForApp` and false as a claim about the CLI, because that proc is not the only
+  route to an `AppListing.id`. **Measured, live, unauthenticated:**
+  `GET /api/v1/apps/radio` → `200 {"id":"apl_01KYNB77D490DM6YS0C5Z7KYT7","kind":"offsite",…}`.
+  That is the listing row id, and **this CLI already decodes it** —
+  `civitai.AppDetail.ID`, off the call `offsiteApp` already makes on the refusal path.
+  Server-side (`civitai/civitai@07a1c537dc`, read not measured) `getMyListingForEdit` and
+  every listing-keyed asset proc gate on **ownership only, no kind check**, and the
+  `listingMedia:false` capability cell is read solely by a client-side tab gate.
+  So: **a client path probably exists for an APPROVED offsite app, and is unverified.**
+  Not a drop-in — `/api/v1/apps/{slug}` is approved-only and scope-gated (a draft or pending
+  offsite listing is invisible to it), and `getMyListingForEdit` **writes** (mints a shadow
+  revision), so it cannot sit on the read-only `app listing status` path. Full account,
+  with the caveats and the probe that would settle it:
+  `claudedocs/decisions/29-offsite-refusal.md`.
 - **Two vendored comments say the row exists** (claims, not measurements):
   `pkg/civitai/apps.go:10-13` — `/api/v1/apps` serves BOTH kinds *"from the durable
   AppListing record"*; `internal/appapi/listing.go:351` — `persistListingAssetImage` is
-  documented against **`offsite-listing.service.ts`**.
-- **Next step:** an issue on **`civitai/civitai`** asking for a `slug` or app-id selector on
-  `appListings.getMyListingForApp`. Not yet filed. It also unblocks #424.
+  documented against **`offsite-listing.service.ts`**. The `id` measurement above turns the
+  first of these from a claim into a confirmed one.
+- **DONE — the upstream issue is filed: `civitai/civitai#3984`**, asking for a slug/app-id
+  selector on `appListings.getMyListingForApp`. It also reports the mechanism that answers
+  #424: the slug arm exists but is scoped
+  `where: { slug, kind: 'onsite', appBlockId: null, status: 'draft' }`
+  (`offsite-listing.service.ts:1705-1710`), so `kind: 'offsite'` excludes every offsite app
+  on the first clause and an approved onsite app fails the other two. Cross-linked from
+  #422, #424 and `civitai/civitai#3893`.
 
 ## Next steps (ranked)
 
-1. **File the server-side selector issue on `civitai/civitai`** — the only thing that
-   unblocks both #422 outcome 1 and #424. Attach the selector table above verbatim.
-2. **Settle #424** with the throwaway-app probe (recipe above). One measurement.
-3. **#420** — `.env.local` / `*.zip` excluded as files but not directories; a planted
+1. ~~**File the server-side selector issue on `civitai/civitai`**~~ — **DONE:
+   `civitai/civitai#3984`.** Note it is no longer "the only thing that unblocks #422
+   outcome 1"; see the retraction above.
+2. **Settle whether the client path is real** — the higher-value probe now. Call
+   `getMyListingForEdit` with an offsite app's `apl_` id and see whether it returns assets
+   or refuses on kind. 🔴 Use a **throwaway** offsite app, never `radio`/`comfy`/
+   `cosmetic-studio`/`vitrine`: the call mints a shadow revision on a live listing.
+   If it resolves, `app listing` can reach approved offsite apps today and item 29's
+   refusal narrows to draft/pending.
+3. **Settle #424** with the throwaway-app probe (recipe above). One measurement. Lower
+   priority now that the server source explains the 404s — the remaining question is only
+   whether the genuinely-pending onsite path works.
+4. **#420** — `.env.local` / `*.zip` excluded as files but not directories; a planted
    `.env.d/db.env` secret is packaged and durably published to Forgejo. Credential-leak
    direction, and the issue asks for a **per-name** decision, not a blanket
    `excludedDirs ⇄ excludedFiles` promotion. Enforce in the shared predicate and extend
    #418's seam test.
-4. **#427** — the residuals: the refusal asserts ownership it never checked (no
+5. **#427** — the residuals: the refusal asserts ownership it never checked (no
    `ownedSubmission` gate, unlike `explainAppViewNotFound`), and the probe has no off switch.
-5. **#411 second half** — provenance stamping at submit (commit SHA + dirty flag). The
+6. **#411 second half** — provenance stamping at submit (commit SHA + dirty flag). The
    dirty-tree refusal already shipped in #415.
 
 ## Gotchas / decisions / dead-ends
@@ -142,9 +177,12 @@ whether reaching those apps is possible at all.
   weaker option demonstrably admits a hazard the shipped one rejects. Residual, documented
   in the source: pure-ASCII, so an IDN host or unencoded UTF-8 path is dropped (message
   says less, stays whole).
-- **Decision: item 29 is INLINE in AGENTS.md**, no `claudedocs/decisions/29-*.md`. A new
-  decisions file needs a `splitItems` sha pinned to a base commit where the body already
-  lived in AGENTS.md, which a first-appearance item cannot have without a two-PR dance.
+- **Decision: item 29 was INLINE in AGENTS.md** — and that was only ever true for one merge.
+  A new decisions file needs a `splitItems` sha pinned to a base commit where the body
+  already lived in AGENTS.md, which a first-appearance item cannot have. #426 WAS that first
+  PR, so the base existed the moment it merged and the split became ordinary
+  (`agentsSplitBaseWave5`). **Generalise it: a new item is inline until its first merge, not
+  forever.**
 - **This checkout is shared.** `main` moved under me mid-session (1b20b99 → 961050e) from
   another session, and a stale agent worktree held `fix/offsite-refusal` checked out,
   blocking a normal `git checkout -B`. Check `git worktree list` before branching.
