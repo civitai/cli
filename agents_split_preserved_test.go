@@ -130,6 +130,18 @@ const agentsSplitBaseWave3 = "6e31b4b29a0eb15c83e951a114db2345877d38bd"
 // items 2 and 4, which are smaller than a trigger plus a file read would cost.
 const agentsSplitBaseWave4 = "dfdcc974976ef4d8104f273b28b1f702c5a7f839"
 
+// agentsSplitBaseWave5 is the commit item 29 was moved from — the tip after
+// #428 (the offsite handoff) and #429 (the v0.1.96 draft).
+//
+// 🔴 WAVE 5 IS ONE ITEM, AND IT IS THE CASE WAVE 4 SAID IT COULD NOT DO. Item 29
+// arrived inline in #426 because a FIRST-APPEARANCE item has no base commit where
+// its body already lived in AGENTS.md, so it could not carry a row here without a
+// two-PR dance. #426 was that first PR whether or not anyone planned it: the body
+// has stood in AGENTS.md since 73ea7b4, so the base now exists and the dance is
+// complete. The lesson generalises — a new item is inline ONLY until its first
+// merge, after which converting it is an ordinary wave.
+const agentsSplitBaseWave5 = "53a925bf7810f2e0dadd64ddc9f77f2e390ae8b4"
+
 type splitItem struct {
 	num      int
 	file     string
@@ -169,6 +181,7 @@ var splitItems = []splitItem{
 	{num: 15, file: "claudedocs/decisions/15-two-trpc-envelopes.md", base: agentsSplitBaseWave4, nonBlank: 25, sha: "74a0d1e7746bec2ccec78bfae7616b7398f7c6a44b995cd7ddc3b58e27425fbb"},
 	{num: 16, file: "claudedocs/decisions/16-externalid-is-the-idempotency-key.md", base: agentsSplitBaseWave4, nonBlank: 25, sha: "cf7f2bd23cf64b0421fad49ace38df6dcdef3d3c3104aecef19e7657935caa4f"},
 	{num: 28, file: "claudedocs/decisions/28-no-claims-about-unobservable-spend.md", base: agentsSplitBaseWave4, nonBlank: 31, sha: "41387de27265146eb9c9fc8a507621b27b8b20cdf0db8d7eb9d4903021707478"},
+	{num: 29, file: "claudedocs/decisions/29-offsite-refusal.md", base: agentsSplitBaseWave5, nonBlank: 8, sha: "df86c7a851e2397db48eebd2f4b9d17e91565128ec4550510a62b785f552828d"},
 }
 
 // --- the one deliberate delta, item 3 ---------------------------------------

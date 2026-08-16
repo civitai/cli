@@ -28,15 +28,25 @@ import (
 // offsite apps fail that way, 7/7 onsite apps succeed — `kind` predicts it
 // exactly.
 //
-// 🔴 THIS IS THE REFUSAL, NOT THE REPAIR, AND THAT IS A MEASURED CHOICE RATHER
-// THAN A SCOPE CUT. #422's preferred outcome was to make offsite apps reachable
-// by resolving them by slug/app id instead. That is impossible client-side:
-// `appListings.getMyListingForApp` was measured live to resolve ONLY by
-// `appBlockId` (the slug selector 404s for every app, onsite positive controls
-// included), and an offsite app has no appBlockId — that is what `kind: offsite`
-// MEANS. Dropping the submission lookup just moves the 404 one call later.
-// Reaching these apps needs a server-side selector; see #422's thread and #424.
-// So do not "fix" this file by making it resolve something.
+// 🔴 THIS IS THE REFUSAL, NOT THE REPAIR. #422's preferred outcome was to make
+// offsite apps reachable by resolving them by slug/app id instead.
+// `appListings.getMyListingForApp` cannot do it: it was measured live to resolve
+// ONLY by `appBlockId` (the slug selector 404s for every app, onsite positive
+// controls included), and an offsite app has no appBlockId — that is what
+// `kind: offsite` MEANS. Dropping the submission lookup just moves the 404 one
+// call later. The upstream ask is civitai/civitai#3984.
+//
+// 🔴 BUT "NO CLIENT PATH EXISTS" IS RETRACTED IN PART, AND THE COUNTEREXAMPLE IS
+// IN THIS FILE. `offsiteApp` below calls GET /api/v1/apps/{slug}, whose payload
+// carries the `AppListing` row id — `civitai.AppDetail.ID`, an `apl_` ULID,
+// measured non-null for an offsite app (`radio` → `apl_01KYNB77D490DM6YS0C5Z7KYT7`,
+// 2026-08-16). Server-side, `getMyListingForEdit` and every listing-keyed asset
+// proc gate on OWNERSHIP only — no kind check — so a client path plausibly exists
+// for an APPROVED offsite app. It is UNVERIFIED (probing it mints a shadow
+// revision on a live listing) and it is not a drop-in: that route is
+// approved-only and scope-gated, so a draft or pending offsite listing is
+// invisible to it. Read claudedocs/decisions/29-offsite-refusal.md BEFORE either
+// restating the absolute or building on the workaround.
 //
 // 🔴 THE PROBE RUNS ONLY ON THE ERROR PATH, and that is load-bearing. A
 // successful `app listing status` / `app status <slug>` must be byte-identical
@@ -159,11 +169,14 @@ type offsiteRefusal func(slug string, d *civitai.AppDetail) string
 // Appending would leave the dead end on screen above the correction.
 //
 // The classification is re-attached, so the exit code is unchanged at 4 — see
-// AGENTS.md item 29 for why. That item is deliberately INLINE in AGENTS.md and
-// has no `claudedocs/decisions/29-*.md` body: a first-appearance item cannot
-// carry the agents_split_preserved_test.go provenance row a split body needs.
-// (An earlier draft of this line cited a decision file that never existed;
-// TestSourceCitationsOfDecisionFilesResolve now fails on that class.)
+// AGENTS.md item 29 for why. That item's body now lives in
+// claudedocs/decisions/29-offsite-refusal.md; it was inline while #426 was its
+// first appearance, because a first-appearance item has no base commit where its
+// body already stood in AGENTS.md and so cannot carry the
+// agents_split_preserved_test.go provenance row a split body needs. Once #426
+// merged, that base existed. (An earlier draft of this line cited a decision
+// file that did not yet exist; TestSourceCitationsOfDecisionFilesResolve fails on
+// that class, and the citation above now resolves.)
 func explainOffsiteMiss(ctx context.Context, slug string, err error, refuse offsiteRefusal) error {
 	// Only the not-found kind. A 403 from the invite-gated submissions route, a
 	// 5xx or a transport failure are different errors with different exit codes,

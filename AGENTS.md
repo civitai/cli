@@ -242,7 +242,7 @@ reason. Item 27 is blockId derivation — the one identity this CLI mints that
 can NEVER be renamed, plus the residuals the refusal knowingly ships with.
 Item 28 is what the CLI may CLAIM about a spend it cannot observe.
 Item 29 is the one place this CLI deliberately REFUSES rather than reaches — the
-offsite app whose listing no client-side selector can address.
+offsite app, whose reachability the item's own evidence file now PARTLY RETRACTS.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -406,14 +406,9 @@ item must carry a trigger that is a routing question rather than a label
     reaching for a banned-phrase guard?**
     → evidence: claudedocs/decisions/28-no-claims-about-unobservable-spend.md
 
-29. **The OFFSITE refusal is a refusal, NOT a repair.** No client change makes
-    `app listing` / `app status <slug>` reach an offsite app:
-    `getMyListingForApp` was measured to resolve ONLY by `appBlockId`, which an
-    offsite app has none of — the slug selector 404s for every app, onsite
-    controls included (civitai/cli#422, #424). Dropping the submission lookup
-    just moves the 404 one call later. `internal/cmd/app_offsite.go` detects
-    `kind: offsite` on the ERROR PATH ONLY; reaching these apps needs a
-    SERVER-side selector.
+29. **Reaching an offsite app's listing or submissions from the CLI, editing the
+    refusal that says you cannot, or repeating that no client path exists?**
+    → evidence: claudedocs/decisions/29-offsite-refusal.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
