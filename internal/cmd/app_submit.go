@@ -27,6 +27,11 @@ import (
 // Whitespace-only formatting: TestSubmitHelpIsTheReviewedCopy compares the help
 // NORMALISED, so re-wrapping is free and rewording is not.
 func wrapCommaList(names []string, perLine int) string {
+	if perLine < 1 {
+		// A zero would panic on i%perLine, and the caller wanting "no wrapping"
+		// is the only sane reading of a non-positive value.
+		perLine = len(names) + 1
+	}
 	var b strings.Builder
 	for i, n := range names {
 		if i > 0 {
@@ -64,9 +69,11 @@ Excluded DIRECTORIES, by name, at any depth:
 
 Excluded FILES, by base name:
   ` + wrapCommaList(pkgzip.ExcludedFilePatterns(), 6) + `
-...but these three are KEPT and uploaded, wherever in the tree they sit:
+...but these three are KEPT and uploaded, in any directory that is itself
+packaged:
   ` + strings.Join(pkgzip.KeptEnvFileNames(), ", ") + `
-Nothing reads their contents, so put no token in any of them.
+Nothing reads their contents, so put no token in any of them. A kept name does
+NOT rescue its directory: .env.d/.env.production is dropped with .env.d/.
 
 The two lists are separate rules, so the shape matters: a regular file named
 build or dist IS packaged, and .git / .hg / .svn go either way (in a linked

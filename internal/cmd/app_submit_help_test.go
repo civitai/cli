@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,10 +9,13 @@ import (
 	"github.com/civitai/cli/internal/pkgzip"
 )
 
-var updateSubmitHelpGolden = flag.Bool("update-submit-help", false,
-	"re-approve the golden for `app submit --help`'s exclusion block")
-
-const submitHelpGoldenPath = "testdata/app_submit_help_exclusions.golden.txt"
+// Deliberately reuses this package's existing golden machinery — `goldenDir`,
+// `normaliseCopy` and the `-update` flag from generate_golden_copy_test.go —
+// rather than minting a second flag. A private flag would mean
+// `go test ./internal/cmd -update` silently does not refresh this file, which
+// is exactly the kind of "the gate exists but nobody's habit reaches it" gap
+// this test was written to close.
+const submitHelpGoldenName = "app_submit_help_exclusions"
 
 // 🔴 THE HELP TEXT IS A SURFACE, AND A SUBSTRING CHECK CANNOT GUARD PROSE.
 //
@@ -38,42 +40,51 @@ const submitHelpGoldenPath = "testdata/app_submit_help_exclusions.golden.txt"
 // costs nothing. Any other edit fails here and must be re-read against the
 // packager before it is re-approved:
 //
-//	go test ./internal/cmd -run TestSubmitHelpIsTheReviewedCopy -update-submit-help
+//	go test ./internal/cmd -run TestSubmitHelpIsTheReviewedCopy -update
 //
 // READ that diff. The question it must answer is not "does this read well" but
 // "is every sentence TRUE of pkgzip.Build" — checked by building a fixture, not
-// by reasoning. The claims that have been wrong here were wrong about which
-// SHAPE a rule applies to, and once in the credential direction.
+// by reasoning. Three separate sentences here have been measurably false, each
+// caught only by running the packager: one about which SHAPE a rule applies to,
+// one in the credential direction, and one universal ("wherever they sit") that
+// contradicted a sentence two lines above it.
 func TestSubmitHelpIsTheReviewedCopy(t *testing.T) {
-	got := strings.Join(strings.Fields(submitHelpExclusionBlock(t)), " ")
-	if got == "" {
+	got := normaliseCopy(submitHelpExclusionBlock(t))
+	path := filepath.Join(goldenDir, submitHelpGoldenName+".txt")
+
+	// POSITIVE CONTROL: an empty block normalises to "" and would match an empty
+	// golden forever, reporting a serene pass over a help text that has stopped
+	// describing anything.
+	if strings.TrimSpace(got) == "" {
 		t.Fatal("CONTROL failure: the exclusion block normalised to nothing, so an " +
 			"empty golden would match it forever")
 	}
 
-	if *updateSubmitHelpGolden {
-		if err := os.MkdirAll(filepath.Dir(submitHelpGoldenPath), 0o755); err != nil {
-			t.Fatalf("create testdata: %v", err)
+	if *updateGolden {
+		if err := os.MkdirAll(goldenDir, 0o755); err != nil {
+			t.Fatalf("create %s: %v", goldenDir, err)
 		}
-		if err := os.WriteFile(submitHelpGoldenPath, []byte(got+"\n"), 0o644); err != nil {
-			t.Fatalf("write %s: %v", submitHelpGoldenPath, err)
+		if err := os.WriteFile(path, []byte(got+"\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
 		}
-		t.Logf("updated %s — READ THE DIFF", submitHelpGoldenPath)
+		t.Logf("updated %s — READ THE DIFF", path)
 		return
 	}
 
-	want, err := os.ReadFile(submitHelpGoldenPath)
+	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v\n\nRe-approve deliberately with -update-submit-help and "+
-			"review the file it writes.", submitHelpGoldenPath, err)
+		t.Fatalf("read %s: %v\n\nRe-approve deliberately with -update and review the "+
+			"file it writes.", path, err)
 	}
 	if strings.TrimSpace(string(want)) != got {
 		t.Errorf("`app submit --help`'s exclusion block changed.\n\n want: %s\n\n got:  %s\n\n"+
-			"🔴 This text tells an author what reaches the platform. It has been WRONG "+
-			"twice — once about which shape a rule applies to (a regular file named "+
-			"`build` is packaged; a directory named `node_modules` is not), and once in "+
-			"the credential direction. Re-approve with -update-submit-help only after "+
-			"checking every sentence against a real `Build` run.",
+			"🔴 This text tells an author what reaches the platform, and it has been "+
+			"WRONG three times: about which shape a rule applies to (a regular file "+
+			"named `build` IS packaged; a directory named `node_modules` is not), in "+
+			"the credential direction, and by claiming kept dotenv files survive "+
+			"\"wherever they sit\" when a kept name inside .env.d/ is dropped with the "+
+			"directory. Re-approve with -update only after checking every sentence "+
+			"against a real `Build` run.",
 			strings.TrimSpace(string(want)), got)
 	}
 }

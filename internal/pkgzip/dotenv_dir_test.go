@@ -215,17 +215,38 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 		".env-backup/db.env", // directory is not ".env."-dotted
 		"x.ZIP/a.txt",        // the archive rule is case-sensitive
 		".ENV.local/b.txt",   // the dotenv rule is case-sensitive
-		// 🔴 The keptEnvFiles allow-list crosses the directory rule: these three
-		// names are kept BY NAME wherever they sit, so an author who reads
-		// "files starting with .env are dropped" is wrong about the one file
-		// most likely to hold a token. DirectoryPatternSummary states this
-		// explicitly; this row is what stops that sentence rotting.
+		// 🔴 The keptEnvFiles allow-list survives a directory the walk does not
+		// drop, so an author who reads "files starting with .env are dropped" is
+		// wrong about the one file most likely to hold a token. Added to the
+		// README's table as its own row — the most surprising residual there is.
 		".env-backup/.env.production",
 	} {
 		if IsExcludedPath(p) {
 			t.Errorf("%q is EXCLUDED, but the README's residual table tells authors it is "+
 				"still uploaded. Either the table is now wrong, or a rule widened without "+
 				"its documentation — fix whichever moved", p)
+		}
+	}
+
+	// 🔴 THE OTHER SIDE OF THE SAME SENTENCE. Both the help and
+	// DirectoryPatternSummary now say a kept dotenv name is uploaded "in any
+	// directory that is itself packaged" and NOT rescued from an excluded one.
+	// The rows above pin the first half; without these, the sentence could be
+	// widened back to the false universal it replaced — "wherever they sit" —
+	// and stay green.
+	//
+	// Build's walk returns SkipDir before isExcludedFile is ever consulted, so
+	// the directory decides. Measured: `.env.d/.env.production` is dropped even
+	// though `.env.production` is on the allow-list.
+	for _, p := range []string{
+		".env.d/.env.production",       // the layout the help names two lines earlier
+		"node_modules/.env.production", // any excluded directory, not just dotenv ones
+		"dist/.env.example",
+	} {
+		if !IsExcludedPath(p) {
+			t.Errorf("%q is PACKAGED, but the help and DirectoryPatternSummary both say a "+
+				"kept name does not rescue its directory. A kept file inside a dropped "+
+				"directory is content loss the author is never told about", p)
 		}
 	}
 }
@@ -255,7 +276,9 @@ func TestDirectoryPatternSummaryIsTheReviewedCopy(t *testing.T) {
 		"whose names merely start with .env — .envrc/, .env-backup/, .envs/ — are NOT " +
 		"dropped, and a secret-bearing file inside one (db.env, prod.env) is uploaded " +
 		"unless the FILE rule below drops it. That rule KEEPS .env.example, .env.sample " +
-		"and .env.production wherever they sit, so .env-backup/.env.production is uploaded too"
+		"and .env.production BY NAME — so .env-backup/.env.production is uploaded too — " +
+		"but only where the containing directory itself survives: a kept name inside " +
+		".env.d/ or node_modules/ goes with the directory."
 
 	got := strings.Join(strings.Fields(DirectoryPatternSummary()), " ")
 	if got == "" {

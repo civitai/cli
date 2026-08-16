@@ -455,7 +455,9 @@ func Build(dir string) (*Result, error) {
 // overstated it and a maintainer would have trusted a gate that cannot see
 // their change:
 //   - A new FIXED name in excludedDirs needs no ledger: `app submit --help`
-//     prints ExcludedNames() verbatim, so it documents itself.
+//     prints ExcludedNames() verbatim, so it documents itself. It does still turn
+//     the help golden red, which is a deliberate re-approval step, not a gate
+//     you have to design.
 //   - A new PATTERN rule does NOT document itself. Add it to
 //     DirectoryPatternSummary by hand. Two different guards then apply, and
 //     neither is a behavioural pin on this prose:
@@ -490,8 +492,9 @@ func DirectoryPatternSummary() string {
 		"  .envrc/, .env-backup/, .envs/ — are NOT dropped, and a secret-bearing\n" +
 		"  file inside one (db.env, prod.env) is uploaded unless the FILE rule\n" +
 		"  below drops it. That rule KEEPS .env.example, .env.sample and\n" +
-		"  .env.production wherever they sit, so .env-backup/.env.production is\n" +
-		"  uploaded too"
+		"  .env.production BY NAME — so .env-backup/.env.production is uploaded\n" +
+		"  too — but only where the containing directory itself survives: a kept\n" +
+		"  name inside .env.d/ or node_modules/ goes with the directory."
 }
 
 // IsExcludedPath answers, for a whole project-relative PATH, the question Build

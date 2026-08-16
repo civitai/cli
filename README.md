@@ -1227,7 +1227,12 @@ shaped. Measured, all of these are **packaged** today:
 | `db.env` at the project root | the base name does not start with `.env` |
 | `envs/prod.env`, `env/local.env` | neither the directory nor the file name is `.env`-dotted |
 | `.env-backup/db.env` | `.env-backup` is not `.env.`-dotted, so the directory rule does not apply |
+| `.env-backup/.env.production` | the three kept names are kept **by name**, in any directory that survives |
 | `x.ZIP/`, `.ENV.local/` | both rules are case-sensitive |
+
+The mirror of that third row: a kept name does **not** rescue its directory.
+`.env.d/.env.production` is dropped along with `.env.d/`, because the walk skips
+an excluded directory before it ever looks at a file name.
 
 Keep secrets in a `.env`-dotted name — `.env.local`, `.env.d/` — and both rules
 drop them. Anything else is on you to check before you submit; `--package-only`
