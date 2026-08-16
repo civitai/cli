@@ -234,6 +234,23 @@ func TestEvidencePointersAndFilesAreTheSameSet(t *testing.T) {
 // a handful of citations without a test edit.
 const minSourceEvidenceCitations = 20
 
+// sourceCitationConcentratedIn names the file that holds 26 of those 27
+// citations, and it exists to say why a COUNT floor is not enough.
+//
+// 🔴 A COUNT FLOOR PROVES THE REGEX WORKS. IT DOES NOT PROVE THE WALK STILL
+// REACHES THE TREE THIS TEST POLICES. 20 of 27 is satisfied by this one file
+// alone, so the scan can stop visiting everything else and stay green. Two
+// mutants were measured to survive it: adding `"internal": true` to
+// skipDirsForSourceScan (26 citations remain — passes), and narrowing the walk
+// to `_test.go` files (26 remain — passes). With EITHER applied, reintroducing
+// the exact dangling citation this test was written to catch — a decisions path
+// cited from a non-test file, which is what internal/cmd/app_offsite.go shipped
+// in civitai/cli#426 — leaves the whole suite green. The reach probes below
+// close that: each one names a corner of the tree at least one citation must
+// still be found in, so a walk that quietly stops covering that corner fails
+// here instead of going silently blind.
+const sourceCitationConcentratedIn = "agents_split_preserved_test.go"
+
 // sourceEvidenceCiteRe is built from evidenceDir at RUNTIME rather than written
 // out as a literal, so this file cannot match itself and inflate the count with
 // a "citation" that is really the pattern.
@@ -306,6 +323,49 @@ func TestSourceCitationsOfDecisionFilesResolve(t *testing.T) {
 			"A scan that finds nothing validates nothing. Check sourceEvidenceCiteRe (%s) and that this test's "+
 			"working directory is the module root — do NOT delete citations on the strength of this failure.",
 			len(found), evidenceDir, minSourceEvidenceCitations, sourceEvidenceCiteRe)
+	}
+
+	// The reach probes. Each is a property of the FILE a citation was found in,
+	// and each is the sole thing standing between this test and a walk-narrowing
+	// mutant that the count floor above waves through. All three happen to be
+	// carried by the same citation today (internal/validate/lockfile.go), which
+	// is the corpus being what it is and not a reason to keep only one: they
+	// fail for different reasons and print different instructions.
+	for _, probe := range []struct {
+		what, mutantItCatches string
+		holds                 func(file string) bool
+	}{
+		{
+			what:            "outside " + sourceCitationConcentratedIn,
+			mutantItCatches: "a walk that has collapsed to the one file holding 26 of the 27 citations",
+			holds:           func(f string) bool { return filepath.Base(f) != sourceCitationConcentratedIn },
+		},
+		{
+			what:            "under internal/",
+			mutantItCatches: `adding "internal" to skipDirsForSourceScan`,
+			holds:           func(f string) bool { return strings.HasPrefix(f, "internal/") },
+		},
+		{
+			what:            "in a non-test .go file",
+			mutantItCatches: "narrowing the walk to _test.go files",
+			holds:           func(f string) bool { return !strings.HasSuffix(f, "_test.go") },
+		},
+	} {
+		n := 0
+		for _, c := range found {
+			if probe.holds(c.file) {
+				n++
+			}
+		}
+		if n == 0 {
+			t.Errorf("CONTROL failure, not a finding: of %d citation(s) found, ZERO are %s.\n"+
+				"This is the reach floor, not the count floor: %d citations is enough to pass "+
+				"minSourceEvidenceCitations while the walk no longer visits that part of the tree, and a dangling "+
+				"citation living there would then go unreported by a green suite. The mutant this catches is %s.\n"+
+				"If a citation was legitimately retired, point this probe at wherever the citations now live — "+
+				"do NOT delete the probe, and do NOT lower minSourceEvidenceCitations to make it moot.",
+				len(found), probe.what, len(found), probe.mutantItCatches)
+		}
 	}
 
 	var problems []string

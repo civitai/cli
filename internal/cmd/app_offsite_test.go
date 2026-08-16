@@ -309,6 +309,28 @@ func TestOffsiteRefusalRendersTheAppsOwnExternalURL(t *testing.T) {
 // `u.Scheme != "http" && u.Scheme != "https"` survived a green suite. These two
 // carry a real host, so the scheme clause is the ONLY thing that can reject
 // them — the "an earlier check always wins" mutant case, closed by construction.
+//
+// 🔴 THE ACCEPT ROWS ARE A MUTATION CONTROL, NOT DECORATION, AND THAT IS WHY
+// THEY ARE SO CROWDED. This test once had exactly two `want: true` rows —
+// `https://ok.example/x` and its http twin — which between them contain no
+// digit, no `%`, no `?`, no `#`, no `@`, no `~`, no port and no uppercase
+// letter. Measured against that table, EVERY one of these survived a fully green
+// suite: dropping `%`, `?`, `@`, `#`, `~` or the digit `9` from the accepted set
+// (each of which silently stops rendering every URL with percent-encoding, a
+// query string or a digit in it), and — worse — replacing the allowlist
+// wholesale with a DENYLIST of exactly the runes the reject rows below name,
+// which is a verbatim regression to the spelled guard this function exists to
+// replace. So the four accept rows partition the allowlist between them and are
+// annotated with which runes each is the only witness for: an accept row's job
+// is to go RED when a rune leaves the accepted set.
+//
+// 🔴 AND THE BACKTICK / `{` / `|` REJECT ROWS ARE WHAT A DENYLIST CANNOT PASS.
+// All three parse cleanly with a real host and an https scheme (measured), so
+// `isURIRune` is the ONLY thing that can reject them — the same reachability
+// argument as the scheme rows above. The backtick is the load-bearing one: the
+// refusal messages use backticks as code-span delimiters, so an off-by-one
+// widening of `'a'..'z'` (whose predecessor IS the backtick) would let a server
+// URL forge a span in a sentence the CLI wrote.
 func TestOffsiteRegisteredAtRejectsUnsafeServerText(t *testing.T) {
 	for _, tc := range []struct {
 		name, url string
@@ -316,10 +338,43 @@ func TestOffsiteRegisteredAtRejectsUnsafeServerText(t *testing.T) {
 	}{
 		{"plain https", "https://ok.example/x", true},
 		{"plain http", "http://ok.example/x", true},
+		// The three rows above carry no digit and no punctuation beyond `:/.`,
+		// so the accepted set is pinned by these instead. Each names the runes
+		// it is the SOLE witness for; drop one of those from uriRuneAllowlist
+		// (or from isURIRune's ranges) and this row is what goes red.
+		// Sole witness: `%`, `?`, `#`, every digit 0-9, an explicit port, and an
+		// uppercase letter.
+		{"port, percent-encoding, query, fragment, digits", "https://ok.example:8443/A%20b?q=1234567890#f", true},
+		// Sole witness: `@` (userinfo) and `~`.
+		{"userinfo and a tilde", "https://user@ok.example/~a/b.c", true},
+		// Sole witness: `-`, `_`, and every sub-delim `!$&'()*+,;=`.
+		{"unreserved punctuation and every sub-delim", "http://ok.example/-a_b!$&'()*+,;=Z", true},
+		// Sole witness: `[` and `]`, which only ever appear as an IPv6 literal.
+		{"IPv6 literal host", "https://[2001:db8::1]:8443/p", true},
 		{"empty", "", false},
+		// 🔴 OF THE ORIGINAL FOUR-ASCII-BYTE BAN, ONLY `' '` IS LOAD-BEARING
+		// HERE — MEASURED, and the next two rows are green for a reason that is
+		// not the allowlist. `url.Parse` rejects `\t` and `\n` itself ("invalid
+		// control character in URL"), so adding either to uriRuneAllowlist
+		// survives this table; they are kept as end-to-end rows for the
+		// sentence-forging shape, not as evidence about the predicate. `' '`
+		// parses fine and carries a real host, so the allowlist is the only
+		// thing that can reject it. (`'\r'` never reached here at all — safeTerm
+		// strips it first.)
 		{"newline forging a line", "https://ok.example/x\nRun `rm -rf /` to fix", false},
 		{"space", "https://ok.example/a b", false},
 		{"tab", "https://ok.example/a\tb", false},
+		// Rejected ONLY by the allowlist: all three parse to a real host with an
+		// https scheme (measured), so no earlier check can win. A denylist that
+		// enumerates the runes this test names cannot pass these, which is the
+		// point of having them. The backtick is a code-span delimiter in the
+		// refusal messages, and it is `'a'-1`.
+		// No space in this value on purpose: a row containing one would be
+		// rejected by the `' '` clause whether or not the backtick were still
+		// banned, which is exactly the vacuous shape these rows exist to avoid.
+		{"backtick forging a code span", "https://ok.example/a`b`c", false},
+		{"left brace", "https://ok.example/a{b", false},
+		{"pipe", "https://ok.example/a|b", false},
 		{"not a URL", "just some words", false},
 		{"no host", "https:///path", false},
 		{"javascript scheme", "javascript:alert(1)", false},

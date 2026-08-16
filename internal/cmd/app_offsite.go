@@ -219,9 +219,17 @@ func isURIRune(r rune) bool {
 // as a gap or a confusable. The allowlist inverts the burden: the value is
 // accepted only if EVERY rune is one RFC 3986 permits in a URI, which is a
 // property of the grammar the value claims to belong to rather than a denylist
-// this file has to keep current. `'\r'` needed no clause of its own either way —
-// safeTerm strips it before this function sees it (measured), which the old
-// four-byte list did not know.
+// this file has to keep current.
+//
+// MEASURED, AND NOT WHAT THE FOUR-BYTE LIST BELIEVED ABOUT ITSELF: exactly ONE
+// of those four bytes was ever load-bearing here. `'\r'` never reaches this
+// function — safeTerm strips it first. `'\t'` and `'\n'` are rejected by
+// `url.Parse` below ("invalid control character in URL"), so adding either to
+// the allowlist changes nothing observable. Only `' '` parses cleanly into a
+// real host, which makes the allowlist the only thing standing between a server
+// string and a forged clause. Stated so the next reader does not infer, from
+// three tab/newline/space rows in the test, that the predicate is what stops
+// them — for two of the three it is not.
 //
 // RESIDUAL, stated rather than hidden: this also drops URLs that are legitimate
 // but not pure-ASCII — an IDN host or a UTF-8 path that was never
