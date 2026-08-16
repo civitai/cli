@@ -193,7 +193,11 @@ func resolveListingSlug(lc listingCommon) (string, error) {
 func resolveListing(ctx context.Context, client *appapi.Client, slug string) (*appapi.ListingRef, error) {
 	sub, err := client.GetSubmission(ctx, "", slug)
 	if err != nil {
-		return nil, err
+		// civitai/cli#422: an OFFSITE app has no submissions, so it lands in the
+		// empty-list branch and is told to run `civitai app submit` — a command
+		// that cannot succeed for it. Only the error path pays for the check;
+		// see app_offsite.go.
+		return nil, explainOffsiteMiss(ctx, slug, err, offsiteListingRefusal)
 	}
 	appBlockID := ""
 	if sub.AppBlockID != nil {

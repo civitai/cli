@@ -27,7 +27,7 @@ const appsLimitMax = 50
 // would drift — an invalid --category is left to the server's 400, which the SDK
 // now surfaces with the offending field + allowed values (see badRequestDetail).
 var (
-	appKinds = []string{"all", "onsite", "offsite"}
+	appKinds = []string{"all", appKindOnsite, appKindOffsite}
 	appSorts = []string{"top-rated", "popular", "newest", "name"}
 	// appCategoriesHint documents the current marketplace category enum for the
 	// --category flag help. It mirrors the backend MARKETPLACE_CATEGORIES /
