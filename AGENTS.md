@@ -243,6 +243,9 @@ can NEVER be renamed, plus the residuals the refusal knowingly ships with.
 Item 28 is what the CLI may CLAIM about a spend it cannot observe.
 Item 29 is the one place this CLI deliberately REFUSES rather than reaches — the
 offsite app, whose reachability the item's own evidence file now PARTLY RETRACTS.
+Item 30 is the one listing change deliberately left STAGED rather than
+published, and why the command that publishes it exits NON-ZERO on a refusal the
+attach path reports as progress.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -409,6 +412,14 @@ item must carry a trigger that is a routing question rather than a label
 29. **Reaching an offsite app's listing or submissions from the CLI, editing the
     refusal that says you cannot, or repeating that no client path exists?**
     → evidence: claudedocs/decisions/29-offsite-refusal.md
+
+30. **A live-listing change may be STAGED and left unpublished, on purpose.**
+    `rm-screenshot` writes into the shadow revision and does NOT submit it: it
+    says so and names `app listing submit-revision`, because curation is N
+    removals and the first must not open a review cycle (#436 — the bare
+    `✓ Screenshot removed` was true of the revision, false of the listing).
+    That command's below-floor refusal therefore FAILS where the attach path
+    exits 0: there the job was the attach; here the submit IS the job.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

@@ -1356,10 +1356,10 @@ Details worth knowing before you start:
   way to publish a removal. `--changelog "<what changed>"` describes it for the
   moderator. It is **not** implicit in `rm-screenshot`: curating a gallery is
   usually several removals, and auto-submitting on the first would open a review
-  cycle in the middle of an edit. (`set-icon`, `set-cover` and `add-screenshot`
-  DO submit the revision they open — each is one complete change; see the two
-  notes above.) It refuses, without submitting, when the listing is
-  **not live** (a draft or
+  cycle in the middle of an edit. (A command that makes ONE complete change does
+  submit the revision it opened — the attach commands `set-icon`, `set-cover`
+  and `add-screenshot` do so today; see the two notes above.) It refuses,
+  without submitting, when the listing is **not live** (a draft or
   pending listing is edited directly, so there is no revision) and when there is
   **no open revision** to submit — a moderator never receives an empty one.
   Submitting is idempotent: a revision already awaiting review returns that same
