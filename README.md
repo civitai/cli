@@ -1258,6 +1258,34 @@ made of — a large text file that deflates to nothing is not what to delete. In
 is printed for any refusal that might be about the bundle, and deliberately
 **not** for a `401`/`403` (a credential problem, unrelated) or a `429`.
 
+#### What the packager left out
+
+Under the `Packaged …` line, `app submit` prints one more line naming every path
+it skipped — on every path including `--package-only`, and not at all when it
+skipped nothing:
+
+```
+Skipped 4 path(s): public/environment.env (*.env), .git/, dist/, node_modules/
+```
+
+- The count is of **skip decisions, not files**. An excluded directory is one
+  entry, printed with a trailing `/`: the walk stops there and never learns how
+  many files are underneath, so no number for that is printed rather than a
+  number that was guessed.
+- A **pattern** rule is tagged with the pattern that matched — `(*.env)`,
+  `(.env*)`, `(*.zip)`, `(.env or .env.*)` for a dotenv-shaped directory, and
+  `(not a regular file)` for a symlink or other non-regular entry. That tag is
+  the actionable part: it says which rule reached the file, so it says that
+  renaming recovers it. Tagged entries are listed first for that reason.
+- A **fixed** name from the excluded-directory list (`node_modules`, `dist`,
+  `.git`, …) carries no tag — `civitai app submit --help` prints that list
+  verbatim.
+- Past 12 entries the list is elided with `… and K more`; the count before the
+  colon still counts every one.
+
+This does not change what is packaged. It changes an exclusion from something
+you meet at runtime in the deployed app into something you read at submit time.
+
 #### Which dotenv files end up in the bundle
 
 "The CLI excludes dotenv files" is the natural reading of the `.env.development*`
@@ -1309,14 +1337,24 @@ never contents. Measured, these are **packaged** today:
 | `NODE_MODULES/`, `Dist/` | the *fixed-name* directory list is matched case-sensitively, on purpose — `Build/` and `Dist/` are plausible content directory names, and dropping one is a silent subtree loss. The two *pattern* rules (`.env…`, `*.zip`) **are** case-insensitive |
 | a secret in a name that is not dotenv-shaped at all | `secrets.json`, `credentials.yaml`, a key pasted into `src/config.ts` — the packager matches **names, never contents** |
 
-⚠️ **The `*.env` rule costs something, and it costs it silently.** `.env` is also
-**Babylon.js's environment-texture format** — a 3D block shipping
-`public/environment.env` will have it dropped, and you will find out at runtime
-in the deployed app, because the submit output prints a file *count* and never
-names what it skipped. `sample.env` and `template.env` go the same way, and the
-three-name allow-list has no suffix-shaped counterpart: `.env.sample` is kept,
-`sample.env` is not. **Run `--package-only` and unzip the result** if your app
-ships any `.env`-suffixed asset. Rename it (`environment.envmap`) and it travels.
+⚠️ **The `*.env` rule costs something, and the packager now says so.** `.env` is
+also **Babylon.js's environment-texture format** — a 3D block shipping
+`public/environment.env` will have it dropped. `sample.env` and `template.env` go
+the same way, and the three-name allow-list has no suffix-shaped counterpart:
+`.env.sample` is kept, `sample.env` is not. Rename the file
+(`environment.envmap`) and it travels.
+
+This used to be invisible until runtime in the deployed app, because the submit
+output printed a file *count* and named nothing. It now prints a second line
+listing what it left out, with the rule that matched:
+
+```
+Packaged 38 file(s) (49213 bytes compressed, 118442 decompressed; 65637 bytes as the base64 JSON submit body)
+Skipped 4 path(s): public/environment.env (*.env), .git/, dist/, node_modules/
+```
+
+Read the tag: it names the rule, so it also names the fix. The line is printed on
+every path including `--package-only`, and not at all when nothing was skipped.
 
 The mirror of the `.env-backup/.env.production` row: a kept name does **not**
 rescue its directory. `.env.d/.env.production` is dropped along with `.env.d/`,
