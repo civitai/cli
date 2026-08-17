@@ -1218,17 +1218,27 @@ The directory rule deliberately stops at the dot, which the file rule does not,
 because matching too much here removes a whole subtree from your submission with
 nothing to tell you: `.environment/` and `.envoy/` still ship.
 
-🔴 **This closes one shape of the leak, not the class.** The packager matches
-*names*, never contents, so a secret still ships whenever neither name is dotenv-
-shaped. Measured, all of these are **packaged** today:
+**A file is also dropped when its name *ends* in `.env`** — `db.env`,
+`prod.env`, `local.env`, `config.env`, at any depth and in any directory. That
+is the shape tooling writes, and until this rule existed no rule saw it: every
+dotenv rule was a *prefix* rule, so a name not starting with `.env` was
+invisible to all of them. This one is **files only** — a directory called
+`config.env/` still ships, because dropping a whole subtree on a suffix match is
+the silent loss the directory rule is aimed away from.
+
+The two *pattern* rules are **case-insensitive**: `.ENV.LOCAL` and `Bundle.ZIP`
+go, as directories or as files. The three kept names are still matched
+**exactly** — `.ENV.PRODUCTION` is not the file `vite build` reads, so it is
+dropped rather than uploaded.
+
+🔴 **This still closes shapes, not the class.** The packager matches *names*,
+never contents. Measured, these are **packaged** today:
 
 | still uploaded | why it slips through |
 | --- | --- |
-| `db.env` at the project root | the base name does not start with `.env` |
-| `envs/prod.env`, `env/local.env` | neither the directory nor the file name is `.env`-dotted |
-| `.env-backup/db.env` | `.env-backup` is not `.env.`-dotted, so the directory rule does not apply |
 | `.env-backup/.env.production` | the three kept names are kept **by name**, wherever every directory above them is itself packaged |
-| `x.ZIP/`, `.ENV.local/` | both rules are case-sensitive |
+| `NODE_MODULES/`, `Dist/` | the *fixed-name* directory list is matched case-sensitively, on purpose — `Build/` and `Dist/` are plausible content directory names, and dropping one is a silent subtree loss. The two *pattern* rules (`.env…`, `*.zip`) **are** case-insensitive |
+| a secret in a name that is not dotenv-shaped at all | `secrets.json`, `credentials.yaml`, a key pasted into `src/config.ts` — the packager matches **names, never contents** |
 
 The mirror of the `.env-backup/.env.production` row: a kept name does **not**
 rescue its directory. `.env.d/.env.production` is dropped along with `.env.d/`,

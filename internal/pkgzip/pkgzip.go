@@ -148,16 +148,50 @@ var vcsMetadataNames = map[string]struct{}{
 // with ".env". If a real case for those names appears, add the exact name to
 // excludedDirs rather than widening this predicate; that keeps the loss visible
 // in a list someone can read.
+// 🔴 CASE-INSENSITIVE since #435: `.ENV.local/` packaged. Case is not a
+// meaningful distinction for this convention — nobody names a content directory
+// to differ from a dotenv one only by case — so folding costs nothing and
+// closes a measured hole. The FIXED-name maps are deliberately NOT folded; see
+// isExcludedDir.
 func isDotenvShaped(name string) bool {
-	return name == ".env" || strings.HasPrefix(name, ".env.")
+	lower := strings.ToLower(name)
+	return lower == ".env" || strings.HasPrefix(lower, ".env.")
 }
 
 // isArchiveArtifact reports whether a base name is a packaged archive. One
 // predicate for both file types: a `--package-only` run drops `<app>-<ver>.zip`
 // in the project dir, and an author who unpacks one in place leaves a DIRECTORY
 // of the same shape. The platform rebuilds from source, so neither ships.
+// Case-insensitive since #435: `x.ZIP/` packaged. Same reasoning as
+// isDotenvShaped — `.ZIP` is the same convention shouted.
 func isArchiveArtifact(name string) bool {
-	return strings.HasSuffix(name, ".zip")
+	return strings.HasSuffix(strings.ToLower(name), ".zip")
+}
+
+// isDotenvSuffixed reports whether a FILE base name ends in ".env" —
+// `db.env`, `prod.env`, `local.env`, `config.env`.
+//
+// 🔴 THIS IS THE SHAPE TOOLING ACTUALLY WRITES, AND NO RULE SAW IT UNTIL #435.
+// The dotenv rules were all PREFIX rules, so a name that does not START with
+// ".env" was invisible to every one of them, at every depth. Measured on
+// v0.1.97 through the released binary: `db.env` at the project root,
+// `envs/prod.env`, `env/local.env` and `.env-backup/db.env` were all packaged
+// into a bundle that is committed to Forgejo and deployed. #420 closed the
+// dotenv-shaped DIRECTORY hole and did nothing for this one.
+//
+// 🔴 FILES ONLY — isExcludedDir does NOT get this rule. The asymmetry is the one
+// #420 settled over four review rounds: for a FILE, matching too much costs one
+// file the author renames, and matching too little costs an uploaded credential,
+// so it is aimed wide. For a DIRECTORY, matching too much removes an entire
+// subtree silently, so `config.env/` still ships.
+//
+// The residual it accepts, deliberately: a file that ends in ".env" for an
+// unrelated reason is dropped. Nothing the scaffold emits does — its dotenv
+// files are `.env.development` / `.env.example` / `.env.production`, all
+// PREFIXED, none suffixed — and the failure mode of the other direction is a
+// silent credential upload.
+func isDotenvSuffixed(name string) bool {
+	return strings.HasSuffix(strings.ToLower(name), ".env")
 }
 
 // isExcludedDir reports whether a DIRECTORY (by base name) must be left out of
@@ -224,6 +258,11 @@ var excludedFilePatterns = []string{
 	// does not. Keep this LAST so the message reads "these, and everything else
 	// like them".
 	".env*",
+	// 🔴 THE OTHER HALF OF THE CATCH-ALL (#435). Every rule above is a PREFIX
+	// rule, so the shape tooling actually writes — `db.env`, `prod.env` — was
+	// invisible to all of them and packaged at any depth. A reader who sees
+	// only `.env*` concludes their `db.env` ships; it does not.
+	"*.env",
 }
 
 // keptEnvFiles are .env* files we deliberately INCLUDE despite the broad
@@ -297,15 +336,27 @@ func isExcludedFile(name string) bool {
 	if isArchiveArtifact(name) {
 		return true
 	}
-	// Dotenv handling: allow-list the known-safe template / production files,
-	// drop everything else that starts with ".env".
-	if strings.HasPrefix(name, ".env") {
-		if _, keep := keptEnvFiles[name]; keep {
-			return false
-		}
+	// Dotenv handling. Two rules, one allow-list:
+	//
+	//   - PREFIX (case-insensitive since #435): every base name starting with
+	//     ".env" — `.env`, `.env.local`, `.envrc`, `.ENV.LOCAL`.
+	//   - SUFFIX (#435): every base name ending in ".env" — `db.env`,
+	//     `prod.env`. See isDotenvSuffixed for why this is files-only.
+	//
+	// 🔴 THE ALLOW-LIST IS CHECKED BY EXACT NAME, AND STAYS THAT WAY WHILE THE
+	// MATCH ABOVE IS FOLDED. `vite build` reads `.env.production` by its exact
+	// name, so `.ENV.PRODUCTION` is not the file the server build consumes and
+	// keeping it would be a claim nothing supports. It therefore falls to the
+	// catch-all and is DROPPED — the safe direction: the author sees a missing
+	// file rather than an uploaded one. None of the three kept names ends in
+	// ".env", so the suffix rule cannot reach them either.
+	if _, keep := keptEnvFiles[name]; keep {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(name), ".env") {
 		return true
 	}
-	return false
+	return isDotenvSuffixed(name)
 }
 
 // Result describes a produced package.
@@ -488,14 +539,15 @@ func IsExcluded(name string) bool { return isExcludedDir(name) }
 func DirectoryPatternSummary() string {
 	return "a DIRECTORY named .env or .env.<anything> (e.g.\n" +
 		"  .env.d/, .env.local/, .env.production/), or ending in .zip, is dropped\n" +
-		"  whole at any depth. Directories whose names merely start with .env —\n" +
-		"  .envrc/, .env-backup/, .envs/ — are NOT dropped, and a secret-bearing\n" +
-		"  file inside one (db.env, prod.env) is uploaded unless the FILE rule\n" +
-		"  below drops it. That rule KEEPS .env.example, .env.sample and\n" +
-		"  .env.production BY NAME — so .env-backup/.env.production is uploaded\n" +
-		"  too — but only where every directory above it is itself packaged: a\n" +
-		"  kept name anywhere under .env.d/ or node_modules/ goes with that\n" +
-		"  directory."
+		"  whole at any depth; matching ignores case, so .ENV.D/ and x.ZIP/ go\n" +
+		"  too. Directories whose names merely start with .env — .envrc/,\n" +
+		"  .env-backup/, .envs/ — are NOT dropped, but the FILE rules still reach\n" +
+		"  inside them: a db.env or prod.env there is dropped by the *.env rule.\n" +
+		"  What survives is the allow-list, which is matched by EXACT name —\n" +
+		"  .env.example, .env.sample and .env.production are uploaded, so\n" +
+		"  .env-backup/.env.production is uploaded too, but only where every\n" +
+		"  directory above it is itself packaged: a kept name anywhere under\n" +
+		"  .env.d/ or node_modules/ goes with that directory."
 }
 
 // IsExcludedPath answers, for a whole project-relative PATH, the question Build

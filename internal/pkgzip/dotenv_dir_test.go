@@ -236,12 +236,24 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 	// the doc says ships), and the author's loss is a silently missing file.
 	// These paths are quoted from that table.
 	for _, p := range []string{
-		"db.env",             // root, base name does not start with ".env"
-		"envs/prod.env",      // neither name is dotenv-shaped
-		"env/local.env",      //
-		".env-backup/db.env", // directory is not ".env."-dotted
-		"x.ZIP/a.txt",        // the archive rule is case-sensitive
-		".ENV.local/b.txt",   // the dotenv rule is case-sensitive
+		// 🔴 SIX ROWS LEFT THIS LIST IN #435, and this is where that was
+		// noticed: `db.env`, `envs/prod.env`, `env/local.env`,
+		// `.env-backup/db.env`, `x.ZIP/` and `.ENV.local/` were all documented
+		// here as uploaded, the `*.env` suffix rule and case-folding closed
+		// them, and these assertions went red on the very commit that closed
+		// them. The ledger caught the code moving ahead of the prose, which is
+		// the direction it was built for. They now live in
+		// TestBuildExcludesEnvSuffixFilesAnywhere as things that must NOT ship.
+		//
+		// The fixed-name directory list is deliberately NOT case-folded: `Build/`
+		// and `Dist/` are plausible content names and dropping one is a silent
+		// subtree loss. That is a documented residual, not an oversight.
+		"NODE_MODULES/react.js",
+		"Dist/app.js",
+		// The packager matches names, never contents — the class that no name
+		// rule can close.
+		"secrets.json",
+		"src/credentials.yaml",
 		// 🔴 The keptEnvFiles allow-list survives a directory the walk does not
 		// drop, so an author who reads "files starting with .env are dropped" is
 		// wrong about the one file most likely to hold a token. Added to the
@@ -302,13 +314,14 @@ func TestDirectoryPatternSummaryIsTheReviewedCopy(t *testing.T) {
 	// WITH its contents, while `.env-backup/.env.local` is dropped. An author
 	// reading the old sentence believed the wrong one was protected.
 	const want = "a DIRECTORY named .env or .env.<anything> (e.g. .env.d/, .env.local/, " +
-		".env.production/), or ending in .zip, is dropped whole at any depth. Directories " +
-		"whose names merely start with .env — .envrc/, .env-backup/, .envs/ — are NOT " +
-		"dropped, and a secret-bearing file inside one (db.env, prod.env) is uploaded " +
-		"unless the FILE rule below drops it. That rule KEEPS .env.example, .env.sample " +
-		"and .env.production BY NAME — so .env-backup/.env.production is uploaded too — " +
-		"but only where every directory above it is itself packaged: a kept name anywhere " +
-		"under .env.d/ or node_modules/ goes with that directory."
+		".env.production/), or ending in .zip, is dropped whole at any depth; matching " +
+		"ignores case, so .ENV.D/ and x.ZIP/ go too. Directories whose names merely start " +
+		"with .env — .envrc/, .env-backup/, .envs/ — are NOT dropped, but the FILE rules " +
+		"still reach inside them: a db.env or prod.env there is dropped by the *.env rule. " +
+		"What survives is the allow-list, which is matched by EXACT name — .env.example, " +
+		".env.sample and .env.production are uploaded, so .env-backup/.env.production is " +
+		"uploaded too, but only where every directory above it is itself packaged: a kept " +
+		"name anywhere under .env.d/ or node_modules/ goes with that directory."
 
 	got := strings.Join(strings.Fields(DirectoryPatternSummary()), " ")
 	if got == "" {
