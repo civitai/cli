@@ -33,7 +33,7 @@
           # Computed from go.sum (this module is not vendored). To recompute
           # after a go.mod/go.sum change: set this to `lib.fakeHash`, run
           # `nix build`, and copy the `got: sha256-…` value from the error.
-          vendorHash = "sha256-prgKRC+357KX7vJ9jcIq2+1FUD91a2Gg5Q89R+FTZ+g=";
+          vendorHash = "sha256-l0RyxhS7+tdL9FngitiUhrciQbZfyDmTp5tP3Kd6NGQ=";
 
           # The module root is `package cli` (a library that embeds the schema);
           # the executable lives in ./cmd/civitai (package main). Build only it.

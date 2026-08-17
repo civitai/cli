@@ -7,3 +7,14 @@ coverage.html
 .DS_Store
 .venv/
 /.claude/worktrees
+
+# `nix build` drops an out-link symlink into the invocation cwd (the repo root),
+# named `result` — or `result-<output>`/`result-<n>` when a build has several
+# outputs or several installables are built at once. It is a pointer into
+# /nix/store and must never be committed. This is DEFENCE IN DEPTH behind the
+# `add-paths:` on the `bump-flake-vendorhash` bot: that bot runs `nix build`
+# before opening its PR, and with neither guard the symlink rode along into the
+# PR diff (#450 committed `result -> /nix/store/kkfnywjq…-civitai-4e35eaa-dirty`
+# and all 13 CI checks stayed green).
+/result
+/result-*

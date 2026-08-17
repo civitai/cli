@@ -232,6 +232,29 @@ jobs:
           # the repo's normal CI (the `flake` build check). Shared with the
           # other drift-bots (bump-scaffold-pins / revendor-canonical-schema).
           token: ${{ secrets.BUMP_SCAFFOLD_PINS_TOKEN }}
+          # 🔴 STAGE ONLY flake.nix. Without `add-paths` this action stages
+          # EVERYTHING in the tree, untracked files included — and the two
+          # validate steps directly above run `nix build`, which drops a
+          # `result` symlink into the repo root on success. So the bot committed
+          # a pointer into /nix/store alongside its hash bump: PR #450 shipped
+          # `result -> /nix/store/kkfnywjq…-civitai-4e35eaa-dirty`, and all 13
+          # CI checks were green on it — nothing here detects the artifact, so
+          # the guard has to be that it is never staged.
+          #
+          # Note the ordering that hid this: `detect changes` runs BEFORE the
+          # validate steps, so its `git status --porcelain` is clean of `result`
+          # and the changed=true/false gate is unaffected. The symlink only
+          # exists during the window between validation and this step.
+          #
+          # This value is the COMPLETE set of paths the job may write, not a
+          # convenience filter. Audited against every step: the recompute step's
+          # two `sed -i`s and its `git checkout --` restore touch flake.nix and
+          # nothing else, and its nix log goes to `$RUNNER_TEMP`. If a future
+          # step writes another file that BELONGS in the PR, add it here — an
+          # unlisted path is silently dropped from the commit, and a bot that
+          # opens an incomplete PR is worse than the artifact this prevents.
+          # `.gitignore` also carries `/result`, as a second, independent layer.
+          add-paths: flake.nix
           branch: automation/bump-flake-vendorhash
           delete-branch: true
           commit-message: "chore(nix): bump flake vendorHash to match go.sum"
