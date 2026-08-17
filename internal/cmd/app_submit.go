@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -16,8 +17,55 @@ import (
 	"github.com/civitai/cli/internal/pkgzip"
 	"github.com/civitai/cli/internal/ui"
 	"github.com/civitai/cli/internal/validate"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
+
+// submitDiagnosisEntries is how many bundle entries the failure diagnosis names.
+// Small on purpose: the list is printed under an error the author is already
+// reading, and #423's cause (a directory of review screenshots) is visible in
+// the first few rows because the offending files were the big ones. A longer
+// list would bury the size line above it, which is the more important fact.
+const submitDiagnosisEntries = 5
+
+// printSubmitSizeDiagnosis writes what the CLI knows about the bundle whose
+// upload just failed: the exact number of bytes it put on the wire, and the
+// largest entries those bytes were made of.
+//
+// 🔴 IT IS AN ACCOUNT OF WHAT WAS SENT, NOT A DIAGNOSIS OF WHY IT WAS REFUSED,
+// and the wording keeps that line. The CLI cannot see the server's limits: it
+// does not know this failure is about size, and it must not imply it does —
+// this same block prints under a 500 that has nothing to do with the bundle.
+// What it can say is true of every one of those cases: here is what left this
+// machine. See issue #423 for the failure that made the distinction matter, and
+// pkgzip's cap comment for why the honest move is to report rather than refuse.
+//
+// It is on the FAILURE path only. On a success there is nothing to diagnose,
+// and the size already appears on the `Packaged …` line for anyone who wants
+// it — printing an entry table after every submit would train people to skip
+// the block, which is precisely when it is worth reading.
+func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte) {
+	fmt.Fprintf(w, "\nWhat this CLI sent (it cannot tell whether that is why the submit failed):\n")
+	fmt.Fprintf(w, "  %d bytes on the wire — a %d-byte zip, base64-encoded into a JSON body.\n",
+		appapi.SubmitBodySize(len(zipBytes)), len(zipBytes))
+
+	entries, err := pkgzip.LargestEntries(zipBytes, submitDiagnosisEntries)
+	if err == nil && len(entries) > 0 {
+		fmt.Fprintf(w, "  largest entries in the bundle (compressed / original):\n")
+		for _, e := range entries {
+			fmt.Fprintf(w, "    %10d / %-10d  %s\n", e.Compressed, e.Uncompressed, e.Name)
+		}
+	}
+
+	for _, line := range wrapRunes("The size the server applies any request-body limit to is the first number, "+
+		"not the zip. This CLI's own size caps are not the server's and are much higher, so clearing them is "+
+		"not a prediction that a submit will be accepted (issue #423). If the bundle carries files the platform "+
+		"build does not need, drop them and retry:", 78) {
+		fmt.Fprintf(w, "  %s\n", line)
+	}
+	fmt.Fprintf(w, "    %s   # writes the exact .zip, so you can list it before retrying\n",
+		ui.Code("civitai app submit --package-only"))
+}
 
 // wrapCommaList renders names as a comma-separated list broken every perLine
 // entries, indented to sit under a help-text heading. The 18 excluded directory
@@ -258,8 +306,17 @@ Defaults to the current directory.`,
 			if err != nil {
 				return err
 			}
-			fmt.Fprintf(out, "Packaged %d file(s) (%d bytes compressed, %d decompressed)\n",
-				len(pkg.Files), len(pkg.Zip), pkg.DecompressedBy)
+			// 🔴 THE THIRD NUMBER IS THE ONE A SIZE LIMIT APPLIES TO (#423).
+			// The zip is base64-encoded into a JSON document before it is sent,
+			// so the server never sees the compressed size — it sees ~4/3 of
+			// it. The author who hit #423 read `8201270 bytes compressed` off
+			// this line and had no way to reach the ~10.9 MB that was really
+			// refused; no local measurement corresponded to the rejected
+			// quantity at all. It is printed on every path including
+			// --package-only, because --package-only is how you inspect a
+			// bundle you cannot submit.
+			fmt.Fprintf(out, "Packaged %d file(s) (%d bytes compressed, %d decompressed; %d bytes as the base64 JSON submit body)\n",
+				len(pkg.Files), len(pkg.Zip), pkg.DecompressedBy, appapi.SubmitBodySize(len(pkg.Zip)))
 
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
 			// The gate above already confirmed (or --yes bypassed) it.
@@ -347,6 +404,26 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 			return e
 		})
 	if err != nil {
+		// 🔴 THE SERVER'S MESSAGE IS ALREADY VERBATIM, AND FOR #423 IT NAMES
+		// NOTHING. appapi.serverError prints the response body as it arrived, so
+		// there is no better message to extract from it: a bundle over the
+		// request-body limit produced `400: Invalid JSON` — an error about the
+		// PARSE, downstream of the real cause — and re-plumbing that decode
+		// cannot recover information the response does not carry.
+		//
+		// What the CLI does hold, and the response does not, is what it SENT. So
+		// add exactly that, labelled as the CLI's own account rather than
+		// dressed up as a diagnosis: the size that went on the wire, and the
+		// entries it was made of. Reaching those took `--package-only` plus
+		// `unzip -l` when #423 was filed.
+		//
+		// Deliberately not printed for a credential refusal (401/403 — the
+		// invite-only Apps beta is the most common submit failure and has
+		// nothing to do with the bundle) or a 429, where an entry list is noise
+		// on top of an error that already says what to do.
+		if !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited) {
+			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes)
+		}
 		return err
 	}
 	base := strings.TrimRight(baseURL, "/")

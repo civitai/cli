@@ -434,6 +434,33 @@ type submitBody struct {
 	BundleBase64 string `json:"bundleBase64"`
 }
 
+// submitBodyEnvelope is the literal JSON document json.Marshal produces for an
+// EMPTY submitBody — i.e. everything the marshaller adds around the payload.
+// Keep it beside the struct: adding a field to submitBody changes this, and the
+// two must move together. TestSubmitBodySizeMatchesRealMarshal pins the
+// arithmetic against json.Marshal itself rather than against this constant.
+const submitBodyEnvelope = `{"bundleBase64":""}`
+
+// SubmitBodySize returns the exact size, in bytes, of the HTTP request body
+// SubmitVersion sends for a zip of zipLen bytes.
+//
+// 🔴 THE ZIP IS NOT WHAT GOES ON THE WIRE, AND THE DIFFERENCE IS THE WHOLE OF
+// ISSUE #423. SubmitVersion base64-encodes the archive into a JSON document, so
+// the bytes the server receives — and the bytes any request-body limit is
+// applied to — are ~4/3 of the compressed size. An author reading
+// `8201270 bytes compressed` off `app submit` had no way to see the ~10.9 MB
+// that was actually sent, so nothing they could measure locally corresponded to
+// the quantity that was refused.
+//
+// It is EXACT, not an estimate: base64's alphabet (A–Z a–z 0–9 + / =) contains
+// no character encoding/json escapes, so the payload is copied through verbatim
+// and the envelope is a constant. Do not substitute a 1.37 multiplier for it —
+// the point of printing the number is that the author can compare it with a
+// limit, and a rounded number cannot be compared with anything.
+func SubmitBodySize(zipLen int) int {
+	return base64.StdEncoding.EncodedLen(zipLen) + len(submitBodyEnvelope)
+}
+
 // submitClient returns an *http.Client for the submit upload: it mirrors the
 // shared client's Transport but uses the longer submitTimeout, so the slow
 // upload + server-side processing doesn't trip the short fast-call timeout
