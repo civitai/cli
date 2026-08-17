@@ -100,9 +100,20 @@ whether reaching those apps is possible at all.
 
 - **Symptom:** offsite apps have no store-listing management path from the CLI. All four on
   this account (`radio`, `comfy`, `cosmetic-studio`, `vitrine`) serve a live icon + cover.
-- **Observed:** `getMyListingForApp` is addressable **only** by `appBlockId`; an offsite app
-  has none — that is what `kind: offsite` means. Dropping the submission lookup and falling
+- **Observed:** `getMyListingForApp` is addressable **only** by `appBlockId`; none of the
+  four offsite apps measured here has one. Dropping the submission lookup and falling
   through with an empty `appBlockId` just moves the 404 one call later.
+- 🔴 **"— that is what `kind: offsite` means" is RETRACTED (2026-08-16).** `appBlockId` is
+  **not** a kind discriminator. `civitai/civitai`,
+  `packages/civitai-db-schema/prisma/schema.full.prisma:2849-2853`: it is "Set for EVERY
+  backfilled row — on-site AND the #2821 off-site rows (both come from an AppBlock) … Only
+  a natively-created off-site listing (no backing AppBlock) leaves it NULL." The
+  `kind:'offsite'` + non-null `appBlockId` shape is **0 rows in production** (measured
+  2026-08-11, `src/components/Apps/appListingEditorTabs.ts`). So: empirically zero today,
+  structurally possible, and a backfilled class exists in the schema. The observation above
+  and the refusal are unaffected — all four apps here are natively-created — but
+  **discriminate on `kind`, never on `appBlockId` nullness.** Full account:
+  `claudedocs/decisions/29-offsite-refusal.md`.
 - 🔴 **"Ruled out: any client-side fix" is RETRACTED (2026-08-16).** It was true of
   `getMyListingForApp` and false as a claim about the CLI, because that proc is not the only
   route to an `AppListing.id`. **Measured, live, unauthenticated:**

@@ -25,8 +25,10 @@ still right for what it does — what does not survive is the absolute.
 `app status <slug>` reach an offsite app."* The support offered is that
 `getMyListingForApp` resolves only by `appBlockId`, and an offsite app has none.
 
-**Both halves of that support are true. The conclusion does not follow**, because
-`getMyListingForApp` is not the only route to an `AppListing.id`.
+**The first half is measured and true. The second half is true of every offsite
+app this CLI has measured, but NOT as the absolute the body states it as** — see
+the section below. **And even granting both, the conclusion does not follow**,
+because `getMyListingForApp` is not the only route to an `AppListing.id`.
 
 **MEASURED (2026-08-16, live, unauthenticated, read-only):**
 
@@ -101,6 +103,54 @@ offsite app's `apl_` id and see whether it returns assets or refuses on kind.
 Do it against a **throwaway** offsite app, not `radio` / `comfy` / `cosmetic-studio`
 / `vitrine` — constraint 2 means the probe writes. Until then, do not restate the
 body's absolute, and do not build on the workaround either.
+
+## 🔴 "AN OFFSITE APP HAS NO `appBlockId`" IS ALSO RETRACTED — IT IS NOT A KIND DISCRIMINATOR
+
+**Read this before writing any predicate over `appBlockId`.** The body says
+`getMyListingForApp` resolves "ONLY by `appBlockId`, which an offsite app has
+none of". The measurement is right; the *"which an offsite app has none of"* is a
+false absolute, and the same absolute was in `internal/cmd/app_offsite.go`
+("that is what `kind: offsite` MEANS") until 2026-08-16. Both were corrected
+upstream the same night.
+
+**READ FROM SOURCE** — `civitai/civitai`,
+`packages/civitai-db-schema/prisma/schema.full.prisma:2849-2853`, on
+`AppListing.appBlockId`:
+
+> 1:1 backing AppBlock (UNIQUE) + idempotency key. Set for EVERY backfilled row —
+> on-site AND the #2821 off-site rows (both come from an AppBlock). **It is NOT a
+> kind discriminator: discriminate on `kind`, never on appBlockId nullness.**
+> Only a natively-created off-site listing (no backing AppBlock) leaves it NULL.
+
+`app-listing-backfill.service.ts:32-40` says the same thing about the writer, and
+`resolveLegacyAppRedirect.ts:170-183` carries the *same* retraction, of the same
+absolute, in the same repo — the sizing claim "every listing that carries an
+`appBlockId` is `kind='onsite'`" was withdrawn there for exactly this reason.
+
+**MEASURED (upstream, production, 2026-08-11)** — the `kind:'offsite'` +
+non-null-`appBlockId` shape is **0 rows**
+(`src/components/Apps/appListingEditorTabs.ts:104-108`, via
+`resolveAccessibleAppBlockIds`), which is why the two-clause tab arms there are
+each individually killable rather than redundant.
+
+**So the honest state is three claims, not one:** the shape is **empirically zero
+today**, **structurally possible**, and **a backfilled class for it exists in the
+schema**. "None, by definition" is none of those.
+
+**WHAT DOES NOT CHANGE, stated so this is not read as a reopening:**
+
+- This CLI's own live measurement stands — 4/4 offsite apps fail the submission
+  lookup, 7/7 onsite pass (#422). `kind` predicts it exactly.
+- The refusal is correct behaviour and its wording is unaffected: it is derived
+  from `kind`, never from `appBlockId` nullness (`offsiteApp` branches on
+  `d.Kind` alone).
+- All four measured apps are **natively-created** offsite listings, which
+  genuinely have no backing AppBlock. The absolute is wrong; the instance is not.
+
+**THE OPERATIONAL RULE:** discriminate on `kind`. If you ever need "does this
+listing have a backing block?", ask that question directly — it is a *different*
+question from "is this offsite?", and treating them as one is what both retracted
+sentences did.
 
 ---
 

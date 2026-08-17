@@ -32,9 +32,27 @@ import (
 // offsite apps reachable by resolving them by slug/app id instead.
 // `appListings.getMyListingForApp` cannot do it: it was measured live to resolve
 // ONLY by `appBlockId` (the slug selector 404s for every app, onsite positive
-// controls included), and an offsite app has no appBlockId — that is what
-// `kind: offsite` MEANS. Dropping the submission lookup just moves the 404 one
-// call later. The upstream ask is civitai/civitai#3984.
+// controls included), and none of the offsite apps measured on #422 has an
+// appBlockId to resolve by. Dropping the submission lookup just moves the 404
+// one call later. The upstream ask is civitai/civitai#3984.
+//
+// 🔴 `appBlockId` IS NOT A KIND DISCRIMINATOR, AND THIS COMMENT USED TO SAY IT
+// WAS. The sentence above read "an offsite app has no appBlockId — that is
+// what `kind: offsite` MEANS" until 2026-08-16. That absolute is false. The
+// server schema says so in as many words
+// (`packages/civitai-db-schema/prisma/schema.full.prisma:2849-2853` in
+// `civitai/civitai`): the 1:1 backing AppBlock is "Set for EVERY backfilled row
+// — on-site AND the #2821 off-site rows (both come from an AppBlock). It is NOT
+// a kind discriminator: discriminate on `kind`, never on appBlockId nullness.
+// Only a natively-created off-site listing (no backing AppBlock) leaves it
+// NULL." The `kind: offsite` + non-null `appBlockId` shape is measured at 0 rows
+// in production (2026-08-11, `src/components/Apps/appListingEditorTabs.ts`), so
+// it is EMPIRICALLY ABSENT TODAY, STRUCTURALLY POSSIBLE, and a backfilled class
+// for it exists in the schema. Nothing about the refusal changes: #422's 4/4
+// offsite / 7/7 onsite measurement stands, and a NATIVELY-created offsite app —
+// which is what all four measured ones are — genuinely has no AppBlock. What
+// changes is what may be INFERRED: never read appBlockId nullness as the kind,
+// which is why offsiteApp below branches on `d.Kind` and nothing else.
 //
 // 🔴 BUT "NO CLIENT PATH EXISTS" IS RETRACTED IN PART, AND THE COUNTEREXAMPLE IS
 // IN THIS FILE. `offsiteApp` below calls GET /api/v1/apps/{slug}, whose payload
