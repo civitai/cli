@@ -246,6 +246,8 @@ offsite app, whose reachability the item's own evidence file now PARTLY RETRACTS
 Item 30 is the one listing change deliberately left STAGED rather than
 published, and why the command that publishes it exits NON-ZERO on a refusal the
 attach path reports as progress.
+Item 31 is a deliberate non-mirror on the submit path: the packager's own size
+caps, and the server ceiling behind them that #423 bracketed but could not pin.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -420,6 +422,14 @@ item must carry a trigger that is a routing question rather than a label
     `✓ Screenshot removed` was true of the revision, false of the listing).
     That command's below-floor refusal therefore FAILS where the attach path
     exits 0: there the job was the attach; here the submit IS the job.
+
+31. **`internal/pkgzip`'s size caps are the CLI's OWN, not a server mirror, and
+    the server's bundle ceiling is deliberately NOT vendored.** #423 bracketed it
+    to `(2.32 MB, 8.20 MB]` and no further; a cap guessed from inside that range
+    refuses bundles the server accepts, unappealably. So the CLI reports rather
+    than refuses: `appapi.SubmitBodySize` (base64-in-JSON, so the wire size is
+    ~4/3 of "compressed" — that is what a body limit applies to) and
+    `pkgzip.LargestEntries`, only under a failed submit. Name no server ceiling.
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

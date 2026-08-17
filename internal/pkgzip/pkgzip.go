@@ -49,8 +49,32 @@ import (
 	"github.com/civitai/cli/internal/manifest"
 )
 
-// These caps mirror the server-side submitVersion service so a package that
-// the CLI accepts will not be rejected on size grounds.
+// 🔴 THESE ARE THE CLI'S OWN SANITY CAPS. THEY ARE NOT A MIRROR OF THE SERVER,
+// AND A PACKAGE THAT PASSES THEM CAN STILL BE REJECTED ON SIZE GROUNDS.
+//
+// This comment used to claim the opposite — "these caps mirror the server-side
+// submitVersion service so a package that the CLI accepts will not be rejected
+// on size grounds" — and issue #423 is the measured counterexample. An 8.20 MB
+// compressed bundle passed every cap here and the server refused it; a 2.32 MB
+// one was accepted. The false claim is what made that refusal unreadable: the
+// CLI's own preflight reported success about a bundle that could never land,
+// and the server's answer (`400: Invalid JSON`, an error about the PARSE) names
+// nothing size-shaped, so nothing anywhere pointed at the size.
+//
+// 🔴 THE SERVER'S REAL BUNDLE CEILING IS NOT KNOWN HERE, AND MUST NOT BE
+// GUESSED. #423's measurement bounds it to the interval (2.32 MB, 8.20 MB] and
+// no further — each additional probe costs a real submission. Vendoring a
+// number picked from inside that bracket would refuse bundles the server
+// accepts, with no appeal and nothing to tell the author it was the CLI's guess
+// rather than a real limit: strictly worse than the failure it would be fixing.
+// (Same reasoning as AGENTS.md item 25, one layer up.)
+//
+// So these caps stay generous, and the CLI REPORTS instead of refusing:
+// appapi.SubmitBodySize is the size a body limit would actually apply to (the
+// zip is base64-encoded into a JSON document before it is sent, so the server
+// sees ~4/3 of the number below), and LargestEntries names what to delete
+// first. Both are printed by `civitai app submit` — the second only when a
+// submit has already failed.
 const (
 	MaxFiles            = 2000
 	MaxFileSizeBytes    = 10 * 1024 * 1024  // 10 MiB per file
@@ -424,7 +448,9 @@ type Bytes struct {
 }
 
 // Build packages dir into an in-memory ZIP. It requires block.manifest.json at
-// the root and enforces the server caps.
+// the root and enforces the CLI's own caps — which are NOT the server's; see
+// the const block for why clearing them is not a prediction that the submit
+// will be accepted.
 func Build(dir string) (*Result, error) {
 	// Manifest must be at the root.
 	if _, err := os.Stat(manifest.Path(dir)); err != nil {
@@ -478,7 +504,7 @@ func Build(dir string) (*Result, error) {
 		return nil, fmt.Errorf("no files to package in %s", dir)
 	}
 	if len(entries) > MaxFiles {
-		return nil, fmt.Errorf("package has %d files (server max %d)", len(entries), MaxFiles)
+		return nil, fmt.Errorf("package has %d files (the CLI's own cap is %d)", len(entries), MaxFiles)
 	}
 
 	// Deterministic ordering.
@@ -496,11 +522,11 @@ func Build(dir string) (*Result, error) {
 			return nil, err
 		}
 		if info.Size() > MaxFileSizeBytes {
-			return nil, fmt.Errorf("%s is %d bytes (server per-file max %d)", e.rel, info.Size(), MaxFileSizeBytes)
+			return nil, fmt.Errorf("%s is %d bytes (the CLI's own per-file cap is %d)", e.rel, info.Size(), MaxFileSizeBytes)
 		}
 		decompressed += info.Size()
 		if decompressed > MaxDecompressedSize {
-			return nil, fmt.Errorf("package decompressed size exceeds server max %d bytes", MaxDecompressedSize)
+			return nil, fmt.Errorf("package decompressed size exceeds the CLI's own cap of %d bytes", MaxDecompressedSize)
 		}
 
 		w, err := zw.CreateHeader(&zip.FileHeader{
@@ -527,7 +553,11 @@ func Build(dir string) (*Result, error) {
 	}
 
 	if int64(len(buf.b)) > MaxBundleSizeBytes {
-		return nil, fmt.Errorf("package is %d bytes compressed (server max %d)", len(buf.b), MaxBundleSizeBytes)
+		// NOT "server max": MaxBundleSizeBytes is this CLI's own cap, and the
+		// server's real ceiling is LOWER and unknown here (#423). Saying "server
+		// max" told an author that clearing this bar meant the server would take
+		// it, which is the claim #423 disproved.
+		return nil, fmt.Errorf("package is %d bytes compressed (the CLI's own cap is %d; the server's own limit is lower and is not known to this CLI — see issue #423)", len(buf.b), MaxBundleSizeBytes)
 	}
 
 	return &Result{
