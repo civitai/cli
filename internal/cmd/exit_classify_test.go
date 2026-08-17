@@ -134,12 +134,29 @@ func TestImagesSearchBadEnumIsBadRequestTaggedAndClean(t *testing.T) {
 // assertion stays green when the classification is stripped.
 // ----------------------------------------------------------------------------
 
-// emptySubmissionsServer answers every request 200 with an EMPTY submissions
-// list — the shape the real route returns for a `?blockId=<unknown slug>`
-// lookup (it does NOT 404) — and points the CLI at it with a token configured.
+// emptySubmissionsServer answers the submissions route 200 with an EMPTY list —
+// the shape the real route returns for a `?blockId=<unknown slug>` lookup (it
+// does NOT 404) — 404s the by-slug listing selector, and points the CLI at it
+// with a token configured.
+//
+// 🔴 THE BY-SLUG ARM IS ANSWERED SEPARATELY, AND IT USED TO BE THE CATCH-ALL
+// (civitai/cli#422 outcome 1). One handler for every path was harmless while
+// `app listing` had a single lookup. It now has two, so getMyListingForApp was
+// receiving `{"submissions":[]}` — a body it cannot DECODE, i.e. a failure that
+// is not a not-found. That was invisible while resolveListing swallowed the
+// fallback's own error; once it stopped, these tests failed with `unexpected
+// appListings.getMyListingForApp response`, which is an honest report about a
+// server answering nonsense and NOT the server they model. A 404 with a tRPC
+// error envelope is what a real Civitai says when an app has no listing row, and
+// it is what keeps the not-found classification these tests pin measurable.
 func emptySubmissionsServer(t *testing.T) {
 	t.Helper()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "getMyListingForApp") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"json":{"message":"No listing found for this app"}}}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"submissions":[]}`))
 	}))
 	t.Cleanup(srv.Close)

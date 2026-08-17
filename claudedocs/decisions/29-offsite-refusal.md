@@ -13,6 +13,131 @@ pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
 routing question rather than a label, and `agents_split_preserved_test.go` pins
 the body against the text it was moved from.
 
+## 🔴 SUPERSEDED FOR `app listing`: THE SERVER SELECTOR SHIPPED, AND SO DID THE CLIENT FALLBACK
+
+**Read this first. The body's central claim is now FALSE for `app listing` and
+still TRUE for `app status <slug>`, and treating the two as one item is the
+mistake this section exists to prevent.** The body is byte-pinned against the
+commit it was moved from, so it cannot be corrected in place; this is the
+correction.
+
+**What the body says.** *"No client change makes `app listing` /
+`app status <slug>` reach an offsite app"*, because `getMyListingForApp` resolves
+only by `appBlockId` and *"the slug selector 404s for every app, onsite controls
+included"*.
+
+**That measurement was right about the server it was taken against, and the
+server changed.** `civitai/civitai#3989` widened the slug arm from
+`where: { slug, kind: 'onsite', appBlockId: null, status: 'draft' }` to
+`where: { slug, revisionOfId: null }`, and it is **deployed**.
+
+**MEASURED (2026-08-17, live, credentialed, read-only, through
+`client.GetMyListingForApp(ctx, "", slug)` against `https://civitai.com`):**
+
+```
+gen-matrix       BY-SLUG (onsite, approved) -> OK  apl_01KWFP4FEEJRWN27CJA49CDY4Q  approved
+radio            BY-SLUG (OFFSITE)          -> OK  apl_01KYNB77D490DM6YS0C5Z7KYT7  approved
+comfy            BY-SLUG (OFFSITE)          -> OK  apl_01KYNC19W1M2020K1BS2JTA4VN  approved
+cosmetic-studio  BY-SLUG (OFFSITE)          -> OK  apl_01KYAZSZPSX8BNSYNTDPD4JCTP  approved
+vitrine          BY-SLUG (OFFSITE)          -> OK  apl_01KWYD9DA34CYKQNC91W2T3SYN  approved
+NEGATIVE CONTROL definitely-not-an-app-zzz  -> 404
+```
+
+The negative control is not decoration: a selector that resolved *everything*
+would produce the same five OKs and mean nothing.
+
+**WHAT SHIPPED IN THIS CLI (civitai/cli#422 outcome 1).** `resolveListing`
+(`internal/cmd/app_listing.go`) now treats the block-submission lookup as the
+ONSITE path and falls back to `GetMyListingForApp(ctx, "", slug)` when it returns
+`ErrNotFound`. Every `app listing` subcommand funnels through that one helper,
+and the listing-keyed procs downstream gate on OWNERSHIP rather than kind, so all
+seven reach an offsite app. Verified live: `civitai app listing status --slug
+radio` refused before the change and printed the listing after it.
+
+**WHAT DID NOT CHANGE, and must not be "tidied" into agreement:**
+
+- **`app status <slug>` is untouched and its refusal is still TRUE.** It reads
+  the block-submission pipeline; an offsite app has no block submissions, and no
+  listing selector repairs that. `offsiteStatusRefusal` stays as it is, and the
+  two messages stay different.
+- **The `app listing` refusal NARROWED, it was not deleted.** It is what a
+  caller gets when the by-slug lookup ALSO answers NOT-FOUND: a Civitai without
+  #3989 (older or self-hosted), or an app with no listing row. Its copy was
+  rewritten — it no longer says the listing "cannot be addressed from this CLI",
+  which is now a claim the code contradicts.
+- 🔴 **"A listing this account does not own" is NOT one of those cases, and the
+  first cut of this file said it was.** On a server carrying #3989 the by-slug
+  arm RESOLVES a stranger's row and then refuses it: `getMyListingForApp` has no
+  user predicate in its `where` (`{ slug, revisionOfId: null }`), and the
+  ownership gate is the next statement —
+  `resolveListingRole(listing.id, userId) === null → NOT_OWNED`
+  (`civitai/civitai → src/server/services/blocks/offsite-listing.service.ts:1772-1774`,
+  the `findFirst` at :1744-1749), mapped NOT_OWNED → FORBIDDEN by
+  `app-listings.router.ts:637-654`. So it is a **403 → exit 3**, not a
+  not-found, and it reaches the refusal only on a server predating #3989 whose
+  narrower clause makes it 404 like an absent row. Verified from source rather
+  than assumed: the refusal copy and the "downstream gates on ownership"
+  argument both depend on this selector being session-scoped, and nothing in the
+  widened `where` says so.
+- **Only `ErrNotFound` falls through — from EITHER lookup.** A 403 from the
+  invite-gated submissions route, a 5xx or a transport failure keep their own
+  error and their own exit code; none of them is evidence that no submission
+  exists. 🔴 The first cut applied that rule to the SUBMISSIONS lookup only: it
+  wrote `if ref, slugErr := …; slugErr == nil` and DISCARDED `slugErr`, so a
+  403/500/503 from the FALLBACK fell through carrying the submission's 404 and
+  exited **4** under a message naming three causes, none of which was "the
+  server errored". Both arms are now gated on `errors.Is(…, ErrNotFound)`.
+  Measured exit codes, both lookups, end-to-end
+  (`cmd/civitai/app_listing_lookup_exitcode_test.go`): 401/403 → 3, 429 → 6,
+  502/503/504 → 5, and a plain **500 → 1** (no sentinel), which is why the
+  published contract's "keeps its own code (`3`, `5`)" was also wrong.
+- **The onsite happy path still costs exactly two requests.** The fallback sits
+  on the error path, the same argument the kind probe rests on. The ERROR path
+  now costs three bounded requests, not two: submissions + fallback + kind
+  probe. The fallback deliberately keeps the client's own 30 s per-request
+  budget rather than the probe's 5 s — for an offsite app it is the ANSWER, not
+  a diagnostic, so capping it at a diagnostic's deadline would fail the repair
+  on a slow-but-working server. Stated in `resolveListing`'s own comment.
+
+**THE THREE CONSTRAINTS LISTED FURTHER DOWN ARE NOT ALL RETIRED, AND THIS
+PARAGRAPH USED TO SAY THEY WERE.** It read: those constraints "applied to the
+WORKAROUND route through `GET /api/v1/apps/{slug}` … the shipped repair … answers
+none of those constraints because it does not need to." That is true of **1** and
+**3** and **false of 2**, which is the one that can cost a user something.
+
+- **Constraint 1 (approved-only catalog visibility) — RETIRED.** It was a
+  property of the public `GET /api/v1/apps/{slug}` hop, and the shipped repair
+  does not use it: `getMyListingForApp` is an authenticated owner read with no
+  publication gate, so a DRAFT or PENDING offsite listing resolves too.
+- **Constraint 3 (two hops through a public catalog is fragile) — RETIRED.** The
+  repair is one hop against the owner route. That was the whole point.
+- 🔴 **Constraint 2 (`getMyListingForEdit` performs a write) — SURVIVES, AND IS
+  NOW LIVE ON THE OFFSITE PATH.** It is a property of `getMyListingForEdit`,
+  **not** of how the listing id was obtained, so changing the resolver cannot
+  retire it. Read the constraint as stated at the bottom of this file: "for an
+  approved parent it calls `beginListingRevision` and mints a shadow revision".
+  That is still exactly what happens — `offsite-listing.service.ts:1540-1541` in
+  `civitai/civitai`, guarded by `if (listing.status === 'approved')`.
+
+**So the repair MOVED constraint 2 rather than answering it.** Before #422
+outcome 1, `app listing` refused for an offsite app and therefore could not write
+anything; now every subcommand resolves, and `app listing status` — a command
+that reads like a read — calls `getMyListingForEdit` exactly once, which on an
+**approved** listing mints a shadow revision on a production listing. Every
+offsite app measured on civitai.com (`radio`, `comfy`, `cosmetic-studio`,
+`vitrine`) is approved, so this is the NORMAL state there, not an edge case.
+
+**NOT HYPOTHETICAL: IT HAPPENED TWICE DURING THIS PR'S OWN DEVELOPMENT**, to
+`radio` and to `gen-matrix`, each time by running `app listing status` against a
+real app to check the repair worked. Tracked as **civitai/cli#389** ("is this a
+read at all?"), which is OPEN and which #422 does not close. The README now says
+so for `app listing status` with and without `--json`, and the command's own
+`--help` says it too.
+
+**The rule for anyone testing this path: use the `httptest` fakes.** If you need
+live shape, `civitai app view <slug>` is genuinely read-only. Do not reach for a
+real slug to "just check" — that is the exact move that left the two shadows.
+
 ## 🔴 "NO CLIENT CHANGE MAKES … REACH AN OFFSITE APP" IS RETRACTED IN PART
 
 **Read this before repeating the body's central claim, and before treating the

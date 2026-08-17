@@ -183,8 +183,9 @@ func resolveListingSlug(lc listingCommon) (string, error) {
 	return m.BlockID, nil
 }
 
-// resolveListing resolves slug -> appBlockId (via the submission row) -> listing
-// ref.
+// resolveListing resolves a slug to the listing ref every `app listing`
+// subcommand addresses: through the app's block SUBMISSION when it has one, and
+// by the SLUG ALONE when it does not.
 //
 // 🔴 A submission with NO appBlockId is a FIRST-version app still pending review. It
 // still has a store listing: `civitai app submit` mints one as a pre-approval DRAFT
@@ -193,13 +194,90 @@ func resolveListingSlug(lc listingCommon) (string, error) {
 // "no listing" error here would make the pending-media flow unreachable from the CLI
 // even though the server supports it. The slug is passed on BOTH paths (harmless when
 // the appBlockId resolves; load-bearing when it is absent).
+//
+// 🔴 THE SUBMISSION LOOKUP IS THE ONSITE PATH, NOT THE ONLY PATH — civitai/cli#422
+// outcome 1, and this ordering is the whole of it. An OFFSITE app is a registered
+// URL rather than a block bundle, so it has NO submission and the lookup above
+// 404s; before this fallback existed, every `app listing` subcommand died there
+// and told the author to run `civitai app submit`, a command that cannot succeed
+// for such an app. The repair is the by-slug arm of `getMyListingForApp`, which
+// `civitai/civitai#3989` rescoped from `{slug, kind:'onsite', appBlockId:null,
+// status:'draft'}` to `{slug, revisionOfId:null}`. Measured live 2026-08-17
+// against https://civitai.com: `radio`, `comfy`, `cosmetic-studio` and `vitrine`
+// (4/4 offsite, all approved) each resolved BY SLUG to their `apl_` listing,
+// `gen-matrix` (onsite, approved) still resolved, and `definitely-not-an-app-zzz`
+// still 404ed. Every listing-keyed proc downstream — getMyListingForEdit, the
+// asset attaches, the revision procs — gates on OWNERSHIP and never on kind, so
+// one resolved ref is all any of these subcommands needed.
+//
+// 🔴 THE WIDENED SERVER CLAUSE `{slug, revisionOfId: null}` CARRIES NO USER
+// PREDICATE, AND THE OWNERSHIP GATE IS THE *NEXT* STATEMENT — verified from
+// source rather than assumed, because the refusal copy ("a listing this account
+// does not own") and the "downstream gates on ownership" argument above both
+// depend on it. `civitai/civitai → src/server/services/blocks/offsite-listing.service.ts`:
+// the slug `findFirst` is at :1744-1749, and `resolveListingRole(listing.id,
+// userId) === null → OffsiteRequestError('NOT_OWNED')` at :1772-1774; the router
+// maps NOT_OWNED → FORBIDDEN (`app-listings.router.ts:637-654`, via
+// `mapOffsiteError`). So the selector is session-scoped after resolution: a
+// stranger's slug resolves a row and is then refused 403 — it never returns
+// someone else's listing, and it never reads as "not found".
+//
+// 🔴 ONLY ErrNotFound FALLS THROUGH — FROM *EITHER* LOOKUP — and the refusal below
+// NARROWS rather than disappears. A 403 from the invite-gated submissions route, a
+// 5xx or a transport failure keep their own error and their own exit code; none of
+// them is evidence that there is no submission, and spending a second request on
+// one would be guessing. The by-slug arm is held to the same rule (see the gate
+// below). What still reaches explainOffsiteMiss is the case where BOTH lookups
+// answered NOT-FOUND: a server that predates #3989 (older or self-hosted), or an
+// app with no listing row at all. A listing this account does not OWN is NOT in
+// that set on a current server — it is the 403 above — and reaches the refusal
+// only on a server predating #3989, whose narrower `where` clause makes it 404.
+//
+// 🔴 THE ONSITE HAPPY PATH IS UNCHANGED AND COSTS THE SAME TWO REQUESTS. The
+// fallback is on the submission lookup's ERROR path only, which is the same
+// argument app_offsite.go's probe rests on — pinned by
+// TestSuccessfulCommandsMakeNoStoreProbe and TestOnsiteHappyPathMakesNoExtraCall.
+//
+// 🔴 AND THE FALLBACK'S OWN ERROR IS NOT THE SUBMISSION'S 404 — ONLY ITS 404
+// FALLS THROUGH. The first cut wrote `if ref, slugErr := …; slugErr == nil`, which
+// DISCARDED slugErr: a 403, a 500 or a transport failure from the by-slug arm then
+// fell through carrying the SUBMISSION's not-found, so the command exited 4 under
+// a message naming three causes — old server, no listing row, not your listing —
+// none of which is "the listings route errored". The gate below is the same shape
+// as the one above it: a not-found from either lookup means the resource is
+// absent, and anything else is a failure that must keep its own text and its own
+// exit code. Pinned by TestFallbackFailuresKeepTheirOwnError, which drives 403 /
+// 500 / 503 through the fallback and asserts the classification, the absence of
+// the OFFSITE claim, and that the kind probe never ran.
+//
+// 🟡 THE FALLBACK DELIBERATELY INHERITS THE CLIENT'S PER-REQUEST BUDGET (30 s,
+// appapi's defaultTimeout) RATHER THAN TAKING A SHORT ONE OF ITS OWN, and that is
+// the OPPOSITE call from offsiteProbeTimeout — for the reason that constant's own
+// doc comment gives. offsiteProbeTimeout is short because the command has ALREADY
+// failed by the time the probe runs and everything it can still do is improve
+// wording. This call is not that: for an OFFSITE app it is the ANSWER, the only
+// lookup that resolves the listing every subcommand then addresses. Capping it at
+// a diagnostic's 5 s would fail the offsite path outright on a slow-but-working
+// server, trading a real answer for latency. The COST, stated rather than hidden:
+// the worst case of the "I have not submitted yet" error path is now three bounded
+// requests — submissions (30 s) + this (30 s) + the kind probe (5 s) — where it
+// was two. If that is ever measured to matter, the knob goes beside
+// offsiteProbeTimeout, not here.
 func resolveListing(ctx context.Context, client *appapi.Client, slug string) (*appapi.ListingRef, error) {
 	sub, err := client.GetSubmission(ctx, "", slug)
 	if err != nil {
-		// civitai/cli#422: an OFFSITE app has no submissions, so it lands in the
-		// empty-list branch and is told to run `civitai app submit` — a command
-		// that cannot succeed for it. Only the error path pays for the check;
-		// see app_offsite.go.
+		if errors.Is(err, civitai.ErrNotFound) {
+			ref, slugErr := client.GetMyListingForApp(ctx, "", slug)
+			if slugErr == nil {
+				return ref, nil
+			}
+			if !errors.Is(slugErr, civitai.ErrNotFound) {
+				return nil, slugErr
+			}
+		}
+		// Both lookups answered NOT-FOUND (or the submission failure was one and
+		// no fallback was warranted). Only the error path pays for the kind
+		// probe; see app_offsite.go.
 		return nil, explainOffsiteMiss(ctx, slug, err, offsiteListingRefusal)
 	}
 	appBlockID := ""
@@ -237,10 +315,11 @@ has to decide which needs both ids. The server's own editTargetId is NOT in
 there: this CLI does not decode that field, and reporting an id it never read
 would be a guess.
 
-🔴 --json is not a pure read, so do not poll it in a loop: on a LIVE listing
-this opens the shadow revision described above, so a script calling it
-repeatedly keeps a revision draft open on your listing. Whether that makes this
-a read at all is civitai/cli#389, which is open.`,
+🔴 This is not a pure read — with or without --json — so do not poll it in a
+loop: on a LIVE listing it opens the shadow revision described above, so a
+script calling it repeatedly keeps a revision draft open on your listing. That
+holds for an OFFSITE app too, and they are approved in practice. Whether this
+is a read at all is civitai/cli#389, which is open.`,
 		Example: `  civitai app listing status
   civitai app listing status --slug my-app
   civitai app listing status --dir ./my-app
