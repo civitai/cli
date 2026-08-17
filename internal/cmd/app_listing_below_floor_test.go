@@ -387,9 +387,18 @@ func slotJSON(imageID int) map[string]any {
 // submitted nothing, so it is asserted on the RENDERED body of every command
 // that can reach that path — not on the constant, which would pass while a
 // command stopped using it.
-func TestAttachHelpStatesTheBelowFloorException(t *testing.T) {
+//
+// 🔴 `reorder` IS ON THAT LIST SINCE civitai/cli#430, and it does NOT share the
+// constant. Retargeting a live reorder at the shadow revision means it also
+// submits that revision, which means it can also be refused for the floor and
+// exit 0 having submitted nothing — the same contract, reached by a fourth
+// command. Its body spells the sentence itself because `liveRevisionHelp` names
+// `-y to skip the confirmation`, a flag reorder deliberately does not have, so
+// reusing the constant would put a false flag in its `--help`. Two spellings of
+// one rule is the cost; asserting both HERE is what keeps them agreeing.
+func TestLiveRevisionHelpStatesTheBelowFloorException(t *testing.T) {
 	root := NewRootCmd()
-	for _, name := range []string{"set-icon", "set-cover", "add-screenshot"} {
+	for _, name := range []string{"set-icon", "set-cover", "add-screenshot", "reorder"} {
 		t.Run(name, func(t *testing.T) {
 			cmd := findListingLeaf(t, root, name)
 			// Rendered, and rune-normalised for the line wrap: the sentence is
