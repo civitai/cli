@@ -152,6 +152,25 @@ jobs:
         # examples/*.block.manifest.json) runs too, not just internal/validate.
         run: go test ./...
 
+      # NO `add-paths:` here, deliberately — and that is a decision, not an
+      # oversight. This action stages `git add -A` when `add-paths` is absent,
+      # so ANY file a step leaves in the workspace rides into the PR. That is
+      # exactly how the sibling `bump-flake-vendorhash` committed a `result`
+      # symlink into /nix/store (#450, green on all 13 checks); it now pins
+      # `add-paths: flake.nix`.
+      #
+      # This job was audited against that failure and does not have it: the only
+      # step that writes into the repo is the re-vendor script, which `cp`s to a
+      # single path it computes from its own location
+      # (`schema/app-block.manifest.schema.json`) and downloads via `mktemp`
+      # outside the tree; `go test ./...` writes nothing. Measured, not just
+      # read: `git status --porcelain` is clean of artifacts after the suite.
+      #
+      # 🔴 If you add a step that builds/installs/generates INTO the workspace,
+      # add `add-paths` naming the complete set of files this bot may commit.
+      # Note the trade-off before reaching for it as a reflex: a path that is
+      # written but NOT listed is silently dropped from the commit, and a bot
+      # that opens an incomplete PR is worse than the artifact it prevents.
       - name: open PR if schema changed
         id: pr
         if: steps.changed.outputs.changed == 'true'
