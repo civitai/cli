@@ -318,8 +318,9 @@ would be a guess.
 🔴 This is not a pure read — with or without --json — so do not poll it in a
 loop: on a LIVE listing it opens the shadow revision described above, so a
 script calling it repeatedly keeps a revision draft open on your listing. That
-holds for an OFFSITE app too, and they are approved in practice. Whether this
-is a read at all is civitai/cli#389, which is open.`,
+holds for an OFFSITE app too, and they are approved in practice.
+civitai/cli#389 settled that a FAILED call writes nothing; a successful one
+still does.`,
 		Example: `  civitai app listing status
   civitai app listing status --slug my-app
   civitai app listing status --dir ./my-app
@@ -1415,9 +1416,16 @@ stages WITHOUT submitting, and exits 0. A DRAFT listing is reordered directly.`,
 // comment for why not, and note it would save a round-trip rather than enable
 // anything. (b) Reusing `ListingEditView.ShadowID`, which IS already decoded:
 // that would build this command on `getMyListingForEdit`, a route classified
-// `listingOpRead` while its own doc records that it OPENS a revision — the
-// contradiction tracked as civitai/cli#389. A fix resting on the side effect of
-// a route whose classification is an open question inherits that question.
+// `listingOpRead` while its own doc records that it OPENS a revision —
+// civitai/cli#389. The classification is now MEASURED correct on the arm #389
+// doubted (every refusal that proc can raise precedes the INSERT, so its 400
+// wording tells the truth — see the `listingOp` doc in
+// `internal/appapi/listing.go`), and the reason to keep this command off it
+// never rested on that doubt: the revision that route opens is a SIDE EFFECT of
+// a look-up, so staging a reorder on it would mint the shadow through a route
+// that tells a rejected caller nothing was changed. This command opens it
+// through `beginListingRevision` instead, which is classified `listingOpChange`
+// because opening it is what the caller asked for.
 //
 // There is deliberately NO interactive confirmation here, unlike runSetMedia's
 // step 3. That gate refuses in a non-TTY without --changelog/--yes, and adding

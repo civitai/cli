@@ -479,9 +479,11 @@ func TestAppListingStatusJSONUsageErrorPrintsNothingAtAll(t *testing.T) {
 // 🔴 getMyListingForEdit OPENS A SHADOW REVISION on an APPROVED listing as a
 // server-side side effect (idempotently). A script polling `--json` in a loop is
 // therefore a WRITER, and the whole reason to give this command a machine
-// interface is that somebody will poll it. Its classification as a "read" is the
-// open question in civitai/cli#389; this test does not settle that, it only
-// pins that the help text tells the truth about it.
+// interface is that somebody will poll it. civitai/cli#389 doubted the route's
+// "read" classification and has since been measured: every refusal the server
+// can return precedes the write, so the 400 wording is honest — but the write on
+// SUCCESS is untouched by that, which is what this help text is about. This test
+// pins only that the help text tells the truth about the side effect.
 func TestAppListingStatusJSONHelpWarnsAboutTheShadowSideEffect(t *testing.T) {
 	cmd := newAppListingStatusCmd()
 	if cmd.Flags().Lookup("json") == nil {
@@ -531,15 +533,17 @@ const listing389IssueLink = "https://github.com/civitai/cli/issues/389"
 const wantREADMEListingWriteWarning = "- 🔴 **`listing status` is NOT a pure read — `--json` or not — so do not poll it in a loop.** On " +
 	"a LIVE (approved) listing the read behind it (`getMyListingForEdit`) opens the revision draft " +
 	"server-side, idempotently — the same one each time — so a script calling it repeatedly keeps a " +
-	"revision open on your listing. Whether that should still be classified a read is " +
-	"[#389](https://github.com/civitai/cli/issues/389), which is open. Reading it once per change is " +
+	"revision open on your listing. [#389](https://github.com/civitai/cli/issues/389) asked the " +
+	"narrower question of whether a call that FAILS could leave a revision behind; it cannot, because " +
+	"every refusal the server can return here is raised before the revision is opened. **That settles " +
+	"the error path only — the write on success is unchanged.** Reading it once per change is " +
 	"fine; a watch loop is a writer. ⚠ **This now applies to OFFSITE apps too.** Before " +
 	"[#422](https://github.com/civitai/cli/issues/422) every `app listing` subcommand refused for an " +
 	"offsite app and therefore could not write anything; now that they resolve by slug, `app listing " +
 	"status` against an **approved** offsite listing mints that shadow revision like any other. Every " +
 	"offsite app measured on civitai.com is approved, so this is the *normal* state there, not an " +
-	"edge case. #422 retired the \"cannot be addressed\" refusal; it did not retire #389 — the shadow " +
-	"is a property of `getMyListingForEdit`, not of how the listing id was obtained."
+	"edge case. #422 retired the \"cannot be addressed\" refusal, and #389 retired nothing about the " +
+	"write — the shadow is a property of `getMyListingForEdit`, not of how the listing id was obtained."
 
 // readmeTopLevelBullets splits md into its top-level markdown bullets: a line
 // beginning `- ` at column 0, plus every indented continuation line under it.
