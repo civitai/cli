@@ -19,30 +19,31 @@ whether reaching those apps is possible at all.
 
 ## State now
 
-- **`civitai/cli` `main` @ `bb7d7f2`**, clean, in sync. One open PR of mine, **#442**
-  (`*.env` anywhere / case-insensitive pkgzip patterns), unrelated to this thread.
-- **The server-side selector is MERGED: `civitai/civitai#3989` → `a15b4fb7b1`.** One clause:
-  `where: { slug, kind:'onsite', appBlockId:null, status:'draft' }` → `where: { slug, revisionOfId: null }`
-  in `getMyListingForApp` (`offsite-listing.service.ts:~1746`). No schema change (the `slug`
-  selector was already declared), no migration, no index — `AppListing.slug` is `@unique`
-  across both kinds.
-- 🔴 **MERGED IS NOT DEPLOYED, AND IT IS NOT DEPLOYED.** Measured 2026-08-17 04:35Z against
-  `https://civitai.com`: slug-only `getMyListingForApp` still 404s for `gen-matrix`, `radio`
-  and `comfy`. **Positive control in the same run:** `app listing status --slug gen-matrix`
-  resolves (exit 0) via the appBlockId path, so the 404s are about the selector, not the
-  probe. **Until this flips, the CLI half must not ship** — a client calling a selector the
-  server drops is the inert-feature shape.
-- **Shipped in `civitai/cli`:**
-  | what | PR | merge |
-  |---|---|---|
-  | AGENTS item 29 split to an evidence file + "no client path" retracted | #432 | `b1213a3` |
-  | `appBlockId` is not a kind discriminator — second retraction | #441 | `483441e` |
-  | README scoped to *this CLI* (published contract) | #446 | `bb7d7f2` |
-- **Filed upstream:** **#3984** (the ask) · **#4003** (unbounded existence oracle, deliberately
-  out of #3989's scope) · **#4008** (`globSync` breaks a convention scanner incl. its own
-  positive control).
-- **Verified, not just merged:** every merge confirmed by CONTENT on `origin/main`, never by
-  ancestry — a squash makes `merge-base --is-ancestor` false forever.
+- **`civitai/cli` `main` @ `fbefd64`**, clean. **The work this doc was written for is DONE.**
+- 🔴 **RETIRED: this section previously said "MERGED IS NOT DEPLOYED … the CLI half must not
+  ship", and next step 1 was "poll for the deploy". Both are now false** — they were replaced
+  here rather than struck through, so this bullet is the only record that they stood.
+  `civitai/civitai#3989`
+  deployed on 2026-08-17, and the CLI half shipped the same day. Measured once live, varying
+  only the selector: `radio` → `apl_01KYNB77D490DM6YS0C5Z7KYT7`, `comfy` →
+  `apl_01KYNC19W1M2020K1BS2JTA4VN`, `cosmetic-studio` → `apl_01KYAZSZPSX8BNSYNTDPD4JCTP`,
+  `vitrine` → `apl_01KWYD9DA34CYKQNC91W2T3SYN`, all `approved`; nonexistent slug still 404s.
+  `radio`'s id matches byte-for-byte what `GET /api/v1/apps/radio` returns — two routes, one
+  listing.
+- **`civitai app listing` reaches OFFSITE apps** (#453, `fbefd64`). `resolveListing` inverted:
+  the submission lookup is the ONSITE path, the slug selector is the fallback, gated on
+  `ErrNotFound` only. All seven subcommands funnel through it. Live before/after on #422's own
+  repro: `app listing status --slug radio` went **exit 4 → exit 0**. The refusal **narrowed**
+  rather than being deleted — it still fires for a server predating #3989 and for an app with
+  no listing row. `app status <slug>` is deliberately unchanged.
+- **`civitai/cli#422` is CLOSED** (both outcomes). `civitai/civitai#3984` closed by `#3989`.
+- **Ships with three known residuals**, none blocking, all from #453's delta re-audit:
+  `app_offsite_test.go:230-238`'s `assertListingTarget` comment claims it catches *every* way a
+  wrong listing can be addressed and does not (a renamed wire key walks it — measured
+  SURVIVED); the new #389 write-warning in `README.md:1496` and the `status` `Long` are
+  themselves unpinned (deleting either survives the suite); and one citation names a test file
+  for `401`/`504`/transport rows it does not contain (numbers verified correct, provenance
+  over-scoped).
 
 ## Open investigations — live diagnosis state
 
@@ -179,24 +180,19 @@ whether reaching those apps is possible at all.
 
 ## Next steps (ranked)
 
-1. 🔴 **Poll for the #3989 deploy, then ship the CLI half.** The one command that settles it
-   (read-only, both controls built in) is under *How to verify*. When slug-only resolves:
-   `resolveListing` passes the slug for offsite, and the refusal **narrows to a fallback for
-   older servers rather than being deleted**. Then `README.md` and
-   `claudedocs/decisions/29-offsite-refusal.md` both need the "merged but not yet deployed"
-   note removed — grep for `3989`.
-2. **#442** — the `*.env` pkgzip PR, open and unrelated to this thread.
-3. **#420** — `.env.d/db.env` packaged; credential-shaped, per-name decision not a blanket
-   `excludedDirs ⇄ excludedFiles` promotion.
-4. **#424's remaining question is now narrow.** Its point 3 is resolved by #3989. What is still
-   unmeasured: a genuinely **pending** first-version *onsite* app — the only shape the OLD clause
-   served. Nothing depends on it; the widening left that path untouched.
-5. **Two 🟢 nits on #3989**, now post-merge so they need a follow-up PR: a comment at
-   `app-collaborator.permission-matrix.test.ts:284` restating the very absolute its own commit
-   softened, and the PR body's mutation counts being wrong in both directions (the matrix mock
-   is not Prisma-filter-aware, so `{not:…}` mutants die from a mock artefact).
-6. **#427** — the refusal asserts ownership it never checked. **#411 second half** — provenance
-   stamp, still needs the server field.
+1. **`civitai/cli#389` — `getMyListingForEdit` is classified a lookup and WRITES.** Now the
+   highest-value thread: it is the root cause of the shadow-revision hazard, and it caught
+   three separate actors during this work. See Gotchas.
+2. **The three #453 residuals** as one small PR — the 🟡 comment over-claim is the same
+   "a comment is a claim too" class this whole thread kept finding.
+3. **`civitai/cli#427`** — the refusal asserts ownership it never checked.
+4. **`civitai/civitai#4008`** — `globSync` breaks a convention scanner *including its own
+   positive control*, so it reports nothing in either direction on every PR it runs on.
+5. **`civitai/civitai#4003`** — `getMyListingForApp` is an unrate-limited existence oracle
+   (deliberately out of #3989's scope).
+6. **`civitai/cli#411` second half** — provenance stamp, still needs the server field.
+7. **`civitai/cli#424`** is archaeology now: only a genuinely PENDING first-version ONSITE app
+   is unmeasured, and nothing depends on the answer.
 
 ## Gotchas / decisions / dead-ends
 
@@ -283,29 +279,67 @@ whether reaching those apps is possible at all.
   fix being vacuous (a permissive mock meant the new offsite cells passed under the old clause too).
   Delta re-audit: 17/17 mutants killed, zero production-code change proven by comment-stripped diff.
 
+- 🔴 **`civitai app listing status` IS NOT A READ, and this is the single most expensive thing
+  learned here.** It calls `getMyListingForEdit`, which for an APPROVED parent calls
+  `beginListingRevision` and mints a shadow revision server-side
+  (`offsite-listing.service.ts:1539-1541`). Every `app listing` subcommand does. **It caught
+  three separate actors in one day** — including a verification step whose whole purpose was to
+  avoid touching production — and left shadow drafts on `radio` and `gen-matrix`. **There is no
+  server-side discard path** (grepped: no `discardRevision`/`abandonRevision`/`deleteRevision`/
+  `cancelRevision`); clearing them is a web-UI action. Impact is bounded: the shadow is a hidden
+  draft clone with a synthetic `rev-<ulid>` slug, nothing is submitted for review
+  (`hasPendingRevision` keys on a pending publish REQUEST, not shadow existence), and the live
+  listing is untouched. Tracked as `civitai/cli#389`. **Use `app view` or the fakes to verify.**
+- 🔴 **A DECISION FILE CLAIMED A HAZARD WAS RETIRED WHILE THE CODE WALKED INTO IT.** #453's
+  first draft added *"the shipped repair answers none of those constraints because it does not
+  need to"* — 70 lines above the same file's own statement that `getMyListingForEdit` writes and
+  *"cannot sit on the read-only `app listing status` path"*. Constraint 2 is a property of the
+  PROC, not of how the listing id was obtained, so changing the resolver retired nothing. Caught
+  by the adversarial audit, not by any gate. **When a change retires *some* of a documented
+  constraint set, say which ones — never "none of them apply now".**
+- 🔴 **A TEST KILLED BY A FIXTURE ARTIFACT LOOKS EXACTLY LIKE A TEST KILLED BY COVERAGE.** The
+  audit reasoned that because a mutant returning `slugErr` was killed by 15 tests, the
+  error-swallow was *pinned* and therefore deliberate. It was not: three fixtures answered
+  **every** path with `{"submissions":[]}`, so the fallback received an undecodable body, and
+  the CORRECT fix was killed by that artifact alone. Found only by running it. **A kill count is
+  not evidence of intent.**
+- 🔴 **`--project unit`-style blind spots have a CI-poll twin: a `PENDING`-only poll reports ALL
+  SETTLED before anything starts**, because a freshly-created check has an **empty** conclusion.
+  Require a terminal conclusion for EVERY check AND assert a minimum count.
+- **GitHub's GraphQL API 503'd for hours** while REST stayed up: `gh pr view/diff/checks` all
+  fail, `gh api repos/...` works. It also failed CodeQL's `init` action, producing an
+  `Analyze (go)` FAILURE that was an outage, not a finding — and therefore not a clearance
+  either. Re-run and confirm before reading a security gate as green.
+- **Three CI failures on `civitai/civitai#3989`, none the code**, each diagnosed rather than
+  assumed: a Turbopack/PostCSS fault at `build-image` (retry passed, same SHA); the `globSync`
+  scanner (#4008); and `tekton / typecheck` **cancelled by a 1h pipeline timeout** while six
+  other PRs passed the same task in that window — so not a degraded cluster. A `preview` label
+  toggle retriggers only when no run is in flight; **an empty commit always works**.
+- **`git worktree remove` is not the monorepo's tool** — use
+  `node .claude/skills/dev-server/cli.mjs wt rm <path>`, which nonetheless crashed on a pnpm
+  symlink (`ENOTDIR`); `git worktree remove --force` + `worktree prune` cleaned up. In THIS repo
+  a plain worktree is fine.
+- **`main` is protected here.** The handoff tooling's `--push` lands a commit on local `main`
+  and then fails the push, leaving it stranded. Preserve onto a branch → **verify with
+  `ls-remote`** → only then `reset --keep`.
+
 ## How to verify
 
 ```bash
-# 1. Is the #3989 selector live yet? THE one question gating the CLI half.
-#    Throwaway Go test in internal/cmd (read-only: getMyListingForApp is a .query and
-#    since the lazy-shadow change does NOT mint a revision — that is getMyListingForEdit,
-#    which DOES write). Delete the file afterwards.
-#      c := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
-#      c.GetMyListingForApp(ctx, "", "radio")     // 404 today; resolves once deployed
-# 🔴 The positive control is NOT optional — four 404s alone are indistinguishable from a
-#    broken probe, which is what invalidated #422's first attempt AND my own first draft:
+# The offsite repair, WITHOUT writing to anything (see Gotchas — `app listing status` WRITES).
 cd /home/zach/workspace/civit/cli && make build
-./bin/civitai app listing status --slug gen-matrix   # MUST resolve, exit 0 — route+auth work
-./bin/civitai app listing status --slug radio        # offsite refusal, exit 4 (until deploy)
+./bin/civitai app view radio     # read-only; the app and its live media
 
-# 2. The retractions are on main
-git -C /home/zach/workspace/civit/cli show origin/main:README.md | grep -c "no client-side route"   # 0
-git -C /home/zach/workspace/civit/cli show origin/main:internal/cmd/app_offsite.go | grep -c "MEANS" # 0
+# The code is on main:
+git -C /home/zach/workspace/civit/cli show origin/main:internal/cmd/app_listing.go \
+  | grep -c 'errors.Is(slugErr, civitai.ErrNotFound)'          # 1
 
-# 3. Item 29's pinned body is intact (see Gotchas — this is the one that breaks silently)
+# Item 29's pinned body is intact (this is the one that breaks silently):
 git -C /home/zach/workspace/civit/cli show origin/main:claudedocs/decisions/29-offsite-refusal.md \
   | awk '/^29\. \*\*/{f=1} f' | grep -v '^[[:space:]]*$' | sha256sum
 #   must equal df86c7a851e2397db48eebd2f4b9d17e91565128ec4550510a62b785f552828d
 ```
 
-🔴 **Do not use the `civitai` on `PATH`** — stale build, predates all of this.
+🔴 **The `app listing status --slug radio` command this doc previously recommended is a WRITE.**
+Do not use it to verify anything. Use `app view`, or the httptest fakes in the suite.
+🔴 **Do not use the `civitai` on `PATH`** — stale build.
