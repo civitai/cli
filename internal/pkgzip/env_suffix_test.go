@@ -36,6 +36,17 @@ func TestBuildExcludesEnvSuffixFilesAnywhere(t *testing.T) {
 	writeFile(t, dir, ".env-backup/db.env", leak)  // inside a NOT-dotenv-shaped dir
 	writeFile(t, dir, "src/deep/config.env", leak) // any depth
 
+	// 🔴 CASE VARIANTS, THROUGH Build — not only through the predicates.
+	// Measured: with these rows absent, a walk that consults isExcludedFile only
+	// for already-lowercase names passes the FULL 20-package suite while
+	// packaging `X.ZIP/`, `.ENV.LOCAL` and `DB.ENV`. Every case assertion lived
+	// in predicate-level tables, and the predicates keep answering correctly
+	// under that mutation — the defect is in the walk that calls them. The
+	// function that produces the uploaded bytes has to see the case variants.
+	writeFile(t, dir, "DB.ENV", leak)
+	writeFile(t, dir, ".ENV.LOCAL", leak)
+	writeFile(t, dir, "X.ZIP/a.txt", leak)
+
 	// 🔴 NEGATIVE CONTROLS — names that merely contain or resemble "env" and
 	// must SHIP. A suffix rule widened to a substring, or to a bare "env",
 	// would take every one of these.
@@ -46,6 +57,12 @@ func TestBuildExcludesEnvSuffixFilesAnywhere(t *testing.T) {
 	// as a DIRECTORY at the root — one tree cannot hold both shapes of one name.
 	writeFile(t, dir, "src/env", "keep me")
 	writeFile(t, dir, "src/envelope.tsx", "keep me")
+	// 🔴 THE SUFFIX/SUBSTRING BOUNDARY. Every control above lacks a literal
+	// ".env" substring, so they cannot see the single most likely careless
+	// widening: HasSuffix -> Contains. Measured — that mutation leaves the full
+	// suite green and silently drops both of these from the bundle.
+	writeFile(t, dir, "src/app.env.ts", "keep me")
+	writeFile(t, dir, "docs/readme.env.md", "keep me")
 	// 🔴 THE FILES-ONLY DECISION, PINNED. A DIRECTORY whose name ends in ".env"
 	// keeps its contents: giving isExcludedDir this suffix would drop a whole
 	// subtree on a name match, which is the silent loss the directory rule is
@@ -68,7 +85,9 @@ func TestBuildExcludesEnvSuffixFilesAnywhere(t *testing.T) {
 		"block.manifest.json",
 		"config.env/settings.ts",
 		"docs/env.md",
+		"docs/readme.env.md",
 		"src/App.tsx",
+		"src/app.env.ts",
 		"src/env",
 		"src/env.ts",
 		"src/envelope.tsx",

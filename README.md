@@ -1226,8 +1226,10 @@ invisible to all of them. This one is **files only** — a directory called
 `config.env/` still ships, because dropping a whole subtree on a suffix match is
 the silent loss the directory rule is aimed away from.
 
-The two *pattern* rules are **case-insensitive**: `.ENV.LOCAL` and `Bundle.ZIP`
-go, as directories or as files. The three kept names are still matched
+Matching is **case-insensitive** for every dotenv and `*.zip` rule, on
+directories and on files alike: `.ENV.LOCAL/`, `.ENV.LOCAL`, `X.ZIP/` and
+`Bundle.ZIP` all go. (The *fixed-name* directory list is the exception — see the
+table below.) The three kept names are still matched
 **exactly** — `.ENV.PRODUCTION` is not the file `vite build` reads, so it is
 dropped rather than uploaded.
 
@@ -1239,6 +1241,15 @@ never contents. Measured, these are **packaged** today:
 | `.env-backup/.env.production` | the three kept names are kept **by name**, wherever every directory above them is itself packaged |
 | `NODE_MODULES/`, `Dist/` | the *fixed-name* directory list is matched case-sensitively, on purpose — `Build/` and `Dist/` are plausible content directory names, and dropping one is a silent subtree loss. The two *pattern* rules (`.env…`, `*.zip`) **are** case-insensitive |
 | a secret in a name that is not dotenv-shaped at all | `secrets.json`, `credentials.yaml`, a key pasted into `src/config.ts` — the packager matches **names, never contents** |
+
+⚠️ **The `*.env` rule costs something, and it costs it silently.** `.env` is also
+**Babylon.js's environment-texture format** — a 3D block shipping
+`public/environment.env` will have it dropped, and you will find out at runtime
+in the deployed app, because the submit output prints a file *count* and never
+names what it skipped. `sample.env` and `template.env` go the same way, and the
+three-name allow-list has no suffix-shaped counterpart: `.env.sample` is kept,
+`sample.env` is not. **Run `--package-only` and unzip the result** if your app
+ships any `.env`-suffixed asset. Rename it (`environment.envmap`) and it travels.
 
 The mirror of the `.env-backup/.env.production` row: a kept name does **not**
 rescue its directory. `.env.d/.env.production` is dropped along with `.env.d/`,
