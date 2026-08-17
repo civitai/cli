@@ -19,22 +19,30 @@ whether reaching those apps is possible at all.
 
 ## State now
 
-- **Branch / PR:** `main` @ `73ea7b4`, clean, in sync with `origin/main`. PR **#426 MERGED**
-  (squash, 2026-08-16T01:57Z). Branch `fix/offsite-refusal` deleted.
-- **DONE — the refusal ships.** `internal/cmd/app_offsite.go` holds ONE predicate
-  (`offsiteApp`) asked by both call sites (`app_listing.go:200` via `resolveListing`,
-  `app_status.go:119`). Error path only, gated on `errors.Is(err, civitai.ErrNotFound)`,
-  own 5s deadline, `client.Stderr = io.Discard` so retry notices cannot print above the
-  real error. Exit code stays **4**. AGENTS.md gains **item 29** — inline in #426, split to
-  `claudedocs/decisions/29-offsite-refusal.md` once that merge gave it a base commit.
-- **DONE — verified LIVE**, not just against fixtures (see *How to verify*).
-- **OPEN by design: #422 stays open.** Only outcome 2 (refuse precisely) shipped. Outcome 1
-  (actually reach offsite apps) is blocked server-side — see the investigation below.
-- **Filed this session:** **#424** (the slug-only lookup nobody's tests can see),
-  **#427** (the two residuals #426 deliberately did not fix).
-- **Not mine, appeared during the session:** #423 (`MaxBundleSizeBytes` ~12× the real
-  server ceiling), #420 (`.env.local`/`*.zip` excluded as files but not directories —
-  the mirror of #409, credential-leak direction).
+- **`civitai/cli` `main` @ `bb7d7f2`**, clean, in sync. One open PR of mine, **#442**
+  (`*.env` anywhere / case-insensitive pkgzip patterns), unrelated to this thread.
+- **The server-side selector is MERGED: `civitai/civitai#3989` → `a15b4fb7b1`.** One clause:
+  `where: { slug, kind:'onsite', appBlockId:null, status:'draft' }` → `where: { slug, revisionOfId: null }`
+  in `getMyListingForApp` (`offsite-listing.service.ts:~1746`). No schema change (the `slug`
+  selector was already declared), no migration, no index — `AppListing.slug` is `@unique`
+  across both kinds.
+- 🔴 **MERGED IS NOT DEPLOYED, AND IT IS NOT DEPLOYED.** Measured 2026-08-17 04:35Z against
+  `https://civitai.com`: slug-only `getMyListingForApp` still 404s for `gen-matrix`, `radio`
+  and `comfy`. **Positive control in the same run:** `app listing status --slug gen-matrix`
+  resolves (exit 0) via the appBlockId path, so the 404s are about the selector, not the
+  probe. **Until this flips, the CLI half must not ship** — a client calling a selector the
+  server drops is the inert-feature shape.
+- **Shipped in `civitai/cli`:**
+  | what | PR | merge |
+  |---|---|---|
+  | AGENTS item 29 split to an evidence file + "no client path" retracted | #432 | `b1213a3` |
+  | `appBlockId` is not a kind discriminator — second retraction | #441 | `483441e` |
+  | README scoped to *this CLI* (published contract) | #446 | `bb7d7f2` |
+- **Filed upstream:** **#3984** (the ask) · **#4003** (unbounded existence oracle, deliberately
+  out of #3989's scope) · **#4008** (`globSync` breaks a convention scanner incl. its own
+  positive control).
+- **Verified, not just merged:** every merge confirmed by CONTENT on `origin/main`, never by
+  ancestry — a squash makes `merge-base --is-ancestor` false forever.
 
 ## Open investigations — live diagnosis state
 
@@ -142,29 +150,53 @@ whether reaching those apps is possible at all.
   on the first clause and an approved onsite app fails the other two. Cross-linked from
   #422, #424 and `civitai/civitai#3893`.
 
+### Is the #3989 slug selector deployed to production? (the only thing gating the CLI half)
+
+- **Symptom:** nothing is broken; this is a readiness question. `civitai app listing set-icon
+  --slug radio` cannot work until the merged server selector is live.
+- **Observed (2026-08-17 04:35Z, `https://civitai.com`, slug-only `getMyListingForApp`):**
+  `gen-matrix` → 404 · `radio` → 404 · `comfy` → 404 · `definitely-not-an-app-zzz` → 404.
+  **Positive control, same session/auth/base URL:** `app listing status --slug gen-matrix`
+  → resolves, exit 0.
+- **Ruled out:** *"the probe is malformed"* — the appBlockId path resolved a real listing in the
+  same run. *"the CLI refusal proves anything"* — it does NOT: `app listing status --slug radio`
+  prints the refusal whether or not the selector is deployed, because the CLI short-circuits at
+  the submissions lookup and never calls the route. That first probe was worthless and is the
+  empty-result trap.
+- **Leading hypothesis:** merged 04:20Z, probed 04:35Z — production simply has not rolled yet.
+- **Next probe:** re-run *How to verify* step 1. A single resolve on `radio` flips this.
+
+### `civitai/cli#424` — does the slug arm serve a genuinely PENDING first-version onsite app?
+
+- **Resolved from server source** (`civitai/civitai@07a1c537dc`): the old arm was
+  `where: { slug, kind:'onsite', appBlockId:null, status:'draft' }`, which accounts for every row
+  in #424's measured table — approved onsite apps carry an `appBlockId` and fail clauses 2-3;
+  offsite fails clause 1. So the `app_listing.go:186-192` comment is **over-general, not wrong**.
+- **Still unmeasured:** the pending-onsite case itself. #424's two `appBlockId = nil` submissions
+  were **withdrawn**, and the clause keys on the *listing's* status, not the submission's.
+- **Next probe:** submit a throwaway app; before review, `GetMyListingForApp(ctx, "", "<slug>")`.
+- **Note:** #3989 widened past this shape entirely, so the answer now changes nothing operationally.
+
 ## Next steps (ranked)
 
-1. ~~**File the server-side selector issue on `civitai/civitai`**~~ — **DONE:
-   `civitai/civitai#3984`.** Note it is no longer "the only thing that unblocks #422
-   outcome 1"; see the retraction above.
-2. **Settle whether the client path is real** — the higher-value probe now. Call
-   `getMyListingForEdit` with an offsite app's `apl_` id and see whether it returns assets
-   or refuses on kind. 🔴 Use a **throwaway** offsite app, never `radio`/`comfy`/
-   `cosmetic-studio`/`vitrine`: the call mints a shadow revision on a live listing.
-   If it resolves, `app listing` can reach approved offsite apps today and item 29's
-   refusal narrows to draft/pending.
-3. **Settle #424** with the throwaway-app probe (recipe above). One measurement. Lower
-   priority now that the server source explains the 404s — the remaining question is only
-   whether the genuinely-pending onsite path works.
-4. **#420** — `.env.local` / `*.zip` excluded as files but not directories; a planted
-   `.env.d/db.env` secret is packaged and durably published to Forgejo. Credential-leak
-   direction, and the issue asks for a **per-name** decision, not a blanket
-   `excludedDirs ⇄ excludedFiles` promotion. Enforce in the shared predicate and extend
-   #418's seam test.
-5. **#427** — the residuals: the refusal asserts ownership it never checked (no
-   `ownedSubmission` gate, unlike `explainAppViewNotFound`), and the probe has no off switch.
-6. **#411 second half** — provenance stamping at submit (commit SHA + dirty flag). The
-   dirty-tree refusal already shipped in #415.
+1. 🔴 **Poll for the #3989 deploy, then ship the CLI half.** The one command that settles it
+   (read-only, both controls built in) is under *How to verify*. When slug-only resolves:
+   `resolveListing` passes the slug for offsite, and the refusal **narrows to a fallback for
+   older servers rather than being deleted**. Then `README.md` and
+   `claudedocs/decisions/29-offsite-refusal.md` both need the "merged but not yet deployed"
+   note removed — grep for `3989`.
+2. **#442** — the `*.env` pkgzip PR, open and unrelated to this thread.
+3. **#420** — `.env.d/db.env` packaged; credential-shaped, per-name decision not a blanket
+   `excludedDirs ⇄ excludedFiles` promotion.
+4. **#424's remaining question is now narrow.** Its point 3 is resolved by #3989. What is still
+   unmeasured: a genuinely **pending** first-version *onsite* app — the only shape the OLD clause
+   served. Nothing depends on it; the widening left that path untouched.
+5. **Two 🟢 nits on #3989**, now post-merge so they need a follow-up PR: a comment at
+   `app-collaborator.permission-matrix.test.ts:284` restating the very absolute its own commit
+   softened, and the PR body's mutation counts being wrong in both directions (the matrix mock
+   is not Prisma-filter-aware, so `{not:…}` mutants die from a mock artefact).
+6. **#427** — the refusal asserts ownership it never checked. **#411 second half** — provenance
+   stamp, still needs the server field.
 
 ## Gotchas / decisions / dead-ends
 
@@ -203,21 +235,77 @@ whether reaching those apps is possible at all.
   green → the test written to catch dangling citations couldn't see its own walk shrinking.
   **CI was green at every step.**
 
+- 🔴 **`claudedocs/decisions/29-offsite-refusal.md` has TWO regions with different rules.**
+  Everything from the `29. **…` heading to EOF is **byte-pinned** — `agents_split_preserved_test.go`
+  holds sha `df86c7a851e2397db48eebd2f4b9d17e91565128ec4550510a62b785f552828d` (8 non-blank lines,
+  base `53a925bf7810f2e0dadd64ddc9f77f2e390ae8b4`). Corrections go **above the `---` rule**, in the
+  free-form header, which is what both retractions did. **If an edit fails
+  `TestSplitItemBodiesArePreservedVerbatim/item_29`, do NOT edit the sha or the test.**
+- 🔴 **A first-appearance AGENTS item is inline only until its FIRST MERGE, not forever.** #426's own
+  comment said a new item cannot carry a `splitItems` provenance row — true, but #426 *was* the first
+  PR of that two-PR dance, so the base existed the moment it merged (`agentsSplitBaseWave5`).
+- 🔴 **THREE claims retracted this session, two of them mine.** (a) *"No client change makes `app
+  listing` reach an offsite app"* — `GET /api/v1/apps/{slug}` returns the `apl_` listing id for an
+  offsite app and the CLI **already decodes it** (`AppDetail.ID`) on the refusal path itself;
+  `getMyListingForEdit` and the asset procs gate on ownership only, **no kind check**. (b) *"an
+  offsite app has no appBlockId — that is what `kind: offsite` MEANS"* — the schema says the
+  opposite and warns against exactly that inference; the backfilled class exists but the backfill
+  service is **DARK**, which is why production measures 0 rows. (c) my #3984 disclosure
+  justification — *"store slugs are already public"* holds only for `approved`; the argument that
+  actually works is that `submitExternalListing` already leaks a coarser oracle over the whole
+  namespace.
+- 🔴 **A `PENDING`-only CI poll reports ALL SETTLED before anything starts.** A freshly-created check
+  has an **empty** conclusion, so it is not `PENDING`. My poll printed `SETTLED (failing=0)` on a
+  rollup of 7 where 4 had blank conclusions and the two Tekton checks were **absent entirely** —
+  one step from merging on it. Require a **terminal** conclusion
+  (`SUCCESS|FAILURE|CANCELLED|TIMED_OUT|NEUTRAL|SKIPPED|ERROR`) for **every** check **and** assert a
+  minimum count. AGENTS.md documents this trap; knowing it did not prevent it.
+- 🔴 **Three CI failures on `civitai/civitai#3989`, none of them the code, each diagnosed not
+  assumed.** (1) `build-image` — a Turbopack/PostCSS fault on CSS modules the PR never touched;
+  a retry passed on the identical SHA. (2) `preview / unit-tests` — `globSync` is not a function,
+  killing a convention scanner **including its own positive control**, so it reported nothing in
+  either direction; also on #3988 → filed as **#4008**. (3) `tekton / typecheck` — **cancelled by a
+  1h pipeline timeout** (59m40s, `TaskRunCancelled`), while six other PRs passed the same task in
+  the same window, so *not* a degraded cluster; an empty commit re-ran it green in **4 minutes**.
+  **A `preview` label toggle retriggers only when no run is in flight**; an empty commit always works.
+- **The `civitai/civitai` worktree recipe is not the generic one** — submodule `event-engine-common`
+  + a `.envrc` (`use flake`) that a worktree never inherits. Remove with
+  `node .claude/skills/dev-server/cli.mjs wt rm <path>`, which **crashed on a pnpm symlink**
+  (`ENOTDIR`); `git worktree remove --force` then `worktree prune` cleaned it up.
+- **Do NOT consolidate `deleteOnsiteDraftListingForSlug`'s look-alike clause**
+  (`publish-request.service.ts`). It is a `deleteMany` with no owner predicate and nothing
+  downstream to refuse it — **the narrowness IS the authorization**. A cross-reference comment now
+  says so at the site.
+- **The audit→fix→re-audit cycle converged in one round** and was worth it: the first audit found
+  the function JSDoc still documenting the deleted clause, a **surviving mutant** (selector
+  precedence — `if (slug)` passed 44/44), and an access-control matrix whose `ONSITE_ONLY`
+  *classification* was stale rather than merely mis-worded. The fix round then caught **its own**
+  fix being vacuous (a permissive mock meant the new offsite cells passed under the old clause too).
+  Delta re-audit: 17/17 mutants killed, zero production-code change proven by comment-stripped diff.
+
 ## How to verify
 
-The offsite refusal, against the live API (read-only — both commands fail before mutating):
-
 ```bash
+# 1. Is the #3989 selector live yet? THE one question gating the CLI half.
+#    Throwaway Go test in internal/cmd (read-only: getMyListingForApp is a .query and
+#    since the lazy-shadow change does NOT mint a revision — that is getMyListingForEdit,
+#    which DOES write). Delete the file afterwards.
+#      c := appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), "")
+#      c.GetMyListingForApp(ctx, "", "radio")     // 404 today; resolves once deployed
+# 🔴 The positive control is NOT optional — four 404s alone are indistinguishable from a
+#    broken probe, which is what invalidated #422's first attempt AND my own first draft:
 cd /home/zach/workspace/civit/cli && make build
-./bin/civitai app listing status --slug radio ; echo "exit=$?"   # precise refusal, exit 4
-./bin/civitai app status comfy                ; echo "exit=$?"   # different message, exit 4
+./bin/civitai app listing status --slug gen-matrix   # MUST resolve, exit 0 — route+auth work
+./bin/civitai app listing status --slug radio        # offsite refusal, exit 4 (until deploy)
+
+# 2. The retractions are on main
+git -C /home/zach/workspace/civit/cli show origin/main:README.md | grep -c "no client-side route"   # 0
+git -C /home/zach/workspace/civit/cli show origin/main:internal/cmd/app_offsite.go | grep -c "MEANS" # 0
+
+# 3. Item 29's pinned body is intact (see Gotchas — this is the one that breaks silently)
+git -C /home/zach/workspace/civit/cli show origin/main:claudedocs/decisions/29-offsite-refusal.md \
+  | awk '/^29\. \*\*/{f=1} f' | grep -v '^[[:space:]]*$' | sha256sum
+#   must equal df86c7a851e2397db48eebd2f4b9d17e91565128ec4550510a62b785f552828d
 ```
 
-Controls that must still hold:
-
-```bash
-./bin/civitai app status definitely-not-an-app-zzz   # today's "no such submission", exit 4
-./bin/civitai app listing status --slug gen-matrix   # onsite happy path, unchanged
-```
-
-Full gate: `make ci` **and** `nix-shell -p golangci-lint --run "golangci-lint run ./..."`.
+🔴 **Do not use the `civitai` on `PATH`** — stale build, predates all of this.
