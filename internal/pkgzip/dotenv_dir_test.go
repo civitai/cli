@@ -17,12 +17,17 @@ import (
 // directory branch consulted `excludedDirs`, a fixed-name map holding none of
 // them — so the walk descended and shipped every file inside.
 //
-// 🔴 THE FILE RULE DOES NOT COVER FOR THE DIRECTORY RULE, which is what makes
-// this a leak rather than bloat. Inside `.env.d/` the conventional file names
-// are `db.env`, `api.env`, `local.env` — base names that do NOT start with
-// ".env", so `isExcludedFile` keeps every one of them. The directory is the only
-// thing standing between those files and an uploaded bundle that is committed to
-// Forgejo and deployed.
+// 🔴 THE FILE RULES DO NOT COVER FOR THE DIRECTORY RULE — but the reason
+// changed in #435 and this header used to state the retired one. It said the
+// file rule could not see `db.env` / `api.env` inside a `.env.d/`; the `*.env`
+// suffix rule now drops all three of those wherever they sit, and measurement
+// confirms they stay dropped with the directory rule removed.
+//
+// The rule is still load-bearing for the reason that survives: the file rules
+// are NAME rules, and a secrets container holds arbitrary names. Measured with
+// isDotenvShaped removed from isExcludedDir — `.env.d/credentials.json`,
+// `.env.d/id_rsa`, `.env.d/notes.txt`, `.env.local/token` and the allow-listed
+// `.env.d/.env.production` all became bundle content. Those are pinned below.
 //
 // The fixture plants BOTH SHAPES of every name it names. The shape that hid this
 // class twice is a fixture that only ever plants the type its author had in mind:
@@ -65,6 +70,14 @@ func TestBuildExcludesDotenvShapedDirectories(t *testing.T) {
 	// (the rule is about every ancestor, not the parent), and `dist/.env.example`
 	// is the only coverage of a kept name that is not `.env.production`. Do not
 	// delete one on the strength of "another row covers that branch".
+	// 🔴 ARBITRARY NAMES INSIDE A CONTAINER — the rows the directory rule
+	// uniquely saves. No file rule reaches any of these: they neither start nor
+	// end with ".env". They are what a secrets directory actually holds, and
+	// they are why the rule survives the arrival of the *.env suffix rule.
+	writeFile(t, dir, ".env.d/credentials.json", leak)
+	writeFile(t, dir, ".env.d/id_rsa", leak)
+	writeFile(t, dir, ".env.local/token", leak)
+
 	writeFile(t, dir, ".env.d/.env.production", leak)           // dotenv-shaped dir
 	writeFile(t, dir, "node_modules/.env.production", leak)     // fixed name
 	writeFile(t, dir, "node_modules/pkg/.env.production", leak) // …at depth

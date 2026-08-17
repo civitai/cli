@@ -47,6 +47,13 @@ func TestBuildExcludesEnvSuffixFilesAnywhere(t *testing.T) {
 	writeFile(t, dir, ".ENV.LOCAL", leak)
 	writeFile(t, dir, "X.ZIP/a.txt", leak)
 
+	// 🔴 A DOTTED STEM. Every other `*.env` row here has a single-dot name, so
+	// none of them can see a rule narrowed to `HasSuffix(".env") && the stem has
+	// no dot` — measured, that mutation passes the FULL suite while packaging
+	// this file. `backup.db.env` is exactly what a dated or environment-scoped
+	// dump is called.
+	writeFile(t, dir, "backup.db.env", leak)
+
 	// 🔴 NEGATIVE CONTROLS — names that merely contain or resemble "env" and
 	// must SHIP. A suffix rule widened to a substring, or to a bare "env",
 	// would take every one of these.

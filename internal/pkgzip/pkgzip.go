@@ -15,8 +15,10 @@
 //     files matched from BOTH ends — every base name that STARTS with ".env"
 //     (dotted or not, so `.envrc`, which routinely holds exported credentials,
 //     goes too) and every base name that ENDS in ".env" (`db.env`, `prod.env` —
-//     the shape tooling writes, invisible to a prefix rule; #435). Matching
-//     ignores case. Except a three-name allow-list, which is matched EXACTLY.
+//     the shape tooling writes, invisible to a prefix rule; #435). The DOTENV
+//     and *.zip matching ignores case; the VCS names in this same bullet do
+//     NOT — a file called `.GIT` is packaged. Except a three-name allow-list,
+//     which is matched EXACTLY.
 //
 //     The scaffolded page-money template points a real,
 //     Buzz-spending block token (VITE_LIVE_BLOCK_TOKEN) at the git-ignored
@@ -204,8 +206,9 @@ func isArchiveArtifact(name string) bool {
 //
 // It is still the right trade: an uploaded credential is durably published to
 // Forgejo and a human reviewer and cannot be recalled, while a dropped asset is
-// recoverable by renaming the file. But it is a real cost, it is named in the
-// README's residual table so an author can find it, and it is the strongest
+// recoverable by renaming the file. But it is a real cost, it is called out in
+// the README beside the residual table (it cannot BE a row there — that table
+// lists what is still uploaded, and this is the opposite residual), and it is the strongest
 // argument for the drop-messaging tracked in #435 — a one-line "skipped N
 // path(s)" would turn this from a silent runtime break into an obvious one.
 //
@@ -238,13 +241,24 @@ func isDotenvSuffixed(name string) bool {
 // directory was the only thing stopping them. The `*.env` suffix rule now drops
 // all three wherever they sit, so that argument is spent.
 //
-// What the directory rule still does, and nothing else does: it stops the
-// keptEnvFiles ALLOW-LIST from rescuing a file out of a dotenv directory.
-// Measured — delete isDotenvShaped from isExcludedDir and `.env.d/.env.production`
-// becomes bundle content, because the allow-list keeps that name by design.
-// TestBuildExcludesDotenvShapedDirectories pins exactly that path. Do not
-// remove this rule as redundant with the suffix rule; they cover different
-// names.
+// What the directory rule still does, and nothing else does: it drops
+// everything in a dotenv container REGARDLESS OF NAME. The file rules are name
+// rules — they reach `.env.local` (prefix) and `db.env` (suffix) and nothing
+// else. Measured by deleting isDotenvShaped from isExcludedDir and packaging a
+// `.env.d/`: six files became bundle content, and only ONE of them was the
+// allow-list case —
+//
+//	.env.d/credentials.json   .env.d/id_rsa   .env.d/notes.txt
+//	.env.local/token          .env.d/.env.production
+//
+// — i.e. the names a secrets directory actually holds are exactly the ones no
+// file rule can see. `.env.d/db.env` stayed dropped, by the suffix rule.
+//
+// So: do NOT remove this as redundant with the suffix rule. The suffix rule
+// covers a NAMING convention; this covers a CONTAINER, and a container's
+// contents are named whatever its author liked.
+// TestBuildExcludesDotenvShapedDirectories pins both the allow-list path and
+// the arbitrary-name paths.
 //
 // 🔴 keptEnvFiles DOES NOT APPLY HERE. That allow-list exists because the server
 // build's `vite build` READS `.env.production`, and because `.env.example` /
@@ -327,18 +341,21 @@ var keptEnvFiles = map[string]struct{}{
 }
 
 // isExcludedFile reports whether a regular file (by base name) must be left out
-// of the package. Four rules, in order (the dotenv pair is described in full
-// inside the function, and isDotenvSuffixed carries the #435 rationale):
+// of the package. Four rules, in order:
 //
 //   - VCS metadata by EXACT name (vcsMetadataNames): a linked worktree's or a
 //     submodule's `.git` is a regular file, and issue #409 is what happens when
 //     only the directory shape is excluded. See that var.
 //   - Build artifacts (*.zip).
-//   - Dotenv. That rule is deliberately CONSERVATIVE toward "never upload a
-//     secret": every base name starting with ".env" is dropped UNLESS it is one
-//     of the three names on the keptEnvFiles allow-list. Build-time config for
-//     the server must come from the manifest / build recipe, not an uploaded
-//     dotenv.
+//   - Dotenv by PREFIX. That rule is deliberately CONSERVATIVE toward "never
+//     upload a secret": every base name starting with ".env" is dropped UNLESS
+//     it is one of the three names on the keptEnvFiles allow-list. Build-time
+//     config for the server must come from the manifest / build recipe, not an
+//     uploaded dotenv.
+//   - Dotenv by SUFFIX (#435): every base name ENDING in ".env" — `db.env`,
+//     `prod.env`, `backup.db.env`. The shape tooling writes, invisible to every
+//     prefix rule above. See isDotenvSuffixed for why it is files-only and what
+//     it costs.
 //
 // 🔴 THE PREFIX IS ".env", NOT ".env." — UNDOTTED NAMES ARE EXCLUDED TOO. The
 // match was `name == ".env" || HasPrefix(name, ".env.")` until the README
