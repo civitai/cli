@@ -1535,18 +1535,21 @@ Details worth knowing before you start:
   in a loop.** On a LIVE (approved) listing the read behind it
   (`getMyListingForEdit`) opens the revision draft server-side, idempotently —
   the same one each time — so a script calling it repeatedly keeps a revision
-  open on your listing. Whether that should still be classified a read is
-  [#389](https://github.com/civitai/cli/issues/389), which is open. Reading it
-  once per change is fine; a watch loop is a writer.
+  open on your listing. [#389](https://github.com/civitai/cli/issues/389) asked
+  the narrower question of whether a call that FAILS could leave a revision
+  behind; it cannot, because every refusal the server can return here is raised
+  before the revision is opened. **That settles the error path only — the write
+  on success is unchanged.** Reading it once per change is fine; a watch loop is
+  a writer.
   ⚠ **This now applies to OFFSITE apps too.** Before
   [#422](https://github.com/civitai/cli/issues/422) every `app listing`
   subcommand refused for an offsite app and therefore could not write anything;
   now that they resolve by slug, `app listing status` against an **approved**
   offsite listing mints that shadow revision like any other. Every offsite app
   measured on civitai.com is approved, so this is the *normal* state there, not
-  an edge case. #422 retired the "cannot be addressed" refusal; it did not
-  retire #389 — the shadow is a property of `getMyListingForEdit`, not of how
-  the listing id was obtained.
+  an edge case. #422 retired the "cannot be addressed" refusal, and #389
+  retired nothing about the write — the shadow is a property of
+  `getMyListingForEdit`, not of how the listing id was obtained.
 - 🔴 **`reorder` addresses the same listing `status` printed, and on a live
   listing that is the *revision*, not the live one.** The server validates a
   reorder against the screenshot ids of the listing it is *addressed to*, and

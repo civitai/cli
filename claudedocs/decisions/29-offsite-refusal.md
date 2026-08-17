@@ -130,9 +130,18 @@ offsite app measured on civitai.com (`radio`, `comfy`, `cosmetic-studio`,
 **NOT HYPOTHETICAL: IT HAPPENED TWICE DURING THIS PR'S OWN DEVELOPMENT**, to
 `radio` and to `gen-matrix`, each time by running `app listing status` against a
 real app to check the repair worked. Tracked as **civitai/cli#389** ("is this a
-read at all?"), which is OPEN and which #422 does not close. The README now says
-so for `app listing status` with and without `--json`, and the command's own
-`--help` says it too.
+read at all?"). #422 does not close it, and neither does the measurement below:
+#389's own open question was whether a call that FAILS could leave a revision
+behind, and reading `getMyListingForEdit` at `civitai/civitai@3ff050f` settles
+that it cannot — every refusal (`loadOwnedEditableListing` at :1494, the
+`revisionOfId` check at :1496, the status switch at :1502) is raised above the
+`if (listing.status === 'approved') beginListingRevision(...)` at :1540, and the
+proc's zod input and `appDeveloperProcedure` middleware reject before the
+resolver runs at all. **That is the ERROR arm. The write on SUCCESS is exactly
+as described above and is unchanged** — an approved offsite listing still gets a
+shadow minted by a command that reads like a read. The README says so for
+`app listing status` with and without `--json`, and the command's own `--help`
+says it too.
 
 **The rule for anyone testing this path: use the `httptest` fakes.** If you need
 live shape, `civitai app view <slug>` is genuinely read-only. Do not reach for a

@@ -466,11 +466,47 @@ func trpcName(path string) string {
 // server documents a side effect — for an APPROVED parent it idempotently opens
 // a shadow revision (see GetMyListingForEdit). Classifying it `change` would
 // tell someone whose `listingId` was rejected to go fix a value they never sent.
-// The residual is real and stated rather than papered over: this CLI cannot see
-// whether the server opened a revision before rejecting the input, so "nothing
-// was changed" is a claim about the REQUEST, not a proof about the database.
-// Tracked as civitai/cli#389, which names the measurement that would settle it;
-// do not "fix" it by re-labelling the route before that measurement exists.
+//
+// 🔴 THE 400 ARM IS MEASURED, AND `listingOpRead`'s WORDING SURVIVES IT.
+// civitai/cli#389 doubted exactly one thing: this CLI cannot see the database,
+// so "nothing was changed" on a 400 was a claim about the REQUEST. The question
+// it named was whether the server opens the revision BEFORE or AFTER validating
+// the input. It is AFTER: the open is the LAST thing the resolver does before
+// reading, and every refusal it can raise precedes it. Read in
+// `civitai/civitai` at 3ff050f2568504aa0c4c302f53818baaa35fbe11,
+// `src/server/services/blocks/offsite-listing.service.ts`, in source order:
+//
+//	:1494  loadOwnedEditableListing  → NOT_FOUND / NOT_OWNED
+//	:1496  listing.revisionOfId != null → INVALID_REVISION
+//	:1502  the status switch → removed FORBIDDEN, rejected MUST_RESUBMIT,
+//	       anything not draft/pending/approved INVALID_REVISION
+//	:1540  if (listing.status === 'approved') { beginListingRevision(...) }
+//
+// Every refusal the resolver can raise sits ABOVE :1540, so each one returns
+// before the INSERT is attempted. The proc's zod input (`listingId` 1..64, in
+// `src/server/schema/blocks/offsite-listing.schema.ts:247`) and the
+// `appDeveloperProcedure` middleware both reject before the resolver is entered
+// at all. `mapOffsiteError` (`src/server/routers/app-listings.router.ts:252`)
+// sends NOT_FOUND→404, NOT_OWNED/FORBIDDEN→403, and every other typed code —
+// INVALID_REVISION, MUST_RESUBMIT — to 400; an untyped failure becomes a 500
+// with a generic message. AFTER the shadow-open only 404 (loadListingEditView's
+// NOT_FOUND) and 500 are reachable. The single 400 that can fire once the
+// INSERT has been ATTEMPTED is `beginListingRevision`'s `if (!winner)`
+// INVALID_REVISION (:1143), and it fires only when no shadow row exists for the
+// parent — i.e. precisely when nothing was written.
+//
+// So a 400 from this route means nothing was changed, and this classification
+// is correct rather than merely convenient.
+//
+// 🔴 THAT SETTLES THE ERROR ARM ONLY — THE WRITE ON SUCCESS STANDS, AND GOT
+// BIGGER. A SUCCESSFUL call against an APPROVED parent still mints a shadow
+// revision. Since civitai/cli#453 (#422 outcome 1) `app listing` also reaches
+// OFFSITE apps by slug, and every offsite app measured on civitai.com is
+// approved — so minting a shadow is now the NORMAL outcome there, not an edge
+// case. `app listing status` is still not a
+// pure read and still must not be polled; the warnings in its `Long` and in
+// README.md say so and stay. Nothing here licenses re-labelling this route, and
+// nothing here makes it safe to point a live-app probe at it.
 //
 // 🔴 IT IS NOT THE HTTP VERB, and civitai/cli#374 is what that cost: keying it
 // on the verb at the three call sites (trpcQuery → read, trpcMutation → change,
