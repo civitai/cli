@@ -56,6 +56,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/civitai/cli/internal/pkgzip"
 )
 
 // Rule is one curated anti-pattern: a regexp that, when it matches a line of a
@@ -195,14 +197,37 @@ var scannedExts = map[string]bool{
 	".md": true, ".txt": true,
 }
 
-// skipDirs are directory names never descended into (build output, deps, vcs).
-var skipDirs = map[string]bool{
-	"node_modules": true, ".git": true, "dist": true, "build": true,
-	"coverage": true, "out": true, ".vite": true, ".next": true,
-}
-
 // ScanDir walks dir and returns every anti-pattern Finding in its source files,
 // sorted by file then line. A clean tree returns nil, nil.
+//
+// 🔴 WHAT IT SCANS IS EXACTLY WHAT THE PACKAGER SHIPS — pkgzip owns that rule and
+// this package does NOT keep a copy of it (issue #435, part 3). It used to: an
+// 8-name `skipDirs` (node_modules, .git, dist, build, coverage, out, .vite,
+// .next) against pkgzip's fixed names plus its two directory PATTERN rules
+// (dotenv-shaped and archive-shaped, both case-insensitive). So the walk
+// descended into `.venv/`, `.pnpm-store/`, `.turbo/`, `.cache/`, `.env.d/`,
+// `old.zip/` and the rest, and a finding there is one an author cannot act on:
+// the code it names is not in the bundle, and most of it is not theirs.
+// TestScanDirSkipsExactlyWhatThePackagerDrops is the ledger — it builds its
+// roster FROM pkgzip.ExcludedNames(), so neither side can move alone. No count
+// is restated here on purpose; both lists are read, never quoted.
+//
+// A duplicated predicate is the drift that produced #409 and #420 — one shape of
+// a name fixed, the other left behind — so this delegates rather than mirrors.
+// The FILE rule (pkgzip.IsExcludedFile) is applied too, ahead of the scannedExts
+// test: today scannedExts hides most of that divergence by accident (`.envrc`,
+// `db.env` and `old.zip` all have extensions it does not scan), but `.env.json`
+// does not, and "a finding is in a file that ships" should hold structurally
+// rather than by coincidence of the extension table.
+//
+// scannedExts stays exactly as it is. It answers a different question — which
+// file types are worth grepping — and is not part of this rule.
+//
+// 🔴 THE ROOT IS NEVER SKIPPED, mirroring pkgzip.Build's own `p == dir` guard.
+// Without it a project directory that happens to be named `dist`, `build` or
+// `x.zip` scans NOTHING and reports a clean tree — a reassuring zero from a
+// walk that never opened a file. Scanning a tree the packager would drop is
+// correct here: the caller named that tree, so it is the subject, not content.
 func ScanDir(dir string) ([]Finding, error) {
 	rules := Rules()
 	var findings []Finding
@@ -212,9 +237,19 @@ func ScanDir(dir string) ([]Finding, error) {
 			return err
 		}
 		if d.IsDir() {
-			if skipDirs[d.Name()] {
+			// The scanned root is the subject of the scan, not content inside
+			// it — see the doc comment.
+			if path == dir {
+				return nil
+			}
+			if pkgzip.IsExcluded(d.Name()) {
 				return fs.SkipDir
 			}
+			return nil
+		}
+		// The packager drops these by NAME regardless of extension, so a finding
+		// in one names code that will not be in the bundle.
+		if pkgzip.IsExcludedFile(d.Name()) {
 			return nil
 		}
 		if !scannedExts[strings.ToLower(filepath.Ext(d.Name()))] {
