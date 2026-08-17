@@ -46,6 +46,13 @@ const (
 const (
 	rmDraftOutcomeLine = "✓ Screenshot removed"
 	rmLiveOutcomeLine  = "✓ Screenshot removal staged on an open revision — not submitted for review yet."
+	// The publish line, pinned WHOLE (civitai/cli#443). Asserting only that the
+	// output contains `civitai app listing submit-revision` left the rest of the
+	// sentence free to say anything — and what it said was "remove the rest
+	// first if you are still curating", an instruction to DELETE MORE attached
+	// to the instruction to publish. Naming the command is not the same claim as
+	// naming it in a sentence that means what it should.
+	rmLivePublishLine = "Publish it: civitai app listing submit-revision — or stage more changes first if you are still curating."
 )
 
 // rmStub is a listing server that records every listing call it was asked to
@@ -230,6 +237,15 @@ func TestAppListingRmScreenshotOnLiveListingReportsItIsNotPublished(t *testing.T
 	if !strings.Contains(out, "civitai app listing submit-revision") {
 		t.Errorf("live rm-screenshot does not name the command that publishes the removal "+
 			"(`civitai app listing submit-revision`):\n%s", out)
+	}
+	// 🔴 And the WHOLE publish line, not just the command inside it
+	// (civitai/cli#443). The command name alone was already present while the
+	// sentence around it told the user to delete more screenshots; a reword can
+	// only be deliberate if the line is pinned entire.
+	if !hasLine(out, rmLivePublishLine) {
+		t.Errorf("live rm-screenshot's publish line is not %q — the sentence naming "+
+			"`submit-revision` must offer STAGING MORE as the alternative to publishing now, "+
+			"never removing more (civitai/cli#443). Full output:\n%s", rmLivePublishLine, out)
 	}
 
 	// The removal itself still happens, and carries the id the user typed.
