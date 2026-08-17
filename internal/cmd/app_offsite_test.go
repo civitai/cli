@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -62,6 +63,16 @@ type appProbeServer struct {
 	// SUCCESSFUL command it must stay 0.
 	appCalls atomic.Int32
 	subCalls atomic.Int32
+	// listingCalls counts appListings.getMyListingForApp — resolveListing's
+	// BY-SLUG fallback (civitai/cli#422 outcome 1). It is what separates "this
+	// server predates civitai/civitai#3989" from "this CLI never asked": every
+	// refusal case below now has to prove the fallback was ATTEMPTED and missed,
+	// or it pins the ABSENCE of a feature rather than its failure mode.
+	listingCalls atomic.Int32
+	// lastListingInput holds the raw `?input=` of the last getMyListingForApp, so
+	// a test can assert WHICH selector was used: the fallback must send the slug
+	// and no appBlockId.
+	lastListingInput atomic.Value
 }
 
 // serverEchoSlug is the `slug` the fake store route puts in the RESPONSE, and it
@@ -112,9 +123,17 @@ func TestOffsiteFixturesAreDistinctOnSlug(t *testing.T) {
 	}
 }
 
-// newAppProbeServer wires the fake and the environment. apps maps a slug to the
-// raw detail body the store route answers with; a slug that is absent 404s,
-// which is the "no such app" case.
+// newAppProbeServer wires the fake and the environment for the cases where the
+// BY-SLUG fallback misses — a server that predates civitai/civitai#3989, or an
+// app with no listing row. apps maps a slug to the raw detail body the store
+// route answers with; a slug that is absent 404s, which is the "no such app"
+// case.
+//
+// 🔴 THE tRPC ARM 404s BY DEFAULT, AND THAT IS A FIXTURE DECISION, NOT A GAP.
+// Before #422 outcome 1 this fake had no getMyListingForApp arm at all, because
+// nothing on the error path called it; leaving it out now would make every
+// refusal case here fail on `unexpected path` instead of measuring anything. A
+// 404 is the honest model of the two servers the narrowed refusal is FOR.
 func newAppProbeServer(t *testing.T, apps map[string]string) *appProbeServer {
 	t.Helper()
 	ps := &appProbeServer{}
@@ -130,6 +149,11 @@ func newAppProbeServer(t *testing.T, apps map[string]string) *appProbeServer {
 				return
 			}
 			_, _ = w.Write([]byte(`{"submissions":[]}`))
+		case strings.Contains(r.URL.Path, "getMyListingForApp"):
+			ps.listingCalls.Add(1)
+			ps.lastListingInput.Store(r.URL.Query().Get("input"))
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"json":{"message":"No listing found for this app","code":-32004}}}`))
 		case strings.HasPrefix(r.URL.Path, "/api/v1/apps/"):
 			ps.appCalls.Add(1)
 			slug := strings.TrimPrefix(r.URL.Path, "/api/v1/apps/")
@@ -150,6 +174,31 @@ func newAppProbeServer(t *testing.T, apps map[string]string) *appProbeServer {
 	return ps
 }
 
+// trpcInputSlug reads the `slug` out of a tRPC query's `?input={"json":{…}}`.
+// t.Errorf rather than t.Fatalf: this runs on the server's goroutine, where
+// FailNow is not allowed.
+func trpcInputSlug(t *testing.T, raw string) string {
+	t.Helper()
+	var env struct {
+		JSON struct {
+			Slug string `json:"slug"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+		t.Errorf("undecodable tRPC input %q: %v", raw, err)
+		return ""
+	}
+	return env.JSON.Slug
+}
+
+// listingRefBody is the getMyListingForApp payload for a slug that RESOLVES.
+func listingRefBody(appListingID, status string) map[string]any {
+	return map[string]any{
+		"appListingId": appListingID, "status": status,
+		"contentRating": "g", "hasPendingRevision": false,
+	}
+}
+
 // bothOffsiteAndOnsite is the fixture table every case below shares.
 func bothOffsiteAndOnsite() map[string]string {
 	return map[string]string{
@@ -160,19 +209,348 @@ func bothOffsiteAndOnsite() map[string]string {
 }
 
 // ---------------------------------------------------------------------------
+// civitai/cli#422 OUTCOME 1 — `app listing` REACHES an offsite app
+// ---------------------------------------------------------------------------
+//
+// The repair, and the thing the rest of this file used to assert was impossible.
+// `civitai/civitai#3989` rescoped `appListings.getMyListingForApp`'s slug arm
+// from `{slug, kind:'onsite', appBlockId:null, status:'draft'}` to
+// `{slug, revisionOfId:null}`, so resolveListing can fall back to it when the
+// submission lookup 404s. Measured live 2026-08-17: 4/4 offsite apps resolved by
+// slug, `gen-matrix` (onsite) still resolved, an unknown slug still 404ed.
+
+// offsiteListingID is the `apl_` row the by-slug selector resolves to. It is
+// deliberately NOT derivable from the slug, so an assertion that the command
+// addressed THIS listing cannot pass for one that echoed the caller's input.
+const offsiteListingID = "apl_zzz_offsite_1"
+
+// TestOffsiteAppListingResolvesBySlug is the failing path from civitai/cli#422,
+// reproduced and now green: an app with NO block submission whose listing the
+// slug selector resolves.
+//
+// 🔴 THE TWO PREMISE ASSERTIONS ARE WHAT MAKE IT MORE THAN "A COMMAND EXITED 0".
+// (a) The store probe must NOT have run: reaching the diagnostic means the
+// command failed, so `appCalls == 0` says the success is a success and not a
+// refusal that happened to print. (b) The lookup must have carried the SLUG and
+// no appBlockId — an offsite app has no block id to send, so a fallback that
+// quietly sent an empty one alongside would be resolving by something else.
+func TestOffsiteAppListingResolvesBySlug(t *testing.T) {
+	fake := newOffsiteListingServer(t)
+	listingEnv(t, fake.URL)
+
+	out, _, err := run(t, "app", "listing", "status", "--slug", offsiteSlugA)
+	if err != nil {
+		t.Fatalf("civitai/cli#422: `app listing status` must now SUCCEED for an offsite app, got: %v", err)
+	}
+	for _, want := range []string{"App:", offsiteSlugA, "Listing status:", "draft"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in the rendered status:\n%s", want, out)
+		}
+	}
+	if n := fake.listingCalls.Load(); n != 1 {
+		t.Errorf("the by-slug fallback must have resolved in exactly one call, ran %d times", n)
+	}
+	if n := fake.appCalls.Load(); n != 0 {
+		t.Errorf("PREMISE: a command that SUCCEEDED never reaches the diagnostic probe; it ran %d times", n)
+	}
+	in, _ := fake.lastListingInput.Load().(string)
+	if !strings.Contains(in, `"slug":"`+offsiteSlugA+`"`) {
+		t.Errorf("the fallback must select by SLUG; input was %q", in)
+	}
+	if strings.Contains(in, "appBlockId") {
+		t.Errorf("an offsite app has no block id — the fallback must send none; input was %q", in)
+	}
+}
+
+// TestOffsiteRepairReachesEverySubcommand is the reachability half of the
+// repair, and the mirror of TestOffsiteRefusalReachesEverySubcommand below.
+// resolveListing is the ONE funnel for `app listing`, so a fix applied there
+// must be observable from every subcommand — not just the one `status` drives.
+//
+// 🔴 EACH ROW ASSERTS AN OUTCOME, NOT MERELY "NOT THE REFUSAL". A row that only
+// checked for the absence of the word OFFSITE would pass for a command that
+// resolved the listing and then failed for any other reason, which is the same
+// green for a different world. Six drive to real success against a DRAFT offsite
+// listing; `submit-revision` refuses BECAUSE the listing is a draft, which is
+// itself proof that it read the resolved ref's status.
+func TestOffsiteRepairReachesEverySubcommand(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		args    func(t *testing.T) []string
+		wantErr string // "" means the command must succeed
+		wantOut string
+	}{
+		{"status", func(*testing.T) []string {
+			return []string{"app", "listing", "status", "--slug", offsiteSlugA}
+		}, "", "Listing status:"},
+		{"set-icon", func(t *testing.T) []string {
+			return []string{"app", "listing", "set-icon", writePNG(t, 512, 512), "--slug", offsiteSlugA, "-y"}
+		}, "", "Icon set"},
+		{"set-cover", func(t *testing.T) []string {
+			return []string{"app", "listing", "set-cover", writePNG(t, 1600, 900), "--slug", offsiteSlugA, "-y"}
+		}, "", "Cover set"},
+		{"add-screenshot", func(t *testing.T) []string {
+			return []string{"app", "listing", "add-screenshot", writePNG(t, 1600, 900), "--slug", offsiteSlugA, "-y"}
+		}, "", "Screenshot set"},
+		{"rm-screenshot", func(*testing.T) []string {
+			return []string{"app", "listing", "rm-screenshot", "alsc_1", "--slug", offsiteSlugA}
+		}, "", "Screenshot removed"},
+		{"reorder", func(*testing.T) []string {
+			return []string{"app", "listing", "reorder", "alsc_2", "alsc_1", "--slug", offsiteSlugA}
+		}, "", "Reordered 2 screenshots"},
+		// A DRAFT listing has no revision to submit, so this refuses — and the
+		// refusal quotes the status it read off the ref the fallback resolved.
+		{"submit-revision", func(*testing.T) []string {
+			return []string{"app", "listing", "submit-revision", "--slug", offsiteSlugA}
+		}, "this listing is not live (status draft)", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fastScanPoll(t)
+			fake := newOffsiteListingServer(t)
+			listingEnv(t, fake.URL)
+
+			out, _, err := run(t, tc.args(t)...)
+			if err != nil && strings.Contains(err.Error(), "OFFSITE app") {
+				t.Fatalf("civitai/cli#422 outcome 1: this subcommand must REACH the offsite listing, not refuse:\n%s", err)
+			}
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("expected success, got: %v", err)
+				}
+				if !strings.Contains(out, tc.wantOut) {
+					t.Errorf("missing %q in the output:\n%s", tc.wantOut, out)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("expected %q, got success:\n%s", tc.wantErr, out)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Errorf("want an error containing %q, got: %v", tc.wantErr, err)
+			}
+		})
+	}
+}
+
+// offsiteFake is a Civitai carrying civitai/civitai#3989, plus the call counters
+// the premise assertions read.
+type offsiteFake struct {
+	*httptest.Server
+	listingCalls     atomic.Int32
+	appCalls         atomic.Int32
+	lastListingInput atomic.Value
+}
+
+// newOffsiteListingServer answers as that Civitai does: no block submission for
+// the app, a DRAFT listing resolvable BY SLUG, and every listing-keyed proc the
+// subcommands need. The `/api/v1/apps/` arm FAILS the test rather than answering
+// — reaching the kind probe means the command failed, and a fake that served it
+// would hide that behind today's generic message.
+func newOffsiteListingServer(t *testing.T) *offsiteFake {
+	t.Helper()
+	f := &offsiteFake{}
+	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
+			_, _ = w.Write([]byte(`{"submissions":[]}`))
+		case strings.Contains(r.URL.Path, "getMyListingForApp"):
+			f.listingCalls.Add(1)
+			f.lastListingInput.Store(r.URL.Query().Get("input"))
+			if slug := trpcInputSlug(t, r.URL.Query().Get("input")); slug != offsiteSlugA {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"error":{"json":{"message":"No listing found"}}}`))
+				return
+			}
+			trpcData(w, listingRefBody(offsiteListingID, "draft"))
+		case strings.Contains(r.URL.Path, "getMyListingForEdit"):
+			trpcData(w, map[string]any{
+				"parentId": offsiteListingID, "slug": "server-echo", "status": "draft",
+				"hasPendingRevision": false, "shadowId": nil,
+				"assets": map[string]any{
+					"icon":  map[string]any{"imageId": 11, "url": "http://x/i.png"},
+					"cover": map[string]any{"imageId": 12, "url": "http://x/c.png"},
+					"screenshots": []any{
+						map[string]any{"id": "alsc_1", "imageId": 5, "url": "http://x/1.png", "order": 0},
+						map[string]any{"id": "alsc_2", "imageId": 6, "url": "http://x/2.png", "order": 1},
+					},
+				},
+			})
+		case strings.Contains(r.URL.Path, "ingestAssetFromDataUri"):
+			trpcData(w, map[string]any{"imageId": 4242})
+		case strings.Contains(r.URL.Path, "image-upload"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": "uuid-1", "uploadURL": "http://" + r.Host + "/upload-sink",
+			})
+		case strings.Contains(r.URL.Path, "/upload-sink"):
+			w.WriteHeader(http.StatusOK)
+		case strings.Contains(r.URL.Path, "persistAssetImage"):
+			trpcData(w, map[string]any{"imageId": 91})
+		case strings.Contains(r.URL.Path, "setIcon"):
+			trpcData(w, map[string]any{"status": "attached", "iconId": 4242})
+		case strings.Contains(r.URL.Path, "setCover"):
+			trpcData(w, map[string]any{"status": "attached", "coverId": 91})
+		case strings.Contains(r.URL.Path, "addScreenshot"):
+			trpcData(w, map[string]any{"status": "attached", "id": "alsc_new", "order": 2})
+		case strings.Contains(r.URL.Path, "removeScreenshot"),
+			strings.Contains(r.URL.Path, "reorderScreenshots"):
+			trpcData(w, map[string]any{"ok": true})
+		case strings.Contains(r.URL.Path, "beginListingRevision"):
+			t.Errorf("a DRAFT listing has no shadow revision — beginListingRevision must not be called")
+			trpcData(w, map[string]any{"shadowId": "apl_shadow", "created": true})
+		case strings.HasPrefix(r.URL.Path, "/api/v1/apps/"):
+			f.appCalls.Add(1)
+			t.Errorf("the kind probe ran, so a command that should have resolved did not: %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			w.WriteHeader(http.StatusTeapot)
+		}
+	}))
+	t.Cleanup(f.Close)
+	return f
+}
+
+// TestNonNotFoundSubmissionFailuresSkipTheSlugFallback — the fallback is gated on
+// the not-found KIND, exactly as the diagnostic probe is. A 403 from the
+// invite-gated submissions route, or a 5xx, says nothing about whether a listing
+// exists; spending a second request on it would turn a real error into a guess,
+// and a fallback that then RESOLVED would report success for a command whose
+// authorization actually failed.
+//
+// The zero-call assertion is the load-bearing one: widening the gate to "the
+// command failed" is the natural-looking edit this exists to catch, and nothing
+// in the error text would reveal it.
+func TestNonNotFoundSubmissionFailuresSkipTheSlugFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		wantIs error
+	}{
+		{"403 from the invite-gated submissions route", http.StatusForbidden, `{"error":"not an apps author"}`, civitai.ErrUnauthorized},
+		{"500 from the submissions route", http.StatusInternalServerError, `{"error":"boom"}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var listingCalls, appCalls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.Contains(r.URL.Path, "getMyListingForApp"):
+					listingCalls.Add(1)
+					// If the gate ever widens, RESOLVE — so the test fails by
+					// reporting a bogus success rather than by a count alone.
+					trpcData(w, listingRefBody(offsiteListingID, "draft"))
+				case strings.HasPrefix(r.URL.Path, "/api/v1/apps/"):
+					appCalls.Add(1)
+					_, _ = w.Write([]byte(appDetailJSON(offsiteSlugA, "offsite", offsiteURLA)))
+				default:
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				}
+			}))
+			defer srv.Close()
+			listingEnv(t, srv.URL)
+
+			_, _, err := run(t, "app", "listing", "status", "--slug", offsiteSlugA)
+			if err == nil {
+				t.Fatal("a non-not-found submissions failure must stay an error")
+			}
+			if errors.Is(err, civitai.ErrNotFound) {
+				t.Errorf("a %d must not be reclassified as not-found: %v", tc.status, err)
+			}
+			if tc.wantIs != nil && !errors.Is(err, tc.wantIs) {
+				t.Errorf("the original classification must survive, got %T: %v", err, err)
+			}
+			if strings.Contains(err.Error(), "OFFSITE") {
+				t.Errorf("a %d must not be rewritten into a claim about the app's kind:\n%s", tc.status, err)
+			}
+			if n := listingCalls.Load(); n != 0 {
+				t.Errorf("only a not-found may fall back to the slug selector; it ran %d times", n)
+			}
+			if n := appCalls.Load(); n != 0 {
+				t.Errorf("only a not-found may be probed; the store route ran %d times", n)
+			}
+		})
+	}
+}
+
+// TestOnsiteHappyPathMakesNoExtraCall is the cost constraint on outcome 1: an
+// app that HAS a submission resolves in exactly the two requests it always did.
+//
+// TestSuccessfulCommandsMakeNoStoreProbe holds the same line for the diagnostic
+// probe; this is its sibling for the by-slug fallback, and it is a different
+// question — a fallback wired BEFORE the submission lookup, or one that ran
+// unconditionally and discarded its answer, would leave that test green and this
+// one red. The `appBlockId` assertion is what pins WHICH selector the single
+// call used, so a fallback that simply replaced the onsite path is caught too.
+func TestOnsiteHappyPathMakesNoExtraCall(t *testing.T) {
+	var subCalls, listingCalls atomic.Int32
+	var lastInput atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
+			subCalls.Add(1)
+			submissionRow(w, "my-app", "block_1")
+		case strings.Contains(r.URL.Path, "getMyListingForApp"):
+			listingCalls.Add(1)
+			lastInput.Store(r.URL.Query().Get("input"))
+			trpcData(w, listingRefBody("listing_1", "draft"))
+		case strings.Contains(r.URL.Path, "getMyListingForEdit"):
+			trpcData(w, map[string]any{
+				"parentId": "listing_1", "slug": "my-app", "status": "draft",
+				"hasPendingRevision": false, "shadowId": nil,
+				"assets": map[string]any{
+					"icon":        map[string]any{"imageId": 11, "url": "http://x/i.png"},
+					"cover":       map[string]any{"imageId": 12, "url": "http://x/c.png"},
+					"screenshots": []any{},
+				},
+			})
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+	listingEnv(t, srv.URL)
+
+	if _, _, err := run(t, "app", "listing", "status", "--slug", "my-app"); err != nil {
+		t.Fatalf("PREMISE BROKEN — the onsite happy path must succeed: %v", err)
+	}
+	if n := subCalls.Load(); n != 1 {
+		t.Errorf("the submission lookup must run exactly once, ran %d times", n)
+	}
+	if n := listingCalls.Load(); n != 1 {
+		t.Errorf("a resolved submission must not also pay for the by-slug fallback; getMyListingForApp ran %d times", n)
+	}
+	in, _ := lastInput.Load().(string)
+	if !strings.Contains(in, `"appBlockId":"block_1"`) {
+		t.Errorf("the onsite path must still select by the submission's appBlockId; input was %q", in)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // The new behaviour
 // ---------------------------------------------------------------------------
 
-// TestAppListingOffsiteRefusesPrecisely is #422's `app listing` half: the app
-// exists, its store listing is serving an icon and a cover right now, and the
-// CLI cannot address it. The message must say that and must NOT name
-// `app submit`, which cannot succeed for an offsite app.
+// TestAppListingOffsiteRefusesPrecisely is what is LEFT of #422's `app listing`
+// half once outcome 1 shipped: the OLD-SERVER case.
+//
+// 🔴 ITS PREMISE CHANGED AND THE TEST WAS RE-POINTED, NOT WEAKENED. It used to
+// assert the refusal for *any* offsite app, because no CLI path existed. That
+// premise is now false — TestOffsiteAppListingResolvesBySlug drives the same
+// slug to SUCCESS against a server carrying civitai/civitai#3989. What this
+// server models instead is a Civitai WITHOUT it (or an app with no listing row):
+// the by-slug lookup 404s, both lookups have missed, and the refusal is the only
+// thing left to say. The `listingCalls` assertion below is what makes that a
+// real premise rather than a name — without it this passes for a CLI that never
+// tries the fallback at all, which is the exact regression outcome 1 undoes.
+//
+// The assertion it LOST is deliberate: `cannot be addressed from this CLI` is
+// now a false sentence, so it is asserted ABSENT rather than present.
 func TestAppListingOffsiteRefusesPrecisely(t *testing.T) {
 	ps := newAppProbeServer(t, bothOffsiteAndOnsite())
 
 	_, _, err := run(t, "app", "listing", "status", "--slug", offsiteSlugA)
 	if err == nil {
-		t.Fatal("expected an error for an offsite app")
+		t.Fatal("expected an error when BOTH lookups miss")
 	}
 	msg := err.Error()
 
@@ -180,17 +558,28 @@ func TestAppListingOffsiteRefusesPrecisely(t *testing.T) {
 	if strings.Contains(msg, "run `civitai app submit` first") {
 		t.Errorf("the dead-end advice is the regression — `app submit` cannot succeed for an offsite app:\n%s", msg)
 	}
+	// The retired absolute. `app listing` CAN address an offsite listing now, so
+	// a message still claiming otherwise is a claim the code contradicts.
+	if strings.Contains(msg, "cannot be addressed from this CLI") {
+		t.Errorf("civitai/cli#422 outcome 1 retired this sentence — the CLI reaches offsite listings on a server "+
+			"carrying civitai/civitai#3989, so the refusal may only report THIS lookup:\n%s", msg)
+	}
 	for _, want := range []string{
 		"OFFSITE app",
 		offsiteSlugA,
 		offsiteURLA,
-		"cannot be addressed from this CLI",
+		"could not reach its store listing here",
 		"`civitai app view " + offsiteSlugA + "`",
 		"App-store listing UI on civitai.com",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("missing %q; got:\n%s", want, msg)
 		}
+	}
+	// PREMISE: the fallback really ran and really missed. Without this the test
+	// is green for a CLI that never asks.
+	if n := ps.listingCalls.Load(); n != 1 {
+		t.Errorf("the by-slug fallback must have been attempted exactly once before refusing, ran %d times", n)
 	}
 	// House rule: an error names a real next command (see
 	// errors_name_next_command_test.go).
@@ -501,13 +890,19 @@ func TestOffsiteRefusalSanitizesControlChars(t *testing.T) {
 // this change nothing probed the store at all. Both are worth having, and only
 // the premise makes the message assertion mean "the probe ran and said onsite"
 // rather than "no probe exists".
+// 🔴 AND SINCE #422 OUTCOME 1 IT CARRIES A SECOND PREMISE, `wantListingCalls`.
+// `app listing` now tries the by-slug selector before refusing, so this row is
+// the case where THAT missed too; `app status` never resolves a listing at all
+// and must stay at zero. Asserting the number per row is what stops the fallback
+// silently leaking onto the status path.
 func TestOnsiteNeverSubmittedKeepsTodaysMessage(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		args []string
+		name             string
+		args             []string
+		wantListingCalls int32
 	}{
-		{"app listing status", []string{"app", "listing", "status", "--slug", onsiteSlug}},
-		{"app status <slug>", []string{"app", "status", onsiteSlug}},
+		{"app listing status", []string{"app", "listing", "status", "--slug", onsiteSlug}, 1},
+		{"app status <slug>", []string{"app", "status", onsiteSlug}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ps := newAppProbeServer(t, bothOffsiteAndOnsite())
@@ -527,6 +922,10 @@ func TestOnsiteNeverSubmittedKeepsTodaysMessage(t *testing.T) {
 			// which is the same green for a completely different reason.
 			if n := ps.appCalls.Load(); n != 1 {
 				t.Errorf("the probe must have run exactly once (it is what decided onsite), ran %d times", n)
+			}
+			if n := ps.listingCalls.Load(); n != tc.wantListingCalls {
+				t.Errorf("getMyListingForApp ran %d times, want %d — `app listing` falls back to the slug "+
+					"selector before refusing, `app status` resolves no listing at all", n, tc.wantListingCalls)
 			}
 		})
 	}
@@ -822,6 +1221,13 @@ func TestAppStatusByIDDoesNotProbeTheStore(t *testing.T) {
 // for `app listing`, so every subcommand that resolves a slug must produce the
 // refusal, not just `status`. This is the reachability half of the mutation
 // check: the branch is not reached only by the one command a single case drives.
+//
+// 🔴 SINCE #422 OUTCOME 1 THIS PINS THE NARROWED CASE — a server WITHOUT
+// civitai/civitai#3989, modelled by newAppProbeServer's 404-ing tRPC arm. Its
+// mirror image, the same seven subcommands against a server that HAS it, is
+// TestOffsiteRepairReachesEverySubcommand. Both are needed: this one alone would
+// be green for a CLI with no fallback, and that one alone would be green for a
+// CLI that had deleted the refusal.
 //
 // 🔴 ALL SIX SUBCOMMANDS, NOT FOUR. The first cut drove `status`, `set-icon`,
 // `set-cover` and `rm-screenshot` and left `add-screenshot` (runSetMedia, the

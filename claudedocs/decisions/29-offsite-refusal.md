@@ -13,6 +13,70 @@ pointer and the file agree, `agents_trigger_test.go` asserts the trigger is a
 routing question rather than a label, and `agents_split_preserved_test.go` pins
 the body against the text it was moved from.
 
+## 🔴 SUPERSEDED FOR `app listing`: THE SERVER SELECTOR SHIPPED, AND SO DID THE CLIENT FALLBACK
+
+**Read this first. The body's central claim is now FALSE for `app listing` and
+still TRUE for `app status <slug>`, and treating the two as one item is the
+mistake this section exists to prevent.** The body is byte-pinned against the
+commit it was moved from, so it cannot be corrected in place; this is the
+correction.
+
+**What the body says.** *"No client change makes `app listing` /
+`app status <slug>` reach an offsite app"*, because `getMyListingForApp` resolves
+only by `appBlockId` and *"the slug selector 404s for every app, onsite controls
+included"*.
+
+**That measurement was right about the server it was taken against, and the
+server changed.** `civitai/civitai#3989` widened the slug arm from
+`where: { slug, kind: 'onsite', appBlockId: null, status: 'draft' }` to
+`where: { slug, revisionOfId: null }`, and it is **deployed**.
+
+**MEASURED (2026-08-17, live, credentialed, read-only, through
+`client.GetMyListingForApp(ctx, "", slug)` against `https://civitai.com`):**
+
+```
+gen-matrix       BY-SLUG (onsite, approved) -> OK  apl_01KWFP4FEEJRWN27CJA49CDY4Q  approved
+radio            BY-SLUG (OFFSITE)          -> OK  apl_01KYNB77D490DM6YS0C5Z7KYT7  approved
+comfy            BY-SLUG (OFFSITE)          -> OK  apl_01KYNC19W1M2020K1BS2JTA4VN  approved
+cosmetic-studio  BY-SLUG (OFFSITE)          -> OK  apl_01KYAZSZPSX8BNSYNTDPD4JCTP  approved
+vitrine          BY-SLUG (OFFSITE)          -> OK  apl_01KWYD9DA34CYKQNC91W2T3SYN  approved
+NEGATIVE CONTROL definitely-not-an-app-zzz  -> 404
+```
+
+The negative control is not decoration: a selector that resolved *everything*
+would produce the same five OKs and mean nothing.
+
+**WHAT SHIPPED IN THIS CLI (civitai/cli#422 outcome 1).** `resolveListing`
+(`internal/cmd/app_listing.go`) now treats the block-submission lookup as the
+ONSITE path and falls back to `GetMyListingForApp(ctx, "", slug)` when it returns
+`ErrNotFound`. Every `app listing` subcommand funnels through that one helper,
+and the listing-keyed procs downstream gate on OWNERSHIP rather than kind, so all
+seven reach an offsite app. Verified live: `civitai app listing status --slug
+radio` refused before the change and printed the listing after it.
+
+**WHAT DID NOT CHANGE, and must not be "tidied" into agreement:**
+
+- **`app status <slug>` is untouched and its refusal is still TRUE.** It reads
+  the block-submission pipeline; an offsite app has no block submissions, and no
+  listing selector repairs that. `offsiteStatusRefusal` stays as it is, and the
+  two messages stay different.
+- **The `app listing` refusal NARROWED, it was not deleted.** It is what a
+  caller gets when the by-slug lookup ALSO misses: a Civitai without #3989
+  (older or self-hosted), an app with no listing row, or a listing this account
+  does not own. Its copy was rewritten — it no longer says the listing "cannot
+  be addressed from this CLI", which is now a claim the code contradicts.
+- **Only `ErrNotFound` falls back.** A 403 from the invite-gated submissions
+  route, a 5xx or a transport failure keep their own error and their own exit
+  code; none of them is evidence that no submission exists.
+- **The onsite happy path still costs exactly two requests.** The fallback sits
+  on the error path, the same argument the kind probe rests on.
+
+**The three constraints listed further down — approved-only catalog visibility,
+the `getMyListingForEdit` write, the fragility of two hops — applied to the
+WORKAROUND route through `GET /api/v1/apps/{slug}`. That route was never built
+and should not be: the shipped repair is the one-hop slug selector, and it
+answers none of those constraints because it does not need to.**
+
 ## 🔴 "NO CLIENT CHANGE MAKES … REACH AN OFFSITE APP" IS RETRACTED IN PART
 
 **Read this before repeating the body's central claim, and before treating the

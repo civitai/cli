@@ -183,8 +183,9 @@ func resolveListingSlug(lc listingCommon) (string, error) {
 	return m.BlockID, nil
 }
 
-// resolveListing resolves slug -> appBlockId (via the submission row) -> listing
-// ref.
+// resolveListing resolves a slug to the listing ref every `app listing`
+// subcommand addresses: through the app's block SUBMISSION when it has one, and
+// by the SLUG ALONE when it does not.
 //
 // 🔴 A submission with NO appBlockId is a FIRST-version app still pending review. It
 // still has a store listing: `civitai app submit` mints one as a pre-approval DRAFT
@@ -193,13 +194,44 @@ func resolveListingSlug(lc listingCommon) (string, error) {
 // "no listing" error here would make the pending-media flow unreachable from the CLI
 // even though the server supports it. The slug is passed on BOTH paths (harmless when
 // the appBlockId resolves; load-bearing when it is absent).
+//
+// 🔴 THE SUBMISSION LOOKUP IS THE ONSITE PATH, NOT THE ONLY PATH — civitai/cli#422
+// outcome 1, and this ordering is the whole of it. An OFFSITE app is a registered
+// URL rather than a block bundle, so it has NO submission and the lookup above
+// 404s; before this fallback existed, every `app listing` subcommand died there
+// and told the author to run `civitai app submit`, a command that cannot succeed
+// for such an app. The repair is the by-slug arm of `getMyListingForApp`, which
+// `civitai/civitai#3989` rescoped from `{slug, kind:'onsite', appBlockId:null,
+// status:'draft'}` to `{slug, revisionOfId:null}`. Measured live 2026-08-17
+// against https://civitai.com: `radio`, `comfy`, `cosmetic-studio` and `vitrine`
+// (4/4 offsite, all approved) each resolved BY SLUG to their `apl_` listing,
+// `gen-matrix` (onsite, approved) still resolved, and `definitely-not-an-app-zzz`
+// still 404ed. Every listing-keyed proc downstream — getMyListingForEdit, the
+// asset attaches, the revision procs — gates on OWNERSHIP and never on kind, so
+// one resolved ref is all any of these subcommands needed.
+//
+// 🔴 ONLY ErrNotFound FALLS THROUGH, and the refusal below NARROWS rather than
+// disappears. A 403 from the invite-gated submissions route, a 5xx or a transport
+// failure keep their own error and their own exit code — none of them is evidence
+// that there is no submission, and spending a second request on one would be
+// guessing. What still reaches explainOffsiteMiss is the case where BOTH lookups
+// missed: a server that predates #3989 (older or self-hosted), an app with no
+// listing row at all, or a listing this account does not own.
+//
+// 🔴 THE ONSITE HAPPY PATH IS UNCHANGED AND COSTS THE SAME TWO REQUESTS. The
+// fallback is on the submission lookup's ERROR path only, which is the same
+// argument app_offsite.go's probe rests on — pinned by
+// TestSuccessfulCommandsMakeNoStoreProbe and TestOnsiteHappyPathMakesNoExtraCall.
 func resolveListing(ctx context.Context, client *appapi.Client, slug string) (*appapi.ListingRef, error) {
 	sub, err := client.GetSubmission(ctx, "", slug)
 	if err != nil {
-		// civitai/cli#422: an OFFSITE app has no submissions, so it lands in the
-		// empty-list branch and is told to run `civitai app submit` — a command
-		// that cannot succeed for it. Only the error path pays for the check;
-		// see app_offsite.go.
+		if errors.Is(err, civitai.ErrNotFound) {
+			if ref, slugErr := client.GetMyListingForApp(ctx, "", slug); slugErr == nil {
+				return ref, nil
+			}
+		}
+		// Both lookups missed. Only the error path pays for the kind probe; see
+		// app_offsite.go.
 		return nil, explainOffsiteMiss(ctx, slug, err, offsiteListingRefusal)
 	}
 	appBlockID := ""

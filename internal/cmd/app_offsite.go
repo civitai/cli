@@ -13,7 +13,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// The OFFSITE refusal (civitai/cli#422, outcome 2)
+// The OFFSITE refusal (civitai/cli#422, outcome 2) — now `app status`'s alone,
+// plus `app listing`'s NARROWED fallback (#422 outcome 1)
 // ---------------------------------------------------------------------------
 //
 // `app listing <sub>` and `app status <slug>` both resolve their target through
@@ -28,13 +29,32 @@ import (
 // offsite apps fail that way, 7/7 onsite apps succeed — `kind` predicts it
 // exactly.
 //
-// 🔴 THIS IS THE REFUSAL, NOT THE REPAIR. #422's preferred outcome was to make
-// offsite apps reachable by resolving them by slug/app id instead.
-// `appListings.getMyListingForApp` cannot do it: it was measured live to resolve
-// ONLY by `appBlockId` (the slug selector 404s for every app, onsite positive
-// controls included), and none of the offsite apps measured on #422 has an
-// appBlockId to resolve by. Dropping the submission lookup just moves the 404
-// one call later. The upstream ask is civitai/civitai#3984.
+// 🔴 THE `app listing` HALF IS NO LONGER A REFUSAL — #422 OUTCOME 1 SHIPPED, AND
+// THIS FILE IS NOW ITS FALLBACK RATHER THAN ITS ANSWER. The paragraph that stood
+// here said `appListings.getMyListingForApp` "cannot do it: it was measured live
+// to resolve ONLY by `appBlockId` … the slug selector 404s for every app, onsite
+// positive controls included". That measurement was true of the server it was
+// taken against and is now STALE: `civitai/civitai#3989` rescoped the slug arm
+// from `{slug, kind:'onsite', appBlockId:null, status:'draft'}` to
+// `{slug, revisionOfId:null}`, and it is DEPLOYED. Measured live 2026-08-17
+// against https://civitai.com — `radio`, `comfy`, `cosmetic-studio` and
+// `vitrine` (4/4 offsite, all approved) each resolved BY SLUG to their `apl_`
+// listing, `gen-matrix` (onsite, approved) still resolved, and
+// `definitely-not-an-app-zzz` still 404ed. So `resolveListing` (app_listing.go)
+// now falls back to the slug selector when the submission lookup 404s, and every
+// `app listing` subcommand reaches an offsite app.
+//
+// 🔴 WHAT SURVIVES, AND WHY THIS FILE DID NOT SIMPLY GO AWAY. Two things.
+// (a) `app status <slug>` is UNCHANGED and its refusal is still TRUE — it reads
+// the block-submission pipeline, an offsite app genuinely has no block
+// submissions, and no listing selector repairs that. Do not collapse the two
+// messages now that only one of them reports a gap; see offsiteStatusRefusal.
+// (b) The `app listing` refusal NARROWED rather than vanished: it is what a
+// caller gets when the by-slug lookup ALSO misses — a server that predates #3989
+// (older or self-hosted), an app with no listing row, or a listing this account
+// does not own. `offsiteListingRefusal` was reworded to match; it no longer
+// claims the listing "cannot be addressed from this CLI", because in the normal
+// case it now can. The upstream ask that produced #3989 was civitai/civitai#3984.
 //
 // 🔴 `appBlockId` IS NOT A KIND DISCRIMINATOR, AND THIS COMMENT USED TO SAY IT
 // WAS. The sentence above read "an offsite app has no appBlockId — that is
@@ -54,8 +74,12 @@ import (
 // changes is what may be INFERRED: never read appBlockId nullness as the kind,
 // which is why offsiteApp below branches on `d.Kind` and nothing else.
 //
-// 🔴 BUT "NO CLIENT PATH EXISTS" IS RETRACTED IN PART, AND THE COUNTEREXAMPLE IS
-// IN THIS FILE. `offsiteApp` below calls GET /api/v1/apps/{slug}, whose payload
+// 🔴 "NO CLIENT PATH EXISTS" WAS RETRACTED IN PART BEFORE #3989 LANDED, AND THE
+// COUNTEREXAMPLE IS IN THIS FILE. It is recorded because it is the reasoning that
+// stopped the refusal being treated as proof — the WORKAROUND it describes was
+// never built, and must still not be: the shipped repair is the one-hop slug
+// selector above, not this two-hop route through the public catalog.
+// `offsiteApp` below calls GET /api/v1/apps/{slug}, whose payload
 // carries the `AppListing` row id — `civitai.AppDetail.ID`, an `apl_` ULID,
 // measured non-null for an offsite app (`radio` → `apl_01KYNB77D490DM6YS0C5Z7KYT7`,
 // 2026-08-16). Server-side, `getMyListingForEdit` and every listing-keyed asset
@@ -293,16 +317,27 @@ func offsiteRegisteredAt(d *civitai.AppDetail) string {
 	return fmt.Sprintf(" (registered at %s)", raw)
 }
 
-// offsiteListingRefusal is what `civitai app listing <sub>` says.
+// offsiteListingRefusal is what `civitai app listing <sub>` says when BOTH of
+// resolveListing's lookups missed.
 //
-// 🔴 THE TWO MESSAGES ARE NOT INTERCHANGEABLE AND MUST NOT BE COLLAPSED. This
-// one describes a GAP: the app really does have a store listing, its icon and
-// cover are serving publicly right now (#422 measured non-null iconUrl/coverUrl
-// on all four offsite apps), and the CLI simply has no route that can address
-// it. So it names the surface that IS authoritative — the App-store listing UI
-// on the website — and is careful to promise no CLI path, because there is
-// none. `civitai app view <slug>` is named as the next command because it is the
-// one thing the CLI can genuinely do here: show the media that is live.
+// 🔴 IT NO LONGER SAYS THE LISTING "CANNOT BE ADDRESSED FROM THIS CLI", BECAUSE
+// IN THE NORMAL CASE IT NOW CAN (civitai/cli#422 outcome 1). That sentence was
+// this message's thesis until `civitai/civitai#3989` deployed; keeping it would
+// be the file header's own hazard — a claim the code contradicts — asserted to
+// the one person who cannot check it. What is left is a report about THIS
+// invocation: the CLI could not reach the listing HERE, and the three ways that
+// happens are named so the reader can tell which one they are in.
+//
+// 🔴 THE TWO MESSAGES ARE NOT INTERCHANGEABLE AND MUST NOT BE COLLAPSED, and the
+// asymmetry GREW rather than shrank. offsiteStatusRefusal reports a permanent
+// truth (an offsite app has no block submissions, ever); this one reports a
+// lookup that missed on this server, this account, this app. It still names the
+// surface that ALWAYS works — the App-store listing UI on civitai.com — because
+// that promise survives every one of the three cases, and it still names
+// `civitai app view <slug>`, the one read the CLI can always do here.
+//
+// It still refuses to name `civitai app submit`: that step cannot exist for an
+// offsite app whichever of the three cases this is.
 //
 // Internal sentences carry full stops; the LAST one does not. AGENTS.md's
 // "lowercase, no trailing punctuation" reads oddly against a multi-sentence
@@ -311,13 +346,15 @@ func offsiteRegisteredAt(d *civitai.AppDetail) string {
 // both multi-sentence, both punctuate internally and both end bare. Same here.
 func offsiteListingRefusal(slug string, d *civitai.AppDetail) string {
 	return fmt.Sprintf(
-		"`%s` is an OFFSITE app%s, and an offsite app's store listing cannot be addressed from this CLI — "+
-			"`civitai app listing` resolves a listing through the app's block submission, and an offsite app has none. "+
-			"`civitai app submit` is NOT the missing step: it packages a block bundle, and an offsite app is a registered URL, "+
-			"so no submission it could create exists to be made.\n"+
-			"Its store listing is live all the same — run `civitai app view %s` to see the icon and cover it is serving right now. "+
-			"Changing that media is only possible in the App-store listing UI on civitai.com, where this app was registered; "+
-			"that surface is authoritative and the CLI has no equivalent for it",
+		"`%s` is an OFFSITE app%s, and this CLI could not reach its store listing here — "+
+			"`civitai app listing` resolves a listing through the app's block submission, which an offsite app has none of, "+
+			"and then by the slug alone; neither answered. `civitai app submit` is NOT the missing step: it packages a block "+
+			"bundle, and an offsite app is a registered URL, so no submission it could create exists to be made.\n"+
+			"The by-slug lookup reaches an offsite listing only on a Civitai carrying civitai/civitai#3989, so an older or "+
+			"self-hosted server, a listing this account does not own, or an app with no listing row at all each land here.\n"+
+			"Its store listing may be live all the same — run `civitai app view %s` to see the icon and cover it is serving. "+
+			"Changing that media always works in the App-store listing UI on civitai.com, where this app was registered; "+
+			"that surface is authoritative whatever this CLI can reach",
 		slug, offsiteRegisteredAt(d), slug)
 }
 

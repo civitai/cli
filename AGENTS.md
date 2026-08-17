@@ -241,8 +241,8 @@ different rule from item 24's predicate and filed separately for exactly that
 reason. Item 27 is blockId derivation — the one identity this CLI mints that
 can NEVER be renamed, plus the residuals the refusal knowingly ships with.
 Item 28 is what the CLI may CLAIM about a spend it cannot observe.
-Item 29 is the one place this CLI deliberately REFUSES rather than reaches — the
-offsite app, whose reachability the item's own evidence file now PARTLY RETRACTS.
+Item 29 is the offsite app: `app listing` now REACHES it by slug, `app status`
+still cannot and truthfully refuses, and the item is the split between them.
 Item 30 is the one listing change deliberately left STAGED rather than
 published, and why the command that publishes it exits NON-ZERO on a refusal the
 attach path reports as progress.
@@ -411,8 +411,8 @@ item must carry a trigger that is a routing question rather than a label
     reaching for a banned-phrase guard?**
     → evidence: claudedocs/decisions/28-no-claims-about-unobservable-spend.md
 
-29. **Reaching an offsite app's listing or submissions from the CLI, editing the
-    refusal that says you cannot, or repeating that no client path exists?**
+29. **Touching how an offsite app's listing or submissions are reached — the
+    by-slug fallback, the narrowed refusal behind it, or `app status`'s?**
     → evidence: claudedocs/decisions/29-offsite-refusal.md
 
 30. **A live-listing change may be STAGED and left unpublished, on purpose.**
