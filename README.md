@@ -319,7 +319,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message` — **`field` is always present and never `null`**) for scriptable parsing — still exits non-zero on failure. 🔴 **BREAKING:** a `[dir]` that does not exist, or is not a directory, is now a **usage error** — exit `2` with **no JSON object** on stdout, where it used to print `{"ok": false, …}` and exit `1`. See [Validate fidelity](#validate-fidelity) and [The `--json` result shape](#the---json-result-shape). |
 | `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). **A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`** — `civitai app submit --yes` is the CI form. (The refusal is reached only when there is a token to upload with: `--package-only`, and the no-token fallback that just writes the .zip, never submit and so never ask.) **It also refuses a version that is not strictly above the highest APPROVED version of that app** — approving an older (or identical) version replaces the newer live deployment — with `--allow-downgrade` as the deliberate-rollback escape hatch. **And it refuses a dirty git work tree** — the bundle is packaged from what is on disk, so approving one deploys code that exists in no commit — with `--allow-dirty` as the escape hatch; that guard degrades rather than enforcing, so a directory in no git repo (every scaffolded app starts that way) submits unchanged, and a clean tree whose `HEAD` is on no remote warns instead of refusing. All three refusals are skipped on the routes that never reach the server. |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
-| `civitai app listing status\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires. The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. **On a listing that is already LIVE, every change — including `reorder` — opens a REVISION for moderator re-review rather than editing the live listing**, and `listing status` reports that in-progress revision's media (so the `alsc_…` ids it prints are the revision's, which is what `reorder` addresses). `rm-screenshot` is the one change deliberately left **staged**: it does **not** submit the revision (curating a gallery is usually several removals), so `submit-revision` is what sends it to moderator review and makes the change public. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
+| `civitai app listing status [--json]\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires, and `listing status --json` emits the same read as one object — including **`parentId` and `shadowId`, the two listing ids a change is addressed to**, which the human output shows neither of. 🔴 **`--json` is not a pure read: on a live listing it opens the revision draft described below, so do not poll it.** The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. **On a listing that is already LIVE, every change — including `reorder` — opens a REVISION for moderator re-review rather than editing the live listing**, and `listing status` reports that in-progress revision's media (so the `alsc_…` ids it prints are the revision's, which is what `reorder` addresses). `rm-screenshot` is the one change deliberately left **staged**: it does **not** submit the revision (curating a gallery is usually several removals), so `submit-revision` is what sends it to moderator review and makes the change public. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). Run from **inside** an app checkout it also warns on **stderr** when your local `block.manifest.json` is **BEHIND** your highest approved version — advisory only, the exit code never changes. See [Submission status](#submission-status) and [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. **Also deletes a first-version app's store listing — icon, cover and every captioned screenshot**, so it asks first and needs `--yes` in a script. Idempotent for the submission only; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
@@ -817,6 +817,17 @@ Both properties hold for `civitai generate` and `civitai workflows …` too, but
 their payloads are **not** Site API REST shapes — generation has no REST route,
 so those commands pass through the raw *orchestrator* reply. Read
 [Generation `--json`](#generation---json) before scripting against them.
+
+Two `app` commands emit a shape this **CLI composes**, not a wire payload:
+`civitai app validate --json` (see
+[The `--json` result shape](#the---json-result-shape)) and
+`civitai app listing status --json`, which joins the two listing reads into one
+object naming `parentId` and `shadowId` (see
+[After you submit](#after-you-submit-review--approve--deploy)). Both keep the two
+properties above; only the *provenance* of the fields differs. 🔴 **And
+`app listing status --json` is a read with a server-side SIDE EFFECT** — on a
+live listing it opens a revision draft — so, unlike the reads above, it must not
+be polled.
 
 ### Cursor pagination loop
 
@@ -1372,6 +1383,45 @@ Details worth knowing before you start:
 - **Screenshots** are managed by id (the `alsc_…` ids `listing status` prints):
   `rm-screenshot <id>` removes one, and `reorder <id...>` takes **all** the
   current ids in the new order — a partial set is rejected.
+- **`civitai app listing status --json` is the scriptable form, and it names the
+  two listing ids the human output never shows.** A live listing has a *parent*
+  and, once a revision is open, a *shadow* — and which one a change is addressed
+  to is what decides whether the server accepts it (that gap is what
+  [#430](https://github.com/civitai/cli/issues/430) was). `--json` reports both:
+
+  ```console
+  $ civitai app listing status --slug my-app --json
+  {
+    "slug": "my-app",
+    "parentId": "apl_01KXPENN7GJV51HBG649P3Y99M",
+    "shadowId": "apl_01M064YJGDR973P73WHC1FGDP9",
+    "status": "approved",
+    "hasPendingRevision": false,
+    "assets": {
+      "icon":  { "present": true,  "imageId": 4711 },
+      "cover": { "present": false, "imageId": null },
+      "screenshots": [
+        { "id": "alsc_01M0…", "order": 0, "caption": "Grid view", "imageId": 8123 }
+      ]
+    },
+    "floor": { "met": false, "missing": ["cover"] }
+  }
+  ```
+
+  `shadowId` is **`null`** when no revision draft exists (every draft or pending
+  listing, and a live one nobody has edited), never absent — so `.shadowId`
+  answers on every listing. `status` is the **parent's** lifecycle status;
+  `hasPendingRevision` means *submitted for review*, not "a shadow exists".
+  `floor.missing` is `[]` when the floor is met. The server's own
+  **`editTargetId` is deliberately not there**: this CLI does not decode that
+  field, and printing an id it never read would be a guess — use `shadowId` when
+  it is non-null and `parentId` otherwise.
+- 🔴 **`listing status --json` is NOT a pure read, so do not poll it in a loop.**
+  On a LIVE listing the read behind it opens the revision draft (idempotently —
+  the same one each time), so a script calling it repeatedly keeps a revision
+  open on your listing. Whether that should still be classified a read is
+  [#389](https://github.com/civitai/cli/issues/389), which is open. Reading it
+  once per change is fine; a watch loop is a writer.
 - 🔴 **`reorder` addresses the same listing `status` printed, and on a live
   listing that is the *revision*, not the live one.** The server validates a
   reorder against the screenshot ids of the listing it is *addressed to*, and

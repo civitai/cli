@@ -71,6 +71,14 @@ var (
 // unambiguous about what it returns. Decoding `editTargetId` is a reasonable
 // LATER optimisation (one fewer round-trip); it is not a prerequisite for
 // anything, and it should not arrive as a side effect of some other change.
+//
+// 🔴 RE-ASKED AND RE-REFUSED BY civitai/cli#447, the `app listing status --json`
+// payload — the surface with the strongest claim on it, since the issue asked
+// for the field BY NAME. That payload emits `parentId` and `shadowId`, which
+// this CLI really reads, and says in its own doc comment and in the README that
+// `editTargetId` is absent because reporting an id the server did not hand it
+// on that call would be a guess. So the refusal now has a user-visible
+// consequence: adding the decode means adding the field there too.
 type ListingRef struct {
 	AppListingID       string `json:"appListingId"`
 	Status             string `json:"status"` // draft|pending|approved|rejected|removed
