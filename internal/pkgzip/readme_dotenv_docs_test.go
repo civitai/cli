@@ -133,8 +133,11 @@ func TestREADMEDocumentsEveryDotenvFileThePackagerKeeps(t *testing.T) {
 		t.Fatal("CONTROL failure: keptEnvFiles is empty, so this half of the ledger checks nothing")
 	}
 	for name := range keptEnvFiles {
-		if isExcludedFile(name) {
-			t.Errorf("🔴 SEAM: %s is in keptEnvFiles but isExcludedFile(%q) = true. The matcher decides what "+
+		// AT THE ROOT — the allow-list is root-scoped, so that is the position
+		// the map is a claim about. The DEPTH half is asserted separately by
+		// TestKeptEnvFilesAreRootScoped, through Build.
+		if isExcludedFile(name, true) {
+			t.Errorf("🔴 SEAM: %s is in keptEnvFiles but isExcludedFile(%q, atRoot=true) = true. The matcher decides what "+
 				"ships; the map is what the README is documented from. They must agree.", name, name)
 			continue
 		}
@@ -158,7 +161,7 @@ func TestREADMEDocumentsEveryDotenvFileThePackagerKeeps(t *testing.T) {
 		}
 		// `.env.*.local` is a glob in the human list; probe a concrete instance.
 		concrete := strings.ReplaceAll(p, "*", "development")
-		if !isExcludedFile(concrete) {
+		if !isExcludedFile(concrete, true) {
 			t.Errorf("🔴 SEAM: excludedFilePatterns lists %q but isExcludedFile(%q) = false, so the file "+
 				"the README calls excluded is actually UPLOADED. The pattern list is messaging; the matcher ships.", p, concrete)
 		}
@@ -189,10 +192,10 @@ func TestDotenvRuleIsACatchAllAndTheREADMESaysSo(t *testing.T) {
 
 	// CONTROL, both directions: isExcludedFile must be able to answer BOTH ways,
 	// or every assertion below passes on a constant.
-	if !isExcludedFile(".env") {
+	if !isExcludedFile(".env", true) {
 		t.Fatal("CONTROL failure: isExcludedFile(\".env\") = false — the matcher excludes nothing, so the checks below are vacuous")
 	}
-	if isExcludedFile(".env.example") {
+	if isExcludedFile(".env.example", true) {
 		t.Fatal("CONTROL failure: isExcludedFile(\".env.example\") = true — the matcher excludes everything, so the checks below are vacuous")
 	}
 
@@ -204,7 +207,7 @@ func TestDotenvRuleIsACatchAllAndTheREADMESaysSo(t *testing.T) {
 				"replace it with a name in neither list (and document the new kept file)", name)
 			continue
 		}
-		if !isExcludedFile(name) {
+		if !isExcludedFile(name, true) {
 			t.Errorf("🔴 %s is UPLOADED. It is on no list, so only the catch-all can have excluded it — the rule "+
 				"has become an enumeration, and every unrecognised dotenv file now ships to the platform.", name)
 		}

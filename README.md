@@ -1294,14 +1294,23 @@ sentence above, and it is **not** what the packager does. The rule is a
 enumeration the table below might otherwise read as:
 
 > **Every file whose base name starts with `.env` is excluded — except
-> `.env.example`, `.env.sample` and `.env.production`, which are always
-> included.**
+> `.env.example`, `.env.sample` and `.env.production` sitting at the project
+> root, which are included.**
+
+The **at the project root** half is load-bearing, not a detail: the allow-list
+exists for the file the server build reads (`vite build` takes env files from
+`envDir`, which defaults to the project root) and the template a human reviewer
+reads, and a copy in a subdirectory can be neither. `.env-backup/.env.production`
+and `old/.env.production` are backups, and a backup of a dotenv file is the
+shape most likely to hold a real credential — so they go to the catch-all with
+everything else.
 
 | file | in the bundle? | why |
 | --- | --- | --- |
 | `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, dotted or not: `.env.staging`, `.env-local`, and `.envrc` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template points a real `VITE_LIVE_BLOCK_TOKEN` at the git-ignored `.env.development.local`; `.envrc` is the direnv convention and routinely holds exported credentials. |
-| `.env.example`, `.env.sample` | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` carries an empty `VITE_LIVE_BLOCK_TOKEN=` line whose comment sends the real token to `.env.development.local` **because this file is uploaded**. A test pins the *scaffolded* line empty; nothing checks the copy in **your** project, so the packager will upload whatever you put there |
-| `.env.production` | **included** | the platform build runs `vite build` in production mode, which reads it |
+| `.env.example`, `.env.sample` **at the project root** | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` carries an empty `VITE_LIVE_BLOCK_TOKEN=` line whose comment sends the real token to `.env.development.local` **because this file is uploaded**. A test pins the *scaffolded* line empty; nothing checks the copy in **your** project, so the packager will upload whatever you put there |
+| `.env.production` **at the project root** | **included** | the platform build runs `vite build` in production mode, which reads it |
+| the same three names **in any subdirectory** — `app/.env.production`, `.env-backup/.env.example`, `backups/.env.sample` | **excluded** | the allow-list is scoped to the root, because both of its reasons are: `vite build` reads env files from `envDir`, which defaults to the project root, and a template a reviewer reads is the one at the root. A copy at depth is a backup, and a backup of a dotenv file is exactly the shape that carries a live credential |
 
 **Directories count too, and by a narrower rule.** A *directory* named `.env` or
 beginning with `.env.` — `.env.d/`, `.env.local/`, `.env.secrets/` — is excluded
@@ -1333,7 +1342,6 @@ never contents. Measured, these are **packaged** today:
 
 | still uploaded | why it slips through |
 | --- | --- |
-| `.env-backup/.env.production` | the three kept names are kept **by name**, wherever every directory above them is itself packaged |
 | `NODE_MODULES/`, `Dist/` | the *fixed-name* directory list is matched case-sensitively, on purpose — `Build/` and `Dist/` are plausible content directory names, and dropping one is a silent subtree loss. The two *pattern* rules (`.env…`, `*.zip`) **are** case-insensitive |
 | a secret in a name that is not dotenv-shaped at all | `secrets.json`, `credentials.yaml`, a key pasted into `src/config.ts` — the packager matches **names, never contents** |
 
@@ -1356,10 +1364,19 @@ Skipped 4 path(s): public/environment.env (*.env), .git/, dist/, node_modules/
 Read the tag: it names the rule, so it also names the fix. The line is printed on
 every path including `--package-only`, and not at all when nothing was skipped.
 
-The mirror of the `.env-backup/.env.production` row: a kept name does **not**
-rescue its directory. `.env.d/.env.production` is dropped along with `.env.d/`,
-and so is `node_modules/pkg/.env.production` — the walk skips an excluded
-directory before it ever looks at a file name, at any depth beneath it.
+A kept name does **not** rescue its directory either. `.env.d/.env.production`
+is dropped along with `.env.d/`, and so is `node_modules/pkg/.env.production` —
+the walk skips an excluded directory before it ever looks at a file name, at any
+depth beneath it. That is a second, independent reason those paths go: they
+would be dropped by the root scope even if their directory shipped.
+
+⚠️ **The root scope costs something too.** If your `vite.config` sets `root:` or
+`envDir:` to a subdirectory, the `.env.production` your build actually reads
+lives there — and this rule drops it. Neither scaffolded template sets either
+key, so the default (the project root) applies to anything `civitai app create`
+produced. If yours is different you will see it on the `Skipped` line of the
+very next `submit` or `--package-only` run, tagged `(.env*)`; move the file to
+the project root, or point `envDir` at the root, and it travels again.
 
 Keep secrets in a `.env`-dotted name — `.env.local`, `.env.d/` — and both rules
 drop them. Anything else is on you to check before you submit; `--package-only`

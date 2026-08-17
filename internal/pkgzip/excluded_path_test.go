@@ -67,17 +67,25 @@ func TestIsExcludedPathFileNames(t *testing.T) {
 		".env.development",
 		".envrc",
 		"nested/.env.production.local",
+		// 🔴 The allow-list is scoped to the PROJECT ROOT, so the same three
+		// names at depth are dropped like any other dotenv file. A guard that
+		// still treated them as bundle content would refuse a submit over an
+		// uncommitted file that is in no zip — the #411 failure mode, and the
+		// reason this side has to move with Build.
+		"src/.env.example",
+		".env-backup/.env.production",
+		"a/b/c/.env.sample",
 	}
 	for _, p := range excluded {
 		if !IsExcludedPath(p) {
 			t.Errorf("IsExcludedPath(%q) = false, want true", p)
 		}
 	}
-	// The allow-listed dotenv templates are BUNDLE CONTENT, so an uncommitted
-	// one is a real difference between the bundle and HEAD.
-	for _, p := range []string{".env.example", ".env.sample", ".env.production", "src/.env.example"} {
+	// The allow-listed dotenv templates are BUNDLE CONTENT AT THE ROOT, so an
+	// uncommitted one is a real difference between the bundle and HEAD.
+	for _, p := range []string{".env.example", ".env.sample", ".env.production", "./.env.production"} {
 		if IsExcludedPath(p) {
-			t.Errorf("IsExcludedPath(%q) = true, but the packager KEEPS it, so the guard must see it", p)
+			t.Errorf("IsExcludedPath(%q) = true, but the packager KEEPS it at the root, so the guard must see it", p)
 		}
 	}
 }
@@ -192,6 +200,15 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 		".env.d/.env.production",
 		"node_modules/.env.example",
 		"artifact.zip/payload.bin",
+		// 🔴 A KEPT dotenv name at DEPTH under an ORDINARY directory. The rows
+		// above are dropped by their directory; these are dropped by the root
+		// scope of the allow-list and by nothing else — `.env-backup/` and `src/`
+		// both ship. Build reads the depth off its `rel`, IsExcludedPath counts
+		// the components it walked past, and this row is where those two
+		// derivations of one fact are compared. The root copies of the same two
+		// names are already in this fixture, so the tree covers both answers.
+		".env-backup/.env.production",
+		"src/.env.example",
 	}
 	// Near-miss DIRECTORY names that must keep shipping — here for the same
 	// reason `.gitignore` is, and with the same limitation, stated honestly:

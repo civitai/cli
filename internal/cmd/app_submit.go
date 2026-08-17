@@ -173,12 +173,12 @@ Excluded DIRECTORIES, by name, at any depth:
 
 Excluded FILES, by base name:
   ` + wrapCommaList(pkgzip.ExcludedFilePatterns(), 6) + `
-...but these three are KEPT and uploaded, anywhere every directory above them
-is itself packaged:
+...but these three are KEPT and uploaded, AT THE PROJECT ROOT ONLY:
   ` + strings.Join(pkgzip.KeptEnvFileNames(), ", ") + `
-Nothing reads their contents, so put no token in any of them. A kept name does
-NOT rescue its directory: .env.d/.env.production and
-node_modules/pkg/.env.production are both dropped.
+Nothing reads their contents, so put no token in any of them. The allow-list
+does not travel: app/.env.production, .env-backup/.env.production and
+node_modules/pkg/.env.production are all dropped, and the Skipped line names
+each one with the rule that matched.
 
 The two lists are separate rules, so the shape matters: a regular file named
 build or dist IS packaged, and .git / .hg / .svn go either way (in a linked
