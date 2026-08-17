@@ -169,6 +169,10 @@ func renderCredentialWarning(w io.Writer, findings []credscan.Finding) string {
 		locs = append(locs, loc)
 	}
 
+	// The column pad is `%-*s`, i.e. BYTES rather than display cells — a path
+	// with non-ASCII in it aligns badly. That is the repo-wide rune-vs-cell
+	// residual tracked in #397, it is cosmetic here (the `path:line` text is
+	// still exact), and it is written down rather than left to be rediscovered.
 	var b strings.Builder
 	b.WriteString(ui.For(w).Warn(fmt.Sprintf("%d packaged file(s) look like they hold credentials:", len(files))))
 	for i, f := range shown {
