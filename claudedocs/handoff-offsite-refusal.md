@@ -1,4 +1,4 @@
-# Handoff: offsite-refusal — 2026-08-16
+# Handoff: offsite-refusal → submit provenance — 2026-08-17
 
 ## Run this first — the index, one read-only command
 ```bash
@@ -12,17 +12,25 @@ Non-blocking: if it exits non-zero, print the stderr line and carry on.
 
 ## Goal
 
+The offsite thread's original goal is **met and closed** (kept below for provenance):
 `civitai app listing` / `app status <slug>` were unreachable for **offsite** apps and told
 their owners to run `civitai app submit` — a command that cannot succeed for an app that is
 a registered URL rather than a block bundle (#422). Ship the honest refusal, and establish
 whether reaching those apps is possible at all.
 
+**The live goal is now `cli#411` — submit provenance.** `civitai app submit` records nothing
+about where a bundle came from, so deploy-vs-source drift can be observed but never diagnosed
+(five first-party apps were found behind their live version). The server half is in review;
+the CLI half is deliberately blocked on it.
+
 ## State now
 
-- **`civitai/cli` `origin/main` @ `de482c95`.** The base clone `/home/zach/workspace/civit/cli` sits
-  **3 commits behind** and is **deliberately not fast-forwarded** — other sessions are live in that
-  shared checkout (HEAD moved under two agents mid-run). `git -C … merge --ff-only origin/main`
-  when you own it.
+- **`civitai/cli` `origin/main` @ `075bf06`.** The base clone `/home/zach/workspace/civit/cli`
+  is **shared and moves under you** — it went 1 behind mid-session twice today.
+  `git -C … fetch && … merge --ff-only origin/main` when you own it; branch from
+  `origin/main`, never from local `main`.
+- **`civitai/civitai` local `main` carries an unpushed commit that is not yours** (`5.1.17`,
+  a release bump by another session). Same rule: branch from `origin/main`.
 - **The offsite thread is CLOSED end to end.** Selector merged + deployed upstream, CLI half
   shipped, both #422 outcomes delivered, and every claim it produced that did not survive has been
   publicly retracted.
@@ -32,13 +40,55 @@ whether reaching those apps is possible at all.
   | four residuals: `assertListingTarget` ledger, README write-warning pin, exit-code rows, #427's false clause | cli#459 | `1695e1f` |
   | #389's measurement recorded; every "is open" surface updated | cli#462 | `de482c95` |
   | `getMyListingForApp` rate-limited 60/60 with an enforcement test | civitai#4050 | `3ff050f2` |
+- **IN REVIEW — `civitai/civitai#4061`**, the server half of `#4059`. See its own section below.
 - **Issues closed:** `cli#422` (both outcomes), `cli#389` (outcome A, measured), `civitai#3984`,
   `civitai#4003` (by #4050), `civitai#4008` (by infra, not code).
 - **Issues corrected rather than closed:** `civitai#3893` — premise falsified by #3989, body carries a
   banner and the original is preserved; `cli#424` and `cli#427` — both narrowed, both still open.
 - **Filed:** `civitai#4059` (the provenance field `cli#411` is blocked on) and `civitai#4057`
   (a real component-test regression on `main`, see below).
-- **Nothing of mine is in flight.** Open PRs `#461` and `#450` belong to other sessions.
+- **In flight:** `civitai#4061` (mine, green, unmerged). Open cli PRs `#450` belongs to another
+  session.
+
+## `civitai/civitai#4061` — the server half of the provenance field (IN REVIEW, not merged)
+
+Two nullable columns on `app_block_publish_requests`, accepted at submit and returned on read:
+`source_commit` (40-hex, lowercase) and `source_dirty` (boolean). 15 files, +795.
+
+- **🔴 THE MIGRATION IS AUTHORED BUT HAS NEVER BEEN APPLIED TO ANY DATABASE.** No
+  `db:migrate`/`db:deploy`/`db:push`/`db:applied` was run. It must be applied **before** the app
+  that writes these columns deploys. Nobody has confirmed the SQL applies cleanly against a real
+  table — that is the single largest unverified thing in this PR.
+- **🔴 THE SCOPING BRIEF NAMED THE WRONG ROUTE, AND THAT NEARLY SHIPPED AN INERT FEATURE.** There
+  are TWO submit front doors: `src/pages/api/blocks/submit-version.ts` (cookie / mod browser) and
+  `src/pages/api/v1/blocks/submit-version.ts` (bearer token). **The CLI posts to the v1 one** —
+  `internal/appapi/appblocks.go:281`, `DefaultSubmitPath = "/api/v1/blocks/submit-version"`. Wiring
+  only the first would have left the actual client's provenance silently stripped: the exact
+  inert-feature failure #4059 exists to close, reproduced by the fix for it. **Both are wired and
+  both are pinned.** Generalise: *when a feature is "the server accepting a field", enumerate every
+  front door that parses that schema before writing a line.*
+- **Design decisions, all stated in the source:** client-claimed and never server-verified; NOT
+  `forgejo_commit_sha` (a server-side sha in the platform's own repo, written on approve — never
+  aliased or fallen back between); both fields optional so this is never a submit gate; a malformed
+  `sourceCommit` **400s rather than being dropped**; and `NULL != false` — `source_dirty` is
+  tri-state (null = unknown, false = client asserted clean, true = client asserted dirty), with no
+  backfill and no DEFAULT, because either would turn "nobody looked" into "someone looked and it
+  was clean". `recordPendingFromPush` deliberately leaves both NULL.
+- **Verified independently of the implementing agent** (all re-run by hand, not taken on its word):
+  `pnpm typecheck` → 0 errors · 6 test files → **255 passed** · the **anti-strip mutant** (delete
+  `sourceCommit` from the schema) → **killed by 14 tests across 3 files**, which is what proves the
+  feature is not inert · the worktree restored byte-identical from a `cp -a` copy afterwards.
+- **CI: every test gate SUCCESS** (Unit / Package unit / App unit / tekton typecheck / ESLint +
+  Prettier / Schema drift / event-engine-common pin; one SKIPPED). `preview / deploy` stayed
+  PENDING; `mergeStateStatus: UNSTABLE` is that alone.
+- **Residual:** mutant (f) — dropping `sourceCommit` from the read `SELECT` — has only a structural
+  kill. The read suite mocks `findMany`, so no behavioural instrument exists at that layer. Stated
+  in the PR body rather than counted as coverage. 7 of 40 new assertions are **invariant guards**
+  (green at base by construction), listed as such; 33 were red at base.
+- **`preview / component-tests` never appeared in the rollup** — it presumably runs after
+  `preview / deploy`. So this PR neither clears nor contradicts `civitai#4057`.
+
+**Next:** merge #4061 → apply the migration → *then* build `cli#411`'s stamping half.
 
 ## Open investigations — live diagnosis state
 
@@ -204,23 +254,80 @@ whether reaching those apps is possible at all.
 
 ## Next steps (ranked)
 
-1. **`civitai#4059`** — the two-column provenance ask. `cli#411`'s remaining half is blocked on it
-   and on nothing else. 🔴 Do NOT ship the CLI half first: `submitVersionSchema` is a plain
-   `z.object`, so extra keys are **silently stripped** — a stamping client would look like it worked
-   and store nothing.
-2. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
+1. **Merge `civitai#4061`, then APPLY THE MIGRATION.** Green and mergeable; needs a human eye on the
+   migration ordering specifically. 🔴 The two are one step, not two: deploying the app that writes
+   these columns against a table without them fails the INSERT.
+2. **`cli#411`'s stamping half — BLOCKED on step 1, both halves of it.** 🔴 Do NOT ship it before the
+   column exists in the database. `submitVersionSchema` was a plain `z.object` (extra keys silently
+   stripped) and after #4061 the *schema* accepts the field, so the failure mode moves rather than
+   disappearing: with the code merged but the migration unapplied, the write fails instead of
+   silently no-oping. Verify the column exists before writing the client.
+   The CLI already computes both facts (the dirty-tree refusal shipped as `cli#415`), and posts to
+   `/api/v1/blocks/submit-version` — check that route, not the mod one.
+3. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
    `appBlockId` in exactly 4 places, all query-key/invalidation; the slug is already in hand at the
    page. The real blocker is `editorTabsFor`'s `appBlockId != null`, not the resolver.
-3. **`civitai#4057`** — the ImageCard tolerance. Live diagnosis below; the bisect window is the work.
-4. **`AGENTS.md` item 29's trigger** still describes a blanket refusal; #453 narrowed it to
+4. **`civitai#4057`** — the ImageCard tolerance. Live diagnosis below; the bisect window is the work.
+   Untouched this session and **not** cleared by #4061 (see that section).
+5. **`AGENTS.md` item 29's trigger** still describes a blanket refusal; #453 narrowed it to
    "both lookups missed". Small, and the same drift class this thread kept closing.
-5. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
+6. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
    under full-suite load (`expected an unreachable-local-dev log line naming the host, got ""`),
    8 clean reruns. Remove the timing dependency; do not re-run it away.
-6. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path. Web UI, or a
+7. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path. Web UI, or a
    deliberate decision to leave them.
 
 ## Gotchas / decisions / dead-ends
+
+### Working in `civitai/civitai` from this harness (new — 2026-08-17)
+
+- 🔴 **`cd` is BLOCKED by this harness, and the monorepo's toolchain is direnv-only.** `pnpm`,
+  `node` and `npx` are NOT on PATH; they come from the flake. Every command must be wrapped:
+  `direnv exec /path/to/worktree <cmd>`. A bare `pnpm --version` returns *"command not found"*,
+  which reads like a broken worktree and is not.
+- **Worktree setup recipe that worked, in full** (the repo's own `wt` subcommand has only
+  `stale` and `rm` — there is **no `wt add`**):
+  ```bash
+  git -C /home/zach/workspace/civit/civitai worktree add <wt> -b <branch> origin/main
+  git -C <wt> submodule update --init event-engine-common
+  printf 'use flake\n' > <wt>/.envrc && direnv allow <wt>
+  direnv exec <wt> pnpm install --prefer-offline      # 13s warm
+  ```
+  🔴 **Do NOT copy the base clone's `.envrc` verbatim** — it carries live S3 credentials and a
+  `DATABASE_URL` the task does not need. `use flake` alone is enough for typecheck/test.
+  Node is v22 against `engines: >=24`; it warns and works.
+- **`civitai/civitai` `main` has NO required status checks.** Measured, not assumed:
+  `repos/civitai/civitai/branches/main/protection` → `contexts: null, checks: []`, and the only
+  ruleset on `main` is `deletion`. **Green CI there is advisory** — local verification is the
+  load-bearing evidence, and the AGENTS.md instruction to re-measure before calling any job a gate
+  applies to this repo too.
+
+### Instrument traps hit again this session
+
+- 🔴 **A vitest run whose path filter matches nothing EXITS 0 AND IS OMITTED SILENTLY.** I passed
+  6 test paths and got `Test Files 6 passed`… no: `5 passed (5)`, because one path guessed a
+  `__tests__/` directory that did not exist. **Nothing named the missing file.** Caught only by
+  comparing the file COUNT to the number of paths passed. Always assert the count equals what you
+  asked for — `Tests N passed` alone cannot see an absent file.
+- 🔴 **The empty-conclusion CI trap fired exactly as documented, again.** `Unit tests` sat with a
+  **blank** conclusion (not `PENDING`) for ~14 minutes before resolving SUCCESS. A `PENDING`-only
+  poll declares ALL SETTLED against it. The check count also GREW mid-poll (8 → 9, `tekton /
+  typecheck` appeared late), so a minimum-count assertion made at t=0 is itself a moving target —
+  require a terminal conclusion on **every** row and re-read the row set each poll.
+- 🔴 **A subagent's self-reported gate results were accurate here — and re-running them still paid
+  for itself.** The re-run is what surfaced the 5-of-6 filter miss (mine, not the agent's) and
+  independently confirmed the anti-strip mutant. Mid-run IDE diagnostics showed a dozen type errors
+  and a stray `mutate-4059.py`; both were **mutation-battery artifacts**, and `git status` on the
+  committed worktree was clean. **Check the tree state before believing a diagnostic snapshot taken
+  during a mutation run.**
+
+### Scoping
+
+- 🔴 **"The server accepts a new field" is a question about EVERY front door that parses the
+  schema, not about the schema.** Two routes parse `submitVersionSchema`; the CLI uses the one the
+  brief did not name. Enumerate the parse sites (`git grep <schemaName>`) before writing a line —
+  the failure mode of missing one is a feature that is inert on exactly the path that matters,
+  with a full green suite.
 
 - 🔴 **A probe that fires identically on its own positive control attributes nothing.**
   This bit three separate attempts on the same question — #422's author, and my first two
@@ -404,6 +511,39 @@ git -C /home/zach/workspace/civit/cli show origin/main:claudedocs/decisions/29-o
   | awk '/^29\. \*\*/{f=1} f' | grep -v '^[[:space:]]*$' | sha256sum
 #   must equal df86c7a851e2397db48eebd2f4b9d17e91565128ec4550510a62b785f552828d
 ```
+All four re-measured 2026-08-17 and still holding: `1`, `0`, `1`, sha matches.
+
+### `civitai#4061` (the provenance server half) — worktree at `civitai-4059-provenance`
+
+```bash
+WT=/home/zach/workspace/civit/civitai-4059-provenance
+
+# 🔴 EVERY command needs the direnv wrapper — pnpm/node are not on PATH otherwise.
+direnv exec $WT pnpm typecheck                       # OK — 0 type errors
+
+# Count the FILES, not just the tests: a path that matches nothing exits 0 and is
+# omitted in silence. Six paths in, "Test Files 6 passed (6)" out, or you have a typo.
+direnv exec $WT npx vitest run --project 'unit*' \
+  src/tests/api/blocks/submit-version.test.ts \
+  src/tests/api/v1/blocks/submit-version.test.ts \
+  src/tests/api/v1/blocks/submissions.test.ts \
+  src/server/services/blocks/__tests__/publish-request.service.test.ts \
+  src/server/services/blocks/__tests__/publish-request.orchestration.test.ts \
+  src/server/schema/blocks/submit-version-provenance.schema.test.ts
+#   Test Files 6 passed (6) · Tests 255 passed (255)
+
+# BOTH front doors must pass provenance through — the CLI uses the v1 one.
+grep -c sourceCommit $WT/src/pages/api/blocks/submit-version.ts      # >=1
+grep -c sourceCommit $WT/src/pages/api/v1/blocks/submit-version.ts   # >=1
+grep -n DefaultSubmitPath /home/zach/workspace/civit/cli/internal/appapi/appblocks.go
+#   -> "/api/v1/blocks/submit-version"
+
+# The anti-strip control. Delete the sourceCommit field from submitVersionSchema and
+# re-run the six files: 14 tests across 3 files MUST go red. Restore from a `cp -a`
+# copy, NEVER `git checkout --`. If it stays green, the feature is inert.
+```
+🔴 **The migration is authored and UNAPPLIED.** Nothing above touches a database, and no
+command here can tell you whether the SQL applies cleanly — that check does not exist yet.
 
 🔴 **Do not use the `civitai` on `PATH`** — stale build.
 🔴 **An earlier version of this section recommended `app listing status --slug radio` as the
