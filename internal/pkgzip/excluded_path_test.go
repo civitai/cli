@@ -164,7 +164,40 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 		// observable through the seam rather than only through Build.
 		".git",
 		"sub/.git",
+		// 🔴 #420: the mirror of the line above, with the shapes swapped —
+		// `.env.local` and `*.zip` were excluded as FILES only, so the same
+		// names as DIRECTORIES shipped their contents. These are here for the
+		// same reason `.git` is: a fix applied to Build's walk alone, instead of
+		// to the shared isExcludedDir, makes this test red.
+		//
+		// Note the base names inside: `db.env` does NOT start with ".env", so
+		// isExcludedFile keeps it. The directory rule is the only thing that
+		// drops it, which is why a seam row for it is worth having.
+		// (`.env.local` cannot appear here as a directory — this fixture already
+		// plants it as a FILE above, and one tree cannot hold both shapes of one
+		// name. TestBuildExcludesDotenvShapedDirectories owns that shape, in its
+		// own tree. `.env.d` is the same rule with no such collision.)
+		".env.d/db.env",
+		"src/.env.d/api.env",
+		// 🔴 A KEPT dotenv name inside an EXCLUDED directory. Without this row
+		// the seam has no coverage of the interaction at all, and a Build-only
+		// change that rescues keptEnvFiles names out of an excluded directory
+		// passes the whole suite while the zip carries them (measured).
+		// isExcludedFile would keep these three names on their own; only the
+		// directory drops them, so the two sides must agree about that.
+		".env.d/.env.production",
+		"node_modules/.env.example",
+		"artifact.zip/payload.bin",
 	}
+	// Near-miss DIRECTORY names that must keep shipping — here for the same
+	// reason `.gitignore` is, and with the same limitation, stated honestly:
+	// this is an AGREEMENT oracle, so it catches an ASYMMETRIC change only. A
+	// directory rule widened to the bare ".env" prefix deletes both subtrees
+	// from every submission silently, and both sides would agree about it, so
+	// these rows stay GREEN through exactly that mistake. The guards that catch
+	// it are the near-miss rows in TestIsExcludedPathDotenvShapedDirectories and
+	// the `kept` half of TestDirectoryRuleIsDocumentedForAuthors.
+	files = append(files, ".environment/config.yaml", ".envoy/bootstrap.yaml")
 	// The names that merely START with ".git" stay in the fixture as content:
 	// both sides must keep shipping them, and a prefix match would make Build
 	// and the predicate agree on a WRONG answer, which only the exact-name

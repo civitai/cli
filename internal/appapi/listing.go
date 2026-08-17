@@ -59,6 +59,18 @@ var (
 
 // ListingRef is the result of getMyListingForApp — the entry read that resolves
 // an app's backing AppListing + its lifecycle status.
+//
+// 🔴 IT DELIBERATELY DOES NOT DECODE `editTargetId`, and civitai/cli#430's own
+// suggested fix was to add it — so this is the field a reader arrives here
+// intending to write. The server does send it on an approved listing, naming the
+// shadow that edits must target, but it has been OBSERVED EXACTLY ONCE (in that
+// issue's manual tRPC read) and adding it would give this CLI a FOURTH way to
+// name an edit target beside `AppListingID`, `ListingEditView.ShadowID` and
+// `BeginListingRevision`'s return. The commands that need the shadow call
+// `BeginListingRevision` — idempotent, already the attach path's mechanism, and
+// unambiguous about what it returns. Decoding `editTargetId` is a reasonable
+// LATER optimisation (one fewer round-trip); it is not a prerequisite for
+// anything, and it should not arrive as a side effect of some other change.
 type ListingRef struct {
 	AppListingID       string `json:"appListingId"`
 	Status             string `json:"status"` // draft|pending|approved|rejected|removed
