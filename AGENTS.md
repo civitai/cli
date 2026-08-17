@@ -141,6 +141,9 @@ These go beyond the global defaults because this repo's release pipeline
   `devtunnel/embedcheck.go` is item 10.
 - `internal/blockproto` — the vendored block→host ready-ack (item 11) plus the
   entry-graph resolver it and `internal/validate` share (item 20).
+- `internal/credscan` — the packaged-credential WARNING (#464): scans exactly
+  what `pkgzip` shipped, prints `path:line` and never the value. Read its doc
+  comment before making it exclude, gate or refuse anything.
 - `internal/antipattern` — the scaffold-currency denylist: fails a template
   shipping code against a dead platform endpoint or message (item 18).
 - `internal/genapi` — the orchestrator **generation** client behind

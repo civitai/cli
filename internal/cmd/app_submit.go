@@ -13,6 +13,7 @@ import (
 	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/auth"
 	"github.com/civitai/cli/internal/config"
+	"github.com/civitai/cli/internal/credscan"
 	"github.com/civitai/cli/internal/manifest"
 	"github.com/civitai/cli/internal/pkgzip"
 	"github.com/civitai/cli/internal/ui"
@@ -121,6 +122,65 @@ func renderSkippedLine(skips []pkgzip.Skip) string {
 		line += fmt.Sprintf(" … and %d more", rest)
 	}
 	return line
+}
+
+// credWarnListCap is how many credential-looking lines the warning names before
+// it truncates. Deliberately generous for the same reason skippedListCap is: on
+// a real project the measured count is 0 (243 of 244 corpus projects) or 2, so
+// this is a pathological-input guard and not the normal path.
+const credWarnListCap = 12
+
+// renderCredentialWarning renders credscan findings as the warning printed under
+// `Packaged …`, or "" when nothing looked like a credential.
+//
+// 🔴 THIS IS THE ONE PLACE THE FINDINGS ARE RENDERED, AND IT IS NEVER HANDED A
+// VALUE TO PRINT. credscan.Finding has no field carrying the matched text (see
+// its doc comment), so the leak this warning exists to prevent cannot be
+// committed here by a careless format string. What is printed is `path:line`
+// plus the KEY name or the format name — enough to locate, nothing to leak,
+// because this output lands in CI logs and terminal scrollback.
+//
+// 🔴 THE HEADING COUNTS FILES, THE LIST COUNTS LINES. They are different numbers
+// (one file can contribute several lines), and the wording says which is which
+// so a truncated list can never make the count read as wrong.
+//
+// It warns and returns; nothing here may drop a file or change an exit code.
+// See internal/credscan's package comment for why that asymmetry is the design.
+func renderCredentialWarning(w io.Writer, findings []credscan.Finding) string {
+	if len(findings) == 0 {
+		return ""
+	}
+	files := map[string]bool{}
+	for _, f := range findings {
+		files[f.Path] = true
+	}
+
+	shown := findings
+	if len(shown) > credWarnListCap {
+		shown = shown[:credWarnListCap]
+	}
+	locs := make([]string, 0, len(shown))
+	width := 0
+	for _, f := range shown {
+		loc := fmt.Sprintf("%s:%d", f.Path, f.Line)
+		if len(loc) > width {
+			width = len(loc)
+		}
+		locs = append(locs, loc)
+	}
+
+	var b strings.Builder
+	b.WriteString(ui.For(w).Warn(fmt.Sprintf("%d packaged file(s) look like they hold credentials:", len(files))))
+	for i, f := range shown {
+		fmt.Fprintf(&b, "\n    %-*s  %s", width, locs[i], f.Label)
+	}
+	if rest := len(findings) - len(shown); rest > 0 {
+		fmt.Fprintf(&b, "\n    … and %d more line(s)", rest)
+	}
+	b.WriteString("\n  These are uploaded to the platform and read by a reviewer, and cannot be" +
+		"\n  recalled. Move them out of the project directory, or confirm they hold" +
+		"\n  placeholders. The matched values are not printed here on purpose.")
+	return b.String()
 }
 
 // wrapCommaList renders names as a comma-separated list broken every perLine
@@ -404,6 +464,23 @@ Defaults to the current directory.`,
 			// deployed app. Empty prints nothing — see renderSkippedLine.
 			if line := renderSkippedLine(pkg.Skipped); line != "" {
 				fmt.Fprintln(out, line)
+			}
+			// 🔴 WHAT DID SHIP AND PROBABLY SHOULD NOT HAVE (#464) — the opposite
+			// residual to the line above, and invisible to it: nothing was
+			// skipped, so #435's drop-messaging is silent in exactly the
+			// credential case. Scoped to pkg.Files, so it can never name a file
+			// the packager dropped, and printed on every path including
+			// --package-only, because --package-only is how an author inspects a
+			// bundle before it goes anywhere.
+			//
+			// 🔴 IT WARNS AND DOES NOTHING ELSE. No drop, no refusal, no exit-code
+			// change: a false positive that removed app source would cost far more
+			// than this line is worth, and `--yes`/CI paths must not begin failing.
+			// The detector's measured false-positive rate is 1 project in 244; its
+			// TRUE-positive rate is unmeasured and unmeasurable from that corpus,
+			// which holds no real credential. See internal/credscan.
+			if warn := renderCredentialWarning(out, credscan.Scan(dir, pkg.Files)); warn != "" {
+				fmt.Fprintln(out, warn)
 			}
 
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
