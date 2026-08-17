@@ -302,13 +302,63 @@ func isDotenvSuffixed(name string) bool {
 // into the file rule wholesale would drop an extensionless `build` SCRIPT. Each
 // rule is decided per name, in the direction its failure mode points.
 func isExcludedDir(name string) bool {
+	_, skip := excludeDirReason(name)
+	return skip
+}
+
+// Rule tags name the PATTERN that dropped a path, for the `Skipped …` line
+// `app submit` prints (#435). They are the author-facing half of drop-messaging:
+// the tag is what says "rename it and it travels" rather than "this file is
+// gone for a reason you must go read the source to learn".
+//
+// 🔴 A FIXED NAME GETS NO TAG, ON PURPOSE. `node_modules/`, `dist/`, `.git/` are
+// self-explanatory and `app submit --help` already prints excludedDirs verbatim,
+// so a tag there is noise on the line an author reads every submit. Only a
+// PATTERN rule — where the author cannot tell from the name alone which rule
+// reached it — carries one. RuleNonRegular is the exception that proves the
+// shape: a symlink's name says nothing about why it was dropped either.
+const (
+	// RuleArchive is isArchiveArtifact's tag. One constant for both file and
+	// directory because they are one predicate (see isArchiveArtifact).
+	RuleArchive = "*.zip"
+	// RuleDotenvPrefix is isExcludedFile's ".env"-prefix catch-all.
+	RuleDotenvPrefix = ".env*"
+	// RuleDotenvSuffix is isDotenvSuffixed, the #435 rule that costs a
+	// Babylon.js `public/environment.env` its place in the bundle.
+	RuleDotenvSuffix = "*.env"
+	// RuleDotenvDir is isDotenvShaped — DIRECTORIES only, and deliberately
+	// spelled out rather than reusing RuleDotenvPrefix: the directory rule
+	// requires the dot, so `.envrc/` and `.env-backup/` are NOT dropped and a
+	// `.env*` tag here would assert a rule that does not exist.
+	RuleDotenvDir = ".env or .env.*"
+	// RuleNonRegular is the walk's `!d.Type().IsRegular()` drop — symlinks,
+	// sockets, fifos, devices. Not "symlink": the rule is wider than that, and
+	// IsExcludedEntry's own doc records what naming only the common case cost.
+	RuleNonRegular = "not a regular file"
+)
+
+// excludeDirReason is isExcludedDir with the matching rule kept, for #435's
+// drop-messaging.
+//
+// 🔴 IT IS THE ONE COPY OF THE DIRECTORY RULE — isExcludedDir is a wrapper over
+// it, not a sibling of it. A second copy of the matching ORDER alongside the
+// original is exactly the drift that produced #409 and #420 (one shape of a name
+// fixed, the other left behind), so the reason-returning form is the
+// implementation and the bool is derived from it.
+//
+// An empty tag with true means "excluded, by a fixed name" — see the rule-tag
+// block above for why those are deliberately untagged.
+func excludeDirReason(name string) (string, bool) {
 	if _, skip := excludedDirs[name]; skip {
-		return true
+		return "", true
 	}
 	if isDotenvShaped(name) {
-		return true
+		return RuleDotenvDir, true
 	}
-	return isArchiveArtifact(name)
+	if isArchiveArtifact(name) {
+		return RuleArchive, true
+	}
+	return "", false
 }
 
 // excludedFilePatterns is the human-readable list of file-level exclusions, for
@@ -405,17 +455,31 @@ var keptEnvFiles = map[string]struct{}{
 // contents, so "kept" is a statement about WHERE the file goes, never a claim
 // that it holds no secret — see the 🔴 note on keptEnvFiles.
 func isExcludedFile(name string) bool {
+	_, skip := excludeFileReason(name)
+	return skip
+}
+
+// excludeFileReason is isExcludedFile with the matching rule kept, for #435's
+// drop-messaging. Same relationship as excludeDirReason to isExcludedDir: this
+// is THE copy of the file rule and its ORDER, and the bool predicate is a
+// wrapper over it. Read isExcludedFile's doc comment for the rules themselves —
+// it is not repeated here, because two accounts of one order is the drift #409
+// and #420 are made of.
+//
+// An empty tag with true means "excluded, by a fixed name" (vcsMetadataNames);
+// see the rule-tag const block for why those carry no tag.
+func excludeFileReason(name string) (string, bool) {
 	// VCS metadata that is a regular FILE, not a directory: a linked worktree's
 	// or a submodule's `.git` (issue #409). Matched on the EXACT name, so
 	// `.gitignore` / `.gitattributes` / `.gitmodules` still ship.
 	if _, vcs := vcsMetadataNames[name]; vcs {
-		return true
+		return "", true
 	}
 	// Build artifacts. Same predicate the directory rule uses (isExcludedDir),
 	// so the two shapes of one name cannot drift apart again — that drift is
 	// #409 and #420.
 	if isArchiveArtifact(name) {
-		return true
+		return RuleArchive, true
 	}
 	// Dotenv handling. Two rules, one allow-list:
 	//
@@ -432,18 +496,75 @@ func isExcludedFile(name string) bool {
 	// file rather than an uploaded one. None of the three kept names ends in
 	// ".env", so the suffix rule cannot reach them either.
 	if _, keep := keptEnvFiles[name]; keep {
-		return false
+		return "", false
 	}
 	if strings.HasPrefix(strings.ToLower(name), ".env") {
-		return true
+		return RuleDotenvPrefix, true
 	}
-	return isDotenvSuffixed(name)
+	if isDotenvSuffixed(name) {
+		return RuleDotenvSuffix, true
+	}
+	return "", false
+}
+
+// Skip is ONE SKIP DECISION POINT in Build's walk — not one dropped file.
+//
+// 🔴 THE DISTINCTION IS THE WHOLE DESIGN (#435). When Build meets an excluded
+// DIRECTORY it returns filepath.SkipDir, so the walk never descends and the
+// number of files under it is never learned. A Skip for `node_modules/` is
+// therefore honest about what happened (the walk stopped here) and says nothing
+// about how many files that cost — because nothing measured it. Reporting a
+// per-file count would mean walking a subtree the packager exists to avoid.
+type Skip struct {
+	// Path is project-relative with forward slashes, and carries NO trailing
+	// slash — Dir is the machine-readable answer and the trailing "/" is a
+	// rendering decision, kept out of the data so a consumer comparing paths
+	// does not have to strip it.
+	Path string
+	// Dir reports whether the skipped entry was a directory, i.e. whether this
+	// one decision truncated a whole subtree.
+	Dir bool
+	// Rule is the PATTERN that matched, e.g. "*.env" — empty when the entry was
+	// dropped by a fixed name (excludedDirs / vcsMetadataNames). See the rule-tag
+	// const block for why a fixed name is deliberately untagged.
+	Rule string
 }
 
 // Result describes a produced package.
 type Result struct {
 	Files []string // archive-relative paths included, sorted
+	// Skipped is every decision point at which Build left something out, in
+	// render order: TAGGED entries first, then untagged, each group sorted by
+	// path (see sortSkips). Nil when nothing was skipped.
+	//
+	// 🔴 IT IS DATA, NOT A MESSAGE. The rendering — the cap, the "…and K more",
+	// the trailing slash — lives in exactly one place, the caller in
+	// `internal/cmd` (renderSkippedLine). pkgzip does not know how wide a
+	// terminal is and must not grow a second opinion about it.
+	Skipped []Skip
 	Bytes
+}
+
+// sortSkips puts the render order in ONE place: entries carrying a rule tag
+// first, then the rest, each group sorted by path.
+//
+// TAGGED FIRST because the tag is the actionable half. `node_modules/` needs no
+// explanation; `public/environment.env (*.env)` is the line that tells a
+// Babylon.js author their environment texture was dropped by a dotenv rule and
+// that renaming it recovers the file. Burying that under four fixed names an
+// author already expects is how the message gets skimmed.
+//
+// Sorted WITHIN each group because determinism is the point of a line tests can
+// pin: filepath.WalkDir is lexical today, but that is its behaviour, not its
+// contract, and the tagged/untagged split reorders it anyway.
+func sortSkips(skips []Skip) {
+	sort.SliceStable(skips, func(i, j int) bool {
+		ti, tj := skips[i].Rule != "", skips[j].Rule != ""
+		if ti != tj {
+			return ti
+		}
+		return skips[i].Path < skips[j].Path
+	})
 }
 
 // Bytes carries the produced archive bytes and decompressed total.
@@ -470,34 +591,43 @@ func Build(dir string) (*Result, error) {
 		rel string
 	}
 	var entries []entry
+	// Every decision point at which this walk leaves something out (#435). The
+	// caller prints it, so a drop stops being invisible until runtime.
+	var skipped []Skip
 
 	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		// Normalize to forward slashes for the archive (and for Skip.Path).
+		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
 			if p == dir {
 				return nil
 			}
-			if isExcludedDir(d.Name()) {
+			if rule, skip := excludeDirReason(d.Name()); skip {
+				// ONE entry for the whole subtree: SkipDir means the files
+				// under it are never enumerated, so a per-file count here would
+				// be invented rather than measured. See Skip's doc comment.
+				skipped = append(skipped, Skip{Path: rel, Dir: true, Rule: rule})
 				return filepath.SkipDir
 			}
 			return nil
 		}
 		// Skip non-regular files (symlinks, sockets, devices).
 		if !d.Type().IsRegular() {
+			skipped = append(skipped, Skip{Path: rel, Rule: RuleNonRegular})
 			return nil
 		}
 		// Skip excluded files (build artifacts, secret-bearing dotenv files).
-		if isExcludedFile(d.Name()) {
+		if rule, skip := excludeFileReason(d.Name()); skip {
+			skipped = append(skipped, Skip{Path: rel, Rule: rule})
 			return nil
 		}
-		rel, err := filepath.Rel(dir, p)
-		if err != nil {
-			return err
-		}
-		// Normalize to forward slashes for the archive.
-		rel = filepath.ToSlash(rel)
 		entries = append(entries, entry{abs: p, rel: rel})
 		return nil
 	})
@@ -514,6 +644,7 @@ func Build(dir string) (*Result, error) {
 
 	// Deterministic ordering.
 	sort.Slice(entries, func(i, j int) bool { return entries[i].rel < entries[j].rel })
+	sortSkips(skipped)
 
 	var buf zipBuffer
 	zw := zip.NewWriter(&buf)
@@ -567,8 +698,9 @@ func Build(dir string) (*Result, error) {
 	}
 
 	return &Result{
-		Files: files,
-		Bytes: Bytes{Zip: buf.b, DecompressedBy: decompressed},
+		Files:   files,
+		Skipped: skipped,
+		Bytes:   Bytes{Zip: buf.b, DecompressedBy: decompressed},
 	}, nil
 }
 

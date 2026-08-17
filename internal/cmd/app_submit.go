@@ -67,6 +67,62 @@ func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte) {
 		ui.Code("civitai app submit --package-only"))
 }
 
+// skippedListCap is how many skipped paths the `Skipped …` line names before it
+// truncates. Measured over six real Vite-shaped block projects the skipped set
+// was 3–4 entries (`node_modules/`, `dist/`, usually `.git/` or `.venv/`, plus
+// 0–1 pattern-matched), so this is a monorepo tail-guard and not the normal
+// path: on a real project nothing is ever elided. It is deliberately generous
+// for that reason — a cap that bites routinely would hide the one entry the
+// author needed, which is the failure this whole line exists to fix.
+const skippedListCap = 12
+
+// renderSkippedLine renders pkgzip's skip decisions as the one line printed
+// under `Packaged …`, or "" when nothing was skipped.
+//
+// 🔴 THIS IS THE ONE PLACE THE SKIP LIST IS RENDERED. pkgzip returns data and no
+// String() — a second renderer is how the count and the list start disagreeing.
+//
+// 🔴 THE COUNT IS OF DECISION POINTS, NOT OF FILES, AND THE WORDING IS PICKED TO
+// SAY SO. An excluded directory is ONE path: Build returns filepath.SkipDir, so
+// what is under it is never enumerated and any file count would be invented.
+// "Skipped 4 path(s)" is true of that; "skipped 4 files" would not be.
+//
+// The count stays accurate when the LIST is truncated — the prefix counts every
+// decision and the tail says how many are not shown, so the two never disagree:
+//
+//	Skipped 4 path(s): public/environment.env (*.env), .git/, dist/, node_modules/
+//	Skipped 15 path(s): a.env (*.env), … , src/z/ … and 3 more
+//
+// A directory carries a trailing "/" here and NOT in pkgzip.Skip.Path: the slash
+// is a rendering decision (it is what tells an author a whole subtree went),
+// and keeping it out of the data means a consumer comparing paths has nothing
+// to strip.
+func renderSkippedLine(skips []pkgzip.Skip) string {
+	if len(skips) == 0 {
+		return ""
+	}
+	shown := skips
+	if len(shown) > skippedListCap {
+		shown = shown[:skippedListCap]
+	}
+	names := make([]string, 0, len(shown))
+	for _, s := range shown {
+		name := s.Path
+		if s.Dir {
+			name += "/"
+		}
+		if s.Rule != "" {
+			name += " (" + s.Rule + ")"
+		}
+		names = append(names, name)
+	}
+	line := fmt.Sprintf("Skipped %d path(s): %s", len(skips), strings.Join(names, ", "))
+	if rest := len(skips) - len(shown); rest > 0 {
+		line += fmt.Sprintf(" … and %d more", rest)
+	}
+	return line
+}
+
 // wrapCommaList renders names as a comma-separated list broken every perLine
 // entries, indented to sit under a help-text heading. The 18 excluded directory
 // names ran to ~130 characters on one line, which wraps badly in an 80-column
@@ -317,6 +373,14 @@ Defaults to the current directory.`,
 			// bundle you cannot submit.
 			fmt.Fprintf(out, "Packaged %d file(s) (%d bytes compressed, %d decompressed; %d bytes as the base64 JSON submit body)\n",
 				len(pkg.Files), len(pkg.Zip), pkg.DecompressedBy, appapi.SubmitBodySize(len(pkg.Zip)))
+			// 🔴 WHAT WAS LEFT OUT, ON EVERY PATH INCLUDING --package-only (#435).
+			// Printed here, above the canUpload branch, for the same reason the
+			// size line is: --package-only is how an author inspects a bundle,
+			// and a drop they cannot see is a drop they meet at runtime in the
+			// deployed app. Empty prints nothing — see renderSkippedLine.
+			if line := renderSkippedLine(pkg.Skipped); line != "" {
+				fmt.Fprintln(out, line)
+			}
 
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
 			// The gate above already confirmed (or --yes bypassed) it.
