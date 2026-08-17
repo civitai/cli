@@ -27,13 +27,14 @@
 //     token to the server, the moderator reviewer, and the built image.
 //     (This said ".env.development" until #380. The scaffolded .env.development
 //     never carried that instruction; the file that did was .env.example — and
-//     that one is ALLOW-LISTED and UPLOADED, see keptEnvFiles.) We KEEP
-//     .env.example / .env.sample (meant to hold documented placeholders) and
-//     .env.production (the server build's `vite build` runs in mode=production
-//     and reads it).
-//     Those three are allow-listed BY NAME — nothing reads their contents, so
-//     keeping one is not a claim that it holds no secret. See isExcludedFile and
-//     keptEnvFiles for the full rule + rationale.
+//     that one is ALLOW-LISTED and UPLOADED, see keptEnvFiles.) At the PROJECT
+//     ROOT we KEEP .env.example / .env.sample (meant to hold documented
+//     placeholders) and .env.production (the server build's `vite build` runs in
+//     mode=production and reads it). At any depth below the root those same three
+//     names fall to the catch-all and are DROPPED.
+//     Those three are allow-listed BY NAME AT THE ROOT — nothing reads their
+//     contents, so keeping one is not a claim that it holds no secret. See
+//     isExcludedFile and keptEnvFiles for the full rule + rationale.
 package pkgzip
 
 import (
@@ -178,12 +179,13 @@ var vcsMetadataNames = map[string]struct{}{
 // has produced.
 //
 // 🔴 RESIDUAL, ACCEPTED AND DELIBERATE: a directory named `.env-backup` or
-// `.envs` is NOT excluded, though the same name as a FILE would be. Since #435
-// that costs much less than it used to — the FILE rules reach inside such a
-// directory and drop both shapes there (`.env.local` by the prefix rule,
-// `db.env` by the `*.env` suffix rule). What survives is a kept name:
-// `.env-backup/.env.production` is uploaded, because the allow-list matches by
-// name and nothing above it is excluded.
+// `.envs` is NOT excluded, though the same name as a FILE would be. That costs
+// little now — the FILE rules reach inside such a directory and drop every
+// dotenv shape there: `.env.local` by the prefix rule, `db.env` by the `*.env`
+// suffix rule, and since the allow-list was scoped to the project root
+// (keptEnvFiles) `.env-backup/.env.production` too. What survives is a file
+// whose NAME is not dotenv-shaped at all — `.env-backup/credentials.json` — the
+// class no name rule can close.
 //
 // If a real case for excluding those directory names appears, add the exact
 // name to excludedDirs rather than widening this predicate; that keeps the loss
@@ -363,7 +365,10 @@ func excludeDirReason(name string) (string, bool) {
 
 // excludedFilePatterns is the human-readable list of file-level exclusions, for
 // CLI messaging. The authoritative matcher is isExcludedFile — keep the two in
-// sync. These are matched on the file's BASE NAME anywhere in the tree.
+// sync. These are matched on the file's BASE NAME anywhere in the tree. (The
+// allow-list that carves three names out of them is NOT any-depth: see
+// keptEnvFiles. Every pattern here holds at every depth; the exception to them
+// does not.)
 var excludedFilePatterns = []string{
 	// Build artifacts. A `--package-only` run drops a *.zip in the project dir;
 	// without this, the next package recursively sweeps that zip back in (a real
@@ -393,7 +398,8 @@ var excludedFilePatterns = []string{
 }
 
 // keptEnvFiles are .env* files we deliberately INCLUDE despite the broad
-// ".env"-prefix exclusion below. They are allow-listed BY NAME:
+// ".env"-prefix exclusion below. They are allow-listed BY NAME, AT THE PROJECT
+// ROOT ONLY:
 //   - .env.example / .env.sample: templates meant to hold documented
 //     placeholders a reviewer reads.
 //   - .env.production: the server build runs `vite build` (mode=production),
@@ -401,6 +407,38 @@ var excludedFilePatterns = []string{
 //     VITE_BLOCK_ALLOWED_PARENT_ORIGINS.
 //   - .env.production.local is NOT kept — `.local` is the dev-local override
 //     convention and is caught by the `.env.*.local` rule above.
+//
+// 🔴 ROOT-SCOPED, BECAUSE EVERY JUSTIFICATION ABOVE IS ROOT-SPECIFIC. Vite reads
+// env files from `envDir`, which defaults to the project root, so the file
+// `vite build` consumes is the ROOT `.env.production` and nothing else; and a
+// template a reviewer reads is the one at the root, not a copy buried in
+// `.env-backup/` or `old/`. Applying the allow-list at any depth granted the
+// exemption to files that can be NEITHER — measured on a binary built at
+// 8617a68, a planted `.env-backup/.env.production` holding `API_SECRET=…` was
+// packaged, and the bundle is committed to Forgejo `civitai-apps/<slug>` and
+// read by a human moderator reviewer. `backups/.env.production` and
+// `old/.env.production` went the same way. So at depth these three names fall to
+// the catch-all like any other dotenv file.
+//
+// 🔴 THE DIRECTION OF FAILURE IS DELIBERATE, AND IT IS CHEAP NOW IN A WAY IT WAS
+// NOT BEFORE. Dropping is the safe direction: an uploaded credential is durably
+// published and cannot be recalled, while a dropped file is recovered by moving
+// it to the root. And since the drop-messaging of #458 the packager PRINTS what
+// it left out with the rule that matched — an author who loses a nested
+// `.env.production` reads `Skipped 1 path(s): app/.env.production (.env*)` on
+// that very run, rather than finding out at build time on the server. That line
+// is what makes this trade affordable; without it the same change would have
+// been a silent loss.
+//
+// 🔴 RESIDUAL, STATED RATHER THAN HIDDEN: an app whose `vite.config` sets
+// `root:` or `envDir:` to a SUBDIRECTORY keeps its real build-input dotenv
+// there, and this rule drops it. Neither scaffold template does that
+// (`internal/scaffold/templates/page-vite/vite.config.js.tmpl` and
+// `internal/scaffold/templates/page-money/vite.config.ts.tmpl` set neither key,
+// so the default root applies), the loss is named in the Skipped line, and the
+// author's fix is one flag or one move. Do not "fix" it by re-widening the
+// allow-list: that restores the leak above for every project to buy a
+// build-input for the few that relocate `envDir`.
 //
 // 🔴 THIS IS A NAME ALLOW-LIST, NOT A SAFETY PROPERTY, AND NOTHING HERE READS
 // THE CONTENTS. An earlier version of this comment (and of the README section it
@@ -429,9 +467,9 @@ var keptEnvFiles = map[string]struct{}{
 //   - Build artifacts (*.zip).
 //   - Dotenv by PREFIX. That rule is deliberately CONSERVATIVE toward "never
 //     upload a secret": every base name starting with ".env" is dropped UNLESS
-//     it is one of the three names on the keptEnvFiles allow-list. Build-time
-//     config for the server must come from the manifest / build recipe, not an
-//     uploaded dotenv.
+//     it is one of the three names on the keptEnvFiles allow-list AND it sits at
+//     the PROJECT ROOT. Build-time config for the server must come from the
+//     manifest / build recipe, not an uploaded dotenv.
 //   - Dotenv by SUFFIX (#435): every base name ENDING in ".env" — `db.env`,
 //     `prod.env`, `backup.db.env`. The shape tooling writes, invisible to every
 //     prefix rule above. See isDotenvSuffixed for why it is files-only and what
@@ -451,11 +489,17 @@ var keptEnvFiles = map[string]struct{}{
 // dropped too. The failure mode of the other direction is a silent credential
 // upload; this one is a missing file the author can rename.
 //
-// Note keptEnvFiles is an allow-list BY NAME. Nothing here reads a file's
-// contents, so "kept" is a statement about WHERE the file goes, never a claim
-// that it holds no secret — see the 🔴 note on keptEnvFiles.
-func isExcludedFile(name string) bool {
-	_, skip := excludeFileReason(name)
+// Note keptEnvFiles is an allow-list BY NAME, and it is scoped to the PROJECT
+// ROOT — hence atRoot, which the caller must supply because a base name carries
+// no depth. Nothing here reads a file's contents, so "kept" is a statement about
+// WHERE the file goes, never a claim that it holds no secret — see the 🔴 note
+// on keptEnvFiles.
+//
+// atRoot is true only for a file directly in the project directory. Passing true
+// for a file at depth re-opens the leak keptEnvFiles' 🔴 note measures; passing
+// false at the root drops the file `vite build` reads.
+func isExcludedFile(name string, atRoot bool) bool {
+	_, skip := excludeFileReason(name, atRoot)
 	return skip
 }
 
@@ -468,7 +512,7 @@ func isExcludedFile(name string) bool {
 //
 // An empty tag with true means "excluded, by a fixed name" (vcsMetadataNames);
 // see the rule-tag const block for why those carry no tag.
-func excludeFileReason(name string) (string, bool) {
+func excludeFileReason(name string, atRoot bool) (string, bool) {
 	// VCS metadata that is a regular FILE, not a directory: a linked worktree's
 	// or a submodule's `.git` (issue #409). Matched on the EXACT name, so
 	// `.gitignore` / `.gitattributes` / `.gitmodules` still ship.
@@ -495,7 +539,15 @@ func excludeFileReason(name string) (string, bool) {
 	// catch-all and is DROPPED — the safe direction: the author sees a missing
 	// file rather than an uploaded one. None of the three kept names ends in
 	// ".env", so the suffix rule cannot reach them either.
-	if _, keep := keptEnvFiles[name]; keep {
+	//
+	// 🔴 AND BY POSITION: at the PROJECT ROOT ONLY. The allow-list exists for the
+	// ROOT build input (`vite build`'s envDir defaults to the project root) and
+	// the ROOT template a reviewer reads; a copy at depth can be neither, so
+	// granting it the exemption uploaded `.env-backup/.env.production` verbatim.
+	// At depth these names fall through to the prefix rule below and are dropped
+	// with the `.env*` tag, which is what tells the author it happened. See
+	// keptEnvFiles for the measurement and the accepted residual.
+	if _, keep := keptEnvFiles[name]; keep && atRoot {
 		return "", false
 	}
 	if strings.HasPrefix(strings.ToLower(name), ".env") {
@@ -624,7 +676,11 @@ func Build(dir string) (*Result, error) {
 			return nil
 		}
 		// Skip excluded files (build artifacts, secret-bearing dotenv files).
-		if rule, skip := excludeFileReason(d.Name()); skip {
+		//
+		// rel is already project-relative and slash-normalised, so it holds a
+		// separator exactly when the file sits below the project root — which is
+		// the only depth information the keptEnvFiles allow-list needs.
+		if rule, skip := excludeFileReason(d.Name(), !strings.Contains(rel, "/")); skip {
 			skipped = append(skipped, Skip{Path: rel, Rule: rule})
 			return nil
 		}
@@ -762,12 +818,12 @@ func DirectoryPatternSummary() string {
 		"  whole at any depth; matching ignores case, so .ENV.D/ and x.ZIP/ go\n" +
 		"  too. Directories whose names merely start with .env — .envrc/,\n" +
 		"  .env-backup/, .envs/ — are NOT dropped, but the FILE rules still reach\n" +
-		"  inside them: a db.env or prod.env there is dropped by the *.env rule.\n" +
-		"  What survives is the allow-list, which is matched by EXACT name —\n" +
-		"  .env.example, .env.sample and .env.production are uploaded, so\n" +
-		"  .env-backup/.env.production is uploaded too, but only where every\n" +
-		"  directory above it is itself packaged: a kept name anywhere under\n" +
-		"  .env.d/ or node_modules/ goes with that directory."
+		"  inside them: a db.env or prod.env there is dropped by the *.env rule,\n" +
+		"  and so is a .env.production, because the allow-list applies at the\n" +
+		"  PROJECT ROOT only. .env.example, .env.sample and .env.production are\n" +
+		"  uploaded from the root and dropped everywhere else —\n" +
+		"  .env-backup/.env.production, backups/.env.production and\n" +
+		"  .env.d/.env.production all go."
 }
 
 // IsExcludedPath answers, for a whole project-relative PATH, the question Build
@@ -796,6 +852,11 @@ func DirectoryPatternSummary() string {
 //     vcsMetadataNames (`.git`/`.hg`/`.svn`), which isExcludedFile drops too —
 //     in a linked worktree or a submodule `.git` IS a regular file (#409), so
 //     for those three names the answer is the same either way.
+//   - that file rule is DEPTH-AWARE, because the keptEnvFiles allow-list is
+//     scoped to the project root: `.env.production` is bundle content and
+//     `app/.env.production` is not. The loop below already knows how many
+//     directory components it walked past, and hands that to the file rule —
+//     the same fact Build reads off its own `rel`.
 //
 // A trailing "/" marks the path as a DIRECTORY — git's porcelain spelling for an
 // untracked directory (`?? dist/`) — so the final component takes the directory
@@ -814,6 +875,11 @@ func IsExcludedPath(rel string) bool {
 		return false
 	}
 	parts := strings.Split(rel, "/")
+	// dirs counts the DIRECTORY components above the final one, so the file rule
+	// below learns whether the file sits at the project root — the depth
+	// keptEnvFiles is scoped to. Counted from the components actually consumed
+	// rather than from len(parts), so "./" and empty segments cannot fake depth.
+	dirs := 0
 	for i, p := range parts {
 		if p == "" || p == "." {
 			continue
@@ -822,9 +888,10 @@ func IsExcludedPath(rel string) bool {
 			if IsExcluded(p) {
 				return true
 			}
+			dirs++
 			continue
 		}
-		if isExcludedFile(p) {
+		if isExcludedFile(p, dirs == 0) {
 			return true
 		}
 	}
@@ -874,9 +941,26 @@ func ExcludedNames() []string {
 	return out
 }
 
-// IsExcludedFile reports whether a file would be excluded by base name
-// (exported for tests + messaging). See isExcludedFile for the rule.
-func IsExcludedFile(name string) bool { return isExcludedFile(name) }
+// IsExcludedFile reports whether a file with this base name, AT THE PROJECT
+// ROOT, would be excluded (exported for tests + messaging). See isExcludedFile
+// for the rule.
+//
+// 🔴 IT ANSWERS THE ROOT QUESTION, AND THAT IS NOT THE SAME QUESTION AT DEPTH.
+// The keptEnvFiles allow-list is root-scoped, so this returns false for
+// `.env.production` while the packager DROPS `app/.env.production`. A caller
+// holding a path must ask IsExcludedPath (or IsExcludedEntry, which also judges
+// file type) — those are the depth-aware forms and the ones Build agrees with.
+// A base name alone cannot answer it: three names out of everything this rule
+// matches depend on where the file sits.
+//
+// The one production caller is internal/antipattern's ScanDir, which walks by
+// base name and therefore asks the root question at every depth. It is a
+// deliberate no-op today: the three names it could differ on end in `.example`,
+// `.sample` and `.production`, none of which is in that package's scannedExts,
+// so the file is skipped by the extension gate either way. If scannedExts ever
+// grows one of those, switch that call to IsExcludedPath on the walk's rel —
+// the failure would be an anti-pattern finding in a file that does not ship.
+func IsExcludedFile(name string) bool { return isExcludedFile(name, true) }
 
 // KeptEnvFileNames returns the dotenv FILE names the packager deliberately
 // uploads despite the ".env" catch-all, sorted.
@@ -887,10 +971,11 @@ func IsExcludedFile(name string) bool { return isExcludedFile(name) }
 // is the least expected". An author who reads only the exclusion list puts a
 // token in the one file that is uploaded.
 //
-// These are allow-listed BY NAME anywhere in the tree, so the exception also
-// crosses the directory rule: `.env-backup/.env.production` is uploaded, which
-// is measured and stated in DirectoryPatternSummary. Nothing reads their
-// contents — see keptEnvFiles for why that is not a safety property.
+// These are allow-listed BY NAME AT THE PROJECT ROOT, so the exception does NOT
+// cross a directory: `.env-backup/.env.production` is dropped like any other
+// dotenv file, which is stated in DirectoryPatternSummary. Nothing reads their
+// contents — see keptEnvFiles for why that is not a safety property, and for why
+// the root scope is the whole justification rather than a detail of it.
 func KeptEnvFileNames() []string {
 	out := make([]string, 0, len(keptEnvFiles))
 	for k := range keptEnvFiles {

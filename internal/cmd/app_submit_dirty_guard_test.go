@@ -422,6 +422,33 @@ func TestBundleDirtyPathsDropsPathsOutsideThePackagedSubtree(t *testing.T) {
 	}
 }
 
+// TestBundleDirtyPathsJudgesTheKeptAllowListAfterStrippingThePrefix is where the
+// prefix arithmetic and the root-scoped dotenv allow-list meet.
+//
+// 🔴 THE ALLOW-LIST IS SCOPED TO THE PROJECT ROOT, AND git REPORTS REPO-RELATIVE
+// PATHS. For a project inside a monorepo those two roots are different, so the
+// question "is this file at the root" can only be asked AFTER the prefix is
+// stripped — `packages/my-block/.env.production` is a ROOT file of this bundle
+// even though it is three components deep in the repository. Asking before the
+// strip inverts both answers at once: the packaged root dotenv stops being
+// guarded (it IS bundle content, and an uncommitted one is a real difference),
+// while a genuinely nested copy starts being refused over although it is in no
+// zip. Nothing else in this suite would notice, because every other fixture path
+// is judged by a rule that has no depth.
+func TestBundleDirtyPathsJudgesTheKeptAllowListAfterStrippingThePrefix(t *testing.T) {
+	raw := strings.Join([]string{
+		" M packages/my-block/.env.production\x00",             // bundle content: KEPT at the packaged root
+		" M packages/my-block/.env-backup/.env.production\x00", // dropped: nested under the packaged root
+		" M packages/my-block/.env.local\x00",                  // dropped: the catch-all, depth-independent
+	}, "")
+	got := bundleDirtyPaths(raw, "packages/my-block/", "")
+	if len(got) != 1 || got[0].path != ".env.production" {
+		t.Errorf("bundleDirtyPaths = %v, want exactly [.env.production] — the packaged root's kept "+
+			"dotenv file is bundle content and must still be guarded, and the nested copy is not in "+
+			"the bundle at all so refusing over it would be a false refusal", got)
+	}
+}
+
 // --- WHICH DIRECTORY: the tree being PACKAGED, not the cwd ---
 
 // TestDirtyGuardInspectsThePackagedDirNotTheCwd is decision 1 stated as a test.

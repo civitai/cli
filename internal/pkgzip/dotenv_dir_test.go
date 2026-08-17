@@ -280,11 +280,12 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 		// rule can close.
 		"secrets.json",
 		"src/credentials.yaml",
-		// 🔴 The keptEnvFiles allow-list survives a directory the walk does not
-		// drop, so an author who reads "files starting with .env are dropped" is
-		// wrong about the one file most likely to hold a token. Added to the
-		// README's table as its own row — the most surprising residual there is.
-		".env-backup/.env.production",
+		// 🔴 `.env-backup/.env.production` LEFT THIS LIST, and this is the second
+		// time a row has: the allow-list is now scoped to the PROJECT ROOT, so a
+		// copy at depth — neither the file `vite build` reads (envDir defaults to
+		// the root) nor the template a reviewer reads — falls to the `.env*`
+		// catch-all. Its README row went with it, and the assertion moved to
+		// TestKeptEnvFilesAreRootScoped, which pins the drop through Build.
 	} {
 		if IsExcludedPath(p) {
 			t.Errorf("%q is EXCLUDED, but the README's residual table tells authors it is "+
@@ -333,21 +334,23 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 // text costs nothing. Any other edit fails here and must be re-read against the
 // code before it is re-approved — which is the whole point.
 func TestDirectoryPatternSummaryIsTheReviewedCopy(t *testing.T) {
-	// 🔴 The tail was reworded once already, in the credential direction, and the
-	// old wording is why: it said a file inside `.env-backup/` "is uploaded
-	// unless its own name starts with .env", which is FALSE for the three
-	// keptEnvFiles names. Measured — `.env-backup/.env.production` is packaged
-	// WITH its contents, while `.env-backup/.env.local` is dropped. An author
-	// reading the old sentence believed the wrong one was protected.
+	// 🔴 The tail has been reworded TWICE, and the history is why it is pinned.
+	// Round one said a file inside `.env-backup/` "is uploaded unless its own
+	// name starts with .env", FALSE for the three keptEnvFiles names. Round two
+	// said `.env-backup/.env.production` was uploaded, which was TRUE of the
+	// code that shipped it and is now false: the allow-list is scoped to the
+	// project root, so that path is dropped by the `.env*` catch-all. Re-approved
+	// against a real Build run over `.env-backup/.env.production` and
+	// `backups/.env.production` — both dropped, both named on the Skipped line.
 	const want = "a DIRECTORY named .env or .env.<anything> (e.g. .env.d/, .env.local/, " +
 		".env.production/), or ending in .zip, is dropped whole at any depth; matching " +
 		"ignores case, so .ENV.D/ and x.ZIP/ go too. Directories whose names merely start " +
 		"with .env — .envrc/, .env-backup/, .envs/ — are NOT dropped, but the FILE rules " +
-		"still reach inside them: a db.env or prod.env there is dropped by the *.env rule. " +
-		"What survives is the allow-list, which is matched by EXACT name — .env.example, " +
-		".env.sample and .env.production are uploaded, so .env-backup/.env.production is " +
-		"uploaded too, but only where every directory above it is itself packaged: a kept " +
-		"name anywhere under .env.d/ or node_modules/ goes with that directory."
+		"still reach inside them: a db.env or prod.env there is dropped by the *.env rule, " +
+		"and so is a .env.production, because the allow-list applies at the PROJECT ROOT " +
+		"only. .env.example, .env.sample and .env.production are uploaded from the root and " +
+		"dropped everywhere else — .env-backup/.env.production, backups/.env.production and " +
+		".env.d/.env.production all go."
 
 	got := strings.Join(strings.Fields(DirectoryPatternSummary()), " ")
 	if got == "" {

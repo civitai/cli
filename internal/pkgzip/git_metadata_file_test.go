@@ -314,9 +314,15 @@ func TestVCSMetadataNamesAreASubsetOfExcludedDirs(t *testing.T) {
 			t.Errorf("%q is in vcsMetadataNames but not excludedDirs — a DIRECTORY by that name would "+
 				"still be walked into, so the two halves of the rule disagree", n)
 		}
-		if !isExcludedFile(n) {
-			t.Errorf("🔴 SEAM: %q is in vcsMetadataNames but isExcludedFile(%q) = false. The map is the "+
-				"declaration; isExcludedFile is what ships.", n, n)
+		// Asked at BOTH depths: the file rule gained a root/depth dimension when
+		// the keptEnvFiles allow-list was scoped to the project root, and this
+		// rule is deliberately independent of it — a `.git` file is VCS plumbing
+		// wherever it sits.
+		for _, atRoot := range []bool{true, false} {
+			if !isExcludedFile(n, atRoot) {
+				t.Errorf("🔴 SEAM: %q is in vcsMetadataNames but isExcludedFile(%q, atRoot=%v) = false. The map is the "+
+					"declaration; isExcludedFile is what ships.", n, n, atRoot)
+			}
 		}
 	}
 	// And the reverse must NOT hold: excludedDirs is deliberately wider, and
@@ -325,8 +331,11 @@ func TestVCSMetadataNamesAreASubsetOfExcludedDirs(t *testing.T) {
 	if _, promoted := vcsMetadataNames["dist"]; promoted {
 		t.Error("`dist` must not be type-independent — a plain FILE named dist is bundle content")
 	}
-	if isExcludedFile("build") || isExcludedFile("dist") || isExcludedFile("out") || isExcludedFile("node_modules") {
-		t.Error("a regular file named after a build/dependency DIRECTORY is bundle content; only VCS " +
-			"metadata names are excluded regardless of type")
+	for _, atRoot := range []bool{true, false} {
+		if isExcludedFile("build", atRoot) || isExcludedFile("dist", atRoot) ||
+			isExcludedFile("out", atRoot) || isExcludedFile("node_modules", atRoot) {
+			t.Errorf("a regular file named after a build/dependency DIRECTORY is bundle content at "+
+				"atRoot=%v; only VCS metadata names are excluded regardless of type", atRoot)
+		}
 	}
 }
