@@ -223,7 +223,12 @@ func normaliseMessage(s string) string { return strings.Join(strings.Fields(s), 
 // refused 403 elsewhere, because after the fallback's error gate it no longer
 // reaches this message on a current server. (c) `civitai app submit` is named as
 // NOT the step, never as the step. (d) The slug rendered is the CALLER's
-// (`radio-zzz`), never the server's echo (`zzz-srv-radio`).
+// (`radio-zzz`), never the server's echo (`zzz-srv-radio`). (e) NO PROMISE TO THE
+// READER: offsiteApp does no ownership check and the store catalog is public, so
+// the App-store listing UI is named as where the media is MANAGED — never as a
+// surface that will work for whoever ran the command (civitai/cli#427 residual 1,
+// closed 2026-08-17; it said "Changing that media always works … where this app
+// was registered" until then).
 const wantOffsiteListingRefusal = "`" + offsiteSlugA + "` is an OFFSITE app (registered at " + offsiteURLA + "), " +
 	"and this CLI could not reach its store listing here — `civitai app listing` resolves a listing through the " +
 	"app's block submission, which an offsite app has none of, and then by the slug alone; neither answered. " +
@@ -233,8 +238,8 @@ const wantOffsiteListingRefusal = "`" + offsiteSlugA + "` is an OFFSITE app (reg
 	"or self-hosted server, or an app with no listing row at all, each land here; a listing this account does not " +
 	"own is refused as a 403 by any server carrying #3989, and reaches this message only on one that does not. " +
 	"Its store listing may be live all the same — run `civitai app view " + offsiteSlugA + "` to see the icon and " +
-	"cover it is serving. Changing that media always works in the App-store listing UI on civitai.com, where this " +
-	"app was registered; that surface is authoritative whatever this CLI can reach"
+	"cover it is serving. That media is managed in the App-store listing UI on civitai.com by the account that " +
+	"registered the app; that surface is authoritative whatever this CLI can reach"
 
 // bothOffsiteAndOnsite is the fixture table every case below shares.
 func bothOffsiteAndOnsite() map[string]string {
@@ -306,25 +311,97 @@ func trpcListingID(t *testing.T, r *http.Request) string {
 	return env.JSON.ListingID
 }
 
+// trpcProc returns the bare proc name from a tRPC path —
+// `/api/trpc/appListings.setIcon` → `setIcon`.
+func trpcProc(path string) string {
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		path = path[i+1:]
+	}
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		path = path[i+1:]
+	}
+	return path
+}
+
+// listingKeyedProcs is the LEDGER the empty-id exemption rests on: every tRPC
+// proc this fixture routes through assertListingTarget, mapped to whether its
+// wire input MUST carry a `listingId`.
+//
+// 🔴 IT EXISTS BECAUSE THE EXEMPTION USED TO BE AN ASSUMPTION, AND THE ASSUMPTION
+// WAS THE HOLE. assertListingTarget returned early on an empty id, justified by a
+// call site that did not exist (removeScreenshot was never routed through it), and
+// the exemption applied to the five that did. MEASURED: renaming the wire key in
+// `appapi.GetMyListingForEdit` (`"listingId"` → `"listing_id"`) empties the id the
+// fake reads, every assertion returns early, and the mutant SURVIVES the FULL
+// suite — 20/20 packages ok. The positive control on the same line (the id
+// replaced by a wrong literal) went red with this function's own message, so the
+// guard was reachable and the `""` escape was the only hole. The ledger closes it:
+// an empty id from a proc declared `true` is a FAILURE, and a listing id from one
+// declared `false` is one too.
+//
+// 🔴 AN UNLISTED PROC IS ALSO A FAILURE, which is what keeps this a ledger rather
+// than a list someone remembered to update: a new listing proc cannot be routed
+// through the fake without declaring which side of the exemption it is on. The
+// ledger's reach is exactly the procs the fake asserts on — it says nothing about
+// a proc no handler routes here, which is why the two un-keyed ones below are
+// asserted rather than merely described.
+var listingKeyedProcs = map[string]bool{
+	"getMyListingForEdit":  true,
+	"setIcon":              true,
+	"setCover":             true,
+	"addScreenshot":        true,
+	"reorderScreenshots":   true,
+	"beginListingRevision": true,
+	// Keyed by screenshotId alone — the server resolves the owning listing from
+	// the row, which is civitai/cli#436's whole mechanism.
+	"removeScreenshot": false,
+	// Keyed by the shadowId being submitted (plus an optional changelog); the
+	// parent listing is the server's to resolve.
+	"submitListingRevision": false,
+}
+
 // assertListingTarget fails the test when a listing-keyed proc was addressed at
 // anything other than want. This is the assertion civitai/cli#422's fixture
 // comment PROMISED and did not make.
 //
-// 🔴 IT IS A STATE ASSERTION, NOT A SPELLING ONE. It compares the id the wire
-// carried against the id the fixture published, so it catches every way the
-// wrong listing can be addressed — an echoed slug, a hardcoded literal, the
-// parent where the shadow was meant, a stale variable — rather than the one
-// substitution someone thought of. An empty id is ignored: the procs that carry
-// no listingId are not a target mistake, and treating "" as a mismatch would
-// make this fail for removeScreenshot on every run.
+// 🔴 IT IS A STATE ASSERTION, NOT A SPELLING ONE, over the procs listingKeyedProcs
+// declares. It compares the id the wire carried against the id the fixture
+// published, so for a listing-keyed proc it catches every way the wrong listing
+// can be addressed — an echoed slug, a hardcoded literal, the parent where the
+// shadow was meant, a stale variable — rather than the one substitution someone
+// thought of. What it CANNOT see, stated so it is not re-promised: a rename that
+// moves the key in the fake's decoder (trpcListingID) at the same time, and any
+// proc no handler routes through here.
+//
+// The empty-id case is no longer an exemption but a verdict the ledger returns:
+// `false` procs must carry NO listing id, `true` procs must carry `want`.
 func assertListingTarget(t *testing.T, r *http.Request, want string) {
 	t.Helper()
-	got := trpcListingID(t, r)
-	if got == "" || got == want {
+	proc := trpcProc(r.URL.Path)
+	mustCarry, declared := listingKeyedProcs[proc]
+	if !declared {
+		t.Errorf("tRPC proc %q is asserted on but not declared in listingKeyedProcs — say whether its "+
+			"input carries a `listingId`; an undeclared proc is how the empty-id exemption silently widens", proc)
 		return
 	}
-	t.Errorf("%s was addressed at listing %q, want %q — the command resolved the wrong target",
-		r.URL.Path, got, want)
+	got := trpcListingID(t, r)
+	if !mustCarry {
+		if got != "" {
+			t.Errorf("%s carried listingId %q, but listingKeyedProcs declares it un-keyed — either the "+
+				"wire input grew a listing id or the ledger is stale", r.URL.Path, got)
+		}
+		return
+	}
+	if got == "" {
+		t.Errorf("%s carried NO listingId though it is declared listing-keyed (want %q) — the wire key was "+
+			"renamed, dropped, or nested where trpcListingID does not look, so NOTHING here observed which "+
+			"listing was addressed", r.URL.Path, want)
+		return
+	}
+	if got != want {
+		t.Errorf("%s was addressed at listing %q, want %q — the command resolved the wrong target",
+			r.URL.Path, got, want)
+	}
 }
 
 // TestOffsiteAppListingResolvesBySlug is the failing path from civitai/cli#422,
@@ -728,9 +805,14 @@ func newOffsiteListingServerWithStatus(t *testing.T, status string) *offsiteFake
 		case strings.Contains(r.URL.Path, "removeScreenshot"):
 			// Keyed by screenshotId alone — the server resolves the owning
 			// listing from the row, which is civitai/cli#436's whole mechanism.
+			// Asserted rather than assumed: listingKeyedProcs declares it
+			// un-keyed, so this call is what makes that half of the ledger real.
+			assertListingTarget(t, r, attachTarget)
 			trpcData(w, map[string]any{"ok": true})
 		case strings.Contains(r.URL.Path, "submitListingRevision"):
 			f.submitRevCalls.Add(1)
+			// Declared un-keyed (it carries the shadowId) — same reason.
+			assertListingTarget(t, r, attachTarget)
 			if !live {
 				t.Errorf("a DRAFT listing has no revision to submit — submitListingRevision must not be called")
 			}
