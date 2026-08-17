@@ -214,14 +214,30 @@ var scannedExts = map[string]bool{
 //
 // A duplicated predicate is the drift that produced #409 and #420 — one shape of
 // a name fixed, the other left behind — so this delegates rather than mirrors.
-// The FILE rule (pkgzip.IsExcludedFile) is applied too, ahead of the scannedExts
-// test: today scannedExts hides most of that divergence by accident (`.envrc`,
-// `db.env` and `old.zip` all have extensions it does not scan), but `.env.json`
-// does not, and "a finding is in a file that ships" should hold structurally
-// rather than by coincidence of the extension table.
+// The FILE rule is applied too, ahead of the scannedExts test: today scannedExts
+// hides most of that divergence by accident (`.envrc`, `db.env` and `old.zip`
+// all have extensions it does not scan), but `.env.json` does not, and "a
+// finding is in a file that ships" should hold structurally rather than by
+// coincidence of the extension table.
 //
-// scannedExts stays exactly as it is. It answers a different question — which
-// file types are worth grepping — and is not part of this rule.
+// 🔴 THAT FILE RULE IS ASKED OF THE WALK'S PROJECT-RELATIVE PATH, NOT OF THE BASE
+// NAME (#466). #461 scoped the packager's dotenv allow-list to the project root,
+// which made "is this file dropped?" a question a base name can no longer answer:
+// `.env.production` ships and `app/.env.production` does not. This walk called
+// pkgzip.IsExcludedFile — the ROOT answer — at every depth, so for the three
+// allow-listed names it asked the wrong question everywhere below the root. It
+// was inert (none of `.example`, `.sample`, `.production` is in scannedExts, so
+// the extension gate skipped those files either way) and gated by this comment
+// alone. pkgzip.IsExcludedPath takes the `rel` the walk already computes and is
+// the form Build agrees with, so the divergence is removed rather than pinned.
+// The correction can only ever skip MORE — and only files the packager drops.
+// TestScanDirJudgesKeptDotenvNamesByDepth is the behavioural guard; it widens
+// scannedExts for its own duration to make the predicate reachable.
+//
+// scannedExts stays exactly as it is, and is now free to move: it answers a
+// different question — which file types are worth grepping — and with the
+// depth-aware call above, growing it can no longer make this walk read a file
+// the packager drops.
 //
 // 🔴 THE ROOT IS NEVER SKIPPED, mirroring pkgzip.Build's own `p == dir` guard.
 // Without it a project directory that happens to be named `dist`, `build` or
@@ -247,17 +263,28 @@ func ScanDir(dir string) ([]Finding, error) {
 			}
 			return nil
 		}
-		// The packager drops these by NAME regardless of extension, so a finding
-		// in one names code that will not be in the bundle.
-		if pkgzip.IsExcludedFile(d.Name()) {
+		rel, relErr := filepath.Rel(dir, path)
+		if relErr != nil {
+			rel = path
+		}
+		// The packager drops these regardless of extension, so a finding in one
+		// names code that will not be in the bundle. Judged on the PATH, not the
+		// base name — see the doc comment (#466).
+		judged := filepath.ToSlash(rel)
+		if relErr != nil {
+			// Unreachable through WalkDir, which only ever hands us paths under
+			// dir. If it happened, `rel` is the ABSOLUTE path and its leading
+			// components are not project directories — a `/home/…/build/…`
+			// segment would exclude the file for a reason that has nothing to do
+			// with the project. Fall back to the base name, i.e. the root answer
+			// this call gave before #466.
+			judged = d.Name()
+		}
+		if pkgzip.IsExcludedPath(judged) {
 			return nil
 		}
 		if !scannedExts[strings.ToLower(filepath.Ext(d.Name()))] {
 			return nil
-		}
-		rel, relErr := filepath.Rel(dir, path)
-		if relErr != nil {
-			rel = path
 		}
 		data, readErr := os.ReadFile(path)
 		if readErr != nil {

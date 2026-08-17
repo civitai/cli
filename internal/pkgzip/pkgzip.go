@@ -430,15 +430,47 @@ var excludedFilePatterns = []string{
 // is what makes this trade affordable; without it the same change would have
 // been a silent loss.
 //
-// 🔴 RESIDUAL, STATED RATHER THAN HIDDEN: an app whose `vite.config` sets
-// `root:` or `envDir:` to a SUBDIRECTORY keeps its real build-input dotenv
-// there, and this rule drops it. Neither scaffold template does that
-// (`internal/scaffold/templates/page-vite/vite.config.js.tmpl` and
-// `internal/scaffold/templates/page-money/vite.config.ts.tmpl` set neither key,
-// so the default root applies), the loss is named in the Skipped line, and the
-// author's fix is one flag or one move. Do not "fix" it by re-widening the
-// allow-list: that restores the leak above for every project to buy a
-// build-input for the few that relocate `envDir`.
+// 🔴 RESIDUAL, STATED RATHER THAN HIDDEN: any project whose build reads its
+// dotenv from somewhere OTHER than the project root keeps its real build-input
+// dotenv there, and this rule drops it.
+//
+// 🔴 AND THE POPULATION IS WIDER THAN "SETS ONE OF TWO VITE KEYS" (#465). An
+// earlier wording scoped this to an app whose `vite.config` sets `root:` or
+// `envDir:` to a subdirectory, which reads as "the scaffolds are safe, therefore
+// essentially everyone is safe". They are not the same set. Vite's `envDir`
+// defaults to `config.root`, which defaults to `process.cwd()` — the directory
+// the build is INVOKED in, not "the project root" in the bundle sense. The
+// page-money template makes that explicit by calling
+// `loadEnv(mode, process.cwd(), …)`. So the affected set also includes:
+//   - a package.json script that relocates the root — `vite build --root app`.
+//     buildCommandRe (internal/validate/validate.go) admits
+//     `npm|pnpm|yarn run <script>`, and the script BODY is arbitrary and read by
+//     nothing here, so none of that is visible to this CLI.
+//   - a workspace-filtered build, or any script that changes directory before
+//     building — `pnpm --filter web build`, `npm --prefix web run build`,
+//     `cd web && vite build` — reachable the same way.
+//   - a non-Vite toolchain entirely (Next / Astro / webpack + dotenv), whose
+//     `.env.production` resolution is likewise cwd-anchored.
+//
+// The shape is first-class in this repo's own contract rather than exotic:
+// `outputDir` (schema/app-block.manifest.schema.json) permits a nested relative
+// path — only a leading `/`, a `..` segment, a backslash and a Windows drive
+// prefix are rejected — so `"outputDir": "packages/web/dist"` validates today.
+// What is NOT known, and is not observable from this repo: how many live App
+// Blocks projects actually build from a subdirectory. The schema permits it and
+// the scaffolds do not produce it, which brackets the question without answering
+// it.
+//
+// What the scaffolds do is still worth saying, but only as a statement about the
+// scaffolds: neither `internal/scaffold/templates/page-vite/vite.config.js.tmpl`
+// nor `internal/scaffold/templates/page-money/vite.config.ts.tmpl` sets `root:`
+// or `envDir:`, and both are built from the project root, so anything
+// `civitai app create` produces and leaves alone is unaffected.
+//
+// The loss is named in the Skipped line, and the author's fix is one flag or one
+// move. Do not "fix" it by re-widening the allow-list: that restores the leak
+// above for every project to buy a build-input for the few that relocate the
+// build's working directory.
 //
 // 🔴 THIS IS A NAME ALLOW-LIST, NOT A SAFETY PROPERTY, AND NOTHING HERE READS
 // THE CONTENTS. An earlier version of this comment (and of the README section it
@@ -953,13 +985,17 @@ func ExcludedNames() []string {
 // A base name alone cannot answer it: three names out of everything this rule
 // matches depend on where the file sits.
 //
-// The one production caller is internal/antipattern's ScanDir, which walks by
-// base name and therefore asks the root question at every depth. It is a
-// deliberate no-op today: the three names it could differ on end in `.example`,
-// `.sample` and `.production`, none of which is in that package's scannedExts,
-// so the file is skipped by the extension gate either way. If scannedExts ever
-// grows one of those, switch that call to IsExcludedPath on the walk's rel —
-// the failure would be an anti-pattern finding in a file that does not ship.
+// 🔴 IT HAS NO PRODUCTION CALLER, AND THAT IS THE POINT (#466). It had one —
+// internal/antipattern's ScanDir, which walks by base name and so asked the root
+// question at every depth. That was inert (the three names it could differ on
+// end in `.example`, `.sample` and `.production`, none of which is in that
+// package's scannedExts, so the extension gate skipped the file either way) but
+// nothing pinned it, and the divergence was newly introduced by the root scope.
+// That call now asks IsExcludedPath on the walk's own rel, so the two agree by
+// construction rather than by coincidence of an extension table. What is left
+// here is the base-name form the tests and the help messaging want: a caller
+// that HAS a path must not use it, because for three names out of everything
+// this rule matches, a base name is not enough to answer with.
 func IsExcludedFile(name string) bool { return isExcludedFile(name, true) }
 
 // KeptEnvFileNames returns the dotenv FILE names the packager deliberately
