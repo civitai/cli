@@ -215,6 +215,7 @@ func resolveListing(ctx context.Context, client *appapi.Client, slug string) (*a
 
 func newAppListingStatusCmd() *cobra.Command {
 	var lc listingCommon
+	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "status",
 		Short: "Show attached media and what's missing vs the publish floor",
@@ -226,10 +227,24 @@ Your store listing exists as a DRAFT from the moment you run
 
 Note: on a LIVE (approved) listing this opens an in-progress revision draft and
 reports ITS media (idempotent — it reuses any existing draft, and nothing is
-submitted for moderator review until you run a set-/add- command and confirm).`,
+submitted for moderator review until you run a set-/add- command and confirm).
+
+--json emits the same read as one object: parentId, shadowId (null when there
+is no revision draft), status, hasPendingRevision, the attached media with
+their image ids, and the publish-floor verdict. The parent and the shadow are
+DIFFERENT listings and a change is addressed to one of them, so a script that
+has to decide which needs both ids. The server's own editTargetId is NOT in
+there: this CLI does not decode that field, and reporting an id it never read
+would be a guess.
+
+🔴 --json is not a pure read, so do not poll it in a loop: on a LIVE listing
+this opens the shadow revision described above, so a script calling it
+repeatedly keeps a revision draft open on your listing. Whether that makes this
+a read at all is civitai/cli#389, which is open.`,
 		Example: `  civitai app listing status
   civitai app listing status --slug my-app
-  civitai app listing status --dir ./my-app`,
+  civitai app listing status --dir ./my-app
+  civitai app listing status --json | jq -r .shadowId`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			client, err := newListingClient()
@@ -252,12 +267,118 @@ submitted for moderator review until you run a set-/add- command and confirm).`,
 			if err != nil {
 				return err
 			}
+			// 🔴 The JSON path does NOT go through printListingStatus, and must
+			// not: `internal/ui/CONVENTION.md` rule 1 is that machine-readable
+			// output carries no styling at all, and that renderer emits
+			// ui.Success/ui.Warn/ui.Code.
+			if jsonOut {
+				return writeJSON(cmd.OutOrStdout(), listingStatusPayload(slug, ref, view))
+			}
 			printListingStatus(cmd.OutOrStdout(), slug, ref, view)
 			return nil
 		},
 	}
 	lc.bind(cmd)
+	cmd.Flags().BoolVar(&jsonOut, "json", false,
+		"emit the listing as JSON (scriptable) — includes the parent and shadow listing ids; NOT a pure read (see the note in --help)")
 	return cmd
+}
+
+// listingStatusJSON is the machine-readable shape of `app listing status`
+// (civitai/cli#447). It is a PUBLISHED CONTRACT — README documents it — so a
+// field is renamed or dropped only deliberately.
+//
+// 🔴 IT NAMES THE TWO ID SPACES, WHICH IS THE WHOLE REASON IT EXISTS. The human
+// rendering prints neither `parentId` nor `shadowId`, and civitai/cli#430 was a
+// bug that lived entirely in the gap between them: `reorder` addressed the
+// PARENT while `status` printed the SHADOW revision's screenshot rows, so the
+// server rejected ids the CLI had just displayed and diagnosing it took
+// hand-written tRPC calls.
+//
+// 🔴 `editTargetId` IS DELIBERATELY ABSENT, and it is what the issue asked for.
+// The server sends it on an approved listing, but `appapi.ListingRef` does not
+// decode it (see the 🔴 note on that type for why — it has been observed once,
+// and it would be a fourth way to name an edit target). This payload therefore
+// reports the two ids the CLI actually read; inventing the third from
+// `shadowId` would be this CLI asserting a value the server never handed it on
+// this call. If that decode ever lands, adding the field here is the follow-on.
+type listingStatusJSON struct {
+	// Slug is the app this was resolved for — the value the human line prints
+	// as "App:", from --slug or block.manifest.json, NOT from the server.
+	Slug string `json:"slug"`
+	// ParentID is the listing that owns the media, from getMyListingForEdit.
+	ParentID string `json:"parentId"`
+	// ShadowID is the in-flight revision draft, or null when there is none.
+	// 🔴 Explicitly null rather than omitted: `.shadowId` must answer for every
+	// listing, so a consumer never has to tell "no revision" from "old CLI".
+	ShadowID *string `json:"shadowId"`
+	// Status is the PARENT's lifecycle status (draft|pending|approved|…), from
+	// the getMyListingForApp lookup — the same value the human line prints.
+	Status string `json:"status"`
+	// HasPendingRevision means SUBMITTED, not "a shadow exists" — see the
+	// measurement in printListingStatus. It is the edit read's value.
+	HasPendingRevision bool              `json:"hasPendingRevision"`
+	Assets             listingAssetsJSON `json:"assets"`
+	Floor              listingFloorJSON  `json:"floor"`
+}
+
+type listingAssetsJSON struct {
+	Icon  listingAssetJSON `json:"icon"`
+	Cover listingAssetJSON `json:"cover"`
+	// Screenshots is never null — an empty gallery is [].
+	Screenshots []listingScreenshotJSON `json:"screenshots"`
+}
+
+// listingAssetJSON is one required slot. `present` is the CLI's own predicate
+// (appapi.ListingAsset.Present: a positive imageId), stated rather than left for
+// a consumer to re-derive from the id.
+type listingAssetJSON struct {
+	Present bool `json:"present"`
+	ImageID *int `json:"imageId"`
+}
+
+// listingScreenshotJSON is one gallery row. `id` is the `alsc_…` value
+// `rm-screenshot` and `reorder` take, and on a live listing it belongs to the
+// SHADOW named above — which is exactly the pairing #430 needed and could not
+// see.
+type listingScreenshotJSON struct {
+	ID      string  `json:"id"`
+	Order   int     `json:"order"`
+	Caption *string `json:"caption"`
+	ImageID *int    `json:"imageId"`
+}
+
+// listingFloorJSON is the publish-floor verdict. `missing` is never null — a met
+// floor is [] — and it holds the same names, in the same order, that the human
+// rendering prints.
+type listingFloorJSON struct {
+	Met     bool     `json:"met"`
+	Missing []string `json:"missing"`
+}
+
+// listingStatusPayload builds the --json object from the two reads the command
+// has already made. No styling, no writer: everything it returns is data.
+func listingStatusPayload(slug string, ref *appapi.ListingRef, view *appapi.ListingEditView) listingStatusJSON {
+	out := listingStatusJSON{
+		Slug:               slug,
+		ParentID:           view.ParentID,
+		ShadowID:           view.ShadowID,
+		Status:             ref.Status,
+		HasPendingRevision: view.HasPendingRevision,
+		Floor: listingFloorJSON{
+			Met:     floorMet(view),
+			Missing: floorMissing(view),
+		},
+	}
+	out.Assets.Icon = listingAssetJSON{Present: view.Assets.Icon.Present(), ImageID: view.Assets.Icon.ImageID}
+	out.Assets.Cover = listingAssetJSON{Present: view.Assets.Cover.Present(), ImageID: view.Assets.Cover.ImageID}
+	out.Assets.Screenshots = make([]listingScreenshotJSON, 0, len(view.Assets.Screenshots))
+	for _, s := range view.Assets.Screenshots {
+		out.Assets.Screenshots = append(out.Assets.Screenshots, listingScreenshotJSON{
+			ID: s.ID, Order: s.Order, Caption: s.Caption, ImageID: s.ImageID,
+		})
+	}
+	return out
 }
 
 func printListingStatus(w io.Writer, slug string, ref *appapi.ListingRef, view *appapi.ListingEditView) {
@@ -283,14 +404,7 @@ func printListingStatus(w io.Writer, slug string, ref *appapi.ListingRef, view *
 	if floorMet(view) {
 		fmt.Fprintln(w, ui.Success("Publish floor met — icon and cover are set."))
 	} else {
-		missing := []string{}
-		if !iconOK {
-			missing = append(missing, "icon")
-		}
-		if !coverOK {
-			missing = append(missing, "cover")
-		}
-		fmt.Fprintln(w, ui.Warn(fmt.Sprintf("Not publishable yet — missing %s.", strings.Join(missing, " and "))))
+		fmt.Fprintln(w, ui.Warn(fmt.Sprintf("Not publishable yet — missing %s.", strings.Join(floorMissing(view), " and "))))
 		if !iconOK {
 			fmt.Fprintf(w, "  Add one:  %s\n", ui.Code("civitai app listing set-icon <file>"))
 		}
@@ -866,6 +980,25 @@ func printFloorAfter(ctx context.Context, out io.Writer, client *appapi.Client, 
 // deliberate one.
 func floorMet(view *appapi.ListingEditView) bool {
 	return view.Assets.Icon.Present() && view.Assets.Cover.Present()
+}
+
+// floorMissing names WHAT the floor is still missing, in the order the human
+// rendering has always listed them (icon before cover). It is empty — never nil
+// — when the floor is met, because it is marshalled straight into `--json` and
+// `.floor.missing` must be an array on every listing.
+//
+// One rule, one place, for the same reason floorMet is: the human line and the
+// `--json` verdict answer the same question and must not be able to disagree
+// about which asset is absent.
+func floorMissing(view *appapi.ListingEditView) []string {
+	missing := []string{}
+	if !view.Assets.Icon.Present() {
+		missing = append(missing, "icon")
+	}
+	if !view.Assets.Cover.Present() {
+		missing = append(missing, "cover")
+	}
+	return missing
 }
 
 // printFloorLine prints the remaining floor gap for an ALREADY-READ view, so a
