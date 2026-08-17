@@ -120,7 +120,8 @@ platform caps the image IT made — it can pass here and be refused at attach.`,
   civitai app listing set-cover ./assets/cover.png
   civitai app listing add-screenshot ./shot.png --caption "Grid view"
   civitai app listing rm-screenshot alsc_01H...
-  civitai app listing reorder alsc_02 alsc_01 alsc_03`,
+  civitai app listing reorder alsc_02 alsc_01 alsc_03
+  civitai app listing submit-revision --changelog "Refreshed the gallery"`,
 	}
 	cmd.AddCommand(newAppListingStatusCmd())
 	cmd.AddCommand(newAppListingSetIconCmd())
@@ -128,6 +129,7 @@ platform caps the image IT made — it can pass here and be refused at attach.`,
 	cmd.AddCommand(newAppListingAddScreenshotCmd())
 	cmd.AddCommand(newAppListingRmScreenshotCmd())
 	cmd.AddCommand(newAppListingReorderCmd())
+	cmd.AddCommand(newAppListingSubmitRevisionCmd())
 	return cmd
 }
 
@@ -278,7 +280,7 @@ func printListingStatus(w io.Writer, slug string, ref *appapi.ListingRef, view *
 	iconOK := view.Assets.Icon.Present()
 	coverOK := view.Assets.Cover.Present()
 	fmt.Fprintln(w)
-	if iconOK && coverOK {
+	if floorMet(view) {
 		fmt.Fprintln(w, ui.Success("Publish floor met — icon and cover are set."))
 	} else {
 		missing := []string{}
@@ -843,13 +845,25 @@ func printFloorAfter(ctx context.Context, out io.Writer, client *appapi.Client, 
 	printFloorLine(out, view)
 }
 
+// floorMet is THE publish-floor predicate: a listing can go to review once it
+// has both an icon and a cover. It was open-coded at four sites and this is
+// three of them (printListingStatus, printFloorLine, and #436's
+// reportSubmitRefusedBelowFloor). The fourth reading is still inline in
+// reportStagedBelowFloor, left alone ON PURPOSE: civitai/cli#434 is in flight
+// and rewrites the lines around it, so folding that one in here would make the
+// two changes conflict textually for no behavioural gain. Fold it in once #434
+// lands.
+func floorMet(view *appapi.ListingEditView) bool {
+	return view.Assets.Icon.Present() && view.Assets.Cover.Present()
+}
+
 // printFloorLine prints the remaining floor gap for an ALREADY-READ view, so a
 // caller that has one does not fetch it twice.
 func printFloorLine(out io.Writer, view *appapi.ListingEditView) {
 	iconOK := view.Assets.Icon.Present()
 	coverOK := view.Assets.Cover.Present()
 	switch {
-	case iconOK && coverOK:
+	case floorMet(view):
 		fmt.Fprintln(out, "Publish floor met — icon and cover are set.")
 	case !iconOK && !coverOK:
 		fmt.Fprintln(out, "Still required before publishing: icon and cover.")
@@ -901,8 +915,14 @@ func newAppListingRmScreenshotCmd() *cobra.Command {
 		Use:   "rm-screenshot <screenshotId>",
 		Short: "Remove a screenshot by its id (see `app listing status`)",
 		Long: `Remove a screenshot from your listing by its screenshot id (the id shown by
-` + "`civitai app listing status`" + `, e.g. alsc_...). Note: for a LIVE listing,
-direct screenshot edits are only possible while a revision is open.`,
+` + "`civitai app listing status`" + `, e.g. alsc_...).
+
+On a listing that is already LIVE the removal lands in the open REVISION — the
+ids ` + "`status`" + ` prints are that revision's — and it is NOT submitted, so your
+public gallery keeps the screenshot until a moderator approves the revision.
+Curating a gallery is usually several removals, so the submit stays yours to
+make: run ` + "`civitai app listing submit-revision`" + ` when the revision is what you
+want. On a DRAFT listing the removal applies to the listing itself.`,
 		Example: `  civitai app listing rm-screenshot alsc_01H8XYZ
   civitai app listing rm-screenshot alsc_01H8XYZ --slug my-app`,
 		Args: cobra.ExactArgs(1),
@@ -911,20 +931,192 @@ direct screenshot edits are only possible while a revision is open.`,
 			if err != nil {
 				return err
 			}
-			// Validate the listing exists (clear error), then remove.
-			if _, err := resolveListingRefFromFlags(cmd, client, lc); err != nil {
+			// The ref is resolved to validate the listing exists (clear error) AND
+			// to learn its lifecycle status — civitai/cli#436: the status was
+			// resolved here and DISCARDED, so the live arm below could not exist.
+			ref, err := resolveListingRefFromFlags(cmd, client, lc)
+			if err != nil {
 				return err
 			}
 			ctx := cmdCtx(cmd)
 			if err := client.RemoveScreenshot(ctx, args[0]); err != nil {
 				return err
 			}
-			fmt.Fprintln(cmd.OutOrStdout(), ui.Success("Screenshot removed"))
+			reportScreenshotRemoved(cmd.OutOrStdout(), ref.Status == "approved")
 			return nil
 		},
 	}
 	lc.bind(cmd)
 	return cmd
+}
+
+// reportScreenshotRemoved prints the outcome of a removal, and the LIVE arm is
+// the whole of civitai/cli#436.
+//
+// 🔴 `✓ Screenshot removed` IS FALSE OF A LIVE LISTING, and it exited 0 saying
+// it. `removeScreenshot` sends only a `screenshotId`, so the server resolves the
+// owning listing from the row itself — and on an approved listing the `apls_…`
+// ids `app listing status` prints are the SHADOW revision's rows (`status`
+// renders getMyListingForEdit, which idempotently opens that shadow). So the
+// removal really happens, in the revision, and the public gallery keeps serving
+// the screenshot. Measured live in #436 against `model-benchmarking`:
+// `✓ Screenshot removed`, exit 0, `app listing status` then reporting 3
+// screenshots while `GET /api/v1/apps/model-benchmarking` still returned 4.
+//
+// The removal is deliberately NOT submitted here — see
+// newAppListingSubmitRevisionCmd for why the review cycle stays an explicit act
+// — so what this owes the user is the fact that nothing is published yet and the
+// name of the command that publishes it. A bare success line that distinguishes
+// nothing is exactly what the issue reports.
+func reportScreenshotRemoved(out io.Writer, live bool) {
+	if !live {
+		fmt.Fprintln(out, ui.Success("Screenshot removed"))
+		return
+	}
+	fmt.Fprintln(out, ui.Success("Screenshot removal staged on an open revision — not submitted for review yet."))
+	fmt.Fprintln(out, "Your live listing still shows this screenshot; the removal reaches the")
+	fmt.Fprintln(out, "public gallery only after a moderator approves the revision.")
+	fmt.Fprintf(out, "Publish it: %s — remove the rest first if you are still curating.\n",
+		ui.Code("civitai app listing submit-revision"))
+}
+
+// newAppListingSubmitRevisionCmd is the standalone submit — civitai/cli#436's
+// root cause, and the repair path for anyone who already hit it.
+//
+// 🔴 BEFORE THIS COMMAND, `submitListingRevision` HAD EXACTLY ONE CALL SITE:
+// step 7 of the attach flow. A user who staged a change any other way — a
+// removal, and after civitai/cli#434 nothing else — had staged something NO
+// command in this CLI could publish; #436's reporter got it to review by hand,
+// with a raw tRPC call. Three paths now need to submit, so the submit is its own
+// verb rather than a side effect of whichever command happened to run last.
+//
+// 🔴 IT DOES NOT AUTO-SUBMIT FROM `rm-screenshot`, AND THAT IS THE DECISION.
+// Curation is N removals, not one atomic operation, so auto-submitting on the
+// first would open a moderator review cycle in the middle of an edit. Whether a
+// shadow stays EDITABLE after submission is NOT measured — this repo has no way
+// to measure it — so auto-submit would be built on an assumption nobody has
+// checked, while fixing the false CLAIM is what actually closes #436.
+//
+// The `created` flag is the one structural guard available. `beginListingRevision`
+// is idempotent: it REUSES an open shadow (created=false) and only mints one when
+// none exists (created=true). So created=true means the user staged nothing —
+// submitting would send an empty revision to a moderator — and this refuses
+// instead. The residual, stated rather than hidden: a shadow opened by an
+// earlier `app listing status` read (which opens one as a side effect) and never
+// written to reports created=false, so an empty revision CAN still be submitted
+// that way. Narrowing that would need a shadow-vs-live diff this CLI cannot
+// compute; the server is free to refuse it, and this claims nothing it cannot
+// see.
+func newAppListingSubmitRevisionCmd() *cobra.Command {
+	var lc listingCommon
+	var changelog string
+	cmd := &cobra.Command{
+		Use:   "submit-revision",
+		Short: "Submit your live listing's open revision for moderator review",
+		Long: `Submit the REVISION your live listing already has open — the one that
+` + "`civitai app listing status`" + ` reports and that ` + "`rm-screenshot`" + ` writes into — for
+moderator re-review. Pass --changelog to describe the change.
+
+Only an approved (LIVE) listing has a revision: a draft or pending listing is
+edited directly, so there is nothing to submit and this refuses. It refuses too
+when there is no open revision to submit, rather than sending a moderator an
+empty one.
+
+The revision is submitted as it stands, so stage everything you want in one
+review cycle first. Submitting is idempotent — a revision already awaiting
+review returns that same request rather than opening a second.`,
+		Example: `  civitai app listing submit-revision
+  civitai app listing submit-revision --changelog "Dropped the outdated grid shot"
+  civitai app listing submit-revision --slug my-app`,
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runSubmitRevision(cmd, lc, changelog)
+		},
+	}
+	lc.bind(cmd)
+	cmd.Flags().StringVar(&changelog, "changelog", "", "changelog for the moderator review")
+	return cmd
+}
+
+func runSubmitRevision(cmd *cobra.Command, lc listingCommon, changelog string) error {
+	out := cmd.OutOrStdout()
+	client, err := newListingClient()
+	if err != nil {
+		return err
+	}
+	ref, err := resolveListingRefFromFlags(cmd, client, lc)
+	if err != nil {
+		return err
+	}
+	ctx := cmdCtx(cmd)
+
+	switch ref.Status {
+	case "rejected":
+		return fmt.Errorf("this listing was rejected — resubmit the app before editing its media")
+	case "removed":
+		return fmt.Errorf("this listing was removed by a moderator and can no longer be edited")
+	case "approved":
+	default:
+		// A draft/pending listing IS the edit target: every listing command
+		// writes it directly, so there is no revision and nothing was staged
+		// behind a review gate.
+		return fmt.Errorf("this listing is not live (status %s) — only an approved listing has revisions, and your changes already apply to it; check them with `civitai app listing status`", ref.Status)
+	}
+
+	shadowID, created, err := client.BeginListingRevision(ctx, ref.AppListingID)
+	if err != nil {
+		return err
+	}
+	if created {
+		return fmt.Errorf("there is no open revision to submit — stage a change first (for example `civitai app listing rm-screenshot <id>`), then re-run this command")
+	}
+	if changelog == "" {
+		changelog = "Update listing via civitai CLI"
+	}
+
+	rev, err := client.SubmitListingRevision(ctx, shadowID, changelog)
+	if err != nil {
+		// 🔴 THIS IS NOT reportStagedBelowFloor, AND THE DIFFERENCE IS THE EXIT
+		// CODE. That helper (#400) exists because a below-floor refusal is not a
+		// failure of a command whose job was to ATTACH — the image landed, so it
+		// exits 0. Here the submit IS the job the user asked for: exiting 0
+		// having submitted nothing would be civitai/cli#436's own false-success
+		// class, reproduced in the command that exists to fix it. So the error
+		// stands and the exit code with it; what is added is the diagnosis,
+		// printed as CONTEXT the way scanFailure prints it — never folded into
+		// the error text, which listingError's change arm owns alone.
+		reportSubmitRefusedBelowFloor(ctx, out, client, ref.AppListingID, err)
+		return err
+	}
+	fmt.Fprintln(out, ui.Success(fmt.Sprintf("Revision submitted — pending moderator review (%s).", rev.PublishRequestID)))
+	fmt.Fprintln(out, "Your live listing is unchanged until a moderator approves the revision.")
+	return nil
+}
+
+// reportSubmitRefusedBelowFloor prints WHY a revision submit was refused when
+// the listing's own state says the publish floor is the reason.
+//
+// It asks the same structural questions reportStagedBelowFloor does — was it a
+// REFUSAL (only a 400 can be the floor talking; a 500/503 says nothing about the
+// listing), and is the floor really unmet — and deliberately not the third one:
+// there is no asset this command attached, because submitting is all it did.
+// It prints nothing when it cannot answer, so a read failure or an unrelated
+// 400 leaves the server's own sentence as the whole story.
+func reportSubmitRefusedBelowFloor(ctx context.Context, out io.Writer, client *appapi.Client, appListingID string, submitErr error) {
+	if !errors.Is(submitErr, civitai.ErrBadRequest) {
+		return
+	}
+	view, err := client.GetMyListingForEdit(ctx, appListingID)
+	if err != nil || floorMet(view) {
+		return
+	}
+	fmt.Fprintln(out, "Nothing was submitted — this listing is below the publish floor.")
+	printFloorLine(out, view)
+	next := "civitai app listing set-icon <file>"
+	if view.Assets.Icon.Present() {
+		next = "civitai app listing set-cover <file>"
+	}
+	fmt.Fprintf(out, "Next: %s — then re-run this command.\n", ui.Code(next))
 }
 
 func newAppListingReorderCmd() *cobra.Command {

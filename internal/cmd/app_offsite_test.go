@@ -828,7 +828,9 @@ func TestAppStatusByIDDoesNotProbeTheStore(t *testing.T) {
 // same shared flow as set-icon/set-cover) and `reorder`
 // (resolveListingRefFromFlags, the same helper as rm-screenshot) unexercised —
 // so the claim "every subcommand" was two thirds measured. `app listing` has
-// exactly these six; if a seventh is added it belongs here.
+// exactly these SEVEN since civitai/cli#436 added `submit-revision` (which
+// resolves through resolveListingRefFromFlags, the same helper as
+// rm-screenshot); if an eighth is added it belongs here.
 func TestOffsiteRefusalReachesEverySubcommand(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -851,6 +853,9 @@ func TestOffsiteRefusalReachesEverySubcommand(t *testing.T) {
 		}},
 		{"reorder", func(*testing.T) []string {
 			return []string{"app", "listing", "reorder", "alsc_2", "alsc_1", "--slug", offsiteSlugA}
+		}},
+		{"submit-revision", func(*testing.T) []string {
+			return []string{"app", "listing", "submit-revision", "--slug", offsiteSlugA}
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
