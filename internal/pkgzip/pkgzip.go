@@ -236,8 +236,8 @@ func isDotenvSuffixed(name string) bool {
 // Forgejo `civitai-apps/<slug>` and deployed, i.e. durably published.
 //
 // 🔴 THIS RULE IS STILL LOAD-BEARING, BUT NOT FOR THE REASON IT ORIGINALLY WAS.
-// Until #435 the argument was that the file rule could not see `db.env` /
-// `api.env` inside a `.env.d/` — those names do not START with ".env" — so the
+// Until #435 the argument was that the file rule could not see `db.env`,
+// `api.env` or `local.env` inside a `.env.d/` — those names do not START with ".env" — so the
 // directory was the only thing stopping them. The `*.env` suffix rule now drops
 // all three wherever they sit, so that argument is spent.
 //
