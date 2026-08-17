@@ -716,7 +716,7 @@ func reportStagedBelowFloor(ctx context.Context, out io.Writer, client *appapi.C
 	if err != nil {
 		return false
 	}
-	if view.Assets.Icon.Present() && view.Assets.Cover.Present() {
+	if floorMet(view) {
 		return false // the floor is met, so it cannot be why this was refused
 	}
 	if !landed(view) {
@@ -846,13 +846,24 @@ func printFloorAfter(ctx context.Context, out io.Writer, client *appapi.Client, 
 }
 
 // floorMet is THE publish-floor predicate: a listing can go to review once it
-// has both an icon and a cover. It was open-coded at four sites and this is
-// three of them (printListingStatus, printFloorLine, and #436's
-// reportSubmitRefusedBelowFloor). The fourth reading is still inline in
-// reportStagedBelowFloor, left alone ON PURPOSE: civitai/cli#434 is in flight
-// and rewrites the lines around it, so folding that one in here would make the
-// two changes conflict textually for no behavioural gain. Fold it in once #434
-// lands.
+// has both an icon and a cover. It was open-coded at four sites; ALL FOUR now
+// ask it here — printListingStatus, reportStagedBelowFloor, printFloorLine and
+// #436's reportSubmitRefusedBelowFloor. #437 folded in three and left
+// reportStagedBelowFloor's copy inline only because civitai/cli#434 was
+// rewriting the lines around it at the time; #440 folded in the fourth once
+// that merged.
+//
+// One rule, one place — and here that is load-bearing rather than tidy, because
+// two of the four callers answer this ONE question with OPPOSITE outcomes on
+// purpose (AGENTS.md item 30): an unmet floor is PROGRESS to
+// reportStagedBelowFloor (the attach/reorder path — the staged change is what
+// the user asked for, exit 0) and a real FAILURE to
+// reportSubmitRefusedBelowFloor (submitting IS the job, exit non-zero). That
+// asymmetry is exactly the configuration in which a later edit to "the floor
+// check" changes only one site and nobody hears it. Sharing the predicate is
+// what makes any future disagreement audible: change the floor here and both
+// answers move together, or state the divergence at the call site as a
+// deliberate one.
 func floorMet(view *appapi.ListingEditView) bool {
 	return view.Assets.Icon.Present() && view.Assets.Cover.Present()
 }
