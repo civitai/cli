@@ -976,7 +976,16 @@ func reportScreenshotRemoved(out io.Writer, live bool) {
 	fmt.Fprintln(out, ui.Success("Screenshot removal staged on an open revision — not submitted for review yet."))
 	fmt.Fprintln(out, "Your live listing still shows this screenshot; the removal reaches the")
 	fmt.Fprintln(out, "public gallery only after a moderator approves the revision.")
-	fmt.Fprintf(out, "Publish it: %s — remove the rest first if you are still curating.\n",
+	// 🔴 THE ALTERNATIVE TO PUBLISHING NOW IS STAGING MORE, NOT REMOVING MORE
+	// (civitai/cli#443). This sentence used to end "remove the rest first if you
+	// are still curating" — an instruction to DELETE MORE grafted onto the
+	// instruction to publish, read by someone who had just asked how to publish.
+	// It is also wrong about what curating involves: an `add-screenshot` or a
+	// `reorder` stages into this same revision, so removal is one kind of
+	// pending change, not the kind. The whole line is pinned by
+	// rmLivePublishLine — naming the command inside a sentence is not the same
+	// claim as the sentence meaning what it should.
+	fmt.Fprintf(out, "Publish it: %s — or stage more changes first if you are still curating.\n",
 		ui.Code("civitai app listing submit-revision"))
 }
 
