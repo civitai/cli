@@ -19,31 +19,26 @@ whether reaching those apps is possible at all.
 
 ## State now
 
-- **`civitai/cli` `main` @ `fbefd64`**, clean. **The work this doc was written for is DONE.**
-- 🔴 **RETIRED: this section previously said "MERGED IS NOT DEPLOYED … the CLI half must not
-  ship", and next step 1 was "poll for the deploy". Both are now false** — they were replaced
-  here rather than struck through, so this bullet is the only record that they stood.
-  `civitai/civitai#3989`
-  deployed on 2026-08-17, and the CLI half shipped the same day. Measured once live, varying
-  only the selector: `radio` → `apl_01KYNB77D490DM6YS0C5Z7KYT7`, `comfy` →
-  `apl_01KYNC19W1M2020K1BS2JTA4VN`, `cosmetic-studio` → `apl_01KYAZSZPSX8BNSYNTDPD4JCTP`,
-  `vitrine` → `apl_01KWYD9DA34CYKQNC91W2T3SYN`, all `approved`; nonexistent slug still 404s.
-  `radio`'s id matches byte-for-byte what `GET /api/v1/apps/radio` returns — two routes, one
-  listing.
-- **`civitai app listing` reaches OFFSITE apps** (#453, `fbefd64`). `resolveListing` inverted:
-  the submission lookup is the ONSITE path, the slug selector is the fallback, gated on
-  `ErrNotFound` only. All seven subcommands funnel through it. Live before/after on #422's own
-  repro: `app listing status --slug radio` went **exit 4 → exit 0**. The refusal **narrowed**
-  rather than being deleted — it still fires for a server predating #3989 and for an app with
-  no listing row. `app status <slug>` is deliberately unchanged.
-- **`civitai/cli#422` is CLOSED** (both outcomes). `civitai/civitai#3984` closed by `#3989`.
-- **Ships with three known residuals**, none blocking, all from #453's delta re-audit:
-  `app_offsite_test.go:230-238`'s `assertListingTarget` comment claims it catches *every* way a
-  wrong listing can be addressed and does not (a renamed wire key walks it — measured
-  SURVIVED); the new #389 write-warning in `README.md:1496` and the `status` `Long` are
-  themselves unpinned (deleting either survives the suite); and one citation names a test file
-  for `401`/`504`/transport rows it does not contain (numbers verified correct, provenance
-  over-scoped).
+- **`civitai/cli` `origin/main` @ `de482c95`.** The base clone `/home/zach/workspace/civit/cli` sits
+  **3 commits behind** and is **deliberately not fast-forwarded** — other sessions are live in that
+  shared checkout (HEAD moved under two agents mid-run). `git -C … merge --ff-only origin/main`
+  when you own it.
+- **The offsite thread is CLOSED end to end.** Selector merged + deployed upstream, CLI half
+  shipped, both #422 outcomes delivered, and every claim it produced that did not survive has been
+  publicly retracted.
+- **Merged since the last update:**
+  | what | PR | merge |
+  |---|---|---|
+  | four residuals: `assertListingTarget` ledger, README write-warning pin, exit-code rows, #427's false clause | cli#459 | `1695e1f` |
+  | #389's measurement recorded; every "is open" surface updated | cli#462 | `de482c95` |
+  | `getMyListingForApp` rate-limited 60/60 with an enforcement test | civitai#4050 | `3ff050f2` |
+- **Issues closed:** `cli#422` (both outcomes), `cli#389` (outcome A, measured), `civitai#3984`,
+  `civitai#4003` (by #4050), `civitai#4008` (by infra, not code).
+- **Issues corrected rather than closed:** `civitai#3893` — premise falsified by #3989, body carries a
+  banner and the original is preserved; `cli#424` and `cli#427` — both narrowed, both still open.
+- **Filed:** `civitai#4059` (the provenance field `cli#411` is blocked on) and `civitai#4057`
+  (a real component-test regression on `main`, see below).
+- **Nothing of mine is in flight.** Open PRs `#461` and `#450` belong to other sessions.
 
 ## Open investigations — live diagnosis state
 
@@ -178,21 +173,52 @@ whether reaching those apps is possible at all.
 - **Next probe:** submit a throwaway app; before review, `GetMyListingForApp(ctx, "", "<slug>")`.
 - **Note:** #3989 widened past this shape entirely, so the answer now changes nothing operationally.
 
+### `civitai#4057` — `preview / component-tests` red on `main`, ImageCard overrun tolerance exceeded
+
+- **Symptom:** `preview / component-tests` fails on every `main`-based branch. **Report-only, not
+  blocking**, which is why it went unnoticed.
+- **Observed (verbatim, from the Tekton run for `pr-preview-4050-5f657`):**
+  ```
+  FAIL  component (chromium)
+    src/components/Cards/ImageCard.browser.test.tsx
+      > ImageCard action row at four-digit reaction counts
+      > still overruns the narrow column, by no more than it does today
+  AssertionError: expected 57 to be less than or equal to 50
+    ❯ src/components/Cards/ImageCard.browser.test.tsx:173:23
+  ```
+  **1 failed of 1670** (157 files, 156 green). A failure screenshot is emitted at
+  `src/components/Cards/__screenshots__/ImageCard.browser.test.tsx/ImageCard-action-row-…-1.png`.
+- **What the test is:** a **characterization test with a tolerance** — the name says *"still
+  overruns … by no more than it does today"*, and line 172 asserts the three-digit case does **not**
+  overrun. It pins a known-bad layout at a 50px budget; the overrun is now 57px.
+- **Window (measured, REST statuses API):** #4004 ✅ 19:34Z → **#4043 ❌ 20:49Z** → #4050 ❌ 21:26Z.
+  Green earlier the same day on #3986 (00:38Z) and #3988 (04:46Z).
+- **Ruled out:** *"it is #4050's rate limit"* — #4050 has no UI change and inherits the failure from
+  its base. *"the whole suite is broken"* — 1669 of 1670 pass. *"a flake"* — not established either
+  way; the assertion is a measured pixel budget, not a timing one.
+- **NOT established:** the cause. #4043 (`4288b08efc`, a notification-db dev-fixture fix) is only the
+  **earliest failing run**, and has no plausible path to card layout. **Do not attribute it.**
+- **Next probe:** open the emitted screenshot, then
+  `git -C /home/zach/workspace/civit/civitai log --since="2026-08-17T19:34Z" --until="2026-08-17T20:49Z" -- src/components/Cards/`
+  and the shared card CSS. If nothing in that window touches the card, widen the bisect.
+
 ## Next steps (ranked)
 
-1. **`civitai/cli#389` — `getMyListingForEdit` is classified a lookup and WRITES.** Now the
-   highest-value thread: it is the root cause of the shadow-revision hazard, and it caught
-   three separate actors during this work. See Gotchas.
-2. **The three #453 residuals** as one small PR — the 🟡 comment over-claim is the same
-   "a comment is a claim too" class this whole thread kept finding.
-3. **`civitai/cli#427`** — the refusal asserts ownership it never checked.
-4. **`civitai/civitai#4008`** — `globSync` breaks a convention scanner *including its own
-   positive control*, so it reports nothing in either direction on every PR it runs on.
-5. **`civitai/civitai#4003`** — `getMyListingForApp` is an unrate-limited existence oracle
-   (deliberately out of #3989's scope).
-6. **`civitai/cli#411` second half** — provenance stamp, still needs the server field.
-7. **`civitai/cli#424`** is archaeology now: only a genuinely PENDING first-version ONSITE app
-   is unmeasured, and nothing depends on the answer.
+1. **`civitai#4059`** — the two-column provenance ask. `cli#411`'s remaining half is blocked on it
+   and on nothing else. 🔴 Do NOT ship the CLI half first: `submitVersionSchema` is a plain
+   `z.object`, so extra keys are **silently stripped** — a stamping client would look like it worked
+   and store nothing.
+2. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
+   `appBlockId` in exactly 4 places, all query-key/invalidation; the slug is already in hand at the
+   page. The real blocker is `editorTabsFor`'s `appBlockId != null`, not the resolver.
+3. **`civitai#4057`** — the ImageCard tolerance. Live diagnosis below; the bisect window is the work.
+4. **`AGENTS.md` item 29's trigger** still describes a blanket refusal; #453 narrowed it to
+   "both lookups missed". Small, and the same drift class this thread kept closing.
+5. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
+   under full-suite load (`expected an unreachable-local-dev log line naming the host, got ""`),
+   8 clean reruns. Remove the timing dependency; do not re-run it away.
+6. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path. Web UI, or a
+   deliberate decision to leave them.
 
 ## Gotchas / decisions / dead-ends
 
@@ -323,23 +349,64 @@ whether reaching those apps is possible at all.
   and then fails the push, leaving it stranded. Preserve onto a branch → **verify with
   `ls-remote`** → only then `reset --keep`.
 
+- 🔴 **GREPPING FOR A STRING YOU DELIBERATELY QUOTED READS AS A REGRESSION. This fired TWICE.**
+  A content check for `MERGED IS NOT DEPLOYED` after retiring it returned 1 — the hit was the
+  *retraction bullet quoting it*. A check for `always works in the App-store` after fixing that
+  clause returned 2 — both were comments recording the retired wording. **Read the surrounding
+  lines; a grep count cannot distinguish a live claim from its own obituary.**
+- 🔴 **A MUTATION THAT DOES NOT APPLY PRINTS THE UNMUTATED RESULT, WHICH READS AS "SURVIVED".**
+  Verifying #4050's limiter, a regex missed because a new doc comment had shifted the block; the run
+  printed 5/5 green. **Assert the mutation LANDED before reading the verdict** — `rateLimit({`
+  count 16 → 15 is what caught it. Same class as the stale-bytecode trap, different mechanism.
+- 🔴 **AN AUDIT CAN BE CONFIDENTLY WRONG ABOUT A SURVIVOR.** The #453 delta re-audit reported the
+  #389 write-warning unpinned on **both** surfaces. False for the `status` `Long` half —
+  `TestAppListingStatusJSONHelpWarnsAboutTheShadowSideEffect` reddens on deletion. Only the README
+  half genuinely survived. A later checker caught it **by running both**, which the audit had not.
+- 🔴 **`mapOffsiteError` does NOT send "everything else" to 400** — `NOT_FOUND`→404,
+  `NOT_OWNED`**or**`FORBIDDEN`→**403**, `ALREADY_REPORTED`→409, remainder→400
+  (`app-listings.router.ts:252`). I relayed the oversimplified version into a brief without checking
+  that clause; corrected publicly on #389. The conclusion (all gates precede the write) was unaffected
+  — but *"the conclusion survives"* is not *"the fact I stated was true"*.
+- 🔴 **zsh ate a git ref.** `git show $B:src/...` — the `:s` is a **history modifier**, so the ref
+  expands to a well-formed WRONG string and git errors confusingly. **Brace it: `"${B}:${path}"`.**
+- 🔴 **`git checkout -- <file>` to revert a deliberate mutation takes your REAL edits with it.**
+  An agent hit this on `README.md` mid-run, caught it via `git diff --stat`, re-applied. Restore
+  from a `cp -a` copy, never from git.
+- 🔴 **A HELP-TEXT BUDGET IS A GUARD: SATISFY IT, DO NOT RAISE IT.** `helpBodyBudget = 1400` runes
+  (`internal/cmd/app_listing_help_test.go:329`) blocked a first draft at 1608. The fix was to
+  compress to *"civitai/cli#389 settled that a FAILED call writes nothing; a successful one still
+  does."* Raising a budget to fit your text is how the budget stops meaning anything.
+- **`fs.globSync` needs Node 22+.** `civitai#4008`'s scanner failure was `node:20-bookworm`
+  (v20.20.2, `typeof fs.globSync === "undefined"`) against a repo declaring `engines.node: ">=24"`.
+  Fixed in `datapacket-talos@5135b849`, **not** in application code — and the code fix I had
+  suggested would have papered over an unsupported runtime.
+- **The three CLI surfaces citing an issue are held consistent by three guards** — a whole-string
+  README pin, a help-text content check, and a **seam ledger** that fails if the warning drops off
+  either published surface. When you change one, expect all three to redden. That is them working.
+
 ## How to verify
 
 ```bash
-# The offsite repair, WITHOUT writing to anything (see Gotchas — `app listing status` WRITES).
+# The offsite repair, WITHOUT writing (see Gotchas — every `app listing` subcommand WRITES).
 cd /home/zach/workspace/civit/cli && make build
-./bin/civitai app view radio     # read-only; the app and its live media
+./bin/civitai app view radio          # read-only
 
-# The code is on main:
+# The shipped pieces are on main:
 git -C /home/zach/workspace/civit/cli show origin/main:internal/cmd/app_listing.go \
-  | grep -c 'errors.Is(slugErr, civitai.ErrNotFound)'          # 1
+  | grep -c 'errors.Is(slugErr, civitai.ErrNotFound)'      # 1  — the by-slug fallback gate
+git -C /home/zach/workspace/civit/cli show origin/main:internal/cmd/app_listing.go \
+  | grep -c 'which is open'                                # 0  — #389 framing retired
+git -C /home/zach/workspace/civit/civitai show origin/main:src/server/routers/app-listings.router.ts \
+  | grep -c 'Too many listing lookups'                     # 1  — the rate limit
 
-# Item 29's pinned body is intact (this is the one that breaks silently):
+# Item 29's pinned body (breaks silently; corrections go in the HEADER, above the `---`):
 git -C /home/zach/workspace/civit/cli show origin/main:claudedocs/decisions/29-offsite-refusal.md \
   | awk '/^29\. \*\*/{f=1} f' | grep -v '^[[:space:]]*$' | sha256sum
 #   must equal df86c7a851e2397db48eebd2f4b9d17e91565128ec4550510a62b785f552828d
 ```
 
-🔴 **The `app listing status --slug radio` command this doc previously recommended is a WRITE.**
-Do not use it to verify anything. Use `app view`, or the httptest fakes in the suite.
 🔴 **Do not use the `civitai` on `PATH`** — stale build.
+🔴 **An earlier version of this section recommended `app listing status --slug radio` as the
+verification command. That is a WRITE** — it mints a shadow revision on an approved listing. The
+recommendation stood for one revision of this doc and is recorded here because it was replaced,
+not struck through.
