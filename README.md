@@ -1299,7 +1299,8 @@ enumeration the table below might otherwise read as:
 
 The **at the project root** half is load-bearing, not a detail: the allow-list
 exists for the file the server build reads (`vite build` takes env files from
-`envDir`, which defaults to the project root) and the template a human reviewer
+`envDir`, which defaults to the directory the build runs in — the project root,
+for a project built from its own root) and the template a human reviewer
 reads, and a copy in a subdirectory can be neither. `.env-backup/.env.production`
 and `old/.env.production` are backups, and a backup of a dotenv file is the
 shape most likely to hold a real credential — so they go to the catch-all with
@@ -1310,7 +1311,7 @@ everything else.
 | `.env`, `.env.local`, `.env.*.local`, `.env.development`, `.env.test` — **and every other `.env*` name**, dotted or not: `.env.staging`, `.env-local`, and `.envrc` | **excluded** | the catch-all: any `.env*` the allow-list does not name is assumed dev-local and secret-bearing. The money template points a real `VITE_LIVE_BLOCK_TOKEN` at the git-ignored `.env.development.local`; `.envrc` is the direnv convention and routinely holds exported credentials. |
 | `.env.example`, `.env.sample` **at the project root** | **included** | meant to be placeholder templates the reviewer reads — **but see below: the allow-list is by NAME and nothing reads the contents**, and the money template's own `.env.example` carries an empty `VITE_LIVE_BLOCK_TOKEN=` line whose comment sends the real token to `.env.development.local` **because this file is uploaded**. A test pins the *scaffolded* line empty; nothing checks the copy in **your** project, so the packager will upload whatever you put there |
 | `.env.production` **at the project root** | **included** | the platform build runs `vite build` in production mode, which reads it |
-| the same three names **in any subdirectory** — `app/.env.production`, `.env-backup/.env.example`, `backups/.env.sample` | **excluded** | the allow-list is scoped to the root, because both of its reasons are: `vite build` reads env files from `envDir`, which defaults to the project root, and a template a reviewer reads is the one at the root. A copy at depth is a backup, and a backup of a dotenv file is exactly the shape that carries a live credential |
+| the same three names **in any subdirectory** — `app/.env.production`, `.env-backup/.env.example`, `backups/.env.sample` | **excluded** | the allow-list is scoped to the root, because both of its reasons are: `vite build` reads env files from `envDir`, which defaults to the directory the build runs in (the project root, unless you moved it — see the ⚠️ below), and a template a reviewer reads is the one at the root. A copy at depth is a backup, and a backup of a dotenv file is exactly the shape that carries a live credential |
 
 **Directories count too, and by a narrower rule.** A *directory* named `.env` or
 beginning with `.env.` — `.env.d/`, `.env.local/`, `.env.secrets/` — is excluded
@@ -1370,13 +1371,30 @@ the walk skips an excluded directory before it ever looks at a file name, at any
 depth beneath it. That is a second, independent reason those paths go: they
 would be dropped by the root scope even if their directory shipped.
 
-⚠️ **The root scope costs something too.** If your `vite.config` sets `root:` or
-`envDir:` to a subdirectory, the `.env.production` your build actually reads
-lives there — and this rule drops it. Neither scaffolded template sets either
-key, so the default (the project root) applies to anything `civitai app create`
-produced. If yours is different you will see it on the `Skipped` line of the
-very next `submit` or `--package-only` run, tagged `(.env*)`; move the file to
-the project root, or point `envDir` at the root, and it travels again.
+⚠️ **The root scope costs something too, and the affected set is wider than one
+`vite.config` key.** If your build reads its dotenv from anywhere other than the
+project root, the `.env.production` it actually reads lives there — and this
+rule drops it.
+
+Vite's `envDir` defaults to `config.root`, which defaults to `process.cwd()` —
+the directory the build is *invoked* in, not "the project root" in the bundle
+sense. So this is not only about a `vite.config` that sets `root:` or `envDir:`.
+It also reaches a `package.json` `build` script that relocates the root
+(`vite build --root app`) or runs the build from another directory at all
+(`pnpm --filter web build`, `npm --prefix web run build`, `cd web && vite
+build`), and a non-Vite toolchain (Next, Astro, webpack + `dotenv`) whose
+`.env.production` resolution is cwd-anchored the same way. In every one of those cases the manifest's `buildCommand` is still
+`npm run build`: the CLI reads the script's **name**, never its body, so it
+cannot tell you which of these you are. And a nested `outputDir` such as
+`packages/web/dist` is a valid manifest, so building from a subdirectory is a
+shape the platform permits rather than an exotic one.
+
+Neither scaffolded template sets `root:` or `envDir:`, and both build from the
+project root — so a project `civitai app create` produced and you have not
+restructured is unaffected. If yours is different you will see it on the
+`Skipped` line of the very next `submit` or `--package-only` run, tagged
+`(.env*)`; move the file to the project root, or point the build's env directory
+at the root, and it travels again.
 
 Keep secrets in a `.env`-dotted name — `.env.local`, `.env.d/` — and both rules
 drop them. Anything else is on you to check before you submit; `--package-only`
