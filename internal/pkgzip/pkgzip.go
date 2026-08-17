@@ -52,14 +52,19 @@ import (
 // 🔴 THESE ARE THE CLI'S OWN SANITY CAPS. THEY ARE NOT A MIRROR OF THE SERVER,
 // AND A PACKAGE THAT PASSES THEM CAN STILL BE REJECTED ON SIZE GROUNDS.
 //
-// This comment used to claim the opposite — "these caps mirror the server-side
-// submitVersion service so a package that the CLI accepts will not be rejected
-// on size grounds" — and issue #423 is the measured counterexample. An 8.20 MB
-// compressed bundle passed every cap here and the server refused it; a 2.32 MB
-// one was accepted. The false claim is what made that refusal unreadable: the
-// CLI's own preflight reported success about a bundle that could never land,
-// and the server's answer (`400: Invalid JSON`, an error about the PARSE) names
-// nothing size-shaped, so nothing anywhere pointed at the size.
+// This comment used to assert the opposite — that these numbers mirrored the
+// platform's, so a package the CLI accepted would not be refused on size — and
+// issue #423 is the measured counterexample. An 8.20 MB compressed bundle
+// passed every cap here and the server refused it; a 2.32 MB one was accepted.
+// The false claim is what made that refusal unreadable: the CLI's own preflight
+// reported success about a bundle that could never land, and the server's
+// answer (`400: Invalid JSON`, an error about the PARSE) names nothing
+// size-shaped, so nothing anywhere pointed at the size.
+//
+// The exact sentence, and the four error messages that carried the same claim,
+// are in #423 and in this change's commit — deliberately not requoted here,
+// because caps_claim_test.go bans those phrasings from this file outright, and
+// a quotation the guard has to make an exception for is a guard with a hole.
 //
 // 🔴 THE SERVER'S REAL BUNDLE CEILING IS NOT KNOWN HERE, AND MUST NOT BE
 // GUESSED. #423's measurement bounds it to the interval (2.32 MB, 8.20 MB] and
@@ -553,10 +558,11 @@ func Build(dir string) (*Result, error) {
 	}
 
 	if int64(len(buf.b)) > MaxBundleSizeBytes {
-		// NOT "server max": MaxBundleSizeBytes is this CLI's own cap, and the
-		// server's real ceiling is LOWER and unknown here (#423). Saying "server
-		// max" told an author that clearing this bar meant the server would take
-		// it, which is the claim #423 disproved.
+		// MaxBundleSizeBytes is this CLI's own cap, and the server's real
+		// ceiling is LOWER and unknown here (#423). The wording this replaced
+		// attributed the number to the platform, which told an author that
+		// clearing this bar meant the server would take the bundle — the claim
+		// #423 disproved. caps_claim_test.go keeps that attribution out.
 		return nil, fmt.Errorf("package is %d bytes compressed (the CLI's own cap is %d; the server's own limit is lower and is not known to this CLI — see issue #423)", len(buf.b), MaxBundleSizeBytes)
 	}
 
