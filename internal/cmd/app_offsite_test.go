@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -199,6 +200,42 @@ func listingRefBody(appListingID, status string) map[string]any {
 	}
 }
 
+// normaliseMessage collapses every whitespace run to one space so the pinned
+// literal below can be written across source lines. It normalises LAYOUT only —
+// every word, every punctuation mark and every backtick survives, so a reword is
+// still a failure. That is the point: line wrapping is not a claim, wording is.
+func normaliseMessage(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// wantOffsiteListingRefusal is the `app listing` refusal, WHOLE, for offsiteSlugA
+// with offsiteURLA.
+//
+// 🔴 WRITTEN FROM THE MESSAGE, NOT DERIVED FROM IT. It is a literal, never
+// `offsiteListingRefusal(offsiteSlugA, d)` — an expectation computed by calling
+// the function under test asserts only that the function is deterministic, which
+// is true of every wrong message too.
+//
+// 🔴 WHAT IT IS ACTUALLY GUARDING, so a future reader knows which words are
+// load-bearing rather than incidental. (a) NO ABSOLUTE: nothing here may say the
+// listing cannot be addressed / reached / read from this CLI, in any phrasing —
+// it can, on a server carrying civitai/civitai#3989, and the ban on one spelling
+// was walked by a synonym. (b) The causes named are the two that really land
+// here; "a listing this account does not own" appears ONLY as the case that is
+// refused 403 elsewhere, because after the fallback's error gate it no longer
+// reaches this message on a current server. (c) `civitai app submit` is named as
+// NOT the step, never as the step. (d) The slug rendered is the CALLER's
+// (`radio-zzz`), never the server's echo (`zzz-srv-radio`).
+const wantOffsiteListingRefusal = "`" + offsiteSlugA + "` is an OFFSITE app (registered at " + offsiteURLA + "), " +
+	"and this CLI could not reach its store listing here — `civitai app listing` resolves a listing through the " +
+	"app's block submission, which an offsite app has none of, and then by the slug alone; neither answered. " +
+	"`civitai app submit` is NOT the missing step: it packages a block bundle, and an offsite app is a registered " +
+	"URL, so no submission it could create exists to be made. " +
+	"The by-slug lookup reaches an offsite listing only on a Civitai carrying civitai/civitai#3989, so an older " +
+	"or self-hosted server, or an app with no listing row at all, each land here; a listing this account does not " +
+	"own is refused as a 403 by any server carrying #3989, and reaches this message only on one that does not. " +
+	"Its store listing may be live all the same — run `civitai app view " + offsiteSlugA + "` to see the icon and " +
+	"cover it is serving. Changing that media always works in the App-store listing UI on civitai.com, where this " +
+	"app was registered; that surface is authoritative whatever this CLI can reach"
+
 // bothOffsiteAndOnsite is the fixture table every case below shares.
 func bothOffsiteAndOnsite() map[string]string {
 	return map[string]string{
@@ -219,10 +256,76 @@ func bothOffsiteAndOnsite() map[string]string {
 // submission lookup 404s. Measured live 2026-08-17: 4/4 offsite apps resolved by
 // slug, `gen-matrix` (onsite) still resolved, an unknown slug still 404ed.
 
-// offsiteListingID is the `apl_` row the by-slug selector resolves to. It is
+// offsiteListingID is the `apl_` row the by-slug selector resolves to, and
+// offsiteShadowID is the revision the APPROVED path opens over it. Both are
 // deliberately NOT derivable from the slug, so an assertion that the command
 // addressed THIS listing cannot pass for one that echoed the caller's input.
-const offsiteListingID = "apl_zzz_offsite_1"
+//
+// 🔴 THAT SENTENCE WAS A CLAIM ABOUT A TEST THAT DID NOT EXIST. Until the fake
+// below started CHECKING the `listingId` it is sent, no assertion anywhere
+// observed which listing was addressed: hardcoding
+// `GetMyListingForEdit(ctx, "apl_WRONG_TARGET")` survived the FULL suite,
+// because the fake answered every id identically and the human output prints the
+// caller's slug rather than the id. A constant chosen so a wrong value cannot
+// coincide is necessary and does nothing on its own — something has to READ it.
+// See assertListingTarget.
+const (
+	offsiteListingID = "apl_zzz_offsite_1"
+	offsiteShadowID  = "apl_zzz_offsite_shadow_9"
+)
+
+// trpcListingID pulls `listingId` out of a tRPC call however it was sent — a
+// query's `?input={"json":{…}}` or a mutation's POST body — and returns "" when
+// the proc carries none (removeScreenshot sends only a screenshotId,
+// submitListingRevision only a shadowId, the ingests neither).
+//
+// Runs on the server goroutine, so t.Errorf and never t.Fatalf.
+func trpcListingID(t *testing.T, r *http.Request) string {
+	t.Helper()
+	raw := r.URL.Query().Get("input")
+	if raw == "" && r.Body != nil {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("unreadable tRPC body for %s: %v", r.URL.Path, err)
+			return ""
+		}
+		raw = string(b)
+	}
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var env struct {
+		JSON struct {
+			ListingID string `json:"listingId"`
+		} `json:"json"`
+	}
+	if err := json.Unmarshal([]byte(raw), &env); err != nil {
+		t.Errorf("undecodable tRPC input %q for %s: %v", raw, r.URL.Path, err)
+		return ""
+	}
+	return env.JSON.ListingID
+}
+
+// assertListingTarget fails the test when a listing-keyed proc was addressed at
+// anything other than want. This is the assertion civitai/cli#422's fixture
+// comment PROMISED and did not make.
+//
+// 🔴 IT IS A STATE ASSERTION, NOT A SPELLING ONE. It compares the id the wire
+// carried against the id the fixture published, so it catches every way the
+// wrong listing can be addressed — an echoed slug, a hardcoded literal, the
+// parent where the shadow was meant, a stale variable — rather than the one
+// substitution someone thought of. An empty id is ignored: the procs that carry
+// no listingId are not a target mistake, and treating "" as a mismatch would
+// make this fail for removeScreenshot on every run.
+func assertListingTarget(t *testing.T, r *http.Request, want string) {
+	t.Helper()
+	got := trpcListingID(t, r)
+	if got == "" || got == want {
+		return
+	}
+	t.Errorf("%s was addressed at listing %q, want %q — the command resolved the wrong target",
+		r.URL.Path, got, want)
+}
 
 // TestOffsiteAppListingResolvesBySlug is the failing path from civitai/cli#422,
 // reproduced and now green: an app with NO block submission whose listing the
@@ -332,22 +435,243 @@ func TestOffsiteRepairReachesEverySubcommand(t *testing.T) {
 	}
 }
 
+// TestOffsiteRepairReachesEverySubcommandOnAnApprovedListing is the state
+// PRODUCTION IS IN, and the shipped suite did not have it.
+//
+// 🔴 EVERY OFFSITE APP MEASURED ON civitai.com IS `approved` — `radio`, `comfy`,
+// `cosmetic-studio`, `vitrine`, all four (2026-08-17). The sibling test above
+// drives a DRAFT listing, where each subcommand writes the listing directly and
+// `submit-revision` refuses. None of that is the code an offsite author runs: on
+// an approved listing every mutating subcommand instead goes
+// beginListingRevision → attach to the SHADOW → submitListingRevision, and
+// `submit-revision` succeeds. A repair asserted only against `draft` is asserted
+// against a state no real offsite app is in.
+//
+// 🔴 THE ROWS ASSERT THE REVISION LANGUAGE, NOT MERELY SUCCESS. "staged on a
+// revision — pending moderator review" is the claim that separates the live path
+// from the draft one; a command that resolved the offsite listing and then took
+// the DRAFT branch would print `✓ Icon set` and exit 0, which is the same green
+// for a world where a live listing was edited without review. The fake's
+// assertListingTarget carries the other half: the attach must be addressed at
+// the shadow, never at the live parent.
+func TestOffsiteRepairReachesEverySubcommandOnAnApprovedListing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args func(t *testing.T) []string
+		// wantOut is the outcome, chosen from the LIVE arm's own wording.
+		wantOut string
+		// wantDraftWord must NOT appear: it is what the draft arm prints for the
+		// same command, so its absence is what proves the live branch ran.
+		wantNotOut string
+		// wantRevisionCalls / wantSubmitCalls pin the revision handshake itself,
+		// which no string in the output can distinguish from a lucky message.
+		wantRevisionCalls int32
+		wantSubmitCalls   int32
+	}{
+		{"status", func(*testing.T) []string {
+			return []string{"app", "listing", "status", "--slug", offsiteSlugA}
+		}, "approved", "", 0, 0},
+		{"set-icon", func(t *testing.T) []string {
+			return []string{"app", "listing", "set-icon", writePNG(t, 512, 512), "--slug", offsiteSlugA, "-y"}
+		}, "Icon staged on a revision — pending moderator review (alpr_zzz_offsite).", "Icon set", 1, 1},
+		{"set-cover", func(t *testing.T) []string {
+			return []string{"app", "listing", "set-cover", writePNG(t, 1600, 900), "--slug", offsiteSlugA, "-y"}
+		}, "Cover staged on a revision — pending moderator review (alpr_zzz_offsite).", "Cover set", 1, 1},
+		{"add-screenshot", func(t *testing.T) []string {
+			return []string{"app", "listing", "add-screenshot", writePNG(t, 1600, 900), "--slug", offsiteSlugA, "-y"}
+		}, "Screenshot staged on a revision — pending moderator review (alpr_zzz_offsite).", "Screenshot set", 1, 1},
+		{"rm-screenshot", func(*testing.T) []string {
+			return []string{"app", "listing", "rm-screenshot", "alsc_1", "--slug", offsiteSlugA}
+		}, "Screenshot removal staged on an open revision — not submitted for review yet.", "", 0, 0},
+		{"reorder", func(*testing.T) []string {
+			return []string{"app", "listing", "reorder", "alsc_2", "alsc_1", "--slug", offsiteSlugA}
+		}, "New screenshot order staged on a revision — pending moderator review (alpr_zzz_offsite).", "Reordered 2 screenshots", 1, 1},
+		// The mirror of the draft row: there the listing is not live so this
+		// refuses; here it IS live, so it submits the open revision.
+		{"submit-revision", func(*testing.T) []string {
+			return []string{"app", "listing", "submit-revision", "--slug", offsiteSlugA}
+		}, "Revision submitted — pending moderator review (alpr_zzz_offsite).", "not live (status", 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fastScanPoll(t)
+			fake := newOffsiteListingServerWithStatus(t, "approved")
+			listingEnv(t, fake.URL)
+
+			out, _, err := run(t, tc.args(t)...)
+			if err != nil {
+				if strings.Contains(err.Error(), "OFFSITE app") {
+					t.Fatalf("civitai/cli#422 outcome 1: this subcommand must REACH the approved offsite listing, not refuse:\n%s", err)
+				}
+				t.Fatalf("expected success against an APPROVED offsite listing, got: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, tc.wantOut) {
+				t.Errorf("missing %q in the output:\n%s", tc.wantOut, out)
+			}
+			if tc.wantNotOut != "" && strings.Contains(out, tc.wantNotOut) {
+				t.Errorf("this is the DRAFT arm's wording — the live listing was edited without opening a revision:\n%s", out)
+			}
+			if n := fake.revisionCalls.Load(); n != tc.wantRevisionCalls {
+				t.Errorf("beginListingRevision ran %d times, want %d", n, tc.wantRevisionCalls)
+			}
+			if n := fake.submitRevCalls.Load(); n != tc.wantSubmitCalls {
+				t.Errorf("submitListingRevision ran %d times, want %d", n, tc.wantSubmitCalls)
+			}
+			// PREMISE, as in the draft sibling: the by-slug fallback is what
+			// resolved this, and a successful command never reaches the probe.
+			if n := fake.listingCalls.Load(); n != 1 {
+				t.Errorf("the by-slug fallback must have resolved in exactly one call, ran %d times", n)
+			}
+			if n := fake.appCalls.Load(); n != 0 {
+				t.Errorf("PREMISE: a command that SUCCEEDED never reaches the diagnostic probe; it ran %d times", n)
+			}
+		})
+	}
+}
+
+// TestFallbackFailuresKeepTheirOwnError is civitai/cli#422's OTHER gate, and it
+// had no test at all.
+//
+// TestNonNotFoundSubmissionFailuresSkipTheSlugFallback covers the FIRST lookup:
+// a non-404 there must not be retried by slug. This covers the SECOND: once the
+// fallback HAS run, its own failure must not be swallowed.
+//
+// 🔴 THE BUG IT PINS SHIPPED AND LOOKED DELIBERATE. resolveListing wrote
+// `if ref, slugErr := client.GetMyListingForApp(…); slugErr == nil`, discarding
+// slugErr — so a 403, a 500 or a 503 from the by-slug arm fell through carrying
+// the SUBMISSION's not-found, `errors.Is(err, ErrNotFound)` stayed true, and the
+// command exited 4 printing a message whose three named causes did not include
+// "the server errored". Measured before the fix: a mutant that RETURNED slugErr
+// was killed by 15 tests, i.e. the swallow was pinned by the suite and read as
+// intentional. Nothing observed the failure it hid.
+//
+// The rows are the classifications the published contract now names, and the
+// 500 row is the one that matters most: it carries NO sentinel, so a swallow
+// shows up as 4 while the honest answer is 1 — two codes that mean opposite
+// things to a script.
+func TestFallbackFailuresKeepTheirOwnError(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		wantIs error
+		// wantMsg is a fragment of the FALLBACK's own error, taken from
+		// listingError's arm for that status — not from a shared prefix.
+		wantMsg string
+	}{
+		{"403 from the listings route", http.StatusForbidden,
+			`{"error":{"json":{"message":"you can only manage your own listings"}}}`,
+			civitai.ErrUnauthorized, "not permitted for your account (403)"},
+		{"500 from the listings route", http.StatusInternalServerError,
+			`{"error":{"json":{"message":"boom"}}}`, nil, ""},
+		{"503 from the listings route", http.StatusServiceUnavailable,
+			`{"error":{"json":{"message":"down"}}}`, civitai.ErrNetwork, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var listingCalls, appCalls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch {
+				case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
+					// The offsite shape: 200 + empty list, resolved to
+					// ErrNotFound client-side. This is what makes the fallback
+					// run — without it the row would be testing the sibling.
+					_, _ = w.Write([]byte(`{"submissions":[]}`))
+				case strings.Contains(r.URL.Path, "getMyListingForApp"):
+					listingCalls.Add(1)
+					w.WriteHeader(tc.status)
+					_, _ = w.Write([]byte(tc.body))
+				case strings.HasPrefix(r.URL.Path, "/api/v1/apps/"):
+					appCalls.Add(1)
+					// Serve a REAL offsite body: if the probe ever runs, the
+					// command produces the confident OFFSITE refusal, so the
+					// assertion below fails LOUDLY rather than on a count alone.
+					_, _ = w.Write([]byte(appDetailJSON(offsiteSlugA, "offsite", offsiteURLA)))
+				default:
+					t.Errorf("unexpected path %s", r.URL.Path)
+				}
+			}))
+			defer srv.Close()
+			listingEnv(t, srv.URL)
+
+			_, _, err := run(t, "app", "listing", "status", "--slug", offsiteSlugA)
+			if err == nil {
+				t.Fatal("a non-not-found failure of the by-slug fallback must stay an error")
+			}
+			// PREMISE: the fallback really ran. Without this the row is green
+			// for a CLI that never asks, which is the regression outcome 1 undoes.
+			if n := listingCalls.Load(); n != 1 {
+				t.Fatalf("PREMISE: the by-slug fallback must have run exactly once, ran %d times", n)
+			}
+			if errors.Is(err, civitai.ErrNotFound) {
+				t.Errorf("a %d from the FALLBACK must not inherit the submission's not-found (exit 4): %v", tc.status, err)
+			}
+			if tc.wantIs != nil && !errors.Is(err, tc.wantIs) {
+				t.Errorf("the fallback's own classification must survive, got %T: %v", err, err)
+			}
+			if tc.wantMsg != "" && !strings.Contains(err.Error(), tc.wantMsg) {
+				t.Errorf("the user must see the fallback's own error %q, got:\n%s", tc.wantMsg, err)
+			}
+			if strings.Contains(err.Error(), "OFFSITE") {
+				t.Errorf("a %d must not be rewritten into a claim about the app's kind:\n%s", tc.status, err)
+			}
+			if n := appCalls.Load(); n != 0 {
+				t.Errorf("only a not-found may be probed; the store route ran %d times", n)
+			}
+		})
+	}
+}
+
 // offsiteFake is a Civitai carrying civitai/civitai#3989, plus the call counters
 // the premise assertions read.
 type offsiteFake struct {
 	*httptest.Server
 	listingCalls     atomic.Int32
 	appCalls         atomic.Int32
+	revisionCalls    atomic.Int32
+	submitRevCalls   atomic.Int32
 	lastListingInput atomic.Value
 }
 
-// newOffsiteListingServer answers as that Civitai does: no block submission for
-// the app, a DRAFT listing resolvable BY SLUG, and every listing-keyed proc the
-// subcommands need. The `/api/v1/apps/` arm FAILS the test rather than answering
-// — reaching the kind probe means the command failed, and a fake that served it
-// would hide that behind today's generic message.
+// newOffsiteListingServer is the DRAFT offsite listing.
 func newOffsiteListingServer(t *testing.T) *offsiteFake {
 	t.Helper()
+	return newOffsiteListingServerWithStatus(t, "draft")
+}
+
+// newOffsiteListingServerWithStatus answers as a Civitai carrying #3989 does: no
+// block submission for the app, a listing in `status` resolvable BY SLUG, and
+// every listing-keyed proc the subcommands need. The `/api/v1/apps/` arm FAILS
+// the test rather than answering — reaching the kind probe means the command
+// failed, and a fake that served it would hide that behind today's generic
+// message.
+//
+// 🔴 `approved` IS THE STATE PRODUCTION IS IN, AND THE SHIPPED SUITE ONLY HAD
+// `draft`. All four offsite apps measured on civitai.com are approved, and the
+// two paths are not the same code: on a draft the subcommands write the listing
+// directly, while on an approved one each runs ingest → beginListingRevision →
+// attach-to-the-SHADOW → submitRevision, and `submit-revision` flips from
+// refusing ("not live (status draft)") to succeeding. A suite that models only
+// `draft` is structurally blind to every defect on the revision path — including
+// attaching to the parent instead of the shadow, which would edit a LIVE listing
+// without moderator review.
+//
+// 🔴 IT ASSERTS *WHICH* LISTING EACH PROC WAS ADDRESSED AT. That is what makes
+// the approved fixture worth more than a second copy of the draft one: the
+// parent and the shadow are different ids here, so "the command attached
+// something" and "the command attached it to the revision" stop being the same
+// green. See assertListingTarget.
+func newOffsiteListingServerWithStatus(t *testing.T, status string) *offsiteFake {
+	t.Helper()
+	live := status == "approved"
+	// The attach/reorder target: the shadow revision on a live listing, the
+	// listing itself on a draft one.
+	attachTarget := offsiteListingID
+	if live {
+		attachTarget = offsiteShadowID
+	}
+	var shadowID any
+	if live {
+		shadowID = offsiteShadowID
+	}
 	f := &offsiteFake{}
 	f.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -361,11 +685,15 @@ func newOffsiteListingServer(t *testing.T) *offsiteFake {
 				_, _ = w.Write([]byte(`{"error":{"json":{"message":"No listing found"}}}`))
 				return
 			}
-			trpcData(w, listingRefBody(offsiteListingID, "draft"))
+			trpcData(w, listingRefBody(offsiteListingID, status))
 		case strings.Contains(r.URL.Path, "getMyListingForEdit"):
+			// Always the PARENT: every caller passes ref.AppListingID, and the
+			// server resolves the shadow itself. A command that passed the shadow
+			// here would be reading the wrong row.
+			assertListingTarget(t, r, offsiteListingID)
 			trpcData(w, map[string]any{
-				"parentId": offsiteListingID, "slug": "server-echo", "status": "draft",
-				"hasPendingRevision": false, "shadowId": nil,
+				"parentId": offsiteListingID, "slug": "server-echo", "status": status,
+				"hasPendingRevision": false, "shadowId": shadowID,
 				"assets": map[string]any{
 					"icon":  map[string]any{"imageId": 11, "url": "http://x/i.png"},
 					"cover": map[string]any{"imageId": 12, "url": "http://x/c.png"},
@@ -386,17 +714,39 @@ func newOffsiteListingServer(t *testing.T) *offsiteFake {
 		case strings.Contains(r.URL.Path, "persistAssetImage"):
 			trpcData(w, map[string]any{"imageId": 91})
 		case strings.Contains(r.URL.Path, "setIcon"):
+			assertListingTarget(t, r, attachTarget)
 			trpcData(w, map[string]any{"status": "attached", "iconId": 4242})
 		case strings.Contains(r.URL.Path, "setCover"):
+			assertListingTarget(t, r, attachTarget)
 			trpcData(w, map[string]any{"status": "attached", "coverId": 91})
 		case strings.Contains(r.URL.Path, "addScreenshot"):
+			assertListingTarget(t, r, attachTarget)
 			trpcData(w, map[string]any{"status": "attached", "id": "alsc_new", "order": 2})
-		case strings.Contains(r.URL.Path, "removeScreenshot"),
-			strings.Contains(r.URL.Path, "reorderScreenshots"):
+		case strings.Contains(r.URL.Path, "reorderScreenshots"):
+			assertListingTarget(t, r, attachTarget)
 			trpcData(w, map[string]any{"ok": true})
+		case strings.Contains(r.URL.Path, "removeScreenshot"):
+			// Keyed by screenshotId alone — the server resolves the owning
+			// listing from the row, which is civitai/cli#436's whole mechanism.
+			trpcData(w, map[string]any{"ok": true})
+		case strings.Contains(r.URL.Path, "submitListingRevision"):
+			f.submitRevCalls.Add(1)
+			if !live {
+				t.Errorf("a DRAFT listing has no revision to submit — submitListingRevision must not be called")
+			}
+			trpcData(w, map[string]any{"publishRequestId": "alpr_zzz_offsite"})
 		case strings.Contains(r.URL.Path, "beginListingRevision"):
-			t.Errorf("a DRAFT listing has no shadow revision — beginListingRevision must not be called")
-			trpcData(w, map[string]any{"shadowId": "apl_shadow", "created": true})
+			f.revisionCalls.Add(1)
+			if !live {
+				t.Errorf("a DRAFT listing has no shadow revision — beginListingRevision must not be called")
+				trpcData(w, map[string]any{"shadowId": "apl_shadow", "created": true})
+				return
+			}
+			assertListingTarget(t, r, offsiteListingID)
+			// created=false — the shadow already exists, which is the state
+			// `submit-revision` requires (created=true means nothing was staged
+			// and it refuses). The attach paths do not read this flag.
+			trpcData(w, map[string]any{"shadowId": offsiteShadowID, "created": false})
 		case strings.HasPrefix(r.URL.Path, "/api/v1/apps/"):
 			f.appCalls.Add(1)
 			t.Errorf("the kind probe ran, so a command that should have resolved did not: %s", r.URL.Path)
@@ -543,8 +893,16 @@ func TestOnsiteHappyPathMakesNoExtraCall(t *testing.T) {
 // real premise rather than a name — without it this passes for a CLI that never
 // tries the fallback at all, which is the exact regression outcome 1 undoes.
 //
-// The assertion it LOST is deliberate: `cannot be addressed from this CLI` is
-// now a false sentence, so it is asserted ABSENT rather than present.
+// 🔴 THE RETIRED ABSOLUTE IS PINNED BY THE WHOLE STRING, NOT BY BANNING A
+// SPELLING — AND THE SPELLED VERSION WAS WALKABLE. This test used to check only
+// `!strings.Contains(msg, "cannot be addressed from this CLI")`. Measured:
+// re-inserting the same false absolute as a SYNONYM — "can never be reached from
+// this CLI" — SURVIVED the entire suite. That is the #367 / #382 / #393 class
+// this file's own header names, arrived at from the prose side: a guard on WORDS
+// is walked by REWORDING, so the guard has to be on the whole normalised string.
+// A cosmetic reword now fails this test; that is the price of a machine-readable
+// claim, and the fix is to update the literal AFTER re-reading the copy against
+// the code, never to weaken the comparison back to a keyword.
 func TestAppListingOffsiteRefusesPrecisely(t *testing.T) {
 	ps := newAppProbeServer(t, bothOffsiteAndOnsite())
 
@@ -558,11 +916,11 @@ func TestAppListingOffsiteRefusesPrecisely(t *testing.T) {
 	if strings.Contains(msg, "run `civitai app submit` first") {
 		t.Errorf("the dead-end advice is the regression — `app submit` cannot succeed for an offsite app:\n%s", msg)
 	}
-	// The retired absolute. `app listing` CAN address an offsite listing now, so
-	// a message still claiming otherwise is a claim the code contradicts.
-	if strings.Contains(msg, "cannot be addressed from this CLI") {
-		t.Errorf("civitai/cli#422 outcome 1 retired this sentence — the CLI reaches offsite listings on a server "+
-			"carrying civitai/civitai#3989, so the refusal may only report THIS lookup:\n%s", msg)
+	// The retired absolute, pinned STRUCTURALLY — see wantOffsiteListingRefusal.
+	if got := normaliseMessage(msg); got != wantOffsiteListingRefusal {
+		t.Errorf("the `app listing` refusal is pinned WHOLE, not by banned spellings (civitai/cli#367, #382, #393).\n"+
+			"If you changed the copy on purpose, re-read it against the code and update the literal.\n want: %s\n got:  %s",
+			wantOffsiteListingRefusal, got)
 	}
 	for _, want := range []string{
 		"OFFSITE app",
@@ -998,6 +1356,16 @@ func TestProbeFailureKeepsTodaysMessage(t *testing.T) {
 					tc.serve(w, r)
 					return
 				}
+				// The by-slug arm 404s: this test is about the PROBE failing,
+				// so the fallback must miss the way a real Civitai misses (no
+				// listing row) rather than by handing getMyListingForApp the
+				// submissions envelope, which is an undecodable body and a
+				// different failure entirely. See emptySubmissionsServer.
+				if strings.Contains(r.URL.Path, "getMyListingForApp") {
+					w.WriteHeader(http.StatusNotFound)
+					_, _ = w.Write([]byte(`{"error":{"json":{"message":"No listing found for this app"}}}`))
+					return
+				}
 				_, _ = w.Write([]byte(`{"submissions":[]}`))
 			}))
 			defer srv.Close()
@@ -1077,6 +1445,20 @@ func TestOffsiteProbeDoesNotHoldTheCommandOpen(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/v1/apps/") {
 			<-block
+			return
+		}
+		// 🔴 THE BY-SLUG ARM MUST 404, NOT FALL THROUGH TO THE CATCH-ALL. This
+		// handler used to answer EVERY path with the submissions envelope, so
+		// getMyListingForApp received `{"submissions":[]}` and failed to DECODE
+		// — a failure that is not a not-found. Once resolveListing stopped
+		// swallowing the fallback's own error that surfaced as `unexpected
+		// appListings.getMyListingForApp response`, which is the honest report
+		// of a server answering nonsense but is not the server this test is
+		// about. A 404 is what a Civitai with no listing row for the app really
+		// says, and it is what keeps this test measuring the PROBE's deadline.
+		if strings.Contains(r.URL.Path, "getMyListingForApp") {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":{"json":{"message":"No listing found for this app"}}}`))
 			return
 		}
 		_, _ = w.Write([]byte(`{"submissions":[]}`))

@@ -50,11 +50,17 @@ import (
 // submissions, and no listing selector repairs that. Do not collapse the two
 // messages now that only one of them reports a gap; see offsiteStatusRefusal.
 // (b) The `app listing` refusal NARROWED rather than vanished: it is what a
-// caller gets when the by-slug lookup ALSO misses — a server that predates #3989
-// (older or self-hosted), an app with no listing row, or a listing this account
-// does not own. `offsiteListingRefusal` was reworded to match; it no longer
-// claims the listing "cannot be addressed from this CLI", because in the normal
-// case it now can. The upstream ask that produced #3989 was civitai/civitai#3984.
+// caller gets when the by-slug lookup ALSO returns NOT-FOUND — a server that
+// predates #3989 (older or self-hosted), or an app with no listing row.
+// A listing the caller does not OWN is no longer in that list: `getMyListingForApp`
+// answers NOT_OWNED → FORBIDDEN for it (`resolveListingRole`,
+// `civitai/civitai → src/server/services/blocks/offsite-listing.service.ts:1772`,
+// mapped at `app-listings.router.ts:637-654`), and resolveListing returns that 403
+// with its own exit code instead of folding it into this message — so it reaches
+// the refusal only on a server that predates #3989, where the same listing 404s.
+// `offsiteListingRefusal` was reworded to match; it no longer claims the listing
+// "cannot be addressed from this CLI", because in the normal case it now can. The
+// upstream ask that produced #3989 was civitai/civitai#3984.
 //
 // 🔴 `appBlockId` IS NOT A KIND DISCRIMINATOR, AND THIS COMMENT USED TO SAY IT
 // WAS. The sentence above read "an offsite app has no appBlockId — that is
@@ -102,23 +108,41 @@ import (
 // as findings, and deliberately NOT fixed here (civitai/cli#427).
 // ---------------------------------------------------------------------------
 //
-// 1. THE REFUSAL ASSERTS THINGS THAT ARE FALSE FOR A SLUG THE CALLER DOES NOT
-//    OWN. offsiteApp performs no ownership check, and GET /api/v1/apps/{slug} is
-//    the PUBLIC catalog, so the app whose kind is read may belong to a stranger.
-//    `civitai app listing` then says "an offsite app's store listing cannot be
-//    addressed from this CLI" and points at "the App-store listing UI … where
-//    this app was registered", both of which read as advice to a person who
-//    could act on it. This predates the refusal — the message it replaced said
-//    "run `civitai app submit` first", equally false for someone else's slug —
-//    so it is a pre-existing wrongness this change carries forward rather than
-//    one it introduced. Closing it needs an ownership signal these two commands
-//    do not have on the error path.
+// 1. THE REFUSAL STILL ASSERTS THINGS THAT ARE FALSE FOR A SLUG THE CALLER DOES
+//    NOT OWN, THOUGH LESS THAN IT DID. offsiteApp performs no ownership check,
+//    and GET /api/v1/apps/{slug} is the PUBLIC catalog, so the app whose kind is
+//    read may belong to a stranger. What #422 outcome 1 CLOSED is the absolute:
+//    the sentence "an offsite app's store listing cannot be addressed from this
+//    CLI" is deleted, and its replacement names the stranger's case explicitly —
+//    as the case that is refused 403 ELSEWHERE rather than reported here, which
+//    is a truer thing to tell them than either the old absolute or the "three
+//    equal causes" wording that briefly replaced it.
+//    What is STILL false for them is the advice
+//    that follows: "Changing that media always works in the App-store listing UI
+//    on civitai.com, where this app was registered" reads as an instruction to a
+//    person who could act on it, and they cannot. (`civitai app view <slug>`,
+//    the other command named, is a public read and is true for anyone.) This
+//    predates the refusal — the message it replaced said "run `civitai app
+//    submit` first", equally false for someone else's slug — so it is a
+//    pre-existing wrongness this change carries forward rather than one it
+//    introduced. Closing it needs an ownership signal these two commands do not
+//    have on the error path. Note the CLI cannot infer one from the by-slug
+//    miss: `getMyListingForApp` refuses a listing you do not own with NOT_OWNED
+//    (→ FORBIDDEN), which resolveListing now returns AS a 403 rather than
+//    folding into this message at all — so the stranger case that still reaches
+//    here is the one where the store catalog knows the app and the listings
+//    route does not answer for it.
 //
-// 2. THE PROBE IS AN EXTRA ROUND TRIP ON THE MOST COMMON ERROR PATH, WITH NO OFF
-//    SWITCH. Every `no such submission` — the ordinary "I have not submitted yet"
-//    case, which is far more common than an offsite app — now pays one bounded
-//    (5s) request before printing. That is a COST, not a defect: it buys the
-//    diagnosis, it cannot make the command fail differently (every probe failure
+// 2. THE ERROR PATH NOW COSTS THREE BOUNDED REQUESTS, WITH NO OFF SWITCH. Every
+//    `no such submission` — the ordinary "I have not submitted yet" case, which
+//    is far more common than an offsite app — pays the submissions lookup that
+//    already failed, then resolveListing's by-slug fallback (30s, the client's
+//    own per-request budget — see the 🟡 note on resolveListing for why that one
+//    is deliberately NOT capped at a diagnostic's 5s), then this probe (5s)
+//    before printing. It was ONE extra request when #422 outcome 2 shipped; the
+//    fallback added the second, and this line said "one" for the length of that
+//    PR. That is a COST, not a defect: it buys the diagnosis and the offsite
+//    repair, it cannot make the command fail differently (every probe failure
 //    collapses to today's message, pinned), and no flag or env var disables it.
 //    If that cost is ever measured to matter, the knob goes here.
 
@@ -318,15 +342,25 @@ func offsiteRegisteredAt(d *civitai.AppDetail) string {
 }
 
 // offsiteListingRefusal is what `civitai app listing <sub>` says when BOTH of
-// resolveListing's lookups missed.
+// resolveListing's lookups answered NOT-FOUND.
 //
 // 🔴 IT NO LONGER SAYS THE LISTING "CANNOT BE ADDRESSED FROM THIS CLI", BECAUSE
 // IN THE NORMAL CASE IT NOW CAN (civitai/cli#422 outcome 1). That sentence was
 // this message's thesis until `civitai/civitai#3989` deployed; keeping it would
 // be the file header's own hazard — a claim the code contradicts — asserted to
 // the one person who cannot check it. What is left is a report about THIS
-// invocation: the CLI could not reach the listing HERE, and the three ways that
-// happens are named so the reader can tell which one they are in.
+// invocation: the CLI could not reach the listing HERE, and the ways that happens
+// are named so the reader can tell which one they are in.
+//
+// 🔴 "A LISTING THIS ACCOUNT DOES NOT OWN" IS NAMED AS THE CASE THAT DOES *NOT*
+// LAND HERE, and that is the second claim this message had to stop making. It
+// listed not-owned as one of three equal causes; on a server carrying #3989 that
+// is false — the by-slug arm resolves the row and then refuses it 403 (NOT_OWNED
+// → FORBIDDEN, see the file header for the upstream file:line), which
+// resolveListing now returns as a 403 rather than swallowing. Not-owned reaches
+// this message only on a server that predates #3989, where the narrower `where`
+// clause excludes the row and it 404s like an absent one. Saying so is the
+// difference between a reader who checks their account and one who does not.
 //
 // 🔴 THE TWO MESSAGES ARE NOT INTERCHANGEABLE AND MUST NOT BE COLLAPSED, and the
 // asymmetry GREW rather than shrank. offsiteStatusRefusal reports a permanent
@@ -351,7 +385,8 @@ func offsiteListingRefusal(slug string, d *civitai.AppDetail) string {
 			"and then by the slug alone; neither answered. `civitai app submit` is NOT the missing step: it packages a block "+
 			"bundle, and an offsite app is a registered URL, so no submission it could create exists to be made.\n"+
 			"The by-slug lookup reaches an offsite listing only on a Civitai carrying civitai/civitai#3989, so an older or "+
-			"self-hosted server, a listing this account does not own, or an app with no listing row at all each land here.\n"+
+			"self-hosted server, or an app with no listing row at all, each land here; a listing this account does not own "+
+			"is refused as a 403 by any server carrying #3989, and reaches this message only on one that does not.\n"+
 			"Its store listing may be live all the same — run `civitai app view %s` to see the icon and cover it is serving. "+
 			"Changing that media always works in the App-store listing UI on civitai.com, where this app was registered; "+
 			"that surface is authoritative whatever this CLI can reach",
