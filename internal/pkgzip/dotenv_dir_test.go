@@ -19,15 +19,20 @@ import (
 //
 // 🔴 THE FILE RULES DO NOT COVER FOR THE DIRECTORY RULE — but the reason
 // changed in #435 and this header used to state the retired one. It said the
-// file rule could not see `db.env` / `api.env` inside a `.env.d/`; the `*.env`
-// suffix rule now drops all three of those wherever they sit, and measurement
+// file rule could not see `db.env`, `api.env` or `local.env` inside a `.env.d/`;
+// the `*.env` suffix rule now drops all three wherever they sit, and measurement
 // confirms they stay dropped with the directory rule removed.
 //
 // The rule is still load-bearing for the reason that survives: the file rules
 // are NAME rules, and a secrets container holds arbitrary names. Measured with
-// isDotenvShaped removed from isExcludedDir — `.env.d/credentials.json`,
-// `.env.d/id_rsa`, `.env.d/notes.txt`, `.env.local/token` and the allow-listed
-// `.env.d/.env.production` all became bundle content. Those are pinned below.
+// isDotenvShaped removed from isExcludedDir, straight off this test's own
+// failure output — six paths became bundle content:
+//
+//	.env.d/credentials.json   .env.d/id_rsa    .env.local/token
+//	.env.local/value          .env/value       .env.d/.env.production
+//
+// Only the last is the allow-list case; the other five are names no file rule
+// reaches. All six are planted below.
 //
 // The fixture plants BOTH SHAPES of every name it names. The shape that hid this
 // class twice is a fixture that only ever plants the type its author had in mind:
@@ -48,6 +53,22 @@ func TestBuildExcludesDotenvShapedDirectories(t *testing.T) {
 	writeFile(t, dir, "src/.env.d/api.env", leak)
 	// Build artifact shaped as a directory.
 	writeFile(t, dir, "artifact.zip/payload.bin", "x")
+
+	// ARBITRARY NAMES INSIDE A CONTAINER. No file rule reaches any of these:
+	// they neither start nor end with ".env". They are what a secrets directory
+	// actually holds, and they are why the rule survives the arrival of the
+	// *.env suffix rule.
+	//
+	// 🔴 HONEST ABOUT THEIR STRENGTH: these three are DOCUMENTATION, not
+	// coverage. Ablated singly and all together against four directory-rule
+	// mutants, every mutant still dies — because `.env.local/value` and
+	// `.env/value` above already witness "arbitrary name inside a dotenv
+	// container". They are here so the class is legible at the point of use;
+	// the not-one-row-per-branch note BELOW is about the five kept-name rows,
+	// not about these.
+	writeFile(t, dir, ".env.d/credentials.json", leak)
+	writeFile(t, dir, ".env.d/id_rsa", leak)
+	writeFile(t, dir, ".env.local/token", leak)
 
 	// 🔴 KEPT NAMES INSIDE EXCLUDED DIRECTORIES — asserted against Build, not
 	// against the string predicate, because the two are a seam and only Build
@@ -70,14 +91,6 @@ func TestBuildExcludesDotenvShapedDirectories(t *testing.T) {
 	// (the rule is about every ancestor, not the parent), and `dist/.env.example`
 	// is the only coverage of a kept name that is not `.env.production`. Do not
 	// delete one on the strength of "another row covers that branch".
-	// 🔴 ARBITRARY NAMES INSIDE A CONTAINER — the rows the directory rule
-	// uniquely saves. No file rule reaches any of these: they neither start nor
-	// end with ".env". They are what a secrets directory actually holds, and
-	// they are why the rule survives the arrival of the *.env suffix rule.
-	writeFile(t, dir, ".env.d/credentials.json", leak)
-	writeFile(t, dir, ".env.d/id_rsa", leak)
-	writeFile(t, dir, ".env.local/token", leak)
-
 	writeFile(t, dir, ".env.d/.env.production", leak)           // dotenv-shaped dir
 	writeFile(t, dir, "node_modules/.env.production", leak)     // fixed name
 	writeFile(t, dir, "node_modules/pkg/.env.production", leak) // …at depth

@@ -170,6 +170,15 @@ func TestExclusionRulesAreCaseInsensitive(t *testing.T) {
 		{"environment.ts", false, "near-miss: does not end in .env"},
 		{"env", false, "near-miss: no extension"},
 		{"envelope.tsx", false, "near-miss"},
+		// 🔴 The VCS map is a THIRD fixed-name list and it is not folded either.
+		// The package doc states `.GIT` is packaged as a known residual; until
+		// this row, nothing pinned it — folding the vcsMetadataNames lookup
+		// passed the full 20-package suite while changing what ships. A residual
+		// worth documenting is a residual worth guarding, in the direction that
+		// makes a change to it visible rather than silent.
+		{".GIT", false, "VCS fixed-name map is not case-folded (documented residual)"},
+		{".Git", false, "same"},
+		{".git", true, "…but the exact name still goes, either shape (#409)"},
 	}
 	for _, c := range fileCases {
 		if got := IsExcludedFile(c.name); got != c.want {

@@ -245,11 +245,12 @@ func isDotenvSuffixed(name string) bool {
 // everything in a dotenv container REGARDLESS OF NAME. The file rules are name
 // rules — they reach `.env.local` (prefix) and `db.env` (suffix) and nothing
 // else. Measured by deleting isDotenvShaped from isExcludedDir and packaging a
-// `.env.d/`: six files became bundle content, and only ONE of them was the
-// allow-list case —
+// `.env.d/`: SIX files became bundle content, and only ONE of them was the
+// allow-list case — read off TestBuildExcludesDotenvShapedDirectories' own
+// failure output, so this list is the fixture's, not a recollection:
 //
-//	.env.d/credentials.json   .env.d/id_rsa   .env.d/notes.txt
-//	.env.local/token          .env.d/.env.production
+//	.env.d/credentials.json   .env.d/id_rsa    .env.local/token
+//	.env.local/value          .env/value       .env.d/.env.production
 //
 // — i.e. the names a secrets directory actually holds are exactly the ones no
 // file rule can see. `.env.d/db.env` stayed dropped, by the suffix rule.
