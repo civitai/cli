@@ -9,11 +9,18 @@
 //     (vcsMetadataNames) are excluded whether the entry is a directory or a
 //     regular file, because in a linked worktree or a submodule `.git` is a
 //     FILE — see that var for the incident.
+//
 //   - File names (isExcludedFile): VCS metadata that is a regular file
-//     (a worktree's / submodule's `.git`), build artifacts (*.zip) and EVERY file whose
-//     BASE NAME starts with ".env" — dotted or not, so `.envrc` (direnv, which
-//     routinely holds exported credentials) goes too — except a three-name
-//     allow-list. The scaffolded page-money template points a real,
+//     (a worktree's / submodule's `.git`), build artifacts (*.zip), and dotenv
+//     files matched from BOTH ends — every base name that STARTS with ".env"
+//     (dotted or not, so `.envrc`, which routinely holds exported credentials,
+//     goes too) and every base name that ENDS in ".env" (`db.env`, `prod.env` —
+//     the shape tooling writes, invisible to a prefix rule; #435). The DOTENV
+//     and *.zip matching ignores case; the VCS names in this same bullet do
+//     NOT — a file called `.GIT` is packaged. Except a three-name allow-list,
+//     which is matched EXACTLY.
+//
+//     The scaffolded page-money template points a real,
 //     Buzz-spending block token (VITE_LIVE_BLOCK_TOKEN) at the git-ignored
 //     .env.development.local for `dev:live` — vite's dev-local override, which
 //     the catch-all drops; bundling any of vite's dev-local files would leak the
@@ -142,22 +149,75 @@ var vcsMetadataNames = map[string]struct{}{
 // has produced.
 //
 // 🔴 RESIDUAL, ACCEPTED AND DELIBERATE: a directory named `.env-backup` or
-// `.envs` is NOT excluded, though the same name as a FILE would be. Its dotenv
-// FILES still go — a `.env.local` inside it is caught by isExcludedFile — but a
-// file named `db.env` inside it is not, because that base name does not start
-// with ".env". If a real case for those names appears, add the exact name to
-// excludedDirs rather than widening this predicate; that keeps the loss visible
-// in a list someone can read.
+// `.envs` is NOT excluded, though the same name as a FILE would be. Since #435
+// that costs much less than it used to — the FILE rules reach inside such a
+// directory and drop both shapes there (`.env.local` by the prefix rule,
+// `db.env` by the `*.env` suffix rule). What survives is a kept name:
+// `.env-backup/.env.production` is uploaded, because the allow-list matches by
+// name and nothing above it is excluded.
+//
+// If a real case for excluding those directory names appears, add the exact
+// name to excludedDirs rather than widening this predicate; that keeps the loss
+// visible in a list someone can read.
+// 🔴 CASE-INSENSITIVE since #435: `.ENV.local/` packaged. Case is not a
+// meaningful distinction for this convention — nobody names a content directory
+// to differ from a dotenv one only by case — so folding costs nothing and
+// closes a measured hole. The FIXED-name maps are deliberately NOT folded; see
+// isExcludedDir.
 func isDotenvShaped(name string) bool {
-	return name == ".env" || strings.HasPrefix(name, ".env.")
+	lower := strings.ToLower(name)
+	return lower == ".env" || strings.HasPrefix(lower, ".env.")
 }
 
 // isArchiveArtifact reports whether a base name is a packaged archive. One
 // predicate for both file types: a `--package-only` run drops `<app>-<ver>.zip`
 // in the project dir, and an author who unpacks one in place leaves a DIRECTORY
 // of the same shape. The platform rebuilds from source, so neither ships.
+// Case-insensitive since #435: `x.ZIP/` packaged. Same reasoning as
+// isDotenvShaped — `.ZIP` is the same convention shouted.
 func isArchiveArtifact(name string) bool {
-	return strings.HasSuffix(name, ".zip")
+	return strings.HasSuffix(strings.ToLower(name), ".zip")
+}
+
+// isDotenvSuffixed reports whether a FILE base name ends in ".env" —
+// `db.env`, `prod.env`, `local.env`, `config.env`.
+//
+// 🔴 THIS IS THE SHAPE TOOLING ACTUALLY WRITES, AND NO RULE SAW IT UNTIL #435.
+// The dotenv rules were all PREFIX rules, so a name that does not START with
+// ".env" was invisible to every one of them, at every depth. Measured on
+// v0.1.97 through the released binary: `db.env` at the project root,
+// `envs/prod.env`, `env/local.env` and `.env-backup/db.env` were all packaged
+// into a bundle that is committed to Forgejo and deployed. #420 closed the
+// dotenv-shaped DIRECTORY hole and did nothing for this one.
+//
+// 🔴 FILES ONLY — isExcludedDir does NOT get this rule. The asymmetry is the one
+// #420 settled over four review rounds: for a FILE, matching too much costs one
+// file the author renames, and matching too little costs an uploaded credential,
+// so it is aimed wide. For a DIRECTORY, matching too much removes an entire
+// subtree silently, so `config.env/` still ships.
+//
+// 🔴 THE RESIDUAL IS NOT HYPOTHETICAL, AND IT IS ACCEPTED WITH THAT KNOWN.
+// `.env` is also **Babylon.js's environment-texture format**, so a 3D block
+// shipping `public/environment.env` loses it — and the loss surfaces at
+// RUNTIME in the deployed app, not at submit time, because nothing prints what
+// the packager dropped. `sample.env` / `template.env` go the same way, and the
+// allow-list has no suffix-shaped counterpart (`.env.sample` is kept,
+// `sample.env` is not).
+//
+// It is still the right trade: an uploaded credential is durably published to
+// Forgejo and a human reviewer and cannot be recalled, while a dropped asset is
+// recoverable by renaming the file. But it is a real cost, it is called out in
+// the README beside the residual table (it cannot BE a row there — that table
+// lists what is still uploaded, and this is the opposite residual), and it is the strongest
+// argument for the drop-messaging tracked in #435 — a one-line "skipped N
+// path(s)" would turn this from a silent runtime break into an obvious one.
+//
+// Nothing the scaffold emits is affected: its dotenv files are
+// `.env.development` / `.env.example` / `.env.production`, all PREFIXED, none
+// suffixed. Vite reads only `.env`, `.env.local` and `.env.[mode]` variants, so
+// no build-time input is lost either.
+func isDotenvSuffixed(name string) bool {
+	return strings.HasSuffix(strings.ToLower(name), ".env")
 }
 
 // isExcludedDir reports whether a DIRECTORY (by base name) must be left out of
@@ -175,10 +235,31 @@ func isArchiveArtifact(name string) bool {
 // holding `API_SECRET=leak` was packaged into a bundle that is committed to
 // Forgejo `civitai-apps/<slug>` and deployed, i.e. durably published.
 //
-// 🔴 THE FILE RULE DOES NOT COVER FOR THIS ONE. The conventional file names
-// inside a `.env.d/` are `db.env`, `api.env`, `local.env` — base names that do
-// NOT start with ".env", so isExcludedFile keeps every one of them. Excluding
-// the directory is the only thing that stops them.
+// 🔴 THIS RULE IS STILL LOAD-BEARING, BUT NOT FOR THE REASON IT ORIGINALLY WAS.
+// Until #435 the argument was that the file rule could not see `db.env`,
+// `api.env` or `local.env` inside a `.env.d/` — those names do not START with ".env" — so the
+// directory was the only thing stopping them. The `*.env` suffix rule now drops
+// all three wherever they sit, so that argument is spent.
+//
+// What the directory rule still does, and nothing else does: it drops
+// everything in a dotenv container REGARDLESS OF NAME. The file rules are name
+// rules — they reach `.env.local` (prefix) and `db.env` (suffix) and nothing
+// else. Measured by deleting isDotenvShaped from isExcludedDir and packaging a
+// `.env.d/`: SIX files became bundle content, and only ONE of them was the
+// allow-list case — read off TestBuildExcludesDotenvShapedDirectories' own
+// failure output, so this list is the fixture's, not a recollection:
+//
+//	.env.d/credentials.json   .env.d/id_rsa    .env.local/token
+//	.env.local/value          .env/value       .env.d/.env.production
+//
+// — i.e. the names a secrets directory actually holds are exactly the ones no
+// file rule can see. `.env.d/db.env` stayed dropped, by the suffix rule.
+//
+// So: do NOT remove this as redundant with the suffix rule. The suffix rule
+// covers a NAMING convention; this covers a CONTAINER, and a container's
+// contents are named whatever its author liked.
+// TestBuildExcludesDotenvShapedDirectories pins both the allow-list path and
+// the arbitrary-name paths.
 //
 // 🔴 keptEnvFiles DOES NOT APPLY HERE. That allow-list exists because the server
 // build's `vite build` READS `.env.production`, and because `.env.example` /
@@ -222,8 +303,14 @@ var excludedFilePatterns = []string{
 	// ".env", dotted or not — `.envrc`, `.env-local`, `.env.staging`. Printing
 	// only the enumeration let a reader conclude an unlisted name ships; it
 	// does not. Keep this LAST so the message reads "these, and everything else
-	// like them".
+	// like them" — and keep the pair together: `*.env` below is the other end
+	// of the same rule, so the two read as one statement about dotenv files.
 	".env*",
+	// 🔴 THE OTHER HALF OF THE CATCH-ALL (#435). Every rule above is a PREFIX
+	// rule, so the shape tooling actually writes — `db.env`, `prod.env` — was
+	// invisible to all of them and packaged at any depth. A reader who sees
+	// only `.env*` concludes their `db.env` ships; it does not.
+	"*.env",
 }
 
 // keptEnvFiles are .env* files we deliberately INCLUDE despite the broad
@@ -255,17 +342,21 @@ var keptEnvFiles = map[string]struct{}{
 }
 
 // isExcludedFile reports whether a regular file (by base name) must be left out
-// of the package. Three rules, in order:
+// of the package. Four rules, in order:
 //
 //   - VCS metadata by EXACT name (vcsMetadataNames): a linked worktree's or a
 //     submodule's `.git` is a regular file, and issue #409 is what happens when
 //     only the directory shape is excluded. See that var.
 //   - Build artifacts (*.zip).
-//   - Dotenv. That rule is deliberately CONSERVATIVE toward "never upload a
-//     secret": every base name starting with ".env" is dropped UNLESS it is one
-//     of the three names on the keptEnvFiles allow-list. Build-time config for
-//     the server must come from the manifest / build recipe, not an uploaded
-//     dotenv.
+//   - Dotenv by PREFIX. That rule is deliberately CONSERVATIVE toward "never
+//     upload a secret": every base name starting with ".env" is dropped UNLESS
+//     it is one of the three names on the keptEnvFiles allow-list. Build-time
+//     config for the server must come from the manifest / build recipe, not an
+//     uploaded dotenv.
+//   - Dotenv by SUFFIX (#435): every base name ENDING in ".env" — `db.env`,
+//     `prod.env`, `backup.db.env`. The shape tooling writes, invisible to every
+//     prefix rule above. See isDotenvSuffixed for why it is files-only and what
+//     it costs.
 //
 // 🔴 THE PREFIX IS ".env", NOT ".env." — UNDOTTED NAMES ARE EXCLUDED TOO. The
 // match was `name == ".env" || HasPrefix(name, ".env.")` until the README
@@ -297,15 +388,27 @@ func isExcludedFile(name string) bool {
 	if isArchiveArtifact(name) {
 		return true
 	}
-	// Dotenv handling: allow-list the known-safe template / production files,
-	// drop everything else that starts with ".env".
-	if strings.HasPrefix(name, ".env") {
-		if _, keep := keptEnvFiles[name]; keep {
-			return false
-		}
+	// Dotenv handling. Two rules, one allow-list:
+	//
+	//   - PREFIX (case-insensitive since #435): every base name starting with
+	//     ".env" — `.env`, `.env.local`, `.envrc`, `.ENV.LOCAL`.
+	//   - SUFFIX (#435): every base name ending in ".env" — `db.env`,
+	//     `prod.env`. See isDotenvSuffixed for why this is files-only.
+	//
+	// 🔴 THE ALLOW-LIST IS CHECKED BY EXACT NAME, AND STAYS THAT WAY WHILE THE
+	// MATCH ABOVE IS FOLDED. `vite build` reads `.env.production` by its exact
+	// name, so `.ENV.PRODUCTION` is not the file the server build consumes and
+	// keeping it would be a claim nothing supports. It therefore falls to the
+	// catch-all and is DROPPED — the safe direction: the author sees a missing
+	// file rather than an uploaded one. None of the three kept names ends in
+	// ".env", so the suffix rule cannot reach them either.
+	if _, keep := keptEnvFiles[name]; keep {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(name), ".env") {
 		return true
 	}
-	return false
+	return isDotenvSuffixed(name)
 }
 
 // Result describes a produced package.
@@ -488,14 +591,15 @@ func IsExcluded(name string) bool { return isExcludedDir(name) }
 func DirectoryPatternSummary() string {
 	return "a DIRECTORY named .env or .env.<anything> (e.g.\n" +
 		"  .env.d/, .env.local/, .env.production/), or ending in .zip, is dropped\n" +
-		"  whole at any depth. Directories whose names merely start with .env —\n" +
-		"  .envrc/, .env-backup/, .envs/ — are NOT dropped, and a secret-bearing\n" +
-		"  file inside one (db.env, prod.env) is uploaded unless the FILE rule\n" +
-		"  below drops it. That rule KEEPS .env.example, .env.sample and\n" +
-		"  .env.production BY NAME — so .env-backup/.env.production is uploaded\n" +
-		"  too — but only where every directory above it is itself packaged: a\n" +
-		"  kept name anywhere under .env.d/ or node_modules/ goes with that\n" +
-		"  directory."
+		"  whole at any depth; matching ignores case, so .ENV.D/ and x.ZIP/ go\n" +
+		"  too. Directories whose names merely start with .env — .envrc/,\n" +
+		"  .env-backup/, .envs/ — are NOT dropped, but the FILE rules still reach\n" +
+		"  inside them: a db.env or prod.env there is dropped by the *.env rule.\n" +
+		"  What survives is the allow-list, which is matched by EXACT name —\n" +
+		"  .env.example, .env.sample and .env.production are uploaded, so\n" +
+		"  .env-backup/.env.production is uploaded too, but only where every\n" +
+		"  directory above it is itself packaged: a kept name anywhere under\n" +
+		"  .env.d/ or node_modules/ goes with that directory."
 }
 
 // IsExcludedPath answers, for a whole project-relative PATH, the question Build

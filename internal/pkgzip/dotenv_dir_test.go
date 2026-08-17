@@ -17,12 +17,22 @@ import (
 // directory branch consulted `excludedDirs`, a fixed-name map holding none of
 // them — so the walk descended and shipped every file inside.
 //
-// 🔴 THE FILE RULE DOES NOT COVER FOR THE DIRECTORY RULE, which is what makes
-// this a leak rather than bloat. Inside `.env.d/` the conventional file names
-// are `db.env`, `api.env`, `local.env` — base names that do NOT start with
-// ".env", so `isExcludedFile` keeps every one of them. The directory is the only
-// thing standing between those files and an uploaded bundle that is committed to
-// Forgejo and deployed.
+// 🔴 THE FILE RULES DO NOT COVER FOR THE DIRECTORY RULE — but the reason
+// changed in #435 and this header used to state the retired one. It said the
+// file rule could not see `db.env`, `api.env` or `local.env` inside a `.env.d/`;
+// the `*.env` suffix rule now drops all three wherever they sit, and measurement
+// confirms they stay dropped with the directory rule removed.
+//
+// The rule is still load-bearing for the reason that survives: the file rules
+// are NAME rules, and a secrets container holds arbitrary names. Measured with
+// isDotenvShaped removed from isExcludedDir, straight off this test's own
+// failure output — six paths became bundle content:
+//
+//	.env.d/credentials.json   .env.d/id_rsa    .env.local/token
+//	.env.local/value          .env/value       .env.d/.env.production
+//
+// Only the last is the allow-list case; the other five are names no file rule
+// reaches. All six are planted below.
 //
 // The fixture plants BOTH SHAPES of every name it names. The shape that hid this
 // class twice is a fixture that only ever plants the type its author had in mind:
@@ -43,6 +53,22 @@ func TestBuildExcludesDotenvShapedDirectories(t *testing.T) {
 	writeFile(t, dir, "src/.env.d/api.env", leak)
 	// Build artifact shaped as a directory.
 	writeFile(t, dir, "artifact.zip/payload.bin", "x")
+
+	// ARBITRARY NAMES INSIDE A CONTAINER. No file rule reaches any of these:
+	// they neither start nor end with ".env". They are what a secrets directory
+	// actually holds, and they are why the rule survives the arrival of the
+	// *.env suffix rule.
+	//
+	// 🔴 HONEST ABOUT THEIR STRENGTH: these three are DOCUMENTATION, not
+	// coverage. Ablated singly and all together against four directory-rule
+	// mutants, every mutant still dies — because `.env.local/value` and
+	// `.env/value` above already witness "arbitrary name inside a dotenv
+	// container". They are here so the class is legible at the point of use;
+	// the not-one-row-per-branch note BELOW is about the five kept-name rows,
+	// not about these.
+	writeFile(t, dir, ".env.d/credentials.json", leak)
+	writeFile(t, dir, ".env.d/id_rsa", leak)
+	writeFile(t, dir, ".env.local/token", leak)
 
 	// 🔴 KEPT NAMES INSIDE EXCLUDED DIRECTORIES — asserted against Build, not
 	// against the string predicate, because the two are a seam and only Build
@@ -236,12 +262,24 @@ func TestDirectoryRuleIsDocumentedForAuthors(t *testing.T) {
 	// the doc says ships), and the author's loss is a silently missing file.
 	// These paths are quoted from that table.
 	for _, p := range []string{
-		"db.env",             // root, base name does not start with ".env"
-		"envs/prod.env",      // neither name is dotenv-shaped
-		"env/local.env",      //
-		".env-backup/db.env", // directory is not ".env."-dotted
-		"x.ZIP/a.txt",        // the archive rule is case-sensitive
-		".ENV.local/b.txt",   // the dotenv rule is case-sensitive
+		// 🔴 SIX ROWS LEFT THIS LIST IN #435, and this is where that was
+		// noticed: `db.env`, `envs/prod.env`, `env/local.env`,
+		// `.env-backup/db.env`, `x.ZIP/` and `.ENV.local/` were all documented
+		// here as uploaded, the `*.env` suffix rule and case-folding closed
+		// them, and these assertions went red on the very commit that closed
+		// them. The ledger caught the code moving ahead of the prose, which is
+		// the direction it was built for. They now live in
+		// TestBuildExcludesEnvSuffixFilesAnywhere as things that must NOT ship.
+		//
+		// The fixed-name directory list is deliberately NOT case-folded: `Build/`
+		// and `Dist/` are plausible content names and dropping one is a silent
+		// subtree loss. That is a documented residual, not an oversight.
+		"NODE_MODULES/react.js",
+		"Dist/app.js",
+		// The packager matches names, never contents — the class that no name
+		// rule can close.
+		"secrets.json",
+		"src/credentials.yaml",
 		// 🔴 The keptEnvFiles allow-list survives a directory the walk does not
 		// drop, so an author who reads "files starting with .env are dropped" is
 		// wrong about the one file most likely to hold a token. Added to the
@@ -302,13 +340,14 @@ func TestDirectoryPatternSummaryIsTheReviewedCopy(t *testing.T) {
 	// WITH its contents, while `.env-backup/.env.local` is dropped. An author
 	// reading the old sentence believed the wrong one was protected.
 	const want = "a DIRECTORY named .env or .env.<anything> (e.g. .env.d/, .env.local/, " +
-		".env.production/), or ending in .zip, is dropped whole at any depth. Directories " +
-		"whose names merely start with .env — .envrc/, .env-backup/, .envs/ — are NOT " +
-		"dropped, and a secret-bearing file inside one (db.env, prod.env) is uploaded " +
-		"unless the FILE rule below drops it. That rule KEEPS .env.example, .env.sample " +
-		"and .env.production BY NAME — so .env-backup/.env.production is uploaded too — " +
-		"but only where every directory above it is itself packaged: a kept name anywhere " +
-		"under .env.d/ or node_modules/ goes with that directory."
+		".env.production/), or ending in .zip, is dropped whole at any depth; matching " +
+		"ignores case, so .ENV.D/ and x.ZIP/ go too. Directories whose names merely start " +
+		"with .env — .envrc/, .env-backup/, .envs/ — are NOT dropped, but the FILE rules " +
+		"still reach inside them: a db.env or prod.env there is dropped by the *.env rule. " +
+		"What survives is the allow-list, which is matched by EXACT name — .env.example, " +
+		".env.sample and .env.production are uploaded, so .env-backup/.env.production is " +
+		"uploaded too, but only where every directory above it is itself packaged: a kept " +
+		"name anywhere under .env.d/ or node_modules/ goes with that directory."
 
 	got := strings.Join(strings.Fields(DirectoryPatternSummary()), " ")
 	if got == "" {

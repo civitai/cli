@@ -170,9 +170,13 @@ func TestIsExcludedPathAgreesWithBuild(t *testing.T) {
 		// same reason `.git` is: a fix applied to Build's walk alone, instead of
 		// to the shared isExcludedDir, makes this test red.
 		//
-		// Note the base names inside: `db.env` does NOT start with ".env", so
-		// isExcludedFile keeps it. The directory rule is the only thing that
-		// drops it, which is why a seam row for it is worth having.
+		// 🔴 These two rows no longer test the DIRECTORY rule. Until #435 they
+		// did — `db.env` and `api.env` do not start with ".env", so only the
+		// directory dropped them — but the `*.env` suffix rule now drops both on
+		// their own names. They stay as seam coverage for the FILE rule at
+		// depth; the row that still exercises the directory rule through this
+		// oracle is `.env.d/.env.production` below, whose name the allow-list
+		// would otherwise keep.
 		// (`.env.local` cannot appear here as a directory — this fixture already
 		// plants it as a FILE above, and one tree cannot hold both shapes of one
 		// name. TestBuildExcludesDotenvShapedDirectories owns that shape, in its
