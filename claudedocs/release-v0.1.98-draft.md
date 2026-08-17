@@ -3,17 +3,24 @@
 **Nothing is released yet.** Written before the tag so the pre-publish checks
 happen in the order that makes them worth doing.
 
-**10 commits** in `v0.1.97..d3d2798` — `d3d2798` being `main` at the time of
+**12 commits** in `v0.1.97..6980b14` — `6980b14` being `main` at the time of
 writing. 🔴 **Recompute as `v0.1.97..v0.1.98` once the tag exists**, and expect
-11: merging this file adds a `docs(release):` commit the filter excludes. That
+13: merging this file adds a `docs(release):` commit the filter excludes. That
 has happened on both of the last two releases and is the whole reason this
 document family recomputes rather than trusting the pre-tag number.
 
-Predicted split, measured by applying `.goreleaser.yaml`'s real patterns with
-Go's `regexp` to the real subjects: **5 excluded, 5 in the notes, 0 leaking.**
+⚠️ It moved once already. This file first said **10 commits / 5-and-5**, written
+against `d3d2798`; two more landed while the draft's own CI was blocked on a
+GitHub CDN outage, one of them user-facing (#452). A pre-tag count is a
+measurement of a moving branch, which is exactly why the number that ships is
+the one recomputed at the tag.
 
-🔴 **THIS RELEASE IS MOSTLY NOT MINE.** Four of the five user-facing commits are
-App-listing work from a concurrent session (#434, #437, #444, #449). They are
+Predicted split, measured by applying `.goreleaser.yaml`'s real patterns with
+Go's `regexp` to the real subjects: **6 excluded, 6 in the notes, 0 leaking.**
+
+🔴 **THIS RELEASE IS MOSTLY NOT MINE.** Five of the six user-facing commits are
+App-listing and submit work from a concurrent session (#434, #437, #444, #449,
+#452). They are
 merged, reviewed and CI-green, but I did not write or audit them, and the arms
 below verify the packager changes properly and the listing changes only as a
 smoke check. Whoever reads this later should not take the depth of the pkgzip
@@ -41,12 +48,14 @@ lose it, and find out at runtime, because submit prints a file count and never
 names what it skipped. `sample.env` and `template.env` go the same way. Both the
 README and the `app submit --help` text now say so.
 
-**2–5. App-listing fixes and a new `--json` output**, from the concurrent
-session: `reorder` addressed at the shadow revision rather than the parent
-(#434), `rm-screenshot` no longer claiming a live gallery change it only staged
-(#437) nor telling you to remove more when there is nothing left (#444), and
-`app listing status --json` naming the two ids the human output never shows
-(#449).
+**2–6. App-listing fixes, a new `--json` output, and a submit-size fix**, from
+the concurrent session: `reorder` addressed at the shadow revision rather than
+the parent (#434), `rm-screenshot` no longer claiming a live gallery change it
+only staged (#437) nor telling you to remove more when there is nothing left
+(#444), `app listing status --json` naming the two ids the human output never
+shows (#449), and **#452 closing #423** — an oversized bundle used to fail as an
+opaque `400: Invalid JSON`; submit now reports the base64 JSON body size and
+says what was sent.
 
 ## Before publishing, not after
 
@@ -79,6 +88,7 @@ Arms. **The packager rows carry a v0.1.97 negative control on the same fixture**
 | `.git` as a FILE (worktree) | still excluded — v0.1.96's fix intact |
 | version + dirty-tree guards | still refuse, exit 1 |
 | `app listing status --json` (smoke) | valid JSON, exits cleanly |
+| oversized bundle (#452, smoke) | the failure names a size, not `Invalid JSON` |
 
 🔴 **Target the bundle by its exact name** (`<blockId>-<version>.zip`). The
 fixture contains DIRECTORIES named `x.ZIP` and `config.env`, so `rm ./*.zip` and
@@ -90,7 +100,7 @@ the cask names must answer **200 unauthenticated**.
 
 ## After publishing
 
-1. Read the published body: 5 entries, none of them `docs(` or `chore(`. This is
+1. Read the published body: 6 entries, none of them `docs(` or `chore(`. This is
    the third consecutive observation of #416's filter working.
 2. Recompute as `v0.1.97..v0.1.98`.
 3. Flip to `# v0.1.98 — SHIPPED` with tag SHA, publish time, npm + cask versions
