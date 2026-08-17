@@ -108,30 +108,29 @@ import (
 // as findings, and deliberately NOT fixed here (civitai/cli#427).
 // ---------------------------------------------------------------------------
 //
-// 1. THE REFUSAL STILL ASSERTS THINGS THAT ARE FALSE FOR A SLUG THE CALLER DOES
-//    NOT OWN, THOUGH LESS THAN IT DID. offsiteApp performs no ownership check,
-//    and GET /api/v1/apps/{slug} is the PUBLIC catalog, so the app whose kind is
-//    read may belong to a stranger. What #422 outcome 1 CLOSED is the absolute:
-//    the sentence "an offsite app's store listing cannot be addressed from this
-//    CLI" is deleted, and its replacement names the stranger's case explicitly —
-//    as the case that is refused 403 ELSEWHERE rather than reported here, which
-//    is a truer thing to tell them than either the old absolute or the "three
-//    equal causes" wording that briefly replaced it.
-//    What is STILL false for them is the advice
-//    that follows: "Changing that media always works in the App-store listing UI
-//    on civitai.com, where this app was registered" reads as an instruction to a
-//    person who could act on it, and they cannot. (`civitai app view <slug>`,
-//    the other command named, is a public read and is true for anyone.) This
-//    predates the refusal — the message it replaced said "run `civitai app
-//    submit` first", equally false for someone else's slug — so it is a
-//    pre-existing wrongness this change carries forward rather than one it
-//    introduced. Closing it needs an ownership signal these two commands do not
-//    have on the error path. Note the CLI cannot infer one from the by-slug
-//    miss: `getMyListingForApp` refuses a listing you do not own with NOT_OWNED
-//    (→ FORBIDDEN), which resolveListing now returns AS a 403 rather than
-//    folding into this message at all — so the stranger case that still reaches
-//    here is the one where the store catalog knows the app and the listings
-//    route does not answer for it.
+// 1. CLOSED 2026-08-17 (civitai/cli#427) — kept as the record of WHY the wording
+//    is what it is, because the constraint that produced it has not gone away.
+//    offsiteApp still performs no ownership check, and GET /api/v1/apps/{slug} is
+//    still the PUBLIC catalog, so the app whose kind is read may belong to a
+//    stranger. #422 outcome 1 closed the absolute — the sentence "an offsite
+//    app's store listing cannot be addressed from this CLI" is deleted, and its
+//    replacement names the stranger's case as the one refused 403 ELSEWHERE
+//    rather than reported here. What remained false for a stranger was the advice
+//    that followed: "Changing that media always works in the App-store listing UI
+//    on civitai.com, where this app was registered" read as an instruction to a
+//    person who could act on it, and they cannot. That clause now says the media
+//    is MANAGED there by the account that registered the app — a fact about the
+//    listing rather than a promise to the reader — so it is true whoever runs the
+//    command. (`civitai app view <slug>`, the other command named, is a public
+//    read and was already true for anyone.)
+//    🔴 THE FIX IS A NARROWED CLAIM, NOT AN ACQUIRED SIGNAL. These two commands
+//    still have no ownership signal on the error path, and the CLI cannot infer
+//    one from the by-slug miss: `getMyListingForApp` refuses a listing you do not
+//    own with NOT_OWNED (→ FORBIDDEN), which resolveListing returns AS a 403
+//    rather than folding into this message at all — so the stranger case that
+//    reaches here is the one where the store catalog knows the app and the
+//    listings route does not answer for it. Anything added to this message that
+//    presumes the reader owns the app reopens this residual.
 //
 // 2. THE ERROR PATH NOW COSTS THREE BOUNDED REQUESTS, WITH NO OFF SWITCH. Every
 //    `no such submission` — the ordinary "I have not submitted yet" case, which
@@ -366,9 +365,20 @@ func offsiteRegisteredAt(d *civitai.AppDetail) string {
 // asymmetry GREW rather than shrank. offsiteStatusRefusal reports a permanent
 // truth (an offsite app has no block submissions, ever); this one reports a
 // lookup that missed on this server, this account, this app. It still names the
-// surface that ALWAYS works — the App-store listing UI on civitai.com — because
-// that promise survives every one of the three cases, and it still names
-// `civitai app view <slug>`, the one read the CLI can always do here.
+// App-store listing UI on civitai.com and `civitai app view <slug>`, the one read
+// the CLI can always do here.
+//
+// 🔴 IT NAMES THAT UI AS WHERE THE MEDIA IS MANAGED, NOT AS A SURFACE THAT WILL
+// WORK FOR THE READER, and the difference is civitai/cli#427 residual 1. This
+// clause read "Changing that media always works in the App-store listing UI on
+// civitai.com, where this app was registered" until 2026-08-17 — an instruction
+// addressed to someone who can act on it. offsiteApp does NO ownership check and
+// GET /api/v1/apps/{slug} is the PUBLIC catalog, so the app may be a stranger's
+// and that sentence was then a promise the reader cannot keep. The current
+// wording states where the media lives and who administers it, which is true
+// whoever is reading; `civitai app view <slug>`, the other command named, is a
+// public read and was always true for anyone. The CLI still has no ownership
+// signal on this path — the fix is to stop CLAIMING one, not to acquire one.
 //
 // It still refuses to name `civitai app submit`: that step cannot exist for an
 // offsite app whichever of the three cases this is.
@@ -388,7 +398,7 @@ func offsiteListingRefusal(slug string, d *civitai.AppDetail) string {
 			"self-hosted server, or an app with no listing row at all, each land here; a listing this account does not own "+
 			"is refused as a 403 by any server carrying #3989, and reaches this message only on one that does not.\n"+
 			"Its store listing may be live all the same — run `civitai app view %s` to see the icon and cover it is serving. "+
-			"Changing that media always works in the App-store listing UI on civitai.com, where this app was registered; "+
+			"That media is managed in the App-store listing UI on civitai.com by the account that registered the app; "+
 			"that surface is authoritative whatever this CLI can reach",
 		slug, offsiteRegisteredAt(d), slug)
 }

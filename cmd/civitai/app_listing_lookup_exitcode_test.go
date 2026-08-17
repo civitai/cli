@@ -29,6 +29,15 @@ package main
 // MEASURED — see the `want` column of each row below; every number in
 // exitCodeDocs' offsite bullets is one of these, and no number appears there that
 // is not measured here.
+//
+// 🔴 THAT USED TO BE TRUE OF THE EXIT CODES AND FALSE OF THE HTTP STATUSES. The
+// doc sentence citing this file said `401`/`403` → 3, `429` → 6, `502`/`503`/`504`
+// and a transport failure → 5, "measured end-to-end on both lookups", while the
+// table held nine rows carrying no `401`, no `504`, no transport failure and `429`
+// on one lookup only. The numbers were right — they come from the shared
+// classifier (pkg/civitai/errkind.go) — but the CITATION overstated what had been
+// run. The rows below now cover every status the sentence names, on both lookups,
+// and the ledger just after them fails if the two ever drift apart again.
 
 import (
 	"fmt"
@@ -51,6 +60,34 @@ const (
 	breakFallback
 )
 
+// transportFailure is the `status` sentinel for a row that breaks the connection
+// instead of answering: the handler hijacks and closes it, so the client sees a
+// transport error rather than an HTTP status.
+//
+// It is here because the README's provenance sentence NAMES a transport failure
+// among the things "measured end-to-end on both lookups", and until this row
+// existed no row in this file produced one — the number was right (pkg/civitai's
+// errkind maps a net.Error to ErrNetwork → 5) but the citation overstated what
+// this file had measured. Same for the 401 and 504 rows below.
+const transportFailure = 0
+
+// breakConnection makes the client see a transport failure. It runs on the
+// server goroutine, so t.Errorf and never t.Fatalf.
+func breakConnection(t *testing.T, w http.ResponseWriter) {
+	t.Helper()
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		t.Errorf("httptest ResponseWriter is not a Hijacker, so this row cannot produce a transport failure")
+		return
+	}
+	conn, _, err := hj.Hijack()
+	if err != nil {
+		t.Errorf("hijack: %v", err)
+		return
+	}
+	_ = conn.Close()
+}
+
 // TestAppListingLookupFailureExitCodes measures the process exit status for every
 // non-404 failure of either lookup.
 //
@@ -67,7 +104,7 @@ const (
 func TestAppListingLookupFailureExitCodes(t *testing.T) {
 	bin := buildCLI(t)
 
-	for _, tc := range []struct {
+	rows := []struct {
 		name  string
 		stage listingLookupStage
 		// status is what the broken route answers with.
@@ -79,23 +116,80 @@ func TestAppListingLookupFailureExitCodes(t *testing.T) {
 		wantStderr string
 	}{
 		// --- the FIRST lookup (submissions) ---
+		{"submissions 401", breakSubmissions, http.StatusUnauthorized, 3, ""},
 		{"submissions 403", breakSubmissions, http.StatusForbidden, 3, "apps access required"},
 		{"submissions 500", breakSubmissions, http.StatusInternalServerError, 1, "server returned 500"},
 		{"submissions 502", breakSubmissions, http.StatusBadGateway, 5, "server returned 502"},
 		{"submissions 503", breakSubmissions, http.StatusServiceUnavailable, 5, "apps is not enabled"},
+		{"submissions 504", breakSubmissions, http.StatusGatewayTimeout, 5, ""},
 		{"submissions 429", breakSubmissions, http.StatusTooManyRequests, 6, "rate limited"},
+		{"submissions transport failure", breakSubmissions, transportFailure, 5, ""},
 
 		// --- the SECOND lookup (the by-slug fallback) ---
+		{"fallback 401", breakFallback, http.StatusUnauthorized, 3, ""},
 		{"fallback 403", breakFallback, http.StatusForbidden, 3, "not permitted for your account"},
 		{"fallback 500", breakFallback, http.StatusInternalServerError, 1, ""},
 		{"fallback 502", breakFallback, http.StatusBadGateway, 5, ""},
 		{"fallback 503", breakFallback, http.StatusServiceUnavailable, 5, ""},
+		{"fallback 504", breakFallback, http.StatusGatewayTimeout, 5, ""},
+		{"fallback 429", breakFallback, http.StatusTooManyRequests, 6, ""},
+		{"fallback transport failure", breakFallback, transportFailure, 5, ""},
+	}
+
+	// 🔴 THE PROVENANCE LEDGER. internal/cmd/exitcodes_doc.go — and the README
+	// block generated from it — cites THIS FILE for a sentence that says these
+	// failures were "measured end-to-end on BOTH lookups". That sentence was
+	// broader than the table for the length of one PR: it named `401`, `504` and a
+	// transport failure while the table had none of the three, and `429` on only
+	// one of the two lookups. Nothing failed, because a citation is prose and prose
+	// does not run.
+	//
+	// So the cited set is declared here and checked against the ROWS rather than
+	// against what a run happened to execute — a `-run` filter cannot make this
+	// pass by excluding the rows it is counting. Widening the doc sentence now
+	// means widening this list, and the test says which lookup is missing.
+	cited := []struct {
+		status int
+		label  string
+	}{
+		{http.StatusUnauthorized, "401"},
+		{http.StatusForbidden, "403"},
+		{http.StatusTooManyRequests, "429"},
+		{http.StatusInternalServerError, "500"},
+		{http.StatusBadGateway, "502"},
+		{http.StatusServiceUnavailable, "503"},
+		{http.StatusGatewayTimeout, "504"},
+		{transportFailure, "a transport failure"},
+	}
+	covered := map[[2]int]bool{}
+	for _, tc := range rows {
+		covered[[2]int{int(tc.stage), tc.status}] = true
+	}
+	for _, stage := range []struct {
+		stage listingLookupStage
+		label string
+	}{
+		{breakSubmissions, "the submissions lookup"},
+		{breakFallback, "the by-slug fallback"},
 	} {
+		for _, c := range cited {
+			if !covered[[2]int{int(stage.stage), c.status}] {
+				t.Errorf("exitcodes_doc.go cites this file for %s measured END-TO-END ON BOTH LOOKUPS, "+
+					"but no row breaks %s that way — either add the row or narrow the sentence",
+					c.label, stage.label)
+			}
+		}
+	}
+
+	for _, tc := range rows {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				subs := strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions")
 				slug := strings.Contains(r.URL.Path, "getMyListingForApp")
 				switch {
+				case subs && tc.stage == breakSubmissions && tc.status == transportFailure,
+					slug && tc.status == transportFailure:
+					breakConnection(t, w)
 				case subs && tc.stage == breakSubmissions:
 					w.WriteHeader(tc.status)
 					_, _ = fmt.Fprintf(w, `{"error":"broken with %d"}`, tc.status)

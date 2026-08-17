@@ -500,3 +500,134 @@ func TestAppListingStatusJSONHelpWarnsAboutTheShadowSideEffect(t *testing.T) {
 		t.Errorf("`app listing status` Long does not say why `editTargetId` is absent from the payload:\n%s", long)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The README half of the same warning (civitai/cli#389)
+// ---------------------------------------------------------------------------
+//
+// 🔴 THE HELP TEXT WAS PINNED AND THE README WAS NOT, AND NOBODY COULD TELL.
+// MEASURED before this block existed: deleting the README's entire write-warning
+// bullet — all 16 lines, 1132 bytes — left the FULL suite green, exit 0, 20/20
+// packages ok. The suite does read README.md (deleting an unrelated `### npm
+// (Node)` heading reddens TestREADMEAnchorLinksResolve), so this claim simply had
+// no assertion on it. The README is the published user contract; a warning that a
+// documented "read" WRITES is the last thing that may evaporate in an unrelated
+// docs edit.
+
+// listing389IssueLink is the structural handle the locator uses: the issue URL,
+// not a phrase. A reword that keeps the bullet still resolves; a deletion cannot.
+const listing389IssueLink = "https://github.com/civitai/cli/issues/389"
+
+// wantREADMEListingWriteWarning is the README's `listing status` write-warning
+// bullet, WHOLE, whitespace-flattened.
+//
+// 🔴 THE WHOLE NORMALISED STRING, NOT A BAG OF SUBSTRINGS. The artifact under
+// test is prose, and a guard on WORDS is walkable by REWORDING — this repo has
+// watched a two-word check be satisfied by a sentence's own static text and a
+// banned term walked by a synonym. So every word, backtick and issue link is
+// pinned and only LINE WRAPPING is normalised away. A cosmetic reword therefore
+// fails this test: pay it deliberately and move the literal, which is the point —
+// the claim is machine-readable and its edits are visible in review.
+const wantREADMEListingWriteWarning = "- 🔴 **`listing status` is NOT a pure read — `--json` or not — so do not poll it in a loop.** On " +
+	"a LIVE (approved) listing the read behind it (`getMyListingForEdit`) opens the revision draft " +
+	"server-side, idempotently — the same one each time — so a script calling it repeatedly keeps a " +
+	"revision open on your listing. Whether that should still be classified a read is " +
+	"[#389](https://github.com/civitai/cli/issues/389), which is open. Reading it once per change is " +
+	"fine; a watch loop is a writer. ⚠ **This now applies to OFFSITE apps too.** Before " +
+	"[#422](https://github.com/civitai/cli/issues/422) every `app listing` subcommand refused for an " +
+	"offsite app and therefore could not write anything; now that they resolve by slug, `app listing " +
+	"status` against an **approved** offsite listing mints that shadow revision like any other. Every " +
+	"offsite app measured on civitai.com is approved, so this is the *normal* state there, not an " +
+	"edge case. #422 retired the \"cannot be addressed\" refusal; it did not retire #389 — the shadow " +
+	"is a property of `getMyListingForEdit`, not of how the listing id was obtained."
+
+// readmeTopLevelBullets splits md into its top-level markdown bullets: a line
+// beginning `- ` at column 0, plus every indented continuation line under it.
+//
+// It Fatals when the split yields implausibly few bullets. A splitter that
+// matched nothing would return an empty slice, and every "is the bullet there?"
+// question below would then answer "no" for a reason that has nothing to do with
+// the README — a harness wired to nothing reporting a confident zero.
+func readmeTopLevelBullets(t *testing.T, md string) []string {
+	t.Helper()
+	var (
+		bullets []string
+		cur     []string
+	)
+	flush := func() {
+		if len(cur) > 0 {
+			bullets = append(bullets, strings.Join(cur, "\n"))
+			cur = nil
+		}
+	}
+	for _, line := range strings.Split(md, "\n") {
+		switch {
+		case strings.HasPrefix(line, "- "):
+			flush()
+			cur = []string{line}
+		case len(cur) == 0:
+			// Not inside a bullet.
+		case strings.HasPrefix(line, "  "):
+			cur = append(cur, line)
+		default:
+			// A blank line, a heading, a fence or an unindented paragraph ends it.
+			flush()
+		}
+	}
+	flush()
+	if len(bullets) < 50 {
+		t.Fatalf("the bullet splitter found only %d top-level bullets in README.md — the split is wrong, "+
+			"so any verdict below would be a fact about this helper rather than about the README", len(bullets))
+	}
+	return bullets
+}
+
+// TestREADMEPinsTheListingStatusWriteWarning is the guard the measurement above
+// says was missing: the README must carry exactly one top-level bullet that
+// documents the #389 shadow-revision write, and it must say what it says today.
+func TestREADMEPinsTheListingStatusWriteWarning(t *testing.T) {
+	var found []string
+	for _, b := range readmeTopLevelBullets(t, readREADME(t)) {
+		if strings.Contains(b, listing389IssueLink) {
+			found = append(found, b)
+		}
+	}
+	if len(found) != 1 {
+		t.Fatalf("README.md has %d top-level bullets linking %s, want exactly 1 — the warning that "+
+			"`app listing status` WRITES (it mints a shadow revision on a live listing) is the published "+
+			"contract for anyone scripting it, and it has been deleted or split in two", len(found), listing389IssueLink)
+	}
+	if got := flattenWS(found[0]); got != wantREADMEListingWriteWarning {
+		t.Errorf("the README's #389 write-warning was reworded.\nwant: %s\n got: %s\n\n"+
+			"If the reword is deliberate, move wantREADMEListingWriteWarning with it — but re-read the "+
+			"bullet against the code first: it must still say the read is NOT pure, that a poll loop is a "+
+			"writer, that the mechanism is getMyListingForEdit, and that this holds for OFFSITE apps too.",
+			wantREADMEListingWriteWarning, got)
+	}
+}
+
+// TestTheShadowWriteWarningIsOnBothPublishedSurfaces is the SEAM guard, and the
+// reason the two pins above are not enough on their own.
+//
+// 🔴 IT ASSERTS A RELATIONSHIP, NOT A COMPONENT. `app listing status` publishes
+// this hazard on exactly two surfaces — the command's own `--help`, and the
+// README section a script author reads — and each of the two tests above is
+// scoped to ONE of them. Nothing there fails when the SET shrinks to one, which
+// is precisely what "documented in the help, dropped from the README" looks like.
+// This ledger fails when a surface stops carrying the citation, so adding a third
+// surface means adding a row here.
+func TestTheShadowWriteWarningIsOnBothPublishedSurfaces(t *testing.T) {
+	md := readREADME(t)
+	for _, s := range []struct {
+		surface string
+		text    string
+	}{
+		{"`civitai app listing status --help` (the command's Long)", newAppListingStatusCmd().Long},
+		{"README.md", md},
+	} {
+		if !strings.Contains(s.text, "389") {
+			t.Errorf("%s no longer cites civitai/cli#389 — every surface that documents this command as a "+
+				"read must also say it opens a revision draft on a live listing", s.surface)
+		}
+	}
+}
