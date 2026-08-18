@@ -815,8 +815,9 @@ var reservedExampleDomains = map[string]bool{
 // 🔴 IT COMPARES WHOLE LABELS, AND THAT IS THE ENTIRE POINT OF THIS FUNCTION.
 // The comparison used to be rejectRe swept over the whole match, i.e. a
 // SUBSTRING test against a hostname, which silenced a real credential whenever a
-// real host happened to spell a reject word anywhere. Measured on the shipped
-// binary, all five of these were dropped and only the control was reported:
+// real host happened to spell a reject word anywhere. Measured end-to-end on a
+// binary built at 43842f4 — `app submit --package-only` over one file per URL —
+// all five of these were dropped and only the control was reported:
 // `db.dev.civitai.com` (`dev.`), `testing.civitai.com` and `fastest.civitai.com`
 // and `cluster0.attestation.mongodb.net` (`test`), `cache.samplerate.io`
 // (`sample`). Splitting on `.` and comparing labels is what makes
