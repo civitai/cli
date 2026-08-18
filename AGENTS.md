@@ -427,13 +427,9 @@ item must carry a trigger that is a routing question rather than a label
     That command's below-floor refusal therefore FAILS where the attach path
     exits 0: there the job was the attach; here the submit IS the job.
 
-31. **`internal/pkgzip`'s size caps are the CLI's OWN, not a server mirror, and
-    the server's bundle ceiling is deliberately NOT vendored.** #423 bracketed it
-    to `(2.32 MB, 8.20 MB]` and no further; a cap guessed from inside that range
-    refuses bundles the server accepts, unappealably. So the CLI reports rather
-    than refuses: `appapi.SubmitBodySize` (base64-in-JSON, so the wire size is
-    ~4/3 of "compressed" — that is what a body limit applies to) and
-    `pkgzip.LargestEntries`, only under a failed submit. Name no server ceiling.
+31. **Changing a `pkgzip` size cap, vendoring or naming the server's bundle
+    ceiling, or wording what `app submit` reports about a bundle's size?**
+    → evidence: claudedocs/decisions/31-pkgzip-caps-are-not-a-server-mirror.md
 
 32. **Sending or showing the commit an app was built from — the 40-hex gate,
     `sourceDirty`'s null-vs-false, or the submit body's size?**
