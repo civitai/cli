@@ -1492,7 +1492,13 @@ Packaged 5 file(s) (858 bytes compressed, 110 decompressed; 1163 bytes as the ba
   the same shape and Google documents it as public, so warning on it would fire
   on every submit of a Firebase-based block — the cost is that a Google *server*
   key is not reported either) and a headerless PKCS#8 body (that shape is an
-  X.509 certificate just as often as a private key). If the scan hits its
+  X.509 certificate just as often as a private key); and a connection string
+  against a **reserved host** — `example.com`/`.net`/`.org` and anything under
+  them, any host whose TLD is `.test`, `.invalid`, `.localhost`, `.example` or
+  `.local`, and the loopback/unspecified addresses — which is documentation, not
+  a leak. That last set is compared as **whole DNS labels**, so a real host that
+  merely spells one of those words (`fastest.civitai.com`, `db.dev.civitai.com`,
+  `cache.samplerate.io`) **is** reported. If the scan hits its
   8 MiB budget it stops **and says so** rather than reporting a quiet zero.
 - 🔴 **The rate you can measure is the false-positive one.** Over 244 real
   project directories and 3,917 packaged files this fires on **one** project. The

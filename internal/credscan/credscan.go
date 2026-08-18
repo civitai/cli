@@ -96,6 +96,13 @@
 //   - GOOGLE API KEYS are exempt by shape — see publicByDesignRe — so a Google
 //     *server* key is a deliberate false negative, and so is a headerless PKCS#8
 //     body (see knownFormats).
+//   - A CONNECTION STRING AGAINST A RESERVED HOST is never reported, however
+//     real its password: `@example.com` and anything under it, and any host
+//     whose TLD is `.test`, `.invalid`, `.localhost`, `.example` or `.local`,
+//     plus the loopback/unspecified literals. That is documentation, and this
+//     is the ONE deliberately quiet host set — see hostIsReserved, which reads
+//     whole DNS labels precisely so a real host that merely SPELLS one of those
+//     words (`fastest.civitai.com`, `db.dev.civitai.com`) is still reported.
 //   - THE BYTE BUDGET (MaxScanBytes) can stop the scan early. That one is NOT
 //     silent: Report.Truncated says so and the warning prints it.
 package credscan
@@ -392,6 +399,11 @@ var interpolationMarkers = []string{"${", "process.env", "import.meta"}
 // rejectRe drops a value that names itself as non-real. Applied to the WHOLE
 // value (not just its start), because `sk-test-...` and `abc-localhost-9090`
 // carry the tell in the middle.
+//
+// 🔴 A SUBSTRING SWEEP IS SAFE ON A VALUE AND UNSAFE ON A HOSTNAME, so the URL
+// validator applies this to the USERINFO ONLY and asks hostIsReserved about the
+// host. A value is bytes the author chose; a hostname is a name the world chose,
+// and `test` sits inside `fastest` and `attestation`. See urlPasswordLooksReal.
 var rejectRe = regexp.MustCompile(`(?i)(mock|dummy|fake|sample|example|placeholder|localhost|changeme|redacted|not[._-]?a[._-]?real|xxxx|test|demo|dev\.)`)
 
 // dottedRefRe matches an UNQUOTED dotted reference expression — `opts.token`,
@@ -763,18 +775,101 @@ var knownFormats = []knownFormat{
 		// auditor named it the most common real leak shape in a web project.
 		name: "URL with an embedded password",
 		// 🔴 THE MATCH RUNS PAST THE `@` TO INCLUDE THE HOST, AND THAT IS A FIX,
-		// NOT DECORATION. It used to end at the `@`, so the rejectRe check inside
-		// the validator — the whole reason `localhost`, `example`, `test` and
-		// `demo` are in that list — could never see the hostname it was written
-		// to read. `postgres://admin:Kq9Zx2Lm5Rb8@localhost:5432/app` fired.
+		// NOT DECORATION. It used to end at the `@`, so the validator could not
+		// see the hostname at all and
+		// `postgres://admin:Kq9Zx2Lm5Rb8@localhost:5432/app` fired. The host is
+		// read by hostIsReserved — a WHOLE-LABEL test, not rejectRe's substring
+		// sweep, which silenced five real hosts when it briefly owned this job.
 		re:       regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s:/?#@]+:[^\s:/?#@]+@[^\s/?#@]{1,255}`),
 		validate: urlPasswordLooksReal,
 	},
 }
 
-// localHostRe is the part of "this is not a real host" that rejectRe's word list
-// cannot spell: a loopback or unspecified ADDRESS.
+// localHostRe is the part of "this is not a real host" that a NAME test cannot
+// spell: a loopback or unspecified ADDRESS. hostIsReserved covers the names.
 var localHostRe = regexp.MustCompile(`@(127\.0\.0\.1|0\.0\.0\.0|\[::1\]|localhost)(:|$)`)
+
+// reservedHostTLDs are the top-level labels that cannot name a machine anyone
+// can reach: RFC 6761 §6.1–6.4 (`.localhost`, `.test`, `.invalid`) and RFC 2606
+// §2 (`.example`), plus `.local`, which RFC 6762 gives to mDNS. A connection
+// string against one of these is documentation or a local dev note.
+//
+// 🔴 THE COST OF `.local` IS REAL AND SMALLER THAN IT LOOKS: an mDNS name does
+// resolve on a LAN, so `nas.local` could hold a live password. It is in the set
+// because the shape overwhelmingly appears in READMEs, and the entry is the one
+// here worth revisiting if a real report ever contradicts that.
+var reservedHostTLDs = map[string]bool{
+	"localhost": true, "test": true, "invalid": true, "example": true, "local": true,
+}
+
+// reservedExampleDomains are RFC 2606 §3's second-level documentation domains.
+// A host AT or UNDER one of them is documentation.
+var reservedExampleDomains = map[string]bool{
+	"example.com": true, "example.net": true, "example.org": true,
+}
+
+// hostIsReserved reports whether host — the authority the URL match ends with,
+// port and IPv6 brackets included — is a name reserved for documentation or
+// local use.
+//
+// 🔴 IT COMPARES WHOLE LABELS, AND THAT IS THE ENTIRE POINT OF THIS FUNCTION.
+// The comparison used to be rejectRe swept over the whole match, i.e. a
+// SUBSTRING test against a hostname, which silenced a real credential whenever a
+// real host happened to spell a reject word anywhere. Measured on the shipped
+// binary, all five of these were dropped and only the control was reported:
+// `db.dev.civitai.com` (`dev.`), `testing.civitai.com` and `fastest.civitai.com`
+// and `cluster0.attestation.mongodb.net` (`test`), `cache.samplerate.io`
+// (`sample`). Splitting on `.` and comparing labels is what makes
+// `fastest` ≠ `test`.
+//
+// 🔴 THE DIRECTION OF FAILURE HERE IS THE OPPOSITE OF THE PACKAGER'S, AND OF
+// EVERY NAME RULE IN pkgzip — do not infer this file's asymmetry from theirs.
+// Matching too much here means a real credential ships silently to a place it
+// cannot be recalled from; matching too little means ONE noisy line the author
+// reads and dismisses. So this set is deliberately small and RFC-derived, and
+// when in doubt it REPORTS.
+//
+// 🔴 DO NOT ADD A LABEL LIKE `dev`, `staging`, `qa` OR `sandbox`. Those name real
+// machines holding real credentials — `db.dev.civitai.com` is the first line of
+// the measurement above — so adding one re-creates the false negative this
+// function exists to remove, one level down and harder to see.
+func hostIsReserved(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(hostWithoutPort(host), "."))
+	// No empty-string guard: strings.Split("", ".") is one empty label, which
+	// matches nothing here and returns false. A guard for it would be dead code
+	// in a gate, which this package has already paid for once — see the
+	// whitespace clause that valueLooksLikeSecret no longer has.
+	labels := strings.Split(h, ".")
+	if reservedHostTLDs[labels[len(labels)-1]] {
+		return true
+	}
+	if n := len(labels); n >= 2 && reservedExampleDomains[labels[n-2]+"."+labels[n-1]] {
+		return true
+	}
+	return false
+}
+
+// hostWithoutPort strips a `:port` suffix, and unwraps an IPv6 literal's
+// brackets so `[::1]:6379` does not read as a host named `[`.
+//
+// 🔴 THE BRACKET BRANCH IS VERDICT-NEUTRAL TODAY AND IS KEPT ANYWAY, LABELLED
+// rather than deleted. An IPv6 literal has no DNS labels, so it can never be
+// reserved with or without the unwrap, and the loopback literal is localHostRe's
+// job — a mutation removing the branch SURVIVES, and that is expected. It stays
+// because the alternative is a function that silently returns `[2001` as a
+// hostname to whatever calls it next.
+func hostWithoutPort(host string) string {
+	if strings.HasPrefix(host, "[") {
+		if i := strings.IndexByte(host, ']'); i >= 0 {
+			return host[1:i]
+		}
+		return host
+	}
+	if i := strings.IndexByte(host, ':'); i >= 0 {
+		return host[:i]
+	}
+	return host
+}
 
 // minURLPasswordEntropy is looser than the value floor. A database password is
 // shorter than an API token, so 3.0 bits/char would reject real ones; 2.5 still
@@ -804,14 +899,27 @@ func urlPasswordLooksReal(match string) bool {
 		user = user[i+2:]
 	}
 	pw := match[colon+1 : at]
-	// rejectRe now sees the HOST as well as the credentials, which is the point
-	// of matching past the `@`.
+	// 🔴 THE HOST AND THE CREDENTIALS GET DIFFERENT TESTS, AND MIXING THEM WAS A
+	// MEASURED FALSE NEGATIVE. Matching past the `@` is what let this validator
+	// see the hostname at all, and that is a fix worth keeping — but it also put
+	// the hostname in front of rejectRe, which is a SUBSTRING sweep, so any real
+	// host spelling a reject word anywhere went quiet: `db.dev.civitai.com`,
+	// `testing.civitai.com`, `fastest.civitai.com`,
+	// `cluster0.attestation.mongodb.net` and `cache.samplerate.io` were all
+	// dropped with a real password on them. So rejectRe now sees the USERINFO —
+	// what it saw before the widening, minus the scheme — and the host goes to
+	// hostIsReserved, which compares whole DNS labels. Read that function's
+	// comment before touching either half; its failure direction is the opposite
+	// of pkgzip's.
 	//
 	// 🔴 NO LENGTH FLOOR HERE: it was redundant and a battery proved it. Any
 	// string of five characters or fewer has at most log2(5) = 2.32 bits/char,
 	// which is already below minURLPasswordEntropy, so `len(pw) < 6` could never
 	// be the clause that rejected anything. One rule, in one place.
-	if rejectRe.MatchString(match) || localHostRe.MatchString(match) {
+	if rejectRe.MatchString(user + ":" + pw) {
+		return false
+	}
+	if localHostRe.MatchString(match) || hostIsReserved(match[at+1:]) {
 		return false
 	}
 	lower := strings.ToLower(pw)

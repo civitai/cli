@@ -702,14 +702,25 @@ func TestURLPasswordGateKeepsDocumentationQuiet(t *testing.T) {
 		// this is the only fixture the `$`/`%` content test catches, and without
 		// it that test is dead code every other clause reaches first.
 		{"an interpolation inside the password", `postgres://admin:tok${DB_PASS}en@db.internal/app`, false},
-		// 🔴 THE HOST HALF. The match used to END at the `@`, so the rejectRe
-		// clause inside the validator — the whole reason `localhost`, `example`,
-		// `test` and `demo` are in that word list — could never see the hostname
-		// it exists to read. All three of these fired.
+		// 🔴 THE HOST HALF. The match used to END at the `@`, so the validator
+		// could not see the hostname at all and all of these fired. The host is
+		// now read by hostIsReserved, a WHOLE-LABEL test — see
+		// TestURLHostIsMatchedByWholeLabelsNotSubstrings for the other side of it.
 		{"a real-looking password against localhost", `postgres://admin:Kq9Zx2Lm5Rb8@localhost:5432/app`, false},
 		{"a real-looking password against a documentation domain", `postgres://admin:Kq9Zx2Lm5Rb8@example.com:5432/app`, false},
+		{"a real-looking password against a host UNDER a documentation domain", `postgres://admin:Kq9Zx2Lm5Rb8@db.example.com:5432/app`, false},
 		{"a real-looking password against loopback", `redis://svc:Kq9Zx2Lm5Rb8@127.0.0.1:6379`, false},
-		{"a real-looking password against a test host", `postgres://admin:Kq9Zx2Lm5Rb8@db.test.internal/app`, false},
+		{"a real-looking password against a .test host", `postgres://admin:Kq9Zx2Lm5Rb8@db.example.test/app`, false},
+		// 🔴 THIS ROW CHANGED SIDES, AND THE REASON IS THE WHOLE-LABEL FIX. It
+		// used to read `false` while the host went through rejectRe's substring
+		// sweep, which saw `test` inside it. `.internal` is a private-use TLD
+		// naming REAL infrastructure — this very table uses `db.internal` as its
+		// canonical real host — so `db.test.internal` is a real machine's test
+		// environment, and a real password on it is a real leak. Reserving the
+		// LABEL `test` at any depth would silence it, and would silence
+		// `db.dev.civitai.com` by the same argument; RFC 6761 reserves the `.test`
+		// TLD, which is the row above.
+		{"a real-looking password against a test ENVIRONMENT of a real host", `postgres://admin:Kq9Zx2Lm5Rb8@db.test.internal/app`, true},
 		// And the gates on the password itself: a default credential, and a
 		// repeated character, are not leaks.
 		{"a default credential", `amqp://guest:guest@rabbitmq:5672`, false},
@@ -1363,6 +1374,145 @@ func TestURLPlaceholderAndDocWordClausesAreEachSeparatelyReachable(t *testing.T)
 			if _, ok := match(tc.control); !ok {
 				t.Errorf("CONTROL failure: %q was NOT reported. It differs from the quiet line only in the "+
 					"trigger for %s, so without it that silence proves nothing.", tc.control, tc.clause)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// THE HOST TEST — WHOLE LABELS, NOT A SUBSTRING SWEEP
+// ---------------------------------------------------------------------------
+
+// TestURLHostIsMatchedByWholeLabelsNotSubstrings is the regression for the false
+// negative this PR's own widening introduced.
+//
+// 🔴 THE WIDENING WAS RIGHT AND ITS SIDE EFFECT WAS NOT. Running the match past
+// the `@` is what let the validator see a hostname at all (`@localhost` had been
+// firing). But it also handed the hostname to rejectRe, which is a SUBSTRING
+// test, so any real host that happened to spell a reject word ANYWHERE went
+// silent. Measured on the built binary before the fix: of the six lines below
+// only the control was reported, and the URL form is the ONLY detector for
+// `DATABASE_URL=…` — no credential word appears in the key, so A2 structurally
+// cannot see it, and an auditor named that the most common real leak shape in a
+// web project.
+//
+// 🔴 THE FIXTURES ARE PICKED SO NO TWO SHARE A REASON. `dev.` and `sample` and
+// `test` are three different rejectRe entries; `fastest` and `attestation` hide
+// `test` at two different offsets inside two different words, which is what
+// separates "the word list shrank" from "the comparison became label-aware".
+func TestURLHostIsMatchedByWholeLabelsNotSubstrings(t *testing.T) {
+	// The password is one string across every row so the ONLY thing that varies
+	// is the host: a row that behaves differently is a fact about the hostname.
+	const pw = "Kq9Zx2Lm5Rb8"
+
+	t.Run("a real host that merely spells a reject word is REPORTED", func(t *testing.T) {
+		for _, tc := range []struct{ swallowedBy, line string }{
+			{"the control — no reject word anywhere in it",
+				`postgres://svc:` + pw + `@db.civitai-internal.net:5432/app`},
+			{"`dev.`, the one rejectRe entry that carries its own dot",
+				`postgres://svc:` + pw + `@db.dev.civitai.com:5432/app`},
+			{"`test`, as a prefix of the first label",
+				`postgres://svc:` + pw + `@testing.civitai.com:5432/app`},
+			{"`test`, buried at the END of an ordinary word",
+				`postgres://svc:` + pw + `@fastest.civitai.com:5432/app`},
+			{"`test`, buried in the MIDDLE of an ordinary word",
+				`mongodb://svc:` + pw + `@cluster0.attestation.mongodb.net/db`},
+			{"`sample`, as a prefix of an ordinary word",
+				`redis://svc:` + pw + `@cache.samplerate.io:6379`},
+		} {
+			t.Run(tc.swallowedBy, func(t *testing.T) {
+				if _, ok := match(tc.line); !ok {
+					t.Errorf("NOT reported:\n  %s\n\n"+
+						"🔴 A real credential against a real host was dropped because the hostname contains %s. "+
+						"The host must be compared as WHOLE DNS LABELS — a substring sweep over a hostname "+
+						"silences the leak shape this format exists to catch, and silently: the author sees "+
+						"the same blank line a clean bundle produces.", tc.line, tc.swallowedBy)
+				}
+			})
+		}
+	})
+
+	// The other direction, so the rows above are not bought by deleting the host
+	// test altogether. Each of these is reserved BY RFC, and each is named for
+	// the clause that must reject it.
+	t.Run("a reserved documentation host is still QUIET", func(t *testing.T) {
+		for _, tc := range []struct{ clause, line string }{
+			{"the `.localhost` TLD (also localHostRe)", `postgres://svc:` + pw + `@localhost:5432/app`},
+			{"the `.localhost` TLD, which localHostRe canNOT see (it anchors on `@localhost`)",
+				`postgres://svc:` + pw + `@db.localhost:5432/app`},
+			{"the loopback literal — localHostRe, the only clause that reads an ADDRESS",
+				`postgres://svc:` + pw + `@127.0.0.1:5432/app`},
+			{"the unspecified literal", `postgres://svc:` + pw + `@0.0.0.0:5432/app`},
+			{"the IPv6 loopback literal", `redis://svc:` + pw + `@[::1]:6379`},
+			{"the `.test` TLD, RFC 6761 §6.2", `postgres://svc:` + pw + `@db.example.test:5432/app`},
+			{"the `.invalid` TLD, RFC 6761 §6.4", `postgres://svc:` + pw + `@db.invalid:5432/app`},
+			{"the `.local` TLD, mDNS", `postgres://svc:` + pw + `@nas.local:5432/app`},
+			{"the `.example` TLD, RFC 2606 §2", `postgres://svc:` + pw + `@db.example:5432/app`},
+			{"example.com, RFC 2606 §3", `postgres://svc:` + pw + `@example.com:5432/app`},
+			{"a host UNDER example.net", `postgres://svc:` + pw + `@db.example.net:5432/app`},
+			{"a host UNDER example.org, with no port", `postgres://svc:` + pw + `@db.example.org/app`},
+		} {
+			t.Run(tc.clause, func(t *testing.T) {
+				if label, ok := match(tc.line); ok {
+					t.Errorf("fired on a reserved host, labelled %q:\n  %s\n\n"+
+						"🔴 %s must reject this. A documentation URL that warns on every submit is the noise "+
+						"failure this whole detector is shaped around.", label, tc.line, tc.clause)
+				}
+			})
+		}
+	})
+}
+
+// TestHostIsReservedComparesLabels is the unit half: the label walk itself,
+// including the parsing hostIsReserved has to do before it can compare anything.
+//
+// 🔴 EVERY `false` ROW HERE IS A CREDENTIAL THAT SHIPS OR DOES NOT. This function
+// is a gate on reporting, so a row reading `true` by accident is a silenced leak,
+// which is why the near-misses (`myexample.com`, `example.company`, `fastest`)
+// are pinned as explicitly as the reserved names.
+func TestHostIsReservedComparesLabels(t *testing.T) {
+	for _, tc := range []struct {
+		host string
+		want bool
+		why  string
+	}{
+		// Reserved — the RFC set, at the shapes a connection string spells it in.
+		{"localhost", true, "the bare name"},
+		{"localhost:5432", true, "the port must not become part of the last label"},
+		{"db.localhost", true, "a subdomain of a reserved TLD is reserved too"},
+		{"db.example.test:5432", true, "the `.test` TLD, with a port"},
+		{"db.invalid", true, "the `.invalid` TLD"},
+		{"nas.local", true, "the `.local` TLD"},
+		{"db.example", true, "the `.example` TLD"},
+		{"EXAMPLE.COM", true, "the comparison is case-insensitive"},
+		{"example.com.", true, "a fully-qualified name's trailing dot must not make the last label empty"},
+		{"db.example.net:5432", true, "under a documentation domain, with a port"},
+		{"a.b.c.example.org", true, "any depth under a documentation domain"},
+
+		// NOT reserved — the five measured false negatives, plus the near-misses
+		// that a substring test or a sloppier suffix test would swallow.
+		{"db.civitai-internal.net:5432", false, "the control"},
+		{"db.dev.civitai.com:5432", false, "a real host with a `dev` label — the label set must NOT grow one"},
+		{"testing.civitai.com:5432", false, "`test` is a PREFIX here, not a label"},
+		{"fastest.civitai.com:5432", false, "`test` is a SUFFIX of an ordinary word"},
+		{"cluster0.attestation.mongodb.net", false, "`test` sits inside `attestation`"},
+		{"cache.samplerate.io:6379", false, "`sample` is a prefix of `samplerate`"},
+		{"db.test.internal", false, "`.internal` is a private-use TLD naming REAL infrastructure"},
+		{"myexample.com", false, "`example.com` as a SUFFIX of a registrable name is a different domain"},
+		{"example.company", false, "`example.com` as a PREFIX of a different TLD is a different domain"},
+		{"notlocalhost", false, "a reserved TLD as a suffix of a longer label is a different name"},
+		{"localhost.civitai.com", false, "the reserved name is the TLD, not any label — this is a real host"},
+		{"10.0.0.5:5432", false, "a private ADDRESS is localHostRe's business, not a label walk's"},
+		{"", false, "an empty authority names nothing"},
+	} {
+		t.Run(tc.host, func(t *testing.T) {
+			if got := hostIsReserved(tc.host); got != tc.want {
+				verb := "silences a real credential"
+				if tc.want {
+					verb = "warns on documentation every submit"
+				}
+				t.Errorf("hostIsReserved(%q) = %v, want %v — %s. Getting this wrong %s.",
+					tc.host, got, tc.want, tc.why, verb)
 			}
 		})
 	}
