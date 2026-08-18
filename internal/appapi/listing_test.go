@@ -62,10 +62,17 @@ func TestGetMyListingForApp(t *testing.T) {
 }
 
 // 🔴 The PRE-APPROVAL DRAFT path: a first-version app pending review has NO backing
-// AppBlock, so its draft listing is resolvable ONLY by slug. If the request ever
-// carried an empty `appBlockId` key instead of omitting it, the server's
+// AppBlock, so the slug is the only selector this client can send for it. If the
+// request ever carried an empty `appBlockId` key instead of omitting it, the server's
 // "either appBlockId or slug" schema would still see a supplied-but-empty id — so
 // pin that the key is OMITTED entirely and the slug is what's sent.
+//
+// 🔴 THIS IS A CLAIM ABOUT THE REQUEST, AND ONLY ABOUT THE REQUEST. The fake below
+// answers with a draft UNCONDITIONALLY — it never inspects the input it just captured
+// — so a green here is evidence that the CLI sends the right wire shape and evidence
+// of NOTHING about what a real server resolves for that shape. civitai/cli#424 was
+// filed because the prose around this test read as the latter; the scope of the
+// server's slug arm lives with `resolveListing` in `internal/cmd/app_listing.go`.
 func TestGetMyListingForAppBySlugOnlyOmitsAppBlockID(t *testing.T) {
 	var gotInput string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

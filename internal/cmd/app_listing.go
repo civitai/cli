@@ -189,11 +189,33 @@ func resolveListingSlug(lc listingCommon) (string, error) {
 //
 // 🔴 A submission with NO appBlockId is a FIRST-version app still pending review. It
 // still has a store listing: `civitai app submit` mints one as a pre-approval DRAFT
-// so its media is settable while pending. That draft has `appBlockId = NULL` and is
-// resolvable ONLY BY SLUG, so we must still call through — short-circuiting to a
-// "no listing" error here would make the pending-media flow unreachable from the CLI
-// even though the server supports it. The slug is passed on BOTH paths (harmless when
-// the appBlockId resolves; load-bearing when it is absent).
+// so its media is settable while pending. That draft has `appBlockId = NULL`, so the
+// SLUG IS THE ONLY SELECTOR THAT CAN NAME IT — the appBlockId arm is skipped entirely
+// when the CLI has none to send. That is why the slug goes on BOTH calls (redundant
+// when the appBlockId resolves, the only handle when it is absent) and why
+// short-circuiting to a "no listing" error here would strand the pending-media flow.
+//
+// 🔴 "ONLY BY SLUG" IS A CLAIM ABOUT WHICH SELECTOR THE CLI CAN SEND, NEVER ABOUT HOW
+// WIDE THE SERVER'S SLUG ARM IS — civitai/cli#424, where this comment asserted the
+// second while only ever having evidence for the first. Against the server it was
+// written for, the arm was `{slug, kind:'onsite', appBlockId:null, status:'draft'}`:
+// four clauses that admitted the pre-approval draft and nothing else, so every OTHER
+// shape 404ed by slug — `gen-matrix` and `custom-generators` (onsite, approved, so
+// carrying an appBlockId) failed clauses 2-3, `radio` and `comfy` failed clause 1.
+// civitai/civitai#3989 then dropped it to `{slug, revisionOfId: null}`, which is what
+// the paragraph below rests on; re-verified against civitai/civitai origin/main at
+// `src/server/services/blocks/offsite-listing.service.ts:1746`. The pre-approval draft
+// is now ONE MEMBER of a wide set rather than the only thing the arm admits, so do not
+// re-derive a narrow server scope from this paragraph — read the server, it moves.
+//
+// 🟡 AND THE PENDING CASE IS ASSERTED FROM SERVER SOURCE, NOT MEASURED. No genuinely
+// `pending` first-version onsite app was ever probed: the only two `appBlockId = nil`
+// rows reachable on 2026-08-17 were WITHDRAWN, and the old clause keyed on the
+// LISTING's status rather than the submission's, so they could not answer it either
+// way. "The server supports it" is therefore unverified, not proven — do not upgrade
+// it to a measurement, and do not downgrade it to a doubt either. Nothing turns on it
+// today: the widened clause admits the row on the slug whatever its status, so this is
+// archaeology. civitai/cli#424 carries the recipe if anyone wants to settle it.
 //
 // 🔴 THE SUBMISSION LOOKUP IS THE ONSITE PATH, NOT THE ONLY PATH — civitai/cli#422
 // outcome 1, and this ordering is the whole of it. An OFFSITE app is a registered
