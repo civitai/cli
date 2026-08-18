@@ -199,6 +199,12 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
 
 ### #424 — does the `slug` selector on `appListings.getMyListingForApp` EVER resolve?
 
+🔴 **SUPERSEDED, KEPT FOR PROVENANCE — do not act on the readings below.** They were taken
+against a server whose slug arm has since been rescoped by `civitai/civitai#3989`, so
+*"Live, the slug selector resolves nothing"* is no longer true. The current state of this
+question is the `civitai/cli#424` section further down; the over-general comment those
+readings were about has since been narrowed in `internal/cmd/app_listing.go`.
+
 - **Symptom + exact repro:** `internal/cmd/app_listing.go:186-192` carries a 🔴 comment
   asserting a pre-approval draft listing has `appBlockId = NULL` and is *"resolvable ONLY
   BY SLUG"*, with the slug argument *"load-bearing when it is absent"*. Live, the slug
@@ -322,9 +328,13 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
 - **Resolved from server source** (`civitai/civitai@07a1c537dc`): the old arm was
   `where: { slug, kind:'onsite', appBlockId:null, status:'draft' }`, which accounts for every row
   in #424's measured table — approved onsite apps carry an `appBlockId` and fail clauses 2-3;
-  offsite fails clause 1. So the `app_listing.go:186-192` comment is **over-general, not wrong**.
+  offsite fails clause 1. So the `app_listing.go:186-192` comment was **over-general, not wrong**.
+  **Now narrowed**, and the corrected claim is pinned WHOLE
+  (`TestResolveListingScopeClaimIsPinnedWhole`), alongside a guard on the slug being
+  sent on BOTH lookup arms (`TestListingLookupCarriesTheSlugOnBothArms`).
 - **Still unmeasured:** the pending-onsite case itself. #424's two `appBlockId = nil` submissions
   were **withdrawn**, and the clause keys on the *listing's* status, not the submission's.
+  The narrowed comment says so in the code rather than only here.
 - **Next probe:** submit a throwaway app; before review, `GetMyListingForApp(ctx, "", "<slug>")`.
 - **Note:** #3989 widened past this shape entirely, so the answer now changes nothing operationally.
 

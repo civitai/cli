@@ -847,14 +847,24 @@ func TestReadmeDocumentsAppListing(t *testing.T) {
 
 // 🔴 TestAppListingPendingReachesDraftBySlug — the whole point of draft-at-submit.
 // A first-version app pending review has NO backing appBlockId, but `civitai app
-// submit` minted its store listing as a pre-approval DRAFT, resolvable ONLY BY SLUG.
+// submit` minted its store listing as a pre-approval DRAFT, and the slug is the only
+// selector the CLI can send for it.
 //
 // This INVERTS the old TestAppListingPendingNoListingYet, which asserted the CLI
 // short-circuits to a "listing is created on approval" error. That short-circuit is
-// now the bug: it would make the pending-media flow unreachable from the CLI even
-// though the server supports it. So this pins that the CLI (a) does NOT bail before
-// the lookup, (b) sends the SLUG (the only thing that can resolve a null-appBlockId
-// draft) and omits the empty appBlockId, and (c) renders the draft's media.
+// now the bug: it would make the pending-media flow unreachable from the CLI. So this
+// pins that the CLI (a) does NOT bail before the lookup, (b) sends the SLUG (the only
+// selector that can name a null-appBlockId draft) and omits the empty appBlockId, and
+// (c) renders the draft's media.
+//
+// 🔴 THE FAKE ANSWERS THE LOOKUP UNCONDITIONALLY, SO THIS PINS WHAT THE CLI SENDS AND
+// NOTHING ABOUT WHAT A SERVER RESOLVES. The handler branches on PATH only; it never
+// reads the input it captured, so it would hand back the same draft for a request
+// carrying no slug at all. That is fine for the claim being made — but the comment
+// this test used to carry ("even though the server supports it") turned it into
+// evidence for a server behaviour that was never measured. See civitai/cli#424 and
+// the doc comment on `resolveListing`: the genuinely PENDING first-version case is
+// asserted from server source and remains unmeasured to this day.
 func TestAppListingPendingReachesDraftBySlug(t *testing.T) {
 	var listingForAppInput string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

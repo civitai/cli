@@ -241,9 +241,13 @@ func decodeTRPCData(raw []byte, out any, route listingRoute) error {
 //
 // 🔴 The SLUG path is what reaches a PRE-APPROVAL DRAFT. A first-version app has no
 // backing AppBlock while it is pending review, so its draft listing (minted at
-// `civitai app submit`) has `appBlockId = NULL` and is resolvable ONLY by slug. That
-// is the whole reason listing media is settable while pending — resolving by
-// appBlockId alone can never see it.
+// `civitai app submit`) has `appBlockId = NULL` and there is no appBlockId to send:
+// resolving by appBlockId alone can never see it. That is the whole reason listing
+// media is settable while pending — and it is a fact about which SELECTOR this client
+// holds, not about how wide the server's slug arm is. The scope of that arm has
+// already moved once (civitai/civitai#3989) and is stated in ONE place, next to the
+// caller that depends on it: see `resolveListing` in `internal/cmd/app_listing.go`,
+// and civitai/cli#424 for the over-general claim this replaced.
 //
 // NOT_FOUND (404) means no listing row exists for the app at all.
 func (c *Client) GetMyListingForApp(ctx context.Context, appBlockID, slug string) (*ListingRef, error) {
