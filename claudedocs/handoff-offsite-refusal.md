@@ -85,8 +85,9 @@ still says it, this is the correction.
   open `civitai` PRs under this account belong to other sessions.
 - **Issues closed:** `cli#422`, `cli#389` (outcome A, measured), `civitai#3984`, `civitai#4003`,
   `civitai#4008`, **`civitai#4059`** (delivered by #4061).
-- **Issues open on purpose:** `cli#424`, `cli#427` (both narrowed), `civitai#3893`,
-  `civitai#4057`. **`cli#411` is CLOSED** — see the top of this doc.
+- **Issues open on purpose:** `cli#424`, `cli#427` (both narrowed), `civitai#3893`.
+  **`cli#411` and `civitai#4057` are both CLOSED** — see the top of this doc, and #4057's block
+  below.
 - 🔴 **The prod-deployed revision IS readable, and the previous revision of this doc said it was
   not.** The GitHub deployments API on `civitai/civitai` carries a `do-prod` environment whose
   successful statuses name `https://civitai.com`. Command + the trap under *How to verify*. This
@@ -356,31 +357,63 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
   `git -C /home/zach/workspace/civit/civitai log --since="2026-08-17T19:34Z" --until="2026-08-17T20:49Z" -- src/components/Cards/`
   and the shared card CSS. If nothing in that window touches the card, widen the bisect.
 
-### `civitai#4057` — the ImageCard tolerance is GREEN EVERYWHERE now, and nobody knows why
+### `civitai#4057` — RESOLVED: fixed by `civitai#4052`, not intermittent (CLOSED 2026-08-18)
 
-- **Symptom as filed:** `preview / component-tests` fails
-  `AssertionError: expected 57 to be less than or equal to 50` at
-  `src/components/Cards/ImageCard.browser.test.tsx:173`, reported red on every `main`-based
-  branch since ~2026-08-17 20:49Z. **Report-only, does not gate.**
-- **Observed 2026-08-18** via `gh api repos/civitai/civitai/commits/<sha>/status`:
-  all four #4061 commits (`c7c58f30ef`, `3c80dfc741`, `fe832d3dfc`, `af56be48df`) →
-  `success — Component suite passed (report-only)`. **And on unrelated PRs:** #4086 → `success`,
-  #4075 → `success`.
-- **Ruled out:** *"green only on my branch"* — the two unrelated PRs are the control, and they
-  pass too. Without that control the observation would have said something about my branch and
-  nothing about the bug.
-- **NOT established:** what fixed it. Nothing in #4061 goes near `ImageCard` or shared card CSS,
-  and no bisect was run. **Do not attribute it**, and note the issue's own standing caveat that
-  #4043 was only the earliest failing run.
-- **Leading hypothesis, weakly held:** either something in the window changed the layout back
-  under budget, or the check is **intermittent**. A tolerance sitting 7px over a 50px budget is
-  exactly the shape that flips on font-metric/rendering variance, so a run of greens is weaker
-  evidence here than it would be for a deterministic assertion.
-- **Next probe:** read several *current* `main` runs directly rather than trusting this sample,
-  then decide deliberately between "fixed in the window" and "intermittent, budget too tight".
-  If intermittent, the durable fix is the one the characterization test's own name implies.
-- Posted to the issue: `civitai/civitai#4057#issuecomment-5333856030`. **Left open** — I cannot
-  say why it went green.
+- **The previous revision's leading hypothesis — "either something in the window changed the
+  layout back, or the check is intermittent" — is REFUTED.** The fix is `cd6d1e9041` (#4052,
+  merged 2026-08-17 21:35Z), which replaced the bare literal with a documented constant:
+  `expect(fourDigits).toBeLessThanOrEqual(MAX_NARROW_OVERFLOW_PX)`, **64**, up from 50.
+- **The mechanism the issue was missing, stated in #4052's own comment:** `reactionBarOverflow()`
+  is a raw pixel distance driven by the WIDTH OF RENDERED TEXT, so unlike the height assertions
+  beside it, it moves with font metrics and therefore with the environment — 50px measured off-CI
+  when #4034 shipped it, 57px in the CI browser. It shipped red, and `preview / component-tests`
+  being report-only is why nothing said so.
+- 🔴 **What killed the intermittency theory: the outcome sorts by ANCESTRY, not by the clock.**
+
+  | PR | run | carries `cd6d1e9041`? | result |
+  |---|---|---|---|
+  | #4056 | 08-17 22:12Z | **no** | ❌ |
+  | #4061 / #4075 / #4086 / #4082 | 08-18 18:53–21:23Z | yes | ✅ |
+
+  #4056 is the run that *looked* like intermittency — it failed AFTER the fix merged, because its
+  branch was cut before it. **A "red after the fix" is a claim about the branch's base, not about
+  the fix.** Check ancestry before reaching for flakiness.
+- **The spec still RUNS, not skipped** — the thing a green could otherwise be hiding:
+  `✓ component (chromium) src/components/Cards/ImageCard.browser.test.tsx (6 tests) 418ms`.
+- **NOT fixed, on purpose:** #4052 raised the bound, it did not close the overrun. The
+  characterization test still pins a known-bad layout, now at 64px, deliberately above the largest
+  observed value — a real regression moves it by tens of px, a font-stack change by a few.
+- Closed with the evidence: `civitai/civitai#4057#issuecomment-5335314159`.
+
+### NEW, unrelated: a `MySubmissionsList` component flake (no issue filed yet)
+
+`preview / component-tests` failed on **#4087** at 20:50Z, which is what made #4057 look
+unresolved on first read. Different test, unrelated cause:
+
+```
+FAIL  src/components/Apps/MySubmissionsList.browser.test.tsx
+  > the History button opens the moderation timeline (actions + verbatim reasons)
+VitestBrowserElementError: Cannot find element with locator: getByText('Reported for policy')
+```
+
+Reads as a flake: #4087 is comment-only and does not touch that component, the same 39-test file
+passed on #4086, #4082 and #4075 either side of it, and **the file took 21.4s failing against
+6.0s green — a ~3.6× inflation confined to ONE file while the whole run moved only 1.26×.** That
+is a locator waiting out its timeout, not load spread across the suite.
+
+🔴 **How to read these runs at all** (the previous revision had no route to the failing test name —
+the GitHub status only says "Component suite failed"): the Tekton pipelines run in the DataPacket
+prod cluster and the logs are readable directly.
+
+```bash
+export KUBECONFIG=$KC_DPPROD
+kubectl get pipelineruns -n tekton-builds --sort-by=.metadata.creationTimestamp | grep <pr-number>
+kubectl logs -n tekton-builds pr-preview-<pr>-<suffix>-component-tests-pod --all-containers \
+  | sed -e 's/\x1b\[[0-9;]*m//g' | sed -n '/Failed Tests/,/Test Files/p'
+```
+
+The taskrun shows `Succeeded` even when the suite fails — it is a report-only suite, so the task's
+own status says nothing about the tests. **Read the pod log, not the taskrun condition.**
 
 ## Next steps (ranked)
 
@@ -395,17 +428,18 @@ before it was caught — because each revision re-ranked the list without re-rea
 names. **Verify a next-step against the tree before carrying it forward; a list item is a
 hypothesis with a timestamp, not a fact.**
 
-1. **`civitai#4057`** — decide fixed-vs-intermittent from current `main` runs; see its block above.
-2. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
+1. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
    `appBlockId` in exactly 4 places, all query-key/invalidation; the slug is already in hand at the
    page. The real blocker is `editorTabsFor`'s `appBlockId != null`, not the resolver.
-3. **`AGENTS.md` eviction wave** for item 30 when someone needs the room — 269 bytes is still
+2. **`AGENTS.md` eviction wave** for item 30 when someone needs the room — 269 bytes is still
    about one ordinary edit away from failing the ceiling.
-4. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
+3. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
    under full-suite load, 8 clean reruns. Remove the timing dependency; do not re-run it away.
-5. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
-6. **`source_dirty = true` has no live proof** — if a submit is being spent anyway, spend it from a
+4. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
+5. **`source_dirty = true` has no live proof** — if a submit is being spent anyway, spend it from a
    dirty tree and read the row; today's round 2 only exercised the clean case.
+6. **File the `MySubmissionsList` flake** if it recurs — one occurrence, diagnosed above, no issue
+   opened for it yet.
 
 ## Gotchas / decisions / dead-ends
 
