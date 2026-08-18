@@ -444,8 +444,13 @@ func matchAssignment(line string) (string, bool) {
 		// It stays because what it prevents is an INFINITE LOOP on a packaged
 		// line — this package promises never to change a submit's exit code, and
 		// a hang is the loudest way to break that — and because the property it
-		// leans on lives in a regexp somebody may widen. Make the operator group
-		// optional and loc[7] can be 0; the guard is then load-bearing.
+		// leans on lives in a regexp somebody may widen. Both halves of that are
+		// MEASURED, not asserted: give the operator group an empty alternative
+		// AND the credential-word group one, and assignRe matches at zero width
+		// so loc[7] reaches 0; with that widening in place AND this guard
+		// removed, TestScanCatchesTheIssuesOwnThreeFiles stops terminating and
+		// the package dies by `panic: test timed out`. With the guard kept, the
+		// same widening fails fast instead.
 		// TestAssignRegexpAlwaysAdvancesTheScanPosition pins the property, and is
 		// what goes red first if it stops holding.
 		next := pos + loc[7]

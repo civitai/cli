@@ -1386,8 +1386,13 @@ func TestURLPlaceholderAndDocWordClausesAreEachSeparatelyReachable(t *testing.T)
 // and at least five, so loc[7] >= 6 > 0 for every match the pattern can produce
 // and `next` can never be <= `pos`.
 //
-// Make the operator group optional and that stops being true — at which point
-// the guard becomes load-bearing and this test goes red first.
+// Widen the pattern and that stops being true, in either of two measured ways —
+// at which point the guard becomes load-bearing and this test is what goes red
+// first. Both were run against this test and both were caught, each by its own
+// branch below: making the operator group OPTIONAL (`(…)?`) lets it fail to
+// participate, so loc[6]/loc[7] come back -1; giving BOTH that group and the
+// credential-word group an EMPTY ALTERNATIVE lets assignRe match at zero width,
+// so loc[7] reaches 0 and matchAssignment advances by nothing at all.
 func TestAssignRegexpAlwaysAdvancesTheScanPosition(t *testing.T) {
 	// A structured sweep rather than a hand-written list: four tokens drawn from
 	// an alphabet built out of the pattern's own moving parts, exhaustively.
