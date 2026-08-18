@@ -431,6 +431,23 @@ func matchAssignment(line string) (string, bool) {
 		// Resume just past this match's OPERATOR, so the next credential word on
 		// the line gets its own turn. Advancing by at least one byte is what
 		// makes the loop terminate.
+		//
+		// 🔴 THE GUARD BELOW IS UNREACHABLE BY CONSTRUCTION, AND IT IS KEPT AND
+		// LABELLED RATHER THAN DELETED. loc[7] is the END of assignRe's operator
+		// submatch, relative to line[pos:]. That group — `(:=|=>|=|:)` — is
+		// mandatory and at least one byte, and the mandatory credential-word
+		// group in front of it is at least five, so loc[7] >= 6 > 0 for every
+		// match the pattern can produce and `next` can never be <= `pos`. A
+		// mutation battery scored its removal SURVIVED for exactly that reason,
+		// and no input can be constructed that makes it fire.
+		//
+		// It stays because what it prevents is an INFINITE LOOP on a packaged
+		// line — this package promises never to change a submit's exit code, and
+		// a hang is the loudest way to break that — and because the property it
+		// leans on lives in a regexp somebody may widen. Make the operator group
+		// optional and loc[7] can be 0; the guard is then load-bearing.
+		// TestAssignRegexpAlwaysAdvancesTheScanPosition pins the property, and is
+		// what goes red first if it stops holding.
 		next := pos + loc[7]
 		if next <= pos {
 			next = pos + 1

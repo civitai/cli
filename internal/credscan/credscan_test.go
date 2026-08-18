@@ -1155,3 +1155,309 @@ func TestValueCaptureIsANonSpaceRun(t *testing.T) {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// THE LONG-LINE CAP — pinned by BEHAVIOUR, not by restating the constant
+// ---------------------------------------------------------------------------
+
+// lineWithACredentialAtItsEnd returns a SINGLE line of exactly n bytes whose
+// tail is an assignment the detector must report. The padding is a run of one
+// character followed by a space; a space cannot appear in the key pattern or in
+// the value capture, so the padding can neither match on its own nor be swept
+// into the key or the value.
+func lineWithACredentialAtItsEnd(t *testing.T, n int) string {
+	t.Helper()
+	const tail = ` apiSecret="Q8vN2mR7kX4zL9pW3tB6";`
+	if n <= len(tail) {
+		t.Fatalf("n=%d cannot hold the %d-byte credential tail", n, len(tail))
+	}
+	return strings.Repeat("x", n-len(tail)) + tail
+}
+
+// TestLongLineCapIsPinnedOnBothSides covers maxLineBytes, which was
+// FUNCTIONALLY UNPINNED: a mutation battery narrowed it from 1 MiB to 1 KiB — a
+// 1024× change — and the whole suite stayed green. It could, because every
+// existing long-line fixture either derives its size from the constant (so it
+// moves with it) or calls match() directly, which never goes through readLine at
+// all. At 1 KiB the scanner would skip any longer line, i.e. go blind across
+// exactly the minified/bundled content the quadratic fix was written for.
+//
+// 🔴 WHICH SIDE OF THE STALE-VS-VACUOUS TRADE THIS PICKS, AND WHY. A test that
+// derives BOTH fixtures from maxLineBytes passes at ANY value, 1 KiB included —
+// that is precisely the trap that let the mutant live, and it is the same shape
+// as the entropy test that hardcoded 3.0 instead of reading the gate's constant
+// and let a 3.0→2.0 change ship green. Restating `1 << 20` here has the mirror
+// failure: it goes red on a deliberate retune that changes nothing anyone cares
+// about, and a permanently-annoying assertion gets edited to match rather than
+// argued with. So this splits them deliberately:
+//
+//   - the UNDER/OVER boundary pair is DERIVED from the constant, so it pins the
+//     skip behaviour wherever the boundary sits and a ±1 retune stays green;
+//   - one LITERAL 256 KiB case pins the STAKE rather than the number. A real
+//     minified vendor bundle is a single line far larger than that, so a cap
+//     that cannot see 256 KiB has silently dropped this feature's headline input
+//     out of scope. 1 KiB fails it; a retune to 512 KiB does not.
+func TestLongLineCapIsPinnedOnBothSides(t *testing.T) {
+	// 🔴 THE LITERAL HALF. Nothing here reads maxLineBytes.
+	t.Run("a 256 KiB line is scanned", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWrite(t, dir, "src/vendor.min.js", lineWithACredentialAtItsEnd(t, 256<<10)+"\n")
+
+		got := scanFindings(dir, []string{"src/vendor.min.js"})
+		if len(got) != 1 {
+			t.Fatalf("a credential inside a 256 KiB line reported %d finding(s), want 1. A minified bundle is "+
+				"ONE line of this order, and it is the input the whole bounded-time fix exists for — a line cap "+
+				"that cannot reach 256 KiB has taken this feature's headline content out of scope silently, "+
+				"because a skipped line reports exactly what a clean line reports: %+v", len(got), got)
+		}
+		if got[0].Label != "apiSecret" {
+			t.Errorf("label = %q, want \"apiSecret\"", got[0].Label)
+		}
+	})
+
+	// The envelope, in literals, for the one direction no behavioural case can
+	// reach: readLine buffers a whole line before deciding anything, so
+	// maxLineBytes is also this package's per-line MEMORY bound, and a submit may
+	// not be turned into an OOM by a bundled asset.
+	//
+	// 🔴 IT IS A FATAL GATE, AND IT RUNS BEFORE THE DERIVED CASES BELOW ON
+	// PURPOSE. Those cases build a fixture of about maxLineBytes bytes, so an
+	// absurd cap makes the TEST the expensive thing: measured at 1 GiB, the
+	// package timed out and died by `panic: test timed out` — a hang that reads
+	// as CI infrastructure trouble, with this assertion's message never printed.
+	// A guard that is right but unreachable behind a neighbour's failure is the
+	// died-for-the-wrong-reason shape, so the cheap literal check goes first and
+	// stops the run with its own words.
+	const floor = 256 << 10 // the 256 KiB case above is the behavioural half
+	const ceiling = 16 << 20
+	if maxLineBytes < floor {
+		t.Fatalf("maxLineBytes = %d, below the %d-byte floor: a minified bundle line is routinely larger "+
+			"than that, so the detector would be blind to it", maxLineBytes, floor)
+	}
+	if maxLineBytes > ceiling {
+		t.Fatalf("maxLineBytes = %d, above the %d-byte ceiling. readLine buffers the whole line before it "+
+			"decides anything, so this constant is a per-line MEMORY bound as well as a detection one, and "+
+			"this package may never turn a submit into an OOM.", maxLineBytes, ceiling)
+	}
+
+	// 🔴 THE DERIVED HALF — the boundary, wherever the constant puts it. ±64
+	// bytes, not ±1: a hairline retune of the cap is not a defect worth a red,
+	// and pinning the exact byte would additionally pin whether the line's
+	// terminator counts against the cap, which is not a contract this package
+	// states.
+	t.Run("just under the cap is scanned", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWrite(t, dir, "under.js", lineWithACredentialAtItsEnd(t, maxLineBytes-64)+"\n")
+
+		got := scanFindings(dir, []string{"under.js"})
+		if len(got) != 1 {
+			t.Fatalf("a credential in a line 64 bytes UNDER the cap reported %d finding(s), want 1 — the cap "+
+				"must skip only what is over it: %+v", len(got), got)
+		}
+		if got[0].Line != 1 {
+			t.Errorf("reported line %d, want 1", got[0].Line)
+		}
+	})
+
+	t.Run("just over the cap is skipped and the rest of the file is not", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWrite(t, dir, "over.js",
+			lineWithACredentialAtItsEnd(t, maxLineBytes+64)+"\n"+
+				`const apiToken = "Zq4TvW9mB2xR7kP1nJ6y";`+"\n")
+
+		got := scanFindings(dir, []string{"over.js"})
+		if len(got) != 1 {
+			t.Fatalf("reported %d finding(s), want exactly 1 — the credential in the OVER-cap line 1 must be "+
+				"skipped and the ordinary line 2 must still be read: %+v", len(got), got)
+		}
+		if got[0].Line != 2 {
+			t.Errorf("reported line %d, want 2. Line 1 is 64 bytes over the cap and must be skipped; reporting "+
+				"it means the cap is not being applied, and reporting nothing at all means a skipped line still "+
+				"ends the file.", got[0].Line)
+		}
+		if got[0].Label != "apiToken" {
+			t.Errorf("label = %q, want \"apiToken\" — that is the line-2 key", got[0].Label)
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// THE URL VALIDATOR'S TWO UNPINNED CLAUSES
+// ---------------------------------------------------------------------------
+
+// TestURLPlaceholderAndDocWordClausesAreEachSeparatelyReachable pins the two
+// clauses of urlPasswordLooksReal that a mutation battery scored SURVIVED:
+// deleting the placeholder-prefix loop, and deleting the documentation-word
+// switch, each left the whole suite green.
+//
+// 🔴 THE FIXTURES ARE PICKED SO THAT EXACTLY ONE CLAUSE REJECTS EACH, AND THAT
+// IS THE ENTIRE DIFFICULTY. Every obvious documentation URL is rejected three or
+// four ways over — `user:password@localhost` is caught by rejectRe, by the
+// loopback rule AND by the doc-word switch — so a fixture like that leaves the
+// OTHER clauses to reject it and BOTH mutants survive a fully green run. Each
+// line below was measured against every clause before it was written down:
+//
+//   - `your…`/`todo…` — prefixes that are in placeholderPrefixes but NOT in
+//     rejectRe's word list, so only the prefix loop can see them. The overlapping
+//     entries (`dummy`, `fake`, `sample`, `example`, `placeholder`, `changeme`,
+//     `redacted`) are useless here because rejectRe rejects them first, and `$`
+//     is taken by the `$`/`%` content test.
+//   - `password` (2.75 bits/char), `hunter2` (2.81), `changeit` (3.00) — doc
+//     words that CLEAR the 2.5 bits/char floor. The switch's other three arms
+//     cannot be used: `secret` and `passwd` sit at 2.25 and `pwd` at 1.58, so
+//     the entropy floor gets there first and a fixture built on one of them
+//     proves nothing about the switch.
+//
+// Each row is paired with a control that differs ONLY in the clause's trigger,
+// so a silence here is a fact about that clause and not about a dead pattern.
+func TestURLPlaceholderAndDocWordClausesAreEachSeparatelyReachable(t *testing.T) {
+	for _, tc := range []struct {
+		clause  string
+		why     string
+		quiet   string // must NOT be reported — only `clause` rejects it
+		control string // must BE reported — identical but for the clause's trigger
+	}{
+		{
+			clause:  "the placeholder-prefix loop",
+			why:     "a `your…` password against a real host",
+			quiet:   `postgres://civitai:yourDbPassw0rd@db.civitai-internal.net:5432/app`,
+			control: `postgres://civitai:DbPassw0rd7q@db.civitai-internal.net:5432/app`,
+		},
+		{
+			clause:  "the placeholder-prefix loop",
+			why:     "a `todo…` password against a real host",
+			quiet:   `mongodb://svc:todoKq9Zx2Lm5Rb8@cluster0.civitai-internal.net/db`,
+			control: `mongodb://svc:Kq9Zx2Lm5Rb8@cluster0.civitai-internal.net/db`,
+		},
+		{
+			clause:  "the documentation-word switch",
+			why:     "the README `admin:password@` spelling, against a REAL host",
+			quiet:   `postgres://admin:password@db.internal:5432/app`,
+			control: `postgres://admin:passwordX9@db.internal:5432/app`,
+		},
+		{
+			clause:  "the documentation-word switch",
+			why:     "`changeit`, the Java keystore default",
+			quiet:   `postgres://admin:changeit@db.internal:5432/app`,
+			control: `postgres://admin:changeitX9@db.internal:5432/app`,
+		},
+		{
+			clause:  "the documentation-word switch",
+			why:     "`hunter2`, the joke password every README borrows",
+			quiet:   `amqp://svc:hunter2@rabbitmq.civitai-internal.net:5672`,
+			control: `amqp://svc:hunter2X9@rabbitmq.civitai-internal.net:5672`,
+		},
+	} {
+		t.Run(tc.why, func(t *testing.T) {
+			if label, ok := match(tc.quiet); ok {
+				t.Errorf("fired on %s, labelled %q:\n  %s\n\n"+
+					"🔴 %s is the ONLY clause of urlPasswordLooksReal that rejects this line — rejectRe, the "+
+					"loopback rule, the password-equals-username test, the `$`/`%%` content test and the "+
+					"entropy floor were all measured to PASS it. So this firing means that clause is gone, "+
+					"and ordinary documentation now warns on every submit.",
+					tc.why, label, tc.quiet, tc.clause)
+			}
+			// CONTROL: the same URL differing only in the clause's trigger IS
+			// reported, so the silence above is a fact about the clause rather
+			// than about a pattern that has stopped matching altogether.
+			if _, ok := match(tc.control); !ok {
+				t.Errorf("CONTROL failure: %q was NOT reported. It differs from the quiet line only in the "+
+					"trigger for %s, so without it that silence proves nothing.", tc.control, tc.clause)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// B49 — the advance-by-one termination guard in matchAssignment
+// ---------------------------------------------------------------------------
+
+// TestAssignRegexpAlwaysAdvancesTheScanPosition is the property that makes
+// matchAssignment's `if next <= pos { next = pos + 1 }` guard UNREACHABLE, which
+// is why deleting that guard survives every behavioural test in this package.
+//
+// 🔴 THE GUARD IS NOT VACUOUS, IT IS UNREACHABLE-BY-CONSTRUCTION, AND THOSE NEED
+// DIFFERENT TREATMENT. A dropped termination guard is an infinite-loop hazard
+// inside a code path that runs on every packaged line, so the honest thing is to
+// pin the PROPERTY the unreachability rests on rather than to write a behavioural
+// test that cannot exist. matchAssignment resumes at `pos + loc[7]`, the END of
+// assignRe's operator submatch; the operator group `(:=|=>|=|:)` is mandatory and
+// at least one byte, and the credential-word group in front of it is mandatory
+// and at least five, so loc[7] >= 6 > 0 for every match the pattern can produce
+// and `next` can never be <= `pos`.
+//
+// Make the operator group optional and that stops being true — at which point
+// the guard becomes load-bearing and this test goes red first.
+func TestAssignRegexpAlwaysAdvancesTheScanPosition(t *testing.T) {
+	// A structured sweep rather than a hand-written list: four tokens drawn from
+	// an alphabet built out of the pattern's own moving parts, exhaustively.
+	// Deterministic, so a failure reproduces exactly.
+	tokens := []string{
+		"", " ", "SECRET", "token", "password", "API_KEY",
+		":", "=", ":=", "=>", `"`, `'`, "9f3a2b7c1d4e", "[",
+	}
+
+	var lines, matches, minEnd int
+	minEnd = -1
+	check := func(t *testing.T, line string) {
+		lines++
+		for pos := 0; pos < len(line); {
+			loc := assignRe.FindStringSubmatchIndex(line[pos:])
+			if loc == nil {
+				return
+			}
+			matches++
+			if loc[6] < 0 || loc[7] < 0 {
+				t.Fatalf("assignRe matched %q at pos %d without its OPERATOR submatch (indices %d,%d). The "+
+					"operator group is what matchAssignment advances past, so a match that omits it makes "+
+					"`pos + loc[7]` meaningless and the termination guard load-bearing.",
+					line, pos, loc[6], loc[7])
+			}
+			if loc[7] < 1 {
+				t.Fatalf("assignRe matched %q at pos %d with an operator ending at offset %d. matchAssignment "+
+					"resumes at `pos + loc[7]`, so this match advances the scan by %d bytes — the loop does "+
+					"not terminate, and the `if next <= pos` guard is now the only thing standing between "+
+					"`civitai app submit` and an infinite loop on a packaged line.",
+					line, pos, loc[7], loc[7])
+			}
+			if minEnd < 0 || loc[7] < minEnd {
+				minEnd = loc[7]
+			}
+			pos += loc[7]
+		}
+	}
+
+	for _, a := range tokens {
+		for _, b := range tokens {
+			for _, c := range tokens {
+				for _, d := range tokens {
+					check(t, a+b+c+d)
+				}
+			}
+		}
+	}
+	// The adversarial shapes a token sweep will not assemble on its own.
+	for _, line := range []string{
+		"",
+		":",
+		"SECRET:",
+		`SECRET:""`,
+		"token=:=:=:=",
+		"secretsecretsecretsecret::::",
+		strings.Repeat("token:", 64),
+		strings.Repeat("[", 41) + "SECRET" + strings.Repeat("]", 41) + `:"9f3a2b7c1d4e"`,
+		`{"token":"","API_SECRET":"9f3a2b7c1d4e5f60718293a4"}`,
+	} {
+		check(t, line)
+	}
+
+	// 🔴 POSITIVE CONTROL. A sweep that matched NOTHING would report the same
+	// clean zero as a sweep that proved the property, so the count has to move.
+	if matches < 100 {
+		t.Fatalf("CONTROL failure: %d line(s) produced only %d assignRe match(es). This sweep proves the "+
+			"advance property only over matches it actually found, so a near-zero here means the alphabet "+
+			"stopped assembling assignments and the property is untested.", lines, matches)
+	}
+	t.Logf("%d lines, %d assignRe matches, smallest operator-end offset %d (the guard fires only at 0)",
+		lines, matches, minEnd)
+}
