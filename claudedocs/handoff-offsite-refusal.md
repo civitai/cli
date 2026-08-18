@@ -1,4 +1,4 @@
-# Handoff: offsite-refusal → submit provenance — 2026-08-17
+# Handoff: submit provenance — BOTH HALVES MERGED, NOT YET LIVE — 2026-08-18
 
 ## Run this first — the index, one read-only command
 ```bash
@@ -20,13 +20,26 @@ whether reaching those apps is possible at all.
 
 **The live goal is now `cli#411` — submit provenance.** `civitai app submit` records nothing
 about where a bundle came from, so deploy-vs-source drift can be observed but never diagnosed
-(five first-party apps were found behind their live version). The server half is in review;
-the CLI half is deliberately blocked on it.
+(five first-party apps were found behind their live version).
+
+## 🔴 READ THIS FIRST — the one-line state of #411
+
+**Both halves are merged. Both databases are migrated. The feature is still INERT in
+production, and that is expected.** Production has not deployed the server half yet, so the
+old `submitVersionSchema` — a plain `z.object` — silently strips the two keys the CLI now
+sends. `app status` showing no provenance today is **correct behaviour, not a bug**.
+Do NOT close `cli#411`. The status note on the issue
+(`civitai/cli#411#issuecomment-5333600097`) carries the same thing for anyone who arrives there
+first.
+
+**The one measurement that closes it**, once prod has `490b330f3b`: submit a throwaway from a
+clean git repo and confirm a non-null `source_commit` matching local `HEAD`, with
+`source_dirty = false`. Recipe under *How to verify*.
 
 ## State now
 
-- **`civitai/cli` `origin/main` @ `075bf06`.** The base clone `/home/zach/workspace/civit/cli`
-  is **shared and moves under you** — it went 1 behind mid-session twice today.
+- **`civitai/cli` `origin/main` @ `8e51494`.** The base clone `/home/zach/workspace/civit/cli`
+  is **shared and moves under you** — it went 1 behind mid-session twice on 08-17.
   `git -C … fetch && … merge --ff-only origin/main` when you own it; branch from
   `origin/main`, never from local `main`.
 - **`civitai/civitai` local `main` carries an unpushed commit that is not yours** (`5.1.17`,
@@ -40,25 +53,67 @@ the CLI half is deliberately blocked on it.
   | four residuals: `assertListingTarget` ledger, README write-warning pin, exit-code rows, #427's false clause | cli#459 | `1695e1f` |
   | #389's measurement recorded; every "is open" surface updated | cli#462 | `de482c95` |
   | `getMyListingForApp` rate-limited 60/60 with an enforcement test | civitai#4050 | `3ff050f2` |
-- **IN REVIEW — `civitai/civitai#4061`**, the server half of `#4059`. See its own section below.
+  | handoff: thread moves to submit provenance | cli#469 | `cc3ce9a` |
+  | **server half — provenance columns, both submit routes, read projection** | **civitai#4061** | **`490b330f3b`** |
+  | **CLI half — stamp at submit, show in `app status`** | **cli#471** | **`8e51494c85`** |
+- **DATABASES MIGRATED BY HAND, both verified** (civitai migrations are hand-applied — no
+  `prisma migrate deploy`): dev clone `cnpg-database-dev/cnpg-cluster-dev-1` and prod
+  `cnpg-database/cnpg-cluster-nvme0-5`. Both show `source_commit text YES` / `source_dirty
+  boolean YES`, no default, 23→25 columns; prod replicated to both replicas; re-apply is a clean
+  no-op. **Prod was migrated BEFORE the code merged, deliberately** — see the RETURNING note below
+  for why that ordering is load-bearing rather than tidy.
+- **In flight:** `cli#472` (item 32 eviction — the AGENTS ceiling). Open cli PR `#450` belongs to
+  another session.
 - **Issues closed:** `cli#422` (both outcomes), `cli#389` (outcome A, measured), `civitai#3984`,
   `civitai#4003` (by #4050), `civitai#4008` (by infra, not code).
 - **Issues corrected rather than closed:** `civitai#3893` — premise falsified by #3989, body carries a
   banner and the original is preserved; `cli#424` and `cli#427` — both narrowed, both still open.
-- **Filed:** `civitai#4059` (the provenance field `cli#411` is blocked on) and `civitai#4057`
+  **`cli#411` — still OPEN on purpose**, with a status comment; see the top of this doc.
+- **Filed:** `civitai#4059` (the provenance ask, now delivered) and `civitai#4057`
   (a real component-test regression on `main`, see below).
-- **In flight:** `civitai#4061` (mine, green, unmerged). Open cli PRs `#450` belongs to another
-  session.
 
-## `civitai/civitai#4061` — the server half of the provenance field (IN REVIEW, not merged)
+## The live proof, and what it found (2026-08-18)
+
+Ran the real thing end to end: scaffolded a throwaway, committed it, `civitai app submit --yes`
+against production, then read the row.
+
+- **Production row: `source_commit` NULL.** Across all of prod, **0 of 145 rows** carry
+  provenance.
+- **The CLI is NOT at fault.** Pointing the shipped binary at a capture server (the step that
+  distinguishes "client didn't send" from "server didn't store" — an empty result cannot):
+  ```json
+  {"path": "/api/v1/blocks/submit-version",
+   "keys": ["bundleBase64", "sourceCommit", "sourceDirty"],
+   "sourceCommit": "8d80b901e00961df3ddeccf020cd07d13db60d5e",
+   "sourceDirty": false, "bodyBytes": 12209}
+  ```
+  Correct route, true HEAD sha, `sourceDirty: false` rather than `null` — the tri-state survives
+  the client. `bodyBytes` matches the CLI's own printed submit-body size exactly, which
+  independently validates the `SubmitBodySize(zipLen, prov)` signature change.
+- **Diagnosis:** production has not deployed `490b330f3b`. **Measured** = the two facts above;
+  **inferred** = the deploy gap (I could not read the prod web deployment's revision). The probe
+  that would settle it is a malformed `sourceCommit` — post-#4061 returns 400, older code accepts
+  and strips — but it costs a real submit, so spend it once, when it matters.
+- **The ordering is safe, and this was verified not assumed:** the real prod submit returned
+  exit 0 and created a real row, because the old handler drops unknown keys silently.
+- **Cleanup done:** `pubreq_01M0B6ZFKM8EB0R8G3BS22RBSQ` withdrawn (`status: withdrawn` confirmed in
+  the DB), nothing left in the moderator queue.
+
+## `civitai/civitai#4061` — the server half (MERGED `490b330f3b`)
 
 Two nullable columns on `app_block_publish_requests`, accepted at submit and returned on read:
-`source_commit` (40-hex, lowercase) and `source_dirty` (boolean). 15 files, +795.
+`source_commit` (40-hex, lowercase) and `source_dirty` (boolean).
 
-- **🔴 THE MIGRATION IS AUTHORED BUT HAS NEVER BEEN APPLIED TO ANY DATABASE.** No
-  `db:migrate`/`db:deploy`/`db:push`/`db:applied` was run. It must be applied **before** the app
-  that writes these columns deploys. Nobody has confirmed the SQL applies cleanly against a real
-  table — that is the single largest unverified thing in this PR.
+- 🔴 **THE WRITE FAILS UNCONDITIONALLY AGAINST AN UNMIGRATED TABLE, VIA `RETURNING` — NOT JUST
+  THE READ.** The migration comment originally claimed the write break was "SECONDARY and
+  CONDITIONAL — only a submit that actually CARRIES provenance names a column the table lacks".
+  **That was false, in the reassuring direction.** Prisma does omit an `undefined` field from the
+  INSERT column list, but `submitVersion`'s `create` passes **no `select`**, so Prisma reads the
+  row back — `INSERT … RETURNING <every scalar in the model>` — and every submit raises P2022,
+  including from clients that send no provenance. Observed, not theorised: it took down the
+  preview smoke suite (`preview / smoke-tests`, 1 failure, the only smoke spec that submits) on
+  two successive commits until the dev clone was migrated, while a control PR passed 65/65.
+  Corrected in the migration header rather than deleted.
 - **🔴 THE SCOPING BRIEF NAMED THE WRONG ROUTE, AND THAT NEARLY SHIPPED AN INERT FEATURE.** There
   are TWO submit front doors: `src/pages/api/blocks/submit-version.ts` (cookie / mod browser) and
   `src/pages/api/v1/blocks/submit-version.ts` (bearer token). **The CLI posts to the v1 one** —
@@ -254,21 +309,22 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
 
 ## Next steps (ranked)
 
-1. **Merge `civitai#4061`, then APPLY THE MIGRATION.** Green and mergeable; needs a human eye on the
-   migration ordering specifically. 🔴 The two are one step, not two: deploying the app that writes
-   these columns against a table without them fails the INSERT.
-2. **`cli#411`'s stamping half — BLOCKED on step 1, both halves of it.** 🔴 Do NOT ship it before the
-   column exists in the database. `submitVersionSchema` was a plain `z.object` (extra keys silently
-   stripped) and after #4061 the *schema* accepts the field, so the failure mode moves rather than
-   disappearing: with the code merged but the migration unapplied, the write fails instead of
-   silently no-oping. Verify the column exists before writing the client.
-   The CLI already computes both facts (the dirty-tree refusal shipped as `cli#415`), and posts to
-   `/api/v1/blocks/submit-version` — check that route, not the mod one.
+1. **Merge `cli#472`** (item 32 eviction). It is the only thing gating routine docs work:
+   `AGENTS.md` sat 12 bytes under `agentsMaxBytes` after #471, so ANY docs edit failed the ceiling.
+   #472 takes it to 145 bytes — better, **not comfortable**. Items 2, 4, 30 and 31 are still inline
+   and 30/31 already have base commits, so the next eviction wave has an obvious start.
+2. **Close `cli#411` when prod deploys `490b330f3b`** — one measurement, recipe under *How to
+   verify*. Until then `app status` showing no provenance is CORRECT; do not "fix" it.
+   Worth doing in the same pass: the malformed-`sourceCommit` probe that distinguishes deployed
+   from not-deployed, since you are spending a submit anyway.
 3. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
    `appBlockId` in exactly 4 places, all query-key/invalidation; the slug is already in hand at the
    page. The real blocker is `editorTabsFor`'s `appBlockId != null`, not the resolver.
 4. **`civitai#4057`** — the ImageCard tolerance. Live diagnosis below; the bisect window is the work.
-   Untouched this session and **not** cleared by #4061 (see that section).
+   **New data point, not yet on the issue:** `preview / component-tests` reported
+   `success — Component suite passed` on both #4061 commits, where the issue says it is red on
+   every `main`-based branch. One green run does not close it, but it narrows the window or
+   suggests intermittency. Worth adding.
 5. **`AGENTS.md` item 29's trigger** still describes a blanket refusal; #453 narrowed it to
    "both lookups missed". Small, and the same drift class this thread kept closing.
 6. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
@@ -278,6 +334,68 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
    deliberate decision to leave them.
 
 ## Gotchas / decisions / dead-ends
+
+### From the provenance build (2026-08-18) — new
+
+- 🔴 **A ZERO FROM A TOOL RUN FROM THE WRONG DIRECTORY LOOKS EXACTLY LIKE A CLEAN RUN.**
+  `golangci-lint run <abs-path>/...` from outside the module printed **`0 issues.`** *together
+  with* a `typechecking error: directory prefix … does not contain main module`. Re-run from
+  inside the module: `0 issues.` and no error. Same reassuring number, one of them meaningless.
+  Read the whole output, not the count — and use the two runs against each other as the control.
+- 🔴 **`preview / smoke-tests` LIVES IN COMMIT STATUSES, NOT THE CHECK ROLLUP, AND IS CREATED
+  ONLY AFTER `preview / deploy` FINISHES.** I read `gh pr view --json statusCheckRollup` while
+  deploy was still pending, saw everything terminal and green, and reported "every test gate
+  green". It was false — smoke-tests failed and did not yet exist to be seen. **Poll
+  `gh api repos/…/commits/<sha>/status` too, and require the status you care about to be
+  PRESENT, not merely for everything present to be terminal.** The check SET also grows mid-poll
+  (8 → 9 → 15 here), so a minimum-count assertion made at t=0 is a moving target.
+- 🔴 **`make ci` TELLS YOU WHEN IT IS NOT ENOUGH — READ ITS TAIL.** It prints "this is a FULL
+  clone. CI checks out at depth 1, where tests that read git history cannot resolve their base
+  blobs. Before you push a change that touches those, run: `make ci-shallow`." Any `splitItems`
+  work touches exactly those. `ci-shallow` reads **committed** state, so commit first.
+- **`build-image` flakes, and the honest retry is an amended commit with an IDENTICAL TREE.**
+  `preview / deploy` failed at `build-image` on a comment-only `.sql` delta from a fully-green
+  commit. `git commit --amend --no-edit` + `--force-with-lease` gives a new SHA with the same tree
+  (verify: tree hash unchanged), so the retry is a real experiment rather than a hope. It went
+  green. **Do NOT use the `preview-db/prod` label to retrigger** — that repoints the preview at
+  the PRODUCTION database.
+- 🔴 **The stash stack in these repos is NON-EMPTY and holds other sessions' work** (three
+  entries: `fix/cleanup-s3-on-model-file-delete` ×2, `feat/deploy-status-skill`). Live proof the
+  no-stash rule is not theoretical. `cp -a` to a **per-agent** path; there is a stale
+  `offsitemod.orig.ts` (2026-08-11, zero provenance content) sitting at bare `/tmp/claude-1000/`
+  that looks exactly like a backup and is not.
+- **An agent cut off mid red/green leaves the tree looking "partially done" when it is REVERTED.**
+  One died having checked a source file back out to base for a red check; the test file survived
+  as modified, the source change was gone, and nothing said so. **Re-derive the tree state before
+  resuming an interrupted agent** — and do not hand it your inference as fact: I told one its red
+  result "stood" when it had never run it, and it correctly re-ran rather than accept my number.
+- **IDE diagnostics from a worktree are mostly gopls noise.** `undefined: Client`, `use of
+  internal package not allowed`, "not included in your workspace" — all false; `go build ./...`
+  returned rc=0. Check with the real toolchain before reporting a diagnostic as a finding. But
+  note the converse bit too: a genuinely broken `_test.go` (`not enough arguments in call to New`)
+  made `internal/appapi` **fail to build so none of its tests ran**, including nine pre-existing
+  files. Read per-package lines.
+- **The `civitai/civitai` worktree recipe from this harness** — `cd` is blocked and the toolchain
+  is direnv-only, so every command needs `direnv exec <wt> …`; `pnpm`/`node` are not otherwise on
+  PATH. There is **no `wt add`** (only `wt stale|rm`). Setup:
+  `git worktree add` → `git submodule update --init event-engine-common` →
+  `printf 'use flake\n' > <wt>/.envrc && direnv allow <wt>` → `direnv exec <wt> pnpm install`
+  (~13s warm). 🔴 **Do NOT copy the base `.envrc`** — it carries live S3 credentials and a
+  `DATABASE_URL` the task does not need.
+- **`civitai/civitai` `main` has NO required status checks** (measured: `contexts: null`,
+  `checks: []`, only a `deletion` ruleset). Green CI there is advisory; local verification is the
+  load-bearing evidence.
+- **Hand-applying a civitai migration** (they are never auto-applied):
+  `KUBECONFIG=$KC_DPPROD kubectl exec -i -n <ns> <primary-pod> -c postgres -- psql -U postgres -d civitai -v ON_ERROR_STOP=1 < <migration.sql>`.
+  dev = `cnpg-database-dev` / `cnpg-cluster-dev-1`; prod = `cnpg-database` / `cnpg-cluster-nvme0-5`.
+  🔴 **Confirm the PRIMARY two ways** (`cnpg.io/instanceRole` label AND
+  `.status.currentPrimary`) before writing DDL, and check no OTHER cluster carries the table
+  (`cnpg-cluster-3` does not; `cnpg-cluster-apps-1` has no `civitai` db) so the apply is complete
+  rather than partial.
+- **A throwaway app for a live probe:** `civitai app create`, `git init -b <not-main>` (a fresh
+  `main` trips the never-commit-to-main guard), stage explicit paths, commit, `app submit --yes`
+  (it refuses non-interactively without `--yes`), then **`civitai app withdraw <pubreq> --yes`** so
+  nothing sits in the moderator queue.
 
 ### Working in `civitai/civitai` from this harness (new — 2026-08-17)
 
@@ -492,6 +610,47 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
   either published surface. When you change one, expect all three to redden. That is them working.
 
 ## How to verify
+
+### 🔴 THE ONE MEASUREMENT THAT CLOSES `cli#411`
+
+Run it once production has deployed `490b330f3b`. Until then it will legitimately return NULL —
+that is the *current* state, not a failure.
+
+```bash
+cd /home/zach/workspace/civit/cli && make build      # never the `civitai` on PATH — stale
+
+S=prov-probe-$(od -An -N3 -tx1 /dev/urandom | tr -d ' ')
+D=/tmp/$S
+./bin/civitai app create "$S" "$D" --template static
+git init -q -b probe "$D"                            # NOT `main` — the guard blocks committing there
+git -C "$D" add $(cd "$D" && find . -type f -not -path './.git/*' -printf '%P\n')
+git -C "$D" commit -q -m scaffold
+git -C "$D" rev-parse HEAD                           # <- the sha that MUST land in the row
+
+./bin/civitai app submit "$D" --yes                  # refuses non-interactively without --yes
+```
+
+Then read the row directly — the CLI's own output is not the proof, the row is:
+
+```bash
+export KUBECONFIG=$KC_DPPROD
+kubectl exec -i -n cnpg-database cnpg-cluster-nvme0-5 -c postgres -- \
+  psql -U postgres -d civitai -x -c \
+  "select id, slug, source_commit, source_dirty from app_block_publish_requests where slug='$S';"
+```
+
+**Closes the issue:** `source_commit` equals the local `HEAD`, and `source_dirty` is **`f`, not
+NULL** (the tree was clean — a NULL there means the tri-state collapsed somewhere).
+
+```bash
+./bin/civitai app withdraw <pubreq_id> --yes         # ALWAYS — don't leave it in the mod queue
+```
+
+**If it comes back NULL,** do not guess. The discriminating step is whether the CLI sent it:
+point the binary at a capture server (`CIVITAI_BASE_URL=http://127.0.0.1:<port>`,
+`CIVITAI_TOKEN=dummy`) and log the POST body. On 2026-08-18 that showed the client perfect and
+the server undeployed. A malformed `sourceCommit` also discriminates: post-#4061 returns 400,
+older code accepts and strips.
 
 ```bash
 # The offsite repair, WITHOUT writing (see Gotchas — every `app listing` subcommand WRITES).
