@@ -1,4 +1,4 @@
-# Handoff: submit provenance — BOTH HALVES MERGED, NOT YET LIVE — 2026-08-18
+# Handoff: submit provenance — SHIPPED, LIVE AND VERIFIED IN PROD — 2026-08-18
 
 ## Run this first — the index, one read-only command
 ```bash
@@ -18,36 +18,39 @@ their owners to run `civitai app submit` — a command that cannot succeed for a
 a registered URL rather than a block bundle (#422). Ship the honest refusal, and establish
 whether reaching those apps is possible at all.
 
-**The live goal is now `cli#411` — submit provenance.** `civitai app submit` records nothing
-about where a bundle came from, so deploy-vs-source drift can be observed but never diagnosed
-(five first-party apps were found behind their live version).
+**`cli#411` — submit provenance — is DELIVERED and CLOSED.** `civitai app submit` recorded
+nothing about where a bundle came from, so deploy-vs-source drift could be observed but never
+diagnosed (five first-party apps were found behind their live version). It now stamps the commit
+and the dirty flag, the server stores them, and `app status` reads them back — measured against
+production, not inferred. **There is no live goal on this thread; pick from *Next steps*.**
 
 ## 🔴 READ THIS FIRST — the one-line state of #411
 
-**Both halves are merged. Both databases are migrated. The feature is still INERT in
-production, and that is expected.** Production has not deployed the server half yet, so the
-old `submitVersionSchema` — a plain `z.object` — silently strips the two keys the CLI now
-sends. `app status` showing no provenance today is **correct behaviour, not a bug**.
-Do NOT close `cli#411`. The status note on the issue
-(`civitai/cli#411#issuecomment-5333600097`) carries the same thing for anyone who arrives there
-first.
+**CLOSED 2026-08-18T22:41Z, on a measurement against production, not on the code merging.**
+Prod deployed `490b330f3b` at 22:19Z (deployment `a55fe05f3ca2`); a throwaway submit six minutes
+later put `source_commit = 9fa0043f8fef741e62c3f572ab5e2e4f9014c0e0` — the local `HEAD` exactly —
+and `source_dirty = f` on the row, and both `app status` surfaces read it back. The evidence is
+the closing comment `civitai/cli#411#issuecomment-5335001032`; the recipe, with the values it
+produced, is under *How to verify*.
 
-**The one measurement that closes it**, once prod has `490b330f3b`: submit a throwaway from a
-clean git repo and confirm a non-null `source_commit` matching local `HEAD`, with
-`source_dirty = false`. Recipe under *How to verify*.
+**The earlier revision of this doc said "do not close #411 — the feature is inert in prod on
+purpose". That was true until 22:19Z today and is now obsolete.** If you are reading a copy that
+still says it, this is the correction.
 
 ## State now
 
-- **`civitai/cli` `origin/main` @ `87a147c`, base clone clean and level.** The base clone
+- **`civitai/cli` `origin/main` @ `e7b9a9f`, base clone clean and level.** The base clone
   `/home/zach/workspace/civit/cli` is **shared and moves under you** — it went 1 behind
   mid-session twice on 08-17. `git -C … fetch && … merge --ff-only origin/main` when you own it;
   branch from `origin/main`, never from local `main`. One untracked `node_modules/` sits there,
   not mine and not ignored.
-- **`civitai/civitai` base clone: 0 ahead, 1 behind `origin/main` @ `408bc2aea3`.**
-  🔴 **CORRECTION to the previous revision of this doc**, which said local `main` carried an
-  unpushed `5.1.17` release bump belonging to another session. Re-measured 2026-08-18:
-  `rev-list --left-right --count HEAD...origin/main` = `0 1`, and `origin/main..HEAD` is empty.
-  Whoever owned that commit has landed or dropped it. Nothing unpushed is stranded there.
+- **`civitai/civitai` base clone level with `origin/main` @ `a55fe05f3c` (`5.1.20`)** —
+  `rev-list --left-right --count HEAD...origin/main` = `0 0`, re-measured 2026-08-18 22:4xZ.
+  **That same sha is what production runs**, and it carries the provenance server half; the two
+  being equal is timing, not a rule — re-read the deploy gate under *How to verify* rather than
+  assuming `origin/main` is live. (Earlier revisions of this doc said local `main` held an
+  unpushed `5.1.17` release bump belonging to another session; whoever owned it landed or dropped
+  it, and nothing unpushed is stranded there.)
 - **The offsite thread is CLOSED end to end.** Selector merged + deployed upstream, CLI half
   shipped, both #422 outcomes delivered, and every claim it produced that did not survive has been
   publicly retracted.
@@ -63,6 +66,8 @@ clean git repo and confirm a non-null `source_commit` matching local `HEAD`, wit
   | **CLI half — stamp at submit, show in `app status`** | **cli#471** | **`8e51494c85`** |
   | AGENTS item 32 eviction — the ceiling had 12 bytes left | cli#472 | `c6c959354b` |
   | handoff: both halves merged, inert in prod on purpose | cli#473 | `87a147cc00` |
+  | handoff: #472 merged, #4057 measured green | cli#474 | `e7b9a9f5b2` |
+  | **prod deployed `490b330f3b`; provenance measured on the row; `cli#411` CLOSED** | — | — |
 - **DATABASES MIGRATED BY HAND, both verified** (civitai migrations are hand-applied — no
   `prisma migrate deploy`): dev clone `cnpg-database-dev/cnpg-cluster-dev-1` and prod
   `cnpg-database/cnpg-cluster-nvme0-5`. Both show `source_commit text YES` / `source_dirty
@@ -77,11 +82,41 @@ clean git repo and confirm a non-null `source_commit` matching local `HEAD`, wit
   open `civitai` PRs under this account belong to other sessions.
 - **Issues closed:** `cli#422`, `cli#389` (outcome A, measured), `civitai#3984`, `civitai#4003`,
   `civitai#4008`, **`civitai#4059`** (delivered by #4061).
-- **Issues open on purpose:** **`cli#411`** — see the top of this doc, and its status comment
-  `civitai/cli#411#issuecomment-5333600097`. Also `cli#424`, `cli#427` (both narrowed),
-  `civitai#3893`, `civitai#4057`.
+- **Issues open on purpose:** `cli#424`, `cli#427` (both narrowed), `civitai#3893`,
+  `civitai#4057`. **`cli#411` is CLOSED** — see the top of this doc.
+- 🔴 **The prod-deployed revision IS readable, and the previous revision of this doc said it was
+  not.** The GitHub deployments API on `civitai/civitai` carries a `do-prod` environment whose
+  successful statuses name `https://civitai.com`. Command + the trap under *How to verify*. This
+  retires the "inferred = the deploy gap" caveat below and, with it, the malformed-`sourceCommit`
+  probe that was being saved to settle it — no submit needs to be spent on that question again.
 
-## The live proof, and what it found (2026-08-18)
+## The live proof — round 1 (22:0x, NULL) and round 2 (22:38, CLOSED)
+
+**Round 2 is the one that closed the issue**; round 1 is kept because it is what proved the
+client half correct while the server was still undeployed, and because the pair is the control:
+the same recipe returned NULL and then the sha, with only the prod deployment changing between.
+
+### Round 2 — 2026-08-18 22:38Z, against prod running `a55fe05f3ca2`
+
+```
+local HEAD:  9fa0043f8fef741e62c3f572ab5e2e4f9014c0e0   (tree clean, branch `probe`, no remote)
+row:         source_commit = 9fa0043f8fef741e62c3f572ab5e2e4f9014c0e0 · source_dirty = f
+app status:  Source commit: 9fa0043f8fef741e62c3f572ab5e2e4f9014c0e0 (reported clean)
+--json:      {"sourceCommit": "9fa0043f…", "sourceDirty": false}
+```
+
+- **`source_dirty` is `f`, not NULL** — the tri-state survives client → wire → column intact.
+- **Count control:** prod went from **0 of 145** rows carrying provenance to **1 of 146**. The
+  number moved by exactly one and it was mine, which is what makes the earlier "0 of 145" a
+  reading rather than a query wired to nothing.
+- **The no-remote warning fired correctly:** *"the work tree is clean, but HEAD is on no remote —
+  this bundle's source exists only on this machine."*
+- **Cleanup:** `pubreq_01M0BGE04Z5YWMWNK1V694ETP9` withdrawn, `status: withdrawn` confirmed on the
+  row; provenance survives the withdrawal; nothing left in the moderator queue.
+- **Residual, stated rather than counted as coverage:** the `source_dirty = true` path was never
+  exercised live — one submit was spent, from a clean tree. Unit tests on both halves only.
+
+### Round 1 — earlier the same day, against prod running `60d8087647cf` (5.1.18)
 
 Ran the real thing end to end: scaffolded a throwaway, committed it, `civitai app submit --yes`
 against production, then read the row.
@@ -99,10 +134,12 @@ against production, then read the row.
   Correct route, true HEAD sha, `sourceDirty: false` rather than `null` — the tri-state survives
   the client. `bodyBytes` matches the CLI's own printed submit-body size exactly, which
   independently validates the `SubmitBodySize(zipLen, prov)` signature change.
-- **Diagnosis:** production has not deployed `490b330f3b`. **Measured** = the two facts above;
-  **inferred** = the deploy gap (I could not read the prod web deployment's revision). The probe
-  that would settle it is a malformed `sourceCommit` — post-#4061 returns 400, older code accepts
-  and strips — but it costs a real submit, so spend it once, when it matters.
+- **Diagnosis:** production had not deployed `490b330f3b`. Recorded then as **measured** = the
+  two facts above, **inferred** = the deploy gap. 🔴 **The inference was right and is now
+  measured**: the last successful `do-prod` deployment at that moment was `60d8087647cf` (5.1.18,
+  2026-08-17 22:47Z), which does not contain `490b330f3b`. The malformed-`sourceCommit` probe
+  that was being held in reserve to settle this is **no longer needed** — the deployments API
+  answers it for free.
 - **The ordering is safe, and this was verified not assumed:** the real prod submit returned
   exit 0 and created a real row, because the old handler drops unknown keys silently.
 - **Cleanup done:** `pubreq_01M0B6ZFKM8EB0R8G3BS22RBSQ` withdrawn (`status: withdrawn` confirmed in
@@ -344,23 +381,40 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
 
 ## Next steps (ranked)
 
-1. **Close `cli#411` when prod deploys `490b330f3b`** — one measurement, recipe under *How to
-   verify*. Until then `app status` showing no provenance is CORRECT; do not "fix" it.
-   Spend the same submit on the malformed-`sourceCommit` probe, which distinguishes deployed from
-   not-deployed and is the one inference this session could not settle.
-2. **`civitai#4057`** — decide fixed-vs-intermittent from current `main` runs; see its block above.
-3. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
+**Nothing on this thread is blocked or in flight.** `cli#411` closed the provenance work; what
+follows is the leftover list, and none of it is urgent.
+
+1. **`civitai#4057`** — decide fixed-vs-intermittent from current `main` runs; see its block above.
+2. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
    `appBlockId` in exactly 4 places, all query-key/invalidation; the slug is already in hand at the
    page. The real blocker is `editorTabsFor`'s `appBlockId != null`, not the resolver.
-4. **`AGENTS.md` eviction wave** for items 30/31 when someone needs the room — 145 bytes is one
+3. **`AGENTS.md` eviction wave** for items 30/31 when someone needs the room — 145 bytes is one
    ordinary edit away from failing the ceiling again.
-5. **`AGENTS.md` item 29's trigger** still describes a blanket refusal; #453 narrowed it to
+4. **`AGENTS.md` item 29's trigger** still describes a blanket refusal; #453 narrowed it to
    "both lookups missed".
-6. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
+5. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
    under full-suite load, 8 clean reruns. Remove the timing dependency; do not re-run it away.
-7. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
+6. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
+7. **`source_dirty = true` has no live proof** — if a submit is being spent anyway, spend it from a
+   dirty tree and read the row; today's round 2 only exercised the clean case.
 
 ## Gotchas / decisions / dead-ends
+
+### From closing #411 (2026-08-18, evening) — new
+
+- 🔴 **A FAILED DEPLOY LEAVES A DEPLOYMENT RECORD THAT NAMES THE SHA IT TRIED TO SHIP.** Reading
+  "the latest deployment" therefore reports a feature live at the moment its deploy *started*, not
+  when it landed — here that was a 2-hour window in which the naive read was confidently wrong, and
+  the deploy in it never succeeded at all. Filter on a `success` status, and treat the
+  `environment_url` on that status as the only thing tying the environment name to production.
+- **A shared-tree guard can judge the WRONG REPO when the tree it should judge does not exist
+  yet.** `git init "$D" && git -C "$D" commit …` in one compound command was blocked as a commit to
+  `main` — of the `cli` clone, because `$D` was not a worktree at evaluation time. The guard said so
+  in its last paragraph. **Split creation from use across Bash calls** rather than reading the
+  refusal as being about the repo you were thinking of.
+- **The count control is what turns "0 rows" into a reading.** Prod held 0-of-145 provenance rows
+  before and 1-of-146 after, and the 1 was mine. Without the second number the 0 is
+  indistinguishable from a query pointed at the wrong table.
 
 ### From the provenance build (2026-08-18) — new
 
@@ -638,24 +692,47 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
 
 ## How to verify
 
-### 🔴 THE ONE MEASUREMENT THAT CLOSES `cli#411`
+### 🔴 IS A GIVEN COMMIT LIVE ON `civitai.com`? — read it, don't infer it
 
-Run it once production has deployed `490b330f3b`. Until then it will legitimately return NULL —
-that is the *current* state, not a failure.
+```bash
+gh api 'repos/civitai/civitai/deployments?per_page=20' --jq '.[]|select(.environment=="do-prod").id' |
+  while read -r id; do gh api "repos/civitai/civitai/deployments/$id/statuses" --jq '.[].state' |
+    grep -qx success && { gh api "repos/civitai/civitai/deployments/$id" --jq .sha; break; }; done
+# then: git -C $CIVITAI merge-base --is-ancestor <commit> <that sha>
+```
+
+🔴 **Read the newest *successful* deployment, not the newest deployment — a FAILED deploy still
+creates a deployment record carrying the sha it tried to ship.** On 2026-08-18 the naive read
+would have called provenance live at 20:20Z; that deploy went `failure` at 21:50Z ("Pipeline
+failed", `tekton-dp.civitai.com`) and the feature did not actually land until `a55fe05f3ca2`
+succeeded at 22:19Z. **Positive control:** `3ff050f2` (#4050, merged 08-17) returns LIVE, so the
+check can say yes — a bare "not live" from an instrument never seen to say otherwise is worth
+nothing. Successful statuses carry `environment_url = https://civitai.com`, which is what ties
+`do-prod` to production rather than to a name that merely looks like it.
+
+### THE MEASUREMENT THAT CLOSED `cli#411` — re-runnable as a regression probe
+
+Ran 2026-08-18 22:38Z; values it produced are inline. Costs one real submit, so re-run it only
+when the provenance path itself is in question.
 
 ```bash
 cd /home/zach/workspace/civit/cli && make build      # never the `civitai` on PATH — stale
 
 S=prov-probe-$(od -An -N3 -tx1 /dev/urandom | tr -d ' ')
-D=/tmp/$S
+D=<scratchpad>/$S
 ./bin/civitai app create "$S" "$D" --template static
 git init -q -b probe "$D"                            # NOT `main` — the guard blocks committing there
-git -C "$D" add $(cd "$D" && find . -type f -not -path './.git/*' -printf '%P\n')
-git -C "$D" commit -q -m scaffold
+git -C "$D" add <the 8 scaffolded paths, explicitly>  # never -A/. — the guard blocks that too
+git -C "$D" -c user.email=… -c user.name=… commit -q -m scaffold
 git -C "$D" rev-parse HEAD                           # <- the sha that MUST land in the row
 
 ./bin/civitai app submit "$D" --yes                  # refuses non-interactively without --yes
 ```
+
+🔴 **`git init` and the `git commit` must be SEPARATE Bash calls.** Chained in one compound
+command the branch guard evaluates before `git init` has run, finds `$D` is not a worktree yet,
+falls back to judging the *caller's* cwd — the `cli` clone, on `main` — and blocks the whole
+thing with a message about the wrong repo.
 
 Then read the row directly — the CLI's own output is not the proof, the row is:
 
@@ -663,21 +740,25 @@ Then read the row directly — the CLI's own output is not the proof, the row is
 export KUBECONFIG=$KC_DPPROD
 kubectl exec -i -n cnpg-database cnpg-cluster-nvme0-5 -c postgres -- \
   psql -U postgres -d civitai -x -c \
-  "select id, slug, source_commit, source_dirty from app_block_publish_requests where slug='$S';"
+  "select id, slug, status, source_commit, source_dirty from app_block_publish_requests where slug='$S';"
+#   source_commit | 9fa0043f8fef741e62c3f572ab5e2e4f9014c0e0   <- == local HEAD
+#   source_dirty  | f                                          <- f, NOT NULL
 ```
 
-**Closes the issue:** `source_commit` equals the local `HEAD`, and `source_dirty` is **`f`, not
-NULL** (the tree was clean — a NULL there means the tri-state collapsed somewhere).
+**Passes when** `source_commit` equals the local `HEAD` **and** `source_dirty` is `f`, not NULL
+(the tree was clean — a NULL there means the tri-state collapsed somewhere). Worth also running
+`./bin/civitai app status "$S"` and `--json` before withdrawing: that exercises the read
+projection, which the row alone does not.
 
 ```bash
 ./bin/civitai app withdraw <pubreq_id> --yes         # ALWAYS — don't leave it in the mod queue
+# confirm on the row: status = withdrawn, and the provenance survives the withdrawal
 ```
 
-**If it comes back NULL,** do not guess. The discriminating step is whether the CLI sent it:
-point the binary at a capture server (`CIVITAI_BASE_URL=http://127.0.0.1:<port>`,
-`CIVITAI_TOKEN=dummy`) and log the POST body. On 2026-08-18 that showed the client perfect and
-the server undeployed. A malformed `sourceCommit` also discriminates: post-#4061 returns 400,
-older code accepts and strips.
+**If `source_commit` comes back NULL,** do not guess. Check the deploy gate above first; if the
+commit IS live, the discriminating step is whether the CLI sent it — point the binary at a
+capture server (`CIVITAI_BASE_URL=http://127.0.0.1:<port>`, `CIVITAI_TOKEN=dummy`) and log the
+POST body. On 2026-08-18 round 1 that showed the client perfect and the server undeployed.
 
 ```bash
 # The offsite repair, WITHOUT writing (see Gotchas — every `app listing` subcommand WRITES).
