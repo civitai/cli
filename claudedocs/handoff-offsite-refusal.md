@@ -73,9 +73,12 @@ still says it, this is the correction.
   `cnpg-database/cnpg-cluster-nvme0-5`. Both show `source_commit text YES` / `source_dirty
   boolean YES`, no default, 23→25 columns; prod replicated to both replicas; re-apply is a clean
   no-op. **Prod was migrated BEFORE the code merged, deliberately** — see the RETURNING note.
-- **`AGENTS.md` is 28,613 bytes against `agentsMaxBytes = 28_758` — 145 bytes of headroom.**
-  Better than the 12 it had after #471, **not comfortable**. Items 2, 4, 30 and 31 are still
-  inline and 30/31 already have base commits, so the next eviction wave has an obvious start.
+- **`AGENTS.md` is 28,489 bytes against `agentsMaxBytes = 28_758` — 269 bytes of headroom**,
+  re-measured 2026-08-18 23:0xZ at `e7be70f`. **Not the 145 an earlier revision of this doc
+  recorded**: another session evicted item 31 to its evidence file and added `internal/credscan`
+  (#470) in between. Items 2, 4 and 30 remain inline; only 30 has a base commit. 🔴 **Re-measure
+  before quoting this** — the file moves under you from threads that have nothing to do with
+  yours, in both directions.
 - **Nothing of mine is in flight.** All four worktrees removed (the `civitai` one needed
   `worktree remove --force` — it holds the `event-engine-common` submodule — done only after
   confirming it was byte-clean and its work was in `origin/main`). Open cli PR `#470` and the
@@ -384,18 +387,24 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
 **Nothing on this thread is blocked or in flight.** `cli#411` closed the provenance work; what
 follows is the leftover list, and none of it is urgent.
 
+🔴 **Retired from this list, having been carried on it while already done:** *"`AGENTS.md` item
+29's trigger still describes a blanket refusal"*. #453 (`fbefd64`) narrowed it at the time it
+shipped; the trigger reads *"the by-slug fallback, the narrowed refusal behind it, or `app
+status`'s?"* today. It survived several revisions of this doc — including one merged 20 minutes
+before it was caught — because each revision re-ranked the list without re-reading the file it
+names. **Verify a next-step against the tree before carrying it forward; a list item is a
+hypothesis with a timestamp, not a fact.**
+
 1. **`civitai#4057`** — decide fixed-vs-intermittent from current `main` runs; see its block above.
 2. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
    `appBlockId` in exactly 4 places, all query-key/invalidation; the slug is already in hand at the
    page. The real blocker is `editorTabsFor`'s `appBlockId != null`, not the resolver.
-3. **`AGENTS.md` eviction wave** for items 30/31 when someone needs the room — 145 bytes is one
-   ordinary edit away from failing the ceiling again.
-4. **`AGENTS.md` item 29's trigger** still describes a blanket refusal; #453 narrowed it to
-   "both lookups missed".
-5. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
+3. **`AGENTS.md` eviction wave** for item 30 when someone needs the room — 269 bytes is still
+   about one ordinary edit away from failing the ceiling.
+4. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
    under full-suite load, 8 clean reruns. Remove the timing dependency; do not re-run it away.
-6. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
-7. **`source_dirty = true` has no live proof** — if a submit is being spent anyway, spend it from a
+5. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
+6. **`source_dirty = true` has no live proof** — if a submit is being spent anyway, spend it from a
    dirty tree and read the row; today's round 2 only exercised the clean case.
 
 ## Gotchas / decisions / dead-ends
