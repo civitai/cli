@@ -433,10 +433,8 @@ item must carry a trigger that is a routing question rather than a label
     `pkgzip.LargestEntries`, only under a failed submit. Name no server ceiling.
 
 32. **Sending or showing the commit an app was built from — the 40-hex gate,
-    `sourceDirty`'s null-vs-false, or the submit body's size?** An UNVERIFIED
-    client claim: word none of it as verified, never `?? false`, and send
-    nothing rather than a value `^[0-9a-f]{40}$` rejects — malformed is a 400
-    that fails the submit (#411).
+    `sourceDirty`'s null-vs-false, or the submit body's size?**
+    → evidence: claudedocs/decisions/32-submit-provenance-claim.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
