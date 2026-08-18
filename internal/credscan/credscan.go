@@ -50,9 +50,11 @@
 // # The detector: A2 ∪ B
 //
 // Chosen by measuring five candidates over 244 real project directories and
-// 3,917 packaged files. A2 ∪ B fired on ONE project (0.4%) — two lines in one
-// `.test.ts`. Plain keyword-assignment matching (no entropy gate) fired on 86.1%
-// of projects, and an entropy-only detector on 100% of authored projects
+// 3,917 packaged files. A2 ∪ B fired on ONE project (0.41%) — one line in one
+// `.test.ts`, re-measured after every detector change since (it was two lines
+// until an unquoted value learned to stop at a structural delimiter). Plain
+// keyword-assignment matching (no entropy gate) fired on 86.1% of projects, and
+// an entropy-only detector on 100% of authored projects
 // (lockfile `integrity` hashes), so both were rejected: a warning that fires on
 // every run trains authors to ignore it and is worse than nothing.
 //
@@ -64,13 +66,12 @@
 //
 // # 🔴 THERE IS NO `*.test.*` CARVE-OUT, ON PURPOSE.
 //
-// The two known false positives in the corpus are in a test file, so excluding
-// test files would take the measured rate to zero — and that is exactly why it
-// is not done. A credential in a test file is uploaded, reviewed and deployed
+// The known false positive in the corpus is in a test file, so excluding test
+// files would take the measured rate to zero — and that is exactly why it is
+// not done. A credential in a test file is uploaded, reviewed and deployed
 // identically to one anywhere else, and a carve-out shaped like "the files where
 // our false positives happen to live" is how a guard gets hollowed out later.
-// Two false positives are the accepted price. Pinned by
-// TestNoTestFileCarveOut.
+// That false positive is the accepted price. Pinned by TestNoTestFileCarveOut.
 //
 // # What this does NOT see — the coverage holes, enumerated
 //
@@ -88,9 +89,10 @@
 //     password passed some other way.
 //   - ONE FINDING PER LINE. A minified line holding several secrets reports only
 //     the first that passes the gate (every credential word on the line gets its
-//     turn — see matchAssignment — but the line stops at the first hit). An
-//     UNQUOTED value still runs to end of line, so on dense one-line content the
-//     value can be over-captured; a quoted one stops at its closing quote.
+//     turn — see matchAssignment — but the line stops at the first hit). A value
+//     is read as far as its closing quote, its first structural delimiter, or
+//     512 bytes, whichever comes first, so a secret longer than 512 bytes is
+//     seen only in part (it still fires — the gate has no upper length).
 //   - GOOGLE API KEYS are exempt by shape — see publicByDesignRe — so a Google
 //     *server* key is a deliberate false negative, and so is a headerless PKCS#8
 //     body (see knownFormats).
@@ -154,15 +156,22 @@ const (
 	// reassuring zero, which is the failure mode this whole feature exists to
 	// avoid.
 	//
-	// 🔴 IT IS A LATENCY BOUND, AND THE NUMBER COMES FROM A MEASUREMENT. Scanning
-	// costs ~230 ms/MiB on the machine this was measured on (19.4 MiB of text:
-	// 233 ms → 4,759 ms end to end), and pkgzip's own caps legally permit a
-	// 200 MiB / 2000-file bundle — i.e. ~45 s of silent stall between the
-	// confirmation prompt and the upload. 16 MiB bounds that at ~3.7 s worst
-	// case, while being ~57× the largest packaged TEXT payload measured across
-	// 244 real project directories (287 KiB), so no real project is truncated.
-	// Binary files cost only their 8 KiB sniff, so assets do not eat the budget.
-	MaxScanBytes int64 = 16 << 20
+	// 🔴 IT IS A LATENCY BOUND, AND BOTH NUMBERS IN IT ARE MEASURED. pkgzip's own
+	// caps legally permit a 200 MiB / 2000-file bundle, and the scan sits between
+	// the confirmation prompt and the upload, where every second is silent.
+	//
+	// Measured on this machine, after the value capture was bounded: ordinary
+	// source text costs ~175 ms/MiB, and the worst realistic shape — a minified
+	// bundle, where every `"token":""` reaches the gate — costs ~1,045 ms/MiB.
+	// So 8 MiB bounds the stall at ~1.4 s typical and ~8.4 s worst case. It is
+	// still ~28× the largest packaged TEXT payload measured across 244 real
+	// project directories (287 KiB), so no real project is truncated.
+	//
+	// 🔴 THE BUDGET IS CHECKED BETWEEN LINES, SO IT CANNOT BOUND ONE LINE. That
+	// is why the quadratic scan it was supposed to cover had to be fixed in the
+	// regexp instead (see assignRe): a single 1 MiB line is one budget check.
+	// Binary files cost only what their sniff actually read.
+	MaxScanBytes int64 = 8 << 20
 )
 
 // Report is the result of a scan: what was found, and what was NOT looked at.
@@ -175,9 +184,17 @@ type Report struct {
 	Findings []Finding
 	// Truncated reports that the byte budget ran out before every file was read.
 	Truncated bool
-	// FilesScanned counts the files this scan actually opened and read (binary
-	// files included — they were read far enough to be classified), and
-	// FilesTotal is how many it was given. They differ only when Truncated.
+	// FilesScanned counts the files this scan read TO THE END (binary files
+	// included — they were read far enough to be classified), and FilesTotal is
+	// how many it was given.
+	//
+	// 🔴 A FILE CUT SHORT BY THE BUDGET IS NOT COUNTED, which is what keeps
+	// "stopped after N of M" honest when the budget dies inside the LAST file.
+	// The first version only noticed truncation at the top of the next
+	// iteration, so a budget that ran out in the final entry reported
+	// Truncated=false, FilesScanned==FilesTotal, no findings — and the renderer
+	// printed NOTHING. That is the reassuring zero, produced by the guard
+	// written to prevent it.
 	FilesScanned int
 	FilesTotal   int
 }
@@ -197,20 +214,26 @@ func Scan(dir string, files []string) Report {
 			rep.Truncated = true
 			break
 		}
-		found, spent := scanFile(dir, rel, budget)
+		found, spent, cut := scanFile(dir, rel, budget)
 		budget -= spent
-		rep.FilesScanned++
 		rep.Findings = append(rep.Findings, found...)
+		if cut {
+			// The budget died INSIDE this file, so it is not a scanned file and
+			// the scan is truncated — even if it was the last entry.
+			rep.Truncated = true
+			break
+		}
+		rep.FilesScanned++
 	}
 	return rep
 }
 
 // scanFile scans one packaged file within budget bytes, and reports the bytes it
 // spent. rel is archive-relative and slash-separated.
-func scanFile(dir, rel string, budget int64) ([]Finding, int64) {
+func scanFile(dir, rel string, budget int64) (found []Finding, spent int64, cut bool) {
 	f, err := os.Open(filepath.Join(dir, filepath.FromSlash(rel)))
 	if err != nil {
-		return nil, 0
+		return nil, 0, false
 	}
 	defer f.Close()
 
@@ -218,21 +241,19 @@ func scanFile(dir, rel string, budget int64) ([]Finding, int64) {
 	// 4 KiB reader would answer Peek(8 KiB) with ErrBufferFull and half the
 	// window, which is a quieter detector than the one that was measured.
 	br := bufio.NewReaderSize(f, binarySniffBytes)
-	if isBinary(br) {
-		// A binary file costs its sniff and nothing more, which is why a bundle
-		// full of images does not eat the byte budget.
-		return nil, binarySniffBytes
+	if binary, sniffed := isBinary(br); binary {
+		// 🔴 CHARGED WHAT THE SNIFF ACTUALLY READ, NOT A FLAT WINDOW. Charging
+		// every binary the full 8 KiB meant 2,000 three-byte files could spend
+		// 97.6% of the budget while reading 6 KB — a comment that said assets
+		// "do not eat the budget" and a charge that made them do exactly that.
+		return nil, int64(sniffed), false
 	}
 
-	var (
-		found []Finding
-		spent int64
-	)
 	for n := 1; ; n++ {
 		line, skipped, consumed, err := readLine(br)
 		spent += int64(consumed)
 		if consumed == 0 && err != nil {
-			break
+			break // end of file, nothing read
 		}
 		// A line past maxLineBytes is skipped and the file CONTINUES — see the
 		// constant's comment for the silence that cost.
@@ -240,15 +261,22 @@ func scanFile(dir, rel string, budget int64) ([]Finding, int64) {
 			if label, ok := match(line); ok {
 				found = append(found, Finding{Path: rel, Line: n, Label: label})
 				if len(found) == maxFindingsPerFile {
+					// The per-file cap, not the budget: this file is reported and
+					// named, so the author is looking at it either way.
 					break
 				}
 			}
 		}
-		if err != nil || spent >= budget {
+		if err != nil {
+			break // end of file, cleanly
+		}
+		if spent >= budget {
+			// More to read, nothing left to read it with.
+			cut = true
 			break
 		}
 	}
-	return found, spent
+	return found, spent, cut
 }
 
 // readLine reads one line, never buffering more than maxLineBytes of it.
@@ -282,14 +310,15 @@ func readLine(br *bufio.Reader) (line string, skipped bool, consumed int, err er
 }
 
 // isBinary reports whether the buffered file looks binary — a NUL byte in the
-// first binarySniffBytes. It peeks, so the reader is left positioned at the
-// start either way.
-func isBinary(br *bufio.Reader) bool {
+// first binarySniffBytes — and how many bytes the sniff actually read, which is
+// what the byte budget is charged. It peeks, so the reader is left positioned at
+// the start either way.
+func isBinary(br *bufio.Reader) (binary bool, sniffed int) {
 	head, err := br.Peek(binarySniffBytes)
 	if err != nil && err != io.EOF && err != bufio.ErrBufferFull {
-		return true // unreadable — say nothing about it
+		return true, len(head) // unreadable — say nothing about it
 	}
-	return bytes.IndexByte(head, 0) >= 0
+	return bytes.IndexByte(head, 0) >= 0, len(head)
 }
 
 // match runs the two detectors over one line. A2 first, because when both fire
@@ -313,10 +342,26 @@ func match(line string) (string, bool) {
 // earlier revision omitted it and did exactly that; only a positive control
 // caught it. TestAssignmentMatchesAQuotedJSONKey pins it.
 //
+// 🔴 THE VALUE GROUP IS BOUNDED, AND THAT BOUND IS A COMPLEXITY FIX, NOT A
+// STYLE CHOICE. It used to be `(\S.*)$` — a capture running to end of line — so
+// every attempt cost the length of the LINE, and matchAssignment retries once
+// per credential word. On the input where the retry runs to exhaustion (a
+// minified bundle whose `"token":""` keys all fail the gate — i.e. a CLEAN file,
+// the common case) that is O(n²): measured 8 KB 0.40 s, 16 KB 1.64 s, 32 KB
+// 6.47 s, 64 KB 26.09 s, a clean 4.0× per doubling, which the 1 MiB line cap
+// extrapolates to over an hour for ONE line. MaxScanBytes could not bound it —
+// the budget is checked between lines, not inside one.
+//
+// A non-space run is not a narrowing: valueLooksLikeSecret rejects any value
+// containing whitespace anyway, so nothing that could ever have fired is lost.
+// TestMinifiedLineScansInBoundedTime is the guard, and
+// TestMinifiedLineStillFindsACredentialAtTheEnd stops it being satisfied by a
+// scanner that simply gives up on long lines.
+//
 // Submatches: 1 = the key (with whatever quoting/indexing surrounds it),
-// 2 = the credential word, 3 = the operator, 4 = the value to end of line.
+// 2 = the credential word, 3 = the operator, 4 = the value (bounded).
 var assignRe = regexp.MustCompile(
-	`(?i)([A-Za-z0-9_.\-\[\]"']{0,40}(SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|CREDENTIALS?)[A-Za-z0-9_.\-"']{0,24})\s*(:=|=>|=|:)\s*(\S.*)$`)
+	`(?i)([A-Za-z0-9_.\-\[\]"']{0,40}(SECRET|TOKEN|PASSWORD|PASSWD|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|CREDENTIALS?)[A-Za-z0-9_.\-"']{0,24})\s*(:=|=>|=|:)\s*(\S{1,512})`)
 
 // placeholderPrefixes are the openings of a value nobody ever pasted a live
 // credential into. Matched case-insensitively against the START of the value.
@@ -415,7 +460,39 @@ func labelFor(key, word string) string {
 	if keyShapeRe.MatchString(k) && !looksLikeCredential(k) {
 		return k
 	}
-	return strings.ToUpper(word)
+	return canonicalWord(word)
+}
+
+// canonicalWord maps the matched credential word onto one of OUR constants, so
+// the degraded label provably carries no bytes from the line.
+//
+// 🔴 `strings.ToUpper` WAS NOT ENOUGH, AND THE REASON IS UNICODE. Go's `(?i)`
+// uses simple case folding, so `toKen` spelled with a KELVIN SIGN (U+212A)
+// matches `TOKEN` — and ToUpper leaves U+212A alone, which put three bytes of
+// the line into a label documented as a closed set of constants. The lookup is
+// exact, and anything it does not recognise degrades to a fixed word rather than
+// to whatever was on the line.
+func canonicalWord(word string) string {
+	switch strings.ToUpper(word) {
+	case "SECRET":
+		return "SECRET"
+	case "TOKEN":
+		return "TOKEN"
+	case "PASSWORD":
+		return "PASSWORD"
+	case "PASSWD":
+		return "PASSWD"
+	case "APIKEY", "API_KEY":
+		return "API_KEY"
+	case "PRIVATEKEY", "PRIVATE_KEY":
+		return "PRIVATE_KEY"
+	case "ACCESSKEY", "ACCESS_KEY":
+		return "ACCESS_KEY"
+	case "CREDENTIAL", "CREDENTIALS":
+		return "CREDENTIALS"
+	default:
+		return "CREDENTIAL"
+	}
 }
 
 // looksLikeCredential is the shared test "would this string, standing alone, be
@@ -444,6 +521,18 @@ func cleanValue(raw string) (value string, quoted bool) {
 		return closed, true
 	}
 	v := strings.TrimSpace(stripTrailingComment(raw))
+	// 🔴 AN UNQUOTED VALUE ENDS AT THE FIRST STRUCTURAL DELIMITER, and this
+	// appeared the moment the value capture was bounded (see assignRe). While the
+	// capture ran to end of line, a JSON fragment inside prose swept up the
+	// spaces after it and the whitespace clause rejected it; a bounded non-space
+	// run does not, so `"maxTokens":50,"responseFormat":{"type":"json_object"}}}`
+	// in a markdown table became a high-entropy "secret" — a new false positive
+	// in the corpus, caught by re-measuring rather than by any test. In JSON,
+	// JS, YAML and TOML alike an unquoted value ends at `,`/`}`/`]`/`)`, and no
+	// credential shape contains one.
+	if i := strings.IndexAny(v, ",}])"); i >= 0 {
+		v = v[:i]
+	}
 	v = strings.TrimSpace(strings.TrimRight(v, ",;"))
 	if len(v) >= 2 {
 		if q := v[0]; (q == '"' || q == '\'' || q == '`') && v[len(v)-1] == q {
@@ -498,9 +587,15 @@ func valueLooksLikeSecret(value string, quoted bool) bool {
 	if len(value) < minValueLen {
 		return false
 	}
-	if strings.ContainsAny(value, " \t") {
-		return false
-	}
+	// 🔴 THERE IS NO WHITESPACE CLAUSE HERE ANY MORE, AND ITS ABSENCE IS THE
+	// POINT. assignRe's value group is `\S{1,512}` — a non-space run — so a
+	// value carrying a space cannot reach this function, and a mutation battery
+	// scored the old `strings.ContainsAny(value, " \t")` SURVIVED because
+	// nothing could make it fire. Dead code in a gate reads as protection, so
+	// the invariant moved to where it is enforced: the regexp, pinned by
+	// TestValueCaptureIsANonSpaceRun (a property test on the capture) and by the
+	// prose row in TestOrdinaryCodeIsSilent, which fires the moment the capture
+	// is widened.
 	for _, marker := range interpolationMarkers {
 		if strings.Contains(value, marker) {
 			return false
@@ -644,24 +739,57 @@ var knownFormats = []knownFormat{
 		// The shape a connection string leaks in — `DATABASE_URL=postgres://…`
 		// carries no credential word in its KEY, so A2 cannot see it, and an
 		// auditor named it the most common real leak shape in a web project.
-		name:     "URL with an embedded password",
-		re:       regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s:/?#@]+:[^\s:/?#@]+@`),
+		name: "URL with an embedded password",
+		// 🔴 THE MATCH RUNS PAST THE `@` TO INCLUDE THE HOST, AND THAT IS A FIX,
+		// NOT DECORATION. It used to end at the `@`, so the rejectRe check inside
+		// the validator — the whole reason `localhost`, `example`, `test` and
+		// `demo` are in that list — could never see the hostname it was written
+		// to read. `postgres://admin:Kq9Zx2Lm5Rb8@localhost:5432/app` fired.
+		re:       regexp.MustCompile(`[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s:/?#@]+:[^\s:/?#@]+@[^\s/?#@]{1,255}`),
 		validate: urlPasswordLooksReal,
 	},
 }
+
+// localHostRe is the part of "this is not a real host" that rejectRe's word list
+// cannot spell: a loopback or unspecified ADDRESS.
+var localHostRe = regexp.MustCompile(`@(127\.0\.0\.1|0\.0\.0\.0|\[::1\]|localhost)(:|$)`)
+
+// minURLPasswordEntropy is looser than the value floor. A database password is
+// shorter than an API token, so 3.0 bits/char would reject real ones; 2.5 still
+// rejects `aaaaaaaa` (0.0) and `00000000` (0.0), which is what it is for.
+const minURLPasswordEntropy = 2.5
 
 // urlPasswordLooksReal keeps the URL form off documentation. It takes the
 // userinfo password out of the match and asks the same placeholder/entropy
 // questions a value gets, minus the length floor — a real database password is
 // routinely shorter than 12 characters, which is exactly why it is worth saying.
 func urlPasswordLooksReal(match string) bool {
+	// 🔴 THE BOUNDS CHECK COMES FIRST. It used to slice `match[:at]` before
+	// testing `at < 0` — unreachable through the regexp, which guarantees an
+	// `@`, but it read as protection it did not provide, and a panic here would
+	// break this package's "never changes the exit code" contract from the
+	// inside.
 	at := strings.LastIndex(match, "@")
-	colon := strings.LastIndex(match[:at], ":")
-	if at < 0 || colon < 0 {
+	if at < 0 {
 		return false
 	}
+	colon := strings.LastIndex(match[:at], ":")
+	if colon < 0 {
+		return false
+	}
+	user := match[:colon]
+	if i := strings.Index(user, "//"); i >= 0 {
+		user = user[i+2:]
+	}
 	pw := match[colon+1 : at]
-	if len(pw) < 4 || rejectRe.MatchString(pw) || rejectRe.MatchString(match) {
+	// rejectRe now sees the HOST as well as the credentials, which is the point
+	// of matching past the `@`.
+	//
+	// 🔴 NO LENGTH FLOOR HERE: it was redundant and a battery proved it. Any
+	// string of five characters or fewer has at most log2(5) = 2.32 bits/char,
+	// which is already below minURLPasswordEntropy, so `len(pw) < 6` could never
+	// be the clause that rejected anything. One rule, in one place.
+	if rejectRe.MatchString(match) || localHostRe.MatchString(match) {
 		return false
 	}
 	lower := strings.ToLower(pw)
@@ -672,12 +800,20 @@ func urlPasswordLooksReal(match string) bool {
 	}
 	// `user:password@`, `admin:pass@` — the words documentation uses.
 	switch lower {
-	case "password", "pass", "pwd", "secret", "hunter2":
+	case "password", "passwd", "pwd", "secret", "hunter2", "changeit":
+		return false
+	}
+	// A default credential is not a leak: `guest:guest`, `root:root`.
+	if strings.EqualFold(pw, user) {
 		return false
 	}
 	// A reference is not a secret: `$FORGEJO_TOKEN`, `${DB_PASSWORD}`, `%s`.
 	// Measured — the `$VAR` form was 12 of the 14 findings in a corpus run.
-	return !strings.ContainsAny(pw, "$%")
+	if strings.ContainsAny(pw, "$%") {
+		return false
+	}
+	// And a repeated character is nobody's password: `aaaaaaaa`, `00000000`.
+	return shannonBitsPerChar(pw) >= minURLPasswordEntropy
 }
 
 // matchKnownFormat implements B. Order is the table's order, so the label for a

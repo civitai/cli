@@ -1493,7 +1493,7 @@ Packaged 5 file(s) (858 bytes compressed, 110 decompressed; 1163 bytes as the ba
   on every submit of a Firebase-based block — the cost is that a Google *server*
   key is not reported either) and a headerless PKCS#8 body (that shape is an
   X.509 certificate just as often as a private key). If the scan hits its
-  16 MiB budget it stops **and says so** rather than reporting a quiet zero.
+  8 MiB budget it stops **and says so** rather than reporting a quiet zero.
 - 🔴 **The rate you can measure is the false-positive one.** Over 244 real
   project directories and 3,917 packaged files this fires on **one** project. The
   *true*-positive rate is unmeasured and cannot be measured from that corpus,

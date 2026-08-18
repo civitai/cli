@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Issue #464: the packager's exclusions are NAME rules, so a credential in an
@@ -170,7 +171,7 @@ func TestKnownFormatsAreAllCaught(t *testing.T) {
 		{"Stripe", "sk_live_9Kq2mZx7Lb4Rv8Nc3Tp6", "Stripe API key"},
 		{"npm", "npm_9Kq2mZx7Lb4Rv8Nc3Tp6Wy1Ud5Ha0Sj2GfQ7", "npm token"},
 		{"URL with a password", `DATABASE_URL=postgres://admin:Kq9Zx2Lm5Rb8@db.internal:5432/app`, "URL with an embedded password"},
-		{"URL with a password, no credential word in the key", `const dsn = "mongodb://svc:Nv4Tc7f3Kq9Z@cluster0.example.net/db";`, "URL with an embedded password"},
+		{"URL with a password, no credential word in the key", `const dsn = "mongodb://svc:Nv4Tc7f3Kq9Z@cluster0.civitai-internal.net/db";`, "URL with an embedded password"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			label, ok := match(tc.line)
@@ -244,6 +245,17 @@ func TestOrdinaryCodeIsSilent(t *testing.T) {
 		{"an angle-bracket placeholder", `const secret = "<YOUR_SECRET>";`},
 		{"a shell/template interpolation", `const token = "${TOKEN}";`},
 		{"a bare shell variable reference, long enough to clear the length floor", `API_SECRET=$CIVITAI_DEPLOY_TOKEN_2`},
+		// 🔴 THE CORPUS REGRESSION FROM BOUNDING THE VALUE CAPTURE, distilled.
+		// The real line is a JSON fragment inside a markdown table with prose
+		// AFTER it: while the capture ran to end of line it swept up that prose's
+		// spaces and the value was rejected for holding whitespace, so bounding
+		// the capture is what made it fire — the corpus rate went 0.41% → 0.82%
+		// on this one line. The fixture is the fragment WITHOUT the trailing
+		// prose, so it fires on both sides of that change and pins the fix that
+		// closed it: an unquoted value stops at the first structural delimiter.
+		{"a JSON fragment inside prose", `call with {"model":"openai/gpt-4o-mini","maxTokens":50,"responseFormat":{"type":"json_object"}}]}`},
+		// The same class in a regexp literal, which is the OTHER corpus line.
+		{"a regexp literal after an assignment", `expect(out.match(/VITE_LIVE_BLOCK_TOKEN=/g)).toHaveLength(1);`},
 		{"a lockfile integrity hash under a non-credential key", `      "integrity": "sha512-9Kq2mZx7Lb4Rv8Nc3Tp6Wy1Ud5Ha0Sj2GfQ7pR4tE1mV6yUxKw==",`},
 		{"a test/mock value", `const apiToken = "mock-token-9Kq2mZx7Lb4Rv8";`},
 		{"a localhost URL", `const credentialsUrl = "http://localhost:3000/auth";`},
@@ -597,6 +609,11 @@ func TestOrdinaryKeysAreStillPrinted(t *testing.T) {
 		{`VITE_LIVE_BLOCK_TOKEN=7f3Kq9Zx2Lm5Rb8Nv4Tc`, "VITE_LIVE_BLOCK_TOKEN"},
 		{`  "auth.password" : "Zx7Z2pQ9mK4vR8nT1yB3"`, "auth.password"},
 		{`x-api-token: "9f3a2b7c1d4e5f6071"`, "x-api-token"},
+		// 🔴 THE COMMA IS INSIDE THE QUOTES. The unquoted path cuts a value at the
+		// first structural delimiter, so only the closing-quote reader can see
+		// this value whole — without it the value becomes `"9f3a` and the finding
+		// is lost. That mutant SURVIVED until this row existed.
+		{`  "API_SECRET": "9f3a,2b7c1d4e5f60718293a4"`, "API_SECRET"},
 		// 🔴 NOT identifier-shaped, so it DEGRADES even though it is plainly not a
 		// secret. This is the second half of the label gate — the shape test —
 		// and without a case for it, dropping that half survives the whole suite:
@@ -685,6 +702,29 @@ func TestURLPasswordGateKeepsDocumentationQuiet(t *testing.T) {
 		// this is the only fixture the `$`/`%` content test catches, and without
 		// it that test is dead code every other clause reaches first.
 		{"an interpolation inside the password", `postgres://admin:tok${DB_PASS}en@db.internal/app`, false},
+		// 🔴 THE HOST HALF. The match used to END at the `@`, so the rejectRe
+		// clause inside the validator — the whole reason `localhost`, `example`,
+		// `test` and `demo` are in that word list — could never see the hostname
+		// it exists to read. All three of these fired.
+		{"a real-looking password against localhost", `postgres://admin:Kq9Zx2Lm5Rb8@localhost:5432/app`, false},
+		{"a real-looking password against a documentation domain", `postgres://admin:Kq9Zx2Lm5Rb8@example.com:5432/app`, false},
+		{"a real-looking password against loopback", `redis://svc:Kq9Zx2Lm5Rb8@127.0.0.1:6379`, false},
+		{"a real-looking password against a test host", `postgres://admin:Kq9Zx2Lm5Rb8@db.test.internal/app`, false},
+		// And the gates on the password itself: a default credential, and a
+		// repeated character, are not leaks.
+		{"a default credential", `amqp://guest:guest@rabbitmq:5672`, false},
+		{"a repeated-character password", `mongodb://root:aaaaaaaa@mongo:27017`, false},
+		{"an all-zero password", `postgres://u:00000000@db.internal/app`, false},
+		{"a password under the length floor", `postgres://admin:aB3x@db.internal/app`, false},
+		// 🔴 ONLY THE EQUALITY TEST CAN REJECT THIS ONE. `guest:guest` is rejected
+		// by entropy long before it, so with that fixture alone the
+		// password-equals-username clause was unreachable and its mutant
+		// SURVIVED. `service` clears the entropy floor (2.52 bits/char).
+		{"a default credential whose password IS the username", `mongodb://service:service@mongo:27017`, false},
+		// CONTROL for that group: the same URL with a real-looking password
+		// against a real-looking host still fires, so the eight silences above
+		// are facts about the gates and not about a dead pattern.
+		{"the control: a real password against a real host", `postgres://admin:Kq9Zx2Lm5Rb8@db.internal:5432/app`, true},
 		// 🔴 THE CORPUS REGRESSION. This exact line, in the App Blocks starter
 		// template's README, was 12 of the 14 findings in a 244-project run and
 		// took the measured firing rate from 0.41% to 5.33% on its own. A `$VAR`
@@ -838,5 +878,280 @@ func TestQuotedExemptionFromTheDottedRule(t *testing.T) {
 	}
 	if valueLooksLikeSecret(dotted, false) {
 		t.Errorf("an UNQUOTED dotted value (%q) was accepted — that is a reference expression", dotted)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BOUNDED TIME — the class no correctness assertion can see
+// ---------------------------------------------------------------------------
+
+// minifiedLine builds one line of the shape a bundler emits: many short quoted
+// credential-word keys with empty values, so every one of them reaches the gate
+// and is rejected. That is the shape that makes the per-line retry loop run to
+// exhaustion, and it is the COMMON case — a clean file, nothing to report.
+func minifiedLine(n int, tail string) string {
+	var b strings.Builder
+	b.WriteString(`var x=[`)
+	for b.Len() < n {
+		b.WriteString(`{"token":"","refreshToken":"","apiSecret":""},`)
+	}
+	b.WriteString(tail)
+	b.WriteString(`];`)
+	return b.String()
+}
+
+// runWithin runs fn and returns how long it took, failing the test if it has not
+// finished within budget.
+//
+// 🔴 IT FAILS AT THE DEADLINE RATHER THAN WAITING. A quadratic regression takes
+// MINUTES on the larger fixture, and a test that simply waits would blow the
+// package timeout and truncate the whole suite's output — which reads as an
+// infrastructure problem rather than as this defect. The goroutine is left
+// running on purpose; the process is about to exit.
+func runWithin(t *testing.T, what string, budget time.Duration, fn func()) time.Duration {
+	t.Helper()
+	done := make(chan time.Duration, 1)
+	go func() {
+		start := time.Now()
+		fn()
+		done <- time.Since(start)
+	}()
+	select {
+	case d := <-done:
+		return d
+	case <-time.After(budget):
+		t.Fatalf("%s did not finish within %v.\n\n"+
+			"🔴 This is the quadratic-scan regression. The per-line retry loop re-runs the assignment "+
+			"regexp from each rejected match, and if the value group captures to END OF LINE then every "+
+			"attempt costs the length of the line — O(n²) on exactly the input where nothing matches, "+
+			"i.e. an ordinary minified bundle in a clean project. Measured before the value capture was "+
+			"bounded: 8 KB 0.40 s, 16 KB 1.64 s, 32 KB 6.47 s, 64 KB 26.09 s (4.0× per doubling), which "+
+			"pkgzip's own 1 MiB line cap extrapolates to over an hour for ONE line.", what, budget)
+		return 0
+	}
+}
+
+// TestMinifiedLineScansInBoundedTime is the regression test for that class.
+//
+// 🔴 IT IS THE ONLY TEST THAT CAN SEE THIS DEFECT. Every correctness assertion in
+// this package passes with a quadratic scanner — the ANSWER is right, it just
+// takes 26 seconds a line — and CI was green on it. Watched failing against the
+// implementation it was written for: the 64 KB case exceeded its 2 s budget.
+//
+// The budgets are ~100× the measured post-fix cost (single-digit ms), so this is
+// a class detector rather than a benchmark: it cannot go red on ordinary CI
+// noise, and it cannot stay green under an O(n²) scan.
+func TestMinifiedLineScansInBoundedTime(t *testing.T) {
+	for _, tc := range []struct {
+		size   int
+		budget time.Duration
+	}{
+		{64 << 10, 2 * time.Second},
+		{256 << 10, 5 * time.Second},
+	} {
+		t.Run(fmt.Sprintf("%dKB", tc.size>>10), func(t *testing.T) {
+			line := minifiedLine(tc.size, "")
+			d := runWithin(t, fmt.Sprintf("scanning a %d KB minified line", tc.size>>10), tc.budget, func() {
+				if _, ok := match(line); ok {
+					t.Errorf("the filler line holds only EMPTY values and must not match")
+				}
+			})
+			t.Logf("%d KB minified line scanned in %v (budget %v)", tc.size>>10, d.Round(time.Millisecond), tc.budget)
+		})
+	}
+}
+
+// TestMinifiedLineStillFindsACredentialAtTheEnd is the correctness half, and it
+// is what stops the bounded-time test being satisfied by a scanner that simply
+// GIVES UP on long lines. The secret sits in the last object, so it is found
+// only by a scan that traversed the whole line.
+func TestMinifiedLineStillFindsACredentialAtTheEnd(t *testing.T) {
+	line := minifiedLine(64<<10, `{"apiSecret":"9f3a2b7c1d4e5f60718293a4"}`)
+	label, ok := match(line)
+	if !ok {
+		t.Fatalf("a credential in the LAST object of a 64 KB minified line was not found — a bounded-time "+
+			"scan must still be a complete one (line length %d)", len(line))
+	}
+	if label != "apiSecret" {
+		t.Errorf("label = %q, want \"apiSecret\"", label)
+	}
+}
+
+// TestWholeFileOfMinifiedLinesIsBounded is the same guard one level up: the
+// per-line cost is what the file loop multiplies, and pkgzip packages
+// `src/*.min.js` (only `dist/` and `node_modules/` are excluded), so this is a
+// real bundle rather than a synthetic worst case.
+func TestWholeFileOfMinifiedLinesIsBounded(t *testing.T) {
+	dir := t.TempDir()
+	var b strings.Builder
+	for i := 0; i < 8; i++ {
+		b.WriteString(minifiedLine(32<<10, ""))
+		b.WriteByte('\n')
+	}
+	mustWrite(t, dir, "src/app.min.js", b.String())
+
+	var got []Finding
+	d := runWithin(t, "scanning a 256 KB minified file", 5*time.Second, func() {
+		got = scanFindings(dir, []string{"src/app.min.js"})
+	})
+	if len(got) != 0 {
+		t.Errorf("the fixture holds only empty values: %+v", got)
+	}
+	t.Logf("256 KB minified file scanned in %v", d.Round(time.Millisecond))
+}
+
+// TestTruncationInsideTheLastFileIsReported is the reassuring zero, reached by
+// the guard written to prevent it.
+//
+// 🔴 MEASURED ON THE PREVIOUS BUILD: with the budget dying inside the FINAL
+// entry, the `budget <= 0` test at the top of the next iteration never ran, so
+// the report came back Truncated=false, FilesScanned==FilesTotal, no findings —
+// and renderCredentialWarning printed NOTHING AT ALL for a bundle whose last
+// file holds a credential. The control below proves that file is detectable.
+func TestTruncationInsideTheLastFileIsReported(t *testing.T) {
+	dir := t.TempDir()
+	// 🔴 THE FIXTURE IS SIZED FROM THE BUDGET, NOT FROM A LITERAL. A fixed size
+	// stops demonstrating the moment the budget moves: measured against the
+	// 16 MiB budget of the commit this fixes, an 11 MiB fixture never truncated
+	// and the test failed on its own CONTROL instead of on the defect. Only the
+	// SIZE is derived; every assertion below is literal.
+	const line = "const x = 1; // ordinary source line\n"
+	perFile := int(MaxScanBytes) / 8
+	filler := strings.Repeat(line, perFile/len(line))
+	var files []string
+	for i := 0; i < 6; i++ {
+		name := fmt.Sprintf("src/filler%02d.ts", i)
+		mustWrite(t, dir, name, filler)
+		files = append(files, name)
+	}
+	// One last file, larger than the remaining budget, with the credential past
+	// where the budget dies.
+	big := strings.Repeat("const y = 2; // padding\n", int(MaxScanBytes)/2/24)
+	mustWrite(t, dir, "src/last.ts", big+"const apiSecret = \"Q8vN2mR7kX4zL9pW3tB6\";\n")
+	files = append(files, "src/last.ts")
+
+	rep := Scan(dir, files)
+	if len(rep.Findings) != 0 {
+		t.Fatalf("CONTROL failure: the credential was reached, so this fixture cannot show the defect: %+v",
+			rep.Findings)
+	}
+	if !rep.Truncated {
+		t.Errorf("the budget ran out INSIDE the last file and the report says Truncated=false "+
+			"(FilesScanned=%d, FilesTotal=%d, findings=0). renderCredentialWarning then prints nothing at "+
+			"all — a scan that stopped early, reporting exactly what a clean bundle reports.",
+			rep.FilesScanned, rep.FilesTotal)
+	}
+	if rep.FilesScanned >= rep.FilesTotal {
+		t.Errorf("FilesScanned=%d of FilesTotal=%d — a file cut short by the budget must not count as scanned, "+
+			"or `stopped after N of M` reads as `N of N`", rep.FilesScanned, rep.FilesTotal)
+	}
+	// CONTROL: that last file DOES hold a credential when it is scanned whole.
+	if n := len(scanFindings(dir, []string{"src/last.ts"})); n != 1 {
+		t.Errorf("control: scanning the last file alone reported %d finding(s), want 1", n)
+	}
+}
+
+// TestManyTinyBinariesDoNotEatTheBudget pins the sniff CHARGE. Charging every
+// binary a flat 8 KiB meant 2,000 three-byte files could spend 97.6% of the
+// budget having read 6 KB — while the comment beside it said assets do not eat
+// the budget.
+func TestManyTinyBinariesDoNotEatTheBudget(t *testing.T) {
+	dir := t.TempDir()
+	// Enough three-byte binaries to blow the WHOLE budget if each is charged a
+	// flat sniff window — derived from the budget so it keeps demonstrating when
+	// that constant moves (a fixed 1500 stopped demonstrating against the 16 MiB
+	// budget this replaced). The assertions stay literal.
+	n := int(MaxScanBytes/binarySniffBytes) + 200
+	var files []string
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("assets/i%05d.ico", i)
+		mustWrite(t, dir, name, "\x00\x01\x02")
+		files = append(files, name)
+	}
+	mustWrite(t, dir, "zz.json", "{\n  \"API_SECRET\": \"9f3a2b7c1d4e5f60718293a4b5c6d7e8\"\n}\n")
+	files = append(files, "zz.json")
+
+	rep := Scan(dir, files)
+	if rep.Truncated {
+		t.Errorf("%d three-byte binaries (%d KB in total) truncated a %d MiB budget — the sniff is being "+
+			"charged as a flat window rather than as what it read", n, n*3/1024, MaxScanBytes>>20)
+	}
+	if len(rep.Findings) != 1 {
+		t.Errorf("the credential after the binaries was not reported (%d finding(s)) — the budget ate it",
+			len(rep.Findings))
+	}
+}
+
+// TestDegradedLabelIsAlwaysOneOfOurConstants pins NF-5. Go's `(?i)` uses Unicode
+// simple folding, so a KELVIN SIGN (U+212A) matches `K` in `TOKEN` — and
+// strings.ToUpper leaves U+212A intact, which put three bytes of the LINE into a
+// label documented as a closed set of constants.
+func TestDegradedLabelIsAlwaysOneOfOurConstants(t *testing.T) {
+	// `to<KELVIN>en` inside credential-shaped material, so the label degrades.
+	line := "AbCdEf9toKen42=Q8vN2mR7kX4zL9pW3tB6"
+	label, ok := match(line)
+	if !ok {
+		t.Fatalf("CONTROL failure: the fold case did not match at all, so there is no label to check: %q", line)
+	}
+	if !canonicalWords[label] {
+		t.Errorf("degraded label = %q, which is not one of the constants this package documents. It carries "+
+			"bytes from the line (%q), because Unicode case folding matched a character ToUpper does not "+
+			"normalise.", label, line)
+	}
+	for _, r := range label {
+		if r > 127 {
+			t.Errorf("label %q holds a non-ASCII rune (%U) — it cannot be one of our own constants", label, r)
+		}
+	}
+}
+
+// TestURLValidatorHandlesAMalformedMatch pins NF-4: the bounds test runs before
+// the slice. Unreachable through the regexp today, which is exactly why it was
+// wrong — it read as protection it did not provide, and a panic here would break
+// this package's never-fail contract from the inside.
+func TestURLValidatorHandlesAMalformedMatch(t *testing.T) {
+	for _, s := range []string{"", "no-at-sign", "postgres://user", ":", "@", "a:b"} {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					t.Errorf("urlPasswordLooksReal(%q) panicked: %v", s, r)
+				}
+			}()
+			if urlPasswordLooksReal(s) {
+				t.Errorf("urlPasswordLooksReal(%q) = true, want false", s)
+			}
+		}()
+	}
+}
+
+// TestValueCaptureIsANonSpaceRun is where the whitespace invariant lives now.
+//
+// 🔴 IT REPLACED A DEAD GUARD. valueLooksLikeSecret used to test the value for
+// spaces, and a mutation battery scored that clause SURVIVED — assignRe's value
+// group is `\S{1,512}`, so a value carrying a space cannot reach the gate at
+// all. Dead code in a gate reads as protection it is not providing, so the
+// clause went and the invariant is asserted here, on the thing that actually
+// enforces it. The prose row in TestOrdinaryCodeIsSilent is the behavioural
+// half: widen the capture and it fires.
+func TestValueCaptureIsANonSpaceRun(t *testing.T) {
+	for _, line := range []string{
+		`password: this is not a real value 12345`,
+		`API_SECRET = 9f3a2b7c1d4e 5f60718293a4`,
+		`token: "hunter two 9f3a2b7c1d4e"`,
+		`  "API_SECRET": "9f3a2b7c 1d4e5f60718293a4",`,
+	} {
+		m := assignRe.FindStringSubmatch(line)
+		if m == nil {
+			t.Errorf("CONTROL failure: %q did not match at all, so it says nothing about the capture", line)
+			continue
+		}
+		if strings.ContainsAny(m[4], " \t") {
+			t.Errorf("the value capture for %q is %q, which carries whitespace. The gate no longer tests for "+
+				"that — this pattern is the only thing enforcing it.", line, m[4])
+		}
+		if len(m[4]) > 512 {
+			t.Errorf("the value capture for %q is %d bytes; the bound is 512, and that bound is what keeps "+
+				"the per-line scan linear", line, len(m[4]))
+		}
 	}
 }
