@@ -156,6 +156,24 @@ const agentsSplitBaseWave5 = "53a925bf7810f2e0dadd64ddc9f77f2e390ae8b4"
 // repo's own remedy, and it is cheapest immediately after the item merges.
 const agentsSplitBaseWave6 = "8e51494c8549cdb838d3861de0dcc63c38d294d5"
 
+// agentsSplitBaseWave7 is the commit item 31 was moved from — the tip after #473
+// (the submit-provenance handoff), which is where wave 6 left the file.
+//
+// Wave 7 is wave 6's own closing note acted on: "items 2, 4, 30 and 31 remain
+// inline and 30/31 already have base commits, so the next eviction wave has
+// somewhere obvious to start." Item 31 is the largest of the four (553 bytes
+// against a trigger block's 162–265), so the eviction playbook ranks it first.
+//
+// 🔴 WHAT FORCED IT NOW: wave 6 left 145 bytes of headroom, and #470's Layout
+// entry for `internal/credscan` does not fit in them. That entry cannot simply
+// be dropped — layout_ledger_test.go is a BIDIRECTIONAL ledger, so a package
+// under internal/ that the Layout section does not name is a failure — and the
+// shrink that would fit was measured at 137 bytes, which lands the merged file
+// 8 bytes under the ceiling. Eight bytes is the twelve wave 6 called
+// unacceptable. So the budget is restored the way this file's playbook says to
+// restore it, rather than by spending the last of it.
+const agentsSplitBaseWave7 = "87a147cc00cd930632948d66a992f2506e1f10e3"
+
 type splitItem struct {
 	num      int
 	file     string
@@ -197,6 +215,7 @@ var splitItems = []splitItem{
 	{num: 28, file: "claudedocs/decisions/28-no-claims-about-unobservable-spend.md", base: agentsSplitBaseWave4, nonBlank: 31, sha: "41387de27265146eb9c9fc8a507621b27b8b20cdf0db8d7eb9d4903021707478"},
 	{num: 29, file: "claudedocs/decisions/29-offsite-refusal.md", base: agentsSplitBaseWave5, nonBlank: 8, sha: "df86c7a851e2397db48eebd2f4b9d17e91565128ec4550510a62b785f552828d"},
 	{num: 32, file: "claudedocs/decisions/32-submit-provenance-claim.md", base: agentsSplitBaseWave6, nonBlank: 5, sha: "45d00151610d87af805502b0113bd6195417ec26ae5c4a4b0d797e0ef7ca5ad9"},
+	{num: 31, file: "claudedocs/decisions/31-pkgzip-caps-are-not-a-server-mirror.md", base: agentsSplitBaseWave7, nonBlank: 7, sha: "3ee77946d738161963e26167b2de2c12a56b01b8262e257708ab713bbd020c8d"},
 }
 
 // --- the one deliberate delta, item 3 ---------------------------------------
