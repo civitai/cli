@@ -385,7 +385,7 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
   observed value — a real regression moves it by tens of px, a font-stack change by a few.
 - Closed with the evidence: `civitai/civitai#4057#issuecomment-5335314159`.
 
-### NEW, unrelated: a `MySubmissionsList` component flake (no issue filed yet)
+### NEW, unrelated: a `MySubmissionsList` component flake — filed as `civitai#4100`
 
 `preview / component-tests` failed on **#4087** at 20:50Z, which is what made #4057 look
 unresolved on first read. Different test, unrelated cause:
@@ -396,10 +396,14 @@ FAIL  src/components/Apps/MySubmissionsList.browser.test.tsx
 VitestBrowserElementError: Cannot find element with locator: getByText('Reported for policy')
 ```
 
-Reads as a flake: #4087 is comment-only and does not touch that component, the same 39-test file
-passed on #4086, #4082 and #4075 either side of it, and **the file took 21.4s failing against
-6.0s green — a ~3.6× inflation confined to ONE file while the whole run moved only 1.26×.** That
-is a locator waiting out its timeout, not load spread across the suite.
+**Intermittency proven by construction, not inferred:** across all 13 component runs still
+retained in `tekton-builds`, 11 are fully green and **2 fail this same spec on the same locator** —
+`pr-preview-4087-c4cwx` and `pr-preview-4082-zcgfn`. **#4082 passed on three OTHER runs of the same
+PR.** Same code, same spec, different outcome. #4087 is comment-only and does not touch the
+component. The time signature agrees: **21.4s failing against 6.0s green (~3.6×) confined to ONE
+file, while the whole run moved only 1.26×** — a matcher waiting out its timeout, not load.
+The `zcgfn` run also logged `Hydration failed because the initial UI does not match what was
+rendered on the server` before the failure; named in the issue as unruled-out, NOT as the cause.
 
 🔴 **How to read these runs at all** (the previous revision had no route to the failing test name —
 the GitHub status only says "Component suite failed"): the Tekton pipelines run in the DataPacket
@@ -438,8 +442,8 @@ hypothesis with a timestamp, not a fact.**
 4. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
 5. **`source_dirty = true` has no live proof** — if a submit is being spent anyway, spend it from a
    dirty tree and read the row; today's round 2 only exercised the clean case.
-6. **File the `MySubmissionsList` flake** if it recurs — one occurrence, diagnosed above, no issue
-   opened for it yet.
+6. **`civitai#4100`** — the `MySubmissionsList` flake, filed with the 2-of-13 measurement and a
+   suggested fix (wait on the timeline being present, don't race the portal render).
 
 ## Gotchas / decisions / dead-ends
 
