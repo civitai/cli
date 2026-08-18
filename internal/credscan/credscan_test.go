@@ -1,8 +1,10 @@
 package credscan
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -27,6 +29,13 @@ func mustWrite(t *testing.T, dir, rel, content string) {
 	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// scanFindings drives the real Scan and returns just the findings, so the tests
+// that predate the byte-budget Report read the same way. The Report's own fields
+// have their own tests — see TestScanBudgetStopsAndSaysSo.
+func scanFindings(dir string, files []string) []Finding {
+	return Scan(dir, files).Findings
 }
 
 // labelsAt returns the labels reported for rel, so a test can assert what a file
@@ -59,7 +68,7 @@ func TestScanCatchesTheIssuesOwnThreeFiles(t *testing.T) {
 	mustWrite(t, dir, "config.toml", "[auth]\ntoken = \"gA7xQ2mV9pL4zR8nB3kW\"\n")
 
 	files := []string{"config.toml", "secrets.json", "src/credentials.yaml"}
-	got := Scan(dir, files)
+	got := scanFindings(dir, files)
 	if len(got) != 3 {
 		t.Fatalf("Scan reported %d finding(s), want 3 (one per planted file): %+v", len(got), got)
 	}
@@ -100,7 +109,7 @@ func TestScanCatchesEnvProductionAtTheRoot(t *testing.T) {
 	mustWrite(t, dir, ".env.production",
 		"VITE_BLOCK_ALLOWED_PARENT_ORIGINS=https://civitai.com\nAPI_SECRET=7f3Kq9Zx2Lm5Rb8Nv4Tc\n")
 
-	got := Scan(dir, []string{".env.production"})
+	got := scanFindings(dir, []string{".env.production"})
 	if len(got) != 1 {
 		t.Fatalf("Scan reported %d finding(s) over .env.production, want 1: %+v", len(got), got)
 	}
@@ -134,8 +143,8 @@ func TestAssignmentMatchesAQuotedJSONKey(t *testing.T) {
 	}
 }
 
-// TestKnownFormatsAreAllCaught covers detector B end to end: ten credential
-// shapes that identify themselves without any assignment. Values are synthetic
+// TestKnownFormatsAreAllCaught covers detector B end to end: every credential
+// shape that identifies itself without any assignment. Values are synthetic
 // but SHAPED like the real thing — a textbook fixture (`AKIAIOSFODNN7EXAMPLE`)
 // would be allowlisted by half the scanners in the world and prove nothing.
 func TestKnownFormatsAreAllCaught(t *testing.T) {
@@ -159,9 +168,9 @@ func TestKnownFormatsAreAllCaught(t *testing.T) {
 		{"Slack", "xox" + "b-2451234567-1234567890123-AbCdEfGhIjKlMnOpQrSt", "Slack token"},
 		{"OpenAI", "sk-9Kq2mZx7Lb4Rv8Nc3Tp6Wy1Ud5Ha0Sj2GfQ7pR4tE1mV6", "OpenAI API key"},
 		{"Stripe", "sk_live_9Kq2mZx7Lb4Rv8Nc3Tp6", "Stripe API key"},
-		{"Google", "AIzaSyD9Kq2mZx7Lb4Rv8Nc3Tp6Wy1Ud5Ha0Sj2", "Google API key"},
 		{"npm", "npm_9Kq2mZx7Lb4Rv8Nc3Tp6Wy1Ud5Ha0Sj2GfQ7", "npm token"},
-		{"PKCS8", "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7Vn", "PKCS#8 key body"},
+		{"URL with a password", `DATABASE_URL=postgres://admin:Kq9Zx2Lm5Rb8@db.internal:5432/app`, "URL with an embedded password"},
+		{"URL with a password, no credential word in the key", `const dsn = "mongodb://svc:Nv4Tc7f3Kq9Z@cluster0.example.net/db";`, "URL with an embedded password"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			label, ok := match(tc.line)
@@ -186,19 +195,18 @@ func TestEveryKnownFormatIsExercised(t *testing.T) {
 	// knownFormats — a list computed from the thing under test agrees with it by
 	// construction.
 	covered := map[string]bool{
-		"PEM private key block": true,
-		"JWT":                   true,
-		"AWS access key id":     true,
-		"GitHub token":          true,
-		"Slack token":           true,
-		"OpenAI API key":        true,
-		"Stripe API key":        true,
-		"Google API key":        true,
-		"npm token":             true,
-		"PKCS#8 key body":       true,
+		"PEM private key block":         true,
+		"JWT":                           true,
+		"AWS access key id":             true,
+		"GitHub token":                  true,
+		"Slack token":                   true,
+		"OpenAI API key":                true,
+		"Stripe API key":                true,
+		"npm token":                     true,
+		"URL with an embedded password": true,
 	}
-	if len(knownFormats) != 10 {
-		t.Errorf("knownFormats holds %d format(s); the corpus in TestKnownFormatsAreAllCaught proves 10. "+
+	if len(knownFormats) != 9 {
+		t.Errorf("knownFormats holds %d format(s); the corpus in TestKnownFormatsAreAllCaught proves 9. "+
 			"Add a case there for the new one (or drop the stale name here) — an unexercised format is not coverage.",
 			len(knownFormats))
 	}
@@ -235,6 +243,7 @@ func TestOrdinaryCodeIsSilent(t *testing.T) {
 		{"a placeholder", `const apiKey = "your-api-key-here";`},
 		{"an angle-bracket placeholder", `const secret = "<YOUR_SECRET>";`},
 		{"a shell/template interpolation", `const token = "${TOKEN}";`},
+		{"a bare shell variable reference, long enough to clear the length floor", `API_SECRET=$CIVITAI_DEPLOY_TOKEN_2`},
 		{"a lockfile integrity hash under a non-credential key", `      "integrity": "sha512-9Kq2mZx7Lb4Rv8Nc3Tp6Wy1Ud5Ha0Sj2GfQ7pR4tE1mV6yUxKw==",`},
 		{"a test/mock value", `const apiToken = "mock-token-9Kq2mZx7Lb4Rv8";`},
 		{"a localhost URL", `const credentialsUrl = "http://localhost:3000/auth";`},
@@ -283,7 +292,7 @@ func TestGateDiscriminatesWithinOneFile(t *testing.T) {
 		`export const HIGH_ENTROPY_TOKEN = "q7W2xE9rT4yU1iO6pA3s";`, // accepted: ~4.3 bits/char
 	}, "\n")+"\n")
 
-	got := Scan(dir, []string{"src/config.ts"})
+	got := scanFindings(dir, []string{"src/config.ts"})
 	if len(got) != 1 {
 		t.Fatalf("Scan reported %d finding(s), want exactly 1 — the fixture holds one value the gate must "+
 			"reject and one it must accept: %+v", len(got), got)
@@ -313,7 +322,7 @@ func TestNoTestFileCarveOut(t *testing.T) {
 	mustWrite(t, dir, "__mocks__/auth.ts", body)
 
 	files := []string{"__mocks__/auth.ts", "src/thing.spec.js", "src/thing.test.ts", "tests/fixture.json"}
-	got := Scan(dir, files)
+	got := scanFindings(dir, files)
 	if len(got) != len(files) {
 		t.Fatalf("Scan reported %d finding(s) over %d test-shaped files, want one each. A carve-out for test "+
 			"files is deliberately absent: %+v", len(got), len(files), got)
@@ -335,7 +344,7 @@ func TestScanReadsOnlyTheFilesItWasGiven(t *testing.T) {
 	mustWrite(t, dir, ".env.local", "API_SECRET=7f3Kq9Zx2Lm5Rb8Nv4Tc\n")
 	mustWrite(t, dir, "node_modules/leak.js", "const apiToken = \"Q8vN2mR7kX4zL9pW3tB6\";\n")
 
-	got := Scan(dir, []string{"src/App.tsx"})
+	got := scanFindings(dir, []string{"src/App.tsx"})
 	if len(got) != 0 {
 		t.Fatalf("Scan looked outside the file list it was given: %+v", got)
 	}
@@ -344,7 +353,7 @@ func TestScanReadsOnlyTheFilesItWasGiven(t *testing.T) {
 	// otherwise report, so the zero above is a fact about the scope and not about
 	// the fixture.
 	for _, rel := range []string{".env.local", "node_modules/leak.js"} {
-		if n := len(Scan(dir, []string{rel})); n != 1 {
+		if n := len(scanFindings(dir, []string{rel})); n != 1 {
 			t.Errorf("control: scanning %s directly reported %d finding(s), want 1 — the zero above would "+
 				"otherwise prove nothing", rel, n)
 		}
@@ -363,7 +372,7 @@ func TestScanNeverReturnsTheValue(t *testing.T) {
 	mustWrite(t, dir, "src/config.ts", "export const apiSecret = \""+planted+"\";\n")
 	mustWrite(t, dir, "keys.pem", "-----BEGIN RSA PRIVATE KEY-----\n")
 
-	got := Scan(dir, []string{"keys.pem", "src/config.ts"})
+	got := scanFindings(dir, []string{"keys.pem", "src/config.ts"})
 	if len(got) != 2 {
 		t.Fatalf("Scan reported %d finding(s), want 2: %+v", len(got), got)
 	}
@@ -388,10 +397,10 @@ func TestBinaryFilesAreSkipped(t *testing.T) {
 	mustWrite(t, dir, "assets/logo.ico", "\x00\x00\x01\x00"+line)
 	mustWrite(t, dir, "assets/logo.txt", line)
 
-	if got := Scan(dir, []string{"assets/logo.ico"}); len(got) != 0 {
+	if got := scanFindings(dir, []string{"assets/logo.ico"}); len(got) != 0 {
 		t.Errorf("scanned a binary file: %+v", got)
 	}
-	if got := Scan(dir, []string{"assets/logo.txt"}); len(got) != 1 {
+	if got := scanFindings(dir, []string{"assets/logo.txt"}); len(got) != 1 {
 		t.Errorf("control: the same line WITHOUT a NUL byte reported %d finding(s), want 1 — otherwise the "+
 			"skip above proves nothing about binary detection", len(got))
 	}
@@ -413,7 +422,7 @@ func TestPerFileCapHoldsAndTheFileStillCounts(t *testing.T) {
 	}
 	mustWrite(t, dir, "src/keys.ts", b.String())
 
-	got := Scan(dir, []string{"src/keys.ts"})
+	got := scanFindings(dir, []string{"src/keys.ts"})
 	if len(got) != 5 {
 		t.Fatalf("Scan reported %d finding(s) over a file with 8 matching lines, want 5 (the per-file cap): %+v",
 			len(got), got)
@@ -430,7 +439,7 @@ func TestPerFileCapHoldsAndTheFileStillCounts(t *testing.T) {
 func TestMissingFileIsAdvisoryNotFatal(t *testing.T) {
 	dir := t.TempDir()
 	mustWrite(t, dir, "src/config.ts", "export const apiSecret = \"Q8vN2mR7kX4zL9pW3tB6\";\n")
-	got := Scan(dir, []string{"gone.json", "src/config.ts", "also/gone.yaml"})
+	got := scanFindings(dir, []string{"gone.json", "src/config.ts", "also/gone.yaml"})
 	if len(got) != 1 {
 		t.Fatalf("Scan over a list holding two unreadable paths reported %d finding(s), want 1: %+v", len(got), got)
 	}
@@ -461,21 +470,373 @@ func TestCleanValueStripsWhatTheSpecSaysAndNoMore(t *testing.T) {
 	}
 }
 
-// TestEntropyFloorIsWhereItSays pins the constant's EFFECT with literal inputs
-// on both sides of it, so a change to the floor fails here by name.
+// TestEntropyFloorIsWhereItSays pins the floor's EFFECT ON THE GATE, with
+// literal inputs on both sides of it.
+//
+// 🔴 IT ASSERTS THROUGH valueLooksLikeSecret, NOT AGAINST A HARDCODED 3.0. The
+// first version compared `shannonBitsPerChar(v) >= 3.0` — a statement about the
+// ENTROPY FUNCTION that never read the constant the gate uses, so lowering
+// minEntropyBitsPerChar to 2.0 widened acceptance invisibly, in the noise
+// direction, with the suite green. The 2.0–2.9 band fixture is what catches
+// that: it must stay SILENT.
 func TestEntropyFloorIsWhereItSays(t *testing.T) {
 	for _, tc := range []struct {
+		why   string
 		value string
 		want  bool
+		band  bool
 	}{
-		{"aaaaaaaaaaaa1", false},       // 0.39 bits/char
-		{"ababababab1b", false},        // ~1.1 bits/char
-		{"q7W2xE9rT4yU1iO6pA3s", true}, // ~4.3 bits/char
-		{"9f3a2b7c1d4e5f60718293a4", true},
+		{why: "a repeated character", value: "aaaaaaaaaaaa1", want: false},
+		{why: "a two-character alphabet", value: "ababababab1b", want: false},
+		{why: "between a lowered floor and this one", value: "aab1aab2aabc3", want: false, band: true},
+		{why: "a mixed-case random token", value: "q7W2xE9rT4yU1iO6pA3s", want: true},
+		{why: "a hex token", value: "9f3a2b7c1d4e5f60718293a4", want: true},
 	} {
-		if got := shannonBitsPerChar(tc.value) >= 3.0; got != tc.want {
-			t.Errorf("value %q: above the 3.0 bits/char floor = %v (%.2f), want %v",
-				tc.value, got, shannonBitsPerChar(tc.value), tc.want)
+		t.Run(tc.why, func(t *testing.T) {
+			h := shannonBitsPerChar(tc.value)
+			if got := valueLooksLikeSecret(tc.value, true); got != tc.want {
+				t.Errorf("valueLooksLikeSecret(%q) = %v (entropy %.2f bits/char), want %v",
+					tc.value, got, h, tc.want)
+			}
+			// The band fixture is only a control while it really sits in the band.
+			if tc.band && (h < 2.0 || h >= 3.0) {
+				t.Errorf("CONTROL failure: %q has %.2f bits/char, which is not in the 2.0–3.0 band this case "+
+					"exists to cover, so it cannot see the floor being lowered to 2.0", tc.value, h)
+			}
+		})
+	}
+}
+
+// TestLengthFloorIsPinnedOnBOTHSides is the boundary the first battery missed:
+// 11 was pinned as rejected and 12 was never pinned as ACCEPTED, so raising
+// minValueLen to 13 shipped green while the detector went blind to 12-character
+// secrets. Both fixtures are the same alphabet, so length is the only variable.
+func TestLengthFloorIsPinnedOnBOTHSides(t *testing.T) {
+	const twelve = "aB3xQ9zK7mWp"
+	const eleven = "aB3xQ9zK7mW"
+	if len(twelve) != 12 || len(eleven) != 11 {
+		t.Fatalf("CONTROL failure: fixtures are %d and %d characters, want 12 and 11", len(twelve), len(eleven))
+	}
+	if !valueLooksLikeSecret(twelve, true) {
+		t.Errorf("a 12-character random value was REJECTED (%q). The floor is 12 and it is inclusive — "+
+			"without this assertion, raising it to 13 is invisible.", twelve)
+	}
+	if valueLooksLikeSecret(eleven, true) {
+		t.Errorf("an 11-character value was accepted (%q); the floor is 12", eleven)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// THE LABEL IS NEVER SECRET MATERIAL
+// ---------------------------------------------------------------------------
+
+// canonicalWords is the closed set a DEGRADED label may come from — the
+// upper-case forms of assignRe's own alternation, written out here rather than
+// derived from the code, so this test can disagree with the implementation.
+var canonicalWords = map[string]bool{
+	"SECRET": true, "TOKEN": true, "PASSWORD": true, "PASSWD": true,
+	"APIKEY": true, "API_KEY": true, "PRIVATEKEY": true, "PRIVATE_KEY": true,
+	"ACCESSKEY": true, "ACCESS_KEY": true, "CREDENTIAL": true, "CREDENTIALS": true,
+}
+
+// keyNameShape is what a printable key may look like, spelled independently of
+// the implementation's own regexp.
+var keyNameShape = regexp.MustCompile(`^[A-Za-z_$][A-Za-z0-9_$.\-]*$`)
+
+// TestLabelNeverCarriesSecretBytes is the regression test for the audited leak.
+//
+// 🔴 MEASURED ON THE SHIPPED BUILD: a line reading
+// `AbCdEfLEAKMARK9SecretKey123: <token>` printed all 27 of those characters as
+// its "key", one line above the sentence promising the value was not printed.
+// The key group is unanchored, so when a credential word sits INSIDE
+// credential-shaped material the label was built out of value bytes.
+//
+// The marker appears in no other fixture, so a hit can only come from the line.
+func TestLabelNeverCarriesSecretBytes(t *testing.T) {
+	const marker = "LEAKMARK"
+	for _, tc := range []struct {
+		why  string
+		line string
+	}{
+		{"a credential word inside a secret-shaped token, YAML", `AbCdEfLEAKMARK9SecretKey123: Zq4TvW9mB2xR7kP1nJ6y`},
+		{"a credential word inside a secret-shaped token, shell", `export sk_live_TOKENLEAKMARK42=AbCdEf9Zq4TvW9mB2xR7`},
+		{"a base64-ish run carrying a credential word", `Zm9vYmFyLEAKMARKtokenX9y=Q8vN2mR7kX4zL9pW3tB6`},
+	} {
+		t.Run(tc.why, func(t *testing.T) {
+			label, ok := match(tc.line)
+			if !ok {
+				t.Skipf("line did not match at all, so there is no label to check: %q", tc.line)
+			}
+			if strings.Contains(label, marker) {
+				t.Fatalf("the label %q carries bytes of the line's credential-shaped material — and it prints "+
+					"directly above a sentence saying values are not printed.", label)
+			}
+			if canonicalWords[label] {
+				return // degraded to a constant from our own table: safe by construction
+			}
+			if !keyNameShape.MatchString(label) {
+				t.Errorf("label %q is neither a canonical credential word nor an identifier-shaped key name", label)
+			}
+			if looksLikeCredential(label) {
+				t.Errorf("label %q would itself be reported as a credential by this very package — it must "+
+					"have degraded to the credential word instead", label)
+			}
+		})
+	}
+}
+
+// TestOrdinaryKeysAreStillPrinted is the other half: the safety gate must not
+// swallow the useful case. A label that degraded to `SECRET` on every finding
+// would pass the leak test above and be nearly useless.
+func TestOrdinaryKeysAreStillPrinted(t *testing.T) {
+	for _, tc := range []struct{ line, want string }{
+		{`  "API_SECRET": "9f3a2b7c1d4e5f60718293a4b5c6d7e8"`, "API_SECRET"},
+		{`password: hunter2-Kx9pQ4mZ7vT1`, "password"},
+		{`token = "gA7xQ2mV9pL4zR8nB3kW"`, "token"},
+		{`export const apiSecret = "Q8vN2mR7kX4zL9pW3tB6";`, "apiSecret"},
+		{`VITE_LIVE_BLOCK_TOKEN=7f3Kq9Zx2Lm5Rb8Nv4Tc`, "VITE_LIVE_BLOCK_TOKEN"},
+		{`  "auth.password" : "Zx7Z2pQ9mK4vR8nT1yB3"`, "auth.password"},
+		{`x-api-token: "9f3a2b7c1d4e5f6071"`, "x-api-token"},
+		// 🔴 NOT identifier-shaped, so it DEGRADES even though it is plainly not a
+		// secret. This is the second half of the label gate — the shape test —
+		// and without a case for it, dropping that half survives the whole suite:
+		// the "does it look like a credential" half alone accepts any punctuation
+		// soup that happens to contain no digits.
+		{`config["auth"].token = "9f3a2b7c1d4e5f6071"`, "TOKEN"},
+		{`obj['auth'].apiSecret = "9f3a2b7c1d4e5f6071"`, "SECRET"},
+	} {
+		label, ok := match(tc.line)
+		if !ok {
+			t.Errorf("no match on %q", tc.line)
+			continue
 		}
+		if label != tc.want {
+			t.Errorf("label for %q = %q, want %q — the label-safety gate must not degrade an ordinary key name",
+				tc.line, label, tc.want)
+		}
+	}
+}
+
+// TestAssignmentLabelWinsOverFormatName pins the order inside match(): when a
+// line satisfies BOTH detectors the KEY is the more useful label. Swapping the
+// two calls is otherwise invisible.
+func TestAssignmentLabelWinsOverFormatName(t *testing.T) {
+	label, ok := match(`AWS_SECRET=AKIA3XQ7ZTLMNBVCXZ12`)
+	if !ok {
+		t.Fatal("no match on a line that satisfies both detectors")
+	}
+	if label != "AWS_SECRET" {
+		t.Errorf("label = %q, want \"AWS_SECRET\" — A2 runs first so the key names the finding; the format "+
+			"name would mean the order flipped", label)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PUBLIC MATERIAL, AND THE HOLES THAT WERE CHOSEN
+// ---------------------------------------------------------------------------
+
+// TestPublicMaterialIsNotReported pins two deliberate false negatives. Both
+// patterns were removed because they fire on material that is public BY DESIGN,
+// so a project using them would warn on EVERY submit — the "trains authors to
+// ignore it" failure the whole detector is shaped around.
+//
+// It is a decision, not an oversight, and it is written down so re-adding either
+// pattern turns this red and forces the trade-off to be argued again.
+func TestPublicMaterialIsNotReported(t *testing.T) {
+	for _, tc := range []struct{ why, line string }{
+		{"a Firebase web API key in .env.production, which Google documents as public",
+			`VITE_FIREBASE_API_KEY=AIzaSyD9Kq2mZx7Lb4Rv8Nc3Tp6Wy1Ud5Ha0Sj2`},
+		{"the same key bare, with no assignment",
+			`AIzaSyD9Kq2mZx7Lb4Rv8Nc3Tp6Wy1Ud5Ha0Sj2`},
+		{"an X.509 certificate body, which is not a private key",
+			`MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7Vn`},
+		{"a PUBLIC key header",
+			`-----BEGIN PUBLIC KEY-----`},
+	} {
+		if label, ok := match(tc.line); ok {
+			t.Errorf("fired on %s, labelled %q:\n  %s", tc.why, label, tc.line)
+		}
+	}
+	// CONTROL: a PRIVATE key header — one word away from the public one above —
+	// still fires, so the four silences are evidence about public material and
+	// not about a detector that has stopped working.
+	if _, ok := match("-----BEGIN RSA " + "PRIVATE KEY-----"); !ok {
+		t.Error("CONTROL failure: a PEM PRIVATE key header is not reported either, so the silences above " +
+			"prove nothing")
+	}
+}
+
+// TestURLPasswordGateKeepsDocumentationQuiet covers the one format with a
+// validator. The connection-string shape is both the most common real leak in a
+// web project and the most common example in a README, and only the userinfo
+// password tells them apart.
+func TestURLPasswordGateKeepsDocumentationQuiet(t *testing.T) {
+	for _, tc := range []struct {
+		why  string
+		line string
+		want bool
+	}{
+		{"a real-looking password", `DATABASE_URL=postgres://admin:Kq9Zx2Lm5Rb8@db.internal:5432/app`, true},
+		{"the README spelling", `postgres://user:password@localhost:5432/mydb`, false},
+		{"a short doc placeholder", `mysql://root:pass@127.0.0.1/db`, false},
+		{"an interpolated password", `postgres://admin:${DB_PASSWORD}@db.internal/app`, false},
+		{"a printf placeholder", `postgres://admin:%s@db.internal/app`, false},
+		// 🔴 THE INTERPOLATION IS IN THE MIDDLE, so no prefix rule can see it —
+		// this is the only fixture the `$`/`%` content test catches, and without
+		// it that test is dead code every other clause reaches first.
+		{"an interpolation inside the password", `postgres://admin:tok${DB_PASS}en@db.internal/app`, false},
+		// 🔴 THE CORPUS REGRESSION. This exact line, in the App Blocks starter
+		// template's README, was 12 of the 14 findings in a 244-project run and
+		// took the measured firing rate from 0.41% to 5.33% on its own. A `$VAR`
+		// password is a REFERENCE, like `process.env.X` — not a secret.
+		{"a shell variable as the password, from the starter template's README",
+			`git remote add origin "https://civitai-admin:$FORGEJO_TOKEN@forgejo.civitai.com/civitai-apps/starter.git"`, false},
+		{"no password at all", `postgres://admin@db.internal:5432/app`, false},
+		{"an ordinary URL", `https://civitai.com/api/v1/models?limit=10`, false},
+	} {
+		t.Run(tc.why, func(t *testing.T) {
+			if _, ok := match(tc.line); ok != tc.want {
+				t.Errorf("match(%q) = %v, want %v", tc.line, ok, tc.want)
+			}
+		})
+	}
+}
+
+// TestPlaceholderTestIsAPrefixNotASubstring is the fixture the corrected comment
+// names. A substring test would silence any real token that happens to spell a
+// short placeholder word inside itself — and `the`, `my` and `xxx` turn up in
+// random strings all the time.
+func TestPlaceholderTestIsAPrefixNotASubstring(t *testing.T) {
+	const line = `const apiSecret = "Q8vN2mR7kX4zL9pWtheB6";`
+	if _, ok := match(line); !ok {
+		t.Errorf("a real-looking value containing the placeholder word \"the\" in its MIDDLE was not reported:\n"+
+			"  %s\nThe placeholder rule is anchored at the START of the value for exactly this reason.", line)
+	}
+	// CONTROL: the same word at the START is still a placeholder.
+	if _, ok := match(`const apiSecret = "theQ8vN2mR7kX4zL9pWB6";`); ok {
+		t.Error("CONTROL failure: a value BEGINNING with a placeholder word was reported, so the case above " +
+			"does not discriminate a prefix test from a substring test")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// READING: BUDGET, LONG LINES, RETRY
+// ---------------------------------------------------------------------------
+
+// TestScanBudgetStopsAndSaysSo covers the latency bound. Scanning costs
+// ~230 ms/MiB and pkgzip legally permits a 200 MiB bundle — ~45 s of silent
+// stall between the confirmation prompt and the upload.
+//
+// 🔴 THE REPORT MUST SAY IT STOPPED. A truncated scan returning an empty finding
+// list is indistinguishable from a clean bundle, which is the one conclusion
+// this feature must never invite.
+func TestScanBudgetStopsAndSaysSo(t *testing.T) {
+	dir := t.TempDir()
+	filler := strings.Repeat("const x = 1; // ordinary source line\n", 40_000) // ~1.4 MiB each
+	var files []string
+	for i := 0; i < 14; i++ {
+		name := fmt.Sprintf("src/filler%02d.ts", i)
+		mustWrite(t, dir, name, filler)
+		files = append(files, name)
+	}
+	mustWrite(t, dir, "zz-last.json", "{\n  \"API_SECRET\": \"9f3a2b7c1d4e5f60718293a4b5c6d7e8\"\n}\n")
+	files = append(files, "zz-last.json")
+
+	rep := Scan(dir, files)
+	if !rep.Truncated {
+		t.Fatalf("a ~20 MiB bundle against a %d MiB budget did not report truncation (scanned %d of %d files)",
+			MaxScanBytes>>20, rep.FilesScanned, rep.FilesTotal)
+	}
+	if rep.FilesScanned >= rep.FilesTotal {
+		t.Errorf("FilesScanned=%d of FilesTotal=%d — a truncated scan must have read fewer files than it was given",
+			rep.FilesScanned, rep.FilesTotal)
+	}
+	if len(rep.Findings) != 0 {
+		t.Errorf("the filler holds no credential, so the findings must be empty: %+v", rep.Findings)
+	}
+
+	// CONTROL: the file the budget cut off DOES hold a credential, so the empty
+	// result above is a fact about the budget and not about the fixture.
+	if n := len(scanFindings(dir, []string{"zz-last.json"})); n != 1 {
+		t.Errorf("control: scanning the cut-off file alone reported %d finding(s), want 1", n)
+	}
+	// And an ordinary bundle is never truncated.
+	if small := Scan(dir, []string{"zz-last.json"}); small.Truncated {
+		t.Error("a one-file bundle reported truncation")
+	}
+}
+
+// TestLongLineSkipsTheLINEAndNotTheREST is the audited blindness: bufio.Scanner
+// returns ErrTooLong and never resumes, so one long line — a `vendor.js`, a
+// bundled asset, a minified blob at the top of a file — silently blinded every
+// line after it.
+func TestLongLineSkipsTheLINEAndNotTheREST(t *testing.T) {
+	dir := t.TempDir()
+	long := strings.Repeat("a", (1<<20)+16) // one line over the 1 MiB cap
+	mustWrite(t, dir, "vendor.js", long+"\nconst apiSecret = \"Q8vN2mR7kX4zL9pW3tB6\";\n")
+	// The identical credential line with no long line in front of it.
+	mustWrite(t, dir, "control.js", "const apiSecret = \"Q8vN2mR7kX4zL9pW3tB6\";\n")
+
+	got := scanFindings(dir, []string{"control.js", "vendor.js"})
+	if len(got) != 2 {
+		t.Fatalf("reported %d finding(s), want 2 — the credential AFTER a too-long line must still be seen, "+
+			"and control.js proves the line itself is detectable: %+v", len(got), got)
+	}
+	for _, f := range got {
+		if f.Path == "vendor.js" && f.Line != 2 {
+			t.Errorf("the vendor.js finding is at line %d, want 2 — a skipped long line must still be COUNTED, "+
+				"or every line number after it is wrong", f.Line)
+		}
+	}
+}
+
+// TestSecondCredentialWordOnALineGetsATurn covers the retry. The value capture
+// runs to end of line, so one line yields one regexp match however many
+// credential words it holds — and on minified single-line JSON the first word
+// was the only one ever put in front of the gate.
+func TestSecondCredentialWordOnALineGetsATurn(t *testing.T) {
+	const line = `{"token":"","auth":{"API_SECRET":"9f3a2b7c1d4e5f60718293a4"}}`
+	label, ok := match(line)
+	if !ok {
+		t.Fatalf("no match on a minified line whose SECOND credential word carries the secret:\n  %s", line)
+	}
+	if label != "API_SECRET" {
+		t.Errorf("label = %q, want \"API_SECRET\" — the first word on the line (`token`, empty value) is "+
+			"rejected by the gate, and the retry is what gives the second one its turn", label)
+	}
+}
+
+// TestBinarySniffWindowIsWhereItSays pins the 8 KiB window on both sides: a NUL
+// inside it classifies the file binary, and one past it does not. Without the
+// second half, widening the window to the whole file — which would silence any
+// text file with a stray NUL anywhere in it — is invisible.
+func TestBinarySniffWindowIsWhereItSays(t *testing.T) {
+	dir := t.TempDir()
+	const credential = "apiSecret = \"Q8vN2mR7kX4zL9pW3tB6\"\n"
+	mustWrite(t, dir, "inside.dat", strings.Repeat("x", 4000)+"\x00"+strings.Repeat("y", 100)+"\n"+credential)
+	mustWrite(t, dir, "outside.dat", strings.Repeat("x", 9000)+"\n"+credential+strings.Repeat("z", 10)+"\x00")
+
+	if got := scanFindings(dir, []string{"inside.dat"}); len(got) != 0 {
+		t.Errorf("a NUL at byte 4000 (inside the 8 KiB window) did not classify the file binary: %+v", got)
+	}
+	if got := scanFindings(dir, []string{"outside.dat"}); len(got) != 1 {
+		t.Errorf("a NUL at ~byte 9040 (outside the window) reported %d finding(s), want 1 — the window must "+
+			"stay bounded, or one stray NUL silences a whole text file", len(got))
+	}
+}
+
+// TestQuotedExemptionFromTheDottedRule pins the `!quoted &&` clause, which no
+// earlier fixture could reach — the entropy floor rejected them first. An
+// UNQUOTED dotted value is a reference expression (`opts.auth2.token`); a QUOTED
+// one is data. Both calls take the same characters, so quoting is the only
+// variable.
+func TestQuotedExemptionFromTheDottedRule(t *testing.T) {
+	const dotted = "a1.b2.c3.d4.e5.f6"
+	if !valueLooksLikeSecret(dotted, true) {
+		t.Errorf("a QUOTED dotted value (%q) was rejected — in a config file that is data, and the "+
+			"dotted-reference rule is exempted for quoted values precisely for it", dotted)
+	}
+	if valueLooksLikeSecret(dotted, false) {
+		t.Errorf("an UNQUOTED dotted value (%q) was accepted — that is a reference expression", dotted)
 	}
 }

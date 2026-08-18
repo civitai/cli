@@ -112,13 +112,49 @@ func TestSubmitWarnsAboutPackagedCredentials(t *testing.T) {
 		t.Errorf("the warning lists %d entr(ies), want 4:\n%s", len(gotEntries), strings.Join(block, "\n"))
 	}
 
-	// The advice has to name what to DO, and say the values were withheld on
-	// purpose — otherwise the natural next move is to paste the file somewhere to
-	// find out what matched.
-	for _, want := range []string{"read by a reviewer", "not printed here"} {
+	// The advice has to name what to DO, say the values were withheld on purpose,
+	// and — the honest part — say that on a real submit this REPORTS rather than
+	// prevents. Verified ordering in RunE: confirmSubmit, then this warning, then
+	// doUpload, with no gate between; `--package-only` is the only path where an
+	// author can still act. "cannot be recalled" alone reads as advice you can
+	// act on, which on the submit path is false.
+	for _, want := range []string{
+		"read by a reviewer",
+		"not printed here",
+		"it does not stop the upload",
+		"--package-only",
+	} {
 		if !strings.Contains(stdout, want) {
 			t.Errorf("the warning does not say %q:\n%s", want, stdout)
 		}
+	}
+}
+
+// TestSubmitWarningLabelIsNeverSecretMaterial is the end-to-end half of the
+// audited leak: the key group is unanchored, so a credential word sitting INSIDE
+// credential-shaped material built the label out of value bytes. Measured on the
+// first shipped build, `AbCdEfLEAKMARK9SecretKey123` was printed as a "key" one
+// line above the sentence promising values are not printed.
+//
+// The whole rendered output is searched, not just the label column: this asserts
+// the property the user sees.
+func TestSubmitWarningLabelIsNeverSecretMaterial(t *testing.T) {
+	const marker = "LEAKMARK"
+	dir := t.TempDir()
+	writeStaticManifest(t, dir)
+	mustWrite(t, dir, "keys.yaml", "AbCdEf"+marker+"9SecretKey123: Zq4TvW9mB2xR7kP1nJ6y\n")
+	mustWrite(t, dir, "deploy.sh", "export sk_live_TOKEN"+marker+"42=AbCdEf9Zq4TvW9mB2xR7\n")
+
+	stdout := submitPackageOnly(t, dir)
+	block := credentialWarningBlock(t, stdout)
+	if len(block) < 2 {
+		t.Fatalf("CONTROL failure: nothing was reported for two credential-shaped lines, so the absence of "+
+			"the marker below proves nothing:\n%s", stdout)
+	}
+	if strings.Contains(stdout, marker) {
+		t.Errorf("the rendered warning carries bytes of the credential-shaped material it matched "+
+			"(marker %q). It prints directly above a sentence saying values are not printed:\n%s",
+			marker, strings.Join(block, "\n"))
 	}
 }
 

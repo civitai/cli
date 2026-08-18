@@ -1451,8 +1451,9 @@ Packaged 5 file(s) (858 bytes compressed, 110 decompressed; 1163 bytes as the ba
     secrets.json:2          API_SECRET
     src/credentials.yaml:1  password
   These are uploaded to the platform and read by a reviewer, and cannot be
-  recalled. Move them out of the project directory, or confirm they hold
-  placeholders. The matched values are not printed here on purpose.
+  recalled. On a real submit this prints as the bundle goes up: it reports,
+  it does not stop the upload — `civitai app submit --package-only` is the
+  path that lets you look first. The matched values are not printed here.
 ```
 
 - **It warns. It never drops a file, never refuses, and never changes the exit
@@ -1460,9 +1461,18 @@ Packaged 5 file(s) (858 bytes compressed, 110 decompressed; 1163 bytes as the ba
   a *name* rule costs one file a rename; matching too much in a *content*
   heuristic would delete app source, and a `.ts` file containing the word
   `password` is ordinary code. So this reports and does nothing else.
+- ⚠️ **On a real `submit` it reports a leak; it cannot prevent one.** The line is
+  printed between the confirmation prompt and the upload, so by the time you read
+  it the bundle is on its way. `--package-only` writes the `.zip` and sends
+  nothing, which is the path where the warning is actionable. (The confirmation
+  deliberately runs before packaging, so moving the warning in front of it is a
+  larger change than this feature carries.)
 - **It prints `path:line` and the key name, never the value.** This output lands
   in CI logs and terminal scrollback: printing the secret would move it into a
-  second durable place. Open the file to see what matched.
+  second durable place. Open the file to see what matched. A key that *itself*
+  looks like a credential — the credential word can sit inside a token — is
+  replaced by the bare word (`SECRET`), so the printed label never carries
+  secret-shaped material.
 - **It reads exactly what the packager kept.** A warning can never name a file
   that was dropped — including `.env.local` and anything under `node_modules/` —
   and `.env.production` **is** in scope, because it is allow-listed by name and
@@ -1471,18 +1481,26 @@ Packaged 5 file(s) (858 bytes compressed, 110 decompressed; 1163 bytes as the ba
   (`SECRET`, `TOKEN`, `PASSWORD`, `API_KEY`, `PRIVATE_KEY`, `ACCESS_KEY`,
   `CREDENTIALS`) and whose value survives a placeholder-and-entropy gate — so
   `process.env.VITE_API_KEY`, `"your-api-key-here"`, `"${TOKEN}"` and
-  `PASSWORD_MIN = 8` are silent — plus ten self-identifying formats (PEM private
-  key, JWT, AWS, GitHub, Slack, OpenAI, Stripe, Google, npm, PKCS#8).
-  **Not scanned:** binary files (a NUL byte in the first 8 KiB) and lines over
-  1 MiB, e.g. a minified bundle.
-- 🔴 **A silent run is not a clean bill of health.** Measured over 244 real
-  project directories and 3,917 packaged files, this fires on **one** project —
-  that is a false-positive rate. The *true*-positive rate is unmeasured and
-  cannot be measured from that corpus, because it holds no real credential: the
-  detector is evidenced only against planted fixtures. It is aimed at accidental
-  inclusion by an honest author. There is deliberately **no** carve-out for
-  `*.test.*` files, because a credential in a test file is uploaded and reviewed
-  like any other.
+  `PASSWORD_MIN = 8` are silent — plus nine self-identifying formats (PEM private
+  key, JWT, AWS, GitHub, Slack, OpenAI, Stripe, npm, and a URL carrying a
+  password such as `postgres://admin:…@host`).
+- 🔴 **What it does NOT see, so a silent run is not a clean bill of health:**
+  binary files (a NUL byte in the first 8 KiB); a line over 1 MiB, e.g. a
+  minified bundle — that *line* is skipped, the rest of the file is still
+  scanned; a credential passed some way other than an assignment or one of the
+  nine formats; and, deliberately, **Google API keys** (a Firebase *web* key has
+  the same shape and Google documents it as public, so warning on it would fire
+  on every submit of a Firebase-based block — the cost is that a Google *server*
+  key is not reported either) and a headerless PKCS#8 body (that shape is an
+  X.509 certificate just as often as a private key). If the scan hits its
+  16 MiB budget it stops **and says so** rather than reporting a quiet zero.
+- 🔴 **The rate you can measure is the false-positive one.** Over 244 real
+  project directories and 3,917 packaged files this fires on **one** project. The
+  *true*-positive rate is unmeasured and cannot be measured from that corpus,
+  because it holds no real credential: detection is evidenced only against
+  planted fixtures. It is aimed at accidental inclusion by an honest author.
+  There is deliberately **no** carve-out for `*.test.*` files, because a
+  credential in a test file is uploaded and reviewed like any other.
 
 ### After you submit: review → approve → deploy
 
@@ -3247,7 +3265,7 @@ credited it to the wrong command.)
 | `What this CLI sent` / `largest entries in the bundle` | Not an error of its own — it is printed **under** a failed submit, and it is the CLI's account of what left your machine: the exact bytes that went on the wire, and the biggest entries they were made of. It appears because the server's own message may name nothing you can act on; `400: Invalid JSON` is the measured case ([#423](https://github.com/civitai/cli/issues/423)), an error about the *parse* raised downstream of an oversized request body. **The CLI does not claim to know why the submit failed** — it cannot see the server's limits, and its own size caps are much higher than the server's real one, which is bracketed only to (2.32 MB, 8.20 MB] and is deliberately not vendored here. If the bundle is large, drop what the platform build does not need and retry. Not printed for a `401`/`403`/`429`. | [Submit & auth](#submit--auth) — *How big can a bundle be?* |
 | `Your repo may be behind what was last released` / `Resubmitting the version that is already live is almost always an accident` / `That version is approved but not live` | The **monotonic-version guard**: `civitai app submit` refused because the manifest version is not strictly above the highest **approved** version of that app, and approving an older (or identical) version supersedes the newer one — replacing the live deployment when that version is serving. Exit `1`; `--allow-downgrade` submits anyway. **The second line tells you which of four cases you are in, and each says only what is actually known.** A **lower** version against a version that is **live** replaces that deployment on approval, so your repo may be behind what was last released — bump the manifest, or `civitai app pull` first. A **lower** version against an approved row that is **not** live deploys code older than the highest approved version; no deployment of that version is being replaced, because none is running. The **same** version against a deployment that is really live is almost always an accident. The **same** version against an approved row that is **not** live is a resubmit of a deploy that has not landed — still building, still deploying, or failed — which is a plausible deliberate act, and `--allow-downgrade` submits that version again. **"Live" is the server's own answer** (the `liveUrl` it returns, the same field `civitai app status` prints `Live at:` from), not a guess from the deploy state — so a legacy approval that predates deploy-state tracking is correctly treated as serving. | [Exit code 1](#exit-code-1) |
 | `from a dirty git work tree` / `that go into the bundle are not committed` | The **dirty-work-tree guard**: `civitai app submit` refused because files that go into the bundle are uncommitted. The bundle is packaged from what is on disk, so approving one deploys code that exists in no commit and nothing afterwards can say which revision is live. The refusal names the paths (`git status` spelling, relative to the packaged directory) — commit them, or pass `--allow-dirty` to submit the tree exactly as it is. Exit `1`. **It only fires inside a git repository**: a scaffolded app that was never `git init`ed submits unchanged, and so does a machine with no `git` on `PATH`. Paths the packager never ships — `dist/`, `node_modules/`, a stray `.zip`, a `.env.local`, anything `.gitignore`d, and any symlink (the packager bundles regular files only) — are not counted, because they are not in the bundle. 🔴 **A repository with no commits yet refuses *everything*, `block.manifest.json` included** — a `git init` you have not committed into means nothing in the bundle is in a commit, which is exactly what the guard checks. That is the row between "no repo" and "repo, dirty": make the first commit, or pass `--allow-dirty`. Scaffolding never puts you here — `civitai app create` / `app init` run no `git init`. **A `git mv` counts as two changes**, because the bundle gains the destination and loses the original; both are named, even when the destination is a path the packager drops (`git mv src/App.tsx dist/App.tsx` is refused, naming `src/App.tsx`). | [Exit code 1](#exit-code-1) |
-| `look like they hold credentials` | A **warning**, not a refusal — the submit continued and the exit code is unchanged. A file the packager KEPT holds a line shaped like a credential, and the bundle goes to the platform and to a human reviewer, where it cannot be recalled. The warning prints `path:line` and the key name and deliberately **not** the value — open the file to see what matched. It fires on every path including `--package-only`, is scoped to what was really packaged, and is a heuristic in both directions: a false positive is possible, and silence is not a guarantee. | [Submit & auth](#submit--auth) — *What looks like a credential* |
+| `look like they hold credentials` | A **warning**, not a refusal — the submit continued and the exit code is unchanged. A file the packager KEPT holds a line shaped like a credential, and the bundle goes to the platform and to a human reviewer, where it cannot be recalled. The warning prints `path:line` and the key name and deliberately **not** the value — open the file to see what matched. It fires on every path including `--package-only`, is scoped to what was really packaged, and is a heuristic in both directions: a false positive is possible, and silence is not a guarantee. ⚠️ On a real `submit` it prints *after* the confirmation, so it reports the leak rather than preventing it — `--package-only` is the path where you can still act. If it says the scan **stopped** at its byte budget, the files after that point were not checked at all. | [Submit & auth](#submit--auth) — *What looks like a credential* |
 | `HEAD is on no remote` | A **warning**, not a refusal — the submit continued. The packaged tree is clean, but the commit it is clean against exists only on this machine, so the deployed version cannot be traced back to anything anyone else can fetch. Push the branch. | [Command reference](#command-reference) |
 | `refusing to withdraw without --yes` | A withdraw asked for confirmation and found no TTY. It gates because withdrawing a **first-version** submission deletes that app's store listing — icon, cover and every captioned screenshot. Pass `--yes` once you have accepted that; nothing was withdrawn and no request was sent. 🔴 **BREAKING:** this refusal is new — a scripted `civitai app withdraw <id>` that used to exit `0` now exits `1` until you add `--yes`. | [After you submit](#after-you-submit-review--approve--deploy) |
 

@@ -146,8 +146,9 @@ const credWarnListCap = 12
 //
 // It warns and returns; nothing here may drop a file or change an exit code.
 // See internal/credscan's package comment for why that asymmetry is the design.
-func renderCredentialWarning(w io.Writer, findings []credscan.Finding) string {
-	if len(findings) == 0 {
+func renderCredentialWarning(w io.Writer, rep credscan.Report) string {
+	findings := rep.Findings
+	if len(findings) == 0 && !rep.Truncated {
 		return ""
 	}
 	files := map[string]bool{}
@@ -174,16 +175,41 @@ func renderCredentialWarning(w io.Writer, findings []credscan.Finding) string {
 	// residual tracked in #397, it is cosmetic here (the `path:line` text is
 	// still exact), and it is written down rather than left to be rediscovered.
 	var b strings.Builder
-	b.WriteString(ui.For(w).Warn(fmt.Sprintf("%d packaged file(s) look like they hold credentials:", len(files))))
-	for i, f := range shown {
-		fmt.Fprintf(&b, "\n    %-*s  %s", width, locs[i], f.Label)
+	if len(findings) > 0 {
+		b.WriteString(ui.For(w).Warn(fmt.Sprintf("%d packaged file(s) look like they hold credentials:", len(files))))
+		for i, f := range shown {
+			fmt.Fprintf(&b, "\n    %-*s  %s", width, locs[i], f.Label)
+		}
+		if rest := len(findings) - len(shown); rest > 0 {
+			fmt.Fprintf(&b, "\n    … and %d more line(s)", rest)
+		}
 	}
-	if rest := len(findings) - len(shown); rest > 0 {
-		fmt.Fprintf(&b, "\n    … and %d more line(s)", rest)
+
+	// 🔴 A TRUNCATED SCAN IS ANNOUNCED, NEVER SWALLOWED. If the byte budget ran
+	// out, the silence about the remaining files is not evidence of anything —
+	// which is the one thing an author must not conclude from this feature. When
+	// nothing was found it is the ONLY line printed, and it is a warning in its
+	// own right for exactly that reason.
+	if rep.Truncated {
+		stopped := fmt.Sprintf("credential scan stopped after %d of %d packaged file(s) at its %d MiB budget — the rest was NOT checked",
+			rep.FilesScanned, rep.FilesTotal, credscan.MaxScanBytes>>20)
+		if len(findings) == 0 {
+			return ui.For(w).Warn(stopped)
+		}
+		b.WriteString("\n  " + stopped + ".")
 	}
+
+	// 🔴 THE SECOND SENTENCE IS THE HONEST ONE, AND IT WAS ADDED BECAUSE THE
+	// FIRST ALONE READS AS ADVICE YOU CAN STILL ACT ON. On a real `app submit`
+	// this prints between the confirmation and the upload, so it REPORTS a leak
+	// and cannot prevent one; --package-only is the path where an author can
+	// still do something. Restructuring the command to gate on it is a much
+	// larger change than this warning should carry — confirmSubmit deliberately
+	// runs before packaging — so the wording carries the limitation instead.
 	b.WriteString("\n  These are uploaded to the platform and read by a reviewer, and cannot be" +
-		"\n  recalled. Move them out of the project directory, or confirm they hold" +
-		"\n  placeholders. The matched values are not printed here on purpose.")
+		"\n  recalled. On a real submit this prints as the bundle goes up: it reports," +
+		"\n  it does not stop the upload — `civitai app submit --package-only` is the" +
+		"\n  path that lets you look first. The matched values are not printed here.")
 	return b.String()
 }
 
