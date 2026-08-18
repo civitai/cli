@@ -38,39 +38,48 @@ clean git repo and confirm a non-null `source_commit` matching local `HEAD`, wit
 
 ## State now
 
-- **`civitai/cli` `origin/main` @ `8e51494`.** The base clone `/home/zach/workspace/civit/cli`
-  is **shared and moves under you** — it went 1 behind mid-session twice on 08-17.
-  `git -C … fetch && … merge --ff-only origin/main` when you own it; branch from
-  `origin/main`, never from local `main`.
-- **`civitai/civitai` local `main` carries an unpushed commit that is not yours** (`5.1.17`,
-  a release bump by another session). Same rule: branch from `origin/main`.
+- **`civitai/cli` `origin/main` @ `87a147c`, base clone clean and level.** The base clone
+  `/home/zach/workspace/civit/cli` is **shared and moves under you** — it went 1 behind
+  mid-session twice on 08-17. `git -C … fetch && … merge --ff-only origin/main` when you own it;
+  branch from `origin/main`, never from local `main`. One untracked `node_modules/` sits there,
+  not mine and not ignored.
+- **`civitai/civitai` base clone: 0 ahead, 1 behind `origin/main` @ `408bc2aea3`.**
+  🔴 **CORRECTION to the previous revision of this doc**, which said local `main` carried an
+  unpushed `5.1.17` release bump belonging to another session. Re-measured 2026-08-18:
+  `rev-list --left-right --count HEAD...origin/main` = `0 1`, and `origin/main..HEAD` is empty.
+  Whoever owned that commit has landed or dropped it. Nothing unpushed is stranded there.
 - **The offsite thread is CLOSED end to end.** Selector merged + deployed upstream, CLI half
   shipped, both #422 outcomes delivered, and every claim it produced that did not survive has been
   publicly retracted.
-- **Merged since the last update:**
+- **Merged across this thread** (08-17 above the rule, 08-18 below it):
   | what | PR | merge |
   |---|---|---|
   | four residuals: `assertListingTarget` ledger, README write-warning pin, exit-code rows, #427's false clause | cli#459 | `1695e1f` |
   | #389's measurement recorded; every "is open" surface updated | cli#462 | `de482c95` |
   | `getMyListingForApp` rate-limited 60/60 with an enforcement test | civitai#4050 | `3ff050f2` |
+  | — | — | — |
   | handoff: thread moves to submit provenance | cli#469 | `cc3ce9a` |
   | **server half — provenance columns, both submit routes, read projection** | **civitai#4061** | **`490b330f3b`** |
   | **CLI half — stamp at submit, show in `app status`** | **cli#471** | **`8e51494c85`** |
+  | AGENTS item 32 eviction — the ceiling had 12 bytes left | cli#472 | `c6c959354b` |
+  | handoff: both halves merged, inert in prod on purpose | cli#473 | `87a147cc00` |
 - **DATABASES MIGRATED BY HAND, both verified** (civitai migrations are hand-applied — no
   `prisma migrate deploy`): dev clone `cnpg-database-dev/cnpg-cluster-dev-1` and prod
   `cnpg-database/cnpg-cluster-nvme0-5`. Both show `source_commit text YES` / `source_dirty
   boolean YES`, no default, 23→25 columns; prod replicated to both replicas; re-apply is a clean
-  no-op. **Prod was migrated BEFORE the code merged, deliberately** — see the RETURNING note below
-  for why that ordering is load-bearing rather than tidy.
-- **In flight:** `cli#472` (item 32 eviction — the AGENTS ceiling). Open cli PR `#450` belongs to
-  another session.
-- **Issues closed:** `cli#422` (both outcomes), `cli#389` (outcome A, measured), `civitai#3984`,
-  `civitai#4003` (by #4050), `civitai#4008` (by infra, not code).
-- **Issues corrected rather than closed:** `civitai#3893` — premise falsified by #3989, body carries a
-  banner and the original is preserved; `cli#424` and `cli#427` — both narrowed, both still open.
-  **`cli#411` — still OPEN on purpose**, with a status comment; see the top of this doc.
-- **Filed:** `civitai#4059` (the provenance ask, now delivered) and `civitai#4057`
-  (a real component-test regression on `main`, see below).
+  no-op. **Prod was migrated BEFORE the code merged, deliberately** — see the RETURNING note.
+- **`AGENTS.md` is 28,613 bytes against `agentsMaxBytes = 28_758` — 145 bytes of headroom.**
+  Better than the 12 it had after #471, **not comfortable**. Items 2, 4, 30 and 31 are still
+  inline and 30/31 already have base commits, so the next eviction wave has an obvious start.
+- **Nothing of mine is in flight.** All four worktrees removed (the `civitai` one needed
+  `worktree remove --force` — it holds the `event-engine-common` submodule — done only after
+  confirming it was byte-clean and its work was in `origin/main`). Open cli PR `#470` and the
+  open `civitai` PRs under this account belong to other sessions.
+- **Issues closed:** `cli#422`, `cli#389` (outcome A, measured), `civitai#3984`, `civitai#4003`,
+  `civitai#4008`, **`civitai#4059`** (delivered by #4061).
+- **Issues open on purpose:** **`cli#411`** — see the top of this doc, and its status comment
+  `civitai/cli#411#issuecomment-5333600097`. Also `cli#424`, `cli#427` (both narrowed),
+  `civitai#3893`, `civitai#4057`.
 
 ## The live proof, and what it found (2026-08-18)
 
@@ -307,31 +316,49 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
   `git -C /home/zach/workspace/civit/civitai log --since="2026-08-17T19:34Z" --until="2026-08-17T20:49Z" -- src/components/Cards/`
   and the shared card CSS. If nothing in that window touches the card, widen the bisect.
 
+### `civitai#4057` — the ImageCard tolerance is GREEN EVERYWHERE now, and nobody knows why
+
+- **Symptom as filed:** `preview / component-tests` fails
+  `AssertionError: expected 57 to be less than or equal to 50` at
+  `src/components/Cards/ImageCard.browser.test.tsx:173`, reported red on every `main`-based
+  branch since ~2026-08-17 20:49Z. **Report-only, does not gate.**
+- **Observed 2026-08-18** via `gh api repos/civitai/civitai/commits/<sha>/status`:
+  all four #4061 commits (`c7c58f30ef`, `3c80dfc741`, `fe832d3dfc`, `af56be48df`) →
+  `success — Component suite passed (report-only)`. **And on unrelated PRs:** #4086 → `success`,
+  #4075 → `success`.
+- **Ruled out:** *"green only on my branch"* — the two unrelated PRs are the control, and they
+  pass too. Without that control the observation would have said something about my branch and
+  nothing about the bug.
+- **NOT established:** what fixed it. Nothing in #4061 goes near `ImageCard` or shared card CSS,
+  and no bisect was run. **Do not attribute it**, and note the issue's own standing caveat that
+  #4043 was only the earliest failing run.
+- **Leading hypothesis, weakly held:** either something in the window changed the layout back
+  under budget, or the check is **intermittent**. A tolerance sitting 7px over a 50px budget is
+  exactly the shape that flips on font-metric/rendering variance, so a run of greens is weaker
+  evidence here than it would be for a deterministic assertion.
+- **Next probe:** read several *current* `main` runs directly rather than trusting this sample,
+  then decide deliberately between "fixed in the window" and "intermittent, budget too tight".
+  If intermittent, the durable fix is the one the characterization test's own name implies.
+- Posted to the issue: `civitai/civitai#4057#issuecomment-5333856030`. **Left open** — I cannot
+  say why it went green.
+
 ## Next steps (ranked)
 
-1. **Merge `cli#472`** (item 32 eviction). It is the only thing gating routine docs work:
-   `AGENTS.md` sat 12 bytes under `agentsMaxBytes` after #471, so ANY docs edit failed the ceiling.
-   #472 takes it to 145 bytes — better, **not comfortable**. Items 2, 4, 30 and 31 are still inline
-   and 30/31 already have base commits, so the next eviction wave has an obvious start.
-2. **Close `cli#411` when prod deploys `490b330f3b`** — one measurement, recipe under *How to
+1. **Close `cli#411` when prod deploys `490b330f3b`** — one measurement, recipe under *How to
    verify*. Until then `app status` showing no provenance is CORRECT; do not "fix" it.
-   Worth doing in the same pass: the malformed-`sourceCommit` probe that distinguishes deployed
-   from not-deployed, since you are spending a submit anyway.
+   Spend the same submit on the malformed-`sourceCommit` probe, which distinguishes deployed from
+   not-deployed and is the one inference this session could not settle.
+2. **`civitai#4057`** — decide fixed-vs-intermittent from current `main` runs; see its block above.
 3. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
    `appBlockId` in exactly 4 places, all query-key/invalidation; the slug is already in hand at the
    page. The real blocker is `editorTabsFor`'s `appBlockId != null`, not the resolver.
-4. **`civitai#4057`** — the ImageCard tolerance. Live diagnosis below; the bisect window is the work.
-   **New data point, not yet on the issue:** `preview / component-tests` reported
-   `success — Component suite passed` on both #4061 commits, where the issue says it is red on
-   every `main`-based branch. One green run does not close it, but it narrows the window or
-   suggests intermittency. Worth adding.
+4. **`AGENTS.md` eviction wave** for items 30/31 when someone needs the room — 145 bytes is one
+   ordinary edit away from failing the ceiling again.
 5. **`AGENTS.md` item 29's trigger** still describes a blanket refusal; #453 narrowed it to
-   "both lookups missed". Small, and the same drift class this thread kept closing.
+   "both lookups missed".
 6. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
-   under full-suite load (`expected an unreachable-local-dev log line naming the host, got ""`),
-   8 clean reruns. Remove the timing dependency; do not re-run it away.
-7. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path. Web UI, or a
-   deliberate decision to leave them.
+   under full-suite load, 8 clean reruns. Remove the timing dependency; do not re-run it away.
+7. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
 
 ## Gotchas / decisions / dead-ends
 
