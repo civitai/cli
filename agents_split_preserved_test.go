@@ -142,6 +142,20 @@ const agentsSplitBaseWave4 = "dfdcc974976ef4d8104f273b28b1f702c5a7f839"
 // merge, after which converting it is an ordinary wave.
 const agentsSplitBaseWave5 = "53a925bf7810f2e0dadd64ddc9f77f2e390ae8b4"
 
+// agentsSplitBaseWave6 is the commit item 32 was moved from: the tip after #471
+// (the `app submit` provenance stamp), which is where item 32's body first
+// landed inline.
+//
+// Wave 6 is wave 5's lesson applied on purpose rather than discovered. Item 32
+// arrived inline in #471 for the same structural reason item 29 did — a
+// first-appearance item has no base commit whose AGENTS.md already held its body
+// — and the conversion was queued as the follow-up in the same breath, not left
+// to be noticed later. What forced the follow-up to happen NOW rather than
+// eventually: #471 left AGENTS.md 12 bytes under agentsMaxBytes, so the next
+// docs edit of any kind would have failed the ceiling. The eviction is the
+// repo's own remedy, and it is cheapest immediately after the item merges.
+const agentsSplitBaseWave6 = "8e51494c8549cdb838d3861de0dcc63c38d294d5"
+
 type splitItem struct {
 	num      int
 	file     string
@@ -182,6 +196,7 @@ var splitItems = []splitItem{
 	{num: 16, file: "claudedocs/decisions/16-externalid-is-the-idempotency-key.md", base: agentsSplitBaseWave4, nonBlank: 25, sha: "cf7f2bd23cf64b0421fad49ace38df6dcdef3d3c3104aecef19e7657935caa4f"},
 	{num: 28, file: "claudedocs/decisions/28-no-claims-about-unobservable-spend.md", base: agentsSplitBaseWave4, nonBlank: 31, sha: "41387de27265146eb9c9fc8a507621b27b8b20cdf0db8d7eb9d4903021707478"},
 	{num: 29, file: "claudedocs/decisions/29-offsite-refusal.md", base: agentsSplitBaseWave5, nonBlank: 8, sha: "df86c7a851e2397db48eebd2f4b9d17e91565128ec4550510a62b785f552828d"},
+	{num: 32, file: "claudedocs/decisions/32-submit-provenance-claim.md", base: agentsSplitBaseWave6, nonBlank: 5, sha: "45d00151610d87af805502b0113bd6195417ec26ae5c4a4b0d797e0ef7ca5ad9"},
 }
 
 // --- the one deliberate delta, item 3 ---------------------------------------
