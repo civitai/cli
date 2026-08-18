@@ -62,7 +62,7 @@ func TestSubmitVersionRecoversWhenSubmissionLanded(t *testing.T) {
 	})
 
 	c := recoverClient(srv.URL)
-	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0")
+	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0", Provenance{})
 	if err != nil {
 		t.Fatalf("SubmitVersion should recover on timeout, got error: %v", err)
 	}
@@ -87,7 +87,7 @@ func TestSubmitVersionRecoveryErrorsWhenAbsent(t *testing.T) {
 	})
 
 	c := recoverClient(srv.URL)
-	_, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0")
+	_, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0", Provenance{})
 	if err == nil {
 		t.Fatal("expected an error when no matching submission landed")
 	}
@@ -107,7 +107,7 @@ func TestSubmitVersionRecoveryMatchesOnlyExactSlugVersion(t *testing.T) {
 	})
 
 	c := recoverClient(srv.URL)
-	_, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0")
+	_, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0", Provenance{})
 	if err == nil {
 		t.Fatal("expected an error: only a different version is pending, not 0.2.0")
 	}

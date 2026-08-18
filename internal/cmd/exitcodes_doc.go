@@ -144,6 +144,11 @@ var exitCodeDocs = []ExitCodeDoc{
 			// working tree against its own history. Pinned by
 			// TestDirtyWorkTreeExitsGeneric.
 			"A **dirty git work tree** lands here too: `civitai app submit` refuses while files that go into the bundle are uncommitted, because the bundle is packaged from what is on disk and approving one deploys code that exists in no commit. `--allow-dirty` submits the tree as it is. It **degrades rather than enforcing** — a directory that is not in a git repo, or a machine with no `git` on `PATH`, submits exactly as before (scaffolded apps have no repo, and that path must keep working), and a clean tree whose `HEAD` is on no remote **warns** instead of refusing. Like the version guard it is skipped by `--package-only` and by a run with no token.",
+			// 🔴 ADDED for the provenance STAMP half of the same issue (#411).
+			// It is here because the question a reader arrives with is "can this
+			// new field fail my submit?", and the answer belongs beside the
+			// guard's own bullet rather than only in the README section.
+			"The **build-provenance stamp** those two guards now also collect (issue #411 — the commit `civitai app submit` reports and `civitai app status` shows) changes no exit code at all, in either direction. It is sent only when the CLI can establish a value in exactly the shape the server accepts (`^[0-9a-f]{40}$`); every branch that cannot — no repo, no `git` on `PATH`, a repo with no commits, or an answer it does not recognise — sends nothing and submits exactly as it did before. A submit that would have succeeded cannot fail because of it, and a missing stamp is never an error.",
 			"**\"Wait for approval\" is the *pending* case only.** The same `1` covers an app whose latest submission was **rejected** or **withdrawn** — nothing is in review there, so `civitai app metrics <slug>` says so and names a new `civitai app submit` as the next step instead of a review to wait for. What separates `1` from `4` is unchanged: the slug is right and the app exists.",
 		},
 	},

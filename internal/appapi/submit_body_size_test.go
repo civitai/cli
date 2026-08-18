@@ -30,8 +30,8 @@ func TestSubmitBodySizeMatchesRealMarshal(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if got := SubmitBodySize(zipLen); got != len(want) {
-			t.Errorf("SubmitBodySize(%d) = %d, but the real marshalled body is %d bytes",
+		if got := SubmitBodySize(zipLen, Provenance{}); got != len(want) {
+			t.Errorf("SubmitBodySize(%d, none) = %d, but the real marshalled body is %d bytes",
 				zipLen, got, len(want))
 		}
 	}
@@ -43,7 +43,7 @@ func TestSubmitBodySizeMatchesRealMarshal(t *testing.T) {
 // Growth is ~4/3, so any non-trivial zip must produce a strictly larger body.
 func TestSubmitBodySizeIsNotTheZipSize(t *testing.T) {
 	for _, zipLen := range []int{1, 97, 811, 8_201_270} {
-		if got := SubmitBodySize(zipLen); got <= zipLen {
+		if got := SubmitBodySize(zipLen, Provenance{}); got <= zipLen {
 			t.Errorf("SubmitBodySize(%d) = %d, which is not larger than the zip — base64 in JSON "+
 				"cannot shrink anything, so this is not the quantity that goes on the wire", zipLen, got)
 		}

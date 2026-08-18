@@ -184,7 +184,7 @@ func mkdirAllT(t *testing.T, dir string) string {
 func guardOn(t *testing.T, dir string, allowDirty bool) (string, error) {
 	t.Helper()
 	var warn bytes.Buffer
-	err := checkWorkTreeClean(gitOutput, &warn, dir, dirtySlug, "0.6.1", allowDirty)
+	_, err := checkWorkTreeClean(gitOutput, &warn, dir, dirtySlug, "0.6.1", allowDirty)
 	return warn.String(), err
 }
 
@@ -687,7 +687,7 @@ func TestDirtyGuardScopesTheStatusCallToThePackagedSubtree(t *testing.T) {
 		return "", nil
 	}
 	var warn bytes.Buffer
-	if err := checkWorkTreeClean(spy, &warn, "/some/dir", dirtySlug, "0.6.1", false); err != nil {
+	if _, err := checkWorkTreeClean(spy, &warn, "/some/dir", dirtySlug, "0.6.1", false); err != nil {
 		t.Fatalf("the stub reports a clean tree; got %v", err)
 	}
 	if len(statusArgs) < 2 || statusArgs[len(statusArgs)-2] != "--" || statusArgs[len(statusArgs)-1] != "." {
@@ -964,7 +964,7 @@ func TestDirtyGuardIsNotRelocatedByGIT_DIR(t *testing.T) {
 		return out.String(), nil
 	}
 	var ctlWarn bytes.Buffer
-	if err := checkWorkTreeClean(unscrubbed, &ctlWarn, target.root, dirtySlug, "0.6.1", false); err != nil {
+	if _, err := checkWorkTreeClean(unscrubbed, &ctlWarn, target.root, dirtySlug, "0.6.1", false); err != nil {
 		t.Fatalf("control: an UNSCRUBBED runner should be relocated by GIT_DIR and report clean; "+
 			"got a refusal, so this test cannot attribute anything to the scrub: %v", err)
 	}
@@ -1049,8 +1049,17 @@ func TestDirtyGuardCleanRepoProceeds(t *testing.T) {
 }
 
 // TestDirtyGuardAllowDirtySubmitsAnyway — the escape hatch, on the same tree the
-// positive control refuses. It short-circuits before any subprocess: a release
-// script that has already decided should not pay for an answer it discards.
+// positive control refuses.
+//
+// 🔴 THE "ZERO SUBPROCESSES" HALF OF THIS TEST WAS DELIBERATELY RETIRED IN #411,
+// AND THE REFUSAL CONTRACT WAS NOT. It used to assert `calls == 0`: the flag
+// short-circuited before any git call, on the reasoning that a release script
+// which has already decided should not pay for an answer it discards. The stamp
+// half of #411 makes that answer the single most useful one the CLI can record —
+// `--allow-dirty` is precisely the invocation that ships bytes in no commit — so
+// the facts are now gathered and `sourceDirty: true` is sent. What #415 published
+// and what this test still pins: the flag CANNOT refuse, and it prints NOTHING.
+// The provenance half is asserted in app_submit_provenance_test.go.
 func TestDirtyGuardAllowDirtySubmitsAnyway(t *testing.T) {
 	f := cleanAppFixture(t, "")
 	f.write("src/App.tsx", "uncommitted")
@@ -1061,17 +1070,9 @@ func TestDirtyGuardAllowDirtySubmitsAnyway(t *testing.T) {
 		t.Fatal("control: this tree must be refused WITHOUT --allow-dirty, or the flag proves nothing")
 	}
 
-	calls := 0
-	counting := func(dir string, args ...string) (string, error) {
-		calls++
-		return gitOutput(dir, args...)
-	}
 	var warn bytes.Buffer
-	if err := checkWorkTreeClean(counting, &warn, f.root, dirtySlug, "0.6.1", true); err != nil {
+	if _, err := checkWorkTreeClean(gitOutput, &warn, f.root, dirtySlug, "0.6.1", true); err != nil {
 		t.Fatalf("--allow-dirty must permit a dirty tree, got: %v", err)
-	}
-	if calls != 0 {
-		t.Errorf("--allow-dirty made %d git call(s); it must short-circuit before any subprocess", calls)
 	}
 	if warn.String() != "" {
 		t.Errorf("--allow-dirty must be silent, got:\n%s", warn.String())
@@ -1123,7 +1124,7 @@ func TestDirtyGuardIsSilentOncePushed(t *testing.T) {
 func TestDirtyGuardTreatsAMissingGitLikeNoRepo(t *testing.T) {
 	noGit := func(dir string, args ...string) (string, error) { return "", errGitUnavailable }
 	var warn bytes.Buffer
-	if err := checkWorkTreeClean(noGit, &warn, t.TempDir(), dirtySlug, "0.6.1", false); err != nil {
+	if _, err := checkWorkTreeClean(noGit, &warn, t.TempDir(), dirtySlug, "0.6.1", false); err != nil {
 		t.Fatalf("no git binary must degrade like no repo, got: %v", err)
 	}
 	if warn.String() != "" {
@@ -1145,7 +1146,7 @@ func TestDirtyGuardWarnsAndProceedsWhenStatusFails(t *testing.T) {
 		return "", boom
 	}
 	var warn bytes.Buffer
-	if err := checkWorkTreeClean(stub, &warn, "/some/dir", dirtySlug, "0.6.1", false); err != nil {
+	if _, err := checkWorkTreeClean(stub, &warn, "/some/dir", dirtySlug, "0.6.1", false); err != nil {
 		t.Fatalf("a failed status read must not block the submit, got: %v", err)
 	}
 	s := warn.String()
@@ -1167,7 +1168,7 @@ func TestDirtyGuardProceedsOnABareRepo(t *testing.T) {
 		return "", errors.New("nothing else should be asked")
 	}
 	var warn bytes.Buffer
-	if err := checkWorkTreeClean(stub, &warn, "/some/dir", dirtySlug, "0.6.1", false); err != nil {
+	if _, err := checkWorkTreeClean(stub, &warn, "/some/dir", dirtySlug, "0.6.1", false); err != nil {
 		t.Fatalf("no working tree means nothing can be dirty, got: %v", err)
 	}
 	if warn.String() != "" {

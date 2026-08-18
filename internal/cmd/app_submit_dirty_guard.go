@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/pkgzip"
 	"github.com/civitai/cli/pkg/civitai"
 )
@@ -24,10 +25,16 @@ import (
 // `custom-generators@0.5.2` exists in no commit anywhere.
 //
 // This guard is the PREVENTER: it refuses a submit whose bundle would carry
-// bytes that are in no commit, and names them. It is not the provenance stamp
-// the issue also asks for — that needs a server-side field on Submission
-// (internal/appapi/appblocks.go carries no commit/tree/dirty column), so the CLI
-// cannot send what the API will not accept, and #411 stays open for it.
+// bytes that are in no commit, and names them.
+//
+// 🔴 IT IS NOW ALSO THE FACT-GATHERER, AND THAT IS WHY IT RETURNS A VALUE. The
+// issue's other half — the provenance STAMP — needed a server-side column that
+// did not exist when the refusal shipped; civitai/civitai#4061 added it, so this
+// function now answers WHICH commit and WHETHER dirty as well as pass/fail.
+// There is exactly ONE git-invocation seam (gitOutputFunc) and it stays that
+// way: a second function asking the same repo the same questions is how the two
+// answers start disagreeing — the refusal naming a dirty path while the stamp
+// claims `sourceDirty: false`.
 //
 // 🔴 IT MUST DEGRADE, NOT ENFORCE. A hard refusal on "there is no git repo here"
 // would break the scaffold path outright: `civitai app scaffold` produces a
@@ -196,18 +203,42 @@ const dirtyPathListCap = 10
 // not exclude — `notes.md`, `App.tsx.orig`, a `.swp` — which genuinely ships.
 //
 // Every non-refusal branch:
-//   - --allow-dirty: returns immediately, before any subprocess.
+//   - --allow-dirty: never refuses and never warns, but still gathers the facts.
 //   - no repo, or no `git` on PATH: proceed SILENTLY. The scaffold path, and the
 //     one the issue says must not break.
 //   - `git status` failed on a tree that IS a repo: WARN and proceed. This is an
 //     accident preventer, not an authorization check.
 //   - clean, HEAD on no remote: WARN and proceed.
-func checkWorkTreeClean(git gitOutputFunc, warn io.Writer, dir, slug, version string, allowDirty bool) error {
-	if allowDirty {
-		return nil
-	}
+//
+// 🔴 IT ALSO RETURNS THE PROVENANCE (#411's stamp half), AND THE MATRIX IS THE
+// SAME ONE THE REFUSAL DEGRADES THROUGH — every branch that cannot establish a
+// fact reports it as UNKNOWN rather than as a default:
+//
+//	no repo / no git / bare repo / inside .git → Provenance{} (send nothing)
+//	unborn HEAD (rev-parse HEAD fails)         → Provenance{} (send nothing)
+//	`git status` failed                        → commit only, Dirty nil
+//	clean                                      → commit + Dirty=false
+//	dirty + --allow-dirty                      → commit + Dirty=TRUE
+//
+// 🔴 THE LAST ROW IS THE ONE WITH THE MOST DIAGNOSTIC VALUE, so --allow-dirty no
+// longer short-circuits before the subprocesses. It used to return before making
+// a single git call, on the reasoning that a release script which has already
+// decided should not pay for an answer it discards — but that answer is no
+// longer discarded: `--allow-dirty` is exactly the invocation that produces a
+// bundle carrying bytes in no commit, which is the state #411 was filed about,
+// and refusing to record it is refusing to record the only case anyone will need
+// to explain later. WHAT DID NOT CHANGE, and is the published contract of #415:
+// the flag still cannot refuse, and it still prints nothing. Both are enforced
+// here by construction — the warn writer is discarded and the dirty branch
+// returns a nil error — rather than by remembering to check the flag twice.
+func checkWorkTreeClean(git gitOutputFunc, warn io.Writer, dir, slug, version string, allowDirty bool) (appapi.Provenance, error) {
+	var prov appapi.Provenance
 	if git == nil {
-		return nil
+		return prov, nil
+	}
+	if allowDirty {
+		// The flag's whole meaning: no verdict, no advisories. Facts only.
+		warn = io.Discard
 	}
 
 	// One call answers both "is this a work tree at all" and "where is it inside
@@ -218,11 +249,11 @@ func checkWorkTreeClean(git gitOutputFunc, warn io.Writer, dir, slug, version st
 	// directory; neither has a working tree to be dirty, so both proceed.
 	out, err := git(dir, "rev-parse", "--is-inside-work-tree", "--show-prefix")
 	if err != nil {
-		return nil
+		return prov, nil
 	}
 	lines := strings.Split(strings.ReplaceAll(out, "\r\n", "\n"), "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "true" {
-		return nil
+		return prov, nil
 	}
 	prefix := ""
 	if len(lines) > 1 {
@@ -236,6 +267,15 @@ func checkWorkTreeClean(git gitOutputFunc, warn io.Writer, dir, slug, version st
 		// \n, so a lone \r from a CRLF-ish environment is the whole risk.
 		prefix = strings.TrimSuffix(lines[1], "\r")
 	}
+
+	// The commit half of the provenance, asked through the SAME seam. A failure
+	// is the unborn-HEAD case (a repo with no commits, which `app init` +
+	// `git init` produces before the first commit) and every other reason git
+	// cannot name HEAD; all of them mean "there is no commit to claim", which is
+	// UNKNOWN and never a default. Whatever comes back is trimmed and nothing
+	// else: the shape gate is appapi.Provenance.sanitised, one place, so this
+	// function cannot disagree with the wire about what is sendable.
+	prov.Commit = headCommit(git, dir)
 
 	// `-c status.relativePaths=false` pins the path spelling AS FUTURE-PROOFING,
 	// and the honest scope of that is narrower than it used to read here.
@@ -290,12 +330,21 @@ func checkWorkTreeClean(git gitOutputFunc, warn io.Writer, dir, slug, version st
 	raw, err := git(dir, "-c", "status.relativePaths=false", "status", "--porcelain", "-z", "--untracked-files=all", "--", ".")
 	if err != nil {
 		warnf(warn, "could not check whether %s is a clean git work tree (%v) — submitting without the dirty-tree guard.", dir, err)
-		return nil
+		// The commit is still known; the dirtiness is not. Provenance.Dirty
+		// stays nil — UNKNOWN — rather than defaulting to the reassuring answer
+		// for a question this run failed to ask.
+		return prov, nil
 	}
 
 	dirty := bundleDirtyPaths(raw, prefix, dir)
-	if len(dirty) > 0 {
-		return dirtyWorkTreeError(slug, version, dirty)
+	isDirty := len(dirty) > 0
+	prov.Dirty = &isDirty
+	if isDirty {
+		if allowDirty {
+			// Facts recorded, verdict withheld — see the 🔴 note above.
+			return prov, nil
+		}
+		return prov, dirtyWorkTreeError(slug, version, dirty)
 	}
 
 	// Clean. The remaining question is whether the commit it is clean AGAINST
@@ -310,7 +359,25 @@ func checkWorkTreeClean(git gitOutputFunc, warn io.Writer, dir, slug, version st
 		warnf(warn, "the work tree is clean, but HEAD is on no remote — this bundle's source exists only on this machine. "+
 			"Push the branch so the submitted version can be traced back to a commit.")
 	}
-	return nil
+	return prov, nil
+}
+
+// headCommit asks the one git seam for HEAD's sha, and returns "" for every
+// reason it cannot be established.
+//
+// 🔴 IT TRIMS AND JUDGES NOTHING ELSE. `git rev-parse HEAD` emits a lowercase
+// 40-hex sha and a trailing newline, so the trim is the whole of the normalising
+// this layer is entitled to do: a value that arrives in any other shape is a
+// signal that this is not the answer we asked for, and appapi's
+// `^[0-9a-f]{40}$` gate drops it. Uppercasing, truncating or lower-casing it
+// here would turn a value we do not understand into one that LOOKS right on the
+// wire, which is the only way this feature could make a submit worse.
+func headCommit(git gitOutputFunc, dir string) string {
+	out, err := git(dir, "rev-parse", "HEAD")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(out)
 }
 
 // gitStatusEntry is one porcelain record: its two status letters and the path.

@@ -44,10 +44,10 @@ const submitDiagnosisEntries = 5
 // and the size already appears on the `Packaged …` line for anyone who wants
 // it — printing an entry table after every submit would train people to skip
 // the block, which is precisely when it is worth reading.
-func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte) {
+func printSubmitSizeDiagnosis(w io.Writer, zipBytes []byte, prov appapi.Provenance) {
 	fmt.Fprintf(w, "\nWhat this CLI sent (it cannot tell whether that is why the submit failed):\n")
 	fmt.Fprintf(w, "  %d bytes on the wire — a %d-byte zip, base64-encoded into a JSON body.\n",
-		appapi.SubmitBodySize(len(zipBytes)), len(zipBytes))
+		appapi.SubmitBodySize(len(zipBytes), prov), len(zipBytes))
 
 	entries, err := pkgzip.LargestEntries(zipBytes, submitDiagnosisEntries)
 	if err == nil && len(entries) > 0 {
@@ -219,6 +219,16 @@ Dirty-tree guard:
   submits exactly as before, and a clean tree whose HEAD is on no remote warns
   rather than refusing.
 
+Build provenance:
+  A submit that really uploads also STAMPS the commit it was built from — the
+  40-character sha of HEAD, plus whether the work tree was dirty — so
+  ` + "`civitai app status`" + ` can later say which source a live version came from.
+  It is a CLAIM, not a proof: the server records what this CLI reports and
+  cannot verify the bundle was built from that commit. It degrades the same way
+  the guard does — no repo, no git, or a repo with no commits sends nothing at
+  all rather than a guess — and --allow-dirty still stamps, marking the
+  submission dirty, because that is the case worth being able to look up.
+
 Defaults to the current directory.`,
 		Example: `  civitai app submit                    # validate + package + confirm + submit
   civitai app submit --yes              # skip the confirmation prompt (scripts/CI)
@@ -300,6 +310,11 @@ Defaults to the current directory.`,
 			// here, then packages + submits below. The --package-only / no-token
 			// fallback path never submits, so it skips the gate and just packages.
 			canUpload := !packageOnly && cfg.Token() != ""
+			// The provenance this run will claim. It stays ZERO on every path
+			// that does not upload (--package-only, the no-token fallback):
+			// those paths run no git at all, and the size line below then
+			// reports the body they would send, which carries none.
+			var prov appapi.Provenance
 			var client *appapi.Client
 			if canUpload {
 				client = appapi.NewWithSource(cfg.BaseURL(), auth.New(cfg), submitPath)
@@ -323,7 +338,14 @@ Defaults to the current directory.`,
 				// version guard does: --package-only and the no-token fallback
 				// never reach the server, so nothing there can publish an
 				// untraceable bundle.
-				if err := checkWorkTreeClean(gitOutput, cmd.ErrOrStderr(), dir, m.BlockID, m.Version, allowDirty); err != nil {
+				// It also returns the PROVENANCE this submit will claim
+				// (#411's stamp half): the commit the bundle was built from
+				// and whether the tree was dirty. Every branch that cannot
+				// establish those returns them absent — see the matrix on
+				// checkWorkTreeClean — and absent is what reaches the wire as
+				// "no key at all", never as a default.
+				prov, err = checkWorkTreeClean(gitOutput, cmd.ErrOrStderr(), dir, m.BlockID, m.Version, allowDirty)
+				if err != nil {
 					return err
 				}
 
@@ -374,7 +396,7 @@ Defaults to the current directory.`,
 			// --package-only, because --package-only is how you inspect a
 			// bundle you cannot submit.
 			fmt.Fprintf(out, "Packaged %d file(s) (%d bytes compressed, %d decompressed; %d bytes as the base64 JSON submit body)\n",
-				len(pkg.Files), len(pkg.Zip), pkg.DecompressedBy, appapi.SubmitBodySize(len(pkg.Zip)))
+				len(pkg.Files), len(pkg.Zip), pkg.DecompressedBy, appapi.SubmitBodySize(len(pkg.Zip), prov))
 			// 🔴 WHAT WAS LEFT OUT, ON EVERY PATH INCLUDING --package-only (#435).
 			// Printed here, above the canUpload branch, for the same reason the
 			// size line is: --package-only is how an author inspects a bundle,
@@ -387,7 +409,7 @@ Defaults to the current directory.`,
 			// 3a. Programmatic submit if we have a token (OAuth or personal key).
 			// The gate above already confirmed (or --yes bypassed) it.
 			if canUpload {
-				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL())
+				return doUpload(cmd, client, pkg.Zip, m, cfg.BaseURL(), prov)
 			}
 
 			// 3b. Fallback: write the canonical .zip + print next steps.
@@ -452,7 +474,7 @@ func confirmSubmit(cmd *cobra.Command, m *manifest.Manifest, baseURL string, ass
 	}
 }
 
-func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string) error {
+func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *manifest.Manifest, baseURL string, prov appapi.Provenance) error {
 	out := cmd.OutOrStdout()
 	ctx := cmd.Context()
 	if ctx == nil {
@@ -466,7 +488,7 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 	err := ui.WithSpinner(ctx, out, fmt.Sprintf("Submitting %s@%s", m.BlockID, m.Version),
 		func(ctx context.Context) error {
 			var e error
-			r, e = client.SubmitVersion(ctx, zipBytes, m.BlockID, m.Version)
+			r, e = client.SubmitVersion(ctx, zipBytes, m.BlockID, m.Version, prov)
 			return e
 		})
 	if err != nil {
@@ -488,7 +510,7 @@ func doUpload(cmd *cobra.Command, client appapi.Submitter, zipBytes []byte, m *m
 		// nothing to do with the bundle) or a 429, where an entry list is noise
 		// on top of an error that already says what to do.
 		if !errors.Is(err, civitai.ErrUnauthorized) && !errors.Is(err, civitai.ErrRateLimited) {
-			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes)
+			printSubmitSizeDiagnosis(cmd.ErrOrStderr(), zipBytes, prov)
 		}
 		return err
 	}

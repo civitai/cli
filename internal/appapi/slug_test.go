@@ -166,7 +166,7 @@ func TestRecoverTimedOutSubmitMatchesARespelledBlockID(t *testing.T) {
 	srv, listCalls := newRecoverServer(t, func() []Submission { return rows })
 
 	c := recoverClient(srv.URL)
-	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0")
+	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0", Provenance{})
 	if err != nil {
 		t.Fatalf("the submit landed — a row for it is in the listing, spelled %q — but the recovery "+
 			"reported a timeout: %v", rows[0].BlockID, err)
