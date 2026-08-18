@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -32,7 +33,61 @@ import (
 // lost to a timeout, the submit path can poll for a landed submission and
 // recover rather than reporting a false failure (see SubmitVersion).
 type Submitter interface {
-	SubmitVersion(ctx context.Context, zipBytes []byte, slug, version string) (*SubmitResult, error)
+	SubmitVersion(ctx context.Context, zipBytes []byte, slug, version string, prov Provenance) (*SubmitResult, error)
+}
+
+// Provenance is what the CLI CLAIMS about the source the bundle was built from
+// (issue #411, the stamp half). It is a claim and never a proof: the server
+// stores what it is told and cannot check that these bytes were built from that
+// commit, so nothing rendered from it may be worded as verified fact.
+//
+// Both halves are optional and independently unknown, which is why Dirty is a
+// pointer:
+//
+//	Commit == "" , Dirty == nil   → unknown (no repo, no git, unborn HEAD)
+//	Commit == sha, Dirty == false → the client asserted a CLEAN tree
+//	Commit == sha, Dirty == true  → the client asserted a DIRTY tree (--allow-dirty)
+//	Commit == sha, Dirty == nil   → the commit is known, dirtiness is not
+//
+// 🔴 nil AND false ARE DIFFERENT ANSWERS ON BOTH SIDES OF THE WIRE. `null` (or
+// an absent key) means nobody said; `false` means a client looked and said
+// clean. Collapsing them with `?? false` invents an assertion the CLI never
+// made, and it is the same tri-state the READ path carries back on
+// Submission.SourceDirty.
+type Provenance struct {
+	// Commit is the full 40-character lowercase hex sha of HEAD, or "" when it
+	// is not known. Anything that is not sourceCommitRe is treated as unknown —
+	// see sanitised.
+	Commit string
+	// Dirty is the client's assertion about its own work tree. nil ⇒ unknown.
+	Dirty *bool
+}
+
+// sourceCommitRe is the server's own validator, mirrored (civitai/civitai#4061,
+// POST /api/v1/blocks/submit-version): `sourceCommit` must be 40 lowercase hex
+// characters.
+//
+// 🔴 IT IS MIRRORED HERE BECAUSE A MALFORMED VALUE IS A HARD 400 THAT FAILS THE
+// WHOLE SUBMIT. The server rejects the request rather than dropping the field —
+// deliberately, because silently dropping is the inert-feature shape — so the
+// burden is on this side: a provenance stamp is a diagnostic nicety and an
+// upload is the user's actual job, and the nicety must never cost the job. Every
+// value that does not match is sent as ABSENT.
+var sourceCommitRe = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// sanitised returns the fields that may go on the wire, and it is the ONE gate
+// they pass through — SubmitVersion and SubmitBodySize both call it, so the size
+// the CLI reports and the body it sends cannot disagree about what was included.
+//
+// 🔴 AN UNUSABLE COMMIT DROPS THE DIRTY FLAG WITH IT. `sourceDirty` alone says
+// "the tree I cannot name was dirty", which is not a fact anyone can act on, and
+// the matrix in issue #411 spells every branch that cannot resolve HEAD as
+// "send nothing" rather than "send half".
+func (p Provenance) sanitised() (string, *bool) {
+	if !sourceCommitRe.MatchString(p.Commit) {
+		return "", nil
+	}
+	return p.Commit, p.Dirty
 }
 
 // Verifier verifies a token and returns the authenticated identity.
@@ -78,6 +133,19 @@ type Submission struct {
 	UpdatedAt       string  `json:"updatedAt"`
 	CreatedAt       string  `json:"createdAt"`
 	LiveURL         *string `json:"liveUrl"` // set once serving (approved+live)
+	// SourceCommit / SourceDirty are the submitting CLIENT'S CLAIM about the
+	// source the bundle was built from (issue #411; server side
+	// civitai/civitai#4061). The server stores them unverified — it cannot check
+	// that the bundle came from that commit — so every rendering says who said
+	// it. Both are pointers because the tri-state is the whole point:
+	//
+	//	nil   → UNKNOWN: a row from before the feature, or a client that sent nothing
+	//	false → the client asserted a CLEAN work tree
+	//	true  → the client asserted a DIRTY work tree
+	//
+	// 🔴 nil AND false ARE DIFFERENT ANSWERS. Never `?? false`.
+	SourceCommit *string `json:"sourceCommit"`
+	SourceDirty  *bool   `json:"sourceDirty"`
 }
 
 // Subject identifies the credential behind a token as returned by
@@ -429,20 +497,68 @@ func (c *Client) doOnceWith(httpClient *http.Client, build func() (*http.Request
 	return resp.StatusCode, raw, nil
 }
 
-// submitBody mirrors submitVersionSchema: a base64-encoded ZIP.
+// submitBody mirrors submitVersionSchema: a base64-encoded ZIP, plus the
+// optional provenance the client claims for it (issue #411).
+//
+// 🔴 BOTH PROVENANCE FIELDS ARE `omitempty`, AND FOR SourceDirty THAT IS A
+// DECISION ABOUT THE TRI-STATE, NOT A TIDINESS ONE. It is a *bool: omitempty
+// drops a NIL pointer and keeps a pointer to false, so "unknown" leaves the key
+// out (the documented wire spelling of UNKNOWN — the server also accepts null)
+// while "the client looked and the tree was clean" is sent as an explicit
+// `false`. A value bool would make those two indistinguishable and would assert
+// CLEAN for every scaffolded app with no repo at all.
 type submitBody struct {
 	BundleBase64 string `json:"bundleBase64"`
+	SourceCommit string `json:"sourceCommit,omitempty"`
+	SourceDirty  *bool  `json:"sourceDirty,omitempty"`
 }
 
 // submitBodyEnvelope is the literal JSON document json.Marshal produces for an
-// EMPTY submitBody — i.e. everything the marshaller adds around the payload.
-// Keep it beside the struct: adding a field to submitBody changes this, and the
-// two must move together. TestSubmitBodySizeMatchesRealMarshal pins the
-// arithmetic against json.Marshal itself rather than against this constant.
+// EMPTY submitBody — i.e. everything the marshaller adds around the payload,
+// with NO provenance. Keep it beside the struct: adding a field to submitBody
+// can change this, and the two must move together.
+// TestSubmitBodySizeMatchesRealMarshal pins the arithmetic against json.Marshal
+// itself rather than against this constant, and
+// TestSubmitBodyEnvelopeIsTheEmptyMarshal pins the constant itself.
 const submitBodyEnvelope = `{"bundleBase64":""}`
 
+// submitEnvelopeLen returns the length of everything the marshaller puts around
+// the base64 payload for THIS submit — the constant above when no provenance is
+// carried, and the real marshalled envelope when some is.
+//
+// 🔴 IT IS MEASURED, NOT ADDED UP. The obvious alternative — keep the constant
+// and add `len(",\"sourceCommit\":\"\"")+40` and so on — is a second model of
+// what encoding/json does, and the whole reason SubmitBodySize exists is that
+// the number it prints is compared against a real limit. Marshalling a struct
+// whose payload field is empty costs nothing and cannot drift from the struct
+// above, so a field added to submitBody is accounted for here without anyone
+// remembering to update an arithmetic term.
+func submitEnvelopeLen(prov Provenance) int {
+	commit, dirty := prov.sanitised()
+	if commit == "" && dirty == nil {
+		return len(submitBodyEnvelope)
+	}
+	env, err := json.Marshal(submitBody{SourceCommit: commit, SourceDirty: dirty})
+	if err != nil {
+		// Unreachable for these field types; degrade to the no-provenance
+		// envelope rather than reporting a nonsense size.
+		return len(submitBodyEnvelope)
+	}
+	return len(env)
+}
+
 // SubmitBodySize returns the exact size, in bytes, of the HTTP request body
-// SubmitVersion sends for a zip of zipLen bytes.
+// SubmitVersion sends for a zip of zipLen bytes carrying provenance prov.
+//
+// 🔴 IT TAKES THE PROVENANCE BECAUSE THE BODY DOES. This number is PRINTED TO
+// USERS — on the `Packaged …` line and again under a failed submit — as "what
+// this CLI sent", and #411's stamp makes a submit that carries provenance ~70
+// bytes larger than one that does not. A signature that could not see the
+// provenance would have kept reporting the smaller number, which is a small
+// error in the quantity and a total one in the claim: the point of the line is
+// that it is EXACT (see below), so it may not be an estimate the moment a
+// feature lands. Pass a zero Provenance for a path that sends none
+// (--package-only, the no-token fallback) and the number is unchanged.
 //
 // 🔴 THE ZIP IS NOT WHAT GOES ON THE WIRE, AND THE DIFFERENCE IS THE WHOLE OF
 // ISSUE #423. SubmitVersion base64-encodes the archive into a JSON document, so
@@ -457,8 +573,8 @@ const submitBodyEnvelope = `{"bundleBase64":""}`
 // and the envelope is a constant. Do not substitute a 1.37 multiplier for it —
 // the point of printing the number is that the author can compare it with a
 // limit, and a rounded number cannot be compared with anything.
-func SubmitBodySize(zipLen int) int {
-	return base64.StdEncoding.EncodedLen(zipLen) + len(submitBodyEnvelope)
+func SubmitBodySize(zipLen int, prov Provenance) int {
+	return base64.StdEncoding.EncodedLen(zipLen) + submitEnvelopeLen(prov)
 }
 
 // submitClient returns an *http.Client for the submit upload: it mirrors the
@@ -496,9 +612,17 @@ func (c *Client) submitClient() *http.Client {
 // one is now present, reports it as a success — surfacing the pubreq id. If no
 // matching submission is found, it returns a clear error telling the user to
 // check `civitai app status` before resubmitting.
-func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, version string) (*SubmitResult, error) {
+func (c *Client) SubmitVersion(ctx context.Context, zipBytes []byte, slug, version string, prov Provenance) (*SubmitResult, error) {
+	// 🔴 sanitised(), NOT the caller's word. This is the last line before the
+	// wire, so it is where the server's `^[0-9a-f]{40}$` is enforced: a value
+	// that would not survive it is sent as ABSENT, because the server answers a
+	// malformed sourceCommit with a hard 400 that fails the upload. A provenance
+	// stamp must never be able to turn a working submit into a failed one.
+	commit, dirty := prov.sanitised()
 	body, err := json.Marshal(submitBody{
 		BundleBase64: base64.StdEncoding.EncodeToString(zipBytes),
+		SourceCommit: commit,
+		SourceDirty:  dirty,
 	})
 	if err != nil {
 		return nil, err

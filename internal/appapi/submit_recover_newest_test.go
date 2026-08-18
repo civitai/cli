@@ -128,7 +128,7 @@ func TestRecoverTimedOutSubmitReadsTheNewestMatchingRow(t *testing.T) {
 			srv, listCalls := newRecoverServer(t, func() []Submission { return rows })
 
 			c := recoverClient(srv.URL)
-			res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0")
+			res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0", Provenance{})
 			if err != nil {
 				t.Fatalf("SubmitVersion should recover on timeout, got error: %v", err)
 			}
@@ -163,7 +163,7 @@ func TestRecoverTimedOutSubmitIgnoresOtherVersionsAmongMatches(t *testing.T) {
 	srv, _ := newRecoverServer(t, func() []Submission { return rows })
 
 	c := recoverClient(srv.URL)
-	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0")
+	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0", Provenance{})
 	if err != nil {
 		t.Fatalf("SubmitVersion should recover on timeout, got error: %v", err)
 	}

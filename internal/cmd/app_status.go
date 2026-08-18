@@ -49,6 +49,14 @@ printed on stderr — a repo behind its own live deployment is how an accidental
 downgrade gets submitted. It is advisory only: the exit code never changes, and
 nothing is said when the versions cannot be compared.
 
+The SOURCE column (and the detail view's "Source commit" line) is the commit the
+submitting client CLAIMED it built the bundle from — abbreviated in the table,
+full in the detail view and in --json. It is stored unverified: the server
+records what the client reported and cannot check it. A "-" means nothing was
+reported (a submission from before the CLI sent it, or from a directory that is
+in no git repo), which is NOT the same as a clean build; "(dirty)" means the
+client said uncommitted changes went into that bundle.
+
 Note: a submission's <blockId>.civit.ai surface only serves AFTER it is approved
 and deployed (deployState 'live').`,
 		Example: `  civitai app status                 # list all your submissions
@@ -218,18 +226,82 @@ func writeJSON(w io.Writer, v any) error {
 
 func printSubmissionTable(w io.Writer, subs []appapi.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "BLOCK_ID\tVERSION\tSTATUS\tDEPLOY\tSUBMITTED\tURL")
+	fmt.Fprintln(tw, "BLOCK_ID\tVERSION\tSTATUS\tDEPLOY\tSOURCE\tSUBMITTED\tURL")
 	for _, s := range subs {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			s.BlockID,
 			s.Version,
 			s.Status,
 			deployLabel(s.DeployState),
+			sourceLabel(s.SourceCommit, s.SourceDirty),
 			shortDate(s.SubmittedAt),
 			strOr(s.LiveURL, "-"),
 		)
 	}
 	_ = tw.Flush()
+}
+
+// shortSHALen is how much of the commit the TABLE shows. Seven is git's own
+// default abbreviation and is what an author will paste into `git show`; the
+// detail view and `--json` both carry the full forty, because a script that
+// compares a sha needs the whole one.
+const shortSHALen = 7
+
+// sourceLabel renders the SOURCE column: the commit the submitting client
+// CLAIMED, abbreviated, with the dirty flag when it is set.
+//
+// 🔴 THE TRI-STATE SURVIVES INTO THE COLUMN, AND "-" MEANS NOBODY SAID. A row
+// from before this feature, or one submitted from a directory with no git repo,
+// carries no commit at all — that is UNKNOWN, and it must not render as anything
+// that reads like a clean build. Where a commit IS claimed, a `dirty` flag is
+// printed and a CLEAN tree is left unmarked: the absence of the word means the
+// client asserted clean, which the header of the detail view spells out.
+//
+// 🔴 A COMMIT WITH sourceDirty NULL IS "COMMIT, DIRTINESS UNKNOWN" AND SAYS SO.
+// Rendering it bare would be indistinguishable from an asserted-clean row, which
+// is the `?? false` collapse wearing a different hat.
+func sourceLabel(commit *string, dirty *bool) string {
+	if commit == nil || *commit == "" {
+		return "-"
+	}
+	short := *commit
+	if len(short) > shortSHALen {
+		short = short[:shortSHALen]
+	}
+	switch {
+	case dirty == nil:
+		return short + " (dirty?)"
+	case *dirty:
+		return short + " (dirty)"
+	default:
+		return short
+	}
+}
+
+// sourceClaimNote is the one sentence that keeps every rendering of the
+// provenance inside what the CLI is entitled to say.
+//
+// 🔴 IT IS A CLAIM, NOT A MEASUREMENT, AND THIS CLI IS NOT THE ONE WHO MADE IT.
+// The server stores whatever the submitting client sent and cannot check that
+// the bundle was built from that commit — a different machine, a different
+// client, or the same one lying, all produce a row that looks identical. Item 28
+// is the precedent: where the CLI cannot observe the thing, it may report what
+// it was told and must attribute it. Anything reading "built from a1b2c3d" would
+// assert exactly the verification nobody performed.
+const sourceClaimNote = "Reported by the client that submitted it; the server stores it unverified."
+
+// sourceDirtySuffix renders the tri-state for the DETAIL view, in words rather
+// than in the table's shorthand. Each of the three says who established what:
+// nothing was said, a client said clean, a client said dirty.
+func sourceDirtySuffix(dirty *bool) string {
+	switch {
+	case dirty == nil:
+		return " (clean or dirty: not reported)"
+	case *dirty:
+		return " (reported DIRTY — uncommitted changes went into the bundle)"
+	default:
+		return " (reported clean)"
+	}
 }
 
 func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
@@ -242,6 +314,12 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
 	if s.DeployDetail != nil && *s.DeployDetail != "" {
 		fmt.Fprintf(tw, "Deploy detail:\t%s\n", *s.DeployDetail)
 	}
+	// The provenance the submitting client claimed (#411). The FULL sha here —
+	// the table abbreviates, this view is where someone goes to get the value
+	// they will paste into `git show`.
+	if s.SourceCommit != nil && *s.SourceCommit != "" {
+		fmt.Fprintf(tw, "Source commit:\t%s%s\n", *s.SourceCommit, sourceDirtySuffix(s.SourceDirty))
+	}
 	fmt.Fprintf(tw, "Submitted:\t%s\n", fullDate(s.SubmittedAt))
 	if s.ReviewedAt != nil && *s.ReviewedAt != "" {
 		fmt.Fprintf(tw, "Reviewed:\t%s\n", fullDate(*s.ReviewedAt))
@@ -250,6 +328,13 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
 		fmt.Fprintf(tw, "Deploy updated:\t%s\n", fullDate(*s.DeployUpdatedAt))
 	}
 	_ = tw.Flush()
+
+	// Attribution goes with the fact, on the same screen, and only when there is
+	// a fact to attribute — a note under a row that claims nothing would be
+	// noise, and would imply the CLI had checked something.
+	if s.SourceCommit != nil && *s.SourceCommit != "" {
+		fmt.Fprintf(w, "  %s\n", sourceClaimNote)
+	}
 
 	if s.Status == "rejected" && s.RejectionReason != nil && *s.RejectionReason != "" {
 		fmt.Fprintf(w, "\nRejection reason:\n  %s\n", *s.RejectionReason)

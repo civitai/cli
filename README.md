@@ -63,6 +63,7 @@ contract, and **packages/submits** it for review.
   - [After you submit: review → approve → deploy](#after-you-submit-review--approve--deploy)
   - [Listing media requirements](#listing-media-requirements)
 - [Submission status](#submission-status)
+  - [Build provenance: which commit is live?](#build-provenance-which-commit-is-live)
   - [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped)
   - [Deployed is not the same as listed in the store](#deployed-is-not-the-same-as-listed-in-the-store)
 - [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
@@ -317,10 +318,10 @@ README. For the end-to-end walkthrough, see
 | `civitai app dev-token <slug> [--env] [--spend] [--budget <n>]` | **Mint a short-lived (~4h) dev block token for `npm run dev:live`.** `--spend` must be asked for explicitly to request real-Buzz spend — without it the CLI filters `ai:write:budgeted` out of the mint request. `--env` prints a paste-ready `VITE_LIVE_BLOCK_TOKEN=<token>`. See [Local dev loop](#local-dev-loop-harness-mock-vs-live). |
 | `civitai app dev-tunnel [blockId] [--block <id>] [--port <n>] [--local-host <host>] [--tunnel-endpoint <h:p>] [--idle-timeout <d>] [--ready-timeout <d>] [--no-wait]` | **(Pre-GA / invite-gated)** Preview your **local** dev server inside the **real** Civitai host at `civitai.com/apps/dev/<blockId>` — a prod-fidelity inner-dev-loop. Pre-flights whether the host can actually **embed** your dev server and warns (never fatally) when it cannot. See [Preview in the real host](#preview-in-the-real-host-app-dev-tunnel). |
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message` — **`field` is always present and never `null`**) for scriptable parsing — still exits non-zero on failure. 🔴 **BREAKING:** a `[dir]` that does not exist, or is not a directory, is now a **usage error** — exit `2` with **no JSON object** on stdout, where it used to print `{"ok": false, …}` and exit `1`. See [Validate fidelity](#validate-fidelity) and [The `--json` result shape](#the---json-result-shape). |
-| `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). **A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`** — `civitai app submit --yes` is the CI form. (The refusal is reached only when there is a token to upload with: `--package-only`, and the no-token fallback that just writes the .zip, never submit and so never ask.) **It also refuses a version that is not strictly above the highest APPROVED version of that app** — approving an older (or identical) version replaces the newer live deployment — with `--allow-downgrade` as the deliberate-rollback escape hatch. **And it refuses a dirty git work tree** — the bundle is packaged from what is on disk, so approving one deploys code that exists in no commit — with `--allow-dirty` as the escape hatch; that guard degrades rather than enforcing, so a directory in no git repo (every scaffolded app starts that way) submits unchanged, and a clean tree whose `HEAD` is on no remote warns instead of refusing. All three refusals are skipped on the routes that never reach the server. |
+| `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). **A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`** — `civitai app submit --yes` is the CI form. (The refusal is reached only when there is a token to upload with: `--package-only`, and the no-token fallback that just writes the .zip, never submit and so never ask.) **It also refuses a version that is not strictly above the highest APPROVED version of that app** — approving an older (or identical) version replaces the newer live deployment — with `--allow-downgrade` as the deliberate-rollback escape hatch. **And it refuses a dirty git work tree** — the bundle is packaged from what is on disk, so approving one deploys code that exists in no commit — with `--allow-dirty` as the escape hatch; that guard degrades rather than enforcing, so a directory in no git repo (every scaffolded app starts that way) submits unchanged, and a clean tree whose `HEAD` is on no remote warns instead of refusing. All three refusals are skipped on the routes that never reach the server. **A submit that really uploads also STAMPS the commit it was built from** (`sourceCommit`, plus `sourceDirty` when it could establish it), so `civitai app status` can say which source a live version came from — a client CLAIM the server stores unverified, absent entirely where there is no repo, no `git`, or no commit. |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status [--json]\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires, and `listing status --json` emits the same read as one object — including **`parentId` and `shadowId`, the two listing ids a change is addressed to**, which the human output shows neither of. 🔴 **`--json` is not a pure read: on a live listing it opens the revision draft described below, so do not poll it.** The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. **On a listing that is already LIVE, every change — including `reorder` — opens a REVISION for moderator re-review rather than editing the live listing**, and `listing status` reports that in-progress revision's media (so the `alsc_…` ids it prints are the revision's, which is what `reorder` addresses). `rm-screenshot` is the one change deliberately left **staged**: it does **not** submit the revision (curating a gallery is usually several removals), so `submit-revision` is what sends it to moderator review and makes the change public. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
-| `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). Run from **inside** an app checkout it also warns on **stderr** when your local `block.manifest.json` is **BEHIND** your highest approved version — advisory only, the exit code never changes. See [Submission status](#submission-status) and [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped). |
+| `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). Run from **inside** an app checkout it also warns on **stderr** when your local `block.manifest.json` is **BEHIND** your highest approved version — advisory only, the exit code never changes. A **SOURCE** column shows the commit the submitting client claimed (short sha, `(dirty)` when it said the tree was uncommitted, `-` when it claimed nothing); the detail view and `--json` carry the full 40 characters, and `sourceDirty` is a tri-state — `null` is *not reported*, `false` is *reported clean*. See [Submission status](#submission-status), [Build provenance](#build-provenance-which-commit-is-live) and [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. **Also deletes a first-version app's store listing — icon, cover and every captioned screenshot**, so it asks first and needs `--yes` in a script. Idempotent for the submission only; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
@@ -1219,6 +1220,13 @@ of the compressed size. That number is exact, not an estimate, and it is printed
 on every path — including `--package-only`, which is how you inspect a bundle
 you cannot submit.
 
+A submit that carries [build provenance](#build-provenance-which-commit-is-live)
+sends `sourceCommit` and `sourceDirty` in that same document, so its body is
+about **70 bytes larger**. The printed number accounts for it: it is computed
+from the body *this run* will send, not from a fixed envelope — which is why the
+`--package-only` and no-token paths, which stamp nothing, print exactly the
+number they always did.
+
 **The size caps this CLI enforces are its own, not the server's.** They are
 generous (2000 files, 10 MiB per file, 50 MiB compressed, 200 MiB decompressed)
 and clearing them is **not** a prediction that the submit will be accepted.
@@ -1787,10 +1795,10 @@ With no argument it lists every submission, newest first:
 
 ```text
 $ civitai app status
-BLOCK_ID    VERSION  STATUS    DEPLOY    SUBMITTED   URL
-gen-matrix  0.6.0    approved  live      2026-06-22  https://gen-matrix.civit.ai/
-my-block    0.2.0    pending   -         2026-06-21  -
-old-app     0.1.0    approved  building  2026-06-19  -
+BLOCK_ID    VERSION  STATUS    DEPLOY    SOURCE            SUBMITTED   URL
+gen-matrix  0.6.0    approved  live      a1b2c3d           2026-06-22  https://gen-matrix.civit.ai/
+my-block    0.2.0    pending   -         9f4e0aa (dirty)   2026-06-21  -
+old-app     0.1.0    approved  building  -                 2026-06-19  -
 ```
 
 Pass a `blockId` (app slug) or `--id <pubreq_id>` to see one in detail — including
@@ -1804,8 +1812,10 @@ Version:          0.6.0
 Publish request:  pubreq_01HZX
 Status:           rejected
 Deploy state:     -
+Source commit:    a1b2c3d4e5f60718293a4b5c6d7e8f9012345678 (reported clean)
 Submitted:        2026-06-22 09:05 CDT
 Reviewed:         2026-06-22 11:40 CDT
+  Reported by the client that submitted it; the server stores it unverified.
 
 Rejection reason:
   the budgeted scope needs the per-app Sybil cap signed off first
@@ -1848,8 +1858,8 @@ the cap.
 
 ```text
 $ civitai app status --limit 5
-BLOCK_ID    VERSION  STATUS    DEPLOY    SUBMITTED   URL
-gen-matrix  0.6.0    approved  live      2026-06-22  https://gen-matrix.civit.ai/
+BLOCK_ID    VERSION  STATUS    DEPLOY    SOURCE   SUBMITTED   URL
+gen-matrix  0.6.0    approved  live      a1b2c3d  2026-06-22  https://gen-matrix.civit.ai/
 …
 ```
 
@@ -1870,6 +1880,54 @@ silently ignoring the flag would be worse than saying so.
 "run `civitai app submit`" hint; with no token it points you at `civitai login`.
 Notes like the cap caveat go to stderr, so `--json` stdout stays pure and the
 exit code stays 0.
+
+### Build provenance: which commit is live?
+
+`civitai app submit` records **which source it was built from**, and
+`civitai app status` shows it. The bundle is packaged from what is on disk, so
+before this a live version could not be traced to a commit at all — five
+first-party apps were live at a version their repo had never held
+([#411](https://github.com/civitai/cli/issues/411)).
+
+What the CLI sends with a submit that really uploads:
+
+- **`sourceCommit`** — the full 40-character sha of `HEAD` in the packaged
+  directory's repository.
+- **`sourceDirty`** — `true` when files that go into the bundle were
+  uncommitted (only reachable with `--allow-dirty`, which is exactly the case
+  worth recording), `false` when the tree was clean.
+
+🔴 **It is a CLAIM, not a proof.** The server stores what the client reports and
+cannot check that the bundle was built from that commit — a different machine,
+a different client, or a modified one all produce a row that looks identical.
+The CLI says so wherever it prints the value, and you should read it the same
+way: it is a very good pointer and it is not an attestation.
+
+🔴 **It degrades rather than guessing, and a missing stamp never fails a
+submit.** Nothing is sent when the packaged directory is in no git repo (every
+scaffolded app starts that way), when there is no `git` on `PATH`, when the repo
+has no commits yet, or when the CLI cannot resolve a value in exactly the shape
+the server accepts (`^[0-9a-f]{40}$`). The server answers a malformed
+`sourceCommit` with a `400` that fails the whole upload, so the CLI sends
+*nothing* rather than something it is unsure of — a provenance stamp must never
+cost you the submit it is describing.
+
+Reading it back, `sourceDirty` is a **tri-state** and the difference is
+load-bearing:
+
+| `--json` value | `SOURCE` column | meaning |
+| --- | --- | --- |
+| `null` (or absent) | `-`, or `a1b2c3d (dirty?)` when only the commit is known | **nobody reported it** — submitted before this shipped, from a non-repo, or by another client |
+| `false` | `a1b2c3d` | a client **asserted** the tree was clean |
+| `true` | `a1b2c3d (dirty)` | a client asserted uncommitted changes went into the bundle |
+
+`null` and `false` are different answers: do not collapse them in a script. The
+table abbreviates to 7 characters for width; `civitai app status <blockId>` and
+`--json` both carry all forty.
+
+The dirty-tree **refusal** is the other half of the same issue and is unchanged:
+see [Exit code 1](#exit-code-1). `--allow-dirty` still submits, still refuses
+nothing, and now marks what it let through.
 
 ### Is your repo behind what you shipped?
 
@@ -3051,6 +3109,7 @@ fi
 - A resource that **exists but is not ready** lands here too, and deliberately not on `4`: `civitai app metrics <slug>` for an app whose submitted version is still in review exits `1`, because the slug is right and the app does exist — only its analytics do not exist yet, and the error names `civitai app status <slug>` as the next command. `4` stays reserved for a slug with no submissions at all, so the two remain separately actionable: fix the slug, versus wait for approval.
 - A **version regression** lands here for the same reason: `civitai app submit` refuses when the manifest version is not strictly **above the highest approved version** of that app, because approving an older (or identical) version replaces the newer live deployment. Nothing about the invocation is wrong, so it is a verdict about the project, not a `2`. `--allow-downgrade` is the deliberate-rollback escape hatch, and the guard is skipped entirely by `--package-only` or a run with no token — neither reaches the server.
 - A **dirty git work tree** lands here too: `civitai app submit` refuses while files that go into the bundle are uncommitted, because the bundle is packaged from what is on disk and approving one deploys code that exists in no commit. `--allow-dirty` submits the tree as it is. It **degrades rather than enforcing** — a directory that is not in a git repo, or a machine with no `git` on `PATH`, submits exactly as before (scaffolded apps have no repo, and that path must keep working), and a clean tree whose `HEAD` is on no remote **warns** instead of refusing. Like the version guard it is skipped by `--package-only` and by a run with no token.
+- The **build-provenance stamp** those two guards now also collect (issue #411 — the commit `civitai app submit` reports and `civitai app status` shows) changes no exit code at all, in either direction. It is sent only when the CLI can establish a value in exactly the shape the server accepts (`^[0-9a-f]{40}$`); every branch that cannot — no repo, no `git` on `PATH`, a repo with no commits, or an answer it does not recognise — sends nothing and submits exactly as it did before. A submit that would have succeeded cannot fail because of it, and a missing stamp is never an error.
 - **"Wait for approval" is the *pending* case only.** The same `1` covers an app whose latest submission was **rejected** or **withdrawn** — nothing is in review there, so `civitai app metrics <slug>` says so and names a new `civitai app submit` as the next step instead of a review to wait for. What separates `1` from `4` is unchanged: the slug is right and the app exists.
 
 ### Exit code 2

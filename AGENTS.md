@@ -248,6 +248,7 @@ published, and why the command that publishes it exits NON-ZERO on a refusal the
 attach path reports as progress.
 Item 31 is a deliberate non-mirror on the submit path: the packager's own size
 caps, and the server ceiling behind them that #423 bracketed but could not pin.
+Item 32 is what a submit may CLAIM about the source it was built from.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -430,6 +431,12 @@ item must carry a trigger that is a routing question rather than a label
     than refuses: `appapi.SubmitBodySize` (base64-in-JSON, so the wire size is
     ~4/3 of "compressed" — that is what a body limit applies to) and
     `pkgzip.LargestEntries`, only under a failed submit. Name no server ceiling.
+
+32. **Sending or showing the commit an app was built from — the 40-hex gate,
+    `sourceDirty`'s null-vs-false, or the submit body's size?** An UNVERIFIED
+    client claim: word none of it as verified, never `?? false`, and send
+    nothing rather than a value `^[0-9a-f]{40}$` rejects — malformed is a 400
+    that fails the submit (#411).
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

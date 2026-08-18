@@ -369,7 +369,7 @@ func driveSubmitWithTokenError(t *testing.T, tokenErr error) submitObservation {
 	zero := time.Duration(0)
 	c.SubmitPollDelay = &zero
 
-	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0")
+	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0", Provenance{})
 	return submitObservation{
 		tokenCalls: int(atomic.LoadInt32(&src.calls)),
 		submitPOST: int(atomic.LoadInt32(posts)),
@@ -469,7 +469,7 @@ func TestSubmitVersionStillRecoversFromARealTimeout(t *testing.T) {
 	zero := time.Duration(0)
 	c.SubmitPollDelay = &zero
 
-	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0")
+	res, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0", Provenance{})
 	if err != nil {
 		t.Fatalf("a REAL request timeout must still recover, got error: %v", err)
 	}
@@ -499,7 +499,7 @@ func TestSubmitVersionStillRecoversFromARealTimeoutWithNothingLanded(t *testing.
 	zero := time.Duration(0)
 	c.SubmitPollDelay = &zero
 
-	_, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0")
+	_, err := c.SubmitVersion(context.Background(), []byte("ZIP"), "my-block", "0.2.0", Provenance{})
 	if err == nil {
 		t.Fatal("a real timeout with nothing landed produced no error")
 	}
