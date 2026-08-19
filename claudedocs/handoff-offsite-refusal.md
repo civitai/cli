@@ -86,6 +86,18 @@ still says it, this is the correction.
 - **Issues closed:** `cli#422`, `cli#389` (outcome A, measured), `civitai#3984`, `civitai#4003`,
   `civitai#4008`, **`civitai#4059`** (delivered by #4061).
 - **Issues open on purpose:** `cli#424`, `cli#427` (both narrowed), `civitai#3893`.
+  🔴 **`cli#427` residual 2 is now MEASURED, and the issue's "three requests on every
+  `no such submission`" is `app listing <sub>`'s number only.** `app status <slug>` never
+  reaches `resolveListing`, so it has no by-slug fallback in its chain and pays **two**;
+  `app status --id` and any not-a-not-found failure pay **one**. Measured hermetically at two
+  round-trip points (httptest, no live network, median of 7): the diagnosis costs N extra round
+  trips of whatever the link costs — 2 for `app listing`, 1 for `app status` — i.e. +0.2 ms on
+  loopback and +403 ms at 200 ms/request. The pathological ceiling is ARITHMETIC, not a
+  measurement: 30 s + 30 s + 5 s = **65 s** before the error prints, and it needs a server that
+  answers 404 *slowly* — a hung or blackholed link never gets past the first request, because a
+  timeout is not a not-found so neither the fallback nor the probe runs. **No knob was shipped**
+  (the operator's call, deliberately deferred); what shipped is the request LEDGER guard that
+  would have caught the silent 1→3 growth.
   **`cli#411` and `civitai#4057` are both CLOSED** — see the top of this doc, and #4057's block
   below.
 - 🔴 **The prod-deployed revision IS readable, and the previous revision of this doc said it was
