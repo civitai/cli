@@ -810,6 +810,28 @@ anything already shipped.** The thread is closed out; this is the leftover pile.
   README pin, a help-text content check, and a **seam ledger** that fails if the warning drops off
   either published surface. When you change one, expect all three to redden. That is them working.
 
+### After the closeout merged (2026-08-19) — new
+
+- 🔴 **THE LEFTOVER `cli-i411-dirty` WORKTREE LOOKS LIKE STRANDED WORK AND IS NOT — do not "rescue"
+  it.** `git log --oneline origin/main..fix/411-dirty-tree-guard` lists **three commits**, which
+  reads exactly like unmerged work on an issue that is now closed. It is the squash-merge trap:
+  PR #415 squashed that branch, so its own commits are not ancestors of `main` and never will be.
+  **Verified by CONTENT, which is the only check that answers this:** all four functions the
+  supposedly-stranded tip commit adds — `gitScrubbedEnv`, `bundleDirtyPaths`, `bundlesOnDisk`,
+  `absentFromHEAD` — are present in `origin/main:internal/cmd/app_submit_dirty_guard.go`, landed by
+  `fcd27fd` (#415). The worktree is also byte-clean.
+- 🔴 **A per-file `sha256sum` comparison does NOT answer "did this branch land".** Three of those
+  four files differ between branch and `main`, and all three differences are `main` moving *forward*
+  past a four-day-old branch. Same trap one level up: `git diff --stat origin/main <branch>` reported
+  **92 files, −19,330 lines** here, none of it the branch's work. Grep for the **symbols the commit
+  introduced** instead — that is a question about the branch's content, which is what you are asking.
+- **The bare `/tmp/claude-1000/` scratch path is SHARED between concurrent sessions and collides in
+  the reassuring direction.** Two writes this session landed on files another session had already
+  put there (`prbody.md` from 08-03, `handoff-delta.md` from 08-18 18:25, both plausible-looking and
+  neither mine). The Write tool's "file has not been read yet" refusal is what caught both. Write to
+  the **session-scoped** scratchpad (`/tmp/claude-1000/<project>/<session-uuid>/scratchpad/`), which
+  is the path the harness names for exactly this reason.
+
 ## How to verify
 
 ### 🔴 IS A GIVEN COMMIT LIVE ON `civitai.com`? — read it, don't infer it
