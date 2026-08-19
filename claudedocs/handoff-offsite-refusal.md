@@ -1,4 +1,4 @@
-# Handoff: submit provenance — SHIPPED, LIVE AND VERIFIED IN PROD — 2026-08-18
+# Handoff: the offsite/provenance thread — CLOSED OUT — 2026-08-19
 
 ## Run this first — the index, one read-only command
 ```bash
@@ -22,9 +22,14 @@ whether reaching those apps is possible at all.
 nothing about where a bundle came from, so deploy-vs-source drift could be observed but never
 diagnosed (five first-party apps were found behind their live version). It now stamps the commit
 and the dirty flag, the server stores them, and `app status` reads them back — measured against
-production, not inferred. **There is no live goal on this thread; pick from *Next steps*.**
+production, not inferred.
 
-## 🔴 READ THIS FIRST — the one-line state of #411
+🔴 **EVERY ISSUE THIS THREAD OWNED IS NOW CLOSED.** There is no live goal here. One issue it
+touched remains open and is someone's to pick up cold — `civitai#3893` — and two were filed on the
+way out, `civitai#4100` and `cli#481`. Everything below is kept for its evidence, not because it
+is pending; the sections describing "open investigations" are closed ones and say so.
+
+## 🔴 READ THIS FIRST — how `#411` was closed (the pattern the rest of the thread followed)
 
 **CLOSED 2026-08-18T22:41Z, on a measurement against production, not on the code merging.**
 Prod deployed `490b330f3b` at 22:19Z (deployment `a55fe05f3ca2`); a throwaway submit six minutes
@@ -34,12 +39,18 @@ the closing comment `civitai/cli#411#issuecomment-5335001032`; the recipe, with 
 produced, is under *How to verify*.
 
 **The earlier revision of this doc said "do not close #411 — the feature is inert in prod on
-purpose". That was true until 22:19Z today and is now obsolete.** If you are reading a copy that
+purpose". That was true until 22:19Z on 08-18 and is now obsolete.** If you are reading a copy that
 still says it, this is the correction.
+
+**Every other issue on this thread closed the same way** — on a measurement against the real thing,
+with the evidence in the closing comment, never on a merge alone. `civitai#4057` closed on an
+ancestry table that refuted its own leading hypothesis; `cli#424` on a re-read of the server source
+that made the planned fix wrong; `cli#427` on a hermetic two-point latency measurement that said
+the proposed knob was not worth building.
 
 ## State now
 
-- **`civitai/cli` `origin/main` @ `e7b9a9f`, base clone clean and level.** The base clone
+- **`civitai/cli` `origin/main` @ `6412af5`, base clone clean and level.** The base clone
   `/home/zach/workspace/civit/cli` is **shared and moves under you** — it went 1 behind
   mid-session twice on 08-17. `git -C … fetch && … merge --ff-only origin/main` when you own it;
   branch from `origin/main`, never from local `main`. One untracked `node_modules/` sits there,
@@ -83,23 +94,31 @@ still says it, this is the correction.
   `worktree remove --force` — it holds the `event-engine-common` submodule — done only after
   confirming it was byte-clean and its work was in `origin/main`). Open cli PR `#470` and the
   open `civitai` PRs under this account belong to other sessions.
-- **Issues closed:** `cli#422`, `cli#389` (outcome A, measured), `civitai#3984`, `civitai#4003`,
-  `civitai#4008`, **`civitai#4059`** (delivered by #4061).
-- **Issues open on purpose:** `cli#424`, `cli#427` (both narrowed), `civitai#3893`.
-  🔴 **`cli#427` residual 2 is now MEASURED, and the issue's "three requests on every
-  `no such submission`" is `app listing <sub>`'s number only.** `app status <slug>` never
-  reaches `resolveListing`, so it has no by-slug fallback in its chain and pays **two**;
-  `app status --id` and any not-a-not-found failure pay **one**. Measured hermetically at two
-  round-trip points (httptest, no live network, median of 7): the diagnosis costs N extra round
-  trips of whatever the link costs — 2 for `app listing`, 1 for `app status` — i.e. +0.2 ms on
-  loopback and +403 ms at 200 ms/request. The pathological ceiling is ARITHMETIC, not a
-  measurement: 30 s + 30 s + 5 s = **65 s** before the error prints, and it needs a server that
-  answers 404 *slowly* — a hung or blackholed link never gets past the first request, because a
-  timeout is not a not-found so neither the fallback nor the probe runs. **No knob was shipped**
-  (the operator's call, deliberately deferred); what shipped is the request LEDGER guard that
-  would have caught the silent 1→3 growth.
-  **`cli#411` and `civitai#4057` are both CLOSED** — see the top of this doc, and #4057's block
-  below.
+- **Issues CLOSED by this thread:** `cli#411`, `cli#422`, `cli#424`, `cli#427`, `cli#389`
+  (outcome A, measured), `civitai#3984`, `civitai#4003`, `civitai#4008`, `civitai#4057`,
+  **`civitai#4059`** (delivered by #4061). Each closed on a measurement or a shipped change, with
+  the evidence in its closing comment — not on a merge alone.
+- **Left OPEN, deliberately:**
+  - **`civitai#3893`** — the only one this thread did not finish. Rescoped, not started:
+    `ListingMediaEditor` uses `appBlockId` in exactly 4 places, all query-key/invalidation, and the
+    slug is already in hand at the page. **The real blocker is `editorTabsFor`'s
+    `appBlockId != null`, not the resolver.**
+  - **`civitai#4100`** (filed 08-18) — a `MySubmissionsList` component flake, 2 of 13 retained runs,
+    same locator, with a suggested fix. Not this thread's surface.
+  - **`cli#481`** (filed 08-19) — the 65 s arithmetic ceiling on the not-found error path, split out
+    of #427 so it would survive that closure. 🔴 **It carries a trade-off, not just a fix:** a
+    diagnostic-scoped deadline on request 2 makes an offsite app on a *slow but working* link stop
+    being diagnosed — the exact case #422 outcome 2 exists to fix. Decide that before writing code,
+    and move #480's request ledger deliberately rather than incidentally.
+- **`cli#427`'s measurement, since it is the one people will look for after the issue closed:** the
+  issue's "three requests on every `no such submission`" is `app listing <sub>`'s number only.
+  `app status <slug>` never reaches `resolveListing`, so it pays **two**; `app status --id` and any
+  not-a-not-found failure pay **one**. Measured hermetically at two round-trip points (httptest, no
+  live network, median of 7): the diagnosis costs N extra round trips of whatever the link costs —
+  +0.2 ms on loopback, +403 ms at 200 ms/request. The 30 + 30 + 5 = **65 s** ceiling is ARITHMETIC
+  and needs a server answering 404 *slowly*; a hung link never gets past request 1, because a
+  timeout is not a not-found. **No knob shipped** — measured as not warranting one; the env-var
+  shape is recorded in #427's closing comment if that judgement is ever revisited.
 - 🔴 **The prod-deployed revision IS readable, and the previous revision of this doc said it was
   not.** The GitHub deployments API on `civitai/civitai` carries a `do-prod` environment whose
   successful statuses name `https://civitai.com`. Command + the trap under *How to verify*. This
@@ -207,9 +226,25 @@ Two nullable columns on `app_block_publish_requests`, accepted at submit and ret
 
 **Next:** merge #4061 → apply the migration → *then* build `cli#411`'s stamping half.
 
-## Open investigations — live diagnosis state
+## CLOSED investigations — kept for their evidence, NOT because they are pending
+
+🔴 **Every heading in this section is answered.** They are kept because the measurements, the
+ruled-out hypotheses and the confounds cost real work to produce and are what a future reader needs
+when the same question comes back. Where a section's own conclusion was later superseded, the
+superseding block follows it rather than replacing it — read to the end of a subsection before
+acting on its first paragraph.
 
 ### #424 — does the `slug` selector on `appListings.getMyListingForApp` EVER resolve?
+
+🔴 **CLOSED 2026-08-19 by `cli#479` — AND THIS SECTION'S ANSWER IS SUPERSEDED.** The four-clause
+scope below (`{slug, kind:'onsite', appBlockId:null, status:'draft'}`) was true of the server it was
+measured against and **no longer exists**: `civitai/civitai#3989` widened the arm to
+`{slug, revisionOfId: null}` (re-verified at `origin/main`,
+`src/server/services/blocks/offsite-listing.service.ts:1744-1749` — note the path moved under
+`services/blocks/`). The fix narrowed the CLI's claim rather than restating the clauses: **"ONLY BY
+SLUG" is a claim about which selector the CLI can send, never about how wide the server's arm is.**
+Writing the four clauses into the comment would have shipped a second over-general claim with a
+shorter half-life. The measurements below still stand and still explain every row.
 
 🔴 **SUPERSEDED, KEPT FOR PROVENANCE — do not act on the readings below.** They were taken
 against a server whose slug arm has since been rescoped by `civitai/civitai#3989`, so
@@ -352,6 +387,9 @@ readings were about has since been narrowed in `internal/cmd/app_listing.go`.
 
 ### `civitai#4057` — `preview / component-tests` red on `main`, ImageCard overrun tolerance exceeded
 
+🔴 **SUPERSEDED — read the RESOLVED block below this one before acting on anything here.** The
+cause named as "not established" in this section was found: `civitai#4052`.
+
 - **Symptom:** `preview / component-tests` fails on every `main`-based branch. **Report-only, not
   blocking**, which is why it went unnoticed.
 - **Observed (verbatim, from the Tekton run for `pr-preview-4050-5f657`):**
@@ -443,31 +481,44 @@ own status says nothing about the tests. **Read the pod log, not the taskrun con
 
 ## Next steps (ranked)
 
-**Nothing on this thread is blocked or in flight.** `cli#411` closed the provenance work; what
-follows is the leftover list, and none of it is urgent.
+**Nothing here is blocked, in flight, or urgent — and nothing on this list is load-bearing for
+anything already shipped.** The thread is closed out; this is the leftover pile.
 
-🔴 **Retired from this list, having been carried on it while already done:** *"`AGENTS.md` item
-29's trigger still describes a blanket refusal"*. #453 (`fbefd64`) narrowed it at the time it
-shipped; the trigger reads *"the by-slug fallback, the narrowed refusal behind it, or `app
-status`'s?"* today. It survived several revisions of this doc — including one merged 20 minutes
-before it was caught — because each revision re-ranked the list without re-reading the file it
-names. **Verify a next-step against the tree before carrying it forward; a list item is a
-hypothesis with a timestamp, not a fact.**
-
-1. **`civitai#3893`** — rescoped to four touch points, no proc re-key. `ListingMediaEditor` uses
-   `appBlockId` in exactly 4 places, all query-key/invalidation; the slug is already in hand at the
-   page. The real blocker is `editorTabsFor`'s `appBlockId != null`, not the resolver.
-2. **`AGENTS.md` eviction wave** for item 30 when someone needs the room — 269 bytes is still
-   about one ordinary edit away from failing the ceiling.
-3. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
+1. **`civitai#3893`** — the only substantive item, and the only issue this thread left unfinished.
+   Blocker is `editorTabsFor`'s `appBlockId != null`, not the resolver.
+2. **`cli#481`** — the 65 s ceiling. Read its trade-off first; the wrong fix regresses #422
+   outcome 2.
+3. **`civitai#4100`** — the `MySubmissionsList` flake, if it keeps costing people a red suite.
+4. **`AGENTS.md` eviction wave** for item 30 when someone needs the room — re-measure the headroom
+   before quoting it; it moved twice in one evening from threads unrelated to this one.
+5. **`internal/devtunnel` flake** — `TestSSHDialerProxyLocalHostUnreachableNamesHost` failed once
    under full-suite load, 8 clean reruns. Remove the timing dependency; do not re-run it away.
-4. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
-5. **`source_dirty = true` has no live proof** — if a submit is being spent anyway, spend it from a
-   dirty tree and read the row; today's round 2 only exercised the clean case.
-6. **`civitai#4100`** — the `MySubmissionsList` flake, filed with the 2-of-13 measurement and a
-   suggested fix (wait on the timeline being present, don't race the portal render).
+6. **Shadow drafts on `radio` and `gen-matrix`** — still no server-side discard path.
+7. **`source_dirty = true` has no live proof** — if a submit is being spent anyway, spend it from a
+   dirty tree and read the row; only the clean case was ever exercised.
 
 ## Gotchas / decisions / dead-ends
+
+### From closing out the thread (2026-08-18/19) — new
+
+- 🔴 **A HANDOFF'S OWN FINDINGS GO STALE, AND THE DOC IS WHERE YOU WILL BELIEVE THEM WITHOUT
+  CHECKING.** Three times in one session a fact was carried forward from this file and acted on:
+  item 29's trigger ("still describes a blanket refusal" — narrowed by #453 long before), #424's
+  four-clause server scope (widened by #3989), and #427's "three requests on every
+  `no such submission`" (`app listing`'s number, not the error path's). Each was written when true.
+  **The failure mode is not the doc being wrong — it is that a doc reads as first-hand knowledge.**
+  Re-read the file a claim names before repeating it, and when you hand a claim to someone else,
+  hand it as a hypothesis with its provenance.
+- 🔴 **Tell a subagent "the code wins" and it will use it.** Both dispatched agents were given a
+  brief containing a stale premise and told explicitly that the brief was a hypothesis and the code
+  wins if they disagreed. **Both found the stale part and reported it prominently instead of
+  building on it** — one of them would otherwise have written the retired four-clause scope into a
+  comment as the fix. A brief that asserts is a brief that gets built on.
+- **Ask for the coverage LABELS, not just the coverage.** Both agents returned tests correctly
+  labelled *invariant guard, not regression coverage* — including one that admitted its own
+  red-at-base was an artefact of a new fixture rather than evidence of a caught bug. That label is
+  the difference between "3 tests added" and knowing that none of them could ever have gone red for
+  the bug being fixed.
 
 ### From closing #411 (2026-08-18, evening) — new
 
