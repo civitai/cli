@@ -98,6 +98,21 @@ radio` refused before the change and printed the listing after it.
   budget rather than the probe's 5 s — for an offsite app it is the ANSWER, not
   a diagnostic, so capping it at a diagnostic's deadline would fail the repair
   on a slow-but-working server. Stated in `resolveListing`'s own comment.
+  🔴 **CORRECTED, `cli#427` (2026-08-18): "three" is `app listing <sub>`'s
+  number, not the error path's.** `app status <slug>` calls `explainOffsiteMiss`
+  straight off `GetSubmissionRows` and never reaches `resolveListing`, so it has
+  no fallback in its chain and pays **two**; `app status --id` and any
+  not-a-not-found failure pay **one**. All five counts are now MEASURED by
+  driving the real commands (`TestNotFoundErrorPathRequestLedger` pins the
+  ordered request ledger, failing on growth *and* shrink) and the numbers written
+  in `app_offsite.go`'s residual 2 are compared against that measurement
+  (`TestDocumentedRequestCountsAreTheMeasuredOnes`) — which is what stops this
+  count going stale again. Cost, measured hermetically at two round-trip points:
+  the diagnosis is N extra round trips of whatever the link costs (2 for
+  `app listing`, 1 for `app status`), 0.2 ms extra on loopback and 403 ms extra
+  at 200 ms/request. Pathological ceiling is ARITHMETIC, not measured:
+  30 + 30 + 5 = 65 s, and it needs a server answering 404 *slowly* — a hung link
+  stops at the first request, because a timeout is not a not-found.
 
 **THE THREE CONSTRAINTS LISTED FURTHER DOWN ARE NOT ALL RETIRED, AND THIS
 PARAGRAPH USED TO SAY THEY WERE.** It read: those constraints "applied to the

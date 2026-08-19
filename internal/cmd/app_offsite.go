@@ -132,18 +132,52 @@ import (
 //    listings route does not answer for it. Anything added to this message that
 //    presumes the reader owns the app reopens this residual.
 //
-// 2. THE ERROR PATH NOW COSTS THREE BOUNDED REQUESTS, WITH NO OFF SWITCH. Every
-//    `no such submission` — the ordinary "I have not submitted yet" case, which
-//    is far more common than an offsite app — pays the submissions lookup that
-//    already failed, then resolveListing's by-slug fallback (30s, the client's
-//    own per-request budget — see the 🟡 note on resolveListing for why that one
-//    is deliberately NOT capped at a diagnostic's 5s), then this probe (5s)
-//    before printing. It was ONE extra request when #422 outcome 2 shipped; the
-//    fallback added the second, and this line said "one" for the length of that
-//    PR. That is a COST, not a defect: it buys the diagnosis and the offsite
-//    repair, it cannot make the command fail differently (every probe failure
-//    collapses to today's message, pinned), and no flag or env var disables it.
-//    If that cost is ever measured to matter, the knob goes here.
+// 2. THE ERROR PATH COSTS UP TO THREE BOUNDED REQUESTS, WITH NO OFF SWITCH —
+//    AND THE COUNT IS PER COMMAND, NOT ONE NUMBER. `app listing <sub>` resolves
+//    through resolveListing and pays THREE: the submissions lookup that already
+//    failed, then resolveListing's by-slug fallback (30s, the client's own
+//    per-request budget — see the 🟡 note on resolveListing for why that one is
+//    deliberately NOT capped at a diagnostic's 5s), then this probe (5s).
+//    `app status <slug>` calls explainOffsiteMiss straight off
+//    GetSubmissionRows, never reaches resolveListing, and pays TWO. This line
+//    said THREE for BOTH commands until civitai/cli#427 measured them, and said
+//    ONE for the length of the PR in which the fallback added the second — which
+//    is why the counts below are now re-derived from a measurement instead of
+//    restated by hand. The ordinary "I have not submitted yet" case — far more
+//    common than an offsite app — pays exactly the same as the offsite one:
+//    `kind` is not known until the store answers.
+//
+//    MEASURED HERMETICALLY by driving the real command path against an httptest
+//    server (TestNotFoundErrorPathRequestLedger, which pins the ordered LEDGER of
+//    requests and fails when it GROWS or SHRINKS). Each count below is re-derived
+//    from that measurement and compared with this text by
+//    TestDocumentedRequestCountsAreTheMeasuredOnes, so editing a number here
+//    without changing the code fails, and so does the reverse:
+//
+//      LEDGER app listing <sub> not-found = 3
+//      LEDGER app listing <sub> not-found (onsite) = 3
+//      LEDGER app status <slug> not-found = 2
+//      LEDGER app status --id not-found = 1
+//      LEDGER app listing <sub> non-not-found = 1
+//
+//    LATENCY, measured at TWO points on the dimension that decides it — the
+//    per-request round trip (2026-08-18, httptest on loopback, no live network,
+//    median of 7 runs each). At ~0 injected latency: 3-request path 0.7ms,
+//    2-request 0.5ms, 1-request 0.5ms. At 200ms injected per request: 604ms,
+//    402ms, 201ms. So the diagnostic costs N EXTRA ROUND TRIPS OF WHATEVER THE
+//    LINK COSTS — two for `app listing`, one for `app status` — and nothing else;
+//    it is a multiple of the link, never a constant and never a timeout.
+//
+//    THE PATHOLOGICAL CASE IS ARITHMETIC, NOT A MEASUREMENT: 30s (submissions) +
+//    30s (fallback) + 5s (probe) = 65s before the message prints. It needs a
+//    server that answers 404 SLOWLY; a hung or blackholed link never gets past
+//    the first request, because a timeout is not a not-found, so neither the
+//    fallback nor this probe runs and the ceiling there is the client's own 30s.
+//
+//    That is a COST, not a defect: it buys the diagnosis and the offsite repair,
+//    it cannot make the command fail differently (every probe failure collapses
+//    to today's message, pinned), and no flag or env var disables it. If that
+//    cost is ever measured to matter, the knob goes here.
 
 // appKindOnsite / appKindOffsite are the two `kind` discriminators GET
 // /api/v1/apps/{slug} returns (civitai.AppDetail.Kind). They are the store's
