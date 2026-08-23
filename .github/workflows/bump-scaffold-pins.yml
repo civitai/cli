@@ -35,9 +35,9 @@ name: bump-scaffold-pins
 on:
   schedule:
     # DAILY at 07:17 UTC (off the top-of-hour rush; the minute is offset from the
-    # sibling drift-bots — revendor-canonical-schema 07:37, bump-flake-vendorhash
-    # 07:47). Cron literal in YAML needs quoting so the `*` isn't parsed as a
-    # YAML alias.
+    # sibling drift-bots — revendor-canonical-schema :37 every 6h,
+    # bump-flake-vendorhash 07:47). Cron literal in YAML needs quoting so the `*`
+    # isn't parsed as a YAML alias.
     #
     # This was weekly (`17 7 * * 1`) and that cadence was measurably too slow.
     # `pins-vs-published` is a REQUIRED check on `main` and it reads npm's

@@ -58,8 +58,8 @@ name: bump-flake-vendorhash
 on:
   schedule:
     # Weekly, Mondays 07:47 UTC — a distinct minute from the other drift-bots
-    # (bump-scaffold-pins 07:17, revendor-canonical-schema 07:37). Cron literal
-    # in YAML needs quoting so the `*` isn't parsed as a YAML alias.
+    # (bump-scaffold-pins 07:17, revendor-canonical-schema :37 every 6h). Cron
+    # literal in YAML needs quoting so the `*` isn't parsed as a YAML alias.
     - cron: "47 7 * * 1"
   workflow_dispatch:
     inputs:

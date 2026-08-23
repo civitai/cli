@@ -34,10 +34,39 @@ name: revendor-canonical-schema
 
 on:
   schedule:
-    # Weekly, Mondays 07:37 UTC — offset from bump-scaffold-pins (07:17) so the
-    # two automations don't open PRs in the same minute. Cron literal quoted so
-    # the `*` isn't parsed as a YAML alias.
-    - cron: "37 7 * * 1"
+    # Every 6 hours at :37 past the hour — 00:37, 06:37, 12:37, 18:37 UTC.
+    #
+    # WHY THIS CADENCE IS LOAD-BEARING, and why it is no longer weekly. This
+    # number is not a politeness setting; it IS the bound on how long this
+    # repo's CI stays red after a canonical schema change.
+    #
+    # The chain: `check-canonical-schema` byte-compares the go:embedded mirror
+    # (`schema/app-block.manifest.schema.json`) against the schema published
+    # LIVE at the canonical URL. That publish happens on a civitai `release`
+    # cut — an event this repo cannot observe. There is no webhook from
+    # civitai, no repository_dispatch, nothing to subscribe to. So the ONLY
+    # thing that closes the gap between "the canonical changed" and "the mirror
+    # was re-vendored" is this cron firing. Until it does, `schema-drift` is red
+    # on every PR in this repo and nothing clears it but a human noticing and
+    # dispatching this workflow by hand.
+    #
+    # The concrete case this was raised for: civitai PR #4314 added an optional
+    # `repository` property to the canonical manifest schema and merged to
+    # civitai `main` on 2026-08-23. dp-prod deploys from `release`, not `main`,
+    # so the published schema does not carry it yet and this mirror is still
+    # green. It goes red the moment a `main` -> `release` cut publishes the new
+    # bytes — and that cut is invisible from here. On the old weekly cron
+    # ("37 7 * * 1", Mondays) that was up to SEVEN DAYS of red CI; at 6-hourly
+    # it is at most ~6 hours.
+    #
+    # The minute is deliberately :37 and NOT :00. GitHub delays cron jobs
+    # scheduled on the hour, because everyone schedules on the hour. :37 also
+    # keeps this off the minute of every sibling drift-bot in this repo
+    # (bump-scaffold-pins :17, bump-flake-vendorhash :47, release-homebrew :23),
+    # so no two of them open PRs in the same minute.
+    #
+    # Cron literal quoted so the `*` isn't parsed as a YAML alias.
+    - cron: "37 */6 * * *"
   workflow_dispatch:
     inputs:
       drill:
@@ -86,9 +115,11 @@ jobs:
       # the classifier as its own state (`canonical-unreachable`). The job still
       # succeeds; only the report says the mirror was not checked.
       #
-      # KNOWN COST, stated rather than hidden: a single transient blip at 07:37
-      # on a Monday opens an issue that sits until the next weekly run closes it.
-      # That is one issue and zero comments (failure-issue.yml's rules), and the
+      # KNOWN COST, stated rather than hidden: a single transient blip opens an
+      # issue that sits until the next scheduled run closes it — at the 6-hourly
+      # cadence above that is at most ~6 hours, where on the old weekly cron it
+      # was up to 7 days. That is one issue and zero comments
+      # (failure-issue.yml's rules), and the
       # backstop for the underlying risk is the `schema-drift` CI job, which
       # reds on every PR once the mirror actually drifts. If the false alarms
       # outweigh that, delete the `canonical-unreachable` arm in `classify` —
