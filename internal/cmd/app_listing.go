@@ -116,6 +116,7 @@ Source files are checked locally BEFORE any upload — ` + listingImageFormats +
 That reads the SOURCE FILE only: an icon is re-encoded server-side and the
 platform caps the image IT made — it can pass here and be refused at attach.`,
 		Example: `  civitai app listing status
+  civitai app listing set-text --tagline "Batch upscaling, in your browser"
   civitai app listing set-icon ./assets/icon.png
   civitai app listing set-cover ./assets/cover.png
   civitai app listing add-screenshot ./shot.png --caption "Grid view"
@@ -124,6 +125,7 @@ platform caps the image IT made — it can pass here and be refused at attach.`,
   civitai app listing submit-revision --changelog "Refreshed the gallery"`,
 	}
 	cmd.AddCommand(newAppListingStatusCmd())
+	cmd.AddCommand(newAppListingSetTextCmd())
 	cmd.AddCommand(newAppListingSetIconCmd())
 	cmd.AddCommand(newAppListingSetCoverCmd())
 	cmd.AddCommand(newAppListingAddScreenshotCmd())

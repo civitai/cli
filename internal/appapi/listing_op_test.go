@@ -130,6 +130,21 @@ func listingRouteCases() []listingRouteCase {
 			},
 		},
 		{
+			// The scalar TEXT write. A change like the attaches below it: it
+			// writes the listing row, so a 400 may have partially applied.
+			name: "updateListing", route: trpcUpdateListing, wantOp: listingOpChange, serverMsg: "refused: scalar text write",
+			call: func(ctx context.Context, c *Client) error {
+				// All three keys, so the authorControlledFields ledger is checked
+				// against a request that really carries each one. The values are
+				// pairwise distinct and distinct from every other fixture string.
+				tag, desc, cat := "a new tagline", "a new description", "utility"
+				_, err := c.UpdateListing(ctx, "apl_text_909", ListingTextPatch{
+					Tagline: &tag, Description: &desc, Category: &cat,
+				})
+				return err
+			},
+		},
+		{
 			name: "setIcon", route: trpcSetIcon, wantOp: listingOpChange, serverMsg: "refused: icon attach",
 			call: func(ctx context.Context, c *Client) error {
 				_, err := c.SetIcon(ctx, "apl_icon_303", 3031)
@@ -294,13 +309,13 @@ func TestListingBadRequestSubjectIsReachablePerRoute(t *testing.T) {
 	cases := listingRouteCases()
 	if len(cases) < 13 {
 		// civitai/cli#391 N3: the floor is a positive control against a table
-		// that quietly emptied, NOT a claim that thirteen is forever. Retiring a
-		// route is a legitimate reason to see twelve, so the message says which
+		// that quietly emptied, NOT a claim that fourteen is forever. Retiring a
+		// route is a legitimate reason to see thirteen, so the message says which
 		// edit is expected instead of only reporting the count.
 		t.Fatalf("positive control: this table drives %d routes, and %d were expected.\n"+
 			"If a route was RETIRED, lower this floor in the same commit that deletes its case, "+
 			"its entry in TestListingRouteOpsAreExactlyThisSpelledSet and its row in procname_leak_test.go. "+
-			"If nothing was retired, the table lost a case.", len(cases), 13)
+			"If nothing was retired, the table lost a case.", len(cases), 14)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -407,6 +422,15 @@ func TestListingBadRequestSubjectIsReachablePerRoute(t *testing.T) {
 //     default "Update listing <kind> via civitai CLI" and the author supplied
 //     nothing either.
 var authorControlledFields = map[string][]string{
+	// 🔴 `patch`, NOT `listingId` — and NOT the patch's inner keys. This ledger
+	// walks the request's TOP-LEVEL fields, which is the right granularity for
+	// the question it asks (does the change arm's remedy presume a value the
+	// author supplied?) and the reason the entry is one name rather than three.
+	// The whole of `patch` is author-typed: every key inside it comes from a
+	// `--tagline` / `--description` / `--category` / `--clear` flag, so the answer
+	// is the same for all of them. The listing id is CLI-minted from a lookup that
+	// already returned 200, exactly like `beginListingRevision`'s.
+	"updateListing":         {"patch"},
 	"setIcon":               {"imageId"},
 	"setCover":              {"imageId"},
 	"addScreenshot":         {"imageId", "caption"},
@@ -427,6 +451,7 @@ var authorControlledFields = map[string][]string{
 // grow it would pass unnoticed. The whole point of this ledger is that a field
 // appearing where it did not before is loud.
 var cliMintedFields = map[string][]string{
+	"updateListing":         {"listingId"},
 	"setIcon":               {"listingId"},
 	"setCover":              {"listingId"},
 	"addScreenshot":         {"listingId"},
@@ -554,8 +579,8 @@ func TestChangeArmPresumesNoUserSuppliedValue(t *testing.T) {
 
 	// Positive control on the selection: a filter that matched nothing would
 	// make every subtest above vacuous.
-	if changeRoutes != 7 {
-		t.Errorf("expected 7 change routes to check, got %d — if a change route was added or retired, "+
+	if changeRoutes != 8 {
+		t.Errorf("expected 8 change routes to check, got %d — if a change route was added or retired, "+
 			"give it an authorControlledFields entry and update this count in the same commit", changeRoutes)
 	}
 	// The conclusion the change arm's wording rests on. If this ever goes empty
@@ -676,12 +701,12 @@ func TestEveryListingRouteHasAReachabilityCase(t *testing.T) {
 
 	// Positive control on the PARSER: a walker that silently matches nothing
 	// would make this test pass with an empty ledger. civitai/cli#391 N3: a
-	// count short of 13 also happens when a route is legitimately retired, so
+	// count short of 14 also happens when a route is legitimately retired, so
 	// the message names that reading too rather than only blaming the sweep.
-	if len(declared) < 13 {
+	if len(declared) < 14 {
 		t.Fatalf("the sweep found %d listingRoute declarations in %s, and %d were expected.\n"+
 			"If a route was RETIRED, lower this floor in the commit that removes it. "+
-			"Otherwise the sweep is not reading what it thinks it is.", len(declared), mustGetwd(t), 13)
+			"Otherwise the sweep is not reading what it thinks it is.", len(declared), mustGetwd(t), 14)
 	}
 	for _, must := range []string{"/api/trpc/appListings.setIcon", ImageUploadPath} {
 		if _, ok := declared[must]; !ok {
@@ -752,6 +777,7 @@ func TestListingRouteOpsAreExactlyThisSpelledSet(t *testing.T) {
 		"/api/trpc/appListings.ingestAssetFromDataUri": "listingOpIngest",
 		"/api/trpc/appListings.persistAssetImage":      "listingOpIngest",
 
+		"/api/trpc/appListings.updateListing":         "listingOpChange",
 		"/api/trpc/appListings.setIcon":               "listingOpChange",
 		"/api/trpc/appListings.setCover":              "listingOpChange",
 		"/api/trpc/appListings.addScreenshot":         "listingOpChange",

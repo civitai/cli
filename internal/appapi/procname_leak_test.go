@@ -135,6 +135,16 @@ func listingWordingRows() []listingWordingRow {
 		// ---- changes: each writes the listing, so none of them may say
 		// "nothing was changed" — a 400 here may have partially applied ----
 		{
+			// 🔴 Written from what updateListing DOES, by hand. It writes the
+			// listing's scalar columns through `buildListingPatchData`, so a 400
+			// may have landed some of the patch — it may NOT say "nothing was
+			// changed", and it is not an image ingest.
+			name:    "updateListing writes the listing's text columns",
+			route:   trpcUpdateListing,
+			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},
+			notWant: []string{"nothing was changed", readSubject, ingestSubject},
+		},
+		{
 			name:    "setIcon attaches an icon to the listing",
 			route:   trpcSetIcon,
 			want:    []string{changeSubject, changeRemedy, "civitai app listing status"},

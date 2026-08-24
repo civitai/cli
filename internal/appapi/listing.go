@@ -48,6 +48,11 @@ var (
 
 	// Changes: these write the listing (or its shadow revision), so a rejection
 	// may have PARTIALLY applied and must never be worded as "nothing changed".
+	// The SCALAR text write behind `civitai app listing set-text`. A change like
+	// any other: it writes the listing row, so a rejection may have partially
+	// applied and must never be worded as "nothing changed".
+	trpcUpdateListing = listingRoute{"/api/trpc/appListings.updateListing", listingOpChange}
+
 	trpcSetIcon               = listingRoute{"/api/trpc/appListings.setIcon", listingOpChange}
 	trpcSetCover              = listingRoute{"/api/trpc/appListings.setCover", listingOpChange}
 	trpcAddScreenshot         = listingRoute{"/api/trpc/appListings.addScreenshot", listingOpChange}
@@ -158,6 +163,142 @@ type AttachResult struct {
 type ScanStatus struct {
 	ImageID int    `json:"imageId"`
 	Status  string `json:"status"` // "scanned" | "blocked" | "pending"
+}
+
+// MarketplaceCategories is the App Blocks marketplace category vocabulary, in
+// the server's own declaration order.
+//
+// 🔴 IT IS A MIRROR OF A SERVER CONSTANT, AND THE COLUMN IT FEEDS IS FREE TEXT.
+// The authority is `MARKETPLACE_CATEGORIES` in
+// `<civitai>/src/server/services/blocks/marketplace-categories.constants.ts`,
+// re-read at origin/main on 2026-08-24. There is NO Postgres enum and NO CHECK
+// constraint — the doc comment on that constant says so explicitly ("Stored in
+// the FREE-TEXT column … so adding a category is a ONE-LINE edit here with NO
+// migration"). What actually rejects a bad value is a `z.enum` at the schema
+// boundary, i.e. a 400 with a server message.
+//
+// So this copy exists to turn that 400 into a local refusal that PRINTS THE
+// ALLOWED VALUES, which the server's message does not. Being a mirror it can go
+// stale in one direction only: the server GAINING a category, which this CLI
+// would then refuse locally. That is the safe direction (a wrong refusal names
+// the list, so the user can see what the CLI believes), and it is why the
+// refusal says where the list came from rather than presenting itself as the
+// authority.
+var MarketplaceCategories = []string{
+	"generation",
+	"games",
+	"utility",
+	"discovery",
+	"moderation",
+	"analytics",
+	"other",
+}
+
+// Field-length bounds enforced by `updateListingSchema` server-side. Mirrored so
+// the CLI can refuse locally and name the limit, rather than spending a round
+// trip to be told a number the user cannot see.
+const (
+	MaxTaglineRunes     = 140
+	MaxDescriptionRunes = 2000
+)
+
+// ListingTextPatch is a scalar text edit. Each field is a TRI-STATE and the
+// distinction is on the wire, not a nicety:
+//
+//	nil            — omitted. The server leaves the column untouched.
+//	pointer to ""  — an explicit empty string. LEGAL for tagline/description
+//	                 (neither carries a `.min()`), and DISTINCT from null.
+//	Clear<field>   — an explicit JSON null, which CLEARS the column.
+//
+// 🔴 "SET EMPTY" AND "CLEAR" ARE DIFFERENT SERVER STATES and the CLI must be
+// able to express both, or one of them becomes unreachable through this tool.
+// They are separate fields here rather than a magic sentinel string, because a
+// sentinel is a value a user can legitimately want to store.
+type ListingTextPatch struct {
+	Tagline     *string
+	Description *string
+	Category    *string
+
+	ClearTagline     bool
+	ClearDescription bool
+	ClearCategory    bool
+}
+
+// Empty reports whether the patch would send no field at all. The server's own
+// schema refines that at least one key is present and 400s otherwise; this lets
+// the CLI refuse it as a usage error instead, before any request.
+func (p ListingTextPatch) Empty() bool {
+	return p.Tagline == nil && p.Description == nil && p.Category == nil &&
+		!p.ClearTagline && !p.ClearDescription && !p.ClearCategory
+}
+
+// wire renders the patch as the JSON object `updateListingSchema.patch` expects:
+// an ABSENT key means untouched, an explicit null clears, a string sets.
+//
+// 🔴 A `map[string]any` RATHER THAN A STRUCT WITH `omitempty`. `omitempty` drops
+// an empty string, which is exactly the value that must survive — it would make
+// `--tagline ""` indistinguishable from omitting the flag, silently turning a
+// deliberate edit into a no-op. Building the map explicitly is what keeps the
+// three states three.
+func (p ListingTextPatch) wire() map[string]any {
+	out := map[string]any{}
+	if p.Tagline != nil {
+		out["tagline"] = *p.Tagline
+	}
+	if p.ClearTagline {
+		out["tagline"] = nil
+	}
+	if p.Description != nil {
+		out["description"] = *p.Description
+	}
+	if p.ClearDescription {
+		out["description"] = nil
+	}
+	if p.Category != nil {
+		out["category"] = *p.Category
+	}
+	if p.ClearCategory {
+		out["category"] = nil
+	}
+	return out
+}
+
+// UpdateListingResult mirrors updateListing's result. `RequiresReview` and
+// `ShadowID` describe the branch the SERVER took.
+//
+// 🔴 FOR A TEXT-ONLY PATCH THESE ARE ALWAYS `false` AND `nil`, AND THEY ARE
+// DECODED ANYWAY. `patchHasMaterialChange` iterates MATERIAL_PATCH_FIELDS —
+// `externalUrl`, `name`, `contentRating`, `sourceRepoUrl` — and it is a DIFF, not
+// a presence check: an omitted field is skipped, so a patch carrying only
+// tagline/description/category can never reach the staging branch and always
+// applies in place, on an approved listing as much as on a draft. (Verified at
+// `<civitai>/src/server/services/blocks/offsite-listing.service.ts:732` and
+// `:849-889`, origin/main, 2026-08-24.)
+//
+// They are decoded so the CLI REPORTS what the server did rather than asserting
+// what it believes the server does. If that field set ever widens to include one
+// of these three, this command starts staging revisions — and the caller will
+// say so, instead of printing a success line that has become false.
+type UpdateListingResult struct {
+	RequiresReview bool    `json:"requiresReview"`
+	ShadowID       *string `json:"shadowId"`
+}
+
+// UpdateListing writes the listing's scalar text fields.
+//
+// 🔴 IT TARGETS THE TOP-LEVEL LISTING AND THE SERVER REFUSES A SHADOW ID
+// (`revisionOfId != null` -> INVALID_REVISION, surfaced as a 400). The sibling
+// proc `updateRevisionDraft` is the one that writes a shadow, and this CLI
+// deliberately does NOT call it: for these three fields the server never routes
+// to a shadow, so wiring it would be dead code — and dead code shaped like a
+// safety mechanism is worse than none, because it reads as a handled case.
+func (c *Client) UpdateListing(ctx context.Context, listingID string, patch ListingTextPatch) (*UpdateListingResult, error) {
+	var out UpdateListingResult
+	in := map[string]any{"listingId": listingID, "patch": patch.wire()}
+	if err := c.trpcMutation(ctx, trpcUpdateListing, in, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
 }
 
 // SubmitRevisionResult mirrors submitListingRevision's result.
