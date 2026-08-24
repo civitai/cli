@@ -36,6 +36,11 @@ var (
 	trpcGetMyListingForApp   = listingRoute{"/api/trpc/appListings.getMyListingForApp", listingOpRead}
 	trpcGetMyListingForEdit  = listingRoute{"/api/trpc/appListings.getMyListingForEdit", listingOpRead}
 	trpcGetAssetScanStatuses = listingRoute{"/api/trpc/appListings.getAssetScanStatuses", listingOpRead}
+	// listMine is the read behind `civitai app doctor`: every listing the caller
+	// owns OR holds an accepted editor seat on, each carrying `problems[]`.
+	// Unlike getMyListingForEdit it has NO server-side side effect — it opens no
+	// shadow revision — which is what makes `doctor` safe to run in a loop.
+	trpcListMine = listingRoute{"/api/trpc/appListings.listMine", listingOpRead}
 
 	// 🔴 INGEST, not change — and both are POSTs, which is exactly why the verb
 	// is not the answer. Each creates an Image row and touches NO listing;
@@ -160,6 +165,85 @@ type ScanStatus struct {
 	Status  string `json:"status"` // "scanned" | "blocked" | "pending"
 }
 
+// Severity values carried by ListingProblem.Severity. They are the SERVER's
+// vocabulary (`ListingProblemSeverity` in
+// civitai:src/server/services/blocks/listing-problems.ts), reproduced here as
+// constants so the CLI compares against one spelling rather than a literal at
+// each site.
+//
+// 🔴 THE CLI DOES NOT RE-DERIVE SEVERITY FROM THE CODE, and that is deliberate.
+// `computeListingProblems` owns which codes are blocking; a second table here
+// would be the two-copies-of-one-predicate shape that this repo keeps finding
+// wrong at N-1 sites. So an UNKNOWN severity string is neither promoted to
+// blocking nor silently dropped — see doctorIsBlocking in
+// internal/cmd/app_doctor.go for what the command does with one.
+const (
+	SeverityBlocking = "blocking"
+	SeverityAdvisory = "advisory"
+)
+
+// ListingProblem is one row of a listing's completeness advisory, exactly as
+// `computeListingProblems` emits it: a stable `code`, a human `label` the SERVER
+// writes, and a `severity`.
+//
+// 🔴 `Label` IS THE SERVER'S SENTENCE AND THE CLI DOES NOT REWRITE IT. For
+// `blocked-media` and `scanning-media` the label is the only place the affected
+// asset KIND appears — the code itself is kind-less ("Replace the blocked icon
+// before it can publish"). A CLI-side label table would therefore lose the one
+// fact those two codes carry.
+type ListingProblem struct {
+	Code     string `json:"code"`
+	Label    string `json:"label"`
+	Severity string `json:"severity"`
+}
+
+// MyListing is one row of appListings.listMine — a listing the caller OWNS or
+// holds an ACCEPTED editor seat on.
+//
+// 🔴 IT IS NOT A SUBMISSIONS ROW. `GET /api/v1/blocks/submissions` (what `app
+// status` reads) is scoped to what the caller SUBMITTED, so a listing acquired
+// by ownership transfer is invisible there to its new owner and a collaborator
+// who submitted nothing sees none at all. This read is scoped by ownership ∪
+// accepted seats, which is why `app doctor` uses it and not the submissions
+// route.
+//
+// Only the fields `app doctor` renders are decoded. The server also sends
+// `kind`, `capabilities`, `iconUrl`, `coverUrl` and `updatedAt`; adding one here
+// is a decision to render it, not a formality.
+type MyListing struct {
+	AppListingID string `json:"appListingId"`
+	Slug         string `json:"slug"`
+	Name         string `json:"name"`
+	// Status is the listing lifecycle: draft|pending|approved|rejected|removed.
+	Status string `json:"status"`
+	// Role is "owner" or "editor" — an accepted collaborator seat.
+	Role string `json:"role"`
+	// AppBlockID is null for an OFF-SITE listing, and for an on-site app whose
+	// first version has not been approved yet. Legitimately absent, not missing.
+	AppBlockID *string `json:"appBlockId"`
+	// Problems is never null on a current server — an all-complete listing sends
+	// `[]`. A nil slice here therefore reads the same as an empty one and no
+	// caller has to tell them apart.
+	Problems []ListingProblem `json:"problems"`
+}
+
+// ListMyListings reads every listing the caller owns or holds an accepted editor
+// seat on, each with its completeness `problems[]`.
+//
+// The proc takes NO input (see trpcQuery's nil-input note). It is a pure read:
+// unlike GetMyListingForEdit it opens no shadow revision, so it is safe to poll.
+//
+// 🔴 An empty result is a REAL answer — "you can work on no listings" — and is
+// returned as an empty slice with a nil error. It is not a 404: the server
+// answers `[]` for a caller with the author flag and nothing to show.
+func (c *Client) ListMyListings(ctx context.Context) ([]MyListing, error) {
+	var out []MyListing
+	if err := c.trpcQuery(ctx, trpcListMine, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SubmitRevisionResult mirrors submitListingRevision's result.
 type SubmitRevisionResult struct {
 	PublishRequestID string `json:"publishRequestId"`
@@ -168,14 +252,24 @@ type SubmitRevisionResult struct {
 }
 
 // trpcQuery issues a tRPC GET query and decodes result.data.json into out.
+//
+// 🔴 A nil `input` sends NO `?input=` parameter at all, and that is not the same
+// wire request as `?input={"json":null}`. A tRPC procedure declared with no
+// `.input()` schema (appListings.listMine is the one such route this client
+// speaks) parses whatever arrives; sending an explicit null is a value the
+// server never has to accept, and the CLI has no reason to make it. Omitting the
+// key is what the tRPC client itself does for an input-less query.
 func (c *Client) trpcQuery(ctx context.Context, route listingRoute, input any, out any) error {
-	inputJSON, err := json.Marshal(map[string]any{"json": input})
-	if err != nil {
-		return err
+	reqURL := c.BaseURL + route.path
+	if input != nil {
+		inputJSON, err := json.Marshal(map[string]any{"json": input})
+		if err != nil {
+			return err
+		}
+		q := url.Values{}
+		q.Set("input", string(inputJSON))
+		reqURL += "?" + q.Encode()
 	}
-	q := url.Values{}
-	q.Set("input", string(inputJSON))
-	reqURL := c.BaseURL + route.path + "?" + q.Encode()
 	build := func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	}
@@ -608,7 +702,23 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// reported as a change that did not happen.
 		switch route.op {
 		case listingOpRead:
-			return fmt.Errorf("the server rejected this store-listing lookup (400): %s — nothing was changed; check the app you named (list your apps with `civitai app status`)", msg)
+			// 🔴 IT NO LONGER SAYS "check the app you named", and adding the
+			// FOURTH read (appListings.listMine, the `app doctor` read) is why.
+			// That route takes NO INPUT AT ALL — no slug, no listing id, no
+			// image id — so the old remedy presumed a value its caller had never
+			// supplied. That is civitai/cli#391's wrong-subject class exactly,
+			// regenerated on the read arm instead of the change arm: one arm
+			// answering for N routes may only claim what is true of all N.
+			//
+			// The replacement keeps the diagnostic value without the
+			// presumption, because the command it names PRINTS the valid app
+			// names — so a caller who did mis-name an app still gets the list
+			// they needed. It also corrects the pointer: `civitai app status`
+			// reads the SUBMISSIONS route, which is scoped to what the caller
+			// submitted, so it cannot list a listing acquired by ownership
+			// transfer or held on a collaborator seat. `app doctor` reads
+			// listMine, which is scoped by ownership ∪ accepted seats.
+			return fmt.Errorf("the server rejected this store-listing lookup (400): %s — nothing was changed; `civitai app doctor` lists every app you can work on", msg)
 		case listingOpIngest:
 			return fmt.Errorf("the server rejected the image-upload request (400): %s — no listing was changed; check the image and retry", msg)
 		case listingOpChange:

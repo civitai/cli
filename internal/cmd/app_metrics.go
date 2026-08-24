@@ -29,18 +29,34 @@ const wireTimeLayout = "2006-01-02T15:04:05.000Z"
 // regardless of where they run the CLI.
 const dateOnlyLayout = "2006-01-02"
 
-// appMetricsCredentialRoute names the ONE credential that works for this
-// command, and it is deliberately NOT login.go's spendCredentialRoutes.
+// appMetricsCredentialRoute names the credentials that work for this command,
+// and it is deliberately NOT login.go's spendCredentialRoutes.
 //
-// 🔴 That constant names BOTH routes because generation accepts either. The
-// analytics proc does not: it is full-scope, so an OAuth browser login is
-// refused with 403 (see the Long text, and item 5 in AGENTS.md). Until issue
-// #260 the no-token error here was the generic "run `civitai login`" — which is
-// the ONE route this command cannot use, so following the CLI's own advice
-// landed the author on a second refusal. `generate` and `workflows` already name
-// their working routes; this mirrors that shape for the route that works here.
-const appMetricsCredentialRoute = "a full-scope personal API key " +
-	"(`civitai login --token <key>`, created at " + accountAPIKeysURL + ")"
+// 🔴 CORRECTED — THE OAuth BROWSER LOGIN WORKS, AND THIS CONSTANT SAID FOR A
+// YEAR THAT IT DID NOT. The claim was true when issue #260 wrote it: the
+// analytics proc carried no `.meta`, and `enforceTokenScope` defaults an
+// un-annotated proc to `TokenScope.Full`, which the scoped `civitai login` token
+// is not — so it 403'd. `civitai/civitai#3572` (`7c529f1eea`) annotated it
+// `requiredScope: TokenScope.AppBlocksSubmit` precisely so the CLI's login token
+// could read its own analytics, and the `civitai-cli` OAuth client's
+// `allowedScopes` carries that bit. Re-verified against civitai/civitai
+// `origin/main` at `src/server/routers/blocks.router.ts:5483`.
+//
+// So the CLI was telling authors to go mint a personal API key to run a command
+// their existing browser login could already run — and doing it in three places
+// (this constant, `--help`, and the no-token error). What survives from #260 is
+// the SHAPE of the fix, not its content: name the routes that work, from ONE
+// constant, so the branches cannot drift apart again.
+//
+// 🔴 It is still not spendCredentialRoutes. That constant offers `civitai login
+// --scopes generate`, which opts into the AI-Services bits and says nothing
+// about the Apps submit bit this proc requires — naming it here would walk an
+// author into a second refusal, which is the defect #260 was filed for.
+//
+// The scope is the SAME bit `civitai app submit` and `civitai app status`
+// require, which is why one login serves all three.
+const appMetricsCredentialRoute = "an OAuth login (`civitai login`) carrying the Apps submit scope, " +
+	"or a full-scope personal API key (`civitai login --token <key>`, created at " + accountAPIKeysURL + ")"
 
 // appMetricsDeps are the two network seams `app metrics` needs: slug →
 // appBlockId resolution (the existing submissions route) and the analytics query
@@ -71,8 +87,11 @@ command therefore always prints the window the SERVER served (echoed from the
 response), not the one you asked for. Pass --from / --to as a plain YYYY-MM-DD
 date (midnight UTC) or a full RFC3339 timestamp to widen it.
 
-CREDENTIAL: the analytics query is full-scope, so it needs ` + appMetricsCredentialRoute + `;
-an OAuth browser login is refused with 403.
+CREDENTIAL: the analytics query needs the Apps submit scope — the same bit
+` + "`civitai app submit`" + ` and ` + "`civitai app status`" + ` require — so it accepts
+` + appMetricsCredentialRoute + `. An OAuth
+token minted before that scope existed does not carry it and is refused with
+403; re-run ` + "`civitai login`" + ` to mint one that does.
 
 DATA CAVEAT: engagement counts only AUTHENTICATED, scope-gated API calls. An app
 that ships no scoped API surface will show real installs and revenue with a flat
@@ -107,11 +126,12 @@ engagement section — that is expected, not a bug.`,
 				return err
 			}
 			if cfg.Token() == "" {
-				// Name the route that WORKS, not the generic one: an OAuth
-				// browser login is refused here with 403 (see
-				// appMetricsCredentialRoute).
+				// Name the routes that WORK, from the one constant. Both do —
+				// see appMetricsCredentialRoute for why the "an OAuth login is
+				// refused with 403" claim this branch used to make was true when
+				// it was written and has not been since civitai/civitai#3572.
 				return civitai.Tag(civitai.ErrUnauthorized, fmt.Errorf(
-					"no token configured — app analytics need %s; a browser login (`civitai login`) is full-scope-refused with 403 here. Or set CIVITAI_TOKEN to that key",
+					"no token configured — app analytics need %s. Or set CIVITAI_TOKEN to either one",
 					appMetricsCredentialRoute))
 			}
 

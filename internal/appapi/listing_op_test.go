@@ -105,6 +105,16 @@ func listingRouteCases() []listingRouteCase {
 			},
 		},
 		{
+			// The `app doctor` read. It takes no input and opens no shadow
+			// revision — the ONLY listing route of which both are true — so it
+			// is a lookup in the strictest sense available here.
+			name: "listMine", route: trpcListMine, wantOp: listingOpRead, serverMsg: "refused: listing enumeration",
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.ListMyListings(ctx)
+				return err
+			},
+		},
+		{
 			// Step 1 of the full-res upload. Not a listing write.
 			name: "imageUploadMint", route: imageUploadRoute, wantOp: listingOpIngest, serverMsg: "refused: mint",
 			call: func(ctx context.Context, c *Client) error {
@@ -251,7 +261,14 @@ func exactForOp(op listingOp, serverMsg string) string {
 	switch op {
 	case listingOpRead:
 		return "the server rejected this store-listing lookup (400): " + serverMsg +
-			" — nothing was changed; check the app you named (list your apps with `civitai app status`)"
+			// 🔴 RE-READ AGAINST EVERY ROUTE THAT REACHES THIS ARM, which is
+			// what this guard's own doc comment asks for. There are now FOUR,
+			// and the fourth (listMine) takes no input, so the old "check the
+			// app you named" clause named a value one of its four callers never
+			// sends. The sentence below is true of all four: it asserts only
+			// that nothing changed, and points at a command that prints the
+			// valid app names rather than presuming the caller typed one.
+			" — nothing was changed; `civitai app doctor` lists every app you can work on"
 	case listingOpIngest:
 		return "the server rejected the image-upload request (400): " + serverMsg +
 			" — no listing was changed; check the image and retry"
@@ -292,15 +309,15 @@ func wantForOp(op listingOp) (want, notWant []string) {
 // wrong op; this is what does not.
 func TestListingBadRequestSubjectIsReachablePerRoute(t *testing.T) {
 	cases := listingRouteCases()
-	if len(cases) < 13 {
+	if len(cases) < 14 {
 		// civitai/cli#391 N3: the floor is a positive control against a table
-		// that quietly emptied, NOT a claim that thirteen is forever. Retiring a
-		// route is a legitimate reason to see twelve, so the message says which
+		// that quietly emptied, NOT a claim that fourteen is forever. Retiring a
+		// route is a legitimate reason to see thirteen, so the message says which
 		// edit is expected instead of only reporting the count.
 		t.Fatalf("positive control: this table drives %d routes, and %d were expected.\n"+
 			"If a route was RETIRED, lower this floor in the same commit that deletes its case, "+
 			"its entry in TestListingRouteOpsAreExactlyThisSpelledSet and its row in procname_leak_test.go. "+
-			"If nothing was retired, the table lost a case.", len(cases), 13)
+			"If nothing was retired, the table lost a case.", len(cases), 14)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -676,12 +693,12 @@ func TestEveryListingRouteHasAReachabilityCase(t *testing.T) {
 
 	// Positive control on the PARSER: a walker that silently matches nothing
 	// would make this test pass with an empty ledger. civitai/cli#391 N3: a
-	// count short of 13 also happens when a route is legitimately retired, so
+	// count short of 14 also happens when a route is legitimately retired, so
 	// the message names that reading too rather than only blaming the sweep.
-	if len(declared) < 13 {
+	if len(declared) < 14 {
 		t.Fatalf("the sweep found %d listingRoute declarations in %s, and %d were expected.\n"+
 			"If a route was RETIRED, lower this floor in the commit that removes it. "+
-			"Otherwise the sweep is not reading what it thinks it is.", len(declared), mustGetwd(t), 13)
+			"Otherwise the sweep is not reading what it thinks it is.", len(declared), mustGetwd(t), 14)
 	}
 	for _, must := range []string{"/api/trpc/appListings.setIcon", ImageUploadPath} {
 		if _, ok := declared[must]; !ok {
@@ -747,6 +764,7 @@ func TestListingRouteOpsAreExactlyThisSpelledSet(t *testing.T) {
 		"/api/trpc/appListings.getMyListingForApp":   "listingOpRead",
 		"/api/trpc/appListings.getMyListingForEdit":  "listingOpRead",
 		"/api/trpc/appListings.getAssetScanStatuses": "listingOpRead",
+		"/api/trpc/appListings.listMine":             "listingOpRead",
 
 		"/api/v1/image-upload":                         "listingOpIngest",
 		"/api/trpc/appListings.ingestAssetFromDataUri": "listingOpIngest",
