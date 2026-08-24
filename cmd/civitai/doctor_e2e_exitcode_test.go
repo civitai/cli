@@ -46,14 +46,22 @@ func e2eDoctorProblem(code, label, severity string) map[string]any {
 }
 
 func e2eDoctorRow(problems ...map[string]any) map[string]any {
+	return e2eDoctorRowWithStatus("e2e-doctor-app", "apl_E2E77", "draft", problems...)
+}
+
+// e2eDoctorRowWithStatus is the same fixture with the lifecycle status — and a
+// distinct slug and listing id — under the caller's control, so the DELISTED
+// arms below can put a `removed` listing beside a live one and tell which of the
+// two moved the process status.
+func e2eDoctorRowWithStatus(slug, listingID, status string, problems ...map[string]any) map[string]any {
 	if problems == nil {
 		problems = []map[string]any{}
 	}
 	return map[string]any{
-		"appListingId": "apl_E2E77",
-		"slug":         "e2e-doctor-app",
-		"name":         "E2E Doctor App",
-		"status":       "draft",
+		"appListingId": listingID,
+		"slug":         slug,
+		"name":         "E2E " + slug,
+		"status":       status,
 		"role":         "owner",
 		"appBlockId":   nil,
 		"problems":     problems,
@@ -144,6 +152,47 @@ func TestDoctorProcessExitStatusEndToEnd(t *testing.T) {
 			args:    []string{"app", "doctor", "not-an-app-of-mine"},
 			want:    exitNotFound,
 			wantWhy: "`you own no app called that` and `that app is fine` are opposite answers",
+		},
+
+		// 🔴 THE DELISTED ARMS, MEASURED AT THE PROCESS LEVEL. This rule changes
+		// the verdict->exit-code path, which is EXACTLY where the M15 seam defect
+		// lived: `internal/cmd` computed a verdict, `cmd/civitai` mapped it, both
+		// were tested, and the join was owned by nobody. Any change to that path
+		// gets re-measured here, from the process status, not from a fixture
+		// error handed to the mapper.
+		{
+			name: "a REMOVED listing with blocking problems exits 0",
+			rows: []map[string]any{e2eDoctorRowWithStatus("e2e-gone", "apl_E2EGONE", "removed",
+				e2eDoctorProblem("missing-cover", "Missing cover image (required before publishing)", "blocking"))},
+			args:    []string{"app", "doctor"},
+			want:    0,
+			wantWhy: "the publish floor is meaningless for a delisted app; before this rule one old removed app failed every run forever",
+			mustSay: "Delisted",
+		},
+		{
+			name: "a removed listing next to a LIVE blocked one still exits 1",
+			rows: []map[string]any{
+				e2eDoctorRowWithStatus("e2e-gone", "apl_E2EGONE", "removed",
+					e2eDoctorProblem("missing-cover", "Missing cover image (required before publishing)", "blocking")),
+				e2eDoctorRowWithStatus("e2e-live", "apl_E2ELIVE", "draft",
+					e2eDoctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking")),
+			},
+			args:    []string{"app", "doctor"},
+			want:    exitGeneric,
+			wantWhy: "a delisted app must not MASK a real one — this is the arm a naive filter gets wrong",
+			mustSay: "e2e-live",
+		},
+		{
+			name: "a removed listing next to a CLEAN live one exits 0",
+			rows: []map[string]any{
+				e2eDoctorRowWithStatus("e2e-gone", "apl_E2EGONE", "removed",
+					e2eDoctorProblem("missing-cover", "Missing cover image (required before publishing)", "blocking")),
+				e2eDoctorRowWithStatus("e2e-live", "apl_E2ELIVE", "approved"),
+			},
+			args:    []string{"app", "doctor"},
+			want:    0,
+			wantWhy: "nothing publishable is blocked",
+			mustSay: "No problems",
 		},
 	}
 

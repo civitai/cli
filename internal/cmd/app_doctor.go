@@ -141,6 +141,40 @@ func doctorIsBlocking(p appapi.ListingProblem) bool {
 	return p.Severity == appapi.SeverityBlocking
 }
 
+// listingStatusRemoved is the ONE lifecycle status that takes a listing out of
+// the gate. The server's vocabulary is `draft|pending|approved|rejected|removed`
+// (`AppListing.status`), and `removed` is the only member that is not on a path
+// to publication: `rejected` is resubmitted, `draft` and `pending` are on their
+// way in, `approved` is live.
+const listingStatusRemoved = "removed"
+
+// doctorGates reports whether an app's BLOCKING problems set the exit code.
+//
+// 🔴 A DELISTED LISTING IS REPORTED BUT DOES NOT GATE. The publish floor is a
+// statement about a listing that is trying to publish; a `removed` one is not,
+// so letting it fail the build makes the no-arg form permanently red for a
+// reason nobody can act on. Measured on production 2026-08-24: of 11 blocking
+// problems across 21 real listings, TEN were on `removed` apps. The command
+// would have exited 1 forever and told nobody anything.
+//
+// 🔴 THE ROWS ARE STILL PRINTED, and that is not a detail. Hiding a population
+// by default is how it stops existing for anyone — this codebase already paid
+// for that once, with rejected submissions that had no surface at all. The
+// verdict shrinks; the report does not.
+//
+// 🔴 ONLY AN EXPLICIT `removed` IS EXCLUDED, and an unrecognised status GATES.
+// "We could not tell that it is delisted" is not "it is delisted", and the two
+// directions are not symmetric: wrongly excluding means a real blocking problem
+// silently stops failing the build, which is the failure this command exists to
+// prevent. So the unknown case takes the loud direction.
+//
+// The exclusion is not permanent, and nothing is stranded by it: an owner who
+// republishes a removed listing moves its status off `removed`, and the next run
+// gates on it again with no CLI change.
+func doctorGates(status string) bool {
+	return !strings.EqualFold(strings.TrimSpace(status), listingStatusRemoved)
+}
+
 // doctorAppJSON is one app in the `--json` payload. PUBLISHED CONTRACT — the
 // README documents it, so a field is renamed or dropped only deliberately.
 //
@@ -155,11 +189,21 @@ type doctorAppJSON struct {
 	AppListingID string `json:"appListingId"`
 	// AppBlockID is explicitly null for an offsite listing and for an app whose
 	// first version is not approved yet — a real state, not an omission.
-	AppBlockID *string             `json:"appBlockId"`
-	Status     string              `json:"status"`
-	Role       string              `json:"role"`
-	Blocking   []doctorProblemJSON `json:"blocking"`
-	Advisory   []doctorProblemJSON `json:"advisory"`
+	AppBlockID *string `json:"appBlockId"`
+	Status     string  `json:"status"`
+	Role       string  `json:"role"`
+	// Delisted means this listing's status is `removed`, so its blocking
+	// problems are REPORTED but do NOT set the exit code.
+	//
+	// 🔴 IT IS A FIELD ON THE ROW, NOT A SEPARATE ARRAY, AND THAT IS THE
+	// DISCLOSURE DECISION. Moving delisted apps into a sibling key would let a
+	// consumer iterate `apps` and never see them — the population-becomes-
+	// unreachable failure this codebase already paid for once, when 100% of
+	// rejected submissions had no surface at all. Every app the caller can work
+	// on is in `apps`; this bit says which of them the verdict counted.
+	Delisted bool                `json:"delisted"`
+	Blocking []doctorProblemJSON `json:"blocking"`
+	Advisory []doctorProblemJSON `json:"advisory"`
 }
 
 // doctorProblemJSON is one finding. `code`, `label` and `severity` are the
@@ -174,18 +218,36 @@ type doctorProblemJSON struct {
 
 // doctorSummaryJSON is the whole-run verdict, so a script can branch without
 // walking the apps.
+//
+// 🔴 `Blocking` AND `Gating` ARE DIFFERENT NUMBERS AND ONLY ONE OF THEM SETS
+// `ok`. `Blocking` counts every blocking problem found, so it matches the
+// `blocking` arrays a consumer can see. `Gating` counts only those on listings
+// that can still publish — delisted (`removed`) listings are excluded — and
+// THAT is the exit code. Publishing one number would have forced a choice
+// between a total that disagrees with the arrays and a verdict that disagrees
+// with the exit code; both are worse than naming the two quantities.
+//
+// Measured on production 2026-08-24 with 21 real listings: 11 blocking, of
+// which 10 sat on `removed` apps. A single number would have made the no-arg
+// form permanently red for reasons nobody can act on.
 type doctorSummaryJSON struct {
 	Apps     int `json:"apps"`
 	Blocking int `json:"blocking"`
 	Advisory int `json:"advisory"`
+	// Gating is the subset of Blocking that sets the exit code.
+	Gating int `json:"gating"`
+	// Delisted is how many of Apps are `removed`.
+	Delisted int `json:"delisted"`
 }
 
 // doctorJSON is the `--json` payload.
 //
 // 🔴 `ok` IS THE SAME FIELD `app validate --json` PUBLISHES, and it means the
 // same thing: the command's verdict, and the structured form of the exit code.
-// It is FALSE exactly when a blocking problem exists — advisories never move it,
-// because they never move the exit code either.
+// It follows `summary.gating`, NOT `summary.blocking` — advisories never move
+// it, and neither does a blocking problem on a DELISTED listing. A script that
+// wants "is anything wrong anywhere" reads `summary.blocking`; a script that
+// wants "may this ship" reads `ok`.
 type doctorJSON struct {
 	OK      bool              `json:"ok"`
 	Apps    []doctorAppJSON   `json:"apps"`
@@ -217,9 +279,15 @@ browser: this command prints the listing's editor URL. The media problems are
 fixed with ` + "`civitai app listing set-icon`" + ` / ` + "`set-cover`" + ` /
 ` + "`add-screenshot`" + `, and the exact command is printed beside each finding.
 
-EXIT CODES: 1 when ANY blocking problem was found, 0 otherwise — including when
-only advisories were found, and when you have no listings at all. So it gates a
-release script directly:
+DELISTED LISTINGS: an app whose status is 'removed' is still reported, in its
+own section, but its blocking problems do NOT set the exit code. The publish
+floor is a statement about a listing that is trying to publish, and a delisted
+one is not — without this, one old removed app would fail every run forever.
+
+EXIT CODES: 1 when a blocking problem was found on a listing that can still
+publish, 0 otherwise — including when only advisories were found, when the only
+blocking problems are on delisted listings, and when you have no listings at
+all. So it gates a release script directly:
 
     civitai app doctor my-app || exit 1
 
@@ -315,12 +383,16 @@ func runAppDoctor(out io.Writer, rows []appapi.MyListing, slug, baseURL string, 
 	} else {
 		printDoctorReport(out, payload)
 	}
-	if payload.Summary.Blocking > 0 {
+	// 🔴 `Gating`, NOT `Blocking`. See doctorGates: a delisted listing's blocking
+	// problems are printed and do not set the exit code.
+	if payload.Summary.Gating > 0 {
 		// 🔴 The findings are already on stdout; this error exists ONLY to carry
 		// the exit code, so its message must not read as a second, competing
-		// report of the same facts.
-		return fmt.Errorf("%w: %d blocking problem(s) across %d app(s) — see the report above",
-			ErrListingBlocked, payload.Summary.Blocking, payload.Summary.Apps)
+		// report of the same facts. It quotes the GATING count for the same
+		// reason — a message naming a bigger number than the verdict acted on
+		// would send a reader hunting for problems the gate deliberately ignored.
+		return fmt.Errorf("%w: %d blocking problem(s) on publishable listing(s) — see the report above",
+			ErrListingBlocked, payload.Summary.Gating)
 	}
 	return nil
 }
@@ -334,8 +406,25 @@ func doctorPayload(rows []appapi.MyListing, baseURL string) doctorJSON {
 		Apps:    make([]doctorAppJSON, 0, len(rows)),
 		Summary: doctorSummaryJSON{Apps: len(rows)},
 	}
+	// 🔴 GATING APPS FIRST, DELISTED LAST — in the PAYLOAD, not only in the
+	// human rendering. The renderer and `--json` read the same slice, which is
+	// what keeps them from disagreeing about a finding or a count; ordering here
+	// rather than at the printer keeps that property. Stable within each group,
+	// so the server's own order survives.
+	ordered := make([]appapi.MyListing, 0, len(rows))
 	for _, r := range rows {
+		if doctorGates(r.Status) {
+			ordered = append(ordered, r)
+		}
+	}
+	for _, r := range rows {
+		if !doctorGates(r.Status) {
+			ordered = append(ordered, r)
+		}
+	}
+	for _, r := range ordered {
 		editURL := editBase + fmt.Sprintf(listingEditPath, r.AppListingID)
+		gates := doctorGates(r.Status)
 		app := doctorAppJSON{
 			Slug:         r.Slug,
 			Name:         r.Name,
@@ -343,6 +432,7 @@ func doctorPayload(rows []appapi.MyListing, baseURL string) doctorJSON {
 			AppBlockID:   r.AppBlockID,
 			Status:       r.Status,
 			Role:         r.Role,
+			Delisted:     !gates,
 			Blocking:     []doctorProblemJSON{},
 			Advisory:     []doctorProblemJSON{},
 		}
@@ -361,9 +451,15 @@ func doctorPayload(rows []appapi.MyListing, baseURL string) doctorJSON {
 		}
 		out.Summary.Blocking += len(app.Blocking)
 		out.Summary.Advisory += len(app.Advisory)
+		if gates {
+			// The ONLY place the exit code is accumulated.
+			out.Summary.Gating += len(app.Blocking)
+		} else {
+			out.Summary.Delisted++
+		}
 		out.Apps = append(out.Apps, app)
 	}
-	out.OK = out.Summary.Blocking == 0
+	out.OK = out.Summary.Gating == 0
 	return out
 }
 
@@ -378,9 +474,19 @@ func printDoctorReport(w io.Writer, payload doctorJSON) {
 			st.Code("civitai app submit"))
 		return
 	}
+	delistedHeaderShown := false
 	for i, app := range payload.Apps {
 		if i > 0 {
 			fmt.Fprintln(w)
+		}
+		// 🔴 THE DELISTED SECTION IS ANNOUNCED, ONCE, WHERE IT STARTS. The
+		// payload is already ordered gating-first (see doctorPayload), so this
+		// fires on the first delisted row. Without the heading a reader sees an
+		// app carrying BLOCKING findings while the command exits 0 and has no
+		// way to tell that from a broken gate.
+		if app.Delisted && !delistedHeaderShown {
+			delistedHeaderShown = true
+			fmt.Fprintln(w, st.Info("Delisted (status 'removed') — reported for completeness; these do NOT set the exit code."))
 		}
 		fmt.Fprintf(w, "%s  (%s, %s)\n", st.Bold(app.Slug), app.Status, app.Role)
 		if len(app.Blocking) == 0 && len(app.Advisory) == 0 {
@@ -397,6 +503,15 @@ func printDoctorReport(w io.Writer, payload doctorJSON) {
 	fmt.Fprintln(w)
 	fmt.Fprintf(w, "%d app(s) checked — %d blocking, %d advisory.\n",
 		payload.Summary.Apps, payload.Summary.Blocking, payload.Summary.Advisory)
+	// 🔴 THE DISCREPANCY IS EXPLAINED WHEREVER IT CAN EXIST, which is whenever a
+	// delisted app was reported at all — not only when one carries a blocking
+	// problem. A reader who sees the section above needs the rule stated whether
+	// or not it changed the arithmetic this time, and a line that appears only
+	// sometimes is a line nobody learns to look for.
+	if payload.Summary.Delisted > 0 {
+		fmt.Fprintf(w, "%d of them are delisted; %d blocking problem(s) on publishable listings set the exit code.\n",
+			payload.Summary.Delisted, payload.Summary.Gating)
+	}
 }
 
 // printDoctorGroup renders one severity group, or nothing when it is empty.

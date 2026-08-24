@@ -36,6 +36,11 @@ const (
 	docListingA = "apl_ALPHA111"
 	docListingB = "apl_BRAVO222"
 	docBlockA   = "block_ALPHA333"
+	// The DELISTED fixture. Distinct from every other slug and id, so an
+	// assertion about the delisted arm cannot pass on a value copied from the
+	// gating one.
+	docSlugC    = "doctor-charlie"
+	docListingC = "apl_CHARLIE333"
 )
 
 // listMinePath is the ONE route `app doctor` is allowed to speak. It is spelled
@@ -286,7 +291,12 @@ func TestDoctorPositiveControlOnTheFindingCount(t *testing.T) {
 // published contract (README documents it); a substring assertion agrees with a
 // payload that has quietly grown, lost or renamed a sibling key.
 func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
+	// 🔴 THE DELISTED ROW IS SENT FIRST ON THE WIRE and must come LAST in the
+	// payload. Feeding them already in the right order would make the ordering
+	// assertion pass against code that does no ordering at all.
 	newDoctorServer(t,
+		doctorRow(docSlugC, docListingC, "removed", "owner", nil,
+			doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking")),
 		doctorRow(docSlugA, docListingA, "draft", "owner", nil,
 			doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking"),
 			doctorProblem("empty-tagline", "Missing tagline", "advisory"),
@@ -296,13 +306,18 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
 	base := envBaseURL(t)
 	stdout, _, err := run(t, "app", "doctor", "--json")
 	if err == nil {
-		t.Fatalf("the first app is blocked, so this must exit non-zero; stdout:\n%s", stdout)
+		t.Fatalf("the DRAFT app is blocked, so this must exit non-zero; stdout:\n%s", stdout)
 	}
 	// 🔴 `<file>` arrives as `\u003cfile\u003e`. That is the SHARED writeJSON
 	// encoder's HTML escaping (json.Encoder does it by default), not this
 	// command's doing, and it is pinned here rather than worked around: a
 	// consumer decoding the payload gets `<file>` back, and changing the shared
 	// encoder would silently change every other `--json` contract in the CLI.
+	//
+	// 🔴 THE NUMBERS ARE ALL DIFFERENT FROM EACH OTHER: 3 apps, 2 blocking,
+	// 1 advisory, 1 gating, 1 delisted. `blocking` and `gating` differ, which is
+	// the whole point of publishing both — a payload that emitted one twice
+	// cannot pass.
 	want := `{
   "ok": false,
   "apps": [
@@ -313,6 +328,7 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
       "appBlockId": null,
       "status": "draft",
       "role": "owner",
+      "delisted": false,
       "blocking": [
         {
           "code": "missing-icon",
@@ -337,14 +353,35 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
       "appBlockId": "` + docBlockA + `",
       "status": "approved",
       "role": "editor",
+      "delisted": false,
       "blocking": [],
+      "advisory": []
+    },
+    {
+      "slug": "` + docSlugC + `",
+      "name": "Doctor-charlie Display Name",
+      "appListingId": "` + docListingC + `",
+      "appBlockId": null,
+      "status": "removed",
+      "role": "owner",
+      "delisted": true,
+      "blocking": [
+        {
+          "code": "missing-icon",
+          "label": "Missing icon (required before publishing)",
+          "severity": "blocking",
+          "fix": "civitai app listing set-icon \u003cfile\u003e --slug ` + docSlugC + `"
+        }
+      ],
       "advisory": []
     }
   ],
   "summary": {
-    "apps": 2,
-    "blocking": 1,
-    "advisory": 1
+    "apps": 3,
+    "blocking": 2,
+    "advisory": 1,
+    "gating": 1,
+    "delisted": 1
   }
 }
 `
@@ -697,10 +734,23 @@ func TestDoctorHelpDocumentsTheExitCodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("app doctor --help: %v", err)
 	}
-	for _, want := range []string{"EXIT CODES", "1 when ANY blocking problem", "0 otherwise"} {
+	for _, want := range []string{
+		"EXIT CODES",
+		"1 when a blocking problem was found on a listing that can still\npublish",
+		"0 otherwise",
+	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("`app doctor --help` must document the exit codes (missing %q):\n%s", want, out)
 		}
+	}
+	// 🔴 THE OLD WORDING IS BANNED, NOT MERELY REPLACED. `--help` used to say "1
+	// when ANY blocking problem was found", which was true until delisted
+	// listings stopped gating and is now an OVER-BROAD claim about the exit
+	// code: a reader who believes it will read a 0 on a delisted app as a bug in
+	// the tool. Keeping it as a prohibition is what stops a future edit
+	// shortening the sentence straight back into the falsehood.
+	if strings.Contains(out, "ANY blocking problem") {
+		t.Errorf("`app doctor --help` claims ANY blocking problem exits 1 — delisted listings do not gate:\n%s", out)
 	}
 }
 
@@ -720,6 +770,7 @@ type doctorPayloadShape struct {
 		AppBlockID   *string `json:"appBlockId"`
 		Status       string  `json:"status"`
 		Role         string  `json:"role"`
+		Delisted     bool    `json:"delisted"`
 		Blocking     []struct {
 			Code     string `json:"code"`
 			Label    string `json:"label"`
@@ -737,6 +788,8 @@ type doctorPayloadShape struct {
 		Apps     int `json:"apps"`
 		Blocking int `json:"blocking"`
 		Advisory int `json:"advisory"`
+		Gating   int `json:"gating"`
+		Delisted int `json:"delisted"`
 	} `json:"summary"`
 }
 
@@ -813,4 +866,217 @@ func envBaseURL(t *testing.T) string {
 		t.Fatal("CIVITAI_BASE_URL is unset — listingEnv did not run, so the URL assertions below would compare against nothing")
 	}
 	return strings.TrimRight(v, "/")
+}
+
+// ---------------------------------------------------------------------------
+// Delisted listings: reported, but they do not set the exit code.
+// ---------------------------------------------------------------------------
+
+// TestDoctorDelistedListingsDoNotSetTheExitCode is the THREE-ARM table, and the
+// third arm is the one that matters.
+//
+// 🔴 THE MIXED ARM IS WHAT A NAIVE FILTER GETS WRONG. An implementation that
+// drops delisted rows from the payload entirely passes arms 1 and 2 and passes
+// arm 3 too — but an implementation that computes the verdict from "are there
+// any delisted apps" instead of "are there gating problems" passes arms 1 and 2
+// and FAILS arm 3. Two arms cannot tell those apart.
+//
+// Measured motivation, not a hypothetical: on production 2026-08-24 this
+// account held 21 listings with 11 blocking problems, TEN of them on `removed`
+// apps. Before this rule the no-arg form exited 1 forever.
+func TestDoctorDelistedListingsDoNotSetTheExitCode(t *testing.T) {
+	blocked := func(slug, id, status string) map[string]any {
+		return doctorRow(slug, id, status, "owner", nil,
+			doctorProblem("missing-cover", "Missing cover image (required before publishing)", "blocking"))
+	}
+
+	cases := []struct {
+		name    string
+		rows    []map[string]any
+		wantErr bool
+		why     string
+		// wantGating / wantBlocking are asserted from --json in the same run, so
+		// the arm pins WHY it exited that way and not merely that it did.
+		wantBlocking int
+		wantGating   int
+	}{
+		{
+			name:         "a removed listing with blocking problems exits 0",
+			rows:         []map[string]any{blocked(docSlugC, docListingC, "removed")},
+			wantErr:      false,
+			why:          "the publish floor is meaningless for a delisted app",
+			wantBlocking: 1,
+			wantGating:   0,
+		},
+		{
+			name:         "a live listing with blocking problems exits 1",
+			rows:         []map[string]any{blocked(docSlugA, docListingA, "draft")},
+			wantErr:      true,
+			why:          "this is the case the gate exists for",
+			wantBlocking: 1,
+			wantGating:   1,
+		},
+		{
+			name: "BOTH present exits 1",
+			rows: []map[string]any{
+				blocked(docSlugC, docListingC, "removed"),
+				blocked(docSlugA, docListingA, "draft"),
+			},
+			wantErr:      true,
+			why:          "a delisted app must not MASK a real one — the naive filter's failure",
+			wantBlocking: 2,
+			wantGating:   1,
+		},
+		{
+			name: "a removed listing next to a CLEAN live one still exits 0",
+			rows: []map[string]any{
+				blocked(docSlugC, docListingC, "removed"),
+				doctorRow(docSlugB, docListingB, "approved", "owner", ptr(docBlockA)),
+			},
+			wantErr:      false,
+			why:          "nothing publishable is blocked",
+			wantBlocking: 1,
+			wantGating:   0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			newDoctorServer(t, tc.rows...)
+			stdout, _, err := run(t, "app", "doctor", "--json")
+			if tc.wantErr && err == nil {
+				t.Fatalf("expected a non-zero verdict — %s; stdout:\n%s", tc.why, stdout)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected exit 0 — %s; got %v; stdout:\n%s", tc.why, err, stdout)
+			}
+			if tc.wantErr && !errors.Is(err, ErrListingBlocked) {
+				t.Errorf("the verdict must be ErrListingBlocked, got %T: %v", err, err)
+			}
+			got := decodeDoctorJSON(t, stdout)
+			if got.Summary.Blocking != tc.wantBlocking {
+				t.Errorf("summary.blocking = %d, want %d — every blocking problem must still be COUNTED",
+					got.Summary.Blocking, tc.wantBlocking)
+			}
+			if got.Summary.Gating != tc.wantGating {
+				t.Errorf("summary.gating = %d, want %d — gating is what sets the exit code",
+					got.Summary.Gating, tc.wantGating)
+			}
+			if got.OK != (tc.wantGating == 0) {
+				t.Errorf("ok = %v with gating = %d — `ok` must follow gating, not blocking", got.OK, got.Summary.Gating)
+			}
+		})
+	}
+}
+
+// TestDoctorDelistedRowsAreStillVisible: the verdict shrinks, the report does
+// not. Hiding a population by default is how it stops existing for anyone.
+func TestDoctorDelistedRowsAreStillVisible(t *testing.T) {
+	newDoctorServer(t, doctorRow(docSlugC, docListingC, "removed", "owner", nil,
+		doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking"),
+		doctorProblem("empty-tagline", "Missing tagline", "advisory"),
+	))
+	stdout, _, err := run(t, "app", "doctor")
+	if err != nil {
+		t.Fatalf("a delisted-only run must exit 0, got %v; stdout:\n%s", err, stdout)
+	}
+	for _, want := range []string{
+		docSlugC,                   // the row itself
+		"missing-icon",             // its blocking finding, not swallowed
+		"empty-tagline",            // and its advisory
+		"BLOCKING",                 // still under the honest heading
+		"Delisted",                 // announced as a section
+		"do NOT set the exit code", // and the rule stated where the reader meets it
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("a delisted app must still be fully reported (missing %q):\n%s", want, stdout)
+		}
+	}
+	// The trailing explanation of the discrepancy.
+	if !strings.Contains(stdout, "1 of them are delisted; 0 blocking problem(s) on publishable listings set the exit code.") {
+		t.Errorf("the summary must explain why the exit code disagrees with the blocking count:\n%s", stdout)
+	}
+}
+
+// TestDoctorDelistedRowsSortLast pins the ORDER, in the payload both renderings
+// read from. A reader scanning the top of the report must meet the apps that
+// can actually block a release first.
+func TestDoctorDelistedRowsSortLast(t *testing.T) {
+	// Sent delisted-FIRST on the wire, so passing requires real ordering work.
+	newDoctorServer(t,
+		doctorRow(docSlugC, docListingC, "removed", "owner", nil),
+		doctorRow(docSlugA, docListingA, "draft", "owner", nil),
+		doctorRow(docSlugB, docListingB, "approved", "owner", ptr(docBlockA)),
+	)
+	stdout, _, err := run(t, "app", "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	got := decodeDoctorJSON(t, stdout)
+	var order []string
+	for _, a := range got.Apps {
+		order = append(order, a.Slug)
+	}
+	want := []string{docSlugA, docSlugB, docSlugC}
+	if !equalStrings(order, want) {
+		t.Errorf("app order = %v, want %v (gating first, delisted last, stable within each group)", order, want)
+	}
+}
+
+// TestDoctorUnknownStatusStillGates: only an explicit `removed` is excluded.
+// "We could not tell that it is delisted" is not "it is delisted", and the two
+// directions are not symmetric — wrongly excluding means a real blocking problem
+// silently stops failing the build.
+func TestDoctorUnknownStatusStillGates(t *testing.T) {
+	for _, status := range []string{"draft", "pending", "approved", "rejected", "a-status-from-the-future", ""} {
+		t.Run("status="+status, func(t *testing.T) {
+			newDoctorServer(t, doctorRow(docSlugA, docListingA, status, "owner", nil,
+				doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking")))
+			stdout, _, err := run(t, "app", "doctor")
+			if err == nil {
+				t.Fatalf("status %q is not `removed`, so a blocking problem must still gate; stdout:\n%s", status, stdout)
+			}
+		})
+	}
+	// POSITIVE CONTROL on the loop: the ONE status that is excluded must really
+	// be excluded, or every assertion above is a fact about a predicate that
+	// never returns false.
+	t.Run("control: removed IS excluded", func(t *testing.T) {
+		newDoctorServer(t, doctorRow(docSlugA, docListingA, "removed", "owner", nil,
+			doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking")))
+		if _, _, err := run(t, "app", "doctor"); err != nil {
+			t.Fatalf("control: `removed` must be excluded, got %v — the predicate never returns false", err)
+		}
+	})
+}
+
+// TestDoctorDelistedStatusMatchIsNormalised: the status is a server string and
+// the CLI compares it. Case and padding must not silently turn a delisted
+// listing back into a gating one.
+func TestDoctorDelistedStatusMatchIsNormalised(t *testing.T) {
+	for _, spelling := range []string{"removed", "REMOVED", "Removed", " removed "} {
+		t.Run(strings.TrimSpace(spelling), func(t *testing.T) {
+			newDoctorServer(t, doctorRow(docSlugA, docListingA, spelling, "owner", nil,
+				doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking")))
+			stdout, _, err := run(t, "app", "doctor")
+			if err != nil {
+				t.Errorf("status %q must read as delisted, got %v; stdout:\n%s", spelling, err, stdout)
+			}
+		})
+	}
+}
+
+// TestDoctorHelpDocumentsTheDelistedRule: the exit code is the command's
+// product, and a rule that changes it belongs in the contract a reader has
+// offline.
+func TestDoctorHelpDocumentsTheDelistedRule(t *testing.T) {
+	out, _, err := run(t, "app", "doctor", "--help")
+	if err != nil {
+		t.Fatalf("app doctor --help: %v", err)
+	}
+	for _, want := range []string{"DELISTED LISTINGS", "'removed'", "do NOT set the exit code"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("`app doctor --help` must document the delisted rule (missing %q):\n%s", want, out)
+		}
+	}
 }

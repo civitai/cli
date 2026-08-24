@@ -323,7 +323,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status [--json]\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires, and `listing status --json` emits the same read as one object — including **`parentId` and `shadowId`, the two listing ids a change is addressed to**, which the human output shows neither of. 🔴 **`--json` is not a pure read: on a live listing it opens the revision draft described below, so do not poll it.** The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. **On a listing that is already LIVE, every change — including `reorder` — opens a REVISION for moderator re-review rather than editing the live listing**, and `listing status` reports that in-progress revision's media (so the `alsc_…` ids it prints are the revision's, which is what `reorder` addresses). `rm-screenshot` is the one change deliberately left **staged**: it does **not** submit the revision (curating a gallery is usually several removals), so `submit-revision` is what sends it to moderator review and makes the change public. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). Run from **inside** an app checkout it also warns on **stderr** when your local `block.manifest.json` is **BEHIND** your highest approved version — advisory only, the exit code never changes. A **SOURCE** column shows the commit the submitting client claimed (short sha, `(dirty)` when it said the tree was uncommitted, `-` when it claimed nothing); the detail view and `--json` carry the full 40 characters, and `sourceDirty` is a tri-state — `null` is *not reported*, `false` is *reported clean*. See [Submission status](#submission-status), [Build provenance](#build-provenance-which-commit-is-live) and [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped). |
-| `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it.** No arg checks every listing you own **or hold an accepted collaborator seat on** (a wider set than `app status`, which is scoped to what *you submitted*); a slug checks just that one. Findings are the platform's, grouped per app, **BLOCKING first** (`missing-icon`, `missing-cover`, `blocked-media` — the listing cannot publish) then **ADVISORY** (`no-screenshots`, `empty-description`, `empty-tagline`, `empty-category`, `scanning-media`). Each one prints the command or URL that fixes it. 🔴 **Exits `1` when anything is blocking, `0` otherwise** — so `civitai app doctor my-app || exit 1` gates a release; `--json` uses the same codes. Unlike `app listing status` it is a **pure read** and opens no revision draft. See [Listing doctor](#listing-doctor-app-doctor). |
+| `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it.** No arg checks every listing you own **or hold an accepted collaborator seat on** (a wider set than `app status`, which is scoped to what *you submitted*); a slug checks just that one. Findings are the platform's, grouped per app, **BLOCKING first** (`missing-icon`, `missing-cover`, `blocked-media` — the listing cannot publish) then **ADVISORY** (`no-screenshots`, `empty-description`, `empty-tagline`, `empty-category`, `scanning-media`). Each one prints the command or URL that fixes it. A listing whose status is `removed` is still reported, in its own section, but does **not** set the exit code — the publish floor is meaningless for a delisted app. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise** — so `civitai app doctor my-app || exit 1` gates a release; `--json` uses the same codes and publishes both `summary.blocking` (everything found) and `summary.gating` (what set the code). Unlike `app listing status` it is a **pure read** and opens no revision draft. See [Listing doctor](#listing-doctor-app-doctor). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs the **Apps submit scope** — an OAuth `civitai login` or a full-scope personal API key; the same bit `app submit` and `app status` use. An OAuth token minted before that scope existed is refused `403`; re-run `civitai login`. See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. **Also deletes a first-version app's store listing — icon, cover and every captioned screenshot**, so it asks first and needs `--yes` in a script. Idempotent for the submission only; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
@@ -2109,22 +2109,47 @@ what the exit code is computed from:
 
 | Severity | Codes | Meaning |
 | --- | --- | --- |
-| **BLOCKING** | `missing-icon`, `missing-cover`, `blocked-media` | The listing **cannot publish** until it is fixed. |
+| **BLOCKING** | `missing-icon`, `missing-cover`, `blocked-media` | The listing **cannot publish** until it is fixed. Sets the exit code — unless the listing is delisted (below). |
 | **ADVISORY** | `no-screenshots`, `empty-description`, `empty-tagline`, `empty-category`, `scanning-media` | Recommended, but nothing is held up. |
 
-**The exit code is the point.** `1` when any blocking problem was found, `0`
-otherwise — including when only advisories were found, and when you have no
-listings at all. So it gates a release script without parsing anything:
+**Delisted listings are reported but do not gate.** An app whose status is
+`removed` still gets a full row, in its own section — the verdict shrinks, the
+report does not. Its blocking problems are counted in `summary.blocking` and
+excluded from `summary.gating`. Without this one old removed app would fail
+every run forever: measured on production, an account with 21 listings had 11
+blocking problems and **ten of them sat on `removed` apps**. Republish a listing
+and it gates again on the next run, with no flag to remember. Only an explicit
+`removed` is excluded — an unrecognised status still gates, because "we could
+not tell it is delisted" is not "it is delisted".
+
+**The exit code is the point.** `1` when a blocking problem was found on a
+listing that **can still publish**, `0` otherwise — including when only
+advisories were found, when the only blocking problems are on delisted
+listings, and when you have no listings at all. So it gates a release script
+without parsing anything:
 
 ```bash
 civitai app doctor my-app || exit 1
 ```
 
-`--json` emits the same verdict as one object (`ok`, `apps[]` with a `blocking`
-and an `advisory` array each, and a `summary`) and uses the **same** exit codes,
+`--json` emits the same verdict as one object and uses the **same** exit codes,
 so a script must branch on the code before trusting the payload. Every other
 code keeps its usual meaning — `3` not authorized, `4` no such app of yours, `5`
-transport.
+transport. The shape:
+
+| Field | Meaning |
+| --- | --- |
+| `ok` | The verdict, and the structured form of the exit code. Follows `summary.gating`, **not** `summary.blocking`. |
+| `apps[]` | Every listing checked, **gating apps first, delisted last**. Each carries `slug`, `name`, `appListingId`, `appBlockId` (null for offsite), `status`, `role`, `delisted`, and a `blocking` and an `advisory` array — never null, `[]` when empty. |
+| `apps[].delisted` | `true` when this listing's status is `removed`, i.e. its blocking problems were reported and not counted. |
+| `summary.blocking` | **Every** blocking problem found, so it matches the arrays you can see. |
+| `summary.gating` | The subset on listings that can still publish. **This is the exit code.** |
+| `summary.advisory` / `summary.apps` / `summary.delisted` | Advisory findings, apps checked, and how many of them are delisted. |
+
+Two counts rather than one is deliberate: publishing a single number would force
+a choice between a total that disagrees with the arrays and a verdict that
+disagrees with the exit code. Ask `ok` for "may this ship", `summary.blocking`
+for "is anything wrong anywhere".
 
 **Each finding names its fix, and only fixes that exist.** The three media
 problems (and `blocked-media`, where replacing the asset *is* the fix) print the
