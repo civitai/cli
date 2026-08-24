@@ -80,6 +80,13 @@ var patternRules = map[string]patternRule{
 		rule:    "must contain at least one non-whitespace character",
 		example: "A tiny image tool",
 	},
+	// repository — the optional public source-repository link. The regex is a
+	// coarse SHAPE check, not the whole server-side rule, so the gloss claims
+	// only what the regex itself enforces.
+	`^https://(github\.com|gitlab\.com|codeberg\.org)/[^/]+/[^/]+/?$`: {
+		rule:    "must be a repository root URL on github.com, gitlab.com or codeberg.org — exactly https://<host>/<owner>/<repo>, with no deeper path",
+		example: "https://github.com/civitai/civitai",
+	},
 	// minApiVersion
 	`^\d+(\.\d+)*$`: {
 		rule:    "must be dot-separated numbers only",
