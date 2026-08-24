@@ -77,6 +77,17 @@ func patternFixtures() []patternFixture {
 			got:      "   ",
 		},
 		{
+			// A DEEP LINK rather than a wrong host: the host arm and the
+			// path-depth arm are separate halves of this regex, and a deep
+			// link is the mistake an author actually makes (pasting the URL
+			// out of the browser bar while looking at a file).
+			name:     "repository",
+			pattern:  `^https://(github\.com|gitlab\.com|codeberg\.org)/[^/]+/[^/]+/?$`,
+			manifest: `{"blockId":"ok-app","repository":"https://github.com/civitai/civitai/tree/main",` + base + `}`,
+			field:    "repository",
+			got:      "https://github.com/civitai/civitai/tree/main",
+		},
+		{
 			name:     "minApiVersion",
 			pattern:  `^\d+(\.\d+)*$`,
 			manifest: `{"blockId":"ok-app","minApiVersion":"v1",` + base + `}`,
@@ -202,6 +213,11 @@ func TestPatternGlossesAreTheRightWayRound(t *testing.T) {
 			"exactly three numeric components plus an optional prerelease"},
 		{`\S`, "non-whitespace", "A tiny image tool",
 			"the only requirement is that SOMETHING is there"},
+		// "repository root URL" rather than a fragment naming the hosts or the
+		// scheme: the assetBundleUrl row below already owns "https:// URL", and
+		// a fragment quoting the scheme would sit inside this rule too.
+		{`^https://(github\.com|gitlab\.com|codeberg\.org)/[^/]+/[^/]+/?$`, "repository root URL", "https://github.com/civitai/civitai",
+			"an exact host allowlist plus a path that is exactly two segments"},
 		// "dot-separated numbers ONLY" rather than the bare phrase: the version
 		// rule above says "three dot-separated numbers", so the shorter
 		// fragment appears in two rules and the absence half stops working.
