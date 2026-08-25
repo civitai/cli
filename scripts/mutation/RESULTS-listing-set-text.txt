@@ -1,186 +1,186 @@
-BASELINE: {'PASS': 2952, 'FAIL': 0, 'PANIC': 0} total=2952 built=True
-S1-omitempty-collapse: KILLED ({'PASS': 2950, 'FAIL': 2, 'PANIC': 0})
+BASELINE: {'PASS': 3027, 'FAIL': 0, 'PANIC': 0} total=3027 built=True
+S1-omitempty-collapse: KILLED ({'PASS': 3025, 'FAIL': 2, 'PANIC': 0})
     <- TestSetTextEmptyStringIsSentAsAnEmptyString
        app_listing_set_text_test.go:259: `--tagline ""` sent NO tagline key — an empty string is a legal value and must reach the server: map[]
     <- TestSetTextAllowsABlankSetWithYes
        app_listing_set_text_test.go:928: tagline = , want an empty JSON string
-S2-clear-sends-empty-not-null: KILLED ({'PASS': 2950, 'FAIL': 2, 'PANIC': 0})
+S2-clear-sends-empty-not-null: KILLED ({'PASS': 3025, 'FAIL': 2, 'PANIC': 0})
     <- TestSetTextClearSendsExplicitNull
        app_listing_set_text_test.go:278: tagline = "", want null — `--clear` must NULL the column, not empty it
     <- TestSetTextClearNeedsNoYes
        app_listing_set_text_test.go:940: tagline = "", want null
-S3-changed-becomes-nonempty: KILLED ({'PASS': 2947, 'FAIL': 5, 'PANIC': 0})
+S3-changed-becomes-nonempty: KILLED ({'PASS': 3022, 'FAIL': 5, 'PANIC': 0})
     <- TestSetTextEmptyStringIsSentAsAnEmptyString
        app_listing_set_text_test.go:254: set-text --tagline "" --yes: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
     <- TestSetTextSuccessLineDistinguishesEmptyFromCleared
        app_listing_set_text_test.go:608: empty arm: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
     <- TestSetTextRefusesABlankSetWithoutYes
        app_listing_set_text_test.go:907: the refusal must name "--clear tagline" so both intents are reachable: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
-S4-patch-always-sends-all: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S4-patch-always-sends-all: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextSendsOnlyTheFieldsGiven
        app_listing_set_text_test.go:235: patch carries 2 keys, want exactly 1 — an omitted flag must send NO key: map[description:[34 34] tagline:[34 90 101 112 104 121 114 32 98 97 116 99 104 32 112 105 112 101 108 105 110 101 115 34]]
-S5-category-any-value: KILLED ({'PASS': 2950, 'FAIL': 2, 'PANIC': 0})
+S5-category-any-value: KILLED ({'PASS': 3025, 'FAIL': 2, 'PANIC': 0})
     <- TestSetTextRejectsAnUnknownCategoryLocally
        app_listing_set_text_test.go:420: an unknown category must be refused
     <- TestSetTextCategoryCaseMissIsNamed
        app_listing_set_text_test.go:445: `Utility` must be refused — categories are lower-case and the server compares exactly
-S6-category-case-insensitive: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S6-category-case-insensitive: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextCategoryCaseMissIsNamed
        app_listing_set_text_test.go:445: `Utility` must be refused — categories are lower-case and the server compares exactly
-S7-empty-category-allowed: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S7-empty-category-allowed: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextEmptyCategoryIsRefusedAndNamesClear
        app_listing_set_text_test.go:465: the refusal must name `--clear category`, which is what the user probably wanted: --category "" is not one of the marketplace categories: generation, games, utility, discovery, moderation, analytics, other
-S8-category-list-dropped-value: KILLED ({'PASS': 2943, 'FAIL': 2, 'PANIC': 0})
+S8-category-list-dropped-value: KILLED ({'PASS': 3018, 'FAIL': 2, 'PANIC': 0})
     <- TestSetTextCategoryAcceptsEveryServerValue
        app_listing_set_text_test.go:397: the category mirror holds 6 values, want 7 — re-read `<civitai>/src/server/services/blocks/marketplace-categories.constants.ts` and update this floor deliberately: [generation games utility moderation analytics other]
     <- TestCategoryMirrorMatchesTheServerVocabularyExactly
        app_listing_set_text_test.go:868: the category mirror has drifted from the server vocabulary.
-S9-empty-patch-allowed: KILLED ({'PASS': 2950, 'FAIL': 2, 'PANIC': 0})
+S9-empty-patch-allowed: KILLED ({'PASS': 3025, 'FAIL': 2, 'PANIC': 0})
     <- TestSetTextRefusalsHappenBeforeAnyRequest
        app_listing_set_text_test.go:495: expected a refusal for no field at all
     <- TestSetTextRefusalsHappenBeforeAnyRequest/no_field_at_all
        app_listing_set_text_test.go:495: expected a refusal for no field at all
-S10-tagline-cap-off-by-one: KILLED ({'PASS': 2950, 'FAIL': 2, 'PANIC': 0})
+S10-tagline-cap-off-by-one: KILLED ({'PASS': 3025, 'FAIL': 2, 'PANIC': 0})
     <- TestSetTextRefusalsHappenBeforeAnyRequest
        app_listing_set_text_test.go:495: expected a refusal for tagline over the cap
     <- TestSetTextRefusalsHappenBeforeAnyRequest/tagline_over_the_cap
        app_listing_set_text_test.go:495: expected a refusal for tagline over the cap
-S11-cap-counts-bytes: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S11-cap-counts-bytes: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextCapsCountRunesNotBytes
        app_listing_set_text_test.go:534: a 140-rune tagline must be accepted however many BYTES it occupies: --tagline is 280 characters; the server accepts at most 140
-S12-contradiction-allowed: KILLED ({'PASS': 2950, 'FAIL': 2, 'PANIC': 0})
+S12-contradiction-allowed: KILLED ({'PASS': 3025, 'FAIL': 2, 'PANIC': 0})
     <- TestSetTextRefusalsHappenBeforeAnyRequest
        app_listing_set_text_test.go:495: expected a refusal for set and clear contradict
     <- TestSetTextRefusalsHappenBeforeAnyRequest/set_and_clear_contradict
        app_listing_set_text_test.go:495: expected a refusal for set and clear contradict
-S13-unknown-clear-field-ignored: KILLED ({'PASS': 2950, 'FAIL': 2, 'PANIC': 0})
+S13-unknown-clear-field-ignored: KILLED ({'PASS': 3025, 'FAIL': 2, 'PANIC': 0})
     <- TestSetTextRefusalsHappenBeforeAnyRequest
        app_listing_set_text_test.go:501: refusal should say "does not know the field", got: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
     <- TestSetTextRefusalsHappenBeforeAnyRequest/unknown_clear_field
        app_listing_set_text_test.go:501: refusal should say "does not know the field", got: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
-S14-requires-review-ignored: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S14-requires-review-ignored: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextReportsTheServersBranchNotItsOwnBelief
        app_listing_set_text_test.go:559: when the SERVER says it staged a revision the CLI must say so (missing "civitai app listing submit-revision"):
-S17-empty-vs-cleared-line-same: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S17-empty-vs-cleared-line-same: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextSuccessLineDistinguishesEmptyFromCleared
        app_listing_set_text_test.go:619: the empty-string arm should say so:
-S18-writes-wrong-listing-key: KILLED ({'PASS': 2932, 'FAIL': 20, 'PANIC': 0})
+S18-writes-wrong-listing-key: KILLED ({'PASS': 3007, 'FAIL': 20, 'PANIC': 0})
     <- TestSetTextSendsOnlyTheFieldsGiven
        app_listing_set_text_test.go:233: update addressed listingId "", want "apl_SETTEXT77"
     <- TestSetTextEmptyStringIsSentAsAnEmptyString
        app_listing_set_text_test.go:256: update addressed listingId "", want "apl_SETTEXT77"
     <- TestSetTextClearSendsExplicitNull
        app_listing_set_text_test.go:272: update addressed listingId "", want "apl_SETTEXT77"
-S19-shadow-gate-dropped: KILLED ({'PASS': 2947, 'FAIL': 5, 'PANIC': 0})
+S19-shadow-gate-dropped: KILLED ({'PASS': 3022, 'FAIL': 5, 'PANIC': 0})
     <- TestSetTextWarnsOnAnOpenUnsubmittedShadow
        app_listing_set_text_test.go:704: an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning exists for, and `hasPendingRevision` is false here because nothing has been submitted.
     <- TestSetTextJSONIsTheWholeOfStdout
        app_listing_set_text_test.go:1000: the overwrite advisory must still print on stderr under --json:
     <- TestSetTextAdvisoryReachesBothRenderings
-       app_listing_set_text_test.go:1179: the overwrite advisory must reach the json rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
-S20-shadowid-not-decoded: KILLED ({'PASS': 2946, 'FAIL': 6, 'PANIC': 0})
+       app_listing_set_text_test.go:1175: the overwrite advisory must reach the json rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
+S20-shadowid-not-decoded: KILLED ({'PASS': 3021, 'FAIL': 6, 'PANIC': 0})
     <- TestSetTextWarnsOnAnOpenUnsubmittedShadow
        app_listing_set_text_test.go:704: an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning exists for, and `hasPendingRevision` is false here because nothing has been submitted.
     <- TestSetTextJSONShapeIsPinnedWhole
        app_listing_set_text_test.go:973: --json payload changed.
     <- TestSetTextJSONIsTheWholeOfStdout
        app_listing_set_text_test.go:1000: the overwrite advisory must still print on stderr under --json:
-S21-shadow-gate-always: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S21-shadow-gate-always: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextIsSilentWithNoShadowAndNoPendingRevision
        app_listing_set_text_test.go:748: no shadow and no pending revision — the warning must NOT fire; a warning that always fires is one nobody reads:
-S22-kind-gate-removed: KILLED ({'PASS': 2940, 'FAIL': 12, 'PANIC': 0})
+S22-kind-gate-removed: KILLED ({'PASS': 3015, 'FAIL': 12, 'PANIC': 0})
     <- TestSetTextRefusesAnOnsiteListing
        app_listing_set_text_test.go:770: an ON-SITE listing's text is manifest-governed — the write must be refused, not silently reverted at the next approve
     <- TestSetTextKindGateFailsClosed
        app_listing_set_text_test.go:822: a slug listMine does not list must refuse
     <- TestSetTextKindGateFailsClosed/unknown_kind
        app_listing_set_text_test.go:822: a slug listMine does not list must refuse
-S23-kind-gate-inverted: KILLED ({'PASS': 2905, 'FAIL': 47, 'PANIC': 0})
+S23-kind-gate-inverted: KILLED ({'PASS': 2980, 'FAIL': 47, 'PANIC': 0})
     <- TestSetTextSendsOnlyTheFieldsGiven
        app_listing_set_text_test.go:231: set-text: this app's listing text is manifest-governed: "set-text-app" is an ON-SITE app, and its tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your
     <- TestSetTextEmptyStringIsSentAsAnEmptyString
        app_listing_set_text_test.go:254: set-text --tagline "" --yes: this app's listing text is manifest-governed: "set-text-app" is an ON-SITE app, and its tagline, description and category come from block.manifest.json — editing them here would be overwritten by t
     <- TestSetTextClearSendsExplicitNull
        app_listing_set_text_test.go:270: set-text --clear tagline: this app's listing text is manifest-governed: "set-text-app" is an ON-SITE app, and its tagline, description and category come from block.manifest.json — editing them here would be overwritten by the 
-S24-kind-fail-open: KILLED ({'PASS': 2949, 'FAIL': 3, 'PANIC': 0})
+S24-kind-fail-open: KILLED ({'PASS': 3024, 'FAIL': 3, 'PANIC': 0})
     <- TestSetTextKindGateFailsClosed
        app_listing_set_text_test.go:807: an unestablished kind must refuse, not proceed
     <- TestSetTextKindGateFailsClosed/unknown_kind
        app_listing_set_text_test.go:807: an unestablished kind must refuse, not proceed
     <- TestSetTextUnknownKindRefusalIsClassified
        app_listing_set_text_test.go:1080: an unestablished kind must refuse
-S25-kind-not-normalised: KILLED ({'PASS': 2948, 'FAIL': 4, 'PANIC': 0})
+S25-kind-not-normalised: KILLED ({'PASS': 3023, 'FAIL': 4, 'PANIC': 0})
     <- TestSetTextKindMatchIsNormalised
        app_listing_set_text_test.go:841: kind " onsite " must read as onsite and refuse
     <- TestSetTextKindMatchIsNormalised/ONSITE
        app_listing_set_text_test.go:841: kind " onsite " must read as onsite and refuse
     <- TestSetTextKindMatchIsNormalised/Onsite
        app_listing_set_text_test.go:841: kind " onsite " must read as onsite and refuse
-S26-unlisted-slug-fails-open: KILLED ({'PASS': 2949, 'FAIL': 3, 'PANIC': 0})
+S26-unlisted-slug-fails-open: KILLED ({'PASS': 3024, 'FAIL': 3, 'PANIC': 0})
     <- TestSetTextKindGateFailsClosed
        app_listing_set_text_test.go:822: a slug listMine does not list must refuse
     <- TestSetTextKindGateFailsClosed/slug_not_listed
        app_listing_set_text_test.go:822: a slug listMine does not list must refuse
     <- TestSetTextNotFoundOnACappedPageIsNotConclusive
        app_listing_set_text_test.go:1140: control: expected a refusal
-S27-blank-guard-removed: KILLED ({'PASS': 2947, 'FAIL': 5, 'PANIC': 0})
+S27-blank-guard-removed: KILLED ({'PASS': 3022, 'FAIL': 5, 'PANIC': 0})
     <- TestSetTextRefusesABlankSetWithoutYes
        app_listing_set_text_test.go:900: --description "\t\n " must be refused without --yes — it would empty a public field
     <- TestSetTextRefusesABlankSetWithoutYes/tagline=/blank
        app_listing_set_text_test.go:900: --description "\t\n " must be refused without --yes — it would empty a public field
     <- TestSetTextRefusesABlankSetWithoutYes/description=/blank
        app_listing_set_text_test.go:900: --description "\t\n " must be refused without --yes — it would empty a public field
-S28-blank-guard-ignores-whitespace: KILLED ({'PASS': 2949, 'FAIL': 3, 'PANIC': 0})
+S28-blank-guard-ignores-whitespace: KILLED ({'PASS': 3024, 'FAIL': 3, 'PANIC': 0})
     <- TestSetTextRefusesABlankSetWithoutYes
        app_listing_set_text_test.go:900: --description "\t\n " must be refused without --yes — it would empty a public field
     <- TestSetTextRefusesABlankSetWithoutYes/tagline=/blank#01
        app_listing_set_text_test.go:900: --description "\t\n " must be refused without --yes — it would empty a public field
     <- TestSetTextRefusesABlankSetWithoutYes/description=/blank#01
        app_listing_set_text_test.go:900: --description "\t\n " must be refused without --yes — it would empty a public field
-S29-blank-guard-blocks-yes: KILLED ({'PASS': 2947, 'FAIL': 5, 'PANIC': 0})
+S29-blank-guard-blocks-yes: KILLED ({'PASS': 3022, 'FAIL': 5, 'PANIC': 0})
     <- TestSetTextEmptyStringIsSentAsAnEmptyString
        app_listing_set_text_test.go:254: set-text --tagline "" --yes: --tagline is blank, which would empty a public field. If that is deliberate, pass --yes (or `--clear tagline` to null it instead). If it is not, an unset shell variable or a failed command substitu
     <- TestSetTextEmptyStringAndNullAreDifferentOnTheWire
        app_listing_set_text_test.go:288: empty arm: --description is blank, which would empty a public field. If that is deliberate, pass --yes (or `--clear description` to null it instead). If it is not, an unset shell variable or a failed command substitution is th
     <- TestSetTextSuccessLineDistinguishesEmptyFromCleared
        app_listing_set_text_test.go:608: empty arm: --tagline is blank, which would empty a public field. If that is deliberate, pass --yes (or `--clear tagline` to null it instead). If it is not, an unset shell variable or a failed command substitution is the usual 
-S30-json-reports-blank-as-set: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S30-json-reports-blank-as-set: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextJSONReportsBlankAsEmptyNotSet
        app_listing_set_text_test.go:1020: fields.tagline = "set", want "empty" — a whitespace-only value leaves `doctor` still reporting empty-tagline, so reporting it as "set" would be false
-S31-json-openrevision-dropped: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S31-json-openrevision-dropped: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextJSONShapeIsPinnedWhole
        app_listing_set_text_test.go:973: --json payload changed.
-S32-category-misspelled: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S32-category-misspelled: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestCategoryMirrorMatchesTheServerVocabularyExactly
        app_listing_set_text_test.go:868: the category mirror has drifted from the server vocabulary.
-S33-category-reordered: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S33-category-reordered: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestCategoryMirrorMatchesTheServerVocabularyExactly
        app_listing_set_text_test.go:868: the category mirror has drifted from the server vocabulary.
-S34-onsite-refusal-reclassified: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S34-onsite-refusal-reclassified: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextOnsiteRefusalIsAVerdictNotAUsageError
        app_listing_set_text_test.go:1047: the refusal must carry ErrOnsiteTextNotEditable so its exit code is assertable, got *errors.errorString: this app's listing text is manifest-governed: "set-text-app" is an ON-SITE app, and its tagline, description and categor
-S35-read-arm-blames-a-named-value: KILLED ({'PASS': 2945, 'FAIL': 7, 'PANIC': 0})
+S35-read-arm-blames-a-named-value: KILLED ({'PASS': 3020, 'FAIL': 7, 'PANIC': 0})
     <- TestListingBadRequestSubjectIsReachablePerRoute
-       listing_op_test.go:407: route /api/trpc/appListings.listMine does not produce its arm's exact message.
+       listing_op_test.go:413: route /api/trpc/appListings.listMine does not produce its arm's exact message.
     <- TestListingBadRequestSubjectIsReachablePerRoute/getMyListingForApp
-       listing_op_test.go:407: route /api/trpc/appListings.listMine does not produce its arm's exact message.
+       listing_op_test.go:413: route /api/trpc/appListings.listMine does not produce its arm's exact message.
     <- TestListingBadRequestSubjectIsReachablePerRoute/getMyListingForEdit
-       listing_op_test.go:407: route /api/trpc/appListings.listMine does not produce its arm's exact message.
-S36-capped-notfound-stated-as-fact: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+       listing_op_test.go:413: route /api/trpc/appListings.listMine does not produce its arm's exact message.
+S36-capped-notfound-stated-as-fact: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextNotFoundOnACappedPageIsNotConclusive
        app_listing_set_text_test.go:1126: a miss off a capped page must say it is uncertain (missing "not conclusive"): no listing of yours is called "an-app-past-the-cap" — `civitai app doctor` lists every app you can work on
-S37-cap-off-by-one: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S37-cap-off-by-one: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextNotFoundOnACappedPageIsNotConclusive
        app_listing_set_text_test.go:1126: a miss off a capped page must say it is uncertain (missing "not conclusive"): no listing of yours is called "an-app-past-the-cap" — `civitai app doctor` lists every app you can work on
-S38-advisory-skips-the-human-path: KILLED ({'PASS': 2950, 'FAIL': 2, 'PANIC': 0})
+S38-advisory-skips-the-human-path: KILLED ({'PASS': 3025, 'FAIL': 2, 'PANIC': 0})
     <- TestSetTextAdvisoryReachesBothRenderings
-       app_listing_set_text_test.go:1179: the overwrite advisory must reach the human rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
+       app_listing_set_text_test.go:1175: the overwrite advisory must reach the human rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
     <- TestSetTextAdvisoryReachesBothRenderings/human
-       app_listing_set_text_test.go:1179: the overwrite advisory must reach the human rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
-S39-unknown-kind-refusal-untagged: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+       app_listing_set_text_test.go:1175: the overwrite advisory must reach the human rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
+S39-unknown-kind-refusal-untagged: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestSetTextUnknownKindRefusalIsClassified
        app_listing_set_text_test.go:1083: the unknown-kind refusal must carry the sentinel so its exit code is assertable, got *errors.errorString: this app's listing text is manifest-governed: could not establish whether "set-text-app" is an on-site or off-site app,
-S40-fake-fidelity-guard-blind: KILLED ({'PASS': 2951, 'FAIL': 1, 'PANIC': 0})
+S40-fake-fidelity-guard-blind: KILLED ({'PASS': 3026, 'FAIL': 1, 'PANIC': 0})
     <- TestScanListingRefFakesCanSeeAnOffender
        listing_ref_fake_fidelity_test.go:98: a reply OMITTING shadowId must be seen as 1 candidate / 1 offender, got 1/0 — the ledger's zero would be a fact about a blind scanner
 
@@ -218,7 +218,7 @@ S17-empty-vs-cleared-line-same	KILLED	the success line stops distinguishing an e
 S18-writes-wrong-listing-key	KILLED	the write is addressed with the shadow proc's key, which updateListing refuses
 	TestSetTextSendsOnlyTheFieldsGiven :: app_listing_set_text_test.go:233: update addressed listingId "", want "apl_SETTEXT77"; TestSetTextEmptyStringIsSentAsAnEmptyString :: app_listing_set_text_test.go:256: update addressed listingId "", want "apl_SETTEXT77"; TestSetTextClearSendsExplicitNull :: app_listing_set_text_test.go:272: update addressed listingId "", want "apl_SETTEXT77"
 S19-shadow-gate-dropped	KILLED	the warning reverts to the SUBMITTED-only gate and cannot see an open, unsubmitted shadow
-	TestSetTextWarnsOnAnOpenUnsubmittedShadow :: app_listing_set_text_test.go:704: an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning exists for, and `hasPendingRevision` is false here because nothing has been submitted.; TestSetTextJSONIsTheWholeOfStdout :: app_listing_set_text_test.go:1000: the overwrite advisory must still print on stderr under --json:; TestSetTextAdvisoryReachesBothRenderings :: app_listing_set_text_test.go:1179: the overwrite advisory must reach the json rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
+	TestSetTextWarnsOnAnOpenUnsubmittedShadow :: app_listing_set_text_test.go:704: an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning exists for, and `hasPendingRevision` is false here because nothing has been submitted.; TestSetTextJSONIsTheWholeOfStdout :: app_listing_set_text_test.go:1000: the overwrite advisory must still print on stderr under --json:; TestSetTextAdvisoryReachesBothRenderings :: app_listing_set_text_test.go:1175: the overwrite advisory must reach the json rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
 S20-shadowid-not-decoded	KILLED	shadowId stops being decoded, so the open-shadow warning goes silent
 	TestSetTextWarnsOnAnOpenUnsubmittedShadow :: app_listing_set_text_test.go:704: an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning exists for, and `hasPendingRevision` is false here because nothing has been submitted.; TestSetTextJSONShapeIsPinnedWhole :: app_listing_set_text_test.go:973: --json payload changed.; TestSetTextJSONIsTheWholeOfStdout :: app_listing_set_text_test.go:1000: the overwrite advisory must still print on stderr under --json:
 S21-shadow-gate-always	KILLED	the warning fires on every run, training the reader to ignore it
@@ -250,13 +250,13 @@ S33-category-reordered	KILLED	the mirror's ORDER drifts, changing what every ref
 S34-onsite-refusal-reclassified	KILLED	the sentinel is formatted, not wrapped, so errors.Is fails and the exit code is unpinned
 	TestSetTextOnsiteRefusalIsAVerdictNotAUsageError :: app_listing_set_text_test.go:1047: the refusal must carry ErrOnsiteTextNotEditable so its exit code is assertable, got *errors.errorString: this app's listing text is manifest-governed: "set-text-app" is an ON-SITE app, and its tagline, description and categor
 S35-read-arm-blames-a-named-value	KILLED	the shared READ arm blames a value listMine never sends, and points at a route that cannot list a seat-held listing
-	TestListingBadRequestSubjectIsReachablePerRoute :: listing_op_test.go:407: route /api/trpc/appListings.listMine does not produce its arm's exact message.; TestListingBadRequestSubjectIsReachablePerRoute/getMyListingForApp :: listing_op_test.go:407: route /api/trpc/appListings.listMine does not produce its arm's exact message.; TestListingBadRequestSubjectIsReachablePerRoute/getMyListingForEdit :: listing_op_test.go:407: route /api/trpc/appListings.listMine does not produce its arm's exact message.
+	TestListingBadRequestSubjectIsReachablePerRoute :: listing_op_test.go:413: route /api/trpc/appListings.listMine does not produce its arm's exact message.; TestListingBadRequestSubjectIsReachablePerRoute/getMyListingForApp :: listing_op_test.go:413: route /api/trpc/appListings.listMine does not produce its arm's exact message.; TestListingBadRequestSubjectIsReachablePerRoute/getMyListingForEdit :: listing_op_test.go:413: route /api/trpc/appListings.listMine does not produce its arm's exact message.
 S36-capped-notfound-stated-as-fact	KILLED	a miss off a CAPPED page is reported as conclusive, hard-blocking a write on an app the caller owns
 	TestSetTextNotFoundOnACappedPageIsNotConclusive :: app_listing_set_text_test.go:1126: a miss off a capped page must say it is uncertain (missing "not conclusive"): no listing of yours is called "an-app-past-the-cap" — `civitai app doctor` lists every app you can work on
 S37-cap-off-by-one	KILLED	an exactly-at-cap page is called complete, though a clamp produces exactly that
 	TestSetTextNotFoundOnACappedPageIsNotConclusive :: app_listing_set_text_test.go:1126: a miss off a capped page must say it is uncertain (missing "not conclusive"): no listing of yours is called "an-app-past-the-cap" — `civitai app doctor` lists every app you can work on
 S38-advisory-skips-the-human-path	KILLED	the human rendering returns early and loses the overwrite advisory that --json still reports
-	TestSetTextAdvisoryReachesBothRenderings :: app_listing_set_text_test.go:1179: the overwrite advisory must reach the human rendering too — a branch that returns early makes the two disagree about whether the hazard applies:; TestSetTextAdvisoryReachesBothRenderings/human :: app_listing_set_text_test.go:1179: the overwrite advisory must reach the human rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
+	TestSetTextAdvisoryReachesBothRenderings :: app_listing_set_text_test.go:1175: the overwrite advisory must reach the human rendering too — a branch that returns early makes the two disagree about whether the hazard applies:; TestSetTextAdvisoryReachesBothRenderings/human :: app_listing_set_text_test.go:1175: the overwrite advisory must reach the human rendering too — a branch that returns early makes the two disagree about whether the hazard applies:
 S39-unknown-kind-refusal-untagged	KILLED	the unknown-kind refusal formats its sentinel instead of wrapping it, unpinning the exit code
 	TestSetTextUnknownKindRefusalIsClassified :: app_listing_set_text_test.go:1083: the unknown-kind refusal must carry the sentinel so its exit code is assertable, got *errors.errorString: this app's listing text is manifest-governed: could not establish whether "set-text-app" is an on-site or off-site app,
 S40-fake-fidelity-guard-blind	KILLED	the fake-fidelity guard stops seeing offenders, so the next consumer can be blinded again
