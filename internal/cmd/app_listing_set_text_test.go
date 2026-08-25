@@ -993,3 +993,49 @@ func TestSetTextJSONReportsBlankAsEmptyNotSet(t *testing.T) {
 			"`doctor` still reporting empty-tagline, so reporting it as \"set\" would be false", got.Fields["tagline"])
 	}
 }
+
+// TestSetTextOnsiteRefusalIsAVerdictNotAUsageError pins the exit CLASSIFICATION
+// of the onsite refusal, which the message assertions above do not touch.
+//
+// 🔴 IT IS 1, NOT 2, AND NOTHING ELSE IN THE SUITE WOULD NOTICE THE MOVE.
+// Stripping the sentinel, or tagging it civitai.ErrBadRequest, leaves every
+// character of the refusal intact and silently reclassifies it — the exact gap
+// AGENTS item 7 exists for. `2` means the INVOCATION was wrong and would send a
+// script's owner re-reading their command line; every flag and the slug are
+// well-formed here. What is wrong is the SUBJECT, which the contract publishes
+// under `1` alongside an invalid manifest and a version regression.
+//
+// Measured live against production 2026-08-25: `set-text --slug
+// model-benchmarking --tagline "…"` (a real ON-SITE approved listing) exited 1
+// with this message, and the listing's tagline md5 was byte-identical before and
+// after — the refusal wrote nothing.
+func TestSetTextOnsiteRefusalIsAVerdictNotAUsageError(t *testing.T) {
+	newSetTextServer(t, withKind("onsite"))
+	_, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline)
+	if err == nil {
+		t.Fatal("expected the onsite refusal")
+	}
+	if !errors.Is(err, ErrOnsiteTextNotEditable) {
+		t.Errorf("the refusal must carry ErrOnsiteTextNotEditable so its exit code is assertable, got %T: %v", err, err)
+	}
+	// 🔴 NOT a usage error, and not any API kind — either would move the code.
+	if errors.Is(err, ErrUsage) {
+		t.Error("the onsite refusal must NOT be a usage error: the invocation is well-formed, the SUBJECT is not editable")
+	}
+	for name, kind := range map[string]error{
+		"ErrBadRequest":   civitai.ErrBadRequest,
+		"ErrUnauthorized": civitai.ErrUnauthorized,
+		"ErrNotFound":     civitai.ErrNotFound,
+		"ErrRateLimited":  civitai.ErrRateLimited,
+		"ErrNetwork":      civitai.ErrNetwork,
+	} {
+		if errors.Is(err, kind) {
+			t.Errorf("the onsite refusal must not match civitai.%s — that would move its exit code", name)
+		}
+	}
+	// POSITIVE CONTROL on the walk: it must be able to SEE a kind, or the five
+	// negatives above are a fact about a comparison that matches nothing.
+	if !errors.Is(civitai.Tag(civitai.ErrNotFound, errors.New("x")), civitai.ErrNotFound) {
+		t.Fatal("the errors.Is walk cannot see a kind it should — the negatives prove nothing")
+	}
+}

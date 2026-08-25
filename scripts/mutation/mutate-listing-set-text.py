@@ -198,6 +198,19 @@ MUTANTS = [
      '\t"generation",\n\t"games",',
      '\t"games",\n\t"generation",',
      "the mirror's ORDER drifts, changing what every refusal prints"),
+
+    # 🔴 `%w` -> `%v`, NOT "delete the verb". The first draft removed `%w:` and
+    # left `ErrOnsiteTextNotEditable` in the argument list, so `go vet`'s printf
+    # check rejected it and the mutant BUILD-FAILED — evidence of nothing, and a
+    # mutant that cannot compile tests nothing at all. `%v` keeps the arity, so
+    # it compiles and produces exactly the defect under test: the sentinel is
+    # FORMATTED rather than WRAPPED, the message is byte-identical, and
+    # `errors.Is` stops matching — which is precisely how an exit code drifts
+    # while every prose assertion in the suite still passes.
+    ("S34-onsite-refusal-reclassified", CMD,
+     '\t\t\t\t"%w: %q is an ON-SITE app',
+     '\t\t\t\t"%v: %q is an ON-SITE app',
+     "the sentinel is formatted, not wrapped, so errors.Is fails and the exit code is unpinned"),
 ]
 
 

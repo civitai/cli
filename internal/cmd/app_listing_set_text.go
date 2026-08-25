@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -52,6 +53,14 @@ import (
 // every refusal print them.
 var setTextFieldNames = []string{"tagline", "description", "category"}
 
+// ErrOnsiteTextNotEditable is returned when `set-text` is pointed at an ON-SITE
+// listing, whose tagline/description/category are manifest-governed. It carries
+// the exit code and nothing else; the message names the remedy.
+//
+// A named sentinel rather than a bare error so the exit-code contract can be
+// asserted with errors.Is rather than by matching prose — AGENTS item 7.
+var ErrOnsiteTextNotEditable = errors.New("this app's listing text is manifest-governed")
+
 func newAppListingSetTextCmd() *cobra.Command {
 	var lc listingCommon
 	var tagline, description, category string
@@ -81,8 +90,9 @@ a public field. Whitespace-only counts as blank (the server trims).
 CATEGORY must be one of:
 ` + strings.Join(wrapRunes(strings.Join(appapi.MarketplaceCategories, ", "), 74), "\n") + `
 
-ON-SITE apps are REFUSED: their copy comes from block.manifest.json and the
-platform overwrites it at your next approved version. Edit the manifest instead.
+ON-SITE apps are REFUSED (exit 1 — a verdict about the app, not a bad command):
+their copy comes from block.manifest.json and the platform overwrites it at your
+next approved version. Edit the manifest instead.
 
 This applies IN PLACE on every listing status — these are not "material"
 changes, so they never open a revision for re-review. The server rate-limits
@@ -194,11 +204,23 @@ func refuseOnsiteTextEdit(ctx context.Context, client *appapi.Client, slug strin
 		}
 		kind := strings.ToLower(strings.TrimSpace(r.Kind))
 		if kind == appapi.ListingKindOnsite {
+			// 🔴 EXIT 1, NOT 2, AND IT IS TAGGED SO THAT IS DELIBERATE RATHER
+			// THAN A FALLTHROUGH. Every flag, value and slug in the invocation is
+			// well-formed — a `2` would tell a script the CALL was malformed and
+			// send someone re-reading their command line. What is wrong is the
+			// SUBJECT: this app's copy is not editable through this route. That
+			// is the same shape as an invalid manifest or a version regression,
+			// which the exit-code contract already publishes under `1` as a
+			// verdict about the project. Left untagged for the API classifier —
+			// tagging it civitai.ErrBadRequest is the only route to `2` — and
+			// pinned by TestSetTextOnsiteRefusalIsAVerdictNotAUsageError, because
+			// nothing else in the suite would notice the move.
 			return fmt.Errorf(
-				"%q is an ON-SITE app, and its tagline, description and category come from "+
+				"%w: %q is an ON-SITE app, and its tagline, description and category come from "+
 					"block.manifest.json — editing them here would be overwritten by the manifest at your "+
 					"next approved version. Edit `name` / `tagline` / `description` in block.manifest.json and run "+
-					"`civitai app submit`. (Category is set by a moderator on an on-site app.)", r.Slug)
+					"`civitai app submit`. (Category is set by a moderator on an on-site app.)",
+				ErrOnsiteTextNotEditable, r.Slug)
 		}
 		if kind == "" {
 			return fmt.Errorf(
