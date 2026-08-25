@@ -239,6 +239,18 @@ type MyListing struct {
 	Problems []ListingProblem `json:"problems"`
 }
 
+// ListMineCap is the server's hard ceiling on a `listMine` page
+// (`MY_APP_LISTINGS_LIMIT` in
+// `<civitai>/src/server/services/blocks/app-access.service.ts:1242`, read at
+// origin/release 2026-08-25).
+//
+// 🔴 THE ROUTE OFFERS NO CURSOR, NO TOTAL AND NO `hasMore`, and it orders
+// `serialId desc` then `take: limit` — so past the cap the OLDEST listings are
+// dropped with nothing on the wire to say so. That is exactly the shape
+// `appapi.ListSubmissionsCap` exists for on the sibling read, whose own comment
+// names the failure: "silently reporting a truncated list as complete".
+const ListMineCap = 200
+
 // ListMyListings reads every listing the caller owns or holds an accepted editor
 // seat on, each with its completeness `problems[]`.
 //

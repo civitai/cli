@@ -64,7 +64,14 @@ func e2eDoctorRowWithStatus(slug, listingID, status string, problems ...map[stri
 		"status":       status,
 		"role":         "owner",
 		"appBlockId":   nil,
-		"problems":     problems,
+		// 🔴 THE REAL SERVER ALWAYS SENDS A KIND, SO THE FAKE MUST TOO. Omitting
+		// it left this whole process-level suite running on the unknown-kind
+		// arm, i.e. structurally blind to every kind-dependent behaviour —
+		// benign here, but it is the same fake-omits-a-field shape that hid the
+		// shadowId defect on the sibling command. The unit fixtures already do
+		// this and say why; this brings the e2e along.
+		"kind":     "offsite",
+		"problems": problems,
 	}
 }
 

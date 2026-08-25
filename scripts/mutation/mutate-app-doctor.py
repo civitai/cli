@@ -29,8 +29,8 @@ MUTANTS = [
      "off-by-one on the exit gate: one blocking problem stops failing the build"),
 
     ("M2-severity-compare", DOCTOR,
-     "return p.Severity == appapi.SeverityBlocking",
-     "return p.Severity == appapi.SeverityAdvisory",
+     "return strings.EqualFold(strings.TrimSpace(p.Severity), appapi.SeverityBlocking)",
+     "return strings.EqualFold(strings.TrimSpace(p.Severity), appapi.SeverityAdvisory)",
      "the severity split is inverted"),
 
     ("M3-ok-field", DOCTOR,
@@ -84,8 +84,8 @@ MUTANTS = [
      "scanning-media advises re-attaching, which restarts the scan"),
 
     ("M13-unknown-severity", DOCTOR,
-     "return p.Severity == appapi.SeverityBlocking",
-     "return p.Severity != appapi.SeverityAdvisory",
+     "return strings.EqualFold(strings.TrimSpace(p.Severity), appapi.SeverityBlocking)",
+     "return !strings.EqualFold(strings.TrimSpace(p.Severity), appapi.SeverityAdvisory)",
      "an unrecognised severity is promoted to blocking"),
 
     ("M14-summary-count", DOCTOR,
@@ -94,8 +94,8 @@ MUTANTS = [
      "the summary counts blocked APPS instead of blocking PROBLEMS"),
 
     ("M15-exit-tag", DOCTOR,
-     'return fmt.Errorf("%w: %d blocking problem(s) on publishable listing(s) — see the report above",\n\t\t\tErrListingBlocked, payload.Summary.Gating)',
-     'return civitai.Tag(civitai.ErrBadRequest, fmt.Errorf("%w: %d blocking problem(s) on publishable listing(s) — see the report above",\n\t\t\tErrListingBlocked, payload.Summary.Gating))',
+     'return fmt.Errorf("%w: %d blocking problem(s) on publishable listing(s) — the report above lists them; "+\n\t\t\t"this exit code is the verdict, not a failure of the command",\n\t\t\tErrListingBlocked, payload.Summary.Gating)',
+     'return civitai.Tag(civitai.ErrBadRequest, fmt.Errorf("%w: %d blocking problem(s) on publishable listing(s) — the report above lists them; "+\n\t\t\t"this exit code is the verdict, not a failure of the command",\n\t\t\tErrListingBlocked, payload.Summary.Gating))',
      "the verdict is tagged ErrBadRequest, moving its exit code from 1 to 2"),
 
     ("M16-metrics-403-claim", METRICS,
@@ -189,6 +189,44 @@ MUTANTS = [
      "Fix:      doctorRemedy(p, r.Slug, editURL, r.Kind),",
      'Fix:      doctorRemedy(p, r.Slug, editURL, ""),',
      "the row's kind never reaches the remedy, so every app gets the offsite arm"),
+
+    # --- audit finding 1: blocked-media sufficiency per slot ---
+    ("M33-screenshot-advice-appends", DOCTOR,
+     '\t\t\treturn "REMOVE the blocked screenshot — adding another does not clear it: " +',
+     '\t\t\treturn "civitai app listing add-screenshot <file> --slug " + slug + " " +',
+     "a blocked SCREENSHOT is answered with add-screenshot, which appends and leaves it blocked"),
+
+    ("M34-blocked-kind-always-empty", DOCTOR,
+     '\tl := strings.ToLower(label)',
+     '\tl := ""',
+     "the slot is never extracted, so every blocked asset gets the generic arm"),
+
+    ("M35-fallback-drops-removal", DOCTOR,
+     '\t\t"civitai app listing set-icon, civitai app listing set-cover, civitai app listing rm-screenshot"',
+     '\t\t"civitai app listing set-icon, civitai app listing set-cover, civitai app listing add-screenshot"',
+     "the unknown-label fallback loses the REMOVAL, which is the only sufficient screenshot fix"),
+
+    # --- audit finding 3: the page cap ---
+    ("M36-truncation-never-reported", DOCTOR,
+     "\tout.Summary.Truncated = len(rows) >= appapi.ListMineCap",
+     "\tout.Summary.Truncated = false",
+     "a truncated page reports ok:true indistinguishably from a complete one"),
+
+    ("M37-truncation-off-by-one", DOCTOR,
+     "\tout.Summary.Truncated = len(rows) >= appapi.ListMineCap",
+     "\tout.Summary.Truncated = len(rows) > appapi.ListMineCap",
+     "an exactly-at-cap page is called complete, though it is the commonest truncated case"),
+
+    ("M38-truncation-caveat-silent", DOCTOR,
+     "\tif !payload.Summary.Truncated {\n\t\treturn\n\t}",
+     "\tif true {\n\t\treturn\n\t}",
+     "the stderr caveat never prints, so only a JSON reader can learn the page was capped"),
+
+    # --- audit finding 5: --json carries kind ---
+    ("M39-json-drops-kind", DOCTOR,
+     "\t\t\tKind:         r.Kind,",
+     '\t\t\tKind:         "",',
+     "--json omits the field that decides `fix`, so a consumer cannot reproduce the branch"),
 ]
 
 
@@ -204,7 +242,16 @@ def run_tests():
 
 
 def parse(out):
-    """Return (failed_tests, first assertion line per test)."""
+    """Return (failed_tests, first assertion line per test).
+
+    🔴 THE ATTRIBUTION IS APPROXIMATE AND THE VERDICTS ARE NOT. This scans
+    BACKWARD up to 60 lines from a `--- FAIL` header for any `_test.go:NN:`,
+    which cross-attributes across subtests — in one real sweep all four of a
+    mutant's reported killers echoed a single subtest's message. Which tests
+    FAILED is exact; the REASON printed beside each is a nearby line, not a
+    proven cause. Do not quote these as "each killed by an assertion naming the
+    specific defect" without reading the run.
+    """
     fails = re.findall(r"^\s*--- FAIL: (\S+)", out, re.M)
     detail = {}
     lines = out.split("\n")
@@ -228,6 +275,13 @@ def parse(out):
         "PASS": len(re.findall(r"^\s*--- PASS:", out, re.M)),
         "FAIL": len(fails),
         "SKIP": len(re.findall(r"^\s*--- SKIP:", out, re.M)),
+        # 🔴 A RUN CAN DIE PART-WAY AND STILL LOOK KILLED. One mutant reported
+        # PASS=766 against a 3049 baseline — ~2280 tests produced no verdict at
+        # all, almost certainly a panic. It was legitimately KILLED (its killers
+        # fire before the death), but nothing here could tell "31 tests failed"
+        # from "the suite stopped a third of the way in", and the second is a
+        # result about the harness rather than about the code.
+        "PANIC": len(re.findall(r"^panic:", out, re.M)),
     }
     build_err = "build failed" if "[build failed]" in out or "cannot use" in out else ""
     return fails, detail, counts, build_err
@@ -237,10 +291,11 @@ def main():
     only = sys.argv[1:] if len(sys.argv) > 1 else None
     base_out = run_tests()
     _, _, base_counts, _ = parse(base_out)
-    print(f"BASELINE: {base_counts}")
+    base_total = base_counts["PASS"] + base_counts["FAIL"] + base_counts["SKIP"]
+    print(f"BASELINE: {base_counts} total={base_total}")
     if base_counts["FAIL"] != 0:
         print("!! baseline is not green — every result below is meaningless")
-        return 1
+        return 3
 
     results = []
     for mid, rel, old, new, why in MUTANTS:
@@ -267,8 +322,19 @@ def main():
         else:
             verdict = "SURVIVED"
         killers = "; ".join(f"{f} :: {detail.get(f,'(no line)')}" for f in fails[:4])
+        # Compare this run's TOTAL against the baseline's. A large shortfall
+        # means tests never ran, which no verdict word conveys on its own.
+        total = counts["PASS"] + counts["FAIL"] + counts["SKIP"]
+        short = base_total - total
+        note = ""
+        if counts["PANIC"] or short > base_total * 0.05:
+            note = (f"  ⚠ TRUNCATED RUN: {total} verdicts vs baseline {base_total}"
+                    f" ({short} missing, panics={counts['PANIC']}) — the verdict below is about a run"
+                    f" that did not finish; treat the KILL as unattributed.")
         results.append((mid, verdict, killers, why))
         print(f"{mid}: {verdict} ({counts})")
+        if note:
+            print(note)
         if verdict == "KILLED":
             for f in fails[:4]:
                 print(f"    <- {f}\n       {detail.get(f,'(no assertion line captured)')}")
@@ -282,9 +348,18 @@ def main():
         print(f"{mid}\t{verdict}\t{why}\n\t{killers}")
     print(f"\n==== VERDICT ==== ran={len(results)-len(bad)} killed="
           f"{len([r for r in results if r[1]=='KILLED'])} survived={len(surv)} not_run={len(bad)}")
+    bf = [r for r in results if r[1] == "BUILD-FAIL"]
     if bad:
         print("!! NOT A CLEAN SWEEP — these mutants NEVER RAN, so they are evidence of nothing:")
         for mid, _, _, why in bad:
+            print(f"     {mid}: {why}")
+        return 2
+    if bf:
+        # A mutant that does not COMPILE tested nothing either. It used to be
+        # counted outside `killed` while the process still exited 0, so the
+        # summary's own arithmetic disagreed with itself.
+        print("!! these mutants did not COMPILE, so they are evidence of nothing:")
+        for mid, _, _, why in bf:
             print(f"     {mid}: {why}")
         return 2
     if surv:

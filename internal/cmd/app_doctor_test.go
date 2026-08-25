@@ -334,6 +334,7 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
       "appBlockId": null,
       "status": "draft",
       "role": "owner",
+      "kind": "offsite",
       "delisted": false,
       "blocking": [
         {
@@ -359,6 +360,7 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
       "appBlockId": "` + docBlockA + `",
       "status": "approved",
       "role": "editor",
+      "kind": "offsite",
       "delisted": false,
       "blocking": [],
       "advisory": []
@@ -370,6 +372,7 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
       "appBlockId": null,
       "status": "removed",
       "role": "owner",
+      "kind": "offsite",
       "delisted": true,
       "blocking": [
         {
@@ -387,7 +390,8 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
     "blocking": 2,
     "advisory": 1,
     "gating": 1,
-    "delisted": 1
+    "delisted": 1,
+    "truncated": false
   }
 }
 `
@@ -471,7 +475,11 @@ func TestDoctorFixAdviceNamesOnlyCommandsThatExist(t *testing.T) {
 	// Positive control on the SCAN: if the regex stopped matching (a reworded
 	// fix line, a changed command spelling) every check above would silently
 	// become vacuous.
-	if seen < 5 {
+	// 🔴 THE FLOOR IS THE REAL COUNT, NOT A SAFE-LOOKING SMALLER ONE. At 5
+	// against 7 actual references the `blocked-media` arm could lose two
+	// commands and this control would still pass — a positive control with two
+	// references of slack is a control for a scan that has half stopped working.
+	if seen < 7 {
 		t.Fatalf("the fix-line scan found only %d command references across the eight codes — "+
 			"the regex is not reading what it thinks it is, so the resolutions above prove nothing", seen)
 	}
@@ -776,6 +784,7 @@ type doctorPayloadShape struct {
 		AppBlockID   *string `json:"appBlockId"`
 		Status       string  `json:"status"`
 		Role         string  `json:"role"`
+		Kind         string  `json:"kind"`
 		Delisted     bool    `json:"delisted"`
 		Blocking     []struct {
 			Code     string `json:"code"`
@@ -791,11 +800,12 @@ type doctorPayloadShape struct {
 		} `json:"advisory"`
 	} `json:"apps"`
 	Summary struct {
-		Apps     int `json:"apps"`
-		Blocking int `json:"blocking"`
-		Advisory int `json:"advisory"`
-		Gating   int `json:"gating"`
-		Delisted int `json:"delisted"`
+		Apps      int  `json:"apps"`
+		Blocking  int  `json:"blocking"`
+		Advisory  int  `json:"advisory"`
+		Gating    int  `json:"gating"`
+		Delisted  int  `json:"delisted"`
+		Truncated bool `json:"truncated"`
 	} `json:"summary"`
 }
 
@@ -1233,5 +1243,198 @@ func TestDoctorKindMatchIsNormalised(t *testing.T) {
 				t.Errorf("kind %q must read as onsite, got fix %q", spelling, fix)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// blocked-media: the three slots do NOT share a remedy.
+// ---------------------------------------------------------------------------
+
+// TestBlockedMediaRemedyIsSufficientPerSlot is the correctness fix, and the
+// reason the previous guard could not catch it is worth stating:
+// TestDoctorFixAdviceNamesOnlyCommandsThatExist asserts the named commands
+// RESOLVE IN THE COBRA TREE. Resolving is not sufficiency. `add-screenshot` is a
+// real command that does not fix a blocked screenshot.
+//
+// 🔴 `add-screenshot` APPENDS. `assertAssetsScanClean`
+// (`<civitai>/src/server/services/blocks/app-listing-assets.service.ts:857-894`)
+// refuses go-live while ANY attached screenshot is Blocked, so adding a second
+// image leaves the listing exactly as blocked and the author out of ideas. Only
+// `rm-screenshot` clears it — and its `alsc_` id is not in `listMine`, so the
+// read that prints it has to be named too.
+func TestBlockedMediaRemedyIsSufficientPerSlot(t *testing.T) {
+	cases := []struct {
+		label      string
+		mustSay    []string
+		mustNotSay []string
+	}{
+		{
+			// set-icon OVERWRITES the slot, dereferencing the blocked Image.
+			label:      "Replace the blocked icon before it can publish",
+			mustSay:    []string{"set-icon"},
+			mustNotSay: []string{"add-screenshot", "rm-screenshot", "set-cover"},
+		},
+		{
+			label:      "Replace the blocked cover before it can publish",
+			mustSay:    []string{"set-cover"},
+			mustNotSay: []string{"add-screenshot", "rm-screenshot", "set-icon"},
+		},
+		{
+			// 🔴 The whole finding: REMOVE, and name the read that shows the id.
+			label:      "Replace the blocked screenshot before it can publish",
+			mustSay:    []string{"rm-screenshot", "civitai app listing status"},
+			mustNotSay: []string{"add-screenshot"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.label, func(t *testing.T) {
+			fix := doctorRemedy(
+				appapi.ListingProblem{Code: "blocked-media", Label: tc.label, Severity: "blocking"},
+				docSlugA, "https://example.invalid/x", "offsite")
+			for _, w := range tc.mustSay {
+				if !strings.Contains(fix, w) {
+					t.Errorf("missing %q in: %s", w, fix)
+				}
+			}
+			for _, w := range tc.mustNotSay {
+				if strings.Contains(fix, w) {
+					t.Errorf("must not advise %q — it does not clear this slot: %s", w, fix)
+				}
+			}
+		})
+	}
+}
+
+// TestBlockedMediaUnknownLabelKeepsTheRemoval: a re-worded label must degrade to
+// an arm that is still SUFFICIENT. Losing precision is acceptable; losing the
+// removal is the defect returning.
+func TestBlockedMediaUnknownLabelKeepsTheRemoval(t *testing.T) {
+	fix := doctorRemedy(
+		appapi.ListingProblem{Code: "blocked-media", Label: "this asset was rejected by the scanner", Severity: "blocking"},
+		docSlugA, "https://example.invalid/x", "offsite")
+	if !strings.Contains(fix, "rm-screenshot") {
+		t.Errorf("the fallback arm must still name the REMOVAL, or a blocked screenshot is unfixable: %s", fix)
+	}
+	if strings.Contains(fix, "add-screenshot") {
+		t.Errorf("the fallback must not advise appending, which never clears a blocked row: %s", fix)
+	}
+}
+
+// TestBlockedMediaKindExtractionIsWordBased, with a negative control so the
+// helper is not merely returning the first thing it sees.
+func TestBlockedMediaKindExtractionIsWordBased(t *testing.T) {
+	for label, want := range map[string]string{
+		"Replace the blocked icon before it can publish":       "icon",
+		"Replace the blocked COVER before it can publish":      "cover",
+		"replace the blocked Screenshot before it can publish": "screenshot",
+		"something else entirely":                              "",
+	} {
+		if got := blockedMediaKind(label); got != want {
+			t.Errorf("blockedMediaKind(%q) = %q, want %q", label, got, want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// severity normalisation, and the page cap.
+// ---------------------------------------------------------------------------
+
+// TestDoctorSeverityIsNormalised: a cased severity must not silently become an
+// advisory. Latent today (the server's union is lowercase), and fixed because
+// unknown STATUS gated loudly while unknown SEVERITY failed quietly.
+func TestDoctorSeverityIsNormalised(t *testing.T) {
+	for _, spelling := range []string{"blocking", "BLOCKING", "Blocking", " blocking "} {
+		t.Run(strings.TrimSpace(spelling), func(t *testing.T) {
+			newDoctorServer(t, doctorRow(docSlugA, docListingA, "draft", "owner", nil,
+				doctorProblem("missing-icon", "Missing icon (required before publishing)", spelling)))
+			stdout, _, err := run(t, "app", "doctor", "--json")
+			if err == nil {
+				t.Fatalf("severity %q must gate; stdout:\n%s", spelling, stdout)
+			}
+			got := decodeDoctorJSON(t, stdout)
+			if len(got.Apps[0].Blocking) != 1 || got.Summary.Gating != 1 || got.OK {
+				t.Errorf("severity %q filed wrong: blocking=%d gating=%d ok=%v — a payload that files a "+
+					"'blocking' finding under advisory[] while echoing its severity is a contradiction the CLI made",
+					spelling, len(got.Apps[0].Blocking), got.Summary.Gating, got.OK)
+			}
+		})
+	}
+	// POSITIVE CONTROL: an unrecognised WORD is still advisory. Normalisation
+	// makes casing safe; it cannot make a new vocabulary word meaningful.
+	newDoctorServer(t, doctorRow(docSlugA, docListingA, "draft", "owner", nil,
+		doctorProblem("missing-icon", "Missing icon", "catastrophic")))
+	if _, _, err := run(t, "app", "doctor"); err != nil {
+		t.Fatalf("control: an unrecognised severity word must NOT gate, got %v", err)
+	}
+}
+
+// TestDoctorReportsTruncationAtThePageCap.
+//
+// 🔴 `ok: true` OTHERWISE MEANS "NOTHING BLOCKING IN WHAT I COULD SEE" AND SAYS
+// "NOTHING BLOCKING". `listMine` clamps to appapi.ListMineCap, orders
+// `serialId desc`, and offers no cursor and no total — so past the cap the
+// OLDEST listings vanish silently and `doctor || exit 1` passes for a listing
+// that cannot publish. This is the same failure `submissionsListTruncated`
+// exists for on the sibling read.
+func TestDoctorReportsTruncationAtThePageCap(t *testing.T) {
+	rows := make([]map[string]any, 0, appapi.ListMineCap)
+	for i := 0; i < appapi.ListMineCap; i++ {
+		rows = append(rows, doctorRow(fmt.Sprintf("bulk-app-%03d", i), fmt.Sprintf("apl_BULK%03d", i),
+			"approved", "owner", nil))
+	}
+	newDoctorServer(t, rows...)
+	stdout, stderr, err := run(t, "app", "doctor", "--json")
+	if err != nil {
+		t.Fatalf("all clean, so exit 0: %v", err)
+	}
+	got := decodeDoctorJSON(t, stdout)
+	if !got.Summary.Truncated {
+		t.Errorf("a full-length page must set summary.truncated — `ok:true` on a truncated read is " +
+			"indistinguishable from `ok:true` on a complete one")
+	}
+	for _, want := range []string{"caps this read", "were NOT checked", "would not change the exit code"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("the caveat must reach stderr (missing %q):\n%s", want, stderr)
+		}
+	}
+	// STDERR only — `--json` stdout stays a pure payload.
+	if strings.Contains(stdout, "caps this read") {
+		t.Errorf("the caveat leaked into --json stdout")
+	}
+}
+
+// TestDoctorDoesNotCryTruncationBelowTheCap is the negative control: a caveat
+// that always prints is one nobody reads.
+func TestDoctorDoesNotCryTruncationBelowTheCap(t *testing.T) {
+	newDoctorServer(t, doctorRow(docSlugA, docListingA, "approved", "owner", nil))
+	stdout, stderr, err := run(t, "app", "doctor", "--json")
+	if err != nil {
+		t.Fatalf("doctor: %v", err)
+	}
+	if decodeDoctorJSON(t, stdout).Summary.Truncated {
+		t.Error("one listing is not a truncated page")
+	}
+	if strings.Contains(stderr, "caps this read") {
+		t.Errorf("the cap caveat must not print below the cap:\n%s", stderr)
+	}
+}
+
+// TestDoctorVerdictDoesNotReadAsAToolFailure: cobra prefixes a returned error
+// with "Error: ", so a successful diagnosis of an incomplete listing printed
+// `Error: the listing has blocking problems` — and a CI scraper watching stderr
+// for `Error:` flags a run that worked exactly as designed.
+func TestDoctorVerdictDoesNotReadAsAToolFailure(t *testing.T) {
+	newDoctorServer(t, doctorRow(docSlugA, docListingA, "draft", "owner", nil,
+		doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking")))
+	_, _, err := run(t, "app", "doctor")
+	if err == nil {
+		t.Fatal("expected the blocking verdict")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "not ready to publish") {
+		t.Errorf("the verdict should describe the LISTING, got: %v", err)
+	}
+	if !strings.Contains(msg, "not a failure of the command") {
+		t.Errorf("the verdict should say it is a finding, not a tool failure, got: %v", err)
 	}
 }

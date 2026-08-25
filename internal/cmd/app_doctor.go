@@ -39,7 +39,7 @@ import (
 // same reason. It is deliberately left UNTAGGED for the exit mapper (tagging it
 // civitai.ErrBadRequest — the only route to exit 2 — would move it), which
 // TestDoctorBlockingExitsGeneric in cmd/civitai is what makes deliberate.
-var ErrListingBlocked = errors.New("the listing has blocking problems")
+var ErrListingBlocked = errors.New("listing not ready to publish")
 
 // listingEditPath is the web listing editor, the fix route for the three TEXT
 // problems. `%s` is the appListingId `listMine` returned.
@@ -104,14 +104,38 @@ func doctorRemedy(p appapi.ListingProblem, slug, editURL, kind string) string {
 	case problemNoScreenshots:
 		return "civitai app listing add-screenshot <file> --slug " + slug
 	case problemBlockedMedia:
-		// 🔴 THE LABEL ON THE LINE ABOVE NAMES THE SLOT, AND THIS ARM DOES NOT
-		// TRY TO. `blocked-media` is emitted once per affected asset KIND and
-		// the kind lives ONLY in the server's label ("Replace the blocked icon
-		// …"); the code is kind-less. Guessing one of the three here would name
-		// the wrong command two times out of three, so all three are offered and
-		// the label is what disambiguates.
-		return "replace the blocked asset named above, with --slug " + slug + " — " +
-			"civitai app listing set-icon, civitai app listing set-cover, civitai app listing add-screenshot"
+		// 🔴 THE THREE SLOTS DO NOT HAVE THE SAME REMEDY, AND OFFERING ALL THREE
+		// WAS WRONG FOR ONE OF THEM. `set-icon` and `set-cover` OVERWRITE the
+		// slot, so the blocked Image is dereferenced and the listing can publish.
+		// `add-screenshot` APPENDS — the blocked row stays attached, and
+		// `assertAssetsScanClean`
+		// (`<civitai>/src/server/services/blocks/app-listing-assets.service.ts:857-894`)
+		// refuses go-live while ANY attached screenshot is Blocked. So an author
+		// who followed the old advice for a blocked screenshot added a second
+		// image and stayed blocked, with the command that actually fixes it —
+		// `rm-screenshot` — never named.
+		//
+		// The kind lives ONLY in the server's label ("Replace the blocked
+		// <kind> before it can publish", listing-problems.ts:144); the code is
+		// kind-less. So the label is parsed for it, and an UNRECOGNISED label
+		// falls back to naming every route including the removal — losing the
+		// precision, never the sufficiency.
+		switch blockedMediaKind(p.Label) {
+		case "icon":
+			return "replace it — the new icon overwrites the blocked one: civitai app listing set-icon <file> --slug " + slug
+		case "cover":
+			return "replace it — the new cover overwrites the blocked one: civitai app listing set-cover <file> --slug " + slug
+		case "screenshot":
+			// 🔴 REMOVE, DO NOT ADD. Adding leaves the blocked row attached and
+			// the listing still refused at go-live. The id is an `alsc_…` this
+			// command never sees — `listMine` does not carry screenshot rows —
+			// so the read that prints it has to be named too.
+			return "REMOVE the blocked screenshot — adding another does not clear it: " +
+				"civitai app listing status --slug " + slug + " to find its alsc_ id, then " +
+				"civitai app listing rm-screenshot <id> --slug " + slug
+		}
+		return "replace or remove the blocked asset named above, with --slug " + slug + " — " +
+			"civitai app listing set-icon, civitai app listing set-cover, civitai app listing rm-screenshot"
 	case problemScanningMedia:
 		// 🔴 NO COMMAND AT ALL, deliberately. A still-scanning asset resolves
 		// itself; printing a fix would tell an author to act on a state that is
@@ -144,16 +168,46 @@ func doctorRemedy(p appapi.ListingProblem, slug, editURL, kind string) string {
 	return "no CLI route for this problem yet — open the listing in the browser: " + editURL
 }
 
-// doctorSeverity classifies one problem for RENDERING and for the exit verdict.
+// blockedMediaKind extracts the asset slot from a `blocked-media` label.
 //
-// 🔴 UNKNOWN IS NOT BLOCKING. A severity string this CLI does not recognise is
-// grouped with the advisories and reported under its own heading rather than
-// failing the build: a release gate that starts refusing every release the day
-// the server adds a ninth vocabulary word is a gate people disable. The finding
-// is never hidden — it is printed with its code, its label and its severity
-// verbatim.
+// 🔴 PARSING A LABEL IS NOT IDEAL AND IS THE ONLY OPTION. `blocked-media` is
+// emitted once per affected KIND and the code carries none of it; the kind
+// appears only in the sentence the server writes. The match is a
+// case-insensitive word search over a fixed three-word vocabulary rather than a
+// format assumption, so a re-worded label degrades to the generic arm instead of
+// mis-naming a slot — and the generic arm names the REMOVAL too, which is the
+// clause whose absence was the defect.
+func blockedMediaKind(label string) string {
+	l := strings.ToLower(label)
+	for _, kind := range []string{"screenshot", "cover", "icon"} {
+		if strings.Contains(l, kind) {
+			return kind
+		}
+	}
+	return ""
+}
+
+// doctorIsBlocking classifies one problem for RENDERING and for the exit verdict.
+//
+// 🔴 IT NORMALISES, LIKE doctorGates AND listingIsOnsite, AND THE ASYMMETRY IT
+// REMOVES POINTED THE UNSAFE WAY. This was a byte-exact `==` while both sibling
+// predicates folded case and trimmed — and this is the one that owns the EXIT
+// CODE. A server sending `"Blocking"` would have produced `gating: 0`, `ok:
+// true`, exit 0, with the finding filed under `advisory[]` while carrying
+// `"severity": "Blocking"`: a contradiction the CLI itself manufactured, in a
+// payload a script is meant to trust. Not reachable today — the server's union
+// is lowercase literals — so this is latent, and fixed for the same reason the
+// others were: unknown STATUS gated loudly while unknown SEVERITY failed
+// quietly, which are opposite defaults for one class of drift.
+//
+// 🔴 AN UNRECOGNISED WORD IS STILL NOT BLOCKING, and that is deliberate rather
+// than an omission. Normalisation makes a CASING change safe; it cannot make a
+// new vocabulary word meaningful. A release gate that started refusing every
+// release the day the server adds a ninth severity is a gate people disable, so
+// the finding is grouped with the advisories — never hidden: it prints with its
+// code, its label and its severity verbatim.
 func doctorIsBlocking(p appapi.ListingProblem) bool {
-	return p.Severity == appapi.SeverityBlocking
+	return strings.EqualFold(strings.TrimSpace(p.Severity), appapi.SeverityBlocking)
 }
 
 // listingStatusRemoved is the ONE lifecycle status that takes a listing out of
@@ -223,6 +277,10 @@ type doctorAppJSON struct {
 	AppBlockID *string `json:"appBlockId"`
 	Status     string  `json:"status"`
 	Role       string  `json:"role"`
+	// Kind is "onsite" or "offsite" — carried because it DECIDES `fix` for the
+	// three text codes. Without it a consumer sees two different `fix` strings
+	// for one `code` and cannot reproduce the branch that chose between them.
+	Kind string `json:"kind"`
 	// Delisted means this listing's status is `removed`, so its blocking
 	// problems are REPORTED but do NOT set the exit code.
 	//
@@ -269,6 +327,16 @@ type doctorSummaryJSON struct {
 	Gating int `json:"gating"`
 	// Delisted is how many of Apps are `removed`.
 	Delisted int `json:"delisted"`
+	// Truncated is true when the server's page cap may have hidden listings.
+	//
+	// 🔴 `ok: true` MEANS "NOTHING BLOCKING IN WHAT I COULD SEE", AND WITHOUT
+	// THIS FIELD A CONSUMER CANNOT TELL THAT APART FROM "NOTHING BLOCKING".
+	// `listMine` clamps to appapi.ListMineCap, orders `serialId desc` and offers
+	// no cursor and no total, so past the cap the OLDEST listings are dropped
+	// silently. An account over the cap with a blocking problem on a hidden
+	// listing would otherwise get `ok: true`, exit 0, and a release that cannot
+	// publish.
+	Truncated bool `json:"truncated"`
 }
 
 // doctorJSON is the `--json` payload.
@@ -353,7 +421,7 @@ revision draft on a live listing, so it is safe to run in a loop.`,
 			if err != nil {
 				return err
 			}
-			return runAppDoctor(cmd.OutOrStdout(), rows, slug, cfg.BaseURL(), jsonOut)
+			return runAppDoctor(cmd.OutOrStdout(), cmd.ErrOrStderr(), rows, slug, cfg.BaseURL(), jsonOut)
 		},
 	}
 	cmd.Flags().BoolVar(&jsonOut, "json", false,
@@ -385,7 +453,7 @@ func doctorNoSuchApp(slug string, rows []appapi.MyListing) error {
 // selects, renders and returns the verdict. Separated from the cobra wiring so
 // the verdict can be exercised without a server, and so the SAME selection and
 // the SAME counting feed both renderings.
-func runAppDoctor(out io.Writer, rows []appapi.MyListing, slug, baseURL string, jsonOut bool) error {
+func runAppDoctor(out, errOut io.Writer, rows []appapi.MyListing, slug, baseURL string, jsonOut bool) error {
 	selected := rows
 	if slug != "" {
 		selected = nil
@@ -414,6 +482,11 @@ func runAppDoctor(out io.Writer, rows []appapi.MyListing, slug, baseURL string, 
 	} else {
 		printDoctorReport(out, payload)
 	}
+	// 🔴 AFTER BOTH RENDERINGS AND BEFORE THE VERDICT — on STDERR, so `--json`
+	// stdout stays a pure payload and the exit code is untouched. It has to run
+	// on the JSON path too: a script reading `ok: true` from a truncated page is
+	// exactly who this caveat is for.
+	warnDoctorTruncated(errOut, payload)
 	// 🔴 `Gating`, NOT `Blocking`. See doctorGates: a delisted listing's blocking
 	// problems are printed and do not set the exit code.
 	if payload.Summary.Gating > 0 {
@@ -422,7 +495,15 @@ func runAppDoctor(out io.Writer, rows []appapi.MyListing, slug, baseURL string, 
 		// report of the same facts. It quotes the GATING count for the same
 		// reason — a message naming a bigger number than the verdict acted on
 		// would send a reader hunting for problems the gate deliberately ignored.
-		return fmt.Errorf("%w: %d blocking problem(s) on publishable listing(s) — see the report above",
+		// 🔴 IT DOES NOT LEAD WITH A WORD THAT READS AS A TOOL FAILURE. cobra
+		// prefixes a returned error with "Error: " on stderr, so a completely
+		// successful diagnosis of an incomplete listing printed
+		// `Error: the listing has blocking problems…` — and a CI scraper
+		// watching stderr for `Error:` flags a run that worked exactly as
+		// designed. The verdict is a FINDING about the listing, not a failure of
+		// the command, and the sentence now says so.
+		return fmt.Errorf("%w: %d blocking problem(s) on publishable listing(s) — the report above lists them; "+
+			"this exit code is the verdict, not a failure of the command",
 			ErrListingBlocked, payload.Summary.Gating)
 	}
 	return nil
@@ -463,6 +544,7 @@ func doctorPayload(rows []appapi.MyListing, baseURL string) doctorJSON {
 			AppBlockID:   r.AppBlockID,
 			Status:       r.Status,
 			Role:         r.Role,
+			Kind:         r.Kind,
 			Delisted:     !gates,
 			Blocking:     []doctorProblemJSON{},
 			Advisory:     []doctorProblemJSON{},
@@ -490,6 +572,12 @@ func doctorPayload(rows []appapi.MyListing, baseURL string) doctorJSON {
 		}
 		out.Apps = append(out.Apps, app)
 	}
+	// The comparison is `>=`, not `==`, and it is computed from what the SERVER
+	// returned: at or beyond the cap this CLI cannot claim the listing is
+	// complete. A caller holding exactly the cap gets a caveat while nothing is
+	// missing — accepted, because the opposite error is the one this exists to
+	// prevent, and the wording says "may".
+	out.Summary.Truncated = len(rows) >= appapi.ListMineCap
 	out.OK = out.Summary.Gating == 0
 	return out
 }
@@ -543,6 +631,20 @@ func printDoctorReport(w io.Writer, payload doctorJSON) {
 		fmt.Fprintf(w, "%d of them are delisted; %d blocking problem(s) on publishable listings set the exit code.\n",
 			payload.Summary.Delisted, payload.Summary.Gating)
 	}
+}
+
+// warnDoctorTruncated writes the page-cap caveat to STDERR, so `--json` stdout
+// stays a pure payload and the exit code is unchanged — the same shape
+// `app status` uses for the sibling read's cap.
+func warnDoctorTruncated(errOut io.Writer, payload doctorJSON) {
+	if !payload.Summary.Truncated {
+		return
+	}
+	fmt.Fprintf(errOut,
+		"note: the server returned %d listings — it caps this read and offers no way to page, so older "+
+			"listings may exist and were NOT checked. A blocking problem on one of them would not appear "+
+			"here, and would not change the exit code. Check a specific app with `civitai app doctor <slug>`.\n",
+		payload.Summary.Apps)
 }
 
 // printDoctorGroup renders one severity group, or nothing when it is empty.
