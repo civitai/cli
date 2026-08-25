@@ -2156,9 +2156,24 @@ problems (and `blocked-media`, where replacing the asset *is* the fix) print the
 exact `civitai app listing set-icon` / `set-cover` / `add-screenshot` command,
 `--slug` already filled in. `scanning-media` prints no command at all, because
 the scan finishes on its own. The three **text** problems — description,
-tagline, category — print the listing's **web editor URL**: the procedures that
-write those fields are reachable by a CLI token, but `doctor` is a diagnosis and
-deliberately mutates nothing, so a CLI route for them is a separate command.
+tagline, category — are **kind-aware**, because who owns that copy differs:
+
+| kind | fix printed | why |
+| --- | --- | --- |
+| **off-site** | the listing's **web editor URL** | the copy is author-supplied through the submit wizard |
+| **on-site** | **`block.manifest.json`**, then `civitai app submit` a new version | the copy is **manifest-governed** |
+
+🔴 That distinction is not cosmetic. On an on-site listing the platform
+overwrites `name` / `tagline` / `description` / `category` **from the manifest on
+every subsequent-version moderator approve** — so telling an on-site author to
+edit them in the browser is advice the platform silently reverts: they follow it,
+`doctor` goes quiet, and the problem comes back with nothing explaining why. An
+unrecognised or absent kind takes the **browser** arm, deliberately: naming a
+manifest an app may not have is confusing and self-correcting, while the reverse
+is the silent failure.
+
+`doctor` itself still mutates nothing — it is a diagnosis, so a CLI route for
+writing those fields is a separate command.
 
 Two properties worth knowing:
 

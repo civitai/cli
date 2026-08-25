@@ -1,0 +1,17 @@
+harness_rc=0
+==== VERDICT ==== ran=32 killed=32 survived=0 not_run=0
+--- new mutants ---
+M28-onsite-arm-dropped: KILLED ({'PASS': 3042, 'FAIL': 7, 'SKIP': 1})
+M29-onsite-arm-always: KILLED ({'PASS': 3043, 'FAIL': 6, 'SKIP': 1})
+M30-kind-not-normalised: KILLED ({'PASS': 3045, 'FAIL': 4, 'SKIP': 1})
+M31-kind-unknown-takes-manifest: KILLED ({'PASS': 3046, 'FAIL': 3, 'SKIP': 1})
+M32-kind-not-passed-through: KILLED ({'PASS': 3042, 'FAIL': 7, 'SKIP': 1})
+M28-onsite-arm-dropped	KILLED	an onsite app is told to edit the browser, whose edit (3b-sync) reverts
+M29-onsite-arm-always	KILLED	an offsite app is told to edit a block.manifest.json it does not have
+M30-kind-not-normalised	KILLED	a padded or mis-cased kind silently re-routes the text advice
+M31-kind-unknown-takes-manifest	KILLED	an absent/unknown kind takes the manifest arm instead of the recoverable one
+M32-kind-not-passed-through	KILLED	the row's kind never reaches the remedy, so every app gets the offsite arm
+--- reconcile ---
+defined=32 verdicts=31
+
+[exited with code 0]

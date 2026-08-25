@@ -61,11 +61,17 @@ func doctorRow(slug, listingID, status, role string, blockID *string, problems .
 	return map[string]any{
 		"appListingId": listingID,
 		"slug":         slug,
-		"name":         strings.ToUpper(slug[:1]) + slug[1:] + " Display Name",
-		"status":       status,
-		"role":         role,
-		"appBlockId":   blockID,
-		"problems":     problems,
+		// 🔴 EVERY FIXTURE ROW CARRIES A KIND, because the real server always
+		// sends one and a fake that omits it would encode the same blind spot
+		// the code had. `offsite` is the default here so the existing
+		// browser-editor assertions keep testing the arm they were written for;
+		// the onsite arm has its own dedicated cases.
+		"kind":       "offsite",
+		"name":       strings.ToUpper(slug[:1]) + slug[1:] + " Display Name",
+		"status":     status,
+		"role":       role,
+		"appBlockId": blockID,
+		"problems":   problems,
 	}
 }
 
@@ -449,7 +455,7 @@ func TestDoctorFixAdviceNamesOnlyCommandsThatExist(t *testing.T) {
 	editURL := base + fmt.Sprintf(listingEditPath, docListingA)
 	seen := 0
 	for _, code := range allEightCodes() {
-		fix := doctorRemedy(problemWithCode(code), docSlugA, editURL)
+		fix := doctorRemedy(problemWithCode(code), docSlugA, editURL, "offsite")
 		if fix == "" {
 			t.Errorf("code %q produced an EMPTY fix line — every finding must say what to do", code)
 			continue
@@ -529,7 +535,7 @@ func TestDoctorTextFixesPointAtTheListingEditorNotTheSlug(t *testing.T) {
 // TestDoctorScanningMediaOffersNoAction: the one code with no remedy says so
 // instead of naming a command that would restart the scan.
 func TestDoctorScanningMediaOffersNoAction(t *testing.T) {
-	fix := doctorRemedy(problemWithCode("scanning-media"), docSlugA, "https://example.invalid/x")
+	fix := doctorRemedy(problemWithCode("scanning-media"), docSlugA, "https://example.invalid/x", "offsite")
 	if !strings.Contains(fix, "nothing to do") {
 		t.Errorf("scanning-media must say there is nothing to do, got %q", fix)
 	}
@@ -1078,5 +1084,154 @@ func TestDoctorHelpDocumentsTheDelistedRule(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("`app doctor --help` must document the delisted rule (missing %q):\n%s", want, out)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The three TEXT codes are KIND-AWARE. An onsite app's copy is manifest-governed.
+// ---------------------------------------------------------------------------
+
+// textCodes are the three problems whose fix route depends on the listing kind.
+func textCodes() []map[string]any {
+	return []map[string]any{
+		doctorProblem("empty-description", "Missing description", "advisory"),
+		doctorProblem("empty-tagline", "Missing tagline", "advisory"),
+		doctorProblem("empty-category", "Missing category", "advisory"),
+	}
+}
+
+// doctorRowKind is doctorRow with the listing KIND under the caller's control.
+func doctorRowKind(slug, listingID, status, kind string, problems ...map[string]any) map[string]any {
+	r := doctorRow(slug, listingID, status, "owner", nil, problems...)
+	r["kind"] = kind
+	return r
+}
+
+// TestDoctorOnsiteTextRemedyNamesTheManifest is the correctness fix.
+//
+// 🔴 THE BROWSER-EDITOR ADVICE IS WRONG FOR AN ONSITE APP, and wrong in the
+// silent direction. `(3b-sync)` in
+// `<civitai>/src/server/services/blocks/publish-request.service.ts:2742-2800`
+// overwrites name/tagline/description/category from the manifest on EVERY
+// subsequent-version moderator approve, scoped `kind: 'onsite'` — its own
+// comment says these fields "have NO author surface other than the manifest".
+// So an onsite author who followed the old advice made an edit the platform
+// reverted at the next approve, and `doctor` reported the same problem again
+// with nothing explaining why.
+func TestDoctorOnsiteTextRemedyNamesTheManifest(t *testing.T) {
+	newDoctorServer(t, doctorRowKind(docSlugA, docListingA, "approved", "onsite", textCodes()...))
+	stdout, _, err := run(t, "app", "doctor", "--json")
+	if err != nil {
+		t.Fatalf("advisory-only must exit 0: %v", err)
+	}
+	got := decodeDoctorJSON(t, stdout)
+	if len(got.Apps) != 1 || len(got.Apps[0].Advisory) != 3 {
+		t.Fatalf("want 1 app with 3 advisories, got %+v", got.Apps)
+	}
+	for _, p := range got.Apps[0].Advisory {
+		if !strings.Contains(p.Fix, "block.manifest.json") {
+			t.Errorf("onsite %q must be fixed in the manifest, got %q", p.Code, p.Fix)
+		}
+		if !strings.Contains(p.Fix, "civitai app submit") {
+			t.Errorf("onsite %q must name the resubmit step, got %q", p.Code, p.Fix)
+		}
+		// 🔴 THE WRONG ROUTE MUST BE ABSENT, not merely outranked. A fix line
+		// that names BOTH still sends the author to the browser.
+		if strings.Contains(p.Fix, "/apps/listing/") {
+			t.Errorf("onsite %q still points at the browser editor, whose edit `(3b-sync)` reverts: %q", p.Code, p.Fix)
+		}
+	}
+}
+
+// TestDoctorOffsiteTextRemedyStillPointsAtTheEditor is the other arm, and
+// without it the test above is equally true of a build that names the manifest
+// for everyone — which would be wrong: an off-site listing's copy is
+// AUTHOR-supplied through the submit wizard, not manifest-governed, and such an
+// app has no block.manifest.json at all.
+func TestDoctorOffsiteTextRemedyStillPointsAtTheEditor(t *testing.T) {
+	newDoctorServer(t, doctorRowKind(docSlugB, docListingB, "approved", "offsite", textCodes()...))
+	base := envBaseURL(t)
+	stdout, _, err := run(t, "app", "doctor", "--json")
+	if err != nil {
+		t.Fatalf("advisory-only must exit 0: %v", err)
+	}
+	got := decodeDoctorJSON(t, stdout)
+	for _, p := range got.Apps[0].Advisory {
+		if !strings.Contains(p.Fix, base+"/apps/listing/"+docListingB+"/edit") {
+			t.Errorf("offsite %q must point at the listing editor, got %q", p.Code, p.Fix)
+		}
+		if strings.Contains(p.Fix, "block.manifest.json") {
+			t.Errorf("offsite %q names a manifest an off-site app does not have: %q", p.Code, p.Fix)
+		}
+	}
+}
+
+// TestDoctorMediaRemediesAreKindIndependent: only the THREE TEXT codes branch.
+// The media procs are listing-keyed and seat-aware and work for both kinds, so
+// a kind gate on them would refuse a route that works.
+func TestDoctorMediaRemediesAreKindIndependent(t *testing.T) {
+	media := []map[string]any{
+		doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking"),
+		doctorProblem("no-screenshots", "No screenshots (recommended, optional)", "advisory"),
+	}
+	fixes := map[string][]string{}
+	for _, kind := range []string{"onsite", "offsite"} {
+		newDoctorServer(t, doctorRowKind(docSlugA, docListingA, "draft", kind, media...))
+		stdout, _, _ := run(t, "app", "doctor", "--json")
+		got := decodeDoctorJSON(t, stdout)
+		for _, p := range append(got.Apps[0].Blocking, got.Apps[0].Advisory...) {
+			fixes[kind] = append(fixes[kind], p.Code+"="+p.Fix)
+		}
+	}
+	if !equalStrings(fixes["onsite"], fixes["offsite"]) {
+		t.Errorf("media remedies differ by kind, but the asset procs work for both:\n onsite=%v\noffsite=%v",
+			fixes["onsite"], fixes["offsite"])
+	}
+	// Positive control: the comparison saw a non-empty population.
+	if len(fixes["onsite"]) != 2 {
+		t.Fatalf("collected %d media remedies, want 2 — the comparison above is vacuous", len(fixes["onsite"]))
+	}
+}
+
+// TestDoctorUnknownKindTakesTheRecoverableArm: an absent or unrecognised kind
+// must NOT take the manifest arm. Naming a manifest an app may not have is
+// confusing but self-correcting; the reverse — sending an onsite author to the
+// browser — is the silent failure this fix exists to remove, so the DEFAULT is
+// the recoverable mistake.
+func TestDoctorUnknownKindTakesTheRecoverableArm(t *testing.T) {
+	for _, kind := range []string{"", "a-kind-from-the-future"} {
+		t.Run("kind="+kind, func(t *testing.T) {
+			newDoctorServer(t, doctorRowKind(docSlugA, docListingA, "draft", kind,
+				doctorProblem("empty-tagline", "Missing tagline", "advisory")))
+			stdout, _, _ := run(t, "app", "doctor", "--json")
+			got := decodeDoctorJSON(t, stdout)
+			fix := got.Apps[0].Advisory[0].Fix
+			if strings.Contains(fix, "block.manifest.json") {
+				t.Errorf("kind %q must not take the manifest arm: %q", kind, fix)
+			}
+		})
+	}
+	// POSITIVE CONTROL: `onsite` really does take it, or the negatives above are
+	// a fact about a predicate that never returns true.
+	newDoctorServer(t, doctorRowKind(docSlugA, docListingA, "draft", "onsite",
+		doctorProblem("empty-tagline", "Missing tagline", "advisory")))
+	stdout, _, _ := run(t, "app", "doctor", "--json")
+	if fix := decodeDoctorJSON(t, stdout).Apps[0].Advisory[0].Fix; !strings.Contains(fix, "block.manifest.json") {
+		t.Fatalf("control: `onsite` did not take the manifest arm (%q) — the negatives prove nothing", fix)
+	}
+}
+
+// TestDoctorKindMatchIsNormalised: `kind` is a server string the CLI compares,
+// and a spelling change must not silently re-route the advice.
+func TestDoctorKindMatchIsNormalised(t *testing.T) {
+	for _, spelling := range []string{"onsite", "ONSITE", "Onsite", " onsite "} {
+		t.Run(strings.TrimSpace(spelling), func(t *testing.T) {
+			newDoctorServer(t, doctorRowKind(docSlugA, docListingA, "draft", spelling,
+				doctorProblem("empty-category", "Missing category", "advisory")))
+			stdout, _, _ := run(t, "app", "doctor", "--json")
+			if fix := decodeDoctorJSON(t, stdout).Apps[0].Advisory[0].Fix; !strings.Contains(fix, "block.manifest.json") {
+				t.Errorf("kind %q must read as onsite, got fix %q", spelling, fix)
+			}
+		})
 	}
 }

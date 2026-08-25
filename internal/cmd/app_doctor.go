@@ -95,7 +95,7 @@ const (
 //     shadow id outright; `updateRevisionDraft` refuses a top-level listing), so
 //     "set the tagline" is two procs and a branch, not a flag. Tracked as the
 //     follow-on to this PR.
-func doctorRemedy(p appapi.ListingProblem, slug, editURL string) string {
+func doctorRemedy(p appapi.ListingProblem, slug, editURL, kind string) string {
 	switch p.Code {
 	case problemMissingIcon:
 		return "civitai app listing set-icon <file> --slug " + slug
@@ -119,6 +119,21 @@ func doctorRemedy(p appapi.ListingProblem, slug, editURL string) string {
 		// the very scan they are waiting for.
 		return "nothing to do — the scan finishes on its own; re-run `civitai app doctor` in a minute"
 	case problemEmptyDescription, problemEmptyTagline, problemEmptyCategory:
+		// 🔴 KIND-AWARE, AND THE ONSITE ARM IS NOT A STYLE CHOICE. An ONSITE
+		// listing's name/tagline/description/category are MANIFEST-governed:
+		// `(3b-sync)` in `<civitai>/publish-request.service.ts:2742-2800`
+		// overwrites all four from the manifest (and `category` from
+		// `AppBlock.category`) on EVERY subsequent-version moderator approve,
+		// scoped `kind: 'onsite'`. Its own comment says these fields "have NO
+		// author surface other than the manifest". So the browser-editor advice
+		// — which is what this arm used to give everyone — sends an onsite
+		// author to make an edit the platform reverts at the next approve,
+		// silently. That is worse than no advice: they follow it, `doctor` goes
+		// quiet, and the problem returns without explanation.
+		if listingIsOnsite(kind) {
+			return "these fields come from block.manifest.json on an on-site app — " +
+				"edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"
+		}
 		return "edit the listing in the browser: " + editURL
 	}
 	// 🔴 An UNKNOWN code is a NEW server code, not a bug in the caller, and it
@@ -171,6 +186,22 @@ const listingStatusRemoved = "removed"
 // The exclusion is not permanent, and nothing is stranded by it: an owner who
 // republishes a removed listing moves its status off `removed`, and the next run
 // gates on it again with no CLI change.
+// listingIsOnsite reports whether a listing's TEXT is manifest-governed.
+//
+// 🔴 ONLY AN EXPLICIT `onsite` TAKES THE MANIFEST ARM, and an unrecognised or
+// ABSENT kind falls through to the browser-editor advice. The two directions are
+// not symmetric. Wrongly sending an OFF-SITE author to the manifest names a file
+// their app does not have — confusing, but they stop and ask. Wrongly sending an
+// ON-SITE author to the browser tells them to make an edit the platform reverts
+// at the next approve, silently, and `doctor` reports the same problem again
+// with no explanation. The recoverable mistake is the default.
+//
+// It normalises, because `kind` is a server string this CLI compares and a
+// spelling change must not silently re-route the advice.
+func listingIsOnsite(kind string) bool {
+	return strings.EqualFold(strings.TrimSpace(kind), "onsite")
+}
+
 func doctorGates(status string) bool {
 	return !strings.EqualFold(strings.TrimSpace(status), listingStatusRemoved)
 }
@@ -441,7 +472,7 @@ func doctorPayload(rows []appapi.MyListing, baseURL string) doctorJSON {
 				Code:     p.Code,
 				Label:    p.Label,
 				Severity: p.Severity,
-				Fix:      doctorRemedy(p, r.Slug, editURL),
+				Fix:      doctorRemedy(p, r.Slug, editURL, r.Kind),
 			}
 			if doctorIsBlocking(p) {
 				app.Blocking = append(app.Blocking, row)

@@ -218,6 +218,18 @@ type MyListing struct {
 	Status string `json:"status"`
 	// Role is "owner" or "editor" — an accepted collaborator seat.
 	Role string `json:"role"`
+	// Kind is "onsite" or "offsite", and it decides WHO OWNS THE TEXT.
+	//
+	// 🔴 IT IS DECODED BECAUSE THE REMEDY DEPENDS ON IT, not for completeness.
+	// An ONSITE listing's name/tagline/description/category are MANIFEST-governed
+	// and have no author surface other than `block.manifest.json`: on every
+	// subsequent-version moderator approve, the `(3b-sync)` re-sync in
+	// `<civitai>/src/server/services/blocks/publish-request.service.ts:2742-2800`
+	// overwrites all four from `buildListingScalarSync`, scoped `kind: 'onsite'`.
+	// So telling an onsite author to edit those fields anywhere but the manifest
+	// is advice whose effect the platform reverts. Verified at origin/main,
+	// 2026-08-24.
+	Kind string `json:"kind"`
 	// AppBlockID is null for an OFF-SITE listing, and for an on-site app whose
 	// first version has not been approved yet. Legitimately absent, not missing.
 	AppBlockID *string `json:"appBlockId"`
