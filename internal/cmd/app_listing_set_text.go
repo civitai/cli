@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 
 	"github.com/civitai/cli/internal/appapi"
 	"github.com/civitai/cli/internal/ui"
+	"github.com/civitai/cli/pkg/civitai"
 	"github.com/spf13/cobra"
 )
 
@@ -54,6 +56,7 @@ func newAppListingSetTextCmd() *cobra.Command {
 	var lc listingCommon
 	var tagline, description, category string
 	var clear []string
+	var assumeYes, jsonOut bool
 
 	cmd := &cobra.Command{
 		Use:   "set-text",
@@ -67,29 +70,30 @@ fixes them without the browser.
 Pass any combination of --tagline, --description and --category; they are sent
 as ONE patch, so a run either applies or does not. At least one is required.
 
-CLEARING vs EMPTYING are different states on the server and both are reachable:
-  --tagline ""          sets an EMPTY STRING (legal for tagline and description)
-  --clear tagline       sets it to NULL
---clear takes a comma-separated list (` + strings.Join(setTextFieldNames, ", ") + `) and
-cannot be combined with the matching value flag. Category accepts null but not
-the empty string, so ` + "`--category \"\"`" + ` is refused here rather than by the server.
+CLEARING vs EMPTYING are different server states and both are reachable:
+--tagline "" sets an EMPTY STRING; --clear tagline sets it to NULL. --clear
+takes a comma-separated list (` + strings.Join(setTextFieldNames, ", ") + `)
+and cannot be combined with the matching value flag.
+
+Blanking a field needs --yes, so an unset shell variable cannot silently empty
+a public field. Whitespace-only counts as blank (the server trims).
 
 CATEGORY must be one of:
 ` + strings.Join(wrapRunes(strings.Join(appapi.MarketplaceCategories, ", "), 74), "\n") + `
 
-This applies IN PLACE, on every listing status — these three fields are not
-"material" changes, so unlike editing a name or an external URL they never open
-a revision for moderator re-review. What the server reports is printed rather
-than assumed.
+ON-SITE apps are REFUSED: their copy comes from block.manifest.json and the
+platform overwrites it at your next approved version. Edit the manifest instead.
 
-The server rate-limits this to 30 edits per hour.`,
+This applies IN PLACE on every listing status — these are not "material"
+changes, so they never open a revision for re-review. The server rate-limits
+these edits (roughly 30 an hour).`,
 		Example: `  civitai app listing set-text --tagline "Batch upscaling, in your browser"
   civitai app listing set-text --category utility --slug my-app
   civitai app listing set-text --description "$(cat DESCRIPTION.md)"
   civitai app listing set-text --clear tagline,category`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			patch, err := buildListingTextPatch(cmd, tagline, description, category, clear)
+			patch, err := buildListingTextPatch(cmd, tagline, description, category, clear, assumeYes)
 			if err != nil {
 				return err
 			}
@@ -102,6 +106,14 @@ The server rate-limits this to 30 edits per hour.`,
 				return err
 			}
 			ctx := cmdCtx(cmd)
+			// 🔴 THE KIND GATE COMES BEFORE THE WRITE, AND BEFORE THE RESOLVE.
+			// An onsite listing's copy is manifest-governed; writing it here
+			// would be reverted at the next approve. Refusing first also means
+			// the refusal costs one read rather than a read plus a pointless
+			// resolve.
+			if err := refuseOnsiteTextEdit(ctx, client, slug); err != nil {
+				return err
+			}
 			ref, err := resolveListing(ctx, client, slug)
 			if err != nil {
 				return err
@@ -109,6 +121,17 @@ The server rate-limits this to 30 edits per hour.`,
 			res, err := client.UpdateListing(ctx, ref.AppListingID, patch)
 			if err != nil {
 				return err
+			}
+			if jsonOut {
+				// 🔴 The JSON path does NOT go through the human renderer:
+				// internal/ui/CONVENTION.md rule 1 is that machine-readable
+				// output carries no styling. The advisory still goes to stderr,
+				// so stdout stays a pure parseable payload.
+				if err := writeJSON(cmd.OutOrStdout(), setTextPayload(slug, ref, res, patch)); err != nil {
+					return err
+				}
+				warnOpenRevision(cmd.ErrOrStderr(), slug, ref)
+				return nil
 			}
 			reportListingTextUpdated(cmd.OutOrStdout(), cmd.ErrOrStderr(), slug, patch, ref, res)
 			return nil
@@ -120,9 +143,73 @@ The server rate-limits this to 30 edits per hour.`,
 	cmd.Flags().StringVar(&category, "category", "", "set the marketplace category: "+strings.Join(appapi.MarketplaceCategories, ", "))
 	// NOTE: no back-quotes in these usage strings — pflag's UnquoteUsage treats
 	// the first back-quoted span as the flag's VALUE NAME.
+	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false,
+		"allow a destructive set: blanking a field that currently has text, which the CLI otherwise refuses")
+	cmd.Flags().BoolVar(&jsonOut, "json", false,
+		"emit the result as JSON (scriptable) — what was sent, and the server's own branch")
 	cmd.Flags().StringSliceVar(&clear, "clear", nil,
 		"clear a field to null instead of setting it: "+strings.Join(setTextFieldNames, ", ")+" (comma-separated)")
 	return cmd
+}
+
+// refuseOnsiteTextEdit blocks a text write on an ON-SITE listing and names the
+// remedy that actually works.
+//
+// 🔴 WITHOUT THIS THE FEATURE LOOP CLOSES WRONGLY. `civitai app doctor` reports
+// `empty-tagline` / `empty-description` / `empty-category` for onsite apps too —
+// `computeListingProblems` is kind-blind — and this command's own help says it
+// fixes them. But an onsite listing's copy has NO author surface other than
+// `block.manifest.json`: the `(3b-sync)` re-sync
+// (`<civitai>/src/server/services/blocks/publish-request.service.ts:2742-2800`)
+// overwrites all four columns from the manifest on EVERY subsequent-version
+// moderator approve, scoped `kind: 'onsite'`. So the write appears to succeed,
+// `doctor` goes quiet, and the next approve silently reverts it. `--category` is
+// worse still: that sync writes `AppBlock.category`, which is null unless a
+// moderator curated one, so a category set here is CLEARED rather than restored.
+//
+// Nothing server-side stops this: `updateListing` selects `kind` and never
+// branches on it, and `loadOwnedEditableListing` does not either. The gate has
+// to be here.
+//
+// 🔴 THE KIND COMES FROM `listMine`, NOT FROM WHICH LOOKUP `resolveListing`
+// HAPPENED TO TAKE. `getMyListingForApp` does not return `kind` (its select is
+// `{id, status, contentRating, revisionOfId}`), and inferring onsite-ness from
+// "the submissions route answered" would be a guess about a derived surface —
+// the exact shape this repo keeps finding wrong. `listMine` carries `kind`
+// authoritatively, is already scope-annotated, and is a pure read.
+//
+// 🔴 IT FAILS CLOSED. A slug that `listMine` does not list, or a kind this CLI
+// does not recognise, REFUSES rather than proceeding. The directions are not
+// symmetric: a wrongly-refused offsite edit is recoverable in the browser and
+// says so, while a wrongly-permitted onsite edit corrupts a public listing in a
+// way whose reversal nobody observes.
+func refuseOnsiteTextEdit(ctx context.Context, client *appapi.Client, slug string) error {
+	rows, err := client.ListMyListings(ctx)
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		if !appapi.SameSlug(slug, r.Slug) {
+			continue
+		}
+		kind := strings.ToLower(strings.TrimSpace(r.Kind))
+		if kind == appapi.ListingKindOnsite {
+			return fmt.Errorf(
+				"%q is an ON-SITE app, and its tagline, description and category come from "+
+					"block.manifest.json — editing them here would be overwritten by the manifest at your "+
+					"next approved version. Edit `name` / `tagline` / `description` in block.manifest.json and run "+
+					"`civitai app submit`. (Category is set by a moderator on an on-site app.)", r.Slug)
+		}
+		if kind == "" {
+			return fmt.Errorf(
+				"could not establish whether %q is an on-site or off-site app, and the two have different "+
+					"owners for this text — refusing rather than risk an edit the platform reverts. "+
+					"Update the CLI, or edit the listing in the browser", r.Slug)
+		}
+		return nil
+	}
+	return civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
+		"no listing of yours is called %q — `civitai app doctor` lists every app you can work on", slug))
 }
 
 // buildListingTextPatch turns the flags into a patch, refusing locally
@@ -132,7 +219,7 @@ The server rate-limits this to 30 edits per hour.`,
 // (the empty string is a legal, distinct state), so deciding "was this flag
 // given" from whether the string is empty would silently drop exactly the edit
 // the tri-state exists to carry.
-func buildListingTextPatch(cmd *cobra.Command, tagline, description, category string, clear []string) (appapi.ListingTextPatch, error) {
+func buildListingTextPatch(cmd *cobra.Command, tagline, description, category string, clear []string, assumeYes bool) (appapi.ListingTextPatch, error) {
 	var p appapi.ListingTextPatch
 	f := cmd.Flags()
 
@@ -188,6 +275,34 @@ func buildListingTextPatch(cmd *cobra.Command, tagline, description, category st
 	if p.Empty() {
 		return p, asUsageError(fmt.Errorf(
 			"nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>"))
+	}
+	// 🔴 A BLANK SET IS GUARDED, BECAUSE THE SHELL MAKES IT AN ACCIDENT RATHER
+	// THAN A CHOICE. `--tagline "$T"` with `T` unset expands to `--tagline ""`,
+	// and this command's own documented example
+	// `--description "$(cat DESCRIPTION.md)"` does the same whenever `cat`
+	// fails — silently blanking a PUBLIC field at exit 0. The siblings all gate
+	// a destructive act (`app submit` needs `--yes`, `app withdraw` confirms);
+	// this had nothing.
+	//
+	// 🔴 WHITESPACE-ONLY COUNTS AS BLANK, and that is not pedantry: the server's
+	// own `isEmpty` trims, so `" "` leaves `civitai app doctor` still reporting
+	// `empty-tagline`. Treating it as a real value would let the command report
+	// success for an edit that fixes nothing.
+	//
+	// It guards only the SET path. `--clear` is already an explicit request to
+	// empty the field, so requiring a second confirmation for it would be noise.
+	if !assumeYes {
+		for _, f := range []struct {
+			name string
+			val  *string
+		}{{"tagline", p.Tagline}, {"description", p.Description}, {"category", p.Category}} {
+			if f.val != nil && strings.TrimSpace(*f.val) == "" {
+				return appapi.ListingTextPatch{}, asUsageError(fmt.Errorf(
+					"--%s is blank, which would empty a public field. If that is deliberate, pass --yes "+
+						"(or `--clear %s` to null it instead). If it is not, an unset shell variable or a failed "+
+						"command substitution is the usual cause", f.name, f.name))
+			}
+		}
 	}
 	return p, nil
 }
@@ -259,11 +374,30 @@ func contains(haystack []string, needle string) bool {
 // an approved listing, so a command that consulted it to avoid the hazard would
 // CREATE the hazard on every run against a listing that had none.
 //
-// 🔴 THE RESIDUAL, STATED RATHER THAN HIDDEN. `hasPendingRevision` means
-// SUBMITTED, not "a shadow exists" (measured 2026-08-12 and recorded on
-// appapi.ListingEditView). An open-but-unsubmitted shadow is therefore invisible
-// here, and no side-effect-free read exposes one. This warning covers the case
-// it can see and does not claim to cover the other.
+// 🔴 IT GATES ON `ShadowID != nil || HasPendingRevision`, AND THE FIRST HALF IS
+// THE ONE THAT MATTERS. An earlier version gated on `HasPendingRevision` alone
+// and argued, as its decisive premise, that "no side-effect-free read exposes an
+// open shadow". THAT WAS FALSE, and it made the warning unable to fire in the
+// one state it exists for.
+//
+// `hasPendingRevision` is a `appListingPublishRequest.findFirst({status:
+// 'pending'})` — it means SUBMITTED. But `getMyListingForApp`, the read this
+// command ALREADY makes, also returns `shadowId`, resolved by a `findFirst` with
+// no create (offsite-listing.service.ts:1975-1993, under a comment that says
+// "WITHOUT creating one"). So an OPEN, UNSUBMITTED shadow is visible, for free,
+// on a request already in flight.
+//
+// That gap was the normal path, not an edge case: `rm-screenshot` leaves its
+// revision unsubmitted BY DOCUMENTED DESIGN, and `set-icon`/`set-cover`/
+// `add-screenshot` mint the shadow lazily too. Stage any media change, then
+// `set-text`, then submit and get approved, and the shadow's stale copy lands
+// back on the parent — silently undoing the text edit, with nothing having
+// warned.
+//
+// 🔴 WHAT SURVIVES OF THE OLD ARGUMENT, AND WHAT DOES NOT. The reroute refusal
+// still stands and for the SECOND of its two reasons only: `getMyListingForEdit`
+// really does OPEN a shadow as a side effect, so consulting IT would create the
+// hazard. The first reason — that nothing else could see a shadow — is retracted.
 func reportListingTextUpdated(out, errOut io.Writer, slug string, p appapi.ListingTextPatch, ref *appapi.ListingRef, res *appapi.UpdateListingResult) {
 	st := ui.For(out)
 	fmt.Fprintln(out, st.Success(fmt.Sprintf("Updated %s: %s", slug, strings.Join(changedFields(p), ", "))))
@@ -283,13 +417,78 @@ func reportListingTextUpdated(out, errOut io.Writer, slug string, p appapi.Listi
 		return
 	}
 
-	if ref != nil && ref.HasPendingRevision {
+	warnOpenRevision(errOut, slug, ref)
+}
+
+// setTextJSON is the `--json` payload. PUBLISHED CONTRACT.
+//
+// 🔴 IT EXISTS BECAUSE THE LOOP THIS COMMAND CLOSES IS MACHINE-READABLE AT BOTH
+// OTHER ENDS AND WAS HUMAN-ONLY HERE. `civitai app doctor --json` gives a
+// machine-readable diagnosis; without this, a script could read the problem and
+// apply the fix but had no machine-readable confirmation of what it changed —
+// and `app listing status --json`, the obvious substitute, cannot serve, because
+// it OPENS a shadow revision as a side effect.
+type setTextJSON struct {
+	Slug         string `json:"slug"`
+	AppListingID string `json:"appListingId"`
+	// Fields is what was SENT, per key: "set", "empty" or "cleared". Never null.
+	Fields map[string]string `json:"fields"`
+	// RequiresReview / ShadowID are the SERVER's own branch, passed through.
+	RequiresReview bool    `json:"requiresReview"`
+	ShadowID       *string `json:"shadowId"`
+	// OpenRevision is true when a revision draft exists (submitted or not) whose
+	// approval would overwrite this edit — the machine-readable form of the
+	// stderr advisory.
+	OpenRevision bool `json:"openRevision"`
+}
+
+func setTextPayload(slug string, ref *appapi.ListingRef, res *appapi.UpdateListingResult, p appapi.ListingTextPatch) setTextJSON {
+	out := setTextJSON{Slug: slug, Fields: map[string]string{}}
+	if ref != nil {
+		out.AppListingID = ref.AppListingID
+		out.ShadowID = ref.ShadowID
+		out.OpenRevision = ref.ShadowID != nil || ref.HasPendingRevision
+	}
+	if res != nil {
+		out.RequiresReview = res.RequiresReview
+	}
+	set := func(k string, v *string, cleared bool) {
+		switch {
+		case cleared:
+			out.Fields[k] = "cleared"
+		case v == nil:
+			return
+		case strings.TrimSpace(*v) == "":
+			out.Fields[k] = "empty"
+		default:
+			out.Fields[k] = "set"
+		}
+	}
+	set("tagline", p.Tagline, p.ClearTagline)
+	set("description", p.Description, p.ClearDescription)
+	set("category", p.Category, p.ClearCategory)
+	return out
+}
+
+// warnOpenRevision is the overwrite advisory, shared by both renderings so they
+// cannot disagree about whether it applies.
+func warnOpenRevision(errOut io.Writer, slug string, ref *appapi.ListingRef) {
+	if ref != nil && (ref.ShadowID != nil || ref.HasPendingRevision) {
 		se := ui.For(errOut)
-		fmt.Fprintln(errOut, se.Warn("A revision of this listing is already under moderator review."))
-		fmt.Fprintln(errOut, "  This edit went to the LIVE listing, not to that revision. If this app is")
-		fmt.Fprintln(errOut, "  OFF-SITE, approving that revision copies its own tagline/description/category")
-		fmt.Fprintln(errOut, "  back over the listing and would undo this edit; an ON-SITE app is unaffected,")
-		fmt.Fprintln(errOut, "  because approving its revision copies only the icon and cover.")
+		// The two states are DIFFERENT and the reader can act on them
+		// differently — one is still theirs to edit, the other is with a
+		// moderator — so they are not collapsed into one sentence.
+		if ref.HasPendingRevision {
+			fmt.Fprintln(errOut, se.Warn("A revision of this listing is already under moderator review."))
+		} else {
+			fmt.Fprintln(errOut, se.Warn("This listing has an OPEN revision draft that has not been submitted yet."))
+		}
+		if ref.ShadowID != nil && *ref.ShadowID != "" {
+			fmt.Fprintf(errOut, "  Revision: %s\n", *ref.ShadowID)
+		}
+		fmt.Fprintln(errOut, "  This edit went to the LIVE listing, not to that revision. Approving the")
+		fmt.Fprintln(errOut, "  revision copies ITS tagline/description/category back over the listing and")
+		fmt.Fprintln(errOut, "  would undo this edit.")
 		fmt.Fprintf(errOut, "  Check afterwards with %s.\n", se.Code("civitai app doctor "+slug))
 	}
 }

@@ -135,6 +135,15 @@ func listingWordingRows() []listingWordingRow {
 		// ---- changes: each writes the listing, so none of them may say
 		// "nothing was changed" — a 400 here may have partially applied ----
 		{
+			// 🔴 Written by hand from what listMine DOES. It sends NO input at
+			// all — no slug, no listing id — so beyond the shared "nothing was
+			// changed" its 400 may not blame a value the caller supplied.
+			name:    "listMine enumerates and blames no value the caller sent",
+			route:   trpcListMine,
+			want:    []string{readSubject, "nothing was changed"},
+			notWant: []string{changeSubject, ingestSubject, changeRemedy, valueBlame},
+		},
+		{
 			// 🔴 Written from what updateListing DOES, by hand. It writes the
 			// listing's scalar columns through `buildListingPatchData`, so a 400
 			// may have landed some of the patch — it may NOT say "nothing was

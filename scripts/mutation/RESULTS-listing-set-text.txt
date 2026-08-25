@@ -1,0 +1,218 @@
+BASELINE: {'PASS': 2943, 'FAIL': 0} built=True
+S1-omitempty-collapse: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextEmptyStringIsSentAsAnEmptyString
+       app_listing_set_text_test.go:239: `--tagline ""` sent NO tagline key — an empty string is a legal value and must reach the server: map[]
+    <- TestSetTextAllowsABlankSetWithYes
+       app_listing_set_text_test.go:900: tagline = , want an empty JSON string
+S2-clear-sends-empty-not-null: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextClearSendsExplicitNull
+       app_listing_set_text_test.go:258: tagline = "", want null — `--clear` must NULL the column, not empty it
+    <- TestSetTextClearNeedsNoYes
+       app_listing_set_text_test.go:912: tagline = "", want null
+S3-changed-becomes-nonempty: KILLED ({'PASS': 2938, 'FAIL': 5})
+    <- TestSetTextEmptyStringIsSentAsAnEmptyString
+       app_listing_set_text_test.go:234: set-text --tagline "" --yes: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
+    <- TestSetTextSuccessLineDistinguishesEmptyFromCleared
+       app_listing_set_text_test.go:580: empty arm: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
+    <- TestSetTextRefusesABlankSetWithoutYes
+       app_listing_set_text_test.go:879: the refusal must name "--clear tagline" so both intents are reachable: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
+S4-patch-always-sends-all: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestSetTextSendsOnlyTheFieldsGiven
+       app_listing_set_text_test.go:215: patch carries 2 keys, want exactly 1 — an omitted flag must send NO key: map[description:[34 34] tagline:[34 90 101 112 104 121 114 32 98 97 116 99 104 32 112 105 112 101 108 105 110 101 115 34]]
+S5-category-any-value: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextRejectsAnUnknownCategoryLocally
+       app_listing_set_text_test.go:392: an unknown category must be refused
+    <- TestSetTextCategoryCaseMissIsNamed
+       app_listing_set_text_test.go:417: `Utility` must be refused — categories are lower-case and the server compares exactly
+S6-category-case-insensitive: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestSetTextCategoryCaseMissIsNamed
+       app_listing_set_text_test.go:417: `Utility` must be refused — categories are lower-case and the server compares exactly
+S7-empty-category-allowed: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestSetTextEmptyCategoryIsRefusedAndNamesClear
+       app_listing_set_text_test.go:437: the refusal must name `--clear category`, which is what the user probably wanted: --category "" is not one of the marketplace categories: generation, games, utility, discovery, moderation, analytics, other
+S8-category-list-dropped-value: KILLED ({'PASS': 2934, 'FAIL': 2})
+    <- TestSetTextCategoryAcceptsEveryServerValue
+       app_listing_set_text_test.go:369: the category mirror holds 6 values, want 7 — re-read `<civitai>/src/server/services/blocks/marketplace-categories.constants.ts` and update this floor deliberately: [generation games utility moderation analytics other]
+    <- TestCategoryMirrorMatchesTheServerVocabularyExactly
+       app_listing_set_text_test.go:840: the category mirror has drifted from the server vocabulary.
+S9-empty-patch-allowed: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextRefusalsHappenBeforeAnyRequest
+       app_listing_set_text_test.go:467: expected a refusal for no field at all
+    <- TestSetTextRefusalsHappenBeforeAnyRequest/no_field_at_all
+       app_listing_set_text_test.go:467: expected a refusal for no field at all
+S10-tagline-cap-off-by-one: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextRefusalsHappenBeforeAnyRequest
+       app_listing_set_text_test.go:467: expected a refusal for tagline over the cap
+    <- TestSetTextRefusalsHappenBeforeAnyRequest/tagline_over_the_cap
+       app_listing_set_text_test.go:467: expected a refusal for tagline over the cap
+S11-cap-counts-bytes: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestSetTextCapsCountRunesNotBytes
+       app_listing_set_text_test.go:506: a 140-rune tagline must be accepted however many BYTES it occupies: --tagline is 280 characters; the server accepts at most 140
+S12-contradiction-allowed: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextRefusalsHappenBeforeAnyRequest
+       app_listing_set_text_test.go:467: expected a refusal for set and clear contradict
+    <- TestSetTextRefusalsHappenBeforeAnyRequest/set_and_clear_contradict
+       app_listing_set_text_test.go:467: expected a refusal for set and clear contradict
+S13-unknown-clear-field-ignored: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextRefusalsHappenBeforeAnyRequest
+       app_listing_set_text_test.go:473: refusal should say "does not know the field", got: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
+    <- TestSetTextRefusalsHappenBeforeAnyRequest/unknown_clear_field
+       app_listing_set_text_test.go:473: refusal should say "does not know the field", got: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
+S14-requires-review-ignored: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestSetTextReportsTheServersBranchNotItsOwnBelief
+       app_listing_set_text_test.go:531: when the SERVER says it staged a revision the CLI must say so (missing "civitai app listing submit-revision"):
+S17-empty-vs-cleared-line-same: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestSetTextSuccessLineDistinguishesEmptyFromCleared
+       app_listing_set_text_test.go:591: the empty-string arm should say so:
+S18-writes-wrong-listing-key: KILLED ({'PASS': 2923, 'FAIL': 20})
+    <- TestSetTextSendsOnlyTheFieldsGiven
+       app_listing_set_text_test.go:213: update addressed listingId "", want "apl_SETTEXT77"
+    <- TestSetTextEmptyStringIsSentAsAnEmptyString
+       app_listing_set_text_test.go:236: update addressed listingId "", want "apl_SETTEXT77"
+    <- TestSetTextClearSendsExplicitNull
+       app_listing_set_text_test.go:252: update addressed listingId "", want "apl_SETTEXT77"
+S19-shadow-gate-dropped: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextWarnsOnAnOpenUnsubmittedShadow
+       app_listing_set_text_test.go:676: an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning exists for, and `hasPendingRevision` is false here because nothing has been submitted.
+    <- TestSetTextJSONIsTheWholeOfStdout
+       app_listing_set_text_test.go:972: the overwrite advisory must still print on stderr under --json:
+S20-shadowid-not-decoded: KILLED ({'PASS': 2940, 'FAIL': 3})
+    <- TestSetTextWarnsOnAnOpenUnsubmittedShadow
+       app_listing_set_text_test.go:676: an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning exists for, and `hasPendingRevision` is false here because nothing has been submitted.
+    <- TestSetTextJSONShapeIsPinnedWhole
+       app_listing_set_text_test.go:945: --json payload changed.
+    <- TestSetTextJSONIsTheWholeOfStdout
+       app_listing_set_text_test.go:972: the overwrite advisory must still print on stderr under --json:
+S21-shadow-gate-always: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestSetTextIsSilentWithNoShadowAndNoPendingRevision
+       app_listing_set_text_test.go:720: no shadow and no pending revision — the warning must NOT fire; a warning that always fires is one nobody reads:
+S22-kind-gate-removed: KILLED ({'PASS': 2934, 'FAIL': 9})
+    <- TestSetTextRefusesAnOnsiteListing
+       app_listing_set_text_test.go:742: an ON-SITE listing's text is manifest-governed — the write must be refused, not silently reverted at the next approve
+    <- TestSetTextKindGateFailsClosed
+       app_listing_set_text_test.go:794: a slug listMine does not list must refuse
+    <- TestSetTextKindGateFailsClosed/unknown_kind
+       app_listing_set_text_test.go:794: a slug listMine does not list must refuse
+S23-kind-gate-inverted: KILLED ({'PASS': 2900, 'FAIL': 43})
+    <- TestSetTextSendsOnlyTheFieldsGiven
+       app_listing_set_text_test.go:211: set-text: "set-text-app" is an ON-SITE app, and its tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edit `name` / `tagline
+    <- TestSetTextEmptyStringIsSentAsAnEmptyString
+       app_listing_set_text_test.go:234: set-text --tagline "" --yes: "set-text-app" is an ON-SITE app, and its tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edi
+    <- TestSetTextClearSendsExplicitNull
+       app_listing_set_text_test.go:250: set-text --clear tagline: "set-text-app" is an ON-SITE app, and its tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edit `
+S24-kind-fail-open: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextKindGateFailsClosed
+       app_listing_set_text_test.go:779: an unestablished kind must refuse, not proceed
+    <- TestSetTextKindGateFailsClosed/unknown_kind
+       app_listing_set_text_test.go:779: an unestablished kind must refuse, not proceed
+S25-kind-not-normalised: KILLED ({'PASS': 2939, 'FAIL': 4})
+    <- TestSetTextKindMatchIsNormalised
+       app_listing_set_text_test.go:813: kind " onsite " must read as onsite and refuse
+    <- TestSetTextKindMatchIsNormalised/ONSITE
+       app_listing_set_text_test.go:813: kind " onsite " must read as onsite and refuse
+    <- TestSetTextKindMatchIsNormalised/Onsite
+       app_listing_set_text_test.go:813: kind " onsite " must read as onsite and refuse
+S26-unlisted-slug-fails-open: KILLED ({'PASS': 2941, 'FAIL': 2})
+    <- TestSetTextKindGateFailsClosed
+       app_listing_set_text_test.go:794: a slug listMine does not list must refuse
+    <- TestSetTextKindGateFailsClosed/slug_not_listed
+       app_listing_set_text_test.go:794: a slug listMine does not list must refuse
+S27-blank-guard-removed: KILLED ({'PASS': 2938, 'FAIL': 5})
+    <- TestSetTextRefusesABlankSetWithoutYes
+       app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field
+    <- TestSetTextRefusesABlankSetWithoutYes/tagline=/blank
+       app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field
+    <- TestSetTextRefusesABlankSetWithoutYes/description=/blank
+       app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field
+S28-blank-guard-ignores-whitespace: KILLED ({'PASS': 2940, 'FAIL': 3})
+    <- TestSetTextRefusesABlankSetWithoutYes
+       app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field
+    <- TestSetTextRefusesABlankSetWithoutYes/tagline=/blank#01
+       app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field
+    <- TestSetTextRefusesABlankSetWithoutYes/description=/blank#01
+       app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field
+S29-blank-guard-blocks-yes: KILLED ({'PASS': 2938, 'FAIL': 5})
+    <- TestSetTextEmptyStringIsSentAsAnEmptyString
+       app_listing_set_text_test.go:234: set-text --tagline "" --yes: --tagline is blank, which would empty a public field. If that is deliberate, pass --yes (or `--clear tagline` to null it instead). If it is not, an unset shell variable or a failed command substitu
+    <- TestSetTextEmptyStringAndNullAreDifferentOnTheWire
+       app_listing_set_text_test.go:268: empty arm: --description is blank, which would empty a public field. If that is deliberate, pass --yes (or `--clear description` to null it instead). If it is not, an unset shell variable or a failed command substitution is th
+    <- TestSetTextSuccessLineDistinguishesEmptyFromCleared
+       app_listing_set_text_test.go:580: empty arm: --tagline is blank, which would empty a public field. If that is deliberate, pass --yes (or `--clear tagline` to null it instead). If it is not, an unset shell variable or a failed command substitution is the usual 
+S30-json-reports-blank-as-set: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestSetTextJSONReportsBlankAsEmptyNotSet
+       app_listing_set_text_test.go:992: fields.tagline = "set", want "empty" — a whitespace-only value leaves `doctor` still reporting empty-tagline, so reporting it as "set" would be false
+S31-json-openrevision-dropped: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestSetTextJSONShapeIsPinnedWhole
+       app_listing_set_text_test.go:945: --json payload changed.
+S32-category-misspelled: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestCategoryMirrorMatchesTheServerVocabularyExactly
+       app_listing_set_text_test.go:840: the category mirror has drifted from the server vocabulary.
+S33-category-reordered: KILLED ({'PASS': 2942, 'FAIL': 1})
+    <- TestCategoryMirrorMatchesTheServerVocabularyExactly
+       app_listing_set_text_test.go:840: the category mirror has drifted from the server vocabulary.
+
+==== TABLE ====
+S1-omitempty-collapse	KILLED	an explicit empty tagline is dropped — `--tagline ""` becomes a silent no-op
+	TestSetTextEmptyStringIsSentAsAnEmptyString :: app_listing_set_text_test.go:239: `--tagline ""` sent NO tagline key — an empty string is a legal value and must reach the server: map[]; TestSetTextAllowsABlankSetWithYes :: app_listing_set_text_test.go:900: tagline = , want an empty JSON string
+S2-clear-sends-empty-not-null	KILLED	`--clear` empties the column instead of nulling it — the two states collapse
+	TestSetTextClearSendsExplicitNull :: app_listing_set_text_test.go:258: tagline = "", want null — `--clear` must NULL the column, not empty it; TestSetTextClearNeedsNoYes :: app_listing_set_text_test.go:912: tagline = "", want null
+S3-changed-becomes-nonempty	KILLED	flag presence is inferred from the VALUE, so `--tagline ""` is dropped
+	TestSetTextEmptyStringIsSentAsAnEmptyString :: app_listing_set_text_test.go:234: set-text --tagline "" --yes: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>; TestSetTextSuccessLineDistinguishesEmptyFromCleared :: app_listing_set_text_test.go:580: empty arm: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>; TestSetTextRefusesABlankSetWithoutYes :: app_listing_set_text_test.go:879: the refusal must name "--clear tagline" so both intents are reachable: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
+S4-patch-always-sends-all	KILLED	an omitted field is sent anyway, overwriting a column the user never named
+	TestSetTextSendsOnlyTheFieldsGiven :: app_listing_set_text_test.go:215: patch carries 2 keys, want exactly 1 — an omitted flag must send NO key: map[description:[34 34] tagline:[34 90 101 112 104 121 114 32 98 97 116 99 104 32 112 105 112 101 108 105 110 101 115 34]]
+S5-category-any-value	KILLED	any category string is accepted, so the local mirror validates nothing
+	TestSetTextRejectsAnUnknownCategoryLocally :: app_listing_set_text_test.go:392: an unknown category must be refused; TestSetTextCategoryCaseMissIsNamed :: app_listing_set_text_test.go:417: `Utility` must be refused — categories are lower-case and the server compares exactly
+S6-category-case-insensitive	KILLED	category is matched case-insensitively, but the server compares exactly
+	TestSetTextCategoryCaseMissIsNamed :: app_listing_set_text_test.go:417: `Utility` must be refused — categories are lower-case and the server compares exactly
+S7-empty-category-allowed	KILLED	an empty category is sent to the server instead of refused locally
+	TestSetTextEmptyCategoryIsRefusedAndNamesClear :: app_listing_set_text_test.go:437: the refusal must name `--clear category`, which is what the user probably wanted: --category "" is not one of the marketplace categories: generation, games, utility, discovery, moderation, analytics, other
+S8-category-list-dropped-value	KILLED	the category mirror loses a value the server accepts
+	TestSetTextCategoryAcceptsEveryServerValue :: app_listing_set_text_test.go:369: the category mirror holds 6 values, want 7 — re-read `<civitai>/src/server/services/blocks/marketplace-categories.constants.ts` and update this floor deliberately: [generation games utility moderation analytics other]; TestCategoryMirrorMatchesTheServerVocabularyExactly :: app_listing_set_text_test.go:840: the category mirror has drifted from the server vocabulary.
+S9-empty-patch-allowed	KILLED	a run with no field at all is sent to the server as an empty patch
+	TestSetTextRefusalsHappenBeforeAnyRequest :: app_listing_set_text_test.go:467: expected a refusal for no field at all; TestSetTextRefusalsHappenBeforeAnyRequest/no_field_at_all :: app_listing_set_text_test.go:467: expected a refusal for no field at all
+S10-tagline-cap-off-by-one	KILLED	the tagline cap is off by one
+	TestSetTextRefusalsHappenBeforeAnyRequest :: app_listing_set_text_test.go:467: expected a refusal for tagline over the cap; TestSetTextRefusalsHappenBeforeAnyRequest/tagline_over_the_cap :: app_listing_set_text_test.go:467: expected a refusal for tagline over the cap
+S11-cap-counts-bytes	KILLED	the cap counts bytes, so a multi-byte tagline within the limit is refused
+	TestSetTextCapsCountRunesNotBytes :: app_listing_set_text_test.go:506: a 140-rune tagline must be accepted however many BYTES it occupies: --tagline is 280 characters; the server accepts at most 140
+S12-contradiction-allowed	KILLED	`--tagline X --clear tagline` is silently resolved instead of refused
+	TestSetTextRefusalsHappenBeforeAnyRequest :: app_listing_set_text_test.go:467: expected a refusal for set and clear contradict; TestSetTextRefusalsHappenBeforeAnyRequest/set_and_clear_contradict :: app_listing_set_text_test.go:467: expected a refusal for set and clear contradict
+S13-unknown-clear-field-ignored	KILLED	a typo in --clear is silently ignored, so the field is never cleared
+	TestSetTextRefusalsHappenBeforeAnyRequest :: app_listing_set_text_test.go:473: refusal should say "does not know the field", got: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>; TestSetTextRefusalsHappenBeforeAnyRequest/unknown_clear_field :: app_listing_set_text_test.go:473: refusal should say "does not know the field", got: nothing to set — pass at least one of --tagline, --description, --category, or --clear <field>
+S14-requires-review-ignored	KILLED	the server staging a revision is not reported — the success line becomes false
+	TestSetTextReportsTheServersBranchNotItsOwnBelief :: app_listing_set_text_test.go:531: when the SERVER says it staged a revision the CLI must say so (missing "civitai app listing submit-revision"):
+S17-empty-vs-cleared-line-same	KILLED	the success line stops distinguishing an empty string from a cleared field
+	TestSetTextSuccessLineDistinguishesEmptyFromCleared :: app_listing_set_text_test.go:591: the empty-string arm should say so:
+S18-writes-wrong-listing-key	KILLED	the write is addressed with the shadow proc's key, which updateListing refuses
+	TestSetTextSendsOnlyTheFieldsGiven :: app_listing_set_text_test.go:213: update addressed listingId "", want "apl_SETTEXT77"; TestSetTextEmptyStringIsSentAsAnEmptyString :: app_listing_set_text_test.go:236: update addressed listingId "", want "apl_SETTEXT77"; TestSetTextClearSendsExplicitNull :: app_listing_set_text_test.go:252: update addressed listingId "", want "apl_SETTEXT77"
+S19-shadow-gate-dropped	KILLED	the warning reverts to the SUBMITTED-only gate and cannot see an open, unsubmitted shadow
+	TestSetTextWarnsOnAnOpenUnsubmittedShadow :: app_listing_set_text_test.go:676: an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning exists for, and `hasPendingRevision` is false here because nothing has been submitted.; TestSetTextJSONIsTheWholeOfStdout :: app_listing_set_text_test.go:972: the overwrite advisory must still print on stderr under --json:
+S20-shadowid-not-decoded	KILLED	shadowId stops being decoded, so the open-shadow warning goes silent
+	TestSetTextWarnsOnAnOpenUnsubmittedShadow :: app_listing_set_text_test.go:676: an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning exists for, and `hasPendingRevision` is false here because nothing has been submitted.; TestSetTextJSONShapeIsPinnedWhole :: app_listing_set_text_test.go:945: --json payload changed.; TestSetTextJSONIsTheWholeOfStdout :: app_listing_set_text_test.go:972: the overwrite advisory must still print on stderr under --json:
+S21-shadow-gate-always	KILLED	the warning fires on every run, training the reader to ignore it
+	TestSetTextIsSilentWithNoShadowAndNoPendingRevision :: app_listing_set_text_test.go:720: no shadow and no pending revision — the warning must NOT fire; a warning that always fires is one nobody reads:
+S22-kind-gate-removed	KILLED	an onsite listing is written, and the platform reverts it at the next approve
+	TestSetTextRefusesAnOnsiteListing :: app_listing_set_text_test.go:742: an ON-SITE listing's text is manifest-governed — the write must be refused, not silently reverted at the next approve; TestSetTextKindGateFailsClosed :: app_listing_set_text_test.go:794: a slug listMine does not list must refuse; TestSetTextKindGateFailsClosed/unknown_kind :: app_listing_set_text_test.go:794: a slug listMine does not list must refuse
+S23-kind-gate-inverted	KILLED	offsite is refused and onsite is written — the gate exactly backwards
+	TestSetTextSendsOnlyTheFieldsGiven :: app_listing_set_text_test.go:211: set-text: "set-text-app" is an ON-SITE app, and its tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edit `name` / `tagline; TestSetTextEmptyStringIsSentAsAnEmptyString :: app_listing_set_text_test.go:234: set-text --tagline "" --yes: "set-text-app" is an ON-SITE app, and its tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edi; TestSetTextClearSendsExplicitNull :: app_listing_set_text_test.go:250: set-text --clear tagline: "set-text-app" is an ON-SITE app, and its tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edit `
+S24-kind-fail-open	KILLED	an unestablished kind proceeds instead of refusing
+	TestSetTextKindGateFailsClosed :: app_listing_set_text_test.go:779: an unestablished kind must refuse, not proceed; TestSetTextKindGateFailsClosed/unknown_kind :: app_listing_set_text_test.go:779: an unestablished kind must refuse, not proceed
+S25-kind-not-normalised	KILLED	a padded or mis-cased kind slips past the onsite refusal
+	TestSetTextKindMatchIsNormalised :: app_listing_set_text_test.go:813: kind " onsite " must read as onsite and refuse; TestSetTextKindMatchIsNormalised/ONSITE :: app_listing_set_text_test.go:813: kind " onsite " must read as onsite and refuse; TestSetTextKindMatchIsNormalised/Onsite :: app_listing_set_text_test.go:813: kind " onsite " must read as onsite and refuse
+S26-unlisted-slug-fails-open	KILLED	a slug listMine does not list proceeds to the write instead of refusing
+	TestSetTextKindGateFailsClosed :: app_listing_set_text_test.go:794: a slug listMine does not list must refuse; TestSetTextKindGateFailsClosed/slug_not_listed :: app_listing_set_text_test.go:794: a slug listMine does not list must refuse
+S27-blank-guard-removed	KILLED	a blank set empties a public field with no confirmation
+	TestSetTextRefusesABlankSetWithoutYes :: app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field; TestSetTextRefusesABlankSetWithoutYes/tagline=/blank :: app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field; TestSetTextRefusesABlankSetWithoutYes/description=/blank :: app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field
+S28-blank-guard-ignores-whitespace	KILLED	a whitespace-only value is treated as real, though the server trims it to empty
+	TestSetTextRefusesABlankSetWithoutYes :: app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field; TestSetTextRefusesABlankSetWithoutYes/tagline=/blank#01 :: app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field; TestSetTextRefusesABlankSetWithoutYes/description=/blank#01 :: app_listing_set_text_test.go:872: --description "\t\n " must be refused without --yes — it would empty a public field
+S29-blank-guard-blocks-yes	KILLED	--yes stops working, making `set to an empty string` unreachable
+	TestSetTextEmptyStringIsSentAsAnEmptyString :: app_listing_set_text_test.go:234: set-text --tagline "" --yes: --tagline is blank, which would empty a public field. If that is deliberate, pass --yes (or `--clear tagline` to null it instead). If it is not, an unset shell variable or a failed command substitu; TestSetTextEmptyStringAndNullAreDifferentOnTheWire :: app_listing_set_text_test.go:268: empty arm: --description is blank, which would empty a public field. If that is deliberate, pass --yes (or `--clear description` to null it instead). If it is not, an unset shell variable or a failed command substitution is th; TestSetTextSuccessLineDistinguishesEmptyFromCleared :: app_listing_set_text_test.go:580: empty arm: --tagline is blank, which would empty a public field. If that is deliberate, pass --yes (or `--clear tagline` to null it instead). If it is not, an unset shell variable or a failed command substitution is the usual 
+S30-json-reports-blank-as-set	KILLED	--json reports a whitespace-only write as `set`, which doctor will contradict
+	TestSetTextJSONReportsBlankAsEmptyNotSet :: app_listing_set_text_test.go:992: fields.tagline = "set", want "empty" — a whitespace-only value leaves `doctor` still reporting empty-tagline, so reporting it as "set" would be false
+S31-json-openrevision-dropped	KILLED	--json never reports that an open revision would overwrite the edit
+	TestSetTextJSONShapeIsPinnedWhole :: app_listing_set_text_test.go:945: --json payload changed.
+S32-category-misspelled	KILLED	a hand-copied category is MISSPELLED — the likelier drift than deletion, and it INVERTS: `--category discovery` is then refused locally and the refusal names the typo as the allowed value
+	TestCategoryMirrorMatchesTheServerVocabularyExactly :: app_listing_set_text_test.go:840: the category mirror has drifted from the server vocabulary.
+S33-category-reordered	KILLED	the mirror's ORDER drifts, changing what every refusal prints
+	TestCategoryMirrorMatchesTheServerVocabularyExactly :: app_listing_set_text_test.go:840: the category mirror has drifted from the server vocabulary.
+
+==== VERDICT ==== defined=31 killed=31 survived=0 build_fail=0 not_run=0

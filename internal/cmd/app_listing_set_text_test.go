@@ -49,6 +49,17 @@ type setTextServer struct {
 	updateBody []byte
 	status     string
 	pending    bool
+	// shadow is the OPEN (unsubmitted) revision draft's id, or "" for none.
+	// The distinction from `pending` is the whole point: a shadow can exist with
+	// no publish request, which is the state the warning must catch.
+	shadow string
+	// kind is what listMine reports for this slug. Defaults to "offsite" — the
+	// kind whose text the author really owns — so the pre-existing cases keep
+	// testing the arm they were written for.
+	kind string
+	// omitFromListMine makes listMine NOT list this slug, exercising the
+	// fail-closed arm.
+	omitFromListMine bool
 	// reply overrides the update's result payload when non-nil.
 	reply map[string]any
 	// updateStatus, when non-zero, makes the update answer that HTTP status
@@ -92,7 +103,7 @@ func (s *setTextServer) patchSent(t *testing.T) map[string]json.RawMessage {
 
 func newSetTextServer(t *testing.T, opts ...func(*setTextServer)) *setTextServer {
 	t.Helper()
-	s := &setTextServer{status: "draft"}
+	s := &setTextServer{status: "draft", kind: "offsite"}
 	for _, o := range opts {
 		o(s)
 	}
@@ -104,12 +115,40 @@ func newSetTextServer(t *testing.T, opts ...func(*setTextServer)) *setTextServer
 		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
 			submissionRow(w, stSlug, stBlockID)
 		case strings.Contains(r.URL.Path, "getMyListingForApp"):
+			// 🔴 THE FAKE MIRRORS THE REAL PAYLOAD, INCLUDING THE KEYS THE CLI
+			// DOES NOT READ. This reply used to omit `shadowId`/`editTargetId`,
+			// which the real server ALWAYS sends — so the fake encoded the same
+			// wrong assumption as the code (that no side-effect-free read
+			// exposes an open shadow) and no test could ever have caught it. A
+			// fake that agrees with the bug is worse than no fake.
+			// Shape: offsite-listing.service.ts:2004-2015.
+			shadow := any(nil)
+			editTarget := stListingID
+			if s.shadow != "" {
+				shadow = s.shadow
+				editTarget = s.shadow
+			}
 			trpcData(w, map[string]any{
 				"appListingId":       stListingID,
 				"status":             s.status,
 				"contentRating":      "g",
 				"hasPendingRevision": s.pending,
+				"shadowId":           shadow,
+				"editTargetId":       editTarget,
+				"editBlockedReason":  nil,
 			})
+		case r.URL.Path == "/api/trpc/appListings.listMine":
+			rows := []map[string]any{}
+			if !s.omitFromListMine {
+				rows = append(rows, map[string]any{
+					"appListingId": stListingID, "slug": stSlug, "kind": s.kind,
+				})
+			}
+			// A second, unrelated row so a match that ignored the slug cannot pass.
+			rows = append(rows, map[string]any{
+				"appListingId": "apl_OTHER11", "slug": "some-other-app", "kind": "onsite",
+			})
+			trpcData(w, rows)
 		case r.URL.Path == updateListingPath:
 			body, _ := io.ReadAll(r.Body)
 			s.mu.Lock()
@@ -141,6 +180,18 @@ func newSetTextServer(t *testing.T, opts ...func(*setTextServer)) *setTextServer
 
 func withStatus(st string) func(*setTextServer) { return func(s *setTextServer) { s.status = st } }
 func withPending(p bool) func(*setTextServer)   { return func(s *setTextServer) { s.pending = p } }
+
+// withOpenShadow gives the listing an OPEN, UNSUBMITTED revision draft —
+// `hasPendingRevision` stays false, exactly as the server reports it. That
+// combination is the state the overwrite warning exists for and could not see.
+func withOpenShadow(id string) func(*setTextServer) {
+	return func(s *setTextServer) { s.shadow = id }
+}
+
+func withKind(k string) func(*setTextServer) { return func(s *setTextServer) { s.kind = k } }
+func withNotListed() func(*setTextServer) {
+	return func(s *setTextServer) { s.omitFromListMine = true }
+}
 func withReply(m map[string]any) func(*setTextServer) {
 	return func(s *setTextServer) { s.reply = m }
 }
@@ -177,8 +228,10 @@ func TestSetTextSendsOnlyTheFieldsGiven(t *testing.T) {
 // struct would silently destroy: `--tagline ""` is a real edit.
 func TestSetTextEmptyStringIsSentAsAnEmptyString(t *testing.T) {
 	srv := newSetTextServer(t)
-	if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", ""); err != nil {
-		t.Fatalf("set-text --tagline \"\": %v", err)
+	// --yes because blanking a public field is now a guarded act; the WIRE
+	// contract under test is unchanged by that gate.
+	if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", "", "--yes"); err != nil {
+		t.Fatalf("set-text --tagline \"\" --yes: %v", err)
 	}
 	patch := srv.patchSent(t)
 	raw, ok := patch["tagline"]
@@ -211,7 +264,7 @@ func TestSetTextClearSendsExplicitNull(t *testing.T) {
 // collapses them to the same value.
 func TestSetTextEmptyStringAndNullAreDifferentOnTheWire(t *testing.T) {
 	srvEmpty := newSetTextServer(t)
-	if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--description", ""); err != nil {
+	if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--description", "", "--yes"); err != nil {
 		t.Fatalf("empty arm: %v", err)
 	}
 	empty := string(srvEmpty.patchSent(t)["description"])
@@ -487,9 +540,14 @@ func TestSetTextWarnsWhenARevisionIsUnderReview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the warning is advisory — the command must still succeed: %v", err)
 	}
-	for _, want := range []string{"already under moderator review", "OFF-SITE", "ON-SITE", "undo this edit"} {
+	// 🔴 THE KIND CAVEAT IS GONE FROM THIS MESSAGE ON PURPOSE. It used to say
+	// "if this app is OFF-SITE …; an ON-SITE app is unaffected", which was a
+	// hedge the command now makes unnecessary: `refuseOnsiteTextEdit` means an
+	// onsite listing never reaches this line at all, so the warning states the
+	// risk plainly instead of asking the reader to work out which case they are.
+	for _, want := range []string{"already under moderator review", "undo this edit", "civitai app doctor"} {
 		if !strings.Contains(stderr, want) {
-			t.Errorf("the warning must state the OFFSITE-only overwrite risk (missing %q):\n%s", want, stderr)
+			t.Errorf("the warning must state the overwrite risk (missing %q):\n%s", want, stderr)
 		}
 	}
 	// 🔴 STDERR, so stdout stays a clean report — the same stream split every
@@ -517,7 +575,7 @@ func TestSetTextIsSilentWhenNoRevisionIsPending(t *testing.T) {
 // command exists to keep separate must not read the same afterwards either.
 func TestSetTextSuccessLineDistinguishesEmptyFromCleared(t *testing.T) {
 	newSetTextServer(t)
-	emptyOut, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", "")
+	emptyOut, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", "", "--yes")
 	if err != nil {
 		t.Fatalf("empty arm: %v", err)
 	}
@@ -587,5 +645,351 @@ func TestSetTextChangeRefusalDoesNotClaimNothingChanged(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "may have partially applied") {
 		t.Errorf("the change arm's remedy should survive: %v", err)
+	}
+}
+
+// TestSetTextWarnsOnAnOpenUnsubmittedShadow is the regression for the defect the
+// audit found: the warning could not fire in the state it exists for.
+//
+// 🔴 THE REPRODUCTION IS THE NORMAL PATH, NOT AN EDGE CASE. `rm-screenshot`,
+// `set-icon`, `set-cover` and `add-screenshot` all mint the shadow LAZILY and —
+// for `rm-screenshot`, by documented design — leave it UNSUBMITTED. So:
+//
+//  1. stage a media change on an approved off-site listing -> a shadow exists,
+//     its `tagline` copied from the parent at open time, and NO publish request;
+//  2. `set-text --tagline "..."` writes the LIVE parent;
+//  3. `submit-revision`, then approval -> `applyApprovedRevision`'s offsite
+//     branch copies the shadow's OLD tagline back over the parent, silently
+//     reverting step 2.
+//
+// The old gate was `hasPendingRevision`, which is a
+// `appListingPublishRequest.findFirst({status:'pending'})` — SUBMITTED, not
+// "a shadow exists" — so in step 2 it was false and nothing was said.
+func TestSetTextWarnsOnAnOpenUnsubmittedShadow(t *testing.T) {
+	const openShadow = "apl_OPENSHADOW9"
+	newSetTextServer(t, withStatus("approved"), withPending(false), withOpenShadow(openShadow))
+	stdout, stderr, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline)
+	if err != nil {
+		t.Fatalf("the warning is advisory — the command must still succeed: %v", err)
+	}
+	if !strings.Contains(stderr, "revision") {
+		t.Fatalf("an OPEN but UNSUBMITTED shadow must still warn — this is the exact window the warning "+
+			"exists for, and `hasPendingRevision` is false here because nothing has been submitted.\n"+
+			"stderr was:\n%s\nstdout was:\n%s", stderr, stdout)
+	}
+	// It must name the revision it is talking about, or the reader cannot act.
+	if !strings.Contains(stderr, openShadow) {
+		t.Errorf("the warning should name the open revision %q so it can be inspected:\n%s", openShadow, stderr)
+	}
+	if !strings.Contains(stderr, "undo this edit") {
+		t.Errorf("the warning must state the overwrite risk:\n%s", stderr)
+	}
+}
+
+// TestSetTextShadowDetectionCostsNoExtraRequest: the field comes off a read the
+// command ALREADY makes. If detecting the shadow needed another call, the
+// obvious candidate would be `getMyListingForEdit` — which OPENS a shadow as a
+// side effect and would therefore CREATE the hazard on every run.
+func TestSetTextShadowDetectionCostsNoExtraRequest(t *testing.T) {
+	srv := newSetTextServer(t, withStatus("approved"), withOpenShadow("apl_OPEN2"))
+	if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline); err != nil {
+		t.Fatalf("set-text: %v", err)
+	}
+	got := srv.seen()
+	if len(got) == 0 {
+		t.Fatal("empty request ledger — this test measures nothing")
+	}
+	for _, p := range got {
+		if strings.Contains(p, "getMyListingForEdit") || strings.Contains(p, "beginListingRevision") {
+			t.Errorf("shadow detection reached %s, which MINTS a shadow — that creates the very "+
+				"state the warning is about. It must come from getMyListingForApp, a pure read. Ledger: %v", p, got)
+		}
+	}
+}
+
+// TestSetTextIsSilentWithNoShadowAndNoPendingRevision is the negative control
+// for BOTH gates: without it, the two tests above are equally true of a build
+// that warns unconditionally.
+func TestSetTextIsSilentWithNoShadowAndNoPendingRevision(t *testing.T) {
+	newSetTextServer(t, withStatus("approved"), withPending(false)) // no shadow
+	_, stderr, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline)
+	if err != nil {
+		t.Fatalf("set-text: %v", err)
+	}
+	if strings.Contains(stderr, "revision") {
+		t.Errorf("no shadow and no pending revision — the warning must NOT fire; a warning that always "+
+			"fires is one nobody reads:\n%s", stderr)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The KIND gate. An onsite listing's copy is manifest-governed.
+// ---------------------------------------------------------------------------
+
+// TestSetTextRefusesAnOnsiteListing is the correctness gate.
+//
+// 🔴 THE WRITE WOULD APPEAR TO SUCCEED AND BE REVERTED LATER. `(3b-sync)` in
+// `<civitai>/src/server/services/blocks/publish-request.service.ts:2742-2800`
+// overwrites name/tagline/description/category from the manifest on EVERY
+// subsequent-version moderator approve, scoped `kind: 'onsite'`. Nothing
+// server-side refuses the write — `updateListing` selects `kind` and never
+// branches on it — so the gate has to be here, and it must refuse BEFORE the
+// write rather than warn after it.
+func TestSetTextRefusesAnOnsiteListing(t *testing.T) {
+	srv := newSetTextServer(t, withKind("onsite"))
+	_, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline)
+	if err == nil {
+		t.Fatal("an ON-SITE listing's text is manifest-governed — the write must be refused, " +
+			"not silently reverted at the next approve")
+	}
+	for _, want := range []string{"ON-SITE", "block.manifest.json", "civitai app submit"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal must name the remedy that works (missing %q): %v", want, err)
+		}
+	}
+	// 🔴 REFUSED BEFORE THE WRITE. A refusal that still wrote would be no fix.
+	for _, p := range srv.seen() {
+		if p == updateListingPath {
+			t.Errorf("the onsite refusal still issued the write: %v", srv.seen())
+		}
+	}
+}
+
+// TestSetTextAllowsAnOffsiteListing is the gate's other arm — without it, the
+// test above is equally true of a command that refuses everything.
+func TestSetTextAllowsAnOffsiteListing(t *testing.T) {
+	srv := newSetTextServer(t, withKind("offsite"))
+	if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline); err != nil {
+		t.Fatalf("an OFF-SITE listing's copy is author-supplied and must be writable: %v", err)
+	}
+	if got := string(srv.patchSent(t)["tagline"]); got != `"`+stTagline+`"` {
+		t.Errorf("tagline = %s, want %q", got, stTagline)
+	}
+}
+
+// TestSetTextKindGateFailsClosed: an unknown kind, or a slug listMine does not
+// list, REFUSES. The directions are not symmetric — a wrongly-refused offsite
+// edit is recoverable in the browser and says so; a wrongly-permitted onsite
+// edit corrupts a public listing in a way nobody observes being reverted.
+func TestSetTextKindGateFailsClosed(t *testing.T) {
+	t.Run("unknown kind", func(t *testing.T) {
+		srv := newSetTextServer(t, withKind(""))
+		_, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline)
+		if err == nil {
+			t.Fatal("an unestablished kind must refuse, not proceed")
+		}
+		if !strings.Contains(err.Error(), "could not establish") {
+			t.Errorf("the refusal should say the kind could not be established: %v", err)
+		}
+		for _, p := range srv.seen() {
+			if p == updateListingPath {
+				t.Error("fail-closed must mean no write happened")
+			}
+		}
+	})
+	t.Run("slug not listed", func(t *testing.T) {
+		srv := newSetTextServer(t, withNotListed())
+		_, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline)
+		if err == nil {
+			t.Fatal("a slug listMine does not list must refuse")
+		}
+		if !errors.Is(err, civitai.ErrNotFound) {
+			t.Errorf("want ErrNotFound (exit 4), got %T: %v", err, err)
+		}
+		for _, p := range srv.seen() {
+			if p == updateListingPath {
+				t.Error("fail-closed must mean no write happened")
+			}
+		}
+	})
+}
+
+// TestSetTextKindMatchIsNormalised: `kind` is a server string the CLI compares.
+func TestSetTextKindMatchIsNormalised(t *testing.T) {
+	for _, spelling := range []string{"onsite", "ONSITE", "Onsite", " onsite "} {
+		t.Run(strings.TrimSpace(spelling), func(t *testing.T) {
+			newSetTextServer(t, withKind(spelling))
+			if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline); err == nil {
+				t.Errorf("kind %q must read as onsite and refuse", spelling)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The category mirror's CONTENTS, not just its cardinality.
+// ---------------------------------------------------------------------------
+
+// TestCategoryMirrorMatchesTheServerVocabularyExactly pins the WHOLE normalised
+// string.
+//
+// 🔴 A CARDINALITY FLOOR IS NOT A CONTENT GUARD, and the gap was demonstrated
+// rather than theorised: misspelling `"discovery"` as `"discovry"` leaves a
+// count of 7 and the entire suite green — while
+// `TestSetTextCategoryAcceptsEveryServerValue` drives the typo through a FAKE
+// that accepts any string, so it confirms the typo instead of catching it.
+//
+// The failure inverts: `--category discovery` is then refused LOCALLY, and the
+// refusal NAMES THE TYPO as an allowed value, so the user copies it and gets a
+// server 400 plus a burnt rate-limit slot. Misspelling is the likelier drift for
+// a hand-copied list than deletion, which is all the S8 mutant covered.
+func TestCategoryMirrorMatchesTheServerVocabularyExactly(t *testing.T) {
+	const want = "generation,games,utility,discovery,moderation,analytics,other"
+	got := strings.Join(appapi.MarketplaceCategories, ",")
+	if got != want {
+		t.Errorf("the category mirror has drifted from the server vocabulary.\n got: %s\nwant: %s\n"+
+			"Authority: `MARKETPLACE_CATEGORIES` in "+
+			"<civitai>/src/server/services/blocks/marketplace-categories.constants.ts (read at origin/main, "+
+			"2026-08-24). Order is part of the contract — it is what every refusal prints.", got, want)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The blank-set guard, --json, and whitespace.
+// ---------------------------------------------------------------------------
+
+// TestSetTextRefusesABlankSetWithoutYes is the safety gate on a PUBLIC write.
+//
+// 🔴 THE SHELL MAKES THIS AN ACCIDENT, NOT A CHOICE. `--tagline "$T"` with `T`
+// unset expands to `--tagline ""`, and this command's own documented example
+// `--description "$(cat DESCRIPTION.md)"` does the same whenever `cat` fails —
+// silently blanking a public field at exit 0. Every destructive sibling gates
+// (`app submit` needs `--yes`, `app withdraw` confirms); this had nothing.
+func TestSetTextRefusesABlankSetWithoutYes(t *testing.T) {
+	for _, tc := range []struct{ flag, val string }{
+		{"tagline", ""},
+		{"description", ""},
+		// 🔴 Whitespace-only is blank too: the server's `isEmpty` TRIMS, so
+		// " " leaves `civitai app doctor` still reporting empty-tagline. A
+		// command that reported success for that would be lying about the fix.
+		{"tagline", "   "},
+		{"description", "\t\n "},
+	} {
+		t.Run(tc.flag+"="+strings.TrimSpace(tc.val)+"/blank", func(t *testing.T) {
+			srv := newSetTextServer(t)
+			_, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--"+tc.flag, tc.val)
+			if err == nil {
+				t.Fatalf("--%s %q must be refused without --yes — it would empty a public field", tc.flag, tc.val)
+			}
+			if !errors.Is(err, ErrUsage) {
+				t.Errorf("want ErrUsage (exit 2), got %T: %v", err, err)
+			}
+			for _, want := range []string{"--yes", "--clear " + tc.flag} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal must name %q so both intents are reachable: %v", want, err)
+				}
+			}
+			// Refused BEFORE the wire — a guard that still wrote would be none.
+			if len(srv.seen()) != 0 {
+				t.Errorf("the blank-set refusal still made requests: %v", srv.seen())
+			}
+		})
+	}
+}
+
+// TestSetTextAllowsABlankSetWithYes is the guard's other arm. Without it, the
+// test above is equally true of a build that refuses every blank forever, which
+// would make "set to an empty string" unreachable — the exact state the tri-state
+// exists to carry.
+func TestSetTextAllowsABlankSetWithYes(t *testing.T) {
+	srv := newSetTextServer(t)
+	if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", "", "--yes"); err != nil {
+		t.Fatalf("--yes must allow a deliberate blank: %v", err)
+	}
+	if got := string(srv.patchSent(t)["tagline"]); got != `""` {
+		t.Errorf("tagline = %s, want an empty JSON string", got)
+	}
+}
+
+// TestSetTextClearNeedsNoYes: `--clear` is already an explicit request to empty
+// the field, so a second confirmation would be noise.
+func TestSetTextClearNeedsNoYes(t *testing.T) {
+	srv := newSetTextServer(t)
+	if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--clear", "tagline"); err != nil {
+		t.Fatalf("--clear is already explicit and must not need --yes: %v", err)
+	}
+	if got := string(srv.patchSent(t)["tagline"]); got != "null" {
+		t.Errorf("tagline = %s, want null", got)
+	}
+}
+
+// TestSetTextJSONShapeIsPinnedWhole: `--json` is a published contract, pinned
+// WHOLE so a renamed or dropped field is visible.
+//
+// 🔴 IT EXISTS BECAUSE THE LOOP WAS MACHINE-READABLE AT BOTH OTHER ENDS.
+// `civitai app doctor --json` gives a machine-readable diagnosis; without this a
+// script could read the problem and apply the fix but had no machine-readable
+// confirmation of what changed — and `app listing status --json`, the obvious
+// substitute, cannot serve because it OPENS a shadow revision as a side effect.
+func TestSetTextJSONShapeIsPinnedWhole(t *testing.T) {
+	const openShadow = "apl_JSONSHADOW5"
+	newSetTextServer(t, withStatus("approved"), withOpenShadow(openShadow))
+	stdout, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug,
+		"--tagline", stTagline, "--clear", "description", "--json")
+	if err != nil {
+		t.Fatalf("set-text --json: %v", err)
+	}
+	want := `{
+  "slug": "` + stSlug + `",
+  "appListingId": "` + stListingID + `",
+  "fields": {
+    "description": "cleared",
+    "tagline": "set"
+  },
+  "requiresReview": false,
+  "shadowId": "` + openShadow + `",
+  "openRevision": true
+}
+`
+	if stdout != want {
+		t.Errorf("--json payload changed.\n--- got ---\n%s\n--- want ---\n%s", stdout, want)
+	}
+}
+
+// TestSetTextJSONIsTheWholeOfStdout: `… --json | jq -e .` must always parse, and
+// the advisory must not contaminate it.
+func TestSetTextJSONIsTheWholeOfStdout(t *testing.T) {
+	newSetTextServer(t, withStatus("approved"), withOpenShadow("apl_X9"))
+	stdout, stderr, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline, "--json")
+	if err != nil {
+		t.Fatalf("set-text --json: %v", err)
+	}
+	dec := json.NewDecoder(strings.NewReader(stdout))
+	var v any
+	if err := dec.Decode(&v); err != nil {
+		t.Fatalf("stdout is not valid JSON (%v):\n%s", err, stdout)
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		t.Fatalf("stdout carries more than the payload:\n%s", stdout)
+	}
+	for _, glyph := range []string{"✓", "⚠", "\x1b["} {
+		if strings.Contains(stdout, glyph) {
+			t.Errorf("--json stdout carries the styling marker %q:\n%s", glyph, stdout)
+		}
+	}
+	// The advisory still has to reach the operator — on stderr.
+	if !strings.Contains(stderr, "revision") {
+		t.Errorf("the overwrite advisory must still print on stderr under --json:\n%s", stderr)
+	}
+}
+
+// TestSetTextJSONReportsBlankAsEmptyNotSet: a script must be able to tell an
+// empty write from a real one, because the server's `isEmpty` trims and `doctor`
+// will still report the field as empty afterwards.
+func TestSetTextJSONReportsBlankAsEmptyNotSet(t *testing.T) {
+	newSetTextServer(t)
+	stdout, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", "  ", "--yes", "--json")
+	if err != nil {
+		t.Fatalf("set-text: %v", err)
+	}
+	var got struct {
+		Fields map[string]string `json:"fields"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("bad payload (%v): %s", err, stdout)
+	}
+	if got.Fields["tagline"] != "empty" {
+		t.Errorf(`fields.tagline = %q, want "empty" — a whitespace-only value leaves `+
+			"`doctor` still reporting empty-tagline, so reporting it as \"set\" would be false", got.Fields["tagline"])
 	}
 }

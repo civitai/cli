@@ -130,6 +130,16 @@ func listingRouteCases() []listingRouteCase {
 			},
 		},
 		{
+			// The ownership-and-seats enumeration `set-text` reads for the
+			// listing KIND. It takes no input and opens no shadow — a lookup in
+			// the strictest sense available here.
+			name: "listMine", route: trpcListMine, wantOp: listingOpRead, serverMsg: "refused: listing enumeration",
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.ListMyListings(ctx)
+				return err
+			},
+		},
+		{
 			// The scalar TEXT write. A change like the attaches below it: it
 			// writes the listing row, so a 400 may have partially applied.
 			name: "updateListing", route: trpcUpdateListing, wantOp: listingOpChange, serverMsg: "refused: scalar text write",
@@ -307,15 +317,15 @@ func wantForOp(op listingOp) (want, notWant []string) {
 // wrong op; this is what does not.
 func TestListingBadRequestSubjectIsReachablePerRoute(t *testing.T) {
 	cases := listingRouteCases()
-	if len(cases) < 13 {
+	if len(cases) < 15 {
 		// civitai/cli#391 N3: the floor is a positive control against a table
-		// that quietly emptied, NOT a claim that fourteen is forever. Retiring a
-		// route is a legitimate reason to see thirteen, so the message says which
+		// that quietly emptied, NOT a claim that fifteen is forever. Retiring a
+		// route is a legitimate reason to see fourteen, so the message says which
 		// edit is expected instead of only reporting the count.
 		t.Fatalf("positive control: this table drives %d routes, and %d were expected.\n"+
 			"If a route was RETIRED, lower this floor in the same commit that deletes its case, "+
 			"its entry in TestListingRouteOpsAreExactlyThisSpelledSet and its row in procname_leak_test.go. "+
-			"If nothing was retired, the table lost a case.", len(cases), 14)
+			"If nothing was retired, the table lost a case.", len(cases), 15)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -701,12 +711,12 @@ func TestEveryListingRouteHasAReachabilityCase(t *testing.T) {
 
 	// Positive control on the PARSER: a walker that silently matches nothing
 	// would make this test pass with an empty ledger. civitai/cli#391 N3: a
-	// count short of 14 also happens when a route is legitimately retired, so
+	// count short of 15 also happens when a route is legitimately retired, so
 	// the message names that reading too rather than only blaming the sweep.
-	if len(declared) < 14 {
+	if len(declared) < 15 {
 		t.Fatalf("the sweep found %d listingRoute declarations in %s, and %d were expected.\n"+
 			"If a route was RETIRED, lower this floor in the commit that removes it. "+
-			"Otherwise the sweep is not reading what it thinks it is.", len(declared), mustGetwd(t), 14)
+			"Otherwise the sweep is not reading what it thinks it is.", len(declared), mustGetwd(t), 15)
 	}
 	for _, must := range []string{"/api/trpc/appListings.setIcon", ImageUploadPath} {
 		if _, ok := declared[must]; !ok {
@@ -777,6 +787,7 @@ func TestListingRouteOpsAreExactlyThisSpelledSet(t *testing.T) {
 		"/api/trpc/appListings.ingestAssetFromDataUri": "listingOpIngest",
 		"/api/trpc/appListings.persistAssetImage":      "listingOpIngest",
 
+		"/api/trpc/appListings.listMine":              "listingOpRead",
 		"/api/trpc/appListings.updateListing":         "listingOpChange",
 		"/api/trpc/appListings.setIcon":               "listingOpChange",
 		"/api/trpc/appListings.setCover":              "listingOpChange",

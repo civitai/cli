@@ -53,6 +53,11 @@ var (
 	// applied and must never be worded as "nothing changed".
 	trpcUpdateListing = listingRoute{"/api/trpc/appListings.updateListing", listingOpChange}
 
+	// The ownership-and-seats enumeration. `set-text` reads it for ONE bit —
+	// the listing KIND — which decides whether the text it is about to write has
+	// an author surface at all. It is a pure read and takes no input.
+	trpcListMine = listingRoute{"/api/trpc/appListings.listMine", listingOpRead}
+
 	trpcSetIcon               = listingRoute{"/api/trpc/appListings.setIcon", listingOpChange}
 	trpcSetCover              = listingRoute{"/api/trpc/appListings.setCover", listingOpChange}
 	trpcAddScreenshot         = listingRoute{"/api/trpc/appListings.addScreenshot", listingOpChange}
@@ -89,6 +94,36 @@ type ListingRef struct {
 	Status             string `json:"status"` // draft|pending|approved|rejected|removed
 	ContentRating      string `json:"contentRating"`
 	HasPendingRevision bool   `json:"hasPendingRevision"`
+	// ShadowID is the OPEN revision draft on an approved parent, or nil.
+	//
+	// 🔴 DECODED BECAUSE A CORRECTNESS CLAIM DEPENDS ON IT, and it is the field
+	// whose absence made `app listing set-text`'s overwrite warning unable to
+	// fire in the one state it exists for. `HasPendingRevision` is a
+	// `appListingPublishRequest.findFirst({status:'pending'})` — it means
+	// SUBMITTED, not "a shadow exists" (offsite-listing.service.ts:1968-1971).
+	// An open-but-unsubmitted shadow — which `rm-screenshot`, `set-icon`,
+	// `set-cover` and `add-screenshot` all mint lazily and deliberately leave
+	// unsubmitted — reports `hasPendingRevision: false`, so a warning gated on
+	// that flag alone stays silent in exactly the window it was written for.
+	//
+	// 🔴 IT IS SIDE-EFFECT-FREE, which is the whole reason this is the right
+	// field. The server resolves it with `dbWrite.appListing.findFirst({where:
+	// {revisionOfId: listing.id}})` — a READ, no create (`:1975-1993`), under a
+	// comment that says so ("WITHOUT creating one"). That is what distinguishes
+	// it from `getMyListingForEdit`, which idempotently OPENS a shadow and so
+	// cannot be used to check for one.
+	//
+	// 🔴 `editTargetId` IS STILL NOT DECODED, and that refusal is re-argued
+	// rather than inherited. It was declined for `app listing status --json`
+	// (civitai/cli#447) on the grounds that it would be a FOURTH way to NAME an
+	// edit target beside AppListingID, ShadowID and BeginListingRevision's
+	// return — an ergonomics argument about id spaces. Nothing here needs to
+	// name a target: this CLI writes the PARENT and only needs to know whether a
+	// shadow EXISTS, which `shadowId` answers on its own. `editTargetId` equals
+	// the parent id when there is no shadow and the shadow id when there is, so
+	// it carries no bit `shadowId` does not. The #447 refusal therefore stands on
+	// its own terms and is not load-bearing for this correctness claim.
+	ShadowID *string `json:"shadowId"`
 }
 
 // ListingAsset mirrors ListingEditAsset ({imageId, url}); a nil/zero imageId +
@@ -263,6 +298,46 @@ func (p ListingTextPatch) wire() map[string]any {
 	return out
 }
 
+// MyListing is one row of `appListings.listMine` — a listing the caller OWNS or
+// holds an ACCEPTED editor seat on.
+//
+// 🔴 ONLY THE FIELDS WITH A CONSUMER ARE DECODED. The server also sends `name`,
+// `status`, `role`, `appBlockId`, `capabilities`, `iconUrl`, `coverUrl`,
+// `updatedAt`, `problems` and `lastModerationAction`. `set-text` needs the slug
+// to match on and the KIND to gate on; adding a field here is a decision to use
+// it, not a formality.
+type MyListing struct {
+	AppListingID string `json:"appListingId"`
+	Slug         string `json:"slug"`
+	// Kind is "onsite" or "offsite", and it decides WHO OWNS THE TEXT — see
+	// ListingKindOnsite.
+	Kind string `json:"kind"`
+}
+
+// ListingKindOnsite is the kind whose listing COPY is manifest-governed.
+//
+// 🔴 AN ONSITE LISTING'S TEXT HAS NO AUTHOR SURFACE BUT THE MANIFEST. The
+// `(3b-sync)` re-sync in
+// `<civitai>/src/server/services/blocks/publish-request.service.ts:2742-2800`
+// overwrites `name`/`tagline`/`description`/`category` from
+// `buildListingScalarSync` on EVERY subsequent-version moderator approve, scoped
+// `where: {appBlockId, kind: 'onsite'}`. Its own comment states the premise:
+// those fields "have NO author surface other than the manifest". `category` is
+// worse than the other three — it is written from `AppBlock.category`, which is
+// null unless a moderator curated one, so a set value is CLEARED at the next
+// approve. Read at origin/main, 2026-08-24.
+const ListingKindOnsite = "onsite"
+
+// ListMyListings enumerates the caller's listings. Pure read, no input; it opens
+// no shadow revision, unlike GetMyListingForEdit.
+func (c *Client) ListMyListings(ctx context.Context) ([]MyListing, error) {
+	var out []MyListing
+	if err := c.trpcQuery(ctx, trpcListMine, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // UpdateListingResult mirrors updateListing's result. `RequiresReview` and
 // `ShadowID` describe the branch the SERVER took.
 //
@@ -309,14 +384,21 @@ type SubmitRevisionResult struct {
 }
 
 // trpcQuery issues a tRPC GET query and decodes result.data.json into out.
+// 🔴 A nil `input` sends NO `?input=` parameter at all. `appListings.listMine`
+// declares no input schema; sending an explicit `{"json":null}` is a value the
+// server never has to accept, and omitting the key is what the tRPC client
+// itself does for an input-less query.
 func (c *Client) trpcQuery(ctx context.Context, route listingRoute, input any, out any) error {
-	inputJSON, err := json.Marshal(map[string]any{"json": input})
-	if err != nil {
-		return err
+	reqURL := c.BaseURL + route.path
+	if input != nil {
+		inputJSON, err := json.Marshal(map[string]any{"json": input})
+		if err != nil {
+			return err
+		}
+		q := url.Values{}
+		q.Set("input", string(inputJSON))
+		reqURL += "?" + q.Encode()
 	}
-	q := url.Values{}
-	q.Set("input", string(inputJSON))
-	reqURL := c.BaseURL + route.path + "?" + q.Encode()
 	build := func() (*http.Request, error) {
 		return http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	}

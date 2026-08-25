@@ -366,7 +366,7 @@ func TestListingHelpStaysWithinTheBudget(t *testing.T) {
 			}
 		}
 	}
-	if checked < 8 {
+	if checked < 9 {
 		t.Fatalf("only %d bodies were measured, want 9 — a body that is empty is not a body "+
 			"that is within budget", checked)
 	}
