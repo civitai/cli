@@ -213,6 +213,9 @@ def run_tests():
 
 
 def parse(out):
+    """🔴 KILLER ATTRIBUTION IS APPROXIMATE; VERDICTS ARE NOT. The backward scan
+    for a nearby `_test.go:NN:` cross-attributes across subtests. Which tests
+    FAILED is exact; the reason printed beside each is a nearby line."""
     fails = re.findall(r"^\s*--- FAIL: (\S+)", out, re.M)
     lines = out.split("\n")
     detail = {}
@@ -228,6 +231,10 @@ def parse(out):
     counts = {
         "PASS": len(re.findall(r"^\s*--- PASS:", out, re.M)),
         "FAIL": len(fails),
+        # 🔴 A run can DIE part-way and still look KILLED. See the sibling
+        # battery's note: one mutant reported a third of the baseline's verdicts,
+        # which is a fact about the harness, not about the code.
+        "PANIC": len(re.findall(r"^panic:", out, re.M)),
     }
     built = "[build failed]" not in out
     return fails, detail, counts, built
@@ -237,7 +244,8 @@ def main():
     only = sys.argv[1:] or None
     base = run_tests()
     _, _, bc, built = parse(base)
-    print(f"BASELINE: {bc} built={built}")
+    base_total = bc["PASS"] + bc["FAIL"]
+    print(f"BASELINE: {bc} total={base_total} built={built}")
     if bc["FAIL"] != 0 or not built:
         print("!! baseline is not green — every result below is meaningless")
         return 3
@@ -265,9 +273,14 @@ def main():
             verdict = "KILLED"
         else:
             verdict = "SURVIVED"
+        total = counts["PASS"] + counts["FAIL"]
+        short = base_total - total
         results.append((mid, verdict, "; ".join(
             f"{f} :: {detail.get(f, '(no line)')}" for f in fails[:3]), why))
         print(f"{mid}: {verdict} ({counts})")
+        if counts["PANIC"] or short > base_total * 0.05:
+            print(f"  ⚠ TRUNCATED RUN: {total} verdicts vs baseline {base_total}"
+                  f" ({short} missing, panics={counts['PANIC']}) — treat the KILL as unattributed.")
         for f in fails[:3]:
             print(f"    <- {f}\n       {detail.get(f, '(no assertion line)')}")
         if verdict == "SURVIVED":
@@ -285,6 +298,11 @@ def main():
     if bad:
         print("!! NOT A CLEAN SWEEP — these NEVER RAN and are evidence of nothing:")
         for mid, _, _, why in bad:
+            print(f"     {mid}: {why}")
+        return 2
+    if bf:
+        print("!! these mutants did not COMPILE, so they are evidence of nothing:")
+        for mid, _, _, why in bf:
             print(f"     {mid}: {why}")
         return 2
     return 1 if surv else 0
