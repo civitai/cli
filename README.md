@@ -66,6 +66,7 @@ contract, and **packages/submits** it for review.
   - [Build provenance: which commit is live?](#build-provenance-which-commit-is-live)
   - [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped)
   - [Deployed is not the same as listed in the store](#deployed-is-not-the-same-as-listed-in-the-store)
+- [Listing doctor (`app doctor`)](#listing-doctor-app-doctor) — **gates a release on exit code**
 - [Pull your app's repository (`app pull`)](#pull-your-apps-repository-app-pull)
 - [Browse the App store](#browse-the-app-store)
 - [App metrics](#app-metrics)
@@ -322,7 +323,8 @@ README. For the end-to-end walkthrough, see
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
 | `civitai app listing status [--json]\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires, and `listing status --json` emits the same read as one object — including **`parentId` and `shadowId`, the two listing ids a change is addressed to**, which the human output shows neither of. 🔴 **`--json` is not a pure read: on a live listing it opens the revision draft described below, so do not poll it.** The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. **On a listing that is already LIVE, every change — including `reorder` — opens a REVISION for moderator re-review rather than editing the live listing**, and `listing status` reports that in-progress revision's media (so the `alsc_…` ids it prints are the revision's, which is what `reorder` addresses). `rm-screenshot` is the one change deliberately left **staged**: it does **not** submit the revision (curating a gallery is usually several removals), so `submit-revision` is what sends it to moderator review and makes the change public. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). Run from **inside** an app checkout it also warns on **stderr** when your local `block.manifest.json` is **BEHIND** your highest approved version — advisory only, the exit code never changes. A **SOURCE** column shows the commit the submitting client claimed (short sha, `(dirty)` when it said the tree was uncommitted, `-` when it claimed nothing); the detail view and `--json` carry the full 40 characters, and `sourceDirty` is a tri-state — `null` is *not reported*, `false` is *reported clean*. See [Submission status](#submission-status), [Build provenance](#build-provenance-which-commit-is-live) and [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped). |
-| `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs a **personal API key** (an OAuth login is refused). See [App metrics](#app-metrics). |
+| `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it.** No arg checks every listing you own **or hold an accepted collaborator seat on** (a wider set than `app status`, which is scoped to what *you submitted*); a slug checks just that one. Findings are the platform's, grouped per app, **BLOCKING first** (`missing-icon`, `missing-cover`, `blocked-media` — the listing cannot publish) then **ADVISORY** (`no-screenshots`, `empty-description`, `empty-tagline`, `empty-category`, `scanning-media`). Each one prints the command or URL that fixes it. A listing whose status is `removed` is still reported, in its own section, but does **not** set the exit code — the publish floor is meaningless for a delisted app. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise** — so `civitai app doctor my-app || exit 1` gates a release; `--json` uses the same codes and publishes both `summary.blocking` (everything found) and `summary.gating` (what set the code). Unlike `app listing status` it is a **pure read** and opens no revision draft. See [Listing doctor](#listing-doctor-app-doctor). |
+| `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs the **Apps submit scope** — an OAuth `civitai login` or a full-scope personal API key; the same bit `app submit` and `app status` use. An OAuth token minted before that scope existed is refused `403`; re-run `civitai login`. See [App metrics](#app-metrics). |
 | `civitai app withdraw [pubreq-id] [--id <pubreq>] [--yes]` | **Withdraw your own pending submission** (the `pubreq_…` id from `civitai app status`). Frees the slug so a fresh `civitai app submit` can replace it. **Also deletes a first-version app's store listing — icon, cover and every captioned screenshot**, so it asks first and needs `--yes` in a script. Idempotent for the submission only; only a `pending` request can be withdrawn. See [Submission status](#submission-status). |
 | `civitai generate "<prompt>" [--negative-prompt <p>] [--quantity <n>] [--aspect-ratio <r>] [--checkpoint <version-id>] [--lora <version-id>[:strength]] [--image <path-or-url>] [--ecosystem <key>] [--input <file>] [--print-input] [--dry-run] [--json] [--max-cost <buzz>] [--fail-on-substitution] [--yes] [--no-wait] [--timeout <dur>] [--out-dir <dir>] [--out-name <template>] [--no-download] [--force] [--external-id <key>]` | **Generate images from a text prompt — this SPENDS REAL BUZZ.** Prices the job with the server's estimator, shows the cost + your balance, asks before spending, submits, then **waits and downloads** the results. `--dry-run` prices it and exits without submitting; `--max-cost` is an **estimate check, not a spending cap**. Needs the AI Services scopes — `civitai login --scopes generate` or a full-scope **personal API key**; a **default** OAuth login is refused. See [Generate](#generate) for the wait/download flags, image-to-image, raw graphs, and [silent model substitution](#-silent-model-substitution). |
 | `civitai workflows list [--limit <n>] [--cursor <c>] [--tag <t>] [--json]` | **List the generation workflows you have submitted**, newest first — status, when, cost, and `deliverable/total` outputs. Where the server recorded **an account of what happened** to a workflow, it is printed in full on indented lines under that workflow's row. Cursor-paged: the next cursor is printed on stdout when more results exist. Reading spends nothing. See [Generate](#listing-and-cancelling-workflows). |
@@ -2089,6 +2091,115 @@ flag while the store is pre-GA. When the 404 lands on a slug **you own**, the CL
 detects that and says so, naming both next commands, instead of leaving you with
 a bare "App not found".
 
+## Listing doctor (`app doctor`)
+
+`civitai app doctor` answers one question — **is this listing ready to
+publish, and if not, what do I do about it?** — for every App you own or hold an
+accepted collaborator seat on, or for just the one you name:
+
+```bash
+civitai app doctor                 # every app you can work on
+civitai app doctor my-app          # just one
+civitai app doctor --json | jq -e .ok
+```
+
+The findings are the **platform's**, not the CLI's. They arrive already
+classified into two severities, and the report keeps that split because it is
+what the exit code is computed from:
+
+| Severity | Codes | Meaning |
+| --- | --- | --- |
+| **BLOCKING** | `missing-icon`, `missing-cover`, `blocked-media` | The listing **cannot publish** until it is fixed. Sets the exit code — unless the listing is delisted (below). |
+| **ADVISORY** | `no-screenshots`, `empty-description`, `empty-tagline`, `empty-category`, `scanning-media` | Recommended, but nothing is held up. |
+
+**Delisted listings are reported but do not gate.** An app whose status is
+`removed` still gets a full row, in its own section — the verdict shrinks, the
+report does not. Its blocking problems are counted in `summary.blocking` and
+excluded from `summary.gating`. Without this one old removed app would fail
+every run forever: measured on production, an account with 21 listings had 11
+blocking problems and **ten of them sat on `removed` apps**. Republish a listing
+and it gates again on the next run, with no flag to remember. Only an explicit
+`removed` is excluded — an unrecognised status still gates, because "we could
+not tell it is delisted" is not "it is delisted".
+
+**The exit code is the point.** `1` when a blocking problem was found on a
+listing that **can still publish**, `0` otherwise — including when only
+advisories were found, when the only blocking problems are on delisted
+listings, and when you have no listings at all. So it gates a release script
+without parsing anything:
+
+```bash
+civitai app doctor my-app || exit 1
+```
+
+`--json` emits the same verdict as one object and uses the **same** exit codes,
+so a script must branch on the code before trusting the payload. Every other
+code keeps its usual meaning — `3` not authorized, `4` no such app of yours, `5`
+transport. The shape:
+
+| Field | Meaning |
+| --- | --- |
+| `ok` | The verdict, and the structured form of the exit code. Follows `summary.gating`, **not** `summary.blocking`. |
+| `apps[]` | Every listing checked, **gating apps first, delisted last**. Each carries `slug`, `name`, `appListingId`, `appBlockId` (null for offsite), `status`, `role`, `delisted`, and a `blocking` and an `advisory` array — never null, `[]` when empty. |
+| `apps[].delisted` | `true` when this listing's status is `removed`, i.e. its blocking problems were reported and not counted. |
+| `apps[].kind` | `onsite` or `offsite`. Carried because it **decides** `fix` for the three text codes — without it a consumer sees two different fixes for one code and cannot reproduce the branch. |
+| `summary.truncated` | `true` when the server's page cap may have hidden listings. Computed from the **server's page**, so it is reported on a single-app run too: that run filters the same capped page client-side, because `listMine` takes no input. |
+| `summary.blocking` | **Every** blocking problem found, so it matches the arrays you can see. |
+| `summary.gating` | The subset on listings that can still publish. **This is the exit code.** |
+| `summary.advisory` / `summary.apps` / `summary.delisted` | Advisory findings, apps checked, and how many of them are delisted. |
+
+Two counts rather than one is deliberate: publishing a single number would force
+a choice between a total that disagrees with the arrays and a verdict that
+disagrees with the exit code. Ask `ok` for "may this ship", `summary.blocking`
+for "is anything wrong anywhere".
+
+**Each finding names its fix, and only fixes that exist — and only fixes that are
+*sufficient*.** `missing-icon` / `missing-cover` / `no-screenshots` print the exact
+`civitai app listing set-icon` / `set-cover` / `add-screenshot` command, `--slug`
+already filled in. `scanning-media` prints no command at all, because the scan
+finishes on its own.
+
+🔴 **`blocked-media` depends on the slot**, which the CLI reads from the server's
+label (the code itself is kind-less). An icon or a cover is **replaced** — the
+new asset overwrites the slot and dereferences the blocked image. A **screenshot
+must be REMOVED**: `add-screenshot` *appends*, so the blocked row stays attached
+and go-live is still refused. That arm therefore prints three commands —
+`listing status` to find the `alsc_` id, `rm-screenshot`, and, on an approved
+listing, `submit-revision`, because the removal lands in a revision that is
+deliberately not auto-submitted. An unrecognised label falls back to an arm that
+still names the removal, losing precision but never sufficiency. The three **text** problems — description,
+tagline, category — are **kind-aware**, because who owns that copy differs:
+
+| kind | fix printed | why |
+| --- | --- | --- |
+| **off-site** | the listing's **web editor URL** | the copy is author-supplied through the submit wizard |
+| **on-site** | **`block.manifest.json`**, then `civitai app submit` a new version | the copy is **manifest-governed** |
+
+🔴 That distinction is not cosmetic. On an on-site listing the platform
+overwrites `name` / `tagline` / `description` / `category` **from the manifest on
+every subsequent-version moderator approve** — so telling an on-site author to
+edit them in the browser is advice the platform silently reverts: they follow it,
+`doctor` goes quiet, and the problem comes back with nothing explaining why. An
+unrecognised or absent kind takes the **browser** arm, deliberately: naming a
+manifest an app may not have is confusing and self-correcting, while the reverse
+is the silent failure.
+
+`doctor` itself still mutates nothing — it is a diagnosis, so a CLI route for
+writing those fields is a separate command.
+
+Two properties worth knowing:
+
+- **It is a PURE READ.** Unlike `civitai app listing status`, it opens no
+  revision draft on a live listing, so it is safe to run in a loop or in CI.
+- **It sees apps `civitai app status` cannot.** `app status` reads the
+  submissions route, which is scoped to what *you submitted* — a listing you
+  acquired by ownership transfer, or one you hold a collaborator seat on, is
+  invisible there. `doctor` reads the ownership-plus-seats listing, so both show
+  up.
+
+An app with nothing wrong is reported as complete, explicitly. A blank space is
+not an answer: a missing section is indistinguishable from a read that failed.
+
 ## Pull your app's repository (`app pull`)
 
 `civitai app pull` is the **read side of git authoring**: it clones (or, if
@@ -2250,12 +2361,15 @@ believable-but-wrong reading:
   dashboard in that case and tells you to check `civitai whoami` /
   `civitai app status <slug>` instead — a silently-empty dashboard that looks
   like real data is the failure mode this command is built to avoid.
-- **It needs a personal API key.** The query is full-scope, so an OAuth
-  `civitai login` token gets a 403. Both refusals — the 403 *and* the
-  no-token-at-all case — name the route that actually works
-  (`civitai login --token <key>`, created at `civitai.com/user/account`) rather
-  than the generic "run `civitai login`", which here is the one route that
-  cannot succeed.
+- **An OAuth login works, and a personal API key works.** The query needs the
+  **Apps submit scope** — the same bit `civitai app submit` and
+  `civitai app status` require — so one `civitai login` serves all three. (This
+  used to need a full-scope personal API key, and this README said so long after
+  it stopped being true: `civitai/civitai#3572` scope-annotated the procedure
+  precisely so the CLI's login token could read its own analytics.) An OAuth
+  token minted **before** that scope existed does not carry it and still gets a
+  403 — re-run `civitai login`. Both refusals, the 403 and the no-token-at-all
+  case, name both working routes rather than the generic "run `civitai login`".
 
 Two data caveats.
 
@@ -3236,7 +3350,7 @@ credited it to the wrong command.)
 | `not logged in (401)` | The credential is present but invalid or expired. OAuth tokens refresh themselves; when the *refresh* token has also expired, log in again. For a personal key, mint a new one at `civitai.com/user/account`. | [Submit & auth](#submit--auth) |
 | `forbidden (403)` | Usually the invite-only Apps beta rather than a broken token — the same account reads the public API fine. | [Submit & auth](#submit--auth) |
 | `not permitted for your account (403)` | Managing a **store listing** needs Apps-author access, which is a narrower grant than being able to submit. | [Listing media requirements](#listing-media-requirements) |
-| `not permitted to read this app's analytics (403)` | `app metrics` needs a **full-scope personal API key**. An OAuth login is refused here even when it can submit. | [App metrics](#app-metrics) |
+| `not permitted to read this app's analytics (403)` | `app metrics` needs the **Apps submit scope**. An OAuth `civitai login` carries it — unless the token was minted before the scope existed, in which case re-run `civitai login`. A full-scope personal API key also works. | [App metrics](#app-metrics) |
 | `block lacks ai:write:budgeted scope` | Printed by your app at runtime under `dev:live`. The dev token was minted **without** `--spend`, so the CLI filtered the budgeted-spend scope out — it never requests that scope implicitly, even when your manifest declares it. | [Local dev loop](#local-dev-loop-harness-mock-vs-live) |
 | `insufficient Buzz` / `generation disabled` | Not credential problems, which is why they exit `1` rather than `3` — a script must not loop on `civitai login` for either. | [Exit codes specific to `generate`](#exit-codes-specific-to-generate) |
 | `rate limited (429)` | Throttled; exit `6`. For deep paging use `--cursor` rather than `--page`. | [Exit codes](#exit-codes) |
@@ -3256,7 +3370,7 @@ credited it to the wrong command.)
 | --- | --- | --- |
 | `… not found at project root …` | **`civitai app validate`** found no `block.manifest.json` in the directory you named — the finding reads `block.manifest.json not found at project root <dir>`, which the terminal wraps onto a second line for a long path (`--json` carries it as one `message` string). `app submit` prints it too, because it validates first. `app submit --skip-validate` never prints it, because it waives the validation that produces it — that run fails on the row below instead. The path itself was fine, which is why this exits `1` and not `2`. | [Exit code 1](#exit-code-1) |
 | `is this an App project?` | The same cause, reported by a command that did not validate first: `civitai app listing …`, which has to work out *which* app you mean from the working directory, and `app submit --skip-validate`, which waived the check that produces the row above. `app validate` and a plain `app submit` never print it, because validation reports the row above first. Run `app listing` from the app directory, or name the app with `--slug` / `--dir`. | [After you submit](#after-you-submit-review--approve--deploy) |
-| `the server rejected this store-listing lookup (400)` | A **read** was refused — resolving your app's listing, reading it for edit, or polling an asset's scan state. Nothing was changed. The value at fault is one the CLI derived (an app slug, a listing id, an image id), so start from `civitai app status` and check the app you named. Exit `2`. | [Listing media requirements](#listing-media-requirements) |
+| `the server rejected this store-listing lookup (400)` | A **read** was refused — resolving your app's listing, reading it for edit, polling an asset's scan state, or enumerating your listings for `app doctor`. Nothing was changed. Three of those four carry a value the CLI derived (an app slug, a listing id, an image id); the `app doctor` enumeration carries **no input at all**, which is why the message no longer blames a value you named. `civitai app doctor` lists every app you can work on. Exit `2`. | [Listing doctor](#listing-doctor-app-doctor) |
 | `the server rejected the image-upload request (400)` | The **image** was refused while being ingested — the presigned upload mint, the inline icon upload, or the row that records the uploaded file. **No listing was changed** by any of those three: an image is attached to nothing until `set-icon` / `set-cover` / `add-screenshot` runs. The server's own reason follows the code and names the bound it applied — read it rather than guessing which limit you crossed. Exit `2`. **The raw upload of the bytes is a fourth step and reports differently** — see the row below. | [Listing media requirements](#listing-media-requirements) |
 | `image upload PUT failed` | The full-resolution upload of the **bytes themselves**, to the presigned URL, was refused by storage (e.g. `EntityTooLarge`) — the step between minting the URL and recording the row. No listing was changed. ⚠️ Unlike the three ingest steps above it is **not** classified as a bad request, so it exits **`1`, not `2`**, and the message leads with the HTTP mechanism rather than with what you were doing. That inconsistency is known and tracked ([#388](https://github.com/civitai/cli/issues/388)), not intended. | [Listing media requirements](#listing-media-requirements) |
 | `the server rejected this store-listing change (400)` | The **listing** was refused — an attach, a removal, a reorder, opening a revision, or submitting one. Unlike the rows above, this one may have **partially applied**, which is why it points you at `civitai app listing status` rather than claiming nothing happened. It deliberately does **not** tell you to go fix a value, because the seven routes it covers do not all carry one. Where the CLI can name something concrete it does so on the lines that follow, and only there: `set-icon`, `set-cover` and `add-screenshot` print the bytes, pixel dimensions and MIME type of the **file** you sent — never the `--caption`. `rm-screenshot`, `reorder` and the two revision steps print this line **alone**, so for those the server's own reason is the whole story; *opening* a revision in particular sends nothing but a listing id the CLI derived from a lookup that had already succeeded. Exit `2`. **One refusal is deliberately not reported here at all**: a revision *submit* refused because the listing is still below the publish floor is not a failure of the command that ran — the change was written to the revision, and the floor takes two commands to clear — so that case prints `staged on an open revision` and exits `0`. The CLI decides that from the listing's own state, never from the server's wording. It reports progress only when all three hold: the refusal was a **400** (a `500`/`503` is an outage, not the floor, and still fails with its usual exit code), what it just wrote is really there — matched by **image id** for an icon or cover, by the `alsc_…` row id for a screenshot (a listing being re-branded already has an *old* icon, which proves nothing), and for `reorder` by the revision's gallery holding **exactly the ids you passed, in the order you passed them** (a revision that exists but was never reordered proves nothing either) — and the floor is really unmet. If it cannot read the listing back it claims nothing — you get this row and exit `2`. **This applies to `reorder` since [#430](https://github.com/civitai/cli/issues/430)**, which is also when a live `reorder` started reaching the revision routes at all: before it, a reorder of a live listing could only ever produce this row, because it was addressed to the parent listing while the ids it carried belonged to the open revision. 🔴 **That exception is scoped to the commands whose job was the STAGED CHANGE — the three attaches and `reorder` — and `civitai app listing submit-revision` is deliberately not one of them**: there the submit *is* what you asked for, so a below-floor refusal is a real failure — you get this row and exit `2`, with the floor gap printed alongside it as context. Reporting `0` there would be [#436](https://github.com/civitai/cli/issues/436)'s own false success, rebuilt in the command that fixes it. | [Listing media requirements](#listing-media-requirements) |

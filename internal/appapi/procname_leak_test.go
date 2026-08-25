@@ -82,6 +82,16 @@ const changeSubject = "store-listing change"
 // states the one thing every change route has in common.
 const changeRemedy = "may have partially applied"
 
+// 🔴 The READ arm's retired clause, kept as a PROHIBITION rather than deleted
+// with it — the same treatment valueBlame gets above, and for the same reason.
+// "check the app you named" was true of the three reads that carry a slug or an
+// id, and became false the moment a fourth read (appListings.listMine, the
+// `app doctor` enumeration) reached the same arm carrying no input at all. One
+// arm answering for N routes may only claim what is true of all N. Deleting the
+// phrase without banning it would retire the lesson silently, and the next
+// author to want a friendlier read message would write it straight back.
+const namedValueBlame = "check the app you named"
+
 // listingWordingRows is the third guard's table, lifted out of its test so the
 // set of routes it covers can itself be checked. See
 // TestEveryListingRouteHasAWordingRow: without that, the table was enforced only
@@ -107,6 +117,20 @@ func listingWordingRows() []listingWordingRow {
 			route:   trpcGetAssetScanStatuses,
 			want:    []string{readSubject, "nothing was changed"},
 			notWant: []string{changeSubject, ingestSubject, changeRemedy, valueBlame},
+		},
+		{
+			// 🔴 Written from what listMine DOES, not copied from the row above
+			// it — and the difference is the whole reason this row was worth
+			// writing by hand. listMine sends NO input: no slug, no listing id,
+			// no image id. So beyond the shared "nothing was changed" it may not
+			// blame a value, and it may not tell the caller to check something
+			// they named, because they named nothing. `namedValueBlame` below is
+			// in notWant for exactly that: it is the clause this route's arrival
+			// made false, and it stays banned so it cannot drift back.
+			name:    "listMine enumerates and blames no value the caller sent",
+			route:   trpcListMine,
+			want:    []string{readSubject, "nothing was changed"},
+			notWant: []string{changeSubject, ingestSubject, changeRemedy, valueBlame, namedValueBlame},
 		},
 
 		// ---- ingests: an Image row, attached to nothing ----
