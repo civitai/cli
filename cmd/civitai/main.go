@@ -46,9 +46,40 @@ const (
 func main() {
 	cmd.SetBuildInfo(version, commit, date)
 	if err := cmd.NewRootCmd().Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, "Error:", err)
+		// 🔴 THIS LINE IS THE ONLY SOURCE OF THE "Error: " PREFIX. cobra prints
+		// nothing — the root sets `SilenceErrors: true` (internal/cmd/root.go) —
+		// so every non-nil error from Execute() is rendered here and nowhere
+		// else. An earlier attempt to stop `app doctor` reading as a tool
+		// failure edited the SENTINEL's text instead, which was a fix aimed at
+		// the wrong emitter: the prefix survived untouched, and the test written
+		// to prove otherwise asserted on `err.Error()` — the string as it exists
+		// BEFORE this line prepends anything, so it was structurally incapable
+		// of observing the property it was named for.
+		fmt.Fprintln(os.Stderr, errorLine(err))
 		os.Exit(exitCode(err))
 	}
+}
+
+// errorLine renders a command error for stderr.
+//
+// 🔴 A VERDICT IS NOT A FAILURE, AND THE PREFIX IS WHAT SAYS WHICH. `civitai app
+// doctor` returns non-nil when it successfully diagnoses an incomplete listing:
+// the command did exactly its job, the report is already on stdout, and the
+// non-zero exit is the ANSWER rather than a malfunction. Prefixing that with
+// "Error: " makes a CI scraper watching stderr for `Error:` flag a run that
+// worked as designed — and, worse, tells a human the tool broke.
+//
+// So the one sentinel that means "a verdict about the subject" renders bare.
+// Everything else keeps the prefix, because everything else really is a failure.
+//
+// It is a WHITELIST of one, deliberately: a predicate like "any error carrying a
+// documented exit code" would silently un-prefix future failures. Adding a
+// second verdict here should be a decision someone makes on purpose.
+func errorLine(err error) string {
+	if errors.Is(err, cmd.ErrListingBlocked) {
+		return err.Error()
+	}
+	return "Error: " + err.Error()
 }
 
 // exitCode maps a command error to a differentiated process exit code so

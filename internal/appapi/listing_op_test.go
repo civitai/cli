@@ -105,6 +105,24 @@ func listingRouteCases() []listingRouteCase {
 			},
 		},
 		{
+			// The read behind `app doctor` AND the kind gate in
+			// `app listing set-text`. It takes no input and opens no shadow
+			// revision — the ONLY listing route of which both are true — so it
+			// is a lookup in the strictest sense available here.
+			//
+			// 🔴 ONE ROW. Both commands added a case for this route on separate
+			// branches and git merged BOTH without a conflict. A duplicate map
+			// key is a compile error; a duplicate SLICE row is not — it compiles,
+			// ships green, and inflates the count the floor below checks, so the
+			// positive control passes vacuously against a table that is one row
+			// short of what it claims to drive.
+			name: "listMine", route: trpcListMine, wantOp: listingOpRead, serverMsg: "refused: listing enumeration",
+			call: func(ctx context.Context, c *Client) error {
+				_, err := c.ListMyListings(ctx)
+				return err
+			},
+		},
+		{
 			// Step 1 of the full-res upload. Not a listing write.
 			name: "imageUploadMint", route: imageUploadRoute, wantOp: listingOpIngest, serverMsg: "refused: mint",
 			call: func(ctx context.Context, c *Client) error {
@@ -126,16 +144,6 @@ func listingRouteCases() []listingRouteCase {
 			name: "persistAssetImage", route: trpcPersistAssetImage, wantOp: listingOpIngest, serverMsg: "refused: persist",
 			call: func(ctx context.Context, c *Client) error {
 				_, err := c.IngestAssetFullRes(ctx, []byte("COVERBYTES"), ImageInfo{Width: 1600, Height: 900, MimeType: "image/jpeg"})
-				return err
-			},
-		},
-		{
-			// The ownership-and-seats enumeration `set-text` reads for the
-			// listing KIND. It takes no input and opens no shadow — a lookup in
-			// the strictest sense available here.
-			name: "listMine", route: trpcListMine, wantOp: listingOpRead, serverMsg: "refused: listing enumeration",
-			call: func(ctx context.Context, c *Client) error {
-				_, err := c.ListMyListings(ctx)
 				return err
 			},
 		},
@@ -278,13 +286,11 @@ func exactForOp(op listingOp, serverMsg string) string {
 		return "the server rejected this store-listing lookup (400): " + serverMsg +
 			// 🔴 RE-READ AGAINST EVERY ROUTE THAT REACHES THIS ARM, which is
 			// what this guard's own doc comment asks for. There are now FOUR,
-			// and the fourth (listMine) takes NO input — so the old "check the
+			// and the fourth (listMine) takes no input, so the old "check the
 			// app you named" clause named a value one of its four callers never
 			// sends. The sentence below is true of all four: it asserts only
-			// that nothing changed, and points at a command that PRINTS the
+			// that nothing changed, and points at a command that prints the
 			// valid app names rather than presuming the caller typed one.
-			// (`civitai app doctor` ships in the sibling PR — see the merge-order
-			// note on refuseOnsiteTextEdit.)
 			" — nothing was changed; `civitai app doctor` lists every app you can work on"
 	case listingOpIngest:
 		return "the server rejected the image-upload request (400): " + serverMsg +
@@ -791,12 +797,12 @@ func TestListingRouteOpsAreExactlyThisSpelledSet(t *testing.T) {
 		"/api/trpc/appListings.getMyListingForApp":   "listingOpRead",
 		"/api/trpc/appListings.getMyListingForEdit":  "listingOpRead",
 		"/api/trpc/appListings.getAssetScanStatuses": "listingOpRead",
+		"/api/trpc/appListings.listMine":             "listingOpRead",
 
 		"/api/v1/image-upload":                         "listingOpIngest",
 		"/api/trpc/appListings.ingestAssetFromDataUri": "listingOpIngest",
 		"/api/trpc/appListings.persistAssetImage":      "listingOpIngest",
 
-		"/api/trpc/appListings.listMine":              "listingOpRead",
 		"/api/trpc/appListings.updateListing":         "listingOpChange",
 		"/api/trpc/appListings.setIcon":               "listingOpChange",
 		"/api/trpc/appListings.setCover":              "listingOpChange",

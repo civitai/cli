@@ -205,6 +205,19 @@ these edits (roughly 30 an hour).`,
 // symmetric: a wrongly-refused offsite edit is recoverable in the browser and
 // says so, while a wrongly-permitted onsite edit corrupts a public listing in a
 // way whose reversal nobody observes.
+//
+// 🔴 THIS COMMAND DEPENDS ON `civitai app doctor`, WHICH IS A DIFFERENT COMMAND.
+// Three SHIPPED surfaces name it — the `--help` Long, the stderr overwrite
+// advisory, and the not-found refusal below, which is this command's own
+// fail-closed safety gate. The dependency is SATISFIED: `app doctor` landed in
+// civitai/cli#488 (squash `75e0c5186`) and is registered in
+// `internal/cmd/app.go`.
+//
+// It is recorded here, and not only in a PR description, because a PR
+// description is not in the tree a bisect or a cherry-pick reads. While the two
+// were in flight this said "#488 must land FIRST", which is what it was for.
+// Anyone lifting THIS command into a tree without `app doctor` re-creates the
+// defect: a mistyped slug exits 4 pointing at a command the binary does not have.
 func refuseOnsiteTextEdit(ctx context.Context, client *appapi.Client, slug string) error {
 	rows, err := client.ListMyListings(ctx)
 	if err != nil {

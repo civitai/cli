@@ -36,6 +36,21 @@ var (
 	trpcGetMyListingForApp   = listingRoute{"/api/trpc/appListings.getMyListingForApp", listingOpRead}
 	trpcGetMyListingForEdit  = listingRoute{"/api/trpc/appListings.getMyListingForEdit", listingOpRead}
 	trpcGetAssetScanStatuses = listingRoute{"/api/trpc/appListings.getAssetScanStatuses", listingOpRead}
+	// listMine is the read behind `civitai app doctor`: every listing the caller
+	// owns OR holds an accepted editor seat on, each carrying `problems[]`.
+	// Unlike getMyListingForEdit it has NO server-side side effect — it opens no
+	// shadow revision — which is what makes `doctor` safe to run in a loop.
+	//
+	// `civitai app listing set-text` is the second consumer, reading it for ONE
+	// bit: the listing KIND, which decides whether the text it is about to write
+	// has an author surface at all.
+	//
+	// 🔴 ONE DECLARATION, AND IT LIVES WITH THE READS. Both commands added this
+	// route independently on separate branches, and git merged BOTH into this
+	// var block without reporting a conflict — a duplicate `var`, caught only by
+	// the compiler. The other copy had drifted into the CHANGES section, where a
+	// pure read does not belong and where its op would eventually be misread.
+	trpcListMine = listingRoute{"/api/trpc/appListings.listMine", listingOpRead}
 
 	// 🔴 INGEST, not change — and both are POSTs, which is exactly why the verb
 	// is not the answer. Each creates an Image row and touches NO listing;
@@ -52,11 +67,6 @@ var (
 	// any other: it writes the listing row, so a rejection may have partially
 	// applied and must never be worded as "nothing changed".
 	trpcUpdateListing = listingRoute{"/api/trpc/appListings.updateListing", listingOpChange}
-
-	// The ownership-and-seats enumeration. `set-text` reads it for ONE bit —
-	// the listing KIND — which decides whether the text it is about to write has
-	// an author surface at all. It is a pure read and takes no input.
-	trpcListMine = listingRoute{"/api/trpc/appListings.listMine", listingOpRead}
 
 	trpcSetIcon               = listingRoute{"/api/trpc/appListings.setIcon", listingOpChange}
 	trpcSetCover              = listingRoute{"/api/trpc/appListings.setCover", listingOpChange}
@@ -298,22 +308,6 @@ func (p ListingTextPatch) wire() map[string]any {
 	return out
 }
 
-// MyListing is one row of `appListings.listMine` — a listing the caller OWNS or
-// holds an ACCEPTED editor seat on.
-//
-// 🔴 ONLY THE FIELDS WITH A CONSUMER ARE DECODED. The server also sends `name`,
-// `status`, `role`, `appBlockId`, `capabilities`, `iconUrl`, `coverUrl`,
-// `updatedAt`, `problems` and `lastModerationAction`. `set-text` needs the slug
-// to match on and the KIND to gate on; adding a field here is a decision to use
-// it, not a formality.
-type MyListing struct {
-	AppListingID string `json:"appListingId"`
-	Slug         string `json:"slug"`
-	// Kind is "onsite" or "offsite", and it decides WHO OWNS THE TEXT — see
-	// ListingKindOnsite.
-	Kind string `json:"kind"`
-}
-
 // ListingKindOnsite is the kind whose listing COPY is manifest-governed.
 //
 // 🔴 AN ONSITE LISTING'S TEXT HAS NO AUTHOR SURFACE BUT THE MANIFEST. The
@@ -329,33 +323,6 @@ type MyListing struct {
 // null unless a moderator curated one, so a set value is CLEARED at the next
 // approve. Read at origin/main, 2026-08-24.
 const ListingKindOnsite = "onsite"
-
-// ListMineCap is the server's hard ceiling on a `listMine` page
-// (`MY_APP_LISTINGS_LIMIT` in
-// `<civitai>/src/server/services/blocks/app-access.service.ts:1242`, re-read at
-// origin/release 2026-08-25).
-//
-// 🔴 THE ROUTE OFFERS NO CURSOR, NO TOTAL AND NO `hasMore`, and it orders
-// `serialId desc` then `take: limit` — so past the cap the OLDEST listings are
-// dropped with nothing on the wire to say so. Any consumer that treats "absent
-// from this read" as "does not exist" is wrong for a caller whose accessible set
-// exceeds the cap. `set-text`'s kind gate is exactly such a consumer; see
-// refuseOnsiteTextEdit.
-const ListMineCap = 200
-
-// ListMyListings enumerates the caller's listings. Pure read, no input; it opens
-// no shadow revision, unlike GetMyListingForEdit.
-//
-// 🔴 THE RESULT IS CAPPED AT ListMineCap AND SAYS SO NOWHERE. A full-length
-// slice may be a truncated page; callers deciding existence from it must treat
-// that case separately.
-func (c *Client) ListMyListings(ctx context.Context) ([]MyListing, error) {
-	var out []MyListing
-	if err := c.trpcQuery(ctx, trpcListMine, nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
 
 // UpdateListingResult mirrors updateListing's result. `RequiresReview` and
 // `ShadowID` describe the branch the SERVER took.
@@ -395,6 +362,112 @@ func (c *Client) UpdateListing(ctx context.Context, listingID string, patch List
 	return &out, nil
 }
 
+// Severity values carried by ListingProblem.Severity. They are the SERVER's
+// vocabulary (`ListingProblemSeverity` in
+// civitai:src/server/services/blocks/listing-problems.ts), reproduced here as
+// constants so the CLI compares against one spelling rather than a literal at
+// each site.
+//
+// 🔴 THE CLI DOES NOT RE-DERIVE SEVERITY FROM THE CODE, and that is deliberate.
+// `computeListingProblems` owns which codes are blocking; a second table here
+// would be the two-copies-of-one-predicate shape that this repo keeps finding
+// wrong at N-1 sites. So an UNKNOWN severity string is neither promoted to
+// blocking nor silently dropped — see doctorIsBlocking in
+// internal/cmd/app_doctor.go for what the command does with one.
+const (
+	SeverityBlocking = "blocking"
+	SeverityAdvisory = "advisory"
+)
+
+// ListingProblem is one row of a listing's completeness advisory, exactly as
+// `computeListingProblems` emits it: a stable `code`, a human `label` the SERVER
+// writes, and a `severity`.
+//
+// 🔴 `Label` IS THE SERVER'S SENTENCE AND THE CLI DOES NOT REWRITE IT. For
+// `blocked-media` and `scanning-media` the label is the only place the affected
+// asset KIND appears — the code itself is kind-less ("Replace the blocked icon
+// before it can publish"). A CLI-side label table would therefore lose the one
+// fact those two codes carry.
+type ListingProblem struct {
+	Code     string `json:"code"`
+	Label    string `json:"label"`
+	Severity string `json:"severity"`
+}
+
+// MyListing is one row of appListings.listMine — a listing the caller OWNS or
+// holds an ACCEPTED editor seat on.
+//
+// 🔴 IT IS NOT A SUBMISSIONS ROW. `GET /api/v1/blocks/submissions` (what `app
+// status` reads) is scoped to what the caller SUBMITTED, so a listing acquired
+// by ownership transfer is invisible there to its new owner and a collaborator
+// who submitted nothing sees none at all. This read is scoped by ownership ∪
+// accepted seats, which is why `app doctor` uses it and not the submissions
+// route.
+//
+// Only the fields with a CONSUMER are decoded — `app doctor` renders most of
+// them and `app listing set-text` reads `kind` for its gate. The server also
+// sends `capabilities`, `iconUrl`, `coverUrl`, `updatedAt` and
+// `lastModerationAction`; adding one here is a decision to use it, not a
+// formality. (This list named `kind` as undecoded until the field was added
+// directly above it — a doc going stale against the struct it introduces.)
+type MyListing struct {
+	AppListingID string `json:"appListingId"`
+	Slug         string `json:"slug"`
+	Name         string `json:"name"`
+	// Status is the listing lifecycle: draft|pending|approved|rejected|removed.
+	Status string `json:"status"`
+	// Role is "owner" or "editor" — an accepted collaborator seat.
+	Role string `json:"role"`
+	// Kind is "onsite" or "offsite", and it decides WHO OWNS THE TEXT.
+	//
+	// 🔴 IT IS DECODED BECAUSE THE REMEDY DEPENDS ON IT, not for completeness.
+	// An ONSITE listing's name/tagline/description/category are MANIFEST-governed
+	// and have no author surface other than `block.manifest.json`: on every
+	// subsequent-version moderator approve, the `(3b-sync)` re-sync in
+	// `<civitai>/src/server/services/blocks/publish-request.service.ts:2742-2800`
+	// overwrites all four from `buildListingScalarSync`, scoped `kind: 'onsite'`.
+	// So telling an onsite author to edit those fields anywhere but the manifest
+	// is advice whose effect the platform reverts. Verified at origin/main,
+	// 2026-08-24.
+	Kind string `json:"kind"`
+	// AppBlockID is null for an OFF-SITE listing, and for an on-site app whose
+	// first version has not been approved yet. Legitimately absent, not missing.
+	AppBlockID *string `json:"appBlockId"`
+	// Problems is never null on a current server — an all-complete listing sends
+	// `[]`. A nil slice here therefore reads the same as an empty one and no
+	// caller has to tell them apart.
+	Problems []ListingProblem `json:"problems"`
+}
+
+// ListMineCap is the server's hard ceiling on a `listMine` page
+// (`MY_APP_LISTINGS_LIMIT` in
+// `<civitai>/src/server/services/blocks/app-access.service.ts:1242`, read at
+// origin/release 2026-08-25).
+//
+// 🔴 THE ROUTE OFFERS NO CURSOR, NO TOTAL AND NO `hasMore`, and it orders
+// `serialId desc` then `take: limit` — so past the cap the OLDEST listings are
+// dropped with nothing on the wire to say so. That is exactly the shape
+// `appapi.ListSubmissionsCap` exists for on the sibling read, whose own comment
+// names the failure: "silently reporting a truncated list as complete".
+const ListMineCap = 200
+
+// ListMyListings reads every listing the caller owns or holds an accepted editor
+// seat on, each with its completeness `problems[]`.
+//
+// The proc takes NO input (see trpcQuery's nil-input note). It is a pure read:
+// unlike GetMyListingForEdit it opens no shadow revision, so it is safe to poll.
+//
+// 🔴 An empty result is a REAL answer — "you can work on no listings" — and is
+// returned as an empty slice with a nil error. It is not a 404: the server
+// answers `[]` for a caller with the author flag and nothing to show.
+func (c *Client) ListMyListings(ctx context.Context) ([]MyListing, error) {
+	var out []MyListing
+	if err := c.trpcQuery(ctx, trpcListMine, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SubmitRevisionResult mirrors submitListingRevision's result.
 type SubmitRevisionResult struct {
 	PublishRequestID string `json:"publishRequestId"`
@@ -403,10 +476,13 @@ type SubmitRevisionResult struct {
 }
 
 // trpcQuery issues a tRPC GET query and decodes result.data.json into out.
-// 🔴 A nil `input` sends NO `?input=` parameter at all. `appListings.listMine`
-// declares no input schema; sending an explicit `{"json":null}` is a value the
-// server never has to accept, and omitting the key is what the tRPC client
-// itself does for an input-less query.
+//
+// 🔴 A nil `input` sends NO `?input=` parameter at all, and that is not the same
+// wire request as `?input={"json":null}`. A tRPC procedure declared with no
+// `.input()` schema (appListings.listMine is the one such route this client
+// speaks) parses whatever arrives; sending an explicit null is a value the
+// server never has to accept, and the CLI has no reason to make it. Omitting the
+// key is what the tRPC client itself does for an input-less query.
 func (c *Client) trpcQuery(ctx context.Context, route listingRoute, input any, out any) error {
 	reqURL := c.BaseURL + route.path
 	if input != nil {
@@ -850,24 +926,22 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// reported as a change that did not happen.
 		switch route.op {
 		case listingOpRead:
-			// 🔴 IT NO LONGER SAYS "check the app you named", AND ADDING
-			// `listMine` IS WHY. That route sends NO INPUT AT ALL — no slug, no
-			// listing id — so the remedy named a value one of its callers never
-			// supplies. This is civitai/cli#391's wrong-subject class landing on
-			// the READ arm: one arm answering for N routes may claim only what
-			// is true of all N.
+			// 🔴 IT NO LONGER SAYS "check the app you named", and adding the
+			// FOURTH read (appListings.listMine, the `app doctor` read) is why.
+			// That route takes NO INPUT AT ALL — no slug, no listing id, no
+			// image id — so the old remedy presumed a value its caller had never
+			// supplied. That is civitai/cli#391's wrong-subject class exactly,
+			// regenerated on the read arm instead of the change arm: one arm
+			// answering for N routes may only claim what is true of all N.
 			//
-			// The old pointer was also wrong on its own terms: `civitai app
-			// status` reads the SUBMISSIONS route, which is scoped to what the
-			// caller submitted, so it cannot list a listing held on a
-			// collaborator seat or acquired by transfer. `listMine` is scoped by
-			// ownership ∪ accepted seats, which is what `civitai app doctor`
-			// reads — and that command PRINTS the valid app names, so a caller
-			// who did mis-name an app still gets the list they needed.
-			//
-			// 🔴 `civitai app doctor` SHIPS IN THE SIBLING PR. See the
-			// merge-order note on refuseOnsiteTextEdit: this branch must not
-			// reach a user before that command exists.
+			// The replacement keeps the diagnostic value without the
+			// presumption, because the command it names PRINTS the valid app
+			// names — so a caller who did mis-name an app still gets the list
+			// they needed. It also corrects the pointer: `civitai app status`
+			// reads the SUBMISSIONS route, which is scoped to what the caller
+			// submitted, so it cannot list a listing acquired by ownership
+			// transfer or held on a collaborator seat. `app doctor` reads
+			// listMine, which is scoped by ownership ∪ accepted seats.
 			return fmt.Errorf("the server rejected this store-listing lookup (400): %s — nothing was changed; `civitai app doctor` lists every app you can work on", msg)
 		case listingOpIngest:
 			return fmt.Errorf("the server rejected the image-upload request (400): %s — no listing was changed; check the image and retry", msg)

@@ -1144,16 +1144,12 @@ func TestSetTextNotFoundOnACappedPageIsNotConclusive(t *testing.T) {
 	}
 }
 
-// TestListMineCapMatchesTheServer is the drift guard. A stale cap changes what
-// "not conclusive" means in both directions.
-func TestListMineCapMatchesTheServer(t *testing.T) {
-	const want = 200
-	if appapi.ListMineCap != want {
-		t.Errorf("ListMineCap = %d, want %d — re-read `MY_APP_LISTINGS_LIMIT` in "+
-			"<civitai>/src/server/services/blocks/app-access.service.ts and change this pin deliberately",
-			appapi.ListMineCap, want)
-	}
-}
+// The `ListMineCap` drift guard lives in app_doctor_test.go
+// (TestListMineCapMatchesTheServer). It pins ONE constant, so there is ONE
+// guard: `app doctor` and `app listing set-text` are both consumers of the same
+// cap, and each branch added its own copy independently. Two copies of one pin
+// is the duplicated-predicate shape this repo keeps finding wrong at N-1 sites —
+// here the compiler caught it, because they landed in the same package.
 
 // TestSetTextAdvisoryReachesBothRenderings is finding 5: the human path RETURNED
 // before the shared advisory while `--json` called it unconditionally, so with
