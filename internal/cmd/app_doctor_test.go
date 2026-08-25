@@ -504,8 +504,13 @@ func TestDoctorFixAdviceNamesOnlyCommandsThatExist(t *testing.T) {
 	// against 7 actual references the `blocked-media` arm could lose two
 	// commands and this control would still pass — a positive control with two
 	// references of slack is a control for a scan that has half stopped working.
-	// The floor rises with the per-slot arms now being walked.
-	if seen < 12 {
+	// 🔴 THE FLOOR IS THE MEASURED COUNT, NOT A SAFE-LOOKING SMALLER ONE.
+	// Measured by arming it at 999 and reading the test's own message: 14. It sat
+	// at 12, so the blocked-media arms could lose two commands and this control
+	// would still pass — a positive control with slack is a control for a scan
+	// that has half stopped working, which is the exact criticism this floor was
+	// raised from 5 to answer in the first place.
+	if seen < 14 {
 		t.Fatalf("the fix-line scan found only %d command references across the eight codes — "+
 			"the regex is not reading what it thinks it is, so the resolutions above prove nothing", seen)
 	}

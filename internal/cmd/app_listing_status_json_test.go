@@ -88,7 +88,12 @@ func approvedListingServer(t *testing.T) *httptest.Server {
 			submissionRow(w, jsonFixtureSlug, "block_json_1")
 		case strings.Contains(r.URL.Path, "getMyListingForApp"):
 			trpcData(w, map[string]any{
-				"appListingId":       jsonFixtureParentID,
+				"appListingId": jsonFixtureParentID,
+				// The real server ALWAYS sends these; a fake that omits them
+				// blinds any consumer that reads them — which is exactly how
+				// the shadow-overwrite warning shipped unable to fire.
+				"shadowId":           nil,
+				"editTargetId":       nil,
 				"status":             "approved",
 				"contentRating":      "g",
 				"hasPendingRevision": false,
@@ -126,7 +131,12 @@ func draftListingServer(t *testing.T) *httptest.Server {
 			submissionRow(w, jsonFixtureSlug, "block_json_1")
 		case strings.Contains(r.URL.Path, "getMyListingForApp"):
 			trpcData(w, map[string]any{
-				"appListingId":       jsonFixtureParentID,
+				"appListingId": jsonFixtureParentID,
+				// The real server ALWAYS sends these; a fake that omits them
+				// blinds any consumer that reads them — which is exactly how
+				// the shadow-overwrite warning shipped unable to fire.
+				"shadowId":           nil,
+				"editTargetId":       nil,
 				"status":             "draft",
 				"contentRating":      "g",
 				"hasPendingRevision": false,

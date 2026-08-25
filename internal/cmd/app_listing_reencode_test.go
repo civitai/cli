@@ -189,7 +189,12 @@ func TestNonIconRejectionOmitsTheReEncodeExplanation(t *testing.T) {
 		case strings.HasPrefix(r.URL.Path, "/api/v1/blocks/submissions"):
 			submissionRow(w, "my-app", "block_1")
 		case strings.Contains(r.URL.Path, "getMyListingForApp"):
-			trpcData(w, map[string]any{"appListingId": "listing_1", "status": "draft"})
+			trpcData(w, map[string]any{"appListingId": "listing_1",
+				// The real server ALWAYS sends these; a fake that omits them
+				// blinds any consumer that reads them — which is exactly how
+				// the shadow-overwrite warning shipped unable to fire.
+				"shadowId":     nil,
+				"editTargetId": nil, "status": "draft"})
 		case strings.Contains(r.URL.Path, "image-upload"):
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id": "uuid-1", "uploadURL": "http://" + r.Host + "/upload-sink",
