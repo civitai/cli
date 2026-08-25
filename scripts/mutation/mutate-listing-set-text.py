@@ -6,11 +6,15 @@ baked in: a mutant whose search text no longer matches is reported as
 BAD-PATTERN with the SAME verdict vocabulary as every other outcome, and the
 process exits non-zero, so a run containing one can never be read as clean.
 """
+import atexit
 import hashlib
 import os
 import re
 import subprocess
 import sys
+
+# 🔴 A FULL RUN ASSERTS ITS OWN POPULATION — see the sibling battery.
+EXPECTED_MUTANTS = 38
 
 WT = os.environ.get("MUTATE_TREE", os.getcwd())
 PKGS = ["./internal/cmd/", "./internal/appapi/"]
@@ -211,7 +215,53 @@ MUTANTS = [
      '\t\t\t\t"%w: %q is an ON-SITE app',
      '\t\t\t\t"%v: %q is an ON-SITE app',
      "the sentinel is formatted, not wrapped, so errors.Is fails and the exit code is unpinned"),
+
+    # --- #489 delta-audit fixes ---
+    ("S35-read-arm-blames-a-named-value", API,
+     '\t\t\treturn fmt.Errorf("the server rejected this store-listing lookup (400): %s — nothing was changed; `civitai app doctor` lists every app you can work on", msg)',
+     '\t\t\treturn fmt.Errorf("the server rejected this store-listing lookup (400): %s — nothing was changed; check the app you named (list your apps with `civitai app status`)", msg)',
+     "the shared READ arm blames a value listMine never sends, and points at a route that cannot list a seat-held listing"),
+
+    ("S36-capped-notfound-stated-as-fact", CMD,
+     "\tif len(rows) >= appapi.ListMineCap {",
+     "\tif false {",
+     "a miss off a CAPPED page is reported as conclusive, hard-blocking a write on an app the caller owns"),
+
+    ("S37-cap-off-by-one", CMD,
+     "\tif len(rows) >= appapi.ListMineCap {",
+     "\tif len(rows) > appapi.ListMineCap {",
+     "an exactly-at-cap page is called complete, though a clamp produces exactly that"),
+
+    ("S38-advisory-skips-the-human-path", CMD,
+     '\t\tfmt.Fprintf(out, "  Send it for review: %s\\n", st.Code("civitai app listing submit-revision"))',
+     '\t\tfmt.Fprintf(out, "  Send it for review: %s\\n", st.Code("civitai app listing submit-revision"))\n\t\treturn',
+     "the human rendering returns early and loses the overwrite advisory that --json still reports"),
+
+    ("S39-unknown-kind-refusal-untagged", CMD,
+     '\t\t\t\t"%w: could not establish whether %q is an on-site or off-site app',
+     '\t\t\t\t"%v: could not establish whether %q is an on-site or off-site app',
+     "the unknown-kind refusal formats its sentinel instead of wrapping it, unpinning the exit code"),
+
+    ("S40-fake-fidelity-guard-blind", "internal/cmd/listing_ref_fake_fidelity_test.go",
+     '\t\tif !strings.Contains(m[1], `"shadowId"`) {',
+     "\t\tif false {",
+     "the fake-fidelity guard stops seeing offenders, so the next consumer can be blinded again"),
 ]
+
+
+# Files currently mutated, so an abnormal exit can put them back.
+_restore_queue = {}
+
+
+def _restore_all():
+    for path, src in list(_restore_queue.items()):
+        try:
+            open(path, "w").write(src)
+        except OSError:
+            pass
+
+
+atexit.register(_restore_all)
 
 
 def sha(path):
@@ -254,7 +304,18 @@ def parse(out):
 
 
 def main():
+    # 🔴 PREFIX SELECTOR, AND A BOGUS NAME REFUSES. Matching full ids only meant
+    # the README's own `… .py S1 S7` selected NOTHING and exited 0 — "every
+    # mutant ran and was killed" — having run none.
     only = sys.argv[1:] or None
+    if only:
+        known = [m[0] for m in MUTANTS]
+        unmatched = [x for x in only
+                     if not any(k == x or k.startswith(x + "-") for k in known)]
+        if unmatched:
+            print(f"!! these selectors match no mutant: {unmatched}")
+            print(f"   known: {known}")
+            return 2
     base = run_tests()
     _, _, bc, built = parse(base)
     base_total = bc["PASS"] + bc["FAIL"]
@@ -263,9 +324,13 @@ def main():
         print("!! baseline is not green — every result below is meaningless")
         return 3
 
+    if not only and len(MUTANTS) < EXPECTED_MUTANTS:
+        print(f"!! this battery defines {len(MUTANTS)} mutants, expected at least {EXPECTED_MUTANTS}.")
+        return 2
+
     results = []
     for mid, rel, old, new, why in MUTANTS:
-        if only and mid not in only:
+        if only and not any(mid == x or mid.startswith(x + "-") for x in only):
             continue
         path = os.path.join(WT, rel)
         before = sha(path)
@@ -275,12 +340,23 @@ def main():
             print(f"{mid}: BAD-PATTERN — matched {n} times (want exactly 1), NOT RUN.")
             results.append((mid, "BAD-PATTERN", "", why))
             continue
-        open(path, "w").write(src.replace(old, new, 1))
-        out = run_tests()
-        fails, detail, counts, built = parse(out)
-        open(path, "w").write(src)
-        assert sha(path) == before, f"{mid}: tree not restored!"
-        if not built and not fails:
+        # 🔴 Restore is GUARANTEED, not hoped for — an interrupt otherwise left
+        # the tree mutated, and `open(path,"w")` truncates, so a signal during
+        # restore could leave the Go file EMPTY.
+        _restore_queue[path] = src
+        try:
+            open(path, "w").write(src.replace(old, new, 1))
+            out = run_tests()
+            fails, detail, counts, built = parse(out)
+        finally:
+            open(path, "w").write(src)
+            _restore_queue.pop(path, None)
+        # A real check, not `assert` — bare asserts vanish under `python3 -O`.
+        if sha(path) != before:
+            raise SystemExit(f"{mid}: tree NOT restored — {path} differs from its pre-mutation bytes")
+        # A build error wins over `fails`: it is evidence about the mutant, not
+        # about the code under test, whatever else the run printed.
+        if not built:
             verdict = "BUILD-FAIL"
         elif fails:
             verdict = "KILLED"
@@ -292,6 +368,9 @@ def main():
             f"{f} :: {detail.get(f, '(no line)')}" for f in fails[:3]), why))
         print(f"{mid}: {verdict} ({counts})")
         if counts["PANIC"] or short > base_total * 0.05:
+            # 🔴 The mark goes in the VERDICT so it reaches the TABLE and the
+            # committed artifact, not only the stream.
+            results[-1] = (results[-1][0], results[-1][1] + " (TRUNCATED)", results[-1][2], results[-1][3])
             print(f"  ⚠ TRUNCATED RUN: {total} verdicts vs baseline {base_total}"
                   f" ({short} missing, panics={counts['PANIC']}) — treat the KILL as unattributed.")
         for f in fails[:3]:
@@ -305,9 +384,11 @@ def main():
     print("\n==== TABLE ====")
     for mid, verdict, killers, why in results:
         print(f"{mid}\t{verdict}\t{why}\n\t{killers}")
-    print(f"\n==== VERDICT ==== defined={len(results)} killed="
-          f"{len([r for r in results if r[1]=='KILLED'])} survived={len(surv)} "
-          f"build_fail={len(bf)} not_run={len(bad)}")
+    killed = len([r for r in results if r[1].startswith("KILLED")])
+    trunc = len([r for r in results if "TRUNCATED" in r[1]])
+    print(f"\n==== VERDICT ==== defined={len(results)} ran={len(results)-len(bad)-len(bf)} "
+          f"killed={killed} survived={len(surv)} build_fail={len(bf)} not_run={len(bad)} "
+          f"truncated={trunc}")
     if bad:
         print("!! NOT A CLEAN SWEEP — these NEVER RAN and are evidence of nothing:")
         for mid, _, _, why in bad:

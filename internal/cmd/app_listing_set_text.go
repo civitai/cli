@@ -153,8 +153,17 @@ these edits (roughly 30 an hour).`,
 	cmd.Flags().StringVar(&category, "category", "", "set the marketplace category: "+strings.Join(appapi.MarketplaceCategories, ", "))
 	// NOTE: no back-quotes in these usage strings — pflag's UnquoteUsage treats
 	// the first back-quoted span as the flag's VALUE NAME.
+	// 🔴 THE HELP DESCRIBES WHAT THE CODE DOES, NOT WHAT WOULD BE NICER. It
+	// used to say "blanking a field that CURRENTLY HAS TEXT, which the CLI
+	// otherwise refuses" — a check this command never performs: the guard runs
+	// in buildListingTextPatch, BEFORE any request, so it has never read the
+	// field's present value. A blank set is refused unconditionally, including
+	// on an already-empty field, which is exactly the state `doctor` reports.
+	// Claiming a conditional guard that does not exist is the
+	// description-wider-than-implementation shape, in shipped help text.
 	cmd.Flags().BoolVarP(&assumeYes, "yes", "y", false,
-		"allow a destructive set: blanking a field that currently has text, which the CLI otherwise refuses")
+		"permit a blank value for --tagline/--description/--category; blanks are refused without it "+
+			"(the check is on the VALUE you passed, not on the field's current contents)")
 	cmd.Flags().BoolVar(&jsonOut, "json", false,
 		"emit the result as JSON (scriptable) — what was sent, and the server's own branch")
 	cmd.Flags().StringSliceVar(&clear, "clear", nil,
@@ -171,8 +180,11 @@ these edits (roughly 30 an hour).`,
 // fixes them. But an onsite listing's copy has NO author surface other than
 // `block.manifest.json`: the `(3b-sync)` re-sync
 // (`<civitai>/src/server/services/blocks/publish-request.service.ts:2742-2800`)
-// overwrites all four columns from the manifest on EVERY subsequent-version
-// moderator approve, scoped `kind: 'onsite'`. So the write appears to succeed,
+// overwrites all four columns from the manifest at THREE points, not one: at
+// DRAFT MINT (`:1307`), at the FIRST approve (`:2682`), and at the
+// `(3b-sync)` subsequent-version approve (`:2792`, scoped `kind: 'onsite'`). An
+// earlier version of this note cited only the third and so UNDERSTATED the
+// hazard — the refusal is more justified than the argument once given for it. So the write appears to succeed,
 // `doctor` goes quiet, and the next approve silently reverts it. `--category` is
 // worse still: that sync writes `AppBlock.category`, which is null unless a
 // moderator curated one, so a category set here is CLEARED rather than restored.
@@ -223,12 +235,37 @@ func refuseOnsiteTextEdit(ctx context.Context, client *appapi.Client, slug strin
 				ErrOnsiteTextNotEditable, r.Slug)
 		}
 		if kind == "" {
+			// 🔴 TAGGED, LIKE ITS SIBLING. This was a bare error pinned only by a
+			// prose assertion, so stripping the classification — or tagging it an
+			// API kind — would move its exit code with every character of the
+			// message intact and nothing failing. That is the gap S34 closed for
+			// the ON-SITE arm; the same arm one branch down had it open.
 			return fmt.Errorf(
-				"could not establish whether %q is an on-site or off-site app, and the two have different "+
+				"%w: could not establish whether %q is an on-site or off-site app, and the two have different "+
 					"owners for this text — refusing rather than risk an edit the platform reverts. "+
-					"Update the CLI, or edit the listing in the browser", r.Slug)
+					"Update the CLI, or edit the listing in the browser", ErrOnsiteTextNotEditable, r.Slug)
 		}
 		return nil
+	}
+	// 🔴 A CAPPED PAGE MAKES THIS ANSWER UNCERTAIN, AND FAIL-CLOSED IS NOT AN
+	// EXCUSE TO STATE IT AS FACT. `listMine` clamps to appapi.ListMineCap with no
+	// cursor and no total, so for a caller whose accessible set exceeds the cap a
+	// listing OUTSIDE the newest page is indistinguishable here from one that
+	// does not exist — and this refusal hard-blocks a write `updateListing` would
+	// have accepted, while telling the author their own app does not exist.
+	//
+	// Refusing remains right: the kind is what makes the write safe, and an
+	// unestablished kind must not proceed. What changes is the CLAIM. The same
+	// reasoning and the same constant are used by `civitai app doctor` in the
+	// sibling PR, which is where ListMineCap's failure mode is documented at
+	// length; this is the second consumer of that route, and it inherited the
+	// hazard without inheriting the note.
+	if len(rows) >= appapi.ListMineCap {
+		return civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
+			"%q is not among the %d listings the server returned — but it CAPS this read at %d and offers "+
+				"no way to page, so an app you own beyond that cap looks identical to one that does not "+
+				"exist. This answer is not conclusive; open the listing in the browser if you are sure you "+
+				"own it", slug, len(rows), appapi.ListMineCap))
 	}
 	return civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
 		"no listing of yours is called %q — `civitai app doctor` lists every app you can work on", slug))
@@ -436,7 +473,18 @@ func reportListingTextUpdated(out, errOut io.Writer, slug string, p appapi.Listi
 			fmt.Fprintf(out, "  Revision: %s\n", *res.ShadowID)
 		}
 		fmt.Fprintf(out, "  Send it for review: %s\n", st.Code("civitai app listing submit-revision"))
-		return
+		// 🔴 NO EARLY RETURN. This branch used to `return` here, skipping the
+		// shared advisory below — while `--json` called it unconditionally. So
+		// with `requiresReview:true` AND an open shadow the HUMAN got no
+		// overwrite warning while `--json` reported `openRevision:true`: the two
+		// renderings disagreeing about whether the hazard applies, which is
+		// exactly the property warnOpenRevision's own doc comment claims they
+		// cannot. A comment asserting a property the control flow denies is
+		// worse than no comment.
+		//
+		// Unreachable today — a text-only patch is never material — but this
+		// branch is deliberately kept live in case MATERIAL_PATCH_FIELDS moves,
+		// and if it fires the HUMAN path is the one that would lose the warning.
 	}
 
 	warnOpenRevision(errOut, slug, ref)

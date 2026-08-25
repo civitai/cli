@@ -320,16 +320,35 @@ type MyListing struct {
 // `(3b-sync)` re-sync in
 // `<civitai>/src/server/services/blocks/publish-request.service.ts:2742-2800`
 // overwrites `name`/`tagline`/`description`/`category` from
-// `buildListingScalarSync` on EVERY subsequent-version moderator approve, scoped
-// `where: {appBlockId, kind: 'onsite'}`. Its own comment states the premise:
+// `buildListingScalarSync` at THREE points, not one — draft mint (`:1307`), the
+// FIRST approve (`:2682`), and the `(3b-sync)` subsequent-version approve
+// (`:2792`, scoped `where: {appBlockId, kind: 'onsite'}`). An earlier version of
+// this note cited only the third and understated the hazard. Its own comment states the premise:
 // those fields "have NO author surface other than the manifest". `category` is
 // worse than the other three — it is written from `AppBlock.category`, which is
 // null unless a moderator curated one, so a set value is CLEARED at the next
 // approve. Read at origin/main, 2026-08-24.
 const ListingKindOnsite = "onsite"
 
+// ListMineCap is the server's hard ceiling on a `listMine` page
+// (`MY_APP_LISTINGS_LIMIT` in
+// `<civitai>/src/server/services/blocks/app-access.service.ts:1242`, re-read at
+// origin/release 2026-08-25).
+//
+// 🔴 THE ROUTE OFFERS NO CURSOR, NO TOTAL AND NO `hasMore`, and it orders
+// `serialId desc` then `take: limit` — so past the cap the OLDEST listings are
+// dropped with nothing on the wire to say so. Any consumer that treats "absent
+// from this read" as "does not exist" is wrong for a caller whose accessible set
+// exceeds the cap. `set-text`'s kind gate is exactly such a consumer; see
+// refuseOnsiteTextEdit.
+const ListMineCap = 200
+
 // ListMyListings enumerates the caller's listings. Pure read, no input; it opens
 // no shadow revision, unlike GetMyListingForEdit.
+//
+// 🔴 THE RESULT IS CAPPED AT ListMineCap AND SAYS SO NOWHERE. A full-length
+// slice may be a truncated page; callers deciding existence from it must treat
+// that case separately.
 func (c *Client) ListMyListings(ctx context.Context) ([]MyListing, error) {
 	var out []MyListing
 	if err := c.trpcQuery(ctx, trpcListMine, nil, &out); err != nil {
@@ -831,7 +850,25 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// reported as a change that did not happen.
 		switch route.op {
 		case listingOpRead:
-			return fmt.Errorf("the server rejected this store-listing lookup (400): %s — nothing was changed; check the app you named (list your apps with `civitai app status`)", msg)
+			// 🔴 IT NO LONGER SAYS "check the app you named", AND ADDING
+			// `listMine` IS WHY. That route sends NO INPUT AT ALL — no slug, no
+			// listing id — so the remedy named a value one of its callers never
+			// supplies. This is civitai/cli#391's wrong-subject class landing on
+			// the READ arm: one arm answering for N routes may claim only what
+			// is true of all N.
+			//
+			// The old pointer was also wrong on its own terms: `civitai app
+			// status` reads the SUBMISSIONS route, which is scoped to what the
+			// caller submitted, so it cannot list a listing held on a
+			// collaborator seat or acquired by transfer. `listMine` is scoped by
+			// ownership ∪ accepted seats, which is what `civitai app doctor`
+			// reads — and that command PRINTS the valid app names, so a caller
+			// who did mis-name an app still gets the list they needed.
+			//
+			// 🔴 `civitai app doctor` SHIPS IN THE SIBLING PR. See the
+			// merge-order note on refuseOnsiteTextEdit: this branch must not
+			// reach a user before that command exists.
+			return fmt.Errorf("the server rejected this store-listing lookup (400): %s — nothing was changed; `civitai app doctor` lists every app you can work on", msg)
 		case listingOpIngest:
 			return fmt.Errorf("the server rejected the image-upload request (400): %s — no listing was changed; check the image and retry", msg)
 		case listingOpChange:

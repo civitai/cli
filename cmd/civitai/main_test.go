@@ -43,6 +43,16 @@ func TestExitCode(t *testing.T) {
 
 		{"usage error", usageErr{errors.New("unknown flag: --nope")}, exitUsage, "unknown flag: --nope"},
 		{"usage sentinel", cmd.ErrUsage, exitUsage, ""},
+
+		// 🔴 THE ONSITE REFUSAL BELONGS IN THIS TABLE LIKE EVERY OTHER SENTINEL.
+		// `app listing set-text` refuses an ON-SITE listing because its copy is
+		// manifest-governed; that is a verdict about the SUBJECT, so it takes
+		// the generic code, NOT `2` — the invocation is well-formed. It was
+		// pinned only in-package, which is precisely the seam this table's own
+		// header records having been bitten by before.
+		{"onsite text refusal is a verdict, not a usage error",
+			fmt.Errorf("%w: \"x\" is an ON-SITE app", cmd.ErrOnsiteTextNotEditable), exitGeneric,
+			"this app's listing text is manifest-governed: \"x\" is an ON-SITE app"},
 		{"bad request sentinel", civitai.ErrBadRequest, exitUsage, ""},
 		{"tagged 400 (real readError shape)", civitai.Tag(civitai.ErrBadRequest,
 			fmt.Errorf("invalid request parameter (400): period — Invalid option")), exitUsage,

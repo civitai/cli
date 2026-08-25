@@ -82,6 +82,16 @@ const changeSubject = "store-listing change"
 // states the one thing every change route has in common.
 const changeRemedy = "may have partially applied"
 
+// 🔴 The READ arm's retired clause, kept as a PROHIBITION rather than deleted
+// with it — the same treatment `valueBlame` gets above, and for the same reason.
+// "check the app you named" was true of the three reads that carry a slug or an
+// id, and became false the moment `listMine` reached the same arm carrying no
+// input at all. One arm answering for N routes may only claim what is true of
+// all N. Deleting the phrase without banning it would retire the lesson
+// silently, and the next author wanting a friendlier read message would write it
+// straight back — which is exactly what happened once already.
+const namedValueBlame = "check the app you named"
+
 // listingWordingRows is the third guard's table, lifted out of its test so the
 // set of routes it covers can itself be checked. See
 // TestEveryListingRouteHasAWordingRow: without that, the table was enforced only
@@ -141,7 +151,7 @@ func listingWordingRows() []listingWordingRow {
 			name:    "listMine enumerates and blames no value the caller sent",
 			route:   trpcListMine,
 			want:    []string{readSubject, "nothing was changed"},
-			notWant: []string{changeSubject, ingestSubject, changeRemedy, valueBlame},
+			notWant: []string{changeSubject, ingestSubject, changeRemedy, valueBlame, namedValueBlame},
 		},
 		{
 			// 🔴 Written from what updateListing DOES, by hand. It writes the

@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -60,6 +61,8 @@ type setTextServer struct {
 	// omitFromListMine makes listMine NOT list this slug, exercising the
 	// fail-closed arm.
 	omitFromListMine bool
+	// bulkRows, when set, REPLACES the listMine page entirely.
+	bulkRows []map[string]any
 	// reply overrides the update's result payload when non-nil.
 	reply map[string]any
 	// updateStatus, when non-zero, makes the update answer that HTTP status
@@ -107,6 +110,11 @@ func newSetTextServer(t *testing.T, opts ...func(*setTextServer)) *setTextServer
 	for _, o := range opts {
 		o(s)
 	}
+	return newSetTextServerWith(t, s)
+}
+
+func newSetTextServerWith(t *testing.T, s *setTextServer) *setTextServer {
+	t.Helper()
 	s.Server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		s.paths = append(s.paths, r.URL.Path)
@@ -138,6 +146,10 @@ func newSetTextServer(t *testing.T, opts ...func(*setTextServer)) *setTextServer
 				"editBlockedReason":  nil,
 			})
 		case r.URL.Path == "/api/trpc/appListings.listMine":
+			if s.bulkRows != nil {
+				trpcData(w, s.bulkRows)
+				return
+			}
 			rows := []map[string]any{}
 			if !s.omitFromListMine {
 				rows = append(rows, map[string]any{
@@ -186,6 +198,14 @@ func withPending(p bool) func(*setTextServer)   { return func(s *setTextServer) 
 // combination is the state the overwrite warning exists for and could not see.
 func withOpenShadow(id string) func(*setTextServer) {
 	return func(s *setTextServer) { s.shadow = id }
+}
+
+// newSetTextServerRows serves an ARBITRARY listMine page, so a test can build a
+// full-length (capped) one. The slug under test is deliberately absent from it.
+func newSetTextServerRows(t *testing.T, rows []map[string]any) *setTextServer {
+	t.Helper()
+	s := &setTextServer{status: "draft", kind: "offsite", bulkRows: rows}
+	return newSetTextServerWith(t, s)
 }
 
 func withKind(k string) func(*setTextServer) { return func(s *setTextServer) { s.kind = k } }
@@ -318,9 +338,17 @@ func TestSetTextSendsAllThreeInOnePatch(t *testing.T) {
 // 🔴 `updateRevisionDraft` IS DELIBERATELY UNWIRED. For these three fields the
 // server never routes to a shadow (`MATERIAL_PATCH_FIELDS` excludes all three
 // and `patchHasMaterialChange` is a diff), so calling it would be dead code
-// shaped like a safety mechanism. A ledger rather than a "did not call X" check:
-// a SET assertion fails when the set grows as well as when it shrinks, so a
-// later change that adds a proc has to come here and say so.
+// shaped like a safety mechanism.
+//
+// 🔴 THIS IS A BLOCKLIST, NOT A SET LEDGER, AND THE COMMENT USED TO CLAIM
+// OTHERWISE. It asserts that specific procs were NOT called; it does not pin the
+// request set, so it does not fail when the set GROWS. Proof, measured: adding
+// `listMine` to this command's requests needed no edit here and stayed green.
+// The growth property is real but comes from elsewhere — `newSetTextServer`'s
+// `default:` arm t.Errorf's and 500s on any unexpected path, so a NEW proc fails
+// every test using the fake. Naming the wrong mechanism is not harmless: it tells
+// the next reader this assertion covers growth, so they will not add the case
+// that actually would.
 func TestSetTextNeverCallsTheShadowProc(t *testing.T) {
 	srv := newSetTextServer(t, withStatus("approved"), withPending(true))
 	if _, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--category", stCategory); err != nil {
@@ -1037,5 +1065,120 @@ func TestSetTextOnsiteRefusalIsAVerdictNotAUsageError(t *testing.T) {
 	// negatives above are a fact about a comparison that matches nothing.
 	if !errors.Is(civitai.Tag(civitai.ErrNotFound, errors.New("x")), civitai.ErrNotFound) {
 		t.Fatal("the errors.Is walk cannot see a kind it should — the negatives prove nothing")
+	}
+}
+
+// TestSetTextUnknownKindRefusalIsClassified pins the OTHER fail-closed arm's
+// exit code. The ONSITE arm got a sentinel and a classification test; this one
+// was left as a bare error pinned only by prose, so stripping the tag — or
+// swapping it for an API kind — would move the exit code with every character of
+// the message intact.
+func TestSetTextUnknownKindRefusalIsClassified(t *testing.T) {
+	newSetTextServer(t, withKind(""))
+	_, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline)
+	if err == nil {
+		t.Fatal("an unestablished kind must refuse")
+	}
+	if !errors.Is(err, ErrOnsiteTextNotEditable) {
+		t.Errorf("the unknown-kind refusal must carry the sentinel so its exit code is assertable, got %T: %v", err, err)
+	}
+	if errors.Is(err, ErrUsage) {
+		t.Error("it is a verdict about the SUBJECT, not a malformed invocation")
+	}
+	for name, kind := range map[string]error{
+		"ErrBadRequest": civitai.ErrBadRequest, "ErrNotFound": civitai.ErrNotFound,
+		"ErrUnauthorized": civitai.ErrUnauthorized, "ErrNetwork": civitai.ErrNetwork,
+	} {
+		if errors.Is(err, kind) {
+			t.Errorf("must not match civitai.%s — that would move its exit code", name)
+		}
+	}
+}
+
+// TestSetTextNotFoundOnACappedPageIsNotConclusive.
+//
+// 🔴 THE KIND GATE INHERITS `listMine`'s 200-ROW CAP AND USED TO STATE THE
+// CONSEQUENCE AS FACT. It treats "absent from listMine" as proof the listing
+// does not exist. For a caller whose accessible set exceeds appapi.ListMineCap, a
+// target OUTSIDE the newest page is indistinguishable from a nonexistent one —
+// so the command hard-blocked a write `updateListing` would have accepted while
+// telling the author their own app does not exist. Refusing stays right (the
+// kind is what makes the write safe); the CLAIM had to stop being certain.
+func TestSetTextNotFoundOnACappedPageIsNotConclusive(t *testing.T) {
+	rows := make([]map[string]any, 0, appapi.ListMineCap)
+	for i := 0; i < appapi.ListMineCap; i++ {
+		rows = append(rows, map[string]any{
+			"appListingId": fmt.Sprintf("apl_BULK%03d", i),
+			"slug":         fmt.Sprintf("bulk-%03d", i),
+			"kind":         "offsite",
+		})
+	}
+	srv := newSetTextServerRows(t, rows)
+	_, _, err := run(t, "app", "listing", "set-text", "--slug", "an-app-past-the-cap", "--tagline", stTagline)
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !errors.Is(err, civitai.ErrNotFound) {
+		t.Errorf("still exit 4, got %T: %v", err, err)
+	}
+	for _, want := range []string{"CAPS this read", "not conclusive"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("a miss off a capped page must say it is uncertain (missing %q): %v", want, err)
+		}
+	}
+	// Fail-closed still means no write.
+	for _, p := range srv.seen() {
+		if p == updateListingPath {
+			t.Errorf("the refusal still issued the write: %v", srv.seen())
+		}
+	}
+	// NEGATIVE CONTROL: below the cap the answer IS conclusive and must not be
+	// hedged, or the hedge becomes noise on every ordinary typo.
+	newSetTextServer(t)
+	_, _, err2 := run(t, "app", "listing", "set-text", "--slug", "definitely-not-mine", "--tagline", stTagline)
+	if err2 == nil {
+		t.Fatal("control: expected a refusal")
+	}
+	if strings.Contains(err2.Error(), "not conclusive") {
+		t.Errorf("below the cap the answer is conclusive and must not be hedged: %v", err2)
+	}
+}
+
+// TestListMineCapMatchesTheServer is the drift guard. A stale cap changes what
+// "not conclusive" means in both directions.
+func TestListMineCapMatchesTheServer(t *testing.T) {
+	const want = 200
+	if appapi.ListMineCap != want {
+		t.Errorf("ListMineCap = %d, want %d — re-read `MY_APP_LISTINGS_LIMIT` in "+
+			"<civitai>/src/server/services/blocks/app-access.service.ts and change this pin deliberately",
+			appapi.ListMineCap, want)
+	}
+}
+
+// TestSetTextAdvisoryReachesBothRenderings is finding 5: the human path RETURNED
+// before the shared advisory while `--json` called it unconditionally, so with
+// `requiresReview:true` AND an open shadow the two renderings disagreed about
+// whether the overwrite hazard applied — the exact property warnOpenRevision's
+// doc comment claimed they could not.
+func TestSetTextAdvisoryReachesBothRenderings(t *testing.T) {
+	const shadow = "apl_BOTHPATHS7"
+	for _, jsonOut := range []bool{false, true} {
+		name := "human"
+		args := []string{"app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline}
+		if jsonOut {
+			name, args = "json", append(args, "--json")
+		}
+		t.Run(name, func(t *testing.T) {
+			newSetTextServer(t, withStatus("approved"), withOpenShadow(shadow),
+				withReply(map[string]any{"requiresReview": true, "shadowId": shadow}))
+			_, stderr, err := run(t, args...)
+			if err != nil {
+				t.Fatalf("set-text: %v", err)
+			}
+			if !strings.Contains(stderr, "revision") {
+				t.Errorf("the overwrite advisory must reach the %s rendering too — a branch that returns "+
+					"early makes the two disagree about whether the hazard applies:\n%s", name, stderr)
+			}
+		})
 	}
 }

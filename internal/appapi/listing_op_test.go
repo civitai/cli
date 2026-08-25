@@ -276,7 +276,16 @@ func exactForOp(op listingOp, serverMsg string) string {
 	switch op {
 	case listingOpRead:
 		return "the server rejected this store-listing lookup (400): " + serverMsg +
-			" — nothing was changed; check the app you named (list your apps with `civitai app status`)"
+			// 🔴 RE-READ AGAINST EVERY ROUTE THAT REACHES THIS ARM, which is
+			// what this guard's own doc comment asks for. There are now FOUR,
+			// and the fourth (listMine) takes NO input — so the old "check the
+			// app you named" clause named a value one of its four callers never
+			// sends. The sentence below is true of all four: it asserts only
+			// that nothing changed, and points at a command that PRINTS the
+			// valid app names rather than presuming the caller typed one.
+			// (`civitai app doctor` ships in the sibling PR — see the merge-order
+			// note on refuseOnsiteTextEdit.)
+			" — nothing was changed; `civitai app doctor` lists every app you can work on"
 	case listingOpIngest:
 		return "the server rejected the image-upload request (400): " + serverMsg +
 			" — no listing was changed; check the image and retry"
