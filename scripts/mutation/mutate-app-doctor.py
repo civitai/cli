@@ -8,11 +8,17 @@ Each mutant is the NARROWEST expression that can be wrong. For each:
 Reports SURVIVED loudly. Runs the whole package (never a -run filter that could
 exclude the killing test).
 """
+import atexit
 import hashlib
 import os
 import re
 import subprocess
 import sys
+
+# 🔴 A FULL RUN ASSERTS ITS OWN POPULATION, so a table that quietly emptied
+# cannot report a serene `killed=0` and exit 0. Lower this in the same commit
+# that retires a mutant.
+EXPECTED_MUTANTS = 45
 
 WT = os.environ.get("MUTATE_TREE", os.getcwd())
 PKGS = ["./internal/cmd/", "./internal/appapi/", "./cmd/civitai/"]
@@ -193,28 +199,28 @@ MUTANTS = [
     # --- audit finding 1: blocked-media sufficiency per slot ---
     ("M33-screenshot-advice-appends", DOCTOR,
      '\t\t\treturn "REMOVE the blocked screenshot — adding another does not clear it: " +',
-     '\t\t\treturn "civitai app listing add-screenshot <file> --slug " + slug + " " +',
+     '\t\t\treturn "civitai app listing add-screenshot <file> --slug " + slug + " " + "" +',
      "a blocked SCREENSHOT is answered with add-screenshot, which appends and leaves it blocked"),
 
     ("M34-blocked-kind-always-empty", DOCTOR,
-     '\tl := strings.ToLower(label)',
-     '\tl := ""',
+     '\t\tif blockedKindWord[kind].MatchString(label) {',
+     '\t\tif false {',
      "the slot is never extracted, so every blocked asset gets the generic arm"),
 
     ("M35-fallback-drops-removal", DOCTOR,
-     '\t\t"civitai app listing set-icon, civitai app listing set-cover, civitai app listing rm-screenshot"',
-     '\t\t"civitai app listing set-icon, civitai app listing set-cover, civitai app listing add-screenshot"',
+     '\t\t\t"civitai app listing rm-screenshot (find the alsc_ id with " +',
+     '\t\t\t"civitai app listing add-screenshot (find the alsc_ id with " +',
      "the unknown-label fallback loses the REMOVAL, which is the only sufficient screenshot fix"),
 
     # --- audit finding 3: the page cap ---
     ("M36-truncation-never-reported", DOCTOR,
-     "\tout.Summary.Truncated = len(rows) >= appapi.ListMineCap",
-     "\tout.Summary.Truncated = false",
+     "func doctorPageTruncated(n int) bool { return n >= appapi.ListMineCap }",
+     "func doctorPageTruncated(n int) bool { return false }",
      "a truncated page reports ok:true indistinguishably from a complete one"),
 
     ("M37-truncation-off-by-one", DOCTOR,
-     "\tout.Summary.Truncated = len(rows) >= appapi.ListMineCap",
-     "\tout.Summary.Truncated = len(rows) > appapi.ListMineCap",
+     "func doctorPageTruncated(n int) bool { return n >= appapi.ListMineCap }",
+     "func doctorPageTruncated(n int) bool { return n > appapi.ListMineCap }",
      "an exactly-at-cap page is called complete, though it is the commonest truncated case"),
 
     ("M38-truncation-caveat-silent", DOCTOR,
@@ -227,7 +233,62 @@ MUTANTS = [
      "\t\t\tKind:         r.Kind,",
      '\t\t\tKind:         "",',
      "--json omits the field that decides `fix`, so a consumer cannot reproduce the branch"),
+
+    # --- delta-audit fixes ---
+    ("M40-error-prefix-restored", "cmd/civitai/main.go",
+     "\tif errors.Is(err, cmd.ErrListingBlocked) {\n\t\treturn err.Error()\n\t}",
+     "\tif false {\n\t\treturn err.Error()\n\t}",
+     "the verdict line leads with `Error:` again, which a CI scraper flags as a failure"),
+
+    ("M41-error-prefix-dropped-everywhere", "cmd/civitai/main.go",
+     '\treturn "Error: " + err.Error()',
+     "\treturn err.Error()",
+     "the prefix is suppressed for REAL failures too, hiding them from the same scraper"),
+
+    ("M42-truncation-from-filtered-slice", DOCTOR,
+     "\tpayload.Summary.Truncated = doctorPageTruncated(len(rows))",
+     "\tpayload.Summary.Truncated = doctorPageTruncated(len(selected))",
+     "truncation is computed from the filtered slice again, so a by-slug run is dead-false"),
+
+    ("M43-notfound-hides-the-cap", DOCTOR,
+     "\tif doctorPageTruncated(len(rows)) {",
+     "\tif false {",
+     "a not-found off a capped page is reported as conclusive about an app the caller may own"),
+
+    ("M44-json-kind-hardcoded", DOCTOR,
+     "\t\t\tKind:         r.Kind,",
+     '\t\t\tKind:         "offsite",',
+     "the kind is HARDCODED rather than nulled — the mutant M39 could not see"),
+
+    # 🔴 THE MUTANT MUST SPAN BOTH LINES OR IT CREATES NO DEFECT. The first
+    # version replaced only the PROSE and left `"civitai app listing
+    # submit-revision --slug " + slug` on the next line — so the string still
+    # contained "submit-revision", the assertion still passed, and the sweep
+    # reported SURVIVED for a mutation that had not removed anything. A SURVIVED
+    # verdict from a mutant that does not produce its own defect is a FALSE
+    # ALARM, and is exactly as misleading as a KILLED verdict from a mutant that
+    # never ran. Both clauses are deleted here.
+    ("M45-screenshot-omits-submit", DOCTOR,
+     '\t\t\t\t". On an approved listing that stages a revision, so finish with " +\n'
+     '\t\t\t\t"civitai app listing submit-revision --slug " + slug',
+     '\t\t\t\t""',
+     "the screenshot remedy omits submit-revision, so doctor keeps reporting blocked-media"),
 ]
+
+
+# Files currently mutated, so an abnormal exit can put them back.
+_restore_queue = {}
+
+
+def _restore_all():
+    for path, src in list(_restore_queue.items()):
+        try:
+            open(path, "w").write(src)
+        except OSError:
+            pass
+
+
+atexit.register(_restore_all)
 
 
 def sha(path):
@@ -288,18 +349,43 @@ def parse(out):
 
 
 def main():
+    # 🔴 THE SELECTOR USED TO MATCH FULL IDS ONLY, so the invocation the README
+    # itself taught (`… .py M1 M7`) selected NOTHING, ran nothing, and fell
+    # through to `return 0` — which the README defines as "every mutant ran,
+    # compiled, and was killed". An instrument that reports success having run
+    # nothing is the whole failure class this harness exists to avoid, and it
+    # was in the harness. It now accepts a PREFIX, and refuses a name that
+    # matches no mutant instead of quietly doing nothing.
     only = sys.argv[1:] if len(sys.argv) > 1 else None
+    if only:
+        known = [m[0] for m in MUTANTS]
+        unmatched = [a for a in only
+                     if not any(k == a or k.startswith(a + "-") for k in known)]
+        if unmatched:
+            print(f"!! these selectors match no mutant: {unmatched}")
+            print(f"   known: {known}")
+            return 2
     base_out = run_tests()
     _, _, base_counts, _ = parse(base_out)
     base_total = base_counts["PASS"] + base_counts["FAIL"] + base_counts["SKIP"]
     print(f"BASELINE: {base_counts} total={base_total}")
-    if base_counts["FAIL"] != 0:
-        print("!! baseline is not green — every result below is meaningless")
+    if base_counts["FAIL"] != 0 or "[build failed]" in base_out:
+        # A baseline that does not COMPILE is a bad baseline, not a "mutant that
+        # never ran" — it takes 3 like any other, which is what the README says.
+        print("!! baseline is not green (or does not build) — every result below is meaningless")
         return 3
+
+    # 🔴 A FULL RUN ASSERTS ITS OWN POPULATION. Without this a table that
+    # quietly emptied — or a selector bug like the one above — reports a serene
+    # `killed=0 survived=0` and exits 0.
+    if not only and len(MUTANTS) < EXPECTED_MUTANTS:
+        print(f"!! this battery defines {len(MUTANTS)} mutants, expected at least {EXPECTED_MUTANTS}. "
+              f"If mutants were RETIRED, lower EXPECTED_MUTANTS in the same commit that deletes them.")
+        return 2
 
     results = []
     for mid, rel, old, new, why in MUTANTS:
-        if only and mid not in only:
+        if only and not any(mid == a or mid.startswith(a + "-") for a in only):
             continue
         path = os.path.join(WT, rel)
         before = sha(path)
@@ -315,7 +401,11 @@ def main():
         fails, detail, counts, build_err = parse(out)
         open(path, "w").write(src)
         assert sha(path) == before, f"{mid}: tree not restored!"
-        if build_err and not fails:
+        # 🔴 BUILD ERROR WINS OVER `fails`. This was `build_err and not fails`,
+        # so a mutant that failed to COMPILE while some unrelated test also
+        # reported a failure scored KILLED — a build error is not evidence about
+        # the code under test, whatever else the run printed.
+        if build_err:
             verdict = "BUILD-FAIL"
         elif fails:
             verdict = "KILLED"
@@ -331,6 +421,12 @@ def main():
             note = (f"  ⚠ TRUNCATED RUN: {total} verdicts vs baseline {base_total}"
                     f" ({short} missing, panics={counts['PANIC']}) — the verdict below is about a run"
                     f" that did not finish; treat the KILL as unattributed.")
+        # 🔴 `note` GOES IN THE TUPLE. It used to be a local printed to the
+        # stream only, so the `==== TABLE ====` at the end listed a truncated
+        # run as a plain unmarked KILLED and `ran`/`killed` counted it like any
+        # other. A reader recounting from the committed artifact saw no trace.
+        if note:
+            verdict += " (TRUNCATED)"
         results.append((mid, verdict, killers, why))
         print(f"{mid}: {verdict} ({counts})")
         if note:
@@ -343,12 +439,19 @@ def main():
 
     bad = [r for r in results if r[1] == "BAD-PATTERN"]
     surv = [r for r in results if r[1] == "SURVIVED"]
+    bf = [r for r in results if r[1] == "BUILD-FAIL"]
     print("\n==== TABLE ====")
     for mid, verdict, killers, why in results:
         print(f"{mid}\t{verdict}\t{why}\n\t{killers}")
-    print(f"\n==== VERDICT ==== ran={len(results)-len(bad)} killed="
-          f"{len([r for r in results if r[1]=='KILLED'])} survived={len(surv)} not_run={len(bad)}")
-    bf = [r for r in results if r[1] == "BUILD-FAIL"]
+    # 🔴 `ran` EXCLUDES EVERY TERM THAT IS EVIDENCE OF NOTHING. It used to
+    # subtract only BAD-PATTERN while still counting BUILD-FAILs, so the summary
+    # could print `ran=39 killed=38 build_fail=1` — arithmetic disagreeing with
+    # itself. A mutant that never compiled did not run.
+    killed = len([r for r in results if r[1].startswith("KILLED")])
+    trunc = len([r for r in results if "TRUNCATED" in r[1]])
+    print(f"\n==== VERDICT ==== defined={len(results)} ran={len(results)-len(bad)-len(bf)} "
+          f"killed={killed} survived={len(surv)} build_fail={len(bf)} not_run={len(bad)} "
+          f"truncated={trunc}")
     if bad:
         print("!! NOT A CLEAN SWEEP — these mutants NEVER RAN, so they are evidence of nothing:")
         for mid, _, _, why in bad:

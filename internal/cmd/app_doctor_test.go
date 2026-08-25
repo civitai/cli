@@ -307,7 +307,14 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
 			doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking"),
 			doctorProblem("empty-tagline", "Missing tagline", "advisory"),
 		),
-		doctorRow(docSlugB, docListingB, "approved", "editor", ptr(docBlockA)),
+		// 🔴 THIS ROW IS `onsite` ON PURPOSE. Every other fixture reaching this
+		// pin was "offsite", so `Kind: r.Kind` -> `Kind: "offsite"` was a
+		// HARDCODING mutant no test could see — the documented blind spot where
+		// a fixture that can only ever produce the constant's own value cannot
+		// observe a mutant that hardcodes the literal. M39 nulled the field and
+		// died; hardcoding survived a fully green suite. Two distinct kinds in
+		// the pinned payload is the mechanical control.
+		doctorRowKind(docSlugB, docListingB, "approved", "onsite"),
 	)
 	base := envBaseURL(t)
 	stdout, _, err := run(t, "app", "doctor", "--json")
@@ -357,10 +364,10 @@ func TestDoctorJSONShapeIsPinnedWhole(t *testing.T) {
       "slug": "` + docSlugB + `",
       "name": "Doctor-bravo Display Name",
       "appListingId": "` + docListingB + `",
-      "appBlockId": "` + docBlockA + `",
+      "appBlockId": null,
       "status": "approved",
-      "role": "editor",
-      "kind": "offsite",
+      "role": "owner",
+      "kind": "onsite",
       "delisted": false,
       "blocking": [],
       "advisory": []
@@ -458,8 +465,26 @@ func TestDoctorFixAdviceNamesOnlyCommandsThatExist(t *testing.T) {
 	base := "https://example.invalid"
 	editURL := base + fmt.Sprintf(listingEditPath, docListingA)
 	seen := 0
+	// 🔴 EVERY CODE, AND `blocked-media` ONCE PER SLOT. `problemWithCode` builds
+	// an EMPTY label, so `blocked-media` always took the FALLBACK arm here — the
+	// three per-slot arms, which is where the new commands live, were never
+	// resolved against the command tree at all. A ledger that walks "all eight
+	// codes" while silently skipping three branches is the narrower-than-its-
+	// description shape.
+	type probe struct {
+		code  string
+		label string
+	}
+	probes := []probe{}
 	for _, code := range allEightCodes() {
-		fix := doctorRemedy(problemWithCode(code), docSlugA, editURL, "offsite")
+		probes = append(probes, probe{code, ""})
+	}
+	for _, kind := range []string{"icon", "cover", "screenshot"} {
+		probes = append(probes, probe{"blocked-media", "Replace the blocked " + kind + " before it can publish"})
+	}
+	for _, pr := range probes {
+		code := pr.code
+		fix := doctorRemedy(appapi.ListingProblem{Code: pr.code, Label: pr.label}, docSlugA, editURL, "offsite")
 		if fix == "" {
 			t.Errorf("code %q produced an EMPTY fix line — every finding must say what to do", code)
 			continue
@@ -479,11 +504,12 @@ func TestDoctorFixAdviceNamesOnlyCommandsThatExist(t *testing.T) {
 	// against 7 actual references the `blocked-media` arm could lose two
 	// commands and this control would still pass — a positive control with two
 	// references of slack is a control for a scan that has half stopped working.
-	if seen < 7 {
+	// The floor rises with the per-slot arms now being walked.
+	if seen < 12 {
 		t.Fatalf("the fix-line scan found only %d command references across the eight codes — "+
 			"the regex is not reading what it thinks it is, so the resolutions above prove nothing", seen)
 	}
-	t.Logf("resolved %d command references across %d codes", seen, len(allEightCodes()))
+	t.Logf("resolved %d command references across %d probes (8 codes + 3 blocked-media slots)", seen, len(probes))
 }
 
 // TestDoctorMediaFixesCarryASlugFlagThatExists: the printed commands pass
@@ -1280,9 +1306,18 @@ func TestBlockedMediaRemedyIsSufficientPerSlot(t *testing.T) {
 			mustNotSay: []string{"add-screenshot", "rm-screenshot", "set-icon"},
 		},
 		{
-			// 🔴 The whole finding: REMOVE, and name the read that shows the id.
+			// 🔴 THREE CLAUSES, AND `submit-revision` IS THE ONE THAT WAS
+			// UNASSERTED. A mutation sweep caught it: deleting the
+			// submit-revision clause left this test green, because it only
+			// demanded the removal and the read. On an APPROVED listing
+			// `rm-screenshot` lands in the open shadow and is deliberately NOT
+			// submitted, and `listMine` reads the PARENT — so without that
+			// clause the author removes the asset, `doctor` keeps reporting
+			// `blocked-media`, keeps exiting 1, and they have nothing left to
+			// try. Asserting two of three clauses is asserting an insufficient
+			// remedy.
 			label:      "Replace the blocked screenshot before it can publish",
-			mustSay:    []string{"rm-screenshot", "civitai app listing status"},
+			mustSay:    []string{"rm-screenshot", "civitai app listing status", "submit-revision"},
 			mustNotSay: []string{"add-screenshot"},
 		},
 	}
@@ -1312,8 +1347,11 @@ func TestBlockedMediaUnknownLabelKeepsTheRemoval(t *testing.T) {
 	fix := doctorRemedy(
 		appapi.ListingProblem{Code: "blocked-media", Label: "this asset was rejected by the scanner", Severity: "blocking"},
 		docSlugA, "https://example.invalid/x", "offsite")
-	if !strings.Contains(fix, "rm-screenshot") {
-		t.Errorf("the fallback arm must still name the REMOVAL, or a blocked screenshot is unfixable: %s", fix)
+	for _, want := range []string{"rm-screenshot", "civitai app listing status", "submit-revision"} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("the fallback arm must still name %q — losing precision is acceptable, losing "+
+				"SUFFICIENCY is the defect returning: %s", want, fix)
+		}
 	}
 	if strings.Contains(fix, "add-screenshot") {
 		t.Errorf("the fallback must not advise appending, which never clears a blocked row: %s", fix)
@@ -1368,38 +1406,117 @@ func TestDoctorSeverityIsNormalised(t *testing.T) {
 	}
 }
 
-// TestDoctorReportsTruncationAtThePageCap.
-//
-// 🔴 `ok: true` OTHERWISE MEANS "NOTHING BLOCKING IN WHAT I COULD SEE" AND SAYS
-// "NOTHING BLOCKING". `listMine` clamps to appapi.ListMineCap, orders
-// `serialId desc`, and offers no cursor and no total — so past the cap the
-// OLDEST listings vanish silently and `doctor || exit 1` passes for a listing
-// that cannot publish. This is the same failure `submissionsListTruncated`
-// exists for on the sibling read.
-func TestDoctorReportsTruncationAtThePageCap(t *testing.T) {
-	rows := make([]map[string]any, 0, appapi.ListMineCap)
-	for i := 0; i < appapi.ListMineCap; i++ {
+// bulkRows builds n clean listings, plus (optionally) a blocking one at the END
+// so a by-slug lookup has to reach past the head of the page.
+func bulkRows(n int, tailSlug string) []map[string]any {
+	rows := make([]map[string]any, 0, n)
+	for i := 0; i < n; i++ {
 		rows = append(rows, doctorRow(fmt.Sprintf("bulk-app-%03d", i), fmt.Sprintf("apl_BULK%03d", i),
 			"approved", "owner", nil))
 	}
-	newDoctorServer(t, rows...)
-	stdout, stderr, err := run(t, "app", "doctor", "--json")
-	if err != nil {
-		t.Fatalf("all clean, so exit 0: %v", err)
+	if tailSlug != "" && n > 0 {
+		rows[n-1] = doctorRow(tailSlug, "apl_TAIL", "draft", "owner", nil,
+			doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking"))
+	}
+	return rows
+}
+
+// TestDoctorTruncationBoundary is the Cap-1 / Cap / Cap+1 table the sibling
+// guard carries and this one lacked.
+//
+// 🔴 A SINGLE AT-CAP CASE CANNOT TELL `>=` FROM `>`, and the off-by-one is the
+// likely drift: the commonest truncated read is EXACTLY at the cap, because that
+// is what a clamp produces.
+func TestDoctorTruncationBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		n    int
+		want bool
+	}{
+		{appapi.ListMineCap - 1, false},
+		{appapi.ListMineCap, true},
+		{appapi.ListMineCap + 1, true},
+	} {
+		t.Run(fmt.Sprintf("n=%d", tc.n), func(t *testing.T) {
+			newDoctorServer(t, bulkRows(tc.n, "")...)
+			stdout, stderr, err := run(t, "app", "doctor", "--json")
+			if err != nil {
+				t.Fatalf("all clean, so exit 0: %v", err)
+			}
+			if got := decodeDoctorJSON(t, stdout).Summary.Truncated; got != tc.want {
+				t.Errorf("n=%d truncated=%v, want %v", tc.n, got, tc.want)
+			}
+			if strings.Contains(stderr, "caps this read") != tc.want {
+				t.Errorf("n=%d caveat presence = %v, want %v", tc.n, !tc.want, tc.want)
+			}
+		})
+	}
+}
+
+// TestDoctorTruncationIsReportedOnTheBySlugPathToo is the defect itself.
+//
+// 🔴 `truncated` USED TO BE COMPUTED FROM THE FILTERED SLICE, so a by-slug run
+// saw len(rows)==1 and reported false — on the exact path the caveat used to
+// tell the reader to use. The flag is a property of the SERVER'S PAGE.
+// `listMine` takes no input (TestDoctorSendsNoInputParameter), so every by-slug
+// run is a capped read filtered client-side.
+func TestDoctorTruncationIsReportedOnTheBySlugPathToo(t *testing.T) {
+	newDoctorServer(t, bulkRows(appapi.ListMineCap, "tail-app")...)
+	stdout, stderr, err := run(t, "app", "doctor", "tail-app", "--json")
+	if err == nil {
+		t.Fatalf("tail-app is blocked, so this must exit non-zero; stdout:\n%s", stdout)
 	}
 	got := decodeDoctorJSON(t, stdout)
-	if !got.Summary.Truncated {
-		t.Errorf("a full-length page must set summary.truncated — `ok:true` on a truncated read is " +
-			"indistinguishable from `ok:true` on a complete one")
+	if len(got.Apps) != 1 {
+		t.Fatalf("by-slug must select exactly one app, got %d", len(got.Apps))
 	}
-	for _, want := range []string{"caps this read", "were NOT checked", "would not change the exit code"} {
-		if !strings.Contains(stderr, want) {
-			t.Errorf("the caveat must reach stderr (missing %q):\n%s", want, stderr)
+	if !got.Summary.Truncated {
+		t.Errorf("a by-slug run reads the SAME capped page — truncated must be true, not false-by-construction")
+	}
+	if !strings.Contains(stderr, "caps this read") {
+		t.Errorf("the caveat must print on the by-slug path:\n%s", stderr)
+	}
+	// 🔴 The caveat must NOT quote the FILTERED count. It used to interpolate
+	// Summary.Apps, which is 1 here, producing "the server returned 1 listings"
+	// about a 200-row page.
+	if strings.Contains(stderr, "returned 1 listings") {
+		t.Errorf("the caveat quotes the filtered count, not the cap:\n%s", stderr)
+	}
+	// And it must not send the reader to the path it was blind on.
+	if strings.Contains(stderr, "Check a specific app with") {
+		t.Errorf("the caveat still directs the reader at the by-slug path as a remedy:\n%s", stderr)
+	}
+}
+
+// TestDoctorNotFoundOnACappedPageIsNotConclusive.
+//
+// 🔴 THE WORST ARM. A slug the caller REALLY OWNS, sitting beyond the cap,
+// resolves to "no listing of yours is called that" — a confidently wrong answer
+// about their own app. That is the same silent-pass class this caveat exists to
+// close, relocated from exit 0 to exit 4, so the refusal has to say it is not
+// conclusive.
+func TestDoctorNotFoundOnACappedPageIsNotConclusive(t *testing.T) {
+	newDoctorServer(t, bulkRows(appapi.ListMineCap, "")...)
+	_, _, err := run(t, "app", "doctor", "an-app-past-the-cap")
+	if err == nil {
+		t.Fatal("expected a not-found")
+	}
+	if !errors.Is(err, civitai.ErrNotFound) {
+		t.Errorf("still exit 4, got %T: %v", err, err)
+	}
+	for _, want := range []string{"CAPS this read", "not conclusive"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("a not-found off a capped page must say it is uncertain (missing %q): %v", want, err)
 		}
 	}
-	// STDERR only — `--json` stdout stays a pure payload.
-	if strings.Contains(stdout, "caps this read") {
-		t.Errorf("the caveat leaked into --json stdout")
+	// NEGATIVE CONTROL: below the cap the answer IS conclusive and must not be
+	// hedged, or the hedge becomes noise on every miss.
+	newDoctorServer(t, doctorRow(docSlugA, docListingA, "draft", "owner", nil))
+	_, _, err2 := run(t, "app", "doctor", "no-such-app-of-mine")
+	if err2 == nil {
+		t.Fatal("control: expected a not-found")
+	}
+	if strings.Contains(err2.Error(), "not conclusive") {
+		t.Errorf("below the cap the answer is conclusive and must not be hedged: %v", err2)
 	}
 }
 
@@ -1419,22 +1536,53 @@ func TestDoctorDoesNotCryTruncationBelowTheCap(t *testing.T) {
 	}
 }
 
-// TestDoctorVerdictDoesNotReadAsAToolFailure: cobra prefixes a returned error
-// with "Error: ", so a successful diagnosis of an incomplete listing printed
-// `Error: the listing has blocking problems` — and a CI scraper watching stderr
-// for `Error:` flags a run that worked exactly as designed.
-func TestDoctorVerdictDoesNotReadAsAToolFailure(t *testing.T) {
+// TestListMineCapMatchesTheServer is the drift guard the sibling constant
+// carries and this one lacked. It cannot reach the server, so it pins the value
+// and names where to re-read it — a stale cap silently changes what "truncated"
+// means in both directions.
+func TestListMineCapMatchesTheServer(t *testing.T) {
+	const want = 200
+	if appapi.ListMineCap != want {
+		t.Errorf("ListMineCap = %d, want %d. Re-read `MY_APP_LISTINGS_LIMIT` in "+
+			"<civitai>/src/server/services/blocks/app-access.service.ts and change this pin deliberately: "+
+			"a cap that is too HIGH never warns on a truncated page, and one that is too LOW warns on every "+
+			"complete one.", appapi.ListMineCap, want)
+	}
+}
+
+// TestDoctorVerdictSentinelIsDistinguishable is what remains here of a test that
+// used to claim more than it could see.
+//
+// 🔴 THE OLD TEST WAS NAMED `…DoesNotReadAsAToolFailure` AND ASSERTED ON
+// `err.Error()` — the string as it exists BEFORE `cmd/civitai/main.go` prepends
+// "Error: ". It was therefore structurally incapable of observing the prefix it
+// was named for, and it passed while the prefix was still being printed. The
+// property is a PROCESS-level one and is now measured where it happens, in
+// cmd/civitai's TestDoctorVerdictPrintsNoErrorPrefix, which reads the real
+// binary's stderr.
+//
+// What stays in-package is the one thing this level CAN establish: the verdict
+// is reachable and carries the sentinel that main.go branches on. Without that,
+// the process-level test could pass for the wrong reason.
+func TestDoctorVerdictSentinelIsDistinguishable(t *testing.T) {
 	newDoctorServer(t, doctorRow(docSlugA, docListingA, "draft", "owner", nil,
 		doctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking")))
 	_, _, err := run(t, "app", "doctor")
 	if err == nil {
 		t.Fatal("expected the blocking verdict")
 	}
-	msg := err.Error()
-	if !strings.Contains(msg, "not ready to publish") {
+	if !errors.Is(err, ErrListingBlocked) {
+		t.Fatalf("the verdict must carry ErrListingBlocked — main.go's errorLine branches on it: %v", err)
+	}
+	if !strings.Contains(err.Error(), "not ready to publish") {
 		t.Errorf("the verdict should describe the LISTING, got: %v", err)
 	}
-	if !strings.Contains(msg, "not a failure of the command") {
-		t.Errorf("the verdict should say it is a finding, not a tool failure, got: %v", err)
+	// NEGATIVE CONTROL: an ordinary failure must NOT carry the sentinel, or
+	// main.go would strip the prefix from real errors too.
+	newDoctorServer(t, doctorRow(docSlugA, docListingA, "draft", "owner", nil))
+	if _, _, err := run(t, "app", "doctor", "no-such-app-of-mine"); err == nil {
+		t.Fatal("control: expected a not-found error")
+	} else if errors.Is(err, ErrListingBlocked) {
+		t.Error("control: a not-found must NOT carry the verdict sentinel — it is a real failure")
 	}
 }

@@ -251,3 +251,64 @@ func TestDoctorProcessExitStatusEndToEnd(t *testing.T) {
 		}
 	})
 }
+
+// TestDoctorVerdictPrintsNoErrorPrefix measures the property at the only level
+// it exists: the PROCESS's stderr.
+//
+// 🔴 THIS REPLACES A TEST THAT COULD NOT SEE IT. The in-package version asserted
+// on `err.Error()`, which is the string BEFORE `main.go` prepends "Error: " — so
+// it passed while the prefix was printed on every run, and an attempt to fix the
+// problem by rewording the sentinel changed only the text AFTER the prefix. The
+// emitter is `main.go`'s `errorLine`, not cobra (the root sets
+// `SilenceErrors: true`), and this reads what that emitter actually produced.
+//
+// The pair is the point. A verdict must print bare; a real failure must keep the
+// prefix. Asserting only the first would be satisfied by deleting the prefix
+// everywhere, which would hide genuine errors from the same CI scraper.
+func TestDoctorVerdictPrintsNoErrorPrefix(t *testing.T) {
+	bin := buildCLI(t)
+	blocked := []map[string]any{e2eDoctorRowWithStatus("e2e-verdict", "apl_E2EVERD", "draft",
+		e2eDoctorProblem("missing-icon", "Missing icon (required before publishing)", "blocking"))}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != doctorListMinePath {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"result": map[string]any{"data": map[string]any{"json": blocked}},
+		})
+	}))
+	defer srv.Close()
+	env := []string{
+		"HOME=" + t.TempDir(), "XDG_CONFIG_HOME=" + t.TempDir(),
+		"CIVITAI_TOKEN=tok-e2e", "CIVITAI_BASE_URL=" + srv.URL,
+		"CIVITAI_NO_UPDATE_CHECK=1", "NO_COLOR=1",
+	}
+
+	rc, _, stderr := runCLIAnyStatus(t, bin, env, "app", "doctor")
+	if rc != exitGeneric {
+		t.Fatalf("verdict exited %d, want %d", rc, exitGeneric)
+	}
+	// 🔴 THE ASSERTION IS ON THE PROCESS'S OWN STDERR, and it is anchored: a
+	// `Contains` would be satisfied by "Error:" appearing anywhere, while what
+	// matters is whether the line LEADS with it, which is what a scraper greps.
+	if strings.HasPrefix(strings.TrimSpace(stderr), "Error:") {
+		t.Errorf("the verdict line still leads with %q — a CI scraper watching stderr for it flags a run "+
+			"that worked exactly as designed.\nstderr: %s", "Error:", stderr)
+	}
+	if !strings.Contains(stderr, "not ready to publish") {
+		t.Errorf("the verdict should still be reported on stderr, got: %s", stderr)
+	}
+
+	// 🔴 NEGATIVE CONTROL, same binary, same run shape: a REAL failure must KEEP
+	// the prefix. Without this, deleting the prefix unconditionally would pass.
+	rc2, _, stderr2 := runCLIAnyStatus(t, bin, env, "app", "doctor", "not-an-app-of-mine")
+	if rc2 != exitNotFound {
+		t.Fatalf("control exited %d, want %d", rc2, exitNotFound)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(stderr2), "Error:") {
+		t.Errorf("a genuine failure must still lead with \"Error:\" — suppressing it everywhere would hide "+
+			"real errors from the same scraper.\nstderr: %s", stderr2)
+	}
+}

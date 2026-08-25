@@ -2142,6 +2142,8 @@ transport. The shape:
 | `ok` | The verdict, and the structured form of the exit code. Follows `summary.gating`, **not** `summary.blocking`. |
 | `apps[]` | Every listing checked, **gating apps first, delisted last**. Each carries `slug`, `name`, `appListingId`, `appBlockId` (null for offsite), `status`, `role`, `delisted`, and a `blocking` and an `advisory` array — never null, `[]` when empty. |
 | `apps[].delisted` | `true` when this listing's status is `removed`, i.e. its blocking problems were reported and not counted. |
+| `apps[].kind` | `onsite` or `offsite`. Carried because it **decides** `fix` for the three text codes — without it a consumer sees two different fixes for one code and cannot reproduce the branch. |
+| `summary.truncated` | `true` when the server's page cap may have hidden listings. Computed from the **server's page**, so it is reported on a single-app run too: that run filters the same capped page client-side, because `listMine` takes no input. |
 | `summary.blocking` | **Every** blocking problem found, so it matches the arrays you can see. |
 | `summary.gating` | The subset on listings that can still publish. **This is the exit code.** |
 | `summary.advisory` / `summary.apps` / `summary.delisted` | Advisory findings, apps checked, and how many of them are delisted. |
@@ -2151,11 +2153,21 @@ a choice between a total that disagrees with the arrays and a verdict that
 disagrees with the exit code. Ask `ok` for "may this ship", `summary.blocking`
 for "is anything wrong anywhere".
 
-**Each finding names its fix, and only fixes that exist.** The three media
-problems (and `blocked-media`, where replacing the asset *is* the fix) print the
-exact `civitai app listing set-icon` / `set-cover` / `add-screenshot` command,
-`--slug` already filled in. `scanning-media` prints no command at all, because
-the scan finishes on its own. The three **text** problems — description,
+**Each finding names its fix, and only fixes that exist — and only fixes that are
+*sufficient*.** `missing-icon` / `missing-cover` / `no-screenshots` print the exact
+`civitai app listing set-icon` / `set-cover` / `add-screenshot` command, `--slug`
+already filled in. `scanning-media` prints no command at all, because the scan
+finishes on its own.
+
+🔴 **`blocked-media` depends on the slot**, which the CLI reads from the server's
+label (the code itself is kind-less). An icon or a cover is **replaced** — the
+new asset overwrites the slot and dereferences the blocked image. A **screenshot
+must be REMOVED**: `add-screenshot` *appends*, so the blocked row stays attached
+and go-live is still refused. That arm therefore prints three commands —
+`listing status` to find the `alsc_` id, `rm-screenshot`, and, on an approved
+listing, `submit-revision`, because the removal lands in a revision that is
+deliberately not auto-submitted. An unrecognised label falls back to an arm that
+still names the removal, losing precision but never sufficiency. The three **text** problems — description,
 tagline, category — are **kind-aware**, because who owns that copy differs:
 
 | kind | fix printed | why |

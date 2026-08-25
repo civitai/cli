@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -78,10 +79,14 @@ const (
 //     civitai/civitai#3472 and are owner-or-accepted-seat bound — so they work
 //     for `role: editor` too, and for an OFFSITE listing (civitai/cli#422's
 //     by-slug fallback, measured live 2026-08-17).
-//   - `blocked-media` routes to the same three, because replacing the asset IS
-//     the fix. Which of the three is named by the SERVER's label, not by the
-//     code — see appapi.ListingProblem.Label — so this arm cannot narrow it and
-//     does not pretend to.
+//   - `blocked-media` NARROWS to the slot, from the SERVER's label (the code is
+//     kind-less). It has to: the three slots do not share a remedy — overwriting
+//     fixes an icon or a cover, while a blocked SCREENSHOT must be REMOVED,
+//     because `add-screenshot` appends and leaves the blocked row attached. An
+//     unrecognised label falls back to an arm that still names the removal.
+//     (This paragraph said the opposite until the arm below started narrowing;
+//     a godoc twenty lines above the code it contradicts is how the next reader
+//     is told not to look.)
 //   - `scanning-media` has NO fix route at all and says so. Printing a command
 //     for it would tell an author to act on a state that resolves itself.
 //   - The three TEXT codes route to the WEB editor, and NOT to a CLI flag. The
@@ -130,12 +135,34 @@ func doctorRemedy(p appapi.ListingProblem, slug, editURL, kind string) string {
 			// the listing still refused at go-live. The id is an `alsc_…` this
 			// command never sees — `listMine` does not carry screenshot rows —
 			// so the read that prints it has to be named too.
+			// 🔴 THREE COMMANDS, AND THE THIRD IS NOT OPTIONAL ON A LIVE
+			// LISTING. `rm-screenshot` on an APPROVED listing lands in the open
+			// shadow revision and is deliberately NOT submitted (its own docs
+			// say so). `listMine` reads the PARENT, so until the revision is
+			// submitted and approved `doctor` keeps reporting `blocked-media`
+			// and keeps exiting 1 — an author who followed a two-command remedy
+			// would remove the asset, see no change, and have nothing to try.
 			return "REMOVE the blocked screenshot — adding another does not clear it: " +
 				"civitai app listing status --slug " + slug + " to find its alsc_ id, then " +
-				"civitai app listing rm-screenshot <id> --slug " + slug
+				"civitai app listing rm-screenshot <id> --slug " + slug +
+				". On an approved listing that stages a revision, so finish with " +
+				"civitai app listing submit-revision --slug " + slug
 		}
+		// The fallback names the READ too: `rm-screenshot` needs an `alsc_` id
+		// that appears in no output this command produces, so naming the removal
+		// without naming where the id comes from is an unfollowable instruction.
+		// 🔴 EVERY COMMAND HERE IS TERMINATED BY PUNCTUATION, not by prose. The
+		// first draft read "civitai app listing status to find the alsc_ id",
+		// and the ledger that resolves these strings against the real command
+		// tree correctly refused it: the trailing words parse as arguments, so
+		// the reference names a command that does not exist. Prose between
+		// commands has to be parenthesised or separated, or the advice is
+		// unfollowable in exactly the way this ledger exists to catch.
 		return "replace or remove the blocked asset named above, with --slug " + slug + " — " +
-			"civitai app listing set-icon, civitai app listing set-cover, civitai app listing rm-screenshot"
+			"civitai app listing set-icon, civitai app listing set-cover, or " +
+			"civitai app listing rm-screenshot (find the alsc_ id with " +
+			"civitai app listing status; on an approved listing finish with " +
+			"civitai app listing submit-revision)"
 	case problemScanningMedia:
 		// 🔴 NO COMMAND AT ALL, deliberately. A still-scanning asset resolves
 		// itself; printing a fix would tell an author to act on a state that is
@@ -177,10 +204,23 @@ func doctorRemedy(p appapi.ListingProblem, slug, editURL, kind string) string {
 // format assumption, so a re-worded label degrades to the generic arm instead of
 // mis-naming a slot — and the generic arm names the REMOVAL too, which is the
 // clause whose absence was the defect.
+var blockedKindWord = map[string]*regexp.Regexp{
+	"screenshot": regexp.MustCompile(`(?i)\bscreenshots?\b`),
+	"cover":      regexp.MustCompile(`(?i)\bcovers?\b`),
+	"icon":       regexp.MustCompile(`(?i)\bicons?\b`),
+}
+
 func blockedMediaKind(label string) string {
-	l := strings.ToLower(label)
+	// 🔴 A WORD MATCH, WHICH IS WHAT THE DOC AND THE TEST NAME ALREADY CLAIMED.
+	// This was `strings.Contains`, so any label with the letters "icon" inside
+	// another word — "iconography", "semiconductor" — would have selected the
+	// icon arm and printed the wrong command. Latent against today's labels and
+	// one line to close, and the alternative was to weaken the doc to match the
+	// code, which is the wrong direction when the doc describes the safer rule.
+	// Order still matters: "screenshot" is checked first so a label naming both
+	// resolves to the slot with the stricter remedy.
 	for _, kind := range []string{"screenshot", "cover", "icon"} {
-		if strings.Contains(l, kind) {
+		if blockedKindWord[kind].MatchString(label) {
 			return kind
 		}
 	}
@@ -373,10 +413,11 @@ Findings come from the platform, grouped per app, blocking first:
 An app with nothing wrong is reported as complete, explicitly. A blank space is
 not an answer.
 
-The three TEXT problems (description / tagline / category) are fixed in the
-browser: this command prints the listing's editor URL. The media problems are
-fixed with ` + "`civitai app listing set-icon`" + ` / ` + "`set-cover`" + ` /
-` + "`add-screenshot`" + `, and the exact command is printed beside each finding.
+Each finding prints the command or URL that fixes it. The three TEXT problems
+(description / tagline / category) depend on the app KIND: an on-site app's copy
+comes from block.manifest.json, an off-site app's from the web listing editor.
+A blocked asset is REPLACED for an icon or cover, but a blocked screenshot must
+be REMOVED — adding another does not clear it.
 
 DELISTED LISTINGS: an app whose status is 'removed' is still reported, in its
 own section, but its blocking problems do NOT set the exit code. The publish
@@ -440,6 +481,18 @@ func doctorNoSuchApp(slug string, rows []appapi.MyListing) error {
 	}
 	sort.Strings(known)
 	msg := fmt.Sprintf("no listing of yours is called %q", slug)
+	// 🔴 A CAPPED PAGE MAKES THIS ANSWER UNCERTAIN, AND IT MUST SAY SO. The slug
+	// is matched against the page the server returned, which is clamped — so an
+	// app the caller really owns, sitting beyond the cap, is indistinguishable
+	// here from one that does not exist. Reporting a bare not-found would be the
+	// silent-pass class this command exists to close, moved from exit 0 to exit
+	// 4.
+	if doctorPageTruncated(len(rows)) {
+		return civitai.Tag(civitai.ErrNotFound, fmt.Errorf(
+			"%s in the %d listings the server returned — but it CAPS this read at %d and offers no way to "+
+				"page, so an app you own beyond that cap looks identical to one that does not exist. "+
+				"This answer is not conclusive", msg, len(rows), appapi.ListMineCap))
+	}
 	switch {
 	case len(known) == 0:
 		msg += " — you own no App listings and hold no collaborator seats yet; `civitai app submit` creates one"
@@ -471,7 +524,14 @@ func runAppDoctor(out, errOut io.Writer, rows []appapi.MyListing, slug, baseURL 
 		}
 	}
 
+	// 🔴 THE TRUNCATION FLAG IS COMPUTED FROM THE SERVER'S PAGE (`rows`), NOT
+	// FROM THE FILTERED SLICE. It used to be derived inside doctorPayload from
+	// whatever it was handed, and the by-slug path hands it ONE row — so
+	// `truncated` was dead-false on exactly the path the caveat tells you to
+	// use. See doctorPageTruncated for why the precedent this was copied from
+	// does not transfer.
 	payload := doctorPayload(selected, baseURL)
+	payload.Summary.Truncated = doctorPageTruncated(len(rows))
 	if jsonOut {
 		// 🔴 The JSON path does NOT go through the human renderer, and must not:
 		// internal/ui/CONVENTION.md rule 1 is that machine-readable output
@@ -495,13 +555,16 @@ func runAppDoctor(out, errOut io.Writer, rows []appapi.MyListing, slug, baseURL 
 		// report of the same facts. It quotes the GATING count for the same
 		// reason — a message naming a bigger number than the verdict acted on
 		// would send a reader hunting for problems the gate deliberately ignored.
-		// 🔴 IT DOES NOT LEAD WITH A WORD THAT READS AS A TOOL FAILURE. cobra
-		// prefixes a returned error with "Error: " on stderr, so a completely
-		// successful diagnosis of an incomplete listing printed
-		// `Error: the listing has blocking problems…` — and a CI scraper
-		// watching stderr for `Error:` flags a run that worked exactly as
-		// designed. The verdict is a FINDING about the listing, not a failure of
-		// the command, and the sentence now says so.
+		// 🔴 THE "Error: " PREFIX IS NOT ADDED HERE AND NOT BY COBRA — it comes
+		// from `cmd/civitai/main.go`, which is the only writer of it (the root
+		// sets `SilenceErrors: true`, so cobra prints nothing). An earlier
+		// version of this comment blamed cobra and "fixed" the problem by
+		// rewording the sentinel, which changed the text after the prefix and
+		// left the prefix exactly where it was. The suppression now lives at the
+		// real emitter, in `errorLine`, keyed on ErrListingBlocked.
+		//
+		// What this sentence still owes the reader is the same thing: the
+		// non-zero exit is a FINDING about the listing, not a malfunction.
 		return fmt.Errorf("%w: %d blocking problem(s) on publishable listing(s) — the report above lists them; "+
 			"this exit code is the verdict, not a failure of the command",
 			ErrListingBlocked, payload.Summary.Gating)
@@ -572,12 +635,6 @@ func doctorPayload(rows []appapi.MyListing, baseURL string) doctorJSON {
 		}
 		out.Apps = append(out.Apps, app)
 	}
-	// The comparison is `>=`, not `==`, and it is computed from what the SERVER
-	// returned: at or beyond the cap this CLI cannot claim the listing is
-	// complete. A caller holding exactly the cap gets a caveat while nothing is
-	// missing — accepted, because the opposite error is the one this exists to
-	// prevent, and the wording says "may".
-	out.Summary.Truncated = len(rows) >= appapi.ListMineCap
 	out.OK = out.Summary.Gating == 0
 	return out
 }
@@ -633,6 +690,32 @@ func printDoctorReport(w io.Writer, payload doctorJSON) {
 	}
 }
 
+// doctorPageTruncated reports whether the server's page may have hidden
+// listings. `n` is the length of the read as it came OFF THE WIRE — never a
+// filtered subset.
+//
+// 🔴 THE `app status` PRECEDENT DOES NOT TRANSFER, AND COPYING IT PAST ITS
+// PREMISE IS WHAT BROKE THIS. `submissionsListTruncated` is applied only to the
+// UNFILTERED submissions listing, because that route narrows BY SLUG
+// SERVER-SIDE: its `where.slug` precedes the `take`, so a slug lookup is already
+// complete and cannot be truncated. `listMine` takes NO INPUT AT ALL — pinned by
+// TestDoctorSendsNoInputParameter — so the CLI fetches the whole capped page and
+// filters in Go. Every by-slug run here is therefore a truncated-page read
+// wearing a one-row result, and deriving the flag from the filtered slice made
+// it structurally false there.
+//
+// That mattered most in the case the caveat itself points at: a slug that IS
+// owned but sits BEYOND the cap resolves to "no listing of yours is called
+// that" — a confidently wrong answer about the caller's own app. That is the
+// same silent-pass class this caveat exists to close, relocated from exit 0 to
+// exit 4, which is why doctorNoSuchApp now says so.
+//
+// `>=`, not `==`: at or beyond the cap this CLI cannot claim the read is
+// complete. A caller holding exactly the cap gets a caveat while nothing is
+// missing — accepted, because the opposite error is the one this prevents, and
+// every sentence it produces says "may".
+func doctorPageTruncated(n int) bool { return n >= appapi.ListMineCap }
+
 // warnDoctorTruncated writes the page-cap caveat to STDERR, so `--json` stdout
 // stays a pure payload and the exit code is unchanged — the same shape
 // `app status` uses for the sibling read's cap.
@@ -640,11 +723,22 @@ func warnDoctorTruncated(errOut io.Writer, payload doctorJSON) {
 	if !payload.Summary.Truncated {
 		return
 	}
+	// 🔴 IT QUOTES THE CAP, NOT `Summary.Apps`. That field is the count AFTER
+	// slug filtering, so on a by-slug run the sentence would have read "the
+	// server returned 1 listings" about a 200-row page. The cap is the fact the
+	// caveat is actually about.
+	//
+	// 🔴 AND IT NO LONGER TELLS THE READER TO GO USE `doctor <slug>`. That was
+	// the advice while the by-slug path was the one place the caveat was
+	// suppressed — it directed people at the blind spot. The by-slug path now
+	// warns too, and what it cannot do is see a listing past the cap at all, so
+	// the remedy has to be something else.
 	fmt.Fprintf(errOut,
-		"note: the server returned %d listings — it caps this read and offers no way to page, so older "+
-			"listings may exist and were NOT checked. A blocking problem on one of them would not appear "+
-			"here, and would not change the exit code. Check a specific app with `civitai app doctor <slug>`.\n",
-		payload.Summary.Apps)
+		"note: the server caps this read at %d listings and offers no way to page, so older listings may "+
+			"exist and were NOT checked. A blocking problem on one of them would not appear here and would "+
+			"not change the exit code. This applies to a single-app run too: the app is picked out of the "+
+			"same capped page, so a listing beyond the cap reads as not-found.\n",
+		appapi.ListMineCap)
 }
 
 // printDoctorGroup renders one severity group, or nothing when it is empty.
