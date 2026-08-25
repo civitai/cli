@@ -1,17 +1,301 @@
-harness_rc=0
-==== VERDICT ==== ran=32 killed=32 survived=0 not_run=0
---- new mutants ---
+BASELINE: {'PASS': 3049, 'FAIL': 0, 'SKIP': 1}
+M1-exit-gate: KILLED ({'PASS': 3028, 'FAIL': 21, 'SKIP': 1})
+    <- TestDoctorExitsNonZeroOnABlockingProblem
+       app_doctor_test.go:134: a blocking problem must exit non-zero; stdout was:
+    <- TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp
+       app_doctor_test.go:193: a mixed app with one blocking problem must exit non-zero; stdout:
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+    <- TestDoctorJSONIsTheWholeOfStdout
+       app_doctor_test.go:407: expected a non-zero verdict
+M2-severity-compare: KILLED ({'PASS': 766, 'FAIL': 31, 'SKIP': 1})
+    <- TestDoctorExitsNonZeroOnABlockingProblem
+       app_doctor_test.go:134: a blocking problem must exit non-zero; stdout was:
+    <- TestDoctorExitsZeroOnAdvisoryOnly
+       app_doctor_test.go:168: advisories alone must exit 0, got the listing has blocking problems: 2 blocking problem(s) on publishable listing(s) — see the report above; stdout was:
+    <- TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp
+       app_doctor_test.go:198: summary line is wrong; got:
+    <- TestDoctorReportsAllEightCodesInTheRightGroup
+       app_doctor_test.go:251: summary = {Apps:1 Blocking:5 Advisory:3 Gating:5 Delisted:0}, want {apps:1 blocking:3 advisory:5}
+M3-ok-field: KILLED ({'PASS': 3042, 'FAIL': 7, 'SKIP': 1})
+    <- TestDoctorReportsAllEightCodesInTheRightGroup
+       app_doctor_test.go:254: ok must be false when anything is blocking
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode
+       app_doctor_test.go:972: ok = true with gating = 1 — `ok` must follow gating, not blocking
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/a_live_listing_with_blocking_problems_exits_1
+       app_doctor_test.go:972: ok = true with gating = 1 — `ok` must follow gating, not blocking
+M4-icon-remedy: KILLED ({'PASS': 3048, 'FAIL': 1, 'SKIP': 1})
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+M5-slug-predicate: KILLED ({'PASS': 3047, 'FAIL': 2, 'SKIP': 1})
+    <- TestDoctorSlugSelectionNormalises
+       app_doctor_test.go:616: "DOCTOR-ALPHA" should resolve to "doctor-alpha", got no listing of yours is called "DOCTOR-ALPHA" — you can work on: doctor-alpha; stdout:
+    <- TestDoctorSlugSelectionNormalises/DOCTOR-ALPHA
+       app_doctor_test.go:616: "DOCTOR-ALPHA" should resolve to "doctor-alpha", got no listing of yours is called "DOCTOR-ALPHA" — you can work on: doctor-alpha; stdout:
+M6-unknown-slug: KILLED ({'PASS': 3046, 'FAIL': 3, 'SKIP': 1})
+    <- TestDoctorUnknownSlugIsNotFoundNotAPass
+       app_doctor_test.go:635: an unknown slug must NOT read as a clean run; stdout:
+    <- TestDoctorProcessExitStatusEndToEnd
+       doctor_e2e_exitcode_test.go:224: `civitai app doctor not-an-app-of-mine` exited 0, want 4 — `you own no app called that` and `that app is fine` are opposite answers.
+    <- TestDoctorProcessExitStatusEndToEnd/an_unknown_slug_is_NOT_FOUND,_not_a_pass
+       doctor_e2e_exitcode_test.go:224: `civitai app doctor not-an-app-of-mine` exited 0, want 4 — `you own no app called that` and `that app is fine` are opposite answers.
+M7-edit-url-id-space: KILLED ({'PASS': 3046, 'FAIL': 3, 'SKIP': 1})
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+    <- TestDoctorTextFixesPointAtTheListingEditorNotTheSlug
+       app_doctor_test.go:530: code "empty-category" built the editor URL from the SLUG, which 404s: "edit the listing in the browser: http://127.0.0.1:42281/apps/listing/doctor-alpha/edit"
+    <- TestDoctorOffsiteTextRemedyStillPointsAtTheEditor
+       app_doctor_test.go:1161: offsite "empty-category" must point at the listing editor, got "edit the listing in the browser: http://127.0.0.1:45253/apps/listing/doctor-bravo/edit"
+M8-empty-sentence: KILLED ({'PASS': 3048, 'FAIL': 1, 'SKIP': 1})
+    <- TestDoctorNoListingsIsASentenceAndExitsZero
+       app_doctor_test.go:661: an empty run printed NOTHING — that is indistinguishable from a swallowed read
+M9-clean-sentence: KILLED ({'PASS': 3045, 'FAIL': 4, 'SKIP': 1})
+    <- TestDoctorExitsZeroOnACleanListing
+       app_doctor_test.go:155: a clean listing must SAY it is complete, got:
+    <- TestDoctorProcessExitStatusEndToEnd
+       doctor_e2e_exitcode_test.go:228: stdout does not carry "No problems":
+    <- TestDoctorProcessExitStatusEndToEnd/a_complete_listing_exits_clean
+       doctor_e2e_exitcode_test.go:228: stdout does not carry "No problems":
+    <- TestDoctorProcessExitStatusEndToEnd/a_removed_listing_next_to_a_CLEAN_live_one_exits_0
+       doctor_e2e_exitcode_test.go:228: stdout does not carry "No problems":
+M10-trpc-input: KILLED ({'PASS': 3048, 'FAIL': 1, 'SKIP': 1})
+    <- TestDoctorSendsNoInputParameter
+       app_doctor_test.go:728: listMine was sent with a query string "input=%7B%22json%22%3Anull%7D" — it takes no input, so none should be sent
+M11-extra-request: KILLED ({'PASS': 2989, 'FAIL': 60, 'SKIP': 1})
+    <- TestDoctorExitsNonZeroOnABlockingProblem
+       app_doctor_test.go:110: unexpected request to /api/trpc/appListings.getAssetScanStatuses — `app doctor` speaks only /api/trpc/appListings.listMine
+    <- TestDoctorExitsZeroOnACleanListing
+       app_doctor_test.go:110: unexpected request to /api/trpc/appListings.getAssetScanStatuses — `app doctor` speaks only /api/trpc/appListings.listMine
+    <- TestDoctorExitsZeroOnAdvisoryOnly
+       app_doctor_test.go:110: unexpected request to /api/trpc/appListings.getAssetScanStatuses — `app doctor` speaks only /api/trpc/appListings.listMine
+    <- TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp
+       app_doctor_test.go:110: unexpected request to /api/trpc/appListings.getAssetScanStatuses — `app doctor` speaks only /api/trpc/appListings.listMine
+M12-scanning-remedy: KILLED ({'PASS': 3048, 'FAIL': 1, 'SKIP': 1})
+    <- TestDoctorScanningMediaOffersNoAction
+       app_doctor_test.go:544: scanning-media must not advise "set-icon" — re-attaching restarts the scan; got "civitai app listing set-icon <file> --slug doctor-alpha"
+M13-unknown-severity: KILLED ({'PASS': 3048, 'FAIL': 1, 'SKIP': 1})
+    <- TestDoctorUnknownSeverityIsNotBlocking
+       app_doctor_test.go:575: an unrecognised severity must not block a release, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M14-summary-count: KILLED ({'PASS': 3044, 'FAIL': 5, 'SKIP': 1})
+    <- TestDoctorReportsAllEightCodesInTheRightGroup
+       app_doctor_test.go:251: summary = {Apps:1 Blocking:1 Advisory:5 Gating:3 Delisted:0}, want {apps:1 blocking:3 advisory:5}
+    <- TestDoctorPositiveControlOnTheFindingCount
+       app_doctor_test.go:269: POSITIVE CONTROL FAILED: a payload carrying 8 problems produced 6 findings. Every zero this file reports is a fact about a probe wired to nothing until this passes.
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode
+       app_doctor_test.go:964: summary.blocking = 2, want 1 — every blocking problem must still be COUNTED
+M15-exit-tag: KILLED ({'PASS': 3044, 'FAIL': 5, 'SKIP': 1})
+    <- TestDoctorProcessExitStatusEndToEnd
+       doctor_e2e_exitcode_test.go:224: `civitai app doctor` exited 2, want 1 — a delisted app must not MASK a real one — this is the arm a naive filter gets wrong.
+    <- TestDoctorProcessExitStatusEndToEnd/a_blocking_problem_fails_the_build
+       doctor_e2e_exitcode_test.go:224: `civitai app doctor` exited 2, want 1 — a delisted app must not MASK a real one — this is the arm a naive filter gets wrong.
+    <- TestDoctorProcessExitStatusEndToEnd/blocked-media_is_blocking_too
+       doctor_e2e_exitcode_test.go:224: `civitai app doctor` exited 2, want 1 — a delisted app must not MASK a real one — this is the arm a naive filter gets wrong.
+    <- TestDoctorProcessExitStatusEndToEnd/--json_uses_the_same_codes
+       doctor_e2e_exitcode_test.go:224: `civitai app doctor` exited 2, want 1 — a delisted app must not MASK a real one — this is the arm a naive filter gets wrong.
+M16-metrics-403-claim: KILLED ({'PASS': 3048, 'FAIL': 1, 'SKIP': 1})
+    <- TestAppMetricsNoTokenNamesTheRouteThatWorks
+       app_metrics_credential_test.go:73: the no-token error still claims an OAuth login is refused ("full-scope-refused") — civitai/civitai#3572 annotated the proc with AppBlocksSubmit and it is not: no token configured — app analytics need an OAuth login (`civitai login`) carrying the Apps submit scope, 
+M17-gates-inverted: KILLED ({'PASS': 3017, 'FAIL': 32, 'SKIP': 1})
+    <- TestDoctorExitsNonZeroOnABlockingProblem
+       app_doctor_test.go:134: a blocking problem must exit non-zero; stdout was:
+    <- TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp
+       app_doctor_test.go:193: a mixed app with one blocking problem must exit non-zero; stdout:
+    <- TestDoctorReportsAllEightCodesInTheRightGroup
+       (no assertion line captured)
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+M18-gates-always-true: KILLED ({'PASS': 3032, 'FAIL': 17, 'SKIP': 1})
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode
+       app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0
+       app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/BOTH_present_exits_1
+       app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M19-gates-always-false: KILLED ({'PASS': 3026, 'FAIL': 23, 'SKIP': 1})
+    <- TestDoctorExitsNonZeroOnABlockingProblem
+       app_doctor_test.go:134: a blocking problem must exit non-zero; stdout was:
+    <- TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp
+       app_doctor_test.go:193: a mixed app with one blocking problem must exit non-zero; stdout:
+    <- TestDoctorReportsAllEightCodesInTheRightGroup
+       (no assertion line captured)
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+M20-exit-reads-blocking: KILLED ({'PASS': 3035, 'FAIL': 14, 'SKIP': 1})
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode
+       app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 0 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0
+       app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 0 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_next_to_a_CLEAN_live_one_still_exits_0
+       app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 0 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedRowsAreStillVisible
+       app_doctor_test.go:987: a delisted-only run must exit 0, got the listing has blocking problems: 0 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M21-ok-reads-blocking: KILLED ({'PASS': 3046, 'FAIL': 3, 'SKIP': 1})
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode
+       app_doctor_test.go:972: ok = false with gating = 0 — `ok` must follow gating, not blocking
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0
+       app_doctor_test.go:972: ok = false with gating = 0 — `ok` must follow gating, not blocking
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_next_to_a_CLEAN_live_one_still_exits_0
+       app_doctor_test.go:972: ok = false with gating = 0 — `ok` must follow gating, not blocking
+M22-gating-tally-unconditional: KILLED ({'PASS': 3033, 'FAIL': 16, 'SKIP': 1})
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode
+       app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0
+       app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/BOTH_present_exits_1
+       app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M23-delisted-rows-hidden: KILLED ({'PASS': 3040, 'FAIL': 9, 'SKIP': 1})
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode
+       app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0
+       app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/BOTH_present_exits_1
+       app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED
+M24-delisted-status-not-normalised: KILLED ({'PASS': 3045, 'FAIL': 4, 'SKIP': 1})
+    <- TestDoctorDelistedStatusMatchIsNormalised
+       app_doctor_test.go:1069: status " removed " must read as delisted, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedStatusMatchIsNormalised/REMOVED
+       app_doctor_test.go:1069: status " removed " must read as delisted, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedStatusMatchIsNormalised/Removed
+       app_doctor_test.go:1069: status " removed " must read as delisted, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+    <- TestDoctorDelistedStatusMatchIsNormalised/removed#01
+       app_doctor_test.go:1069: status " removed " must read as delisted, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M25-ordering-dropped: KILLED ({'PASS': 3040, 'FAIL': 9, 'SKIP': 1})
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode
+       app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0
+       app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED
+    <- TestDoctorDelistedListingsDoNotSetTheExitCode/BOTH_present_exits_1
+       app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED
+M26-delisted-heading-dropped: KILLED ({'PASS': 3046, 'FAIL': 3, 'SKIP': 1})
+    <- TestDoctorDelistedRowsAreStillVisible
+       app_doctor_test.go:998: a delisted app must still be fully reported (missing "do NOT set the exit code"):
+    <- TestDoctorProcessExitStatusEndToEnd
+       doctor_e2e_exitcode_test.go:228: stdout does not carry "Delisted":
+    <- TestDoctorProcessExitStatusEndToEnd/a_REMOVED_listing_with_blocking_problems_exits_0
+       doctor_e2e_exitcode_test.go:228: stdout does not carry "Delisted":
+M27-summary-explanation-dropped: KILLED ({'PASS': 3048, 'FAIL': 1, 'SKIP': 1})
+    <- TestDoctorDelistedRowsAreStillVisible
+       app_doctor_test.go:1003: the summary must explain why the exit code disagrees with the blocking count:
 M28-onsite-arm-dropped: KILLED ({'PASS': 3042, 'FAIL': 7, 'SKIP': 1})
+    <- TestDoctorOnsiteTextRemedyNamesTheManifest
+       app_doctor_test.go:1141: onsite "empty-category" still points at the browser editor, whose edit `(3b-sync)` reverts: "edit the listing in the browser: http://127.0.0.1:35537/apps/listing/apl_ALPHA111/edit"
+    <- TestDoctorUnknownKindTakesTheRecoverableArm
+       app_doctor_test.go:1220: control: `onsite` did not take the manifest arm ("edit the listing in the browser: http://127.0.0.1:41463/apps/listing/apl_ALPHA111/edit") — the negatives prove nothing
+    <- TestDoctorKindMatchIsNormalised
+       app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:43531/apps/listing/apl_ALPHA111/edit"
+    <- TestDoctorKindMatchIsNormalised/onsite
+       app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:43531/apps/listing/apl_ALPHA111/edit"
 M29-onsite-arm-always: KILLED ({'PASS': 3043, 'FAIL': 6, 'SKIP': 1})
+    <- TestDoctorJSONShapeIsPinnedWhole
+       (no assertion line captured)
+    <- TestDoctorTextFixesPointAtTheListingEditorNotTheSlug
+       app_doctor_test.go:525: code "empty-category" fix = "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version", want it to name "http://127.0.0.1:39531/apps/listing/apl_ALPHA111/edit"
+    <- TestDoctorOffsiteTextRemedyStillPointsAtTheEditor
+       app_doctor_test.go:1164: offsite "empty-category" names a manifest an off-site app does not have: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"
+    <- TestDoctorUnknownKindTakesTheRecoverableArm
+       app_doctor_test.go:1210: kind "a-kind-from-the-future" must not take the manifest arm: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"
 M30-kind-not-normalised: KILLED ({'PASS': 3045, 'FAIL': 4, 'SKIP': 1})
+    <- TestDoctorKindMatchIsNormalised
+       app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:39537/apps/listing/apl_ALPHA111/edit"
+    <- TestDoctorKindMatchIsNormalised/ONSITE
+       app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:39537/apps/listing/apl_ALPHA111/edit"
+    <- TestDoctorKindMatchIsNormalised/Onsite
+       app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:39537/apps/listing/apl_ALPHA111/edit"
+    <- TestDoctorKindMatchIsNormalised/onsite#01
+       app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:39537/apps/listing/apl_ALPHA111/edit"
 M31-kind-unknown-takes-manifest: KILLED ({'PASS': 3046, 'FAIL': 3, 'SKIP': 1})
+    <- TestDoctorUnknownKindTakesTheRecoverableArm
+       app_doctor_test.go:1210: kind "a-kind-from-the-future" must not take the manifest arm: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"
+    <- TestDoctorUnknownKindTakesTheRecoverableArm/kind=
+       app_doctor_test.go:1210: kind "a-kind-from-the-future" must not take the manifest arm: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"
+    <- TestDoctorUnknownKindTakesTheRecoverableArm/kind=a-kind-from-the-future
+       app_doctor_test.go:1210: kind "a-kind-from-the-future" must not take the manifest arm: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"
 M32-kind-not-passed-through: KILLED ({'PASS': 3042, 'FAIL': 7, 'SKIP': 1})
-M28-onsite-arm-dropped	KILLED	an onsite app is told to edit the browser, whose edit (3b-sync) reverts
-M29-onsite-arm-always	KILLED	an offsite app is told to edit a block.manifest.json it does not have
-M30-kind-not-normalised	KILLED	a padded or mis-cased kind silently re-routes the text advice
-M31-kind-unknown-takes-manifest	KILLED	an absent/unknown kind takes the manifest arm instead of the recoverable one
-M32-kind-not-passed-through	KILLED	the row's kind never reaches the remedy, so every app gets the offsite arm
---- reconcile ---
-defined=32 verdicts=31
+    <- TestDoctorOnsiteTextRemedyNamesTheManifest
+       app_doctor_test.go:1141: onsite "empty-category" still points at the browser editor, whose edit `(3b-sync)` reverts: "edit the listing in the browser: http://127.0.0.1:44627/apps/listing/apl_ALPHA111/edit"
+    <- TestDoctorUnknownKindTakesTheRecoverableArm
+       app_doctor_test.go:1220: control: `onsite` did not take the manifest arm ("edit the listing in the browser: http://127.0.0.1:42511/apps/listing/apl_ALPHA111/edit") — the negatives prove nothing
+    <- TestDoctorKindMatchIsNormalised
+       app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:44679/apps/listing/apl_ALPHA111/edit"
+    <- TestDoctorKindMatchIsNormalised/onsite
+       app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:44679/apps/listing/apl_ALPHA111/edit"
 
-[exited with code 0]
+==== TABLE ====
+M1-exit-gate	KILLED	off-by-one on the exit gate: one blocking problem stops failing the build
+	TestDoctorExitsNonZeroOnABlockingProblem :: app_doctor_test.go:134: a blocking problem must exit non-zero; stdout was:; TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp :: app_doctor_test.go:193: a mixed app with one blocking problem must exit non-zero; stdout:; TestDoctorJSONShapeIsPinnedWhole :: (no line); TestDoctorJSONIsTheWholeOfStdout :: app_doctor_test.go:407: expected a non-zero verdict
+M2-severity-compare	KILLED	the severity split is inverted
+	TestDoctorExitsNonZeroOnABlockingProblem :: app_doctor_test.go:134: a blocking problem must exit non-zero; stdout was:; TestDoctorExitsZeroOnAdvisoryOnly :: app_doctor_test.go:168: advisories alone must exit 0, got the listing has blocking problems: 2 blocking problem(s) on publishable listing(s) — see the report above; stdout was:; TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp :: app_doctor_test.go:198: summary line is wrong; got:; TestDoctorReportsAllEightCodesInTheRightGroup :: app_doctor_test.go:251: summary = {Apps:1 Blocking:5 Advisory:3 Gating:5 Delisted:0}, want {apps:1 blocking:3 advisory:5}
+M3-ok-field	KILLED	--json `ok` always says the listing is fine
+	TestDoctorReportsAllEightCodesInTheRightGroup :: app_doctor_test.go:254: ok must be false when anything is blocking; TestDoctorJSONShapeIsPinnedWhole :: (no line); TestDoctorDelistedListingsDoNotSetTheExitCode :: app_doctor_test.go:972: ok = true with gating = 1 — `ok` must follow gating, not blocking; TestDoctorDelistedListingsDoNotSetTheExitCode/a_live_listing_with_blocking_problems_exits_1 :: app_doctor_test.go:972: ok = true with gating = 1 — `ok` must follow gating, not blocking
+M4-icon-remedy	KILLED	missing-icon advises the cover command
+	TestDoctorJSONShapeIsPinnedWhole :: (no line)
+M5-slug-predicate	KILLED	the typed slug is compared byte-for-byte instead of through the shared predicate
+	TestDoctorSlugSelectionNormalises :: app_doctor_test.go:616: "DOCTOR-ALPHA" should resolve to "doctor-alpha", got no listing of yours is called "DOCTOR-ALPHA" — you can work on: doctor-alpha; stdout:; TestDoctorSlugSelectionNormalises/DOCTOR-ALPHA :: app_doctor_test.go:616: "DOCTOR-ALPHA" should resolve to "doctor-alpha", got no listing of yours is called "DOCTOR-ALPHA" — you can work on: doctor-alpha; stdout:
+M6-unknown-slug	KILLED	an unknown slug reads as a clean run
+	TestDoctorUnknownSlugIsNotFoundNotAPass :: app_doctor_test.go:635: an unknown slug must NOT read as a clean run; stdout:; TestDoctorProcessExitStatusEndToEnd :: doctor_e2e_exitcode_test.go:224: `civitai app doctor not-an-app-of-mine` exited 0, want 4 — `you own no app called that` and `that app is fine` are opposite answers.; TestDoctorProcessExitStatusEndToEnd/an_unknown_slug_is_NOT_FOUND,_not_a_pass :: doctor_e2e_exitcode_test.go:224: `civitai app doctor not-an-app-of-mine` exited 0, want 4 — `you own no app called that` and `that app is fine` are opposite answers.
+M7-edit-url-id-space	KILLED	the listing editor URL is built from the slug, so it 404s
+	TestDoctorJSONShapeIsPinnedWhole :: (no line); TestDoctorTextFixesPointAtTheListingEditorNotTheSlug :: app_doctor_test.go:530: code "empty-category" built the editor URL from the SLUG, which 404s: "edit the listing in the browser: http://127.0.0.1:42281/apps/listing/doctor-alpha/edit"; TestDoctorOffsiteTextRemedyStillPointsAtTheEditor :: app_doctor_test.go:1161: offsite "empty-category" must point at the listing editor, got "edit the listing in the browser: http://127.0.0.1:45253/apps/listing/doctor-bravo/edit"
+M8-empty-sentence	KILLED	an empty run prints nothing at all
+	TestDoctorNoListingsIsASentenceAndExitsZero :: app_doctor_test.go:661: an empty run printed NOTHING — that is indistinguishable from a swallowed read
+M9-clean-sentence	KILLED	a clean app renders as a gap instead of a verdict
+	TestDoctorExitsZeroOnACleanListing :: app_doctor_test.go:155: a clean listing must SAY it is complete, got:; TestDoctorProcessExitStatusEndToEnd :: doctor_e2e_exitcode_test.go:228: stdout does not carry "No problems":; TestDoctorProcessExitStatusEndToEnd/a_complete_listing_exits_clean :: doctor_e2e_exitcode_test.go:228: stdout does not carry "No problems":; TestDoctorProcessExitStatusEndToEnd/a_removed_listing_next_to_a_CLEAN_live_one_exits_0 :: doctor_e2e_exitcode_test.go:228: stdout does not carry "No problems":
+M10-trpc-input	KILLED	an input-less tRPC query is sent with ?input={"json":null}
+	TestDoctorSendsNoInputParameter :: app_doctor_test.go:728: listMine was sent with a query string "input=%7B%22json%22%3Anull%7D" — it takes no input, so none should be sent
+M11-extra-request	KILLED	doctor starts asking getAssetScanStatuses (the owner-filtered proc)
+	TestDoctorExitsNonZeroOnABlockingProblem :: app_doctor_test.go:110: unexpected request to /api/trpc/appListings.getAssetScanStatuses — `app doctor` speaks only /api/trpc/appListings.listMine; TestDoctorExitsZeroOnACleanListing :: app_doctor_test.go:110: unexpected request to /api/trpc/appListings.getAssetScanStatuses — `app doctor` speaks only /api/trpc/appListings.listMine; TestDoctorExitsZeroOnAdvisoryOnly :: app_doctor_test.go:110: unexpected request to /api/trpc/appListings.getAssetScanStatuses — `app doctor` speaks only /api/trpc/appListings.listMine; TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp :: app_doctor_test.go:110: unexpected request to /api/trpc/appListings.getAssetScanStatuses — `app doctor` speaks only /api/trpc/appListings.listMine
+M12-scanning-remedy	KILLED	scanning-media advises re-attaching, which restarts the scan
+	TestDoctorScanningMediaOffersNoAction :: app_doctor_test.go:544: scanning-media must not advise "set-icon" — re-attaching restarts the scan; got "civitai app listing set-icon <file> --slug doctor-alpha"
+M13-unknown-severity	KILLED	an unrecognised severity is promoted to blocking
+	TestDoctorUnknownSeverityIsNotBlocking :: app_doctor_test.go:575: an unrecognised severity must not block a release, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M14-summary-count	KILLED	the summary counts blocked APPS instead of blocking PROBLEMS
+	TestDoctorReportsAllEightCodesInTheRightGroup :: app_doctor_test.go:251: summary = {Apps:1 Blocking:1 Advisory:5 Gating:3 Delisted:0}, want {apps:1 blocking:3 advisory:5}; TestDoctorPositiveControlOnTheFindingCount :: app_doctor_test.go:269: POSITIVE CONTROL FAILED: a payload carrying 8 problems produced 6 findings. Every zero this file reports is a fact about a probe wired to nothing until this passes.; TestDoctorJSONShapeIsPinnedWhole :: (no line); TestDoctorDelistedListingsDoNotSetTheExitCode :: app_doctor_test.go:964: summary.blocking = 2, want 1 — every blocking problem must still be COUNTED
+M15-exit-tag	KILLED	the verdict is tagged ErrBadRequest, moving its exit code from 1 to 2
+	TestDoctorProcessExitStatusEndToEnd :: doctor_e2e_exitcode_test.go:224: `civitai app doctor` exited 2, want 1 — a delisted app must not MASK a real one — this is the arm a naive filter gets wrong.; TestDoctorProcessExitStatusEndToEnd/a_blocking_problem_fails_the_build :: doctor_e2e_exitcode_test.go:224: `civitai app doctor` exited 2, want 1 — a delisted app must not MASK a real one — this is the arm a naive filter gets wrong.; TestDoctorProcessExitStatusEndToEnd/blocked-media_is_blocking_too :: doctor_e2e_exitcode_test.go:224: `civitai app doctor` exited 2, want 1 — a delisted app must not MASK a real one — this is the arm a naive filter gets wrong.; TestDoctorProcessExitStatusEndToEnd/--json_uses_the_same_codes :: doctor_e2e_exitcode_test.go:224: `civitai app doctor` exited 2, want 1 — a delisted app must not MASK a real one — this is the arm a naive filter gets wrong.
+M16-metrics-403-claim	KILLED	the corrected D2 claim drifts back to the false one
+	TestAppMetricsNoTokenNamesTheRouteThatWorks :: app_metrics_credential_test.go:73: the no-token error still claims an OAuth login is refused ("full-scope-refused") — civitai/civitai#3572 annotated the proc with AppBlocksSubmit and it is not: no token configured — app analytics need an OAuth login (`civitai login`) carrying the Apps submit scope, 
+M17-gates-inverted	KILLED	the predicate is inverted: ONLY delisted listings gate
+	TestDoctorExitsNonZeroOnABlockingProblem :: app_doctor_test.go:134: a blocking problem must exit non-zero; stdout was:; TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp :: app_doctor_test.go:193: a mixed app with one blocking problem must exit non-zero; stdout:; TestDoctorReportsAllEightCodesInTheRightGroup :: (no line); TestDoctorJSONShapeIsPinnedWhole :: (no line)
+M18-gates-always-true	KILLED	delisted listings gate again — the defect this rule exists to remove
+	TestDoctorJSONShapeIsPinnedWhole :: (no line); TestDoctorDelistedListingsDoNotSetTheExitCode :: app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0 :: app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedListingsDoNotSetTheExitCode/BOTH_present_exits_1 :: app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M19-gates-always-false	KILLED	NOTHING gates — the exit code can never be 1
+	TestDoctorExitsNonZeroOnABlockingProblem :: app_doctor_test.go:134: a blocking problem must exit non-zero; stdout was:; TestDoctorBlockingWinsOverAdvisoriesOnTheSameApp :: app_doctor_test.go:193: a mixed app with one blocking problem must exit non-zero; stdout:; TestDoctorReportsAllEightCodesInTheRightGroup :: (no line); TestDoctorJSONShapeIsPinnedWhole :: (no line)
+M20-exit-reads-blocking	KILLED	the exit gate reads the total instead of the gating subset
+	TestDoctorDelistedListingsDoNotSetTheExitCode :: app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 0 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0 :: app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 0 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_next_to_a_CLEAN_live_one_still_exits_0 :: app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 0 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedRowsAreStillVisible :: app_doctor_test.go:987: a delisted-only run must exit 0, got the listing has blocking problems: 0 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M21-ok-reads-blocking	KILLED	--json `ok` disagrees with the exit code on a delisted-only run
+	TestDoctorDelistedListingsDoNotSetTheExitCode :: app_doctor_test.go:972: ok = false with gating = 0 — `ok` must follow gating, not blocking; TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0 :: app_doctor_test.go:972: ok = false with gating = 0 — `ok` must follow gating, not blocking; TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_next_to_a_CLEAN_live_one_still_exits_0 :: app_doctor_test.go:972: ok = false with gating = 0 — `ok` must follow gating, not blocking
+M22-gating-tally-unconditional	KILLED	every app's blocking problems are tallied as gating
+	TestDoctorJSONShapeIsPinnedWhole :: (no line); TestDoctorDelistedListingsDoNotSetTheExitCode :: app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0 :: app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedListingsDoNotSetTheExitCode/BOTH_present_exits_1 :: app_doctor_test.go:957: expected exit 0 — nothing publishable is blocked; got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M23-delisted-rows-hidden	KILLED	delisted apps are DROPPED from the report — the population-becomes-unreachable failure
+	TestDoctorJSONShapeIsPinnedWhole :: (no line); TestDoctorDelistedListingsDoNotSetTheExitCode :: app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED; TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0 :: app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED; TestDoctorDelistedListingsDoNotSetTheExitCode/BOTH_present_exits_1 :: app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED
+M24-delisted-status-not-normalised	KILLED	a padded or mis-cased `removed` silently gates again
+	TestDoctorDelistedStatusMatchIsNormalised :: app_doctor_test.go:1069: status " removed " must read as delisted, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedStatusMatchIsNormalised/REMOVED :: app_doctor_test.go:1069: status " removed " must read as delisted, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedStatusMatchIsNormalised/Removed :: app_doctor_test.go:1069: status " removed " must read as delisted, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:; TestDoctorDelistedStatusMatchIsNormalised/removed#01 :: app_doctor_test.go:1069: status " removed " must read as delisted, got the listing has blocking problems: 1 blocking problem(s) on publishable listing(s) — see the report above; stdout:
+M25-ordering-dropped	KILLED	delisted apps are dropped from the ordering pass, so they no longer sort last
+	TestDoctorJSONShapeIsPinnedWhole :: (no line); TestDoctorDelistedListingsDoNotSetTheExitCode :: app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED; TestDoctorDelistedListingsDoNotSetTheExitCode/a_removed_listing_with_blocking_problems_exits_0 :: app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED; TestDoctorDelistedListingsDoNotSetTheExitCode/BOTH_present_exits_1 :: app_doctor_test.go:964: summary.blocking = 0, want 1 — every blocking problem must still be COUNTED
+M26-delisted-heading-dropped	KILLED	the delisted section loses its heading, so a 0 exit beside BLOCKING findings is unexplained
+	TestDoctorDelistedRowsAreStillVisible :: app_doctor_test.go:998: a delisted app must still be fully reported (missing "do NOT set the exit code"):; TestDoctorProcessExitStatusEndToEnd :: doctor_e2e_exitcode_test.go:228: stdout does not carry "Delisted":; TestDoctorProcessExitStatusEndToEnd/a_REMOVED_listing_with_blocking_problems_exits_0 :: doctor_e2e_exitcode_test.go:228: stdout does not carry "Delisted":
+M27-summary-explanation-dropped	KILLED	the summary stops explaining why blocking and the exit code disagree
+	TestDoctorDelistedRowsAreStillVisible :: app_doctor_test.go:1003: the summary must explain why the exit code disagrees with the blocking count:
+M28-onsite-arm-dropped	KILLED	an onsite app is told to edit the browser, whose edit (3b-sync) reverts
+	TestDoctorOnsiteTextRemedyNamesTheManifest :: app_doctor_test.go:1141: onsite "empty-category" still points at the browser editor, whose edit `(3b-sync)` reverts: "edit the listing in the browser: http://127.0.0.1:35537/apps/listing/apl_ALPHA111/edit"; TestDoctorUnknownKindTakesTheRecoverableArm :: app_doctor_test.go:1220: control: `onsite` did not take the manifest arm ("edit the listing in the browser: http://127.0.0.1:41463/apps/listing/apl_ALPHA111/edit") — the negatives prove nothing; TestDoctorKindMatchIsNormalised :: app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:43531/apps/listing/apl_ALPHA111/edit"; TestDoctorKindMatchIsNormalised/onsite :: app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:43531/apps/listing/apl_ALPHA111/edit"
+M29-onsite-arm-always	KILLED	an offsite app is told to edit a block.manifest.json it does not have
+	TestDoctorJSONShapeIsPinnedWhole :: (no line); TestDoctorTextFixesPointAtTheListingEditorNotTheSlug :: app_doctor_test.go:525: code "empty-category" fix = "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version", want it to name "http://127.0.0.1:39531/apps/listing/apl_ALPHA111/edit"; TestDoctorOffsiteTextRemedyStillPointsAtTheEditor :: app_doctor_test.go:1164: offsite "empty-category" names a manifest an off-site app does not have: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"; TestDoctorUnknownKindTakesTheRecoverableArm :: app_doctor_test.go:1210: kind "a-kind-from-the-future" must not take the manifest arm: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"
+M30-kind-not-normalised	KILLED	a padded or mis-cased kind silently re-routes the text advice
+	TestDoctorKindMatchIsNormalised :: app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:39537/apps/listing/apl_ALPHA111/edit"; TestDoctorKindMatchIsNormalised/ONSITE :: app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:39537/apps/listing/apl_ALPHA111/edit"; TestDoctorKindMatchIsNormalised/Onsite :: app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:39537/apps/listing/apl_ALPHA111/edit"; TestDoctorKindMatchIsNormalised/onsite#01 :: app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:39537/apps/listing/apl_ALPHA111/edit"
+M31-kind-unknown-takes-manifest	KILLED	an absent/unknown kind takes the manifest arm instead of the recoverable one
+	TestDoctorUnknownKindTakesTheRecoverableArm :: app_doctor_test.go:1210: kind "a-kind-from-the-future" must not take the manifest arm: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"; TestDoctorUnknownKindTakesTheRecoverableArm/kind= :: app_doctor_test.go:1210: kind "a-kind-from-the-future" must not take the manifest arm: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"; TestDoctorUnknownKindTakesTheRecoverableArm/kind=a-kind-from-the-future :: app_doctor_test.go:1210: kind "a-kind-from-the-future" must not take the manifest arm: "these fields come from block.manifest.json on an on-site app — edit `name` / `tagline` / `description` there, then `civitai app submit` a new version"
+M32-kind-not-passed-through	KILLED	the row's kind never reaches the remedy, so every app gets the offsite arm
+	TestDoctorOnsiteTextRemedyNamesTheManifest :: app_doctor_test.go:1141: onsite "empty-category" still points at the browser editor, whose edit `(3b-sync)` reverts: "edit the listing in the browser: http://127.0.0.1:44627/apps/listing/apl_ALPHA111/edit"; TestDoctorUnknownKindTakesTheRecoverableArm :: app_doctor_test.go:1220: control: `onsite` did not take the manifest arm ("edit the listing in the browser: http://127.0.0.1:42511/apps/listing/apl_ALPHA111/edit") — the negatives prove nothing; TestDoctorKindMatchIsNormalised :: app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:44679/apps/listing/apl_ALPHA111/edit"; TestDoctorKindMatchIsNormalised/onsite :: app_doctor_test.go:1233: kind " onsite " must read as onsite, got fix "edit the listing in the browser: http://127.0.0.1:44679/apps/listing/apl_ALPHA111/edit"
+
+==== VERDICT ==== ran=32 killed=32 survived=0 not_run=0
