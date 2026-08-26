@@ -44,6 +44,12 @@ import (
 // went from 26,571 bytes to 6,109 (−77%) and the file from 45,027 to 25,258
 // (−43.9%). The ceiling is 28,758 — 3,500 bytes of headroom.
 //
+// 🔴 "ITEMS 2 AND 4" IS WAVE-4 HISTORY, NOT THE CURRENT INLINE SET. It was the
+// whole set on 2026-08-10 (#317); item 30 arrived inline on 2026-08-16 (#437)
+// and the sentence above kept reading present-tense. Do not re-derive today's
+// set from this paragraph — ask the file: evictionPlaybook computes it, and
+// TestInlineAgentsItemsStayUnderTheBreakEven logs the count.
+//
 // 🔴 THE HEADROOM IS A BUDGET FOR ORDINARY EDITS, AND THE THREE NUMBERS BEFORE
 // IT WERE NOT. 287 bytes, then 300, then 2,500: the first two evaporated on the
 // very next commit touching this file (#308 consumed 94% of the 300, leaving 19)
@@ -271,8 +277,35 @@ func evictionPlaybook(t *testing.T, size int) string {
 		fmt.Fprintf(&b, "  item %-2d %7d bytes  %-36s  %s\n", s.num, s.bytes, state, truncateRunes(s.firstL, 72))
 		shown++
 	}
+	// 🔴 THE INLINE SET IS COMPUTED, NOT SPELLED, AND THAT IS A CORRECTION.
+	// This line read "Every item but 2 and 4" as a literal from wave 4 (#317,
+	// 2026-08-10) until #491 — but item 30 arrived inline six days later in
+	// #437, so for months the advice a maintainer read AT THE CEILING named the
+	// wrong set with full confidence. A comment is a claim; one that reads as
+	// coverage while being wrong is worse than none, because it stops the next
+	// person looking. Deriving the set from the same `→ evidence:` predicate
+	// agentsItems uses means it cannot drift from the count
+	// TestInlineAgentsItemsStayUnderTheBreakEven reports, and
+	// TestPlaybookNamesTheLiveInlineSet cross-checks it against that OTHER
+	// slicer so a future re-hardcoding fails by name.
+	var inline []int
+	for _, s := range sizes {
+		if !s.split {
+			inline = append(inline, s.num)
+		}
+	}
+	sort.Ints(inline)
+	subject := "EVERY item is"
+	if len(inline) > 0 {
+		parts := make([]string, 0, len(inline))
+		for _, n := range inline {
+			parts = append(parts, strconv.Itoa(n))
+		}
+		subject = "Every item but " + strings.Join(parts, ", ") + " is"
+	}
+
 	fmt.Fprintf(&b, "\n🔴 THE LIST IS A TRIGGER INDEX, SO AN ITEM OVER ~%d BYTES IS ALREADY THE BUG.\n"+
-		"Every item but 2 and 4 is one routing question plus a pointer. If the ranking above\n"+
+		"%s one routing question plus a pointer. If the ranking above\n"+
 		"shows a large item, convert it; if it shows only trigger-sized ones, the growth is in\n"+
 		"the PROSE sections and no eviction will fix it — see the note on agentsMaxBytes.\n"+
 		"\nTo convert an item:\n"+
@@ -295,7 +328,7 @@ func evictionPlaybook(t *testing.T, size int) string {
 		"     base is fixed at the moment it was evicted and cannot be re-pointed.\n"+
 		"\nDo NOT raise agentsMaxBytes to make this pass. It is currently %d, the file is\n"+
 		"%d bytes, and agentsMaxBytesCeiling (%d) bounds how far it may ever be raised.\n",
-		maxInlineItemBytes, evidenceDir, evidenceDir, agentsMaxBytes, size, agentsMaxBytesCeiling)
+		maxInlineItemBytes, subject, evidenceDir, evidenceDir, agentsMaxBytes, size, agentsMaxBytesCeiling)
 	return b.String()
 }
 
@@ -459,6 +492,53 @@ func TestAgentsSizeGuardCanStillFire(t *testing.T) {
 	if !utf8.ValidString(pb) {
 		t.Errorf("the eviction playbook is not valid UTF-8 — it is truncating a title mid-rune, and the advice a maintainer reads at the ceiling is mojibake\n---\n%q", pb)
 	}
+}
+
+// TestPlaybookNamesTheLiveInlineSet is the drift guard for the correction in
+// evictionPlaybook's 🔴 note. Computing the set fixes TODAY; this fixes
+// tomorrow, by asserting the rendered advice names exactly the inline set the
+// file actually has — so re-hardcoding it fails here by name rather than going
+// stale in silence, which is what "2 and 4" did for months.
+//
+// 🔴 IT DELIBERATELY CROSSES SLICERS. agentsItemSizes (what the playbook reads)
+// and agentsItems (what agents_trigger_test.go reads to decide which items are
+// exempt from the trigger rule) each answer "is this item inline" from their own
+// parse of the `→ evidence:` pointer. Asserting one against the other is the
+// same seam TestEvictionPlaybookSizesTheLastItemCorrectly pins for item
+// BOUNDARIES; a guard built on the playbook's own slicer alone would agree with
+// itself whatever that slicer decided.
+func TestPlaybookNamesTheLiveInlineSet(t *testing.T) {
+	var want []int
+	for _, it := range agentsItems(t) {
+		if !it.converted {
+			want = append(want, it.num)
+		}
+	}
+	// POSITIVE CONTROL. With no inline items the phrase below never renders and
+	// the assertion would pass having compared nothing.
+	if len(want) == 0 {
+		t.Fatalf("CONTROL failure, not a finding: agentsItems reports no inline items, so the assertion below would " +
+			"check for a phrase the playbook never emits. Either every item is now converted (in which case retire this " +
+			"guard deliberately) or the pointer scan is broken.")
+	}
+	sort.Ints(want)
+	parts := make([]string, 0, len(want))
+	for _, n := range want {
+		parts = append(parts, strconv.Itoa(n))
+	}
+	// Anchored at both ends, so a SUPERSET or a stale SUBSET both fail: the
+	// phrase pins the whole set, not merely that some inline item is mentioned.
+	phrase := "Every item but " + strings.Join(parts, ", ") + " is"
+
+	pb := evictionPlaybook(t, agentsMaxBytes+1)
+	if !strings.Contains(pb, phrase) {
+		t.Errorf("the eviction playbook does not name the live inline set %v.\nwant the phrase: %q\n\n"+
+			"A maintainer reads this message AT THE CEILING, so a wrong set here is advice that reads as coverage while "+
+			"naming the wrong items — \"2 and 4\" was right for the six days between wave 4 (#317) and item 30 landing "+
+			"inline (#437), and wrong for months after. Compute the set from the `→ evidence:` pointer; do not spell it.\n---\n%s",
+			want, phrase, pb)
+	}
+	t.Logf("the playbook names the live inline set %v, agreeing with agentsItems", want)
 }
 
 // TestPlaybookTruncationIsRuneSafe is the negative control for truncateRunes.
