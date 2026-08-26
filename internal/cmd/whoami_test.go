@@ -489,9 +489,24 @@ func TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a hostile subscriptions shape must not fail the command: %v", err)
 	}
+
+	// 🔴 SCAN THE PAYLOAD WITHOUT `base_url`, NOT RAW STDOUT — THE ENVIRONMENT
+	// CAN SPELL A MARKER. This scanned the whole of stdout, and stdout carries
+	// `base_url` with the httptest server's EPHEMERAL PORT. When that port
+	// happened to contain `4242` — the card fragment in the fixture — the guard
+	// reported a PII leak that had not happened. Reproduced at roughly 1 run in
+	// 100: ports are handed out near-sequentially and the counter persists
+	// across processes, so the danger window is crossed in clusters, which is
+	// why it looked like an unreproducible one-off. A false red on a privacy
+	// guard is the worst place to teach anyone to re-run and move on.
+	//
+	// Dropping `base_url` is the narrow fix: it is the only field whose value
+	// this test does not control, and the assertions below still cover every
+	// byte the server's response could reach.
+	scanned := payloadWithoutBaseURL(t, stdout)
 	for _, leak := range []string{"pii@example.test", "cus_MARKER", "4242", "billingEmail", "stripeId", "cardLast4"} {
-		if strings.Contains(stdout, leak) || strings.Contains(stderr, leak) {
-			t.Errorf("`whoami --json` published unmodelled content %q from subscriptions:\n%s%s", leak, stdout, stderr)
+		if strings.Contains(scanned, leak) || strings.Contains(stderr, leak) {
+			t.Errorf("`whoami --json` published unmodelled content %q from subscriptions:\n%s%s", leak, scanned, stderr)
 		}
 	}
 	// 🔴 POSITIVE CONTROL, AND IT IS NOT OPTIONAL. A command that errored, or a
@@ -503,6 +518,63 @@ func TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent(t *testing.T) {
 	}
 	if !strings.Contains(stdout, `"subscriptions": null`) {
 		t.Errorf("the hostile shape should have degraded the whole profile to null, got:\n%s", stdout)
+	}
+}
+
+// payloadWithoutBaseURL re-renders a `whoami --json` payload with `base_url`
+// removed, for a leak scan to run over.
+//
+// 🔴 IT EXISTS BECAUSE `base_url` IS THE ONE FIELD A TEST DOES NOT CONTROL, AND
+// THE ENVIRONMENT CAN SPELL A MARKER INTO IT. See
+// TestScanExcludesBaseURLNotThePayload for the measured failure.
+func payloadWithoutBaseURL(t *testing.T, stdout string) string {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("--json did not emit an object (%v):\n%s", err, stdout)
+	}
+	if _, ok := payload["base_url"]; !ok {
+		// Positive control on the helper: if the key were ever renamed, the
+		// delete would silently do nothing and the flake would return.
+		t.Fatalf("payload has no base_url key to exclude — the field was renamed and this "+
+			"helper is now a no-op:\n%s", stdout)
+	}
+	delete(payload, "base_url")
+	out, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("re-marshal: %v", err)
+	}
+	return string(out)
+}
+
+// TestScanExcludesBaseURLNotThePayload is the deterministic regression for a
+// FLAKE, and it exists because the flake itself is not reproducible on demand.
+//
+// 🔴 THE DEFECT: the leak scan above ran over raw stdout, and stdout carries
+// `base_url` with the httptest server's EPHEMERAL PORT. The scan's marker list
+// includes `"4242"` — the card fragment in the hostile fixture — so any run
+// whose port contained `4242` reported a PII leak that had not happened. It
+// reproduced at roughly 1 run in 100, in CLUSTERS, because ports are handed out
+// near-sequentially from a counter that persists across processes. That is a
+// nondeterministic red on a required check, on a privacy guard, which is the
+// worst possible place to train anyone to re-run and move on.
+//
+// It cannot be reproduced by asking for a port, so the regression is on the
+// PROPERTY instead: markers living in `base_url` must not be scanned, and
+// markers living anywhere else must be. Both directions, or this would pass for
+// a helper that returns the empty string.
+func TestScanExcludesBaseURLNotThePayload(t *testing.T) {
+	const marker = "4242"
+	// The exact shape the flake produced: a port containing the card fragment.
+	inBaseURL := `{"base_url":"http://127.0.0.1:4242","username":"ida","subscriptions":null}`
+	if got := payloadWithoutBaseURL(t, inBaseURL); strings.Contains(got, marker) {
+		t.Errorf("a marker inside base_url must not survive into the scanned text: %s", got)
+	}
+	// The other direction. Without this, a helper returning "" would pass.
+	inPayload := `{"base_url":"http://127.0.0.1:1234","username":"ida","subscriptions":["cardLast4 4242"]}`
+	if got := payloadWithoutBaseURL(t, inPayload); !strings.Contains(got, marker) {
+		t.Errorf("a marker in the PAYLOAD must survive into the scanned text, or the leak scan is "+
+			"inert: %s", got)
 	}
 }
 

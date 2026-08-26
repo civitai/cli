@@ -186,8 +186,13 @@ func whoamiGoldenCases() []whoamiGoldenCase {
 		// ---- 5: no subject + ABSENT mask -------------------------------------
 		// Both sections degrade at once, and the `Credential:` section still
 		// prints — an "unknown" type is a rendered answer, not an omission.
+		// 🔴 THE PROFILE IS IN THIS BODY FOR `Type: unknown`, a value no other
+		// case produces. It was invisible while outputShape collapsed a padded
+		// row's VALUE: `Type: unknown` and `Type: personal API key` shared a
+		// shape, so this branch read as covered by case 9. Dropping that
+		// collapse surfaced it immediately.
 		name: "no subject, absent mask",
-		body: `{"username":"zach","id":1}`,
+		body: `{"username":"zach","id":1,` + profileFields,
 		want: "Logged in as zach (id 1) at %s\n" +
 			"\n" +
 			"Credential:\n" +
@@ -361,21 +366,77 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 	}
 }
 
-// outputShape normalises one printed line to the BRANCH that produced it,
-// discarding only what varies between fixtures of the same branch: the test
-// server's URL, numeric ids and counts, and a padded row's value (`yes`/`no`/
-// `unknown` come from one `yesNo` call site). Everything else is kept, so two
-// lines share a shape only when the same statement printed both.
+// outputShape normalises one printed line by discarding the two things that
+// vary with the HARNESS rather than with the code: the test server's URL and
+// digit runs (the fixture's user id, and the scope count).
+//
+// 🔴 DO NOT NORMALISE ANYTHING ELSE. Every widening merges two lines into one
+// shape, and a merge is exactly how the previous version of this guard went
+// blind: it treated `Scopes (N): …` and `Scopes (0): (none granted)` as one
+// region, and a nil-guarded row in the empty-list branch survived the whole
+// repo. The tempting widenings are named so they can be refused by name:
+//
+//   - the SCOPE LIST ("it varies between fixtures") — collapsing it re-merges
+//     the two `Scopes` statements and restores that exact hole. Measured: one
+//     line of normalisation brings the survivor back.
+//   - a padded row's VALUE ("yes/no/unknown are one call site") — they are
+//     three: `yesNo`, `yesNoUnknown`, and `id.CredentialType()`. This version
+//     collapsed values and it is no longer safe to assume they share a site.
+//   - the GUIDANCE FORK wording — the OAuth and personal-key forks differ only
+//     in their trailing comments, so converging that copy merges two branches
+//     an earlier round paid to discover.
+//
+// When a legitimate new case produces a new shape, this test goes red. THE FIX
+// IS A FIXTURE, NEVER A WIDER NORMALISATION: give that case `profileFields`.
+//
+// The injectivity is MEASURED, not derived — 15 output statements produce
+// distinct shapes today, and TestOutputShapeKeepsStatementsDistinct pins the
+// pairs that matter so a widening cannot land quietly.
 func outputShape(line, baseURL string) string {
 	s := strings.ReplaceAll(line, baseURL, "<url>")
-	s = digitRun.ReplaceAllString(s, "N")
-	if m := labelledRow.FindStringSubmatch(s); m != nil {
-		return "  " + m[1] // the label alone; the value is fixture-dependent
-	}
-	return s
+	return digitRun.ReplaceAllString(s, "N")
 }
 
 var digitRun = regexp.MustCompile(`\d+`)
+
+// TestOutputShapeKeepsStatementsDistinct pins the collapses that would blind
+// the ledger, as a direct property of outputShape.
+//
+// 🔴 IT IS THE STRUCTURAL HALF OF A GUARANTEE THAT IS OTHERWISE ONLY MEASURED.
+// The ledger's soundness rests on "different statements produce different
+// shapes", which does not follow from the function — it is a fact about today's
+// output that a one-line widening can end. Each pair below comes from two
+// DIFFERENT statements in whoami.go; if a future normalisation merges any of
+// them, that widening fails here instead of silently making the ledger vacuous.
+func TestOutputShapeKeepsStatementsDistinct(t *testing.T) {
+	const url = "http://127.0.0.1:1234"
+	pairs := [][2]string{
+		// The `Scopes` pair — the exact merge that blinded the previous version.
+		{"\nScopes (3): UserRead, BuzzRead", "\nScopes (0): (none granted)"},
+		// The two guidance forks, distinguished only by trailing comment text.
+		{"  civitai login --scopes generate  # re-login, additively granting generation + Buzz spend",
+			"  civitai login --scopes generate  # or a browser login that opts into generation"},
+		{"  civitai login --token <key>      # or a full-scope personal API key: https://civitai.com/user/account",
+			"  civitai login --token <key>      # a FULL-SCOPE personal API key: create one at https://civitai.com/user/account"},
+		// Padded rows from three different value sources.
+		{"  Type:                     personal API key", "  Type:                     OAuth login"},
+		{"  Read Buzz balance:        yes", "  Read Buzz balance:        no"},
+		{"  Submit Apps:              unknown", "  Submit Apps:              no"},
+		{"  Type:                     unknown", "  Submit Apps:              unknown"},
+	}
+	for _, p := range pairs {
+		if a, b := outputShape(p[0], url), outputShape(p[1], url); a == b {
+			t.Errorf("outputShape merged two distinct statements into one shape %q — the ledger is now "+
+				"blind to an output row added in one of them.\n  a: %q\n  b: %q", a, p[0], p[1])
+		}
+	}
+	// Positive control: the normalisations it IS supposed to do must still work,
+	// or every pair above passes trivially on a function that changes nothing.
+	if outputShape("Logged in as z (id 8753561) at "+url, url) != outputShape("Logged in as z (id 1) at "+url, url) {
+		t.Error("outputShape must merge the harness-dependent id and base URL, or every legitimate " +
+			"fixture difference reads as a new branch")
+	}
+}
 
 // TestGoldenCarriesTheProfileOnEveryRenderPath is the LEDGER behind the fixture
 // spread, and it exists because that spread is load-bearing prose.
@@ -433,8 +494,12 @@ func TestGoldenCarriesTheProfileOnEveryRenderPath(t *testing.T) {
 		}
 	}
 
-	// Positive control: a run that printed nothing, or fixtures that all
-	// collapsed to one shape, would satisfy the subset check vacuously.
+	// Positive control against a VACUOUS pass: a run that printed nothing, or
+	// fixtures that all collapsed to one shape, satisfies the subset check
+	// trivially. The floor is deliberately loose — a tight number would be a
+	// hand-maintained count, which is the thing this design exists to avoid —
+	// so read it as "the command produced output", NOT as a completeness check.
+	// Completeness is the sweep in the doc comment, re-run when the code moves.
 	if len(all) < 10 {
 		t.Fatalf("only %d distinct output shapes across every golden case — the cases are not "+
 			"exercising the command, so the coverage verdict below would be vacuous", len(all))
@@ -442,9 +507,14 @@ func TestGoldenCarriesTheProfileOnEveryRenderPath(t *testing.T) {
 
 	for _, shape := range slices.Sorted(maps.Keys(all)) {
 		if !withProfile[shape] {
-			t.Errorf("the line %q is rendered only by golden case %q, whose body does NOT carry the "+
-				"account profile. An output row added at that statement behind `if id.Tier != nil` "+
-				"would ship with every golden green. Add profileFields to a case that reaches it.",
+			// `all[shape]` is the FIRST case that rendered this line, not the
+			// only one — several may. Any one of them gaining profileFields
+			// fixes it, so naming one is enough to act on.
+			t.Errorf("the line %q is rendered by NO golden case whose body carries the account "+
+				"profile (first case that renders it: %q). An output row added at that statement "+
+				"behind `if id.Tier != nil` would ship with every golden green.\n"+
+				"THE FIX IS A FIXTURE, NOT A WIDER NORMALISATION: add profileFields to a case that "+
+				"reaches it. See the 🔴 block on outputShape for why widening reopens a closed hole.",
 				shape, all[shape])
 		}
 	}
