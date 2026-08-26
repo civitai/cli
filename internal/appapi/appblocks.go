@@ -186,6 +186,43 @@ type Identity struct {
 	// Subject identifies the credential (OAuth login vs personal API key). nil ⇒
 	// cookie/session auth (not applicable to the CLI).
 	Subject *Subject `json:"subject,omitempty"`
+
+	// ---- account profile (#377 option b) --------------------------------------
+	//
+	// 🔴 THE POINTERS ARE THE SAME TRI-STATE RULE AS CanSubmitApps, NOT STYLE.
+	// GET /api/v1/me omits every field below for some credentials, and a plain
+	// `string`/`bool` would zero-fill the omission — publishing `"tier": ""` or
+	// `"isMember": false` as if the server had SAID so. nil ⇒ the server did not
+	// report it, and reaches `whoami --json` as `null`.
+	//
+	// 🔴 email AND emailVerified ARE DELIBERATELY NOT MODELLED, AND MUST NOT BE
+	// ADDED. The live capture in api_test.go carries both, so this is an omission
+	// with a reason, not an oversight: they are PII that `whoami` does not print
+	// today, and `whoami --json` is a projection precisely so a script that
+	// redirects its output never lands a user's email address in a log. Modelling
+	// them here would put them one map entry away from being published — see
+	// civitai/cli#377, which rejected "just pass the raw body through" for this.
+
+	// Tier is the account's membership tier ("free", "silver", …). nil ⇒ absent.
+	Tier *string `json:"tier,omitempty"`
+	// Status is the account status ("active", …). nil ⇒ absent.
+	Status *string `json:"status,omitempty"`
+	// IsMember is the server's own answer to "is this a member account". It is
+	// not idle trivia: AGENTS.md item 13
+	// (claudedocs/decisions/13-generation-graph-not-validated.md) records that a
+	// caller's usable — non-disabled, non-memberOnly — ecosystem set differs
+	// between a free and a member account, so this is the one field that predicts
+	// whether `civitai generate`'s defaults are even available. nil ⇒ absent.
+	IsMember *bool `json:"isMember,omitempty"`
+	// Subscriptions is the raw subscription list. It is RawMessage for the same
+	// reason BuzzLimit is, and with precedent from this very endpoint: buzzLimit
+	// drifted from a bare number to an array of window objects and hard-failed
+	// `whoami` in production. Subscriptions is the one COMPOSITE among the four
+	// profile fields, so it is the one that can drift that way — and a strict
+	// parse failure here would fall back to parseCoreIdentity and blank Tier,
+	// Status and IsMember as collateral. Held raw, any shape survives and passes
+	// through to `--json` verbatim. nil ⇒ absent (marshals to null).
+	Subscriptions json.RawMessage `json:"subscriptions,omitempty"`
 }
 
 // Token-scope bits, mirrored from @civitai/auth token-scope (civitai/civitai
@@ -890,12 +927,20 @@ func (c *Client) WhoAmI(ctx context.Context) (*Identity, error) {
 	return nil, fmt.Errorf("unexpected /api/v1/me response: %s", string(raw))
 }
 
-// parseCoreIdentity unmarshals only the fields whoami actually renders (id,
-// username, tokenScope, and subject.type) from a /api/v1/me body, ignoring every
-// peripheral field. It is the resilience fallback for WhoAmI: even if a future
-// server change breaks the strict Identity parse, the core identity still
-// surfaces. It errors only when the body is not a JSON object or a core field
-// itself has an incompatible type.
+// parseCoreIdentity unmarshals only the CORE identity (id, username, tokenScope,
+// and subject.type) from a /api/v1/me body, ignoring every peripheral field. It
+// is the resilience fallback for WhoAmI: even if a future server change breaks
+// the strict Identity parse, the core identity still surfaces. It errors only
+// when the body is not a JSON object or a core field itself has an incompatible
+// type.
+//
+// 🔴 THE PROFILE FIELDS (Tier/Status/IsMember/Subscriptions) ARE NOT PARSED HERE
+// ON PURPOSE, EVEN THOUGH `--json` NOW RENDERS THEM. This function's whole value
+// is that it cannot fail on a peripheral type drift; re-listing those fields
+// would hand the drift a second chance to kill the command. When this fallback
+// fires they degrade to `null` — "the CLI does not have it", which is exactly
+// the state the tri-state pointers exist to express — rather than to a
+// fabricated zero value.
 func parseCoreIdentity(raw []byte) (*Identity, error) {
 	var core struct {
 		Username   string `json:"username"`

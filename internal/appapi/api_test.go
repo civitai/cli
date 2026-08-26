@@ -344,6 +344,128 @@ func TestWhoAmIParsesLiveMeBody(t *testing.T) {
 	}
 }
 
+// TestWhoAmIParsesAccountProfile pins #377 option (b): the four modellable
+// profile fields the live capture demonstrably carries must LAND, with their
+// real values, off the very body that proves the server sends them.
+//
+// 🔴 THE FIXTURE IS THE REAL CAPTURE, AND THAT IS THE WHOLE METHOD. #377 was
+// only findable because `liveMeBody` is a production response rather than a
+// hand-written mirror of this struct — a mirror cannot, by construction, carry
+// a field the struct is missing. Asserting against a body typed from the struct
+// would re-create the blind spot that hid these four for months, so do not
+// "simplify" this onto a local literal.
+func TestWhoAmIParsesAccountProfile(t *testing.T) {
+	srv := meServer(t, liveMeBody)
+	defer srv.Close()
+
+	id, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
+	if err != nil {
+		t.Fatalf("WhoAmI on the live /me body must not error: %v", err)
+	}
+	if id.Tier == nil || *id.Tier != "silver" {
+		t.Errorf("tier = %v, want silver", id.Tier)
+	}
+	if id.Status == nil || *id.Status != "active" {
+		t.Errorf("status = %v, want active", id.Status)
+	}
+	if id.IsMember == nil || !*id.IsMember {
+		t.Errorf("isMember = %v, want true", id.IsMember)
+	}
+	if string(id.Subscriptions) != `["yellow"]` {
+		t.Errorf("subscriptions = %s, want [\"yellow\"] retained raw", string(id.Subscriptions))
+	}
+}
+
+// TestIdentityHasNoEmailField is the #377 privacy invariant at its SOURCE.
+//
+// 🔴 IT IS A STRUCTURAL GUARD ON `appapi.Identity`, NOT ON `whoami --json`, AND
+// THE TWO ARE DIFFERENT CLAIMS. The payload guard in internal/cmd pins one
+// command's output; this one pins that the bytes are dropped at the CLIENT
+// boundary, so no FUTURE surface can publish a user's email address by adding a
+// map entry. `liveMeBody` really carries `email`/`emailVerified` — the positive
+// control that this asserts a live omission rather than an impossible one.
+func TestIdentityHasNoEmailField(t *testing.T) {
+	if !strings.Contains(liveMeBody, `"email"`) || !strings.Contains(liveMeBody, `"emailVerified"`) {
+		t.Fatalf("positive control failed: the live capture no longer carries the PII this guard is about, " +
+			"so its verdict would be vacuous — re-point it at a body that does")
+	}
+	// Round-trip the capture through the struct: whatever Identity models is
+	// what a `--json` surface can reach, and nothing else survives.
+	var id Identity
+	if err := json.Unmarshal([]byte(liveMeBody), &id); err != nil {
+		t.Fatalf("the live capture must parse: %v", err)
+	}
+	back, err := json.Marshal(&id)
+	if err != nil {
+		t.Fatalf("marshal Identity: %v", err)
+	}
+	for _, pii := range []string{"email", "emailVerified", "@"} {
+		if strings.Contains(string(back), pii) {
+			t.Errorf("appapi.Identity now retains PII (%q) from /api/v1/me — #377 rejected modelling "+
+				"email/emailVerified precisely so no --json surface can publish them:\n%s", pii, back)
+		}
+	}
+	// Positive control on the round-trip itself: a zero of everything would also
+	// contain no PII. Something the struct DOES model must have survived.
+	if !strings.Contains(string(back), `"tier":"silver"`) {
+		t.Fatalf("the round-trip carried nothing, so the PII verdict above is vacuous:\n%s", back)
+	}
+}
+
+// TestWhoAmIProfileDriftIsIsolated covers the reason Subscriptions is
+// json.RawMessage while its three siblings are typed pointers.
+//
+// 🔴 IT IS THE ONE COMPOSITE, SO IT IS THE ONE THAT CAN DRIFT SHAPE — and this
+// endpoint has already done exactly that once (buzzLimit: bare number → array
+// of window objects, which hard-failed whoami in production). Were it typed
+// `[]string`, an object-shaped element would fail the strict parse, drop WhoAmI
+// into parseCoreIdentity, and blank Tier/Status/IsMember as collateral. Held
+// raw, the drift costs nothing: every sibling survives and the new shape reaches
+// `--json` verbatim.
+func TestWhoAmIProfileDriftIsIsolated(t *testing.T) {
+	const drifted = `{"id":7,"username":"carol","tokenScope":1,"subject":{"type":"apiKey","id":42},` +
+		`"tier":"gold","status":"active","isMember":true,"subscriptions":[{"tier":"yellow","since":"2026-01-01"}]}`
+	srv := meServer(t, drifted)
+	defer srv.Close()
+
+	id, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
+	if err != nil {
+		t.Fatalf("a shape drift in subscriptions must not fail WhoAmI: %v", err)
+	}
+	// The collateral is what this test is about: the three siblings must NOT
+	// have been blanked by a fallback the drift would otherwise have triggered.
+	if id.Tier == nil || *id.Tier != "gold" {
+		t.Errorf("tier = %v, want gold — a subscriptions drift took a sibling down with it", id.Tier)
+	}
+	if id.Status == nil || *id.Status != "active" {
+		t.Errorf("status = %v, want active — a subscriptions drift took a sibling down with it", id.Status)
+	}
+	if id.IsMember == nil || !*id.IsMember {
+		t.Errorf("isMember = %v, want true — a subscriptions drift took a sibling down with it", id.IsMember)
+	}
+	if !strings.HasPrefix(string(id.Subscriptions), `[{`) {
+		t.Errorf("subscriptions = %s, want the drifted object array retained verbatim", string(id.Subscriptions))
+	}
+}
+
+// TestIdentityProfileFieldsAreTriState pins that an ABSENT profile field stays
+// absent rather than zero-filling. A plain `string`/`bool` would publish
+// `"tier": ""` and `"isMember": false` as if the server had said so — the same
+// false-negative-stated-as-fact that made CanSubmitApps a pointer.
+func TestIdentityProfileFieldsAreTriState(t *testing.T) {
+	srv := meServer(t, `{"id":9,"username":"hedda","tokenScope":1,"subject":{"type":"apiKey","id":1}}`)
+	defer srv.Close()
+
+	id, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
+	if err != nil {
+		t.Fatalf("WhoAmI: %v", err)
+	}
+	if id.Tier != nil || id.Status != nil || id.IsMember != nil || id.Subscriptions != nil {
+		t.Errorf("an omitted profile must stay nil, got tier=%v status=%v isMember=%v subscriptions=%s",
+			id.Tier, id.Status, id.IsMember, string(id.Subscriptions))
+	}
+}
+
 // TestWhoAmIResilientToPeripheralDrift covers future non-essential field drift:
 // an unknown extra field, and a peripheral field (buzzLimit) with an unexpected
 // type must all still yield the core identity rather than hard-failing.

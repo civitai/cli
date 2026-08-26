@@ -76,6 +76,14 @@ Reads the token from config or CIVITAI_TOKEN.`,
 					// true / false / null — null means unknowable, never "no".
 					"canSubmitApps": canSubmit,
 					"scopes":        id.DecodeScopes(),
+					// Account profile (#377 option b). All four are null when the
+					// server did not report them — never a fabricated ""/false. See
+					// appapi.Identity for why `email`/`emailVerified` are absent from
+					// the struct and so cannot be added here by accident.
+					"tier":          id.Tier,
+					"status":        id.Status,
+					"isMember":      id.IsMember,
+					"subscriptions": id.Subscriptions,
 					// Back-compat: the nested capabilities object earlier releases emit.
 					"capabilities": map[string]bool{
 						"can_spend_buzz": id.CanSpendBuzz(),
@@ -156,13 +164,16 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			return nil
 		},
 	}
-	// 🔴 NOT "raw JSON" (#377). The payload is a hand-built projection of ten
-	// keys; the server demonstrably sends six more — `tier`, `status`,
-	// `isMember`, `subscriptions`, `email`, `emailVerified` — that never appear
-	// (see the real production capture in internal/appapi/api_test.go). Making
-	// it actually raw is NOT the fix: `email`/`emailVerified` are PII this
-	// command does not print today, so passing the body through would be a
-	// privacy regression dressed as a bug fix. The words are what was wrong.
+	// 🔴 STILL NOT "raw JSON" (#377), AND THAT IS NOW THE WHOLE POINT. #377
+	// option (b) landed the four modellable keys the server sends — `tier`,
+	// `status`, `isMember`, `subscriptions` — so the projection is fourteen keys,
+	// not ten. What remains dropped is `email`/`emailVerified`, and they are
+	// dropped ON PURPOSE: they are PII this command does not print, so passing
+	// the body through would be a privacy regression dressed as a bug fix. The
+	// gap between "raw" and "curated" is now exactly that PII, which is why the
+	// word "raw" must never come back — a reader who believes it would expect
+	// the two fields the CLI is deliberately withholding. The live capture that
+	// proves the server sends them is in internal/appapi/api_test.go.
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit a stable, curated identity object (scriptable)")
 	cmd.Flags().BoolVar(&showScopes, "scopes", false, "also print the full decoded scope list")
 	return cmd
