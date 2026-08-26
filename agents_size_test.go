@@ -50,7 +50,8 @@ import (
 // pointer, ten bodies evicted in the process, items 2 and 4 left inline because
 // they are smaller than a trigger plus a file read would cost. The item list
 // went from 26,571 bytes to 6,109 (−77%) and the file from 45,027 to 25,258
-// (−43.9%). The ceiling is 28,758 — 3,500 bytes of headroom.
+// (−43.9%). The ceiling was 28,758 then — 3,500 bytes of headroom. It is 29,600
+// now; the raise is dated and derived on agentsMaxBytes itself.
 //
 // 🔴 "ITEMS 2 AND 4" IS WAVE-4 HISTORY, NOT THE CURRENT INLINE SET. It was the
 // whole set on 2026-08-10 (#317); item 30 arrived inline on 2026-08-16 (#437)
@@ -121,7 +122,27 @@ import (
 // cannot rot. Do not reintroduce one here.
 //
 // Do not raise this to make an item fit. Write its trigger and move its body.
-const agentsMaxBytes = 28_758
+//
+// 🔴 RAISED ONCE, DELIBERATELY: 28,758 → 29,600 on 2026-08-26 (#495). This is
+// NOT drift and NOT to make something fit — it re-baselines the constant after a
+// CONSOLIDATION. #493 folded CLAUDE.md into this file (CLAUDE.md is now the
+// 11-byte `@AGENTS.md` import and a guard keeps it that way), so the per-session
+// cost of the PAIR fell from 29,823 to 28,661 bytes while this file's own number
+// rose. Holding the old ceiling would have charged AGENTS.md for bytes the
+// session had stopped paying next door — a budget that punishes consolidation.
+//
+// The 842 bytes it adds leave 950 of headroom, and that CANNOT undo an eviction,
+// which is the property worth stating: the three largest bodies wave 4 moved out
+// cost 2,092 / 1,647 / 1,642 bytes NET to re-inline (the derivation is under
+// agentsMaxBytesCeiling), so even the cheapest of the three is ~1.7× the whole
+// headroom. Re-inlining a body remains a ceiling failure, not a rounding error.
+//
+// agentsMaxBytesCeiling stays 30,600 and did NOT need re-deriving. Its property
+// is "the three largest bodies cannot all be re-inlined", and the achieved size
+// has RISEN since it was set, so that restoration now lands at 28,650 + 5,381 =
+// 34,031 — clearing the bound by more than it did at wave 4. It got stricter
+// without being touched, which is why raising the budget below it is safe.
+const agentsMaxBytes = 29_600
 
 // agentsMaxBytesCeiling bounds agentsMaxBytes itself, so the budget above cannot
 // be turned into unlimited slack by editing one number.
