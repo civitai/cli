@@ -450,27 +450,59 @@ func TestWhoAmINeverPrintsEmail(t *testing.T) {
 	}
 }
 
-// TestWhoAmIProfileFieldsReachTheHumanSurfaceNever pins a deliberate NON-change.
+// 🔴 THE HUMAN SURFACE'S "no account dump" GUARD IS NOT HERE — IT IS CASE 9 OF
+// TestWhoAmIHumanBlockIsPinnedWhole, AND IT USED TO BE A BANNED-SUBSTRING LEDGER
+// IN THIS FILE. That ledger listed "silver", "active", "yellow", "isMember",
+// "tier" and passed while the command printed
 //
-// #377 option (b) is scoped to `--json`. The human output is byte-locked to
-// README.md by whoami_readme_block_test.go and is a capability report, not an
-// account dump — so the four profile fields must not appear there. Without this,
-// "add them to the human rows too" reads as an obvious follow-up rather than as
-// a decision someone already made.
-func TestWhoAmIProfileFieldsReachTheHumanSurfaceNever(t *testing.T) {
-	setupWhoAmI(t, meBodyWithPII)
-	stdout, _, err := run(t, "whoami")
+//	Member:                   yes
+//	Account status:           ACTIVE
+//
+// with the whole `internal/cmd` package `ok`: `Member:` pays no banned word and
+// `ACTIVE` evades the lowercase literal. AGENTS item 28 records that exact shape
+// losing three times and names golden-output pinning as what closes ADDITION, so
+// the ledger was replaced by a golden case rather than extended with a fourth
+// phrase. Do not re-add a phrase list here.
+
+// TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent is the OTHER half of
+// the #377 privacy boundary, and the one an earlier draft of this PR got wrong.
+//
+// 🔴 "email IS NOT MODELLED" ONLY CONTAINS PII IF NO FIELD IS AN UNBOUNDED
+// PASSTHROUGH. `Subscriptions` was a `json.RawMessage` for one review round, on
+// a resilience argument — and that made `whoami --json` publish whatever bytes
+// the server put under that key, with no code change required. This test drives
+// the command against exactly that: a `subscriptions` whose elements are objects
+// carrying a billing email and a card fragment. Because the field is now typed
+// `[]string`, the strict parse rejects it, the whole profile degrades to null,
+// and none of it reaches stdout.
+//
+// The fixture is deliberately the hostile shape rather than the observed one:
+// asserting against `["yellow"]` cannot see this failure mode at all, which is
+// why the guards written alongside the RawMessage version were all green.
+func TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent(t *testing.T) {
+	const hostile = `{"username":"ida","id":88,"tokenScope":1,"subject":{"type":"apiKey","id":"k"},` +
+		`"tier":"silver","status":"active","isMember":true,` +
+		`"subscriptions":[{"tier":"yellow","billingEmail":"pii@example.test",` +
+		`"customer":{"stripeId":"cus_MARKER"},"cardLast4":"4242"}]}`
+	setupWhoAmI(t, hostile)
+	stdout, stderr, err := run(t, "whoami", "--json")
 	if err != nil {
-		t.Fatalf("whoami: %v", err)
+		t.Fatalf("a hostile subscriptions shape must not fail the command: %v", err)
 	}
-	for _, v := range []string{"silver", "active", "yellow", "isMember", "Tier", "tier"} {
-		if strings.Contains(stdout, v) {
-			t.Errorf("the human surface is a capability report, not an account dump — it printed %q:\n%s", v, stdout)
+	for _, leak := range []string{"pii@example.test", "cus_MARKER", "4242", "billingEmail", "stripeId", "cardLast4"} {
+		if strings.Contains(stdout, leak) || strings.Contains(stderr, leak) {
+			t.Errorf("`whoami --json` published unmodelled content %q from subscriptions:\n%s%s", leak, stdout, stderr)
 		}
 	}
-	// Positive control: the capability rows the surface IS for still print.
-	if !strings.Contains(stdout, "Submit Apps:") {
-		t.Fatalf("the capability rows are missing, so the verdict above is vacuous:\n%s", stdout)
+	// 🔴 POSITIVE CONTROL, AND IT IS NOT OPTIONAL. A command that errored, or a
+	// fixture the server never received, also prints none of the markers above.
+	// Assert the command really ran AND that the degradation is what stopped the
+	// PII — `subscriptions: null` is the mechanism, not `"yellow"` filtered out.
+	if !strings.Contains(stdout, `"username": "ida"`) {
+		t.Fatalf("the command printed no identity, so the leak verdict is vacuous:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, `"subscriptions": null`) {
+		t.Errorf("the hostile shape should have degraded the whole profile to null, got:\n%s", stdout)
 	}
 }
 

@@ -53,6 +53,30 @@ see `len 0` either way; only the JSON encoding differs.
 `canSpend`, which stay plain booleans: when it is `false`, both are `false`
 because nothing is known, not because the capability was denied.
 
+**Third `--json` change, and this one is ADDITIVE, not breaking (#498).**
+`whoami --json` now carries the account profile the server was already sending
+and the CLI was discarding: **`tier`, `status`, `isMember`, `subscriptions`**.
+Four keys added, none removed, none retyped — every pre-existing key's value is
+byte-identical. The only consumers that can notice are strict-schema ones
+(`DisallowUnknownFields`, `additionalProperties: false`).
+
+Two things a script author needs:
+
+- **Each is `null` when the server did not report it**, never a fabricated
+  `""` / `false` / `[]`. Same rule as `canSubmitApps` — test for `null` first.
+- **They degrade as a group.** If any one of them arrives in an unexpected
+  shape, all four become `null`; `whoami` still prints identity and
+  capabilities normally. The CLI publishes only fields it models, so an
+  unrecognised shape is withheld rather than passed to your terminal.
+
+`isMember` is the one worth branching on: a member and a free account do not
+see the same usable generation ecosystems, so it predicts whether
+`civitai generate`'s defaults are available to the credential in hand.
+
+**Still withheld on purpose:** `email` and `emailVerified`. The server sends
+both; `whoami` does not print them and `--json` does not carry them, which is
+why the CLI does not describe this output as "raw" (#377).
+
 **Human output changed shape too** (#494), so anything screen-scraping the old
 single `Capabilities:` block breaks. The section is now two:
 
@@ -109,18 +133,28 @@ Re-derive it at tag time rather than trusting this number:
 git log v0.1.100..v0.1.101 --pretty='%s' | grep -cvE '^(docs|test|chore)(\(.*\))?:'
 ```
 
-At `af5e98f` that command returns **2**.
+At `af5e98f` that command returned **2**; #498 has landed since, so re-run it
+rather than reusing that number.
 
-### The 2 that should appear
+### The ones that should appear
+
+Count the numbered rows below rather than trusting a total in this heading — a
+count maintained beside the list it counts drifts the first time the list grows,
+which is what happened when #498 landed against a heading that said "the 2".
 
 | # | commit | thread |
 |---|---|---|
 | 1 | `fix(whoami)`: `canSubmitApps` was a false negative stated as fact, and the two surfaces disagreed (#492) | whoami contract |
 | 2 | `refactor(whoami)`: the credential TYPE is not a capability — split the section in two (#494) | whoami contract |
+| 3 | `feat(whoami)`: `--json` carries the account profile, and still withholds the PII (#498) | whoami contract |
 
-**This release is one thread.** #492 fixes the contract and #494 fixes the
-presentation of the same four rows; they are the reason this release exists and
-neither is gated behind a flag.
+**This release is one thread.** #492 fixes the contract, #494 fixes the
+presentation of the same four rows, and #498 closes the second half of #377 on
+the same `--json` payload; they are the reason this release exists and none is
+gated behind a flag.
+
+⚠️ **Re-derive the count at tag time**, as the command above the table says —
+this list is written before the tag and any further merge changes it.
 
 ⚠️ **`refactor(` is not filtered either — and that is correct here.** The
 exclude list is `docs(` / `test(` / `chore(` only (three patterns in
@@ -190,7 +224,13 @@ not the question — **shape** is. The check that matters is the tri-state:
 
 ```
 civitai whoami --json | jq 'has("canSubmitApps"), .canSubmitApps, .scopes'
+civitai whoami --json | jq 'has("tier"), has("isMember"), has("email")'
 ```
+
+The second line covers #498: the first two must be `true` (the profile keys are
+present, `null` or not) and **`has("email")` must be `false`** — the PII is
+withheld by design, and `has()` is the only discriminator that distinguishes
+"absent" from "present and null".
 
 Confirm on the released binary that `canSubmitApps` is **present** and that the
 key can hold `null` (`has()` is the discriminator — a missing key and a `null`

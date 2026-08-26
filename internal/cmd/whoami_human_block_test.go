@@ -38,7 +38,11 @@ const cantSpendGuidance = "\n" +
 const scopeCaveat = "  (token scope not reported by the server — Buzz capabilities unknown)\n"
 
 // TestWhoAmIHumanBlockIsPinnedWhole compares the ENTIRE stdout of the human
-// surface against a literal, for six states.
+// surface against a literal, for every state in the numbered list below. The
+// cases are numbered in their own comments; count them there rather than
+// trusting a total written here — this sentence said "six states" while the
+// list held eight, which is what a count maintained in parallel with the thing
+// it counts always does.
 //
 // 🔴 RED AT origin/main FOR EVERY CASE. Before this change the command printed
 // ONE `Capabilities:` section whose first row was `Credential type:` — an
@@ -184,6 +188,42 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 			"\n" +
 			"Scopes (0): (none granted)\n" +
 			cantSpendGuidance,
+	}, {
+		// ---- 9: the account profile is present and RENDERS NOTHING -----------
+		// 🔴 THIS CASE IS WHAT CLOSES ADDITION, AND EVERY OTHER CASE IS BLIND TO
+		// IT. Bodies 1–8 carry no `tier`/`status`/`isMember`/`subscriptions`, so
+		// a row rendered under `if id.Tier != nil` never executes in any of them
+		// — every golden here stays green while the human surface turns into an
+		// account dump. Measured, not reasoned: adding nil-guarded `Member:` and
+		// `Account status:` rows to whoami.go left the WHOLE `internal/cmd`
+		// package `ok`, and printed
+		//     Type:                     personal API key
+		//     Member:                   yes
+		//     Account status:           ACTIVE
+		// This body makes those rows render, so the golden below fails on them.
+		//
+		// It is a golden and not a banned-substring list on purpose. AGENTS item
+		// 28 (claudedocs/decisions/28-no-claims-about-unobservable-spend.md)
+		// records a phrase ledger losing THREE times — to a paraphrase paying no
+		// banned word, and to a case-change — and names golden-output pinning as
+		// the shape that closes ADDITION. `Member:` and `ACTIVE` are exactly
+		// those two evasions, and this case kills both.
+		//
+		// The DECISION it pins: `whoami`'s human surface is a capability report,
+		// not an account dump. #377 option (b) is scoped to `--json`.
+		name: "full account profile present, human surface unchanged",
+		body: `{"username":"zach","id":1,"tokenScope":33554431,"subject":{"type":"apiKey","id":"k"},` +
+			`"tier":"silver","status":"active","isMember":true,"subscriptions":["yellow"],` +
+			`"email":"zach@example.test","emailVerified":true}`,
+		want: "Logged in as zach (id 1) at %s\n" +
+			"\n" +
+			"Credential:\n" +
+			"  Type:                     personal API key\n" +
+			"\n" +
+			"Capabilities:\n" +
+			"  Read Buzz balance:        yes\n" +
+			"  Spend Buzz (AI Services): yes\n" +
+			"  Submit Apps:              yes\n",
 	}}
 
 	for _, tc := range cases {

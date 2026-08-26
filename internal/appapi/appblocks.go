@@ -202,6 +202,14 @@ type Identity struct {
 	// redirects its output never lands a user's email address in a log. Modelling
 	// them here would put them one map entry away from being published — see
 	// civitai/cli#377, which rejected "just pass the raw body through" for this.
+	//
+	// 🔴 "UNMODELLED" IS ONLY HALF THE GUARANTEE, AND THE OTHER HALF IS EASY TO
+	// LOSE. A field the struct drops can still reach a terminal by any path that
+	// handles the RAW bytes: WhoAmI's parse-failure branch echoed the whole body
+	// until this was written, and Subscriptions below published anything the
+	// server put in it for exactly as long as it was a json.RawMessage. Both are
+	// closed. Before adding any code that touches the raw /me response, ask what
+	// it does with bytes this struct deliberately never decodes.
 
 	// Tier is the account's membership tier ("free", "silver", …). nil ⇒ absent.
 	Tier *string `json:"tier,omitempty"`
@@ -214,15 +222,32 @@ type Identity struct {
 	// between a free and a member account, so this is the one field that predicts
 	// whether `civitai generate`'s defaults are even available. nil ⇒ absent.
 	IsMember *bool `json:"isMember,omitempty"`
-	// Subscriptions is the raw subscription list. It is RawMessage for the same
-	// reason BuzzLimit is, and with precedent from this very endpoint: buzzLimit
-	// drifted from a bare number to an array of window objects and hard-failed
-	// `whoami` in production. Subscriptions is the one COMPOSITE among the four
-	// profile fields, so it is the one that can drift that way — and a strict
-	// parse failure here would fall back to parseCoreIdentity and blank Tier,
-	// Status and IsMember as collateral. Held raw, any shape survives and passes
-	// through to `--json` verbatim. nil ⇒ absent (marshals to null).
-	Subscriptions json.RawMessage `json:"subscriptions,omitempty"`
+	// Subscriptions is the account's subscription list (the live capture carries
+	// `["yellow"]`). nil ⇒ absent; a non-nil empty slice ⇒ reported and empty,
+	// the same nil-is-not-empty distinction DecodeScopes documents.
+	//
+	// 🔴 IT IS TYPED, NOT json.RawMessage, AND THAT IS A PRIVACY DECISION THAT
+	// OVERRODE A RESILIENCE ONE. RawMessage was tried first, reasoning that this
+	// is the one COMPOSITE among the four profile fields and so the one that can
+	// drift shape (buzzLimit did exactly that on this endpoint and hard-failed
+	// whoami in production). It was wrong twice over, both measured:
+	//
+	//   - A RawMessage passes the server's bytes to `--json` VERBATIM, so a
+	//     future object-shaped element carrying a billing email or a card
+	//     fragment would be published with no code change at all. That is the
+	//     very boundary the email/emailVerified omission above exists to hold —
+	//     leaving one field an unbounded passthrough makes the argument false.
+	//   - It did not even buy the resilience it was chosen for: a drift in Tier,
+	//     Status OR IsMember drops WhoAmI into parseCoreIdentity and blanks all
+	//     four regardless, so the raw field protected the group only against a
+	//     drift in ITSELF.
+	//
+	// Typed, an unexpected shape degrades exactly like its siblings — every
+	// profile field goes null, `whoami` still works, and nothing unmodelled ever
+	// reaches stdout. TestWhoAmIProfileDriftDegradesTheWholeProfile pins that,
+	// and TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent pins that the
+	// degradation is what stops the PII rather than luck.
+	Subscriptions []string `json:"subscriptions,omitempty"`
 }
 
 // Token-scope bits, mirrored from @civitai/auth token-scope (civitai/civitai
@@ -924,7 +949,17 @@ func (c *Client) WhoAmI(ctx context.Context) (*Identity, error) {
 	if core, cerr := parseCoreIdentity(raw); cerr == nil {
 		return core, nil
 	}
-	return nil, fmt.Errorf("unexpected /api/v1/me response: %s", string(raw))
+	// 🔴 THE BODY IS NOT ECHOED. It used to be, and that made this error the one
+	// path by which a user's email address DID reach a terminal — /api/v1/me
+	// carries `email`/`emailVerified`, this branch printed the whole response,
+	// and `main` writes it to stderr where a shell redirect or a CI log keeps it.
+	// The struct's argument that email is unpublishable because it is unmodelled
+	// was false while this line existed, so the fix belongs here rather than in
+	// the comment. Diagnosability is preserved by describeMeBody, which reports
+	// the SHAPE — the keys present and the offending type — and never a value.
+	return nil, fmt.Errorf("unexpected /api/v1/me response (%s) — "+
+		"run `civitai login` to re-authenticate, or report this at "+
+		"https://github.com/civitai/cli/issues", describeMeBody(raw))
 }
 
 // parseCoreIdentity unmarshals only the CORE identity (id, username, tokenScope,
@@ -958,6 +993,73 @@ func parseCoreIdentity(raw []byte) (*Identity, error) {
 		id.Subject = &Subject{Type: core.Subject.Type}
 	}
 	return id, nil
+}
+
+// meKeyAllowlist is every /api/v1/me key describeMeBody may NAME. It is an
+// allowlist, not a denylist, on purpose: a denylist of known-sensitive keys goes
+// stale the moment the server adds one, and the failure is silent and in the
+// leaking direction. A key the CLI has never heard of is counted, never printed.
+var meKeyAllowlist = map[string]bool{
+	"id": true, "username": true, "tier": true, "status": true,
+	"isMember": true, "subscriptions": true, "tokenScope": true,
+	"buzzLimit": true, "subject": true,
+}
+
+// describeMeBody renders the SHAPE of an unparseable /api/v1/me body for an
+// error message: its top-level keys (allowlisted ones by name, the rest only
+// counted) and each named key's JSON type.
+//
+// 🔴 IT MUST NEVER RETURN A VALUE FROM THE BODY, ONLY KEYS AND TYPES. The body
+// carries `email`/`emailVerified`, and this string is printed to stderr where a
+// redirect or a CI log keeps it. Types are what actually diagnose the failure
+// this is reached from — a peripheral field that drifted its JSON type — so the
+// omission costs nothing diagnostically. TestDescribeMeBodyNeverLeaksValues
+// pins it against a body whose every value is a distinct PII-shaped marker.
+func describeMeBody(raw []byte) string {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return fmt.Sprintf("not a JSON object, %d bytes", len(raw))
+	}
+	named := make([]string, 0, len(obj))
+	unknown := 0
+	for k, v := range obj {
+		if !meKeyAllowlist[k] {
+			unknown++
+			continue
+		}
+		named = append(named, k+": "+jsonKindOf(v))
+	}
+	sort.Strings(named)
+	desc := "keys " + strings.Join(named, ", ")
+	if len(named) == 0 {
+		desc = "no recognised keys"
+	}
+	if unknown > 0 {
+		desc += fmt.Sprintf(" (+%d unrecognised)", unknown)
+	}
+	return desc
+}
+
+// jsonKindOf names a raw JSON value's type without revealing the value.
+func jsonKindOf(v json.RawMessage) string {
+	t := bytes.TrimSpace(v)
+	if len(t) == 0 {
+		return "empty"
+	}
+	switch t[0] {
+	case '{':
+		return "object"
+	case '[':
+		return "array"
+	case '"':
+		return "string"
+	case 't', 'f':
+		return "bool"
+	case 'n':
+		return "null"
+	default:
+		return "number"
+	}
 }
 
 // GetBuzzAccount reads the caller's spendable Buzz balance via the

@@ -1304,9 +1304,15 @@ output raw.
 **The account profile — `tier`, `status`, `isMember`, `subscriptions` — is
 `null` when the server did not report it, never `""` / `false` / `[]`.** The
 CLI will not fabricate a value the server did not send, so a script must test
-for `null` before reading any of the four. `subscriptions` is passed through
-**verbatim**, so treat its element shape as server-owned rather than pinned by
-this CLI. `isMember` is the one worth branching on: a member and a free account
+for `null` before reading any of the four. `subscriptions` is a list of strings
+(`[]` means reported and empty, `null` means not reported).
+
+🔴 **The four degrade together.** They come from one strict parse, so if *any*
+of them arrives in an unexpected shape, **all four** become `null` rather than
+some of them being dropped silently — `whoami` still prints your identity and
+capabilities normally. That is deliberate: the CLI publishes only fields it
+models, so an unrecognised shape is withheld rather than passed through to your
+terminal. `isMember` is the one worth branching on: a member and a free account
 do not see the same usable generation ecosystems, so it predicts whether
 `civitai generate`'s defaults are even available to this credential.
 

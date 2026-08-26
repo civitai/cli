@@ -371,8 +371,8 @@ func TestWhoAmIParsesAccountProfile(t *testing.T) {
 	if id.IsMember == nil || !*id.IsMember {
 		t.Errorf("isMember = %v, want true", id.IsMember)
 	}
-	if string(id.Subscriptions) != `["yellow"]` {
-		t.Errorf("subscriptions = %s, want [\"yellow\"] retained raw", string(id.Subscriptions))
+	if len(id.Subscriptions) != 1 || id.Subscriptions[0] != "yellow" {
+		t.Errorf("subscriptions = %v, want [yellow]", id.Subscriptions)
 	}
 }
 
@@ -415,36 +415,124 @@ func TestIdentityHasNoEmailField(t *testing.T) {
 // TestWhoAmIProfileDriftIsIsolated covers the reason Subscriptions is
 // json.RawMessage while its three siblings are typed pointers.
 //
-// 🔴 IT IS THE ONE COMPOSITE, SO IT IS THE ONE THAT CAN DRIFT SHAPE — and this
-// endpoint has already done exactly that once (buzzLimit: bare number → array
-// of window objects, which hard-failed whoami in production). Were it typed
-// `[]string`, an object-shaped element would fail the strict parse, drop WhoAmI
-// into parseCoreIdentity, and blank Tier/Status/IsMember as collateral. Held
-// raw, the drift costs nothing: every sibling survives and the new shape reaches
-// `--json` verbatim.
-func TestWhoAmIProfileDriftIsIsolated(t *testing.T) {
-	const drifted = `{"id":7,"username":"carol","tokenScope":1,"subject":{"type":"apiKey","id":42},` +
-		`"tier":"gold","status":"active","isMember":true,"subscriptions":[{"tier":"yellow","since":"2026-01-01"}]}`
-	srv := meServer(t, drifted)
+// 🔴 A DRIFT IN ANY ONE PROFILE FIELD BLANKS ALL FOUR, AND THAT IS THE DESIGN.
+// The strict parse is all-or-nothing, so an unexpected shape anywhere in the
+// profile drops WhoAmI into parseCoreIdentity — which deliberately parses none
+// of them. The result degrades to "the CLI does not have it" (null) rather than
+// to a fabricated value, and the core identity whoami prints still surfaces.
+//
+// This replaced an earlier design in which Subscriptions was a json.RawMessage
+// specifically so a drift in IT could not blank its siblings. Two measurements
+// killed that: the raw field published whatever the server put in it straight
+// to `--json` stdout (see
+// TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent in internal/cmd),
+// and it did not buy the resilience anyway — as the subtests below show, a
+// drift in tier, status OR isMember blanks the whole profile regardless, so
+// the exemption only ever covered a drift in subscriptions itself.
+//
+// The parameterisation is the point: ONE drifted field per case, each a
+// different one, so the test cannot pass because some other field happened to
+// be the one that failed.
+func TestWhoAmIProfileDriftDegradesTheWholeProfile(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"subscriptions is an object array", `{"id":7,"username":"carol","tokenScope":1,"subject":{"type":"apiKey","id":42},` +
+			`"tier":"gold","status":"active","isMember":true,"subscriptions":[{"tier":"yellow"}]}`},
+		{"tier is a number", `{"id":7,"username":"carol","tokenScope":1,"subject":{"type":"apiKey","id":42},` +
+			`"tier":3,"status":"active","isMember":true,"subscriptions":["yellow"]}`},
+		{"status is an object", `{"id":7,"username":"carol","tokenScope":1,"subject":{"type":"apiKey","id":42},` +
+			`"tier":"gold","status":{"code":2},"isMember":true,"subscriptions":["yellow"]}`},
+		{"isMember is a string", `{"id":7,"username":"carol","tokenScope":1,"subject":{"type":"apiKey","id":42},` +
+			`"tier":"gold","status":"active","isMember":"true","subscriptions":["yellow"]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := meServer(t, tc.body)
+			defer srv.Close()
+
+			id, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
+			if err != nil {
+				t.Fatalf("a profile shape drift must not fail WhoAmI: %v", err)
+			}
+			// The core identity is what the fallback exists to preserve.
+			if id.ID != 7 || id.Username != "carol" {
+				t.Errorf("core identity lost: id=%d user=%q", id.ID, id.Username)
+			}
+			if id.TokenScope == nil || *id.TokenScope != 1 {
+				t.Errorf("tokenScope should survive the fallback: %v", id.TokenScope)
+			}
+			// 🔴 AND THE WHOLE PROFILE MUST BE NIL, NOT PARTIALLY POPULATED.
+			// This is what enforces parseCoreIdentity's "the profile fields are
+			// NOT parsed here on purpose" comment: re-listing them there makes
+			// this assertion fail. A comment is a claim; this is the check.
+			if id.Tier != nil || id.Status != nil || id.IsMember != nil || id.Subscriptions != nil {
+				t.Errorf("the fallback must blank the WHOLE profile, not populate part of it: "+
+					"tier=%v status=%v isMember=%v subscriptions=%v",
+					id.Tier, id.Status, id.IsMember, id.Subscriptions)
+			}
+		})
+	}
+}
+
+// TestDescribeMeBodyNeverLeaksValues pins the error path that used to echo the
+// entire /api/v1/me body — email and all — into an error `main` writes to
+// stderr, where a shell redirect or a CI log keeps it.
+//
+// 🔴 EVERY VALUE IN THE FIXTURE IS A DISTINCT PII-SHAPED MARKER, so the guard
+// cannot pass because the body happened to be boring. Types and key names are
+// what diagnose this failure (a peripheral field that drifted its JSON type),
+// so withholding values costs nothing diagnostically — and the assertions below
+// check that the diagnosis really is still there, not just that the PII is gone.
+func TestDescribeMeBodyNeverLeaksValues(t *testing.T) {
+	const body = `{"id":8753561,"username":"zachlowdenzx","email":"leak@example.test",` +
+		`"emailVerified":true,"tier":"MARKER-TIER","status":"MARKER-STATUS",` +
+		`"subscriptions":["MARKER-SUB"],"stripeCustomerId":"cus_MARKERSTRIPE",` +
+		`"buzzLimit":[{"limit":5000}],"subject":{"type":"apiKey","id":96633526}}`
+	got := describeMeBody([]byte(body))
+
+	for _, leak := range []string{
+		"leak@example.test", "MARKER-TIER", "MARKER-STATUS", "MARKER-SUB",
+		"cus_MARKERSTRIPE", "zachlowdenzx", "8753561", "96633526", "5000",
+		"stripeCustomerId", // an unrecognised key is COUNTED, never named
+	} {
+		if strings.Contains(got, leak) {
+			t.Errorf("describeMeBody leaked %q from the body: %s", leak, got)
+		}
+	}
+	// Positive controls: it must still DIAGNOSE, or "leaked nothing" is just a
+	// description of an empty string.
+	// "+3 unrecognised" is email, emailVerified and stripeCustomerId — the count
+	// is the assertion that unallowlisted keys are COUNTED rather than named,
+	// and it covers the two PII keys specifically.
+	for _, want := range []string{"tier: string", "subscriptions: array", "buzzLimit: array", "+3 unrecognised"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("describeMeBody must still report shape — missing %q in: %s", want, got)
+		}
+	}
+}
+
+// TestWhoAmIUnparseableBodyErrorCarriesNoPII is the same guarantee at the seam:
+// describeMeBody being clean proves nothing if WhoAmI does not use it.
+func TestWhoAmIUnparseableBodyErrorCarriesNoPII(t *testing.T) {
+	// `username` as an object defeats BOTH the strict parse and the core
+	// fallback, which is the only way to reach this branch.
+	const body = `{"id":1,"username":{"first":"ida"},"email":"leak@example.test","emailVerified":true}`
+	srv := meServer(t, body)
 	defer srv.Close()
 
-	id, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
-	if err != nil {
-		t.Fatalf("a shape drift in subscriptions must not fail WhoAmI: %v", err)
+	_, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
+	if err == nil {
+		t.Fatal("a body that defeats both parses must error")
 	}
-	// The collateral is what this test is about: the three siblings must NOT
-	// have been blanked by a fallback the drift would otherwise have triggered.
-	if id.Tier == nil || *id.Tier != "gold" {
-		t.Errorf("tier = %v, want gold — a subscriptions drift took a sibling down with it", id.Tier)
+	if strings.Contains(err.Error(), "leak@example.test") || strings.Contains(err.Error(), "emailVerified") {
+		t.Errorf("the unparseable-body error leaked PII from the response: %v", err)
 	}
-	if id.Status == nil || *id.Status != "active" {
-		t.Errorf("status = %v, want active — a subscriptions drift took a sibling down with it", id.Status)
-	}
-	if id.IsMember == nil || !*id.IsMember {
-		t.Errorf("isMember = %v, want true — a subscriptions drift took a sibling down with it", id.IsMember)
-	}
-	if !strings.HasPrefix(string(id.Subscriptions), `[{`) {
-		t.Errorf("subscriptions = %s, want the drifted object array retained verbatim", string(id.Subscriptions))
+	// Positive control: the error must still be the actionable one, or this
+	// passes for a command that failed somewhere else entirely.
+	if !strings.Contains(err.Error(), "unexpected /api/v1/me response") {
+		t.Fatalf("wrong error reached the assertion, so the verdict is vacuous: %v", err)
 	}
 }
 
@@ -461,8 +549,8 @@ func TestIdentityProfileFieldsAreTriState(t *testing.T) {
 		t.Fatalf("WhoAmI: %v", err)
 	}
 	if id.Tier != nil || id.Status != nil || id.IsMember != nil || id.Subscriptions != nil {
-		t.Errorf("an omitted profile must stay nil, got tier=%v status=%v isMember=%v subscriptions=%s",
-			id.Tier, id.Status, id.IsMember, string(id.Subscriptions))
+		t.Errorf("an omitted profile must stay nil, got tier=%v status=%v isMember=%v subscriptions=%v",
+			id.Tier, id.Status, id.IsMember, id.Subscriptions)
 	}
 }
 
