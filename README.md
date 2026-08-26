@@ -310,7 +310,7 @@ README. For the end-to-end walkthrough, see
 | Command | What it does |
 | --- | --- |
 | `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens). The default scope set grants identity + Apps submit + dev-tunnel and **not** Buzz-spend; `--scopes generate` additively grants generation + Buzz **spend** (needed by `civitai generate` and money-path `dev:live`). `--token <t>` stores a personal API key instead (not combinable with `--scopes`). `--token` with **no value** prints where to create a personal key (`civitai.com/user/account`) and how to re-run — handy when you know you want a personal key but haven't minted one yet. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
-| `civitai whoami [--scopes] [--json]` | Verify the stored token; print the authenticated user **and a Capabilities section** of four rows — credential type (**OAuth login** vs **personal API key**), **Read Buzz balance**, **Spend Buzz**, and **Submit Apps** — decoded from the token's scope, so a money-path dead end (a default OAuth login can't spend) is visible before `dev:live` — and when it can't, the output names the fix for that credential (`login --scopes generate` for an OAuth login, a full-scope key otherwise). **Submit Apps is tri-state**: `yes` / `no` / **`unknown`**, because a personal key is never scope-gated for submit while an OAuth token's answer *is* the scope bit — so an absent mask makes it unknowable, and `unknown` must never be read as `no`. `--scopes` also lists every granted scope; `--json` emits a **curated, not raw** identity object — `username`/`id`/`base_url`/`credentialType`/`scopesKnown`/`canReadBalance`/`canSpend`/`canSubmitApps` (`true`/`false`/**`null`**)/`scopes`/`capabilities` (scriptable). See [What `civitai whoami` reports](#submit--auth). |
+| `civitai whoami [--scopes] [--json]` | Verify the stored token; print the authenticated user, **a `Credential:` section** naming the credential type (**OAuth login** vs **personal API key**), and **a `Capabilities:` section** of three rows — **Read Buzz balance**, **Spend Buzz**, and **Submit Apps** — decoded from the token's scope, so a money-path dead end (a default OAuth login can't spend) is visible before `dev:live` — and when it can't, the output names the fix for that credential (`login --scopes generate` for an OAuth login, a full-scope key otherwise). **Submit Apps is tri-state**: `yes` / `no` / **`unknown`**, because a personal key is never scope-gated for submit while an OAuth token's answer *is* the scope bit — so an absent mask makes it unknowable, and `unknown` must never be read as `no`. `--scopes` also lists every granted scope; `--json` emits a **curated, not raw** identity object — `username`/`id`/`base_url`/`credentialType`/`scopesKnown`/`canReadBalance`/`canSpend`/`canSubmitApps` (`true`/`false`/**`null`**)/`scopes`/`capabilities` (scriptable). See [What `civitai whoami` reports](#submit--auth). |
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**). Needs the BuzzRead scope — a full-scope personal API key or `civitai login --scopes generate`; a **default** OAuth login token can't read it, and gets a clear message naming both fixes. `--json` emits `{blue,green,yellow,total}` (scriptable — handy for before/after diffing a `dev:live` spend). |
 | `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based discovery, not free-text search. **Needs a credential** (`civitai login` or `CIVITAI_TOKEN`): the endpoint keys the visible catalog off your identity, so this is *not* one of the anonymous reads. Cursor-paged. See [Browse the App store](#browse-the-app-store). |
 | `civitai app view <slug> [--json]` | **Show one published App's store detail** (`GET /api/v1/apps/{slug}`) — description, category, rating, gallery, live/external target. **Needs a credential**, same as `app list`. Reads the *public store catalog*, which is a different resource from your own deploy — a not-found here says nothing about `<slug>.civit.ai`. See [Browse the App store](#browse-the-app-store). |
@@ -1207,19 +1207,34 @@ only credential carrying the rest of the Full scope mask.
 
 #### What `civitai whoami` reports
 
-`civitai whoami` prints the authenticated user and a **Capabilities** section of
-**four** rows — credential type, **Read Buzz balance**, **Spend Buzz (AI
-Services)** and **Submit Apps**:
+`civitai whoami` prints the authenticated user, then **two** sections — a
+**Credential** section carrying the one identity *attribute* (the credential
+type), and a **Capabilities** section of **three** *verdicts*: **Read Buzz
+balance**, **Spend Buzz (AI Services)** and **Submit Apps**:
 
 ```
 Logged in as zach (id 1) at https://civitai.com
 
+Credential:
+  Type:                     personal API key
+
 Capabilities:
-  Credential type:          personal API key
   Read Buzz balance:        yes
-  Spend Buzz (AI Services): no
+  Spend Buzz (AI Services): yes
   Submit Apps:              yes
 ```
+
+(That is the WHOLE of stdout for a full-scope personal key. A credential whose
+**Spend Buzz** row says `no` gets one more block appended below, naming the fix
+for *that* credential — `civitai login --scopes generate` for an OAuth login, a
+full-scope personal key otherwise.)
+
+The credential type is deliberately **not** filed under Capabilities: it says
+what the token *is*, not what it may *do*. (Renaming the header to "Granted
+Capabilities" was considered and rejected — `Submit Apps: yes` for a personal
+API key is not a granted bit at all, because the server does not scope-gate
+submit for personal keys; for an OAuth token it genuinely *is* the
+`AppBlocksSubmit` bit.)
 
 **Submit Apps is a tri-state — `yes` / `no` / `unknown` — and `unknown` is not
 `no`.** The server scope-gates submit **only** on OAuth tokens (the opt-in
@@ -1233,10 +1248,24 @@ key is not scope-gated for submit at all. So:
 | OAuth login | **absent** | **`unknown`** — the bit *is* the answer, and the server did not report it |
 | No `subject` in the response | either | **`unknown`** — we cannot tell which gate applies |
 
-When the server reports no scope mask the output says *"(token scope not
-reported by the server — **Buzz** capabilities unknown)"*. That caveat is scoped
-to Buzz on purpose: the Submit Apps row above it may well be a known answer, and
-a blanket "capabilities unknown" would have been false.
+When the server reports no scope mask, the two **Buzz** rows are omitted rather
+than printed as `no`, and the output says *"(token scope not reported by the
+server — **Buzz** capabilities unknown)"*. That caveat sits **inside the
+Capabilities section, below the rows** — it explains why two capability rows are
+missing, and says nothing about the credential's identity. It is scoped to Buzz
+on purpose: the Submit Apps row above it may well be a known answer, and a
+blanket "capabilities unknown" would have been false. So the degraded output is:
+
+```
+Logged in as zach (id 1) at https://civitai.com
+
+Credential:
+  Type:                     OAuth login
+
+Capabilities:
+  Submit Apps:              unknown
+  (token scope not reported by the server — Buzz capabilities unknown)
+```
 
 A `yes` means the credential's **scope** permits submit — not that the account
 is in the author cohort. The remaining author-cohort and not-banned gates are
