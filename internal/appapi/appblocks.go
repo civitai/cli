@@ -273,21 +273,63 @@ func (id *Identity) CanReadBuzz() bool { return id.hasScope(ScopeBuzzRead) }
 // subject.type == "oauth", so any personal key clears it. (The remaining
 // author-cohort / not-banned gates are server-side and not visible here, so a
 // "yes" means the credential's SCOPE permits submit, not that the account is in
-// the author cohort.) An unknown/absent credential is treated as false.
-func (id *Identity) CanSubmitApps() bool {
-	if id.IsOAuth() {
-		return id.hasScope(ScopeAppBlocksSubmit)
+// the author cohort.)
+//
+// 🔴 THE RESULT IS TRI-STATE, AND THE POINTER IS WHY. There are THREE answers,
+// not two — yes, no, and *we cannot tell* — and this is the same discriminator
+// shape as AGENTS.md item 9's `views.unavailable`
+// (claudedocs/decisions/09-views-unavailable-discriminator.md): read that item
+// for the rationale rather than re-deriving it here. A plain `bool` collapses
+// "cannot tell" into "no", which is a false negative stated as fact — measured
+// on `{"username":…,"id":…,"subject":{"type":"oauth","id":"a"}}` (an OAuth
+// credential whose `tokenScope` the server omitted), where the bool version
+// emitted `"canSubmitApps": false` while the truth was unknowable. The pointer
+// return also makes the third state impossible for a caller to ignore: it
+// cannot be handed to a yes/no renderer without an explicit nil branch, and it
+// marshals straight to JSON `null`.
+//
+// The three states, exactly:
+//
+//   - non-nil true/false — an OAuth credential with a KNOWN mask (the bit
+//     decides), or any personal API key (never scope-gated, so always true).
+//   - nil — an OAuth credential whose scope mask is absent (the bit is the
+//     whole answer and we do not have it), or a credential with no `subject`
+//     at all (CredentialType() == "unknown": we cannot even tell whether the
+//     OAuth gate applies).
+//
+// Callers must branch on nil and say "unknown"; they must never print "no".
+func (id *Identity) CanSubmitApps() *bool {
+	switch {
+	case id.IsOAuth():
+		if !id.ScopeKnown() {
+			return nil // the bit is the whole answer, and it is not reported.
+		}
+		return boolPtr(id.hasScope(ScopeAppBlocksSubmit))
+	case id.CredentialType() == "personal API key":
+		// Not scope-gated for submit at all, so this holds with or without a mask.
+		return boolPtr(true)
+	default:
+		// No subject: we cannot tell which gate applies, let alone its answer.
+		return nil
 	}
-	return id.CredentialType() == "personal API key"
 }
 
-// DecodeScopes returns the names of every set scope bit (low → high). A nil
-// (unknown) mask returns nil.
+func boolPtr(b bool) *bool { return &b }
+
+// DecodeScopes returns the names of every set scope bit (low → high).
+//
+// 🔴 nil AND EMPTY ARE DIFFERENT ANSWERS, so the field is self-describing when
+// it reaches a `--json` surface: a nil (unknown) mask returns nil, while a mask
+// that is KNOWN and zero returns a non-nil empty slice. Collapsing the two made
+// `whoami --json` emit `"scopes": null` in two unrelated states — scope
+// unreported, and a real key with no bits set — which no consumer could tell
+// apart. Go callers see len 0 either way; only the JSON encoding differs
+// (`null` vs `[]`).
 func (id *Identity) DecodeScopes() []string {
 	if id.TokenScope == nil {
 		return nil
 	}
-	var out []string
+	out := []string{}
 	for _, s := range scopeBits {
 		if *id.TokenScope&s.bit != 0 {
 			out = append(out, s.name)
