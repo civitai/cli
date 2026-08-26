@@ -21,10 +21,21 @@ func newWhoAmICmd() *cobra.Command {
 		Use:   "whoami",
 		Short: "Verify your stored API token and its capabilities",
 		Long: `Verify the stored API token by calling the Civitai API and printing the
-authenticated user PLUS a short capability summary: the credential type (OAuth
-login vs personal API key), whether it can read your Buzz balance, and whether
-it can spend Buzz. The money-path dead end — an OAuth ` + "`civitai login`" + ` token
-can submit/withdraw but cannot spend Buzz — is surfaced here, before dev:live.
+authenticated user, then TWO sections.
+
+Credential: one identity ATTRIBUTE — the credential type (OAuth login vs
+personal API key). It is not a capability, which is why it no longer sits with
+them.
+
+Capabilities: three VERDICTS about what this token may do — whether it can read
+your Buzz balance, whether it can spend Buzz, and whether it can submit Apps.
+Submit Apps is TRI-STATE — yes / no / unknown — and unknown is the CLI declining
+to answer (an OAuth token whose scope mask the server did not report, or a
+response with no subject), never a "no". When the scope mask is absent the two
+Buzz rows are omitted rather than printed as "no".
+
+The money-path dead end — an OAuth ` + "`civitai login`" + ` token can submit/withdraw
+but cannot spend Buzz — is surfaced here, before dev:live.
 
 Reads the token from config or CIVITAI_TOKEN.`,
 		Example: `  civitai whoami
@@ -77,10 +88,20 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			// Preserve this first line verbatim (scripts + tests depend on it).
 			fmt.Fprintf(out, "Logged in as %s (id %d) at %s\n", ui.Bold(id.Username), id.ID, cfg.BaseURL())
 
+			// 🔴 TWO SECTIONS, BECAUSE THE CREDENTIAL TYPE IS NOT A CAPABILITY.
+			// It is an identity ATTRIBUTE — what the token IS — while the rows
+			// below are VERDICTS about what it may do. Renaming the one header to
+			// "Granted Capabilities" was considered and rejected: `Submit Apps:
+			// yes` for a personal API key is not a granted bit at all (the server
+			// does not scope-gate submit for personal keys — nothing was granted,
+			// the gate simply does not apply); for an OAuth token it genuinely IS
+			// the ScopeAppBlocksSubmit bit. So the split is by KIND OF CLAIM.
+			fmt.Fprintln(out, "\n"+ui.Bold("Credential:"))
+			fmt.Fprintln(out, whoamiRow("Type:", id.CredentialType()))
+
 			// A short capability summary so the money-path dead end (an OAuth
 			// login can't spend) is visible BEFORE a dev:live run.
 			fmt.Fprintln(out, "\n"+ui.Bold("Capabilities:"))
-			fmt.Fprintf(out, "  Credential type:          %s\n", id.CredentialType())
 			// 🔴 THE SUBMIT ROW IS NOT GATED ON ScopeKnown(). A personal API key
 			// is not scope-gated for submit at all, so its answer is KNOWN even
 			// when the server reports no mask — the old early return withheld a
@@ -88,17 +109,20 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			// prints in every branch; only its VALUE degrades, and it degrades to
 			// "unknown", never to "no".
 			submitRow := func() {
-				fmt.Fprintf(out, "  Submit Apps:              %s\n", yesNoUnknown(canSubmit))
+				fmt.Fprintln(out, whoamiRow("Submit Apps:", yesNoUnknown(canSubmit)))
 			}
 			if !id.ScopeKnown() {
 				submitRow()
 				// Scoped to BUZZ deliberately: the submit row above may well be
-				// known, so "capabilities unknown" would have been false.
+				// known, so "capabilities unknown" would have been false. It sits
+				// INSIDE Capabilities and BELOW the rows because it explains why
+				// two capability rows are missing — it says nothing about the
+				// credential's identity, so it does not belong in that section.
 				fmt.Fprintln(out, "  "+ui.Dim("(token scope not reported by the server — Buzz capabilities unknown)"))
 				return nil
 			}
-			fmt.Fprintf(out, "  Read Buzz balance:        %s\n", yesNo(id.CanReadBuzz()))
-			fmt.Fprintf(out, "  Spend Buzz (AI Services): %s\n", yesNo(id.CanSpendBuzz()))
+			fmt.Fprintln(out, whoamiRow("Read Buzz balance:", yesNo(id.CanReadBuzz())))
+			fmt.Fprintln(out, whoamiRow("Spend Buzz (AI Services):", yesNo(id.CanSpendBuzz())))
 			submitRow()
 
 			if showScopes {
@@ -142,6 +166,29 @@ Reads the token from config or CIVITAI_TOKEN.`,
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit a stable, curated identity object (scriptable)")
 	cmd.Flags().BoolVar(&showScopes, "scopes", false, "also print the full decoded scope list")
 	return cmd
+}
+
+// whoamiLabelColumn is the width the label column is padded to, INCLUDING the
+// trailing colon and the single space before the value.
+//
+// 🔴 ONE CONSTANT, TWO SECTIONS. The value column must line up across BOTH the
+// `Credential:` block and the `Capabilities:` block even though `Type:` is far
+// shorter than the labels it used to share a block with — so the padding is
+// computed, never typed per row. The widest label is
+// "Spend Buzz (AI Services):" (25 bytes, colon included); +1 separating
+// space = 26.
+const whoamiLabelColumn = 26
+
+// whoamiRow renders one `  <label><pad><value>` line of either section.
+//
+// 🔴 THE LABEL IS PASSED WITH ITS COLON, ON PURPOSE. `README.md`'s
+// Troubleshooting index quotes `Submit Apps:` as a symptom, and
+// TestREADMETroubleshootingSymptomsExistInTheSource proves that string still
+// exists in non-test source. Appending the colon here instead would leave the
+// emitted label as `"Submit Apps"`, and that guard would then be satisfied only
+// by a COMMENT — green while the row it indexes had drifted.
+func whoamiRow(label, value string) string {
+	return fmt.Sprintf("  %-*s%s", whoamiLabelColumn, label, value)
 }
 
 // yesNo renders a KNOWN capability bit as "yes"/"no".

@@ -245,9 +245,12 @@ func TestWhoAmIJSON(t *testing.T) {
 	if got.BaseURL != srv.URL {
 		t.Errorf("base_url = %q, want %q", got.BaseURL, srv.URL)
 	}
-	// JSON mode must not leak the human prose.
-	if strings.Contains(out, "Logged in as") || strings.Contains(out, "Capabilities:") {
-		t.Errorf("--json should not emit human text: %s", out)
+	// JSON mode must not leak the human prose. Both section headers are named:
+	// listing only one goes vacuous the moment that one is renamed.
+	for _, human := range []string{"Logged in as", "Credential:", "Capabilities:"} {
+		if strings.Contains(out, human) {
+			t.Errorf("--json should not emit human text %q: %s", human, out)
+		}
 	}
 }
 
@@ -276,7 +279,9 @@ func TestWhoAmICredentialTypeOAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("whoami: %v", err)
 	}
-	if !strings.Contains(out, "Credential type:") || !strings.Contains(out, "OAuth login") {
+	// The credential type lives in its own `Credential:` section since the
+	// split; whoami_human_block_test.go pins that shape whole.
+	if !strings.Contains(out, "Credential:") || !strings.Contains(out, "  Type:                     OAuth login") {
 		t.Errorf("should show credential type OAuth login: %s", out)
 	}
 	if !strings.Contains(out, "Spend Buzz (AI Services): no") {

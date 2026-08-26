@@ -200,7 +200,13 @@ func TestWhoAmIJSONIsTheWholeOfStdout(t *testing.T) {
 	if _, err := dec.Token(); err != io.EOF {
 		t.Fatalf("stdout carries more than the payload:\n%s", stdout)
 	}
-	for _, glyph := range []string{"Logged in as", "Capabilities:", "\x1b["} {
+	// 🔴 THIS LIST IS THE NEGATIVE CONTROL, AND IT GOES VACUOUS ON A RENAME.
+	// Every entry must be a marker the HUMAN surface really emits today —
+	// a header that no longer exists is a string `--json` can never carry, so
+	// the guard would pass while testing nothing. `whoami` now prints TWO
+	// section headers, so BOTH are listed; `whoami_human_block_test.go` pins
+	// the rendering they come from, which is what keeps them real.
+	for _, glyph := range []string{"Logged in as", "Credential:", "Capabilities:", "\x1b["} {
 		if strings.Contains(stdout, glyph) {
 			t.Errorf("--json stdout carries the human marker %q:\n%s", glyph, stdout)
 		}
@@ -211,94 +217,14 @@ func TestWhoAmIJSONIsTheWholeOfStdout(t *testing.T) {
 // The two surfaces must agree about what is KNOWABLE.
 // ---------------------------------------------------------------------------
 
-// TestWhoAmICapabilityMatrixHumanSurface drives the same four states as the
-// `--json` pin above through the HUMAN surface, because the defect was
-// precisely that the two surfaces disagreed.
-//
-// 🔴 THE REGRESSION IS THE personal-key-with-ABSENT-mask ROW. The old code
-// returned early on `!ScopeKnown()` and printed no Submit Apps row at all,
-// while `--json` published `canSubmitApps: true` for the same body — the human
-// surface withholding a fact the command was holding. The early return was
-// keyed on scope, but a personal key's submit answer does not depend on scope.
-func TestWhoAmICapabilityMatrixHumanSurface(t *testing.T) {
-	const (
-		scopeUserRead        = 1 << 0
-		scopeAIServicesWrite = 1 << 15
-		scopeBuzzRead        = 1 << 16
-		scopeAppBlocksSubmit = 1 << 25
-	)
-	cases := []struct {
-		name    string
-		body    string
-		want    []string
-		notWant []string
-	}{{
-		name: "personal key, known mask",
-		body: fmt.Sprintf(`{"username":"alma","id":11,"tokenScope":%d,"subject":{"type":"apiKey","id":"k"}}`,
-			scopeUserRead|scopeBuzzRead),
-		want: []string{
-			"Credential type:          personal API key",
-			"Read Buzz balance:        yes",
-			"Spend Buzz (AI Services): no",
-			"Submit Apps:              yes",
-		},
-		notWant: []string{"Submit Apps:              unknown", "not reported by the server"},
-	}, {
-		// 🔴 THE ROW MUST APPEAR EVEN THOUGH THE BUZZ CAPABILITIES ARE UNKNOWN.
-		name: "personal key, absent mask",
-		body: `{"username":"bertil","id":22,"subject":{"type":"apiKey","id":"k"}}`,
-		want: []string{
-			"Credential type:          personal API key",
-			"Submit Apps:              yes",
-			"(token scope not reported by the server — Buzz capabilities unknown)",
-		},
-		// The Buzz rows are genuinely unknowable here, so they must NOT print a
-		// "no" — that is the pre-existing behaviour this change preserves.
-		notWant: []string{"Read Buzz balance:", "Spend Buzz (AI Services):"},
-	}, {
-		name: "oauth, known mask",
-		body: fmt.Sprintf(`{"username":"cesar","id":33,"tokenScope":%d,"subject":{"type":"oauth","id":"a"}}`,
-			scopeAIServicesWrite|scopeAppBlocksSubmit),
-		want: []string{
-			"Credential type:          OAuth login",
-			"Read Buzz balance:        no",
-			"Spend Buzz (AI Services): yes",
-			"Submit Apps:              yes",
-		},
-		notWant: []string{"Submit Apps:              unknown"},
-	}, {
-		// 🔴 "unknown", NEVER "no". The mask IS the answer for an OAuth
-		// credential, and the server did not report it.
-		name: "oauth, absent mask",
-		body: `{"username":"david","id":44,"subject":{"type":"oauth","id":"a"}}`,
-		want: []string{
-			"Credential type:          OAuth login",
-			"Submit Apps:              unknown",
-			"(token scope not reported by the server — Buzz capabilities unknown)",
-		},
-		notWant: []string{"Submit Apps:              no"},
-	}}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			setupWhoAmI(t, tc.body)
-			stdout, _, err := run(t, "whoami")
-			if err != nil {
-				t.Fatalf("whoami: %v", err)
-			}
-			for _, w := range tc.want {
-				if !strings.Contains(stdout, w) {
-					t.Errorf("human output missing %q:\n%s", w, stdout)
-				}
-			}
-			for _, n := range tc.notWant {
-				if strings.Contains(stdout, n) {
-					t.Errorf("human output must NOT contain %q:\n%s", n, stdout)
-				}
-			}
-		})
-	}
-}
+// The human-surface half of this pairing — the same states driven through the
+// rendered block, because the #492 defect was precisely that the two surfaces
+// DISAGREED (the old code returned early on `!ScopeKnown()` and printed no
+// Submit Apps row at all, while `--json` published `canSubmitApps: true` for
+// the same body) — lives in whoami_human_block_test.go. It moved there when it
+// was upgraded from a want/notWant substring matrix to whole-block equality,
+// which subsumes every assertion the matrix made and additionally sees the
+// section a row lands in and the column its value starts at.
 
 // TestWhoAmICaveatIsScopedToBuzz: the degraded-scope caveat used to say
 // "capabilities unknown", full stop. With the Submit Apps row now printing
