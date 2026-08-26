@@ -236,8 +236,15 @@ func whoamiGoldenCases() []whoamiGoldenCase {
 			"Scopes (3): UserRead, AIServicesWrite, BuzzRead\n",
 	}, {
 		// ---- 8: --scopes on a zero mask, plus the can't-spend guidance -------
+		// 🔴 THE PROFILE IS IN THIS BODY FOR THE EMPTY-SCOPE-LIST BRANCH, which
+		// is NOT the same statement as case 7's scope list. The previous version
+		// of the ledger used the marker `"Scopes ("` for both, so this branch
+		// read as covered by case 7 — and a nil-guarded row printed between
+		// `Submit Apps:` and `Scopes (0): (none granted)` survived the whole
+		// repo. Two `Fprintf` sites behind one substring.
 		name: "--scopes, zero mask",
-		body: `{"username":"zach","id":1,"tokenScope":0,"subject":{"type":"apiKey","id":"k"}}`,
+		body: `{"username":"zach","id":1,"tokenScope":0,"subject":{"type":"apiKey","id":"k"},` +
+			profileFields,
 		args: []string{"--scopes"},
 		want: "Logged in as zach (id 1) at %s\n" +
 			"\n" +
@@ -346,11 +353,7 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 			if stdout != want {
 				t.Errorf("the rendered block changed.\n--- got ---\n%s\n--- want ---\n%s", stdout, want)
 			}
-			// 🔴 STDERR IS PART OF THE PIN, BECAUSE A GOLDEN ON STDOUT ALONE IS
-			// WALKABLE BY WRITING TO THE OTHER STREAM. Measured: a profile row
-			// sent to ErrOrStderr renders in the user's terminal exactly like a
-			// stdout row and left every case below green. A successful `whoami`
-			// says nothing on stderr, so equality with "" is the whole contract.
+			// See the 🔴 STDERR paragraph on this function's doc comment.
 			if stderr != "" {
 				t.Errorf("a successful whoami must print nothing to stderr, got:\n%s", stderr)
 			}
@@ -358,21 +361,21 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 	}
 }
 
-// renderRegions maps each region of `whoami`'s human output to a substring that
-// appears in stdout IF AND ONLY IF that region rendered. They are observations,
-// not names: a region is "covered" when a case's real output contains its
-// marker, so the set cannot drift from the code the way a hand-kept list does.
-var renderRegions = map[string]string{
-	"identity line":               "Logged in as",
-	"Credential section":          "Credential:",
-	"Capabilities section":        "Capabilities:",
-	"scope-absent caveat":         "token scope not reported by the server",
-	"known-mask capability rows":  "Read Buzz balance:",
-	"--scopes block":              "Scopes (",
-	"can't-spend guidance":        "can't spend Buzz",
-	"guidance, OAuth fork":        "re-login, additively granting",
-	"guidance, personal-key fork": "a FULL-SCOPE personal API key",
+// outputShape normalises one printed line to the BRANCH that produced it,
+// discarding only what varies between fixtures of the same branch: the test
+// server's URL, numeric ids and counts, and a padded row's value (`yes`/`no`/
+// `unknown` come from one `yesNo` call site). Everything else is kept, so two
+// lines share a shape only when the same statement printed both.
+func outputShape(line, baseURL string) string {
+	s := strings.ReplaceAll(line, baseURL, "<url>")
+	s = digitRun.ReplaceAllString(s, "N")
+	if m := labelledRow.FindStringSubmatch(s); m != nil {
+		return "  " + m[1] // the label alone; the value is fixture-dependent
+	}
+	return s
 }
+
+var digitRun = regexp.MustCompile(`\d+`)
 
 // TestGoldenCarriesTheProfileOnEveryRenderPath is the LEDGER behind the fixture
 // spread, and it exists because that spread is load-bearing prose.
@@ -383,55 +386,66 @@ var renderRegions = map[string]string{
 // without profile fields never fires the `id.Tier != nil` row a mutant would
 // add. So a tidy-up of a fixture silently reopens the gap the spread closes.
 //
-// 🔴 IT OBSERVES OUTPUT, IT DOES NOT READ SOURCE — AND THE FIRST VERSION DID.
-// That version matched case NAMES in this file's own text, and it was wrong in
-// three measured ways: its count matched the literal inside its own assertion
-// (six uses of a five-use fixture); an indented COMMENT ending in the
-// identifier inflated the count; and it was coupled to gofmt's key alignment,
-// so adding a longer field to the case struct re-padded `name:` and failed with
-// "a rename broke the ledger" when nothing was renamed. Worse, it could not see
-// the failure that matters most: RETUNING a case's body so it stops reaching
-// its branch (change case 6's `tokenScope` and it no longer renders the
-// guidance) left the ledger green with the path uncovered.
+// 🔴 THERE IS NO LIST OF RENDER PATHS HERE, AND THAT IS THE POINT — THREE
+// CONSECUTIVE VERSIONS OF THIS GUARD GOT THE LIST WRONG. First it read case
+// names out of this file's own source (matching the literal in its own
+// assertion, matching indented comments, and coupled to gofmt's key alignment).
+// Then it observed output through a hand-kept map of named regions — better,
+// but the map was STILL a restatement of the code, and still incomplete: its
+// `--scopes` marker was `"Scopes ("`, which matches both `Scopes (N): …` and
+// `Scopes (0): (none granted)`, so the empty-list branch read as covered by a
+// case that never rendered it. A nil-guarded row there survived the whole repo.
 //
-// Driving the cases and looking at what they actually PRINT has none of those
-// problems. A retuned body stops producing its region's marker, so the region
-// goes uncovered and this fails — which is the whole point.
+// Every one of those failures was the same mistake — a human enumerating the
+// branches. So this enumerates nothing. It derives the branch set from what the
+// cases actually PRINT: the union of line shapes produced by profile-carrying
+// bodies must equal the union produced by ALL bodies. Any line only a
+// profile-less case can produce is, by construction, a place an
+// `if id.Tier != nil` row could hide — whether or not anyone thought of it.
+//
+// A new branch in whoami.go therefore needs no edit here at all; it needs a
+// golden case, and if that case has no profile the test names the exact line.
 func TestGoldenCarriesTheProfileOnEveryRenderPath(t *testing.T) {
-	type coverage struct{ any, withProfile bool }
-	seen := map[string]*coverage{}
-	for name := range renderRegions {
-		seen[name] = &coverage{}
-	}
+	all, withProfile := map[string]string{}, map[string]bool{}
 
 	for _, tc := range whoamiGoldenCases() {
-		t.Run("observe/"+tc.name, func(t *testing.T) {
-			stdout, _, _ := runWhoAmIGoldenCase(t, tc)
-			hasProfile := strings.Contains(tc.body, `"tier"`)
-			for name, marker := range renderRegions {
-				if strings.Contains(stdout, marker) {
-					seen[name].any = true
-					seen[name].withProfile = seen[name].withProfile || hasProfile
-				}
+		// 🔴 NOT SUBTESTS. A t.Fatalf inside one would skip its contribution to
+		// the sets below, and the outer verdict would then blame a "stale
+		// marker" for what is really a broken fixture — a wrong diagnosis
+		// printed after the right one.
+		stdout, _, baseURL := runWhoAmIGoldenCase(t, tc)
+		// The proxy must match the guard a mutant would write. `id.Tier != nil`
+		// needs `tier` to have PARSED, so a body is profile-carrying only when
+		// it embeds the fixture whole — checking one key would count a body with
+		// `"tier":null`, or a drifted body that degrades every field to nil.
+		carries := strings.Contains(tc.body, profileFields)
+		for _, line := range strings.Split(stdout, "\n") {
+			if line == "" {
+				continue
 			}
-		})
+			shape := outputShape(line, baseURL)
+			if _, ok := all[shape]; !ok {
+				all[shape] = tc.name
+			}
+			if carries {
+				withProfile[shape] = true
+			}
+		}
 	}
 
-	for _, name := range slices.Sorted(maps.Keys(renderRegions)) {
-		c := seen[name]
-		// 🔴 POSITIVE CONTROL ON THE MARKER ITSELF. A region no case renders is
-		// indistinguishable from a region whose marker string went stale after a
-		// reword — and a stale marker would make the coverage check below pass
-		// for a region nothing tests. Fail loudly rather than silently pass.
-		if !c.any {
-			t.Errorf("no golden case renders the %q region (marker %q) — either the marker went stale "+
-				"after a reword, or the region lost its only case", name, renderRegions[name])
-			continue
-		}
-		if !c.withProfile {
-			t.Errorf("the %q region is rendered by golden cases, but by NONE whose body carries the "+
-				"account profile — an output row added there behind `if id.Tier != nil` would ship "+
-				"with every golden green. Add profileFields to a case that reaches it.", name)
+	// Positive control: a run that printed nothing, or fixtures that all
+	// collapsed to one shape, would satisfy the subset check vacuously.
+	if len(all) < 10 {
+		t.Fatalf("only %d distinct output shapes across every golden case — the cases are not "+
+			"exercising the command, so the coverage verdict below would be vacuous", len(all))
+	}
+
+	for _, shape := range slices.Sorted(maps.Keys(all)) {
+		if !withProfile[shape] {
+			t.Errorf("the line %q is rendered only by golden case %q, whose body does NOT carry the "+
+				"account profile. An output row added at that statement behind `if id.Tier != nil` "+
+				"would ship with every golden green. Add profileFields to a case that reaches it.",
+				shape, all[shape])
 		}
 	}
 }
