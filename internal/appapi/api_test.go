@@ -412,8 +412,8 @@ func TestIdentityHasNoEmailField(t *testing.T) {
 	}
 }
 
-// TestWhoAmIProfileDriftIsIsolated covers the reason Subscriptions is
-// json.RawMessage while its three siblings are typed pointers.
+// TestWhoAmIProfileDriftDegradesTheWholeProfile covers what an unexpected shape
+// anywhere in the account profile does.
 //
 // 🔴 A DRIFT IN ANY ONE PROFILE FIELD BLANKS ALL FOUR, AND THAT IS THE DESIGN.
 // The strict parse is all-or-nothing, so an unexpected shape anywhere in the
@@ -509,6 +509,38 @@ func TestDescribeMeBodyNeverLeaksValues(t *testing.T) {
 	for _, want := range []string{"tier: string", "subscriptions: array", "buzzLimit: array", "+3 unrecognised"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("describeMeBody must still report shape — missing %q in: %s", want, got)
+		}
+	}
+
+	// 🔴 THE "no recognised keys" BRANCH IS THE THIRD BODY-ECHO SITE IN THIS
+	// FUNCTION, and it was uncovered until this case: a mutant replacing it with
+	// `desc = string(raw)` survived the whole battery. It is not reachable from
+	// WhoAmI today (every key parseCoreIdentity can choke on is allowlisted, so
+	// `named` is never empty there) — which is exactly why only a direct call
+	// can pin it, and why leaving it unpinned bets on that staying true.
+	if unnamed := describeMeBody([]byte(`{"email":"leak@example.test","stripeId":"cus_MARKER"}`)); //
+	strings.Contains(unnamed, "leak@example.test") || strings.Contains(unnamed, "cus_MARKER") {
+		t.Errorf("the no-recognised-keys branch echoed the body: %s", unnamed)
+	} else if !strings.Contains(unnamed, "no recognised keys") || !strings.Contains(unnamed, "+2 unrecognised") {
+		t.Errorf("the no-recognised-keys branch must still report a count, got: %s", unnamed)
+	}
+
+	// A JSON null under an allowlisted key must report as "null", not fall
+	// through to "number" — deleting that case is otherwise invisible, and the
+	// body is reachable (a bad `username` type with `tier:null` gets here).
+	if k := describeMeBody([]byte(`{"tier":null,"isMember":false,"id":7}`)); !strings.Contains(k, "tier: null") {
+		t.Errorf("a JSON null must be reported as null, got: %s", k)
+	} else if !strings.Contains(k, "isMember: bool") || !strings.Contains(k, "id: number") {
+		t.Errorf("bool and number must not collapse into one kind, got: %s", k)
+	}
+
+	// The key list is sorted, so the message is deterministic. Go randomises map
+	// iteration, so dropping the sort makes this error message differ run to run
+	// — which nothing else here would notice.
+	for range 8 {
+		if k := describeMeBody([]byte(`{"tier":"x","status":"y","id":1,"username":"u"}`)); //
+		k != "keys id: number, status: string, tier: string, username: string" {
+			t.Fatalf("describeMeBody must be deterministic, got: %s", k)
 		}
 	}
 }

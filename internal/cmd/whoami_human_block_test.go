@@ -37,12 +37,43 @@ const cantSpendGuidance = "\n" +
 // it does not belong in the `Credential:` section.
 const scopeCaveat = "  (token scope not reported by the server — Buzz capabilities unknown)\n"
 
+// profileFields is the tail of a /api/v1/me body carrying the full account
+// profile plus the two PII keys the CLI withholds. Bodies that end with it
+// render IDENTICALLY to bodies without it — that is the property being pinned.
+const profileFields = `"tier":"silver","status":"active","isMember":true,` +
+	`"subscriptions":["yellow"],"email":"zach@example.test","emailVerified":true}`
+
 // TestWhoAmIHumanBlockIsPinnedWhole compares the ENTIRE stdout of the human
 // surface against a literal, for every state in the numbered list below. The
 // cases are numbered in their own comments; count them there rather than
 // trusting a total written here — this sentence said "six states" while the
 // list held eight, which is what a count maintained in parallel with the thing
 // it counts always does.
+//
+// 🔴 WHICH BODY CARRIES THE PROFILE, AND WHY — A GOLDEN ONLY CLOSES ADDITION ON
+// THE BRANCHES ITS FIXTURES EXECUTE. `whoami` renders through FOUR paths, and a
+// profile row added to any of them ships to a real user. Measured, one mutant
+// per path, each a nil-guarded `Plan:` row: with the profile only in case 9,
+// the Credential-section mutant was KILLED and the guidance-block, early-return
+// and `--scopes` mutants all SURVIVED the whole `internal/cmd` package. A body
+// without profile fields cannot see them, because the `id.Tier != nil` guard
+// never fires. So `profileFields` is now on one body per path:
+//
+//	Credential section          -> case 9
+//	`!ScopeKnown()` early return -> case 4 (oauth, absent mask)
+//	can't-spend guidance         -> case 6 (known mask is zero)
+//	`--scopes` block             -> case 7 (--scopes, known mask)
+//
+// The loop also pins STDERR empty, because a golden on stdout alone is walked
+// by writing the row to the other stream — which reaches the terminal just the
+// same. Adding a render path to whoami.go means adding it to this list.
+//
+// 🔴 THIS REPLACED A BANNED-SUBSTRING LEDGER, AND THE TRADE IS DELIBERATE. The
+// ledger caught the guidance-block row (it listed "silver") but lost to a
+// paraphrase (`Member: yes` pays no banned word) and to a case change
+// (`ACTIVE` evades the lowercase literal) — AGENTS item 28 records that shape
+// losing three times. The golden loses to neither, and the fixture spread above
+// is what recovers the branch coverage the ledger had.
 //
 // 🔴 RED AT origin/main FOR EVERY CASE. Before this change the command printed
 // ONE `Capabilities:` section whose first row was `Credential type:` — an
@@ -114,8 +145,13 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 	}, {
 		// ---- 4: OAuth + ABSENT mask ------------------------------------------
 		// 🔴 "unknown", never "no".
+		// 🔴 THE PROFILE IS IN THIS BODY TO COVER THE EARLY-RETURN BRANCH.
+		// See "which body carries the profile, and why" above the case list:
+		// case 9's body never reaches the `!ScopeKnown()` return, so a profile
+		// row added inside it renders for a real user and no golden sees it.
 		name: "oauth, absent mask",
-		body: `{"username":"zach","id":1,"subject":{"type":"oauth","id":"a"}}`,
+		body: `{"username":"zach","id":1,"subject":{"type":"oauth","id":"a"},` +
+			profileFields,
 		want: "Logged in as zach (id 1) at %s\n" +
 			"\n" +
 			"Credential:\n" +
@@ -142,8 +178,12 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 		// ---- 6: KNOWN mask == 0 ----------------------------------------------
 		// The discriminator case: the mask WAS reported and had no bits, so the
 		// Buzz rows are a measured `no` — no caveat, and the guidance fires.
+		// 🔴 THE PROFILE IS IN THIS BODY TO COVER THE can't-spend GUIDANCE
+		// BLOCK — the branch a profile row is most tempting to land in, since
+		// it is the one that already talks about the account.
 		name: "known mask is zero",
-		body: `{"username":"zach","id":1,"tokenScope":0,"subject":{"type":"apiKey","id":"k"}}`,
+		body: `{"username":"zach","id":1,"tokenScope":0,"subject":{"type":"apiKey","id":"k"},` +
+			profileFields,
 		want: "Logged in as zach (id 1) at %s\n" +
 			"\n" +
 			"Credential:\n" +
@@ -156,9 +196,10 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 			cantSpendGuidance,
 	}, {
 		// ---- 7: --scopes, so the split is pinned with the scope list too -----
+		// 🔴 THE PROFILE IS IN THIS BODY TO COVER THE `--scopes` BLOCK.
 		name: "--scopes, known mask",
-		body: fmt.Sprintf(`{"username":"zach","id":1,"tokenScope":%d,"subject":{"type":"apiKey","id":"k"}}`,
-			scopeUserRead|scopeAIServicesWrite|scopeBuzzRead),
+		body: fmt.Sprintf(`{"username":"zach","id":1,"tokenScope":%d,"subject":{"type":"apiKey","id":"k"},%s`,
+			scopeUserRead|scopeAIServicesWrite|scopeBuzzRead, profileFields),
 		args: []string{"--scopes"},
 		want: "Logged in as zach (id 1) at %s\n" +
 			"\n" +
@@ -213,8 +254,7 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 		// not an account dump. #377 option (b) is scoped to `--json`.
 		name: "full account profile present, human surface unchanged",
 		body: `{"username":"zach","id":1,"tokenScope":33554431,"subject":{"type":"apiKey","id":"k"},` +
-			`"tier":"silver","status":"active","isMember":true,"subscriptions":["yellow"],` +
-			`"email":"zach@example.test","emailVerified":true}`,
+			profileFields,
 		want: "Logged in as zach (id 1) at %s\n" +
 			"\n" +
 			"Credential:\n" +
@@ -229,13 +269,21 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := setupWhoAmI(t, tc.body)
-			stdout, _, err := run(t, append([]string{"whoami"}, tc.args...)...)
+			stdout, stderr, err := run(t, append([]string{"whoami"}, tc.args...)...)
 			if err != nil {
 				t.Fatalf("whoami %v: %v", tc.args, err)
 			}
 			want := fmt.Sprintf(tc.want, srv.URL)
 			if stdout != want {
 				t.Errorf("the rendered block changed.\n--- got ---\n%s\n--- want ---\n%s", stdout, want)
+			}
+			// 🔴 STDERR IS PART OF THE PIN, BECAUSE A GOLDEN ON STDOUT ALONE IS
+			// WALKABLE BY WRITING TO THE OTHER STREAM. Measured: a profile row
+			// sent to ErrOrStderr renders in the user's terminal exactly like a
+			// stdout row and left every case below green. A successful `whoami`
+			// says nothing on stderr, so equality with "" is the whole contract.
+			if stderr != "" {
+				t.Errorf("a successful whoami must print nothing to stderr, got:\n%s", stderr)
 			}
 		})
 	}

@@ -133,8 +133,8 @@ Re-derive it at tag time rather than trusting this number:
 git log v0.1.100..v0.1.101 --pretty='%s' | grep -cvE '^(docs|test|chore)(\(.*\))?:'
 ```
 
-At `af5e98f` that command returned **2**; #498 has landed since, so re-run it
-rather than reusing that number.
+At `af5e98f` that command returned **2**. #498 is open and will make it 3 once
+merged, so re-run it at the tag rather than reusing either number.
 
 ### The ones that should appear
 
