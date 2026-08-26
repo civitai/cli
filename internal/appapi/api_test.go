@@ -183,6 +183,68 @@ func TestIdentityScopeUnknown(t *testing.T) {
 	}
 }
 
+// TestCanSubmitAppsIsTriState pins the THREE states of the submit predicate at
+// its source, so the rule lives in one place and both `whoami` surfaces read
+// the same answer rather than re-deriving it.
+//
+// 🔴 THE nil CASES ARE THE REGRESSION. The predicate used to return a plain
+// bool, so an OAuth credential with an ABSENT mask reported `false` — a false
+// negative stated as fact, since for OAuth the mask bit IS the answer. Same for
+// a credential with no `subject` at all: the CLI cannot tell whether the OAuth
+// gate applies, so it cannot answer. Neither may ever render as "no".
+func TestCanSubmitAppsIsTriState(t *testing.T) {
+	oauthSubject := &Subject{Type: "oauth", ID: json.RawMessage(`"a"`)}
+	keySubject := &Subject{Type: "apiKey", ID: json.RawMessage(`"k"`)}
+
+	cases := []struct {
+		name string
+		id   *Identity
+		want *bool // nil == unknowable
+	}{
+		{"oauth with the submit bit", &Identity{Subject: oauthSubject, TokenScope: scopePtr(ScopeUserRead | ScopeAppBlocksSubmit)}, boolPtr(true)},
+		// Full scope EXCLUDES bit 25, so this is a real "no", not an unknown.
+		{"oauth, full scope, no submit bit", &Identity{Subject: oauthSubject, TokenScope: scopePtr(ScopeFull)}, boolPtr(false)},
+		{"oauth, mask absent", &Identity{Subject: oauthSubject}, nil},
+		// A personal key is not scope-gated for submit, so the answer holds with
+		// or without a mask — the pair below is what makes that visible.
+		{"personal key, minimal mask", &Identity{Subject: keySubject, TokenScope: scopePtr(ScopeUserRead)}, boolPtr(true)},
+		{"personal key, mask absent", &Identity{Subject: keySubject}, boolPtr(true)},
+		{"no subject, mask present", &Identity{TokenScope: scopePtr(ScopeFull | ScopeAppBlocksSubmit)}, nil},
+		{"no subject, mask absent", &Identity{}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.id.CanSubmitApps()
+			switch {
+			case tc.want == nil && got != nil:
+				t.Errorf("CanSubmitApps = %v, want nil (unknowable) — a bool here is a claim the CLI cannot support", *got)
+			case tc.want != nil && got == nil:
+				t.Errorf("CanSubmitApps = nil, want %v — this state IS knowable and must not be withheld", *tc.want)
+			case tc.want != nil && got != nil && *tc.want != *got:
+				t.Errorf("CanSubmitApps = %v, want %v", *got, *tc.want)
+			}
+		})
+	}
+}
+
+// TestDecodeScopesNilVsEmpty: `nil` and `[]` are DIFFERENT answers, because
+// `whoami --json` emitted `"scopes": null` in two unrelated states — scope
+// unreported, and a real credential with no bits set — which no consumer could
+// tell apart. Go callers see len 0 either way; only the JSON encoding differs.
+func TestDecodeScopesNilVsEmpty(t *testing.T) {
+	unknown := (&Identity{}).DecodeScopes()
+	if unknown != nil {
+		t.Errorf("an ABSENT mask must decode to nil (JSON null), got %#v", unknown)
+	}
+	knownEmpty := (&Identity{TokenScope: scopePtr(0)}).DecodeScopes()
+	if knownEmpty == nil {
+		t.Error("a KNOWN mask of 0 must decode to a non-nil empty slice (JSON []), not nil — that is the whole distinction")
+	}
+	if len(knownEmpty) != 0 {
+		t.Errorf("a zero mask decodes to no scope names, got %v", knownEmpty)
+	}
+}
+
 // TestDecodeScopes exercises the bit-decode helper against representative masks.
 func TestDecodeScopes(t *testing.T) {
 	full := &Identity{TokenScope: scopePtr(ScopeFull)}

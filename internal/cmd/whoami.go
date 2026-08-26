@@ -29,7 +29,7 @@ can submit/withdraw but cannot spend Buzz — is surfaced here, before dev:live.
 Reads the token from config or CIVITAI_TOKEN.`,
 		Example: `  civitai whoami
   civitai whoami --scopes   # also list every granted scope
-  civitai whoami --json     # raw JSON (scriptable)`,
+  civitai whoami --json     # a stable, curated identity object (scriptable)`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.Load()
@@ -46,6 +46,13 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			}
 			out := cmd.OutOrStdout()
 
+			// 🔴 ONE PREDICATE, ONE PLACE. Both surfaces below read this single
+			// tri-state answer; neither re-derives "can this credential submit?"
+			// from the subject type or the mask. nil means UNKNOWABLE — see
+			// appapi.Identity.CanSubmitApps, which states the three states and
+			// cites AGENTS item 9 for the discriminator rationale.
+			canSubmit := id.CanSubmitApps()
+
 			if jsonOut {
 				payload := map[string]any{
 					"username":       id.Username,
@@ -55,8 +62,9 @@ Reads the token from config or CIVITAI_TOKEN.`,
 					"scopesKnown":    id.ScopeKnown(),
 					"canReadBalance": id.CanReadBuzz(),
 					"canSpend":       id.CanSpendBuzz(),
-					"canSubmitApps":  id.CanSubmitApps(),
-					"scopes":         id.DecodeScopes(),
+					// true / false / null — null means unknowable, never "no".
+					"canSubmitApps": canSubmit,
+					"scopes":        id.DecodeScopes(),
 					// Back-compat: the nested capabilities object earlier releases emit.
 					"capabilities": map[string]bool{
 						"can_spend_buzz": id.CanSpendBuzz(),
@@ -73,16 +81,35 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			// login can't spend) is visible BEFORE a dev:live run.
 			fmt.Fprintln(out, "\n"+ui.Bold("Capabilities:"))
 			fmt.Fprintf(out, "  Credential type:          %s\n", id.CredentialType())
+			// 🔴 THE SUBMIT ROW IS NOT GATED ON ScopeKnown(). A personal API key
+			// is not scope-gated for submit at all, so its answer is KNOWN even
+			// when the server reports no mask — the old early return withheld a
+			// fact the command was holding, while `--json` published it. The row
+			// prints in every branch; only its VALUE degrades, and it degrades to
+			// "unknown", never to "no".
+			submitRow := func() {
+				fmt.Fprintf(out, "  Submit Apps:              %s\n", yesNoUnknown(canSubmit))
+			}
 			if !id.ScopeKnown() {
-				fmt.Fprintln(out, "  "+ui.Dim("(token scope not reported by the server — capabilities unknown)"))
+				submitRow()
+				// Scoped to BUZZ deliberately: the submit row above may well be
+				// known, so "capabilities unknown" would have been false.
+				fmt.Fprintln(out, "  "+ui.Dim("(token scope not reported by the server — Buzz capabilities unknown)"))
 				return nil
 			}
 			fmt.Fprintf(out, "  Read Buzz balance:        %s\n", yesNo(id.CanReadBuzz()))
 			fmt.Fprintf(out, "  Spend Buzz (AI Services): %s\n", yesNo(id.CanSpendBuzz()))
-			fmt.Fprintf(out, "  Submit Apps:              %s\n", yesNo(id.CanSubmitApps()))
+			submitRow()
 
 			if showScopes {
-				fmt.Fprintf(out, "\nScopes (%d): %s\n", len(id.DecodeScopes()), strings.Join(id.DecodeScopes(), ", "))
+				scopes := id.DecodeScopes()
+				list := strings.Join(scopes, ", ")
+				if len(scopes) == 0 {
+					// A known mask with no bits set. An empty trailing list read
+					// as truncated output; say what it means.
+					list = ui.Dim("(none granted)")
+				}
+				fmt.Fprintf(out, "\nScopes (%d): %s\n", len(scopes), list)
 			}
 
 			// The #34 dead end, made visible before dev:live: a credential without
@@ -105,15 +132,32 @@ Reads the token from config or CIVITAI_TOKEN.`,
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit raw JSON (scriptable)")
+	// 🔴 NOT "raw JSON" (#377). The payload is a hand-built projection of ten
+	// keys; the server demonstrably sends six more — `tier`, `status`,
+	// `isMember`, `subscriptions`, `email`, `emailVerified` — that never appear
+	// (see the real production capture in internal/appapi/api_test.go). Making
+	// it actually raw is NOT the fix: `email`/`emailVerified` are PII this
+	// command does not print today, so passing the body through would be a
+	// privacy regression dressed as a bug fix. The words are what was wrong.
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "emit a stable, curated identity object (scriptable)")
 	cmd.Flags().BoolVar(&showScopes, "scopes", false, "also print the full decoded scope list")
 	return cmd
 }
 
-// yesNo renders a capability bit as "yes"/"no".
+// yesNo renders a KNOWN capability bit as "yes"/"no".
 func yesNo(b bool) string {
 	if b {
 		return "yes"
 	}
 	return "no"
+}
+
+// yesNoUnknown renders a TRI-STATE capability as "yes"/"no"/"unknown". nil is
+// the third state (see appapi.Identity.CanSubmitApps) and must never render as
+// "no" — that is the false-negative-stated-as-fact this exists to prevent.
+func yesNoUnknown(b *bool) string {
+	if b == nil {
+		return ui.Dim("unknown")
+	}
+	return yesNo(*b)
 }

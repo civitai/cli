@@ -310,7 +310,7 @@ README. For the end-to-end walkthrough, see
 | Command | What it does |
 | --- | --- |
 | `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens). The default scope set grants identity + Apps submit + dev-tunnel and **not** Buzz-spend; `--scopes generate` additively grants generation + Buzz **spend** (needed by `civitai generate` and money-path `dev:live`). `--token <t>` stores a personal API key instead (not combinable with `--scopes`). `--token` with **no value** prints where to create a personal key (`civitai.com/user/account`) and how to re-run — handy when you know you want a personal key but haven't minted one yet. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
-| `civitai whoami [--scopes] [--json]` | Verify the stored token; print the authenticated user **and a Capabilities section** — credential type (**OAuth login** vs **personal API key**), **Read Buzz balance**, and **Spend Buzz** — decoded from the token's scope, so a money-path dead end (a default OAuth login can't spend) is visible before `dev:live` — and when it can't, the output names the fix for that credential (`login --scopes generate` for an OAuth login, a full-scope key otherwise). `--scopes` also lists every granted scope; `--json` emits the user + `credentialType`/`canReadBalance`/`canSpend`/`scopes` (scriptable). |
+| `civitai whoami [--scopes] [--json]` | Verify the stored token; print the authenticated user **and a Capabilities section** of four rows — credential type (**OAuth login** vs **personal API key**), **Read Buzz balance**, **Spend Buzz**, and **Submit Apps** — decoded from the token's scope, so a money-path dead end (a default OAuth login can't spend) is visible before `dev:live` — and when it can't, the output names the fix for that credential (`login --scopes generate` for an OAuth login, a full-scope key otherwise). **Submit Apps is tri-state**: `yes` / `no` / **`unknown`**, because a personal key is never scope-gated for submit while an OAuth token's answer *is* the scope bit — so an absent mask makes it unknowable, and `unknown` must never be read as `no`. `--scopes` also lists every granted scope; `--json` emits a **curated, not raw** identity object — `username`/`id`/`base_url`/`credentialType`/`scopesKnown`/`canReadBalance`/`canSpend`/`canSubmitApps` (`true`/`false`/**`null`**)/`scopes`/`capabilities` (scriptable). See [What `civitai whoami` reports](#submit--auth). |
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**). Needs the BuzzRead scope — a full-scope personal API key or `civitai login --scopes generate`; a **default** OAuth login token can't read it, and gets a clear message naming both fixes. `--json` emits `{blue,green,yellow,total}` (scriptable — handy for before/after diffing a `dev:live` spend). |
 | `civitai app list [--kind <k>] [--category <c>] [--sort <s>] [--limit <n>] [--cursor <c>] [--json]` | **Discover published Apps in the store** (`GET /api/v1/apps`) — filter-based discovery, not free-text search. **Needs a credential** (`civitai login` or `CIVITAI_TOKEN`): the endpoint keys the visible catalog off your identity, so this is *not* one of the anonymous reads. Cursor-paged. See [Browse the App store](#browse-the-app-store). |
 | `civitai app view <slug> [--json]` | **Show one published App's store detail** (`GET /api/v1/apps/{slug}`) — description, category, rating, gallery, live/external target. **Needs a credential**, same as `app list`. Reads the *public store catalog*, which is a different resource from your own deploy — a not-found here says nothing about `<slug>.civit.ai`. See [Browse the App store](#browse-the-app-store). |
@@ -1204,6 +1204,85 @@ only credential carrying the rest of the Full scope mask.
   `/apps/submit`).
 
 `--package-only` always just writes the `.zip` and stops.
+
+#### What `civitai whoami` reports
+
+`civitai whoami` prints the authenticated user and a **Capabilities** section of
+**four** rows — credential type, **Read Buzz balance**, **Spend Buzz (AI
+Services)** and **Submit Apps**:
+
+```
+Logged in as zach (id 1) at https://civitai.com
+
+Capabilities:
+  Credential type:          personal API key
+  Read Buzz balance:        yes
+  Spend Buzz (AI Services): no
+  Submit Apps:              yes
+```
+
+**Submit Apps is a tri-state — `yes` / `no` / `unknown` — and `unknown` is not
+`no`.** The server scope-gates submit **only** on OAuth tokens (the opt-in
+`AppBlocksSubmit` bit, which `ScopeFull` deliberately excludes); a personal API
+key is not scope-gated for submit at all. So:
+
+| Credential | `tokenScope` reported | Submit Apps |
+| --- | --- | --- |
+| Personal API key | either | **`yes`** — never scope-gated, so the mask is irrelevant |
+| OAuth login | present | `yes` / `no` from the `AppBlocksSubmit` bit |
+| OAuth login | **absent** | **`unknown`** — the bit *is* the answer, and the server did not report it |
+| No `subject` in the response | either | **`unknown`** — we cannot tell which gate applies |
+
+When the server reports no scope mask the output says *"(token scope not
+reported by the server — **Buzz** capabilities unknown)"*. That caveat is scoped
+to Buzz on purpose: the Submit Apps row above it may well be a known answer, and
+a blanket "capabilities unknown" would have been false.
+
+A `yes` means the credential's **scope** permits submit — not that the account
+is in the author cohort. The remaining author-cohort and not-banned gates are
+server-side and are not visible to the CLI.
+
+##### `whoami --json`
+
+🔴 **`--json` is a stable, *curated* identity object — it is not the server's
+raw `/api/v1/me` body.** It is a hand-built projection of ten keys; the server
+sends more (`tier`, `status`, `isMember`, `subscriptions`, `email`,
+`emailVerified`) that deliberately never appear. `email` / `emailVerified` in
+particular are PII this command does not print, so passing the body through
+would be a privacy regression, not a fix
+([#377](https://github.com/civitai/cli/issues/377)).
+
+```json
+{
+  "base_url": "https://civitai.com",
+  "canReadBalance": true,
+  "canSpend": false,
+  "canSubmitApps": true,
+  "capabilities": { "can_read_buzz": true, "can_spend_buzz": false },
+  "credentialType": "personal API key",
+  "id": 1,
+  "scopes": ["UserRead", "BuzzRead"],
+  "scopesKnown": true,
+  "username": "zach"
+}
+```
+
+Two fields carry a **third state a script must branch on**, exactly as
+`app metrics` requires for `views.unavailable`:
+
+- **`canSubmitApps` is `true` / `false` / `null`.** `null` means *unknowable*
+  (the two rows above), and a consumer must not read it as `false`. ⚠️ **This
+  field used to be a plain boolean**; a script doing `if (!j.canSubmitApps)`
+  now treats `null` the same as `false` and will report a dead end that may not
+  exist. Test `j.canSubmitApps === null` first.
+- **`scopes` is a list, `[]`, or `null`.** `null` means the scope mask was not
+  reported (`scopesKnown: false`); `[]` means the mask **was** reported and had
+  no bits set. These used to both serialise as `null`, which no consumer could
+  tell apart.
+
+`scopesKnown` disambiguates `canReadBalance` and `canSpend`, which stay plain
+booleans: when it is `false`, both are `false` because nothing is known, not
+because the capability was denied.
 
 #### How big can a bundle be?
 
@@ -3350,6 +3429,8 @@ credited it to the wrong command.)
 | `not logged in (401)` | The credential is present but invalid or expired. OAuth tokens refresh themselves; when the *refresh* token has also expired, log in again. For a personal key, mint a new one at `civitai.com/user/account`. | [Submit & auth](#submit--auth) |
 | `forbidden (403)` | Usually the invite-only Apps beta rather than a broken token — the same account reads the public API fine. | [Submit & auth](#submit--auth) |
 | `not permitted for your account (403)` | Managing a **store listing** needs Apps-author access, which is a narrower grant than being able to submit. | [Listing media requirements](#listing-media-requirements) |
+| `Submit Apps:` | The `civitai whoami` capability row, and it is **tri-state**: `yes` / `no` / `unknown`. **`unknown` is not `no`** — it is the CLI declining to answer, because the server reported no `tokenScope` for an **OAuth** credential (whose submit answer *is* the `AppBlocksSubmit` bit) or sent no `subject` at all, so which gate applies is itself unknown. Re-run `civitai login` to mint a token whose scope the server reports; a **personal API key** always answers `yes`, since it is not scope-gated for submit. In `--json` this row is `canSubmitApps`, which is `true` / `false` / `null`. | [Submit & auth](#submit--auth) |
+| `(token scope not reported by the server — Buzz capabilities unknown)` | `civitai whoami` got no `tokenScope`, so **Buzz** read/spend are unknowable and are omitted rather than printed as `no`. Scoped to Buzz deliberately: the **Submit Apps** row is still shown above it, because a personal key's submit answer does not depend on the scope mask. | [Submit & auth](#submit--auth) |
 | `not permitted to read this app's analytics (403)` | `app metrics` needs the **Apps submit scope**. An OAuth `civitai login` carries it — unless the token was minted before the scope existed, in which case re-run `civitai login`. A full-scope personal API key also works. | [App metrics](#app-metrics) |
 | `block lacks ai:write:budgeted scope` | Printed by your app at runtime under `dev:live`. The dev token was minted **without** `--spend`, so the CLI filtered the budgeted-spend scope out — it never requests that scope implicitly, even when your manifest declares it. | [Local dev loop](#local-dev-loop-harness-mock-vs-live) |
 | `insufficient Buzz` / `generation disabled` | Not credential problems, which is why they exit `1` rather than `3` — a script must not loop on `civitai login` for either. | [Exit codes specific to `generate`](#exit-codes-specific-to-generate) |

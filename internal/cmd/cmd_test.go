@@ -363,11 +363,17 @@ func TestWhoAmISuccess(t *testing.T) {
 	}
 }
 
-// TestWhoAmISubmitAppsCapability drives the "Submit Apps: yes/no" capability
-// line. Mirrors submit-version.ts's gate: the ScopeAppBlocksSubmit (bit 25 =
-// 33554432) requirement applies ONLY to OAuth tokens; a personal API key is not
-// scope-gated for submit and always reports "yes". An unknown/absent credential
-// reports "no" (conservative).
+// TestWhoAmISubmitAppsCapability drives the "Submit Apps: yes/no/unknown"
+// capability line. Mirrors submit-version.ts's gate: the ScopeAppBlocksSubmit
+// (bit 25 = 33554432) requirement applies ONLY to OAuth tokens; a personal API
+// key is not scope-gated for submit and always reports "yes".
+//
+// 🔴 THE NO-SUBJECT CASE CHANGED FROM "no" TO "unknown", ON PURPOSE. It used to
+// be documented here as "conservative", but "no" is not conservative — it is a
+// claim, and a false one: with no `subject` the CLI cannot tell whether the
+// OAuth gate even applies, let alone its answer. Conservative would be
+// declining to answer, which is what "unknown" does. See
+// appapi.Identity.CanSubmitApps for the three states.
 func TestWhoAmISubmitAppsCapability(t *testing.T) {
 	const submitBit = 1 << 25       // ScopeAppBlocksSubmit
 	const scopeFull = submitBit - 1 // ScopeFull = bits 0..24 (excludes bit 25)
@@ -381,7 +387,7 @@ func TestWhoAmISubmitAppsCapability(t *testing.T) {
 		{"oauth without submit scope (even full scope)", "oauth", scopeFull, "Submit Apps:              no"},
 		{"personal key, full scope, no submit bit", "apiKey", scopeFull, "Submit Apps:              yes"},
 		{"personal key, minimal scope", "apiKey", 1, "Submit Apps:              yes"},
-		{"unknown credential (no subject)", "", 1, "Submit Apps:              no"},
+		{"unknown credential (no subject)", "", 1, "Submit Apps:              unknown"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
