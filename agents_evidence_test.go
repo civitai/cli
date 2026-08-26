@@ -55,13 +55,19 @@ const evidenceDir = "claudedocs/decisions"
 // directory — finds zero pointers, compares the empty set with an empty
 // expectation and reports a serene pass while the ledger checks nothing.
 //
-// It rises with each wave, or it stops being a control. TWENTY-SIX items are
-// split today — every item but 2 and 4, which are smaller than a trigger plus a
-// file read would cost. A floor of 5 was set when nine were and 10 when sixteen
-// were; against twenty-six, 10 would let a regex that had lost SIXTY PERCENT of
-// the corpus through — the "comfortable margin" the sibling xrefs guard warns is
-// not evidence of a healthy scan. 16 leaves room to re-inline ten without
-// weakening the control that far.
+// It rises with each wave, or it stops being a control. A floor of 5 was set
+// when nine items were split and 10 when sixteen were; against the corpus wave 4
+// produced, 10 would let a regex that had lost SIXTY PERCENT of the corpus
+// through — the "comfortable margin" the sibling xrefs guard warns is not
+// evidence of a healthy scan. 16 leaves room to re-inline ten without weakening
+// the control that far.
+//
+// 🔴 THE COUNT AND THE INLINE SET ARE NOT SPELLED HERE, ON PURPOSE. This comment
+// used to read "TWENTY-SIX items are split today — every item but 2 and 4", and
+// both halves outlived their truth: item 30 landed inline in #437, item 29 was
+// converted in wave 5, 32 in wave 6, 31 in wave 7, and 4 and 30 in wave 8. Ask
+// the file — TestEvidencePointersAndFilesAreTheSameSet logs the live count and
+// TestPlaybookNamesTheLiveInlineSet names the inline members.
 const minEvidencePointers = 16
 
 // evidencePointerRe matches the pointer line a stub ends with. The path is

@@ -37,6 +37,14 @@ import (
 
 // agentsMaxBytes is the ceiling on AGENTS.md.
 //
+// 🔴 EVERY MEASUREMENT BELOW IS WAVE-4 HISTORY (2026-08-10, #317), NOT TODAY'S
+// FILE — including "3,500 bytes of headroom", which has not been true for
+// months: the file has run at 12–145 bytes under this ceiling since #471, and
+// that is what forced waves 6, 7 and 8. The numbers are kept because the
+// DERIVATION is what justifies the constant; do not read any of them as the
+// current size. TestAgentsMDStaysUnderItsCeiling logs the live figure on every
+// run, which is the copy that cannot rot.
+//
 // Achieved size: 25,258 bytes, after wave 4 turned the numbered list into a
 // TRIGGER INDEX — twenty-six items reduced to a one-line routing question plus a
 // pointer, ten bodies evicted in the process, items 2 and 4 left inline because
