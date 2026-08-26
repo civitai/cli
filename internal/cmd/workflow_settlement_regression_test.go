@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -72,9 +73,27 @@ func TestWorkflowsGet_RendersTheTransactionsItParsed(t *testing.T) {
 			t.Errorf("#346: `workflows get` did not render the %q the payload contains.\nstdout:\n%s", want, stdout)
 		}
 	}
-	// The amounts, so a heading with no numbers under it cannot pass.
-	if !strings.Contains(stdout, "8") {
-		t.Errorf("#346: the transaction amounts are missing.\nstdout:\n%s", stdout)
+	// 🔴 THE AMOUNT BESIDE ITS LABEL, NOT A BARE DIGIT. `Contains(stdout, "8")`
+	// was the old form and its comment claimed "a heading with no numbers under
+	// it cannot pass" — false: stdout carries `Created: 2026-08-10T09:00:00Z`,
+	// so zeroing every rendered amount left this PASSING. Measured. The mutant
+	// is caught elsewhere (TestGoldenSpendCopy and
+	// TestReportWorkflowSettlement_ReportsTheEntries), so this was a false claim
+	// rather than a coverage hole — but a false claim on a money surface reads
+	// as coverage and stops anyone looking.
+	//
+	// Anchoring each amount to its own row label is what a timestamp cannot
+	// spell. The values are read from the rendered output, NOT guessed: a first
+	// attempt at `-8`/`+3` assumed a signed format the renderer does not use,
+	// and this assertion caught that too.
+	for _, row := range []*regexp.Regexp{
+		regexp.MustCompile(`(?m)^\s*debit\s+8\s*$`),
+		regexp.MustCompile(`(?m)^\s*credit\s+8\s*$`),
+		regexp.MustCompile(`(?m)^\s*net\s+0\s*$`),
+	} {
+		if !row.MatchString(stdout) {
+			t.Errorf("#346: no row matches %s — the transaction amounts are missing.\nstdout:\n%s", row, stdout)
+		}
 	}
 
 	// THE DEFECT: the disclaimer must not be printed beside the data.

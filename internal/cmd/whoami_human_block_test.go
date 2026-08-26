@@ -241,12 +241,15 @@ func whoamiGoldenCases() []whoamiGoldenCase {
 			"Scopes (3): UserRead, AIServicesWrite, BuzzRead\n",
 	}, {
 		// ---- 8: --scopes on a zero mask, plus the can't-spend guidance -------
-		// 🔴 THE PROFILE IS IN THIS BODY FOR THE EMPTY-SCOPE-LIST BRANCH, which
-		// is NOT the same statement as case 7's scope list. The previous version
-		// of the ledger used the marker `"Scopes ("` for both, so this branch
-		// read as covered by case 7 — and a nil-guarded row printed between
-		// `Submit Apps:` and `Scopes (0): (none granted)` survived the whole
-		// repo. Two `Fprintf` sites behind one substring.
+		// 🔴 THE PROFILE IS IN THIS BODY FOR THE EMPTY-SCOPE-LIST BRANCH. It is
+		// the same `Fprintf` as case 7's scope list (whoami.go:144) — the
+		// `(none granted)` fork is an ASSIGNMENT feeding it, not a second print
+		// — but it is a different rendered VALUE, and only this case produces
+		// it. The previous ledger keyed on the substring `"Scopes ("`, which
+		// matches both values, so this branch read as covered by case 7 and a
+		// nil-guarded row printed between `Submit Apps:` and
+		// `Scopes (0): (none granted)` survived the whole repo. That is why the
+		// coverage unit is a rendered value, not a statement.
 		name: "--scopes, zero mask",
 		body: `{"username":"zach","id":1,"tokenScope":0,"subject":{"type":"apiKey","id":"k"},` +
 			profileFields,
@@ -399,9 +402,10 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 // When a legitimate new case produces a new shape, this test goes red. THE FIX
 // IS A FIXTURE, NEVER A WIDER NORMALISATION: give that case `profileFields`.
 //
-// The injectivity is MEASURED, not derived — the golden cases produce distinct
-// shapes today, and TestOutputShapeDistinguishesEveryRenderedValue pins the
-// pairs that matter so a widening cannot land quietly.
+// The injectivity is MEASURED, not derived — whoami.go's 15 output statements
+// produce distinct shapes today, and TestOutputShapeMergesNothingTheHarnessDoesNot
+// re-measures it over every rendered line on every run, so a widening cannot
+// land quietly.
 func outputShape(line, baseURL string) string {
 	s := strings.ReplaceAll(line, baseURL, "<url>")
 	return digitRun.ReplaceAllString(s, "N")
@@ -428,8 +432,73 @@ var digitRun = regexp.MustCompile(`\d+`)
 // The property this enforces is the stronger one the ledger actually needs:
 // every value that REACHES THE SCREEN keeps its own shape, so each one needs a
 // profile-carrying fixture of its own. Pairs 2 and 3 are genuinely
-// cross-statement (the two guidance forks); the rest are cross-value; pair 7 is
-// both. A widening fails here instead of silently making the ledger vacuous.
+// cross-statement (the two guidance forks); the rest are two values of one
+// statement; pair 7 is cross-statement with a SHARED value word.
+// harnessNormalise is the normalisation outputShape is ALLOWED to perform:
+// the test server's URL and digit runs, and nothing else.
+//
+// 🔴 IT IS A FROZEN COPY, AND IT MUST NEVER GAIN A RULE. It exists so
+// TestOutputShapeMergesNothingTheHarnessDoesNot can compare outputShape against
+// the intended behaviour rather than against itself. Widening both together
+// defeats the guard, which is the one way to get this wrong; widening only
+// outputShape — the actual hazard — fails that test immediately.
+func harnessNormalise(line, baseURL string) string {
+	return digitRun.ReplaceAllString(strings.ReplaceAll(line, baseURL, "<url>"), "N")
+}
+
+// TestOutputShapeMergesNothingTheHarnessDoesNot is the per-VALUE guarantee, over
+// EVERY line the golden cases actually render.
+//
+// 🔴 IT REPLACED A HAND-LISTED PAIR TABLE THAT DID NOT COVER WHAT ITS NAME
+// CLAIMED. That table held seven pairs organised by value SOURCE, while the
+// name and doc promised every rendered VALUE. Three widenings measurably slipped
+// through: collapsing `Spend Buzz (AI Services): yes|no` (a row the table never
+// named), `Submit Apps: yes` against `no` (it pinned only `unknown` vs `no`),
+// and `Type: personal API key` against `unknown` (only `personal` vs `OAuth`).
+// Reading as complete while covering a subset is what stops the next person
+// adding the missing pair — so the pairs are no longer listed by hand.
+//
+// The property, stated exactly: if two rendered lines differ by more than the
+// harness normalisation, outputShape must keep them apart. Any widening of
+// outputShape merges a pair the harness does not, and this fails naming both
+// lines. The examples table below is kept only as a REGRESSION record of merges
+// that actually happened; it is no longer the coverage.
+func TestOutputShapeMergesNothingTheHarnessDoesNot(t *testing.T) {
+	lines := map[string]bool{}
+	for _, tc := range whoamiGoldenCases() {
+		stdout, _, baseURL := runWhoAmIGoldenCase(t, tc)
+		for _, l := range strings.Split(stdout, "\n") {
+			if l != "" {
+				lines[harnessNormalise(l, baseURL)] = true
+			}
+		}
+	}
+	// Positive control: a run producing nothing would satisfy the pair loop
+	// vacuously, and every widening below would pass.
+	if len(lines) < 10 {
+		t.Fatalf("only %d normalised lines across every golden case — the cases are not exercising "+
+			"the command, so the injectivity verdict would be vacuous", len(lines))
+	}
+	distinct := slices.Sorted(maps.Keys(lines))
+	for i := range distinct {
+		for j := i + 1; j < len(distinct); j++ {
+			// Both are already harness-normalised, so any remaining difference
+			// is one outputShape must preserve. `<url>` is a literal here, so
+			// passing it as baseURL is a no-op replace.
+			a, b := outputShape(distinct[i], "<url>"), outputShape(distinct[j], "<url>")
+			if a == b {
+				t.Errorf("outputShape merged two lines the harness normalisation keeps apart, so the "+
+					"ledger is now blind to an output row added alongside either.\n  shape: %q\n"+
+					"  a: %q\n  b: %q", a, distinct[i], distinct[j])
+			}
+		}
+	}
+}
+
+// TestOutputShapeDistinguishesEveryRenderedValue keeps the merges that HAPPENED
+// as named regressions. Coverage is TestOutputShapeMergesNothingTheHarnessDoesNot
+// above; this is the record of which collapses were real, so a reader meets them
+// by name rather than as an abstract property.
 func TestOutputShapeDistinguishesEveryRenderedValue(t *testing.T) {
 	const url = "http://127.0.0.1:1234"
 	pairs := [][2]string{
@@ -439,7 +508,7 @@ func TestOutputShapeDistinguishesEveryRenderedValue(t *testing.T) {
 		// ("\nScopes (%d): …") is not the line outputShape is ever handed. It
 		// matters — with the "\n" present, a widening keyed on
 		// strings.HasPrefix(s, "Scopes (") SURVIVED this test.
-		{"Scopes (3): UserRead, BuzzRead", "Scopes (0): (none granted)"},
+		{"Scopes (3): UserRead, AIServicesWrite, BuzzRead", "Scopes (0): (none granted)"},
 		// Two STATEMENTS: the guidance forks, distinguished only by trailing comments.
 		{"  civitai login --scopes generate  # re-login, additively granting generation + Buzz spend",
 			"  civitai login --scopes generate  # or a browser login that opts into generation"},
@@ -450,7 +519,8 @@ func TestOutputShapeDistinguishesEveryRenderedValue(t *testing.T) {
 		{"  Type:                     personal API key", "  Type:                     OAuth login"},
 		{"  Read Buzz balance:        yes", "  Read Buzz balance:        no"},
 		{"  Submit Apps:              unknown", "  Submit Apps:              no"},
-		// Both at once: different statements AND the same value word.
+		// Cross-statement, and the same value word — a label-dropping collapse
+		// merges these two even though nothing else does.
 		{"  Type:                     unknown", "  Submit Apps:              unknown"},
 	}
 	for _, p := range pairs {

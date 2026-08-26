@@ -496,8 +496,10 @@ func TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent(t *testing.T) {
 	// happened to contain `4242` — the card fragment in the fixture — the guard
 	// reported a PII leak that had not happened. Measured at 5 failures in 6000
 	// runs of the pre-fix code — about 1 in 1200, and 0 in 6000 after the fix.
-	// The structural bound agrees: 13 of the 28232 ephemeral ports contain
-	// `4242`. It looked unreproducible because the failures CLUSTER — all five
+	// The structural bound is the same order: 13 of the 28232 ephemeral ports
+	// contain `4242`, i.e. 1 in 2172 — 1.8x rarer than the clustered rate
+	// observed, which is what clustering does to a short sample. Both numbers
+	// are here so a future reader can check rather than trust either. It looked unreproducible because the failures CLUSTER — all five
 	// were ports 42420-42429, one crossing of a single decade — since ports are
 	// handed out near-sequentially from a counter that persists across
 	// processes. A false red on a privacy guard is the worst place to teach
