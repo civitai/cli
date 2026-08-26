@@ -12,8 +12,10 @@ import (
 	"testing"
 )
 
-// The evidence split has moved TWENTY-SIX item BODIES out of AGENTS.md, over
-// four waves, and left first stubs and now TRIGGER LINES behind. The whole value
+// The evidence split has moved item BODIES out of AGENTS.md over EIGHT waves —
+// the count is splitItems' own length, deliberately not restated in prose here,
+// because every earlier attempt to state it went stale within two waves — and
+// left first stubs and now TRIGGER LINES behind. The whole value
 // of the split rests on one claim: the move was VERBATIM. Every measured RSS
 // table, every mutation matrix, every retraction and every enumerated residual
 // is still there, byte for byte, in the file the pointer names.
@@ -174,6 +176,32 @@ const agentsSplitBaseWave6 = "8e51494c8549cdb838d3861de0dcc63c38d294d5"
 // restore it, rather than by spending the last of it.
 const agentsSplitBaseWave7 = "87a147cc00cd930632948d66a992f2506e1f10e3"
 
+// agentsSplitBaseWave8 is the commit items 4 and 30 were moved from — the tip
+// after #492, i.e. the state of the file before CLAUDE.md was collapsed to its
+// bare `@AGENTS.md` import.
+//
+// 🔴 WHAT FORCED IT: collapsing CLAUDE.md meant RELOCATING the two rules it
+// carried that AGENTS.md did not — that `README.md` is the published user
+// contract, and that "README" is three surfaces which go stale independently.
+// That text is ~650 bytes and there were NINETY under agentsMaxBytes. Merging it
+// into the existing prose (the cheapest option, and the one tried first) closes
+// none of that gap: the content is irreducible, so the budget had to come from
+// eviction, which is what this file's playbook says to do.
+//
+// Items 4 (580 bytes) and 30 (532) were the two largest remaining inline bodies
+// and the playbook ranked them first and second. Item 2 (301) is deliberately
+// left inline: TestInlineAgentsItemsStayUnderTheBreakEven needs at least one
+// inline item or its own control fires.
+//
+// 🔴 AND THE JUSTIFICATION FOR KEEPING THEM INLINE HAD ALREADY EXPIRED.
+// maxInlineItemBytes' comment said the inline items "carry nothing to defer: no
+// measurement, no mutation matrix, no retraction". That is no longer true of
+// either: item 4 records a RETRACTION (#70 claimed the reverse of the vendoring,
+// four days after the bits shipped) and item 30 records a worked incident (#436)
+// plus an enumerated exit-code asymmetry. Both now have a body worth opening a
+// file for, which is exactly the condition the break-even describes.
+const agentsSplitBaseWave8 = "c3af4cad891091183836f94a920895c1c28e1cd6"
+
 type splitItem struct {
 	num      int
 	file     string
@@ -216,6 +244,8 @@ var splitItems = []splitItem{
 	{num: 29, file: "claudedocs/decisions/29-offsite-refusal.md", base: agentsSplitBaseWave5, nonBlank: 8, sha: "df86c7a851e2397db48eebd2f4b9d17e91565128ec4550510a62b785f552828d"},
 	{num: 32, file: "claudedocs/decisions/32-submit-provenance-claim.md", base: agentsSplitBaseWave6, nonBlank: 5, sha: "45d00151610d87af805502b0113bd6195417ec26ae5c4a4b0d797e0ef7ca5ad9"},
 	{num: 31, file: "claudedocs/decisions/31-pkgzip-caps-are-not-a-server-mirror.md", base: agentsSplitBaseWave7, nonBlank: 7, sha: "3ee77946d738161963e26167b2de2c12a56b01b8262e257708ab713bbd020c8d"},
+	{num: 4, file: "claudedocs/decisions/04-token-scope-bitmask-is-vendored.md", base: agentsSplitBaseWave8, nonBlank: 8, sha: "63c66afe0ad72780f451645f63474c3877c316e5ab193d7046077fdd4e7a3b7e"},
+	{num: 30, file: "claudedocs/decisions/30-listing-change-may-be-staged.md", base: agentsSplitBaseWave8, nonBlank: 7, sha: "3fbea5dc77a22e8d567b8340b1022915434fc68e2a21a13ab204c5f8b325d722"},
 }
 
 // --- the one deliberate delta, item 3 ---------------------------------------

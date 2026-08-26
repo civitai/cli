@@ -64,10 +64,14 @@ import (
 //  6. A CONVERTED ITEM IS THE TRIGGER AND THE POINTER, NOTHING ELSE. Any other
 //     line in the block is a body creeping back inline.
 //
-//  7. AN INLINE ITEM STAYS UNDER THE BREAK-EVEN. Two items (2 and 4) are stated
-//     in full because a trigger plus a file read costs more than they do; see
+//  7. AN INLINE ITEM STAYS UNDER THE BREAK-EVEN. An item may be stated in full
+//     when a trigger plus a file read costs more than it does; see
 //     maxInlineItemBytes. Without this rule the next item is written inline
 //     "just this once" and the index silently reverts to a list of bodies.
+//     🔴 Do not re-derive today's inline SET from any comment in this package —
+//     "2 and 4" was wave-4 history that outlived its truth twice over. Ask the
+//     file: TestInlineAgentsItemsStayUnderTheBreakEven logs the count and
+//     TestPlaybookNamesTheLiveInlineSet names the members.
 //
 // # 🔴 WHAT THIS FILE SUPERSEDES, AND THE PROPERTY THAT MOVED
 //
@@ -113,17 +117,25 @@ const (
 // A trigger block (the wrapped question plus its pointer line) measures 162–265
 // bytes in AGENTS.md today, mean 204. So converting an item recovers
 // (its size − ~204) bytes and costs one file read whenever its subject comes up.
-// The two items left inline are 301 and 500 bytes — they would recover 97 and
-// 296 — and they are also the only two whose bodies carry nothing to defer: no
-// measurement, no mutation matrix, no retraction, no enumerated residual, no
-// second sub-rule. Their evidence files would hold exactly the text the list
-// already shows, so the trigger would promise something to open and deliver a
-// restatement.
+// An item under the break-even is one that recovers little AND has nothing to
+// defer — no measurement, no mutation matrix, no retraction, no enumerated
+// residual, no second sub-rule — so its evidence file would hold exactly the
+// text the list already shows, and the trigger would promise something to open
+// and deliver a restatement.
 //
-// 600 sits above item 4 (500) and below the smallest converted body (item 11's
-// 638-byte stub, which recovered 441). The two tests agree at this line, which
-// is why it is drawn here: everything under it saves less than 300 bytes AND has
-// nothing to defer; everything over it fails both ways.
+// 600 was drawn above the largest inline body of the day and below the smallest
+// converted one (item 11's 638-byte stub, which recovered 441): everything under
+// it saves less than ~300 bytes AND has nothing to defer; everything over it
+// fails both ways.
+//
+// 🔴 UNDER THE BREAK-EVEN IS NOT A PROHIBITION ON CONVERTING, AND WAVE 8 IS THE
+// CASE. Items 4 (580 bytes) and 30 (532) were both under 600 and both were
+// converted, because the SECOND half of the test had stopped holding: item 4
+// carries a retraction (#70) and item 30 a worked incident (#436) plus an
+// enumerated exit-code asymmetry, so each had a body worth opening a file for.
+// This constant is a CEILING on what may sit inline. It has never been a floor
+// on what may be evicted, and the budget in agents_size_test.go is a legitimate
+// reason to evict — that is what its playbook is for.
 //
 // 🔴 THIS IS THE RULE THAT KEEPS THE INDEX AN INDEX. A new item written inline
 // as a full body fails here by name, and the fix is to write the trigger and

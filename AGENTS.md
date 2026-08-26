@@ -3,8 +3,18 @@
 Guidance for AI coding agents (Cursor, Codex, Copilot, Gemini, Claude Code, …)
 and human contributors. This is the **single source of truth** for stack,
 conventions, the release process, and the few decisions that look wrong but are
-intentional. For user-facing docs see [`README.md`](README.md); for the
-contributor checklist see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+intentional. For the contributor checklist see
+[`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+🔴 **[`README.md`](README.md) IS THE PUBLISHED USER CONTRACT, AND IT IS NOT ONE
+PLACE.** This file holds the decisions and rationale; the README states the
+contract — exit codes, `--json` shapes, the command reference (don't re-derive
+it here) — so **any** behaviour change is incomplete until it moves too, not
+only the ones an item below cites. Its command section, exit-code table and
+Troubleshooting index each state that contract and each goes stale ALONE: #371
+shipped having updated two of three (#378). Grep every surface naming what you
+changed: some of that prose is GENERATED (`internal/cmd/exitcodes_doc.go`) or
+frozen verbatim by a provenanced fixture, so it cannot be fixed in place.
 
 ## Stack (exact versions — don't assume training-data defaults)
 
@@ -29,7 +39,7 @@ contributor checklist see [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 `civitai` is the Apps authoring CLI. `civitai app` scaffolds a correct
 project, validates the manifest against the platform contract, packages it, and
-submits it for review. See the README command reference — don't re-derive it.
+submits it for review.
 
 ## Build / test / lint / run (exact commands)
 
@@ -283,8 +293,8 @@ whether you are in the situation that item governs.
 change it.** A trigger is deliberately not enough to act on: it names the
 situation, never the conclusion, so "I read the trigger" is not "I know the
 rule". If no trigger matches, you have read the whole list and you are done —
-that is what the list is for. Items with no pointer (2, 4, 30) are shorter than
-a trigger plus a file read would be, so they are stated here in full; there is
+that is what the list is for. Item 2 has no pointer — it is shorter than a
+trigger plus a file read would be, so it is stated here in full; there is
 nothing further to open.
 
 The move is verbatim and pinned as such (`agents_split_preserved_test.go`); the
@@ -306,14 +316,10 @@ item must carry a trigger that is a routing question rather than a label
    strip, the 64 MiB cap — or adding a package manager to the build recipe?**
    → evidence: claudedocs/decisions/03-lockfile-check.md
 
-4. **The token-scope BITMASK is vendored — the dev-token JWT check is not.**
-   `internal/appapi/appblocks.go` mirrors `civitai/civitai`'s frozen
-   `token-scope.constants.ts` bits, and `whoami`'s `CanSpendBuzz` / `--scopes`
-   decode test that `tokenScope` integer — so a change there is a
-   vendored-mirror edit ("Ask first"). Other credential, other mechanism:
-   `tokenCanSpend` (`internal/cmd/app_dev_token.go`) reads the dev-token JWT's
-   `scopes` **string array** for `ai:write:budgeted`, never a bitmask.
-   #70 claimed the reverse, four days after the bits shipped.
+4. **Deciding where a token's scope authority lives — adding or removing a
+   vendored `tokenScope` bitmask, `whoami`'s `CanSpendBuzz` / `--scopes`, or the
+   dev-token JWT's `scopes` array?**
+   → evidence: claudedocs/decisions/04-token-scope-bitmask-is-vendored.md
 
 5. **Replacing `app metrics`' slug→id→tRPC two-hop with a REST route, or
    editing `internal/appapi/analytics.go`?**
@@ -420,13 +426,9 @@ item must carry a trigger that is a routing question rather than a label
     by-slug fallback, the narrowed refusal behind it, or `app status`'s?**
     → evidence: claudedocs/decisions/29-offsite-refusal.md
 
-30. **A live-listing change may be STAGED and left unpublished, on purpose.**
-    `rm-screenshot` writes into the shadow revision and does NOT submit it: it
-    says so and names `app listing submit-revision`, because curation is N
-    removals and the first must not open a review cycle (#436 — the bare
-    `✓ Screenshot removed` was true of the revision, false of the listing).
-    That command's below-floor refusal therefore FAILS where the attach path
-    exits 0: there the job was the attach; here the submit IS the job.
+30. **Staging a live-listing change without publishing it — `rm-screenshot`'s
+    shadow revision, or a refusal that must FAIL where the attach path exits 0?**
+    → evidence: claudedocs/decisions/30-listing-change-may-be-staged.md
 
 31. **Changing a `pkgzip` size cap, vendoring or naming the server's bundle
     ceiling, or wording what `app submit` reports about a bundle's size?**
