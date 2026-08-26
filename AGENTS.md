@@ -225,8 +225,8 @@ func newWhoAmICmd() *cobra.Command {
 
 ## Intentional decisions that look wrong (read before "fixing")
 
-**Index.** Items 1–3, 10 and 11 are deliberate mirrors of the platform;
-items 4, 8 and 25 are deliberate *non*-mirrors (25 = the store-listing image
+**Index.** Items 1–4, 10 and 11 are deliberate mirrors of the platform;
+items 8 and 25 are deliberate *non*-mirrors (25 = the store-listing image
 dimension/aspect bounds, which stay prose in the README rather than becoming a
 local check). Items 5–9 cover `civitai app metrics`, the CLI's only analytics
 read path. Items 12–17, 19, 21 and 22 cover `civitai generate`, the CLI's only
@@ -283,8 +283,8 @@ whether you are in the situation that item governs.
 change it.** A trigger is deliberately not enough to act on: it names the
 situation, never the conclusion, so "I read the trigger" is not "I know the
 rule". If no trigger matches, you have read the whole list and you are done —
-that is what the list is for. Items with no pointer (2 and 4) are shorter than a
-trigger plus a file read would be, so they are stated here in full; there is
+that is what the list is for. Items with no pointer (2, 4, 30) are shorter than
+a trigger plus a file read would be, so they are stated here in full; there is
 nothing further to open.
 
 The move is verbatim and pinned as such (`agents_split_preserved_test.go`); the
@@ -306,13 +306,14 @@ item must carry a trigger that is a routing question rather than a label
    strip, the 64 MiB cap — or adding a package manager to the build recipe?**
    → evidence: claudedocs/decisions/03-lockfile-check.md
 
-4. **The CLI does NOT vendor the server's token-scope bitmask — and shouldn't.**
-   The `whoami` / `dev-token` "can spend Buzz" capability check decodes the JWT
-   `scopes` (a **string array**) and looks for the `ai:write:budgeted` scope
-   string (see `tokenCanSpend` in `internal/cmd/app_dev_token.go`). It does NOT
-   reproduce the server's numeric scope bit positions — all bit/scope authority
-   stays server-side. Don't "helpfully" add a vendored bitmask; the string check
-   is deliberate.
+4. **The token-scope BITMASK is vendored — the dev-token JWT check is not.**
+   `internal/appapi/appblocks.go` mirrors `civitai/civitai`'s frozen
+   `token-scope.constants.ts` bits, and `whoami`'s `CanSpendBuzz` / `--scopes`
+   decode test that `tokenScope` integer — so a change there is a
+   vendored-mirror edit ("Ask first"). Other credential, other mechanism:
+   `tokenCanSpend` (`internal/cmd/app_dev_token.go`) reads the dev-token JWT's
+   `scopes` **string array** for `ai:write:budgeted`, never a bitmask.
+   #70 claimed the reverse, four days after the bits shipped.
 
 5. **Replacing `app metrics`' slug→id→tRPC two-hop with a REST route, or
    editing `internal/appapi/analytics.go`?**
@@ -440,8 +441,9 @@ the server — `schema/`, the ported Go checks in `internal/validate/` (includin
 the slot registry), the Vite dotenv resolution behind the dev-tunnel parent-origin
 check (item 10), and the block→host ready-ack in `internal/blockproto/` (item 11)
 — and update `examples_test.go` (asserts shipped examples validate clean) + the
-README. `internal/genapi` is deliberately NOT on that list: item 13 explains why
-the generation path mirrors nothing.**
+README. A FIFTH mirror answers to AUTH, not validation: the token-scope bits in
+`internal/appapi/` (item 4). `internal/genapi` is deliberately NOT on that list:
+item 13 explains why the generation path mirrors nothing.**
 
 ## Permission boundaries
 
