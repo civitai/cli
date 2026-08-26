@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -51,22 +52,26 @@ const profileFields = `"tier":"silver","status":"active","isMember":true,` +
 // it counts always does.
 //
 // 🔴 WHICH BODY CARRIES THE PROFILE, AND WHY — A GOLDEN ONLY CLOSES ADDITION ON
-// THE BRANCHES ITS FIXTURES EXECUTE. `whoami` renders through FOUR paths, and a
-// profile row added to any of them ships to a real user. Measured, one mutant
-// per path, each a nil-guarded `Plan:` row: with the profile only in case 9,
-// the Credential-section mutant was KILLED and the guidance-block, early-return
-// and `--scopes` mutants all SURVIVED the whole `internal/cmd` package. A body
-// without profile fields cannot see them, because the `id.Tier != nil` guard
-// never fires. So `profileFields` is now on one body per path:
+// THE BRANCHES ITS FIXTURES EXECUTE. A profile row added to any render path
+// ships to a real user, and a body WITHOUT profile fields cannot see it, because
+// the `id.Tier != nil` guard never fires. So `profileFields` goes on one body
+// per path. Do not trust a count in this sentence — the paths are the rows of
+// TestGoldenCarriesTheProfileOnEveryRenderPath's `ledger`, which fails when the
+// set shrinks; that map is the list, and this is a description of it.
 //
-//	Credential section          -> case 9
-//	`!ScopeKnown()` early return -> case 4 (oauth, absent mask)
-//	can't-spend guidance         -> case 6 (known mask is zero)
-//	`--scopes` block             -> case 7 (--scopes, known mask)
+// Measured, one nil-guarded `Plan:` mutant per path: with the profile only in
+// case 9, the Credential-section mutant was KILLED and the guidance-block,
+// early-return and `--scopes` mutants all SURVIVED the whole `internal/cmd`
+// package. Spreading the fixture killed those three — and then a further round
+// found a FIFTH path they had all missed, the OAuth half of the can't-spend
+// guidance, which no case could reach at all because `config.AuthKind()` reads
+// any env `CIVITAI_TOKEN` as a personal key. Case 10 carries an OAuth config for
+// exactly that fork. The lesson is in the ledger's existence: "how many render
+// paths are there" is a question to answer by enumeration, not by memory.
 //
 // The loop also pins STDERR empty, because a golden on stdout alone is walked
 // by writing the row to the other stream — which reaches the terminal just the
-// same. Adding a render path to whoami.go means adding it to this list.
+// same. Adding a render path to whoami.go means adding it to the ledger.
 //
 // 🔴 THIS REPLACED A BANNED-SUBSTRING LEDGER, AND THE TRADE IS DELIBERATE. The
 // ledger caught the guidance-block row (it listed "silver") but lost to a
@@ -94,6 +99,13 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 		name string
 		body string
 		args []string
+		// oauth swaps the default CIVITAI_TOKEN setup for a stored OAuth config.
+		//
+		// 🔴 IT IS NOT COSMETIC: config.AuthKind() returns AuthKindToken for ANY
+		// env-supplied token, so every case without this flag takes the `else`
+		// half of the can't-spend guidance. The OAuth half was structurally
+		// unreachable from this table — a fifth render path no fixture executed.
+		oauth bool
 		// want is a format string; the single %s is the test server's URL.
 		want string
 	}{{
@@ -264,11 +276,51 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 			"  Read Buzz balance:        yes\n" +
 			"  Spend Buzz (AI Services): yes\n" +
 			"  Submit Apps:              yes\n",
+	}, {
+		// ---- 10: OAuth CONFIG + can't-spend -> the FIFTH render path ---------
+		// 🔴 CASE 6 CANNOT REACH THIS BRANCH, AND NEITHER COULD ANY OTHER CASE.
+		// The can't-spend guidance forks on config.AuthKind(), and every case
+		// above runs under a CIVITAI_TOKEN — which AuthKind() classifies as a
+		// personal key unconditionally. So the OAuth half of that fork was
+		// structurally unreachable from this table: a nil-guarded profile row
+		// added inside it SURVIVED the whole `internal/cmd` package while all
+		// five other render paths killed the same mutant.
+		//
+		// It is not an exotic state either — it is the headline case for the #34
+		// money-path dead end this guidance exists to surface: a default
+		// `civitai login` that cannot spend Buzz.
+		name:  "oauth config, can't spend — the OAuth guidance fork",
+		oauth: true,
+		body: `{"username":"zach","id":1,"tokenScope":1,"subject":{"type":"oauth","id":"a"},` +
+			profileFields,
+		want: "Logged in as zach (id 1) at %s\n" +
+			"\n" +
+			"Credential:\n" +
+			"  Type:                     OAuth login\n" +
+			"\n" +
+			"Capabilities:\n" +
+			"  Read Buzz balance:        no\n" +
+			"  Spend Buzz (AI Services): no\n" +
+			"  Submit Apps:              no\n" +
+			"\n" +
+			"⚠ This credential can't spend Buzz — `civitai generate` and money-path `dev:live`\n" +
+			"generation both need the AI Services scope. To get it:\n" +
+			"  civitai login --scopes generate  # re-login, additively granting generation + Buzz spend\n" +
+			"  civitai login --token <key>      # or a full-scope personal API key: https://civitai.com/user/account\n",
 	}}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := setupWhoAmI(t, tc.body)
+			if tc.oauth {
+				// setupWhoAmI already pointed XDG_CONFIG_HOME at a temp dir and
+				// set CIVITAI_TOKEN; clear the token so the stored OAuth config
+				// is what AuthKind() reads.
+				dir := t.TempDir()
+				t.Setenv("XDG_CONFIG_HOME", dir)
+				t.Setenv("CIVITAI_TOKEN", "")
+				writeOAuthConfig(t, dir)
+			}
 			stdout, stderr, err := run(t, append([]string{"whoami"}, tc.args...)...)
 			if err != nil {
 				t.Fatalf("whoami %v: %v", tc.args, err)
@@ -286,6 +338,76 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 				t.Errorf("a successful whoami must print nothing to stderr, got:\n%s", stderr)
 			}
 		})
+	}
+}
+
+// TestGoldenCarriesTheProfileOnEveryRenderPath is the LEDGER behind the case
+// spread above, and it exists because that spread is load-bearing prose.
+//
+// 🔴 THE FIXTURES ARE THE GUARD, AND NOTHING GUARDED THE FIXTURES. Deleting
+// `profileFields` from case 4 or case 6 — leaving every `want` untouched —
+// SURVIVED the whole `internal/cmd` package: the goldens still matched, because
+// a body without profile fields simply never fires the `id.Tier != nil` row a
+// mutant would add. So a future tidy-up of a fixture silently reopens the exact
+// gap the spread closes, with the only warning being a comment.
+//
+// This asserts the RELATIONSHIP — every named render path has a case carrying
+// the profile — and fails when the set SHRINKS (a fixture was tidied) or when a
+// name no longer resolves (a case was renamed). It cannot replace the goldens;
+// it stops them going quietly vacuous.
+// profileFieldsUse matches a case body's use of the fixture — an indented line
+// ENDING in the identifier — and so cannot match prose, the const declaration,
+// or the assertion that counts it.
+// (`profileFields,` for a concatenated body, `profileFields),` for a Sprintf one.)
+var profileFieldsUse = regexp.MustCompile(`(?m)^\t+.*profileFields[),]{1,2}$`)
+
+func TestGoldenCarriesTheProfileOnEveryRenderPath(t *testing.T) {
+	// render path -> the case name whose body must carry profileFields.
+	ledger := map[string]string{
+		"Credential section":          "full account profile present, human surface unchanged",
+		"!ScopeKnown early return":    "oauth, absent mask",
+		"can't-spend guidance":        "known mask is zero",
+		"--scopes block":              "--scopes, known mask",
+		"can't-spend guidance, OAuth": "oauth config, can't spend — the OAuth guidance fork",
+	}
+	src, err := os.ReadFile("whoami_human_block_test.go")
+	if err != nil {
+		t.Fatalf("read own source: %v", err)
+	}
+	text := string(src)
+	// Positive control on the reader, and the check that catches a case ADDED
+	// with the fixture but never entered in the ledger.
+	//
+	// 🔴 THE ANCHOR IS LINE-POSITIONAL BECAUSE THIS TEST READS ITS OWN SOURCE.
+	// A plain Count of "profileFields," matched SIX — the five fixtures plus the
+	// literal in this very assertion — so the guard failed on itself. Matching
+	// only lines that END in the identifier keeps prose, the const declaration
+	// and this comment out of the count.
+	if n := len(profileFieldsUse.FindAllString(text, -1)); n != len(ledger) {
+		t.Fatalf("the ledger names %d render paths but %d case bodies carry profileFields — they have "+
+			"diverged; add the new path to the ledger, or restore the fixture that was removed",
+			len(ledger), n)
+	}
+	for path, caseName := range ledger {
+		i := strings.Index(text, `name:  "`+caseName+`"`)
+		if i < 0 {
+			i = strings.Index(text, `name: "`+caseName+`"`)
+		}
+		if i < 0 {
+			t.Errorf("render path %q names case %q, which no longer exists — a rename broke the ledger", path, caseName)
+			continue
+		}
+		// The body follows the name within the same case literal; the next
+		// `want:` ends it.
+		end := strings.Index(text[i:], "want:")
+		if end < 0 {
+			t.Errorf("case %q has no want: field", caseName)
+			continue
+		}
+		if !strings.Contains(text[i:i+end], "profileFields") {
+			t.Errorf("render path %q is covered by case %q, whose body no longer carries profileFields — "+
+				"an output row added on that path would ship with every golden green", path, caseName)
+		}
 	}
 }
 

@@ -247,7 +247,12 @@ type Identity struct {
 	// reaches stdout. TestWhoAmIProfileDriftDegradesTheWholeProfile pins that,
 	// and TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent pins that the
 	// degradation is what stops the PII rather than luck.
-	Subscriptions []string `json:"subscriptions,omitempty"`
+	//
+	// No `omitempty`: it omits nil AND empty alike, which would erase the
+	// distinction the paragraph above promises on a direct json.Marshal of this
+	// struct. (`whoami --json` builds its own map and was never affected.)
+	// TestSubscriptionsTagKeepsNilAndEmptyDistinct pins it.
+	Subscriptions []string `json:"subscriptions"`
 }
 
 // Token-scope bits, mirrored from @civitai/auth token-scope (civitai/civitai
@@ -957,9 +962,16 @@ func (c *Client) WhoAmI(ctx context.Context) (*Identity, error) {
 	// was false while this line existed, so the fix belongs here rather than in
 	// the comment. Diagnosability is preserved by describeMeBody, which reports
 	// the SHAPE — the keys present and the offending type — and never a value.
+	//
+	// The advice names the only action that can help. Re-authenticating cannot:
+	// the token was ACCEPTED (this is a 200) and the body's SHAPE is what
+	// defeated both parses, so a fresh token produces the identical failure.
+	// TestUnparseableMeErrorAdvisesUpgradeNotLogin pins that — an error string
+	// with no assertion on it is one careless restore away from reverting, which
+	// is how this exact line was lost once already.
 	return nil, fmt.Errorf("unexpected /api/v1/me response (%s) — "+
-		"run `civitai login` to re-authenticate, or report this at "+
-		"https://github.com/civitai/cli/issues", describeMeBody(raw))
+		"the server sent a shape this CLI cannot read; try `civitai upgrade`, "+
+		"and report it at https://github.com/civitai/cli/issues", describeMeBody(raw))
 }
 
 // parseCoreIdentity unmarshals only the CORE identity (id, username, tokenScope,

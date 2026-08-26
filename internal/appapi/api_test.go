@@ -534,6 +534,17 @@ func TestDescribeMeBodyNeverLeaksValues(t *testing.T) {
 		t.Errorf("bool and number must not collapse into one kind, got: %s", k)
 	}
 
+	// The `unknown > 0` boundary: with exactly ONE unrecognised key the clause
+	// must still fire. Every other fixture here carries 3, 2 or 0, so `> 0`
+	// mutated to `> 1` executed nowhere and SURVIVED — a guard green by never
+	// reaching its own boundary.
+	if one := describeMeBody([]byte(`{"id":1,"somethingNew":{"a":1}}`)); !strings.Contains(one, "+1 unrecognised") {
+		t.Errorf("a single unrecognised key must still be reported, got: %s", one)
+	}
+	if none := describeMeBody([]byte(`{"id":1,"tier":"x"}`)); strings.Contains(none, "unrecognised") {
+		t.Errorf("zero unrecognised keys must not print the clause at all, got: %s", none)
+	}
+
 	// The key list is sorted, so the message is deterministic. Go randomises map
 	// iteration, so dropping the sort makes this error message differ run to run
 	// — which nothing else here would notice.
@@ -575,6 +586,66 @@ func TestDescribeMeBodyNonObjectBodyLeaksNothingEither(t *testing.T) {
 		if !strings.Contains(got, "not a JSON object") {
 			t.Errorf("a non-object body should be reported as such, got %q for %q", got, body)
 		}
+	}
+}
+
+// TestUnparseableMeErrorAdvisesUpgradeNotLogin pins the ADVICE, not just the
+// absence of PII.
+//
+// 🔴 IT EXISTS BECAUSE THIS EXACT LINE WAS SILENTLY LOST ONCE. The wording was
+// edited, the edit was discarded by a `git checkout HEAD --` restore run while
+// it was still uncommitted, and the full suite stayed green through the whole
+// round — nothing asserted on the string, so nothing could notice. An error
+// message with no test is not a contract, it is a comment that happens to
+// compile.
+//
+// The substance: `civitai login` cannot help here. The token was ACCEPTED (the
+// branch is only reachable on a 200) and the response's SHAPE is what defeated
+// both parses, so a fresh credential fails identically. Advice a user can
+// follow to no effect is worse than no advice — it costs them a login and
+// leaves them where they started.
+func TestUnparseableMeErrorAdvisesUpgradeNotLogin(t *testing.T) {
+	srv := meServer(t, `{"id":1,"username":{"first":"ida"}}`)
+	defer srv.Close()
+
+	_, err := New(srv.URL, "tok", "").WhoAmI(context.Background())
+	if err == nil {
+		t.Fatal("a body that defeats both parses must error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "civitai login") {
+		t.Errorf("the advice must not send the user to re-authenticate — the token was accepted "+
+			"and the BODY SHAPE is the failure, so a fresh token fails identically: %s", msg)
+	}
+	if !strings.Contains(msg, "civitai upgrade") {
+		t.Errorf("the error should name the one action that can help (a newer CLI): %s", msg)
+	}
+	if !strings.Contains(msg, "github.com/civitai/cli/issues") {
+		t.Errorf("the error should name where to report an unreadable shape: %s", msg)
+	}
+}
+
+// TestSubscriptionsTagKeepsNilAndEmptyDistinct pins the struct tag against
+// `omitempty`, which omits nil and empty alike and so erases the distinction
+// the field's own doc comment promises. Lost in the same discarded restore as
+// the error wording above, and equally unnoticed — the tag had no assertion.
+func TestSubscriptionsTagKeepsNilAndEmptyDistinct(t *testing.T) {
+	absent, err := json.Marshal(&Identity{Username: "z", ID: 1})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	empty, err := json.Marshal(&Identity{Username: "z", ID: 1, Subscriptions: []string{}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(absent), `"subscriptions":null`) {
+		t.Errorf("an absent subscriptions must marshal to null, got %s", absent)
+	}
+	if !strings.Contains(string(empty), `"subscriptions":[]`) {
+		t.Errorf("a reported-but-empty subscriptions must marshal to [], got %s", empty)
+	}
+	if string(absent) == string(empty) {
+		t.Errorf("nil and empty must not serialise identically — that is the whole point of the tag:\n%s", absent)
 	}
 }
 

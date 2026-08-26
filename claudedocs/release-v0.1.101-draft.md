@@ -123,8 +123,11 @@ mask emitted `canSubmitApps: false` when the truth was unknowable.
 
 ## Predicted contents
 
-**5 commits** (`v0.1.100..HEAD` including this draft commit): **3 excluded**
-(`docs(`/`test(`/`chore(`), **2 in the notes**, **0 leaking**.
+🔴 **No totals here on purpose.** Every fixed number this section carried has
+gone stale — "2 in the notes" survived #498 adding a third row to the table
+below, three lines under a sentence telling the reader not to trust a total.
+The split is `docs(`/`test(`/`chore(` excluded, everything else in the notes,
+**0 leaking**; for the counts, run the command below and count the table rows.
 
 🔴 **The count has moved between drafting and tagging on every recent release.**
 Re-derive it at tag time rather than trusting this number:
@@ -138,9 +141,10 @@ merged, so re-run it at the tag rather than reusing either number.
 
 ### The ones that should appear
 
-Count the numbered rows below rather than trusting a total in this heading — a
-count maintained beside the list it counts drifts the first time the list grows,
-which is what happened when #498 landed against a heading that said "the 2".
+Count the numbered rows below rather than trusting a total written anywhere — a
+count maintained beside the list it counts drifts the first time the list grows.
+It happened twice on this page while #498 was open: a heading that said "the 2",
+and a "**2 in the notes**" nine lines above that outlived the fix to the heading.
 
 | # | commit | thread |
 |---|---|---|
