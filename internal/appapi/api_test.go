@@ -513,6 +513,39 @@ func TestDescribeMeBodyNeverLeaksValues(t *testing.T) {
 	}
 }
 
+// TestDescribeMeBodyNonObjectBodyLeaksNothingEither covers describeMeBody's
+// OTHER branch.
+//
+// 🔴 THE OBJECT TEST ABOVE CANNOT REACH THIS CODE, AND A MUTATION SWEEP PROVED
+// IT. Replacing the non-object return with `return string(raw)` — an outright
+// body echo — SURVIVED the whole battery, because every fixture in the sibling
+// tests is a valid JSON object and so takes the map-parse path. The branch was
+// green by never executing, which is the unreachable-guard shape, not coverage.
+//
+// A non-object /me body carrying PII is not hypothetical: a bare JSON array or
+// string reaches here with both parses defeated, and nothing stops the server
+// (or a proxy, or an error page rendered as JSON) putting an address in it.
+func TestDescribeMeBodyNonObjectBodyLeaksNothingEither(t *testing.T) {
+	for _, body := range []string{
+		`["leak@example.test","cus_MARKER"]`,
+		`"leak@example.test"`,
+		// Truncated mid-object: not parseable as an object at all.
+		`{"id":1,"email":"leak@example.test"`,
+	} {
+		got := describeMeBody([]byte(body))
+		for _, leak := range []string{"leak@example.test", "cus_MARKER"} {
+			if strings.Contains(got, leak) {
+				t.Errorf("describeMeBody leaked %q from a non-object body %q: %s", leak, body, got)
+			}
+		}
+		// Positive control: it must still say something USEFUL, or "leaked
+		// nothing" is just a description of the empty string.
+		if !strings.Contains(got, "not a JSON object") {
+			t.Errorf("a non-object body should be reported as such, got %q for %q", got, body)
+		}
+	}
+}
+
 // TestWhoAmIUnparseableBodyErrorCarriesNoPII is the same guarantee at the seam:
 // describeMeBody being clean proves nothing if WhoAmI does not use it.
 func TestWhoAmIUnparseableBodyErrorCarriesNoPII(t *testing.T) {
