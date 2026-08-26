@@ -494,15 +494,19 @@ func TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent(t *testing.T) {
 	// CAN SPELL A MARKER. This scanned the whole of stdout, and stdout carries
 	// `base_url` with the httptest server's EPHEMERAL PORT. When that port
 	// happened to contain `4242` — the card fragment in the fixture — the guard
-	// reported a PII leak that had not happened. Reproduced at roughly 1 run in
-	// 100: ports are handed out near-sequentially and the counter persists
-	// across processes, so the danger window is crossed in clusters, which is
-	// why it looked like an unreproducible one-off. A false red on a privacy
-	// guard is the worst place to teach anyone to re-run and move on.
+	// reported a PII leak that had not happened. Measured at 5 failures in 6000
+	// runs of the pre-fix code — about 1 in 1200, and 0 in 6000 after the fix.
+	// The structural bound agrees: 13 of the 28232 ephemeral ports contain
+	// `4242`. It looked unreproducible because the failures CLUSTER — all five
+	// were ports 42420-42429, one crossing of a single decade — since ports are
+	// handed out near-sequentially from a counter that persists across
+	// processes. A false red on a privacy guard is the worst place to teach
+	// anyone to re-run and move on.
 	//
 	// Dropping `base_url` is the narrow fix: it is the only field whose value
-	// this test does not control, and the assertions below still cover every
-	// byte the server's response could reach.
+	// this test does not control, and it carries no server bytes at all — it is
+	// `cfg.BaseURL()`, read before the request. Every field the RESPONSE can
+	// reach is still scanned.
 	scanned := payloadWithoutBaseURL(t, stdout)
 	for _, leak := range []string{"pii@example.test", "cus_MARKER", "4242", "billingEmail", "stripeId", "cardLast4"} {
 		if strings.Contains(scanned, leak) || strings.Contains(stderr, leak) {
@@ -554,8 +558,9 @@ func payloadWithoutBaseURL(t *testing.T, stdout string) string {
 // `base_url` with the httptest server's EPHEMERAL PORT. The scan's marker list
 // includes `"4242"` — the card fragment in the hostile fixture — so any run
 // whose port contained `4242` reported a PII leak that had not happened. It
-// reproduced at roughly 1 run in 100, in CLUSTERS, because ports are handed out
-// near-sequentially from a counter that persists across processes. That is a
+// reproduced at about 1 run in 1200 (5 in 6000 measured), and in CLUSTERS,
+// because ports come from a near-sequential counter that persists across
+// processes — all five observed failures fell in ports 42420-42429. That is a
 // nondeterministic red on a required check, on a privacy guard, which is the
 // worst possible place to train anyone to re-run and move on.
 //
