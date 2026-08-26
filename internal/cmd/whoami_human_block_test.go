@@ -402,16 +402,83 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 // When a legitimate new case produces a new shape, this test goes red. THE FIX
 // IS A FIXTURE, NEVER A WIDER NORMALISATION: give that case `profileFields`.
 //
-// The injectivity is MEASURED, not derived — whoami.go's 15 output statements
-// produce distinct shapes today, and TestOutputShapeMergesNothingTheHarnessDoesNot
-// re-measures it over every rendered line on every run, so a widening cannot
-// land quietly.
+// The rule is not merely measured, it is PINNED:
+// TestOutputShapeDoesExactlyTheHarnessNormalisation asserts equality against an
+// independent copy of it over every raw rendered line, so any widening at all —
+// not just one that merges two of today's lines — fails.
 func outputShape(line, baseURL string) string {
 	s := strings.ReplaceAll(line, baseURL, "<url>")
 	return digitRun.ReplaceAllString(s, "N")
 }
 
 var digitRun = regexp.MustCompile(`\d+`)
+
+// harnessDigitRun is harnessNormalise's OWN copy of the digit rule.
+//
+// 🔴 IT DELIBERATELY DUPLICATES `digitRun`, AND MERGING THE TWO DEFEATS THE
+// GUARD. An earlier version had harnessNormalise read `digitRun`, so widening
+// that ONE shared line — e.g. to `\d+|yes|no|unknown` — changed both sides at
+// once and the equality test passed while outputShape had gained a rule. The
+// duplication is what makes the two definitions independent, which is the whole
+// basis for comparing them.
+var harnessDigitRun = regexp.MustCompile(`\d+`)
+
+// harnessNormalise is the normalisation outputShape is ALLOWED to perform: the
+// test server's URL and digit runs, and nothing else.
+//
+// 🔴 IT IS A FROZEN COPY, AND IT MUST NEVER GAIN A RULE. It exists so
+// TestOutputShapeDoesExactlyTheHarnessNormalisation can compare outputShape
+// against the intended behaviour rather than against itself. If you find
+// yourself editing this to make a test pass, the test is telling you outputShape
+// has widened — fix that instead.
+func harnessNormalise(line, baseURL string) string {
+	return harnessDigitRun.ReplaceAllString(strings.ReplaceAll(line, baseURL, "<url>"), "N")
+}
+
+// TestOutputShapeDoesExactlyTheHarnessNormalisation is the coverage, over EVERY
+// RAW line the golden cases render.
+//
+// 🔴 IT ASSERTS EQUALITY, NOT INJECTIVITY, AND THE DIFFERENCE IS WHY THE
+// PREVIOUS VERSION WAS BLIND. That version fed outputShape lines the harness had
+// ALREADY normalised, then checked no two of them collapsed together. So any
+// widening whose trigger referenced what the harness had erased — a digit run,
+// or the base URL — never fired inside the test and passed silently. Measured:
+// a `^Scopes \(\d+\): .*$` collapse, which is refused widening #1 in its most
+// natural spelling, SURVIVED it. So did a whitespace-squashing collapse.
+//
+// Raw lines plus equality closes the whole class. outputShape must return
+// exactly what an independent copy of the intended rule returns; any extra rule
+// changes some line and fails here, whether or not it merges two of today's
+// lines. Injectivity then follows rather than being separately asserted.
+func TestOutputShapeDoesExactlyTheHarnessNormalisation(t *testing.T) {
+	type sample struct{ line, baseURL string }
+	var raw []sample
+	seen := map[string]bool{}
+	for _, tc := range whoamiGoldenCases() {
+		stdout, _, baseURL := runWhoAmIGoldenCase(t, tc)
+		for _, l := range strings.Split(stdout, "\n") {
+			// 🔴 RAW, NOT NORMALISED — that is the fix. Dedupe on the normalised
+			// form only to keep the sample small; what is COMPARED is `l`.
+			if l == "" || seen[harnessNormalise(l, baseURL)] {
+				continue
+			}
+			seen[harnessNormalise(l, baseURL)] = true
+			raw = append(raw, sample{l, baseURL})
+		}
+	}
+	// Positive control: a run producing nothing would satisfy the loop vacuously.
+	if len(raw) < 10 {
+		t.Fatalf("only %d distinct rendered lines across every golden case — the cases are not "+
+			"exercising the command, so the verdict below would be vacuous", len(raw))
+	}
+	for _, s := range raw {
+		if got, want := outputShape(s.line, s.baseURL), harnessNormalise(s.line, s.baseURL); got != want {
+			t.Errorf("outputShape has gained a normalisation rule the harness does not have, so the "+
+				"ledger can now merge two rendered lines and go blind.\n  line: %q\n  outputShape: %q"+
+				"\n  allowed:     %q", s.line, got, want)
+		}
+	}
+}
 
 // TestOutputShapeDistinguishesEveryRenderedValue pins the collapses that would
 // blind the ledger, as a direct property of outputShape.
@@ -434,71 +501,19 @@ var digitRun = regexp.MustCompile(`\d+`)
 // profile-carrying fixture of its own. Pairs 2 and 3 are genuinely
 // cross-statement (the two guidance forks); the rest are two values of one
 // statement; pair 7 is cross-statement with a SHARED value word.
-// harnessNormalise is the normalisation outputShape is ALLOWED to perform:
-// the test server's URL and digit runs, and nothing else.
 //
-// 🔴 IT IS A FROZEN COPY, AND IT MUST NEVER GAIN A RULE. It exists so
-// TestOutputShapeMergesNothingTheHarnessDoesNot can compare outputShape against
-// the intended behaviour rather than against itself. Widening both together
-// defeats the guard, which is the one way to get this wrong; widening only
-// outputShape — the actual hazard — fails that test immediately.
-func harnessNormalise(line, baseURL string) string {
-	return digitRun.ReplaceAllString(strings.ReplaceAll(line, baseURL, "<url>"), "N")
-}
-
-// TestOutputShapeMergesNothingTheHarnessDoesNot is the per-VALUE guarantee, over
-// EVERY line the golden cases actually render.
+// 🔴 IT IS ALSO THE BACKSTOP FOR THE ONE CASE THE EQUALITY TEST CANNOT SEE:
+// widening outputShape AND harnessNormalise together. Do not delete it on the
+// grounds that the equality test covers everything — it does not cover that.
 //
-// 🔴 IT REPLACED A HAND-LISTED PAIR TABLE THAT DID NOT COVER WHAT ITS NAME
-// CLAIMED. That table held seven pairs organised by value SOURCE, while the
-// name and doc promised every rendered VALUE. Three widenings measurably slipped
-// through: collapsing `Spend Buzz (AI Services): yes|no` (a row the table never
-// named), `Submit Apps: yes` against `no` (it pinned only `unknown` vs `no`),
-// and `Type: personal API key` against `unknown` (only `personal` vs `OAuth`).
-// Reading as complete while covering a subset is what stops the next person
-// adding the missing pair — so the pairs are no longer listed by hand.
-//
-// The property, stated exactly: if two rendered lines differ by more than the
-// harness normalisation, outputShape must keep them apart. Any widening of
-// outputShape merges a pair the harness does not, and this fails naming both
-// lines. The examples table below is kept only as a REGRESSION record of merges
-// that actually happened; it is no longer the coverage.
-func TestOutputShapeMergesNothingTheHarnessDoesNot(t *testing.T) {
-	lines := map[string]bool{}
-	for _, tc := range whoamiGoldenCases() {
-		stdout, _, baseURL := runWhoAmIGoldenCase(t, tc)
-		for _, l := range strings.Split(stdout, "\n") {
-			if l != "" {
-				lines[harnessNormalise(l, baseURL)] = true
-			}
-		}
-	}
-	// Positive control: a run producing nothing would satisfy the pair loop
-	// vacuously, and every widening below would pass.
-	if len(lines) < 10 {
-		t.Fatalf("only %d normalised lines across every golden case — the cases are not exercising "+
-			"the command, so the injectivity verdict would be vacuous", len(lines))
-	}
-	distinct := slices.Sorted(maps.Keys(lines))
-	for i := range distinct {
-		for j := i + 1; j < len(distinct); j++ {
-			// Both are already harness-normalised, so any remaining difference
-			// is one outputShape must preserve. `<url>` is a literal here, so
-			// passing it as baseURL is a no-op replace.
-			a, b := outputShape(distinct[i], "<url>"), outputShape(distinct[j], "<url>")
-			if a == b {
-				t.Errorf("outputShape merged two lines the harness normalisation keeps apart, so the "+
-					"ledger is now blind to an output row added alongside either.\n  shape: %q\n"+
-					"  a: %q\n  b: %q", a, distinct[i], distinct[j])
-			}
-		}
-	}
-}
-
-// TestOutputShapeDistinguishesEveryRenderedValue keeps the merges that HAPPENED
-// as named regressions. Coverage is TestOutputShapeMergesNothingTheHarnessDoesNot
-// above; this is the record of which collapses were real, so a reader meets them
-// by name rather than as an abstract property.
+// The backstop is PARTIAL, and the bound is measured rather than assumed: it
+// catches a both-widening that merges one of the pairs below (a padded-row value
+// collapse and a trailing-`#` drop are each KILLED here and nowhere else), and
+// it does NOT catch one that merges nothing listed — a both-sided whitespace
+// squash survives every test in this file. That residual is latent rather than
+// live: whitespace-squashing merges none of the lines whoami renders today, so
+// it blinds nothing until some future line differs from another only by spacing.
+// Widening a pair's coverage is the fix if that ever changes.
 func TestOutputShapeDistinguishesEveryRenderedValue(t *testing.T) {
 	const url = "http://127.0.0.1:1234"
 	pairs := [][2]string{
