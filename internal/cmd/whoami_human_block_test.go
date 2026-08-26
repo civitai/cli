@@ -404,8 +404,9 @@ func TestWhoAmIHumanBlockIsPinnedWhole(t *testing.T) {
 //
 // The rule is not merely measured, it is PINNED:
 // TestOutputShapeDoesExactlyTheHarnessNormalisation asserts equality against an
-// independent copy of it over every raw rendered line, so any widening at all —
-// not just one that merges two of today's lines — fails.
+// independent copy of it over every raw rendered line, so a widening that fires
+// on any rendered line fails — not only one that merges two of today's lines.
+// That test enumerates the two classes it still cannot see.
 func outputShape(line, baseURL string) string {
 	s := strings.ReplaceAll(line, baseURL, "<url>")
 	return digitRun.ReplaceAllString(s, "N")
@@ -446,10 +447,23 @@ func harnessNormalise(line, baseURL string) string {
 // a `^Scopes \(\d+\): .*$` collapse, which is refused widening #1 in its most
 // natural spelling, SURVIVED it. So did a whitespace-squashing collapse.
 //
-// Raw lines plus equality closes the whole class. outputShape must return
-// exactly what an independent copy of the intended rule returns; any extra rule
-// changes some line and fails here, whether or not it merges two of today's
-// lines. Injectivity then follows rather than being separately asserted.
+// Raw lines plus equality closes that class: outputShape must return exactly
+// what an independent copy of the intended rule returns, so a rule that fires on
+// any rendered line fails here whether or not it merges two of them. Injectivity
+// follows rather than being separately asserted.
+//
+// 🔴 WHAT IT STILL CANNOT SEE, STATED SO NOBODY HAS TO REDISCOVER IT. Exactly
+// two classes, both measured:
+//
+//  1. a rule that fires on NO line whoami renders — e.g. one keyed on a
+//     `Member:`/`Account status:` row, which is precisely the profile row the
+//     ledger exists to detect. Such a rule is INERT until such a line renders,
+//     and it becomes visible here the moment one does; it is latent, not a hole.
+//  2. widening outputShape and harnessNormalise TOGETHER, which moves both sides
+//     of the equality. TestOutputShapeDistinguishesEveryRenderedValue is the
+//     partial backstop for that — see its own comment for the measured bound.
+//
+// Both are why that test is not redundant record-keeping.
 func TestOutputShapeDoesExactlyTheHarnessNormalisation(t *testing.T) {
 	type sample struct{ line, baseURL string }
 	var raw []sample
@@ -457,12 +471,19 @@ func TestOutputShapeDoesExactlyTheHarnessNormalisation(t *testing.T) {
 	for _, tc := range whoamiGoldenCases() {
 		stdout, _, baseURL := runWhoAmIGoldenCase(t, tc)
 		for _, l := range strings.Split(stdout, "\n") {
-			// 🔴 RAW, NOT NORMALISED — that is the fix. Dedupe on the normalised
-			// form only to keep the sample small; what is COMPARED is `l`.
-			if l == "" || seen[harnessNormalise(l, baseURL)] {
+			// 🔴 THE DEDUPE KEY IS THE RAW LINE, NOT ITS NORMALISED FORM.
+			// Keying on the normalised form dropped 9 genuinely distinct raws —
+			// the `Logged in as zach (id N) at <url>` headers, which differ in
+			// both the id and the port — so a widening firing only on one of
+			// them was never compared. Measured: a rule rewriting
+			// `zach (id 1)` survived this test under the old key. It also made
+			// the sample depend on one of the two functions under comparison,
+			// so widening `harnessNormalise` shrank the set it was checked over.
+			k := l + "\x00" + baseURL
+			if l == "" || seen[k] {
 				continue
 			}
-			seen[harnessNormalise(l, baseURL)] = true
+			seen[k] = true
 			raw = append(raw, sample{l, baseURL})
 		}
 	}
@@ -502,9 +523,11 @@ func TestOutputShapeDoesExactlyTheHarnessNormalisation(t *testing.T) {
 // cross-statement (the two guidance forks); the rest are two values of one
 // statement; pair 7 is cross-statement with a SHARED value word.
 //
-// 🔴 IT IS ALSO THE BACKSTOP FOR THE ONE CASE THE EQUALITY TEST CANNOT SEE:
-// widening outputShape AND harnessNormalise together. Do not delete it on the
-// grounds that the equality test covers everything — it does not cover that.
+// 🔴 IT IS ALSO THE BACKSTOP FOR ONE OF THE TWO CASES THE EQUALITY TEST CANNOT
+// SEE: widening outputShape AND harnessNormalise together. (The other — a rule
+// firing on no rendered line — is latent and needs no backstop; both are
+// enumerated on that test.) Do not delete this on the grounds that the equality
+// test covers everything, because that is one of the cases it does not cover.
 //
 // The backstop is PARTIAL, and the bound is measured rather than assumed: it
 // catches a both-widening that merges one of the pairs below (a padded-row value
