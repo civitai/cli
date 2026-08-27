@@ -1,9 +1,47 @@
-# v0.1.102 — DRAFT
+# v0.1.102 — SHIPPED
 
-**Not yet tagged.** Cut from `main` at `0db9382`, which is the commit this draft
-sits on top of. Publishing the draft GitHub Release is what fires **npm and the
-Homebrew tap** (both trigger on `release: published`), and npm unpublish is
-restricted — so the tag is the recoverable step and the publish is not.
+**Tagged and published 2026-08-27T18:03:55Z.** `gh release view v0.1.102`
+reports `isDraft: false` with **14/14** expected assets. All three channels
+fired and all three succeeded.
+
+Everything below was written *before* the tag and is kept as the record. Where a
+section made a prediction, the measured outcome is folded in and marked
+**MEASURED**; the reasoning that made the release safe is preserved unchanged.
+
+**What shipped, verified against the published artifact — and every row was read
+from the CONSUMER, not from the workflow that claims to have updated it:**
+
+| Claim | Measured |
+| --- | --- |
+| Release is published, not draft | `isDraft: false`, `publishedAt: 2026-08-27T18:03:55Z` |
+| Assets | **14**, exactly the predicted list |
+| `Release` workflow (tag push) | `success` (run `33100399176`) |
+| `Release npm` (on `published`) | `success` |
+| `Release Homebrew cask` (on `published`) | `success` |
+| npm | `dist-tags.latest = 0.1.102`, and a `versions["0.1.102"]` record exists |
+| Homebrew tap | cask `version "0.1.102"`, tap commit `2b51e6f` |
+| Cask URLs resolve **unauthenticated** | all 4 → `200`; negative control `v0.1.999` → `404` |
+| Changelog entries in the body | **1** — `#498`, matching the prediction exactly |
+| `has("tier")`, `has("isMember")` on the RELEASED binary | `true`, `true` |
+| `has("email")`, `has("emailVerified")` | **`false`, `false`** — PII withheld |
+
+**The tag sits on `6e3037f`, a `docs(handoff)` commit — a deliberate deviation
+from the convention.** v0.1.99/100/101 each sit on their own `docs(release)`
+commit; here #501 (docs-only) merged after #500 carried this draft in. Tagging
+`HEAD` rather than `b04501d` makes the released tree match `main` exactly, and
+it changes the changelog not at all — #501 is `docs(` and filtered out, so the
+body is one entry either way. That was verified before tagging, not assumed.
+
+**Probes run on the downloaded release binary** (`sha256sum -c` OK, reports
+`civitai 0.1.102`), not on a local build — a local build is evidence about the
+working tree, never about the artifact.
+
+---
+
+**Cut from `main` at `0db9382`**, which is the commit this draft sat on top of.
+Publishing the draft GitHub Release is what fires **npm and the Homebrew tap**
+(both trigger on `release: published`), and npm unpublish is restricted — so the
+tag is the recoverable step and the publish is not.
 
 The version is a plain patch increment on `0.1.101`. The three-digit-ordering
 question was settled in `release-v0.1.100-draft.md` and has now been confirmed
@@ -81,6 +119,13 @@ git log v0.1.101..v0.1.102 --pretty='%s' | grep -cvE '^(docs|test|chore)(\(.*\))
 ```
 
 At `0db9382` that command returns **1**.
+
+✅ **MEASURED at the tag: 1.** The prediction held; the published body carries
+the single row below. The **totals moved exactly as this section warned they
+would** — the range grew from 3 commits to **5** (4 excluded, not 3) because
+#500 and #501 merged between drafting and tagging. That is the case for
+re-deriving rather than trusting a written total, and it is why the count that
+matters here is the one in the notes, which did not move.
 
 ### The 1 that should appear
 
@@ -213,8 +258,9 @@ rest per platform at postinstall time.
    rather than by taking it back. On v0.1.100 and v0.1.101 both downstream
    workflows started within two seconds of the publish — there is no window to
    reconsider after the click.
-5. **When it ships, change this file's first line to `# v0.1.102 — SHIPPED`**
-   and fold in the measured table, the way `release-v0.1.100-draft.md` and
+5. ✅ **DONE — this file's first line reads `# v0.1.102 — SHIPPED`** and the
+   measured table is folded in, the way `release-v0.1.100-draft.md` and
    `release-v0.1.101-draft.md` do. A page that keeps saying `DRAFT` after the
    tag is what caused this release to have its own notes written into the
-   previous one.
+   previous one. **Step 5 closed in the same session as the publish** — that is
+   the whole point of it being a numbered step rather than a good intention.
