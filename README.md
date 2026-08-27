@@ -2047,7 +2047,11 @@ exit code.** Read the code, not the word "refused":
 
 The first is `2` because the server answers `MATERIAL_CHANGE_BLOCKED` as an HTTP
 `400`, which this CLI classifies as a malformed request — see
-[Exit code 2](#exit-code-2). The message in each case is the server's.
+[Exit code 2](#exit-code-2). In each case the server's own sentence is what names
+the state, and the CLI echoes it verbatim. On the **moderator takedown** the CLI
+adds what that sentence leaves out — that your account's access is not the
+problem, and that asking a moderator to relist the listing is the only step that
+helps.
 
 **If a revision was already open** — because you staged an `rm-screenshot`, or
 one of the attach commands minted one — then *when this edit is material* it
@@ -3523,6 +3527,7 @@ fi
 ### Exit code 3
 
 - Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured).
+- **Not every `403` here is about your credential.** `civitai app listing …` against a listing a **moderator removed** answers `403` and so exits `3`, and nothing about the account is wrong: no login, grant or scope changes it. The message says so rather than sending you to fix access that is already fine, and names asking a moderator to relist the listing as the next step. Look the message itself up under [Troubleshooting](#troubleshooting).
 - **`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as "bad flags". See [Generate](#exit-codes-specific-to-generate).
 
 ### Exit code 4
@@ -3557,7 +3562,8 @@ credited it to the wrong command.)
 | `no token configured` | Nothing is logged in. Run `civitai login`, or set `CIVITAI_TOKEN`. This includes `civitai app list` / `app view`: the App **store** is not an anonymous read. | [Submit & auth](#submit--auth), [Browse the App store](#browse-the-app-store) |
 | `not logged in (401)` | The credential is present but invalid or expired. OAuth tokens refresh themselves; when the *refresh* token has also expired, log in again. For a personal key, mint a new one at `civitai.com/user/account`. | [Submit & auth](#submit--auth) |
 | `forbidden (403)` | Usually the invite-only Apps beta rather than a broken token — the same account reads the public API fine. | [Submit & auth](#submit--auth) |
-| `not permitted for your account (403)` | Managing a **store listing** needs Apps-author access, which is a narrower grant than being able to submit. | [Listing media requirements](#listing-media-requirements) |
+| `not permitted for your account (403)` | The **catch-all** listing `403`: managing a **store listing** needs Apps-author access, which is a narrower grant than being able to submit. It is not what a **moderator takedown** prints — that has its own message, the row below. | [Listing media requirements](#listing-media-requirements) |
+| `under a moderator takedown (403)` | A moderator removed this **store listing**, so the platform refuses to edit it. **Your account's access is not the problem** — this is the listing `403` that is *not* about your credential — and no login, grant or CLI command reverses it: ask a Civitai moderator to relist it. The server's own sentence follows the code, and it is what names the state. Exit `3`. **Not** the same as unpublishing the listing yourself: that refuses a *material* change as a `400` and exits `2`. | [Exit code 3](#exit-code-3) |
 | `Submit Apps:` | The `civitai whoami` capability row, and it is **tri-state**: `yes` / `no` / `unknown`. **`unknown` is not `no`** — it is the CLI declining to answer, because the server reported no `tokenScope` for an **OAuth** credential (whose submit answer *is* the `AppBlocksSubmit` bit) or sent no `subject` at all, so which gate applies is itself unknown. Re-run `civitai login` to mint a token whose scope the server reports; a **personal API key** always answers `yes`, since it is not scope-gated for submit. In `--json` this row is `canSubmitApps`, which is `true` / `false` / `null`. | [Submit & auth](#submit--auth) |
 | `(token scope not reported by the server — Buzz capabilities unknown)` | `civitai whoami` got no `tokenScope`, so **Buzz** read/spend are unknowable and are omitted rather than printed as `no`. Scoped to Buzz deliberately: the **Submit Apps** row is still shown above it, because a personal key's submit answer does not depend on the scope mask. | [Submit & auth](#submit--auth) |
 | `not permitted to read this app's analytics (403)` | `app metrics` needs the **Apps submit scope**. An OAuth `civitai login` carries it — unless the token was minted before the scope existed, in which case re-run `civitai login`. A full-scope personal API key also works. | [App metrics](#app-metrics) |

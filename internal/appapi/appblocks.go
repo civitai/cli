@@ -1859,6 +1859,33 @@ func isInsufficientScopeMsg(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "required scope")
 }
 
+// isModeratorTakedownMsg detects the server's moderator-TAKEDOWN refusal, for
+// exactly the reason isInsufficientScopeMsg exists: the wire carries no distinct
+// code for it either — both are a TRPCError FORBIDDEN — so the server message is
+// the only signal separating it from the author/cohort 403s. It is therefore
+// classified on the stable CORE of that message rather than on a whole sentence.
+//
+// Two spellings ship upstream and the core is what they share, which is why the
+// match is neither exact nor case-sensitive (`civitai/civitai@origin/main`):
+//
+//   - the edit refusal, lower-case — "this listing has been removed by a
+//     moderator and can no longer be edited"
+//     (src/server/services/blocks/offsite-listing.service.ts:1242 on the
+//     updateListing write path, :1888 on the prefill read path);
+//   - the republish refusal, capitalised — "This listing was removed by a
+//     moderator and cannot be restored by its owner."
+//     (src/server/services/blocks/offsite-moderation.service.ts:1638).
+//
+// 🔴 It means a moderator DELIST and never an owner-initiated unpublish. The
+// same helper that produces the first string returns `null` when the listing was
+// owner-unpublished instead (offsite-listing.service.ts:2320), so the string
+// cannot be reached for a listing its owner took down. That case is a different
+// refusal entirely — MATERIAL_CHANGE_BLOCKED, answered as HTTP 400, classified
+// here as a bad request (exit 2) — and must not be folded into this one.
+func isModeratorTakedownMsg(msg string) bool {
+	return strings.Contains(strings.ToLower(msg), "removed by a moderator")
+}
+
 // devTunnelError maps a non-200 dev-tunnel tRPC response to an actionable CLI
 // error. tRPC error bodies are {error:{json:{message,code,...}}}; the HTTP
 // status carries the mapped code (403 flag-off/not-author, 404 not-your-app).

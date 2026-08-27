@@ -1000,6 +1000,22 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		if isInsufficientScopeMsg(msg) {
 			return fmt.Errorf("listing media needs the Apps submit scope (403): %s — re-run `civitai login` (an old token may predate the scope), or use a full-scope personal API key", msg)
 		}
+		// 🔴 A MODERATOR TAKEDOWN IS NOT AN ACCESS PROBLEM, and the fallback
+		// below says it is. That arm answers for every non-scope 403, so it used
+		// to append "managing store listings needs Apps-author access" to a
+		// refusal where the caller's Apps-author access is fine and nothing
+		// about access is what failed — the wrong-subject class (#374/#391) one
+		// level out, on the 403 arm instead of the 400 one. The remedy it named
+		// was unreachable too: no grant, no re-login and no CLI command puts a
+		// delisted listing back.
+		//
+		// So this arm claims nothing about the account and names the only step
+		// that can work. It is deliberately NOT a new exit code: 403 is tagged
+		// by the deferred TagStatus above, so this stays exit 3, which is what
+		// README publishes for "a moderator removed the listing".
+		if isModeratorTakedownMsg(msg) {
+			return fmt.Errorf("this listing is under a moderator takedown (403): %s — your account's access is not the problem and no CLI command reverses this; ask a Civitai moderator to relist it", msg)
+		}
 		return fmt.Errorf("not permitted for your account (403): %s — managing store listings needs Apps-author access (invite-only beta)", msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("no store listing found for this app (404): %s — a store listing is created when you run `civitai app submit` and is settable while the app is pending review; submit the app first, then these commands will work", msg)

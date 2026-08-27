@@ -171,6 +171,7 @@ var exitCodeDocs = []ExitCodeDoc{
 		Summary: "Not authorized — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403).",
 		Detail: []string{
 			"Authentication/authorization — login required, token invalid/expired, or the credential lacks the needed scope (HTTP 401/403, or no token configured).",
+			"**Not every `403` here is about your credential.** `civitai app listing …` against a listing a **moderator removed** answers `403` and so exits `3`, and nothing about the account is wrong: no login, grant or scope changes it. The message says so rather than sending you to fix access that is already fine, and names asking a moderator to relist the listing as the next step. Look the message itself up under [Troubleshooting](#troubleshooting).",
 			"**`civitai generate` refines this**: several of its failures are *not* credential problems but would otherwise land here or on `2`, so they exit `1` instead and a script never loops on `civitai login`. A **muted account or incomplete onboarding** arrives as a bare `403` that is byte-identical to a missing scope; **out of Buzz** and **generation disabled** arrive as `400` (the upstream 403 is re-thrown server-side as a tRPC `BAD_REQUEST`), which would otherwise read as \"bad flags\". See [Generate](#exit-codes-specific-to-generate).",
 		},
 	},

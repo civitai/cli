@@ -40,12 +40,20 @@ the gap, then set the link on every app that has a public repo.
 
 ## Open investigations — live diagnosis state
 
-### `listingError`'s 403 arm appends a remedy that is false for a moderator takedown
+### ✅ FIXED — `listingError`'s 403 arm appended a remedy that was false for a moderator takedown
 
-Not mid-diagnosis — root cause and evidence are below and nothing is unknown.
-Recorded because it is unfixed, it now has a **documented destination** (the new
-README exit-code table publishes `a moderator removed the listing → 3`), and the
-next person to hit it will be told to fix access that is already fine.
+**CLOSED by `fix/listing-403-moderator-takedown` (PR #509).** `listingError`'s
+403 arm now branches on `isModeratorTakedownMsg` (declared beside
+`isInsufficientScopeMsg` in `internal/appapi/appblocks.go`) before the
+Apps-author-access fallback, and says the account's access is not the problem
+while naming "ask a Civitai moderator to relist it". Exit code unchanged at `3`.
+`README.md`'s Troubleshooting row was split in two, the source-repo section's
+"the message in each case is the server's" sentence corrected, and a bullet added
+to exit code 3's generated `Detail` (`internal/cmd/exitcodes_doc.go`) saying not
+every `403` there is about the credential. Regression:
+`internal/appapi/listing_forbidden_test.go` — red at `d2a635c`, green at HEAD.
+
+The diagnosis below is kept as the record of what was wrong and why.
 
 - **Symptom + exact repro:** any `civitai app listing` write against a listing a
   moderator removed. The server's own sentence is correct; the CLI appends a
@@ -74,10 +82,8 @@ next person to hit it will be told to fix access that is already fine.
 
 ## Next steps (ranked)
 
-1. **Narrow `listingError`'s 403 arm** — repo `civitai/cli`, files
-   `internal/appapi/listing.go:999-1003` and `README.md:3560`. Evidence and the
-   exact change are in the open investigation above. Pre-existing; deliberately
-   not folded into a listing-feature branch.
+1. ~~**Narrow `listingError`'s 403 arm**~~ — **DONE**, PR #509
+   (`fix/listing-403-moderator-takedown`). See the closed investigation above.
 2. **Set the remaining 3 offsite links, IF their repos go public** — `comfy`,
    `radio`, `cosmetic-studio`. Blocked, not forgotten: `civitai/ai-radio`,
    `civitai/Cosmetic-Studio` and every `comfy` candidate are **private**
