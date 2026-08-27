@@ -1,4 +1,11 @@
-# Handoff: the App Listing source-repository link — 2026-08-27
+# RECORD: the App Listing source-repository link — 2026-08-27
+
+🔴 **This is a RECORD, not a live handoff. Its queue is DRAINED — see "Next
+steps".** Two items shipped (#509, #510) and two were decided by Zach; nothing in
+here is waiting on anyone. Read it for the measured facts and the gotchas, which
+outlive the work. Do not resume from it expecting a task, and do not re-open the
+decisions in items 2 and 3 without new information — they were answered, not
+deferred.
 
 ## Run this first — the index, one read-only command
 ```bash
@@ -80,26 +87,58 @@ The diagnosis below is kept as the record of what was wrong and why.
   split `README.md:3560` into two rows. Confirm the exact server string first:
   `git -C $CIVITAI show origin/main:src/server/services/blocks/offsite-listing.service.ts | sed -n '1240,1244p'`
 
-## Next steps (ranked)
+## Next steps — 🔴 NONE. The queue is DRAINED and this doc is a RECORD.
+
+All four ranked items are resolved: two shipped, two decided by Zach on
+2026-08-27. **Nothing here is waiting on anyone.** Do not treat the list below as
+a queue — it is the disposition of each item, kept so the decisions are not
+silently re-opened by the next session.
 
 1. ~~**Narrow `listingError`'s 403 arm**~~ — **DONE**, PR #509
    (`fix/listing-403-moderator-takedown`). See the closed investigation above.
-2. **Set the remaining 3 offsite links, IF their repos go public** — `comfy`,
-   `radio`, `cosmetic-studio`. Blocked, not forgotten: `civitai/ai-radio`,
-   `civitai/Cosmetic-Studio` and every `comfy` candidate are **private**
-   (re-verified 2026-08-27). A link to a private repo is a 404 on a public store
-   page. Command once unblocked:
+2. ~~**Set the remaining 3 offsite links**~~ — **DECIDED: leave them unset.**
+   `comfy`, `radio`, `cosmetic-studio`. Not blocked-and-waiting; a decision.
+   `civitai/ai-radio`, `civitai/Cosmetic-Studio` and every `comfy` candidate are
+   **private** (re-verified 2026-08-27), and a link to a private repo is a 404 on
+   a public store page. 🔴 **This does NOT become actionable merely because a repo
+   later goes public** — it needs someone to want the link. If that happens:
    `civitai app listing set-source-repo <url> --slug <slug>` then
-   `civitai app listing submit-revision --slug <slug>` — it is a MATERIAL change,
-   so it stages a revision and needs moderator approval.
-3. **Decide whether `vitrine` should point at the civitai org's repo.** The listing
-   is yours; `github.com/civitai/vitrine` is not. Live now. Reversing it is
+   `civitai app listing submit-revision --slug <slug>` — a MATERIAL change, so it
+   stages a revision and needs moderator approval.
+3. ~~**Whether `vitrine` should point at the civitai org's repo**~~ — **DECIDED:
+   keep it, because the repo is public.** No write was made; the link was already
+   live and still is. Verified 2026-08-27 two ways, because a `gh` token can read
+   private repos and the store page is anonymous: `repos/civitai/vitrine` reports
+   `private: false`, AND unauthenticated `GET https://github.com/civitai/vitrine`
+   answers `200`. `app view vitrine --json` serves
+   `sourceRepoUrl: https://github.com/civitai/vitrine`. The org-vs-owner asymmetry
+   that made this a decision (the listing is Zach's, the repo is the org's) is
+   accepted, not overlooked. Reversing it would be
    `civitai app listing set-source-repo --clear --slug vitrine` — another material
-   change, another review cycle, so it is a decision rather than a cleanup.
-4. **Consider porting `splitItemsFloor`'s membership shape to other count floors.**
-   `agents_split_preserved_test.go` — a count floor was defeated by add-one/
-   delete-one (see gotchas); any other `len(x) >= N` guard in this repo has the
-   same hole. Not surveyed.
+   change and another review cycle.
+4. ~~**Port `splitItemsFloor`'s membership shape to other count floors**~~ —
+   **DONE**, PR #510. ~130 guards surveyed, **5** genuinely had the hole
+   (`humanbytes_test.go`, `fs_not_network_test.go`, `exitcodes_claims_test.go`,
+   `readme_troubleshooting_test.go`, `read_help_test.go`). Each converted with the
+   proof pair: old count guard GREEN under the trade, new membership guard RED by
+   name. 🔴 The loudest find: `exitcodes_claims_test.go` guarded a **ten-row**
+   ledger with `len(claims) < 5`, so five rows — including the #241 row that stops
+   a script retrying a permissions error forever — were deletable outright with
+   nothing going red.
+
+### Known and UNCLAIMED — deliberately not minted as work items
+
+Neither has an owner or a closing condition, so neither is a queue entry. They are
+recorded because they were found, not because anyone is on them.
+
+- **Four other 403 arms answering for N causes.** `submissionsError`
+  (`internal/appapi/appblocks.go:1943`) and `devTunnelError` have the same
+  one-arm-answers-many-causes shape PR #509 fixed. A listing takedown cannot reach
+  either, so nothing is currently wrong — the ground is simply unexamined.
+- **Five tables with NO collection guard at all** — including
+  `internal/cmd/app_listing_advice_ledger_test.go:121`. A *missing* guard is a
+  different defect from a tradeable count and was left alone on purpose; PR #510's
+  body lists all five.
 
 ## Gotchas / decisions / dead-ends
 
@@ -137,7 +176,27 @@ The diagnosis below is kept as the record of what was wrong and why.
 - 🔴 **A COUNT floor is defeated by add-one/delete-one.** `minSplitRows = 31`
   rested on "append-only, so any deletion drops below the floor" — but an eviction
   wave is *the* commit that adds rows, so it is the natural vehicle for the
-  deletion. Replaced with a membership floor over item numbers.
+  deletion. Replaced with a membership floor over item numbers. **Swept repo-wide
+  in PR #510**: ~130 guards examined, 5 more had the hole. The discrimination that
+  decides it — a walker/corpus positive control like `neterr_ledger_test.go:131`
+  (`len(files) < 60`) is NOT this defect; it asserts the instrument RAN, which is
+  a count question by nature. Convert only guards whose purpose is "this protected
+  set must not shrink" AND where losing A while gaining B is a real loss.
+  🔴 **What a membership floor still does not buy:** deleting the floor entry and
+  its row *together* stays green, and protection is opt-in per entry — a new row
+  nobody names in the floor is permanently tradeable, and nothing reddens at the
+  moment of the omission.
+- 🔴 **A broken sweep regex reports a confident, quiet ZERO.** Twice in one
+  session. `len\([A-Za-z0-9_.\[\]]*\)` looks fine and is not: inside an ERE
+  bracket expression a backslash is LITERAL, so the class closed early and the
+  pattern demanded a trailing `]`. It was "positive-controlled" against a fixed
+  string that never exercised it, so the control passed while the sweep found
+  almost nothing. Caught only because a hit named in the brief
+  (`neterr_ledger_test.go:131`) was missing from the results. **Control a search
+  pattern against a KNOWN hit in the real corpus, never against a synthetic
+  string** — and note the repo-local trap that compounds it: `grep -r` here is a
+  ugrep wrapper honouring `.gitignore`, so prefer
+  `find … -print0 | xargs -0 grep …`.
 - 🔴 **A mutation battery run against a DIRTY tree destroys uncommitted work.**
   Its `git checkout --` restore ate an entire round of edits; caught only because
   the file was missing from `git status` before committing. The battery must
