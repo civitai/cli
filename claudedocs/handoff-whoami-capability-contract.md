@@ -1,4 +1,4 @@
-# Handoff: whoami capability contract + the AGENTS/CLAUDE consolidation — 2026-08-26
+# Handoff: whoami capability contract + the AGENTS/CLAUDE consolidation — 2026-08-26, updated 2026-08-27
 
 ## Run this first — the index, one read-only command
 ```bash
@@ -20,8 +20,9 @@ picked up with its measurements intact.
 
 ## State now
 
-- **`main` @ `79ed55d`, tree clean** (only untracked `node_modules/`, pre-existing).
+- **`main` @ `b04501d`, tree clean** (only untracked `node_modules/`, pre-existing).
   Base clone synced with `merge --ff-only`. **No open PRs. Nothing in flight.**
+  All claims released.
 - **#377 is CLOSED — option (b) shipped as PR #498** (squash `79ed55d`,
   merged `2026-08-27T00:03:20Z`, branch deleted, claim
   `whoami-capability-contract-1` released).
@@ -37,76 +38,64 @@ picked up with its measurements intact.
   really is an array of **strings** on the live server, so `[]string` is
   measured, not inferred from the single recorded capture.
 - **`v0.1.101` DOES NOT CONTAIN #498.** The tag sits on `edc1299` and published
-  `2026-08-26T03:56:29Z`; `79ed55d` landed after it. #498 ships in the NEXT
-  release. See the open investigation below — the release draft is wrong about
-  this and it is my error.
+  `2026-08-26T03:56:29Z`; `79ed55d` landed after it. **#498 ships in v0.1.102**,
+  whose notes are now written: `claudedocs/release-v0.1.102-draft.md`.
+- **The release drafts are correct and the v0.1.101 page is CLOSED** (PR #500,
+  squash `b04501d`). `release-v0.1.101-draft.md` is headed `SHIPPED` with a
+  measured outcome table; the false #498 row and prose section are gone. 🔴 **Do
+  not edit a `SHIPPED` page** — that is exactly the mistake #500 corrected.
 - 11 commits on the branch, 10 audit rounds. Every round produced findings;
   rounds 1–2 were shipped behaviour, 3–10 were guard quality.
 
+## Resolved since this doc was written — do NOT re-derive these
+
+🔴 **Both entries below were filed under "Open investigations — live diagnosis
+state" and have SHIPPED.** They are kept because the reasoning is worth reading,
+not because there is work in them. A resolved investigation left under an "open"
+heading is the same defect as a shipped release page still headed `DRAFT` — and
+this doc had both at once.
+
+### ✅ `whoami --json` drops four modellable fields (#377 option b) — SHIPPED in #498
+
+`tier`, `status`, `isMember`, `subscriptions` are modelled on `appapi.Identity`
+and published by `--json`. `email` / `emailVerified` stay unmodelled **on
+purpose**: they are PII the command does not print, so passing the body through
+would be a privacy regression dressed as a bug fix. The rationale lives in a 🔴
+block on the struct field an editor must touch, with two tests that go red.
+Verified live: `tier:"silver"`, `status:"active"`, `isMember:true`,
+`subscriptions:["yellow"]`, `has("email")==false`.
+
+**Two leaks were found in review, neither in the original diff** — `WhoAmI`'s
+parse-failure branch echoed the whole `/api/v1/me` body (email included) to
+stderr, and `Subscriptions` was briefly a `json.RawMessage` that republished
+server bytes verbatim. Both closed; see the `[]string` note under Gotchas.
+
+### ✅ `release-v0.1.101-draft.md` described #498 as part of a release that shipped without it — FIXED in #500
+
+The tag published `2026-08-26T03:56:29Z`; `79ed55d` merged
+`2026-08-27T00:03:20Z`, **20 hours later**. The published body carries exactly
+two changelog entries (#492, #494) and no #498 — measured, not inferred.
+
+**Cause, and it is the reusable part:** an audit reported the release notes were
+stale about #498, and the fix went into the v0.1.101 page without anyone asking
+whether that release had already closed. It had. The page still said `DRAFT` /
+"Not yet tagged" while being live on all three channels, which is what made it
+look editable.
+
+🔴 **Before writing into any release page, check whether it is closed:**
+
+```bash
+gh release view vX.Y.Z --json isDraft,publishedAt   # isDraft:false ⇒ CLOSED
+git merge-base --is-ancestor <pr-sha> vX.Y.Z        # non-zero ⇒ NOT in that tag
+```
+
+The fix restored the page (`git checkout edc1299 -- <path>`; only two commits
+ever touched it, so the revert is exact), headed it `SHIPPED` with a measured
+table, and opened `release-v0.1.102-draft.md` carrying the #498 content where it
+is true. That page's mechanics step 5 flips its own heading at tag time, so the
+loop closes itself next time.
+
 ## Open investigations — live diagnosis state
-
-### `whoami --json` still drops four modellable fields (#377 option b)
-
-- **Symptom + exact repro:** `civitai whoami --json` omits fields the server
-  demonstrably sends. Reproduce by pointing the binary at a fake `/api/v1/me`
-  serving the real-capture body kept verbatim in `internal/appapi/api_test.go`.
-- **Observed (with values):** six keys have nowhere to land in `appapi.Identity` —
-  `tier`, `status`, `isMember`, `subscriptions`, `email`, `emailVerified`.
-  Confirmed live against the released v0.1.101 binary, not inferred from code.
-- **Ruled out:** *"just pass the raw body through"* — rejected. `email` /
-  `emailVerified` are PII the command does not print today; making the output
-  genuinely raw is a privacy regression dressed as a bug fix.
-  Also ruled out: that this is a wording problem only. Option (a) — the false
-  `"raw JSON"` claim in help + flag usage — **shipped in #492** and is pinned so
-  it cannot regress. The dropped fields are a separate, still-live defect.
-- **Leading hypothesis:** not a bug hunt — the work is known and scoped. Model
-  `tier`, `status`, `isMember`, `subscriptions` on `appapi.Identity` and add them
-  to the `--json` map; leave `email`/`emailVerified` unmodelled **and say so in
-  the struct doc comment**, so the reasoning lives in the code.
-  `isMember`/`tier`/`subscriptions` are not idle: AGENTS item 13 records that a
-  caller's usable ecosystem set differs between a free and a member account, so
-  the CLI is discarding the server's own answer to "is this a member account".
-- **Next probe:** none needed — go straight to implementation. Note that
-  `TestWhoAmIJSONShapeIsPinnedWhole` **will fail the moment the fields land**;
-  that is the guard working, and its expected key set is what you update.
-
-- 🔴 **Why this was nearly lost:** #492's body read
-  `Closes #377 partially — option (a) only; (b) remains open.`
-  **GitHub has no partial-close keyword** — it saw `Closes #377` and closed the
-  whole issue one second after the merge, while the author was saying the
-  opposite in the same sentence. Reopened `2026-08-26` with the full evidence.
-  **For a half-fix, reference the issue WITHOUT a closing keyword.**
-
-### 🔴 `claudedocs/release-v0.1.101-draft.md` now describes #498 as part of a release that shipped without it
-
-- **Symptom + exact repro:** the draft's "Predicted contents" table carries a
-  row `| 3 | feat(whoami): --json carries the account profile … (#498) |`, and a
-  prose section headed *"Third `--json` change, and this one is ADDITIVE, not
-  breaking (#498)"*. Both are false: v0.1.101 was already tagged and published
-  when #498 merged.
-  ```bash
-  git rev-list -n1 v0.1.101 | cut -c1-7          # edc1299
-  git merge-base --is-ancestor 79ed55d v0.1.101  # non-zero -> NOT in the tag
-  git log --oneline v0.1.101..origin/main        # 79ed55d, 5d897d0
-  ```
-- **Observed (with values):** `gh release list` shows `v0.1.101  Latest
-  2026-08-26T03:56:29Z`. `79ed55d` merged `2026-08-27T00:03:20Z` — 20 hours
-  after the tag.
-- **Ruled out:** *"the draft is just ahead of the tag"* — no; the previous
-  handoff records v0.1.101 as **tagged, published and verified on all three
-  channels** (GitHub Release 14/14 assets, npm `dist-tags.latest=0.1.101`,
-  Homebrew cask `2beec20`). The draft is describing the past, not the future.
-- **Leading hypothesis:** not a hypothesis — a mistake with a known cause. I
-  updated the v0.1.101 draft because the audit told me the release notes were
-  stale about this PR, and I never checked whether that release had already
-  shipped. The `has("email")` smoke probe I added to it is good content in the
-  wrong document.
-- **Next probe:** none needed. The fix is mechanical, on a feature branch
-  (never `main`): restore `release-v0.1.101-draft.md` to its as-shipped state
-  (`git show edc1299:claudedocs/release-v0.1.101-draft.md` is the pre-#498
-  text — diff it, do not blind-restore, since #497 may have touched it), and
-  open `claudedocs/release-v0.1.102-draft.md` carrying the #498 section, the
-  table row and the `jq 'has("tier"), has("isMember"), has("email")'` probe.
 
 ### Two test failures observed during the audit that were never attributed
 
@@ -140,23 +129,28 @@ picked up with its measurements intact.
 
 ## Next steps (ranked)
 
-1. **Fix the release-draft error** — repo `civitai/cli`, files
-   `claudedocs/release-v0.1.101-draft.md` (restore) and a new
-   `claudedocs/release-v0.1.102-draft.md`. Feature branch + PR; evidence and the
-   exact commands are in the open investigation above. **This is a correction of
-   something this session got wrong**, not new scope.
-2. **Tag v0.1.102 when the maintainer wants it** — `main` is green and carries
+🔴 **RENUMBERED 2026-08-27 — `claim-work` slugs are derived from doc + RANK, so
+every slug below now points at a DIFFERENT item than it did yesterday.** The old
+rank 1 (fix the release-draft error) shipped as #500 and its claim
+`whoami-capability-contract-1` was released; that same slug now means "tag
+v0.1.102". Re-derive with `claim-work --slug-for <this-doc> <rank>` and read the
+`--subject` of any live claim before assuming it is yours.
+
+1. **Tag v0.1.102 when the maintainer wants it** — `main` is green and carries
    one user-visible change since v0.1.101 (#498, additive `--json` keys). 🔴
    `AGENTS.md` makes tagging and publishing SEPARATE consents, and publishing the
    draft fires npm + the Homebrew tap on the same click. Do not do either without
-   being asked. Do step 1 first or the notes will be wrong.
-3. **Reap two stale in-repo agent worktrees** — `git worktree list` shows
+   being asked. ✅ The notes prerequisite is DONE —
+   `claudedocs/release-v0.1.102-draft.md` exists and is correct (#500), so
+   nothing blocks the tag but the maintainer's word. Tag the `docs(release)`
+   commit, per the convention v0.1.99/100/101 all follow.
+2. **Reap two stale in-repo agent worktrees** — `git worktree list` shows
    `.claude/worktrees/agent-a06dc1f0c76f4f7c7` (holding `fix/offsite-refusal`)
    and `.claude/worktrees/agent-a84febaf8c91e65fe` (holding `audit392`). They
    live INSIDE the repo, are gitignored, and hold those branches repo-globally;
    they also polluted an auditor's `grep` with stale copies of `whoami.go` until
    it switched to `find | xargs grep`. Check for unique work before removing.
-4. **Decide whether `AGENTS.md` gets a NEW item for "`email`/`emailVerified`
+3. **Decide whether `AGENTS.md` gets a NEW item for "`email`/`emailVerified`
    are unmodelled on purpose".** I did NOT add one: the rationale sits in a 🔴
    block at the exact struct field an editor must touch, backed by two tests
    that go red, and `AGENTS.md` has ~950 bytes of headroom (28,650 / 29,600).
@@ -166,7 +160,7 @@ picked up with its measurements intact.
    not write that number here: `TestAgentsItemCrossReferencesResolve` scans
    every doc for `item N` and fails on one AGENTS.md does not have yet. It
    caught this line naming a number that did not exist.
-5. **Watch the additive `--json` change in the wild** — no code pending. If a
+4. **Watch the additive `--json` change in the wild** — no code pending. If a
    consumer reports breakage it will be a strict-schema decoder; the four new
    keys are the only difference.
 
