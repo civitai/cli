@@ -4,6 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
+	"os"
+	"path/filepath"
+	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -35,6 +41,17 @@ import (
 // somewhere: A has read=true/spend=false, C has read=false/spend=true, A has
 // submit=true/spend=false, C has submit=true/read=false, and D has submit=null
 // — which no bool-valued mutant can produce.
+//
+// 🔴 CASES F AND G EXIST BECAUSE A/B/C/D/E CANNOT SEE THE PROFILE FIELDS AT ALL.
+// None of those five bodies carries `tier`/`status`/`isMember`/`subscriptions`,
+// so all four pin as `null` in every one of them — a literal that a payload
+// which never reads `id.Tier` and friends satisfies exactly as well. F and G
+// carry them with values, and carry them PAIRWISE DISTINCT (silver/free,
+// active/muted, true/false, ["yellow"]/[]) so a cross-assignment mutant
+// (`"tier": id.Status`, `"isMember": id.Tier != nil`) disagrees in at least one
+// case. F additionally carries `email`/`emailVerified` in the SERVER BODY and
+// pins a payload WITHOUT them: that is the #377 privacy invariant, asserted on
+// a body that really contains the PII rather than on one that never could.
 func TestWhoAmIJSONShapeIsPinnedWhole(t *testing.T) {
 	const (
 		scopeUserRead        = 1 << 0
@@ -63,11 +80,15 @@ func TestWhoAmIJSONShapeIsPinnedWhole(t *testing.T) {
   },
   "credentialType": "personal API key",
   "id": 11,
+  "isMember": null,
   "scopes": [
     "UserRead",
     "BuzzRead"
   ],
   "scopesKnown": true,
+  "status": null,
+  "subscriptions": null,
+  "tier": null,
   "username": "alma"
 }
 `,
@@ -89,8 +110,12 @@ func TestWhoAmIJSONShapeIsPinnedWhole(t *testing.T) {
   },
   "credentialType": "personal API key",
   "id": 22,
+  "isMember": null,
   "scopes": null,
   "scopesKnown": false,
+  "status": null,
+  "subscriptions": null,
+  "tier": null,
   "username": "bertil"
 }
 `,
@@ -110,11 +135,15 @@ func TestWhoAmIJSONShapeIsPinnedWhole(t *testing.T) {
   },
   "credentialType": "OAuth login",
   "id": 33,
+  "isMember": null,
   "scopes": [
     "AIServicesWrite",
     "AppBlocksSubmit"
   ],
   "scopesKnown": true,
+  "status": null,
+  "subscriptions": null,
+  "tier": null,
   "username": "cesar"
 }
 `,
@@ -137,8 +166,12 @@ func TestWhoAmIJSONShapeIsPinnedWhole(t *testing.T) {
   },
   "credentialType": "OAuth login",
   "id": 44,
+  "isMember": null,
   "scopes": null,
   "scopesKnown": false,
+  "status": null,
+  "subscriptions": null,
+  "tier": null,
   "username": "david"
 }
 `,
@@ -160,9 +193,78 @@ func TestWhoAmIJSONShapeIsPinnedWhole(t *testing.T) {
   },
   "credentialType": "unknown",
   "id": 55,
+  "isMember": null,
   "scopes": [],
   "scopesKnown": true,
+  "status": null,
+  "subscriptions": null,
+  "tier": null,
   "username": "elias"
+}
+`,
+	}, {
+		// ---- F: the full account profile, PII INCLUDED IN THE BODY -----------
+		// 🔴 THE SERVER BODY BELOW CARRIES `email` AND `emailVerified` AND THE
+		// PINNED PAYLOAD DOES NOT. That is the #377 privacy invariant as a
+		// whole-payload literal: modelling either field on appapi.Identity and
+		// adding it to the map turns this literal red. A body without the PII
+		// could not have seen that, which is why this one has it.
+		name: "personal key, full profile (PII in the body)",
+		body: fmt.Sprintf(`{"username":"frida","id":66,"tokenScope":%d,"subject":{"type":"apiKey","id":"k"},`+
+			`"tier":"silver","status":"active","isMember":true,"subscriptions":["yellow"],`+
+			`"email":"frida@example.test","emailVerified":true}`, scopeUserRead),
+		want: `{
+  "base_url": "%s",
+  "canReadBalance": false,
+  "canSpend": false,
+  "canSubmitApps": true,
+  "capabilities": {
+    "can_read_buzz": false,
+    "can_spend_buzz": false
+  },
+  "credentialType": "personal API key",
+  "id": 66,
+  "isMember": true,
+  "scopes": [
+    "UserRead"
+  ],
+  "scopesKnown": true,
+  "status": "active",
+  "subscriptions": [
+    "yellow"
+  ],
+  "tier": "silver",
+  "username": "frida"
+}
+`,
+	}, {
+		// ---- G: the profile's OTHER pole -------------------------------------
+		// Every profile value disagrees with F's: free/silver, muted/active,
+		// false/true, []/["yellow"]. A mutant that cross-wires two of the four,
+		// or derives one from another's presence, agrees with F and dies here.
+		// `subscriptions: []` also pins the empty-vs-null distinction the raw
+		// passthrough preserves — the same nil-is-not-empty rule as `scopes`.
+		name: "oauth, known mask, profile at the other pole",
+		body: `{"username":"gustav","id":77,"tokenScope":0,"subject":{"type":"oauth","id":"a"},` +
+			`"tier":"free","status":"muted","isMember":false,"subscriptions":[]}`,
+		want: `{
+  "base_url": "%s",
+  "canReadBalance": false,
+  "canSpend": false,
+  "canSubmitApps": false,
+  "capabilities": {
+    "can_read_buzz": false,
+    "can_spend_buzz": false
+  },
+  "credentialType": "OAuth login",
+  "id": 77,
+  "isMember": false,
+  "scopes": [],
+  "scopesKnown": true,
+  "status": "muted",
+  "subscriptions": [],
+  "tier": "free",
+  "username": "gustav"
 }
 `,
 	}}
@@ -254,11 +356,14 @@ func TestWhoAmICaveatIsScopedToBuzz(t *testing.T) {
 // the same false claim in both. Asserting once, on the rendered `--help`, would
 // pass with one of them still wrong if the other happened to shadow it.
 //
-// The output is a hand-built projection of ten keys; the server demonstrably
-// sends six more (`tier`, `status`, `isMember`, `subscriptions`, `email`,
-// `emailVerified` — see the production capture in internal/appapi/api_test.go).
-// Making it truly raw is NOT the fix: `email`/`emailVerified` are PII this
-// command does not print.
+// The output is a hand-built projection of fourteen keys. #377 option (b)
+// landed four of the six the server sent and the CLI dropped (`tier`, `status`,
+// `isMember`, `subscriptions`); the remaining two are `email`/`emailVerified`,
+// which stay dropped BECAUSE they are PII this command does not print. So
+// "raw" is still false, and now false in a sharper way: the only gap left
+// between raw and curated IS the PII, so a reader who believes the word expects
+// exactly the two fields the CLI is deliberately withholding. The production
+// capture proving the server sends them is in internal/appapi/api_test.go.
 func TestWhoAmIJSONHelpDoesNotClaimRaw(t *testing.T) {
 	cmd := newWhoAmICmd()
 	flag := cmd.Flags().Lookup("json")
@@ -293,5 +398,238 @@ func TestWhoAmIScopesEmptyListIsNotBlank(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Scopes (0): (none granted)") {
 		t.Errorf("a zero mask should say so explicitly:\n%s", stdout)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// #377 option (b) — the profile fields, and the PII that stays behind.
+// ---------------------------------------------------------------------------
+
+// meBodyWithPII is a /api/v1/me body shaped like the production capture in
+// internal/appapi/api_test.go: it carries the four profile fields the CLI now
+// publishes AND the two it deliberately withholds.
+const meBodyWithPII = `{"username":"ida","id":88,"tokenScope":1,"subject":{"type":"apiKey","id":"k"},` +
+	`"tier":"silver","status":"active","isMember":true,"subscriptions":["yellow"],` +
+	`"email":"ida@example.test","emailVerified":true}`
+
+// TestWhoAmINeverPrintsEmail is the #377 privacy invariant asserted where a user
+// would actually see it: on BOTH of the command's own output surfaces.
+//
+// 🔴 THE STRUCTURAL GUARD IN internal/appapi CANNOT SEE THIS AND THIS CANNOT SEE
+// THAT. TestIdentityHasNoEmailField pins that the bytes die at the client
+// boundary; this pins that neither rendered surface prints them. They fail to
+// different changes — a raw-body passthrough added in whoami.go would leave the
+// struct guard green — so both exist.
+//
+// The positive control matters as much as the assertion: an email address is
+// exactly the string a command that never had it also fails to print, so a
+// verdict over a body without PII would be vacuous.
+func TestWhoAmINeverPrintsEmail(t *testing.T) {
+	if !strings.Contains(meBodyWithPII, "ida@example.test") || !strings.Contains(meBodyWithPII, "emailVerified") {
+		t.Fatal("positive control failed: the fixture body no longer carries the PII this guard is about")
+	}
+	for _, surface := range [][]string{{"whoami"}, {"whoami", "--json"}} {
+		t.Run(strings.Join(surface, " "), func(t *testing.T) {
+			setupWhoAmI(t, meBodyWithPII)
+			stdout, stderr, err := run(t, surface...)
+			if err != nil {
+				t.Fatalf("%v: %v", surface, err)
+			}
+			for _, pii := range []string{"ida@example.test", "email", "emailVerified"} {
+				if strings.Contains(stdout, pii) || strings.Contains(stderr, pii) {
+					t.Errorf("`civitai %s` leaked %q — #377 withholds email/emailVerified on purpose:\n%s%s",
+						strings.Join(surface, " "), pii, stdout, stderr)
+				}
+			}
+			// Positive control on the run itself: a command that errored early,
+			// or printed nothing, would also print no PII.
+			if !strings.Contains(stdout, "ida") {
+				t.Fatalf("the command printed nothing about this identity, so the PII verdict is vacuous:\n%s", stdout)
+			}
+		})
+	}
+}
+
+// 🔴 THE HUMAN SURFACE'S "no account dump" GUARD IS NOT HERE — IT IS CASE 9 OF
+// TestWhoAmIHumanBlockIsPinnedWhole, AND IT USED TO BE A BANNED-SUBSTRING LEDGER
+// IN THIS FILE. That ledger listed "silver", "active", "yellow", "isMember",
+// "tier" and passed while the command printed
+//
+//	Member:                   yes
+//	Account status:           ACTIVE
+//
+// with the whole `internal/cmd` package `ok`: `Member:` pays no banned word and
+// `ACTIVE` evades the lowercase literal. AGENTS item 28 records that exact shape
+// losing three times and names golden-output pinning as what closes ADDITION, so
+// the ledger was replaced by a golden case rather than extended with a fourth
+// phrase. Do not re-add a phrase list here.
+
+// TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent is the OTHER half of
+// the #377 privacy boundary, and the one an earlier draft of this PR got wrong.
+//
+// 🔴 "email IS NOT MODELLED" ONLY CONTAINS PII IF NO FIELD IS AN UNBOUNDED
+// PASSTHROUGH. `Subscriptions` was a `json.RawMessage` for one review round, on
+// a resilience argument — and that made `whoami --json` publish whatever bytes
+// the server put under that key, with no code change required. This test drives
+// the command against exactly that: a `subscriptions` whose elements are objects
+// carrying a billing email and a card fragment. Because the field is now typed
+// `[]string`, the strict parse rejects it, the whole profile degrades to null,
+// and none of it reaches stdout.
+//
+// The fixture is deliberately the hostile shape rather than the observed one:
+// asserting against `["yellow"]` cannot see this failure mode at all, which is
+// why the guards written alongside the RawMessage version were all green.
+func TestWhoAmIJSONNeverPublishesUnmodelledSubscriptionContent(t *testing.T) {
+	const hostile = `{"username":"ida","id":88,"tokenScope":1,"subject":{"type":"apiKey","id":"k"},` +
+		`"tier":"silver","status":"active","isMember":true,` +
+		`"subscriptions":[{"tier":"yellow","billingEmail":"pii@example.test",` +
+		`"customer":{"stripeId":"cus_MARKER"},"cardLast4":"4242"}]}`
+	setupWhoAmI(t, hostile)
+	stdout, stderr, err := run(t, "whoami", "--json")
+	if err != nil {
+		t.Fatalf("a hostile subscriptions shape must not fail the command: %v", err)
+	}
+
+	// 🔴 SCAN THE PAYLOAD WITHOUT `base_url`, NOT RAW STDOUT — THE ENVIRONMENT
+	// CAN SPELL A MARKER. This scanned the whole of stdout, and stdout carries
+	// `base_url` with the httptest server's EPHEMERAL PORT. When that port
+	// happened to contain `4242` — the card fragment in the fixture — the guard
+	// reported a PII leak that had not happened. Measured at 5 failures in 6000
+	// runs of the pre-fix code — about 1 in 1200, and 0 in 6000 after the fix.
+	// The structural bound is the same order: 13 of the 28232 ephemeral ports
+	// contain `4242`, i.e. 1 in 2172 — 1.8x rarer than the clustered rate
+	// observed, which is what clustering does to a short sample. Both numbers
+	// are here so a future reader can check rather than trust either. It looked unreproducible because the failures CLUSTER — all five
+	// were ports 42420-42429, one crossing of a single decade — since ports are
+	// handed out near-sequentially from a counter that persists across
+	// processes. A false red on a privacy guard is the worst place to teach
+	// anyone to re-run and move on.
+	//
+	// Dropping `base_url` is the narrow fix: it is the only field whose value
+	// this test does not control, and it carries no server bytes at all — it is
+	// `cfg.BaseURL()`, read before the request. Every field the RESPONSE can
+	// reach is still scanned.
+	scanned := payloadWithoutBaseURL(t, stdout)
+	for _, leak := range []string{"pii@example.test", "cus_MARKER", "4242", "billingEmail", "stripeId", "cardLast4"} {
+		if strings.Contains(scanned, leak) || strings.Contains(stderr, leak) {
+			t.Errorf("`whoami --json` published unmodelled content %q from subscriptions:\n%s%s", leak, scanned, stderr)
+		}
+	}
+	// 🔴 POSITIVE CONTROL, AND IT IS NOT OPTIONAL. A command that errored, or a
+	// fixture the server never received, also prints none of the markers above.
+	// Assert the command really ran AND that the degradation is what stopped the
+	// PII — `subscriptions: null` is the mechanism, not `"yellow"` filtered out.
+	if !strings.Contains(stdout, `"username": "ida"`) {
+		t.Fatalf("the command printed no identity, so the leak verdict is vacuous:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, `"subscriptions": null`) {
+		t.Errorf("the hostile shape should have degraded the whole profile to null, got:\n%s", stdout)
+	}
+}
+
+// payloadWithoutBaseURL re-renders a `whoami --json` payload with `base_url`
+// removed, for a leak scan to run over.
+//
+// 🔴 IT EXISTS BECAUSE `base_url` IS THE ONE FIELD A TEST DOES NOT CONTROL, AND
+// THE ENVIRONMENT CAN SPELL A MARKER INTO IT. See
+// TestScanExcludesBaseURLNotThePayload for the measured failure.
+func payloadWithoutBaseURL(t *testing.T, stdout string) string {
+	t.Helper()
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(stdout), &payload); err != nil {
+		t.Fatalf("--json did not emit an object (%v):\n%s", err, stdout)
+	}
+	if _, ok := payload["base_url"]; !ok {
+		// Positive control on the helper: if the key were ever renamed, the
+		// delete would silently do nothing and the flake would return.
+		t.Fatalf("payload has no base_url key to exclude — the field was renamed and this "+
+			"helper is now a no-op:\n%s", stdout)
+	}
+	delete(payload, "base_url")
+	out, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatalf("re-marshal: %v", err)
+	}
+	return string(out)
+}
+
+// TestScanExcludesBaseURLNotThePayload is the deterministic regression for a
+// FLAKE, and it exists because the flake itself is not reproducible on demand.
+//
+// 🔴 THE DEFECT: the leak scan above ran over raw stdout, and stdout carries
+// `base_url` with the httptest server's EPHEMERAL PORT. The scan's marker list
+// includes `"4242"` — the card fragment in the hostile fixture — so any run
+// whose port contained `4242` reported a PII leak that had not happened. It
+// reproduced at about 1 run in 1200 (5 in 6000 measured), and in CLUSTERS,
+// because ports come from a near-sequential counter that persists across
+// processes — all five observed failures fell in ports 42420-42429. That is a
+// nondeterministic red on a required check, on a privacy guard, which is the
+// worst possible place to train anyone to re-run and move on.
+//
+// It cannot be reproduced by asking for a port, so the regression is on the
+// PROPERTY instead: markers living in `base_url` must not be scanned, and
+// markers living anywhere else must be. Both directions, or this would pass for
+// a helper that returns the empty string.
+func TestScanExcludesBaseURLNotThePayload(t *testing.T) {
+	const marker = "4242"
+	// The exact shape the flake produced: a port containing the card fragment.
+	inBaseURL := `{"base_url":"http://127.0.0.1:4242","username":"ida","subscriptions":null}`
+	if got := payloadWithoutBaseURL(t, inBaseURL); strings.Contains(got, marker) {
+		t.Errorf("a marker inside base_url must not survive into the scanned text: %s", got)
+	}
+	// The other direction. Without this, a helper returning "" would pass.
+	inPayload := `{"base_url":"http://127.0.0.1:1234","username":"ida","subscriptions":["cardLast4 4242"]}`
+	if got := payloadWithoutBaseURL(t, inPayload); !strings.Contains(got, marker) {
+		t.Errorf("a marker in the PAYLOAD must survive into the scanned text, or the leak scan is "+
+			"inert: %s", got)
+	}
+}
+
+// readmeWhoAmIJSONBlockRe captures the ```json fence under `##### whoami --json`
+// — identified by a key unique to that payload on the whole page.
+var readmeWhoAmIJSONBlockRe = regexp.MustCompile("(?s)```json\\n(\\{[^`]*?\"credentialType\"[^`]*?\\})\\n```")
+
+// TestREADMEWhoAmIJSONBlockHasTheRealKeys closes the OTHER whoami seam.
+//
+// 🔴 whoami_readme_block_test.go BYTE-LOCKS THE HUMAN BLOCKS AND IS BLIND TO
+// THIS ONE. Its regex anchors on `Logged in as`, which the `--json` example does
+// not contain, so the documented payload could drift arbitrarily far from the
+// real one with every existing guard green — and #377 option (b) is precisely a
+// change that adds keys to one and not the other.
+//
+// It pins the KEY SET rather than the bytes, deliberately: the README block is
+// hand-formatted (`"capabilities"` inline on one line) and json.Encoder is not,
+// so byte-equality would force a reformat that helps no reader. The key set is
+// what a script author reads it for, and it is what goes stale.
+func TestREADMEWhoAmIJSONBlockHasTheRealKeys(t *testing.T) {
+	readme, err := os.ReadFile(filepath.Join(repoRootDir(t), "README.md"))
+	if err != nil {
+		t.Fatalf("read README.md: %v", err)
+	}
+	blocks := readmeWhoAmIJSONBlockRe.FindAllStringSubmatch(string(readme), -1)
+	// Positive control on the extractor: a verdict over zero blocks is the
+	// reassuring zero this repo keeps hitting.
+	if len(blocks) != 1 {
+		t.Fatalf("expected exactly 1 `whoami --json` example block in README.md, extracted %d "+
+			"(pattern: %s) — the extractor is reading the wrong text", len(blocks), readmeWhoAmIJSONBlockRe)
+	}
+	var documented map[string]any
+	if err := json.Unmarshal([]byte(blocks[0][1]), &documented); err != nil {
+		t.Fatalf("README.md's `whoami --json` example is not valid JSON (%v):\n%s", err, blocks[0][1])
+	}
+
+	setupWhoAmI(t, meBodyWithPII)
+	stdout, _, err := run(t, "whoami", "--json")
+	if err != nil {
+		t.Fatalf("whoami --json: %v", err)
+	}
+	var actual map[string]any
+	if err := json.Unmarshal([]byte(stdout), &actual); err != nil {
+		t.Fatalf("payload is not valid JSON (%v):\n%s", err, stdout)
+	}
+	got, want := slices.Sorted(maps.Keys(actual)), slices.Sorted(maps.Keys(documented))
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("README.md's `whoami --json` example no longer lists the keys the command emits.\n"+
+			"--- the command emits ---\n%v\n--- README.md documents ---\n%v", got, want)
 	}
 }

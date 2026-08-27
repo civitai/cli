@@ -358,7 +358,14 @@ func TestWhoAmISuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("whoami: %v", err)
 	}
-	if !strings.Contains(out, "bob") || !strings.Contains(out, "99") {
+	// 🔴 ASSERT THE WHOLE IDENTITY LINE, NOT THE BARE ID. `Contains(out, "99")`
+	// scanned output that also carries the base URL with the httptest server's
+	// EPHEMERAL PORT — and 2.88% of ports in the ephemeral range contain "99".
+	// So if the id ever stopped printing, this passed vacuously about one run in
+	// 35: a SILENT GREEN, the mirror image of the false red the same mechanism
+	// caused in whoami_test.go's leak scan. Pinning the rendered line ties the
+	// id to its label and to the username, which no port can spell.
+	if !strings.Contains(out, "Logged in as bob (id 99) at ") {
 		t.Errorf("whoami output should report the user: %s", out)
 	}
 }
