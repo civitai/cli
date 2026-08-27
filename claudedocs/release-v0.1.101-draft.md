@@ -1,9 +1,56 @@
-# v0.1.101 — DRAFT
+# v0.1.101 — SHIPPED
 
-**Not yet tagged.** Cut from `main` at `af5e98f`, which is the commit this draft
-sits on top of. Publishing the draft GitHub Release is what fires **npm and the
-Homebrew tap** (both trigger on `release: published`), and npm unpublish is
-restricted — so the tag is the recoverable step and the publish is not.
+**Tagged and published 2026-08-26T03:56:29Z.** `gh release view v0.1.101`
+reports `isDraft: false` with **14/14** expected assets. The tag sits on
+`edc1299`, the `docs(release)` commit this draft was merged as — the convention
+`v0.1.99` and `v0.1.100` established. All three channels fired and all three
+succeeded; npm `dist-tags.latest` is `0.1.101` and the tap cask reads
+`version "0.1.101"`.
+
+Everything below was written *before* the tag and is kept as the record. Where a
+section made a prediction, the measured outcome is folded in and marked
+**MEASURED**; the reasoning that made the release safe is preserved unchanged,
+because it is the part worth re-reading next time.
+
+🔴 **THIS PAGE IS CLOSED. A LATER SESSION EDITED IT ANYWAY, AND EVERY WORD IT
+ADDED WAS FALSE.** On 2026-08-26 an audit reported that the release notes were
+stale about **#498**, and the fix went into *this* file — a third table row, a
+prose section, an extra `jq` probe — without anyone asking whether v0.1.101 had
+already shipped. It had, **20 hours earlier**: the tag published
+`2026-08-26T03:56:29Z` and `79ed55d` merged `2026-08-27T00:03:20Z`. The edit was
+reverted here and the content moved to `release-v0.1.102-draft.md`, where it is
+true. The one-command discriminator, before editing any release page:
+
+```bash
+gh release view v0.1.101 --json isDraft,publishedAt   # isDraft:false ⇒ CLOSED
+git merge-base --is-ancestor <pr-sha> v0.1.101        # non-zero ⇒ NOT in the tag
+```
+
+A draft page and a shipped page look identical in an editor. The heading is the
+only marker, so **a draft that ships and keeps saying `DRAFT` is a trap armed for
+the next reader** — that is why this one now says `SHIPPED` in the first line.
+
+**What shipped, verified against the published artifact:**
+
+| Claim | Measured |
+| --- | --- |
+| Release is published, not draft | `isDraft: false`, `publishedAt: 2026-08-26T03:56:29Z` |
+| Assets | **14**, exactly the predicted list |
+| `Release` workflow (tag push) | `success` |
+| `Release npm` (on `published`) | `success` |
+| `Release Homebrew cask` (on `published`) | `success` |
+| npm | `dist-tags.latest = 0.1.101` |
+| Homebrew tap | `cask "civitai" … version "0.1.101"` |
+| Changelog entries in the body | **2** — `#492` and `#494`, matching the prediction exactly |
+| `refactor(whoami)` (#494) in the notes | **present**, as predicted and as intended |
+| #498 in the notes | **absent** — it merged after the tag and ships in v0.1.102 |
+
+---
+
+**Cut from `main` at `af5e98f`**, which is the commit this draft sat on top of.
+Publishing the draft GitHub Release is what fires **npm and the Homebrew tap**
+(both trigger on `release: published`), and npm unpublish is restricted — so the
+tag is the recoverable step and the publish is not.
 
 The version is a plain patch increment on `0.1.100`. The three-digit-ordering
 question was settled in `release-v0.1.100-draft.md` (every comparison site read,
@@ -53,30 +100,6 @@ see `len 0` either way; only the JSON encoding differs.
 `canSpend`, which stay plain booleans: when it is `false`, both are `false`
 because nothing is known, not because the capability was denied.
 
-**Third `--json` change, and this one is ADDITIVE, not breaking (#498).**
-`whoami --json` now carries the account profile the server was already sending
-and the CLI was discarding: **`tier`, `status`, `isMember`, `subscriptions`**.
-Four keys added, none removed, none retyped — every pre-existing key's value is
-byte-identical. The only consumers that can notice are strict-schema ones
-(`DisallowUnknownFields`, `additionalProperties: false`).
-
-Two things a script author needs:
-
-- **Each is `null` when the server did not report it**, never a fabricated
-  `""` / `false` / `[]`. Same rule as `canSubmitApps` — test for `null` first.
-- **They degrade as a group.** If any one of them arrives in an unexpected
-  shape, all four become `null`; `whoami` still prints identity and
-  capabilities normally. The CLI publishes only fields it models, so an
-  unrecognised shape is withheld rather than passed to your terminal.
-
-`isMember` is the one worth branching on: a member and a free account do not
-see the same usable generation ecosystems, so it predicts whether
-`civitai generate`'s defaults are available to the credential in hand.
-
-**Still withheld on purpose:** `email` and `emailVerified`. The server sends
-both; `whoami` does not print them and `--json` does not carry them, which is
-why the CLI does not describe this output as "raw" (#377).
-
 **Human output changed shape too** (#494), so anything screen-scraping the old
 single `Capabilities:` block breaks. The section is now two:
 
@@ -123,11 +146,8 @@ mask emitted `canSubmitApps: false` when the truth was unknowable.
 
 ## Predicted contents
 
-🔴 **No totals here on purpose.** Every fixed number this section carried has
-gone stale — "2 in the notes" survived #498 adding a third row to the table
-below, three lines under a sentence telling the reader not to trust a total.
-The split is `docs(`/`test(`/`chore(` excluded, everything else in the notes,
-**0 leaking**; for the counts, run the command below and count the table rows.
+**5 commits** (`v0.1.100..HEAD` including this draft commit): **3 excluded**
+(`docs(`/`test(`/`chore(`), **2 in the notes**, **0 leaking**.
 
 🔴 **The count has moved between drafting and tagging on every recent release.**
 Re-derive it at tag time rather than trusting this number:
@@ -136,29 +156,23 @@ Re-derive it at tag time rather than trusting this number:
 git log v0.1.100..v0.1.101 --pretty='%s' | grep -cvE '^(docs|test|chore)(\(.*\))?:'
 ```
 
-At `af5e98f` that command returned **2**. #498 is open and will make it 3 once
-merged, so re-run it at the tag rather than reusing either number.
+At `af5e98f` that command returns **2**.
 
-### The ones that should appear
+✅ **MEASURED at the tag: 2.** The prediction held — the published body carries
+exactly the two rows below and nothing else. Note that the same command run
+against `origin/main` **today** returns 3, because `#498` merged after the tag;
+that third commit belongs to v0.1.102 and is not evidence this section is stale.
 
-Count the numbered rows below rather than trusting a total written anywhere — a
-count maintained beside the list it counts drifts the first time the list grows.
-It happened twice on this page while #498 was open: a heading that said "the 2",
-and a "**2 in the notes**" nine lines above that outlived the fix to the heading.
+### The 2 that should appear
 
 | # | commit | thread |
 |---|---|---|
 | 1 | `fix(whoami)`: `canSubmitApps` was a false negative stated as fact, and the two surfaces disagreed (#492) | whoami contract |
 | 2 | `refactor(whoami)`: the credential TYPE is not a capability — split the section in two (#494) | whoami contract |
-| 3 | `feat(whoami)`: `--json` carries the account profile, and still withholds the PII (#498) | whoami contract |
 
-**This release is one thread.** #492 fixes the contract, #494 fixes the
-presentation of the same four rows, and #498 closes the second half of #377 on
-the same `--json` payload; they are the reason this release exists and none is
-gated behind a flag.
-
-⚠️ **Re-derive the count at tag time**, as the command above the table says —
-this list is written before the tag and any further merge changes it.
+**This release is one thread.** #492 fixes the contract and #494 fixes the
+presentation of the same four rows; they are the reason this release exists and
+neither is gated behind a flag.
 
 ⚠️ **`refactor(` is not filtered either — and that is correct here.** The
 exclude list is `docs(` / `test(` / `chore(` only (three patterns in
@@ -228,13 +242,7 @@ not the question — **shape** is. The check that matters is the tri-state:
 
 ```
 civitai whoami --json | jq 'has("canSubmitApps"), .canSubmitApps, .scopes'
-civitai whoami --json | jq 'has("tier"), has("isMember"), has("email")'
 ```
-
-The second line covers #498: the first two must be `true` (the profile keys are
-present, `null` or not) and **`has("email")` must be `false`** — the PII is
-withheld by design, and `has()` is the only discriminator that distinguishes
-"absent" from "present and null".
 
 Confirm on the released binary that `canSubmitApps` is **present** and that the
 key can hold `null` (`has()` is the discriminator — a missing key and a `null`
@@ -263,6 +271,11 @@ civitai_0.1.101_linux_arm64         civitai_0.1.101_linux_arm64.tar.gz
 civitai_0.1.101_windows_amd64.exe   civitai_0.1.101_windows_amd64.zip
 civitai_0.1.101_windows_arm64.exe   civitai_0.1.101_windows_arm64.zip
 ```
+
+✅ **MEASURED on the published release: 14 assets, this exact list.** Third
+consecutive release at 14/14; windows/arm64 shipped in both forms again, so the
+"no `ignore:` rule exists" claim in `AGENTS.md` is confirmed on an artifact
+rather than on the config for the third time.
 
 A missing raw binary is the one that breaks silently and durably:
 `release-npm.yml` refuses to publish without `civitai_<version>_linux_amd64`
