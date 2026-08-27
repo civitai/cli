@@ -51,11 +51,23 @@ func TestGenerate_WaitingPathPrintsTheRealizedCharge(t *testing.T) {
 	if polls == 0 {
 		t.Fatal("POSITIVE CONTROL FAILED: the poll seam was never reached, so the ordering assertion below is vacuous")
 	}
-	if !strings.Contains(errOut.String(), "137") {
-		t.Errorf("waiting path must print the realized charge 137 via runGenerate.\nstderr:\n%s", errOut.String())
-	}
-	if !strings.Contains(errOut.String(), "Charged") {
-		t.Errorf("waiting path must label the charge.\nstderr:\n%s", errOut.String())
+	// 🔴 PIN THE WHOLE RENDERED CLAIM, NOT THE BARE NUMBER. This assertion used
+	// to read `Contains(errOut, "137")`, and that is a SILENT GREEN at a
+	// measured 0.40%: the same stderr carries a random external-ID UUID, whose
+	// hex digits spell "137" about 1 run in 250. Measured 2026-08-27 by mutating
+	// the charge to 999 — which must make this assertion impossible to satisfy —
+	// and running the test 2000 times: 8 PASSED. The number was being supplied
+	// by the UUID, not by the charge line, and no amount of re-running a green
+	// suite would have shown it.
+	//
+	// "Charged 137 Buzz" cannot be spelled by a UUID (it is not hex), so the
+	// assertion now fails when the charge is wrong instead of coin-flipping.
+	// Generalises: a short numeric literal asserted over command output is a
+	// claim about DIGITS APPEARING SOMEWHERE, never about the value rendered.
+	const wantCharge = "Charged 137 Buzz"
+	if !strings.Contains(errOut.String(), wantCharge) {
+		t.Errorf("waiting path must print the realized charge as %q via runGenerate.\nstderr:\n%s",
+			wantCharge, errOut.String())
 	}
 	if !strings.Contains(stderrAtFirstPoll, "Charged") {
 		t.Errorf("the charge must be printed BEFORE the wait begins; stderr at the first poll was:\n%s", stderrAtFirstPoll)

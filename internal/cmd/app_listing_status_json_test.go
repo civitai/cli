@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -630,7 +631,44 @@ func TestREADMEPinsTheListingStatusWriteWarning(t *testing.T) {
 // is precisely what "documented in the help, dropped from the README" looks like.
 // This ledger fails when a surface stops carrying the citation, so adding a third
 // surface means adding a row here.
+// citationRe matches a reference to issue 389 as a CITATION — `#389` with no
+// digit either side — rather than the bare digit run "389".
+//
+// 🔴 THE BARE SUBSTRING WAS A SPELLED GUARD. `Contains(text, "389")` is
+// satisfied by any three consecutive digits: a byte count like "3891", a
+// timestamp, a different issue number. It claimed "this surface cites
+// civitai/cli#389" while testing "these digits appear somewhere", so the
+// citation could be deleted and the test stay green as long as some unrelated
+// number spelled it. Both surfaces really do write `#389` (the Long says
+// "civitai/cli#389 settled that…"; the README links "[#389](…/issues/389)"),
+// so the stronger form costs nothing. The digit guards on either side stop
+// "#3890" — a plausible future issue number — from satisfying it.
+var citationRe = regexp.MustCompile(`(^|[^0-9])#389([^0-9]|$)`)
+
 func TestTheShadowWriteWarningIsOnBothPublishedSurfaces(t *testing.T) {
+	// NEGATIVE CONTROL on the pattern itself, before it is trusted to judge the
+	// real surfaces. A guard whose matcher cannot fail is not a guard, and the
+	// decoys below are exactly the strings the old bare-substring form accepted.
+	for _, decoy := range []string{
+		"a bundle of 3891 bytes",  // digit run containing 389
+		"see civitai/cli#3890",    // a longer issue number
+		"389",                     // the old assertion's entire requirement
+		"no citation here at all", // nothing
+	} {
+		if citationRe.MatchString(decoy) {
+			t.Fatalf("NEGATIVE CONTROL FAILED: citationRe matched %q, which is not a citation of #389. "+
+				"The pattern is too loose to distinguish a real reference from stray digits, so every "+
+				"assertion below is unreliable.", decoy)
+		}
+	}
+	// POSITIVE CONTROL: it must match the forms the surfaces actually use.
+	for _, real := range []string{"civitai/cli#389 settled that", "[#389](https://x/issues/389)", "and #389."} {
+		if !citationRe.MatchString(real) {
+			t.Fatalf("POSITIVE CONTROL FAILED: citationRe did not match %q, a form the published "+
+				"surfaces use. The pattern is too strict and would fail on correct docs.", real)
+		}
+	}
+
 	md := readREADME(t)
 	for _, s := range []struct {
 		surface string
@@ -639,7 +677,7 @@ func TestTheShadowWriteWarningIsOnBothPublishedSurfaces(t *testing.T) {
 		{"`civitai app listing status --help` (the command's Long)", newAppListingStatusCmd().Long},
 		{"README.md", md},
 	} {
-		if !strings.Contains(s.text, "389") {
+		if !citationRe.MatchString(s.text) {
 			t.Errorf("%s no longer cites civitai/cli#389 — every surface that documents this command as a "+
 				"read must also say it opens a revision draft on a live listing", s.surface)
 		}
