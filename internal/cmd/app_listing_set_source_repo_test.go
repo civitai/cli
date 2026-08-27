@@ -307,3 +307,119 @@ func TestSetTextNeverSendsSourceRepoURL(t *testing.T) {
 			"above is vacuous: %v", len(patch), patch)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The pre-existing-revision hazard. Added after an audit found the command
+// giving advice that publishes work the author never meant to publish.
+// ---------------------------------------------------------------------------
+
+// TestSetSourceRepoWarnsOnAPreExistingRevision.
+//
+// 🔴 `beginListingRevision` IS IDEMPOTENT, WHICH IS WHAT MAKES THIS A HAZARD
+// RATHER THAN A COSMETIC ISSUE. It reuses an open shadow instead of minting a
+// second one, so this edit lands beside whatever was already staged there — an
+// `rm-screenshot` deliberately left unsubmitted (AGENTS item 30) is the normal
+// case, not an exotic one. `applyApprovedRevision` then copies the shadow's
+// WHOLE scalar set and its screenshots onto the parent, so a bare "send it for
+// review" publishes all of it and can revert a live tagline.
+func TestSetSourceRepoWarnsOnAPreExistingRevision(t *testing.T) {
+	const shadow = "apl_PREEXISTING_9"
+	newSetTextServer(t, withStatus("approved"), withOpenShadow(shadow),
+		withReply(map[string]any{"requiresReview": true, "shadowId": shadow}))
+	out, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
+	if err != nil {
+		t.Fatalf("set-source-repo: %v", err)
+	}
+	for _, want := range []string{"ALREADY existed", "publishes EVERYTHING staged on it", "civitai app listing status"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("a pre-existing revision must be called out (missing %q); got:\n%s", want, out)
+		}
+	}
+	// 🔴 AND THE BARE INSTRUCTION MUST BE GONE. Printing the warning while ALSO
+	// saying "Send it for review:" on its own line would leave the dangerous
+	// advice on screen — the reader follows the imperative, not the caveat.
+	if strings.Contains(out, "Send it for review:") {
+		t.Errorf("the unconditional 'Send it for review' line must not appear when the revision "+
+			"already carried other staged work; got:\n%s", out)
+	}
+}
+
+// TestSetSourceRepoFreshRevisionKeepsTheSimpleInstruction is the other arm.
+// Without it the test above is equally satisfied by a command that never prints
+// the simple instruction at all.
+func TestSetSourceRepoFreshRevisionKeepsTheSimpleInstruction(t *testing.T) {
+	const shadow = "apl_FRESH_4"
+	newSetTextServer(t, withStatus("approved"), // no withOpenShadow: the server minted this one
+		withReply(map[string]any{"requiresReview": true, "shadowId": shadow}))
+	out, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
+	if err != nil {
+		t.Fatalf("set-source-repo: %v", err)
+	}
+	if !strings.Contains(out, "Send it for review:") {
+		t.Errorf("a revision the server opened FOR this edit carries nothing else, so the simple "+
+			"instruction is correct and must still appear; got:\n%s", out)
+	}
+	if strings.Contains(out, "ALREADY existed") {
+		t.Errorf("a freshly-minted revision must NOT be described as pre-existing — that would send "+
+			"the author hunting for staged work that does not exist; got:\n%s", out)
+	}
+}
+
+// TestSetSourceRepoJSONOpenRevision pins the machine-readable half of the same
+// distinction.
+//
+// 🔴 `shadowId` ALONE CANNOT ANSWER IT: it is populated in BOTH cases, because
+// the server reuses an open shadow. Without `openRevision` a script cannot tell
+// "the server opened a revision for my change" from "my change joined one that
+// already carries somebody else's staged work".
+func TestSetSourceRepoJSONOpenRevision(t *testing.T) {
+	decode := func(t *testing.T, out string) (bool, *string) {
+		t.Helper()
+		var got struct {
+			OpenRevision bool    `json:"openRevision"`
+			ShadowID     *string `json:"shadowId"`
+		}
+		if err := json.Unmarshal([]byte(out), &got); err != nil {
+			t.Fatalf("--json did not emit one JSON object (%v):\n%s", err, out)
+		}
+		return got.OpenRevision, got.ShadowID
+	}
+
+	t.Run("true when a revision already existed", func(t *testing.T) {
+		const shadow = "apl_PREEXISTING_J"
+		newSetTextServer(t, withStatus("approved"), withOpenShadow(shadow),
+			withReply(map[string]any{"requiresReview": true, "shadowId": shadow}))
+		out, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug, "--json")
+		if err != nil {
+			t.Fatalf("set-source-repo --json: %v", err)
+		}
+		open, sid := decode(t, out)
+		if !open {
+			t.Error("openRevision = false, want true — a revision existed before this edit")
+		}
+		if sid == nil || *sid != shadow {
+			t.Errorf("shadowId = %v, want %q", sid, shadow)
+		}
+	})
+
+	t.Run("false when the server opened one for this edit", func(t *testing.T) {
+		const shadow = "apl_FRESH_J"
+		newSetTextServer(t, withStatus("approved"),
+			withReply(map[string]any{"requiresReview": true, "shadowId": shadow}))
+		out, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug, "--json")
+		if err != nil {
+			t.Fatalf("set-source-repo --json: %v", err)
+		}
+		open, sid := decode(t, out)
+		if open {
+			t.Error("openRevision = true, want false — nothing was staged before this edit")
+		}
+		// 🔴 THE POSITIVE CONTROL ON THE PAIR. shadowId is populated in BOTH
+		// subtests, which is exactly why openRevision has to exist; if this were
+		// nil the two cases would be trivially distinguishable and the field
+		// would be redundant.
+		if sid == nil || *sid != shadow {
+			t.Fatalf("shadowId = %v, want %q — without it this pair proves nothing", sid, shadow)
+		}
+	})
+}
