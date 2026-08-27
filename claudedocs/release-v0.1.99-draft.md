@@ -1,9 +1,43 @@
-# v0.1.99 — DRAFT
+# v0.1.99 — SHIPPED
 
-**Not yet tagged.** Cut from `main` at `e7be70f`, which is the commit this draft
-sits on top of. Publishing the draft GitHub Release is what fires **npm and the
-Homebrew tap** (both trigger on `release: published`), and npm unpublish is
-restricted — so the tag is the recoverable step and the publish is not.
+**Tagged and published 2026-08-18T23:20:40Z.**
+
+🔴 **THIS HEADING SAID `DRAFT` FOR NINE DAYS AFTER THE RELEASE SHIPPED, THROUGH
+THREE SUBSEQUENT RELEASES, AND NOBODY NOTICED — BECAUSE NOTHING WAS LOOKING.**
+It was found on 2026-08-27 by `release_page_state_test.go`, the guard written
+after the same staleness on the v0.1.101 page caused a whole PR of false content
+to be written into a release that had already shipped (#500). This page was the
+guard's first finding, on its first run.
+
+That is the argument for a guard rather than more prose: v0.1.100 and v0.1.102
+got their headings flipped by a human who happened to remember, v0.1.99 did not,
+and the difference was invisible for nine days.
+
+**Closed retroactively — read the provenance of these numbers.** The rows below
+were measured on **2026-08-27**, not at release time, from the published release
+as it stands today. They are NOT the contemporaneous verification that
+`release-v0.1.100-draft.md` onward record, and this page does not pretend
+otherwise: nobody checked npm or the tap at the time, so nobody can now say what
+those read on 2026-08-18.
+
+| Claim | Measured 2026-08-27 |
+| --- | --- |
+| Release is published, not draft | `isDraft: false`, `publishedAt: 2026-08-18T23:20:40Z` |
+| Assets | **14** — the same cross product every release since has shipped |
+| Changelog entries in the body | **9** — matching the prediction below exactly |
+
+✅ **The "9 in the notes" prediction below HELD.** Worth recording because the
+section itself warns that the count has moved between drafting and tagging on
+every recent release; here it did not.
+
+Everything below was written *before* the tag and is kept as the record.
+
+---
+
+**Cut from `main` at `e7be70f`**, which is the commit this draft sat on top of.
+Publishing the draft GitHub Release is what fires **npm and the Homebrew tap**
+(both trigger on `release: published`), and npm unpublish is restricted — so the
+tag is the recoverable step and the publish is not.
 
 ## Predicted contents
 
