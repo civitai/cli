@@ -22,14 +22,6 @@ import (
 
 const srSourceRepoURL = "https://github.com/zephyr-labs/quartz-tool"
 
-// patchRawSent is `patchSent` without its listing-id assertion re-implemented:
-// it returns the decoded `patch` map so a test can assert on an explicit JSON
-// null, which unmarshalling into a typed struct would erase.
-func srPatch(t *testing.T, s *setTextServer) map[string]json.RawMessage {
-	t.Helper()
-	return s.patchSent(t)
-}
-
 // ---------------------------------------------------------------------------
 // What goes on the wire. Two states, and `null` is one of them.
 // ---------------------------------------------------------------------------
@@ -45,7 +37,7 @@ func TestSetSourceRepoSendsTheURL(t *testing.T) {
 	if _, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug); err != nil {
 		t.Fatalf("set-source-repo: %v", err)
 	}
-	patch := srPatch(t, srv)
+	patch := srv.patchSent(t)
 	if got := len(patch); got != 1 {
 		t.Fatalf("patch carries %d keys, want exactly 1 — nothing else may ride along: %v", got, patch)
 	}
@@ -73,7 +65,7 @@ func TestSetSourceRepoClearSendsExplicitNull(t *testing.T) {
 	if _, _, err := run(t, "app", "listing", "set-source-repo", "--clear", "--slug", stSlug); err != nil {
 		t.Fatalf("set-source-repo --clear: %v", err)
 	}
-	patch := srPatch(t, srv)
+	patch := srv.patchSent(t)
 	raw, ok := patch["sourceRepoUrl"]
 	if !ok {
 		t.Fatalf("--clear sent no sourceRepoUrl key at all — an omitted key leaves the column "+
@@ -142,9 +134,14 @@ func TestSetSourceRepoRefusesOnsite(t *testing.T) {
 	if !errors.Is(err, ErrOnsiteNotEditable) {
 		t.Errorf("the refusal must carry ErrOnsiteNotEditable so its exit code is assertable, got %T: %v", err, err)
 	}
-	if !strings.Contains(err.Error(), "repository") {
-		t.Errorf("the refusal must name the `repository` manifest key — the remedy that actually "+
-			"works for a source link — got: %v", err)
+	// 🔴 THE WHOLE NORMALISED CLAUSE, for the same reason as its `set-text`
+	// counterpart: "repository" alone is a keyword, and a keyword pin is
+	// satisfiable by a sibling subject that merely happens to contain it.
+	if want := onsiteSubjectSourceRepo.clause; !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal must carry the SOURCE-REPO remedy verbatim.\n got: %v\nwant it to contain: %s", err, want)
+	}
+	if onsiteSubjectText.clause == onsiteSubjectSourceRepo.clause {
+		t.Fatal("the two onsite remedies are identical — the assertion above cannot tell them apart")
 	}
 	for _, p := range srv.seen() {
 		if p == updateListingPath {

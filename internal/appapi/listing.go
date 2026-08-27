@@ -322,16 +322,31 @@ func (p ListingTextPatch) wire() map[string]any {
 // stop the TAGLINE applying in place — silently converting a live edit into one
 // that waits on a moderator.
 //
-// Keeping them separate TYPES rather than more flags on one struct is a
-// STRUCTURAL guard, not a spelled one: `ListingTextPatch` has no source-repo
-// field to set, so `set-text` cannot acquire that behaviour by someone adding a
-// flag later. A test asserting "set-text does not send sourceRepoUrl" would be a
-// sentence about today's code; this is a property of the program.
+// 🔴 WHAT THE CLOSED INTERFACE ACTUALLY BUYS, STATED HONESTLY. It stops another
+// PACKAGE implementing ListingPatch. It does NOT stop this package widening
+// `ListingTextPatch` — an audit built exactly that mutant (add `SourceRepoURL`,
+// wire it, hang a `--source-repo` flag off `set-text`) and it compiled with the
+// whole suite green. An earlier version of this comment claimed the separation
+// was "a property of the program" rather than "a sentence about today's code";
+// that was wrong in the direction that matters, because it discouraged writing
+// the guard.
+//
+// The property is enforced by a FIELD LEDGER instead — see
+// listing_patch_ledger_test.go, which fails when either patch type's field set
+// grows or shrinks, and when their wire keys overlap.
 type ListingPatch interface {
 	wire() map[string]any
 	// Empty reports whether the patch would send no field at all. The server's
-	// own schema refines that at least one key is present and 400s otherwise;
-	// this lets the CLI refuse it as a usage error instead, before any request.
+	// own schema refines that at least one key is present and 400s otherwise, so
+	// a caller can refuse it as a usage error before any request.
+	//
+	// ⚠ IT IS ON THE INTERFACE, NOT NECESSARILY ON EVERY CALLER'S PATH.
+	// `set-text` builds its patch field by field and calls this at the end;
+	// `set-source-repo` decides from its own flags — a switch whose
+	// nothing-was-passed arm refuses first — so the empty patch is unreachable
+	// there and this method is never called on it. That is fine, and it is
+	// recorded because "the interface has it" reads like "every command checks
+	// it", which is the description-wider-than-implementation shape.
 	Empty() bool
 }
 

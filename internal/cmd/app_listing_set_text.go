@@ -179,6 +179,39 @@ these edits (roughly 30 an hour).`,
 	return cmd
 }
 
+// onsiteSubject names WHICH manifest-governed surface a refused write was aimed
+// at, so one gate can print the remedy that actually works for each.
+//
+// 🔴 THE GATE IS SHARED, THE PROSE IS NOT. Everything that makes this check safe
+// — reading `kind` from `listMine` rather than inferring it, failing closed on an
+// unknown kind, and the capped-page caveat below — is identical for every
+// manifest-governed field and is exactly the logic that must not be copied. What
+// legitimately differs is which manifest key to edit, so that is all a caller
+// supplies.
+type onsiteSubject struct {
+	// clause completes "…is an ON-SITE app, and its ", including the remedy
+	// sentence that follows it.
+	clause string
+	// what is a short noun for the value, used by the unknown-kind refusal.
+	what string
+}
+
+var (
+	onsiteSubjectText = onsiteSubject{
+		clause: "tagline, description and category come from block.manifest.json — editing them here " +
+			"would be overwritten by the manifest at your next approved version. Edit `name` / `tagline` / " +
+			"`description` in block.manifest.json and run `civitai app submit`. (Category is set by a " +
+			"moderator on an on-site app.)",
+		what: "text",
+	}
+	onsiteSubjectSourceRepo = onsiteSubject{
+		clause: "source-repository link comes from the `repository` key in block.manifest.json — editing " +
+			"it here would be overwritten by the manifest at your next approved version. Set `repository` " +
+			"in block.manifest.json and run `civitai app submit`.",
+		what: "source-repository link",
+	}
+)
+
 // refuseOnsiteEdit blocks a write on an ON-SITE listing and names the
 // remedy that actually works.
 //
@@ -226,39 +259,6 @@ these edits (roughly 30 an hour).`,
 // were in flight this said "#488 must land FIRST", which is what it was for.
 // Anyone lifting THIS command into a tree without `app doctor` re-creates the
 // defect: a mistyped slug exits 4 pointing at a command the binary does not have.
-// onsiteSubject names WHICH manifest-governed surface a refused write was aimed
-// at, so one gate can print the remedy that actually works for each.
-//
-// 🔴 THE GATE IS SHARED, THE PROSE IS NOT. Everything that makes this check safe
-// — reading `kind` from `listMine` rather than inferring it, failing closed on an
-// unknown kind, and the capped-page caveat below — is identical for every
-// manifest-governed field and is exactly the logic that must not be copied. What
-// legitimately differs is which manifest key to edit, so that is all a caller
-// supplies.
-type onsiteSubject struct {
-	// clause completes "…is an ON-SITE app, and its ", including the remedy
-	// sentence that follows it.
-	clause string
-	// what is a short noun for the value, used by the unknown-kind refusal.
-	what string
-}
-
-var (
-	onsiteSubjectText = onsiteSubject{
-		clause: "tagline, description and category come from block.manifest.json — editing them here " +
-			"would be overwritten by the manifest at your next approved version. Edit `name` / `tagline` / " +
-			"`description` in block.manifest.json and run `civitai app submit`. (Category is set by a " +
-			"moderator on an on-site app.)",
-		what: "text",
-	}
-	onsiteSubjectSourceRepo = onsiteSubject{
-		clause: "source-repository link comes from the `repository` key in block.manifest.json — editing " +
-			"it here would be overwritten by the manifest at your next approved version. Set `repository` " +
-			"in block.manifest.json and run `civitai app submit`.",
-		what: "source-repository link",
-	}
-)
-
 func refuseOnsiteEdit(ctx context.Context, client *appapi.Client, slug string, subj onsiteSubject) error {
 	rows, err := client.ListMyListings(ctx)
 	if err != nil {

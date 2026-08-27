@@ -181,7 +181,7 @@ func newSetTextServerWith(t *testing.T, s *setTextServer) *setTextServer {
 			// unexpected proc must FAIL, not merely be noted — `getAssets` and
 			// `updateRevisionDraft` both 403 a CLI token in production, and a
 			// test that only logged the call would stay green.
-			t.Errorf("unexpected request to %s — set-text must not call it", r.URL.Path)
+			t.Errorf("unexpected request to %s — neither set-text nor set-source-repo (which shares this fake) may call it", r.URL.Path)
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 	}))
@@ -770,10 +770,19 @@ func TestSetTextRefusesAnOnsiteListing(t *testing.T) {
 		t.Fatal("an ON-SITE listing's text is manifest-governed — the write must be refused, " +
 			"not silently reverted at the next approve")
 	}
-	for _, want := range []string{"ON-SITE", "block.manifest.json", "civitai app submit"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal must name the remedy that works (missing %q): %v", want, err)
-		}
+	// 🔴 THE WHOLE NORMALISED CLAUSE, NOT KEYWORDS. This asserted
+	// {"ON-SITE", "block.manifest.json", "civitai app submit"} — every one of
+	// which also appears in `onsiteSubjectSourceRepo.clause`, because the two
+	// remedies are the same SHAPE. So once the gate's prose became a parameter,
+	// passing the source-repo subject here printed a completely wrong remedy for
+	// a tagline edit and the whole suite stayed green (measured). A keyword pin
+	// on text a sibling can spell is not a guard.
+	if want := onsiteSubjectText.clause; !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal must carry the TEXT remedy verbatim.\n got: %v\nwant it to contain: %s", err, want)
+	}
+	// …and the guard is only meaningful if the two clauses actually differ.
+	if onsiteSubjectText.clause == onsiteSubjectSourceRepo.clause {
+		t.Fatal("the two onsite remedies are identical — the assertion above cannot tell them apart")
 	}
 	// 🔴 REFUSED BEFORE THE WRITE. A refusal that still wrote would be no fix.
 	for _, p := range srv.seen() {

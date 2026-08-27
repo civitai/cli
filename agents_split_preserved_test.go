@@ -396,6 +396,77 @@ func TestSplitItemBodiesArePreservedVerbatim(t *testing.T) {
 	}
 }
 
+// bornSplitItems are evidence files whose body was NEVER in AGENTS.md.
+//
+// 🔴 THIS IS NOT AN ESCAPE HATCH, AND THE DISTINCTION IS REAL. Everything in
+// splitItems was MOVED, and the sha proves the move was verbatim. An item written
+// straight into `claudedocs/decisions/` has no predecessor text, so there is
+// nothing a digest could compare against — pinning the sha of the file against
+// itself would be a tautology that LOOKS like the same proof and is not. Saying
+// "no move happened" out loud is more honest than a self-referential digest.
+//
+// The abuse this category invites is obvious — move an item, then declare it
+// born-split to dodge the digest — so TestBornSplitItemsWereNeverInAgents refutes
+// exactly that, mechanically, against the commit before the file appeared.
+//
+// AGENTS.md's item list is append-only, so this list only grows, and a new entry
+// should be rare: prefer writing an item's body into AGENTS.md and letting the
+// next eviction wave move it, which is what produced every splitItems row. It is
+// only worth being born split when the body is too long to sit in AGENTS.md even
+// briefly — item 33's measured divergence tables are 60+ lines against ~500 bytes
+// of ceiling headroom.
+var bornSplitItems = []string{
+	"claudedocs/decisions/33-source-repo-url-is-not-mirrored.md",
+}
+
+// TestBornSplitItemsWereNeverInAgents is what keeps bornSplitItems honest.
+//
+// For each such file it finds the commit that ADDED it and reads AGENTS.md as it
+// stood at that commit's PARENT. If the body had just been moved out, AGENTS.md
+// there would still carry it — so a heading unique to the file appearing in the
+// parent's AGENTS.md means this is a MOVE wearing a born-split label, and it must
+// be pinned with a digest like every other row.
+func TestBornSplitItemsWereNeverInAgents(t *testing.T) {
+	if len(bornSplitItems) == 0 {
+		t.Skip("no born-split items to check")
+	}
+	for _, f := range bornSplitItems {
+		t.Run(f, func(t *testing.T) {
+			addSha, err := exec.Command("git", "log", "--diff-filter=A", "--format=%H", "-1", "--", f).Output()
+			if err != nil || len(strings.TrimSpace(string(addSha))) == 0 {
+				t.Skipf("CONTROL unavailable, not a finding: cannot find the commit that added %s "+
+					"(shallow clone, or not committed yet) — this check proves nothing here", f)
+			}
+			parent := strings.TrimSpace(string(addSha)) + "^:AGENTS.md"
+			prev, err := exec.Command("git", "show", parent).Output()
+			if err != nil {
+				t.Skipf("CONTROL unavailable, not a finding: cannot read %s: %v", parent, err)
+			}
+			body, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatalf("cannot read %s: %v", f, err)
+			}
+			// The file's own H1 is the most distinctive line it has; if the text
+			// was moved rather than written, AGENTS.md still had it one commit ago.
+			var h1 string
+			for _, ln := range strings.Split(string(body), "\n") {
+				if strings.HasPrefix(ln, "# ") {
+					h1 = strings.TrimSpace(strings.TrimPrefix(ln, "# "))
+					break
+				}
+			}
+			if h1 == "" {
+				t.Fatalf("%s has no `# ` heading, so this check has nothing distinctive to look for", f)
+			}
+			if strings.Contains(string(prev), h1) {
+				t.Errorf("%s is listed as born-split, but AGENTS.md at the commit BEFORE it appeared "+
+					"already contained its heading %q — that is a MOVE, and a move needs a splitItems "+
+					"row pinning the sha of the text it came from.", f, h1)
+			}
+		})
+	}
+}
+
 // TestSplitTableCoversEveryEvidenceFile keeps this table and the ledger in
 // agents_evidence_test.go from drifting apart. A body moved without a row here
 // is a body with no preservation proof at all — the exact silence the whole file
@@ -409,11 +480,31 @@ func TestSplitTableCoversEveryEvidenceFile(t *testing.T) {
 		}
 		inTable[it.file] = true
 	}
+	born := map[string]bool{}
+	for _, f := range bornSplitItems {
+		if born[f] {
+			t.Errorf("%s appears twice in bornSplitItems", f)
+		}
+		if inTable[f] {
+			t.Errorf("%s is in BOTH splitItems and bornSplitItems — it was either moved or it was not", f)
+		}
+		born[f] = true
+	}
 	files := evidenceFilesOnDisk(t)
 	for _, f := range files {
-		if !inTable[f] {
+		if !inTable[f] && !born[f] {
 			t.Errorf("%s has no row in splitItems, so nothing proves its body is the text it was moved from.\n"+
-				"Add a row with the sha256 of its non-blank body lines at the commit you moved it from (see this file's header).", f)
+				"Add a row with the sha256 of its non-blank body lines at the commit you moved it from (see this file's header).\n"+
+				"If the body was never in AGENTS.md, add it to bornSplitItems instead — and read that list's comment first.", f)
+		}
+	}
+	onDiskBorn := map[string]bool{}
+	for _, f := range files {
+		onDiskBorn[f] = true
+	}
+	for _, f := range bornSplitItems {
+		if !onDiskBorn[f] {
+			t.Errorf("bornSplitItems names %s, which is not in %s — a stale row looks like coverage and is not", f, evidenceDir)
 		}
 	}
 	onDisk := map[string]bool{}

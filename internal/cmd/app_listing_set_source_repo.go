@@ -54,28 +54,26 @@ func newAppListingSetSourceRepoCmd() *cobra.Command {
 		Short: "Set (or clear) the public source-repository link on your listing",
 		Long: `Publish a link to your app's PUBLIC SOURCE on its store detail page.
 
-It renders as one ` + "`Source`" + ` row on the /apps detail page — detail only,
-never on a store grid card — and it is omitted entirely when unset.
+It renders as one ` + "`Source`" + ` row on the /apps DETAIL page — never on a
+grid card — and is omitted entirely when unset.
 
-The URL must be a repository ROOT on github.com, gitlab.com or codeberg.org:
-https://<owner>/<repo>, with no deeper path. A trailing "/" or ".git", a query
-string and a fragment are accepted and normalised away by the server. The
-SERVER is the authority here and this command does not second-guess it, so an
-unacceptable URL comes back as the server's own message rather than a local
-guess that may be wrong in either direction.
+Pass a repository ROOT url to set it, or --clear to remove it. Exactly one of
+the two. The SERVER validates the url and this command does not second-guess
+it, so a rejection comes back in the server's own words.
 
-Pass a URL to set it, or --clear to remove the link. Exactly one of the two.
+ON-SITE apps are REFUSED (exit 1 — a verdict about the app, not a bad
+command): their link comes from the ` + "`repository`" + ` key in
+block.manifest.json, which the platform re-syncs at every approved version.
 
-ON-SITE apps are REFUSED (exit 1 — a verdict about the app, not a bad command):
-their link comes from the ` + "`repository`" + ` key in block.manifest.json and the
-platform re-syncs it from there at your next approved version.
+🔴 THIS IS A MATERIAL CHANGE, unlike set-text. On an APPROVED listing the
+server stages it on a REVISION instead of applying it, so the live page is
+unchanged until a moderator approves that revision. This command reports which
+branch the server took — it never guesses. On a draft or pending listing it
+applies directly.
 
-🔴 THIS IS A MATERIAL CHANGE. On an APPROVED listing the server does NOT apply
-it in place: it stages the edit on a revision and the listing re-enters
-moderator review, because this is an outbound link on a public page. The
-command reports which branch the server took, and names the command that sends
-a staged revision for review. On a draft or pending listing it applies
-directly.`,
+See the guide for the accepted hosts, what counts as a "change", and the
+states that are refused outright.`,
+
 		Example: `  civitai app listing set-source-repo https://github.com/me/my-app
   civitai app listing set-source-repo https://gitlab.com/me/my-app --slug my-app
   civitai app listing set-source-repo --clear
@@ -116,7 +114,7 @@ directly.`,
 				// carries no styling.
 				return writeJSON(cmd.OutOrStdout(), setSourceRepoPayload(slug, ref, res, patch))
 			}
-			reportListingSourceRepoUpdated(cmd.OutOrStdout(), slug, patch, res)
+			reportListingSourceRepoUpdated(cmd.OutOrStdout(), slug, patch, ref, res)
 			return nil
 		},
 	}
@@ -185,12 +183,27 @@ type setSourceRepoJSON struct {
 	// RequiresReview / ShadowID are the SERVER's own branch, passed through.
 	RequiresReview bool    `json:"requiresReview"`
 	ShadowID       *string `json:"shadowId"`
+	// OpenRevision reports whether a revision draft ALREADY existed before this
+	// edit — read from the listing BEFORE the write, never from the result.
+	//
+	// 🔴 `shadowId` ALONE CANNOT ANSWER THIS, WHICH IS THE WHOLE REASON THE KEY
+	// EXISTS. `beginListingRevision` is idempotent: it reuses an open shadow
+	// rather than minting a second one, so a populated `shadowId` means "this
+	// edit is on a revision" and says nothing about whether that revision was
+	// already carrying somebody else's staged work. The two cases need different
+	// handling and are indistinguishable without this key — see the renderer.
+	//
+	// The sibling `setTextJSON` publishes an `openRevision` too, and it must
+	// stay spelled the same: two commands on one proc that disagree about the
+	// name of the same hazard is a contract seam.
+	OpenRevision bool `json:"openRevision"`
 }
 
 func setSourceRepoPayload(slug string, ref *appapi.ListingRef, res *appapi.UpdateListingResult, p appapi.ListingSourceRepoPatch) setSourceRepoJSON {
 	out := setSourceRepoJSON{Slug: slug, Action: "cleared"}
 	if ref != nil {
 		out.AppListingID = ref.AppListingID
+		out.OpenRevision = hadOpenRevision(ref)
 	}
 	if p.URL != nil {
 		out.SourceRepoURL = p.URL
@@ -201,6 +214,19 @@ func setSourceRepoPayload(slug string, ref *appapi.ListingRef, res *appapi.Updat
 		out.ShadowID = res.ShadowID
 	}
 	return out
+}
+
+// hadOpenRevision reports whether the listing was ALREADY carrying a revision
+// draft when this command read it — submitted (`hasPendingRevision`) or merely
+// open (`shadowId`).
+//
+// 🔴 IT IS READ BEFORE THE WRITE, AND THAT ORDERING IS THE MEASUREMENT. After
+// the write every staged edit has a `shadowId`, so asking afterwards cannot tell
+// "the server opened a revision for MY change" from "my change joined one that
+// already existed". `resolveListing` runs before `UpdateListing`, so this is
+// free and it is the only moment the distinction is observable.
+func hadOpenRevision(ref *appapi.ListingRef) bool {
+	return ref != nil && (ref.ShadowID != nil || ref.HasPendingRevision)
 }
 
 // reportListingSourceRepoUpdated prints what changed and, when the server staged
@@ -214,7 +240,23 @@ func setSourceRepoPayload(slug string, ref *appapi.ListingRef, res *appapi.Updat
 //
 // It is still exit 0: staging is what was asked for and it succeeded. What the
 // user needs is the NEXT command, which is `submit-revision`.
-func reportListingSourceRepoUpdated(out io.Writer, slug string, p appapi.ListingSourceRepoPatch, res *appapi.UpdateListingResult) {
+//
+// 🔴 "SEND IT FOR REVIEW" IS NOT UNCONDITIONALLY SAFE ADVICE, AND THAT IS WHY
+// `ref` IS A PARAMETER. `beginListingRevision` is IDEMPOTENT — it reuses an
+// already-open shadow rather than minting a second one
+// (`<civitai>/src/server/services/blocks/offsite-listing.service.ts:1370-1380`).
+// So when a revision was ALREADY open — an `rm-screenshot` deliberately left
+// staged (AGENTS item 30), or one minted lazily by `set-icon` / `set-cover` /
+// `add-screenshot` / `listing status --json` — this edit lands on THAT shadow,
+// beside work the author did not mean to publish now. `applyApprovedRevision`
+// then copies the shadow's WHOLE scalar set and its screenshots onto the parent
+// on approval (`:3018+`), so following a bare "send it for review" publishes all
+// of it and can revert a live tagline the shadow captured earlier.
+//
+// The distinction is only observable BEFORE the write (see hadOpenRevision), so
+// it is measured there and reported here. Telling the author which of the two
+// they are in costs one sentence; getting it wrong costs a public page.
+func reportListingSourceRepoUpdated(out io.Writer, slug string, p appapi.ListingSourceRepoPatch, ref *appapi.ListingRef, res *appapi.UpdateListingResult) {
 	st := ui.For(out)
 	what := "Cleared the source-repository link on " + slug
 	if p.URL != nil {
@@ -228,6 +270,22 @@ func reportListingSourceRepoUpdated(out io.Writer, slug string, p appapi.Listing
 		fmt.Fprintln(out, "  The live listing is unchanged until a moderator approves the revision.")
 		if res.ShadowID != nil && *res.ShadowID != "" {
 			fmt.Fprintf(out, "  Revision: %s\n", *res.ShadowID)
+		}
+		if hadOpenRevision(ref) {
+			// The pre-existing-revision case. Deliberately NOT phrased as "run
+			// this next": the right next step depends on what else is staged,
+			// which this command cannot see and must not guess at.
+			fmt.Fprintln(out, "")
+			if ref.HasPendingRevision {
+				fmt.Fprintln(out, st.Warn("That revision was ALREADY under moderator review before this edit."))
+			} else {
+				fmt.Fprintln(out, st.Warn("That revision ALREADY existed and may carry other staged changes."))
+			}
+			fmt.Fprintln(out, "  Approving it publishes EVERYTHING staged on it, not just this link, and")
+			fmt.Fprintln(out, "  copies its text back over the live listing.")
+			fmt.Fprintf(out, "  Check what is on it first: %s\n", st.Code("civitai app listing status --slug "+slug))
+			fmt.Fprintf(out, "  Then, if that is all meant to go public: %s\n", st.Code("civitai app listing submit-revision"))
+			return
 		}
 		fmt.Fprintf(out, "  Send it for review: %s\n", st.Code("civitai app listing submit-revision"))
 		return

@@ -262,6 +262,9 @@ attach path reports as progress.
 Item 31 is a deliberate non-mirror on the submit path: the packager's own size
 caps, and the server ceiling behind them that #423 bracketed but could not pin.
 Item 32 is what a submit may CLAIM about the source it was built from.
+Item 33 is the source-repository URL: a deliberate NON-mirror, because the
+one mirror of that rule this repo already ships is measurably wrong in BOTH
+directions and cannot be tightened without breaking every vendored copy.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -437,6 +440,10 @@ item must carry a trigger that is a routing question rather than a label
 32. **Sending or showing the commit an app was built from — the 40-hex gate,
     `sourceDirty`'s null-vs-false, or the submit body's size?**
     → evidence: claudedocs/decisions/32-submit-provenance-claim.md
+
+33. **Adding a local check to `app listing set-source-repo`, or tightening the
+    manifest schema's `repository` pattern to match the server?**
+    → evidence: claudedocs/decisions/33-source-repo-url-is-not-mirrored.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
