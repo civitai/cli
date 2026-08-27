@@ -5,31 +5,6 @@ import (
 	"testing"
 )
 
-// TestHumanBytesLabelsItsOwnArithmetic pins the unit SUFFIX to the divisor the
-// function actually uses.
-//
-// The regression it exists for: humanBytes divided by 1024 and labelled the
-// result with the SI suffixes (KB/MB/GB), so 2 MiB rendered as "2.0 MB" — a
-// figure 4.9% below the bytes it described. That was invisible while the string
-// only ever reached download progress, and #275 put it in `--help`: the
-// set-icon / set-cover one-liners interpolate listingSourceRule(kind), which
-// renders the cap through this function, so two commands advertised "at most
-// 2.0 MB" / "at most 4.0 MB" for caps the README documents as 2 MiB / 4 MiB.
-//
-// 🔴 The table has to pin the DIVISOR as well as the LABEL, because "relabel"
-// and "re-base the arithmetic" are two different fixes and only one of them was
-// wanted. Both mutants were run against this table rather than reasoned about:
-//
-//	SI labels over a 1024 divisor (the bug)  -> every prefixed row reddens.
-//	IEC labels over a 1000 divisor           -> 1023, 1,000,000, all three cap
-//	                                            rows, 1.5 MiB and every rung
-//	                                            from GiB up redden; only the
-//	                                            1024 row survives, because
-//	                                            %.1f rounds 1.024 back to "1.0".
-//
-// The 1,000,000 row is the loudest of those and is here on purpose: it is the
-// value where the two systems disagree about which RUNG to use at all
-// ("976.6 KiB" vs "1.0 MiB"), so it fails legibly rather than by a last digit.
 // humanBytesLadderFloor is the KEEPER for the case table in
 // TestHumanBytesLabelsItsOwnArithmetic: the set of case NAMES that must have a
 // row, whatever else the table gains.
@@ -77,6 +52,31 @@ var humanBytesLadderFloor = []string{
 	"EiB",
 }
 
+// TestHumanBytesLabelsItsOwnArithmetic pins the unit SUFFIX to the divisor the
+// function actually uses.
+//
+// The regression it exists for: humanBytes divided by 1024 and labelled the
+// result with the SI suffixes (KB/MB/GB), so 2 MiB rendered as "2.0 MB" — a
+// figure 4.9% below the bytes it described. That was invisible while the string
+// only ever reached download progress, and #275 put it in `--help`: the
+// set-icon / set-cover one-liners interpolate listingSourceRule(kind), which
+// renders the cap through this function, so two commands advertised "at most
+// 2.0 MB" / "at most 4.0 MB" for caps the README documents as 2 MiB / 4 MiB.
+//
+// 🔴 The table has to pin the DIVISOR as well as the LABEL, because "relabel"
+// and "re-base the arithmetic" are two different fixes and only one of them was
+// wanted. Both mutants were run against this table rather than reasoned about:
+//
+//	SI labels over a 1024 divisor (the bug)  -> every prefixed row reddens.
+//	IEC labels over a 1000 divisor           -> 1023, 1,000,000, all three cap
+//	                                            rows, 1.5 MiB and every rung
+//	                                            from GiB up redden; only the
+//	                                            1024 row survives, because
+//	                                            %.1f rounds 1.024 back to "1.0".
+//
+// The 1,000,000 row is the loudest of those and is here on purpose: it is the
+// value where the two systems disagree about which RUNG to use at all
+// ("976.6 KiB" vs "1.0 MiB"), so it fails legibly rather than by a last digit.
 func TestHumanBytesLabelsItsOwnArithmetic(t *testing.T) {
 	cases := []struct {
 		name string
