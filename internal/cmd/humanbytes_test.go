@@ -30,6 +30,53 @@ import (
 // The 1,000,000 row is the loudest of those and is here on purpose: it is the
 // value where the two systems disagree about which RUNG to use at all
 // ("976.6 KiB" vs "1.0 MiB"), so it fails legibly rather than by a last digit.
+// humanBytesLadderFloor is the KEEPER for the case table in
+// TestHumanBytesLabelsItsOwnArithmetic: the set of case NAMES that must have a
+// row, whatever else the table gains.
+//
+// 🔴 A COUNT WAS NOT ENOUGH, AND THE ROWS IT PROTECTS ARE NOT INTERCHANGEABLE.
+// This started as `len(cases) < 13`, reasoning that the table only grows so any
+// deletion drops below the floor. Add-one/delete-one defeats it in one move:
+// delete "one decimal MB" and add any unrelated row — "two bytes", say — and the
+// count is still 13, the guard is green, and the rung is uncovered.
+//
+// That trade is not hypothetical bookkeeping, because this table's rows are
+// individually load-bearing and the doc comment above says which: the IEC-labels
+// -over-a-1000-divisor mutant is survived by the 1024 row alone, so "one decimal
+// MB" is the row that fails LEGIBLY (976.6 KiB vs 1.0 MiB — a disagreement about
+// which RUNG applies, not a last digit). Trading it for a row that only re-pins
+// an already-covered rung keeps the count and silently downgrades the mutation
+// matrix this test's credibility rests on. Membership cannot be traded that way:
+// removing a NAME from this list, or a row from the table, is red by name.
+//
+// 🔴 TWO RESIDUALS, STATED RATHER THAN GLOSSED. (1) Protection is OPT-IN PER
+// ROW: the loop iterates THIS list, so a row added to the table and not named
+// here is permanently tradeable, and nothing goes red at the moment of the
+// omission. Append the name in the same commit as the row. (2) The two-line
+// bypass is still open: delete the floor entry AND the row together. What this
+// stops is the ONE-line trade — a deletion paid for by an unrelated addition,
+// which is exactly the shape a "widen the table" commit takes; it does not stop
+// a deliberate two-line removal, and no in-tree check can. That is review's job.
+//
+// It pins NAMES, not values. A row keeping its name while its `want` is edited
+// to match a regression is not caught here — TestHumanBytesNeverPrintsAnSILabel
+// is the property half that covers the ladder independently of any row.
+var humanBytesLadderFloor = []string{
+	"zero",
+	"one",
+	"just under a KiB",
+	"exactly a KiB",
+	"one decimal MB",
+	"icon cap",
+	"cover cap",
+	"screenshot cap",
+	"a MiB and a half",
+	"GiB",
+	"TiB",
+	"PiB",
+	"EiB",
+}
+
 func TestHumanBytesLabelsItsOwnArithmetic(t *testing.T) {
 	cases := []struct {
 		name string
@@ -51,10 +98,24 @@ func TestHumanBytesLabelsItsOwnArithmetic(t *testing.T) {
 		{"PiB", 1 << 50, "1.0 PiB"},
 		{"EiB", 1 << 60, "1.0 EiB"},
 	}
-	if len(cases) < 13 {
-		t.Fatalf("the table lost rows (%d) — a shrunken table is how this guard stops "+
-			"covering the unit ladder without anything going red", len(cases))
+	have := map[string]bool{}
+	for _, tc := range cases {
+		have[tc.name] = true
 	}
+	// POSITIVE CONTROL: an empty floor would make every check below vacuous.
+	if len(humanBytesLadderFloor) == 0 {
+		t.Fatal("CONTROL failure: humanBytesLadderFloor is empty, so this test asserts nothing")
+	}
+	for _, name := range humanBytesLadderFloor {
+		if !have[name] {
+			t.Errorf("the %q row is gone from the unit-ladder table.\n"+
+				"Rows are only ever ADDED; deleting one stops this guard covering that rung — and "+
+				"because the old guard was a COUNT (`len(cases) < 13`), deleting this row while "+
+				"adding any unrelated one kept the count at 13 and stayed green.\n"+
+				"Adding rows is free; this list only forbids REMOVING one.", name)
+		}
+	}
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := humanBytes(tc.in); got != tc.want {

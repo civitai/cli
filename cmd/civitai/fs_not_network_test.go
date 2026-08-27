@@ -196,14 +196,84 @@ func realFilesystemErrors(t *testing.T) []fsFixture {
 	return out
 }
 
+// fsFixtureFloor is the KEEPER for realFilesystemErrors: the fixture NAMES that
+// must always be produced, whatever else the table gains.
+//
+// 🔴 A COUNT WAS NOT ENOUGH, AND THE FIXTURES IT PROTECTS ARE NOT
+// INTERCHANGEABLE. This started as `len(fixtures) < 8`, reasoning that the table
+// only grows so any deletion drops below the floor. Add-one/delete-one defeats
+// it in one move: delete `os.Symlink EEXIST (*os.LinkError)` and add any
+// unrelated row — a fifth bare errno, say — and the count is still above 8, the
+// guard is green, and `*os.LinkError` has lost half its coverage.
+//
+// The trade matters here more than a row count suggests, because the fixtures
+// are not samples of one thing: each pins a distinct WRAPPING SHAPE
+// (`*fs.PathError`, `*os.LinkError`, `*os.SyscallError`, bare `syscall.Errno`),
+// and the defect in issue #241 was precisely that `errors.As` unwrapped PAST
+// some wrappers and not others. A table that keeps its size while collapsing
+// onto one wrapper still reports "12 fixtures, all green" while the shape that
+// actually regressed is no longer represented. Membership cannot be traded that
+// way: removing a NAME from this list, or its `add(...)` call, is red by name.
+//
+// 🔴 THREE RESIDUALS, STATED RATHER THAN GLOSSED. (1) The two EACCES fixtures
+// are DELIBERATELY ABSENT from this floor: realFilesystemErrors skips them under
+// `os.Geteuid() == 0` because root defeats mode 000, so naming them here would
+// make the guard red in a root container rather than catching anything. Their
+// wrapping shape (`*fs.PathError`) is held by three other named fixtures, so the
+// omission costs no shape coverage — but it does mean the EACCES rows themselves
+// stay tradeable. (2) Protection is OPT-IN PER FIXTURE: the loop iterates THIS
+// list, so a fixture added and not named here is permanently tradeable, and
+// nothing goes red at the moment of the omission. Append the name in the same
+// commit. (3) The two-line bypass is still open: delete the floor entry AND the
+// `add(...)` call together. What this stops is the ONE-line trade — a deletion
+// paid for by an unrelated addition; it does not stop a deliberate two-line
+// removal, and no in-tree check can. That is review's job.
+//
+// The bare-errno names are BUILT the way realFilesystemErrors builds them rather
+// than typed out, because `%s` on a syscall.Errno renders the OS's message text
+// ("no such file or directory"), which is not portable across GOOS. The identity
+// being pinned is the ERRNO, not the English string.
+var fsFixtureFloor = []string{
+	// *fs.PathError, from three unconditional os entry points.
+	"os.Open ENOENT (*fs.PathError)",
+	"os.Stat ENOTDIR (*fs.PathError)",
+	"os.ReadFile EISDIR (*fs.PathError)",
+	// *os.LinkError, from two.
+	"os.Rename ENOENT (*os.LinkError)",
+	"os.Symlink EEXIST (*os.LinkError)",
+	// *os.SyscallError.
+	"os.NewSyscallError EACCES (*os.SyscallError)",
+	// Bare errnos — nothing wrapping them at all.
+	fmt.Sprintf("bare syscall.Errno %s", syscall.ENOENT),
+	fmt.Sprintf("bare syscall.Errno %s", syscall.EACCES),
+	fmt.Sprintf("bare syscall.Errno %s", syscall.ENOTDIR),
+	fmt.Sprintf("bare syscall.Errno %s", syscall.EISDIR),
+}
+
 // TestFilesystemErrorsAreNotNetworkErrors is the regression coverage.
 //
 // RED AT BASE (origin/main): every subtest fails with exit 5.
 // GREEN AT HEAD: every subtest gets exit 1.
 func TestFilesystemErrorsAreNotNetworkErrors(t *testing.T) {
 	fixtures := realFilesystemErrors(t)
-	if len(fixtures) < 8 {
-		t.Fatalf("only %d fixtures were produced — a shrunken table is a guard wired to less than it claims", len(fixtures))
+
+	have := map[string]bool{}
+	for _, f := range fixtures {
+		have[f.name] = true
+	}
+	// POSITIVE CONTROL: an empty floor would make every check below vacuous.
+	if len(fsFixtureFloor) == 0 {
+		t.Fatal("CONTROL failure: fsFixtureFloor is empty, so this test asserts nothing")
+	}
+	for _, name := range fsFixtureFloor {
+		if !have[name] {
+			t.Errorf("the %q fixture is gone.\n"+
+				"Each fixture pins a distinct WRAPPING SHAPE that must not be classified as a network "+
+				"error (AGENTS.md items 7 and 24); deleting one drops that shape's coverage. The old "+
+				"guard was a COUNT (`len(fixtures) < 8`), so deleting this fixture while adding any "+
+				"unrelated one kept the count above 8 and stayed green.\n"+
+				"Adding fixtures is free; this list only forbids REMOVING one.", name)
+		}
 	}
 
 	for _, f := range fixtures {
