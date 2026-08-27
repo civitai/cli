@@ -1,4 +1,4 @@
-# 33. The source-repository URL rule is NOT mirrored locally — the server decides
+# AGENTS.md item 33 — the source-repository URL rule is NOT mirrored locally
 
 **Trigger:** adding a local check to `app listing set-source-repo`, tightening the
 manifest schema's `repository` `pattern`, or reconciling the two.

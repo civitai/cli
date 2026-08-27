@@ -125,6 +125,10 @@ func TestSetSourceRepoUsageRefusals(t *testing.T) {
 // manifest's `repository` key, NOT from `tagline`/`description`/`category`. A
 // refusal that named the text remedy would send the author to edit three fields
 // that have nothing to do with what they asked for.
+// want0SourceRepo is the ON-SITE source-repo remedy, written out here rather
+// than read from the constant the command uses.
+const want0SourceRepo = "source-repository link comes from the `repository` key in block.manifest.json — editing it here would be overwritten by the manifest at your next approved version. Set `repository` in block.manifest.json and run `civitai app submit`."
+
 func TestSetSourceRepoRefusesOnsite(t *testing.T) {
 	srv := newSetTextServer(t, withKind(appapi.ListingKindOnsite))
 	_, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
@@ -137,8 +141,15 @@ func TestSetSourceRepoRefusesOnsite(t *testing.T) {
 	// 🔴 THE WHOLE NORMALISED CLAUSE, for the same reason as its `set-text`
 	// counterpart: "repository" alone is a keyword, and a keyword pin is
 	// satisfiable by a sibling subject that merely happens to contain it.
-	if want := onsiteSubjectSourceRepo.clause; !strings.Contains(err.Error(), want) {
+	// 🔴 A LITERAL, for the same reason as its `set-text` counterpart: an
+	// expectation read from the constant under test cannot see a reword of that
+	// constant, and an audit demonstrated exactly that.
+	if want := want0SourceRepo; !strings.Contains(err.Error(), want) {
 		t.Errorf("the refusal must carry the SOURCE-REPO remedy verbatim.\n got: %v\nwant it to contain: %s", err, want)
+	}
+	if onsiteSubjectSourceRepo.clause != want0SourceRepo {
+		t.Errorf("onsiteSubjectSourceRepo.clause no longer matches the pinned text.\n got: %s\nwant: %s",
+			onsiteSubjectSourceRepo.clause, want0SourceRepo)
 	}
 	if onsiteSubjectText.clause == onsiteSubjectSourceRepo.clause {
 		t.Fatal("the two onsite remedies are identical — the assertion above cannot tell them apart")
@@ -422,4 +433,96 @@ func TestSetSourceRepoJSONOpenRevision(t *testing.T) {
 			t.Fatalf("shadowId = %v, want %q — without it this pair proves nothing", sid, shadow)
 		}
 	})
+}
+
+// ---------------------------------------------------------------------------
+// Round-2 arms. Added with the fixes, not after them — round 1 shipped two
+// behaviours unguarded and only the mutation battery noticed.
+// ---------------------------------------------------------------------------
+
+// TestSetSourceRepoPendingRevisionDoesNotAdviseSubmitting.
+//
+// 🔴 `submitListingRevision` ON AN ALREADY-PENDING REVISION IS A NO-OP: the
+// server returns the existing publish request unchanged. Offering it there is
+// not dangerous, it is MISLEADING — it implies an action is outstanding when the
+// edit is already in the moderator queue, and the author goes looking for a
+// button that does nothing.
+func TestSetSourceRepoPendingRevisionDoesNotAdviseSubmitting(t *testing.T) {
+	const shadow = "apl_PENDING_7"
+	newSetTextServer(t, withStatus("approved"), withOpenShadow(shadow), withPending(true),
+		withReply(map[string]any{"requiresReview": true, "shadowId": shadow}))
+	out, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
+	if err != nil {
+		t.Fatalf("set-source-repo: %v", err)
+	}
+	if !strings.Contains(out, "ALREADY under moderator review") {
+		t.Errorf("a submitted revision must be described as such; got:\n%s", out)
+	}
+	if strings.Contains(out, "submit-revision") {
+		t.Errorf("must NOT advise submit-revision on a revision already under review — the server "+
+			"returns the existing request unchanged, so the advice implies work that does not "+
+			"exist; got:\n%s", out)
+	}
+}
+
+// TestSetSourceRepoStagedAdviceCarriesTheSlug.
+//
+// 🔴 BOTH COMMANDS IN THE BLOCK BIND `--slug`. Printing it on the first line and
+// omitting it on the second sends a user who reached this command with `--slug`,
+// from a directory with no matching block.manifest.json, into a slug-resolve
+// failure on the follow-up.
+func TestSetSourceRepoStagedAdviceCarriesTheSlug(t *testing.T) {
+	const shadow = "apl_SLUGADVICE_2"
+	newSetTextServer(t, withStatus("approved"), withOpenShadow(shadow),
+		withReply(map[string]any{"requiresReview": true, "shadowId": shadow}))
+	out, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
+	if err != nil {
+		t.Fatalf("set-source-repo: %v", err)
+	}
+	for _, want := range []string{
+		"civitai app listing status --slug " + stSlug,
+		"civitai app listing submit-revision --slug " + stSlug,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("every command offered in the advice block must carry the slug the user passed "+
+				"(missing %q); got:\n%s", want, out)
+		}
+	}
+}
+
+// TestSetSourceRepoInPlaceStillWarnsAboutAnOpenRevision.
+//
+// 🔴 THE TWO RENDERINGS MUST NOT DISAGREE ABOUT WHETHER THE HAZARD APPLIES.
+// `--json` reports `openRevision` from the listing regardless of which branch the
+// server took, so a human path that only warned inside the staged branch left an
+// approved listing with an open shadow printing a bare success line while the
+// machine payload said `openRevision:true` — the exact defect recorded in
+// `warnOpenRevision`'s own doc comment, reintroduced one file over.
+//
+// Reachable when the server judges the patch non-material (a canonical no-op),
+// and it matters because that shadow can carry a DIFFERENT staged sourceRepoUrl
+// that replaces the live one on approval.
+func TestSetSourceRepoInPlaceStillWarnsAboutAnOpenRevision(t *testing.T) {
+	const shadow = "apl_INPLACE_SHADOW"
+	newSetTextServer(t, withStatus("approved"), withOpenShadow(shadow),
+		withReply(map[string]any{"requiresReview": false, "shadowId": nil}))
+	out, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
+	if err != nil {
+		t.Fatalf("set-source-repo: %v", err)
+	}
+	if !strings.Contains(out, "has a revision open") {
+		t.Errorf("an in-place edit on a listing with an open revision must still warn — the "+
+			"revision can overwrite this link on approval; got:\n%s", out)
+	}
+	// The other arm: no open revision, no warning. Without this the assertion
+	// above is satisfied by a command that warns unconditionally.
+	newSetTextServer(t, withStatus("draft"),
+		withReply(map[string]any{"requiresReview": false, "shadowId": nil}))
+	out2, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
+	if err != nil {
+		t.Fatalf("set-source-repo: %v", err)
+	}
+	if strings.Contains(out2, "has a revision open") {
+		t.Errorf("a listing with no open revision must not be warned about one; got:\n%s", out2)
+	}
 }

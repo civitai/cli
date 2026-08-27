@@ -763,6 +763,10 @@ func TestSetTextIsSilentWithNoShadowAndNoPendingRevision(t *testing.T) {
 // server-side refuses the write — `updateListing` selects `kind` and never
 // branches on it — so the gate has to be here, and it must refuse BEFORE the
 // write rather than warn after it.
+// want0Text is the ON-SITE text remedy, written out here rather than read from
+// the constant the command uses. See the assertion below.
+const want0Text = "tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edit `name` / `tagline` / `description` in block.manifest.json and run `civitai app submit`. (Category is set by a moderator on an on-site app.)"
+
 func TestSetTextRefusesAnOnsiteListing(t *testing.T) {
 	srv := newSetTextServer(t, withKind("onsite"))
 	_, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline)
@@ -777,10 +781,24 @@ func TestSetTextRefusesAnOnsiteListing(t *testing.T) {
 	// passing the source-repo subject here printed a completely wrong remedy for
 	// a tagline edit and the whole suite stayed green (measured). A keyword pin
 	// on text a sibling can spell is not a guard.
-	if want := onsiteSubjectText.clause; !strings.Contains(err.Error(), want) {
+	// 🔴 A LITERAL, NOT `onsiteSubjectText.clause`. Asserting against the constant
+	// under test only pins WHICH subject the gate was handed — an audit reworded
+	// the clause to "…come from the moon…" and the suite stayed green. Deriving an
+	// expectation from the implementation it tests is how a guard ends up agreeing
+	// with any change to it.
+	//
+	// The price is that a deliberate reword fails here once. Pay it: this string is
+	// shipped user-facing advice about a public listing, and a machine-checkable
+	// claim is worth one test edit.
+	if want := want0Text; !strings.Contains(err.Error(), want) {
 		t.Errorf("the refusal must carry the TEXT remedy verbatim.\n got: %v\nwant it to contain: %s", err, want)
 	}
-	// …and the guard is only meaningful if the two clauses actually differ.
+	// The constant must still BE that literal — otherwise the two could drift apart
+	// with only this test's copy staying right.
+	if onsiteSubjectText.clause != want0Text {
+		t.Errorf("onsiteSubjectText.clause no longer matches the pinned text.\n got: %s\nwant: %s",
+			onsiteSubjectText.clause, want0Text)
+	}
 	if onsiteSubjectText.clause == onsiteSubjectSourceRepo.clause {
 		t.Fatal("the two onsite remedies are identical — the assertion above cannot tell them apart")
 	}

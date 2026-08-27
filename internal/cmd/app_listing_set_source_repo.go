@@ -225,6 +225,14 @@ func setSourceRepoPayload(slug string, ref *appapi.ListingRef, res *appapi.Updat
 // "the server opened a revision for MY change" from "my change joined one that
 // already existed". `resolveListing` runs before `UpdateListing`, so this is
 // free and it is the only moment the distinction is observable.
+//
+// 🔴 ONE PREDICATE, FOUR CALL SITES. `set-text` open-coded
+// `ref.ShadowID != nil || ref.HasPendingRevision` twice — once in its renderer,
+// once in its `--json` payload — and this command added a third and fourth. All
+// four agreed, which is exactly when consolidating is cheap and exactly when a
+// future disagreement would be silent: the `ShadowID` arm is the one that took a
+// release to get right (see warnOpenRevision), and it is the one a re-derivation
+// drops.
 func hadOpenRevision(ref *appapi.ListingRef) bool {
 	return ref != nil && (ref.ShadowID != nil || ref.HasPendingRevision)
 }
@@ -277,14 +285,26 @@ func reportListingSourceRepoUpdated(out io.Writer, slug string, p appapi.Listing
 			// which this command cannot see and must not guess at.
 			fmt.Fprintln(out, "")
 			if ref.HasPendingRevision {
+				// 🔴 NO "submit it" LINE ON THIS ARM. The revision is already with
+				// a moderator, and `submitListingRevision` returns the existing
+				// pending request unchanged — so telling the author to run it
+				// implies an action is outstanding when none is.
 				fmt.Fprintln(out, st.Warn("That revision was ALREADY under moderator review before this edit."))
-			} else {
-				fmt.Fprintln(out, st.Warn("That revision ALREADY existed and may carry other staged changes."))
+				fmt.Fprintln(out, "  It will be published together with everything else staged on it, and")
+				fmt.Fprintln(out, "  approving it copies its text back over the live listing.")
+				fmt.Fprintf(out, "  See what is on it: %s\n", st.Code("civitai app listing status --slug "+slug))
+				return
 			}
+			fmt.Fprintln(out, st.Warn("That revision ALREADY existed and may carry other staged changes."))
 			fmt.Fprintln(out, "  Approving it publishes EVERYTHING staged on it, not just this link, and")
 			fmt.Fprintln(out, "  copies its text back over the live listing.")
 			fmt.Fprintf(out, "  Check what is on it first: %s\n", st.Code("civitai app listing status --slug "+slug))
-			fmt.Fprintf(out, "  Then, if that is all meant to go public: %s\n", st.Code("civitai app listing submit-revision"))
+			// 🔴 CARRIES --slug LIKE THE LINE ABOVE IT. `submit-revision` binds
+			// `--slug` too, and a user who reached this command with `--slug` from a
+			// directory with no matching block.manifest.json would hit a
+			// slug-resolve failure on the bare form.
+			fmt.Fprintf(out, "  Then, if that is all meant to go public: %s\n",
+				st.Code("civitai app listing submit-revision --slug "+slug))
 			return
 		}
 		fmt.Fprintf(out, "  Send it for review: %s\n", st.Code("civitai app listing submit-revision"))
@@ -292,4 +312,20 @@ func reportListingSourceRepoUpdated(out io.Writer, slug string, p appapi.Listing
 	}
 
 	fmt.Fprintln(out, st.Success(what))
+
+	// 🔴 THE IN-PLACE PATH STILL HAS THE OVERWRITE HAZARD, and leaving it silent
+	// here made the two renderings disagree: `--json` reported `openRevision:true`
+	// while the human saw a bare success line. That is the exact defect recorded
+	// one file over, in warnOpenRevision's own doc comment, about `set-text`.
+	//
+	// Reachable on an approved listing whose patch the server judged non-material
+	// (a canonical no-op). The shadow can still carry a DIFFERENT staged
+	// sourceRepoUrl that replaces the live one when it is approved, so the author
+	// needs to know it is there.
+	if hadOpenRevision(ref) {
+		fmt.Fprintln(out, "")
+		fmt.Fprintln(out, st.Warn("This listing has a revision open, and approving it will overwrite this link"))
+		fmt.Fprintln(out, "  with whatever that revision carries.")
+		fmt.Fprintf(out, "  See what is on it: %s\n", st.Code("civitai app listing status --slug "+slug))
+	}
 }

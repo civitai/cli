@@ -419,13 +419,55 @@ var bornSplitItems = []string{
 	"claudedocs/decisions/33-source-repo-url-is-not-mirrored.md",
 }
 
-// TestBornSplitItemsWereNeverInAgents is what keeps bornSplitItems honest.
+// minSplitRows is the CI-SIDE KEEPER for bornSplitItems, and it is the one that
+// actually fires.
 //
-// For each such file it finds the commit that ADDED it and reads AGENTS.md as it
-// stood at that commit's PARENT. If the body had just been moved out, AGENTS.md
-// there would still carry it — so a heading unique to the file appearing in the
-// parent's AGENTS.md means this is a MOVE wearing a born-split label, and it must
-// be pinned with a digest like every other row.
+// 🔴 IT EXISTS BECAUSE THE HISTORICAL CHECK BELOW CANNOT RUN IN CI. The abuse
+// bornSplitItems invites is: move an item, DELETE its splitItems digest row, and
+// relabel it born-split — which destroys that item's verbatim-preservation proof.
+// An audit demonstrated exactly that against item 32 and the suite stayed GREEN,
+// because the only floor was `minEvidencePointers` (16) against 31 real rows, and
+// the coverage test is satisfied by a file appearing in EITHER table.
+//
+// splitItems is append-only by construction — a row is added when a body moves,
+// and a body never moves back — so a floor equal to today's count makes any
+// DELETION red. That needs no git history, so it holds on `actions/checkout@v4`'s
+// depth-1 clone where the historical check skips.
+//
+// Raising this is normal (a new eviction wave adds rows). LOWERING it is the
+// thing to refuse: it means a preservation proof was thrown away.
+const minSplitRows = 31
+
+// TestSplitRowsAreNeverDeleted is the floor's assertion. See minSplitRows.
+func TestSplitRowsAreNeverDeleted(t *testing.T) {
+	if len(splitItems) < minSplitRows {
+		t.Fatalf("splitItems has %d rows, below the floor of %d.\n"+
+			"A row is only ever ADDED (when a body moves out of AGENTS.md); deleting one throws away "+
+			"that item's proof that the move was verbatim. If you are relabelling an item as "+
+			"born-split to get rid of its digest, that is the abuse this floor exists to stop — "+
+			"a moved body needs its sha, whatever list it is named in.", len(splitItems), minSplitRows)
+	}
+}
+
+// TestBornSplitItemsWereNeverInAgents is the historical half of keeping
+// bornSplitItems honest. It is a BONUS check, not the keeper — see minSplitRows.
+//
+// 🔴 ITS FIRST VERSION WAS VACUOUS AND AN AUDIT PROVED IT. It searched the
+// parent commit's AGENTS.md for the evidence file's `# ` heading — but this
+// directory's headings read "AGENTS.md item N — <title>", a string AGENTS.md has
+// never contained, so a genuinely-moved item passed for all 30 of them. The
+// instrument could go red (a rewritten heading reddened it) while being pointed
+// at a condition the convention never produces, which is the worst shape a guard
+// has: reading as coverage while providing none.
+//
+// The discriminator is now AGENTS.md's SIZE at that commit. A move takes a body
+// OUT and leaves a trigger, so AGENTS.md SHRINKS — often by thousands of bytes.
+// A born-split item only ADDS a trigger, so it GROWS (item 33: +447 bytes). That
+// is convention-independent and cannot be defeated by renaming a heading.
+//
+// ⚠ A commit that BOTH moves an item and adds a born-split one would shrink and
+// fail here. That is the right answer: split the commits, so each claim is
+// reviewable on its own.
 func TestBornSplitItemsWereNeverInAgents(t *testing.T) {
 	if len(bornSplitItems) == 0 {
 		t.Skip("no born-split items to check")
@@ -433,35 +475,33 @@ func TestBornSplitItemsWereNeverInAgents(t *testing.T) {
 	for _, f := range bornSplitItems {
 		t.Run(f, func(t *testing.T) {
 			addSha, err := exec.Command("git", "log", "--diff-filter=A", "--format=%H", "-1", "--", f).Output()
-			if err != nil || len(strings.TrimSpace(string(addSha))) == 0 {
-				t.Skipf("CONTROL unavailable, not a finding: cannot find the commit that added %s "+
-					"(shallow clone, or not committed yet) — this check proves nothing here", f)
+			sha := strings.TrimSpace(string(addSha))
+			if err != nil || sha == "" {
+				// 🔴 A SKIP IS NOT A PASS, AND THIS ONE IS ROUTINE: CI checks out
+				// at depth 1, where `git show <sha>^` does not resolve. The floor
+				// in minSplitRows is what covers this case; if that is ever
+				// removed, this test is NOT a substitute for it.
+				t.Skipf("CONTROL unavailable, not a finding: no add-commit for %s reachable "+
+					"(depth-1 clone, or not committed yet). minSplitRows is the keeper here.", f)
 			}
-			parent := strings.TrimSpace(string(addSha)) + "^:AGENTS.md"
-			prev, err := exec.Command("git", "show", parent).Output()
-			if err != nil {
-				t.Skipf("CONTROL unavailable, not a finding: cannot read %s: %v", parent, err)
-			}
-			body, err := os.ReadFile(f)
-			if err != nil {
-				t.Fatalf("cannot read %s: %v", f, err)
-			}
-			// The file's own H1 is the most distinctive line it has; if the text
-			// was moved rather than written, AGENTS.md still had it one commit ago.
-			var h1 string
-			for _, ln := range strings.Split(string(body), "\n") {
-				if strings.HasPrefix(ln, "# ") {
-					h1 = strings.TrimSpace(strings.TrimPrefix(ln, "# "))
-					break
+			sizeAt := func(ref string) (int, bool) {
+				out, err := exec.Command("git", "show", ref+":AGENTS.md").Output()
+				if err != nil {
+					return 0, false
 				}
+				return len(out), true
 			}
-			if h1 == "" {
-				t.Fatalf("%s has no `# ` heading, so this check has nothing distinctive to look for", f)
+			before, okB := sizeAt(sha + "^")
+			after, okA := sizeAt(sha)
+			if !okB || !okA {
+				t.Skipf("CONTROL unavailable, not a finding: cannot read AGENTS.md around %s "+
+					"(depth-1 clone). minSplitRows is the keeper here.", sha[:7])
 			}
-			if strings.Contains(string(prev), h1) {
-				t.Errorf("%s is listed as born-split, but AGENTS.md at the commit BEFORE it appeared "+
-					"already contained its heading %q — that is a MOVE, and a move needs a splitItems "+
-					"row pinning the sha of the text it came from.", f, h1)
+			if after < before {
+				t.Errorf("%s is listed as born-split, but AGENTS.md SHRANK by %d bytes in the commit "+
+					"that added it (%d -> %d at %s).\nA shrink means a body was moved OUT, and a moved "+
+					"body needs a splitItems row pinning the sha of the text it came from. If this "+
+					"commit did both, split it.", f, before-after, before, after, sha[:7])
 			}
 		})
 	}

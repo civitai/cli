@@ -567,7 +567,7 @@ func setTextPayload(slug string, ref *appapi.ListingRef, res *appapi.UpdateListi
 	if ref != nil {
 		out.AppListingID = ref.AppListingID
 		out.ShadowID = ref.ShadowID
-		out.OpenRevision = ref.ShadowID != nil || ref.HasPendingRevision
+		out.OpenRevision = hadOpenRevision(ref)
 	}
 	if res != nil {
 		out.RequiresReview = res.RequiresReview
@@ -593,7 +593,7 @@ func setTextPayload(slug string, ref *appapi.ListingRef, res *appapi.UpdateListi
 // warnOpenRevision is the overwrite advisory, shared by both renderings so they
 // cannot disagree about whether it applies.
 func warnOpenRevision(errOut io.Writer, slug string, ref *appapi.ListingRef) {
-	if ref != nil && (ref.ShadowID != nil || ref.HasPendingRevision) {
+	if hadOpenRevision(ref) {
 		se := ui.For(errOut)
 		// The two states are DIFFERENT and the reader can act on them
 		// differently — one is still theirs to edit, the other is with a

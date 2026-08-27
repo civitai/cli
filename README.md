@@ -2019,8 +2019,8 @@ trailing `/` or `.git`, a query string and a fragment are accepted and
 normalised away. A deep link such as `/owner/repo/tree/main` is rejected.
 
 > 🔴 **This is a *material* change, unlike `set-text`.** On an **approved**
-> listing the server does not apply it in place: it stages the edit on a
-> revision and the listing re-enters moderator review, because this is an
+> listing a change to this link is not applied in place: the server stages it on
+> a revision and the listing re-enters moderator review, because this is an
 > outbound link on a public page. **The live listing is unchanged until that
 > revision is approved** — run `civitai app listing submit-revision` to send it.
 > The command tells you which branch the server took, and `--json` carries it as
@@ -2028,6 +2028,25 @@ normalised away. A deep link such as `/owner/repo/tree/main` is rejected.
 > directly. This is also why it is a separate command rather than a flag on
 > `set-text`: bundling them would make a `--tagline` edit stage instead of apply,
 > depending on whether an unrelated flag happened to be passed.
+
+**What counts as a "change".** The server compares **canonical** forms, so
+several things that look like edits are not: re-setting the link you already
+have, setting a `/` or `.git` spelling of it, or `--clear` on a listing that has
+no link. Those apply in place and stage nothing, and the command reports
+`requiresReview: false` — it never guesses which branch happened, it reports the
+one the server took.
+
+**Two states are refused outright rather than staged.** A **removed**
+(owner-unpublished) listing cannot take a material change at all. And until the
+platform applies the migration that adds the listing's source-repo column, an
+author write is refused with a precondition error. Both arrive as the server's
+own message, and both exit `1`.
+
+**If a revision was already open** — because you staged an `rm-screenshot`, or
+one of the attach commands minted one — this edit joins **that** revision rather
+than getting its own, and approving it publishes *everything* staged there and
+copies its text back over the live listing. The command says so and points you
+at `civitai app listing status` first; `--json` reports it as `openRevision`.
 
 **The CLI does not pre-validate the URL**, on purpose. The platform's
 `validateRepositoryUrl` is the authority, and it constrains things the shipped

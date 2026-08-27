@@ -1,6 +1,10 @@
 package appapi
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -79,14 +83,84 @@ func TestListingSourceRepoPatchCarriesExactlyItsOwnField(t *testing.T) {
 // TestListingPatchImplementationsAreLedgered pins WHICH types may reach
 // UpdateListing.
 //
-// 🔴 THE POINT IS THE COUNT, NOT THE MEMBERSHIP. Each type on its own is
-// asserted above; what this adds is that a THIRD implementation cannot appear
-// unnoticed. A new patch type is exactly the moment someone must decide whether
-// its fields are material, and this is the only thing that asks.
+// 🔴 THIS TEST ONCE CLAIMED A COUNT IT NEVER COUNTED. It asserted two
+// `var _ ListingPatch = …` lines and a disjointness check over the two types it
+// already knew about, while its comment promised "a THIRD implementation cannot
+// appear unnoticed". An audit added `ListingComboPatch` — one type carrying a
+// text field AND the material `sourceRepoUrl`, exactly the hazard this file
+// exists for — and the whole suite stayed green.
+//
+// Go cannot enumerate a closed interface's implementations at runtime, so the
+// enumeration is done over the package SOURCE: every method set that declares
+// `wire() map[string]any` is an implementation, because that is what makes a type
+// satisfy `ListingPatch`. A new one must be added here deliberately, which is the
+// moment someone has to decide whether its fields are material.
 func TestListingPatchImplementationsAreLedgered(t *testing.T) {
-	// Compile-time: both types satisfy the closed interface.
+	// Compile-time: both known types satisfy the closed interface.
 	var _ ListingPatch = ListingTextPatch{}
 	var _ ListingPatch = ListingSourceRepoPatch{}
+
+	want := map[string]bool{"ListingTextPatch": true, "ListingSourceRepoPatch": true}
+
+	// 🔴 ParseFile PER FILE, NOT parser.ParseDir — the latter is deprecated as of
+	// Go 1.25 (SA1019) because it ignores build tags. Walking the directory here
+	// keeps the enumeration honest for THIS package's own files, which is all it
+	// claims to cover.
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot read the package directory: %v", err)
+	}
+	fset := token.NewFileSet()
+	found := map[string]bool{}
+	files := 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("CONTROL failure, not a finding: cannot parse %s: %v", name, err)
+		}
+		files++
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Name.Name != "wire" || fn.Recv == nil || len(fn.Recv.List) != 1 {
+				continue
+			}
+			recv := fn.Recv.List[0].Type
+			if star, isPtr := recv.(*ast.StarExpr); isPtr {
+				recv = star.X
+			}
+			if id, ok := recv.(*ast.Ident); ok {
+				found[id.Name] = true
+			}
+		}
+	}
+	// 🔴 POSITIVE CONTROL. A parse that read no files, or a `wire` spelling that
+	// matched nothing, would report an empty set and pass every check below —
+	// the reassuring zero this repo keeps getting caught by.
+	if files == 0 {
+		t.Fatal("CONTROL failure: parsed 0 non-test files; the enumeration below is vacuous")
+	}
+	if len(found) == 0 {
+		t.Fatal("CONTROL failure: found 0 `wire()` methods; the enumeration below is vacuous")
+	}
+
+	for name := range found {
+		if !want[name] {
+			t.Errorf("%s implements ListingPatch but is not ledgered here.\n"+
+				"A new patch type is the moment to decide whether its fields are MATERIAL: a type "+
+				"carrying both a text field and sourceRepoUrl would stage the text on a revision "+
+				"instead of applying it in place. Add it above only after checking that.", name)
+		}
+	}
+	for name := range want {
+		if !found[name] {
+			t.Errorf("%s is ledgered as a ListingPatch implementation but declares no wire() method "+
+				"— a stale entry looks like coverage and is not", name)
+		}
+	}
 
 	// The wire shapes must be disjoint — no key may be reachable from both, or
 	// the separation is nominal.
