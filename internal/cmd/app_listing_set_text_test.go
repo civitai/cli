@@ -570,7 +570,7 @@ func TestSetTextWarnsWhenARevisionIsUnderReview(t *testing.T) {
 	}
 	// 🔴 THE KIND CAVEAT IS GONE FROM THIS MESSAGE ON PURPOSE. It used to say
 	// "if this app is OFF-SITE …; an ON-SITE app is unaffected", which was a
-	// hedge the command now makes unnecessary: `refuseOnsiteTextEdit` means an
+	// hedge the command now makes unnecessary: `refuseOnsiteEdit` means an
 	// onsite listing never reaches this line at all, so the warning states the
 	// risk plainly instead of asking the reader to work out which case they are.
 	for _, want := range []string{"already under moderator review", "undo this edit", "civitai app doctor"} {
@@ -1043,8 +1043,8 @@ func TestSetTextOnsiteRefusalIsAVerdictNotAUsageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the onsite refusal")
 	}
-	if !errors.Is(err, ErrOnsiteTextNotEditable) {
-		t.Errorf("the refusal must carry ErrOnsiteTextNotEditable so its exit code is assertable, got %T: %v", err, err)
+	if !errors.Is(err, ErrOnsiteNotEditable) {
+		t.Errorf("the refusal must carry ErrOnsiteNotEditable so its exit code is assertable, got %T: %v", err, err)
 	}
 	// 🔴 NOT a usage error, and not any API kind — either would move the code.
 	if errors.Is(err, ErrUsage) {
@@ -1079,7 +1079,7 @@ func TestSetTextUnknownKindRefusalIsClassified(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unestablished kind must refuse")
 	}
-	if !errors.Is(err, ErrOnsiteTextNotEditable) {
+	if !errors.Is(err, ErrOnsiteNotEditable) {
 		t.Errorf("the unknown-kind refusal must carry the sentinel so its exit code is assertable, got %T: %v", err, err)
 	}
 	if errors.Is(err, ErrUsage) {

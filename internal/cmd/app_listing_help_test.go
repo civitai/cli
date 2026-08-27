@@ -292,14 +292,18 @@ func minimalGIF(*testing.T) []byte {
 // The floor is asserted so a walk that found nothing cannot read as clean.
 func TestListingHelpBodiesAreComplete(t *testing.T) {
 	nodes := listingHelpNodes(t)
-	// The group + its EIGHT subcommands. `submit-revision` is the seventh
+	// The group + its NINE subcommands. `submit-revision` is the seventh
 	// (civitai/cli#436): before it, a change staged in a live listing's revision
 	// — a removal, and nothing else after #434 — could not be published by any
 	// command in this CLI. `set-text` is the eighth: the three TEXT problems
 	// `civitai app doctor` reports were fixable only in the browser until
 	// civitai/civitai#4341 made `appListings.updateListing` reachable by a CLI
-	// token.
-	const wantNodes = 9
+	// token. `set-source-repo` is the ninth (civitai/civitai#4314): the public
+	// source-repository link, which is the one field on this proc that is
+	// MATERIAL, so it gets its own command rather than a flag on `set-text` —
+	// see that command's header for why bundling them would change what
+	// `set-text`'s existing flags do.
+	const wantNodes = 10
 	if len(nodes) != wantNodes {
 		t.Fatalf("walked %d nodes under `app listing`, want %d — adding a command means "+
 			"documenting it, so update this floor deliberately", len(nodes), wantNodes)
