@@ -53,13 +53,21 @@ import (
 // every refusal print them.
 var setTextFieldNames = []string{"tagline", "description", "category"}
 
-// ErrOnsiteTextNotEditable is returned when `set-text` is pointed at an ON-SITE
-// listing, whose tagline/description/category are manifest-governed. It carries
-// the exit code and nothing else; the message names the remedy.
+// ErrOnsiteNotEditable is returned when a listing WRITE is pointed at an ON-SITE
+// listing, whose corresponding value is manifest-governed. It carries the exit
+// code and nothing else; the message names the remedy.
 //
 // A named sentinel rather than a bare error so the exit-code contract can be
 // asserted with errors.Is rather than by matching prose — AGENTS item 7.
-var ErrOnsiteTextNotEditable = errors.New("this app's listing text is manifest-governed")
+//
+// 🔴 ONE SENTINEL FOR EVERY MANIFEST-GOVERNED FIELD, not one per command. Both
+// `set-text` (tagline/description/category) and `set-source-repo`
+// (`sourceRepoUrl` ← the manifest's `repository`) refuse for the SAME reason and
+// publish the SAME exit code, so a second sentinel would be a second thing to
+// keep in step with the exit-code contract. It was named `ErrOnsiteTextNotEditable`
+// while `set-text` was the only writer; the name widened when the second one
+// arrived, rather than being left describing half of what it covers.
+var ErrOnsiteNotEditable = errors.New("this app's listing value is manifest-governed")
 
 func newAppListingSetTextCmd() *cobra.Command {
 	var lc listingCommon
@@ -121,7 +129,7 @@ these edits (roughly 30 an hour).`,
 			// would be reverted at the next approve. Refusing first also means
 			// the refusal costs one read rather than a read plus a pointless
 			// resolve.
-			if err := refuseOnsiteTextEdit(ctx, client, slug); err != nil {
+			if err := refuseOnsiteEdit(ctx, client, slug, onsiteSubjectText); err != nil {
 				return err
 			}
 			ref, err := resolveListing(ctx, client, slug)
@@ -171,7 +179,40 @@ these edits (roughly 30 an hour).`,
 	return cmd
 }
 
-// refuseOnsiteTextEdit blocks a text write on an ON-SITE listing and names the
+// onsiteSubject names WHICH manifest-governed surface a refused write was aimed
+// at, so one gate can print the remedy that actually works for each.
+//
+// 🔴 THE GATE IS SHARED, THE PROSE IS NOT. Everything that makes this check safe
+// — reading `kind` from `listMine` rather than inferring it, failing closed on an
+// unknown kind, and the capped-page caveat below — is identical for every
+// manifest-governed field and is exactly the logic that must not be copied. What
+// legitimately differs is which manifest key to edit, so that is all a caller
+// supplies.
+type onsiteSubject struct {
+	// clause completes "…is an ON-SITE app, and its ", including the remedy
+	// sentence that follows it.
+	clause string
+	// what is a short noun for the value, used by the unknown-kind refusal.
+	what string
+}
+
+var (
+	onsiteSubjectText = onsiteSubject{
+		clause: "tagline, description and category come from block.manifest.json — editing them here " +
+			"would be overwritten by the manifest at your next approved version. Edit `name` / `tagline` / " +
+			"`description` in block.manifest.json and run `civitai app submit`. (Category is set by a " +
+			"moderator on an on-site app.)",
+		what: "text",
+	}
+	onsiteSubjectSourceRepo = onsiteSubject{
+		clause: "source-repository link comes from the `repository` key in block.manifest.json — editing " +
+			"it here would be overwritten by the manifest at your next approved version. Set `repository` " +
+			"in block.manifest.json and run `civitai app submit`.",
+		what: "source-repository link",
+	}
+)
+
+// refuseOnsiteEdit blocks a write on an ON-SITE listing and names the
 // remedy that actually works.
 //
 // 🔴 WITHOUT THIS THE FEATURE LOOP CLOSES WRONGLY. `civitai app doctor` reports
@@ -218,7 +259,7 @@ these edits (roughly 30 an hour).`,
 // were in flight this said "#488 must land FIRST", which is what it was for.
 // Anyone lifting THIS command into a tree without `app doctor` re-creates the
 // defect: a mistyped slug exits 4 pointing at a command the binary does not have.
-func refuseOnsiteTextEdit(ctx context.Context, client *appapi.Client, slug string) error {
+func refuseOnsiteEdit(ctx context.Context, client *appapi.Client, slug string, subj onsiteSubject) error {
 	rows, err := client.ListMyListings(ctx)
 	if err != nil {
 		return err
@@ -240,12 +281,8 @@ func refuseOnsiteTextEdit(ctx context.Context, client *appapi.Client, slug strin
 			// tagging it civitai.ErrBadRequest is the only route to `2` — and
 			// pinned by TestSetTextOnsiteRefusalIsAVerdictNotAUsageError, because
 			// nothing else in the suite would notice the move.
-			return fmt.Errorf(
-				"%w: %q is an ON-SITE app, and its tagline, description and category come from "+
-					"block.manifest.json — editing them here would be overwritten by the manifest at your "+
-					"next approved version. Edit `name` / `tagline` / `description` in block.manifest.json and run "+
-					"`civitai app submit`. (Category is set by a moderator on an on-site app.)",
-				ErrOnsiteTextNotEditable, r.Slug)
+			return fmt.Errorf("%w: %q is an ON-SITE app, and its %s",
+				ErrOnsiteNotEditable, r.Slug, subj.clause)
 		}
 		if kind == "" {
 			// 🔴 TAGGED, LIKE ITS SIBLING. This was a bare error pinned only by a
@@ -255,8 +292,8 @@ func refuseOnsiteTextEdit(ctx context.Context, client *appapi.Client, slug strin
 			// the ON-SITE arm; the same arm one branch down had it open.
 			return fmt.Errorf(
 				"%w: could not establish whether %q is an on-site or off-site app, and the two have different "+
-					"owners for this text — refusing rather than risk an edit the platform reverts. "+
-					"Update the CLI, or edit the listing in the browser", ErrOnsiteTextNotEditable, r.Slug)
+					"owners for this %s — refusing rather than risk an edit the platform reverts. "+
+					"Update the CLI, or edit the listing in the browser", ErrOnsiteNotEditable, r.Slug, subj.what)
 		}
 		return nil
 	}
@@ -530,7 +567,7 @@ func setTextPayload(slug string, ref *appapi.ListingRef, res *appapi.UpdateListi
 	if ref != nil {
 		out.AppListingID = ref.AppListingID
 		out.ShadowID = ref.ShadowID
-		out.OpenRevision = ref.ShadowID != nil || ref.HasPendingRevision
+		out.OpenRevision = hadOpenRevision(ref)
 	}
 	if res != nil {
 		out.RequiresReview = res.RequiresReview
@@ -556,7 +593,7 @@ func setTextPayload(slug string, ref *appapi.ListingRef, res *appapi.UpdateListi
 // warnOpenRevision is the overwrite advisory, shared by both renderings so they
 // cannot disagree about whether it applies.
 func warnOpenRevision(errOut io.Writer, slug string, ref *appapi.ListingRef) {
-	if ref != nil && (ref.ShadowID != nil || ref.HasPendingRevision) {
+	if hadOpenRevision(ref) {
 		se := ui.For(errOut)
 		// The two states are DIFFERENT and the reader can act on them
 		// differently — one is still theirs to edit, the other is with a

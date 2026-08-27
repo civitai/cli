@@ -396,6 +396,152 @@ func TestSplitItemBodiesArePreservedVerbatim(t *testing.T) {
 	}
 }
 
+// bornSplitItems are evidence files whose body was NEVER in AGENTS.md.
+//
+// 🔴 THIS IS NOT AN ESCAPE HATCH, AND THE DISTINCTION IS REAL. Everything in
+// splitItems was MOVED, and the sha proves the move was verbatim. An item written
+// straight into `claudedocs/decisions/` has no predecessor text, so there is
+// nothing a digest could compare against — pinning the sha of the file against
+// itself would be a tautology that LOOKS like the same proof and is not. Saying
+// "no move happened" out loud is more honest than a self-referential digest.
+//
+// The abuse this category invites is obvious — move an item, then declare it
+// born-split to dodge the digest — so TestBornSplitItemsWereNeverInAgents refutes
+// exactly that, mechanically, against the commit before the file appeared.
+//
+// AGENTS.md's item list is append-only, so this list only grows, and a new entry
+// should be rare: prefer writing an item's body into AGENTS.md and letting the
+// next eviction wave move it, which is what produced every splitItems row. It is
+// only worth being born split when the body is too long to sit in AGENTS.md even
+// briefly — item 33's measured divergence tables are 60+ lines against ~500 bytes
+// of ceiling headroom.
+var bornSplitItems = []string{
+	"claudedocs/decisions/33-source-repo-url-is-not-mirrored.md",
+}
+
+// splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item
+// numbers that MUST have a digest row, whatever else the table gains.
+//
+// 🔴 A COUNT WAS NOT ENOUGH, AND THE HOLE WAS THE SHAPE OF A REAL COMMIT. This
+// started as `minSplitRows = 31`, reasoning that splitItems is append-only so any
+// deletion drops below the floor. An audit defeated it in one move: delete item
+// 30's row, relabel it born-split, and ADD a row for some other file — count
+// still 31, both guards green, item 30's preservation proof gone. That is not a
+// contrived mutation: an eviction wave is precisely the commit that adds rows, so
+// it is the natural vehicle for the deletion the floor exists to stop.
+//
+// Membership cannot be traded that way: removing a NUMBER from this list, or a
+// row from splitItems, is red by name.
+//
+// 🔴 TWO RESIDUALS, STATED RATHER THAN GLOSSED. (1) Protection is OPT-IN PER
+// ITEM: TestSplitRowsAreNeverDeleted iterates THIS list, so a future wave that
+// moves a NEW item, adds its digest row and forgets to append that number here
+// leaves it permanently tradeable — and nothing goes red at the moment of the
+// omission.
+// "Adding a row stays free" is therefore a convenience AND a hole; append the
+// number in the same commit as the row. (2) The two-line bypass is still open:
+// delete the floor entry AND the row together. What this stops is the ONE-line
+// trade an audit actually demonstrated, where the count was preserved by adding
+// an unrelated row; it does not stop a deliberate two-line removal, and no
+// in-tree check can — that is what review is for.
+//
+// The abuse this exists for: move an item, delete its digest, relabel it
+// born-split. TestBornSplitItemsWereNeverInAgents is the other half, and it SKIPS
+// under CI's depth-1 checkout — so this is the half that actually runs there.
+var splitItemsFloor = []int{1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
+
+// TestSplitRowsAreNeverDeleted is the floor's assertion. See splitItemsFloor.
+func TestSplitRowsAreNeverDeleted(t *testing.T) {
+	have := map[int]bool{}
+	for _, it := range splitItems {
+		have[it.num] = true
+	}
+	// POSITIVE CONTROL: an empty floor would make every check below vacuous.
+	if len(splitItemsFloor) == 0 {
+		t.Fatal("CONTROL failure: splitItemsFloor is empty, so this test asserts nothing")
+	}
+	for _, num := range splitItemsFloor {
+		if !have[num] {
+			t.Errorf("item %d has no splitItems row.\n"+
+				"A row is only ever ADDED (when a body moves out of AGENTS.md); deleting one throws "+
+				"away that item's proof that the move was verbatim. If you are relabelling it as "+
+				"born-split to be rid of its digest, that is the abuse this floor exists to stop — "+
+				"a moved body needs its sha whatever list it is named in.\n"+
+				"Adding rows is free; this list only forbids REMOVING one.", num)
+		}
+	}
+}
+
+// TestBornSplitItemsWereNeverInAgents is the historical half of keeping
+// bornSplitItems honest. It is a BONUS check, not the keeper — see splitItemsFloor.
+//
+// 🔴 ITS FIRST VERSION WAS VACUOUS AND AN AUDIT PROVED IT. It searched the
+// parent commit's AGENTS.md for the evidence file's `# ` heading — but this
+// directory's headings read "AGENTS.md item N — <title>", a string AGENTS.md has
+// never contained, so a genuinely-moved item passed for all 30 of them. The
+// instrument could go red (a rewritten heading reddened it) while being pointed
+// at a condition the convention never produces, which is the worst shape a guard
+// has: reading as coverage while providing none.
+//
+// The discriminator is now AGENTS.md's SIZE at that commit. A move takes a body
+// OUT and leaves a trigger, so AGENTS.md SHRINKS; a born-split item only ADDS a
+// trigger, so it GROWS. Convention-independent, and renaming a heading cannot
+// defeat it.
+//
+// 🔴 BUT THE MARGIN IS THIN, AND AN EARLIER VERSION OF THIS NOTE SAID "often by
+// thousands of bytes", WHICH THE DATA DOES NOT SUPPORT. Measured per add-commit:
+//
+//	item 33 (born-split)   0821dc33   28650 -> 29097   +447
+//	items 4+30 (wave 8)    1609fad4   28668 -> 28650    -18
+//	item 31                e7be70f8   28613 -> 28489   -124
+//	item 32                c6c95935   28746 -> 28613   -133
+//
+// The most recent real wave nets EIGHTEEN bytes. So a wave that also added a
+// trigger the size of item 33's would net positive and this check would certify a
+// moved item as born-split. It is a useful second opinion, NOT the keeper — that
+// is splitItemsFloor, which is membership-based and cannot be traded away.
+//
+// ⚠ A commit that BOTH moves an item and adds a born-split one is the ambiguous
+// case: split such commits, so each claim is reviewable on its own.
+func TestBornSplitItemsWereNeverInAgents(t *testing.T) {
+	if len(bornSplitItems) == 0 {
+		t.Skip("no born-split items to check")
+	}
+	for _, f := range bornSplitItems {
+		t.Run(f, func(t *testing.T) {
+			addSha, err := exec.Command("git", "log", "--diff-filter=A", "--format=%H", "-1", "--", f).Output()
+			sha := strings.TrimSpace(string(addSha))
+			if err != nil || sha == "" {
+				// 🔴 A SKIP IS NOT A PASS, AND THIS ONE IS ROUTINE: CI checks out
+				// at depth 1, where `git show <sha>^` does not resolve. The floor
+				// in splitItemsFloor is what covers this case; if that is ever
+				// removed, this test is NOT a substitute for it.
+				t.Skipf("CONTROL unavailable, not a finding: no add-commit for %s reachable "+
+					"(depth-1 clone, or not committed yet). splitItemsFloor is the keeper here.", f)
+			}
+			sizeAt := func(ref string) (int, bool) {
+				out, err := exec.Command("git", "show", ref+":AGENTS.md").Output()
+				if err != nil {
+					return 0, false
+				}
+				return len(out), true
+			}
+			before, okB := sizeAt(sha + "^")
+			after, okA := sizeAt(sha)
+			if !okB || !okA {
+				t.Skipf("CONTROL unavailable, not a finding: cannot read AGENTS.md around %s "+
+					"(depth-1 clone). splitItemsFloor is the keeper here.", sha[:7])
+			}
+			if after < before {
+				t.Errorf("%s is listed as born-split, but AGENTS.md SHRANK by %d bytes in the commit "+
+					"that added it (%d -> %d at %s).\nA shrink means a body was moved OUT, and a moved "+
+					"body needs a splitItems row pinning the sha of the text it came from. If this "+
+					"commit did both, split it.", f, before-after, before, after, sha[:7])
+			}
+		})
+	}
+}
+
 // TestSplitTableCoversEveryEvidenceFile keeps this table and the ledger in
 // agents_evidence_test.go from drifting apart. A body moved without a row here
 // is a body with no preservation proof at all — the exact silence the whole file
@@ -409,11 +555,31 @@ func TestSplitTableCoversEveryEvidenceFile(t *testing.T) {
 		}
 		inTable[it.file] = true
 	}
+	born := map[string]bool{}
+	for _, f := range bornSplitItems {
+		if born[f] {
+			t.Errorf("%s appears twice in bornSplitItems", f)
+		}
+		if inTable[f] {
+			t.Errorf("%s is in BOTH splitItems and bornSplitItems — it was either moved or it was not", f)
+		}
+		born[f] = true
+	}
 	files := evidenceFilesOnDisk(t)
 	for _, f := range files {
-		if !inTable[f] {
+		if !inTable[f] && !born[f] {
 			t.Errorf("%s has no row in splitItems, so nothing proves its body is the text it was moved from.\n"+
-				"Add a row with the sha256 of its non-blank body lines at the commit you moved it from (see this file's header).", f)
+				"Add a row with the sha256 of its non-blank body lines at the commit you moved it from (see this file's header).\n"+
+				"If the body was never in AGENTS.md, add it to bornSplitItems instead — and read that list's comment first.", f)
+		}
+	}
+	onDiskBorn := map[string]bool{}
+	for _, f := range files {
+		onDiskBorn[f] = true
+	}
+	for _, f := range bornSplitItems {
+		if !onDiskBorn[f] {
+			t.Errorf("bornSplitItems names %s, which is not in %s — a stale row looks like coverage and is not", f, evidenceDir)
 		}
 	}
 	onDisk := map[string]bool{}

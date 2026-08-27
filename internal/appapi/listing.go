@@ -308,6 +308,91 @@ func (p ListingTextPatch) wire() map[string]any {
 	return out
 }
 
+// ListingPatch is what UpdateListing sends as `patch`. One proc, one patch
+// object — but MORE THAN ONE PATCH TYPE, and that is the whole point.
+//
+// 🔴 A CLOSED INTERFACE (its methods are unexported), SO THE TYPE SYSTEM ENFORCES
+// WHICH COMMAND MAY SEND WHICH FIELD. `sourceRepoUrl` is in the server's
+// `MATERIAL_PATCH_FIELDS`; the text fields are not. On an APPROVED listing the
+// server writes the FULL patch — material AND trivial — to a shadow revision as
+// soon as ANY material field differs
+// (`<civitai>/src/server/services/blocks/offsite-listing.service.ts:1318-1339`,
+// whose own comment reads "the FULL patch (material + trivial) is written to the
+// shadow"). So one patch carrying both a tagline and a source-repo change would
+// stop the TAGLINE applying in place — silently converting a live edit into one
+// that waits on a moderator.
+//
+// 🔴 WHAT THE CLOSED INTERFACE ACTUALLY BUYS, STATED HONESTLY. It stops another
+// PACKAGE implementing ListingPatch. It does NOT stop this package widening
+// `ListingTextPatch` — an audit built exactly that mutant (add `SourceRepoURL`,
+// wire it, hang a `--source-repo` flag off `set-text`) and it compiled with the
+// whole suite green. An earlier version of this comment claimed the separation
+// was "a property of the program" rather than "a sentence about today's code";
+// that was wrong in the direction that matters, because it discouraged writing
+// the guard.
+//
+// The property is enforced by a FIELD LEDGER instead — see
+// listing_patch_ledger_test.go, which fails when either patch type's field set
+// grows or shrinks, and when their wire keys overlap.
+type ListingPatch interface {
+	wire() map[string]any
+	// Empty reports whether the patch would send no field at all. The server's
+	// own schema refines that at least one key is present and 400s otherwise, so
+	// a caller can refuse it as a usage error before any request.
+	//
+	// ⚠ IT IS ON THE INTERFACE, NOT NECESSARILY ON EVERY CALLER'S PATH.
+	// `set-text` builds its patch field by field and calls this at the end;
+	// `set-source-repo` decides from its own flags — a switch whose
+	// nothing-was-passed arm refuses first — so the empty patch is unreachable
+	// there and this method is never called on it. That is fine, and it is
+	// recorded because "the interface has it" reads like "every command checks
+	// it", which is the description-wider-than-implementation shape.
+	Empty() bool
+}
+
+// ListingSourceRepoPatch edits an OFF-SITE listing's public source-repository
+// link (`sourceRepoUrl`) — the "this app is open source, here is the code" row
+// on the store detail page.
+//
+// Two states, matching the server's nullable-optional field: omitted leaves the
+// column untouched, an explicit null clears it. There is deliberately NO
+// "set empty" third state, unlike the text fields — the server's
+// `updateListingPatchSchema` bounds this one `z.string().min(1)`, so `""` is not
+// a legal value and offering it would only buy a 400.
+type ListingSourceRepoPatch struct {
+	// URL sets the link. nil means "not setting it".
+	URL *string
+	// Clear sends an explicit JSON null, removing the link from the listing.
+	Clear bool
+}
+
+// Empty reports whether the patch would send no field at all.
+func (p ListingSourceRepoPatch) Empty() bool { return p.URL == nil && !p.Clear }
+
+// wire renders the patch for `updateListingSchema.patch`.
+//
+// 🔴 THE URL IS SENT VERBATIM AND IS NOT VALIDATED HERE. The authority is
+// `validateRepositoryUrl` in
+// `<civitai>/src/server/schema/blocks/external-app.schema.ts`, and this CLI
+// already carries ONE coarse mirror of that rule — the `repository` `pattern` in
+// the vendored manifest schema — which is MEASURABLY wrong in both directions:
+// it accepts seven values the server refuses (a segment starting `-`, a bare
+// `.git`, a percent-escape, a non-ASCII character …) and rejects at least one it
+// accepts (`https://GITHUB.COM/o/r/` — the server compares a lower-cased
+// `URL.hostname` while the pattern is case-sensitive). A SECOND copy here would
+// be a second thing to be wrong, on a path where the server answers
+// authoritatively anyway, so its message is surfaced rather than pre-empted.
+func (p ListingSourceRepoPatch) wire() map[string]any {
+	out := map[string]any{}
+	if p.URL != nil {
+		out["sourceRepoUrl"] = *p.URL
+	}
+	if p.Clear {
+		out["sourceRepoUrl"] = nil
+	}
+	return out
+}
+
 // ListingKindOnsite is the kind whose listing COPY is manifest-governed.
 //
 // 🔴 AN ONSITE LISTING'S TEXT HAS NO AUTHOR SURFACE BUT THE MANIFEST. The
@@ -345,15 +430,21 @@ type UpdateListingResult struct {
 	ShadowID       *string `json:"shadowId"`
 }
 
-// UpdateListing writes the listing's scalar text fields.
+// UpdateListing writes the listing's scalar fields.
 //
 // 🔴 IT TARGETS THE TOP-LEVEL LISTING AND THE SERVER REFUSES A SHADOW ID
 // (`revisionOfId != null` -> INVALID_REVISION, surfaced as a 400). The sibling
 // proc `updateRevisionDraft` is the one that writes a shadow, and this CLI
-// deliberately does NOT call it: for these three fields the server never routes
-// to a shadow, so wiring it would be dead code — and dead code shaped like a
-// safety mechanism is worse than none, because it reads as a handled case.
-func (c *Client) UpdateListing(ctx context.Context, listingID string, patch ListingTextPatch) (*UpdateListingResult, error) {
+// deliberately does NOT call it — for a MATERIAL field the server opens the
+// shadow ITSELF (`beginListingRevision`, then writes the patch to the shadow id)
+// and reports it back in `requiresReview`/`shadowId`. Calling the shadow proc
+// directly would be a second way to do the same thing, and the caller would have
+// to guess in advance which branch the server was going to take.
+//
+// 🔴 THE PATCH IS AN INTERFACE, NOT A STRUCT. See ListingPatch: the text fields
+// and `sourceRepoUrl` must not travel in one patch, because the server stages
+// the WHOLE patch on a shadow when any material field changes.
+func (c *Client) UpdateListing(ctx context.Context, listingID string, patch ListingPatch) (*UpdateListingResult, error) {
 	var out UpdateListingResult
 	in := map[string]any{"listingId": listingID, "patch": patch.wire()}
 	if err := c.trpcMutation(ctx, trpcUpdateListing, in, &out); err != nil {

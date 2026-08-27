@@ -181,7 +181,7 @@ func newSetTextServerWith(t *testing.T, s *setTextServer) *setTextServer {
 			// unexpected proc must FAIL, not merely be noted — `getAssets` and
 			// `updateRevisionDraft` both 403 a CLI token in production, and a
 			// test that only logged the call would stay green.
-			t.Errorf("unexpected request to %s — set-text must not call it", r.URL.Path)
+			t.Errorf("unexpected request to %s — neither set-text nor set-source-repo (which shares this fake) may call it", r.URL.Path)
 			w.WriteHeader(http.StatusInternalServerError)
 		}
 	}))
@@ -570,7 +570,7 @@ func TestSetTextWarnsWhenARevisionIsUnderReview(t *testing.T) {
 	}
 	// 🔴 THE KIND CAVEAT IS GONE FROM THIS MESSAGE ON PURPOSE. It used to say
 	// "if this app is OFF-SITE …; an ON-SITE app is unaffected", which was a
-	// hedge the command now makes unnecessary: `refuseOnsiteTextEdit` means an
+	// hedge the command now makes unnecessary: `refuseOnsiteEdit` means an
 	// onsite listing never reaches this line at all, so the warning states the
 	// risk plainly instead of asking the reader to work out which case they are.
 	for _, want := range []string{"already under moderator review", "undo this edit", "civitai app doctor"} {
@@ -754,6 +754,10 @@ func TestSetTextIsSilentWithNoShadowAndNoPendingRevision(t *testing.T) {
 // The KIND gate. An onsite listing's copy is manifest-governed.
 // ---------------------------------------------------------------------------
 
+// want0Text is the ON-SITE text remedy, written out here rather than read from
+// the constant the command uses. See the assertion below.
+const want0Text = "tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edit `name` / `tagline` / `description` in block.manifest.json and run `civitai app submit`. (Category is set by a moderator on an on-site app.)"
+
 // TestSetTextRefusesAnOnsiteListing is the correctness gate.
 //
 // 🔴 THE WRITE WOULD APPEAR TO SUCCEED AND BE REVERTED LATER. `(3b-sync)` in
@@ -770,10 +774,33 @@ func TestSetTextRefusesAnOnsiteListing(t *testing.T) {
 		t.Fatal("an ON-SITE listing's text is manifest-governed — the write must be refused, " +
 			"not silently reverted at the next approve")
 	}
-	for _, want := range []string{"ON-SITE", "block.manifest.json", "civitai app submit"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("the refusal must name the remedy that works (missing %q): %v", want, err)
-		}
+	// 🔴 THE WHOLE NORMALISED CLAUSE, NOT KEYWORDS. This asserted
+	// {"ON-SITE", "block.manifest.json", "civitai app submit"} — every one of
+	// which also appears in `onsiteSubjectSourceRepo.clause`, because the two
+	// remedies are the same SHAPE. So once the gate's prose became a parameter,
+	// passing the source-repo subject here printed a completely wrong remedy for
+	// a tagline edit and the whole suite stayed green (measured). A keyword pin
+	// on text a sibling can spell is not a guard.
+	// 🔴 A LITERAL, NOT `onsiteSubjectText.clause`. Asserting against the constant
+	// under test only pins WHICH subject the gate was handed — an audit reworded
+	// the clause to "…come from the moon…" and the suite stayed green. Deriving an
+	// expectation from the implementation it tests is how a guard ends up agreeing
+	// with any change to it.
+	//
+	// The price is that a deliberate reword fails here once. Pay it: this string is
+	// shipped user-facing advice about a public listing, and a machine-checkable
+	// claim is worth one test edit.
+	if want := want0Text; !strings.Contains(err.Error(), want) {
+		t.Errorf("the refusal must carry the TEXT remedy verbatim.\n got: %v\nwant it to contain: %s", err, want)
+	}
+	// The constant must still BE that literal — otherwise the two could drift apart
+	// with only this test's copy staying right.
+	if onsiteSubjectText.clause != want0Text {
+		t.Errorf("onsiteSubjectText.clause no longer matches the pinned text.\n got: %s\nwant: %s",
+			onsiteSubjectText.clause, want0Text)
+	}
+	if onsiteSubjectText.clause == onsiteSubjectSourceRepo.clause {
+		t.Fatal("the two onsite remedies are identical — the assertion above cannot tell them apart")
 	}
 	// 🔴 REFUSED BEFORE THE WRITE. A refusal that still wrote would be no fix.
 	for _, p := range srv.seen() {
@@ -1043,8 +1070,8 @@ func TestSetTextOnsiteRefusalIsAVerdictNotAUsageError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected the onsite refusal")
 	}
-	if !errors.Is(err, ErrOnsiteTextNotEditable) {
-		t.Errorf("the refusal must carry ErrOnsiteTextNotEditable so its exit code is assertable, got %T: %v", err, err)
+	if !errors.Is(err, ErrOnsiteNotEditable) {
+		t.Errorf("the refusal must carry ErrOnsiteNotEditable so its exit code is assertable, got %T: %v", err, err)
 	}
 	// 🔴 NOT a usage error, and not any API kind — either would move the code.
 	if errors.Is(err, ErrUsage) {
@@ -1079,7 +1106,7 @@ func TestSetTextUnknownKindRefusalIsClassified(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unestablished kind must refuse")
 	}
-	if !errors.Is(err, ErrOnsiteTextNotEditable) {
+	if !errors.Is(err, ErrOnsiteNotEditable) {
 		t.Errorf("the unknown-kind refusal must carry the sentinel so its exit code is assertable, got %T: %v", err, err)
 	}
 	if errors.Is(err, ErrUsage) {

@@ -62,6 +62,7 @@ contract, and **packages/submits** it for review.
 - [Submit & auth](#submit--auth)
   - [After you submit: review → approve → deploy](#after-you-submit-review--approve--deploy)
   - [Listing media requirements](#listing-media-requirements)
+  - [Link your source code (`app listing set-source-repo`)](#link-your-source-code-app-listing-set-source-repo) — **material: stages a revision**
 - [Submission status](#submission-status)
   - [Build provenance: which commit is live?](#build-provenance-which-commit-is-live)
   - [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped)
@@ -321,7 +322,7 @@ README. For the end-to-end walkthrough, see
 | `civitai app validate [dir] [--strict] [--json]` | Best-effort local pre-check of `block.manifest.json`; emits non-fatal warnings (`--strict` fails on them). `--json` emits the structured result (`ok`, plus `errors`/`warnings` each with `field`/`message` — **`field` is always present and never `null`**) for scriptable parsing — still exits non-zero on failure. 🔴 **BREAKING:** a `[dir]` that does not exist, or is not a directory, is now a **usage error** — exit `2` with **no JSON object** on stdout, where it used to print `{"ok": false, …}` and exit `1`. See [Validate fidelity](#validate-fidelity) and [The `--json` result shape](#the---json-result-shape). |
 | `civitai app submit [dir] [--yes] [--package-only] [--out f.zip] [--skip-validate] [--allow-downgrade] [--allow-dirty]` | Validate + package the source tree + upload it with your stored token (or, with no token, write the bundle + print next steps). **A submit that would really upload asks for confirmation, and in a non-interactive shell it refuses without `--yes`** — `civitai app submit --yes` is the CI form. (The refusal is reached only when there is a token to upload with: `--package-only`, and the no-token fallback that just writes the .zip, never submit and so never ask.) **It also refuses a version that is not strictly above the highest APPROVED version of that app** — approving an older (or identical) version replaces the newer live deployment — with `--allow-downgrade` as the deliberate-rollback escape hatch. **And it refuses a dirty git work tree** — the bundle is packaged from what is on disk, so approving one deploys code that exists in no commit — with `--allow-dirty` as the escape hatch; that guard degrades rather than enforcing, so a directory in no git repo (every scaffolded app starts that way) submits unchanged, and a clean tree whose `HEAD` is on no remote warns instead of refusing. All three refusals are skipped on the routes that never reach the server. **A submit that really uploads also STAMPS the commit it was built from** (`sourceCommit`, plus `sourceDirty` when it could establish it), so `civitai app status` can say which source a live version came from — a client CLAIM the server stores unverified, absent entirely where there is no repo, no `git`, or no commit. |
 | `civitai app pull [dir] --app <slug\|appBlockId>` | **Clone (or sync) the canonical git repository behind one of your approved Apps** — the read side of git authoring. ⚠ The clone URL embeds your access token, and a fresh clone persists it into `.git/config`. See [Pull your app's repository](#pull-your-apps-repository-app-pull). |
-| `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>]\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires, and `listing status --json` emits the same read as one object — including **`parentId` and `shadowId`, the two listing ids a change is addressed to**, which the human output shows neither of. 🔴 **`--json` is not a pure read: on a live listing it opens the revision draft described below, so do not poll it.** The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. **On a listing that is already LIVE, every change — including `reorder` — opens a REVISION for moderator re-review rather than editing the live listing**, and `listing status` reports that in-progress revision's media (so the `alsc_…` ids it prints are the revision's, which is what `reorder` addresses). `rm-screenshot` is the one change deliberately left **staged**: it does **not** submit the revision (curating a gallery is usually several removals), so `submit-revision` is what sends it to moderator review and makes the change public. `set-text` is the **text** half — tagline, description and category, the three problems `civitai app doctor` reports as `empty-tagline` / `empty-description` / `empty-category`. All three go in **one** patch, and unlike a name or external-URL edit they are **not** material changes, so they apply **in place** on every listing status and never open a revision. 🔴 **ON-SITE apps are refused**: their copy is manifest-governed and the platform overwrites it from `block.manifest.json` at the next approved version, so the CLI names that remedy instead of writing an edit that gets reverted. `--tagline ""` sets an empty string; `--clear tagline` sets **null** — different server states, both reachable — and **blanking a field needs `--yes`**, so an unset shell variable cannot silently empty a public field (whitespace-only counts as blank, because the server trims). `--category` is validated against the marketplace set locally. `--json` emits what was sent plus the server's own branch. See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
+| `civitai app listing status [--json]\|set-text [--tagline <t>] [--description <d>] [--category <c>] [--clear <fields>]\|set-source-repo <url>\|--clear\|set-icon <file>\|set-cover <file>\|add-screenshot <file>\|rm-screenshot <id>\|reorder <id...>\|submit-revision` | **Attach the store-listing media your App needs before it can be published** — an **icon and a cover are mandatory** (screenshots are optional, up to 8). `listing status` prints what is attached vs. what the publish floor still requires, and `listing status --json` emits the same read as one object — including **`parentId` and `shadowId`, the two listing ids a change is addressed to**, which the human output shows neither of. 🔴 **`--json` is not a pure read: on a live listing it opens the revision draft described below, so do not poll it.** The CLI checks format + byte size locally; **dimensions and aspect ratio are checked by the platform at attach**. **On a listing that is already LIVE, every change — including `reorder` — opens a REVISION for moderator re-review rather than editing the live listing**, and `listing status` reports that in-progress revision's media (so the `alsc_…` ids it prints are the revision's, which is what `reorder` addresses). `rm-screenshot` is the one change deliberately left **staged**: it does **not** submit the revision (curating a gallery is usually several removals), so `submit-revision` is what sends it to moderator review and makes the change public. `set-text` is the **text** half — tagline, description and category, the three problems `civitai app doctor` reports as `empty-tagline` / `empty-description` / `empty-category`. All three go in **one** patch, and unlike a name or external-URL edit they are **not** material changes, so they apply **in place** on every listing status and never open a revision. 🔴 **ON-SITE apps are refused**: their copy is manifest-governed and the platform overwrites it from `block.manifest.json` at the next approved version, so the CLI names that remedy instead of writing an edit that gets reverted. `--tagline ""` sets an empty string; `--clear tagline` sets **null** — different server states, both reachable — and **blanking a field needs `--yes`**, so an unset shell variable cannot silently empty a public field (whitespace-only counts as blank, because the server trims). `--category` is validated against the marketplace set locally. `--json` emits what was sent plus the server's own branch. `set-source-repo` publishes the **public source-repository link** shown as a `Source` row on the detail page (never on a grid card); pass a repository root on github.com / gitlab.com / codeberg.org, or `--clear` to remove it. 🔴 **Unlike `set-text` this IS a material change**: on an approved listing the server stages it on a revision and the live listing is unchanged until `submit-revision` is approved — which is why it is a separate command rather than another `set-text` flag. On-site apps are refused: their link comes from the `repository` key in `block.manifest.json`. The URL is validated by the **server**, not locally. See [Link your source code](#link-your-source-code-app-listing-set-source-repo). See [After you submit](#after-you-submit-review--approve--deploy) and [Listing media requirements](#listing-media-requirements). |
 | `civitai app status [blockId] [--id <pubreq>] [--limit N] [--json]` | Check the review/deploy status of **your own** submissions. No arg lists them all; `--limit N` shows only the newest N (display-side — this route cannot page); a `blockId` (app slug) or `--id` shows one in detail (rejection reason if rejected, live URL once deployed). Run from **inside** an app checkout it also warns on **stderr** when your local `block.manifest.json` is **BEHIND** your highest approved version — advisory only, the exit code never changes. A **SOURCE** column shows the commit the submitting client claimed (short sha, `(dirty)` when it said the tree was uncommitted, `-` when it claimed nothing); the detail view and `--json` carry the full 40 characters, and `sourceDirty` is a tri-state — `null` is *not reported*, `false` is *reported clean*. See [Submission status](#submission-status), [Build provenance](#build-provenance-which-commit-is-live) and [Is your repo behind what you shipped?](#is-your-repo-behind-what-you-shipped). |
 | `civitai app doctor [slug] [--json]` | **Diagnose what is incomplete or blocked on your App store listings, and how to fix it.** No arg checks every listing you own **or hold an accepted collaborator seat on** (a wider set than `app status`, which is scoped to what *you submitted*); a slug checks just that one. Findings are the platform's, grouped per app, **BLOCKING first** (`missing-icon`, `missing-cover`, `blocked-media` — the listing cannot publish) then **ADVISORY** (`no-screenshots`, `empty-description`, `empty-tagline`, `empty-category`, `scanning-media`). Each one prints the command or URL that fixes it. A listing whose status is `removed` is still reported, in its own section, but does **not** set the exit code — the publish floor is meaningless for a delisted app. 🔴 **Exits `1` when a blocking problem sits on a listing that can still publish, `0` otherwise** — so `civitai app doctor my-app || exit 1` gates a release; `--json` uses the same codes and publishes both `summary.blocking` (everything found) and `summary.gating` (what set the code). Unlike `app listing status` it is a **pure read** and opens no revision draft. See [Listing doctor](#listing-doctor-app-doctor). |
 | `civitai app metrics <slug> [--from <d>] [--to <d>] [--json]` | **Owner-only analytics for one of your Apps** — installs, runs + Buzz spent, Buzz purchased, and API engagement. Always prints the window the **server** served (it defaults to 30 days and clamps to 366), so a zero is never ambiguous. Needs the **Apps submit scope** — an OAuth `civitai login` or a full-scope personal API key; the same bit `app submit` and `app status` use. An OAuth token minted before that scope existed is refused `403`; re-run `civitai login`. See [App metrics](#app-metrics). |
@@ -1988,6 +1989,85 @@ Four behaviours that are not obvious from the numbers:
 > "helpfully" promote these numbers into a local check (see
 > [`AGENTS.md`](https://github.com/civitai/cli/blob/main/AGENTS.md) item 25).
 
+### Link your source code (`app listing set-source-repo`)
+
+If your app is open source, its store **detail** page can carry a `Source` row
+linking to the code. It never appears on a store grid card, and it is omitted
+entirely when unset.
+
+**Where you set it depends on your app's kind, and the two are not
+interchangeable.**
+
+| kind | where the link lives | how it gets there |
+|---|---|---|
+| **on-site** | the `repository` key in `block.manifest.json` | flows to the listing when a moderator approves a version, and is **re-synced from the manifest on every approved version after that** — remove the key and the link is cleared |
+| **off-site** | the listing itself | `civitai app listing set-source-repo <url>` |
+
+`set-source-repo` **refuses an on-site app** (exit `1`) and names the manifest
+key instead, because a write here would be re-synced away at your next approved
+version.
+
+```bash
+civitai app listing set-source-repo https://github.com/me/my-app
+civitai app listing set-source-repo --clear          # remove the link
+civitai app listing set-source-repo https://github.com/me/my-app --json
+```
+
+The URL must be a repository **root** on `github.com`, `gitlab.com` or
+`codeberg.org` — `https://<host>/<owner>/<repo>`, with no deeper path. A
+trailing `/` or `.git`, a query string and a fragment are accepted and
+normalised away. A deep link such as `/owner/repo/tree/main` is rejected.
+
+> 🔴 **This is a *material* change, unlike `set-text`.** On an **approved**
+> listing a change to this link is not applied in place: the server stages it on
+> a revision and the listing re-enters moderator review, because this is an
+> outbound link on a public page. **The live listing is unchanged until that
+> revision is approved** — run `civitai app listing submit-revision` to send it.
+> The command tells you which branch the server took, and `--json` carries it as
+> `requiresReview` and `shadowId`. On a draft or pending listing it applies
+> directly. This is also why it is a separate command rather than a flag on
+> `set-text`: bundling them would make a `--tagline` edit stage instead of apply,
+> depending on whether an unrelated flag happened to be passed.
+
+**What counts as a "change".** The server compares **canonical** forms, so
+several things that look like edits are not: re-setting the link you already
+have, setting a `/` or `.git` spelling of it, or `--clear` on a listing that has
+no link. Those apply in place and stage nothing, and the command reports
+`requiresReview: false` — it never guesses which branch happened, it reports the
+one the server took.
+
+**Some states are refused outright rather than staged, and they do NOT share an
+exit code.** Read the code, not the word "refused":
+
+| state | exit |
+|---|---|
+| you unpublished the listing yourself — a material change is blocked while it is down | `2` |
+| a moderator removed the listing | `3` |
+| the platform has not yet applied the migration that adds the listing's source-repo column | `1` |
+
+The first is `2` because the server answers `MATERIAL_CHANGE_BLOCKED` as an HTTP
+`400`, which this CLI classifies as a malformed request — see
+[Exit code 2](#exit-code-2). The message in each case is the server's.
+
+**If a revision was already open** — because you staged an `rm-screenshot`, or
+one of the attach commands minted one — then *when this edit is material* it
+joins **that** revision rather than getting its own, and approving it publishes
+*everything* staged there and copies its text back over the live listing. The
+command says so and points you at `civitai app listing status` first.
+
+When the edit is **not** material (the canonical no-op above) it applies in place
+and does not join the revision — but that revision can still carry a *different*
+source link that replaces yours when it is approved, so the command warns about
+it on that path too. `--json` reports it as `openRevision` either way.
+
+**The CLI does not pre-validate the URL**, on purpose. The platform's
+`validateRepositoryUrl` is the authority, and it constrains things the shipped
+manifest `pattern` does not (each path segment's characters, a stripped trailing
+`.git`). A second local copy of that rule would be a second thing to be wrong —
+so an unacceptable URL comes back as the server's own message. For the
+**on-site** manifest key, `civitai app validate` checks only the coarse shape:
+passing it is necessary, not sufficient.
+
 ## Submission status
 
 `civitai app status` checks where **your own** submissions are in that lifecycle
@@ -3506,6 +3586,10 @@ credited it to the wrong command.)
 | `the server rejected this store-listing change (400)` | The **listing** was refused — an attach, a removal, a reorder, opening a revision, or submitting one. Unlike the rows above, this one may have **partially applied**, which is why it points you at `civitai app listing status` rather than claiming nothing happened. It deliberately does **not** tell you to go fix a value, because the seven routes it covers do not all carry one. Where the CLI can name something concrete it does so on the lines that follow, and only there: `set-icon`, `set-cover` and `add-screenshot` print the bytes, pixel dimensions and MIME type of the **file** you sent — never the `--caption`. `rm-screenshot`, `reorder` and the two revision steps print this line **alone**, so for those the server's own reason is the whole story; *opening* a revision in particular sends nothing but a listing id the CLI derived from a lookup that had already succeeded. Exit `2`. **One refusal is deliberately not reported here at all**: a revision *submit* refused because the listing is still below the publish floor is not a failure of the command that ran — the change was written to the revision, and the floor takes two commands to clear — so that case prints `staged on an open revision` and exits `0`. The CLI decides that from the listing's own state, never from the server's wording. It reports progress only when all three hold: the refusal was a **400** (a `500`/`503` is an outage, not the floor, and still fails with its usual exit code), what it just wrote is really there — matched by **image id** for an icon or cover, by the `alsc_…` row id for a screenshot (a listing being re-branded already has an *old* icon, which proves nothing), and for `reorder` by the revision's gallery holding **exactly the ids you passed, in the order you passed them** (a revision that exists but was never reordered proves nothing either) — and the floor is really unmet. If it cannot read the listing back it claims nothing — you get this row and exit `2`. **This applies to `reorder` since [#430](https://github.com/civitai/cli/issues/430)**, which is also when a live `reorder` started reaching the revision routes at all: before it, a reorder of a live listing could only ever produce this row, because it was addressed to the parent listing while the ids it carried belonged to the open revision. 🔴 **That exception is scoped to the commands whose job was the STAGED CHANGE — the three attaches and `reorder` — and `civitai app listing submit-revision` is deliberately not one of them**: there the submit *is* what you asked for, so a below-floor refusal is a real failure — you get this row and exit `2`, with the floor gap printed alongside it as context. Reporting `0` there would be [#436](https://github.com/civitai/cli/issues/436)'s own false success, rebuilt in the command that fixes it. | [Listing media requirements](#listing-media-requirements) |
 | `there is no open revision to submit` | `civitai app listing submit-revision` found no revision staged on your live listing, so there is nothing to send a moderator and it refuses rather than opening an empty one. Stage the change first (`rm-screenshot <id>`, or one of the attach commands), then re-run it. Exit `1`. | [Listing media requirements](#listing-media-requirements) |
 | `this listing is not live` | `civitai app listing submit-revision` on a draft or pending listing. Only an approved listing has revisions — everything else is edited directly, so your change is already applied. Check it with `civitai app listing status`. Exit `1`. | [Listing media requirements](#listing-media-requirements) |
+| `pass a URL or --clear, not both` | `civitai app listing set-source-repo` was given a repository URL **and** `--clear`. One sets the source-repository link, the other removes it; the CLI refuses rather than picking a winner and applying an edit you did not ask for to a public page. Exit `2`, and nothing is sent. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
+| `nothing to do — pass a repository URL to set the link, or --clear` | `civitai app listing set-source-repo` with neither a URL nor `--clear`. The server would reject the empty patch too, but as a 400 that costs a round trip and one of your ~30/hour listing-edit budget. Exit `2`. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
+| `the source-repository URL is blank` | `civitai app listing set-source-repo ""` — almost always an unset shell variable. The server does not accept an empty string for this field, so there is no "set it to empty" state to reach; pass `--clear` to **remove** the link instead. Exit `2`. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
+| `source-repository link comes from the` | `civitai app listing set-source-repo` on an on-site app. Its link is manifest-governed and the platform re-syncs it from `block.manifest.json` at **every** approved version, so a write here would be reverted. Set `repository` in the manifest and run `civitai app submit`. Exit `1` — a verdict about the app, not a bad command. | [Link your source code](#link-your-source-code-app-listing-set-source-repo) |
 | `no such directory — pass the path to an App project root` | The path does not exist. This is a **usage** error: exit `2`, and `--json` prints nothing at all. | [Exit codes](#exit-codes) |
 | `is not a directory — pass the App project ROOT` | You pointed at a file — often the manifest itself. Pass the directory holding it. Exit `2`. | [Exit codes](#exit-codes) |
 | `it did NOT check that the file is loaded` | The `BLOCK_READY` advisory on its **weak** tier: it could not resolve what your `index.html` loads, so it only checked whether *some* file mentions the message. The lines that follow name what it could not follow. | [The host handshake](#the-host-handshake-block_ready) |

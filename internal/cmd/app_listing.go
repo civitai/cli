@@ -126,6 +126,7 @@ platform caps the image IT made — it can pass here and be refused at attach.`,
 	}
 	cmd.AddCommand(newAppListingStatusCmd())
 	cmd.AddCommand(newAppListingSetTextCmd())
+	cmd.AddCommand(newAppListingSetSourceRepoCmd())
 	cmd.AddCommand(newAppListingSetIconCmd())
 	cmd.AddCommand(newAppListingSetCoverCmd())
 	cmd.AddCommand(newAppListingAddScreenshotCmd())
