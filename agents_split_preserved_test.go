@@ -430,8 +430,20 @@ var bornSplitItems = []string{
 // contrived mutation: an eviction wave is precisely the commit that adds rows, so
 // it is the natural vehicle for the deletion the floor exists to stop.
 //
-// Membership cannot be traded that way. Adding a row stays free (append its
-// number here when a wave moves a new item); removing one is red BY NAME.
+// Membership cannot be traded that way: removing a NUMBER from this list, or a
+// row from splitItems, is red by name.
+//
+// 🔴 TWO RESIDUALS, STATED RATHER THAN GLOSSED. (1) Protection is OPT-IN PER
+// ITEM: TestSplitRowsAreNeverDeleted iterates THIS list, so a future wave that
+// moves a NEW item, adds its digest row and forgets to append that number here
+// leaves it permanently tradeable — and nothing goes red at the moment of the
+// omission.
+// "Adding a row stays free" is therefore a convenience AND a hole; append the
+// number in the same commit as the row. (2) The two-line bypass is still open:
+// delete the floor entry AND the row together. What this stops is the ONE-line
+// trade an audit actually demonstrated, where the count was preserved by adding
+// an unrelated row; it does not stop a deliberate two-line removal, and no
+// in-tree check can — that is what review is for.
 //
 // The abuse this exists for: move an item, delete its digest, relabel it
 // born-split. TestBornSplitItemsWereNeverInAgents is the other half, and it SKIPS
@@ -461,7 +473,7 @@ func TestSplitRowsAreNeverDeleted(t *testing.T) {
 }
 
 // TestBornSplitItemsWereNeverInAgents is the historical half of keeping
-// bornSplitItems honest. It is a BONUS check, not the keeper — see minSplitRows.
+// bornSplitItems honest. It is a BONUS check, not the keeper — see splitItemsFloor.
 //
 // 🔴 ITS FIRST VERSION WAS VACUOUS AND AN AUDIT PROVED IT. It searched the
 // parent commit's AGENTS.md for the evidence file's `# ` heading — but this
@@ -502,10 +514,10 @@ func TestBornSplitItemsWereNeverInAgents(t *testing.T) {
 			if err != nil || sha == "" {
 				// 🔴 A SKIP IS NOT A PASS, AND THIS ONE IS ROUTINE: CI checks out
 				// at depth 1, where `git show <sha>^` does not resolve. The floor
-				// in minSplitRows is what covers this case; if that is ever
+				// in splitItemsFloor is what covers this case; if that is ever
 				// removed, this test is NOT a substitute for it.
 				t.Skipf("CONTROL unavailable, not a finding: no add-commit for %s reachable "+
-					"(depth-1 clone, or not committed yet). minSplitRows is the keeper here.", f)
+					"(depth-1 clone, or not committed yet). splitItemsFloor is the keeper here.", f)
 			}
 			sizeAt := func(ref string) (int, bool) {
 				out, err := exec.Command("git", "show", ref+":AGENTS.md").Output()
@@ -518,7 +530,7 @@ func TestBornSplitItemsWereNeverInAgents(t *testing.T) {
 			after, okA := sizeAt(sha)
 			if !okB || !okA {
 				t.Skipf("CONTROL unavailable, not a finding: cannot read AGENTS.md around %s "+
-					"(depth-1 clone). minSplitRows is the keeper here.", sha[:7])
+					"(depth-1 clone). splitItemsFloor is the keeper here.", sha[:7])
 			}
 			if after < before {
 				t.Errorf("%s is listed as born-split, but AGENTS.md SHRANK by %d bytes in the commit "+
