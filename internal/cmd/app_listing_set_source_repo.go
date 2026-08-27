@@ -307,7 +307,13 @@ func reportListingSourceRepoUpdated(out io.Writer, slug string, p appapi.Listing
 				st.Code("civitai app listing submit-revision --slug "+slug))
 			return
 		}
-		fmt.Fprintf(out, "  Send it for review: %s\n", st.Code("civitai app listing submit-revision"))
+		// Carries --slug for the same reason as the arm above: `submit-revision`
+		// binds it too, and without it a user who reached this command with
+		// --slug from a directory with no block.manifest.json hits a
+		// slug-resolve failure on the follow-up. Both staged arms must agree —
+		// the first fix for this changed only one of them.
+		fmt.Fprintf(out, "  Send it for review: %s\n",
+			st.Code("civitai app listing submit-revision --slug "+slug))
 		return
 	}
 
@@ -324,8 +330,19 @@ func reportListingSourceRepoUpdated(out io.Writer, slug string, p appapi.Listing
 	// needs to know it is there.
 	if hadOpenRevision(ref) {
 		fmt.Fprintln(out, "")
-		fmt.Fprintln(out, st.Warn("This listing has a revision open, and approving it will overwrite this link"))
-		fmt.Fprintln(out, "  with whatever that revision carries.")
+		// 🔴 THE TWO STATES ARE KEPT APART HERE TOO. The staged branch above
+		// distinguishes "already under moderator review" from "open and still
+		// yours", and warnOpenRevision's doc comment gives the rule: the reader
+		// can act on them differently, so they are not collapsed into one
+		// sentence. Collapsing them only on this path would be the same defect
+		// in a quieter place.
+		if ref.HasPendingRevision {
+			fmt.Fprintln(out, st.Warn("A revision of this listing is already under moderator review, and"))
+			fmt.Fprintln(out, "  approving it will overwrite this link with whatever that revision carries.")
+		} else {
+			fmt.Fprintln(out, st.Warn("This listing has an OPEN revision draft that has not been submitted yet,"))
+			fmt.Fprintln(out, "  and approving it will overwrite this link with whatever it carries.")
+		}
 		fmt.Fprintf(out, "  See what is on it: %s\n", st.Code("civitai app listing status --slug "+slug))
 	}
 }

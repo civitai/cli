@@ -2036,17 +2036,29 @@ no link. Those apply in place and stage nothing, and the command reports
 `requiresReview: false` — it never guesses which branch happened, it reports the
 one the server took.
 
-**Two states are refused outright rather than staged.** A **removed**
-(owner-unpublished) listing cannot take a material change at all. And until the
-platform applies the migration that adds the listing's source-repo column, an
-author write is refused with a precondition error. Both arrive as the server's
-own message, and both exit `1`.
+**Some states are refused outright rather than staged, and they do NOT share an
+exit code.** Read the code, not the word "refused":
+
+| state | exit |
+|---|---|
+| you unpublished the listing yourself — a material change is blocked while it is down | `2` |
+| a moderator removed the listing | `3` |
+| the platform has not yet applied the migration that adds the listing's source-repo column | `1` |
+
+The first is `2` because the server answers `MATERIAL_CHANGE_BLOCKED` as an HTTP
+`400`, which this CLI classifies as a malformed request — see
+[Exit code 2](#exit-code-2). The message in each case is the server's.
 
 **If a revision was already open** — because you staged an `rm-screenshot`, or
-one of the attach commands minted one — this edit joins **that** revision rather
-than getting its own, and approving it publishes *everything* staged there and
-copies its text back over the live listing. The command says so and points you
-at `civitai app listing status` first; `--json` reports it as `openRevision`.
+one of the attach commands minted one — then *when this edit is material* it
+joins **that** revision rather than getting its own, and approving it publishes
+*everything* staged there and copies its text back over the live listing. The
+command says so and points you at `civitai app listing status` first.
+
+When the edit is **not** material (the canonical no-op above) it applies in place
+and does not join the revision — but that revision can still carry a *different*
+source link that replaces yours when it is approved, so the command warns about
+it on that path too. `--json` reports it as `openRevision` either way.
 
 **The CLI does not pre-validate the URL**, on purpose. The platform's
 `validateRepositoryUrl` is the authority, and it constrains things the shipped

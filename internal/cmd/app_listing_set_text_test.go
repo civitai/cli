@@ -754,6 +754,10 @@ func TestSetTextIsSilentWithNoShadowAndNoPendingRevision(t *testing.T) {
 // The KIND gate. An onsite listing's copy is manifest-governed.
 // ---------------------------------------------------------------------------
 
+// want0Text is the ON-SITE text remedy, written out here rather than read from
+// the constant the command uses. See the assertion below.
+const want0Text = "tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edit `name` / `tagline` / `description` in block.manifest.json and run `civitai app submit`. (Category is set by a moderator on an on-site app.)"
+
 // TestSetTextRefusesAnOnsiteListing is the correctness gate.
 //
 // 🔴 THE WRITE WOULD APPEAR TO SUCCEED AND BE REVERTED LATER. `(3b-sync)` in
@@ -763,10 +767,6 @@ func TestSetTextIsSilentWithNoShadowAndNoPendingRevision(t *testing.T) {
 // server-side refuses the write — `updateListing` selects `kind` and never
 // branches on it — so the gate has to be here, and it must refuse BEFORE the
 // write rather than warn after it.
-// want0Text is the ON-SITE text remedy, written out here rather than read from
-// the constant the command uses. See the assertion below.
-const want0Text = "tagline, description and category come from block.manifest.json — editing them here would be overwritten by the manifest at your next approved version. Edit `name` / `tagline` / `description` in block.manifest.json and run `civitai app submit`. (Category is set by a moderator on an on-site app.)"
-
 func TestSetTextRefusesAnOnsiteListing(t *testing.T) {
 	srv := newSetTextServer(t, withKind("onsite"))
 	_, _, err := run(t, "app", "listing", "set-text", "--slug", stSlug, "--tagline", stTagline)

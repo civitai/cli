@@ -118,6 +118,10 @@ func TestSetSourceRepoUsageRefusals(t *testing.T) {
 	}
 }
 
+// want0SourceRepo is the ON-SITE source-repo remedy, written out here rather
+// than read from the constant the command uses.
+const want0SourceRepo = "source-repository link comes from the `repository` key in block.manifest.json — editing it here would be overwritten by the manifest at your next approved version. Set `repository` in block.manifest.json and run `civitai app submit`."
+
 // TestSetSourceRepoRefusesOnsite pins the kind gate for THIS command.
 //
 // 🔴 THE GATE IS SHARED WITH `set-text` BUT THE REMEDY IS NOT, and the remedy is
@@ -125,10 +129,6 @@ func TestSetSourceRepoUsageRefusals(t *testing.T) {
 // manifest's `repository` key, NOT from `tagline`/`description`/`category`. A
 // refusal that named the text remedy would send the author to edit three fields
 // that have nothing to do with what they asked for.
-// want0SourceRepo is the ON-SITE source-repo remedy, written out here rather
-// than read from the constant the command uses.
-const want0SourceRepo = "source-repository link comes from the `repository` key in block.manifest.json — editing it here would be overwritten by the manifest at your next approved version. Set `repository` in block.manifest.json and run `civitai app submit`."
-
 func TestSetSourceRepoRefusesOnsite(t *testing.T) {
 	srv := newSetTextServer(t, withKind(appapi.ListingKindOnsite))
 	_, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
@@ -488,6 +488,59 @@ func TestSetSourceRepoStagedAdviceCarriesTheSlug(t *testing.T) {
 				"(missing %q); got:\n%s", want, out)
 		}
 	}
+
+	// 🔴 THE OTHER STAGED ARM, WHICH THE FIRST FIX MISSED. A material edit on an
+	// approved listing with NO pre-existing revision is the ORDINARY case, and it
+	// prints its own `submit-revision` line. Fixing the slug on the rarer arm and
+	// not this one left the common path broken — and the guard, scoped to one arm,
+	// could not see it.
+	newSetTextServer(t, withStatus("approved"),
+		withReply(map[string]any{"requiresReview": true, "shadowId": "apl_FRESH_SLUG"}))
+	fresh, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
+	if err != nil {
+		t.Fatalf("set-source-repo: %v", err)
+	}
+	if want := "civitai app listing submit-revision --slug " + stSlug; !strings.Contains(fresh, want) {
+		t.Errorf("the fresh-revision arm must carry the slug too (missing %q); got:\n%s", want, fresh)
+	}
+}
+
+// TestSetSourceRepoInPlaceWarningKeepsTheTwoStatesApart.
+//
+// 🔴 "UNDER REVIEW" AND "OPEN BUT NOT SUBMITTED" ARE DIFFERENT, AND THE READER
+// ACTS ON THEM DIFFERENTLY — one is with a moderator, the other is still theirs
+// to edit. `warnOpenRevision`'s doc comment states that rule for `set-text`, and
+// the staged branch of this command already honours it; the in-place branch
+// collapsed both into one sentence when it was added.
+func TestSetSourceRepoInPlaceWarningKeepsTheTwoStatesApart(t *testing.T) {
+	inPlace := map[string]any{"requiresReview": false, "shadowId": nil}
+
+	newSetTextServer(t, withStatus("approved"), withOpenShadow("apl_OPEN_A"), withReply(inPlace))
+	open, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
+	if err != nil {
+		t.Fatalf("set-source-repo: %v", err)
+	}
+	if !strings.Contains(open, "not been submitted yet") {
+		t.Errorf("an OPEN, unsubmitted revision must be described as such; got:\n%s", open)
+	}
+
+	newSetTextServer(t, withStatus("approved"), withOpenShadow("apl_OPEN_B"), withPending(true), withReply(inPlace))
+	pending, _, err := run(t, "app", "listing", "set-source-repo", srSourceRepoURL, "--slug", stSlug)
+	if err != nil {
+		t.Fatalf("set-source-repo: %v", err)
+	}
+	if !strings.Contains(pending, "already under moderator review") {
+		t.Errorf("a SUBMITTED revision must be described as such; got:\n%s", pending)
+	}
+	// 🔴 AND THE TWO MUST NOT BE THE SAME SENTENCE. Without this, a renderer that
+	// printed one wording for both would satisfy whichever assertion happened to
+	// match it.
+	if strings.Contains(pending, "not been submitted yet") {
+		t.Errorf("a revision under review must NOT be called unsubmitted; got:\n%s", pending)
+	}
+	if strings.Contains(open, "already under moderator review") {
+		t.Errorf("an unsubmitted revision must NOT be called under review; got:\n%s", open)
+	}
 }
 
 // TestSetSourceRepoInPlaceStillWarnsAboutAnOpenRevision.
@@ -510,7 +563,12 @@ func TestSetSourceRepoInPlaceStillWarnsAboutAnOpenRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set-source-repo: %v", err)
 	}
-	if !strings.Contains(out, "has a revision open") {
+	// Asserts the LOAD-BEARING claim ("it will overwrite this link"), not the
+	// sentence around it: the two revision states are worded differently on
+	// purpose and TestSetSourceRepoInPlaceWarningKeepsTheTwoStatesApart owns that
+	// distinction. Pinning the whole sentence here would make this test a second,
+	// weaker copy of that one.
+	if !strings.Contains(out, "overwrite this link") {
 		t.Errorf("an in-place edit on a listing with an open revision must still warn — the "+
 			"revision can overwrite this link on approval; got:\n%s", out)
 	}
@@ -522,7 +580,7 @@ func TestSetSourceRepoInPlaceStillWarnsAboutAnOpenRevision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set-source-repo: %v", err)
 	}
-	if strings.Contains(out2, "has a revision open") {
+	if strings.Contains(out2, "overwrite this link") {
 		t.Errorf("a listing with no open revision must not be warned about one; got:\n%s", out2)
 	}
 }

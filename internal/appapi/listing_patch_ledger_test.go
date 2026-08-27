@@ -128,9 +128,21 @@ func TestListingPatchImplementationsAreLedgered(t *testing.T) {
 			if !ok || fn.Name.Name != "wire" || fn.Recv == nil || len(fn.Recv.List) != 1 {
 				continue
 			}
+			// Unwrap in the order a receiver can nest: pointer, then type
+			// parameters. A GENERIC receiver (`func (p P[T]) wire()`) parses as
+			// an IndexExpr and slipped straight through an earlier version of
+			// this walk — an audit built `ListingComboPatch[T any]` and the
+			// suite stayed green, which is the same blindness this file exists
+			// to end, one level down.
 			recv := fn.Recv.List[0].Type
 			if star, isPtr := recv.(*ast.StarExpr); isPtr {
 				recv = star.X
+			}
+			switch g := recv.(type) {
+			case *ast.IndexExpr: // P[T]
+				recv = g.X
+			case *ast.IndexListExpr: // P[T, U]
+				recv = g.X
 			}
 			if id, ok := recv.(*ast.Ident); ok {
 				found[id.Name] = true

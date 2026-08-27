@@ -419,33 +419,44 @@ var bornSplitItems = []string{
 	"claudedocs/decisions/33-source-repo-url-is-not-mirrored.md",
 }
 
-// minSplitRows is the CI-SIDE KEEPER for bornSplitItems, and it is the one that
-// actually fires.
+// splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item
+// numbers that MUST have a digest row, whatever else the table gains.
 //
-// 🔴 IT EXISTS BECAUSE THE HISTORICAL CHECK BELOW CANNOT RUN IN CI. The abuse
-// bornSplitItems invites is: move an item, DELETE its splitItems digest row, and
-// relabel it born-split — which destroys that item's verbatim-preservation proof.
-// An audit demonstrated exactly that against item 32 and the suite stayed GREEN,
-// because the only floor was `minEvidencePointers` (16) against 31 real rows, and
-// the coverage test is satisfied by a file appearing in EITHER table.
+// 🔴 A COUNT WAS NOT ENOUGH, AND THE HOLE WAS THE SHAPE OF A REAL COMMIT. This
+// started as `minSplitRows = 31`, reasoning that splitItems is append-only so any
+// deletion drops below the floor. An audit defeated it in one move: delete item
+// 30's row, relabel it born-split, and ADD a row for some other file — count
+// still 31, both guards green, item 30's preservation proof gone. That is not a
+// contrived mutation: an eviction wave is precisely the commit that adds rows, so
+// it is the natural vehicle for the deletion the floor exists to stop.
 //
-// splitItems is append-only by construction — a row is added when a body moves,
-// and a body never moves back — so a floor equal to today's count makes any
-// DELETION red. That needs no git history, so it holds on `actions/checkout@v4`'s
-// depth-1 clone where the historical check skips.
+// Membership cannot be traded that way. Adding a row stays free (append its
+// number here when a wave moves a new item); removing one is red BY NAME.
 //
-// Raising this is normal (a new eviction wave adds rows). LOWERING it is the
-// thing to refuse: it means a preservation proof was thrown away.
-const minSplitRows = 31
+// The abuse this exists for: move an item, delete its digest, relabel it
+// born-split. TestBornSplitItemsWereNeverInAgents is the other half, and it SKIPS
+// under CI's depth-1 checkout — so this is the half that actually runs there.
+var splitItemsFloor = []int{1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32}
 
-// TestSplitRowsAreNeverDeleted is the floor's assertion. See minSplitRows.
+// TestSplitRowsAreNeverDeleted is the floor's assertion. See splitItemsFloor.
 func TestSplitRowsAreNeverDeleted(t *testing.T) {
-	if len(splitItems) < minSplitRows {
-		t.Fatalf("splitItems has %d rows, below the floor of %d.\n"+
-			"A row is only ever ADDED (when a body moves out of AGENTS.md); deleting one throws away "+
-			"that item's proof that the move was verbatim. If you are relabelling an item as "+
-			"born-split to get rid of its digest, that is the abuse this floor exists to stop — "+
-			"a moved body needs its sha, whatever list it is named in.", len(splitItems), minSplitRows)
+	have := map[int]bool{}
+	for _, it := range splitItems {
+		have[it.num] = true
+	}
+	// POSITIVE CONTROL: an empty floor would make every check below vacuous.
+	if len(splitItemsFloor) == 0 {
+		t.Fatal("CONTROL failure: splitItemsFloor is empty, so this test asserts nothing")
+	}
+	for _, num := range splitItemsFloor {
+		if !have[num] {
+			t.Errorf("item %d has no splitItems row.\n"+
+				"A row is only ever ADDED (when a body moves out of AGENTS.md); deleting one throws "+
+				"away that item's proof that the move was verbatim. If you are relabelling it as "+
+				"born-split to be rid of its digest, that is the abuse this floor exists to stop — "+
+				"a moved body needs its sha whatever list it is named in.\n"+
+				"Adding rows is free; this list only forbids REMOVING one.", num)
+		}
 	}
 }
 
@@ -461,13 +472,25 @@ func TestSplitRowsAreNeverDeleted(t *testing.T) {
 // has: reading as coverage while providing none.
 //
 // The discriminator is now AGENTS.md's SIZE at that commit. A move takes a body
-// OUT and leaves a trigger, so AGENTS.md SHRINKS — often by thousands of bytes.
-// A born-split item only ADDS a trigger, so it GROWS (item 33: +447 bytes). That
-// is convention-independent and cannot be defeated by renaming a heading.
+// OUT and leaves a trigger, so AGENTS.md SHRINKS; a born-split item only ADDS a
+// trigger, so it GROWS. Convention-independent, and renaming a heading cannot
+// defeat it.
 //
-// ⚠ A commit that BOTH moves an item and adds a born-split one would shrink and
-// fail here. That is the right answer: split the commits, so each claim is
-// reviewable on its own.
+// 🔴 BUT THE MARGIN IS THIN, AND AN EARLIER VERSION OF THIS NOTE SAID "often by
+// thousands of bytes", WHICH THE DATA DOES NOT SUPPORT. Measured per add-commit:
+//
+//	item 33 (born-split)   0821dc33   28650 -> 29097   +447
+//	items 4+30 (wave 8)    1609fad4   28668 -> 28650    -18
+//	item 31                e7be70f8   28613 -> 28489   -124
+//	item 32                c6c95935   28746 -> 28613   -133
+//
+// The most recent real wave nets EIGHTEEN bytes. So a wave that also added a
+// trigger the size of item 33's would net positive and this check would certify a
+// moved item as born-split. It is a useful second opinion, NOT the keeper — that
+// is splitItemsFloor, which is membership-based and cannot be traded away.
+//
+// ⚠ A commit that BOTH moves an item and adds a born-split one is the ambiguous
+// case: split such commits, so each claim is reviewable on its own.
 func TestBornSplitItemsWereNeverInAgents(t *testing.T) {
 	if len(bornSplitItems) == 0 {
 		t.Skip("no born-split items to check")
