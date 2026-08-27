@@ -156,12 +156,16 @@ picked up with its measurements intact.
    live INSIDE the repo, are gitignored, and hold those branches repo-globally;
    they also polluted an auditor's `grep` with stale copies of `whoami.go` until
    it switched to `find | xargs grep`. Check for unique work before removing.
-4. **Decide on `AGENTS.md` item 33** — "`email`/`emailVerified` are unmodelled
-   on purpose". I did NOT add it: the rationale sits in a 🔴 block at the exact
-   struct field an editor must touch, backed by two tests that go red, and
-   `AGENTS.md` has ~950 bytes of headroom (28,650 / 29,600). An auditor
-   independently argued FOR adding it. ~310 bytes for a trigger + a
-   `claudedocs/decisions/33-*.md`. Judgement call, still open.
+4. **Decide whether `AGENTS.md` gets a NEW item for "`email`/`emailVerified`
+   are unmodelled on purpose".** I did NOT add one: the rationale sits in a 🔴
+   block at the exact struct field an editor must touch, backed by two tests
+   that go red, and `AGENTS.md` has ~950 bytes of headroom (28,650 / 29,600).
+   An auditor independently argued FOR adding it. Cost is ~310 bytes: a trigger
+   line plus a `claudedocs/decisions/` file. Judgement call, still open.
+   🔴 The list is APPEND-ONLY — take the next free number at the time, and do
+   not write that number here: `TestAgentsItemCrossReferencesResolve` scans
+   every doc for `item N` and fails on one AGENTS.md does not have yet. It
+   caught this line naming a number that did not exist.
 5. **Watch the additive `--json` change in the wild** — no code pending. If a
    consumer reports breakage it will be a strict-schema decoder; the four new
    keys are the only difference.
