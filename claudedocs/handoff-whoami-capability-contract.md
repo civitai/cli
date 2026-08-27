@@ -1,4 +1,14 @@
-# Handoff: whoami capability contract + the AGENTS/CLAUDE consolidation — 2026-08-26, updated 2026-08-27
+# CLOSED — Handoff: whoami capability contract + the AGENTS/CLAUDE consolidation (2026-08-26 → 2026-08-27)
+
+🔴 **THIS DOC IS A RECORD, NOT A QUEUE. Nothing in it is waiting for you.**
+The work shipped (#492, #494, #498, #500, #501, #502, #504, #505) and released as
+**v0.1.102**. Read it for the reasoning and the gotchas; do not read it for
+something to do. New work gets a NEW handoff doc — see the residuals section for
+why re-adding a ranked list here is actively harmful.
+
+**Every "state" claim below was true when written and is not re-verified.** A
+sha, a branch list, a "no open PRs" — all decay. Re-measure before acting on any
+of them; that is the exact failure this thread produced four times.
 
 ## Run this first — the index, one read-only command
 ```bash
@@ -13,16 +23,23 @@ Non-blocking: if it exits non-zero, print the stderr line and carry on.
 ## Goal
 
 `civitai whoami` reported capabilities dishonestly in three independent ways, and
-`AGENTS.md`/`CLAUDE.md` were two docs claiming to be one. Both are fixed and
-**shipped as v0.1.101**. This doc exists so the next session does not re-derive
-the evidence, and so the one deliberately-unfinished piece (#377 option b) is
-picked up with its measurements intact.
+`AGENTS.md`/`CLAUDE.md` were two docs claiming to be one. Both were fixed and
+**shipped as v0.1.101**; the deliberately-unfinished piece (#377 option b)
+shipped in **#498** and released as **v0.1.102**.
 
-## State now
+The doc then outlived its own goal by two days, which is how it became a case
+study in the defect it was recording. What it is now good for is the reasoning:
+the gotchas, the retracted theories, and the measurements — none of which are
+re-derivable from the diff.
 
-- **`main` @ `b04501d`, tree clean** (only untracked `node_modules/`, pre-existing).
-  Base clone synced with `merge --ff-only`. **No open PRs. Nothing in flight.**
-  All claims released.
+## State as of closing (2026-08-27) — a SNAPSHOT, already decaying
+
+🔴 This section used to be headed "State now" and carried a `main` sha. It was
+wrong within hours, twice. It is kept for provenance only; **re-measure anything
+you intend to act on.**
+
+- **`main` @ `d1afcbc`** at the time of writing, tree clean apart from untracked
+  `node_modules/`. **`v0.1.102` published and live on all three channels.**
 - **#377 is CLOSED — option (b) shipped as PR #498** (squash `79ed55d`,
   merged `2026-08-27T00:03:20Z`, branch deleted, claim
   `whoami-capability-contract-1` released).
@@ -95,7 +112,70 @@ table, and opened `release-v0.1.102-draft.md` carrying the #498 content where it
 is true. That page's mechanics step 5 flips its own heading at tag time, so the
 loop closes itself next time.
 
-## Open investigations — live diagnosis state
+## Residuals — nothing here is queued work
+
+🔴 **CLOSED. There is no ranked list any more, and its absence is deliberate.**
+This doc's queue drained on 2026-08-27; every item either shipped or was decided.
+A handoff is a SNAPSHOT, and this one went stale twice in two days while people
+kept patching it — each patch made it read more authoritative as it decayed at
+the same rate. The residuals below are recorded so nobody re-derives them, not
+so somebody picks them up.
+
+🔴 **Do not re-add a ranked list to this file.** `claim-work` derives its slug
+from doc + RANK, so a new list silently re-points `whoami-capability-contract-N`
+at whatever you wrote. That already happened once here: rank 1 meant "fix the
+release-draft error", then "tag v0.1.102", under the same slug. New work gets a
+NEW handoff doc.
+
+### ✅ Decided: `AGENTS.md` gets NO item for the unmodelled `email`/`emailVerified`
+
+Decided 2026-08-27 against adding one. The guard is **structural and stronger
+than prose**: `appapi.Identity` has nine fields — `Username, ID, TokenScope,
+BuzzLimit, Subject, Tier, Status, IsMember, Subscriptions` — and **no `Email`
+field exists anywhere in `internal/appapi`**. Adding `"email": id.Email` to the
+`--json` map does not leak PII; it fails to compile. Reaching a leak means first
+adding the field to `Identity`, which is exactly where the 🔴 rationale block
+sits, backed by two tests that go red.
+
+A trigger line costs ~310 bytes of AGENTS.md's ~950-byte headroom **every
+session**, to restate what the compiler already enforces at the one place an
+editor must touch. An auditor argued for adding it; that argument loses to the
+compiler.
+
+### ◻︎ Closed by decision: the 2-in-8 `internal/cmd` failures were never attributed
+
+**And they are not going to be.** The observation was 2 failures in 8 runs of
+`go test ./internal/cmd`, output never captured. Later rounds ran 70 and then
+100 full-package runs at HEAD with **0** failures, so whatever it was is not
+reproducible at that rate now; the most likely explanation is that it was seen
+on a mid-session tree that no longer exists — which no amount of re-running can
+confirm or refute.
+
+The 400-run capture probe this section used to prescribe was **rejected**: it
+hunts one unreproducible instance and cannot distinguish "fixed" from "never
+existed here". The **sweep** was done instead, because it finds the CLASS:
+
+- `generate_charge_seam_test.go` — `Contains(errOut, "137")` was a silent green
+  at a **measured 0.40%** (8 survivals / 2000 runs with the charge mutated to
+  999). The carrier is the random external-ID **UUID**, whose hex digits spell
+  `137` about 1 run in 250 — *not* the temp path that was predicted. Fixed by
+  pinning `"Charged 137 Buzz"`; re-measured **0 / 2000**.
+- `app_listing_status_json_test.go` — `Contains(text, "389")` was a spelled
+  guard: replacing the citation with "a payload of 3891 bytes" left it GREEN
+  with the citation gone. Now boundary-matched, with its own negative and
+  positive controls.
+
+Both in #505, alongside the three earlier instances (`whoami_test.go`'s `4242`,
+`cmd_test.go`'s `Contains(out,"99")`, and the `workflow_settlement_regression`
+false claim). **Assume more exist** — the sweep covered `internal/cmd` only.
+
+### ◻︎ Passive: the additive `--json` keys in the wild
+
+No code pending. If a consumer reports breakage it will be a strict-schema
+decoder (`DisallowUnknownFields` / `additionalProperties:false`); the four new
+keys are the only difference.
+
+## Historical record — the original diagnosis, kept for its reasoning
 
 ### Two test failures observed during the audit that were never attributed
 
@@ -127,42 +207,34 @@ loop closes itself next time.
   Then grep `internal/cmd` for `strings.Contains` over command output with a
   literal shorter than ~4 chars.
 
-## Next steps (ranked)
+## What shipped, in order
 
-🔴 **RENUMBERED 2026-08-27 — `claim-work` slugs are derived from doc + RANK, so
-every slug below now points at a DIFFERENT item than it did yesterday.** The old
-rank 1 (fix the release-draft error) shipped as #500 and its claim
-`whoami-capability-contract-1` was released; that same slug now means "tag
-v0.1.102". Re-derive with `claim-work --slug-for <this-doc> <rank>` and read the
-`--subject` of any live claim before assuming it is yours.
+| PR | What |
+|---|---|
+| #492 | #377 option (a) — the false "raw JSON" claim in help + flag usage |
+| #494 | the credential TYPE is not a capability — split the section in two |
+| #498 | #377 option (b) — `--json` carries `tier`/`status`/`isMember`/`subscriptions`, still withholds the PII |
+| #500 | restored the v0.1.101 page and opened v0.1.102's, after #498's notes were written into a release that had already shipped |
+| #501 | this doc — two investigations had shipped but were still filed as OPEN |
+| #502 | v0.1.102 closed as SHIPPED in the same session as its publish |
+| #504 | `release_page_state_test.go` — a shipped release page can no longer keep saying DRAFT; found v0.1.99 stale for nine days |
+| #505 | two assertions that passed on digits appearing rather than values rendered |
 
-1. **Tag v0.1.102 when the maintainer wants it** — `main` is green and carries
-   one user-visible change since v0.1.101 (#498, additive `--json` keys). 🔴
-   `AGENTS.md` makes tagging and publishing SEPARATE consents, and publishing the
-   draft fires npm + the Homebrew tap on the same click. Do not do either without
-   being asked. ✅ The notes prerequisite is DONE —
-   `claudedocs/release-v0.1.102-draft.md` exists and is correct (#500), so
-   nothing blocks the tag but the maintainer's word. Tag the `docs(release)`
-   commit, per the convention v0.1.99/100/101 all follow.
-2. **Reap two stale in-repo agent worktrees** — `git worktree list` shows
-   `.claude/worktrees/agent-a06dc1f0c76f4f7c7` (holding `fix/offsite-refusal`)
-   and `.claude/worktrees/agent-a84febaf8c91e65fe` (holding `audit392`). They
-   live INSIDE the repo, are gitignored, and hold those branches repo-globally;
-   they also polluted an auditor's `grep` with stale copies of `whoami.go` until
-   it switched to `find | xargs grep`. Check for unique work before removing.
-3. **Decide whether `AGENTS.md` gets a NEW item for "`email`/`emailVerified`
-   are unmodelled on purpose".** I did NOT add one: the rationale sits in a 🔴
-   block at the exact struct field an editor must touch, backed by two tests
-   that go red, and `AGENTS.md` has ~950 bytes of headroom (28,650 / 29,600).
-   An auditor independently argued FOR adding it. Cost is ~310 bytes: a trigger
-   line plus a `claudedocs/decisions/` file. Judgement call, still open.
-   🔴 The list is APPEND-ONLY — take the next free number at the time, and do
-   not write that number here: `TestAgentsItemCrossReferencesResolve` scans
-   every doc for `item N` and fails on one AGENTS.md does not have yet. It
-   caught this line naming a number that did not exist.
-4. **Watch the additive `--json` change in the wild** — no code pending. If a
-   consumer reports breakage it will be a strict-schema decoder; the four new
-   keys are the only difference.
+**`v0.1.102` published 2026-08-27T18:03:55Z** and verified from each consumer,
+not from the workflow claiming to have updated it: GitHub Release `isDraft:false`
+with 14/14 assets and one changelog entry; npm `dist-tags.latest = 0.1.102`;
+Homebrew cask `version "0.1.102"` (tap `2b51e6f`) with all four of its own URLs
+resolving 200 **unauthenticated** against a `v0.1.999` → 404 control; and, on the
+downloaded binary, `has("tier")`/`has("isMember")` true with
+`has("email")`/`has("emailVerified")` both **false**.
+
+🔴 **THE THREAD'S ACTUAL DEFECT WAS NOT ABOUT `whoami`.** It was one shape,
+four times: **a document asserting a state its artifact had moved past.** The
+v0.1.101 release page, this handoff twice, and `release-v0.1.99-draft.md` sitting
+`DRAFT` for nine days. Prose asking people to remember failed every time —
+including an explicit numbered step written for exactly that purpose. #504 is the
+only durable fix, and it covers release pages **only**; the same class remains
+open for every other doc in this repo.
 
 ## Gotchas / decisions / dead-ends
 
