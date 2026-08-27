@@ -703,6 +703,30 @@ var authRequiringCommands = map[string][]string{
 	"app view": {"app", "view", "some-slug"},
 }
 
+// authRequiringCommandsFloor is the KEEPER for that ledger: the command names
+// that must have a row, whatever else it gains.
+//
+// 🔴 A COUNT WAS NOT ENOUGH — AND `len(...) == 0` IS A COUNT WITH MAXIMAL SLACK.
+// The old guard only refused an EMPTY ledger. Add-one/delete-one defeats it
+// trivially: delete the `app view` row and add `app pull`, the ledger is still
+// non-empty, the measurement loop above runs happily over the two rows that
+// exist, and readAnonNote is then free to drop `app view` from its exception
+// clause — restoring for that command exactly the false blanket claim #268
+// removed. Unlike readAPILimitLedger and readAPIInvocations, this ledger is
+// cross-checked against NO derived set (there is no structural "commands that
+// require auth" walk to diff it against), so nothing else in the suite notices.
+//
+// 🔴 TWO RESIDUALS, STATED RATHER THAN GLOSSED. (1) Protection is OPT-IN PER
+// ROW: a command added to the ledger and not named here is tradeable, and
+// nothing goes red at the moment of the omission. (2) The two-line bypass is
+// open, and here it is a LEGITIMATE edit more often than elsewhere: if a command
+// really does go anonymous, its row SHOULD go, and this floor must go with it in
+// the same commit. That is the intended cost — the deletion becomes visible and
+// reviewable instead of silent. This floor is not a claim that these two
+// commands must require auth forever; it is a claim that dropping one must be
+// deliberate.
+var authRequiringCommandsFloor = []string{"app list", "app view"}
+
 // blanketAuthClaims is the CONTROL CORPUS for the universal-quantifier check:
 // phrasings of the claim #268 had to remove. It is asserted below that the
 // checker FIRES on each of them, so the denylist cannot rot into a filter that
@@ -746,8 +770,21 @@ func TestReadAnonNoteKeepsItsException(t *testing.T) {
 			}
 		})
 	}
-	if len(authRequiringCommands) == 0 {
-		t.Fatal("no auth-requiring commands ledgered — the exception clause would have no basis")
+	// POSITIVE CONTROL: an empty floor would make every check below vacuous.
+	if len(authRequiringCommandsFloor) == 0 {
+		t.Fatal("CONTROL failure: authRequiringCommandsFloor is empty, so this test asserts nothing")
+	}
+	for _, name := range authRequiringCommandsFloor {
+		if _, ok := authRequiringCommands[name]; !ok {
+			t.Errorf("`%s` is gone from the auth-requiring ledger.\n"+
+				"Every row here is an exception that readAnonNote must NAME; the measurement and the "+
+				"naming rule below both iterate the rows that still exist, so a deleted row stops "+
+				"requiring its own mention and #268's false blanket claim comes back for that command. "+
+				"The old guard was `len(...) == 0`, so deleting this row while adding any other one "+
+				"kept the ledger non-empty and stayed green.\n"+
+				"If this command genuinely went ANONYMOUS, that is a real product change: remove it "+
+				"here and from the ledger in the same commit, and say so in the message.", name)
+		}
 	}
 
 	// (2) readAnonNote must NAME every one of them. This is what a blanket

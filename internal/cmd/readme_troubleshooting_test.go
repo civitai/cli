@@ -264,6 +264,35 @@ type symptomAttribution struct {
 	why          string
 }
 
+// symptomAttributionsFloor is the KEEPER for symptomAttributions: the row
+// FRAGMENTS that must be ledgered, whatever else it gains.
+//
+// 🔴 A COUNT WAS NOT ENOUGH, AND THE OLD GUARD'S OWN MESSAGE GAVE IT AWAY. It
+// was `len(ledger) < 2` with the message "it must at least cover the confusable
+// pair from #361" — a MEMBERSHIP claim asserted as a COUNT. Add-one/delete-one
+// defeats it in one move: delete the `is this an App project?` row, which is the
+// #361 row and the one carrying the `notEmittedBy` invariant, add any new row,
+// count still 2, guard green, #361 unprotected.
+//
+// Membership cannot be traded that way: removing a FRAGMENT from this list, or
+// its row from the ledger, is red by name.
+//
+// 🔴 THREE RESIDUALS, STATED RATHER THAN GLOSSED. (1) Protection is OPT-IN PER
+// ROW: a row added and not named here is permanently tradeable, and nothing goes
+// red at the moment of the omission. Append the fragment in the same commit as
+// the row. (2) The two-line bypass is still open: delete the floor entry AND the
+// row together; no in-tree check can stop that, and that is review's job.
+// (3) IT DOES NOT PIN ORDER, and three fixtures below reach rows POSITIONALLY —
+// `symptomAttributions()[0]` and `[1]` at the prose-parser tests. Reordering the
+// ledger silently retargets those fixtures at a different row while this floor
+// stays green. Converting those call sites to look a row up BY FRAGMENT is the
+// obvious follow-up; it is deliberately not done here so this change stays a
+// count→membership port and nothing else.
+var symptomAttributionsFloor = []string{
+	"not found at project root",
+	"is this an App project?",
+}
+
 func symptomAttributions() []symptomAttribution {
 	appValidate := func() attributionRun {
 		return attributionRun{
@@ -424,10 +453,24 @@ func TestREADMETroubleshootingRowsAreAttributedToTheEmittingCommand(t *testing.T
 	ledger := symptomAttributions()
 	paths := knownCommandPaths(t)
 
-	// Positive control on the ledger itself: an empty (or accidentally emptied)
-	// ledger passes every assertion below while checking nothing.
-	if len(ledger) < 2 {
-		t.Fatalf("the attribution ledger holds %d rows — it must at least cover the confusable pair from #361", len(ledger))
+	// The ledger's rows are named, not counted — see symptomAttributionsFloor.
+	have := map[string]bool{}
+	for _, a := range ledger {
+		have[a.fragment] = true
+	}
+	// POSITIVE CONTROL: an empty floor would make every check below vacuous.
+	if len(symptomAttributionsFloor) == 0 {
+		t.Fatal("CONTROL failure: symptomAttributionsFloor is empty, so this test asserts nothing")
+	}
+	for _, fragment := range symptomAttributionsFloor {
+		if !have[fragment] {
+			t.Errorf("the attribution ledger no longer holds a row for %q.\n"+
+				"This pair is the confusable pair from #361, and the assertions below only run for rows "+
+				"that still exist. The old guard was a COUNT (`len(ledger) < 2`) whose own message "+
+				"claimed MEMBERSHIP (\"it must at least cover the confusable pair\") — so deleting this "+
+				"row while adding any unrelated one kept the count at 2 and stayed green.\n"+
+				"Adding rows is free; this list only forbids REMOVING one.", fragment)
+		}
 	}
 
 	for _, a := range ledger {
