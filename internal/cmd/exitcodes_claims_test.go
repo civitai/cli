@@ -42,6 +42,51 @@ type contractClaim struct {
 	pinnedBy string
 }
 
+// exitCodeClaimsFloor is the KEEPER for exitCodeContractClaims: the row NAMES
+// that must be in the ledger, whatever else it gains.
+//
+// 🔴 A COUNT WAS NOT ENOUGH, AND IT HAD FIVE ROWS OF SLACK. This started as
+// `len(claims) < 5` against a ten-row ledger, which means five rows could be
+// deleted with no addition at all and the guard stayed green. Add-one/delete-one
+// defeats even a tight version of it: delete "a filesystem failure is 1, not 2
+// and not 5" — the issue #241 row, the one that stops a script retrying a
+// permissions error forever — add a row about some other code, count unchanged,
+// green, and the README is free to drop the sentence.
+//
+// The per-row assertions in TestPublishedExitCodeClaims cannot cover this,
+// because they iterate the rows that EXIST. A deleted row takes its own
+// assertion with it, which is what makes row existence a separate question from
+// row content, and the reason this file's header calls a row "a claim someone
+// measured and someone else must not silently drop".
+//
+// Keyed on NAME, not on code: four rows share code 1 and four share code 2, so
+// the code is not an identity. The names are the stable identities and are
+// already the subtest names.
+//
+// 🔴 THREE RESIDUALS, STATED RATHER THAN GLOSSED. (1) Protection is OPT-IN PER
+// ROW: the loop iterates THIS list, so a row added to the ledger and not named
+// here is permanently tradeable, and nothing goes red at the moment of the
+// omission. Append the name in the same commit as the row. (2) The two-line
+// bypass is still open: delete the floor entry AND the row together. What this
+// stops is the ONE-line trade; it does not stop a deliberate two-line removal,
+// and no in-tree check can — that is what review is for. (3) It pins NAMES, not
+// PHRASES: a row keeping its name while its `phrases` are watered down to
+// something the contract trivially satisfies is not caught here. The phrases are
+// asserted against both rendered surfaces, but nothing pins how load-bearing
+// they are.
+var exitCodeClaimsFloor = []string{
+	"a filesystem failure is 1, not 2 and not 5",
+	"a resource that EXISTS but is not READY is 1, not 4",
+	`the not-ready 1 is not always "wait for approval"`,
+	"a local image is refused at 2 for the enumerated reasons",
+	"an unreadable-but-present file is NOT 2",
+	"the missing-vs-unreadable split holds for a flag's value and a positional alike",
+	"a project path that does not exist, or is not a directory, is 2",
+	"a validation VERDICT is 1, and a manifest-less directory is a verdict",
+	"`app validate --json` publishes a result only when it produced one",
+	"5 is the retry code and a filesystem failure never lands there",
+}
+
 func exitCodeContractClaims() []contractClaim {
 	return []contractClaim{
 		{
@@ -190,8 +235,32 @@ func readmeExitCodePublished() string {
 // carry every code and to say where the rest is, which is what it now promises.
 func TestPublishedExitCodeClaims(t *testing.T) {
 	claims := exitCodeContractClaims()
-	if len(claims) < 5 {
-		t.Fatalf("only %d claims in the ledger — a shrunken ledger is a guard wired to less than it says", len(claims))
+
+	have := map[string]bool{}
+	for _, c := range claims {
+		if have[c.name] {
+			// Two rows sharing a name would let one be deleted while its twin
+			// satisfies the floor below, which is the trade this floor exists
+			// to stop.
+			t.Fatalf("two ledger rows are both named %q — the floor keys on the name, so a duplicate "+
+				"lets one of them be deleted silently", c.name)
+		}
+		have[c.name] = true
+	}
+	// POSITIVE CONTROL: an empty floor would make every check below vacuous.
+	if len(exitCodeClaimsFloor) == 0 {
+		t.Fatal("CONTROL failure: exitCodeClaimsFloor is empty, so this test asserts nothing")
+	}
+	for _, name := range exitCodeClaimsFloor {
+		if !have[name] {
+			t.Errorf("the ledger row %q is gone.\n"+
+				"A row is a decision someone MEASURED and someone else must not silently drop; the "+
+				"per-row assertions below only check rows that still exist, so a deleted row takes its "+
+				"own coverage with it. The old guard was a COUNT (`len(claims) < 5`) against ten rows, "+
+				"so five could be deleted outright — and deleting this one while adding any unrelated "+
+				"row kept the count and stayed green.\n"+
+				"Adding rows is free; this list only forbids REMOVING one.", name)
+		}
 	}
 
 	byCode := make(map[int]ExitCodeDoc, len(exitCodeDocs))
