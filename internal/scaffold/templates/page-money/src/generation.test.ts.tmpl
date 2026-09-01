@@ -19,6 +19,7 @@ import {
   phaseForSnapshot,
   phaseForSubmitError,
   spentAccountLabel,
+  submitErrorReason,
 } from './generation.js';
 import { DEFAULT_CHECKPOINT, type LoraOption } from './models.js';
 
@@ -321,6 +322,58 @@ describe('phaseForSnapshot', () => {
     expect(phaseForSnapshot(snap({ status: 'expired', error: 'Insufficient Buzz' }))).toBe(
       'insufficient',
     );
+  });
+});
+
+describe('submitErrorReason', () => {
+  // Faithful to the real shape: blocks-react ^0.44 throws an Error SUBCLASS whose
+  // `.message` is a generic template and whose `.snapshot.error` holds the server
+  // reason. The three strings below are pairwise distinct and none equals the
+  // 'submit failed' fallback, so every assertion can see WHICH source was read.
+  class FakeWorkflowSubmitError extends Error {
+    snapshot: { error?: string };
+    constructor(message: string, snapshotError?: string) {
+      super(message);
+      this.name = 'WorkflowSubmitError';
+      this.snapshot = { error: snapshotError };
+    }
+  }
+
+  const GENERIC = 'submit did not return a usable workflow (exception) — reason on .snapshot.error';
+  const SERVER_REASON = "buzz account 'green' is not spendable for this app's content rating";
+
+  it('prefers .snapshot.error over the generic .message (blocks-react ^0.44)', () => {
+    // THE REGRESSION: reading `.message` here classifies as `failed` and renders a
+    // hard "Generation failed" instead of the friendly switched-back-to-Auto note.
+    expect(submitErrorReason(new FakeWorkflowSubmitError(GENERIC, SERVER_REASON))).toBe(
+      SERVER_REASON,
+    );
+  });
+
+  it('falls back to .message when there is no snapshot (blocks-react ^0.43)', () => {
+    expect(submitErrorReason(new Error(SERVER_REASON))).toBe(SERVER_REASON);
+  });
+
+  it('falls back to .message when .snapshot.error is absent, empty or whitespace', () => {
+    expect(submitErrorReason(new FakeWorkflowSubmitError(GENERIC))).toBe(GENERIC);
+    expect(submitErrorReason(new FakeWorkflowSubmitError(GENERIC, ''))).toBe(GENERIC);
+    expect(submitErrorReason(new FakeWorkflowSubmitError(GENERIC, '   '))).toBe(GENERIC);
+  });
+
+  it('falls back to the caller default for a non-Error throw or an empty message', () => {
+    expect(submitErrorReason('a bare string')).toBe('submit failed');
+    expect(submitErrorReason(null)).toBe('submit failed');
+    expect(submitErrorReason(undefined)).toBe('submit failed');
+    expect(submitErrorReason(new Error(''))).toBe('submit failed');
+    expect(submitErrorReason(new Error(''), 'estimate failed')).toBe('estimate failed');
+  });
+
+  it('end-to-end: a ^0.44 disallowed-pool rejection still classifies as account-rejected', () => {
+    // The behavioural claim the structural one exists to serve. Reading `.message`
+    // would yield 'failed' here — that is the mutation this case kills.
+    const err = new FakeWorkflowSubmitError(GENERIC, SERVER_REASON);
+    expect(phaseForError(submitErrorReason(err))).toBe('account-rejected');
+    expect(phaseForError(GENERIC)).toBe('failed');
   });
 });
 

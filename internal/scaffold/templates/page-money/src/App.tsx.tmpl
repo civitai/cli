@@ -36,6 +36,7 @@ import {
   phaseForSnapshot,
   phaseForSubmitError,
   spentAccountLabel,
+  submitErrorReason,
   isTerminalStatus,
   type AccountChoice,
   type GenPhase,
@@ -352,7 +353,9 @@ export function App() {
     try {
       snap = await submit(body);
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'submit failed';
+      // NOT `err.message` — under blocks-react ^0.44 that is a generic template
+      // and the server's reason rides on `.snapshot.error`. See submitErrorReason.
+      const msg = submitErrorReason(err);
       const failPhase = classifyError(msg);
       setPhase(failPhase);
       if (failPhase === 'account-rejected') handleAccountRejected();
