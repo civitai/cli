@@ -13,6 +13,23 @@
 //  2. templates/page-money/README.md.tmpl       (@civitai/<pkg>@^X.Y.Z prose)
 //  3. scaffold_test.go                          (the mustContain assertion)
 //
+// It also owns a FOURTH site of a different shape:
+//
+//  4. testdata/design-tokens.txt                (the design-token ledger)
+//
+// 🔴 That fourth site is here, and not in a separate command, because the pin
+// and the ledger are the SAME FACT and drift apart silently otherwise. The
+// ledger records the CSS custom properties `@civitai/blocks-react` defines, and
+// the offline guard (design_tokens_guard_test.go) checks every token the
+// templates reference for membership in it. Bump the pin without regenerating
+// the ledger and that guard is checking references against the token set of a
+// version the scaffold no longer installs — so it can pass over a token the
+// newly-pinned pack dropped, which is precisely the failure the guard exists to
+// catch (an undefined CSS variable resolves to nothing: no error, green build,
+// unstyled app). Regenerating in the same run makes them agree by construction.
+// If the token fetch fails, that package's pin bump is SKIPPED too rather than
+// written alone — a half-applied bump is the drift state.
+//
 // 🔴 It rewrites the LITERAL pins (it does NOT template them): the guard reads
 // the raw `^X.Y.Z` bytes out of the .tmpl, so templating would blind it.
 //
@@ -81,7 +98,7 @@ func main() {
 	check := flag.Bool("check", false, "exit non-zero if a bump is NEEDED; write nothing (for CI)")
 	flag.Parse()
 
-	changes, err := run(*dir, scaffold.FetchNpmLatest, *check, os.Stdout)
+	changes, err := run(*dir, scaffold.FetchNpmLatest, scaffold.FetchNpmTokens, *check, os.Stdout)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "bump-pins:", err)
 		os.Exit(2)
@@ -94,9 +111,19 @@ func main() {
 
 // run discovers the @civitai/* packages pinned in the template, resolves each to
 // its desired pin via fetch, and rewrites every stale literal across the three
-// sites. With check=true it computes the needed changes but writes nothing.
-// It returns the list of applied (or, under --check, needed) changes.
-func run(dir string, fetch func(pkg string) (string, error), check bool, out io.Writer) ([]change, error) {
+// pin sites plus the design-token ledger. With check=true it computes the needed
+// changes but writes nothing. It returns the list of applied (or, under
+// --check, needed) changes.
+//
+// fetchTokens reads the design tokens a published version DEFINES; it is only
+// called for scaffold.DesignTokenPkg.
+func run(
+	dir string,
+	fetch func(pkg string) (string, error),
+	fetchTokens func(pkg, version string) ([]string, error),
+	check bool,
+	out io.Writer,
+) ([]change, error) {
 	// 1. Discover the distinct @civitai/* packages from the canonical source.
 	pkgs, err := discoverPackages(filepath.Join(dir, pkgJSONFile))
 	if err != nil {
@@ -110,6 +137,7 @@ func run(dir string, fetch func(pkg string) (string, error), check bool, out io.
 	//    (or a genuinely-missing package) skips that package without failing —
 	//    the pins-vs-published guard is the loud channel for real drift.
 	desired := map[string]string{} // pkg -> desired bare "X.Y.Z"
+	resolved := map[string]string{}
 	for _, pkg := range pkgs {
 		latest, err := fetch(pkg)
 		if err != nil {
@@ -122,6 +150,24 @@ func run(dir string, fetch func(pkg string) (string, error), check bool, out io.
 			continue
 		}
 		desired[pkg] = pin[1:] // drop the leading caret; the site regexes own the "^"
+		resolved[pkg] = latest
+	}
+
+	// 2b. Read the design tokens the token package's published version defines,
+	//     BEFORE anything is written. On failure the package is dropped from the
+	//     bump entirely: writing the pin without the matching ledger is the drift
+	//     state the ledger exists to prevent, so a half-applied bump is worse
+	//     than no bump.
+	var tokens []string
+	if _, ok := desired[scaffold.DesignTokenPkg]; ok {
+		tokens, err = fetchTokens(scaffold.DesignTokenPkg, resolved[scaffold.DesignTokenPkg])
+		if err != nil {
+			fmt.Fprintf(os.Stderr,
+				"bump-pins: skipping %s ENTIRELY (design-token read failed: %v)\n"+
+					"bump-pins: its pin is deliberately left alone — bumping it without regenerating %s would leave the design-token guard checking against the wrong token set\n",
+				scaffold.DesignTokenPkg, err, scaffold.DesignTokenLedgerFile)
+			delete(desired, scaffold.DesignTokenPkg)
+		}
 	}
 
 	// 3. Rewrite every stale literal across the three sites.
@@ -158,6 +204,20 @@ func run(dir string, fetch func(pkg string) (string, error), check bool, out io.
 		}
 	}
 
+	// 3b. Regenerate the design-token ledger. Rewritten when the pin it records
+	//     has moved OR the published token SET has changed — the two states the
+	//     guard can be wrong about. A published patch that changes neither
+	//     produces no write, so this adds no PR churn of its own.
+	if bare, ok := desired[scaffold.DesignTokenPkg]; ok {
+		ledgerChange, err := syncLedger(dir, scaffold.DesignTokenPkg, "^"+bare, resolved[scaffold.DesignTokenPkg], tokens, check)
+		if err != nil {
+			return nil, err
+		}
+		if ledgerChange != nil {
+			changes = append(changes, *ledgerChange)
+		}
+	}
+
 	// 4. Report.
 	for _, c := range changes {
 		verb := "would bump"
@@ -167,9 +227,87 @@ func run(dir string, fetch func(pkg string) (string, error), check bool, out io.
 		fmt.Fprintf(out, "%s %s: %s -> %s (%s)\n", verb, c.pkg, c.oldPin, c.newPin, c.file)
 	}
 	if len(changes) == 0 {
-		fmt.Fprintln(out, "all @civitai/* pins are current — nothing to do")
+		fmt.Fprintln(out, "all @civitai/* pins are current and the design-token ledger matches — nothing to do")
 	}
 	return changes, nil
+}
+
+// syncLedger rewrites the design-token ledger when it no longer describes what
+// the templates will install: either the caret pin moved, or the published token
+// set changed. It returns the change it made (or, under check, would make), or
+// nil when the ledger is already correct.
+//
+// A MISSING ledger is regenerated, not tolerated — the guard fails closed on
+// one, so leaving it absent would leave the repo permanently red.
+func syncLedger(dir, pkg, pin, version string, tokens []string, check bool) (*change, error) {
+	if len(tokens) == 0 {
+		// FetchNpmTokens already treats an empty read as an error; this is the
+		// belt-and-braces so a future caller cannot write an empty ledger, which
+		// would make the membership guard vacuous.
+		return nil, fmt.Errorf("refusing to write %s with ZERO tokens — that would make the design-token guard pass over everything", scaffold.DesignTokenLedgerFile)
+	}
+
+	path := filepath.Join(dir, scaffold.DesignTokenLedgerFile)
+	want := scaffold.RenderDesignTokenLedger(pkg, pin, version, tokens)
+
+	oldDesc := "(missing)"
+	existing, err := os.ReadFile(path)
+	switch {
+	case err == nil:
+		if string(existing) == string(want) {
+			return nil, nil // already correct
+		}
+		if l, perr := scaffold.ParseDesignTokenLedger(existing); perr == nil {
+			// Only the provenance line moving (same pin, same tokens) is not
+			// worth a rewrite — it would churn a PR for no behavioural change.
+			if l.Pin == pin && sameTokens(l.Tokens, tokens) {
+				return nil, nil
+			}
+			oldDesc = fmt.Sprintf("%s@%s (%d tokens)", l.Pin, l.Version, len(l.Tokens))
+		} else {
+			oldDesc = "(unparseable)"
+		}
+	case os.IsNotExist(err):
+		// regenerate below
+	default:
+		return nil, fmt.Errorf("reading %s: %w", scaffold.DesignTokenLedgerFile, err)
+	}
+
+	if !check {
+		// The ledger is the one site that can legitimately not exist yet (the
+		// three pin sites are always read before being written), so create its
+		// directory rather than failing on a fresh tree.
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return nil, fmt.Errorf("creating %s: %w", filepath.Dir(scaffold.DesignTokenLedgerFile), err)
+		}
+		if err := os.WriteFile(path, want, 0o644); err != nil {
+			return nil, fmt.Errorf("writing %s: %w", scaffold.DesignTokenLedgerFile, err)
+		}
+	}
+	return &change{
+		pkg:    pkg,
+		oldPin: oldDesc,
+		newPin: fmt.Sprintf("%s@%s (%d tokens)", pin, version, len(tokens)),
+		file:   scaffold.DesignTokenLedgerFile,
+	}, nil
+}
+
+func sameTokens(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	// The ledger's tokens are stored sorted+deduped and RenderDesignTokenLedger
+	// sorts+dedupes too, so compare the normalised forms.
+	as := append([]string(nil), a...)
+	bs := append([]string(nil), b...)
+	sort.Strings(as)
+	sort.Strings(bs)
+	for i := range as {
+		if as[i] != bs[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // discoverPackages returns the distinct @civitai/* package names pinned in the

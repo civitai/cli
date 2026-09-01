@@ -1,0 +1,48 @@
+# Design tokens DEFINED by the pinned UI pack — the membership ledger for
+# internal/scaffold/design_tokens_guard_test.go.
+#
+# Every `--civitai-*` (and any legacy `--ci-color-*`) custom property referenced
+# anywhere under internal/scaffold/templates/ must appear below. A reference to a
+# token the pack does not define resolves to nothing at runtime: no error, a
+# green build, and an app scaffolded with unset colours.
+#
+# 🔴 DO NOT HAND-EDIT. Regenerate, which also re-reads the pin:
+#     go run ./internal/scaffold/cmd/bump-pins
+# The bumper rewrites this file in the SAME run in which it bumps the pack's pin,
+# so the pin and this ledger cannot drift apart. `--check` reports without writing.
+#
+# `pin` is the caret literal in templates/page-money/package.json.tmpl at
+# generation time; `version` is the concrete version those tokens were read from.
+# The guard fails when `pin` no longer matches the template.
+#
+# package: @civitai/blocks-react
+# pin: ^0.43.0
+# version: 0.43.1
+
+--civitai-color-body
+--civitai-color-border
+--civitai-color-error
+--civitai-color-gray-0
+--civitai-color-gray-1
+--civitai-color-gray-2
+--civitai-color-gray-3
+--civitai-color-gray-4
+--civitai-color-gray-5
+--civitai-color-gray-6
+--civitai-color-gray-7
+--civitai-color-gray-8
+--civitai-color-gray-9
+--civitai-color-info
+--civitai-color-primary
+--civitai-color-primary-fg
+--civitai-color-primary-hover
+--civitai-color-primary-light
+--civitai-color-success
+--civitai-color-surface
+--civitai-color-surface-2
+--civitai-color-text
+--civitai-color-text-dimmed
+--civitai-color-warning
+--civitai-font
+--civitai-font-mono
+--civitai-radius

@@ -864,8 +864,8 @@ const shell: React.CSSProperties = {
   alignItems: 'flex-start',
   padding: 24,
   boxSizing: 'border-box',
-  background: 'var(--ci-color-surface-2)',
-  color: 'var(--ci-color-text)',
+  background: 'var(--civitai-color-surface-2)',
+  color: 'var(--civitai-color-text)',
 };
 
 const cardStyle: React.CSSProperties = { width: '100%', maxWidth: 640 };
@@ -878,7 +878,7 @@ const fieldStyle: React.CSSProperties = { display: 'grid', gap: 4 };
 const fieldLabelStyle: React.CSSProperties = { fontSize: 14, fontWeight: 600 };
 const fieldDescStyle: React.CSSProperties = {
   fontSize: 12,
-  color: 'var(--ci-color-text-muted, var(--ci-color-text))',
+  color: 'var(--civitai-color-text-dimmed, var(--civitai-color-text))',
   opacity: 0.8,
 };
 const currentModelStyle: React.CSSProperties = {
@@ -886,9 +886,9 @@ const currentModelStyle: React.CSSProperties = {
   minWidth: 0,
   padding: '10px 12px',
   borderRadius: 8,
-  border: '1px solid var(--ci-color-border)',
-  background: 'var(--ci-color-surface)',
-  color: 'var(--ci-color-text)',
+  border: '1px solid var(--civitai-color-border)',
+  background: 'var(--civitai-color-surface)',
+  color: 'var(--civitai-color-text)',
   fontSize: 14,
   overflow: 'hidden',
   textOverflow: 'ellipsis',
@@ -907,9 +907,9 @@ function pickerBtnStyle(selected: boolean, disabled: boolean): React.CSSProperti
   return {
     padding: '6px 14px',
     borderRadius: 999,
-    border: '1px solid ' + (selected ? 'var(--ci-color-primary)' : 'var(--ci-color-border)'),
-    background: selected ? 'var(--ci-color-primary)' : 'var(--ci-color-surface)',
-    color: selected ? 'var(--ci-color-primary-contrast, #fff)' : 'var(--ci-color-text)',
+    border: '1px solid ' + (selected ? 'var(--civitai-color-primary)' : 'var(--civitai-color-border)'),
+    background: selected ? 'var(--civitai-color-primary)' : 'var(--civitai-color-surface)',
+    color: selected ? 'var(--civitai-color-primary-fg, #fff)' : 'var(--civitai-color-text)',
     fontSize: 13,
     fontWeight: 600,
     cursor: disabled ? 'not-allowed' : 'pointer',
@@ -925,8 +925,8 @@ const loraRowStyle: React.CSSProperties = {
   gap: 6,
   padding: '8px 10px',
   borderRadius: 8,
-  border: '1px solid var(--ci-color-border)',
-  background: 'var(--ci-color-surface)',
+  border: '1px solid var(--civitai-color-border)',
+  background: 'var(--civitai-color-surface)',
 };
 const loraRowHeadStyle: React.CSSProperties = {
   display: 'flex',
@@ -943,7 +943,7 @@ const loraNameStyle: React.CSSProperties = {
 };
 const loraWeightRowStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 8 };
 const loraWeightLabelStyle: React.CSSProperties = { fontSize: 12, opacity: 0.8, minWidth: 44 };
-const loraRangeStyle: React.CSSProperties = { flex: 1, accentColor: 'var(--ci-color-primary)' };
+const loraRangeStyle: React.CSSProperties = { flex: 1, accentColor: 'var(--civitai-color-primary)' };
 const loraWeightValueStyle: React.CSSProperties = {
   fontSize: 12,
   fontVariantNumeric: 'tabular-nums',
