@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -111,6 +113,16 @@ func TestRewritePin(t *testing.T) {
 	})
 }
 
+// fakeTokens is the injected design-token read (no network). It returns a small
+// but non-empty set — non-empty matters, because run() refuses to write an empty
+// ledger and an empty set would make the design-token guard vacuous.
+func fakeTokens(pkg, version string) ([]string, error) {
+	if pkg != scaffold.DesignTokenPkg {
+		return nil, fmt.Errorf("unexpected token fetch for %s", pkg)
+	}
+	return []string{"--civitai-color-text", "--civitai-color-surface", "--civitai-radius"}, nil
+}
+
 // TestRunRewritesAllThreeFilesAndIsIdempotent exercises the full run() against a
 // temp-dir fixture mirroring the three literal sites, with an injected
 // "published" version (no network).
@@ -130,13 +142,26 @@ func TestRunRewritesAllThreeFilesAndIsIdempotent(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	changes, err := run(dir, fetch, false, &buf)
+	changes, err := run(dir, fetch, fakeTokens, false, &buf)
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	// 2 packages × 3 files = 6 rewrites.
-	if len(changes) != 6 {
-		t.Fatalf("expected 6 changes, got %d:\n%s", len(changes), buf.String())
+	// 2 packages × 3 pin sites = 6 rewrites, + the design-token ledger.
+	if len(changes) != 7 {
+		t.Fatalf("expected 7 changes (6 pin sites + the ledger), got %d:\n%s", len(changes), buf.String())
+	}
+
+	// The ledger must have been written, and must record the pin this run set.
+	ledger := readFile(t, dir, scaffold.DesignTokenLedgerFile)
+	l, err := scaffold.ParseDesignTokenLedger([]byte(ledger))
+	if err != nil {
+		t.Fatalf("bump-pins wrote an unparseable ledger: %v\n%s", err, ledger)
+	}
+	if l.Pkg != scaffold.DesignTokenPkg || l.Pin != "^0.30.0" || l.Version != "0.30.1" {
+		t.Errorf("ledger provenance = %+v, want pkg=%s pin=^0.30.0 version=0.30.1", l, scaffold.DesignTokenPkg)
+	}
+	if len(l.Tokens) != 3 {
+		t.Errorf("ledger holds %d token(s), want 3: %v", len(l.Tokens), l.Tokens)
 	}
 
 	pkgJSON := readFile(t, dir, pkgJSONFile)
@@ -154,7 +179,7 @@ func TestRunRewritesAllThreeFilesAndIsIdempotent(t *testing.T) {
 
 	// Second run is a no-op (idempotent).
 	buf.Reset()
-	changes2, err := run(dir, fetch, false, &buf)
+	changes2, err := run(dir, fetch, fakeTokens, false, &buf)
 	if err != nil {
 		t.Fatalf("second run: %v", err)
 	}
@@ -184,7 +209,7 @@ func TestRunCheckWritesNothing(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	changes, err := run(dir, fetch, true /*check*/, &buf)
+	changes, err := run(dir, fetch, fakeTokens, true /*check*/, &buf)
 	if err != nil {
 		t.Fatalf("run --check: %v", err)
 	}
@@ -211,7 +236,7 @@ func TestRunSkipsOnFetchError(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	changes, err := run(dir, fetch, false, &buf)
+	changes, err := run(dir, fetch, fakeTokens, false, &buf)
 	if err != nil {
 		t.Fatalf("run must not fail on a skipped package: %v", err)
 	}
@@ -221,6 +246,163 @@ func TestRunSkipsOnFetchError(t *testing.T) {
 	if got := readFile(t, dir, pkgJSONFile); got != before {
 		t.Errorf("skipped run must not modify files")
 	}
+}
+
+// TestRunSkipsThePinBumpWhenTheTokenReadFails is the coupling this wiring
+// exists for. Writing the pack's PIN without regenerating the design-token
+// ledger leaves the offline guard checking template references against the token
+// set of a version the scaffold no longer installs — the exact drift state the
+// ledger prevents. So a failed token read must skip that package's pin bump
+// too, not write it alone.
+//
+// The other package must still bump: the failure is scoped to the token package.
+func TestRunSkipsThePinBumpWhenTheTokenReadFails(t *testing.T) {
+	dir := t.TempDir()
+	writeFixture(t, dir)
+
+	fetch := func(pkg string) (string, error) {
+		switch pkg {
+		case "@civitai/app-sdk":
+			return "0.25.4", nil
+		case "@civitai/blocks-react":
+			return "0.30.1", nil
+		}
+		return "", scaffold.ErrPkgNotFound
+	}
+	failTokens := func(pkg, version string) ([]string, error) {
+		return nil, errors.New("registry unreachable")
+	}
+
+	var buf bytes.Buffer
+	changes, err := run(dir, fetch, failTokens, false, &buf)
+	if err != nil {
+		t.Fatalf("a failed token read must skip, not fail the command: %v", err)
+	}
+	// Only app-sdk's 3 pin sites — blocks-react is skipped entirely, ledger
+	// included.
+	if len(changes) != 3 {
+		t.Fatalf("expected 3 changes (app-sdk only), got %d:\n%s", len(changes), buf.String())
+	}
+	pkgJSON := readFile(t, dir, pkgJSONFile)
+	assertContains(t, pkgJSON, `"@civitai/app-sdk": "^0.25.0"`)
+	// 🔴 The load-bearing assertion: blocks-react's pin is UNCHANGED at the
+	// fixture's value. A bumped pin here would be the half-applied state.
+	assertContains(t, pkgJSON, `"@civitai/blocks-react": "^0.29.0"`)
+	if _, err := os.Stat(filepath.Join(dir, scaffold.DesignTokenLedgerFile)); !os.IsNotExist(err) {
+		t.Errorf("no ledger should have been written when the token read failed (stat err: %v)", err)
+	}
+}
+
+// TestSyncLedgerRewritesOnPinMoveAndOnTokenChange covers the two states the
+// guard can be wrong about, and the one that must NOT churn a PR.
+func TestSyncLedgerRewritesOnPinMoveAndOnTokenChange(t *testing.T) {
+	toks := []string{"--civitai-color-text", "--civitai-color-surface"}
+
+	seed := func(t *testing.T, pin, version string, tokens []string) string {
+		t.Helper()
+		dir := t.TempDir()
+		path := filepath.Join(dir, scaffold.DesignTokenLedgerFile)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		raw := scaffold.RenderDesignTokenLedger(scaffold.DesignTokenPkg, pin, version, tokens)
+		if err := os.WriteFile(path, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+
+	t.Run("pin moved -> rewrite", func(t *testing.T) {
+		dir := seed(t, "^0.43.0", "0.43.1", toks)
+		c, err := syncLedger(dir, scaffold.DesignTokenPkg, "^0.44.0", "0.44.2", toks, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c == nil {
+			t.Fatal("a moved pin must rewrite the ledger — otherwise the guard checks the wrong version's token set")
+		}
+		l, err := scaffold.ParseDesignTokenLedger([]byte(readFile(t, dir, scaffold.DesignTokenLedgerFile)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if l.Pin != "^0.44.0" || l.Version != "0.44.2" {
+			t.Errorf("ledger not updated: %+v", l)
+		}
+	})
+
+	t.Run("token set changed -> rewrite", func(t *testing.T) {
+		dir := seed(t, "^0.43.0", "0.43.1", toks)
+		next := []string{"--civitai-color-text", "--civitai-color-surface", "--civitai-color-brand-new"}
+		c, err := syncLedger(dir, scaffold.DesignTokenPkg, "^0.43.0", "0.43.2", next, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c == nil {
+			t.Fatal("a changed token set must rewrite the ledger even within one caret range")
+		}
+		l, err := scaffold.ParseDesignTokenLedger([]byte(readFile(t, dir, scaffold.DesignTokenLedgerFile)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(l.Tokens) != 3 {
+			t.Errorf("ledger tokens = %v, want the new 3", l.Tokens)
+		}
+	})
+
+	t.Run("only the version moved -> no churn", func(t *testing.T) {
+		dir := seed(t, "^0.43.0", "0.43.1", toks)
+		before := readFile(t, dir, scaffold.DesignTokenLedgerFile)
+		c, err := syncLedger(dir, scaffold.DesignTokenPkg, "^0.43.0", "0.43.2", toks, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c != nil {
+			t.Errorf("same pin + same tokens must not rewrite (it would churn a PR for no behavioural change), got %+v", c)
+		}
+		if got := readFile(t, dir, scaffold.DesignTokenLedgerFile); got != before {
+			t.Error("ledger was rewritten despite no behavioural change")
+		}
+	})
+
+	t.Run("missing ledger is regenerated", func(t *testing.T) {
+		dir := t.TempDir()
+		c, err := syncLedger(dir, scaffold.DesignTokenPkg, "^0.43.0", "0.43.1", toks, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c == nil {
+			t.Fatal("a missing ledger must be regenerated — the guard fails closed on one, so leaving it absent leaves the repo permanently red")
+		}
+		if _, err := os.Stat(filepath.Join(dir, scaffold.DesignTokenLedgerFile)); err != nil {
+			t.Errorf("ledger not created: %v", err)
+		}
+	})
+
+	t.Run("refuses to write an empty ledger", func(t *testing.T) {
+		dir := seed(t, "^0.43.0", "0.43.1", toks)
+		before := readFile(t, dir, scaffold.DesignTokenLedgerFile)
+		if _, err := syncLedger(dir, scaffold.DesignTokenPkg, "^0.44.0", "0.44.0", nil, false); err == nil {
+			t.Fatal("writing an EMPTY ledger must be an error — it would make the membership guard pass over everything")
+		}
+		if got := readFile(t, dir, scaffold.DesignTokenLedgerFile); got != before {
+			t.Error("the refused write still modified the ledger")
+		}
+	})
+
+	t.Run("check writes nothing", func(t *testing.T) {
+		dir := seed(t, "^0.43.0", "0.43.1", toks)
+		before := readFile(t, dir, scaffold.DesignTokenLedgerFile)
+		c, err := syncLedger(dir, scaffold.DesignTokenPkg, "^0.44.0", "0.44.2", toks, true /*check*/)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if c == nil {
+			t.Fatal("--check must still REPORT the needed rewrite")
+		}
+		if got := readFile(t, dir, scaffold.DesignTokenLedgerFile); got != before {
+			t.Error("--check must not write")
+		}
+	})
 }
 
 // --- fixture helpers ---

@@ -21,9 +21,12 @@ body {
 
 /* Focus affordance for any raw textarea/button (the W6 /ui pack styles its own
    controls). Use the pack's brand accent so the outline matches, not a clashing
-   gold; --ci-color-primary is defined by the pack's injected stylesheet. */
+   gold; --civitai-color-primary is defined by the stylesheet
+   @civitai/blocks-react/ui injects. Every --civitai-color-* token referenced
+   anywhere under templates/ is checked against that pack's published token set
+   by internal/scaffold/design_tokens_guard_test.go — see its testdata ledger. */
 textarea:focus-visible,
 button:focus-visible {
-  outline: 2px solid var(--ci-color-primary);
+  outline: 2px solid var(--civitai-color-primary);
   outline-offset: 2px;
 }
