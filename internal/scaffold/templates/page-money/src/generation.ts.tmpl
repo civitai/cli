@@ -135,6 +135,35 @@ export function isDisallowedAccountError(message: string | null | undefined): bo
 }
 
 /**
+ * The reason string to CLASSIFY and DISPLAY for a rejected submit.
+ *
+ * `@civitai/blocks-react@^0.44` throws a `WorkflowSubmitError` whose `.message`
+ * is a deliberately GENERIC template — it carries no server text, so a raw
+ * server string never lands on the default-printed surface of code that merely
+ * awaited the promise. The server's actual reason, the one
+ * {@link isDisallowedAccountError} and {@link isInsufficientBuzz} sniff for,
+ * rides on `.snapshot.error` instead. Under `^0.43` the reason was on `.message`
+ * and there was no snapshot.
+ *
+ * So read the snapshot reason FIRST and fall back to `.message`: that classifies
+ * correctly on BOTH sides of the change, and it is what keeps a disallowed-pool
+ * rejection rendering the friendly "switched back to Auto" note rather than a
+ * hard "Generation failed".
+ *
+ * 🔴 STRUCTURAL ON PURPOSE — it keys on WHERE the reason lives, never on the
+ * wording of the generic template. Sniffing for that wording would be a spelled
+ * guard: the next upstream reword would silently restore the misclassification,
+ * which is exactly the defect this replaces.
+ */
+export function submitErrorReason(err: unknown, fallback = 'submit failed'): string {
+  const snapshotError = (err as { snapshot?: { error?: unknown } } | null | undefined)?.snapshot
+    ?.error;
+  if (typeof snapshotError === 'string' && snapshotError.trim() !== '') return snapshotError;
+  if (err instanceof Error && err.message.trim() !== '') return err.message;
+  return fallback;
+}
+
+/**
  * The Comfy on Civitai recipe id this sample sends. MIRRORED from comfy.ts's
  * `STARTER_COMFY_RECIPE` (kept as a literal here to avoid a generation.ts ⇄
  * comfy.ts import cycle) — the enum-rejection sniff below keys on it. If you
