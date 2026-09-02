@@ -1,5 +1,9 @@
 :root {
-  color-scheme: light dark;
+  /* DARK FIRST, matching `<meta name="color-scheme" content="dark light">` in
+     index.html. This property OVERRIDES the meta once the stylesheet lands, so
+     the two orders have to agree — `light dark` here would quietly undo the
+     meta's dark default the moment this file loads. */
+  color-scheme: dark light;
   font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 }
 
