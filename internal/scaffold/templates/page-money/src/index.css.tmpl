@@ -1,5 +1,9 @@
 :root {
-  color-scheme: light dark;
+  /* DARK FIRST, matching `<meta name="color-scheme" content="dark light">` in
+     index.html. This property OVERRIDES the meta once the bundle lands, so the
+     two orders have to agree — `light dark` here would quietly undo the boot
+     skeleton's dark default at exactly the moment the app takes over. */
+  color-scheme: dark light;
 }
 
 * {

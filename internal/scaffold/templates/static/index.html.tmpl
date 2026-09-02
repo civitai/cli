@@ -3,11 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- DARK FIRST, deliberately. The first thing an iframe paints is the UA
+         canvas, and the host sends this block no theme hint before it boots, so
+         the boot theme is a GUESS and the platform's guess is dark. `light dark`
+         here would default the canvas to LIGHT and flash white. `style.css`
+         re-states the same order in its `color-scheme` property, so the two
+         cannot disagree once the stylesheet lands. -->
+    <meta name="color-scheme" content="dark light" />
     <title>{{ .Name }}</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231971c2'/></svg>" />
     <link rel="stylesheet" href="./style.css" />
   </head>
   <body>
+    <!-- NO BOOT SKELETON HERE, ON PURPOSE — and the manifest still declares
+         `"bootSkeleton": true`. Both halves are deliberate.
+
+         A static app has no bundle to wait for: this document IS the app, and
+         everything below paints at first paint. Declaring bootSkeleton tells the
+         Civitai run host to stand down its loading veil, which for this template
+         is pure delay over content that is already on screen. That is the flag
+         doing exactly what it is for.
+
+         A *skeleton* here would be inert at best. There is no framework render
+         to clear the container, so a skeleton would need explicit JS removal and
+         would buy a skeleton→content flash in exchange for nothing. The
+         platform's `bootSkeleton-not-empty` gate keys on the container being
+         non-empty, not on the presence of a `[data-boot-skeleton]` marker, and
+         the real content below satisfies it on its own. -->
     <main id="app">
       <h1>{{ .Name }}</h1>
       <p>This is a Civitai App (static template). Edit <code>app.js</code> to build your app.</p>

@@ -3,12 +3,123 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="light dark" />
+    <!-- DARK FIRST, deliberately. The first thing an iframe paints is the UA
+         canvas, and the host sends this block no theme hint before it boots, so
+         the boot theme is a GUESS and the platform's guess is dark. `light dark`
+         here would default the canvas to LIGHT and flash white. -->
+    <meta name="color-scheme" content="dark light" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%231971c2'/></svg>" />
     <title>{{ .Name }} — Civitai App</title>
+    <!-- BOOT SKELETON styles. Paired with `"bootSkeleton": true` in
+         block.manifest.json — THE TWO CANNOT BE SEPARATED. When the manifest
+         declares bootSkeleton the Civitai run host stands down its own loading
+         veil (no branded overlay, iframe opaque from mount, no reveal settle),
+         so whatever this document paints IS the loading state. Declare the flag
+         over an empty #root and the viewer stares at a blank iframe for the
+         whole load — strictly worse than not opting in.
+
+         INLINE, and no JS: an external stylesheet is a second round-trip, which
+         is exactly the window this exists to cover. These rules must paint
+         before anything is fetched — including before the W6 pack's stylesheet,
+         so the literal colours below are stand-ins for the pack's surface /
+         border tokens rather than `var(--civitai-color-*)` reads, which resolve
+         to nothing this early.
+
+         DARK IS THE BASE. Light lives in a `prefers-color-scheme: light` block
+         and nowhere else. There is deliberately NO `prefers-color-scheme: dark`
+         block: a UA reporting `no-preference`, or one that does not support the
+         query at all, matches neither branch and would fall through to whatever
+         the base rules say — so the base rules have to be the dark ones. -->
+    <style>
+      html {
+        /* The strong guarantee. Unlike `color-scheme` this does not depend on
+           UA support for anything. */
+        background: #101113;
+      }
+      body {
+        margin: 0;
+      }
+      /* Mirrors the `shell` style in src/App.tsx. */
+      [data-boot-skeleton] {
+        min-height: 100dvh;
+        display: flex;
+        justify-content: center;
+        align-items: flex-start;
+        padding: 24px;
+        box-sizing: border-box;
+      }
+      /* Attribute selectors, not classes: a class is fair game for CSS-modules
+         hashing or a purge pass, an attribute survives the bundler. */
+      [data-boot-skeleton] [data-boot-shape='card'] {
+        width: 100%;
+        max-width: 640px;
+        padding: 24px;
+        border-radius: 8px;
+        background: #1a1b1e;
+        border: 1px solid #2c2e33;
+        box-sizing: border-box;
+      }
+      [data-boot-skeleton] [data-boot-shape='card'] > [data-boot-shape] {
+        background: #2c2e33;
+        border-radius: 6px;
+        margin-bottom: 16px;
+      }
+      [data-boot-skeleton] [data-boot-shape='title'] {
+        height: 24px;
+        width: 45%;
+      }
+      [data-boot-skeleton] [data-boot-shape='control'] {
+        height: 34px;
+      }
+      [data-boot-skeleton] [data-boot-shape='field'] {
+        height: 96px;
+      }
+      [data-boot-skeleton] [data-boot-shape='button'] {
+        height: 36px;
+        margin-bottom: 0;
+      }
+      @media (prefers-color-scheme: light) {
+        html {
+          background: #f8f9fa;
+        }
+        [data-boot-skeleton] [data-boot-shape='card'] {
+          background: #ffffff;
+          border-color: #dee2e6;
+        }
+        [data-boot-skeleton] [data-boot-shape='card'] > [data-boot-shape] {
+          background: #e9ecef;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- The skeleton MUST live inside #root. One painted as a sibling of the
+           mount container is never replaced by the app's render and stays on
+           screen after mount.
+
+           NO REMOVAL CODE IS NEEDED HERE, AND THAT IS REACT-SPECIFIC.
+           `createRoot(container).render(...)` in src/main.tsx clears the
+           container's existing children before its first commit, so this
+           skeleton removes itself. A framework that APPENDS instead of clearing
+           (Svelte 5's `mount(App, { target })`, for one) leaves it on screen
+           and needs an explicit
+           `document.querySelector('[data-boot-skeleton]')?.remove()` straight
+           after the mount call. Assume APPEND for anything you have not
+           measured.
+
+           aria-hidden because this is decoration: the host already publishes
+           `aria-busy` on the iframe while the block is loading, and a second
+           announcement in here would just talk over it. -->
+      <div data-boot-skeleton aria-hidden="true">
+        <div data-boot-shape="card">
+          <div data-boot-shape="title"></div>
+          <div data-boot-shape="control"></div>
+          <div data-boot-shape="field"></div>
+          <div data-boot-shape="button"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
