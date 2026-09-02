@@ -30,14 +30,23 @@ package scaffold
 // same run in which it bumps the pin so the two cannot drift.
 //
 // RESIDUAL, stated rather than papered over: the ledger is only as fresh as the
-// last regeneration. Within one caret range (`^0.43.0` admits every `0.43.x`) a
+// last regeneration. Within one caret range (`^0.45.0` admits every `0.45.x`) a
 // patch release could add a token — a template using it would red, which is a
 // false failure a regeneration fixes — or REMOVE one, which the ledger would
 // still list, and that direction is a false PASS. Closing it would need a
 // network read at test time, which is the thing this guard deliberately does not
-// do. Measured across the whole range this pin admits and the next minor
-// (0.43.0, 0.43.1, 0.44.0, 0.44.1, 0.44.2) the defined set is byte-identical, so
-// the residual is small today; it is not zero.
+// do.
+//
+// Scope of the residual, re-measured 2026-09-02 at the ^0.44.0 → ^0.45.0 bump.
+// The PATCH axis has stayed quiet: across 0.43.0, 0.43.1, 0.44.0, 0.44.1 and
+// 0.44.2 the defined set is byte-identical, so drift WITHIN a caret range — the
+// only drift this guard cannot see — remains unobserved. The MINOR axis is not
+// quiet, and that is the correction: 0.44.2 → 0.45.0 ADDED five tokens
+// (`--civitai-bp-{xs,sm,md,lg,xl}`, the breakpoint scale behind the new
+// `useBlockBreakpoint` hook), 27 → 32. Nothing was removed, so no reference went
+// dead — but a minor bump demonstrably DOES move the set, which is precisely why
+// `bump-pins` regenerates this ledger in the same run that moves the pin rather
+// than trusting the sets to agree.
 
 import (
 	"os"

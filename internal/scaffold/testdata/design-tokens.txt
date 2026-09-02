@@ -16,9 +16,14 @@
 # The guard fails when `pin` no longer matches the template.
 #
 # package: @civitai/blocks-react
-# pin: ^0.44.0
-# version: 0.44.2
+# pin: ^0.45.0
+# version: 0.45.0
 
+--civitai-bp-lg
+--civitai-bp-md
+--civitai-bp-sm
+--civitai-bp-xl
+--civitai-bp-xs
 --civitai-color-body
 --civitai-color-border
 --civitai-color-error
