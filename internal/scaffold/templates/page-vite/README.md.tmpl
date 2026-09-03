@@ -61,6 +61,48 @@ internally.
 > an init: it gives up after 10s while the host sits "ready", showing an app
 > that never started, with no retry and no error card.
 
+## Width-adaptive layout (`src/index.css`)
+
+Your app renders inside whatever slot the host gave it, and **slot width is not
+monotonic in viewport width** — the `model.sidebar_top` slot is about 360px next
+to a 360px phone and only about 430px next to a 1440px desktop. A viewport-based
+media query inside the frame therefore answers a question nobody asked, which is
+why this template ships none.
+
+`src/index.css` makes `.app` a **query container** (`container-type:
+inline-size`) and adapts `.app-actions` against the container's own width:
+
+```css
+.app-actions { flex-direction: column; }          /* narrow — the base state */
+
+@container block (min-width: 480px) {
+  .app-actions { flex-direction: row; }           /* wider */
+}
+```
+
+Narrow is the base state and widening is the override, on purpose: a block is
+narrow far more often than not, and that is also what a browser without
+`@container` support falls back to.
+
+The thresholds are Civitai's block breakpoint scale, in **CSS pixels**:
+`xs 480 · sm 768 · md 1024 · lg 1184 · xl 1440`. (Not Mantine's stock `em`
+scale — the two agree on `sm` and nowhere else.) 480 is the step this layout can
+actually cross, since `.app` is capped at `40rem`.
+
+> 🔴 **Write the pixel number out.** The design system publishes these as
+> `--civitai-bp-*` custom properties, and reaching for one in the condition of a
+> media or container query is the first thing most people try. It does not work:
+> a query's condition is evaluated before custom properties are substituted, so
+> the rule never matches — no error, no warning, green build, and a layout
+> silently stuck on one branch.
+
+Adopting `@civitai/blocks-react` later? Its `useBlockBreakpoint()` hook reports
+the same scale in JS, for decisions CSS cannot make — rendering a genuinely
+*different* element tree rather than restyling the same one. The `page-money`
+template (`civitai app init "…" --template page-money`) shows that form.
+
+Full guide: <https://developer.civitai.com/apps/responsive>
+
 ## Develop
 
 ```bash

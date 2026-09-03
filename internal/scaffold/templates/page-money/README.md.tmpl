@@ -46,6 +46,8 @@ The money path uses the SDK hooks — never raw `window.parent.postMessage`:
   consent-gated, so the token mints WITHOUT it; the grant arrives as a
   `TOKEN_REFRESH` and the app auto-resumes the click.
 - `useBlockResize()` — the SDK reports height to the host safely.
+- `useBlockBreakpoint()` — the width tier of your block's own box, for layout
+  decisions. See below.
 
 Page constraints: a page is `entity=none` — it carries no HOST model context (a
 model slot would deliver `modelId`/`modelVersionId` via `BLOCK_INIT`; a page does
@@ -55,6 +57,45 @@ paint) — and lets the user CHANGE it via the host picker. The viewer's Buzz
 balance is read in-block via `useBuzzBalance()` (host-mediated, no scope) — an
 insufficient-Buzz `failed` snapshot is still handled as a backstop. The budget
 comes from `page.buzzBudgetPerGen` in the manifest.
+
+### Width-adaptive layout (`useBlockBreakpoint`)
+
+Your app renders inside whatever slot the host gave it, and **slot width is not
+monotonic in viewport width** — the `model.sidebar_top` slot is about 360px next
+to a 360px phone and only about 430px next to a 1440px desktop. So the useful
+question is "how wide am **I**?", not "how wide is the browser window?".
+
+`useBlockBreakpoint()` answers that. It observes your element with a
+`ResizeObserver` (a container query, effectively) and returns the width **tier**:
+
+```ts
+const bp = useBlockBreakpoint(rootRef); // or no ref → the sandbox document
+bp.tier;            // 'base' | 'xs' | 'sm' | 'md' | 'lg' | 'xl'
+bp.below('sm');     // true when narrower than 768px
+bp.atLeast('md');   // true at 1024px and up
+bp.measured;        // false until the first measurement lands
+```
+
+The scale is **CSS pixels**: `xs 480 · sm 768 · md 1024 · lg 1184 · xl 1440`.
+That is Civitai's own scale, and it is deliberately **not** Mantine's stock `em`
+scale (576 / 768 / 992 / 1200 / 1408) — the two agree on `sm` and nowhere else,
+so a check that only ever exercises 768 tells you nothing about the rest.
+
+It re-renders you on a **tier change only**, never per pixel, so branching on it
+is cheap. `src/App.tsx` uses it for exactly one decision — the Model row is a
+`Group` when there is room and a `Stack` when there is not — and
+`src/responsive.test.tsx` drives that at two widths. Keep the rest of your layout
+in fluid CSS; reach for the hook when you need a genuinely **different element
+tree**, not a different size.
+
+> 🔴 **`--civitai-bp-*` cannot be used in a query condition.** The tokens exist,
+> and putting one in the condition of a media or container query is the first
+> thing most people try — but a query's condition is evaluated before custom
+> properties are substituted, so the rule never matches. Nothing errors, nothing
+> warns, the build stays green, and your layout is silently stuck on one branch.
+> In CSS, write the pixel number out. In JS, use this hook.
+
+Full guide: <https://developer.civitai.com/apps/responsive>
 
 ### Model picker (host-served, server-revalidated)
 

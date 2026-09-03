@@ -76,6 +76,45 @@ func TestRenderPageVite(t *testing.T) {
 	if !json.Valid([]byte(pkg)) {
 		t.Errorf("page-vite package.json is not valid JSON:\n%s", pkg)
 	}
+
+	// page-vite ships NO @civitai/* dependency and that is load-bearing, not an
+	// oversight: it is the SDK-free template, its ready-ack is the vendored
+	// src/civitai-host.js (Template.ReadyAckPath), and its README tells the author
+	// to delete that file in the same change that adopts the SDK. Adding an
+	// @civitai/* pin here would also come under `pins-vs-published` — which reads
+	// EVERY template's package.json.tmpl — while `bump-pins` only ever rewrites
+	// templates/page-money/. A pin here would therefore be unbumpable, and would
+	// freeze this repo's required merge gate at the next published minor.
+	if strings.Contains(pkg, "@civitai/") {
+		t.Errorf("page-vite package.json pins an @civitai/* package:\n%s\n"+
+			"  page-vite is the SDK-FREE template. Two things break if it stops being one:\n"+
+			"    1. `pins-vs-published` (a REQUIRED check) reads every template's\n"+
+			"       package.json.tmpl, but `bump-pins` rewrites only page-money's three\n"+
+			"       literal sites — so this pin can never be auto-bumped and goes\n"+
+			"       permanently red on the next @civitai/* minor publish.\n"+
+			"    2. The README tells the author to delete src/civitai-host.js when they\n"+
+			"       adopt the SDK. With the SDK already in package.json but no transport\n"+
+			"       mounted, following that instruction leaves the app with NO handshake.\n"+
+			"  If this is deliberate, extend bump-pins' `sites` list and rewrite that\n"+
+			"  README section in the SAME change.", pkg)
+	}
+
+	// WIDTH-ADAPTIVE example, done with a CSS container query because this
+	// template has no SDK to ask. `container-type` is what makes `.app` a query
+	// container; without it the @container rule silently never matches.
+	css := readFile(t, filepath.Join(dest, "src", "index.css"))
+	mustContain(t, css, "container-type: inline-size")
+	mustContain(t, css, "@container block (min-width: 480px)")
+	mustContain(t, css, ".app-actions")
+	// A VIEWPORT media query is the wrong question inside a block iframe (slot
+	// width is not monotonic in viewport width), so the responsive rule must not
+	// be one. The boot skeleton's prefers-color-scheme block lives in index.html,
+	// not here, so this file legitimately has no @media at all.
+	mustNotContain(t, css, "@media")
+	// And the markup must actually use it — a container query over a class
+	// nothing renders is inert.
+	appJSX := readFile(t, filepath.Join(dest, "src", "App.jsx"))
+	mustContain(t, appJSX, `className="app-actions"`)
 }
 
 func TestRenderPageMoney(t *testing.T) {
@@ -95,7 +134,7 @@ func TestRenderPageMoney(t *testing.T) {
 		"src/generation.test.ts", "src/models.test.ts", "src/nav.test.ts",
 		"src/comfy.test.ts",
 		"src/setup-dev-live.test.ts", "src/setup-plugin.test.ts",
-		"src/App.pollretry.test.tsx", "src/index.css",
+		"src/App.pollretry.test.tsx", "src/responsive.test.tsx", "src/index.css",
 		"README.md", ".gitignore", ".env.development", ".env.production", ".env.example",
 		"assets/README.md",
 	} {
@@ -168,6 +207,39 @@ func TestRenderPageMoney(t *testing.T) {
 	mustContain(t, app, "useRequestConsent")
 	mustContain(t, app, "useBuzzWorkflow")
 	mustContain(t, app, "useBlockResize")
+
+	// WIDTH-ADAPTIVE example. The block branches on ITS OWN width tier
+	// (useBlockBreakpoint — a container query over the slot the host gave it),
+	// never on the viewport, and renders a different container for the Model row.
+	//
+	// 🔴 THESE ARE PRESENCE FLOORS, NOT BEHAVIOURAL GUARDS. This is a substring
+	// match over a rendered template, so a comment satisfies every line below;
+	// they exist so DELETING the example is loud, not to prove it works. The
+	// behavioural guard ships in the generated project — src/responsive.test.tsx
+	// renders <App/> at 361px and 900px against a stubbed ResizeObserver and
+	// asserts the layout actually swaps — and CI runs it via `template-page-money`
+	// (`npm test`). The separate CLASS guard against the silently-dead
+	// `var()`-in-a-query-prelude form is
+	// TestScaffoldTemplatesHaveNoVarInQueryPreludes.
+	mustContain(t, app, "useBlockBreakpoint")
+	mustContain(t, app, "bp.below('sm')")
+	mustContain(t, app, `data-testid="pm-model-row"`)
+	mustContain(t, app, `data-layout="stacked"`)
+	mustContain(t, app, `data-layout="row"`)
+	mustContain(t, app, "data-block-tier")
+	// The example must not reach for the viewport instead — that is the wrong
+	// question inside a block iframe, and it is what a reader writes by reflex.
+	mustNotContain(t, app, "matchMedia")
+	mustNotContain(t, app, "window.innerWidth")
+	// And the generated test must actually exercise it at BOTH widths — an
+	// unreferenced example rots (same reasoning as the inline-Comfy sample below).
+	responsiveTest := readFile(t, filepath.Join(dest, "src", "responsive.test.tsx"))
+	mustContain(t, responsiveTest, "pm-model-row")
+	mustContain(t, responsiveTest, "resolveBlockTier")
+	for _, w := range []string{"361", "900"} {
+		mustContain(t, responsiveTest, w)
+	}
+
 	// The model + LoRA controls drive the HOST's native pickers via the SDK hooks
 	// (the in-block catalog browser is gone).
 	mustContain(t, app, "useCheckpointPicker")
