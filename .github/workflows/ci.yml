@@ -270,9 +270,17 @@ jobs:
           go-version: "1.25"
           cache: true
 
+      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
+      # `Cannot read properties of null (reading 'edgesOut')` while walking
+      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
+      # of a scaffolded page-money app. That froze EVERY PR in this repo
+      # (scaffold-currency is required + enforce_admins) with no code change,
+      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
+      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
+      # pinning vitest does NOT fix it. Do not drop back to 22.
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: scaffolded ready-ack actually fires
         env:
@@ -334,9 +342,17 @@ jobs:
           go-version: "1.25"
           cache: true
 
+      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
+      # `Cannot read properties of null (reading 'edgesOut')` while walking
+      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
+      # of a scaffolded page-money app. That froze EVERY PR in this repo
+      # (scaffold-currency is required + enforce_admins) with no code change,
+      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
+      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
+      # pinning vitest does NOT fix it. Do not drop back to 22.
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: scaffold page-vite
         run: go run ./cmd/civitai app init "CI Vite Block" --dir ./_ci-page-vite --template page-vite
@@ -413,9 +429,17 @@ jobs:
           go-version: "1.25"
           cache: true
 
+      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
+      # `Cannot read properties of null (reading 'edgesOut')` while walking
+      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
+      # of a scaffolded page-money app. That froze EVERY PR in this repo
+      # (scaffold-currency is required + enforce_admins) with no code change,
+      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
+      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
+      # pinning vitest does NOT fix it. Do not drop back to 22.
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: scaffold page-money
         run: go run ./cmd/civitai app init "CI Money Block" --dir ./_ci-page-money --template page-money
@@ -477,9 +501,17 @@ jobs:
           go-version: "1.25"
           cache: true
 
+      # node 24 (npm 11), NOT 22 (npm 10). npm 10's arborist crashes with
+      # `Cannot read properties of null (reading 'edgesOut')` while walking
+      # vitest -> its optional `jsdom@*` peer -> canvas, during `npm install`
+      # of a scaffolded page-money app. That froze EVERY PR in this repo
+      # (scaffold-currency is required + enforce_admins) with no code change,
+      # the moment vitest@5.0.0 published upstream. Measured: npm 10.9.9 fails
+      # on the unmodified template, npm 11.19.0 succeeds; overriding jsdom or
+      # pinning vitest does NOT fix it. Do not drop back to 22.
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: scaffold page-money
         run: go run ./cmd/civitai app init "CI Currency Block" --dir "$GITHUB_WORKSPACE/_ci-currency" --template page-money
