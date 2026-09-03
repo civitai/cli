@@ -15,6 +15,49 @@ body {
   max-width: 40rem;
   margin: 0 auto;
   padding: 2rem 1.5rem;
+
+  /* WIDTH-ADAPTIVE LAYOUT — a CONTAINER query, not a viewport media query.
+     Your block renders inside whatever slot the host gave it, and SLOT WIDTH IS
+     NOT MONOTONIC IN VIEWPORT WIDTH: the `model.sidebar_top` slot is ~360px on a
+     phone and only ~430px on a 1440px desktop. A viewport-based media query
+     inside the frame therefore answers a question nobody asked, which is why
+     this file has none. `container-type: inline-size` makes this element a query
+     container, so the `@container` rule below asks about the real box. */
+  container-type: inline-size;
+  container-name: block;
+}
+
+/* Narrow is the BASE state, and widening is the override. A block is narrow far
+   more often than not, so the mobile-ish layout is what you get with no query
+   matched at all — including in a browser that does not support `@container`. */
+.app-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.75rem;
+}
+
+/* 480px is `xs` on Civitai's block breakpoint scale, in CSS px:
+     xs 480 · sm 768 · md 1024 · lg 1184 · xl 1440
+   (Civitai's own scale — NOT Mantine's stock em scale, which agrees on `sm`
+   alone.) `xs` is the step this template can actually cross, since `.app` is
+   capped at 40rem; a threshold the layout can never reach teaches nothing.
+
+   🔴 WRITE THE PIXEL VALUE OUT. `@container block (min-width: var(--civitai-bp-xs))`
+   is silently DEAD: a media/container query prelude is evaluated before custom
+   properties are substituted, so the rule simply never applies — no error, no
+   warning, no console noise, and the layout is quietly stuck on one branch. The
+   `--civitai-bp-*` tokens exist for use in ordinary declarations, not here.
+
+   Adopting `@civitai/blocks-react`? `useBlockBreakpoint()` reports the same
+   scale in JS, for the decisions CSS cannot make — rendering a DIFFERENT element
+   tree rather than restyling the same one. See the `page-money` template.
+   Guide: https://developer.civitai.com/apps/responsive */
+@container block (min-width: 480px) {
+  .app-actions {
+    flex-direction: row;
+    align-items: center;
+  }
 }
 
 button {

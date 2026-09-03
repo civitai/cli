@@ -22,6 +22,19 @@ const estimateFn = vi.fn<() => Promise<BlockWorkflowSnapshot>>();
 vi.mock('@civitai/blocks-react', () => ({
   useBlockContext: () => ({ ready: true, viewer: { id: 2, username: 'dev' }, theme: 'dark' }),
   useBlockResize: () => {},
+  // Width tier is inert here (this test is about the poll loop, not layout), but
+  // it must be returned in FULL SHAPE — App calls `.below()` on it, so a partial
+  // stub throws. 🔴 This whole `vi.mock` is WHOLESALE: every hook App imports has
+  // to be listed, and vitest fails the test the moment App uses one that isn't.
+  // That is the right failure direction — a silently-missing export would render
+  // a different component than the one that ships — but it does mean this object
+  // is a second place to update when App adopts a new SDK hook.
+  useBlockBreakpoint: () => ({
+    tier: 'base',
+    measured: false,
+    atLeast: () => false,
+    below: () => true,
+  }),
   useBlockToken: () => ({ scopes: ['ai:write:budgeted'], raw: 't', expiresAt: '' }),
   useBuzzWorkflow: () => ({ estimate: estimateFn, submit: submitFn, poll: pollFn }),
   // Balance read is inert here (this test is about the poll loop, not balance).

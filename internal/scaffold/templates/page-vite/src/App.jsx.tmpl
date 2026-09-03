@@ -17,7 +17,14 @@ export default function App() {
     <main className="app">
       <h1>{{ .Name }}</h1>
       <p>A Civitai App built with Vite + React.</p>
-      <button onClick={() => setCount((c) => c + 1)}>count is {count}</button>
+      {/* THE RESPONSIVE EXAMPLE. These two buttons stack on a narrow block and
+          sit side by side once there is room. The switch lives in
+          src/index.css (`.app-actions` + the `@container` rule) — read the
+          comments there before adding a `@media` query of your own. */}
+      <div className="app-actions">
+        <button onClick={() => setCount((c) => c + 1)}>count is {count}</button>
+        <button onClick={() => setCount(0)}>reset</button>
+      </div>
     </main>
   );
 }

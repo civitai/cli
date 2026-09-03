@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  useBlockBreakpoint,
   useBlockContext,
   useBlockResize,
   useBlockToken,
@@ -141,6 +142,37 @@ export function App() {
 
   const rootRef = useRef<HTMLDivElement>(null);
   useBlockResize(rootRef);
+
+  // WIDTH-ADAPTIVE LAYOUT. `useBlockBreakpoint` reports the width tier of THIS
+  // BLOCK'S OWN BOX — a container query, not a viewport media query — because a
+  // block renders inside whatever slot the host gave it and SLOT WIDTH IS NOT
+  // MONOTONIC IN VIEWPORT WIDTH (the `model.sidebar_top` slot is ~360px on a
+  // phone and only ~430px on a 1440px desktop). Any viewport-based test —
+  // a viewport media query, or the window's own width read from JS — asks about
+  // the browser window, which is a question nobody here needed answered.
+  //
+  // Scale (CSS px, Civitai's own — NOT Mantine's stock em scale, which agrees on
+  // `sm` alone): xs 480 · sm 768 · md 1024 · lg 1184 · xl 1440. The same numbers
+  // are published as the `--civitai-bp-*` custom properties.
+  //
+  // 🔴 THOSE TOKENS CANNOT BE USED IN A QUERY CONDITION. `@media (min-width:
+  // var(--civitai-bp-sm))` is silently DEAD — a media/container query prelude is
+  // evaluated before custom properties are substituted, so the rule simply never
+  // applies: no error, no warning, no console noise. Write the pixel value out,
+  // or branch in JS the way this component does. (An `internal/scaffold` guard in
+  // the CLI repo fails on a `var()` inside any `@media`/`@container` prelude in
+  // these templates, for exactly this reason.)
+  //
+  // Re-render safety: the hook stores the resolved TIER, not the width, so
+  // dragging a window edge 200px inside one tier re-renders this block zero
+  // times. Full guide: https://developer.civitai.com/apps/responsive
+  const bp = useBlockBreakpoint(rootRef);
+  // ONE structural decision, deliberately. `below('sm')` is the "am I in a narrow
+  // slot?" question every block eventually asks; everything else here is fluid
+  // CSS already. `measured` is not gated on because the fallback (`'base'`, i.e.
+  // narrow) is the safe branch for a block — see the hook's own docs for when to
+  // gate on it instead.
+  const narrow = bp.below('sm');
 
   const [mode, setMode] = useState<GenMode>('txt2img');
   const [prompt, setPrompt] = useState('');
@@ -478,12 +510,32 @@ export function App() {
   const busy = isBusyPhase(phase);
   const isComfy = mode === 'comfy';
 
+  // The Model row's CONTENT, hoisted so the two layouts below share one copy of
+  // it. Only the container differs between the wide and narrow branches.
+  const modelRow = (
+    <>
+      <span style={currentModelStyle} title={checkpoint.label} data-testid="pm-model-label">
+        {checkpoint.label}
+        {checkpoint.baseModel ? ` (${checkpoint.baseModel})` : ''}
+      </span>
+      <Button
+        variant="light"
+        size="sm"
+        loading={pickerBusy}
+        onClick={() => void onChangeModel()}
+        data-testid="pm-change-model"
+      >
+        Change model
+      </Button>
+    </>
+  );
+
   // ---- Render ----
 
   if (!ready) {
     return (
       // Theme the block's OWN root; that's what the pack's CSS reads.
-      <div ref={rootRef} data-theme={theme} style={shell}>
+      <div ref={rootRef} data-theme={theme} data-block-tier={bp.tier} style={shell}>
         <Card padding="lg">
           <Group gap={10}>
             <Badge color="info" variant="light">
@@ -506,7 +558,9 @@ export function App() {
   };
 
   return (
-    <div ref={rootRef} data-theme={theme} style={shell}>
+    // `data-block-tier` is not required by anything — it is here so you can see
+    // the tier in devtools (and assert it in a test) while you build a layout.
+    <div ref={rootRef} data-theme={theme} data-block-tier={bp.tier} style={shell}>
       <Card padding="lg" style={cardStyle}>
         <Stack gap={16}>
           <strong style={titleStyle}>{{ .Name }}</strong>
@@ -570,25 +624,27 @@ export function App() {
                 <span style={fieldDescStyle}>
                   The checkpoint to generate with. The server validates + prices every generation.
                 </span>
-                <Group justify="space-between" align="center" gap={8} wrap={false}>
-                  <span
-                    style={currentModelStyle}
-                    title={checkpoint.label}
-                    data-testid="pm-model-label"
+                {/* THE RESPONSIVE EXAMPLE. Side by side when the block has room;
+                    stacked, with a full-width button, when it doesn't. This is a
+                    STRUCTURAL swap (a different element), which is the kind of
+                    change CSS alone handles badly and `useBlockBreakpoint` is
+                    for — pure sizing/spacing should stay in fluid CSS. */}
+                {narrow ? (
+                  <Stack gap={8} align="stretch" data-testid="pm-model-row" data-layout="stacked">
+                    {modelRow}
+                  </Stack>
+                ) : (
+                  <Group
+                    justify="space-between"
+                    align="center"
+                    gap={8}
+                    wrap={false}
+                    data-testid="pm-model-row"
+                    data-layout="row"
                   >
-                    {checkpoint.label}
-                    {checkpoint.baseModel ? ` (${checkpoint.baseModel})` : ''}
-                  </span>
-                  <Button
-                    variant="light"
-                    size="sm"
-                    loading={pickerBusy}
-                    onClick={() => void onChangeModel()}
-                    data-testid="pm-change-model"
-                  >
-                    Change model
-                  </Button>
-                </Group>
+                    {modelRow}
+                  </Group>
+                )}
               </div>
 
               {/* LoRA control. Add up to MAX_LORAS LoRAs on top of the checkpoint
