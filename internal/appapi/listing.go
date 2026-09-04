@@ -1016,6 +1016,38 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		if isModeratorTakedownMsg(msg) {
 			return fmt.Errorf("this listing is under a moderator takedown (403): %s — your account's access is not the problem and no CLI command reverses this; ask a Civitai moderator to relist it", msg)
 		}
+		// 🔴 THE THIRD INSTANCE OF THE WRONG-SUBJECT CLASS (#374/#391 on the 400
+		// arm, #509 on the takedown arm above, this one on ownership). An
+		// OWNERSHIP refusal is not an access refusal: the caller's Apps-author
+		// access can be perfect — they can be a moderator, and the account that
+		// submitted the publish request — and still be refused, because the gate
+		// resolves ownership KIND-AWARE (onsite: the OAuth client's owner,
+		// falling back to the listing's `user_id`; OFFSITE: the listing's
+		// `user_id`) and has no moderator bypass. See isNotOwnedMsg for the
+		// measurement and for why the offsite branch is the one that matters
+		// here.
+		//
+		// It must sit BELOW the takedown branch. A listing can be BOTH
+		// moderator-removed and owned by someone else, and the server's ownership
+		// check runs FIRST, so the client only ever sees one of the two messages
+		// — but if that ever changes, "ask a moderator to relist it" is the more
+		// actionable of the two and should keep winning.
+		// 🔴 THE REMEDY NAMES THE COLLABORATOR CASE, because the gate is
+		// `resolveListingRole(...) === null` — neither owner NOR accepted
+		// collaborator. An invited developer who has not accepted the seat is
+		// refused here, and for them "sign in as the owner" is the wrong step
+		// while "accept the invite" is the one that works. Omitting it would be
+		// this arm's own defect one notch smaller.
+		//
+		// ⚠ KNOWN IMPRECISION, accepted: the server reports NOT_OWNED (not
+		// NOT_FOUND) for a listing DELETED between its two reads — a race its
+		// own source records at `offsite-listing.service.ts:2453-2460`. This
+		// sentence is then confidently wrong about a listing that no longer
+		// exists. It is not a regression — the catch-all it replaces was equally
+		// false there — but do not tighten the wording without re-reading that.
+		if isNotOwnedMsg(msg) {
+			return fmt.Errorf("this listing belongs to another account (403): %s — your account's access is not the problem, and being a moderator does not help: sign in as the app's owner (`civitai whoami` shows who you are), accept a pending collaborator invite if you were sent one, or ask the owner to make the change", msg)
+		}
 		return fmt.Errorf("not permitted for your account (403): %s — managing store listings needs Apps-author access (invite-only beta)", msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("no store listing found for this app (404): %s — a store listing is created when you run `civitai app submit` and is settable while the app is pending review; submit the app first, then these commands will work", msg)

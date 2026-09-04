@@ -635,8 +635,18 @@ func TestFallbackFailuresKeepTheirOwnError(t *testing.T) {
 		// listingError's arm for that status — not from a shared prefix.
 		wantMsg string
 	}{
+		// 🔴 THE FIXTURE MESSAGE IS A COHORT REFUSAL ON PURPOSE. It used to be
+		// "you can only manage your own listings", which was incidental — any
+		// 403 body exercises this row's actual subject (the fallback's own
+		// error survives instead of inheriting the submission's not-found).
+		// That string now has its OWN arm in listingError (the NOT_OWNED
+		// ownership branch), so leaving it here would silently re-point this
+		// row at that arm and couple an unrelated test to it. The cohort
+		// message is the one the catch-all is genuinely true of, which is the
+		// arm `wantMsg` below names. The not-owned routing is pinned by
+		// appapi's TestListingForbiddenTakedownDoesNotBlameTheAccount.
 		{"403 from the listings route", http.StatusForbidden,
-			`{"error":{"json":{"message":"you can only manage your own listings"}}}`,
+			`{"error":{"json":{"message":"Apps authoring is not enabled"}}}`,
 			civitai.ErrUnauthorized, "not permitted for your account (403)"},
 		{"500 from the listings route", http.StatusInternalServerError,
 			`{"error":{"json":{"message":"boom"}}}`, nil, ""},

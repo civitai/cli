@@ -1886,6 +1886,122 @@ func isModeratorTakedownMsg(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "removed by a moderator")
 }
 
+// isNotOwnedMsg detects the server's OWNERSHIP refusal, and exists for exactly
+// the reason its two siblings above do: the wire carries no distinct code. The
+// service throws `OffsiteRequestError('NOT_OWNED', …)`, but `mapOffsiteError`
+// (`src/server/routers/app-listings.router.ts:359`) collapses NOT_OWNED and
+// FORBIDDEN onto the SAME TRPCError code, so the original discriminator is gone
+// by the time it reaches us and the message is all that is left.
+//
+// 🔴 THIS IS NOT AN ACCESS PROBLEM, which is the whole point of the branch it
+// feeds. The gate is `resolveListingRole(...) === null` — the caller is neither
+// the listing's owner NOR an accepted collaborator on it — and there is
+// deliberately NO moderator bypass on it (contrast
+// `app-listing-assets.service::loadOwnedListing`, which does bypass for mods;
+// `offsite-listing.service.ts:1289-1291` states the difference). Being
+// `app_block_publish_requests.submitted_by_user_id` is not ownership either.
+//
+// 🔴 Ownership is resolved KIND-AWARE, and BOTH branches matter — an earlier
+// draft of this comment gave only the first and named the second as the thing
+// that is *not* the authority, which is backwards for the offsite case:
+//
+//	// app-access.service.ts:283-292
+//	if (args.kind === 'onsite') return args.blockOwnerUserId ?? args.listingUserId;
+//	return args.listingUserId;
+//
+// So for an ONSITE listing the authority is the OAuth client's owner
+// (`appBlock.app.userId`), falling back to the listing's `user_id`; for OFFSITE
+// (and any unrecognised kind) the authority IS the listing's `user_id`. All
+// three throws above live in `offsite-listing.service.ts` and their gates are
+// dual-kind, so a maintainer debugging an offsite refusal by looking at
+// `AppBlock.app.userId` is looking at the wrong column — it can be null there.
+//
+// Measured 2026-09-03: an account that was both a moderator and the publish
+// request's submitter was still refused, while the SAME account managed a
+// listing it owned in the same minutes. So no grant, re-login or cohort invite
+// changes this outcome, and the fallback's "needs Apps-author access" is the
+// wrong subject.
+//
+// Matched on the stable CORE shared by every reachable spelling rather than a
+// whole sentence, because three of them ship today
+// (`offsite-listing.service.ts`, civitai@origin/main):
+//
+//   - :2467 "you can only manage your own listings"  (the manage path)
+//   - :1323 "you can only edit your own listings"    (the edit path)
+//   - :1811 "you can only submit your own revision"  (the revision path)
+//
+// They share no noun and no verb — only "you can only …your own".
+//
+// 🔴 SAFETY HERE IS ROUTE-POPULATION CONTAINMENT, NOT A PROPERTY OF THE STRING.
+// The predicate is not scoped to listings, so what keeps it from mis-firing is
+// WHICH ROUTES reach `listingError` — and that set is every `listingRoute`
+// DECLARED IN THIS PACKAGE (they all sit in one block in `listing.go` today,
+// but see arm 1 below), NOT "the `appListings.*` procs". An earlier draft
+// of this paragraph said the latter and was already false when written:
+// `listingError` has three call sites, and the third is `MintImageUpload`
+// (`listing.go`), which passes `ImageUploadPath` — the REST endpoint
+// `/api/v1/image-upload`, not a tRPC proc at all.
+//
+// 🔴 THE TRIGGER HAS TWO ARMS, because the hazard does. An earlier draft had
+// only the first and was keyed on a LOCATION rather than on the property:
+//
+//  1. **A route becomes reachable.** Re-run the enumeration when a
+//     `listingRoute` is declared ANYWHERE IN THIS PACKAGE — not "added to the
+//     block in listing.go". `listing_op_test.go` says why in its own words: it
+//     reads the whole package "because a route declared in a sibling file of
+//     the same package is exactly as reachable". They all happen to live in
+//     one block today; that is tidiness, not a constraint. (That ledger test
+//     does fail on a new route, but its remedy text tells you to classify the
+//     route's op — it says nothing about re-running THIS enumeration.)
+//  2. **A refusal changes behind a route already in the set.** Nothing about
+//     addition covers this, and it is the likelier of the two: any route here
+//     whose server side gains a `"you can only …your own"` refusal starts
+//     being answered by this arm, with the wrong noun.
+//
+// The enumeration itself, over the whole server repo rather than one file:
+// other NOT_OWNED-shaped refusals matching this core ship for challenges,
+// collections, creator shop and remix gallery — and, closest to this CLI's own
+// surface, `apps-shared.router.ts:611` ("you can only edit your own
+// submissions"). None is on a route this package declares today.
+//
+// ⚠ `/api/v1/image-upload` is the interesting one, and an earlier draft of this
+// paragraph got it WRONG in a way worth recording. It claimed that route's
+// "only ownership refusal" was "You do not own this image"
+// (`block-image-upload.service.ts:360`). Measured: that route is
+// `src/pages/api/v1/image-upload/index.ts`, it performs NO ownership check at
+// all, and can only answer 401 or 200 — so containment there is currently
+// TOTAL, not luck. The cited string lives in `gateBlockUploadImage`, whose only
+// caller is a tRPC proc (`block-image-upload.router.ts:48`) that this CLI never
+// calls. The hazard is arm 2 above — a 403 being ADDED to that route later —
+// not a refusal that is there now.
+//
+// Two more NOT_OWNED strings ship in `offsite-moderation.service.ts` (:1668,
+// :2226) and are unreachable only because the CLI calls none of the procs that
+// raise them (`unpublishOwnListing` / `republishOwnListing` /
+// `listMyListingModerationEvents`).
+//
+// A fourth listing-service spelling, :582 "you can only withdraw your own
+// publish requests", is also unreachable here — but by neither of the two
+// mechanisms an earlier draft of this comment claimed. Its `OffsiteRequestError`
+// is raised by `withdrawExternalRequest`, whose route is the tRPC proc
+// `appListings.withdrawExternalRequest` (`app-listings.router.ts:646`); that
+// proc does NOT use `mapOffsiteError` — it wraps every failure in
+// `TRPCError{code:'BAD_REQUEST'}` (:660-664), i.e. HTTP 400, not 403. And the
+// CLI does not call it at all: its withdraw path is the REST `WithdrawPath`
+// with its own `withdrawError`. (The REST route `api/v1/blocks/withdraw.ts`
+// handles a BYTE-IDENTICAL twin string thrown by a DIFFERENT class in
+// `publish-request.service.ts:1649` — not this one. Do not merge the two.)
+//
+// 🔴 That proc is the one in its router that hand-rolls its error mapping while
+// its own docstring says it "mirrors `blocks.withdrawPublishRequest`". An
+// ordinary consolidation onto `mapOffsiteError` would turn :582 into a real 403
+// that this predicate matches — at which point the printed noun "this listing"
+// is wrong for a publish request. Re-read this arm if that consolidation lands.
+func isNotOwnedMsg(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "you can only ") && strings.Contains(m, "your own")
+}
+
 // devTunnelError maps a non-200 dev-tunnel tRPC response to an actionable CLI
 // error. tRPC error bodies are {error:{json:{message,code,...}}}; the HTTP
 // status carries the mapped code (403 flag-off/not-author, 404 not-your-app).

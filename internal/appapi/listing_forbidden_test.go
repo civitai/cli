@@ -57,6 +57,39 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 		// wantAccessClaim is whether the Apps-author-access diagnosis belongs
 		// on this 403 at all.
 		wantAccessClaim bool
+		// wantRemedy is every clause of the arm's DIAGNOSIS and REMEDY that
+		// must survive a reword — i.e. the whole sentence after the server's
+		// own message, clause by clause.
+		//
+		// 🔴 THE SENTENCE ABOVE IS THE COVERAGE CLAIM, AND IT WAS FALSE TWICE.
+		// Round 3 of the audit ladder wrote "every clause" while pinning two of
+		// three, and round 4 measured the survivor: deleting `, or ask the
+		// owner to make the change` left the FULL suite green (21/21). The
+		// miscount was treating "being a moderator does not help" — a negation
+		// of a non-remedy — as one of the remedy STEPS, which hid that a real
+		// step was unlisted. There are three steps (sign in / accept an invite
+		// / ask the owner), plus the diagnosis and that negation, and all five
+		// are listed on every not-owned row now.
+		//
+		// So: if you add a clause to the arm, add it here. A guard whose
+		// DESCRIPTION is wider than its implementation reads as coverage while
+		// providing none, which is worse than no guard, because it stops the
+		// next person looking.
+		//
+		// 🔴 IT EXISTS BECAUSE THE REMEDY WAS UNPINNED AND AN AUDIT PROVED IT:
+		// deleting BOTH the collaborator clause and the moderator clause from
+		// the not-owned arm left the ENTIRE suite green (measured, `-count=1`,
+		// full `./...`). Every other assertion here keys on the arm's opening
+		// words, the echoed server message, or the absence of the false advice
+		// — none of them touches the part that tells the user what to DO.
+		//
+		// That matters most for the collaborator clause: the gate is
+		// `resolveListingRole(...) === null`, so an invited developer who has
+		// not accepted the seat lands here, and "sign in as the owner" is a
+		// step they cannot take while "accept the invite" is the one that
+		// works. Dropping it would be this arm's own defect one notch smaller,
+		// which is the thing the whole PR exists to stop doing.
+		wantRemedy []string
 	}{
 		{
 			// civitai/civitai@origin/main,
@@ -89,6 +122,123 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			msg:             "Removed By A Moderator, pending appeal",
 			wantSubstr:      "ask a Civitai moderator to relist it",
 			wantAccessClaim: false,
+		},
+		{
+			// 🔴 THE THIRD INSTANCE OF THE WRONG-SUBJECT CLASS, one arm over
+			// again. civitai/civitai@origin/main,
+			// src/server/services/blocks/offsite-listing.service.ts:2467 —
+			// `OffsiteRequestError('NOT_OWNED', 'you can only manage your own
+			// listings')`, thrown when `resolveListingRole` returns null, i.e.
+			// the caller is neither the listing's owner nor an accepted
+			// collaborator on it.
+			//
+			// Measured on 2026-09-03 against a real listing: the account was a
+			// moderator AND the publish request's `submitted_by_user_id`, and
+			// was still refused, because ownership resolves KIND-AWARE and
+			// there is deliberately no moderator bypass on that gate. So the
+			// caller's Apps-author access is fine and is not what failed.
+			//
+			// 🔴 KIND-AWARE means BOTH branches, and this row's throw
+			// (`getMyListingForApp`) is dual-kind: onsite resolves to the OAuth
+			// client's owner falling back to the listing's `user_id`, OFFSITE
+			// resolves to the listing's `user_id`. For an offsite listing
+			// `appBlockId` is null, so reading `appBlock.app.userId` to debug
+			// one sends you to a null column. See isNotOwnedMsg.
+			name:            "not-owned, the manage refusal",
+			msg:             "you can only manage your own listings",
+			wantSubstr:      "belongs to another account",
+			wantAccessClaim: false,
+			wantRemedy: []string{
+				"your account's access is not the problem",
+				"being a moderator does not help",
+				"sign in as the app's owner",
+				"civitai whoami",
+				"accept a pending collaborator invite",
+				"ask the owner to make the change",
+			},
+		},
+		{
+			// A SECOND spelling from the same service (:1323, the edit path).
+			// Listed separately for the same reason the takedown rows are: a
+			// predicate keyed on one whole sentence answers the other with the
+			// false advice.
+			name:            "not-owned, the edit refusal",
+			msg:             "you can only edit your own listings",
+			wantSubstr:      "belongs to another account",
+			wantAccessClaim: false,
+			wantRemedy: []string{
+				"your account's access is not the problem",
+				"being a moderator does not help",
+				"sign in as the app's owner",
+				"civitai whoami",
+				"accept a pending collaborator invite",
+				"ask the owner to make the change",
+			},
+		},
+		{
+			// A THIRD spelling (:1811, the revision-submit path). It shares
+			// neither the noun ("revision", not "listings") nor the verb with
+			// the two above — only the core the predicate matches.
+			//
+			// A FOURTH exists, ':582 — you can only withdraw your own publish
+			// requests', and is deliberately NOT a row here: it is raised by
+			// `withdrawExternalRequest`, whose proc wraps every failure as
+			// BAD_REQUEST (400, not 403) and which the CLI does not call at all.
+			// See isNotOwnedMsg for why the REST withdraw route is NOT the
+			// mechanism — it handles a byte-identical twin from a different
+			// service.
+			name:            "not-owned, the revision-submit refusal",
+			msg:             "you can only submit your own revision",
+			wantSubstr:      "belongs to another account",
+			wantAccessClaim: false,
+			wantRemedy: []string{
+				"your account's access is not the problem",
+				"being a moderator does not help",
+				"sign in as the app's owner",
+				"civitai whoami",
+				"accept a pending collaborator invite",
+				"ask the owner to make the change",
+			},
+		},
+		{
+			// 🔴 INVARIANT GUARD, not regression coverage — labelled as one for
+			// the same reason as the takedown case-fold row above: no measured
+			// server string capitalises this core today, but the predicate
+			// folds case, so a "simplification" that drops the fold is a live
+			// hazard with no shipped string to catch it.
+			name:            "invariant: the not-owned core is matched case-insensitively",
+			msg:             "You Can Only manage Your Own listings",
+			wantSubstr:      "belongs to another account",
+			wantAccessClaim: false,
+		},
+		{
+			// 🔴 INVARIANT GUARD pinning the predicate's NARROWNESS, added
+			// because a mutation sweep found the conjunction's two halves were
+			// each individually redundant: dropping either clause left every
+			// row above still green. This row kills the "you can only " half.
+			//
+			// A REAL string, not an invented one — `civitai@origin/main` ships
+			// many "you can only …" refusals that are nothing to do with
+			// ownership (rate limits, upload caps, status preconditions). This
+			// is the rate-limit one. It cannot reach this arm today, hence
+			// invariant-guard rather than regression coverage; what it pins is
+			// that a future widening to a bare "you can only" prefix would
+			// start telling a rate-limited user their listing belongs to
+			// someone else.
+			name:            "invariant: a non-ownership 'you can only' refusal is NOT not-owned",
+			msg:             "You can only request 2 email changes per day. Please try again tomorrow.",
+			wantSubstr:      accessClaim,
+			wantAccessClaim: true,
+		},
+		{
+			// 🔴 INVARIANT GUARD, the mirror of the row above — it kills the
+			// "your own" half of the conjunction, which the same sweep found
+			// equally unpinned. Also a real shipped string: several refusals
+			// say "your own" without being ownership refusals of a LISTING.
+			name:            "invariant: a non-ownership 'your own' refusal is NOT not-owned",
+			msg:             "You cannot purchase access to your own chapter.",
+			wantSubstr:      accessClaim,
+			wantAccessClaim: true,
 		},
 		{
 			// The 403 the fallback is TRUE of — the invite-gated cohort. Same
@@ -141,6 +291,14 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 						"access is the problem here, and no grant, re-login or CLI command reverses this "+
 						"state — the user is sent to fix something that is already fine.\ngot: %s",
 						tc.msg, accessClaim, got)
+				}
+			}
+
+			for _, clause := range tc.wantRemedy {
+				if !strings.Contains(got, clause) {
+					t.Errorf("the 403 for %q lost the remedy clause %q. The arm still names the right "+
+						"CAUSE, so every other assertion here stays green — but the user is no longer "+
+						"told the step that works.\ngot: %s", tc.msg, clause, got)
 				}
 			}
 
