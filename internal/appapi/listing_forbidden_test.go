@@ -57,8 +57,24 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 		// wantAccessClaim is whether the Apps-author-access diagnosis belongs
 		// on this 403 at all.
 		wantAccessClaim bool
-		// wantRemedy is every clause of the arm's REMEDY that must survive a
-		// reword.
+		// wantRemedy is every clause of the arm's DIAGNOSIS and REMEDY that
+		// must survive a reword — i.e. the whole sentence after the server's
+		// own message, clause by clause.
+		//
+		// 🔴 THE SENTENCE ABOVE IS THE COVERAGE CLAIM, AND IT WAS FALSE TWICE.
+		// Round 3 of the audit ladder wrote "every clause" while pinning two of
+		// three, and round 4 measured the survivor: deleting `, or ask the
+		// owner to make the change` left the FULL suite green (21/21). The
+		// miscount was treating "being a moderator does not help" — a negation
+		// of a non-remedy — as one of the remedy STEPS, which hid that a real
+		// step was unlisted. There are three steps (sign in / accept an invite
+		// / ask the owner), plus the diagnosis and that negation, and all five
+		// are listed on every not-owned row now.
+		//
+		// So: if you add a clause to the arm, add it here. A guard whose
+		// DESCRIPTION is wider than its implementation reads as coverage while
+		// providing none, which is worse than no guard, because it stops the
+		// next person looking.
 		//
 		// 🔴 IT EXISTS BECAUSE THE REMEDY WAS UNPINNED AND AN AUDIT PROVED IT:
 		// deleting BOTH the collaborator clause and the moderator clause from
@@ -132,7 +148,14 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			msg:             "you can only manage your own listings",
 			wantSubstr:      "belongs to another account",
 			wantAccessClaim: false,
-			wantRemedy:      []string{"sign in as the app's owner", "civitai whoami", "accept a pending collaborator invite", "being a moderator does not help"},
+			wantRemedy: []string{
+				"your account's access is not the problem",
+				"being a moderator does not help",
+				"sign in as the app's owner",
+				"civitai whoami",
+				"accept a pending collaborator invite",
+				"ask the owner to make the change",
+			},
 		},
 		{
 			// A SECOND spelling from the same service (:1323, the edit path).
@@ -143,7 +166,14 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			msg:             "you can only edit your own listings",
 			wantSubstr:      "belongs to another account",
 			wantAccessClaim: false,
-			wantRemedy:      []string{"sign in as the app's owner", "civitai whoami", "accept a pending collaborator invite", "being a moderator does not help"},
+			wantRemedy: []string{
+				"your account's access is not the problem",
+				"being a moderator does not help",
+				"sign in as the app's owner",
+				"civitai whoami",
+				"accept a pending collaborator invite",
+				"ask the owner to make the change",
+			},
 		},
 		{
 			// A THIRD spelling (:1811, the revision-submit path). It shares
@@ -161,7 +191,14 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			msg:             "you can only submit your own revision",
 			wantSubstr:      "belongs to another account",
 			wantAccessClaim: false,
-			wantRemedy:      []string{"sign in as the app's owner", "civitai whoami", "accept a pending collaborator invite", "being a moderator does not help"},
+			wantRemedy: []string{
+				"your account's access is not the problem",
+				"being a moderator does not help",
+				"sign in as the app's owner",
+				"civitai whoami",
+				"accept a pending collaborator invite",
+				"ask the owner to make the change",
+			},
 		},
 		{
 			// 🔴 INVARIANT GUARD, not regression coverage — labelled as one for
