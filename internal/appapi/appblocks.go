@@ -1934,27 +1934,46 @@ func isModeratorTakedownMsg(msg string) bool {
 //
 // 🔴 SAFETY HERE IS ROUTE-POPULATION CONTAINMENT, NOT A PROPERTY OF THE STRING.
 // The predicate is not scoped to listings, so what keeps it from mis-firing is
-// WHICH ROUTES reach `listingError` — and that set is the `listingRoute` block
-// at the top of `listing.go`, NOT "the `appListings.*` procs". An earlier draft
+// WHICH ROUTES reach `listingError` — and that set is every `listingRoute`
+// DECLARED IN THIS PACKAGE (they all sit in one block in `listing.go` today,
+// but see arm 1 below), NOT "the `appListings.*` procs". An earlier draft
 // of this paragraph said the latter and was already false when written:
 // `listingError` has three call sites, and the third is `MintImageUpload`
 // (`listing.go`), which passes `ImageUploadPath` — the REST endpoint
 // `/api/v1/image-upload`, not a tRPC proc at all.
 //
-// So the trigger is mechanical and matches the premise: **re-run the
-// enumeration when a route is ADDED TO THAT BLOCK**, whatever its shape. (An
-// earlier trigger said "if the CLI routes a NON-LISTING proc through
-// listingError" — a different predicate from its own premise, and one that
-// would not fire for image-upload, since image-upload *is* a listing route.)
+// 🔴 THE TRIGGER HAS TWO ARMS, because the hazard does. An earlier draft had
+// only the first and was keyed on a LOCATION rather than on the property:
+//
+//  1. **A route becomes reachable.** Re-run the enumeration when a
+//     `listingRoute` is declared ANYWHERE IN THIS PACKAGE — not "added to the
+//     block in listing.go". `listing_op_test.go` says why in its own words: it
+//     reads the whole package "because a route declared in a sibling file of
+//     the same package is exactly as reachable". They all happen to live in
+//     one block today; that is tidiness, not a constraint. (That ledger test
+//     does fail on a new route, but its remedy text tells you to classify the
+//     route's op — it says nothing about re-running THIS enumeration.)
+//  2. **A refusal changes behind a route already in the set.** Nothing about
+//     addition covers this, and it is the likelier of the two: any route here
+//     whose server side gains a `"you can only …your own"` refusal starts
+//     being answered by this arm, with the wrong noun.
 //
 // The enumeration itself, over the whole server repo rather than one file:
 // other NOT_OWNED-shaped refusals matching this core ship for challenges,
 // collections, creator shop and remix gallery — and, closest to this CLI's own
 // surface, `apps-shared.router.ts:611` ("you can only edit your own
-// submissions"). None is on a route in that block today. `/api/v1/image-upload`
-// is the one to watch: its only ownership refusal is currently "You do not own
-// this image" (`block-image-upload.service.ts:360`), which does NOT match the
-// core — so containment there is luck, not design.
+// submissions"). None is on a route this package declares today.
+//
+// ⚠ `/api/v1/image-upload` is the interesting one, and an earlier draft of this
+// paragraph got it WRONG in a way worth recording. It claimed that route's
+// "only ownership refusal" was "You do not own this image"
+// (`block-image-upload.service.ts:360`). Measured: that route is
+// `src/pages/api/v1/image-upload/index.ts`, it performs NO ownership check at
+// all, and can only answer 401 or 200 — so containment there is currently
+// TOTAL, not luck. The cited string lives in `gateBlockUploadImage`, whose only
+// caller is a tRPC proc (`block-image-upload.router.ts:48`) that this CLI never
+// calls. The hazard is arm 2 above — a 403 being ADDED to that route later —
+// not a refusal that is there now.
 //
 // Two more NOT_OWNED strings ship in `offsite-moderation.service.ts` (:1668,
 // :2226) and are unreachable only because the CLI calls none of the procs that

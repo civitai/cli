@@ -132,7 +132,7 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			msg:             "you can only manage your own listings",
 			wantSubstr:      "belongs to another account",
 			wantAccessClaim: false,
-			wantRemedy:      []string{"accept a pending collaborator invite", "being a moderator does not help"},
+			wantRemedy:      []string{"sign in as the app's owner", "civitai whoami", "accept a pending collaborator invite", "being a moderator does not help"},
 		},
 		{
 			// A SECOND spelling from the same service (:1323, the edit path).
@@ -143,7 +143,7 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			msg:             "you can only edit your own listings",
 			wantSubstr:      "belongs to another account",
 			wantAccessClaim: false,
-			wantRemedy:      []string{"accept a pending collaborator invite", "being a moderator does not help"},
+			wantRemedy:      []string{"sign in as the app's owner", "civitai whoami", "accept a pending collaborator invite", "being a moderator does not help"},
 		},
 		{
 			// A THIRD spelling (:1811, the revision-submit path). It shares
@@ -161,7 +161,7 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			msg:             "you can only submit your own revision",
 			wantSubstr:      "belongs to another account",
 			wantAccessClaim: false,
-			wantRemedy:      []string{"accept a pending collaborator invite", "being a moderator does not help"},
+			wantRemedy:      []string{"sign in as the app's owner", "civitai whoami", "accept a pending collaborator invite", "being a moderator does not help"},
 		},
 		{
 			// 🔴 INVARIANT GUARD, not regression coverage — labelled as one for
