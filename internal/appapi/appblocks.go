@@ -1934,12 +1934,27 @@ func isModeratorTakedownMsg(msg string) bool {
 //
 // 🔴 SAFETY HERE IS ROUTE-POPULATION CONTAINMENT, NOT A PROPERTY OF THE STRING.
 // The predicate is not scoped to listings, so what keeps it from mis-firing is
-// that only `appListings.*` procs reach `listingError`. Other NOT_OWNED-shaped
-// refusals ship elsewhere in that server (challenges, collections, creator
-// shop, remix gallery) and match the same core; none of them is on a route this
-// function answers for. **If the CLI ever routes a non-listing proc through
-// `listingError`, re-run that enumeration** — over the whole server repo, not
-// over one file.
+// WHICH ROUTES reach `listingError` — and that set is the `listingRoute` block
+// at the top of `listing.go`, NOT "the `appListings.*` procs". An earlier draft
+// of this paragraph said the latter and was already false when written:
+// `listingError` has three call sites, and the third is `MintImageUpload`
+// (`listing.go`), which passes `ImageUploadPath` — the REST endpoint
+// `/api/v1/image-upload`, not a tRPC proc at all.
+//
+// So the trigger is mechanical and matches the premise: **re-run the
+// enumeration when a route is ADDED TO THAT BLOCK**, whatever its shape. (An
+// earlier trigger said "if the CLI routes a NON-LISTING proc through
+// listingError" — a different predicate from its own premise, and one that
+// would not fire for image-upload, since image-upload *is* a listing route.)
+//
+// The enumeration itself, over the whole server repo rather than one file:
+// other NOT_OWNED-shaped refusals matching this core ship for challenges,
+// collections, creator shop and remix gallery — and, closest to this CLI's own
+// surface, `apps-shared.router.ts:611` ("you can only edit your own
+// submissions"). None is on a route in that block today. `/api/v1/image-upload`
+// is the one to watch: its only ownership refusal is currently "You do not own
+// this image" (`block-image-upload.service.ts:360`), which does NOT match the
+// core — so containment there is luck, not design.
 //
 // Two more NOT_OWNED strings ship in `offsite-moderation.service.ts` (:1668,
 // :2226) and are unreachable only because the CLI calls none of the procs that
@@ -1952,7 +1967,7 @@ func isModeratorTakedownMsg(msg string) bool {
 // is raised by `withdrawExternalRequest`, whose route is the tRPC proc
 // `appListings.withdrawExternalRequest` (`app-listings.router.ts:646`); that
 // proc does NOT use `mapOffsiteError` — it wraps every failure in
-// `TRPCError{code:'BAD_REQUEST'}` (:653-659), i.e. HTTP 400, not 403. And the
+// `TRPCError{code:'BAD_REQUEST'}` (:660-664), i.e. HTTP 400, not 403. And the
 // CLI does not call it at all: its withdraw path is the REST `WithdrawPath`
 // with its own `withdrawError`. (The REST route `api/v1/blocks/withdraw.ts`
 // handles a BYTE-IDENTICAL twin string thrown by a DIFFERENT class in

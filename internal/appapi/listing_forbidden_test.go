@@ -57,6 +57,23 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 		// wantAccessClaim is whether the Apps-author-access diagnosis belongs
 		// on this 403 at all.
 		wantAccessClaim bool
+		// wantRemedy is every clause of the arm's REMEDY that must survive a
+		// reword.
+		//
+		// 🔴 IT EXISTS BECAUSE THE REMEDY WAS UNPINNED AND AN AUDIT PROVED IT:
+		// deleting BOTH the collaborator clause and the moderator clause from
+		// the not-owned arm left the ENTIRE suite green (measured, `-count=1`,
+		// full `./...`). Every other assertion here keys on the arm's opening
+		// words, the echoed server message, or the absence of the false advice
+		// — none of them touches the part that tells the user what to DO.
+		//
+		// That matters most for the collaborator clause: the gate is
+		// `resolveListingRole(...) === null`, so an invited developer who has
+		// not accepted the seat lands here, and "sign in as the owner" is a
+		// step they cannot take while "accept the invite" is the one that
+		// works. Dropping it would be this arm's own defect one notch smaller,
+		// which is the thing the whole PR exists to stop doing.
+		wantRemedy []string
 	}{
 		{
 			// civitai/civitai@origin/main,
@@ -101,14 +118,21 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			//
 			// Measured on 2026-09-03 against a real listing: the account was a
 			// moderator AND the publish request's `submitted_by_user_id`, and
-			// was still refused, because ownership resolves KIND-AWARE to the
-			// OAuth client's owner (`appBlock.app.userId`) and there is
-			// deliberately no moderator bypass on that gate. So the caller's
-			// Apps-author access is fine and is not what failed.
+			// was still refused, because ownership resolves KIND-AWARE and
+			// there is deliberately no moderator bypass on that gate. So the
+			// caller's Apps-author access is fine and is not what failed.
+			//
+			// 🔴 KIND-AWARE means BOTH branches, and this row's throw
+			// (`getMyListingForApp`) is dual-kind: onsite resolves to the OAuth
+			// client's owner falling back to the listing's `user_id`, OFFSITE
+			// resolves to the listing's `user_id`. For an offsite listing
+			// `appBlockId` is null, so reading `appBlock.app.userId` to debug
+			// one sends you to a null column. See isNotOwnedMsg.
 			name:            "not-owned, the manage refusal",
 			msg:             "you can only manage your own listings",
 			wantSubstr:      "belongs to another account",
 			wantAccessClaim: false,
+			wantRemedy:      []string{"accept a pending collaborator invite", "being a moderator does not help"},
 		},
 		{
 			// A SECOND spelling from the same service (:1323, the edit path).
@@ -119,6 +143,7 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			msg:             "you can only edit your own listings",
 			wantSubstr:      "belongs to another account",
 			wantAccessClaim: false,
+			wantRemedy:      []string{"accept a pending collaborator invite", "being a moderator does not help"},
 		},
 		{
 			// A THIRD spelling (:1811, the revision-submit path). It shares
@@ -136,6 +161,7 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			msg:             "you can only submit your own revision",
 			wantSubstr:      "belongs to another account",
 			wantAccessClaim: false,
+			wantRemedy:      []string{"accept a pending collaborator invite", "being a moderator does not help"},
 		},
 		{
 			// 🔴 INVARIANT GUARD, not regression coverage — labelled as one for
@@ -228,6 +254,14 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 						"access is the problem here, and no grant, re-login or CLI command reverses this "+
 						"state — the user is sent to fix something that is already fine.\ngot: %s",
 						tc.msg, accessClaim, got)
+				}
+			}
+
+			for _, clause := range tc.wantRemedy {
+				if !strings.Contains(got, clause) {
+					t.Errorf("the 403 for %q lost the remedy clause %q. The arm still names the right "+
+						"CAUSE, so every other assertion here stays green — but the user is no longer "+
+						"told the step that works.\ngot: %s", tc.msg, clause, got)
 				}
 			}
 

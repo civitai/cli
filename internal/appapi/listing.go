@@ -1021,8 +1021,11 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// OWNERSHIP refusal is not an access refusal: the caller's Apps-author
 		// access can be perfect — they can be a moderator, and the account that
 		// submitted the publish request — and still be refused, because the gate
-		// resolves the OAuth client's owner and has no moderator bypass. See
-		// isNotOwnedMsg for the measurement.
+		// resolves ownership KIND-AWARE (onsite: the OAuth client's owner,
+		// falling back to the listing's `user_id`; OFFSITE: the listing's
+		// `user_id`) and has no moderator bypass. See isNotOwnedMsg for the
+		// measurement and for why the offsite branch is the one that matters
+		// here.
 		//
 		// It must sit BELOW the takedown branch. A listing can be BOTH
 		// moderator-removed and owned by someone else, and the server's ownership
@@ -1038,7 +1041,7 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		//
 		// ⚠ KNOWN IMPRECISION, accepted: the server reports NOT_OWNED (not
 		// NOT_FOUND) for a listing DELETED between its two reads — a race its
-		// own source records at `offsite-listing.service.ts:2454-2461`. This
+		// own source records at `offsite-listing.service.ts:2453-2460`. This
 		// sentence is then confidently wrong about a listing that no longer
 		// exists. It is not a regression — the catch-all it replaces was equally
 		// false there — but do not tighten the wording without re-reading that.
