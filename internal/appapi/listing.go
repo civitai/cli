@@ -1029,8 +1029,21 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		// check runs FIRST, so the client only ever sees one of the two messages
 		// — but if that ever changes, "ask a moderator to relist it" is the more
 		// actionable of the two and should keep winning.
+		// 🔴 THE REMEDY NAMES THE COLLABORATOR CASE, because the gate is
+		// `resolveListingRole(...) === null` — neither owner NOR accepted
+		// collaborator. An invited developer who has not accepted the seat is
+		// refused here, and for them "sign in as the owner" is the wrong step
+		// while "accept the invite" is the one that works. Omitting it would be
+		// this arm's own defect one notch smaller.
+		//
+		// ⚠ KNOWN IMPRECISION, accepted: the server reports NOT_OWNED (not
+		// NOT_FOUND) for a listing DELETED between its two reads — a race its
+		// own source records at `offsite-listing.service.ts:2454-2461`. This
+		// sentence is then confidently wrong about a listing that no longer
+		// exists. It is not a regression — the catch-all it replaces was equally
+		// false there — but do not tighten the wording without re-reading that.
 		if isNotOwnedMsg(msg) {
-			return fmt.Errorf("this listing belongs to another account (403): %s — your account's access is not the problem; sign in as the app's owner (`civitai whoami` shows who you are) or ask its owner to make the change", msg)
+			return fmt.Errorf("this listing belongs to another account (403): %s — your account's access is not the problem, and being a moderator does not help: sign in as the app's owner (`civitai whoami` shows who you are), accept a pending collaborator invite if you were sent one, or ask the owner to make the change", msg)
 		}
 		return fmt.Errorf("not permitted for your account (403): %s — managing store listings needs Apps-author access (invite-only beta)", msg)
 	case http.StatusNotFound:

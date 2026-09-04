@@ -126,9 +126,12 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			// the two above — only the core the predicate matches.
 			//
 			// A FOURTH exists, ':582 — you can only withdraw your own publish
-			// requests', and is deliberately NOT a row here: its own route
-			// (src/pages/api/v1/blocks/withdraw.ts:229) maps NOT_OWNED to 404
-			// with a body identical to NOT_FOUND, so it cannot reach this arm.
+			// requests', and is deliberately NOT a row here: it is raised by
+			// `withdrawExternalRequest`, whose proc wraps every failure as
+			// BAD_REQUEST (400, not 403) and which the CLI does not call at all.
+			// See isNotOwnedMsg for why the REST withdraw route is NOT the
+			// mechanism — it handles a byte-identical twin from a different
+			// service.
 			name:            "not-owned, the revision-submit refusal",
 			msg:             "you can only submit your own revision",
 			wantSubstr:      "belongs to another account",

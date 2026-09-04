@@ -1894,14 +1894,33 @@ func isModeratorTakedownMsg(msg string) bool {
 // by the time it reaches us and the message is all that is left.
 //
 // 🔴 THIS IS NOT AN ACCESS PROBLEM, which is the whole point of the branch it
-// feeds. Ownership resolves KIND-AWARE to the OAuth client's owner
-// (`resolveListingAccess` → `appBlock.app.userId`), NOT the listing's
-// denormalized `user_id` and NOT `app_block_publish_requests.submitted_by_user_id`
-// — and there is deliberately NO moderator bypass on that gate. Measured
-// 2026-09-03: an account that was both a moderator and the publish request's
-// submitter was still refused, while the SAME account managed a listing it owned
-// in the same minutes. So no grant, re-login or cohort invite changes this
-// outcome, and the fallback's "needs Apps-author access" is the wrong subject.
+// feeds. The gate is `resolveListingRole(...) === null` — the caller is neither
+// the listing's owner NOR an accepted collaborator on it — and there is
+// deliberately NO moderator bypass on it (contrast
+// `app-listing-assets.service::loadOwnedListing`, which does bypass for mods;
+// `offsite-listing.service.ts:1289-1291` states the difference). Being
+// `app_block_publish_requests.submitted_by_user_id` is not ownership either.
+//
+// 🔴 Ownership is resolved KIND-AWARE, and BOTH branches matter — an earlier
+// draft of this comment gave only the first and named the second as the thing
+// that is *not* the authority, which is backwards for the offsite case:
+//
+//	// app-access.service.ts:283-292
+//	if (args.kind === 'onsite') return args.blockOwnerUserId ?? args.listingUserId;
+//	return args.listingUserId;
+//
+// So for an ONSITE listing the authority is the OAuth client's owner
+// (`appBlock.app.userId`), falling back to the listing's `user_id`; for OFFSITE
+// (and any unrecognised kind) the authority IS the listing's `user_id`. All
+// three throws above live in `offsite-listing.service.ts` and their gates are
+// dual-kind, so a maintainer debugging an offsite refusal by looking at
+// `AppBlock.app.userId` is looking at the wrong column — it can be null there.
+//
+// Measured 2026-09-03: an account that was both a moderator and the publish
+// request's submitter was still refused, while the SAME account managed a
+// listing it owned in the same minutes. So no grant, re-login or cohort invite
+// changes this outcome, and the fallback's "needs Apps-author access" is the
+// wrong subject.
 //
 // Matched on the stable CORE shared by every reachable spelling rather than a
 // whole sentence, because three of them ship today
@@ -1911,11 +1930,39 @@ func isModeratorTakedownMsg(msg string) bool {
 //   - :1323 "you can only edit your own listings"    (the edit path)
 //   - :1811 "you can only submit your own revision"  (the revision path)
 //
-// They share no noun and no verb — only "you can only …your own". A fourth,
-// :582 "you can only withdraw your own publish requests", is unreachable HERE:
-// its own route (`src/pages/api/v1/blocks/withdraw.ts:229`) maps NOT_OWNED to a
-// 404 whose body is identical to NOT_FOUND, deliberately, so it never arrives as
-// a 403.
+// They share no noun and no verb — only "you can only …your own".
+//
+// 🔴 SAFETY HERE IS ROUTE-POPULATION CONTAINMENT, NOT A PROPERTY OF THE STRING.
+// The predicate is not scoped to listings, so what keeps it from mis-firing is
+// that only `appListings.*` procs reach `listingError`. Other NOT_OWNED-shaped
+// refusals ship elsewhere in that server (challenges, collections, creator
+// shop, remix gallery) and match the same core; none of them is on a route this
+// function answers for. **If the CLI ever routes a non-listing proc through
+// `listingError`, re-run that enumeration** — over the whole server repo, not
+// over one file.
+//
+// Two more NOT_OWNED strings ship in `offsite-moderation.service.ts` (:1668,
+// :2226) and are unreachable only because the CLI calls none of the procs that
+// raise them (`unpublishOwnListing` / `republishOwnListing` /
+// `listMyListingModerationEvents`).
+//
+// A fourth listing-service spelling, :582 "you can only withdraw your own
+// publish requests", is also unreachable here — but by neither of the two
+// mechanisms an earlier draft of this comment claimed. Its `OffsiteRequestError`
+// is raised by `withdrawExternalRequest`, whose route is the tRPC proc
+// `appListings.withdrawExternalRequest` (`app-listings.router.ts:646`); that
+// proc does NOT use `mapOffsiteError` — it wraps every failure in
+// `TRPCError{code:'BAD_REQUEST'}` (:653-659), i.e. HTTP 400, not 403. And the
+// CLI does not call it at all: its withdraw path is the REST `WithdrawPath`
+// with its own `withdrawError`. (The REST route `api/v1/blocks/withdraw.ts`
+// handles a BYTE-IDENTICAL twin string thrown by a DIFFERENT class in
+// `publish-request.service.ts:1649` — not this one. Do not merge the two.)
+//
+// 🔴 That proc is the one in its router that hand-rolls its error mapping while
+// its own docstring says it "mirrors `blocks.withdrawPublishRequest`". An
+// ordinary consolidation onto `mapOffsiteError` would turn :582 into a real 403
+// that this predicate matches — at which point the printed noun "this listing"
+// is wrong for a publish request. Re-read this arm if that consolidation lands.
 func isNotOwnedMsg(msg string) bool {
 	m := strings.ToLower(msg)
 	return strings.Contains(m, "you can only ") && strings.Contains(m, "your own")
