@@ -1016,6 +1016,22 @@ func listingError(status int, raw []byte, route listingRoute) (err error) {
 		if isModeratorTakedownMsg(msg) {
 			return fmt.Errorf("this listing is under a moderator takedown (403): %s — your account's access is not the problem and no CLI command reverses this; ask a Civitai moderator to relist it", msg)
 		}
+		// 🔴 THE THIRD INSTANCE OF THE WRONG-SUBJECT CLASS (#374/#391 on the 400
+		// arm, #509 on the takedown arm above, this one on ownership). An
+		// OWNERSHIP refusal is not an access refusal: the caller's Apps-author
+		// access can be perfect — they can be a moderator, and the account that
+		// submitted the publish request — and still be refused, because the gate
+		// resolves the OAuth client's owner and has no moderator bypass. See
+		// isNotOwnedMsg for the measurement.
+		//
+		// It must sit BELOW the takedown branch. A listing can be BOTH
+		// moderator-removed and owned by someone else, and the server's ownership
+		// check runs FIRST, so the client only ever sees one of the two messages
+		// — but if that ever changes, "ask a moderator to relist it" is the more
+		// actionable of the two and should keep winning.
+		if isNotOwnedMsg(msg) {
+			return fmt.Errorf("this listing belongs to another account (403): %s — your account's access is not the problem; sign in as the app's owner (`civitai whoami` shows who you are) or ask its owner to make the change", msg)
+		}
 		return fmt.Errorf("not permitted for your account (403): %s — managing store listings needs Apps-author access (invite-only beta)", msg)
 	case http.StatusNotFound:
 		return fmt.Errorf("no store listing found for this app (404): %s — a store listing is created when you run `civitai app submit` and is settable while the app is pending review; submit the app first, then these commands will work", msg)

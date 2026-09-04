@@ -91,6 +91,90 @@ func TestListingForbiddenTakedownDoesNotBlameTheAccount(t *testing.T) {
 			wantAccessClaim: false,
 		},
 		{
+			// 🔴 THE THIRD INSTANCE OF THE WRONG-SUBJECT CLASS, one arm over
+			// again. civitai/civitai@origin/main,
+			// src/server/services/blocks/offsite-listing.service.ts:2467 —
+			// `OffsiteRequestError('NOT_OWNED', 'you can only manage your own
+			// listings')`, thrown when `resolveListingRole` returns null, i.e.
+			// the caller is neither the listing's owner nor an accepted
+			// collaborator on it.
+			//
+			// Measured on 2026-09-03 against a real listing: the account was a
+			// moderator AND the publish request's `submitted_by_user_id`, and
+			// was still refused, because ownership resolves KIND-AWARE to the
+			// OAuth client's owner (`appBlock.app.userId`) and there is
+			// deliberately no moderator bypass on that gate. So the caller's
+			// Apps-author access is fine and is not what failed.
+			name:            "not-owned, the manage refusal",
+			msg:             "you can only manage your own listings",
+			wantSubstr:      "belongs to another account",
+			wantAccessClaim: false,
+		},
+		{
+			// A SECOND spelling from the same service (:1323, the edit path).
+			// Listed separately for the same reason the takedown rows are: a
+			// predicate keyed on one whole sentence answers the other with the
+			// false advice.
+			name:            "not-owned, the edit refusal",
+			msg:             "you can only edit your own listings",
+			wantSubstr:      "belongs to another account",
+			wantAccessClaim: false,
+		},
+		{
+			// A THIRD spelling (:1811, the revision-submit path). It shares
+			// neither the noun ("revision", not "listings") nor the verb with
+			// the two above — only the core the predicate matches.
+			//
+			// A FOURTH exists, ':582 — you can only withdraw your own publish
+			// requests', and is deliberately NOT a row here: its own route
+			// (src/pages/api/v1/blocks/withdraw.ts:229) maps NOT_OWNED to 404
+			// with a body identical to NOT_FOUND, so it cannot reach this arm.
+			name:            "not-owned, the revision-submit refusal",
+			msg:             "you can only submit your own revision",
+			wantSubstr:      "belongs to another account",
+			wantAccessClaim: false,
+		},
+		{
+			// 🔴 INVARIANT GUARD, not regression coverage — labelled as one for
+			// the same reason as the takedown case-fold row above: no measured
+			// server string capitalises this core today, but the predicate
+			// folds case, so a "simplification" that drops the fold is a live
+			// hazard with no shipped string to catch it.
+			name:            "invariant: the not-owned core is matched case-insensitively",
+			msg:             "You Can Only manage Your Own listings",
+			wantSubstr:      "belongs to another account",
+			wantAccessClaim: false,
+		},
+		{
+			// 🔴 INVARIANT GUARD pinning the predicate's NARROWNESS, added
+			// because a mutation sweep found the conjunction's two halves were
+			// each individually redundant: dropping either clause left every
+			// row above still green. This row kills the "you can only " half.
+			//
+			// A REAL string, not an invented one — `civitai@origin/main` ships
+			// many "you can only …" refusals that are nothing to do with
+			// ownership (rate limits, upload caps, status preconditions). This
+			// is the rate-limit one. It cannot reach this arm today, hence
+			// invariant-guard rather than regression coverage; what it pins is
+			// that a future widening to a bare "you can only" prefix would
+			// start telling a rate-limited user their listing belongs to
+			// someone else.
+			name:            "invariant: a non-ownership 'you can only' refusal is NOT not-owned",
+			msg:             "You can only request 2 email changes per day. Please try again tomorrow.",
+			wantSubstr:      accessClaim,
+			wantAccessClaim: true,
+		},
+		{
+			// 🔴 INVARIANT GUARD, the mirror of the row above — it kills the
+			// "your own" half of the conjunction, which the same sweep found
+			// equally unpinned. Also a real shipped string: several refusals
+			// say "your own" without being ownership refusals of a LISTING.
+			name:            "invariant: a non-ownership 'your own' refusal is NOT not-owned",
+			msg:             "You cannot purchase access to your own chapter.",
+			wantSubstr:      accessClaim,
+			wantAccessClaim: true,
+		},
+		{
 			// The 403 the fallback is TRUE of — the invite-gated cohort. Same
 			// string TestListingErrorMapping uses, kept here so a fix that
 			// emptied the fallback cannot pass this file.

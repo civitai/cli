@@ -1886,6 +1886,41 @@ func isModeratorTakedownMsg(msg string) bool {
 	return strings.Contains(strings.ToLower(msg), "removed by a moderator")
 }
 
+// isNotOwnedMsg detects the server's OWNERSHIP refusal, and exists for exactly
+// the reason its two siblings above do: the wire carries no distinct code. The
+// service throws `OffsiteRequestError('NOT_OWNED', …)`, but `mapOffsiteError`
+// (`src/server/routers/app-listings.router.ts:359`) collapses NOT_OWNED and
+// FORBIDDEN onto the SAME TRPCError code, so the original discriminator is gone
+// by the time it reaches us and the message is all that is left.
+//
+// 🔴 THIS IS NOT AN ACCESS PROBLEM, which is the whole point of the branch it
+// feeds. Ownership resolves KIND-AWARE to the OAuth client's owner
+// (`resolveListingAccess` → `appBlock.app.userId`), NOT the listing's
+// denormalized `user_id` and NOT `app_block_publish_requests.submitted_by_user_id`
+// — and there is deliberately NO moderator bypass on that gate. Measured
+// 2026-09-03: an account that was both a moderator and the publish request's
+// submitter was still refused, while the SAME account managed a listing it owned
+// in the same minutes. So no grant, re-login or cohort invite changes this
+// outcome, and the fallback's "needs Apps-author access" is the wrong subject.
+//
+// Matched on the stable CORE shared by every reachable spelling rather than a
+// whole sentence, because three of them ship today
+// (`offsite-listing.service.ts`, civitai@origin/main):
+//
+//   - :2467 "you can only manage your own listings"  (the manage path)
+//   - :1323 "you can only edit your own listings"    (the edit path)
+//   - :1811 "you can only submit your own revision"  (the revision path)
+//
+// They share no noun and no verb — only "you can only …your own". A fourth,
+// :582 "you can only withdraw your own publish requests", is unreachable HERE:
+// its own route (`src/pages/api/v1/blocks/withdraw.ts:229`) maps NOT_OWNED to a
+// 404 whose body is identical to NOT_FOUND, deliberately, so it never arrives as
+// a 403.
+func isNotOwnedMsg(msg string) bool {
+	m := strings.ToLower(msg)
+	return strings.Contains(m, "you can only ") && strings.Contains(m, "your own")
+}
+
 // devTunnelError maps a non-200 dev-tunnel tRPC response to an actionable CLI
 // error. tRPC error bodies are {error:{json:{message,code,...}}}; the HTTP
 // status carries the mapped code (403 flag-off/not-author, 404 not-your-app).
