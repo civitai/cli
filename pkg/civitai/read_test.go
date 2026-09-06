@@ -3,6 +3,7 @@ package civitai
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -308,5 +309,41 @@ func TestCursorStringEmpty(t *testing.T) {
 	var m Metadata
 	if got := m.CursorString(); got != "" {
 		t.Errorf("empty metadata CursorString = %q, want empty", got)
+	}
+}
+
+// TestGetIntoSanitizesRawControlChars verifies that an API response carrying
+// an unescaped C0 control character inside a string literal (which violates
+// strict RFC 8259 JSON syntax, but is intermittently emitted by Civitai) is
+// sanitized before typed unmarshaling, so getInto succeeds instead of failing
+// with an "unexpected response" error.
+func TestGetIntoSanitizesRawControlChars(t *testing.T) {
+	// A payload where "name" carries a literal carriage return (0x0D).
+	raw := "{\"items\":[{\"id\":1,\"name\":\"Pony\rModel\",\"type\":\"Checkpoint\"}]}"
+	srv, _, _, _ := newTestServer(t, raw)
+
+	c := New(srv.URL, "")
+	res, err := c.SearchModels(context.Background(), url.Values{})
+	if err != nil {
+		t.Fatalf("SearchModels failed on raw CR payload: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("expected 1 item, got %d", len(res.Items))
+	}
+	if res.Items[0].Name != "Pony\rModel" {
+		t.Errorf("item name = %q, want %q", res.Items[0].Name, "Pony\rModel")
+	}
+	if !json.Valid(res.Raw) {
+		t.Fatalf("res.Raw should be valid JSON, got: %q", res.Raw)
+	}
+}
+
+// TestEscapeJSONStringControlCharsLeavesStructuralWhitespace ensures control
+// bytes outside strings (newlines/tabs between tokens) are left untouched.
+func TestEscapeJSONStringControlCharsLeavesStructuralWhitespace(t *testing.T) {
+	raw := []byte("{\n\t\"a\": 1\n}")
+	got := EscapeJSONStringControlChars(raw)
+	if !bytes.Equal(got, raw) {
+		t.Fatalf("structural whitespace altered:\n got %q\nwant %q", got, raw)
 	}
 }

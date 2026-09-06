@@ -108,59 +108,10 @@ func emitJSON(cmd *cobra.Command, raw []byte) error {
 	return nil
 }
 
-// escapeJSONStringControlChars walks raw JSON bytes tracking in-string state
-// (respecting \\ and \") and replaces any raw C0 control byte (0x00–0x1F) that
-// appears INSIDE a string literal with its valid JSON escape (\b \f \n \r \t or
-// \u00xx). Control bytes outside strings (structural whitespace) and everything
-// already escaped are left byte-for-byte unchanged, so valid input round-trips
-// identically. This does not attempt to repair other kinds of malformed JSON;
-// callers should verify the result with json.Valid before relying on it.
+// escapeJSONStringControlChars delegates to civitai.EscapeJSONStringControlChars
+// in pkg/civitai.
 func escapeJSONStringControlChars(raw []byte) []byte {
-	var out bytes.Buffer
-	out.Grow(len(raw))
-	inString := false
-	escaped := false
-	for i := 0; i < len(raw); i++ {
-		c := raw[i]
-		switch {
-		case !inString:
-			out.WriteByte(c)
-			if c == '"' {
-				inString = true
-			}
-		case escaped:
-			// Previous byte was a backslash; this byte is the escape's payload
-			// (", \\, /, b, f, n, r, t, or the u of a \uXXXX). Emit verbatim.
-			out.WriteByte(c)
-			escaped = false
-		case c == '\\':
-			out.WriteByte(c)
-			escaped = true
-		case c == '"':
-			out.WriteByte(c)
-			inString = false
-		case c < 0x20:
-			// Raw control character inside a string literal — invalid JSON.
-			// Rewrite it as the shortest valid escape.
-			switch c {
-			case '\b':
-				out.WriteString(`\b`)
-			case '\f':
-				out.WriteString(`\f`)
-			case '\n':
-				out.WriteString(`\n`)
-			case '\r':
-				out.WriteString(`\r`)
-			case '\t':
-				out.WriteString(`\t`)
-			default:
-				fmt.Fprintf(&out, `\u%04x`, c)
-			}
-		default:
-			out.WriteByte(c)
-		}
-	}
-	return out.Bytes()
+	return civitai.EscapeJSONStringControlChars(raw)
 }
 
 // nonModelFileMarker returns a short human tag naming a version's PRIMARY file
