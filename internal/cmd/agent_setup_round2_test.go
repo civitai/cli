@@ -26,6 +26,12 @@ import (
 // sentence here, which made a maintainer count ten regression guards where there
 // are seven. Each of the three says so at its own docstring too.
 //
+// 🔴 AND THE MATRIX ABOVE DOES NOT COVER LATER ADDITIONS TO A TEST.
+// TestDryRunAndTheRealRunAgreeOnEveryAction gained three fixtures in round 3
+// which were measured against 897c1cc — the tree this header calls "after". Its
+// own docstring carries that matrix; read it there rather than assuming this
+// paragraph covers it.
+//
 // 🔴 THEY ARE ALL BLACK-BOX ON PURPOSE. Every assertion below drives the command
 // through `run` and reads the file or the payload it produced, so the same test
 // source compiles and runs against the PRE-FIX tree. A guard that references a
@@ -398,6 +404,13 @@ func TestAStrictAgentStaysStrictAboutTrailingCommas(t *testing.T) {
 // config each emitted ZERO BYTES on stdout at exit 1. A consumer facing the
 // silent ones cannot tell a partial run from a usage error — and the fourth is
 // what `developer.civitai.com`'s hosted prompt reads.
+//
+// 🔴 ITS NAME OVERSTATES IT: THESE ARE FOUR ENUMERATED SHAPES, NOT EVERY SHAPE.
+// Nothing here is derived from a table, so a fifth silent shape is invisible to
+// it — and there were three more, found in round 3 and measured at 897c1cc
+// (`AGENTS.md` as a directory, under `--json`, `--check --json` and
+// `--dry-run --json`). The class-level guard is round 3's
+// TestJSONNeverExitsSilently; this one stays as the four measured instances.
 func TestJSONIsEmittedForEveryFailureShape(t *testing.T) {
 	t.Run("plan-time refusal", func(t *testing.T) {
 		dir, home := agentSetupProject(t)
@@ -650,12 +663,31 @@ func TestDryRunAndTheRealRunAgreeOnEveryAction(t *testing.T) {
 			dir, home := agentSetupProject(t)
 			tc.setUp(t, dir, home)
 
+			// 🔴 SNAPSHOT FIRST, AND OVER ALL THREE PATHS. "The dry run wrote
+			// nothing" is only observable BEFORE the real run, and a check that
+			// looked at CLAUDE.md alone stated the general claim while sampling one
+			// third of it. Which paths a fixture has already created differs per
+			// fixture, so the set is derived rather than listed.
+			var absentBefore []string
+			for _, p := range []string{
+				filepath.Join(dir, agentsFilename),
+				filepath.Join(dir, claudeFilename),
+				filepath.Join(home, ".codex", "config.toml"),
+			} {
+				if _, statErr := os.Lstat(p); statErr != nil {
+					absentBefore = append(absentBefore, p)
+				}
+			}
+			if len(absentBefore) == 0 {
+				t.Fatal("PREMISE BROKEN: every path already exists, so this fixture cannot observe a " +
+					"dry run writing one")
+			}
+
 			dryOut, _, dryErr := run(t, "agent-setup", "--dry-run", "--json", "--dir", dir, "--agent", agentCodex)
-			// Checked BEFORE the real run, which is the only moment at which "the
-			// dry run wrote nothing" is observable at all.
-			if _, statErr := os.Lstat(filepath.Join(dir, claudeFilename)); statErr == nil &&
-				tc.wantBlocked != claudeFilename {
-				t.Error("--dry-run wrote " + claudeFilename)
+			for _, p := range absentBefore {
+				if _, statErr := os.Lstat(p); statErr == nil {
+					t.Errorf("--dry-run created %s", p)
+				}
 			}
 			realOut, _, realErr := run(t, "agent-setup", "--json", "--dir", dir, "--agent", agentCodex)
 

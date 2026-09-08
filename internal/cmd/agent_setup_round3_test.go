@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,9 +16,11 @@ import (
 // claim ten regression guards over seven. Count them from the labels, not from
 // the file:
 //
-//   - REGRESSION (watched red on 897c1cc, green after): every subtest of
-//     TestJSONNeverExitsSilently, TestAPreservedHeaderIsNotReportedAsAuthenticating
-//     and TestACodexEnvVarReferenceIsNotCalledAHeader.
+//   - REGRESSION (watched red on 897c1cc, green after): all six subtests of
+//     TestJSONNeverExitsSilently — four measured by hand as recorded at its
+//     docstring, and all six replayed by copying this file into a worktree at
+//     897c1cc — plus TestAPreservedHeaderIsNotReportedAsAuthenticating and
+//     TestACodexEnvVarReferenceIsNotCalledAHeader.
 //   - MUTATION GUARD (897c1cc is not the mutant; it passes there by construction):
 //     TestAFirstWriteFailureDoesNotStopTheLaterOnes. Its red observation is
 //     against a named source mutation, recorded at its docstring.
@@ -80,9 +83,23 @@ func TestAFirstWriteFailureDoesNotStopTheLaterOnes(t *testing.T) {
 			"write-time failure:\n%s", agentsFilename, dryOut)
 	}
 
-	// The first row is AGENTS.md and it is the one that fails; CLAUDE.md and the
-	// MCP config must still be attempted, and must still exist afterwards.
-	assertBlockedWritePayload(t, dir, agentCodex, "permission denied", claudeFilename)
+	// 🔴 THE DIRECT RUN COMES FIRST, AND THE ORDER IS THE ASSERTION. This block
+	// used to sit AFTER assertBlockedWritePayload, which performs a complete
+	// `agent-setup` against this same dir/home — so the closing `os.Stat(mcpPath)`
+	// passed on THAT run's artefact no matter what the second run did, while the
+	// comment beside it claimed it was catching the write an abort-on-first mutant
+	// never reaches. A guard whose subject was already created by an earlier run
+	// is not observing the run it names.
+	mcpPath, ok := agentConfigPath(liveAgentEnv(dir), agentCodex)
+	if !ok {
+		t.Fatal("no codex config path")
+	}
+	for _, p := range []string{mcpPath, filepath.Join(dir, claudeFilename)} {
+		if _, statErr := os.Lstat(p); statErr == nil {
+			t.Fatalf("PREMISE BROKEN: %s exists before the run under test, so its existence afterwards "+
+				"proves nothing", p)
+		}
+	}
 
 	out, _, err := run(t, "agent-setup", "--json", "--dir", dir, "--agent", agentCodex)
 	if err == nil {
@@ -102,16 +119,21 @@ func TestAFirstWriteFailureDoesNotStopTheLaterOnes(t *testing.T) {
 				"abort: %s", c.Path, c.Reason)
 		}
 	}
-	// The MCP config is the LAST write, and it is the one an abort-on-first
-	// mutant never reaches.
-	mcpPath, ok := agentConfigPath(liveAgentEnv(dir), agentCodex)
-	if !ok {
-		t.Fatal("no codex config path")
+	// Both later writes must have HAPPENED, in this run: CLAUDE.md is the second
+	// and the MCP config is the last, the one an abort-on-first mutant never
+	// reaches at all.
+	if _, statErr := os.Stat(filepath.Join(dir, claudeFilename)); statErr != nil {
+		t.Errorf("%s was never written, though its row claims %q: %v",
+			claudeFilename, payload.Changes[1].Action, statErr)
 	}
 	if _, statErr := os.Stat(mcpPath); statErr != nil {
 		t.Errorf("the MCP config was never written, though its row claims %q: %v",
 			payload.Changes[len(payload.Changes)-1].Action, statErr)
 	}
+
+	// And the shared payload contract on a SECOND run over the same tree: the
+	// first write still fails, the rows still describe what happened.
+	assertBlockedWritePayload(t, dir, agentCodex, "permission denied", claudeFilename)
 }
 
 // ---------------------------------------------------------------------------
@@ -210,6 +232,14 @@ func duplicateManagedBlock(t *testing.T, dir, _ string) {
 // a payload for everything, including a command line that never named a run —
 // and the exit-2 arms are the documented exception, so widening into them would
 // be a silent contract change rather than a fix.
+//
+// 🔴 IT ASSERTS THE CLASS, NOT JUST "IT FAILED AND SAID NOTHING". The first draft
+// checked only `err != nil` plus an empty stdout — which is satisfied by exactly
+// the defect the guard above exists to prevent: an input that stopped being a
+// usage error and became an ordinary runtime failure with zero bytes on stdout
+// would pass here and be certified correct. `errors.Is(err, ErrUsage)` is what
+// makes "silence is allowed HERE" a claim about the exit-2 CLASS rather than
+// about these three particular strings.
 func TestAUsageErrorStillEmitsNoPayload(t *testing.T) {
 	dir, _ := agentSetupProject(t)
 	for _, args := range [][]string{
@@ -220,6 +250,11 @@ func TestAUsageErrorStillEmitsNoPayload(t *testing.T) {
 		out, _, err := run(t, args...)
 		if err == nil {
 			t.Errorf("%v exited 0", args)
+			continue
+		}
+		if !errors.Is(err, ErrUsage) {
+			t.Errorf("%v is not a usage error (%v), so an empty stdout here is the silent-exit defect "+
+				"rather than the documented exception", args, err)
 		}
 		if strings.TrimSpace(out) != "" {
 			t.Errorf("%v put a payload on stdout for a usage error:\n%s", args, out)

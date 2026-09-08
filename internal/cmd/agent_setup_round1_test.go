@@ -11,20 +11,38 @@ import (
 
 // The round-1 audit guards for `civitai agent-setup`.
 //
-// 🔴 EVERY TEST BELOW *AS ROUND 1 WROTE IT* WAS WATCHED RED ON THE PRE-FIX TREE
-// (6340db8) AND GREEN AFTER. They are regression tests, not invariant guards:
-// each one names a behaviour that was MEASURED wrong by running the binary, not
-// a property that was merely unasserted. The red-then-green matrix is in the PR.
+// 🔴 THIS HEADER USED TO SAY "EVERY TEST BELOW WAS WATCHED RED ON THE PRE-FIX
+// TREE (6340db8) AND GREEN AFTER … regression tests, not invariant guards", AND
+// THAT SENTENCE WAS FALSE IN TWO SEPARATE WAYS. It is corrected here rather than
+// deleted, because the correction is the whole lesson: a blanket claim over a
+// file is the description-wider-than-body defect at file scope, and this PR has
+// now hit that defect five times.
 //
-// 🔴 TWO OF THEM HAVE SINCE BEEN REWRITTEN, AND THE BLANKET ABOVE DOES NOT COVER
-// A REWRITE — a header that keeps asserting a matrix measured against a
-// DIFFERENT body is the description-wider-than-body defect this PR has now hit
-// four times. `TestTOMLMergePreservesKeysOnOurOwnTable` (rewritten in round 2)
-// and `TestRepeatedRunsAreIdempotent` (rewritten in rounds 2 and 3) each carry
-// their OWN, narrower matrix at their own docstring, measured against the tree
-// the rewrite was made on. Read those, not this paragraph, for either of them.
-// In particular `TestRepeatedRunsAreIdempotent` is NOT wholly a regression
-// guard: six of its seven per-agent subtests PASS on `c801ab8`.
+// 1. THE FILE DOES NOT COMPILE AT 6340db8. Measured: copy it into a worktree at
+//    that commit and `go vet ./internal/cmd` stops at `srv.Anonymous undefined`
+//    — and `mcpAnonymityNote`, `blankJSONComments`, `agentsMDBlockState`,
+//    `actionBlocked`, `PreferExisting` and `agentEnv.GOOS` are absent there too.
+//    A `_test.go` file is one compilation unit, so NO test in it was, or could
+//    have been, watched red at 6340db8 in this form. What WAS measured is what
+//    each docstring below actually says: the BEHAVIOUR was reproduced by running
+//    the pre-fix BINARY. That is a real observation and a weaker one — it is
+//    exactly the distinction the round-2 and round-3 files were made black-box
+//    to preserve, and those two do compile against their own base trees.
+//
+// 2. SEVERAL TESTS HERE ARE OPPOSITE-DIRECTION CONTROLS, i.e. INVARIANT GUARDS,
+//    and must not be counted as regression coverage — their own docstrings say
+//    "the OTHER direction": TestAGenuinelyMalformedConfigStillRefuses,
+//    TestAnExportedTokenIsReportedAsAuthenticated,
+//    TestTOMLParserStillRefusesBrokenDocuments,
+//    TestOpencodeJSONIsStillTheDefaultTarget and
+//    TestCodexHomeIsNotConsultedOnATargetThatDoesNotDeclareIt. Round 2's file
+//    labels its three; this one labelled none.
+//
+// 3. TWO TESTS HAVE SINCE BEEN REWRITTEN, and a matrix measured against one body
+//    is not a claim about a different body. TestTOMLMergePreservesKeysOnOurOwnTable
+//    (round 2) and TestRepeatedRunsAreIdempotent (rounds 2 and 3) each carry
+//    their OWN, narrower matrix at their own docstring, measured against the tree
+//    the rewrite was made on. Read those, not this paragraph, for either of them.
 
 // ---------------------------------------------------------------------------
 // 1 — the two servers do not both work anonymously
@@ -460,70 +478,93 @@ tool_timeout_sec = 120
 // what we re-render' from 'skip a fixed list'." Consequence, measured: the whole
 // test passed on c801ab8, the tree round 2 found the bug in — an invariant guard
 // wearing a regression guard's docstring. `owned` below is the discriminating
-// key: it is in the merge's owned set and is NOT re-rendered on this run, which
-// is the combination c801ab8 dropped.
+// key.
 //
-// SCOPE, measured rather than assumed: with `owned` added, the CODEX subtest goes
-// red on c801ab8 and the six JSON subtests still pass — round 1's JSON merge was
-// already per-key, and c801ab8's defect was in `mergeTOMLBlock` alone. So the
-// JSON arms remain invariant guards; the TOML arm is the regression one.
+// 🔴 AND "OWNED BUT NOT RE-RENDERED" IS A PROPERTY OF THE *RUN*, NOT OF THE KEY —
+// WHICH IS THIS SAME DEFECT ONE MORE TIME, IN THIS SENTENCE'S FIRST DRAFT. It
+// said `owned` is not re-rendered "on this run", for all seven agents, while
+// setting a token: `mcpEntry` writes `HeadersKey` whenever `EnvHeaderSyntax != ""`
+// AND a token is set, i.e. for claude, cursor, vscode, windsurf and opencode.
+// The property held for 2 of 7. So the run is now parameterised on the token,
+// and `ownedIsReRendered` is DERIVED from the same two facts the renderer reads:
+//
+//   - no token   -> `owned` is re-rendered by nobody, for EVERY agent. This is
+//     the arm the docstring's claim is true of.
+//   - with token -> `owned` is re-rendered exactly where the vendor documents
+//     interpolation; Codex's `http_headers` and Zed's `headers` still are not.
+//     This arm covers the merge-over-a-re-rendered-key path instead.
+//
+// SCOPE, measured rather than assumed: the CODEX subtests go red on c801ab8 and
+// the JSON ones still pass — round 1's JSON merge was already per-key, and
+// c801ab8's defect was in `mergeTOMLBlock` alone. So the JSON arms are invariant
+// guards; the TOML arms are the regression ones.
 //
 // 🔴 THE ASSERTIONS NAME THE KEYS. `strings.Contains(after3, "45")` matched the
 // digits of a port, a timeout, or any other number anywhere in the file.
 func TestRepeatedRunsAreIdempotent(t *testing.T) {
 	for _, agent := range agentsWithConfigFiles() {
-		t.Run(agent, func(t *testing.T) {
-			dir, _ := agentSetupProject(t)
-			t.Setenv("CIVITAI_TOKEN", credFixtureToken)
-			target := agentTargets[agent]
-			path, _ := agentConfigPath(liveAgentEnv(dir), agent)
-			// A file the USER wrote, in the shape their agent uses, carrying TWO
-			// keys on OUR entry: one this command never renders, and one it owns
-			// but does not re-render on a run shaped like this one.
-			//
-			// `owned` is per format because "owned but not re-rendered" is: with a
-			// token Codex re-renders `bearer_token_env_var` and never renders
-			// `http_headers`; the JSON targets re-render `headers` only where the
-			// vendor documents interpolation, so Zed's is owned-and-never-rendered.
-			var pre, owned, unowned string
-			if target.Format == formatTOML {
-				owned, unowned = target.HeadersKey, "startup_timeout_sec"
-				pre = "model = \"gpt-5\"\n\n[mcp_servers.\"civitai\"]\nurl = \"https://mcp.civitai.com/mcp\"\n" +
-					unowned + " = 45\n" +
-					owned + " = { X-Civitai-Fixture = \"round3\" }\n"
-			} else {
-				owned, unowned = target.HeadersKey, "theirEntryKey"
-				pre = "{\n  \"theirTopLevelKey\": true,\n  " + strconv.Quote(target.ServersKey) + ": {\n" +
-					"    \"civitai\": {" + strconv.Quote(target.URLKey) + ": \"https://mcp.civitai.com/mcp\", " +
-					strconv.Quote(unowned) + ": 45, " +
-					strconv.Quote(owned) + ": {\"X-Civitai-Fixture\": \"round3\"}}\n  }\n}\n"
-			}
-			writeFile(t, path, pre)
+		for _, tokenCase := range []struct{ name, token string }{
+			{"no token", ""},
+			{"with a token", credFixtureToken},
+		} {
+			t.Run(agent+"/"+tokenCase.name, func(t *testing.T) {
+				dir, _ := agentSetupProject(t)
+				t.Setenv("CIVITAI_TOKEN", tokenCase.token)
+				target := agentTargets[agent]
+				path, _ := agentConfigPath(liveAgentEnv(dir), agent)
+				// Derived from exactly what mcpEntry/renderTOMLServer consult, so
+				// this cannot drift from the renderer the way the prose did.
+				ownedIsReRendered := tokenCase.token != "" && target.EnvHeaderSyntax != ""
+				// A file the USER wrote, in the shape their agent uses, carrying TWO
+				// keys on OUR entry: one this command never renders under any
+				// condition, and one it OWNS.
+				var pre, owned, unowned string
+				if target.Format == formatTOML {
+					owned, unowned = target.HeadersKey, "startup_timeout_sec"
+					pre = "model = \"gpt-5\"\n\n[mcp_servers.\"civitai\"]\nurl = \"https://mcp.civitai.com/mcp\"\n" +
+						unowned + " = 45\n" +
+						owned + " = { X-Civitai-Fixture = \"round3\" }\n"
+				} else {
+					owned, unowned = target.HeadersKey, "theirEntryKey"
+					pre = "{\n  \"theirTopLevelKey\": true,\n  " + strconv.Quote(target.ServersKey) + ": {\n" +
+						"    \"civitai\": {" + strconv.Quote(target.URLKey) + ": \"https://mcp.civitai.com/mcp\", " +
+						strconv.Quote(unowned) + ": 45, " +
+						strconv.Quote(owned) + ": {\"X-Civitai-Fixture\": \"round3\"}}\n  }\n}\n"
+				}
+				writeFile(t, path, pre)
 
-			for i := 0; i < 2; i++ {
+				for i := 0; i < 2; i++ {
+					if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agent); err != nil {
+						t.Fatalf("run %d: %v", i, err)
+					}
+				}
+				after2 := readFile(t, path)
 				if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agent); err != nil {
-					t.Fatalf("run %d: %v", i, err)
+					t.Fatalf("run 3: %v", err)
 				}
-			}
-			after2 := readFile(t, path)
-			if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agent); err != nil {
-				t.Fatalf("run 3: %v", err)
-			}
-			after3 := readFile(t, path)
-			if after3 != after2 {
-				t.Errorf("a third run changed the file:\n--- after 2 ---\n%s\n--- after 3 ---\n%s", after2, after3)
-			}
-			// PREMISE + the erosion half: the user's keys are what make this a MERGE,
-			// and a run that had deleted them would be idempotent about nothing. The
-			// KEY NAMES are asserted, plus the value that identifies the owned key as
-			// theirs rather than one this run happened to re-render.
-			for _, want := range []string{unowned, owned, "X-Civitai-Fixture", "round3"} {
-				if !strings.Contains(after3, want) {
-					t.Errorf("%q the user put on OUR entry was gone by run 3:\n--- before ---\n%s\n"+
-						"--- after ---\n%s", want, pre, after3)
+				after3 := readFile(t, path)
+				if after3 != after2 {
+					t.Errorf("a third run changed the file:\n--- after 2 ---\n%s\n--- after 3 ---\n%s", after2, after3)
 				}
-			}
-		})
+				// PREMISE + the erosion half: the user's keys are what make this a
+				// MERGE, and a run that had deleted them would be idempotent about
+				// nothing. The KEY NAMES are asserted, plus the fixture VALUE, which
+				// is what distinguishes "their key survived" from "we happened to
+				// re-render a key of the same name".
+				//
+				// 🔴 `owned`'s NAME is a weak witness precisely on the arm where the
+				// renderer writes it: `"headers"` appears in this command's own
+				// output. `X-Civitai-Fixture` cannot — it is only ever theirs — and
+				// it must survive on BOTH arms, because round 1's per-key merge is
+				// what keeps a re-rendered `headers` from replacing the whole object.
+				for _, want := range []string{unowned, owned, "X-Civitai-Fixture", "round3"} {
+					if !strings.Contains(after3, want) {
+						t.Errorf("%q the user put on OUR entry was gone by run 3 (ownedIsReRendered=%t):\n"+
+							"--- before ---\n%s\n--- after ---\n%s", want, ownedIsReRendered, pre, after3)
+					}
+				}
+			})
+		}
 	}
 }
 

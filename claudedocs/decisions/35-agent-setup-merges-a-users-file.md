@@ -654,3 +654,63 @@ is, including the envelope assertions, which decode into a bare `map[string]any`
 rather than naming a Go field the fix introduced. The file header enumerates
 which of its tests are **regression**, which is a **mutation guard**, and which
 are **over-widening controls** — the round-2 mistake, not repeated.
+
+## 9. The sweep, and what it found in round 3's own guards
+
+Because this is the defect's fifth appearance, all 45 top-level tests in the
+three round files were swept for it — docstring claim against body — rather than
+only the ones the audit named. Six more instances, three of them in guards
+written *in this round*:
+
+- **`agent_setup_round1_test.go`'s header is false in two ways.** Measured: copy
+  the file into a worktree at `6340db8` and `go vet ./internal/cmd` stops at
+  `srv.Anonymous undefined`; `mcpAnonymityNote`, `blankJSONComments`,
+  `agentsMDBlockState`, `actionBlocked`, `PreferExisting` and `agentEnv.GOOS` are
+  absent there too. A `_test.go` file is one compilation unit, so **no** test in
+  it was watched red at `6340db8` in this form — what was measured is what each
+  docstring says, that the BEHAVIOUR was reproduced against the pre-fix BINARY.
+  That is a real observation and a weaker one; it is exactly the distinction the
+  round-2 and round-3 files are black-box to preserve, and both of those do
+  compile against their own base trees. Second, five tests in that file are
+  self-described opposite-direction controls, i.e. invariant guards, and none was
+  labelled.
+- **`TestRepeatedRunsAreIdempotent`'s round-3 docstring — written in this round —
+  was itself wider than its body.** It said `owned` is "in the merge's owned set
+  and NOT re-rendered on this run" for all seven agents, while setting a token:
+  `mcpEntry` writes `HeadersKey` whenever `EnvHeaderSyntax != ""` and a token is
+  set, so the property held for **2 of 7**. The run is now parameterised on the
+  token and `ownedIsReRendered` is derived from the two facts the renderer itself
+  reads. Both codex arms are red on `c801ab8`; the JSON arms remain invariant
+  guards and say so.
+- **`TestAUsageErrorStillEmitsNoPayload` — written in this round — asserted only
+  `err != nil` and an empty stdout**, never that the invocation is in the exit-2
+  class. So an input that regressed *out* of that class into an ordinary runtime
+  failure with zero bytes on stdout — the very defect §3 exists to prevent —
+  would have passed here and been certified correct. It now asserts
+  `errors.Is(err, ErrUsage)`.
+- **`TestAFirstWriteFailureDoesNotStopTheLaterOnes` — written in this round — had
+  its closing assertion behind an earlier full run.** `assertBlockedWritePayload`
+  performs a complete `agent-setup` against the same dir, so the final
+  `os.Stat(mcpPath)` passed on *that* run's artefact whatever the run it named
+  did. The direct run now comes FIRST, with a premise that neither later file
+  exists beforehand. Re-verified against the `attempt` mutant: still the only
+  failing test in the package, now dying on both later-file assertions.
+- **`TestJSONIsEmittedForEveryFailureShape` is named for a class and enumerates
+  four instances.** Its docstring now says so and points at
+  `TestJSONNeverExitsSilently` as the class-level guard.
+- **`TestDryRunAndTheRealRunAgreeOnEveryAction`'s "the dry run wrote nothing"
+  check sampled one of the three paths.** It now snapshots which paths a fixture
+  left absent and asserts none of them appeared, with a premise that the set is
+  non-empty.
+
+Four more pre-existing round-1 guards were flagged and deliberately NOT changed
+here, because they are outside this round's findings and each needs its own
+measurement: `TestABrokenSymlinkIsRefusedByName` (asserts the message, not that
+the dangling target was left unmaterialised — the thing its sentence is about),
+`TestCodexHomeIsNotConsultedOnATargetThatDoesNotDeclareIt` (samples one
+target × one root var for a general per-target claim, and discards `ok` from
+`agentConfigPath` so the assertion can pass vacuously),
+`TestJSONPathsAreAbsoluteUnderTheDefaultDir` (its `--check` half filters on both
+the row name and `c.OK` with no counter, so it can assert nothing), and
+`TestAGenuinelyMalformedConfigStillRefuses` (checks "the file is untouched" as
+`Contains(got, "rubbish")` where its round-2 sibling uses `got != tc.src`).
