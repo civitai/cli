@@ -11,10 +11,20 @@ import (
 
 // The round-1 audit guards for `civitai agent-setup`.
 //
-// 🔴 EVERY TEST BELOW WAS WATCHED RED ON THE PRE-FIX TREE (6340db8) AND GREEN
-// AFTER. They are regression tests, not invariant guards: each one names a
-// behaviour that was MEASURED wrong by running the binary, not a property that
-// was merely unasserted. The red-then-green matrix is in the PR.
+// 🔴 EVERY TEST BELOW *AS ROUND 1 WROTE IT* WAS WATCHED RED ON THE PRE-FIX TREE
+// (6340db8) AND GREEN AFTER. They are regression tests, not invariant guards:
+// each one names a behaviour that was MEASURED wrong by running the binary, not
+// a property that was merely unasserted. The red-then-green matrix is in the PR.
+//
+// 🔴 TWO OF THEM HAVE SINCE BEEN REWRITTEN, AND THE BLANKET ABOVE DOES NOT COVER
+// A REWRITE — a header that keeps asserting a matrix measured against a
+// DIFFERENT body is the description-wider-than-body defect this PR has now hit
+// four times. `TestTOMLMergePreservesKeysOnOurOwnTable` (rewritten in round 2)
+// and `TestRepeatedRunsAreIdempotent` (rewritten in rounds 2 and 3) each carry
+// their OWN, narrower matrix at their own docstring, measured against the tree
+// the rewrite was made on. Read those, not this paragraph, for either of them.
+// In particular `TestRepeatedRunsAreIdempotent` is NOT wholly a regression
+// guard: six of its seven per-agent subtests PASS on `c801ab8`.
 
 // ---------------------------------------------------------------------------
 // 1 — the two servers do not both work anonymously

@@ -620,6 +620,14 @@ guard be labelled as one and not counted as regression coverage. The file header
 and each of the three now say so; the sentence made a maintainer count ten where
 there are seven.
 
+🔴 **The same shape was then found one file over, in `agent_setup_round1_test.go`.**
+Its header says every test below was watched red on `6340db8`. Two of them have
+since been **rewritten** — `TestTOMLMergePreservesKeysOnOurOwnTable` in round 2
+and `TestRepeatedRunsAreIdempotent` in rounds 2 and 3 — and a blanket matrix does
+not survive a rewrite of the body it was measured against. Six of the seven
+per-agent subtests of the latter PASS on `c801ab8`. The header now says so and
+points at each rewritten test's own, narrower matrix.
+
 ## 7. A README absolute falsified by `action: manual`
 
 `README.md` said "there is no outcome where a step is skipped and the command
