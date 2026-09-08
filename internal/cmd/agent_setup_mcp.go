@@ -104,6 +104,160 @@ func mcpAnonymityNote() string {
 	}
 }
 
+// mcpAuthCoverage is which of the Civitai entries in the config a run LEAVES ON
+// DISK carry a credential — whichever hand wrote it.
+//
+// 🔴 "THIS RUN WROTE NO HEADER" IS NOT "THE REGISTRATION HAS NO HEADER", AND THE
+// OUTPUT USED TO SAY THE SECOND WHILE MEANING THE FIRST. Both mcpAuthReason and
+// printAgentSetupAuthNote derived everything from `hasToken` and never looked at
+// the merged entry. Measured: run with a token, then re-run in a shell without
+// one (CI, a second machine, an expired login). The merge correctly PRESERVES
+// `"Authorization": "Bearer ${env:CIVITAI_TOKEN}"` — that is finding 3 of item
+// 35 working — and the run then printed "No token is configured, so no
+// Authorization header was written" and "civitai-orchestration returns 401 until
+// an Authorization header is present". The first sentence is true of the run and
+// misleading about the file; the second is a claim about WHAT THE REGISTRATION
+// REACHES, and it is simply wrong about the file just written.
+//
+// So the sentence is derived from the rendered bytes rather than from the gate.
+type mcpAuthCoverage struct {
+	// With and Without partition civitaiMCPServers by whether that entry, as it
+	// will exist on disk, carries a credential. Both empty means the config was
+	// never rendered (a refusal, or no file to write) and nothing is claimed.
+	With    []string
+	Without []string
+}
+
+// known reports whether the rendered config was inspected at all.
+func (c mcpAuthCoverage) known() bool { return len(c.With)+len(c.Without) > 0 }
+
+// mcpAuthCoverageOf reads the bytes this run will write and reports which of our
+// entries end up carrying a credential.
+//
+// 🔴 IT READS THE RENDERED OUTPUT, NOT THE INPUT, because the output is what the
+// user's agent will load — and it is the one artefact both `--dry-run` and the
+// real run agree on by construction (renderMCPConfig performs no write).
+//
+// What counts as "carries a credential" is per format, and both forms are the
+// ones this command or a user would actually produce:
+//
+//   - JSON: a non-empty `Authorization` under the entry's HeadersKey.
+//   - TOML: an `EnvBearerKey` assignment, an inline `HeadersKey` line naming
+//     Authorization, or an `Authorization` inside a `<table>.<HeadersKey>`
+//     sub-table.
+//
+// 🔴 THE RESIDUAL: a shape neither branch recognises is reported as NO
+// credential, which is the conservative direction — it falls back to exactly the
+// message that shipped. It is conservative, not correct: a header this function
+// cannot see still gets described as absent.
+func mcpAuthCoverageOf(data []byte, t agentTarget) mcpAuthCoverage {
+	if len(data) == 0 {
+		return mcpAuthCoverage{}
+	}
+	var carries map[string]bool
+	if t.Format == formatTOML {
+		carries = tomlEntriesWithAuth(data, t)
+	} else {
+		carries = jsonEntriesWithAuth(data, t)
+	}
+	if carries == nil {
+		return mcpAuthCoverage{}
+	}
+	var cov mcpAuthCoverage
+	for _, srv := range civitaiMCPServers {
+		if carries[srv.Name] {
+			cov.With = append(cov.With, srv.Name)
+			continue
+		}
+		cov.Without = append(cov.Without, srv.Name)
+	}
+	return cov
+}
+
+func jsonEntriesWithAuth(data []byte, t agentTarget) map[string]bool {
+	if t.HeadersKey == "" {
+		return map[string]bool{}
+	}
+	root := map[string]any{}
+	if err := json.Unmarshal(data, &root); err != nil {
+		return nil
+	}
+	section, _ := root[t.ServersKey].(map[string]any)
+	found := map[string]bool{}
+	for _, srv := range civitaiMCPServers {
+		entry, _ := section[srv.Name].(map[string]any)
+		headers, _ := entry[t.HeadersKey].(map[string]any)
+		if v, ok := headers["Authorization"].(string); ok && strings.TrimSpace(v) != "" {
+			found[srv.Name] = true
+		}
+	}
+	return found
+}
+
+func tomlEntriesWithAuth(data []byte, t agentTarget) map[string]bool {
+	blocks, err := parseTOMLBlocks("", string(data))
+	if err != nil {
+		return nil
+	}
+	found := map[string]bool{}
+	for _, srv := range civitaiMCPServers {
+		table := tomlServerTable(t, srv)
+		for _, b := range blocks {
+			switch b.Name {
+			case table:
+				for _, line := range b.Lines[1:] {
+					key := tomlKeyOnLine(line)
+					if t.EnvBearerKey != "" && key == t.EnvBearerKey {
+						found[srv.Name] = true
+					}
+					if t.HeadersKey != "" && key == t.HeadersKey &&
+						strings.Contains(strings.ToLower(line), "authorization") {
+						found[srv.Name] = true
+					}
+				}
+			case table + "." + t.HeadersKey:
+				if t.HeadersKey == "" {
+					continue
+				}
+				for _, line := range b.Lines[1:] {
+					if strings.EqualFold(tomlKeyOnLine(line), "Authorization") {
+						found[srv.Name] = true
+					}
+				}
+			}
+		}
+	}
+	return found
+}
+
+// mcpPreservedAuthNote is the ONE sentence describing a credential the run did
+// NOT write and did NOT touch, or "" when there is none to describe. Every
+// header-less surface builds from it, so the terminal and `--json` cannot
+// disagree about a file they are both describing.
+func mcpPreservedAuthNote(cov mcpAuthCoverage) string {
+	if !cov.known() || len(cov.With) == 0 {
+		return ""
+	}
+	if len(cov.Without) == 0 {
+		return "every Civitai entry already carries an Authorization header this run did not write " +
+			"and did not remove, and that is what they authenticate with"
+	}
+	note := strings.Join(cov.With, ", ") + " already carries an Authorization header this run did not " +
+		"write and did not remove; " + strings.Join(cov.Without, ", ") + " has none"
+	var needing []string
+	for _, name := range cov.Without {
+		for _, srv := range civitaiMCPServers {
+			if srv.Name == name && !srv.Anonymous {
+				needing = append(needing, name)
+			}
+		}
+	}
+	if len(needing) > 0 {
+		note += " and " + strings.Join(needing, ", ") + " returns 401 until one is present"
+	}
+	return note
+}
+
 // mcpAuthValue is the header VALUE an interpolating agent gets, or "" when this
 // run must write no header at all. It is the ONE place the credential rule is
 // decided, so the JSON writer, the TOML writer and the `--agent other` paste
@@ -165,10 +319,11 @@ func mcpMalformed(path string, err error) error {
 // on WRITE would, and a "simplification" to strings.Replace would remove the
 // only property that makes it possible.
 //
-// 🔴 WHAT IT DOES NOT DO IS PRESERVE COMMENTS ON THE WAY OUT. The merge
-// re-encodes through a Go map, so a JSONC file this command writes back loses
-// its comments and its key order. That is a REAL loss and it is reported rather
-// than hidden — see jsonMergeDropsComments and the change reason built from it.
+// 🔴 WHAT IT DOES NOT DO IS PRESERVE JSONC ON THE WAY OUT. The merge re-encodes
+// through a Go map, so a JSONC file this command writes back loses its comments,
+// its trailing commas (blankJSONTrailingCommas is the other pass) and its key
+// order. That is a REAL loss and it is reported rather than hidden — see
+// jsonMergeDropsFormatting and the change reason built from it.
 // The alternative that was rejected: refusing every commented file, which is
 // what shipped, and which made `--agent zed` fail for every real Zed install
 // (Zed's settings.json opens with a four-line comment block) while taking
@@ -224,7 +379,7 @@ func blankJSONComments(src []byte) []byte {
 func decodeAgentJSON(path string, raw []byte, t agentTarget) (map[string]any, error) {
 	body := raw
 	if t.AllowsComments {
-		body = blankJSONComments(raw)
+		body = blankJSONC(raw)
 	}
 	root := map[string]any{}
 	if len(strings.TrimSpace(string(body))) == 0 {
@@ -236,13 +391,88 @@ func decodeAgentJSON(path string, raw []byte, t agentTarget) (map[string]any, er
 	return root, nil
 }
 
-// jsonMergeDropsComments reports whether writing this file back will lose
-// comments the user wrote. Used to WARN, never to refuse.
-func jsonMergeDropsComments(raw []byte, t agentTarget) bool {
+// blankJSONTrailingCommas blanks a `,` that only whitespace separates from the
+// `}` or `]` closing its container, so `encoding/json` can decode the result.
+//
+// 🔴 A TRAILING COMMA IS PART OF THE JSONC THESE AGENTS ACCEPT, AND REFUSING ONE
+// WAS THIS COMMAND'S OWN STATED FAILURE MODE — refusing while blaming the user,
+// on a file their editor authored and reads back happily. Measured on
+// `{ "theme": "One Dark", }` as Zed's settings.json: rc 1, "does not parse … fix
+// or move that file". Both parsers were read rather than remembered:
+//
+//   - **Zed** parses settings with `parse_json_with_comments`
+//     (`crates/settings_json/src/settings_json.rs`), which is
+//     `serde_json_lenient::Deserializer::from_str`; serde_json_lenient accepts
+//     `//` and `/* */` comments AND trailing commas by default, with no feature
+//     flag — that leniency is the crate's whole purpose.
+//   - **VS Code** strips both in `src/vs/base/common/jsonc.ts` before
+//     `JSON.parse`: the scanner's fifth capture group is `(,\s*[}\]])` and there
+//     is a `.replace(/,\s*([}\]])/g, '$1')` fallback besides.
+//
+// 🔴 NEITHER EDITOR WAS RUN. The claim rests on those two sources, not on a
+// live observation — and **opencode's parser was NOT established**, so its row
+// rides on the same `AllowsComments` gate by inference. What bounds that: this
+// command writes STRICT JSON back in every case, so tolerating an input form the
+// agent would have rejected can never produce a file the agent cannot read. That
+// is the asymmetry AllowsComments' own comment worries about, and it does not
+// apply in this direction.
+//
+// It blanks rather than deletes for the same reason blankJSONComments does — the
+// byte offsets into the original stay valid.
+func blankJSONTrailingCommas(src []byte) []byte {
+	out := make([]byte, len(src))
+	copy(out, src)
+	inString, escaped := false, false
+	for i := 0; i < len(out); i++ {
+		c := out[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch {
+		case c == '"':
+			inString = true
+		case c == ',':
+			for j := i + 1; j < len(out); j++ {
+				if out[j] == ' ' || out[j] == '\t' || out[j] == '\r' || out[j] == '\n' {
+					continue
+				}
+				if out[j] == '}' || out[j] == ']' {
+					out[i] = ' '
+				}
+				break
+			}
+		}
+	}
+	return out
+}
+
+// blankJSONC applies both blanking passes, in the order they compose: comments
+// first, so a comment sitting between a trailing comma and its closing brace has
+// already become whitespace by the time the comma is judged.
+func blankJSONC(src []byte) []byte {
+	return blankJSONTrailingCommas(blankJSONComments(src))
+}
+
+// jsonMergeDropsFormatting reports whether writing this file back will lose
+// something the user wrote that is not a key or a value — a comment, or a
+// trailing comma. Used to WARN, never to refuse.
+//
+// It covers BOTH because the re-encode drops both, and a warning scoped to
+// comments alone would say nothing about a file whose only JSONC feature is a
+// trailing comma.
+func jsonMergeDropsFormatting(raw []byte, t agentTarget) bool {
 	if !t.AllowsComments || len(raw) == 0 {
 		return false
 	}
-	return !bytes.Equal(raw, blankJSONComments(raw))
+	return !bytes.Equal(raw, blankJSONC(raw))
 }
 
 // mergeEntryKeys overlays this command's keys onto an entry the user may already
@@ -303,8 +533,9 @@ func mergeHeaderKeys(existing any, ours map[string]any) map[string]any {
 // Every key it does not own is preserved: the decode is into map[string]any,
 // only `t.ServersKey` and the two server names under it are touched, and within
 // those two entries only the keys this command writes are assigned
-// (mergeEntryKeys). What it does NOT preserve is byte layout — comments and key
-// order do not survive a decode/encode round trip through a Go map.
+// (mergeEntryKeys). What it does NOT preserve is byte layout — comments, trailing
+// commas and key order do not survive a decode/encode round trip through a Go
+// map.
 func mergeJSONMCP(path string, raw []byte, t agentTarget, token string) ([]byte, error) {
 	root, err := decodeAgentJSON(path, raw, t)
 	if err != nil {
@@ -590,11 +821,37 @@ func renderTOMLServer(t agentTarget, srv mcpServer, token string) []string {
 // same published contract broken ("preserving every other server AND KEY").
 //
 // Comments inside the block are carried through with the lines they annotate.
-func mergeTOMLBlock(b tomlBlock, ours []string, t agentTarget) []string {
-	ownedKeys := map[string]bool{t.URLKey: true}
-	for _, k := range []string{t.EnvBearerKey, t.HeadersKey} {
-		if k != "" {
-			ownedKeys[k] = true
+//
+// 🔴 A KEY IS SKIPPED ONLY WHEN `ours` ACTUALLY RE-RENDERS IT — AND THE FIRST
+// VERSION OF THIS FUNCTION SKIPPED A FIXED SET INSTEAD, WHICH DELETED THE OTHER
+// HALF. The set was {URLKey, EnvBearerKey, HeadersKey}, but renderTOMLServer
+// emits `http_headers` NEVER (Codex's EnvHeaderSyntax is "", so mcpAuthValue
+// returns "") and `bearer_token_env_var` only WITH a token. So a key that is not
+// re-rendered was dropped with nothing put back: a Codex user's hand-added
+// `http_headers = { Authorization = … }` — the only static-header key Codex
+// documents, i.e. the way a Codex user authenticates — vanished on the next run,
+// at rc 0, with `--check` still reporting `ok: true`. Measured. This is the same
+// defect the JSON side had, one layer down, and it survived the round-1 fix
+// because that fix was written against a fixture holding only keys this command
+// NEVER writes.
+//
+// So the owned set is DERIVED from `ours`, which makes it structurally
+// impossible for the two to disagree: mergeEntryKeys (JSON) overlays exactly the
+// keys present in `ours`, and this is the same rule spelled for lines.
+//
+// 🔴 THE RESIDUAL, STATED: with a token configured this writes
+// `bearer_token_env_var` while leaving a user's `http_headers` Authorization in
+// place, so Codex is handed two sources for one header. That is deliberate — it
+// is their key, in their file, and deleting it silently is the defect above —
+// but it is a state a diff will look surprising in. Item 34's rule is about what
+// this command WRITES; it is not a licence to delete what it finds.
+func mergeTOMLBlock(b tomlBlock, ours []string) []string {
+	// The header line carries no `=`, so tomlKeyOnLine returns "" for it and it
+	// contributes nothing to the set.
+	ownedKeys := map[string]bool{}
+	for _, line := range ours {
+		if key := tomlKeyOnLine(line); key != "" {
+			ownedKeys[key] = true
 		}
 	}
 	out := append([]string{}, ours...)
@@ -671,7 +928,7 @@ func mergeTOMLMCP(path string, src string, t agentTarget, token string) ([]byte,
 		// Re-render OUR keys and carry every other key the block held through
 		// verbatim (see mergeTOMLBlock). The trailing blank lines it carried are
 		// dropped with it and re-added below, so repeated runs are idempotent.
-		out = append(out, mergeTOMLBlock(b, renderTOMLServer(t, srv, token), t)...)
+		out = append(out, mergeTOMLBlock(b, renderTOMLServer(t, srv, token))...)
 		out = append(out, "")
 		replaced[b.Name] = true
 	}
@@ -832,6 +1089,22 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmpName, target)
+}
+
+// checkWriteTargetResolvable is resolveWriteTarget's refusal WITHOUT the write —
+// a pure read (Lstat plus a link resolution), so the planning phase can reach the
+// same verdict the write phase would.
+//
+// 🔴 A REFUSAL ONLY THE WRITE PATH CAN REACH IS INVISIBLE TO `--dry-run`, AND
+// THAT MADE THE DRY RUN LIE. Measured on a broken-symlink `~/.codex/config.toml`:
+// `--dry-run` reported `create`, `ok: true`, exit 0, for a destination the real
+// run refuses by name. The file header's claim that dry-run "cannot report a path
+// or an action the write path would not take" was true only for the checks that
+// happened to sit in planMCPConfig. Moving this one there makes the claim true of
+// it too — and, on the real run, turns a bare error into a `blocked` row.
+func checkWriteTargetResolvable(path string) error {
+	_, err := resolveWriteTarget(path)
+	return err
 }
 
 // resolveWriteTarget returns the real path a write to `path` must land on: the

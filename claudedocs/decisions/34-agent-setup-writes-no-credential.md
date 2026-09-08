@@ -53,12 +53,18 @@ Per agent, one of two branches:
    have the printed next-step block name the file and the exact header the user
    must add themselves.
 
-### The table, from the vendor docs
+### The table, and the evidence each row rests on
 
-Every row below was read out of the vendor's own documentation. None of it is
-from memory, and the syntaxes genuinely disagree — that disagreement is the
-whole reason this lives in Go instead of in a paragraph telling people to
-hand-write JSON.
+Every row below was read out of a **primary vendor source** — its documentation
+or its implementation, per the rule of record below. None of it is from memory,
+and the syntaxes genuinely disagree — that disagreement is the whole reason this
+lives in Go instead of in a paragraph telling people to hand-write JSON.
+
+> This heading and sentence used to read *"The table, from the vendor docs /
+> Every row below was read out of the vendor's own documentation."* Round 1
+> enabled the `vscode` row on implementation evidence, which made that sentence
+> false, and nobody amended it. The `vendor doc` column below is likewise the
+> *evidence* column: two rows now cite issues and source files.
 
 | agent | mechanism | value written | vendor doc |
 |---|---|---|---|
@@ -106,9 +112,48 @@ It fails at request time, and it fails looking like a **bad credential** rather
 than a bad config, which is the most expensive shape a failure can take: the
 user goes and re-mints a token.
 
-So the rule for this table is: **if you cannot confirm support from a vendor
-doc, it is unsupported.** Absence of evidence is treated as evidence of absence
-here on purpose, because the two error directions are not symmetric.
+So the refusal direction is: **with no confirmation from a primary vendor
+source, a row is unsupported.** Absence of evidence is treated as evidence of
+absence here on purpose, because the two error directions are not symmetric.
+
+### 🔴 The rule of record — ONE rule, three evidence classes
+
+**This supersedes every other statement of the rule in this file.** Read it
+before adding, enabling or reversing a row; do not derive the rule from a
+sentence elsewhere in this document.
+
+A row may name an interpolation syntax only on evidence from class 1 or class 2,
+and it must CITE the evidence it rests on:
+
+| class | what it is | sufficient alone? |
+|---|---|---|
+| **1. Vendor implementation** | the code that performs the resolution, read from the config value to the request — or a maintainer OF that implementation stating the behaviour in the vendor's own tracker | **yes** |
+| **2. Vendor documentation** | a vendor doc page naming the file *and* the field | **yes** |
+| **3. Everything else** | a blog post, a third-party wrapper, a sibling feature by analogy, an inference chained across two documents, memory | **never** |
+
+Where 1 and 2 disagree, **1 wins** and the row records both, because the
+implementation is what runs. Where neither exists, the row gets **no header
+key** — that is the refusal above, and it is unchanged.
+
+**The rule CHANGED, and here is what changed.** It used to be class 2 only,
+stated twice: "Every row below was read out of the vendor's own documentation"
+and "if you cannot confirm support from a vendor doc, it is unsupported". Round 1
+then reversed the `vscode` row on class 1 evidence — two closed issues carrying a
+MEMBER's statement, plus a read of `mcpRegistry.ts` — which the class-2-only rule
+forbade, and neither sentence was amended. So the file shipped two rules that
+could not both be followed, and a maintainer adding an eighth agent had no
+tiebreak.
+
+**The reversal was right and stays.** What was wrong was the rule, not the row:
+class 2 is a *proxy* for class 1, and a proxy cannot outrank the thing it proxies
+for. The narrow rule was written when the only evidence anyone had gone looking
+for was documentation.
+
+🔴 **Class 3 is still forbidden, and that is the half the widening must not eat.**
+The blockquote below closes with *"an inference is exactly what this table may
+not ship"* — that sentence is still the rule. It condemns class 3, which is what
+it was written about; it does not condemn class 1, which is what replaced it
+here. Reading a vendor's resolver is not an inference across two docs.
 
 ### The one that got "fixed" — and the fix was right
 
@@ -128,10 +173,10 @@ nothing.
 > inference across two documents, and an inference is exactly what this table may
 > not ship.
 
-**What overturned it was the IMPLEMENTATION, not better docs.** The docs still
-say what they said, and read alone they still support the conservative reading —
-which is the lesson: for a behaviour the vendor implements but does not document,
-the docs are the weaker witness. Every item below was checked directly:
+**What overturned it was the IMPLEMENTATION, not better docs** — class 1 over
+class 2, in the rule of record above. The docs still say what they said, and read
+alone they still support the conservative reading; that is why the classes are
+ranked rather than merely listed. Every item below was checked directly:
 
 - **microsoft/vscode#245237** — *"Support `${env:VARIABLE_NAME}` in mcp.json"*,
   `state: closed`, `state_reason: completed`, closed 2025-04-01. Its single

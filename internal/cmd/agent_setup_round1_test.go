@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -331,57 +332,153 @@ func TestMergePreservesKeysOnOurOwnEntries(t *testing.T) {
 
 // TestTOMLMergePreservesKeysOnOurOwnTable is the same defect on the Codex path,
 // where a server table legitimately carries timeouts and an enabled flag.
+//
+// 🔴 THE FIXTURE CARRIES BOTH AUTH KEYS, AND THAT IS THE HALF ROUND 1 MISSED.
+// This guard's docstring claimed "the same defect on the Codex path" while its
+// fixture held only `startup_timeout_sec` / `tool_timeout_sec` — two keys the
+// TOML renderer never emits under ANY condition. The keys that were actually
+// being deleted are the ones the renderer emits SOMETIMES: `http_headers` (never
+// emitted — Codex's EnvHeaderSyntax is "") and `bearer_token_env_var` (emitted
+// only with a token configured). `mergeTOMLBlock` skipped both unconditionally,
+// so a hand-added `http_headers` — which is how a Codex user authenticates
+// today — was deleted with nothing put back, at rc 0. Measured on c801ab8.
+// A fixture that avoids the sometimes-written keys cannot see that class.
 func TestTOMLMergePreservesKeysOnOurOwnTable(t *testing.T) {
-	dir, home := agentSetupProject(t)
-	path := filepath.Join(home, ".codex", "config.toml")
-	writeFile(t, path, `model = "gpt-5"
+	// theirHeaderLine is the line a Codex user adds by hand to authenticate:
+	// `http_headers` is the ONLY static-header key Codex documents, and this
+	// command never writes it. The value is a synthetic fixture.
+	const theirHeaderLine = `http_headers = { Authorization = "Bearer sk-their-own-literal-secret-8891" }`
+	const theirBearerLine = `bearer_token_env_var = "MY_OWN_CIVITAI_VAR"`
+	fixture := `model = "gpt-5"
 
 [mcp_servers."civitai"]
 url = "https://mcp.civitai.com/mcp"
+# I added this by hand so it works:
+` + theirHeaderLine + `
+` + theirBearerLine + `
 startup_timeout_sec = 30
 tool_timeout_sec = 120
-`)
-	if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentCodex); err != nil {
-		t.Fatalf("agent-setup: %v", err)
-	}
-	got := readFile(t, path)
-	for _, want := range []string{
-		"startup_timeout_sec = 30",
-		"tool_timeout_sec = 120",
-		`model = "gpt-5"`,
-		`[mcp_servers."civitai"]`,
-		`url = "https://mcp.civitai.com/mcp"`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the merge dropped %q:\n%s", want, got)
+`
+
+	t.Run("no token configured", func(t *testing.T) {
+		dir, home := agentSetupProject(t)
+		path := filepath.Join(home, ".codex", "config.toml")
+		writeFile(t, path, fixture)
+		t.Setenv("CIVITAI_TOKEN", "")
+
+		if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentCodex); err != nil {
+			t.Fatalf("agent-setup: %v", err)
 		}
-	}
-	// The url line must appear ONCE — a merge that appends ours beside the old
-	// one produces a table TOML rejects.
-	if n := strings.Count(got, `url = "https://mcp.civitai.com/mcp"`); n != 1 {
-		t.Errorf("the civitai url appears %d times, want 1:\n%s", n, got)
-	}
+		got := readFile(t, path)
+		for _, want := range []string{
+			"startup_timeout_sec = 30",
+			"tool_timeout_sec = 120",
+			`model = "gpt-5"`,
+			`[mcp_servers."civitai"]`,
+			`url = "https://mcp.civitai.com/mcp"`,
+			"# I added this by hand so it works:",
+			// 🔴 THE TWO THE RENDERER DID NOT PUT BACK. With no token this run
+			// renders neither key, so skipping their lines deletes them.
+			theirHeaderLine,
+			theirBearerLine,
+		} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the merge dropped %q:\n%s", want, got)
+			}
+		}
+		// The url line must appear ONCE — a merge that appends ours beside the old
+		// one produces a table TOML rejects.
+		if n := strings.Count(got, `url = "https://mcp.civitai.com/mcp"`); n != 1 {
+			t.Errorf("the civitai url appears %d times, want 1:\n%s", n, got)
+		}
+	})
+
+	t.Run("token configured replaces only the key we render", func(t *testing.T) {
+		dir, home := agentSetupProject(t)
+		path := filepath.Join(home, ".codex", "config.toml")
+		writeFile(t, path, fixture)
+		t.Setenv("CIVITAI_TOKEN", credFixtureToken)
+
+		if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentCodex); err != nil {
+			t.Fatalf("agent-setup: %v", err)
+		}
+		got := readFile(t, path)
+		// `bearer_token_env_var` IS re-rendered with a token, so ours wins — the
+		// precedence rule in item 35: on our own entries this command owns the
+		// keys it writes, and nothing else.
+		if !strings.Contains(got, `bearer_token_env_var = "`+tokenEnvVar+`"`) {
+			t.Errorf("our own bearer_token_env_var was not written:\n%s", got)
+		}
+		if strings.Contains(got, theirBearerLine) {
+			t.Errorf("a key this run DOES render was not replaced by ours:\n%s", got)
+		}
+		// Exactly one per server table — a merge that appends ours beside theirs
+		// defines the key twice in one table, which TOML rejects.
+		if n, want := strings.Count(got, "bearer_token_env_var"), len(civitaiMCPServers); n != want {
+			t.Errorf("bearer_token_env_var appears %d times, want %d (one per table):\n%s", n, want, got)
+		}
+		// `http_headers` is NEVER rendered, token or not, so it is still theirs.
+		if !strings.Contains(got, theirHeaderLine) {
+			t.Errorf("the merge dropped %q, a key it never re-renders:\n%s", theirHeaderLine, got)
+		}
+		for _, want := range []string{"startup_timeout_sec = 30", "tool_timeout_sec = 120", `model = "gpt-5"`} {
+			if !strings.Contains(got, want) {
+				t.Errorf("the merge dropped %q:\n%s", want, got)
+			}
+		}
+	})
 }
 
 // TestRepeatedRunsAreIdempotent: the per-key merge must not accumulate. Two runs
 // and three runs produce the same bytes.
+//
+// 🔴 THE FIRST RUN STARTS FROM A FILE THIS COMMAND DID NOT WRITE, AND THAT IS
+// THE POINT — round 2 found this guard testing the RENDERER's idempotence and
+// calling it the MERGE's. Started from an empty project, every run after the
+// first merges over this command's OWN output, which is the one input item 35's
+// thesis says cannot break a merge routine ("a merge routine tested only against
+// its own output is tested against the one input that cannot break it"). The
+// pre-existing keys below are what make the per-key path run at all, and the
+// second assertion is that they are STILL THERE after three runs — accumulating
+// is one failure, eroding is the other.
 func TestRepeatedRunsAreIdempotent(t *testing.T) {
 	for _, agent := range agentsWithConfigFiles() {
 		t.Run(agent, func(t *testing.T) {
 			dir, _ := agentSetupProject(t)
 			t.Setenv("CIVITAI_TOKEN", credFixtureToken)
+			path, _ := agentConfigPath(liveAgentEnv(dir), agent)
+			// A file the USER wrote, in the shape their agent uses, carrying a key
+			// on OUR entry that this command never renders.
+			var pre string
+			if agentTargets[agent].Format == formatTOML {
+				pre = "model = \"gpt-5\"\n\n[mcp_servers.\"civitai\"]\nurl = \"https://mcp.civitai.com/mcp\"\n" +
+					"startup_timeout_sec = 45\n"
+			} else {
+				t := agentTargets[agent]
+				pre = "{\n  \"theirTopLevelKey\": true,\n  " + strconv.Quote(t.ServersKey) + ": {\n" +
+					"    \"civitai\": {" + strconv.Quote(t.URLKey) + ": \"https://mcp.civitai.com/mcp\", " +
+					"\"theirEntryKey\": 45}\n  }\n}\n"
+			}
+			writeFile(t, path, pre)
+
 			for i := 0; i < 2; i++ {
 				if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agent); err != nil {
 					t.Fatalf("run %d: %v", i, err)
 				}
 			}
-			path, _ := agentConfigPath(liveAgentEnv(dir), agent)
 			after2 := readFile(t, path)
 			if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agent); err != nil {
 				t.Fatalf("run 3: %v", err)
 			}
-			if after3 := readFile(t, path); after3 != after2 {
+			after3 := readFile(t, path)
+			if after3 != after2 {
 				t.Errorf("a third run changed the file:\n--- after 2 ---\n%s\n--- after 3 ---\n%s", after2, after3)
+			}
+			// PREMISE + the erosion half: the user's keys are what make this a MERGE,
+			// and a run that had deleted them would be idempotent about nothing.
+			if !strings.Contains(after3, "45") {
+				t.Errorf("the key the user put on OUR entry was gone by run 3:\n--- before ---\n%s\n--- after ---\n%s",
+					pre, after3)
 			}
 		})
 	}

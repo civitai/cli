@@ -61,8 +61,9 @@ rc=1        and the project directory is EMPTY
 
 🔴 **THE COMMENTS ARE STILL LOST ON THE WAY OUT, AND THAT IS SAID RATHER THAN
 HIDDEN.** The merge decodes into a Go map and re-encodes, so a JSONC file this
-command writes back loses its comments and its key order. `jsonMergeDropsComments`
-detects it and the change `reason` states it in the run's own output.
+command writes back loses its comments, its trailing commas and its key order.
+`jsonMergeDropsFormatting` detects it and the change `reason` states it in the
+run's own output.
 
 *Rejected: refusing every commented file.* That is what shipped, and it made
 `--agent zed` fail for every real Zed install. Losing a comment while saying so
@@ -109,7 +110,8 @@ on those entries is the user's and is preserved. Two consequences worth stating,
 because both look surprising in a diff:
 
 - With **no** token configured, a hand-added `Authorization` on our entry
-  survives untouched. That is the finding this section exists for.
+  survives untouched. That is the finding this section exists for. 🔴 **On the
+  TOML side that was still false after round 1** — see round 2, defect 1.
 - With a token configured, a hand-added `Authorization` on our entry is
   **replaced** by the env-var reference. That is deliberate: it is our entry, the
   reference is what the command exists to write, and if what they wrote was a
@@ -278,3 +280,189 @@ Every defect above was reproduced by running the binary on the pre-fix tree
 fix was reverted individually — 18 mutants — and every one was killed by the
 guard named for it, with a green baseline as the positive control. The matrix is
 in the PR that introduced this item.
+
+---
+
+# Round 2
+
+Round 1's fixes were re-audited against the same standard — run the binary
+against files real installs have — and five more defects came out of it. The
+first is the one that matters most, because **it is the contract round 1
+declared fixed**.
+
+## 1. The TOML merge still deleted the user's auth keys
+
+`mergeTOMLBlock` skipped a **fixed** set of owned keys — `{URLKey,
+EnvBearerKey, HeadersKey}` — while `renderTOMLServer` emits `http_headers`
+**never** (Codex's `EnvHeaderSyntax` is `""`, so `mcpAuthValue` returns `""`) and
+`bearer_token_env_var` only **with** a token. So an owned key that was not
+re-rendered was skipped with **nothing put back**:
+
+```
+BEFORE                                          AFTER            (rc 0, no warning)
+[mcp_servers.civitai]                           [mcp_servers."civitai"]
+url = "…/mcp"                                   url = "…/mcp"
+# I added this by hand so it works:             # I added this by hand so it works:
+http_headers = { Authorization = "Bearer …" }   startup_timeout_sec = 30
+startup_timeout_sec = 30
+```
+
+`http_headers` is the **only** static-header key Codex documents — it is how a
+Codex user authenticates by hand — and it was deleted while the comment
+introducing it survived, annotating nothing. `--check` still said `ok: true`.
+
+**The fix mirrors the JSON side exactly**: the owned set is now DERIVED from the
+rendered lines, so "skip a key" and "write a key" are the same decision.
+`mergeEntryKeys` overlays exactly the keys present in `ours`; `mergeTOMLBlock`
+now does the same, spelled for lines.
+
+🔴 **The residual, stated.** With a token configured, this writes
+`bearer_token_env_var` and leaves a user's `http_headers` `Authorization` in
+place — two sources for one header, in a shape a diff will look surprising in.
+That is deliberate: item 34's rule is about what this command **writes**, not a
+licence to delete what it **finds**, and deleting it silently is defect 1 all
+over again.
+
+🔴 **Why the round-1 guard could not see it, and this is the transferable part.**
+`TestTOMLMergePreservesKeysOnOurOwnTable`'s docstring said "the same defect on
+the Codex path". Its fixture carried `startup_timeout_sec` and
+`tool_timeout_sec` — two keys the renderer emits under **no** condition. The
+keys that were actually being deleted are the ones the renderer emits
+**sometimes**. A fixture built only from never-written keys cannot distinguish
+"skip what we re-render" from "skip a fixed list", so the guard read as coverage
+and provided none. **Ask which of the states your fixture does not reach.**
+
+## 2. The run described a header it had just preserved as absent
+
+`mcpAuthReason` and `printAgentSetupAuthNote` both derived everything from
+`hasToken` and never looked at the merged entry. Measured: run with a token, then
+re-run in a shell without one — CI, a second machine, an expired login. The merge
+correctly **keeps** `"Authorization": "Bearer ${env:CIVITAI_TOKEN}"`, and the run
+then printed:
+
+> No token is configured, so no Authorization header was written.
+> ⚠ Access without one: … civitai-orchestration returns 401 until an
+> Authorization header is present.
+
+The first sentence is true of the **run** and misleading about the **file**. The
+second is a claim about **what the registration reaches**, and it is simply wrong
+about the file just written. `--json`'s `reason` said the same.
+
+Both surfaces now read `mcpAuthCoverage`, computed from **the bytes the run will
+write** — the one artefact `--dry-run` and the real run agree on by construction,
+since `renderMCPConfig` performs no write. The sentence is built once
+(`mcpPreservedAuthNote`) so the terminal and `--json` cannot disagree about a
+file they are both describing.
+
+🔴 **The residual, stated:** a credential in a shape neither the JSON nor the
+TOML reader recognises is reported as **no credential** — the conservative
+direction, which is exactly the message that shipped. Conservative is not
+correct: a header this code cannot see is still described as absent.
+
+## 3. A trailing comma was refused while every surface said JSONC was tolerated
+
+`blankJSONComments` stripped comments and nothing else. Measured on
+`{ "theme": "One Dark", }` as Zed's `settings.json`: **rc 1**, *"does not parse …
+fix or move that file"* — this command's own stated failure mode, refusing while
+blaming the user, on a file the editor authored and reads back happily.
+
+Both parsers were **read**, not remembered:
+
+- **Zed** — `crates/settings_json/src/settings_json.rs`'s
+  `parse_json_with_comments` is `serde_json_lenient::Deserializer::from_str`.
+  `serde_json_lenient` accepts `//` and `/* */` comments **and** trailing commas
+  by default, no feature flag; that leniency is the crate's purpose.
+- **VS Code** — `src/vs/base/common/jsonc.ts` strips both before `JSON.parse`:
+  the scanner's fifth capture group is `(,\s*[}\]])`, and there is a
+  `.replace(/,\s*([}\]])/g, '$1')` fallback besides.
+
+🔴 **NEITHER EDITOR WAS RUN.** The claim rests on those two sources. And
+**opencode's parser was not established at all** — its row rides on the same
+`AllowsComments` gate by inference. What bounds that: this command writes
+**strict JSON** back in every case, so tolerating an input form the agent would
+have rejected can never produce a file the agent cannot read. The asymmetry
+`AllowsComments`' own comment worries about does not exist in this direction.
+
+`blankJSONTrailingCommas` blanks rather than deletes, like its sibling, so byte
+offsets into the original stay valid. The refusals that must SURVIVE the
+loosening are pinned separately (`TestATrailingCommaDoesNotMakeRubbishAcceptable`,
+`TestAStrictAgentStaysStrictAboutTrailingCommas`): a doubled comma, a leading
+comma, a truncated file, and a strict agent's plain-JSON config.
+
+**The exception statement had to widen with it.** A trailing comma does not
+survive the re-encode either, so every surface that framed the exception as
+"comments and key order" now names all three forms — README, the command's
+`Long`, the change `reason`, this file, `AGENTS.md`.
+
+## 4. `--json` emitted zero bytes for three of four failure shapes
+
+One flag, three contracts:
+
+| trigger | `AGENTS.md` written | `--json` stdout | rc |
+|---|---|---|---|
+| plan-time refusal | yes | full payload, `ok:false`, `blocked` row | 1 |
+| write-time refusal (a broken symlink) | yes | **0 bytes** | 1 |
+| write-time failure (an unwritable dir) | yes | **0 bytes** | 1 |
+| `--check --json` on an unparseable config | n/a | **0 bytes** | 1 |
+
+Only the first was documented. A consumer facing the others cannot distinguish a
+partial run from a usage error — and the fourth is what
+`developer.civitai.com`'s hosted prompt reads.
+
+- **The write path** now attempts each of the three files **independently** and
+  turns a failure into that row's own `blocked` action, exactly as the MCP
+  refusal already was. Independence is not decoration: the old code returned on
+  the FIRST failure, so a payload emitted after one would have claimed actions
+  for files nothing ever tried to write.
+- **`--check`** turns an unreadable config into `mcp-site`/`mcp-orch` rows
+  carrying the parse failure, which is what the code's own principle already said
+  — *"COULD NOT LOOK is not NOT REGISTERED, and the details say which"* — and
+  what the other two could-not-look cases already did.
+
+## 5. `--dry-run` reported an action the real run refuses
+
+`resolveWriteTarget`'s broken-symlink refusal lived in the **write** path, so
+`--dry-run` reported `create`, `ok: true`, exit 0 for a destination the real run
+refuses by name. The file header's claim that a dry run "cannot report a path or
+an action the write path would not take" was true of the refusals that happened
+to sit in the planner and blind to the one that did not.
+
+Resolving the destination is a **pure read**, so it moved into `planMCPConfig`
+where the claim can hold — which also turned the real run's bare error into a
+`blocked` row (defect 4). `TestDryRunAndTheRealRunAgreeOnEveryAction` is the
+**ledger** over the class rather than a second copy of the one case: for four
+fixtures, the two runs' `changes` must agree on path **and action**, row for row.
+Comparing paths alone is satisfied by `create` opposite `blocked`, which is the
+defect.
+
+🔴 **What the claim still cannot cover, stated rather than left to be found
+again:** a failure that only the *act of writing* can produce — permissions, a
+full disk, a race — is by definition invisible to a run that performs no write.
+`--dry-run` reports it as `create`; the real run reports it as `blocked`. That is
+the residual, and defect 4's independent-attempt fix is what keeps it from being
+silent.
+
+## Red-then-green
+
+Every defect above was reproduced by running the binary on `c801ab8` — the tip of
+the round-1 fix — then fixed and re-run on the same input.
+`agent_setup_round2_test.go` is deliberately **black-box**: every assertion drives
+the command through `run` and reads the file or the payload it produced, so the
+same test source compiles and runs against the pre-fix tree. A guard referencing a
+symbol the fix introduced cannot be watched red — it fails to compile, which is
+not the same observation.
+
+The controls in that file passed on `c801ab8` as well as after, which is what
+makes them controls: a header-less run still names the server that 401s, broken
+JSON is still refused, a strict agent still rejects a trailing comma, and the
+plan-time refusal still emitted its payload.
+
+**One guard was strengthened rather than added.**
+`TestRepeatedRunsAreIdempotent` claimed "the per-key merge must not accumulate"
+while starting from an **empty** project — so every run after the first merged
+over this command's own output, which is the one input this file's own thesis
+says cannot break a merge routine. It now starts from a file the user wrote,
+carrying a key on OUR entry that the command never renders, and asserts that key
+is still there after three runs. It was **green on `c801ab8`**: it is coverage
+that was missing, not a defect that was found.
+

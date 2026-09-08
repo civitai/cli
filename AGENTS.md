@@ -454,9 +454,9 @@ item must carry a trigger that is a routing question rather than a label
     or wording what a header-less config reaches?**
     → evidence: claudedocs/decisions/34-agent-setup-writes-no-credential.md
 
-35. **Changing how `agent-setup` merges into a file the USER owns — JSONC
-    comments, which keys survive on our OWN entries, the TOML parser, a
-    symlinked destination, an agent's config root, or the `--check` verdict?**
+35. **Changing how `agent-setup` merges a file the USER owns, or what it CLAIMS
+    about the result — JSONC leniency, keys on OUR entries, the TOML parser,
+    symlinks, config roots, `--check`'s verdict, `--json` on a blocked step?**
     → evidence: claudedocs/decisions/35-agent-setup-merges-a-users-file.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with

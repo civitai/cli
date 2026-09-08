@@ -142,8 +142,11 @@ import (
 // has RISEN since it was set, so that restoration now lands at 28,650 + 5,381 =
 // 34,031 — clearing the bound by more than it did at wave 4. It got stricter
 // without being touched, which is why raising the budget below it is safe.
-// 🔴 RAISED FROM 29,600 TO 30,100 IN THE ROUND-1 agent-setup FIX, DELIBERATELY
-// AND WITH THE ALTERNATIVE NAMED. That change added item 35 — the merge/parser/
+// 🔴 RAISED FROM 29,600 TO 30,200 IN THE ROUND-1 agent-setup FIX, DELIBERATELY
+// AND WITH THE ALTERNATIVE NAMED. (That number read 30,100 until round 2: a
+// typo, and one that mattered, because the whole purpose of this sentence is to
+// make the next author redo the arithmetic — reading it gave them 110 bytes of
+// spend where the constant below had actually spent 210.) That change added item 35 — the merge/parser/
 // verdict decisions for `agent-setup`, a genuinely separate subject from item
 // 34's credential rule — and the file had ~100 bytes of headroom. The two ways
 // out were (a) evict somebody else's item to pay for a new one, which is how a

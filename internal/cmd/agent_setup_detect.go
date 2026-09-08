@@ -246,7 +246,15 @@ type agentTarget struct {
 	PreferExisting [][]string
 	Format         configFormat
 	// AllowsComments is true when the agent's own parser accepts JSONC — `//`
-	// and `/* */` comments in a nominally-JSON file.
+	// and `/* */` comments AND trailing commas in a nominally-JSON file.
+	//
+	// 🔴 THE NAME IS NARROWER THAN THE FLAG. It gates both leniencies, because
+	// both are JSONC and both were being refused: `{ "theme": "One Dark", }` as
+	// Zed's settings.json exited 1 with "does not parse", on a file Zed's own
+	// `serde_json_lenient` reads without complaint. Renaming the field would
+	// churn every row; widening this comment is the fix. See
+	// blankJSONTrailingCommas for which parsers were read, which were not, and
+	// why tolerating too much here cannot produce a file the agent rejects.
 	//
 	// 🔴 WITHOUT IT, THE COMMON CASE IS A REFUSAL. Zed SHIPS
 	// `~/.config/zed/settings.json` with a leading comment block, and VS Code
