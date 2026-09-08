@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -53,6 +54,14 @@ type agentEnv struct {
 	Home string
 	// Dir is the project directory the run was pointed at.
 	Dir string
+	// GOOS is runtime.GOOS, injected rather than read.
+	//
+	// 🔴 A PER-OS CONFIG PATH IS OTHERWISE UNTESTABLE ON ONE MACHINE. Zed keeps
+	// its settings under `%APPDATA%\Zed` on Windows and `~/.config/zed`
+	// everywhere else, and the release cross-compiles windows/amd64 and
+	// windows/arm64 — so the Windows path is shipped to users on a build no
+	// maintainer runs. Injecting it lets the table be exercised for both.
+	GOOS string
 	// Exists reports whether an absolute path exists. Injected for the same
 	// reason Vars is: a marker-file table is only testable if the filesystem is.
 	Exists func(path string) bool
@@ -78,6 +87,7 @@ func liveAgentEnv(dir string) agentEnv {
 		Vars:   vars,
 		Home:   home,
 		Dir:    dir,
+		GOOS:   runtime.GOOS,
 		Exists: func(path string) bool { _, statErr := os.Stat(path); return statErr == nil },
 	}
 }
@@ -216,8 +226,38 @@ type agentTarget struct {
 	// directory is unresolvable, and the command says which target that was.
 	UserScoped bool
 	// Parts are path segments joined onto the project dir (or $HOME).
-	Parts  []string
-	Format configFormat
+	Parts []string
+	// Roots are config-root OVERRIDES, tried in order BEFORE Parts.
+	//
+	// 🔴 $HOME IS NOT ALWAYS THE ROOT, AND GETTING IT WRONG IS SILENT. Codex
+	// documents `CODEX_HOME` as its config directory; a user who has set it gets
+	// a `~/.codex/config.toml` written that Codex never reads, and `--check`
+	// then reports "not registered" forever with no way to tell why. Zed on
+	// Windows reads `%APPDATA%\Zed\settings.json`, and the release ships
+	// windows/amd64 and windows/arm64. See agentRoot.
+	Roots []agentRoot
+	// PreferExisting are alternative Parts that WIN over Parts when the file is
+	// already there.
+	//
+	// 🔴 A DETECTION MARKER THAT IS NEVER A WRITE TARGET CREATES A SECOND FILE.
+	// `opencode.jsonc` is a marker that detects opencode; without this the run
+	// then writes `opencode.json` BESIDE it, and the config the user actually
+	// maintains is not the one the servers landed in.
+	PreferExisting [][]string
+	Format         configFormat
+	// AllowsComments is true when the agent's own parser accepts JSONC — `//`
+	// and `/* */` comments in a nominally-JSON file.
+	//
+	// 🔴 WITHOUT IT, THE COMMON CASE IS A REFUSAL. Zed SHIPS
+	// `~/.config/zed/settings.json` with a leading comment block, and VS Code
+	// writes commented JSON throughout `.vscode/`. A strict `encoding/json`
+	// decode of either fails with `invalid character '/'`, and the refusal blames
+	// the user for a file their editor authored. See blankJSONComments for what
+	// this does and does NOT preserve.
+	AllowsComments bool
+	// Caveat, when set, is one sentence printed beside this agent's config path
+	// saying something true about it that the path alone does not convey.
+	Caveat string
 	// ServersKey is the top-level object key (JSON) or the table prefix (TOML)
 	// the server entries live under.
 	ServersKey string
@@ -250,6 +290,23 @@ type agentTarget struct {
 	EnabledKey string
 }
 
+// agentRoot is one config-root override for a user-scoped target: an
+// environment variable the vendor documents as its config directory, optionally
+// restricted to one GOOS.
+//
+// 🔴 IT REPLACES THE WHOLE `$HOME + Parts` PATH, not just its first segment —
+// `CODEX_HOME=/etc/codex` means `/etc/codex/config.toml`, not
+// `/etc/codex/.codex/config.toml`. That is why Parts is stated here again
+// rather than reused from the target.
+type agentRoot struct {
+	// EnvVar holds the root directory. Empty or unset ⇒ this root does not apply.
+	EnvVar string
+	// GOOS restricts the root to one operating system; "" means any.
+	GOOS string
+	// Parts are joined onto EnvVar's value.
+	Parts []string
+}
+
 // tokenEnvVar is the environment variable this CLI already publishes as its
 // token override (`config.Load` reads it). It is the ONE name an interpolated
 // MCP header may reference: a second spelling would be a variable the user has
@@ -272,24 +329,40 @@ const tokenEnvVar = "CIVITAI_TOKEN"
 // alike, with no flag to opt in.
 //
 // 🔴 THE SYNTAXES BELOW COME FROM THE VENDOR DOCS AND FOUR OF THEM DISAGREE.
-// `${VAR}` (Claude Code) vs `${env:VAR}` (Cursor, Windsurf) vs `{env:VAR}` —
-// single brace, no `$` — (opencode) vs a TOML key taking a bare variable NAME
-// (Codex) vs nothing at all (VS Code, Zed). Getting one wrong is WORSE than
+// `${VAR}` (Claude Code) vs `${env:VAR}` (Cursor, Windsurf, VS Code) vs
+// `{env:VAR}` — single brace, no `$` — (opencode) vs a TOML key taking a bare
+// variable NAME (Codex) vs nothing at all (Zed). Getting one wrong is WORSE than
 // omitting the header: an unsupported syntax produces a config that looks
 // configured and sends the literal string `${CIVITAI_TOKEN}` as a bearer token,
 // which fails at request time and looks like a bad credential rather than a bad
 // config. So an agent whose vendor doc does not document interpolation gets NO
 // header key at all, and its next-step block names the header to add by hand.
-// Both servers' read tools are anonymous, so a header-less entry is genuinely
-// useful rather than a degraded one.
 //
-// 🔴 A HEADER IS ONLY WRITTEN WHEN A TOKEN IS CONFIGURED, AND THAT IS NOT A
-// LEFTOVER OF THE OLD BEHAVIOUR. With `CIVITAI_TOKEN` unset, Claude Code passes
-// the literal `${CIVITAI_TOKEN}` through and Cursor/Windsurf/opencode resolve it
-// to the empty string — so an unconditional header sends `Bearer ` or `Bearer
-// ${CIVITAI_TOKEN}` on every request and can turn a working ANONYMOUS setup into
-// a 401. Writing it only for a user who demonstrably has a credential keeps the
-// no-token path exactly as useful as it is today.
+// 🔴 A HEADER-LESS ENTRY IS NOT A COMPLETE SETUP, AND SAYING IT IS WAS THE BUG.
+// The two servers differ: the SITE server serves an anonymous `initialize`, the
+// ORCHESTRATION server answers 401 to one. So a header-less config reaches half
+// of what it registered. See mcpServer.Anonymous — every surface reads it rather
+// than repeating a claim about "both servers".
+//
+// 🔴 A HEADER IS ONLY WRITTEN WHEN A TOKEN IS CONFIGURED — AND "CONFIGURED" IS
+// NOT "EXPORTED", WHICH IS THE PART THIS COMMENT USED TO GET WRONG. The gate is
+// `config.Load().Token()`, satisfied by `~/.config/civitai/config.yaml` (i.e. by
+// `civitai login`) OR by the CIVITAI_TOKEN environment variable. The AGENT
+// resolves the header from the PROCESS environment and cannot read this CLI's
+// config file, so the two are independent and the gate covers only the first.
+//
+// What the gate does buy: with NO token at all, an unconditional header would
+// send `Bearer ` (Cursor/Windsurf/opencode/VS Code resolve an unset variable to
+// the empty string) or the literal `Bearer ${CIVITAI_TOKEN}` (Claude Code passes
+// it through) on every request, turning a working anonymous SITE setup into a
+// 401 for a user who never asked for auth.
+//
+// What it does NOT cover, and what the output must therefore say: a user who ran
+// `civitai login` but never exported CIVITAI_TOKEN passes this gate, gets the
+// header written, and the agent still resolves it to empty. That case is
+// detected separately (tokenIsExported) and named in the next-step block — it is
+// a missing export, not a bad credential, and it reads as the latter if nobody
+// says so.
 var agentTargets = map[string]agentTarget{
 	agentClaude: {
 		Agent: agentClaude, Parts: []string{".mcp.json"}, Format: formatJSON,
@@ -316,20 +389,45 @@ var agentTargets = map[string]agentTarget{
 		// does not spell it the Claude way.
 		ServersKey: "servers", URLKey: "url",
 		TypeKey: "type", TypeValue: "http", HeadersKey: "headers",
-		// 🔴 NO INTERPOLATION, ON PURPOSE — and this is the entry most likely to
-		// be "corrected" by someone who knows `${env:Name}` is a real VS Code
-		// variable. It is, in launch.json and tasks.json; the MCP configuration
-		// reference
-		// (code.visualstudio.com/docs/agents/reference/mcp-configuration) lists an
-		// HTTP server's fields as exactly type/url/headers/oauth, and its only
-		// headers example is `"Bearer ${input:api-token}"` — PROMPTED INPUT, not
-		// the environment. `${env:…}` resolving in mcp.json is an inference from
-		// two documents, and an inference is exactly what this table may not
-		// ship: a wrong guess here sends the literal `${env:CIVITAI_TOKEN}`.
-		EnvHeaderSyntax: "",
+		// `.vscode/mcp.json` and VS Code's own user `mcp.json` are JSONC — VS
+		// Code writes commented JSON throughout `.vscode/`.
+		AllowsComments: true,
+		// 🔴 THIS ROW USED TO SAY "NO INTERPOLATION", AND THAT WAS WRONG. It was
+		// derived from the docs alone — the MCP configuration reference's only
+		// `headers` example is `"Bearer ${input:api-token}"` (prompted input),
+		// and the variables reference does not name `mcp.json` — so the table
+		// shipped the conservative reading. The IMPLEMENTATION says otherwise,
+		// and it was checked rather than inferred:
+		//
+		//   - microsoft/vscode#245237 "Support ${env:VARIABLE_NAME} in mcp.json",
+		//     closed COMPLETED 2025-04-01; the one comment, from connor4312
+		//     (MEMBER, who owns the MCP implementation): "This is supported."
+		//   - microsoft/vscode#264448, closed completed; connor4312 again: "The
+		//     format is ${env:VARIABLE_NAME}" and "It works using the same logic
+		//     as tasks.json/launch.json do".
+		//   - mcpRegistry.ts `_replaceVariablesInLaunch` parses
+		//     `McpServerLaunch.toSerialized(launch)` — which is the IDENTITY
+		//     function (mcpTypes.ts) — and hands it to `resolveAsync`;
+		//     `ConfigurationResolverExpression.parseObject` recurses through
+		//     arrays and objects; an HTTP launch's `headers` is
+		//     `[string, string][]` built from `configuration.headers`; and
+		//     `variableReplacement` is set for EVERY mcp.json server, not only
+		//     stdio ones (installedMcpServersDiscovery.ts).
+		//
+		// 🔴 THE RESIDUAL, STATED: VS Code resolves `${env:X}` against ITS OWN
+		// process environment, and a variable it cannot see becomes the EMPTY
+		// STRING, not the literal (variableResolver.ts `case 'env'` returns
+		// ''). So a GUI-launched VS Code that never read your shell profile
+		// sends `Authorization: Bearer ` and 401s. That failure is a missing
+		// export, not a bad token, and the next-step block says so.
+		EnvHeaderSyntax: "${env:" + tokenEnvVar + "}",
 	},
 	agentCodex: {
 		Agent: agentCodex, UserScoped: true, Parts: []string{".codex", "config.toml"},
+		// 🔴 `CODEX_HOME` IS THE ROOT WHEN IT IS SET. Codex documents it as its
+		// configuration directory; writing `$HOME/.codex/config.toml` for a user
+		// who has moved it registers the servers in a file Codex never opens.
+		Roots:  []agentRoot{{EnvVar: "CODEX_HOME", Parts: []string{"config.toml"}}},
 		Format: formatTOML, ServersKey: "mcp_servers", URLKey: "url",
 		HeadersKey: "http_headers",
 		// 🔴 A DIFFERENT MECHANISM, NOT A DIFFERENT SPELLING. Codex documents no
@@ -346,7 +444,14 @@ var agentTargets = map[string]agentTarget{
 		EnvBearerKey: "bearer_token_env_var",
 	},
 	agentOpencode: {
-		Agent: agentOpencode, Parts: []string{"opencode.json"}, Format: formatJSON,
+		Agent: agentOpencode, Parts: []string{"opencode.json"},
+		// 🔴 AN EXISTING `opencode.jsonc` IS THE TARGET, NOT A SECOND FILE.
+		// `opencode.jsonc` is one of the markers that DETECTS opencode
+		// (agentMarkers), so a project carrying only that file was detected
+		// correctly and then had `opencode.json` created beside it — two config
+		// files, the servers in the one the user does not maintain.
+		PreferExisting: [][]string{{"opencode.jsonc"}},
+		Format:         formatJSON, AllowsComments: true,
 		// 🔴 `mcp`, and the entry carries `type: "remote"` plus an explicit
 		// `enabled` — opencode's schema requires both.
 		ServersKey: "mcp", URLKey: "url",
@@ -372,10 +477,34 @@ var agentTargets = map[string]agentTarget{
 		// command, args, env, serverUrl, url, and headers", with `${env:VAR_NAME}`
 		// and the documented example `"API_KEY": "Bearer ${env:AUTH_TOKEN}"`.
 		EnvHeaderSyntax: "${env:" + tokenEnvVar + "}",
+		// 🔴 THAT PAGE NOW SCOPES ITSELF TO THE LEGACY AGENT, AND THE PATH IS
+		// STILL THE ONE IT DOCUMENTS. Verbatim, at the top of it: "The MCP
+		// configuration on this page applies to the legacy Cascade agent only.
+		// The Devin Local agent — the default agent for new tabs — configures MCP
+		// servers in the Devin CLI config files instead." Those files are
+		// `~/.config/devin/mcp_config.json` (`%APPDATA%\devin\mcp_config.json` on
+		// Windows) and the project-scoped `.devin/mcp_config.json`.
+		//
+		// This CLI still writes only the Cascade path, because that is the one
+		// this row was built and tested against — but a user on the current
+		// default agent would otherwise get a silently-ignored file, so the row
+		// SAYS SO rather than pretending the write is the whole answer.
+		Caveat: "that file is the LEGACY Cascade agent's; the Devin Local agent (the default for new " +
+			"tabs) reads ~/.config/devin/mcp_config.json instead — add the servers there too if you use it",
 	},
 	agentZed: {
 		Agent: agentZed, UserScoped: true, Parts: []string{".config", "zed", "settings.json"},
+		// 🔴 `%APPDATA%\Zed\settings.json` ON WINDOWS, and the release ships
+		// windows/amd64 and windows/arm64. `$HOME/.config/zed` there is a
+		// directory Zed does not read.
+		Roots:  []agentRoot{{EnvVar: "APPDATA", GOOS: "windows", Parts: []string{"Zed", "settings.json"}}},
 		Format: formatJSON,
+		// 🔴 ZED SHIPS THIS FILE WITH A COMMENT BLOCK IN IT. A fresh
+		// `~/.config/zed/settings.json` opens with four `//` lines pointing at
+		// Zed's docs, so a strict JSON decode fails on the FIRST BYTE of the
+		// FIRST LINE for every real Zed install. Measured; it took the whole run
+		// down with it.
+		AllowsComments: true,
 		// 🔴 `context_servers`, which is Zed's own name for the same concept, and
 		// NO transport discriminator. zed.dev/docs/ai/mcp's remote example is
 		// `{"url": …, "headers": {"Authorization": "Bearer …"}}` and nothing else;
@@ -384,13 +513,26 @@ var agentTargets = map[string]agentTarget{
 		// settings file is the failure this whole table exists to avoid.
 		ServersKey: "context_servers", URLKey: "url", HeadersKey: "headers",
 		// 🔴 NO INTERPOLATION. zed.dev/docs/ai/mcp documents no substitution
-		// syntax at all; its remote example hard-codes `"Bearer <token>"`, and
-		// the alternative it offers for an authenticated server is OAuth: "When a
-		// remote MCP server has no configured "Authorization" header, Zed will
-		// prompt you to authenticate yourself … using the standard MCP OAuth
-		// flow." So a header-less entry is not merely safe here, it is the entry
-		// that lets Zed offer the user its own auth flow.
+		// syntax at all and its remote example hard-codes `"Bearer <token>"`, so
+		// there is nothing this command can write here that is both
+		// authenticated and credential-free.
+		//
+		// 🔴 THE OAUTH RATIONALE THAT USED TO SIT HERE IS RETRACTED, AND IT HAS
+		// NO REPLACEMENT. It said a header-less entry "lets Zed offer the user
+		// its own auth flow" via Zed's MCP OAuth prompt. That flow needs the
+		// server to advertise its authorization server, and the Civitai
+		// orchestration server does not: an anonymous `initialize` returns a
+		// bare 401 with NO `WWW-Authenticate` header, and
+		// `/.well-known/oauth-protected-resource`,
+		// `/.well-known/oauth-authorization-server` and the `/mcp`-scoped
+		// variants all 404. Measured against the live host. So the header-less
+		// entry is the SAFE option and nothing more — Zed users authenticate by
+		// adding the header themselves, which the next-step block tells them.
+		// Do not restore a benefit clause here without a live probe behind it.
 		EnvHeaderSyntax: "",
+		Caveat: "Zed documents no environment-variable interpolation, so the entries carry no Authorization " +
+			"header; the orchestration server needs one, and Zed's MCP OAuth flow cannot supply it (that " +
+			"server advertises no authorization server)",
 	},
 }
 
@@ -440,11 +582,46 @@ func agentConfigPath(env agentEnv, agent string) (string, bool) {
 		return "", false
 	}
 	base := env.Dir
+	parts := t.Parts
 	if t.UserScoped {
-		if strings.TrimSpace(env.Home) == "" {
+		// A documented config-root override wins over $HOME, and is checked
+		// FIRST — a user who set CODEX_HOME has moved the file, not added a
+		// second copy of it.
+		if root, rootParts, found := agentRootOverride(env, t); found {
+			base, parts = root, rootParts
+		} else if strings.TrimSpace(env.Home) == "" {
 			return "", false
+		} else {
+			base = env.Home
 		}
-		base = env.Home
 	}
-	return filepath.Join(append([]string{base}, t.Parts...)...), true
+	// An alternative spelling that ALREADY EXISTS is the file the user
+	// maintains, so it beats the default name. Only consulted when the
+	// filesystem is injected; detection-only callers pass no Exists.
+	if env.Exists != nil {
+		for _, alt := range t.PreferExisting {
+			candidate := filepath.Join(append([]string{base}, alt...)...)
+			if env.Exists(candidate) {
+				return candidate, true
+			}
+		}
+	}
+	return filepath.Join(append([]string{base}, parts...)...), true
+}
+
+// agentRootOverride returns the first applicable config-root override for a
+// target: an environment variable the vendor documents as its config directory,
+// set to something non-empty, on a matching GOOS.
+func agentRootOverride(env agentEnv, t agentTarget) (root string, parts []string, found bool) {
+	for _, r := range t.Roots {
+		if r.GOOS != "" && r.GOOS != env.GOOS {
+			continue
+		}
+		v := strings.TrimSpace(env.Vars[r.EnvVar])
+		if v == "" {
+			continue
+		}
+		return v, r.Parts, true
+	}
+	return "", nil, false
 }

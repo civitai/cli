@@ -99,6 +99,22 @@ func mergeAgentsMD(path, existing string) (string, fileAction, error) {
 		return block + "\n", actionCreate, nil
 	}
 
+	// 🔴 A SECOND MANAGED BLOCK IS REFUSED, NOT SILENTLY IGNORED. The replace
+	// case below spans the FIRST begin to the FIRST end, so a file carrying two
+	// blocks keeps the later one forever: it is never refreshed, it keeps
+	// instructing the agent with whatever the template said when it was written,
+	// and `--check` stayed green because a block was found. That is the worst of
+	// the three states — a stale instruction file that reports healthy — and it
+	// is reachable by an ordinary copy-paste or a bad merge resolution.
+	if state := agentsMDBlockState(existing); state == blockDuplicated {
+		return "", "", fmt.Errorf(
+			"%s contains %d civitai managed blocks — only the first is ever refreshed, so the rest go stale "+
+				"silently while `civitai agent-setup --check` still reports them as present; delete all but one "+
+				"(everything between a BEGIN and its END is this command's to rewrite) and re-run "+
+				"`civitai agent-setup`",
+			path, strings.Count(existing, agentsBeginMarker))
+	}
+
 	begin := strings.Index(existing, agentsBeginMarker)
 	end := strings.Index(existing, agentsEndMarker)
 	switch {
@@ -124,21 +140,70 @@ func mergeAgentsMD(path, existing string) (string, fileAction, error) {
 	// the boundary, and this command cannot tell which of the surrounding bytes
 	// were its own and which are the author's. Appending would leave a nested,
 	// self-overlapping block that every subsequent run gets more wrong.
+	//
+	// 🔴 THE OUT-OF-ORDER CASE GETS ITS OWN SENTENCE, BECAUSE THE SHARED ONE WAS
+	// ACTIVELY MISLEADING. With END above BEGIN both markers ARE present, so the
+	// generic message read "BEGIN present: true, END present: true — restore both
+	// marker lines", sending the reader to look for a marker that is sitting
+	// right there. Nothing about the file needs restoring; the two lines need
+	// swapping.
+	if begin >= 0 && end >= 0 {
+		return "", "", fmt.Errorf(
+			"%s has the civitai managed block's markers in the wrong order — the END marker appears BEFORE the "+
+				"BEGIN marker, so there is no span this command can rewrite. Both lines are present: swap them "+
+				"back (BEGIN first, END last) or delete both and re-run `civitai agent-setup`; this command will "+
+				"not guess where your text ends and its own begins",
+			path)
+	}
 	return "", "", fmt.Errorf(
 		"%s contains only one half of the civitai managed block (BEGIN present: %t, END present: %t) — "+
-			"restore both marker lines or delete the partial block, then re-run `civitai agent-setup`; "+
+			"restore the missing marker line or delete the partial block, then re-run `civitai agent-setup`; "+
 			"this command will not guess where your text ends and its own begins",
 		path, begin >= 0, end >= 0)
 }
 
-// agentsMDHasManagedBlock reports whether a file already carries a complete,
-// well-ordered managed block. `--check` reads this and nothing else about the
-// file: whether the author added prose around it is not this command's business.
-func agentsMDHasManagedBlock(content string) bool {
-	begin := strings.Index(content, agentsBeginMarker)
-	end := strings.Index(content, agentsEndMarker)
-	return begin >= 0 && end > begin
+// agentsBlockState is what a file's managed-block markers add up to. The three
+// non-healthy values are distinct because each has a DIFFERENT remedy, and the
+// message that collapsed two of them sent readers after a marker that was there.
+type agentsBlockState int
+
+const (
+	// blockAbsent: neither marker. The block gets appended.
+	blockAbsent agentsBlockState = iota
+	// blockPresent: exactly one well-ordered BEGIN…END pair.
+	blockPresent
+	// blockPartial: one marker without the other, or END before BEGIN.
+	blockPartial
+	// blockDuplicated: more than one BEGIN, or more than one END. Only the first
+	// pair is ever refreshed, so the others rot in place — and `--check` used to
+	// call this healthy.
+	blockDuplicated
+)
+
+// agentsMDBlockState classifies a file's markers. `--check` and the merge both
+// read THIS, so a state one of them refuses cannot be a state the other calls
+// green.
+func agentsMDBlockState(content string) agentsBlockState {
+	begins := strings.Count(content, agentsBeginMarker)
+	ends := strings.Count(content, agentsEndMarker)
+	switch {
+	case begins > 1 || ends > 1:
+		return blockDuplicated
+	case begins == 0 && ends == 0:
+		return blockAbsent
+	case begins == 1 && ends == 1 && strings.Index(content, agentsEndMarker) > strings.Index(content, agentsBeginMarker):
+		return blockPresent
+	default:
+		return blockPartial
+	}
 }
+
+// 🔴 `agentsMDHasManagedBlock` WAS DELETED, NOT LEFT AS A WRAPPER. It answered a
+// BOOLEAN — "is there a block?" — and that shape is precisely why a duplicate
+// block read as healthy: two blocks are `true`. `--check` now branches on
+// `agentsMDBlockState` directly, so it has to name which of the four states it is
+// treating as green. Do not reintroduce a boolean helper here; a caller that only
+// wants "present or not" is a caller about to miss `blockDuplicated` again.
 
 // planAgentsMD renders what a run would do to <dir>/AGENTS.md without writing.
 // The real run calls exactly this and then writes the returned content, so

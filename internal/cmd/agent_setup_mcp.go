@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -19,8 +20,8 @@ import (
 // that has lost their work. A "repair" here is indistinguishable from deletion.
 
 // mcpServer is one server this command registers. Both are registered on every
-// run: the read tools on both work anonymously, so registering them before login
-// is useful rather than half-done.
+// run, before login, because registering is cheap and reversible — but they do
+// NOT both work without a credential. See Anonymous.
 type mcpServer struct {
 	// Name is the key the entry is written under, and the name the agent shows.
 	Name string
@@ -31,21 +32,76 @@ type mcpServer struct {
 	// Check is the `--check` row this server is reported under. Pinned rather
 	// than derived: `prompt.md` reads these names out of `--check --json`.
 	Check string
+	// Anonymous is whether this server answers a credential-free request.
+	//
+	// 🔴 IT IS PER SERVER, AND THE TWO DISAGREE. This command shipped claiming
+	// "both servers' read tools work anonymously" in seven places, and that claim
+	// was the justification for the whole header-less design. It is false for one
+	// of the two. Measured, no credential, POST `initialize`:
+	//
+	//	https://mcp.civitai.com/mcp            -> 200, serverInfo civitai-mcp-server
+	//	https://orchestration.civitai.com/mcp  -> 401, empty body, NO WWW-Authenticate
+	//
+	// The missing `WWW-Authenticate` matters twice over: it is why no MCP client
+	// can discover an auth flow from that 401 (every
+	// `/.well-known/oauth-*` variant 404s as well), and it is why the failure
+	// surfaces to a user as a server that simply does not answer.
+	//
+	// So a VS Code / Zed / `--agent other` / no-token user must be told that HALF
+	// of what was registered needs a header. Read this field; never restate a
+	// claim about "both servers".
+	Anonymous bool
 }
 
 var civitaiMCPServers = []mcpServer{
 	{
-		Name:  "civitai",
-		URL:   "https://mcp.civitai.com/mcp",
-		What:  "the Civitai site — models, images, articles, your account",
-		Check: "mcp-site",
+		Name:      "civitai",
+		URL:       "https://mcp.civitai.com/mcp",
+		What:      "the Civitai site — models, images, articles, your account",
+		Check:     "mcp-site",
+		Anonymous: true,
 	},
 	{
 		Name:  "civitai-orchestration",
 		URL:   "https://orchestration.civitai.com/mcp",
 		What:  "the generation orchestrator — workflows and image generation",
 		Check: "mcp-orch",
+		// 🔴 401 WITHOUT A TOKEN. Not a read/write split: the anonymous
+		// `initialize` handshake itself is refused, so nothing on this server is
+		// reachable at all until an Authorization header is present.
+		Anonymous: false,
 	},
+}
+
+// anonymousServerNames and authRequiredServerNames split the table so a message
+// naming one group cannot drift from the table. They are derived, never listed:
+// a third server is described correctly the moment it is added.
+func anonymousServerNames() []string    { return mcpServerNames(true) }
+func authRequiredServerNames() []string { return mcpServerNames(false) }
+
+func mcpServerNames(anonymous bool) []string {
+	var out []string
+	for _, srv := range civitaiMCPServers {
+		if srv.Anonymous == anonymous {
+			out = append(out, srv.Name)
+		}
+	}
+	return out
+}
+
+// mcpAnonymityNote is the ONE sentence every header-less surface prints about
+// what a credential-free config does and does not reach. Built from the table.
+func mcpAnonymityNote() string {
+	anon, auth := anonymousServerNames(), authRequiredServerNames()
+	switch {
+	case len(auth) == 0:
+		return "every registered server answers without a credential"
+	case len(anon) == 0:
+		return "every registered server needs an Authorization header — none of them answers without one"
+	default:
+		return strings.Join(anon, ", ") + " answers without a credential (models, images, articles); " +
+			strings.Join(auth, ", ") + " returns 401 until an Authorization header is present"
+	}
 }
 
 // mcpAuthValue is the header VALUE an interpolating agent gets, or "" when this
@@ -62,8 +118,9 @@ var civitaiMCPServers = []mcpServer{
 //
 // 🔴 NO PLACEHOLDER, EITHER — the older rule, still live. `Bearer
 // <your-token-here>` is a config that looks correct in every file the user can
-// read and 401s at request time. A header-less entry is honest and still works,
-// because both servers' read tools are anonymous.
+// read and 401s at request time. A header-less entry is honest — but it is NOT
+// fully working: see mcpServer.Anonymous, and mcpAnonymityNote for the sentence
+// that says which half of the registration it reaches.
 func mcpAuthValue(t agentTarget, hasToken bool) string {
 	if !hasToken || t.HeadersKey == "" || t.EnvHeaderSyntax == "" {
 		return ""
@@ -98,21 +155,160 @@ func mcpMalformed(path string, err error) error {
 		"from deleting whatever you had in it", path, err)
 }
 
+// blankJSONComments replaces JSONC comments with spaces so `encoding/json` can
+// decode the result.
+//
+// 🔴 IT BLANKS RATHER THAN DELETES, AND THE LENGTH IS PRESERVED DELIBERATELY —
+// a newline inside a `/* */` run is kept as a newline, so every byte offset and
+// every line number in the blanked text still points at the same place in the
+// original. Nothing depends on that yet; a future splice that preserves comments
+// on WRITE would, and a "simplification" to strings.Replace would remove the
+// only property that makes it possible.
+//
+// 🔴 WHAT IT DOES NOT DO IS PRESERVE COMMENTS ON THE WAY OUT. The merge
+// re-encodes through a Go map, so a JSONC file this command writes back loses
+// its comments and its key order. That is a REAL loss and it is reported rather
+// than hidden — see jsonMergeDropsComments and the change reason built from it.
+// The alternative that was rejected: refusing every commented file, which is
+// what shipped, and which made `--agent zed` fail for every real Zed install
+// (Zed's settings.json opens with a four-line comment block) while taking
+// AGENTS.md and CLAUDE.md down with it.
+func blankJSONComments(src []byte) []byte {
+	out := make([]byte, len(src))
+	copy(out, src)
+	inString, escaped := false, false
+	for i := 0; i < len(out); i++ {
+		c := out[i]
+		if inString {
+			switch {
+			case escaped:
+				escaped = false
+			case c == '\\':
+				escaped = true
+			case c == '"':
+				inString = false
+			}
+			continue
+		}
+		switch {
+		case c == '"':
+			inString = true
+		case c == '/' && i+1 < len(out) && out[i+1] == '/':
+			for ; i < len(out) && out[i] != '\n'; i++ {
+				out[i] = ' '
+			}
+		case c == '/' && i+1 < len(out) && out[i+1] == '*':
+			out[i], out[i+1] = ' ', ' '
+			i += 2
+			for ; i < len(out); i++ {
+				if out[i] == '*' && i+1 < len(out) && out[i+1] == '/' {
+					out[i], out[i+1] = ' ', ' '
+					i++
+					break
+				}
+				if out[i] != '\n' {
+					out[i] = ' '
+				}
+			}
+		}
+	}
+	return out
+}
+
+// decodeAgentJSON decodes an agent's config, tolerating JSONC comments for the
+// agents whose own parsers accept them.
+//
+// 🔴 A STRICT DECODE STAYS STRICT FOR EVERY OTHER AGENT. Tolerating comments in
+// a file the agent itself would reject would let this command write a config
+// that parses here and not there.
+func decodeAgentJSON(path string, raw []byte, t agentTarget) (map[string]any, error) {
+	body := raw
+	if t.AllowsComments {
+		body = blankJSONComments(raw)
+	}
+	root := map[string]any{}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return root, nil
+	}
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, mcpMalformed(path, err)
+	}
+	return root, nil
+}
+
+// jsonMergeDropsComments reports whether writing this file back will lose
+// comments the user wrote. Used to WARN, never to refuse.
+func jsonMergeDropsComments(raw []byte, t agentTarget) bool {
+	if !t.AllowsComments || len(raw) == 0 {
+		return false
+	}
+	return !bytes.Equal(raw, blankJSONComments(raw))
+}
+
+// mergeEntryKeys overlays this command's keys onto an entry the user may already
+// have, instead of replacing the entry wholesale.
+//
+// 🔴 ASSIGNING THE WHOLE ENTRY DELETES KEYS THE USER ADDED TO **OUR** SERVER.
+// The published contract says an existing MCP config is "merged into, preserving
+// every other server AND KEY", and that was true for their servers and false for
+// ours: a hand-added `Authorization` header — which the no-interpolation branch
+// of this very command TELLS Zed users to add — was silently dropped
+// on the next run, rc 0, with `--check` still reporting `ok: true`. Measured.
+//
+// So: start from what is there, and set only the keys this command owns. The one
+// nested map that gets the same treatment is the headers object, so an unrelated
+// header the user added (`X-Trace-Id`, a proxy key) survives a run that rewrites
+// Authorization.
+func mergeEntryKeys(existing any, ours map[string]any, headersKey string) map[string]any {
+	prev, ok := existing.(map[string]any)
+	if !ok {
+		return ours
+	}
+	merged := make(map[string]any, len(prev)+len(ours))
+	for k, v := range prev {
+		merged[k] = v
+	}
+	for k, v := range ours {
+		if k == headersKey && headersKey != "" {
+			if oursHeaders, isMap := v.(map[string]any); isMap {
+				merged[k] = mergeHeaderKeys(prev[k], oursHeaders)
+				continue
+			}
+		}
+		merged[k] = v
+	}
+	return merged
+}
+
+// mergeHeaderKeys overlays our header(s) onto theirs, keeping every header name
+// we do not write.
+func mergeHeaderKeys(existing any, ours map[string]any) map[string]any {
+	prev, ok := existing.(map[string]any)
+	if !ok {
+		return ours
+	}
+	merged := make(map[string]any, len(prev)+len(ours))
+	for k, v := range prev {
+		merged[k] = v
+	}
+	for k, v := range ours {
+		merged[k] = v
+	}
+	return merged
+}
+
 // mergeJSONMCP merges the servers into `raw`, an agent's existing JSON config
 // (empty for a file that does not exist yet), and returns the bytes to write.
 //
-// Every key it does not own is preserved: the decode is into map[string]any and
-// only `t.ServersKey` and the two server names under it are assigned. What it
-// does NOT preserve is byte layout — comments and key order do not survive a
-// decode/encode round trip through a Go map. That is stated rather than hidden;
-// a JSONC settings file with comments fails the DECODE first and is refused by
-// name, so the case where a comment would be silently dropped does not arise.
+// Every key it does not own is preserved: the decode is into map[string]any,
+// only `t.ServersKey` and the two server names under it are touched, and within
+// those two entries only the keys this command writes are assigned
+// (mergeEntryKeys). What it does NOT preserve is byte layout — comments and key
+// order do not survive a decode/encode round trip through a Go map.
 func mergeJSONMCP(path string, raw []byte, t agentTarget, token string) ([]byte, error) {
-	root := map[string]any{}
-	if len(strings.TrimSpace(string(raw))) > 0 {
-		if err := json.Unmarshal(raw, &root); err != nil {
-			return nil, mcpMalformed(path, err)
-		}
+	root, err := decodeAgentJSON(path, raw, t)
+	if err != nil {
+		return nil, err
 	}
 
 	// 🔴 A NON-OBJECT AT THE SERVERS KEY IS REFUSED, NOT REPLACED. `"mcp": []`
@@ -129,7 +325,7 @@ func mergeJSONMCP(path string, raw []byte, t agentTarget, token string) ([]byte,
 		section = m
 	}
 	for _, srv := range civitaiMCPServers {
-		section[srv.Name] = mcpEntry(t, srv, token)
+		section[srv.Name] = mergeEntryKeys(section[srv.Name], mcpEntry(t, srv, token), t.HeadersKey)
 	}
 	root[t.ServersKey] = section
 
@@ -144,12 +340,9 @@ func mergeJSONMCP(path string, raw []byte, t agentTarget, token string) ([]byte,
 // existing JSON config. A missing file is not an error — nothing is registered.
 func jsonMCPRegistered(path string, raw []byte, t agentTarget) (map[string]bool, error) {
 	found := map[string]bool{}
-	if len(strings.TrimSpace(string(raw))) == 0 {
-		return found, nil
-	}
-	var root map[string]any
-	if err := json.Unmarshal(raw, &root); err != nil {
-		return nil, mcpMalformed(path, err)
+	root, err := decodeAgentJSON(path, raw, t)
+	if err != nil {
+		return nil, err
 	}
 	section, _ := root[t.ServersKey].(map[string]any)
 	for _, srv := range civitaiMCPServers {
@@ -174,18 +367,34 @@ func jsonMCPRegistered(path string, raw []byte, t agentTarget) (map[string]bool,
 // table headers, the `[mcp_servers.<name>]` blocks this command owns are
 // replaced or appended, and every other byte is passed through untouched.
 //
-// 🔴 THE RESIDUAL, STATED. This parser understands table headers, comments and
-// multi-line basic/literal strings (it tracks `"""` and `'''` so a header-shaped
-// line inside one is not mistaken for a header). It does NOT understand a
-// header-shaped line inside a multi-line ARRAY value spanning lines. No MCP or
-// Codex config plausibly contains one, the effect would be a mis-placed block
-// boundary rather than data loss, and the alternative — a full TOML parser —
-// costs a direct dependency for a file with six keys in it.
+// 🔴 THE RESIDUAL, STATED — AND THE PREVIOUS STATEMENT OF IT WAS WRONG ABOUT
+// THE EFFECT. It said a header-shaped line inside a multi-line ARRAY would cause
+// "a mis-placed block boundary rather than data loss". Measured, it caused a
+// HARD REFUSAL: `matrix = [\n  [1, 2],\n]` produced `unterminated table header
+// "[1, 2],"` and the run exited non-zero telling the user their valid TOML was
+// broken. A legal array of tables (`[[profiles]]` twice) was refused the same
+// way, as `table [profiles] is defined twice`, because both headers strip to one
+// name. Both are now handled: bracket depth is tracked across lines so a
+// continuation line is never read as a header, and `[[…]]` is exempt from the
+// duplicate-table rule that only applies to real tables.
+//
+// What is still NOT understood: nothing this file has been shown to get wrong.
+// The parser tracks table headers, `[[array of tables]]` headers, comments,
+// multi-line basic/literal strings (`"""` / `'''`) and array nesting depth. A
+// full TOML parser remains rejected — it costs a direct dependency and a
+// comment-and-order-destroying round trip for a file with six keys in it.
 
 // tomlBlock is one table (or the preamble before the first table), verbatim.
 type tomlBlock struct {
 	// Name is the table name with quotes stripped, "" for the preamble.
 	Name string
+	// Array is true when the header was `[[name]]` — an ARRAY OF TABLES entry.
+	//
+	// 🔴 IT IS NOT A TABLE AND MUST NOT BE TREATED AS ONE. TOML allows any number
+	// of `[[profiles]]` headers; that is the whole point of the form. Folding it
+	// into Name alone made two legal entries look like one table defined twice,
+	// and the duplicate rule then refused the file.
+	Array bool
 	// Lines are the block's source lines, header included, unmodified.
 	Lines []string
 }
@@ -207,6 +416,11 @@ func parseTOMLBlocks(path string, src string) ([]tomlBlock, error) {
 	}
 	blocks := []tomlBlock{{}}
 	inMultiline := false
+	// 🔴 BRACKET DEPTH IS WHAT SEPARATES A HEADER FROM A CONTINUATION LINE. At
+	// depth 0 a line starting with `[` is a table header; inside an open array
+	// value it is data, and `[1, 2],` is a perfectly ordinary element. Without
+	// this the parser refused valid TOML by name.
+	depth := 0
 	for _, line := range strings.Split(src, "\n") {
 		if inMultiline {
 			blocks[len(blocks)-1].Lines = append(blocks[len(blocks)-1].Lines, line)
@@ -216,19 +430,97 @@ func parseTOMLBlocks(path string, src string) ([]tomlBlock, error) {
 			continue
 		}
 		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "[") {
-			if !strings.HasSuffix(trimmed, "]") {
+		if depth == 0 && strings.HasPrefix(trimmed, "[") {
+			// A trailing comment is legal after a header (`[table] # mine`), so
+			// it is stripped before the terminator check rather than making the
+			// header look unterminated.
+			head := strings.TrimSpace(stripTOMLLineComment(trimmed))
+			if !strings.HasSuffix(head, "]") {
 				return nil, mcpMalformed(path, fmt.Errorf("unterminated table header %q", trimmed))
 			}
-			blocks = append(blocks, tomlBlock{Name: tomlTableName(trimmed), Lines: []string{line}})
+			blocks = append(blocks, tomlBlock{
+				Name:  tomlTableName(head),
+				Array: strings.HasPrefix(head, "[[") && strings.HasSuffix(head, "]]"),
+				Lines: []string{line},
+			})
 			continue
 		}
 		blocks[len(blocks)-1].Lines = append(blocks[len(blocks)-1].Lines, line)
 		if opensTOMLMultiline(trimmed) {
 			inMultiline = true
+			continue
+		}
+		depth += tomlBracketDelta(line)
+		if depth < 0 {
+			depth = 0
 		}
 	}
 	return blocks, nil
+}
+
+// stripTOMLLineComment removes a `#` comment from a line, respecting quoting so
+// a `#` inside a string is not mistaken for one.
+func stripTOMLLineComment(line string) string {
+	inBasic, inLiteral, escaped := false, false, false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case escaped:
+			escaped = false
+		case inBasic && c == '\\':
+			escaped = true
+		case inBasic:
+			if c == '"' {
+				inBasic = false
+			}
+		case inLiteral:
+			if c == '\'' {
+				inLiteral = false
+			}
+		case c == '"':
+			inBasic = true
+		case c == '\'':
+			inLiteral = true
+		case c == '#':
+			return line[:i]
+		}
+	}
+	return line
+}
+
+// tomlBracketDelta is a line's net `[` minus `]`, counting only brackets that
+// are neither quoted nor commented — i.e. how much deeper into an array value
+// the document is when the line ends.
+func tomlBracketDelta(line string) int {
+	body := stripTOMLLineComment(line)
+	delta := 0
+	inBasic, inLiteral, escaped := false, false, false
+	for i := 0; i < len(body); i++ {
+		c := body[i]
+		switch {
+		case escaped:
+			escaped = false
+		case inBasic && c == '\\':
+			escaped = true
+		case inBasic:
+			if c == '"' {
+				inBasic = false
+			}
+		case inLiteral:
+			if c == '\'' {
+				inLiteral = false
+			}
+		case c == '"':
+			inBasic = true
+		case c == '\'':
+			inLiteral = true
+		case c == '[':
+			delta++
+		case c == ']':
+			delta--
+		}
+	}
+	return delta
 }
 
 // opensTOMLMultiline reports whether a line starts a multi-line string that the
@@ -288,6 +580,53 @@ func renderTOMLServer(t agentTarget, srv mcpServer, token string) []string {
 	return lines
 }
 
+// mergeTOMLBlock rebuilds one of OUR tables: this command's keys, re-rendered,
+// followed by every line of the existing block that this command does not own.
+//
+// 🔴 REPLACING THE BLOCK WHOLESALE DELETED THE USER'S KEYS. Codex server tables
+// legitimately carry `startup_timeout_sec`, `tool_timeout_sec`, `enabled`,
+// `env` — none of which this command writes and all of which vanished on the
+// next run, silently, at rc 0. Same defect as the JSON side (mergeEntryKeys),
+// same published contract broken ("preserving every other server AND KEY").
+//
+// Comments inside the block are carried through with the lines they annotate.
+func mergeTOMLBlock(b tomlBlock, ours []string, t agentTarget) []string {
+	ownedKeys := map[string]bool{t.URLKey: true}
+	for _, k := range []string{t.EnvBearerKey, t.HeadersKey} {
+		if k != "" {
+			ownedKeys[k] = true
+		}
+	}
+	out := append([]string{}, ours...)
+	// Skip the header line: `ours` already carries this command's own spelling
+	// of it, and emitting the old one too would define the table twice.
+	for _, line := range b.Lines[1:] {
+		if key := tomlKeyOnLine(line); key != "" && ownedKeys[key] {
+			continue
+		}
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// tomlKeyOnLine returns the bare key a `key = value` line assigns, or "" when
+// the line is not a simple assignment (a comment, a blank, a continuation).
+func tomlKeyOnLine(line string) string {
+	body := strings.TrimSpace(stripTOMLLineComment(line))
+	i := strings.Index(body, "=")
+	if i <= 0 {
+		return ""
+	}
+	key := strings.TrimSpace(body[:i])
+	if key == "" || strings.ContainsAny(key, " \t") {
+		return ""
+	}
+	return strings.Trim(key, `"'`)
+}
+
 // mergeTOMLMCP replaces or appends this command's two tables and returns the
 // whole document. Every block it does not own is emitted byte-for-byte.
 func mergeTOMLMCP(path string, src string, t agentTarget, token string) ([]byte, error) {
@@ -301,12 +640,16 @@ func mergeTOMLMCP(path string, src string, t agentTarget, token string) ([]byte,
 		owned[tomlServerTable(t, srv)] = srv
 	}
 
-	// 🔴 A DUPLICATE TABLE IS REFUSED. TOML forbids defining a table twice, so a
-	// file carrying two `[mcp_servers.civitai]` blocks is already broken; picking
-	// one to replace would silently change which definition wins.
+	// 🔴 A DUPLICATE TABLE IS REFUSED — BUT AN ARRAY OF TABLES IS NOT A
+	// DUPLICATE. TOML forbids defining a table twice, so a file carrying two
+	// `[mcp_servers.civitai]` blocks is already broken and picking one to replace
+	// would silently change which definition wins. `[[profiles]]` twice is the
+	// opposite: it is the DOCUMENTED way to write a list, it is what an array of
+	// tables looks like, and refusing it told the user their valid config was
+	// broken. Measured.
 	seen := map[string]bool{}
 	for _, b := range blocks {
-		if b.Name == "" {
+		if b.Name == "" || b.Array {
 			continue
 		}
 		if seen[b.Name] {
@@ -319,13 +662,16 @@ func mergeTOMLMCP(path string, src string, t agentTarget, token string) ([]byte,
 	replaced := map[string]bool{}
 	for _, b := range blocks {
 		srv, mine := owned[b.Name]
-		if !mine {
+		// An `[[mcp_servers.civitai]]` is somebody else's shape, not our table —
+		// rewriting it as a table would change what the file means.
+		if !mine || b.Array {
 			out = append(out, b.Lines...)
 			continue
 		}
-		// Replace the block's contents; the trailing blank lines it carried are
+		// Re-render OUR keys and carry every other key the block held through
+		// verbatim (see mergeTOMLBlock). The trailing blank lines it carried are
 		// dropped with it and re-added below, so repeated runs are idempotent.
-		out = append(out, renderTOMLServer(t, srv, token)...)
+		out = append(out, mergeTOMLBlock(b, renderTOMLServer(t, srv, token), t)...)
 		out = append(out, "")
 		replaced[b.Name] = true
 	}
@@ -356,6 +702,11 @@ func tomlMCPRegistered(path string, src string, t agentTarget) (map[string]bool,
 	}
 	present := map[string]bool{}
 	for _, b := range blocks {
+		// An `[[mcp_servers.civitai]]` array entry is not the table this command
+		// writes, so it does not count as registered.
+		if b.Array {
+			continue
+		}
 		present[b.Name] = true
 	}
 	found := map[string]bool{}
@@ -415,10 +766,24 @@ func mcpRegisteredServers(path string, t agentTarget) (map[string]bool, error) {
 
 // writeMCPConfig writes the merged config, creating parent directories.
 //
-// 🔴 0600 ON A FILE WE CREATE, and the existing mode is preserved otherwise. The
-// entry carries a bearer token whenever one is configured, so a world-readable
-// new file would be this command leaking a credential into a path the user never
-// chose. Preserving the mode on an existing file is the other half: tightening
+// 🔴 0600 ON A FILE WE CREATE — AND NOT BECAUSE THE ENTRY CARRIES A TOKEN. It
+// does not; that is item 34's whole rule, and the comment that used to sit here
+// justified the mode with a credential this command stopped writing. The mode
+// stays for a different, still-true reason: this file is exactly where the
+// no-interpolation branch TELLS a Zed user to paste a literal token by hand, and
+// where an authenticated user's own header will end up. Creating it
+// world-readable would hand them a 0644 home for a credential they were invited
+// to add. So the strict mode is about what the file is FOR, not about what this
+// command puts in it.
+//
+// 🔴 AND THAT IS WHY IT DIFFERS FROM AGENTS.md / CLAUDE.md AT 0644
+// (writeProjectFile). Those two are instruction files: they are meant to be
+// committed, read by the whole team and by CI, they can never hold a credential,
+// and a 0600 AGENTS.md would break a checkout shared between accounts. Two files
+// created side by side with different modes looks like an oversight and is a
+// decision — the split is credential-adjacency, not scope.
+//
+// Preserving the mode on an existing file is the other half: tightening
 // somebody's config to 0600 behind their back is also a change they did not ask
 // for.
 func writeMCPConfig(path string, data []byte) error {
@@ -435,9 +800,22 @@ func writeMCPConfig(path string, data []byte) error {
 // writeFileAtomic writes via a temp file in the same directory and a rename, so
 // an interrupted run cannot leave a half-written config behind — which for these
 // files means an agent that no longer starts.
+//
+// 🔴 A SYMLINKED DESTINATION IS FOLLOWED, NOT REPLACED. A rename onto
+// `~/.codex/config.toml -> ~/dotfiles/codex.toml` destroys the link and leaves a
+// regular file, with the dotfiles copy orphaned and every future edit to it
+// invisible — silently, at rc 0. Measured. Dotfile repositories are the normal
+// way these files are managed, so this is the common case, not an edge one, and
+// it contradicts this file's whole "the config belongs to the user" posture.
+// The destination is therefore resolved first and the write lands on the real
+// file, in the real file's directory so the rename stays on one filesystem.
 func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
+	target, err := resolveWriteTarget(path)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(target)
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(target)+".*")
 	if err != nil {
 		return err
 	}
@@ -453,7 +831,38 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := os.Chmod(tmpName, mode); err != nil {
 		return err
 	}
-	return os.Rename(tmpName, path)
+	return os.Rename(tmpName, target)
+}
+
+// resolveWriteTarget returns the real path a write to `path` must land on: the
+// path itself when it is a regular file or does not exist, and the link's target
+// when it is a symlink.
+//
+// A BROKEN symlink is refused by name rather than materialised into a regular
+// file: the user pointed this path somewhere, and creating a file here instead
+// silently un-does that.
+func resolveWriteTarget(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		return "", err
+	}
+	if info.Mode()&os.ModeSymlink == 0 {
+		return path, nil
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		dest, readErr := os.Readlink(path)
+		if readErr != nil {
+			dest = "?"
+		}
+		return "", fmt.Errorf("%s is a symlink to %s, which cannot be resolved (%v) — this command follows the "+
+			"link rather than replacing it with a regular file; fix or remove the link and re-run "+
+			"`civitai agent-setup`", path, dest, err)
+	}
+	return resolved, nil
 }
 
 // mcpPasteBlock renders the config an `other` agent's user has to place by hand.

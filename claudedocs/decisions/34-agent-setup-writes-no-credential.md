@@ -13,8 +13,16 @@ project-scoped or user-scoped, with no flag to opt in.**
 The first cut of `civitai agent-setup` wrote
 
 ```json
-"headers": { "Authorization": "Bearer civitai_579a06da…" }
+"headers": { "Authorization": "Bearer civitai_9f31c0a7d24e4b8fa5c6071e3d8b2a4c" }
 ```
+
+> The token above is the **synthetic fixture** from
+> `agent_setup_credential_test.go` (`credFixtureToken`), not a real one. An
+> earlier revision of this file carried the first eight hex characters of the
+> operator's **actual** token, pasted in while reproducing the bug — a leak of
+> exactly the kind the item forbids, in the document that forbids it. When you
+> illustrate a credential defect, illustrate it with the fixture; a real prefix
+> is still a real prefix.
 
 into whichever file the detected agent uses. Four of those seven files are
 **project-scoped**: `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` and
@@ -56,10 +64,10 @@ hand-write JSON.
 |---|---|---|---|
 | `claude` | interpolation, **bare** `${VAR}` | `Bearer ${CIVITAI_TOKEN}` | https://code.claude.com/docs/en/mcp |
 | `cursor` | interpolation, `${env:VAR}` | `Bearer ${env:CIVITAI_TOKEN}` | https://cursor.com/docs/context/mcp |
-| `windsurf` | interpolation, `${env:VAR}` | `Bearer ${env:CIVITAI_TOKEN}` | https://docs.windsurf.com/windsurf/cascade/mcp (307 → https://docs.devin.ai/desktop/cascade/mcp) |
+| `windsurf` | interpolation, `${env:VAR}` | `Bearer ${env:CIVITAI_TOKEN}` | docs.windsurf.com/windsurf/cascade/mcp (307 → docs.devin.ai/desktop/cascade/mcp) — **legacy agent only**, see below |
 | `opencode` | interpolation, **`{env:VAR}`** — single brace, no `$` | `Bearer {env:CIVITAI_TOKEN}` | https://opencode.ai/docs/mcp-servers/ and https://opencode.ai/docs/config/ |
 | `codex` | **a different mechanism**: a key taking the variable's NAME | `bearer_token_env_var = "CIVITAI_TOKEN"` | https://learn.chatgpt.com/docs/extend/mcp?surface=cli |
-| `vscode` | **none documented** | *no `headers` key* | https://code.visualstudio.com/docs/agents/reference/mcp-configuration |
+| `vscode` | interpolation, `${env:VAR}` — **this row was REVERSED in round 1** | `Bearer ${env:CIVITAI_TOKEN}` | microsoft/vscode#245237, #264448, and `mcpRegistry.ts` — see below |
 | `zed` | **none documented** | *no `headers` key* | https://zed.dev/docs/ai/mcp |
 | `other` | unknown agent | *no `headers` key* | — |
 
@@ -87,8 +95,11 @@ Supporting quotes, so a future reader can check the claim without re-fetching:
 This is the decision the trigger is guarding, because it is the one that reads
 backwards.
 
-A missing header is a **visibly** anonymous config, and both Civitai MCP servers'
-read tools work anonymously — models, images, articles all browse fine. A header
+A missing header is a **visibly** anonymous config, and the SITE server's read
+tools work anonymously — models, images, articles all browse fine. (The
+ORCHESTRATION server does not; see "What a header-less config actually reaches"
+below. That distinction was absent from this document and from six code
+surfaces, and it was the stated justification for the whole design.) A header
 carrying a syntax the agent does not implement is a config that **looks
 configured** and sends the literal string `${CIVITAI_TOKEN}` as a bearer token.
 It fails at request time, and it fails looking like a **bad credential** rather
@@ -99,26 +110,125 @@ So the rule for this table is: **if you cannot confirm support from a vendor
 doc, it is unsupported.** Absence of evidence is treated as evidence of absence
 here on purpose, because the two error directions are not symmetric.
 
-### The one that will get "fixed"
+### The one that got "fixed" — and the fix was right
 
-**VS Code is the entry someone will correct.** `${env:Name}` *is* a real VS Code
-variable — the variables reference says so — and it is genuinely tempting to
-conclude it therefore resolves in `mcp.json`. It does not follow. The MCP
-configuration reference lists an HTTP server's fields as exactly
-`type`/`url`/`headers`/`oauth`; its only `headers` example is `"Bearer
-${input:api-token}"`, which is **prompted input**, not the environment ("VS Code
-prompts you for the value when the server starts for the first time"); and the
-variables reference scopes substitution to "Debugging and Task configuration
-files, and for some select settings", never naming `mcp.json`. That is an
-inference across two documents, and an inference is exactly what this table may
-not ship.
+**VS Code was the entry someone would correct, and in round 1 someone did.** The
+original text is kept below because the REASONING is still the reasoning; only
+its conclusion was wrong, and a retraction that deletes the argument teaches
+nothing.
 
-**Zed** is the easier call: it documents no substitution syntax at all, its
-remote example hard-codes `"Bearer <token>"`, and for an authenticated server it
-offers OAuth instead — "When a remote MCP server has no configured
-`"Authorization"` header, Zed will prompt you to authenticate yourself … using
-the standard MCP OAuth flow." So a header-less entry is not merely the safe
-option for Zed, it is the entry that lets Zed offer the user its own auth flow.
+> **VS Code is the entry someone will correct.** `${env:Name}` *is* a real VS
+> Code variable — the variables reference says so — and it is genuinely tempting
+> to conclude it therefore resolves in `mcp.json`. It does not follow. The MCP
+> configuration reference lists an HTTP server's fields as exactly
+> `type`/`url`/`headers`/`oauth`; its only `headers` example is `"Bearer
+> ${input:api-token}"`, which is **prompted input**, not the environment; and the
+> variables reference scopes substitution to "Debugging and Task configuration
+> files, and for some select settings", never naming `mcp.json`. That is an
+> inference across two documents, and an inference is exactly what this table may
+> not ship.
+
+**What overturned it was the IMPLEMENTATION, not better docs.** The docs still
+say what they said, and read alone they still support the conservative reading —
+which is the lesson: for a behaviour the vendor implements but does not document,
+the docs are the weaker witness. Every item below was checked directly:
+
+- **microsoft/vscode#245237** — *"Support `${env:VARIABLE_NAME}` in mcp.json"*,
+  `state: closed`, `state_reason: completed`, closed 2025-04-01. Its single
+  comment, from **@connor4312** (`author_association: MEMBER`, the engineer who
+  owns VS Code's MCP implementation): **"This is supported."**
+- **microsoft/vscode#264448** — closed completed 2025-09-10. @connor4312 again:
+  *"The format is `${env:VARIABLE_NAME}`"*, and, asked whether it really works in
+  `mcp.json` specifically, *"It works using the same logic as
+  tasks.json/launch.json do"*.
+- **`mcpRegistry.ts` `_replaceVariablesInLaunch`** parses
+  `ConfigurationResolverExpression.parse(McpServerLaunch.toSerialized(launch))`
+  and resolves the result with `resolveAsync`. Three links make that cover
+  headers: `McpServerLaunch.toSerialized` is the **identity function**
+  (`mcpTypes.ts`), so nothing is filtered out; an HTTP launch carries
+  `headers: [string, string][]` built from `configuration.headers`; and
+  `ConfigurationResolverExpression.parseObject` **recurses** through arrays and
+  objects, calling `parseString` on every string it reaches. `variableReplacement`
+  is set for **every** `mcp.json` server in `installedMcpServersDiscovery.ts`,
+  outside any `config.type === 'http'` branch.
+
+So `vscode` now gets `${env:CIVITAI_TOKEN}`, the same spelling as Cursor and
+Windsurf. `TestVSCodeGetsTheDocumentedInterpolation` pins it.
+
+**The gap, stated:** no VS Code test or doc line asserts header-value resolution
+*specifically*. The verdict rests on the code path plus the maintainer's
+statement. Nobody ran VS Code and watched a resolved header go out on the wire.
+
+#### 🔴 The residual VS Code ships with
+
+`${env:X}` resolves against **VS Code's own process environment**, and a variable
+it cannot see becomes the **empty string**, silently — `variableResolver.ts`'s
+`case 'env'` returns `''` rather than leaving the template in place. So a
+GUI-launched VS Code that never read the user's shell profile sends
+`Authorization: Bearer ` and gets a 401.
+
+That is *not* the failure this item's rule was protecting against — a wrong
+syntax sends the LITERAL `${env:CIVITAI_TOKEN}`, which is worse — but it is a
+failure, and it looks like a bad credential. It is the same hazard as the
+config-only token below, with the same remedy, and the next-step block names it:
+**a missing export, not a bad token.**
+
+### Windsurf: the path is right, the AGENT it serves may not be
+
+`docs.windsurf.com/windsurf/cascade/mcp` 307s to
+`docs.devin.ai/desktop/cascade/mcp`, which now opens, verbatim:
+
+> **The MCP configuration on this page applies to the legacy Cascade agent
+> only.** The Devin Local agent — the default agent for new tabs — configures MCP
+> servers in the Devin CLI config files instead.
+
+The page still documents `~/.codeium/windsurf/mcp_config.json`, which is what
+this CLI writes. The Devin CLI reads `~/.config/devin/mcp_config.json`
+(`%APPDATA%\devin\mcp_config.json` on Windows) plus the project-scoped
+`.devin/mcp_config.json`.
+
+**Decision: keep writing the Cascade path, and SAY SO.** Adding a second write
+target for an agent this table has never been tested against is a bigger change
+than the finding warrants, and guessing at a target is the failure this whole
+item exists to prevent. So the row carries a `Caveat` the run prints, naming the
+Devin path. `TestWindsurfRowNamesTheDevinSplit` pins that it reaches the user and
+not merely the source.
+
+### Zed: the safe option, and NOT for the reason this file used to give
+
+**Zed** documents no substitution syntax at all and its remote example hard-codes
+`"Bearer <token>"`, so it still gets no `headers` key. That much stands.
+
+🔴 **The rest of this paragraph is RETRACTED, AND IT HAS NO REPLACEMENT.** It
+used to read: *"for an authenticated server it offers OAuth instead — 'When a
+remote MCP server has no configured `Authorization` header, Zed will prompt you
+to authenticate yourself … using the standard MCP OAuth flow' — so a header-less
+entry is not merely the safe option for Zed, it is the entry that lets Zed offer
+the user its own auth flow."*
+
+Zed's documented behaviour is real. The inference that it BENEFITS our users is
+not: the flow needs the server to advertise an authorization server, and ours
+does not. Measured against the live host, with no credential:
+
+| probe | result |
+|---|---|
+| `POST https://orchestration.civitai.com/mcp` `initialize` | **401**, empty body, **no `WWW-Authenticate`** |
+| `GET /.well-known/oauth-protected-resource` | 404 |
+| `GET /.well-known/oauth-protected-resource/mcp` | 404 |
+| `GET /.well-known/oauth-authorization-server` | 404 |
+| `GET /mcp/.well-known/oauth-protected-resource` | 404 |
+
+With no `WWW-Authenticate` and no discovery document, an MCP client has nothing
+to start an OAuth flow from.
+
+**So the header-less Zed entry is the SAFE option and nothing more.** It is not
+better than the alternatives; it is the only one that does not write a
+credential. A Zed user authenticates by adding the header by hand, which the run
+tells them to do, and the row's `Caveat` says why no flow will offer itself.
+
+🔴 **Do not restore a benefit clause here without a live probe behind it.** The
+retracted sentence was written because a rationale was wanted, not because one
+was measured — which is precisely how this class of error regenerates.
 
 **`--agent other`** is the strictest case and it is easy to miss, because the
 paste block is not a file. It is text the human pastes **into** a config file, so
@@ -127,6 +237,73 @@ agent is by definition one this CLI does not know, so no interpolation syntax
 can be assumed correct for it either. `mcpPasteBlock` therefore carries no
 header **even with a token configured**, and the printed block names the four
 known spellings for the reader to pick from.
+
+## What a header-less config actually reaches
+
+🔴 **THE TWO SERVERS DO NOT BOTH WORK ANONYMOUSLY, AND THE CLAIM THAT THEY DID
+WAS THE LOAD-BEARING JUSTIFICATION FOR THIS WHOLE DESIGN.** It appeared in this
+document and in six code surfaces — the command's file header, its `Long` help,
+`mcpAuthValue`'s comment, `agentTargets`' block comment, `mcpAuthReason`,
+`printAgentSetupAuthNote` — plus the README. Every one of them said some form of
+"both servers' read tools work anonymously, so a header-less config is not
+degraded".
+
+Measured, no credential, `POST … {"method":"initialize"}`:
+
+| endpoint | anonymous `initialize` |
+|---|---|
+| `https://mcp.civitai.com/mcp` | **200**, `serverInfo: civitai-mcp-server` |
+| `https://orchestration.civitai.com/mcp` | **401**, empty body, **no `WWW-Authenticate`** |
+
+It is not a read/write split: the `initialize` handshake itself is refused, so
+**nothing** on the orchestration server is reachable until an `Authorization`
+header is present.
+
+### What follows from it
+
+The credential rule does **not** change — writing a literal token into a
+committed file is still the worse failure, and a header this CLI cannot spell
+correctly is still worse than no header. What changes is what the command is
+allowed to CLAIM:
+
+- Anonymity is modelled **per server** (`mcpServer.Anonymous`), not asserted
+  about "both".
+- Every surface that used to state it now calls `mcpAnonymityNote()`, which is
+  DERIVED from that field — so a third server, or a change to either, is
+  described correctly everywhere at once instead of in six places by hand.
+- A VS Code / Zed / `--agent other` / no-token user is told, on the server's own
+  output row, that one of the two entries just registered will 401 without a
+  header.
+
+`TestTheTwoServersDisagreeAboutAnonymousAccess` pins the measurement;
+`TestHeaderLessRunNamesTheServerThatNeedsAHeader` pins that a real run says so,
+for every agent/token combination that produces no header.
+
+🔴 **If the orchestration server later opens up, re-probe and change the table —
+do not change the test to match a table someone edited without measuring.**
+
+## "Configured" is not "exported"
+
+The gate on writing the header is `config.Load().Token() != ""`. That is
+satisfied by `~/.config/civitai/config.yaml` — i.e. by `civitai login`, the very
+command this tool's last line recommends — **or** by the `CIVITAI_TOKEN`
+environment variable. The AGENT resolves the header from the **process
+environment** and cannot read this CLI's config file. The two are independent.
+
+Measured: token in `config.yaml`, `CIVITAI_TOKEN` unset. The `${CIVITAI_TOKEN}`
+header was written and the output printed **"3. Already authenticated"** — while
+the variable it references was empty, so every request the agent makes 401s.
+Cursor, Windsurf, opencode and VS Code all resolve an unset variable to the
+**empty string** (VS Code's `variableResolver.ts` `case 'env'` returns `''`), and
+Claude Code passes the literal through.
+
+**The gate is kept**, because gating on the environment instead would leave a
+`civitai login` user with no header and no guidance — a worse outcome than a
+header that needs one more step. What changed is the reporting: `tokenIsExported`
+is consulted separately, and when the variable is unset the run says so in both
+the export step and the final line, in the words that matter — **a missing
+export, not a bad token.** Getting this wrong sends the user to re-mint a
+credential that was fine, which is the most expensive shape a failure can take.
 
 ## Two decisions that look like leftovers and are not
 
@@ -147,12 +324,14 @@ interchangeable in a config diff and are not.
 
 ## `--check` and the absent header
 
-An absent `Authorization` header is **the correct state** for VS Code and Zed, so
-`--check` must not fail on it. This is the same shape as the `authenticated` row
-that item 11's contract already settled: reported, never folded into the verdict.
-A check that went red here would be permanently red for every VS Code and Zed
-user who did everything right, and a gate nobody can clear is a gate everyone
-learns to ignore. `TestCheckDoesNotFailOnAnAbsentHeader` pins it, with a premise
+An absent `Authorization` header is **the correct state** for Zed (and, until
+round 1 reversed that row, for VS Code), so `--check` must not fail on it. This is
+the same shape as the `authenticated` row that item 11's contract already settled:
+reported, never folded into the verdict. A check that went red here would be
+permanently red for every Zed user who did everything right, and a gate nobody
+can clear is a gate everyone learns to ignore. Item 35 records a THIRD instance of
+this shape — `claude-md` for an agent that never reads it — and consolidates all
+three behind one predicate. `TestCheckDoesNotFailOnAnAbsentHeader` pins it, with a premise
 assertion first so it cannot pass by checking a config that has a header after
 all.
 

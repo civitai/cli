@@ -265,8 +265,10 @@ Item 32 is what a submit may CLAIM about the source it was built from.
 Item 33 is the source-repository URL: a deliberate NON-mirror, because the
 one mirror of that rule this repo already ships is measurably wrong in BOTH
 directions and cannot be tightened without breaking every vendored copy.
-Item 34 is `agent-setup`'s absolute no-credential-on-disk rule and the four
-vendor syntaxes that replace it.
+Item 34 is `agent-setup`'s absolute no-credential-on-disk rule, the vendor
+syntaxes that replace it, and what a header-less config actually reaches.
+Item 35 is the OTHER half of that command: what it may do to a config file the
+USER owns — the merge, the parsers, and which rows fail `--check`.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -448,9 +450,14 @@ item must carry a trigger that is a routing question rather than a label
     → evidence: claudedocs/decisions/33-source-repo-url-is-not-mirrored.md
 
 34. **Putting an `Authorization` header into anything `agent-setup` writes or
-    prints — filling an empty `EnvHeaderSyntax`, reaching for `${env:…}` on VS
-    Code or Zed, or adding an agent to that table?**
+    prints — filling an empty `EnvHeaderSyntax`, adding an agent to that table,
+    or wording what a header-less config reaches?**
     → evidence: claudedocs/decisions/34-agent-setup-writes-no-credential.md
+
+35. **Changing how `agent-setup` merges into a file the USER owns — JSONC
+    comments, which keys survive on our OWN entries, the TOML parser, a
+    symlinked destination, an agent's config root, or the `--check` verdict?**
+    → evidence: claudedocs/decisions/35-agent-setup-merges-a-users-file.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

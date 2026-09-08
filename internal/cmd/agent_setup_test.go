@@ -30,6 +30,17 @@ func agentSetupProject(t *testing.T) (dir string, home string) {
 	for _, s := range agentEnvSignals {
 		t.Setenv(s.Var, "")
 	}
+	// 🔴 CONFIG-ROOT OVERRIDES ARE CLEARED, AND THE LIST IS DERIVED. A developer
+	// who has CODEX_HOME set in their own shell would otherwise have these tests
+	// write outside t.TempDir() — into their real Codex config — and the test
+	// that then looked in $HOME would report a plausible, wrong failure.
+	// Enumerating the table means a new root is neutralised the moment it is
+	// added rather than the next time someone remembers.
+	for _, target := range agentTargets {
+		for _, r := range target.Roots {
+			t.Setenv(r.EnvVar, "")
+		}
+	}
 	return dir, home
 }
 
@@ -422,8 +433,11 @@ theme = "dark"
 //
 // 🔴 A PLACEHOLDER WOULD BE WORSE THAN NOTHING. `Bearer <your-token>` produces a
 // config that looks complete in every file the user can read and 401s at request
-// time; a header-less entry is honest and still works, because both servers'
-// read tools are anonymous.
+// time; a header-less entry is honest, and it still reaches the SITE server,
+// whose read tools are anonymous. (It does NOT reach the orchestration server,
+// which 401s an anonymous handshake — see mcpServer.Anonymous. That does not
+// change this rule: a placeholder would not reach it either, and would look like
+// it had.)
 func TestAgentSetupWritesNoPlaceholderToken(t *testing.T) {
 	t.Run("no token", func(t *testing.T) {
 		dir, _ := agentSetupProject(t)
@@ -887,26 +901,40 @@ func TestAuthenticatedIsReportedButNeverFailsTheVerdict(t *testing.T) {
 	})
 }
 
-// TestAgentSetupVerdictUnit drives the verdict function directly, over the two
-// rows that decide it. A unit here catches an inversion the end-to-end rows
-// above could only see through a whole run.
+// TestAgentSetupVerdictUnit drives the verdict function directly, over the rows
+// that decide it. A unit here catches an inversion the end-to-end rows above
+// could only see through a whole run.
+//
+// The agent is part of the input because `claude-md` counts for exactly one
+// agent — see TestClaudeMDDoesNotFailTheVerdictForANonClaudeAgent.
 func TestAgentSetupVerdictUnit(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
+		agent  string
 		checks []agentCheckJSON
 		want   bool
 	}{
-		{"only authenticated fails", []agentCheckJSON{
+		{"only authenticated fails", agentClaude, []agentCheckJSON{
 			{Name: checkAgentsMD, OK: true}, {Name: checkAuthenticated, OK: false}}, true},
-		{"a real check fails", []agentCheckJSON{
+		{"a real check fails", agentClaude, []agentCheckJSON{
 			{Name: checkAgentsMD, OK: false}, {Name: checkAuthenticated, OK: true}}, false},
-		{"everything passes", []agentCheckJSON{
+		{"everything passes", agentClaude, []agentCheckJSON{
 			{Name: checkAgentsMD, OK: true}, {Name: checkAuthenticated, OK: true}}, true},
-		{"everything fails", []agentCheckJSON{
+		{"everything fails", agentClaude, []agentCheckJSON{
 			{Name: checkAgentsMD, OK: false}, {Name: checkAuthenticated, OK: false}}, false},
+		// claude-md counts for Claude Code and for nothing else.
+		{"claude-md fails for claude", agentClaude, []agentCheckJSON{
+			{Name: checkAgentsMD, OK: true}, {Name: checkClaudeMD, OK: false}}, false},
+		{"claude-md does not fail for cursor", agentCursor, []agentCheckJSON{
+			{Name: checkAgentsMD, OK: true}, {Name: checkClaudeMD, OK: false}}, true},
+		{"claude-md does not fail for other", agentOther, []agentCheckJSON{
+			{Name: checkAgentsMD, OK: true}, {Name: checkClaudeMD, OK: false}}, true},
+		// …and exempting it must not exempt anything else for that agent.
+		{"an mcp row still fails for cursor", agentCursor, []agentCheckJSON{
+			{Name: checkClaudeMD, OK: false}, {Name: "mcp-site", OK: false}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := agentSetupVerdict(tc.checks); got != tc.want {
+			if got := agentSetupVerdict(tc.checks, tc.agent); got != tc.want {
 				t.Errorf("agentSetupVerdict = %t, want %t", got, tc.want)
 			}
 		})

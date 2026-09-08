@@ -418,6 +418,12 @@ func TestSplitItemBodiesArePreservedVerbatim(t *testing.T) {
 var bornSplitItems = []string{
 	"claudedocs/decisions/33-source-repo-url-is-not-mirrored.md",
 	"claudedocs/decisions/34-agent-setup-writes-no-credential.md",
+	// Item 35 was written straight into claudedocs/decisions/: its body is the
+	// round-1 audit's seven measured defects plus their rejected alternatives,
+	// and AGENTS.md had ~100 bytes of headroom when it was written. Parking that
+	// in the numbered list even briefly would have blown the ceiling on the same
+	// commit that raised it.
+	"claudedocs/decisions/35-agent-setup-merges-a-users-file.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item

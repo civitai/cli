@@ -23,11 +23,17 @@ import (
 //
 // 🔴 IT STOPS BEFORE AUTH, ON PURPOSE. Nothing here runs `civitai login`, opens
 // a browser or prompts for a credential — the last thing it prints is the
-// instruction for the human to authenticate themselves. Both MCP servers' read
-// tools work anonymously, so a token-less registration is genuinely useful, and
-// an unauthenticated setup is a SUCCESS rather than a half-finished one. That is
-// why `authenticated` is reported by `--check` and deliberately excluded from its
-// verdict; see agentSetupVerdict.
+// instruction for the human to authenticate themselves. A token-less
+// registration is still useful because the SITE server answers anonymously, and
+// registering a server you cannot yet reach costs nothing and is reversible. So
+// an unauthenticated setup is a SUCCESS rather than a half-finished one, and
+// that is why `authenticated` is reported by `--check` and deliberately excluded
+// from its verdict; see agentSetupVerdict.
+//
+// 🔴 IT IS NOT "BOTH SERVERS WORK ANONYMOUSLY", WHICH IS WHAT THIS COMMENT AND
+// SIX OTHER SURFACES USED TO SAY. The orchestration server 401s an anonymous
+// handshake. See mcpServer.Anonymous; every surface here reads mcpAnonymityNote
+// rather than repeating a claim.
 //
 // 🔴 IT PINS NO PACKAGE VERSION, ANYWHERE — not in the template, not in help
 // text, not as an example in a comment. See agent_setup_files.go.
@@ -153,6 +159,22 @@ type agentCheckJSON struct {
 	Detail string `json:"detail"`
 }
 
+// The MCP-config `changes[].action` values. Named because three of the four are
+// reported identically in `--json` and rendered differently on the terminal, and
+// a bare string literal at each site is how they drift.
+const (
+	// actionManual: there is no file to write — `--agent other`, or a
+	// user-scoped target with no resolvable home. The human does it.
+	actionManual = "manual"
+	// actionMerge: an existing config gained the two entries.
+	actionMerge = "merge"
+	// actionBlocked: the MCP config was REFUSED and nothing was written to it,
+	// while the instruction files were still written. See runAgentSetupWrite —
+	// this is the degraded run, and it is the one action that comes with
+	// `ok: false` and a non-zero exit.
+	actionBlocked = "blocked"
+)
+
 // agentChangeJSON is one file a write run touched (or, under --dry-run, would).
 type agentChangeJSON struct {
 	Path   string `json:"path"`
@@ -171,11 +193,18 @@ type agentChangeJSON struct {
 // 🔴 `ok` MEANS DIFFERENT THINGS IN THE TWO MODES, AND SAYING SO IS THE POINT.
 // On `--check` it is the verdict, and the structured form of the exit code
 // (agentSetupVerdict). On a write run it means the run did what it set out to
-// do; a write run that fails returns an error and emits no payload at all, so
-// `ok` is true whenever there is one to read. A write run for `--agent other`
-// leaves a MANUAL step, and that is reported as a `changes` row with the action
-// `manual` rather than by moving `ok` — an `ok: false` beside exit 0 is a
-// contradiction a script cannot act on.
+// do. A write run for `--agent other` leaves a MANUAL step, and that is reported
+// as a `changes` row with the action `manual` rather than by moving `ok` — an
+// `ok: false` beside exit 0 is a contradiction a script cannot act on.
+//
+// 🔴 A WRITE RUN CAN NOW EMIT `ok: false`, AND IT ALWAYS COMES WITH A NON-ZERO
+// EXIT. An MCP config that cannot be written no longer aborts the run before the
+// instruction files (runAgentSetupWrite), so there is a partial outcome to
+// report: the `changes` row carries the action `blocked` with the refusal as its
+// reason, `ok` is false, and the command exits 1. The invariant a script needs is
+// preserved in the form that matters — `ok: true` still means every step
+// happened — and the one it used to rely on ("a payload implies success") is
+// gone deliberately, because the alternative was writing nothing at all.
 type agentSetupJSON struct {
 	Track   string            `json:"track"`
 	Agent   string            `json:"agent"`
@@ -194,17 +223,35 @@ type agentSetupJSON struct {
 // leaves them in, and the hosted prompt would report a failure for a run that
 // did everything right. TestAuthenticatedIsReportedButNeverFailsTheVerdict pins
 // it in both directions.
-func agentSetupVerdict(checks []agentCheckJSON) bool {
-	ok := true
+//
+// 🔴 `claude-md` MUST NOT COUNT FOR AN AGENT THAT DOES NOT READ IT, AND THAT IS
+// THE SAME SHAPE AGAIN. CLAUDE.md exists only because Claude Code does not read
+// AGENTS.md; every other agent reads AGENTS.md directly and the shim is inert
+// for them. A Cursor user who deletes the file they were never going to use got
+// `ok: false`, exit 1, with every other row green — and `developer.civitai.com`'s
+// hosted prompt reports that as a failed setup. The row STAYS (it is true, and a
+// user who later opens Claude Code wants it) and it is excluded from the AND, the
+// same way the absent Authorization header already is under item 34.
+func agentSetupVerdict(checks []agentCheckJSON, agent string) bool {
 	for _, c := range checks {
-		if c.Name == checkAuthenticated {
-			continue
-		}
-		if !c.OK {
-			ok = false
+		if checkCountsTowardVerdict(c.Name, agent) && !c.OK {
+			return false
 		}
 	}
-	return ok
+	return true
+}
+
+// checkCountsTowardVerdict is the ONE predicate both the verdict and the failed
+// count consult, so `ok: true` beside "1 check(s) failed" is unreachable.
+func checkCountsTowardVerdict(name, agent string) bool {
+	switch name {
+	case checkAuthenticated:
+		return false
+	case checkClaudeMD:
+		return agent == agentClaude
+	default:
+		return true
+	}
 }
 
 func newAgentSetupCmd() *cobra.Command {
@@ -236,12 +283,20 @@ It does three things, and it never authenticates:
 
 NOTHING IS CLOBBERED. An existing AGENTS.md is appended to, or has only its
 managed block replaced; an existing CLAUDE.md is left exactly as you wrote it;
-an existing MCP config is MERGED into, preserving every other server and key. A
-config file that does not parse is refused by name rather than repaired.
+an existing MCP config is MERGED into, preserving every other server, every
+unknown key, and every key you added to the Civitai entries themselves. A config
+file that does not parse is refused by name rather than repaired -- and that
+refusal no longer stops AGENTS.md and CLAUDE.md from being written.
 
 The agent is detected from the environment and then from marker files in the
 project; --agent overrides it. --agent other prints the config for you to paste
 in yourself and writes nothing.
+
+ONE STATED EXCEPTION TO THAT: a JSONC config (Zed's settings.json,
+.vscode/mcp.json, opencode.jsonc) is re-encoded, so its comments and key order
+are not preserved. The run says so when it happens, rather than refusing the
+file -- which is what it used to do, and Zed ships settings.json with comments
+in it.
 
 NO CREDENTIAL IS EVER WRITTEN INTO A CONFIG FILE. Most of these files are
 project-scoped — .mcp.json, .cursor/mcp.json, .vscode/mcp.json and opencode.json
@@ -249,12 +304,16 @@ sit in the repo root and get committed — so an Authorization header holding yo
 actual token is a secret headed for version control. Instead, for agents whose
 vendors document environment-variable interpolation, the header REFERENCES
 CIVITAI_TOKEN in that vendor's own spelling (${CIVITAI_TOKEN} for Claude Code,
-${env:CIVITAI_TOKEN} for Cursor and Windsurf, {env:CIVITAI_TOKEN} for opencode,
-and bearer_token_env_var for Codex); export CIVITAI_TOKEN so the agent resolves
-it. For agents that document none — VS Code and Zed today — no header is written
-at all and the output names the exact header to add yourself. Both servers' read
-tools work anonymously, so a header-less config browses models, images and
-articles as it stands.
+${env:CIVITAI_TOKEN} for Cursor, VS Code and Windsurf, {env:CIVITAI_TOKEN} for
+opencode, and bearer_token_env_var for Codex); export CIVITAI_TOKEN so the agent
+resolves it — a token stored only by 'civitai login' is NOT visible to your
+agent. For agents that document none — Zed today — no header is written at all
+and the output names the exact header to add yourself.
+
+THE TWO SERVERS DIFFER ON ANONYMOUS ACCESS. https://mcp.civitai.com/mcp answers
+without a credential, so a header-less config browses models, images and
+articles as it stands. https://orchestration.civitai.com/mcp returns 401 until
+an Authorization header is present, so generation tools need one either way.
 
 AUTHENTICATION IS YOURS TO RUN. The servers are registered before login on
 purpose, and 'civitai login' is a separate store from CIVITAI_TOKEN: it writes
@@ -287,8 +346,19 @@ fails it: an unauthenticated setup is a success, not a failure.`,
 			if err := resolveAgentSetupDir(dir); err != nil {
 				return err
 			}
+			// 🔴 ABSOLUTE, BECAUSE EVERY PATH IN THE PAYLOAD IS BUILT FROM IT.
+			// With the default `--dir .` the `--json` `path` fields came out
+			// relative (`AGENTS.md`, `.mcp.json`) while the README's documented
+			// example shows absolute ones — so a script resolving them against
+			// anything but the CLI's own cwd got the wrong file. A path a consumer
+			// cannot resolve without also knowing the working directory is not a
+			// path.
+			absDir, err := filepath.Abs(dir)
+			if err != nil {
+				return err
+			}
 
-			env := liveAgentEnv(dir)
+			env := liveAgentEnv(absDir)
 			if resolvedAgent == "" {
 				resolvedAgent = detectAgent(env)
 			}
@@ -337,7 +407,7 @@ func runAgentSetupCheck(out io.Writer, env agentEnv, track, agent, token string,
 	payload := agentSetupJSON{
 		Track:  track,
 		Agent:  agent,
-		OK:     agentSetupVerdict(checks),
+		OK:     agentSetupVerdict(checks, agent),
 		Checks: checks,
 	}
 	if jsonOut {
@@ -355,16 +425,13 @@ func runAgentSetupCheck(out io.Writer, env agentEnv, track, agent, token string,
 	// The rows are already printed; this error exists only to carry the exit
 	// code, so it must not read as a second, competing report of the same facts.
 	return fmt.Errorf("%w: %d check(s) failed — the report above lists them; re-run `civitai agent-setup` to fix "+
-		"what it can write", ErrAgentSetupIncomplete, countFailedChecks(checks))
+		"what it can write", ErrAgentSetupIncomplete, countFailedChecks(checks, agent))
 }
 
-func countFailedChecks(checks []agentCheckJSON) int {
+func countFailedChecks(checks []agentCheckJSON, agent string) int {
 	n := 0
 	for _, c := range checks {
-		if c.Name == checkAuthenticated {
-			continue
-		}
-		if !c.OK {
+		if checkCountsTowardVerdict(c.Name, agent) && !c.OK {
 			n++
 		}
 	}
@@ -382,11 +449,19 @@ func agentSetupChecks(env agentEnv, agent, token string) ([]agentCheckJSON, erro
 	if err != nil {
 		return nil, err
 	}
-	switch {
+	switch state := agentsMDBlockState(string(raw)); {
 	case !found:
 		checks = append(checks, agentCheckJSON{Name: checkAgentsMD, OK: false,
 			Detail: "missing at " + agentsPath + " — run `civitai agent-setup`"})
-	case !agentsMDHasManagedBlock(string(raw)):
+	case state == blockDuplicated:
+		// 🔴 A SECOND MANAGED BLOCK IS A FAILED ROW, NOT A GREEN ONE. Only the
+		// first is ever refreshed, so the stale copy keeps telling the agent
+		// whatever it said when it was written, forever, while `--check` reported
+		// `ok: true` because a block was found.
+		checks = append(checks, agentCheckJSON{Name: checkAgentsMD, OK: false,
+			Detail: agentsPath + " has MORE THAN ONE civitai managed block — only the first is ever refreshed, " +
+				"so the others go stale silently; delete all but one and re-run `civitai agent-setup`"})
+	case state != blockPresent:
 		checks = append(checks, agentCheckJSON{Name: checkAgentsMD, OK: false,
 			Detail: agentsPath + " has no civitai managed block — run `civitai agent-setup` (it appends, it does not overwrite)"})
 	default:
@@ -398,12 +473,21 @@ func agentSetupChecks(env agentEnv, agent, token string) ([]agentCheckJSON, erro
 	// demanded the '@AGENTS.md' import would be permanently red for every author
 	// who wrote their own — a gate nobody can clear is a gate everyone learns to
 	// ignore. The detail says which case it is; the verdict does not move.
+	//
+	// 🔴 AND FOR A NON-CLAUDE AGENT IT DOES NOT MOVE THE VERDICT EITHER — see
+	// checkCountsTowardVerdict. The detail below says so, because a red row whose
+	// absence from the verdict is invisible reads as a bug in the verdict.
 	claudePath := filepath.Join(env.Dir, claudeFilename)
 	claudeRaw, claudeFound, err := readIfExists(claudePath)
 	if err != nil {
 		return nil, err
 	}
 	switch {
+	case !claudeFound && agent != agentClaude:
+		checks = append(checks, agentCheckJSON{Name: checkClaudeMD, OK: false,
+			Detail: "missing at " + claudePath + " — " + agent + " reads " + agentsFilename +
+				" directly, so this shim is inert for it and does NOT fail the verdict; " +
+				"`civitai agent-setup` writes it for whoever opens Claude Code here later"})
 	case !claudeFound:
 		checks = append(checks, agentCheckJSON{Name: checkClaudeMD, OK: false,
 			Detail: "missing at " + claudePath + " — `civitai agent-setup` writes a one-line `@" + agentsFilename + "` shim"})
@@ -483,10 +567,12 @@ func printAgentSetupChecks(w io.Writer, payload agentSetupJSON) {
 			fmt.Fprintln(w, "  "+st.Success(label+c.Detail))
 			continue
 		}
-		if c.Name == checkAuthenticated {
+		if !checkCountsTowardVerdict(c.Name, payload.Agent) {
 			// 🔴 A WARNING, NOT A FAILURE — the glyph has to agree with the
-			// verdict. Rendering this row like the others tells a reader the run
-			// failed on the one row that deliberately cannot fail it.
+			// verdict, and it is derived from the SAME predicate rather than
+			// re-listing which rows are exempt. Rendering one of these rows like
+			// the others tells a reader the run failed on a row that deliberately
+			// cannot fail it.
 			fmt.Fprintln(w, "  "+st.Warn(label+c.Detail))
 			continue
 		}
@@ -499,6 +585,9 @@ func printAgentSetupChecks(w io.Writer, payload agentSetupJSON) {
 		fmt.Fprintln(w, st.ErrorMsg("Setup is incomplete — re-run `civitai agent-setup`."))
 	}
 	fmt.Fprintln(w, st.Dim("`authenticated` is reported but never fails this check — setup stops before login on purpose."))
+	if payload.Agent != agentClaude {
+		fmt.Fprintln(w, st.Dim("`claude-md` likewise: "+payload.Agent+" reads "+agentsFilename+" directly, so the shim is inert for it."))
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -511,6 +600,18 @@ func printAgentSetupChecks(w io.Writer, payload agentSetupJSON) {
 // planning code the real run does and then skips the writes, so it cannot report
 // a path or an action the write path would not take. A separate dry-run renderer
 // is how a `--dry-run` starts lying.
+// 🔴 AN MCP REFUSAL DEGRADES, IT DOES NOT ABORT — AND THAT IS A FIX FOR A
+// SHIPPED BUG. `planMCPConfig` runs before ANY write, so a config file this
+// command would not touch took the whole run down with it: `--agent zed` on a
+// stock Zed install (its settings.json ships with comments) exited 1 having
+// written NOTHING, leaving the project dir empty — no AGENTS.md, no CLAUDE.md —
+// with a message blaming the user's file. The instruction files have nothing to
+// do with the MCP config, so they are written regardless and the MCP failure is
+// reported as its own row.
+//
+// The run still exits NON-ZERO, and `ok` is false. Degrading is not pretending:
+// a script that reads `ok: true` and exit 0 must be able to conclude every step
+// happened, so a partial run says so in both channels at once.
 func runAgentSetupWrite(out io.Writer, env agentEnv, track, agent, token string, jsonOut, dryRun bool) error {
 	var changes []agentChangeJSON
 
@@ -528,9 +629,14 @@ func runAgentSetupWrite(out io.Writer, env agentEnv, track, agent, token string,
 	changes = append(changes, agentChangeJSON{
 		Path: claudePath, Action: string(claudeAction), Reason: claudeMDReason(claudeAction)})
 
-	mcpPath, mcpData, mcpChange, err := planMCPConfig(env, agent, token)
-	if err != nil {
-		return err
+	mcpPath, mcpData, mcpChange, mcpErr := planMCPConfig(env, agent, token)
+	if mcpErr != nil {
+		mcpData = nil
+		mcpChange = agentChangeJSON{
+			Path:   mcpPath,
+			Action: actionBlocked,
+			Reason: mcpErr.Error(),
+		}
 	}
 	changes = append(changes, mcpChange)
 
@@ -553,11 +659,18 @@ func runAgentSetupWrite(out io.Writer, env agentEnv, track, agent, token string,
 	}
 
 	if jsonOut {
-		return writeJSON(out, agentSetupJSON{
-			Track: track, Agent: agent, OK: true, Changes: changes, DryRun: dryRun,
-		})
+		if err := writeJSON(out, agentSetupJSON{
+			Track: track, Agent: agent, OK: mcpErr == nil, Changes: changes, DryRun: dryRun,
+		}); err != nil {
+			return err
+		}
+	} else {
+		printAgentSetupWrite(out, env, agent, token, changes, dryRun)
 	}
-	printAgentSetupWrite(out, env, agent, token, changes, dryRun)
+	if mcpErr != nil {
+		return fmt.Errorf("%w: the instruction files were written; the MCP config was not — %v",
+			ErrAgentSetupIncomplete, mcpErr)
+	}
 	return nil
 }
 
@@ -589,7 +702,7 @@ func planMCPConfig(env agentEnv, agent, token string) (string, []byte, agentChan
 	if !known {
 		return "", nil, agentChangeJSON{
 			Path:   "",
-			Action: "manual",
+			Action: actionManual,
 			Reason: "agent " + agent + " has no MCP config file this CLI knows — the servers are printed below for you to paste in",
 		}, nil
 	}
@@ -597,7 +710,7 @@ func planMCPConfig(env agentEnv, agent, token string) (string, []byte, agentChan
 	if !ok {
 		return "", nil, agentChangeJSON{
 			Path:   "",
-			Action: "manual",
+			Action: actionManual,
 			Reason: agent + "'s MCP config is user-scoped and no home directory could be resolved — set HOME and re-run",
 		}, nil
 	}
@@ -605,17 +718,29 @@ func planMCPConfig(env agentEnv, agent, token string) (string, []byte, agentChan
 	if err != nil {
 		return path, nil, agentChangeJSON{}, err
 	}
-	_, existed, err := readIfExists(path)
+	raw, existed, err := readIfExists(path)
 	if err != nil {
 		return path, nil, agentChangeJSON{}, err
 	}
 	action := string(actionCreate)
 	reason := "registers both Civitai MCP servers"
 	if existed {
-		action = "merge"
+		action = actionMerge
 		reason = "merges both Civitai MCP servers in, preserving every other server and key"
 	}
+	// 🔴 THE ONE THING THE MERGE DOES NOT PRESERVE IS NAMED WHERE IT HAPPENS. A
+	// JSONC config is decoded and re-encoded, so its comments and key order are
+	// gone from the file the user opens next. The alternative that shipped —
+	// refusing every commented file — made `--agent zed` unusable on a stock Zed
+	// install. Losing a comment while saying so beats refusing while blaming the
+	// user, but only if it is actually said.
+	if jsonMergeDropsComments(raw, t) {
+		reason += "; comments and key order in that file are NOT preserved by this merge (it is decoded and re-encoded)"
+	}
 	reason += "; " + mcpAuthReason(t, token != "")
+	if t.Caveat != "" {
+		reason += "; note: " + t.Caveat
+	}
 	return path, data, agentChangeJSON{Path: path, Action: action, Reason: reason}, nil
 }
 
@@ -625,10 +750,11 @@ func planMCPConfig(env agentEnv, agent, token string) (string, []byte, agentChan
 // 🔴 IT NEVER SAYS "THE TOKEN WAS WRITTEN", BECAUSE IT NEVER IS. The three
 // outcomes are: a reference to CIVITAI_TOKEN in the agent's own documented
 // spelling, Codex's variable-NAME key, or no header at all — and the last one is
-// reported as the working anonymous setup it is, not as something missing.
+// reported for exactly what it reaches (mcpAnonymityNote), not as "anonymous
+// read tools work", which was true of one of the two servers.
 func mcpAuthReason(t agentTarget, hasToken bool) string {
 	if !hasToken {
-		return "no Authorization header — no token is configured (read tools still work anonymously)"
+		return "no Authorization header — no token is configured (" + mcpAnonymityNote() + ")"
 	}
 	if t.EnvBearerKey != "" {
 		return "auth reads " + tokenEnvVar + " via `" + t.EnvBearerKey + "` — no credential is written to disk"
@@ -638,7 +764,23 @@ func mcpAuthReason(t agentTarget, hasToken bool) string {
 			"` — no credential is written to disk; export " + tokenEnvVar + " for the agent to resolve it"
 	}
 	return "no Authorization header — " + t.Agent + " documents no way to read one from the environment, " +
-		"and this command never writes a credential to a config file (read tools still work anonymously)"
+		"and this command never writes a credential to a config file (" + mcpAnonymityNote() + ")"
+}
+
+// tokenIsExported reports whether the AGENT will be able to resolve the header
+// this command wrote: the token has to be in the PROCESS environment, not merely
+// in this CLI's config file.
+//
+// 🔴 `civitai login` DOES NOT SATISFY IT, AND THAT IS THE POINT. `config.Load()`
+// reads `~/.config/civitai/config.yaml`, which no coding agent opens. A user who
+// logged in and never exported CIVITAI_TOKEN gets the header written and every
+// request 401s with an EMPTY bearer — VS Code, Cursor, Windsurf and opencode all
+// resolve an unset variable to "" (verified in VS Code's variableResolver.ts).
+// Measured on this command: token in config.yaml, CIVITAI_TOKEN unset, output
+// said "Already authenticated". It is a missing export, and it reads as a bad
+// token unless the output says which.
+func tokenIsExported(env agentEnv) bool {
+	return strings.TrimSpace(env.Vars[tokenEnvVar]) != ""
 }
 
 // printAgentSetupWrite renders the human report and the next-step block.
@@ -652,8 +794,14 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 
 	for _, c := range changes {
 		switch {
-		case c.Action == "manual":
+		case c.Action == actionManual:
 			fmt.Fprintln(w, "  "+st.Warn("manual   "+c.Reason))
+		case c.Action == actionBlocked:
+			// 🔴 RENDERED AS A FAILURE, BECAUSE IT IS ONE. The instruction files
+			// above it succeeded; this row is the part that did not, and the run
+			// exits non-zero. A dim or warn glyph here would read as "handled".
+			fmt.Fprintf(w, "  %s %s\n", st.ErrorMsg(fmt.Sprintf("%-9s", c.Action)), c.Path)
+			fmt.Fprintf(w, "  %s\n", st.ErrorMsg("          "+c.Reason))
 		case c.Action == string(actionUnchanged), c.Action == string(actionKeep):
 			fmt.Fprintf(w, "  %s %s\n", st.Dim(fmt.Sprintf("%-9s", c.Action)), c.Path)
 			fmt.Fprintf(w, "  %s\n", st.Dim("          "+c.Reason))
@@ -676,10 +824,22 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 		for _, srv := range civitaiMCPServers {
 			fmt.Fprintf(w, "  %-22s %s\n", srv.Name, srv.URL)
 			fmt.Fprintf(w, "  %s\n", st.Dim(strings.Repeat(" ", 22)+" "+srv.What))
+			// 🔴 THE PER-SERVER ACCESS FACT, ON THE SERVER'S OWN ROW. Stating it
+			// once at the bottom is how "both servers work anonymously" survived
+			// in seven places: a reader matches the sentence to whichever server
+			// they were looking at.
+			if !srv.Anonymous {
+				fmt.Fprintf(w, "  %s%s\n", strings.Repeat(" ", 23), st.Warn("needs an Authorization header — "+
+					"this one returns 401 without a credential"))
+			}
 		}
 	}
 
 	printAgentSetupAuthNote(w, st, agent, target, known, token != "")
+
+	if known && target.Caveat != "" {
+		fmt.Fprintf(w, "\n  %s\n", st.Warn("Note: "+target.Caveat))
+	}
 
 	fmt.Fprintln(w, "\nNext:")
 	n := 1
@@ -693,21 +853,39 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 	// which this CLI reads and the coding agent does not; the agent resolves the
 	// header from the PROCESS environment. Collapsing the two would leave the
 	// user with a token the agent cannot see, which reads as a broken credential.
+	exported := tokenIsExported(env)
 	if token != "" && known && (target.EnvHeaderSyntax != "" || target.EnvBearerKey != "") {
 		n++
 		fmt.Fprintf(w, "  %d. Export the token where %s can see it — the config above references it by name:\n", n, agent)
 		fmt.Fprintf(w, "       %s\n", st.Code("export "+tokenEnvVar+"=<your token>"))
-		fmt.Fprintf(w, "     %s\n", st.Dim("Put it in your shell profile so the agent inherits it. "+
-			"Browsing and other read tools work without it."))
+		if exported {
+			fmt.Fprintf(w, "     %s\n", st.Dim(tokenEnvVar+" is already set in this shell. Put it in your shell "+
+				"profile so the agent inherits it too."))
+		} else {
+			// 🔴 THE MEASURED CASE, NAMED. A token in ~/.config/civitai/config.yaml
+			// satisfies this command's own gate and is invisible to the agent, so
+			// the header it just wrote resolves to the empty string and every
+			// request 401s. Saying nothing here is what makes that read as a bad
+			// credential and sends the user to re-mint a token that was fine.
+			fmt.Fprintf(w, "     %s\n", st.Warn(tokenEnvVar+" is NOT set in this environment. The header above "+
+				"references it by name, so until you export it "+agent+" resolves it to an empty string and the "+
+				"requests 401 — that is a missing export, not a bad token."))
+		}
 	}
 	// 🔴 THE LAST LINE NAMES `civitai login`, AND THIS COMMAND NEVER RUNS IT.
 	// Authentication is the human's step: nothing here opens a browser, prompts
 	// for a credential, or stores one.
 	n++
-	if token == "" {
+	switch {
+	case token == "":
 		fmt.Fprintf(w, "  %d. Run %s to authenticate, then re-run %s so the MCP entries pick up the reference.\n",
 			n, st.Code("civitai login"), st.Code("civitai agent-setup"))
-	} else {
+	case !exported:
+		// 🔴 NOT "ALREADY AUTHENTICATED". This CLI is; the agent is not, and this
+		// is the line that used to say otherwise.
+		fmt.Fprintf(w, "  %d. This CLI has a token, but %s cannot see it — %s is unset. Export it (step above); "+
+			"%s alone does not reach your agent.\n", n, agent, tokenEnvVar, st.Code("civitai login"))
+	default:
 		fmt.Fprintf(w, "  %d. Already authenticated — run %s again only if you need different scopes.\n",
 			n, st.Code("civitai login"))
 	}
@@ -715,11 +893,14 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 
 // printAgentSetupAuthNote says what was — and was not — written about auth.
 //
-// 🔴 A HEADER-LESS CONFIG IS PRESENTED AS WORKING, NOT AS DEGRADED. Both
-// servers' read tools are anonymous, so "no Authorization header" is a setup
-// that browses models, images and articles today; wording it as a shortfall
-// invites the reader to paste their token in by hand, which is precisely the
-// leak this command was fixed to stop causing.
+// 🔴 A HEADER-LESS CONFIG IS PRESENTED AS WHAT IT REACHES, NOT AS "WORKING" AND
+// NOT AS "BROKEN". It browses the SITE server today, and the ORCHESTRATION
+// server answers it 401. Overstating it in the first direction — which this
+// function did, in the words "the read tools work anonymously, so this setup is
+// usable as it stands" — leaves a VS Code / Zed / no-token user believing half a
+// registration is a finished one. Overstating it in the second invites them to
+// paste a literal token into a file that gets committed, which is the leak item
+// 34 exists to prevent. Both halves of the sentence are load-bearing.
 func printAgentSetupAuthNote(w io.Writer, st ui.Styler, agent string, t agentTarget, known, hasToken bool) {
 	fmt.Fprintln(w, "\nAuthentication:")
 	fmt.Fprintf(w, "  %s\n", st.Dim("No credential is ever written into an agent config file — "+
@@ -732,10 +913,15 @@ func printAgentSetupAuthNote(w io.Writer, st ui.Styler, agent string, t agentTar
 		fmt.Fprintf(w, "  agent that is. Add it yourself if you want authenticated tools:\n")
 		fmt.Fprintf(w, "       %s\n", st.Code(`"headers": {"Authorization": "Bearer <env-var reference>"}`))
 		fmt.Fprintf(w, "  %s\n", st.Dim("Known spellings: ${"+tokenEnvVar+"} (Claude Code), ${env:"+tokenEnvVar+
-			"} (Cursor, Windsurf), {env:"+tokenEnvVar+"} (opencode)."))
+			"} (Cursor, VS Code, Windsurf), {env:"+tokenEnvVar+"} (opencode)."))
+		fmt.Fprintf(w, "  %s\n", st.Warn("Without it: "+mcpAnonymityNote()+"."))
 	case !hasToken:
-		fmt.Fprintf(w, "  No token is configured, so no Authorization header was written. The read tools work\n")
-		fmt.Fprintf(w, "  anonymously, so this setup is usable as it stands.\n")
+		fmt.Fprintf(w, "  No token is configured, so no Authorization header was written.\n")
+		// 🔴 THE NOTE IS PRINTED VERBATIM. It opens with a SERVER NAME, and a
+		// sentence-casing pass would silently rename `civitai` to `Civitai` — a
+		// key the user has to type.
+		fmt.Fprintf(w, "  %s\n", st.Warn("Access without one: "+mcpAnonymityNote()+"."))
+		fmt.Fprintf(w, "  Run %s and re-run this command to reference it.\n", st.Code("civitai login"))
 	case t.EnvBearerKey != "":
 		fmt.Fprintf(w, "  Each entry carries %s, so %s reads the token from your environment\n",
 			st.Code(t.EnvBearerKey+" = \""+tokenEnvVar+"\""), agent)
@@ -745,14 +931,14 @@ func printAgentSetupAuthNote(w io.Writer, st ui.Styler, agent string, t agentTar
 			st.Code(`"Authorization": "Bearer `+t.EnvHeaderSyntax+`"`), agent)
 		fmt.Fprintf(w, "  environment at request time rather than from the file.\n")
 	default:
-		// 🔴 NAMED, NOT SILENT. VS Code and Zed document no way to read a header
-		// from the environment, so there is nothing this command can write that
-		// is both authenticated and credential-free. Saying so — with the exact
-		// file and the exact header — is the whole remedy; a silent omission
-		// would read as a bug in this command.
+		// 🔴 NAMED, NOT SILENT. Zed documents no way to read a header from the
+		// environment, so there is nothing this command can write that is both
+		// authenticated and credential-free. Saying so — with the exact file and
+		// the exact header — is the whole remedy; a silent omission would read as
+		// a bug in this command.
 		fmt.Fprintf(w, "  %s documents no way to read a header from the environment, so no Authorization header\n", agent)
-		fmt.Fprintf(w, "  was written. Read tools still work anonymously. To authenticate, add this yourself to\n")
-		fmt.Fprintf(w, "  each Civitai entry in that file:\n")
+		fmt.Fprintf(w, "  was written. %s\n", st.Warn("Access without one: "+mcpAnonymityNote()+"."))
+		fmt.Fprintf(w, "  To authenticate, add this yourself to each Civitai entry in that file:\n")
 		fmt.Fprintf(w, "       %s\n", st.Code(`"`+t.HeadersKey+`": {"Authorization": "Bearer <your token>"}`))
 		fmt.Fprintf(w, "  %s\n", st.Dim("That file is yours; note that a literal token in it is a credential on disk, "+
 			"so keep it out of version control."))
