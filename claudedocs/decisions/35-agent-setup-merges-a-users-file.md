@@ -714,3 +714,160 @@ target × one root var for a general per-target claim, and discards `ok` from
 the row name and `c.OK` with no counter, so it can assert nothing), and
 `TestAGenuinelyMalformedConfigStillRefuses` (checks "the file is untouched" as
 `Contains(got, "rubbish")` where its round-2 sibling uses `got != tc.src`).
+
+# Round 4
+
+Three findings. The common thread is not any one of them — it is that **each of
+the previous three rounds fixed a false absolute by writing a narrower absolute
+that was also false**, in the same commit as the fix and before anyone had
+enumerated the cases:
+
+| round | the sentence it shipped | what falsified it |
+| --- | --- | --- |
+| 2 | `--json` "never as an empty stdout" | three cases, found in round 3 |
+| 3 | "three shapes and no silent one; the one exception is exit 2" | a fourth shape, found in round 4 |
+| 3 | `--dry-run` reports "the same rows, the same `ok` and the same exit code … for **any** of the three files" | a test *inside the same PR* depends on the disagreement |
+
+So the rule this round adopted, and the one to hold future rounds to: for a claim
+about behaviour, either **make the code true and name the guard that enforces
+it**, or **state the enumerated truth positively and say the enumeration may not
+be exhaustive**. "There is no case where…" is the sentence that has now been
+wrong three times.
+
+## 1. `--json` had a fourth, silent shape: rc 1 with zero bytes
+
+`resolveAgentSetupDir` returns three classifications (item 26): does-not-exist
+and not-a-directory are `ErrUsage` (exit 2), and **any other stat failure is
+returned untagged** (exit 1, item 24). Round 3 preserved the "exit 2 carries no
+payload" exception by **constructing the emitter after that call** — which made
+the untagged arm silent too. Measured at `c341be4`:
+
+```
+$ mkdir -p outer/proj && chmod 0000 outer
+$ civitai agent-setup --agent claude --dir outer/proj --json
+rc=1   stdout = 0 bytes   stderr: Error: stat …/outer/proj: permission denied
+$ civitai agent-setup --agent claude --dir outer/proj --check --json
+rc=1   stdout = 0 bytes
+$ printf x > file; civitai agent-setup --agent claude --dir file/sub --json
+rc=1   stdout = 0 bytes   stderr: Error: stat file/sub: not a directory
+```
+
+Five surfaces written in round 3 denied it, including the published `Long` and
+the README, and one source comment asserted this branch "exits 2" when it
+exits 1.
+
+**Two fixes were available.** The rejected one: tag the untagged arm
+`asUsageError` so it exits 2 and the stated exception becomes true. That would
+have made the sentence true by moving the code to fit it, at the cost of calling
+an *environment* condition a mistake about the invocation — a directory that is
+momentarily unsearchable is a fact about the machine, and the command line
+naming it may be exactly right. It also contradicts item 24 (errno failures take
+the generic code) and item 26's published three-way branch, which are the two
+places this repo already decided the question.
+
+**The chosen fix** moves the decision from *position* to *the error*:
+`RunE` builds the emitter first, has a **single return**, and hands every error
+to `envelope`, which skips only `errors.Is(err, ErrUsage)`. Both halves are then
+properties of one function rather than of a list somebody maintains — and the
+one thing that can still break it is named at the place where it would happen
+(`RunE`'s comment: do not add a second return).
+
+## 2. `--dry-run` and the real run disagree on write-time failures
+
+Measured with an existing `AGENTS.md` in a project directory at mode 0500:
+
+```
+--dry-run --json : ok=true   rc=0   append-managed-block / create / create
+        --json   : ok=false  rc=1   blocked / blocked / blocked
+```
+
+The README and `Long` said the two runs report "the same rows, the same `ok` and
+the same exit code … for **any** of the three files", while
+`TestAFirstWriteFailureDoesNotStopTheLaterOnes` — in the same PR — fails
+`PREMISE BROKEN` if they ever agree on a case like this one.
+
+**The prose moved; the code did not, and neither did the test.** The rejected
+alternative was teaching the planner to predict writability (an `access(2)`
+probe, or a temp-file probe). Both replace a false absolute with a narrower one:
+an advisory permission check is wrong under ACLs, read-only mounts and immutable
+flags, and *no* pre-check covers a full disk. A dry run that performs no write
+cannot observe a failure the write produces, and that is now what the documents
+say — naming the **one** case actually reproduced (an unwritable project
+directory) as measured, and a full disk and a read-only mount as the same shape
+by construction but **not** measured. The list is stated as open.
+
+`TestDryRunAndTheRealRunAgreeOnEveryAction` was renamed
+`TestDryRunAndTheRealRunAgreeOnEveryPlanTimeOutcome`: all seven of its fixtures
+vary something the **plan** can see, so that is the width of what it
+establishes. `TestADryRunCannotSeeAFailureOnlyTheWriteCanProduce` (round-4 file)
+now pins the divergence head-on, and goes red if a later change makes the
+planner predict it — which is the correct outcome, because the sentence would
+then need re-measuring rather than inheriting.
+
+## 3. A fully blocked run still opened with "Configured …"
+
+```
+$ chmod 0500 proj && civitai agent-setup --agent claude --dir proj
+Configured claude for Civitai App development in …/proj
+  ✗ blocked …/AGENTS.md   ✗ blocked …/CLAUDE.md   ✗ blocked …/.mcp.json
+```
+
+The verb branched on `dryRun` and nothing else. `ok`, the exit code and the error
+already read `blockedRowSummary`; the headline — the **first line the user
+reads** — did not. This is round 3's own finding 8 one surface over, and round 3
+*widened* which inputs reach it, because a plan-time refusal used to be a bare
+`return err` that printed no report at all.
+
+`agentSetupHeadline` now counts `blocked` rows — the same predicate `ok` uses, so
+the two cannot disagree — and a `manual` row still does not move it, because a
+manual step is a success with work left for the human (that is the published
+exit-code contract, not an oversight).
+
+## Red-then-green
+
+| finding | red at `c341be4` | green after |
+| --- | --- | --- |
+| 1 | `TestJSONNeverExitsSilently`'s five new subtests, "no readable payload (unexpected end of JSON input)"; its six pre-existing subtests PASS at `c341be4` | all eleven pass |
+| 2 | no test was red — the code is correct and the **prose** was wrong; `TestADryRunCannotSeeAFailureOnlyTheWriteCanProduce` is labelled a DOCUMENTATION GUARD and passes at `c341be4` by design | passes |
+| 3 | `TestTheHeadlineReadsTheRowsRatherThanTheDryRunFlag`'s two blocked arms, both modes; its "nothing blocked" CONTROL arm PASSES at `c341be4` | all six pass |
+
+The round-4 file labels each test's kind for the reason round 3's file gives.
+The finding-1 case was added to `TestJSONNeverExitsSilently` rather than to a new
+test, so the shape class stays in one place; it asserts `!errors.Is(err,
+ErrUsage)` before asserting a payload, so it pins the classification decision as
+well as the payload.
+
+## What this round could NOT establish
+
+- That `--json` emits a payload for **every** non-usage failure. What is
+  established is that every error `RunE` returns passes through `envelope`, and
+  `envelope` emits for everything that is not `ErrUsage`. That is a property of
+  two functions, verified by reading them and by the eleven cases above — not a
+  proof over all inputs. A second `return` in `RunE` would end it; a mutation
+  inserting one that bypasses `envelope` for the `--dir` check DOES turn five
+  subtests red, so the shape is defended for the listed inputs, but a second
+  return covering a future step no input reaches would not be caught.
+- That the write-only failure list (unwritable directory, full disk, read-only
+  mount) is complete. Only the first was reproduced here.
+
+## Mutation matrix for the round-4 guards
+
+Each mutant was applied to `internal/cmd/agent_setup.go`, the named tests run
+with `-count=1`, and the file restored from a `cp` aside — never from a stash,
+never from `git checkout --`.
+
+| mutant | killed by | with its own message? |
+| --- | --- | --- |
+| drop `errors.Is(err, ErrUsage)` from `envelope` | `TestAUsageErrorStillEmitsNoPayload` (the over-widening control) | yes — "put a payload on stdout for a usage error" |
+| tag the untagged `os.Stat` failure `asUsageError` — i.e. **the rejected alternative fix** | `TestJSONNeverExitsSilently`, all five new subtests | yes — "was classified as a usage error … items 24 and 26" |
+| `agentSetupHeadline`'s success arms taken unconditionally | `TestTheHeadlineReadsTheRowsRatherThanTheDryRunFlag`, both blocked arms × both modes | yes — "first line does not lead with …" and "opens by claiming it configured the agent" |
+| a second `return` in `RunE` bypassing `envelope` for the `--dir` check | `TestJSONNeverExitsSilently`, five subtests | yes |
+
+🔴 **One mutant "SURVIVED" first time and the survival was an artefact of the
+harness, not of the code.** The `asUsageError` mutant was first applied with a
+`perl -0pi -e 's/\Q…\E/…/'` whose `\Q…\E` quoted the embedded newlines
+literally, so nothing was substituted and the suite passed against *unmutated*
+source. The tell was that the `grep` verifying the edit printed nothing — only
+visible if you look at it. Re-applied with a Python replace that asserts
+`count(anchor) == 1` first, the mutant dies. Assert the edit landed before
+reading the verdict.

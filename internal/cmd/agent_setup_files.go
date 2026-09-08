@@ -206,8 +206,12 @@ func agentsMDBlockState(content string) agentsBlockState {
 // wants "present or not" is a caller about to miss `blockDuplicated` again.
 
 // planAgentsMD renders what a run would do to <dir>/AGENTS.md without writing.
-// The real run calls exactly this and then writes the returned content, so
-// `--dry-run` cannot report an action the write path would not take.
+// The real run calls exactly this and then writes the returned content, so both
+// modes reach the same verdict on everything THIS function decides: the path, the
+// action, and the destination refusal below. It settles nothing about what
+// `writeProjectFile` then hits — a directory the process may not write into is
+// the measured case — and that gap is stated where it belongs, at
+// runAgentSetupWrite, rather than denied here.
 //
 // 🔴 THE DESTINATION IS CLASSIFIED HERE TOO, NOT ONLY FOR THE MCP CONFIG. Round
 // 2 put checkWriteTargetResolvable into `planMCPConfig` and stopped, so the same
@@ -215,7 +219,7 @@ func agentsMDBlockState(content string) agentsBlockState {
 // said `create` / `ok: true` / exit 0 for a destination `writeProjectFile`
 // refuses by name. Measured at 897c1cc. The check is a pure read (Lstat plus a
 // link resolution), so every plan can afford it and none of them may skip it —
-// TestDryRunAndTheRealRunAgreeOnEveryAction carries a fixture per file.
+// TestDryRunAndTheRealRunAgreeOnEveryPlanTimeOutcome carries a fixture per file.
 func planAgentsMD(dir string) (path, content string, action fileAction, err error) {
 	path = filepath.Join(dir, agentsFilename)
 	if terr := checkWriteTargetResolvable(path); terr != nil {

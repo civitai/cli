@@ -27,7 +27,8 @@ import (
 // are seven. Each of the three says so at its own docstring too.
 //
 // 🔴 AND THE MATRIX ABOVE DOES NOT COVER LATER ADDITIONS TO A TEST.
-// TestDryRunAndTheRealRunAgreeOnEveryAction gained three fixtures in round 3
+// TestDryRunAndTheRealRunAgreeOnEveryPlanTimeOutcome (round 2 and 3 called it
+// TestDryRunAndTheRealRunAgreeOnEveryAction) gained three fixtures in round 3
 // which were measured against 897c1cc — the tree this header calls "after". Its
 // own docstring carries that matrix; read it there rather than assuming this
 // paragraph covers it.
@@ -600,24 +601,36 @@ func TestDryRunReportsADestinationTheRealRunRefuses(t *testing.T) {
 	}
 }
 
-// TestDryRunAndTheRealRunAgreeOnEveryAction is the ledger behind that finding
-// rather than a second copy of the one case that was wrong: for each fixture,
-// the dry run's `changes` and the real run's must carry the same path, the same
-// action and the same `ok`, row for row.
+// TestDryRunAndTheRealRunAgreeOnEveryPlanTimeOutcome is the ledger behind that
+// finding rather than a second copy of the one case that was wrong: for each
+// fixture, the dry run's `changes` and the real run's must carry the same path,
+// the same action and the same `ok`, row for row.
 //
 // 🔴 THE ACTIONS ARE COMPARED, NOT JUST THE PATHS. A dry run reporting `create`
 // where the real run reports `blocked` is exactly the defect, and a path-only
 // comparison is satisfied by both.
 //
-// 🔴 THE NAME SAYS "EVERY ACTION" AND ROUND 2's FIXTURES ONLY VARIED THE MCP
-// DESTINATION — which is how round 2's own fix shipped with the identical lie
-// alive for AGENTS.md: the destination check went into `planMCPConfig` and the
-// two instruction-file plans did not get it. Measured at 897c1cc, `--dry-run
-// --json` said `create` / `ok: true` / exit 0 for a broken-symlink AGENTS.md the
-// real run reported `blocked` / `ok: false` / exit 1. There is now a fixture per
-// WRITTEN FILE, and `wantBlocked` names which row each one must block, so a
-// future change that makes both runs agree on the WRONG action still fails.
-func TestDryRunAndTheRealRunAgreeOnEveryAction(t *testing.T) {
+// 🔴 ROUND 2'S FIXTURES ONLY VARIED THE MCP DESTINATION — which is how round 2's
+// own fix shipped with the identical lie alive for AGENTS.md: the destination
+// check went into `planMCPConfig` and the two instruction-file plans did not get
+// it. Measured at 897c1cc, `--dry-run --json` said `create` / `ok: true` / exit 0
+// for a broken-symlink AGENTS.md the real run reported `blocked` / `ok: false` /
+// exit 1. There is now a fixture per WRITTEN FILE, and `wantBlocked` names which
+// row each one must block, so a future change that makes both runs agree on the
+// WRONG action still fails.
+//
+// 🔴 IT WAS CALLED "…OnEveryAction" UNTIL ROUND 4, AND THE NAME WAS WIDER THAN
+// THE BODY IN THE ONE DIRECTION THAT MATTERS. Every fixture below varies
+// something the PLAN can see — a destination, a parse failure, an unreadable
+// file — so the seven of them establish agreement over plan-time outcomes and
+// nothing else. They cannot see, and were never able to see, a failure only the
+// WRITE can produce; `TestAFirstWriteFailureDoesNotStopTheLaterOnes` in the
+// round-3 file DEPENDS on that divergence and fails `PREMISE BROKEN` if the two
+// runs ever agree on such a case, and
+// `TestADryRunCannotSeeAFailureOnlyTheWriteCanProduce` in the round-4 file pins
+// it directly. So: this list is a claim about the fixtures in it, and adding a
+// case to it is how the claim gets wider — not rewording the name.
+func TestDryRunAndTheRealRunAgreeOnEveryPlanTimeOutcome(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setUp func(t *testing.T, dir, home string)

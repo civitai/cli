@@ -55,6 +55,15 @@ import (
 // time: `AGENTS.md` is a symlink whose target EXISTS (so the destination check
 // resolves and the plan succeeds) in a directory that is not writable (so the
 // atomic write's temp file cannot be created).
+//
+// 🔴 THE `PREMISE BROKEN` BRANCH BELOW REQUIRES THE DRY RUN AND THE REAL RUN TO
+// DISAGREE, and until round 4 the README and `Long` said in as many words that
+// they never do — "the same rows, the same `ok` and the same exit code … for ANY
+// of the three files". This test was the evidence sitting inside the same PR as
+// the sentence. The prose moved (a dry run reports what the PLAN can classify);
+// this fixture is unchanged, and
+// TestADryRunCannotSeeAFailureOnlyTheWriteCanProduce now pins the divergence
+// head-on rather than only as this test's premise.
 func TestAFirstWriteFailureDoesNotStopTheLaterOnes(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root — a 0500 directory is still writable")
@@ -149,8 +158,31 @@ func TestAFirstWriteFailureDoesNotStopTheLaterOnes(t *testing.T) {
 // stdout" — that three of these falsify, INCLUDING `--check --json`, the exact
 // surface `developer.civitai.com`'s hosted prompt reads.
 //
-// Every case below is one where the command reaches a RUN. Exit 2 — a mistake
-// about the invocation — is the stated exception and has its own test.
+// 🔴 ROUND 4 FALSIFIED THIS TEST'S OWN SCOPE SENTENCE, which read: "every case
+// below is one where the command reaches a RUN; exit 2 — a mistake about the
+// invocation — is the stated exception and has its own test." A FOURTH silent
+// shape sat in the gap BETWEEN those two clauses, measured at c341be4 as rc 1
+// with ZERO BYTES on stdout under `--json` and again under `--check --json`: a
+// `--dir` whose parent cannot be searched (EACCES on `outer` for
+// `--dir outer/proj`), and a `--dir` under a plain file (ENOTDIR). Neither
+// reaches a run and neither is exit 2, so six enumerated cases plus a stated
+// exception covered no part of it. `resolveAgentSetupDir` returned an untagged
+// error BEFORE the emitter was constructed, so there was nothing that could have
+// written a payload.
+//
+// The fix moved the decision INTO the emitter: `RunE` builds it first, has ONE
+// return, and `envelope` branches on `errors.Is(err, ErrUsage)` rather than on
+// where in the function the error was raised. So the property asserted here is
+// "an error that is not a usage error carries a payload", and it is a property
+// of one function — see TestAUsageErrorStillEmitsNoPayload for the other half of
+// the pair.
+//
+// 🔴 THAT IS STILL A CLAIM ABOUT ONE FUNCTION, NOT A PROOF OVER ALL INPUTS. It
+// holds for inputs nobody has listed only while `RunE` keeps a single return
+// through `envelope`. How much of THAT this table defends was measured, not
+// assumed: inserting a second return in `RunE` that bypasses `envelope` for the
+// `--dir` check turns the five subtests below red. What it would NOT see is a
+// second return covering some future step no input here reaches.
 func TestJSONNeverExitsSilently(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
@@ -211,6 +243,91 @@ func TestJSONNeverExitsSilently(t *testing.T) {
 			t.Errorf("the envelope carries `changes`, so a consumer cannot discriminate on it:\n%s", out)
 		}
 	})
+
+	// 🔴 THE ROUND-4 SHAPE: a `--dir` this command cannot STAT. It is neither a
+	// run (nothing was read or written) nor exit 2 (the command line is
+	// well-formed and the directory may be exactly the one the user meant), so
+	// the two clauses of this test's old scope sentence passed either side of it.
+	//
+	// The classification is deliberate and is asserted here rather than assumed:
+	// item 24 assigns EACCES and ENOTDIR the generic exit code, and item 26's
+	// three-way branch tags only "does not exist" and "is not a directory" as
+	// usage. Making these exit 2 instead would have been the other available fix;
+	// it was rejected because a directory that is momentarily unreadable is a
+	// fact about the machine, not a mistake about the invocation.
+	for _, tc := range []struct {
+		name string
+		// dirUnder builds the unstattable path inside a temp root and returns it.
+		dirUnder func(t *testing.T, root string) string
+		args     []string
+	}{
+		{"a --dir whose parent cannot be searched", eaccesParentDir, nil},
+		{"--check on a --dir whose parent cannot be searched", eaccesParentDir, []string{"--check"}},
+		{"--dry-run on a --dir whose parent cannot be searched", eaccesParentDir, []string{"--dry-run"}},
+		{"a --dir under a plain file", enotdirPath, nil},
+		{"--check on a --dir under a plain file", enotdirPath, []string{"--check"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, home := agentSetupProject(t)
+			target := tc.dirUnder(t, home)
+			args := append([]string{"agent-setup", "--json", "--dir", target, "--agent", agentClaude}, tc.args...)
+			out, _, err := run(t, args...)
+			if err == nil {
+				t.Fatalf("PREMISE BROKEN: %v exited 0, so there is no failure to report:\n%s", args, out)
+			}
+			// The classification half. Asserted BEFORE the payload, because a
+			// payload for a usage error would be the over-widening defect
+			// TestAUsageErrorStillEmitsNoPayload exists to catch, not a fix.
+			if errors.Is(err, ErrUsage) {
+				t.Fatalf("%v was classified as a usage error (%v) — items 24 and 26 put an unstattable "+
+					"path on the generic exit code, and exit 2 carries no payload by design", args, err)
+			}
+			var payload map[string]any
+			if jsonErr := json.Unmarshal([]byte(out), &payload); jsonErr != nil {
+				t.Fatalf("--json emitted no readable payload (%v):\n%q", jsonErr, out)
+			}
+			if ok, _ := payload["ok"].(bool); ok {
+				t.Errorf("ok = true on a run that could not start:\n%s", out)
+			}
+			if reason, _ := payload["error"].(string); strings.TrimSpace(reason) == "" {
+				t.Errorf("the envelope carries no reason:\n%s", out)
+			}
+			for _, arr := range []string{"checks", "changes"} {
+				if _, has := payload[arr]; has {
+					t.Errorf("the envelope carries `%s`, so a consumer cannot discriminate on it:\n%s", arr, out)
+				}
+			}
+		})
+	}
+}
+
+// eaccesParentDir returns `<root>/outer/proj` with `outer` unsearchable, so
+// os.Stat of the child fails with EACCES rather than ENOENT.
+func eaccesParentDir(t *testing.T, root string) string {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — a 0000 directory is still searchable")
+	}
+	outer := filepath.Join(root, "outer")
+	target := filepath.Join(outer, "proj")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(outer, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(outer, 0o700) })
+	return target
+}
+
+// enotdirPath returns a path that walks THROUGH a regular file, the second
+// measured instance of the same shape and the one no permission trick is needed
+// to reach.
+func enotdirPath(t *testing.T, root string) string {
+	t.Helper()
+	file := filepath.Join(root, "notadir")
+	writeFile(t, file, "x")
+	return filepath.Join(file, "sub")
 }
 
 func mkdirOverAgentsMD(t *testing.T, dir, _ string) {

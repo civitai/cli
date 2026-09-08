@@ -206,23 +206,48 @@ type agentChangeJSON struct {
 // happened — and the one it used to rely on ("a payload implies success") is
 // gone deliberately, because the alternative was writing nothing at all.
 //
-// 🔴 THERE IS A THIRD SHAPE, AND IT EXISTS SO THE FLAG HAS NO SILENT OUTCOME.
+// 🔴 THERE IS A THIRD SHAPE, AND IT EXISTS SO A FAILURE HAS SOMEWHERE TO GO.
 // `--json` used to emit ZERO BYTES for any failure that happened before a row
 // could be built — an AGENTS.md that is a directory, a duplicated managed block,
 // a config root that cannot be resolved — while the enumerated failures emitted a
-// full payload. Four instances of that were closed one at a time and the class
-// stayed open, so it is now closed at the ONE place stdout is written
-// (agentSetupEmitter): any error that escapes without a payload is emitted as
-// `track` / `agent` / `ok: false` / `error`, with NEITHER array. So a consumer
-// discriminates on which of the three is present — `checks`, `changes`, or
-// `error` — and never on stdout being empty. `error` is present ONLY on that
+// full payload. Instances of that were closed one at a time and the class stayed
+// open, so the decision now lives at the ONE place stdout is written
+// (agentSetupEmitter.envelope): an error that escapes without a payload, and that
+// is not a usage error, is emitted as `track` / `agent` / `ok: false` / `error`,
+// with NEITHER array. So a consumer discriminates on which of the three is
+// present — `checks`, `changes`, or `error`. `error` is present ONLY on that
 // envelope: a run that produced rows says what went wrong IN the rows.
 //
-// 🔴 THE ONE EXCEPTION IS EXIT 2, AND IT IS STATED RATHER THAN ABSOLUTE. A
-// mistake about the INVOCATION — an unknown `--agent`, a `--dir` that is not a
-// directory, `--track api` — is reported on stderr like every other command's
-// usage error, because there is no run to describe. `--json` promises a payload
-// for every run that STARTED, not for a command line that never named one.
+// 🔴 WHAT IS ENFORCED, AND BY WHAT. Under `--json`, a payload is WRITTEN for
+// every error that is not `ErrUsage`, because `RunE` builds the emitter first,
+// has a SINGLE return, and hands every error to `envelope`, which branches on the
+// error itself. That is the guard: not a list of cases, one control-flow shape.
+// A second return added to `RunE` breaks it — and how much of that a test would
+// catch was measured rather than guessed: inserting one that bypasses `envelope`
+// for the `--dir` check turns five of TestJSONNeverExitsSilently's subtests red.
+// So the shape IS defended for the inputs that table lists; a second return
+// covering a step the table has no input for is what nothing would catch, which
+// is why the note also sits on `RunE` itself.
+//
+// 🔴 THREE THINGS THAT PROPERTY DOES NOT COVER, STATED SO THEY ARE NOT FOUND THE
+// WAY THE FOURTH SHAPE WAS. (a) A failure of the stdout WRITE itself — a closed
+// pipe — leaves nothing on stdout and nothing can fix that from in here. (b) An
+// error cobra raises BEFORE `RunE` (an unknown flag, a stray argument, a missing
+// flag value) never reaches the emitter; measured, all three exit 2 and are
+// `ErrUsage`-tagged by root.go's enforceUsageExitCodes, so they land on the
+// documented side rather than being a fourth hole — but that is root.go's
+// property, not this one's, and it is what would break if that tagging changed.
+// (c) A process that dies without returning (a panic, a signal) writes nothing.
+//
+// 🔴 THE STATED EXCEPTION IS `ErrUsage` — WHICH IS NOT THE SAME SET AS "EXIT 2
+// FROM THIS COMMAND", AND SAYING THEY WERE THE SAME IS HOW ROUND 3 SHIPPED A
+// FOURTH SILENT SHAPE. A mistake about the INVOCATION — an unknown `--agent`, a
+// `--dir` that does not exist or is not a directory, `--track api` — is tagged
+// `ErrUsage`, exits 2, and is reported on stderr like every other command's usage
+// error, because there is no run to describe. A `--dir` this command cannot STAT
+// for some OTHER reason (EACCES on a parent, ENOTDIR partway down) is NOT tagged,
+// exits 1 by items 24 and 26, and now gets the envelope. Both were measured at
+// c341be4 emitting nothing at all.
 type agentSetupJSON struct {
 	Track   string            `json:"track"`
 	Agent   string            `json:"agent"`
@@ -234,9 +259,9 @@ type agentSetupJSON struct {
 }
 
 // agentSetupEmitter is the ONE place `agent-setup` writes stdout, and the only
-// thing that knows whether a payload got there. Both modes emit through it, so
-// the "no silent outcome" rule above is a property of the code path rather than
-// of an enumeration somebody has to keep complete.
+// thing that knows whether a payload got there. Both modes emit through it, and
+// `envelope` decides the rest — so which failures carry a payload is a property
+// of two functions rather than of an enumeration somebody has to keep complete.
 type agentSetupEmitter struct {
 	w       io.Writer
 	json    bool
@@ -259,8 +284,26 @@ func (e *agentSetupEmitter) emit(payload agentSetupJSON, render func(io.Writer, 
 // envelope is the fallback: an error reached the top with no rows behind it. It
 // is a no-op unless `--json` was asked for and nothing was emitted, so it cannot
 // double-print or invent a second report of a run that already described itself.
+//
+// 🔴 THE EXIT-2 EXCEPTION IS DECIDED HERE, FROM THE ERROR, AND NOT FROM WHERE THE
+// EMITTER HAPPENS TO BE CONSTRUCTED. Round 3 kept the exception by building the
+// emitter AFTER the usage-error checks — which silently made every other error
+// raised above that line silent too. Two were measured at c341be4, rc 1 with zero
+// bytes on stdout under `--json` and again under `--check --json`:
+// `--dir outer/proj` where `outer` cannot be searched (EACCES), and
+// `--dir file/sub` where `file` is a regular file (ENOTDIR). Those two are what
+// was reproduced; `os.Stat` has other errnos (ELOOP, ENAMETOOLONG, EIO) that take
+// the same branch and were not. `resolveAgentSetupDir` returns all of them
+// UNTAGGED on purpose (items 24 and 26), so they are exit 1 — not the documented
+// exception — and nothing had been built that could report them.
+//
+// Branching on `errors.Is(err, ErrUsage)` makes both halves properties of this
+// one function: a usage error carries no payload, and everything else does.
+// `RunE` holds up its end by having a SINGLE return, so there is no path to the
+// caller that skips this call. TestJSONNeverExitsSilently and
+// TestAUsageErrorStillEmitsNoPayload are the pair that pins the two directions.
 func (e *agentSetupEmitter) envelope(track, agent string, err error) {
-	if !e.json || e.emitted || err == nil {
+	if !e.json || e.emitted || err == nil || errors.Is(err, ErrUsage) {
 		return
 	}
 	e.emitted = true
@@ -376,49 +419,54 @@ EXIT CODES: --check exits 1 when a check failed, 0 otherwise. A write run exits
 0 when every step happened and 1 when one did not -- a config that does not
 parse, a destination it will not write (for ANY of the three files), a file it
 could not write -- and each of those is a 'blocked' row in the report with 'ok'
-false, never a silent success. --dry-run reports the same rows and the same exit
-code without writing. THE ONE STEP THAT DOES NOT HAPPEN AND STILL EXITS 0 is the
-'manual' row: --agent other, or a user-scoped agent with no resolvable home,
-where there is no file for this CLI to write and the config is printed for you to
-paste instead. A bad --agent, a --dir that does not exist or is not a directory,
-and --track api all exit 2. 'authenticated' is REPORTED by --check and never
-fails it: an unauthenticated setup is a success, not a failure.
+false, never a silent success. THE ONE STEP THAT DOES NOT HAPPEN AND STILL EXITS
+0 is the 'manual' row: --agent other, or a user-scoped agent with no resolvable
+home, where there is no file for this CLI to write and the config is printed for
+you to paste instead. A bad --agent, a --dir that does not exist or is not a
+directory, and --track api all exit 2. 'authenticated' is REPORTED by --check and
+never fails it: an unauthenticated setup is a success, not a failure.
 
---json HAS THREE SHAPES AND NO SILENT ONE: 'checks' for --check, 'changes' for a
-write or dry run, and -- when a run failed before either could be built -- an
-'error' string with neither array. Discriminate on which is present. The one
-exception is exit 2, a mistake about the invocation rather than a run, which is
-reported on stderr like every other command's usage error.`,
+WHAT --dry-run CAN TELL YOU. It writes nothing and reports the rows the PLAN can
+classify -- for all three files -- with the same 'ok' and the same exit code the
+real run would give for those: a destination it will not write, a config that
+does not parse, an AGENTS.md it cannot read or that carries two managed blocks.
+It CANNOT report a failure only the act of writing can produce. Measured: a
+project directory this process may not write into gives 'blocked' rows and exit 1
+on the real run where the dry run reported the intended action and exit 0. A full
+disk and a read-only mount are the same shape and were not measured, so treat
+that as an open list: a green dry run means the plan is sound, not that the write
+will succeed.
+
+--json SHAPES: 'checks' for --check, 'changes' for a write or dry run, and -- for
+a failure that happened before either could be built -- an 'error' string with
+neither array. Discriminate on which is present. A usage error carries no
+payload: a mistake about the INVOCATION (a bad --agent, a --dir that does not
+exist or is not a directory, --track api) exits 2 on stderr like every other
+command's usage error, because there is no run to describe. Everything else that
+fails emits one of the three -- including a --dir this command cannot stat for
+some other reason, which exits 1 and gets the 'error' envelope.`,
 		Example: `  civitai agent-setup                       # detect the agent and set it up
   civitai agent-setup --agent cursor        # override the detection
   civitai agent-setup --dir ./my-app        # a project other than the cwd
   civitai agent-setup --dry-run             # print every path, write nothing
   civitai agent-setup --check --json        # verify a setup (scriptable)`,
 		Args: cobra.NoArgs,
+		// 🔴 ONE RETURN, AND THE EMITTER IS BUILT BEFORE THE FIRST THING THAT CAN
+		// FAIL. That shape is what lets `envelope` be the whole rule about which
+		// failures carry a payload: every error this command produces reaches it,
+		// and it decides from the error rather than from how far the function had
+		// got. The previous shape decided by POSITION — the emitter was
+		// constructed after the usage-error checks — and that silently gave every
+		// non-usage error raised above the construction an empty stdout at exit 1.
+		// Two such inputs were measured. See envelope's comment.
+		//
+		// So: do not add a second `return` here. `agentSetupCommand` below is
+		// where new steps go.
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// Flags first, filesystem second: `--track api` and a mistyped
-			// `--agent` are answers about the invocation and must not depend on
-			// whether some directory happens to exist.
-			resolvedTrack, err := validateTrack(track)
-			if err != nil {
-				return err
-			}
-			resolvedAgent := ""
-			if strings.TrimSpace(agent) != "" {
-				if resolvedAgent, err = validateAgentFlag(agent); err != nil {
-					return err
-				}
-			}
-			if err := resolveAgentSetupDir(dir); err != nil {
-				return err
-			}
-			// Everything above is a mistake about the INVOCATION and exits 2 on
-			// stderr; everything below is a RUN, and a run always describes itself
-			// on stdout — see agentSetupJSON's third shape.
 			emit := &agentSetupEmitter{w: cmd.OutOrStdout(), json: jsonOut}
-			runErr := runAgentSetup(emit, &resolvedAgent, resolvedTrack, dir, check, dryRun)
-			emit.envelope(resolvedTrack, resolvedAgent, runErr)
-			return runErr
+			resolvedTrack, resolvedAgent, err := agentSetupCommand(emit, track, agent, dir, check, dryRun)
+			emit.envelope(resolvedTrack, resolvedAgent, err)
+			return err
 		},
 	}
 	cmd.Flags().StringVar(&track, "track", trackApp,
@@ -434,6 +482,36 @@ reported on stderr like every other command's usage error.`,
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false,
 		"print every path that would be written and why; write nothing")
 	return cmd
+}
+
+// agentSetupCommand is everything `RunE` does that can fail, so that `RunE`
+// itself is the emitter, one call, and one return. It returns the resolved track
+// and agent alongside the error because the envelope names the run even when the
+// run never started — an empty `agent` is what a caller gets when the failure
+// happened before detection, and that is honest rather than invented.
+//
+// Flags first, filesystem second: `--track api` and a mistyped `--agent` are
+// answers about the invocation and must not depend on whether some directory
+// happens to exist.
+func agentSetupCommand(emit *agentSetupEmitter, track, agent, dir string, check, dryRun bool) (string, string, error) {
+	resolvedTrack, err := validateTrack(track)
+	if err != nil {
+		return track, "", err
+	}
+	resolvedAgent := ""
+	if strings.TrimSpace(agent) != "" {
+		if resolvedAgent, err = validateAgentFlag(agent); err != nil {
+			return resolvedTrack, "", err
+		}
+	}
+	// 🔴 THIS ONE IS NOT ALL EXIT 2, WHICH IS WHY THE EMITTER IS ALREADY BUILT.
+	// Two of resolveAgentSetupDir's three arms are usage errors and one is not;
+	// `envelope` sorts them, this function does not have to.
+	if err := resolveAgentSetupDir(dir); err != nil {
+		return resolvedTrack, resolvedAgent, err
+	}
+	err = runAgentSetup(emit, &resolvedAgent, resolvedTrack, dir, check, dryRun)
+	return resolvedTrack, resolvedAgent, err
 }
 
 // runAgentSetup is the body of the command, split out so the ONE stdout emitter
@@ -685,9 +763,25 @@ func printAgentSetupChecks(w io.Writer, payload agentSetupJSON) {
 // runAgentSetupWrite performs (or, under dryRun, describes) the whole setup.
 //
 // 🔴 THE PLAN IS BUILT THE SAME WAY IN BOTH MODES. `--dry-run` runs exactly the
-// planning code the real run does and then skips the writes, so it cannot report
-// a path or an action the write path would not take. A separate dry-run renderer
-// is how a `--dry-run` starts lying.
+// planning code the real run does and then skips the writes. So over ONE tree
+// state the two agree on everything the PLAN decides — the paths, the actions,
+// and each file's plan-time refusal. (Over one tree state: a real run CHANGES the
+// tree, so a dry run afterwards legitimately plans `unchanged` where the first
+// planned `create`.) A separate dry-run renderer is how a `--dry-run` starts
+// lying.
+//
+// 🔴 IT DOES NOT MAKE THEM AGREE ON EVERYTHING, AND THE README NO LONGER SAYS IT
+// DOES. A failure that only the ACT of writing can produce is invisible to a run
+// that performs no write: measured, a project directory at mode 0500 gives
+// `--dry-run --json` three actionable rows, `ok: true`, exit 0, where the real
+// run gives three `blocked` rows, `ok: false`, exit 1. That ONE case is what was
+// measured. A full disk and a read-only mount are the same shape by
+// construction and were not reproduced; the set is not claimed to be closed.
+//
+// TestDryRunAndTheRealRunAgreeOnEveryPlanTimeOutcome pins the agreement over the
+// plan-time cases it enumerates; TestADryRunCannotSeeAFailureOnlyTheWriteCanProduce
+// pins the divergence, so removing it also fails a test rather than only a
+// paragraph.
 // 🔴 AN MCP REFUSAL DEGRADES, IT DOES NOT ABORT — AND THAT IS A FIX FOR A
 // SHIPPED BUG. `planMCPConfig` runs before ANY write, so a config file this
 // command would not touch took the whole run down with it: `--agent zed` on a
@@ -968,14 +1062,53 @@ func tokenIsExported(env agentEnv) bool {
 	return strings.TrimSpace(env.Vars[tokenEnvVar]) != ""
 }
 
+// agentSetupHeadline is the FIRST LINE the user reads, and it counts the rows
+// for the same reason `ok`, the exit code and the error already do
+// (blockedRowSummary). The verb used to branch on `dryRun` and on nothing else,
+// so a run in which every single step was refused opened with:
+//
+//	Configured claude for Civitai App development in …/proj
+//	  ✗ blocked …/AGENTS.md   ✗ blocked …/CLAUDE.md   ✗ blocked …/.mcp.json
+//
+// Measured at c341be4 against a project directory at mode 0500. It is the
+// sibling of the "the instruction files were written" sentence round 3 removed
+// from the error, one surface over — and round 3 WIDENED which inputs reach it,
+// because a plan-time refusal used to be a bare `return err` that printed no
+// report at all.
+//
+// 🔴 IT COUNTS `blocked` AND NOTHING ELSE, WHICH IS THE SAME PREDICATE `ok` USES.
+// A `manual` row — `--agent other`, or a user-scoped agent with no resolvable
+// home — is a SUCCESS with a step left for the human (see the exit-code section
+// of `Long`), so it does not move the headline any more than it moves `ok`. A
+// headline that disagreed with `ok` would be a second, competing verdict.
+func agentSetupHeadline(changes []agentChangeJSON, dryRun bool) (lead, tail string) {
+	blocked := 0
+	for _, c := range changes {
+		if c.Action == actionBlocked {
+			blocked++
+		}
+	}
+	switch {
+	case blocked == 0 && dryRun:
+		return "Would configure", ""
+	case blocked == 0:
+		return "Configured", ""
+	case blocked == len(changes) && dryRun:
+		return "Would NOT configure", fmt.Sprintf(" — all %d steps would be blocked", blocked)
+	case blocked == len(changes):
+		return "Did NOT configure", fmt.Sprintf(" — all %d steps blocked", blocked)
+	case dryRun:
+		return "Would PARTIALLY configure", fmt.Sprintf(" — %d of %d steps would be blocked", blocked, len(changes))
+	default:
+		return "PARTIALLY configured", fmt.Sprintf(" — %d of %d steps blocked", blocked, len(changes))
+	}
+}
+
 // printAgentSetupWrite renders the human report and the next-step block.
 func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, changes []agentChangeJSON, cov mcpAuthCoverage, dryRun bool) {
 	st := ui.For(w)
-	verb := "Configured"
-	if dryRun {
-		verb = "Would configure"
-	}
-	fmt.Fprintf(w, "%s %s for Civitai App development in %s\n\n", verb, st.Bold(agent), env.Dir)
+	lead, tail := agentSetupHeadline(changes, dryRun)
+	fmt.Fprintf(w, "%s %s for Civitai App development in %s%s\n\n", lead, st.Bold(agent), env.Dir, tail)
 
 	for _, c := range changes {
 		switch {
