@@ -318,6 +318,37 @@ func TestAgentSetupRefusesAMalformedMCPConfig(t *testing.T) {
 	}
 }
 
+// TestAgentSetupTOMLOnAFreshConfigOpensWithItsTable pins the empty-source arm.
+//
+// `strings.Split("", "\n")` returns a one-element slice holding a blank line, so
+// a config file that does not exist yet rendered a document OPENING with a blank
+// line — measured on a real fresh `~/.codex/config.toml`. Harmless to TOML and
+// wrong in a file a human reads. The CONTROL below is the half that matters: a
+// leading blank line an existing file legitimately has must SURVIVE, so the fix
+// could not be a trim.
+func TestAgentSetupTOMLOnAFreshConfigOpensWithItsTable(t *testing.T) {
+	dir, home := agentSetupProject(t)
+	if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", "codex"); err != nil {
+		t.Fatalf("agent-setup: %v", err)
+	}
+	got := readFile(t, filepath.Join(home, ".codex", "config.toml"))
+	if !strings.HasPrefix(got, "[mcp_servers.") {
+		t.Errorf("a fresh config.toml does not open with its first table:\n%q", got)
+	}
+
+	// CONTROL: an EXISTING file's own leading blank line is a byte this command
+	// has no business touching, so a trim-based fix must fail here.
+	dir2, home2 := agentSetupProject(t)
+	path2 := filepath.Join(home2, ".codex", "config.toml")
+	writeFile(t, path2, "\n# a comment after a deliberate blank line\nmodel = \"gpt-5\"\n")
+	if _, _, err := run(t, "agent-setup", "--dir", dir2, "--agent", "codex"); err != nil {
+		t.Fatalf("agent-setup: %v", err)
+	}
+	if got := readFile(t, path2); !strings.HasPrefix(got, "\n# a comment after a deliberate blank line") {
+		t.Errorf("an existing file's leading blank line was stripped:\n%q", got)
+	}
+}
+
 // TestAgentSetupTOMLMergePreservesEverythingElse is the Codex path. The
 // line-based merge exists so a hand-maintained config.toml keeps its comments
 // and its key order — properties a decode/encode round trip destroys while

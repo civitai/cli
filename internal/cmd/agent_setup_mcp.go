@@ -175,6 +175,17 @@ type tomlBlock struct {
 // error only for a header it cannot read — an unterminated `[` — because that IS
 // malformed TOML and refusing beats guessing where the block ends.
 func parseTOMLBlocks(path string, src string) ([]tomlBlock, error) {
+	// 🔴 AN EMPTY SOURCE HAS AN EMPTY PREAMBLE, NOT A ONE-LINE ONE.
+	// `strings.Split("", "\n")` returns `[""]`, so without this guard a config
+	// file that does not exist yet gets a preamble holding one blank line — and
+	// the rendered document then OPENS with a blank line before its first table.
+	// Measured on a fresh `~/.codex/config.toml`. Harmless to TOML and wrong in
+	// a file a human reads; trimming it afterwards is not the fix, because that
+	// would also strip a leading blank line an EXISTING file legitimately has,
+	// which is a byte this command has no business touching.
+	if src == "" {
+		return []tomlBlock{{}}, nil
+	}
 	blocks := []tomlBlock{{}}
 	inMultiline := false
 	for _, line := range strings.Split(src, "\n") {
