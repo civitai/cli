@@ -234,9 +234,13 @@ type agentChangeJSON struct {
 // pipe — leaves nothing on stdout and nothing can fix that from in here. (b) An
 // error cobra raises BEFORE `RunE` (an unknown flag, a stray argument, a missing
 // flag value) never reaches the emitter; measured, all three exit 2 and are
-// `ErrUsage`-tagged by root.go's enforceUsageExitCodes, so they land on the
-// documented side rather than being a fourth hole — but that is root.go's
-// property, not this one's, and it is what would break if that tagging changed.
+// `ErrUsage`-tagged by root.go — but by TWO different mechanisms, and naming
+// only one sends the next reader to a function that does not hold the property:
+// the two FLAG errors are tagged by `SetFlagErrorFunc`, the stray argument by
+// `enforceUsageExitCodes`'s `Args` wrapper, which never sees a flag error at
+// all. They land on the documented side rather than being a fourth hole — but
+// that is root.go's property, not this one's, and it is what would break if
+// EITHER tagging changed.
 // (c) A process that dies without returning (a panic, a signal) writes nothing.
 //
 // 🔴 THE STATED EXCEPTION IS `ErrUsage` — WHICH IS NOT THE SAME SET AS "EXIT 2
