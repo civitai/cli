@@ -409,7 +409,16 @@ theme = "dark"
 
 // TestAgentSetupWritesNoPlaceholderToken pins the credential rule in both
 // directions: without a token the entry carries NO Authorization header, and
-// with one it carries the real value.
+// with one it carries a REFERENCE to CIVITAI_TOKEN in that agent's own
+// documented spelling — never the token itself.
+//
+// 🔴 THIS SECOND SUBTEST USED TO ASSERT `Bearer tok-abc`, AND THAT ASSERTION WAS
+// THE BUG RATHER THAN A WITNESS TO IT. It pinned a live credential into
+// `.mcp.json` — a PROJECT-scoped file that lives in the repo root and gets
+// committed — and a green suite around it is why the leak shipped. The guards
+// that now read every byte this command writes are in
+// agent_setup_credential_test.go; the rule itself is the block comment above
+// agentTargets.
 //
 // 🔴 A PLACEHOLDER WOULD BE WORSE THAN NOTHING. `Bearer <your-token>` produces a
 // config that looks complete in every file the user can read and 401s at request
@@ -434,17 +443,26 @@ func TestAgentSetupWritesNoPlaceholderToken(t *testing.T) {
 	})
 	t.Run("with a token", func(t *testing.T) {
 		dir, _ := agentSetupProject(t)
-		t.Setenv("CIVITAI_TOKEN", "tok-abc")
+		const secret = "tok-abc-do-not-write-me"
+		t.Setenv("CIVITAI_TOKEN", secret)
 		if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", "claude"); err != nil {
 			t.Fatalf("agent-setup: %v", err)
 		}
+		raw := readFile(t, filepath.Join(dir, ".mcp.json"))
+		if strings.Contains(raw, secret) {
+			t.Fatalf("the config carries the LITERAL token — see agent_setup_credential_test.go")
+		}
 		var cfg map[string]map[string]map[string]any
-		if err := json.Unmarshal([]byte(readFile(t, filepath.Join(dir, ".mcp.json"))), &cfg); err != nil {
+		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 			t.Fatalf("bad json: %v", err)
 		}
 		headers, _ := cfg["mcpServers"]["civitai"]["headers"].(map[string]any)
-		if got := headers["Authorization"]; got != "Bearer tok-abc" {
-			t.Errorf("Authorization = %v, want %q", got, "Bearer tok-abc")
+		// Claude Code's documented spelling is the BARE `${VAR}` form —
+		// code.claude.com/docs/en/mcp lists `headers` among the fields it expands
+		// and shows `"Authorization": "Bearer ${API_KEY}"`. `${env:…}` is
+		// Cursor's and Windsurf's; writing it here would be sent literally.
+		if got := headers["Authorization"]; got != "Bearer ${CIVITAI_TOKEN}" {
+			t.Errorf("Authorization = %v, want %q", got, "Bearer ${CIVITAI_TOKEN}")
 		}
 	})
 }

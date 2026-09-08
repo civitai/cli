@@ -48,14 +48,30 @@ var civitaiMCPServers = []mcpServer{
 	},
 }
 
-// mcpEntry renders ONE server entry for ONE agent.
+// mcpAuthValue is the header VALUE an interpolating agent gets, or "" when this
+// run must write no header at all. It is the ONE place the credential rule is
+// decided, so the JSON writer, the TOML writer and the `--agent other` paste
+// block cannot disagree about it.
 //
-// 🔴 NO PLACEHOLDER TOKEN, EVER. With no token configured the entry is written
-// WITHOUT the header — auth here is a Bearer API key, not OAuth, so an entry
-// carrying `Bearer <your-token-here>` is a config that fails at request time with
-// a 401 and looks correct in every file the user can read. The read tools work
-// anonymously, so a header-less entry is genuinely useful; the next-step block
-// says what is missing and how to add it.
+// 🔴 NO LITERAL CREDENTIAL, EVER — see the block comment above agentTargets. The
+// value returned here is a REFERENCE to CIVITAI_TOKEN in the vendor's own
+// documented spelling; the caller's `token` argument is consulted only to decide
+// WHETHER there is a credential to reference, and is never interpolated into the
+// result. That is why the parameter is named `hasToken` rather than `token`: a
+// signature that cannot receive the secret cannot leak it.
+//
+// 🔴 NO PLACEHOLDER, EITHER — the older rule, still live. `Bearer
+// <your-token-here>` is a config that looks correct in every file the user can
+// read and 401s at request time. A header-less entry is honest and still works,
+// because both servers' read tools are anonymous.
+func mcpAuthValue(t agentTarget, hasToken bool) string {
+	if !hasToken || t.HeadersKey == "" || t.EnvHeaderSyntax == "" {
+		return ""
+	}
+	return "Bearer " + t.EnvHeaderSyntax
+}
+
+// mcpEntry renders ONE server entry for ONE agent.
 func mcpEntry(t agentTarget, srv mcpServer, token string) map[string]any {
 	m := map[string]any{t.URLKey: srv.URL}
 	if t.TypeKey != "" {
@@ -64,8 +80,11 @@ func mcpEntry(t agentTarget, srv mcpServer, token string) map[string]any {
 	if t.EnabledKey != "" {
 		m[t.EnabledKey] = true
 	}
-	if token != "" && t.HeadersKey != "" {
-		m[t.HeadersKey] = map[string]any{"Authorization": "Bearer " + token}
+	// 🔴 NO KEY AT ALL, NOT AN EMPTY ONE. `"headers": {}` reads to a human as a
+	// header that was configured and left blank, and to an agent as a header
+	// block to send; the absence is the whole signal.
+	if v := mcpAuthValue(t, token != ""); v != "" {
+		m[t.HeadersKey] = map[string]any{"Authorization": v}
 	}
 	return m
 }
@@ -250,11 +269,21 @@ func tomlServerTable(t agentTarget, srv mcpServer) string {
 // header this same parser would then read differently — the two Civitai names do
 // not need it today, and a renderer that only stays correct for today's inputs
 // is how the next name breaks it.
+//
+// 🔴 THE TOML SIDE USES A DIFFERENT MECHANISM, NOT A DIFFERENT SPELLING. Codex
+// documents no `${…}` interpolation at all; it takes the NAME of an environment
+// variable in `bearer_token_env_var` and does the `Bearer ` prefixing itself. So
+// this renders `bearer_token_env_var = "CIVITAI_TOKEN"` and NEVER an
+// `http_headers` line, which is documented as static values only — i.e. as the
+// literal credential this whole path forbids.
 func renderTOMLServer(t agentTarget, srv mcpServer, token string) []string {
 	lines := []string{fmt.Sprintf("[%s.%q]", t.ServersKey, srv.Name)}
 	lines = append(lines, fmt.Sprintf("%s = %q", t.URLKey, srv.URL))
-	if token != "" && t.HeadersKey != "" {
-		lines = append(lines, fmt.Sprintf("%s = { %q = %q }", t.HeadersKey, "Authorization", "Bearer "+token))
+	if token != "" && t.EnvBearerKey != "" {
+		lines = append(lines, fmt.Sprintf("%s = %q", t.EnvBearerKey, tokenEnvVar))
+	}
+	if v := mcpAuthValue(t, token != ""); v != "" {
+		lines = append(lines, fmt.Sprintf("%s = { %q = %q }", t.HeadersKey, "Authorization", v))
 	}
 	return lines
 }
@@ -432,15 +461,23 @@ func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
 // It is the SAME entry builder the file writers use, so the block a human pastes
 // cannot drift from the block the CLI writes — which is the failure this command
 // exists to prevent, moved from a hosted doc into the binary.
-func mcpPasteBlock(token string) string {
+//
+// 🔴 IT CARRIES NO AUTHORIZATION HEADER, EVEN WITH A TOKEN CONFIGURED, AND THAT
+// IS THE STRICTEST CASE RATHER THAN AN OVERSIGHT. Pasted text lands in a config
+// file by hand, so a literal credential here is the same leak with one extra
+// step — and worse, the destination agent is by definition one this CLI does not
+// know, so no interpolation syntax can be assumed correct for it either. The
+// next-step block names the header and the four spellings instead.
+func mcpPasteBlock() string {
 	// The shape shown is the most widely used one: a `mcpServers` object with
-	// `type`/`url`/`headers`. The next-step block names the per-agent keys that
-	// differ, because the ONE thing a paste cannot carry is which key name the
-	// reader's own agent wants.
+	// `type`/`url`. The next-step block names the per-agent keys that differ,
+	// because the ONE thing a paste cannot carry is which key name the reader's
+	// own agent wants.
 	shape := agentTargets[agentClaude]
 	servers := map[string]any{}
 	for _, srv := range civitaiMCPServers {
-		servers[srv.Name] = mcpEntry(shape, srv, token)
+		// The empty token is not a bug: it is what makes this header-less.
+		servers[srv.Name] = mcpEntry(shape, srv, "")
 	}
 	out, err := json.MarshalIndent(map[string]any{shape.ServersKey: servers}, "", "  ")
 	if err != nil {

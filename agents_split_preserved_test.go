@@ -417,6 +417,7 @@ func TestSplitItemBodiesArePreservedVerbatim(t *testing.T) {
 // of ceiling headroom.
 var bornSplitItems = []string{
 	"claudedocs/decisions/33-source-repo-url-is-not-mirrored.md",
+	"claudedocs/decisions/34-agent-setup-writes-no-credential.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item

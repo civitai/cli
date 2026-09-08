@@ -228,25 +228,87 @@ type agentTarget struct {
 	// an unknown key in someone else's config.
 	TypeKey   string
 	TypeValue string
-	// HeadersKey carries the `Authorization: Bearer …` header when — and ONLY
-	// when — a token is configured. See mcpEntry.
+	// HeadersKey is the entry key an Authorization header would live under.
+	//
+	// 🔴 IT DOES NOT MEAN "WRITE A HEADER". A header is written ONLY when
+	// EnvHeaderSyntax is also set; see mcpEntry and the block comment above
+	// agentTargets.
 	HeadersKey string
+	// EnvHeaderSyntax is this agent's DOCUMENTED environment-variable
+	// interpolation for a header VALUE, already spelled for CIVITAI_TOKEN —
+	// e.g. `${CIVITAI_TOKEN}`. Empty means the vendor documents none, and an
+	// empty value is the SAFE default: see the block comment above agentTargets
+	// for why an unsupported syntax is worse than no header at all.
+	EnvHeaderSyntax string
+	// EnvBearerKey is an entry key taking the NAME of an environment variable
+	// holding the bearer token, with the agent doing the `Bearer ` prefixing
+	// itself. Codex's `bearer_token_env_var` is the only one; it is a DIFFERENT
+	// mechanism from EnvHeaderSyntax, not a spelling of it, and the two are
+	// mutually exclusive (TestEveryTargetPicksOneCredentialMechanism).
+	EnvBearerKey string
 	// EnabledKey, where set, is written `true`. opencode requires it.
 	EnabledKey string
 }
 
+// tokenEnvVar is the environment variable this CLI already publishes as its
+// token override (`config.Load` reads it). It is the ONE name an interpolated
+// MCP header may reference: a second spelling would be a variable the user has
+// never been told to set, so the header would resolve to empty and the failure
+// would look like a bad token rather than a missing one.
+const tokenEnvVar = "CIVITAI_TOKEN"
+
 // agentTargets is the table. Keyed by agent id; `other` is absent on purpose —
 // its absence IS the "we do not know where your agent keeps this" answer, so a
 // lookup miss and `other` are the same code path.
+//
+// 🔴 NO ENTRY IN THIS TABLE MAY EVER CARRY A LITERAL CREDENTIAL, AND THAT IS A
+// FIX FOR A SHIPPED BUG RATHER THAN A PREFERENCE. The first cut of this command
+// wrote `"Authorization": "Bearer <the user's live token>"` into whichever file
+// the agent uses — and four of those files (`.mcp.json`, `.cursor/mcp.json`,
+// `.vscode/mcp.json`, `opencode.json`) are PROJECT-scoped, live in the repo root
+// and get committed. This repo ships `internal/credscan` to warn about exactly
+// that in a packaged bundle; writing one here was the same failure with the
+// polarity reversed. So the rule is now absolute, project- and user-scoped
+// alike, with no flag to opt in.
+//
+// 🔴 THE SYNTAXES BELOW COME FROM THE VENDOR DOCS AND FOUR OF THEM DISAGREE.
+// `${VAR}` (Claude Code) vs `${env:VAR}` (Cursor, Windsurf) vs `{env:VAR}` —
+// single brace, no `$` — (opencode) vs a TOML key taking a bare variable NAME
+// (Codex) vs nothing at all (VS Code, Zed). Getting one wrong is WORSE than
+// omitting the header: an unsupported syntax produces a config that looks
+// configured and sends the literal string `${CIVITAI_TOKEN}` as a bearer token,
+// which fails at request time and looks like a bad credential rather than a bad
+// config. So an agent whose vendor doc does not document interpolation gets NO
+// header key at all, and its next-step block names the header to add by hand.
+// Both servers' read tools are anonymous, so a header-less entry is genuinely
+// useful rather than a degraded one.
+//
+// 🔴 A HEADER IS ONLY WRITTEN WHEN A TOKEN IS CONFIGURED, AND THAT IS NOT A
+// LEFTOVER OF THE OLD BEHAVIOUR. With `CIVITAI_TOKEN` unset, Claude Code passes
+// the literal `${CIVITAI_TOKEN}` through and Cursor/Windsurf/opencode resolve it
+// to the empty string — so an unconditional header sends `Bearer ` or `Bearer
+// ${CIVITAI_TOKEN}` on every request and can turn a working ANONYMOUS setup into
+// a 401. Writing it only for a user who demonstrably has a credential keeps the
+// no-token path exactly as useful as it is today.
 var agentTargets = map[string]agentTarget{
 	agentClaude: {
 		Agent: agentClaude, Parts: []string{".mcp.json"}, Format: formatJSON,
 		ServersKey: "mcpServers", URLKey: "url",
 		TypeKey: "type", TypeValue: "http", HeadersKey: "headers",
+		// code.claude.com/docs/en/mcp: "Claude Code supports environment
+		// variable expansion in .mcp.json files"; the listed locations include
+		// "headers: for HTTP server authentication", with the documented example
+		// `"Authorization": "Bearer ${API_KEY}"`. Bare `${VAR}` — NOT `${env:…}`.
+		EnvHeaderSyntax: "${" + tokenEnvVar + "}",
 	},
 	agentCursor: {
 		Agent: agentCursor, Parts: []string{".cursor", "mcp.json"}, Format: formatJSON,
 		ServersKey: "mcpServers", URLKey: "url", HeadersKey: "headers",
+		// cursor.com/docs/context/mcp: "Cursor resolves variables in these
+		// fields: command, args, env, url, and headers", documented example
+		// `"Authorization": "Bearer ${env:MY_SERVICE_TOKEN}"`. The `env:` prefix
+		// is required — Claude Code's bare `${VAR}` is not Cursor's syntax.
+		EnvHeaderSyntax: "${env:" + tokenEnvVar + "}",
 	},
 	agentVSCode: {
 		Agent: agentVSCode, Parts: []string{".vscode", "mcp.json"}, Format: formatJSON,
@@ -254,11 +316,34 @@ var agentTargets = map[string]agentTarget{
 		// does not spell it the Claude way.
 		ServersKey: "servers", URLKey: "url",
 		TypeKey: "type", TypeValue: "http", HeadersKey: "headers",
+		// 🔴 NO INTERPOLATION, ON PURPOSE — and this is the entry most likely to
+		// be "corrected" by someone who knows `${env:Name}` is a real VS Code
+		// variable. It is, in launch.json and tasks.json; the MCP configuration
+		// reference
+		// (code.visualstudio.com/docs/agents/reference/mcp-configuration) lists an
+		// HTTP server's fields as exactly type/url/headers/oauth, and its only
+		// headers example is `"Bearer ${input:api-token}"` — PROMPTED INPUT, not
+		// the environment. `${env:…}` resolving in mcp.json is an inference from
+		// two documents, and an inference is exactly what this table may not
+		// ship: a wrong guess here sends the literal `${env:CIVITAI_TOKEN}`.
+		EnvHeaderSyntax: "",
 	},
 	agentCodex: {
 		Agent: agentCodex, UserScoped: true, Parts: []string{".codex", "config.toml"},
 		Format: formatTOML, ServersKey: "mcp_servers", URLKey: "url",
 		HeadersKey: "http_headers",
+		// 🔴 A DIFFERENT MECHANISM, NOT A DIFFERENT SPELLING. Codex documents no
+		// `${…}` interpolation anywhere in config.toml. It instead has keys that
+		// take a variable NAME: `bearer_token_env_var` — "Environment variable
+		// name for a bearer token to send in Authorization" — beside the
+		// literal-only `http_headers` ("Map of header names to static values").
+		// learn.chatgpt.com/docs/extend/mcp?surface=cli.
+		//
+		// `bearer_token_env_var` is chosen over the sibling `env_http_headers`
+		// ("Map of header names to environment variable names") because that one
+		// sends the variable's value VERBATIM as the header: an `Authorization`
+		// built that way would carry the bare token with no `Bearer ` prefix.
+		EnvBearerKey: "bearer_token_env_var",
 	},
 	agentOpencode: {
 		Agent: agentOpencode, Parts: []string{"opencode.json"}, Format: formatJSON,
@@ -267,6 +352,13 @@ var agentTargets = map[string]agentTarget{
 		ServersKey: "mcp", URLKey: "url",
 		TypeKey: "type", TypeValue: "remote", HeadersKey: "headers",
 		EnabledKey: "enabled",
+		// 🔴 SINGLE BRACE AND NO `$` — the odd one out in this whole table.
+		// opencode.ai/docs/mcp-servers/ shows `"Authorization": "Bearer
+		// {env:MY_API_KEY}"` inside a remote server's headers, and
+		// opencode.ai/docs/config/ states the rule: "Use {env:VARIABLE_NAME} to
+		// substitute environment variables". Writing `${env:…}` here would be
+		// sent literally.
+		EnvHeaderSyntax: "{env:" + tokenEnvVar + "}",
 	},
 	agentWindsurf: {
 		Agent: agentWindsurf, UserScoped: true,
@@ -275,6 +367,11 @@ var agentTargets = map[string]agentTarget{
 		// spells the URL key differently, and a `url` key here parses fine and
 		// registers nothing.
 		ServersKey: "mcpServers", URLKey: "serverUrl", HeadersKey: "headers",
+		// docs.windsurf.com/windsurf/cascade/mcp (307 → docs.devin.ai/desktop/
+		// cascade/mcp): "supports variable interpolation in the following fields:
+		// command, args, env, serverUrl, url, and headers", with `${env:VAR_NAME}`
+		// and the documented example `"API_KEY": "Bearer ${env:AUTH_TOKEN}"`.
+		EnvHeaderSyntax: "${env:" + tokenEnvVar + "}",
 	},
 	agentZed: {
 		Agent: agentZed, UserScoped: true, Parts: []string{".config", "zed", "settings.json"},
@@ -286,6 +383,14 @@ var agentTargets = map[string]agentTarget{
 		// current doc, so it is not written. An invented key in someone else's
 		// settings file is the failure this whole table exists to avoid.
 		ServersKey: "context_servers", URLKey: "url", HeadersKey: "headers",
+		// 🔴 NO INTERPOLATION. zed.dev/docs/ai/mcp documents no substitution
+		// syntax at all; its remote example hard-codes `"Bearer <token>"`, and
+		// the alternative it offers for an authenticated server is OAuth: "When a
+		// remote MCP server has no configured "Authorization" header, Zed will
+		// prompt you to authenticate yourself … using the standard MCP OAuth
+		// flow." So a header-less entry is not merely safe here, it is the entry
+		// that lets Zed offer the user its own auth flow.
+		EnvHeaderSyntax: "",
 	},
 }
 

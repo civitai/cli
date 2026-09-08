@@ -243,11 +243,22 @@ The agent is detected from the environment and then from marker files in the
 project; --agent overrides it. --agent other prints the config for you to paste
 in yourself and writes nothing.
 
-AUTHENTICATION IS YOURS TO RUN. Both servers' read tools work anonymously, so
-they are registered before login on purpose. With a token configured the
-Authorization header is written into the entries; without one the entries are
-written WITHOUT it — never with a placeholder that looks like a credential — and
-re-running after 'civitai login' adds it.
+NO CREDENTIAL IS EVER WRITTEN INTO A CONFIG FILE. Most of these files are
+project-scoped — .mcp.json, .cursor/mcp.json, .vscode/mcp.json and opencode.json
+sit in the repo root and get committed — so an Authorization header holding your
+actual token is a secret headed for version control. Instead, for agents whose
+vendors document environment-variable interpolation, the header REFERENCES
+CIVITAI_TOKEN in that vendor's own spelling (${CIVITAI_TOKEN} for Claude Code,
+${env:CIVITAI_TOKEN} for Cursor and Windsurf, {env:CIVITAI_TOKEN} for opencode,
+and bearer_token_env_var for Codex); export CIVITAI_TOKEN so the agent resolves
+it. For agents that document none — VS Code and Zed today — no header is written
+at all and the output names the exact header to add yourself. Both servers' read
+tools work anonymously, so a header-less config browses models, images and
+articles as it stands.
+
+AUTHENTICATION IS YOURS TO RUN. The servers are registered before login on
+purpose, and 'civitai login' is a separate store from CIVITAI_TOKEN: it writes
+this CLI's own config, which your coding agent does not read.
 
 EXIT CODES: --check exits 1 when a check failed, 0 otherwise. A write run exits
 0 on success. A bad --agent, a --dir that does not exist or is not a directory,
@@ -604,10 +615,30 @@ func planMCPConfig(env agentEnv, agent, token string) (string, []byte, agentChan
 		action = "merge"
 		reason = "merges both Civitai MCP servers in, preserving every other server and key"
 	}
-	if token == "" {
-		reason += "; no Authorization header — no token is configured (read tools still work anonymously)"
-	}
+	reason += "; " + mcpAuthReason(t, token != "")
 	return path, data, agentChangeJSON{Path: path, Action: action, Reason: reason}, nil
+}
+
+// mcpAuthReason states, in one clause, what this run did about authentication —
+// and it is the same sentence in `--dry-run`, in `--json` and on the terminal.
+//
+// 🔴 IT NEVER SAYS "THE TOKEN WAS WRITTEN", BECAUSE IT NEVER IS. The three
+// outcomes are: a reference to CIVITAI_TOKEN in the agent's own documented
+// spelling, Codex's variable-NAME key, or no header at all — and the last one is
+// reported as the working anonymous setup it is, not as something missing.
+func mcpAuthReason(t agentTarget, hasToken bool) string {
+	if !hasToken {
+		return "no Authorization header — no token is configured (read tools still work anonymously)"
+	}
+	if t.EnvBearerKey != "" {
+		return "auth reads " + tokenEnvVar + " via `" + t.EnvBearerKey + "` — no credential is written to disk"
+	}
+	if t.EnvHeaderSyntax != "" {
+		return "the Authorization header references " + tokenEnvVar + " as `" + t.EnvHeaderSyntax +
+			"` — no credential is written to disk; export " + tokenEnvVar + " for the agent to resolve it"
+	}
+	return "no Authorization header — " + t.Agent + " documents no way to read one from the environment, " +
+		"and this command never writes a credential to a config file (read tools still work anonymously)"
 }
 
 // printAgentSetupWrite renders the human report and the next-step block.
@@ -632,9 +663,10 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 		}
 	}
 
-	if _, known := agentTargets[agent]; !known {
+	target, known := agentTargets[agent]
+	if !known {
 		fmt.Fprintln(w, "\nPaste this into your agent's MCP config:")
-		fmt.Fprintln(w, mcpPasteBlock(token))
+		fmt.Fprintln(w, mcpPasteBlock())
 		fmt.Fprintln(w, "The file and the top-level key differ per agent:")
 		for _, line := range mcpKeyDifferences() {
 			fmt.Fprintln(w, "  "+st.Dim(line))
@@ -647,20 +679,82 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 		}
 	}
 
+	printAgentSetupAuthNote(w, st, agent, target, known, token != "")
+
 	fmt.Fprintln(w, "\nNext:")
+	n := 1
 	if dryRun {
-		fmt.Fprintln(w, "  1. Re-run without --dry-run — nothing above was written.")
+		fmt.Fprintf(w, "  %d. Re-run without --dry-run — nothing above was written.\n", n)
 	} else {
-		fmt.Fprintf(w, "  1. Restart %s so it loads the MCP servers.\n", agent)
+		fmt.Fprintf(w, "  %d. Restart %s so it loads the MCP servers.\n", n, agent)
+	}
+	// 🔴 EXPORTING CIVITAI_TOKEN IS A SEPARATE STEP FROM `civitai login`, AND
+	// BOTH LINES STAY. `civitai login` writes ~/.config/civitai/config.yaml,
+	// which this CLI reads and the coding agent does not; the agent resolves the
+	// header from the PROCESS environment. Collapsing the two would leave the
+	// user with a token the agent cannot see, which reads as a broken credential.
+	if token != "" && known && (target.EnvHeaderSyntax != "" || target.EnvBearerKey != "") {
+		n++
+		fmt.Fprintf(w, "  %d. Export the token where %s can see it — the config above references it by name:\n", n, agent)
+		fmt.Fprintf(w, "       %s\n", st.Code("export "+tokenEnvVar+"=<your token>"))
+		fmt.Fprintf(w, "     %s\n", st.Dim("Put it in your shell profile so the agent inherits it. "+
+			"Browsing and other read tools work without it."))
 	}
 	// 🔴 THE LAST LINE NAMES `civitai login`, AND THIS COMMAND NEVER RUNS IT.
 	// Authentication is the human's step: nothing here opens a browser, prompts
 	// for a credential, or stores one.
+	n++
 	if token == "" {
-		fmt.Fprintf(w, "  2. Run %s to authenticate, then re-run %s so the MCP entries pick up the token.\n",
-			st.Code("civitai login"), st.Code("civitai agent-setup"))
+		fmt.Fprintf(w, "  %d. Run %s to authenticate, then re-run %s so the MCP entries pick up the reference.\n",
+			n, st.Code("civitai login"), st.Code("civitai agent-setup"))
 	} else {
-		fmt.Fprintf(w, "  2. Already authenticated — run %s again only if you need different scopes.\n",
-			st.Code("civitai login"))
+		fmt.Fprintf(w, "  %d. Already authenticated — run %s again only if you need different scopes.\n",
+			n, st.Code("civitai login"))
+	}
+}
+
+// printAgentSetupAuthNote says what was — and was not — written about auth.
+//
+// 🔴 A HEADER-LESS CONFIG IS PRESENTED AS WORKING, NOT AS DEGRADED. Both
+// servers' read tools are anonymous, so "no Authorization header" is a setup
+// that browses models, images and articles today; wording it as a shortfall
+// invites the reader to paste their token in by hand, which is precisely the
+// leak this command was fixed to stop causing.
+func printAgentSetupAuthNote(w io.Writer, st ui.Styler, agent string, t agentTarget, known, hasToken bool) {
+	fmt.Fprintln(w, "\nAuthentication:")
+	fmt.Fprintf(w, "  %s\n", st.Dim("No credential is ever written into an agent config file — "+
+		".mcp.json, .cursor/mcp.json, .vscode/mcp.json and opencode.json live in the repo and get committed."))
+
+	switch {
+	case !known:
+		fmt.Fprintf(w, "  The block above carries no Authorization header, because the header value has to be\n")
+		fmt.Fprintf(w, "  spelled the way YOUR agent reads environment variables, and this CLI does not know which\n")
+		fmt.Fprintf(w, "  agent that is. Add it yourself if you want authenticated tools:\n")
+		fmt.Fprintf(w, "       %s\n", st.Code(`"headers": {"Authorization": "Bearer <env-var reference>"}`))
+		fmt.Fprintf(w, "  %s\n", st.Dim("Known spellings: ${"+tokenEnvVar+"} (Claude Code), ${env:"+tokenEnvVar+
+			"} (Cursor, Windsurf), {env:"+tokenEnvVar+"} (opencode)."))
+	case !hasToken:
+		fmt.Fprintf(w, "  No token is configured, so no Authorization header was written. The read tools work\n")
+		fmt.Fprintf(w, "  anonymously, so this setup is usable as it stands.\n")
+	case t.EnvBearerKey != "":
+		fmt.Fprintf(w, "  Each entry carries %s, so %s reads the token from your environment\n",
+			st.Code(t.EnvBearerKey+" = \""+tokenEnvVar+"\""), agent)
+		fmt.Fprintf(w, "  at request time rather than from the file.\n")
+	case t.EnvHeaderSyntax != "":
+		fmt.Fprintf(w, "  Each entry carries %s, which %s resolves from your\n",
+			st.Code(`"Authorization": "Bearer `+t.EnvHeaderSyntax+`"`), agent)
+		fmt.Fprintf(w, "  environment at request time rather than from the file.\n")
+	default:
+		// 🔴 NAMED, NOT SILENT. VS Code and Zed document no way to read a header
+		// from the environment, so there is nothing this command can write that
+		// is both authenticated and credential-free. Saying so — with the exact
+		// file and the exact header — is the whole remedy; a silent omission
+		// would read as a bug in this command.
+		fmt.Fprintf(w, "  %s documents no way to read a header from the environment, so no Authorization header\n", agent)
+		fmt.Fprintf(w, "  was written. Read tools still work anonymously. To authenticate, add this yourself to\n")
+		fmt.Fprintf(w, "  each Civitai entry in that file:\n")
+		fmt.Fprintf(w, "       %s\n", st.Code(`"`+t.HeadersKey+`": {"Authorization": "Bearer <your token>"}`))
+		fmt.Fprintf(w, "  %s\n", st.Dim("That file is yours; note that a literal token in it is a credential on disk, "+
+			"so keep it out of version control."))
 	}
 }
