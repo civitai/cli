@@ -102,6 +102,23 @@ next run deleted it.
 this command owns. The headers object gets the same treatment one level deeper,
 so an unrelated header survives a run that rewrites `Authorization`.
 
+**The precedence rule, since "merge per key" does not say which side wins.** On
+the Civitai entries only, this command OWNS `url`, the transport discriminator,
+`enabled`, and — *when a token is configured* — `Authorization`. Everything else
+on those entries is the user's and is preserved. Two consequences worth stating,
+because both look surprising in a diff:
+
+- With **no** token configured, a hand-added `Authorization` on our entry
+  survives untouched. That is the finding this section exists for.
+- With a token configured, a hand-added `Authorization` on our entry is
+  **replaced** by the env-var reference. That is deliberate: it is our entry, the
+  reference is what the command exists to write, and if what they wrote was a
+  literal token, replacing it removes a credential from a file that gets
+  committed. Their `X-Trace`, timeouts and everything else still survive.
+- An `"headers": {}` the USER wrote is preserved as-is. Item 34 forbids this
+  command from WRITING an empty headers object; it does not license deleting one
+  out of somebody's file.
+
 🔴 **The pre-existing guard could not see this.**
 `TestAgentSetupDoesNotTouchAUserWrittenLiteralToken` is scoped to a DIFFERENT
 server (`their-server`), and other people's servers were never the broken case.
