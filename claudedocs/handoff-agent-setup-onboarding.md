@@ -23,17 +23,46 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
   that is NOT gitignored (a stray npm install in the base clone — delete it or
   ignore it; it is a live `git add -A` footgun).
 - **The repo is FROZEN and this blocks everything below.** See the investigation.
-- **Two draft PRs in flight**, written by subagents in isolated worktrees:
+- **THIS DOC IS ITSELF PR `civitai/cli#527`**, on branch
+  `docs/handoff-agent-setup-onboarding` (commit `9f5e28c`). It is NOT on `main` —
+  the repo forbids committing to the shared branch, so the doc landed on a topic
+  branch and needs merging like anything else. 🔴 **It is subject to the same
+  freeze it documents** and cannot merge until the pin bump lands. A session
+  reading this from a checkout of `main` will not find it there.
+- **Two draft feature PRs in flight**, written by subagents in isolated
+  worktrees:
   - `civitai/cli` — branch `feat/agent-setup`, the new command.
   - `civitai/civitai-developer-docs` — branch `feat/agent-setup`, the hosted
     `prompt.md` route, a landing page, two serving-bug fixes, the anti-rot guard.
-  Neither was reviewed by this session; both reports land after this doc.
+  Neither was reviewed by this session, and **neither subagent had reported by
+  the time this doc was last updated** — so treat both as unverified: nobody has
+  read the code, and the reports may contain refusals or deviations from the
+  contract. Read them before assuming either PR does what it was asked to.
+- 🔴 **A compile-breaking collision was already observed in the CLI branch, while
+  the agent was still working:** `internal/cmd/agent_setup_detect.go:331`
+  declares `targetPath`, which **redeclares** the existing
+  `internal/cmd/download.go:737` — `targetPath redeclared in this block`. It
+  cascades: `download.go:359/559/679` and `download_sanitize_test.go:39/57/88`
+  all fail with `assignment mismatch: 3 variables but targetPath returns 2
+  values` and argument-type errors, because the call sites now resolve to the
+  wrong function. **The whole `internal/cmd` package does not build.** `make ci`
+  cannot pass in this state, so either the agent fixed it before finishing or its
+  green claim is false — **re-run the gate yourself rather than reading the
+  agent's report for the answer.** The fix is a rename in the new file
+  (`download.go`'s `targetPath` is long-standing and has tests); it is not a
+  reason to doubt the rest of the branch.
 - 🔴 **The design contract is currently ONLY in an ephemeral scratchpad** —
   `…/7a9918ba-…/scratchpad/agent-setup-contract.md`. It is the frozen seam
   between the two repos (command surface, exit codes, `--check --json` shape, the
   per-agent MCP config table, the `AGENTS.md` template verbatim, `prompt.md`
   verbatim). **If neither PR carries it into a repo, it is lost when the session
   ends.** Next step 2 exists to close that.
+- **Recorded in the subsystem index:** one bullet appended to `cli/scaffold`
+  (revision `b2d0166c`) — that the freeze is *self-perpetuating*, which the
+  entry's existing 2026-09-02 freeze bullet does not say. `cairn validate
+  --scope cli` passes 5/5. Both path windows (`--session`, `--pr 527`) were
+  empty, so nothing else was nominated; that is a fact about the windows, not
+  about the session.
 - Work claimed: `claim-work --release agent-setup-onboarding-p1` when done.
 - No clawgate task recorded: `clawgate_handoff.sh resolve` exited 5 (nothing
   resolved). The board WAS reachable — its positive control resolved 8 links for
