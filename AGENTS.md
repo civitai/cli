@@ -456,7 +456,7 @@ item must carry a trigger that is a routing question rather than a label
 
 35. **Changing how `agent-setup` merges a file the USER owns, or what it CLAIMS
     about the result — JSONC leniency, keys on OUR entries, the TOML parser,
-    symlinks, config roots, `--check`'s verdict, `--json` on a blocked step?**
+    symlinks, config roots, `--check`'s verdict, `--json`'s shapes?**
     → evidence: claudedocs/decisions/35-agent-setup-merges-a-users-file.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with

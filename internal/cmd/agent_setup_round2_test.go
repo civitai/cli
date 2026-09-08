@@ -11,10 +11,20 @@ import (
 
 // The round-2 audit guards for `civitai agent-setup`.
 //
-// 🔴 EVERY TEST BELOW WAS WATCHED RED ON c801ab8 — the tip of the round-1 fix —
-// AND GREEN AFTER. They are regression tests, not invariant guards: each names a
-// behaviour that was MEASURED wrong by running the binary against a file a real
-// install has. The red-then-green matrix is in the PR.
+// 🔴 SEVEN OF THE TEN TESTS BELOW WERE WATCHED RED ON c801ab8 — the tip of the
+// round-1 fix — AND GREEN AFTER. Each of those names a behaviour that was
+// MEASURED wrong by running the binary against a file a real install has, and the
+// red-then-green matrix is in the PR.
+//
+// 🔴 THE OTHER THREE ARE INVARIANT GUARDS AND MUST NOT BE COUNTED AS REGRESSION
+// COVERAGE. Replayed against c801ab8's payload,
+// TestARunWithoutATokenAndWithoutAHeaderStillSaysSo,
+// TestATrailingCommaDoesNotMakeRubbishAcceptable and
+// TestAStrictAgentStaysStrictAboutTrailingCommas PASS. They are deliberate
+// OVER-WIDENING CONTROLS — each pins the direction its sibling fix could
+// overshoot in — and they are correct and wanted; what was wrong was the blanket
+// sentence here, which made a maintainer count ten regression guards where there
+// are seven. Each of the three says so at its own docstring too.
 //
 // 🔴 THEY ARE ALL BLACK-BOX ON PURPOSE. Every assertion below drives the command
 // through `run` and reads the file or the payload it produced, so the same test
@@ -183,6 +193,10 @@ func TestARunWithoutATokenDoesNotCallAPreservedHeaderAbsent(t *testing.T) {
 // the guard above cannot be satisfied by a command that simply stopped saying
 // anything about what a header-less registration reaches. This is the case item
 // 34 exists for and its wording must survive unchanged.
+//
+// 🔴 OVER-WIDENING CONTROL — AN INVARIANT GUARD, NOT A REGRESSION TEST. It PASSES
+// on c801ab8: nothing was ever wrong with the genuinely header-less case. Do not
+// count it as coverage of the finding above it.
 func TestARunWithoutATokenAndWithoutAHeaderStillSaysSo(t *testing.T) {
 	dir, _ := agentSetupProject(t)
 	out, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude)
@@ -321,6 +335,10 @@ func TestATrailingCommaIsToleratedLikeAComment(t *testing.T) {
 // TestATrailingCommaDoesNotMakeRubbishAcceptable is the direction a leniency fix
 // is most likely to break. Refuse-rather-than-repair is still the rule, and a
 // parser loosened for one JSONC form must not start accepting broken JSON.
+//
+// 🔴 OVER-WIDENING CONTROL — AN INVARIANT GUARD, NOT A REGRESSION TEST. It PASSES
+// on c801ab8, which refused these inputs for the wrong reason (it refused
+// everything). Do not count it as coverage of the trailing-comma finding.
 func TestATrailingCommaDoesNotMakeRubbishAcceptable(t *testing.T) {
 	for _, tc := range []struct{ name, src string }{
 		{"a doubled comma", "{\n  \"a\": [1,,],\n}\n"},
@@ -350,6 +368,9 @@ func TestATrailingCommaDoesNotMakeRubbishAcceptable(t *testing.T) {
 // TestAStrictAgentStaysStrictAboutTrailingCommas: tolerating a trailing comma is
 // gated on the agent's own parser, exactly as tolerating a comment is. Claude
 // Code's `.mcp.json` is plain JSON.
+//
+// 🔴 OVER-WIDENING CONTROL — AN INVARIANT GUARD, NOT A REGRESSION TEST. It PASSES
+// on c801ab8 for the same reason as the one above. Do not count it as coverage.
 func TestAStrictAgentStaysStrictAboutTrailingCommas(t *testing.T) {
 	dir, _ := agentSetupProject(t)
 	path := filepath.Join(dir, ".mcp.json")
@@ -381,7 +402,7 @@ func TestJSONIsEmittedForEveryFailureShape(t *testing.T) {
 	t.Run("plan-time refusal", func(t *testing.T) {
 		dir, home := agentSetupProject(t)
 		writeFile(t, filepath.Join(home, ".codex", "config.toml"), "[mcp_servers\nx = 1\n")
-		assertBlockedWritePayload(t, dir, agentCodex, "does not parse")
+		assertBlockedWritePayload(t, dir, agentCodex, "does not parse", agentsFilename, claudeFilename)
 	})
 
 	t.Run("write-time refusal: a broken symlink destination", func(t *testing.T) {
@@ -393,7 +414,7 @@ func TestJSONIsEmittedForEveryFailureShape(t *testing.T) {
 		if err := os.Symlink(filepath.Join(home, "gone", "codex.toml"), link); err != nil {
 			t.Skipf("symlinks unavailable: %v", err)
 		}
-		assertBlockedWritePayload(t, dir, agentCodex, "symlink")
+		assertBlockedWritePayload(t, dir, agentCodex, "symlink", agentsFilename, claudeFilename)
 	})
 
 	t.Run("write-time failure: an unwritable directory", func(t *testing.T) {
@@ -409,7 +430,7 @@ func TestJSONIsEmittedForEveryFailureShape(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = os.Chmod(codexDir, 0o700) })
-		assertBlockedWritePayload(t, dir, agentCodex, "permission denied")
+		assertBlockedWritePayload(t, dir, agentCodex, "permission denied", agentsFilename, claudeFilename)
 	})
 
 	t.Run("--check --json on an unparseable config", func(t *testing.T) {
@@ -452,11 +473,19 @@ func TestJSONIsEmittedForEveryFailureShape(t *testing.T) {
 	})
 }
 
-// assertBlockedWritePayload is the shared half of the three write-run cases: a
+// assertBlockedWritePayload is the shared half of the blocked write-run cases: a
 // payload on stdout, `ok: false`, a non-zero exit, a `blocked` row carrying the
-// reason — and the instruction files written anyway, because they have nothing
-// to do with the MCP config.
-func assertBlockedWritePayload(t *testing.T, dir, agent, wantReason string) {
+// reason — and every file in wantWritten present afterwards, because the three
+// writes are independent of each other.
+//
+// 🔴 wantWritten IS A PARAMETER RATHER THAN THE TWO INSTRUCTION FILES, BECAUSE
+// THE DOCSTRING WAS WIDER THAN THE BODY. It said "the instruction files written
+// anyway, because they have nothing to do with the MCP config", which is true of
+// the three MCP fixtures and describes nothing at all about a fixture whose
+// FIRST write is the one that fails — the only arrangement in which the
+// independence this helper asserts is observable. See
+// TestAFirstWriteFailureDoesNotStopTheLaterOnes.
+func assertBlockedWritePayload(t *testing.T, dir, agent, wantReason string, wantWritten ...string) {
 	t.Helper()
 	out, _, err := run(t, "agent-setup", "--json", "--dir", dir, "--agent", agent)
 	if err == nil {
@@ -484,9 +513,9 @@ func assertBlockedWritePayload(t *testing.T, dir, agent, wantReason string) {
 	if blocked.Path == "" {
 		t.Error("the blocked row names no path")
 	}
-	for _, name := range []string{agentsFilename, claudeFilename} {
+	for _, name := range wantWritten {
 		if _, statErr := os.Stat(filepath.Join(dir, name)); statErr != nil {
-			t.Errorf("%s was not written despite the MCP failure being unrelated to it: %v", name, statErr)
+			t.Errorf("%s was not written despite the failing step being unrelated to it: %v", name, statErr)
 		}
 	}
 	// 🔴 EVERY ROW IS TRUE OF WHAT HAPPENED. The old code returned on the FIRST
@@ -560,25 +589,37 @@ func TestDryRunReportsADestinationTheRealRunRefuses(t *testing.T) {
 
 // TestDryRunAndTheRealRunAgreeOnEveryAction is the ledger behind that finding
 // rather than a second copy of the one case that was wrong: for each fixture,
-// the dry run's `changes` and the real run's must carry the same path and the
-// same action, row for row.
+// the dry run's `changes` and the real run's must carry the same path, the same
+// action and the same `ok`, row for row.
 //
 // 🔴 THE ACTIONS ARE COMPARED, NOT JUST THE PATHS. A dry run reporting `create`
 // where the real run reports `blocked` is exactly the defect, and a path-only
 // comparison is satisfied by both.
+//
+// 🔴 THE NAME SAYS "EVERY ACTION" AND ROUND 2's FIXTURES ONLY VARIED THE MCP
+// DESTINATION — which is how round 2's own fix shipped with the identical lie
+// alive for AGENTS.md: the destination check went into `planMCPConfig` and the
+// two instruction-file plans did not get it. Measured at 897c1cc, `--dry-run
+// --json` said `create` / `ok: true` / exit 0 for a broken-symlink AGENTS.md the
+// real run reported `blocked` / `ok: false` / exit 1. There is now a fixture per
+// WRITTEN FILE, and `wantBlocked` names which row each one must block, so a
+// future change that makes both runs agree on the WRONG action still fails.
 func TestDryRunAndTheRealRunAgreeOnEveryAction(t *testing.T) {
 	for _, tc := range []struct {
 		name  string
 		setUp func(t *testing.T, dir, home string)
+		// wantBlocked, when set, is the basename of the row that must carry the
+		// `blocked` action in BOTH runs. "" means every row must be actionable.
+		wantBlocked string
 	}{
-		{"a fresh project", func(*testing.T, string, string) {}},
-		{"an existing config", func(t *testing.T, _, home string) {
+		{name: "a fresh project", setUp: func(*testing.T, string, string) {}},
+		{name: "an existing config", setUp: func(t *testing.T, _, home string) {
 			writeFile(t, filepath.Join(home, ".codex", "config.toml"), "model = \"gpt-5\"\n")
 		}},
-		{"a config that does not parse", func(t *testing.T, _, home string) {
+		{name: "a config that does not parse", setUp: func(t *testing.T, _, home string) {
 			writeFile(t, filepath.Join(home, ".codex", "config.toml"), "[mcp_servers\nx = 1\n")
-		}},
-		{"a broken symlink destination", func(t *testing.T, _, home string) {
+		}, wantBlocked: "config.toml"},
+		{name: "a broken symlink MCP destination", setUp: func(t *testing.T, _, home string) {
 			link := filepath.Join(home, ".codex", "config.toml")
 			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 				t.Fatal(err)
@@ -586,14 +627,37 @@ func TestDryRunAndTheRealRunAgreeOnEveryAction(t *testing.T) {
 			if err := os.Symlink(filepath.Join(home, "gone", "codex.toml"), link); err != nil {
 				t.Skipf("symlinks unavailable: %v", err)
 			}
-		}},
+		}, wantBlocked: "config.toml"},
+		{name: "a broken symlink AGENTS.md", setUp: func(t *testing.T, dir, _ string) {
+			if err := os.Symlink(filepath.Join(dir, "gone", agentsFilename),
+				filepath.Join(dir, agentsFilename)); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+		}, wantBlocked: agentsFilename},
+		{name: "a broken symlink CLAUDE.md", setUp: func(t *testing.T, dir, _ string) {
+			if err := os.Symlink(filepath.Join(dir, "gone", claudeFilename),
+				filepath.Join(dir, claudeFilename)); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+		}, wantBlocked: claudeFilename},
+		{name: "an AGENTS.md that cannot be read", setUp: func(t *testing.T, dir, _ string) {
+			if err := os.MkdirAll(filepath.Join(dir, agentsFilename), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, wantBlocked: agentsFilename},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir, home := agentSetupProject(t)
 			tc.setUp(t, dir, home)
 
-			dryOut, _, _ := run(t, "agent-setup", "--dry-run", "--json", "--dir", dir, "--agent", agentCodex)
-			realOut, _, _ := run(t, "agent-setup", "--json", "--dir", dir, "--agent", agentCodex)
+			dryOut, _, dryErr := run(t, "agent-setup", "--dry-run", "--json", "--dir", dir, "--agent", agentCodex)
+			// Checked BEFORE the real run, which is the only moment at which "the
+			// dry run wrote nothing" is observable at all.
+			if _, statErr := os.Lstat(filepath.Join(dir, claudeFilename)); statErr == nil &&
+				tc.wantBlocked != claudeFilename {
+				t.Error("--dry-run wrote " + claudeFilename)
+			}
+			realOut, _, realErr := run(t, "agent-setup", "--json", "--dir", dir, "--agent", agentCodex)
 
 			var dry, real agentSetupJSON
 			if err := json.Unmarshal([]byte(dryOut), &dry); err != nil {
@@ -601,6 +665,9 @@ func TestDryRunAndTheRealRunAgreeOnEveryAction(t *testing.T) {
 			}
 			if err := json.Unmarshal([]byte(realOut), &real); err != nil {
 				t.Fatalf("bad write-run json: %v\n%q", err, realOut)
+			}
+			if (dryErr == nil) != (realErr == nil) {
+				t.Errorf("--dry-run err = %v, the real run err = %v — the exit codes disagree", dryErr, realErr)
 			}
 			if len(dry.Changes) != len(real.Changes) {
 				t.Fatalf("--dry-run reports %d rows, the real run %d:\n%s\n%s",
@@ -617,6 +684,27 @@ func TestDryRunAndTheRealRunAgreeOnEveryAction(t *testing.T) {
 					t.Errorf("row %d action: dry %q, real %q — a dry run that reports an action the write "+
 						"path would not take is the whole defect",
 						i, dry.Changes[i].Action, real.Changes[i].Action)
+				}
+			}
+			// 🔴 THE AGREEMENT ABOVE IS SATISFIED BY TWO RUNS THAT ARE BOTH WRONG.
+			// This half pins WHICH row the fixture is about, in both runs, so a
+			// regression that reports `create` for a refused destination on BOTH
+			// sides is still red.
+			for _, p := range []struct {
+				label   string
+				payload agentSetupJSON
+			}{{"--dry-run", dry}, {"the real run", real}} {
+				got := ""
+				for _, c := range p.payload.Changes {
+					if c.Action == actionBlocked {
+						got = filepath.Base(c.Path)
+					}
+				}
+				if got != tc.wantBlocked {
+					t.Errorf("%s blocked %q, want %q", p.label, got, tc.wantBlocked)
+				}
+				if p.payload.OK != (tc.wantBlocked == "") {
+					t.Errorf("%s ok = %t with wantBlocked %q", p.label, p.payload.OK, tc.wantBlocked)
 				}
 			}
 		})

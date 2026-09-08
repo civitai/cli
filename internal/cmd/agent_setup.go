@@ -205,6 +205,24 @@ type agentChangeJSON struct {
 // preserved in the form that matters — `ok: true` still means every step
 // happened — and the one it used to rely on ("a payload implies success") is
 // gone deliberately, because the alternative was writing nothing at all.
+//
+// 🔴 THERE IS A THIRD SHAPE, AND IT EXISTS SO THE FLAG HAS NO SILENT OUTCOME.
+// `--json` used to emit ZERO BYTES for any failure that happened before a row
+// could be built — an AGENTS.md that is a directory, a duplicated managed block,
+// a config root that cannot be resolved — while the enumerated failures emitted a
+// full payload. Four instances of that were closed one at a time and the class
+// stayed open, so it is now closed at the ONE place stdout is written
+// (agentSetupEmitter): any error that escapes without a payload is emitted as
+// `track` / `agent` / `ok: false` / `error`, with NEITHER array. So a consumer
+// discriminates on which of the three is present — `checks`, `changes`, or
+// `error` — and never on stdout being empty. `error` is present ONLY on that
+// envelope: a run that produced rows says what went wrong IN the rows.
+//
+// 🔴 THE ONE EXCEPTION IS EXIT 2, AND IT IS STATED RATHER THAN ABSOLUTE. A
+// mistake about the INVOCATION — an unknown `--agent`, a `--dir` that is not a
+// directory, `--track api` — is reported on stderr like every other command's
+// usage error, because there is no run to describe. `--json` promises a payload
+// for every run that STARTED, not for a command line that never named one.
 type agentSetupJSON struct {
 	Track   string            `json:"track"`
 	Agent   string            `json:"agent"`
@@ -212,6 +230,41 @@ type agentSetupJSON struct {
 	Checks  []agentCheckJSON  `json:"checks,omitempty"`
 	Changes []agentChangeJSON `json:"changes,omitempty"`
 	DryRun  bool              `json:"dryRun,omitempty"`
+	Error   string            `json:"error,omitempty"`
+}
+
+// agentSetupEmitter is the ONE place `agent-setup` writes stdout, and the only
+// thing that knows whether a payload got there. Both modes emit through it, so
+// the "no silent outcome" rule above is a property of the code path rather than
+// of an enumeration somebody has to keep complete.
+type agentSetupEmitter struct {
+	w       io.Writer
+	json    bool
+	emitted bool
+}
+
+// emit writes the payload in whichever channel the flags asked for and records
+// that a payload happened. render is the human view of the SAME payload.
+func (e *agentSetupEmitter) emit(payload agentSetupJSON, render func(io.Writer, agentSetupJSON)) error {
+	e.emitted = true
+	if e.json {
+		// 🔴 The JSON path carries ZERO styling — internal/ui/CONVENTION.md rule
+		// 1 — and goes through the same writeJSON every other command uses.
+		return writeJSON(e.w, payload)
+	}
+	render(e.w, payload)
+	return nil
+}
+
+// envelope is the fallback: an error reached the top with no rows behind it. It
+// is a no-op unless `--json` was asked for and nothing was emitted, so it cannot
+// double-print or invent a second report of a run that already described itself.
+func (e *agentSetupEmitter) envelope(track, agent string, err error) {
+	if !e.json || e.emitted || err == nil {
+		return
+	}
+	e.emitted = true
+	_ = writeJSON(e.w, agentSetupJSON{Track: track, Agent: agent, OK: false, Error: err.Error()})
 }
 
 // agentSetupVerdict is the ONE place `ok` is computed for `--check`.
@@ -321,11 +374,21 @@ this CLI's own config, which your coding agent does not read.
 
 EXIT CODES: --check exits 1 when a check failed, 0 otherwise. A write run exits
 0 when every step happened and 1 when one did not -- a config that does not
-parse, a destination it will not write, a file it could not write -- and each of
-those is a 'blocked' row in the report with 'ok' false, never a silent success.
-A bad --agent, a --dir that does not exist or is not a directory, and --track api
-all exit 2. 'authenticated' is REPORTED by --check and never fails it: an
-unauthenticated setup is a success, not a failure.`,
+parse, a destination it will not write (for ANY of the three files), a file it
+could not write -- and each of those is a 'blocked' row in the report with 'ok'
+false, never a silent success. --dry-run reports the same rows and the same exit
+code without writing. THE ONE STEP THAT DOES NOT HAPPEN AND STILL EXITS 0 is the
+'manual' row: --agent other, or a user-scoped agent with no resolvable home,
+where there is no file for this CLI to write and the config is printed for you to
+paste instead. A bad --agent, a --dir that does not exist or is not a directory,
+and --track api all exit 2. 'authenticated' is REPORTED by --check and never
+fails it: an unauthenticated setup is a success, not a failure.
+
+--json HAS THREE SHAPES AND NO SILENT ONE: 'checks' for --check, 'changes' for a
+write or dry run, and -- when a run failed before either could be built -- an
+'error' string with neither array. Discriminate on which is present. The one
+exception is exit 2, a mistake about the invocation rather than a run, which is
+reported on stderr like every other command's usage error.`,
 		Example: `  civitai agent-setup                       # detect the agent and set it up
   civitai agent-setup --agent cursor        # override the detection
   civitai agent-setup --dir ./my-app        # a project other than the cwd
@@ -349,36 +412,13 @@ unauthenticated setup is a success, not a failure.`,
 			if err := resolveAgentSetupDir(dir); err != nil {
 				return err
 			}
-			// 🔴 ABSOLUTE, BECAUSE EVERY PATH IN THE PAYLOAD IS BUILT FROM IT.
-			// With the default `--dir .` the `--json` `path` fields came out
-			// relative (`AGENTS.md`, `.mcp.json`) while the README's documented
-			// example shows absolute ones — so a script resolving them against
-			// anything but the CLI's own cwd got the wrong file. A path a consumer
-			// cannot resolve without also knowing the working directory is not a
-			// path.
-			absDir, err := filepath.Abs(dir)
-			if err != nil {
-				return err
-			}
-
-			env := liveAgentEnv(absDir)
-			if resolvedAgent == "" {
-				resolvedAgent = detectAgent(env)
-			}
-
-			// config.Load is the only "network-shaped" thing here and it touches
-			// no network: it reads ~/.config/civitai/config.yaml plus the
-			// CIVITAI_* environment. The token decides whether the MCP entries
-			// carry an Authorization header, and nothing else.
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-
-			if check {
-				return runAgentSetupCheck(cmd.OutOrStdout(), env, resolvedTrack, resolvedAgent, cfg.Token(), jsonOut)
-			}
-			return runAgentSetupWrite(cmd.OutOrStdout(), env, resolvedTrack, resolvedAgent, cfg.Token(), jsonOut, dryRun)
+			// Everything above is a mistake about the INVOCATION and exits 2 on
+			// stderr; everything below is a RUN, and a run always describes itself
+			// on stdout — see agentSetupJSON's third shape.
+			emit := &agentSetupEmitter{w: cmd.OutOrStdout(), json: jsonOut}
+			runErr := runAgentSetup(emit, &resolvedAgent, resolvedTrack, dir, check, dryRun)
+			emit.envelope(resolvedTrack, resolvedAgent, runErr)
+			return runErr
 		},
 	}
 	cmd.Flags().StringVar(&track, "track", trackApp,
@@ -396,31 +436,58 @@ unauthenticated setup is a success, not a failure.`,
 	return cmd
 }
 
+// runAgentSetup is the body of the command, split out so the ONE stdout emitter
+// wraps every failure it can reach. resolvedAgent is a pointer because detection
+// happens in here and the envelope wants the answer even when the run then
+// failed.
+func runAgentSetup(emit *agentSetupEmitter, resolvedAgent *string, track, dir string, check, dryRun bool) error {
+	// 🔴 ABSOLUTE, BECAUSE EVERY PATH IN THE PAYLOAD IS BUILT FROM IT.
+	// With the default `--dir .` the `--json` `path` fields came out relative
+	// (`AGENTS.md`, `.mcp.json`) while the README's documented example shows
+	// absolute ones — so a script resolving them against anything but the CLI's
+	// own cwd got the wrong file. A path a consumer cannot resolve without also
+	// knowing the working directory is not a path.
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return err
+	}
+
+	env := liveAgentEnv(absDir)
+	if *resolvedAgent == "" {
+		*resolvedAgent = detectAgent(env)
+	}
+
+	// config.Load is the only "network-shaped" thing here and it touches no
+	// network: it reads ~/.config/civitai/config.yaml plus the CIVITAI_*
+	// environment. The token decides whether the MCP entries carry an
+	// Authorization header, and nothing else.
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+
+	if check {
+		return runAgentSetupCheck(emit, env, track, *resolvedAgent, cfg.Token())
+	}
+	return runAgentSetupWrite(emit, env, track, *resolvedAgent, cfg.Token(), dryRun)
+}
+
 // ---------------------------------------------------------------------------
 // --check
 // ---------------------------------------------------------------------------
 
 // runAgentSetupCheck verifies a setup and writes NOTHING. Every filesystem call
 // below is a read.
-func runAgentSetupCheck(out io.Writer, env agentEnv, track, agent, token string, jsonOut bool) error {
-	checks, err := agentSetupChecks(env, agent, token)
-	if err != nil {
-		return err
-	}
+func runAgentSetupCheck(emit *agentSetupEmitter, env agentEnv, track, agent, token string) error {
+	checks := agentSetupChecks(env, agent, token)
 	payload := agentSetupJSON{
 		Track:  track,
 		Agent:  agent,
 		OK:     agentSetupVerdict(checks, agent),
 		Checks: checks,
 	}
-	if jsonOut {
-		// 🔴 The JSON path carries ZERO styling — internal/ui/CONVENTION.md rule
-		// 1 — and goes through the same writeJSON every other command uses.
-		if err := writeJSON(out, payload); err != nil {
-			return err
-		}
-	} else {
-		printAgentSetupChecks(out, payload)
+	if err := emit.emit(payload, printAgentSetupChecks); err != nil {
+		return err
 	}
 	if payload.OK {
 		return nil
@@ -442,17 +509,26 @@ func countFailedChecks(checks []agentCheckJSON, agent string) int {
 }
 
 // agentSetupChecks builds the rows, in the published order.
-func agentSetupChecks(env agentEnv, agent, token string) ([]agentCheckJSON, error) {
+//
+// 🔴 IT RETURNS NO ERROR, AND THAT IS THE SHAPE RATHER THAN A SIMPLIFICATION. An
+// `--check` run that cannot READ one of the three files used to return the read
+// error up to `main`, which printed it on stderr and left `--json`'s stdout
+// EMPTY at exit 1 — the same defect the MCP rows already fixed one case of, with
+// `AGENTS.md`/`CLAUDE.md` still open. Measured on a project where `AGENTS.md` is
+// a directory. A function that CAN return an error here is a function that will
+// grow another silent exit, so it cannot: every failure is a row saying which
+// file it was and why it could not be read.
+func agentSetupChecks(env agentEnv, agent, token string) []agentCheckJSON {
 	checks := []agentCheckJSON{
 		{Name: checkCLIVersion, OK: true, Detail: version},
 	}
 
 	agentsPath := filepath.Join(env.Dir, agentsFilename)
 	raw, found, err := readIfExists(agentsPath)
-	if err != nil {
-		return nil, err
-	}
 	switch state := agentsMDBlockState(string(raw)); {
+	case err != nil:
+		checks = append(checks, agentCheckJSON{Name: checkAgentsMD, OK: false,
+			Detail: "could not read " + agentsPath + ": " + err.Error()})
 	case !found:
 		checks = append(checks, agentCheckJSON{Name: checkAgentsMD, OK: false,
 			Detail: "missing at " + agentsPath + " — run `civitai agent-setup`"})
@@ -481,11 +557,11 @@ func agentSetupChecks(env agentEnv, agent, token string) ([]agentCheckJSON, erro
 	// checkCountsTowardVerdict. The detail below says so, because a red row whose
 	// absence from the verdict is invisible reads as a bug in the verdict.
 	claudePath := filepath.Join(env.Dir, claudeFilename)
-	claudeRaw, claudeFound, err := readIfExists(claudePath)
-	if err != nil {
-		return nil, err
-	}
+	claudeRaw, claudeFound, claudeErr := readIfExists(claudePath)
 	switch {
+	case claudeErr != nil:
+		checks = append(checks, agentCheckJSON{Name: checkClaudeMD, OK: false,
+			Detail: "could not read " + claudePath + ": " + claudeErr.Error()})
 	case !claudeFound && agent != agentClaude:
 		checks = append(checks, agentCheckJSON{Name: checkClaudeMD, OK: false,
 			Detail: "missing at " + claudePath + " — " + agent + " reads " + agentsFilename +
@@ -501,11 +577,7 @@ func agentSetupChecks(env agentEnv, agent, token string) ([]agentCheckJSON, erro
 		checks = append(checks, agentCheckJSON{Name: checkClaudeMD, OK: true, Detail: claudePath})
 	}
 
-	mcpRows, err := agentSetupMCPChecks(env, agent)
-	if err != nil {
-		return nil, err
-	}
-	checks = append(checks, mcpRows...)
+	checks = append(checks, agentSetupMCPChecks(env, agent)...)
 
 	if token != "" {
 		checks = append(checks, agentCheckJSON{Name: checkAuthenticated, OK: true,
@@ -514,7 +586,7 @@ func agentSetupChecks(env agentEnv, agent, token string) ([]agentCheckJSON, erro
 		checks = append(checks, agentCheckJSON{Name: checkAuthenticated, OK: false,
 			Detail: "no token — run `civitai login`"})
 	}
-	return checks, nil
+	return checks
 }
 
 // agentSetupMCPChecks reports one row per server.
@@ -523,7 +595,7 @@ func agentSetupChecks(env agentEnv, agent, token string) ([]agentCheckJSON, erro
 // agent this CLI has no target for, and a user-scoped target with no resolvable
 // home directory, are both genuinely unfinished setups — but a row reading "not
 // registered in " with an empty path is an answer with none of the content.
-func agentSetupMCPChecks(env agentEnv, agent string) ([]agentCheckJSON, error) {
+func agentSetupMCPChecks(env agentEnv, agent string) []agentCheckJSON {
 	t, known := agentTargets[agent]
 	if !known {
 		rows := make([]agentCheckJSON, 0, len(civitaiMCPServers))
@@ -532,7 +604,7 @@ func agentSetupMCPChecks(env agentEnv, agent string) ([]agentCheckJSON, error) {
 				Detail: "agent " + agent + " has no config file this CLI knows — register " + srv.URL +
 					" by hand (`civitai agent-setup --agent other` prints the JSON)"})
 		}
-		return rows, nil
+		return rows
 	}
 	path, ok := agentConfigPath(env, agent)
 	if !ok {
@@ -541,7 +613,7 @@ func agentSetupMCPChecks(env agentEnv, agent string) ([]agentCheckJSON, error) {
 			rows = append(rows, agentCheckJSON{Name: srv.Check, OK: false,
 				Detail: agent + "'s MCP config is user-scoped and this CLI could not resolve a home directory — set HOME and re-run"})
 		}
-		return rows, nil
+		return rows
 	}
 	registered, err := mcpRegisteredServers(path, t)
 	if err != nil {
@@ -558,7 +630,7 @@ func agentSetupMCPChecks(env agentEnv, agent string) ([]agentCheckJSON, error) {
 			rows = append(rows, agentCheckJSON{Name: srv.Check, OK: false,
 				Detail: "could not read " + agent + "'s MCP config: " + err.Error()})
 		}
-		return rows, nil
+		return rows
 	}
 	rows := make([]agentCheckJSON, 0, len(civitaiMCPServers))
 	for _, srv := range civitaiMCPServers {
@@ -569,7 +641,7 @@ func agentSetupMCPChecks(env agentEnv, agent string) ([]agentCheckJSON, error) {
 		rows = append(rows, agentCheckJSON{Name: srv.Check, OK: false,
 			Detail: "not registered in " + path})
 	}
-	return rows, nil
+	return rows
 }
 
 // printAgentSetupChecks renders the human view from the SAME payload `--json`
@@ -628,24 +700,32 @@ func printAgentSetupChecks(w io.Writer, payload agentSetupJSON) {
 // The run still exits NON-ZERO, and `ok` is false. Degrading is not pretending:
 // a script that reads `ok: true` and exit 0 must be able to conclude every step
 // happened, so a partial run says so in both channels at once.
-func runAgentSetupWrite(out io.Writer, env agentEnv, track, agent, token string, jsonOut, dryRun bool) error {
+func runAgentSetupWrite(emit *agentSetupEmitter, env agentEnv, track, agent, token string, dryRun bool) error {
 	var changes []agentChangeJSON
 
-	agentsPath, agentsContent, agentsAction, err := planAgentsMD(env.Dir)
-	if err != nil {
-		return err
+	// 🔴 A PLAN-TIME REFUSAL IS A `blocked` ROW FOR *EVERY* FILE, NOT JUST THE
+	// MCP CONFIG. Round 2 moved the destination check into `planMCPConfig` and
+	// left the two instruction files reaching it only at WRITE time, so the exact
+	// defect it fixed survived one file over: with `AGENTS.md` a broken symlink,
+	// `--dry-run --json` reported `create` / `ok: true` / exit 0 while the real
+	// run reported `blocked` / `ok: false` / exit 1. Measured. And a plan error
+	// here used to be `return err`, which is the OTHER defect — `--json` emitting
+	// zero bytes. Both are closed by giving all three files the same shape: plan,
+	// and if the plan refuses, that file's row carries the refusal.
+	planRow := func(path string, action fileAction, reason string, err error) agentChangeJSON {
+		if err != nil {
+			return agentChangeJSON{Path: path, Action: actionBlocked, Reason: err.Error()}
+		}
+		return agentChangeJSON{Path: path, Action: string(action), Reason: reason}
 	}
-	agentsRow := len(changes)
-	changes = append(changes, agentChangeJSON{
-		Path: agentsPath, Action: string(agentsAction), Reason: agentsMDReason(agentsAction)})
 
-	claudePath, claudeContent, claudeAction, err := planClaudeMD(env.Dir)
-	if err != nil {
-		return err
-	}
+	agentsPath, agentsContent, agentsAction, agentsErr := planAgentsMD(env.Dir)
+	agentsRow := len(changes)
+	changes = append(changes, planRow(agentsPath, agentsAction, agentsMDReason(agentsAction), agentsErr))
+
+	claudePath, claudeContent, claudeAction, claudeErr := planClaudeMD(env.Dir)
 	claudeRow := len(changes)
-	changes = append(changes, agentChangeJSON{
-		Path: claudePath, Action: string(claudeAction), Reason: claudeMDReason(claudeAction)})
+	changes = append(changes, planRow(claudePath, claudeAction, claudeMDReason(claudeAction), claudeErr))
 
 	mcpPath, mcpData, mcpChange, mcpAuth, mcpErr := planMCPConfig(env, agent, token)
 	if mcpErr != nil {
@@ -670,11 +750,20 @@ func runAgentSetupWrite(out io.Writer, env agentEnv, track, agent, token string,
 	// claimed actions for files nothing ever tried to write. The three files are
 	// independent of each other, exactly as the MCP refusal is independent of the
 	// instruction files, so each is attempted and each reports its own outcome.
-	writeFailed := false
 	if !dryRun {
+		// 🔴 `attempt` NEVER SHORT-CIRCUITS, AND THAT IS THE INVARIANT. Restoring
+		// an abort-on-first-failure here (`if anyBlocked(changes) { return }`)
+		// emits a payload claiming `create` for files nothing ever tried to write.
+		// TestAFirstWriteFailureDoesNotStopTheLaterOnes is the guard: its fixture
+		// fails the FIRST write, which is the only arrangement in which a
+		// short-circuit is observable at all.
 		attempt := func(i int, do func() error) {
+			if changes[i].Action == actionBlocked {
+				// The plan already refused this file; there is nothing to try, and
+				// re-reporting it would overwrite the plan's own reason.
+				return
+			}
 			if err := do(); err != nil {
-				writeFailed = true
 				changes[i].Action = actionBlocked
 				changes[i].Reason = err.Error()
 			}
@@ -699,38 +788,44 @@ func runAgentSetupWrite(out io.Writer, env agentEnv, track, agent, token string,
 		})
 	}
 
-	ok := mcpErr == nil && !writeFailed
-	if jsonOut {
-		if err := writeJSON(out, agentSetupJSON{
-			Track: track, Agent: agent, OK: ok, Changes: changes, DryRun: dryRun,
-		}); err != nil {
-			return err
-		}
-	} else {
-		printAgentSetupWrite(out, env, agent, token, changes, mcpAuth, dryRun)
+	// 🔴 `ok`, THE EXIT CODE AND THE ERROR ALL READ THE ROWS. One predicate, so
+	// `ok: true` beside a `blocked` row is unreachable — and so is the case the
+	// three-way version missed: a dry run whose PLAN refused a file exited 0
+	// because no write had failed and `mcpErr` was nil.
+	blocked := blockedRowSummary(changes)
+	if err := emit.emit(agentSetupJSON{
+		Track: track, Agent: agent, OK: blocked == "", Changes: changes, DryRun: dryRun,
+	}, func(w io.Writer, p agentSetupJSON) {
+		printAgentSetupWrite(w, env, agent, token, p.Changes, mcpAuth, dryRun)
+	}); err != nil {
+		return err
 	}
-	if writeFailed {
-		return fmt.Errorf("%w: %s — the report above lists every step and whether it happened",
-			ErrAgentSetupIncomplete, blockedRowSummary(changes))
+	if blocked == "" {
+		return nil
 	}
-	if mcpErr != nil {
-		return fmt.Errorf("%w: the instruction files were written; the MCP config was not — %v",
-			ErrAgentSetupIncomplete, mcpErr)
+	// 🔴 A DRY RUN DID NOT WRITE THE OTHER FILES, AND MUST NOT SAY IT DID. The
+	// sentence that shipped read "the instruction files were written; the MCP
+	// config was not" unconditionally, and round 2's fix ROUTED A NEW CASE INTO
+	// IT: a broken-symlink destination used to exit 0 under `--dry-run` and now
+	// exits 1, with that claim attached to a run that wrote nothing at all.
+	if dryRun {
+		return fmt.Errorf("%w: %s — this is a dry run, so nothing was written either way; "+
+			"the report above is what the real run would do", ErrAgentSetupIncomplete, blocked)
 	}
-	return nil
+	return fmt.Errorf("%w: %s — the report above lists every step and whether it happened",
+		ErrAgentSetupIncomplete, blocked)
 }
 
 // blockedRowSummary names what did not happen, from the rows themselves, so the
-// error cannot claim a different set of failures from the report above it.
+// error cannot claim a different set of failures from the report above it. It
+// returns "" when nothing is blocked, which is what `ok` and the exit code both
+// branch on — see runAgentSetupWrite.
 func blockedRowSummary(changes []agentChangeJSON) string {
 	var parts []string
 	for _, c := range changes {
 		if c.Action == actionBlocked {
 			parts = append(parts, c.Path+": "+c.Reason)
 		}
-	}
-	if len(parts) == 0 {
-		return "nothing was written"
 	}
 	return strings.Join(parts, "; ")
 }
@@ -910,10 +1005,6 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 			fmt.Fprintln(w, "  "+st.Dim(line))
 		}
 	} else {
-		hasAuth := map[string]bool{}
-		for _, name := range cov.With {
-			hasAuth[name] = true
-		}
 		fmt.Fprintln(w, "\nMCP servers:")
 		for _, srv := range civitaiMCPServers {
 			fmt.Fprintf(w, "  %-22s %s\n", srv.Name, srv.URL)
@@ -922,15 +1013,31 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 			// once at the bottom is how "both servers work anonymously" survived
 			// in seven places: a reader matches the sentence to whichever server
 			// they were looking at.
-			// 🔴 AND NOT WHEN THIS ENTRY ALREADY HAS ONE. The warning is there to
-			// tell a reader that the row they are looking at is short a header; on
-			// an entry that carries one — because they added it, or because an
-			// earlier run did and this merge kept it — it says the opposite of
-			// what is true of their file. Same class as mcpAuthCoverage's finding,
-			// one surface over.
-			if !srv.Anonymous && !hasAuth[srv.Name] {
-				fmt.Fprintf(w, "  %s%s\n", strings.Repeat(" ", 23), st.Warn("needs an Authorization header — "+
-					"this one returns 401 without a credential"))
+			//
+			// 🔴 AND THE ROW IS NEVER SUPPRESSED BY A VALUE THIS COMMAND CANNOT
+			// EVALUATE. Round 2 dropped it whenever the entry carried ANY non-empty
+			// Authorization, which silenced the 401 warning for a Zed config
+			// holding the literal `Bearer <your token>` — the placeholder this
+			// command's own next-step block tells the user to paste. Presence is
+			// not resolution: each kind gets its own honest row, and only this
+			// command's OWN reference, with the variable actually exported, gets
+			// none. See mcpAuthKind.
+			if !srv.Anonymous {
+				pad := strings.Repeat(" ", 23)
+				switch cov.kindOf(srv.Name) {
+				case authManaged:
+					if !tokenIsExported(env) {
+						fmt.Fprintf(w, "  %s%s\n", pad, st.Warn(cov.artefactOf(srv.Name)+" is present and "+
+							"references "+tokenEnvVar+", which is NOT set here — this one returns 401 until "+
+							"you export it"))
+					}
+				case authOpaque:
+					fmt.Fprintf(w, "  %s%s\n", pad, st.Warn("carries "+cov.artefactOf(srv.Name)+" this "+
+						"command did not write — this one returns 401 unless that value resolves to a credential"))
+				default:
+					fmt.Fprintf(w, "  %s%s\n", pad, st.Warn("needs an Authorization header — "+
+						"this one returns 401 without a credential"))
+				}
 			}
 		}
 	}

@@ -441,23 +441,52 @@ tool_timeout_sec = 120
 // pre-existing keys below are what make the per-key path run at all, and the
 // second assertion is that they are STILL THERE after three runs — accumulating
 // is one failure, eroding is the other.
+//
+// 🔴 AND THE PRE-FILE CARRIES A KEY THE MERGE *OWNS*, NOT ONLY KEYS IT HAS NEVER
+// HEARD OF — WHICH IS THE SAME BLIND CLASS ONE LEVEL DOWN. The rewritten fixture
+// used `startup_timeout_sec` (TOML) and `theirEntryKey` (JSON), both of which
+// `renderTOMLServer`/`mcpEntry` emit under NO condition. Item 35 §1 names exactly
+// that: "a fixture built only from never-written keys cannot distinguish 'skip
+// what we re-render' from 'skip a fixed list'." Consequence, measured: the whole
+// test passed on c801ab8, the tree round 2 found the bug in — an invariant guard
+// wearing a regression guard's docstring. `owned` below is the discriminating
+// key: it is in the merge's owned set and is NOT re-rendered on this run, which
+// is the combination c801ab8 dropped.
+//
+// SCOPE, measured rather than assumed: with `owned` added, the CODEX subtest goes
+// red on c801ab8 and the six JSON subtests still pass — round 1's JSON merge was
+// already per-key, and c801ab8's defect was in `mergeTOMLBlock` alone. So the
+// JSON arms remain invariant guards; the TOML arm is the regression one.
+//
+// 🔴 THE ASSERTIONS NAME THE KEYS. `strings.Contains(after3, "45")` matched the
+// digits of a port, a timeout, or any other number anywhere in the file.
 func TestRepeatedRunsAreIdempotent(t *testing.T) {
 	for _, agent := range agentsWithConfigFiles() {
 		t.Run(agent, func(t *testing.T) {
 			dir, _ := agentSetupProject(t)
 			t.Setenv("CIVITAI_TOKEN", credFixtureToken)
+			target := agentTargets[agent]
 			path, _ := agentConfigPath(liveAgentEnv(dir), agent)
-			// A file the USER wrote, in the shape their agent uses, carrying a key
-			// on OUR entry that this command never renders.
-			var pre string
-			if agentTargets[agent].Format == formatTOML {
+			// A file the USER wrote, in the shape their agent uses, carrying TWO
+			// keys on OUR entry: one this command never renders, and one it owns
+			// but does not re-render on a run shaped like this one.
+			//
+			// `owned` is per format because "owned but not re-rendered" is: with a
+			// token Codex re-renders `bearer_token_env_var` and never renders
+			// `http_headers`; the JSON targets re-render `headers` only where the
+			// vendor documents interpolation, so Zed's is owned-and-never-rendered.
+			var pre, owned, unowned string
+			if target.Format == formatTOML {
+				owned, unowned = target.HeadersKey, "startup_timeout_sec"
 				pre = "model = \"gpt-5\"\n\n[mcp_servers.\"civitai\"]\nurl = \"https://mcp.civitai.com/mcp\"\n" +
-					"startup_timeout_sec = 45\n"
+					unowned + " = 45\n" +
+					owned + " = { X-Civitai-Fixture = \"round3\" }\n"
 			} else {
-				t := agentTargets[agent]
-				pre = "{\n  \"theirTopLevelKey\": true,\n  " + strconv.Quote(t.ServersKey) + ": {\n" +
-					"    \"civitai\": {" + strconv.Quote(t.URLKey) + ": \"https://mcp.civitai.com/mcp\", " +
-					"\"theirEntryKey\": 45}\n  }\n}\n"
+				owned, unowned = target.HeadersKey, "theirEntryKey"
+				pre = "{\n  \"theirTopLevelKey\": true,\n  " + strconv.Quote(target.ServersKey) + ": {\n" +
+					"    \"civitai\": {" + strconv.Quote(target.URLKey) + ": \"https://mcp.civitai.com/mcp\", " +
+					strconv.Quote(unowned) + ": 45, " +
+					strconv.Quote(owned) + ": {\"X-Civitai-Fixture\": \"round3\"}}\n  }\n}\n"
 			}
 			writeFile(t, path, pre)
 
@@ -475,10 +504,14 @@ func TestRepeatedRunsAreIdempotent(t *testing.T) {
 				t.Errorf("a third run changed the file:\n--- after 2 ---\n%s\n--- after 3 ---\n%s", after2, after3)
 			}
 			// PREMISE + the erosion half: the user's keys are what make this a MERGE,
-			// and a run that had deleted them would be idempotent about nothing.
-			if !strings.Contains(after3, "45") {
-				t.Errorf("the key the user put on OUR entry was gone by run 3:\n--- before ---\n%s\n--- after ---\n%s",
-					pre, after3)
+			// and a run that had deleted them would be idempotent about nothing. The
+			// KEY NAMES are asserted, plus the value that identifies the owned key as
+			// theirs rather than one this run happened to re-render.
+			for _, want := range []string{unowned, owned, "X-Civitai-Fixture", "round3"} {
+				if !strings.Contains(after3, want) {
+					t.Errorf("%q the user put on OUR entry was gone by run 3:\n--- before ---\n%s\n"+
+						"--- after ---\n%s", want, pre, after3)
+				}
 			}
 		})
 	}

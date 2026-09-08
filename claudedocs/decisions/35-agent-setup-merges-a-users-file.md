@@ -466,3 +466,183 @@ carrying a key on OUR entry that the command never renders, and asserts that key
 is still there after three runs. It was **green on `c801ab8`**: it is coverage
 that was missing, not a defect that was found.
 
+
+# Round 3
+
+Round 2 was re-audited the same way, and the shape that came back is one shape:
+**a guard's description was wider than its body**, four times over. That is what
+let every defect below through a green suite, so it is stated first.
+
+| the sentence | what the body actually did |
+| --- | --- |
+| the extractor's "every invocation" | one invocation |
+| the TOML fixture "a key on OUR entry" | only keys the renderer never writes |
+| `TestRepeatedRunsAreIdempotent`'s "the MERGE's idempotence" | started from an empty project |
+| `TestDryRunAndTheRealRunAgreeOnEveryAction`'s "every action" | four fixtures, all varying only the MCP destination |
+
+## 1. `--dry-run` lied about `AGENTS.md`, exactly as it had about the MCP config
+
+Round 2 moved `checkWriteTargetResolvable` into `planMCPConfig` **and stopped**.
+`writeProjectFile` → `writeFileAtomic` → `resolveWriteTarget` still reached the
+refusal for the two instruction files only at **write** time, so the file
+header's claim that a dry run "cannot report a path or an action the write path
+would not take" was still false — one file over. Measured on `897c1cc`:
+
+```
+$ ln -s /nonexistent/agents.md proj/AGENTS.md
+$ civitai agent-setup --agent claude --dir proj --dry-run --json
+rc=0  ok=true   create AGENTS.md / create CLAUDE.md / create .mcp.json
+$ civitai agent-setup --agent claude --dir proj --json
+rc=1  ok=false  blocked AGENTS.md / create CLAUDE.md / create .mcp.json
+```
+
+`planAgentsMD` and `planClaudeMD` now classify their own destination, and every
+plan-time refusal — for all three files — becomes that file's `blocked` row
+rather than a bare `return err`. `TestDryRunAndTheRealRunAgreeOnEveryAction`
+gained a fixture **per written file**, plus a `wantBlocked` field naming which
+row each fixture must block: agreement alone is satisfied by two runs that are
+both wrong.
+
+## 2. A preserved value was reported as authenticating, in both directions
+
+`mcpAuthCoverageOf` treated **any** non-empty `Authorization` as "carries a
+credential", and `mcpPreservedAuthNote` ended "…and that is what they
+authenticate with". Two measured cases:
+
+1. **Zed with this CLI's own template still in place.** The next-step block tells
+   a Zed user to paste `"headers": {"Authorization": "Bearer <your token>"}`.
+   With that literal on disk the run called the entry authenticating and
+   **dropped** the `needs an Authorization header — this one returns 401 without
+   a credential` row that `c801ab8` printed. The same run then contradicted
+   itself, because Zed's static `Caveat` still said the entries carry no
+   Authorization header.
+2. **Codex, no token.** A leftover `bearer_token_env_var = "CIVITAI_TOKEN"` made
+   the run say "…and that is what they authenticate with" **from the `!hasToken`
+   branch**, which is reached only when `CIVITAI_TOKEN` is unset in this process:
+   the command had just established the reference resolves to nothing. It also
+   called `bearer_token_env_var` an "Authorization header", which it is not —
+   the file contains no header; Codex builds one from the variable name.
+
+Round 2 stated its residual only in the **conservative** direction ("a shape this
+code cannot see is described as absent"). This is the **opposite** direction and
+it was unstated. Items 28 and 34 both say the command does not claim what it
+cannot observe, so the classification is now three-valued (`mcpAuthKind`):
+
+- `authManaged` — byte-for-byte what this command renders for that target. It
+  may be described as *referencing* `CIVITAI_TOKEN`, and, when that variable is
+  unset here, as resolving to nothing until the user exports it.
+- `authOpaque` — present, not this command's, **unevaluable**. Every sentence
+  about one says exactly that: *"…this command did not write that value and
+  cannot tell whether it resolves to a credential."*
+- `authNone` — nothing recognised. The conservative residual, unchanged.
+
+The 401 row is no longer suppressed by a string the command cannot evaluate; each
+kind gets its own honest row instead. Zed's `Caveat` now describes what this
+command **writes** rather than what the file **contains** — a static sentence
+cannot know the second.
+
+🔴 **Both residuals now stated.** (a) conservative: an unrecognised shape reads
+as absent. (b) optimistic, closed: material this code *can* see is not thereby a
+working credential, which is why `authOpaque` exists.
+
+## 3. `--json` still emitted zero bytes outside the enumerated four shapes
+
+Round 2 closed four **instances** and asserted an **absolute** — "never as an
+empty stdout". Measured on `897c1cc`, all rc 1 with 0 bytes on stdout:
+
+```
+mkdir proj/AGENTS.md ; … --json
+mkdir proj/AGENTS.md ; … --check --json      # the surface developer.civitai.com reads
+mkdir proj/AGENTS.md ; … --dry-run --json
+env -i … --agent codex --json                # "neither $XDG_CONFIG_HOME nor $HOME are defined"
+```
+
+The class is now closed at the **one place stdout is written**
+(`agentSetupEmitter`), not per instance: `agentSetupChecks` returns no error at
+all — a file it cannot read is a failed row — and any error that still escapes
+without a payload is emitted as the **third shape**, `track` / `agent` /
+`ok: false` / `error`, with neither array. A consumer discriminates on which of
+`checks` / `changes` / `error` is present.
+
+🔴 **The one exception is STATED rather than absolute.** Exit `2` is a mistake
+about the *invocation* — unknown `--agent`, a bad `--dir`, `--track api` — and
+there is no run to describe, so it goes to stderr like every other command's
+usage error. `TestAUsageErrorStillEmitsNoPayload` is the control that keeps
+"close the class" from widening into it.
+
+## 4. Write-independence had no guard, and the mutant survived the package
+
+Inserting `if writeFailed { return }` at the top of `runAgentSetupWrite`'s
+`attempt` — restoring abort-on-first-failure — **survived `go test
+./internal/cmd`** at `897c1cc` (rc 0). Built and run against a broken-symlink
+`AGENTS.md`, that mutant emitted `blocked / create / create` while only the
+symlink existed on disk: a payload claiming `create` for two files nothing
+attempted, precisely what §4 above says independence prevents.
+
+`assertBlockedWritePayload` carried the right assertion; all three of its
+fixtures failed the **last** write, so an abort-on-first mutant never skipped
+anything. `TestAFirstWriteFailureDoesNotStopTheLaterOnes` fails the **first**
+write, at write time rather than plan time — `AGENTS.md` symlinked to an existing
+file inside a `0500` directory, so the destination resolves and the atomic write's
+temp file cannot be created. With the mutant applied it is the **only** test in
+the package that fails; without it, green.
+
+Its docstring says it is a **mutation guard, not a regression test**: `897c1cc`
+already has the behaviour, so it passes there. `assertBlockedWritePayload`'s
+`wantWritten` is now a parameter for the same reason — its docstring said "the
+instruction files written anyway, because they have nothing to do with the MCP
+config", which describes nothing at all about a first-write-fails fixture.
+
+## 5. The idempotency fixture repeated the blind class round 2 diagnosed
+
+Round 2's rewritten `TestRepeatedRunsAreIdempotent` used
+`startup_timeout_sec = 45` (TOML) and `theirEntryKey` (JSON) — keys the renderers
+emit under **no** condition. §1 of round 2 names exactly that: *a fixture built
+only from never-written keys cannot distinguish "skip what we re-render" from
+"skip a fixed list"*. It passed on `c801ab8`: an invariant guard wearing a
+regression guard's docstring.
+
+The pre-file now also carries an **owned-but-not-re-rendered** key (each target's
+`HeadersKey`), and the assertions name the keys instead of matching the digits
+`"45"` anywhere in the file. Measured scope: with that key added the **codex**
+subtest goes red on `c801ab8` and the six JSON subtests still pass — round 1's
+JSON merge was already per-key, and `c801ab8`'s defect was in `mergeTOMLBlock`
+alone. The JSON arms therefore remain invariant guards and say so.
+
+## 6. The round-2 file's blanket "watched red" was false for 3 of its 10 tests
+
+Replayed against the `c801ab8` payload, eight were red;
+`TestARunWithoutATokenAndWithoutAHeaderStillSaysSo`,
+`TestATrailingCommaDoesNotMakeRubbishAcceptable` and
+`TestAStrictAgentStaysStrictAboutTrailingCommas` **passed**. They are deliberate
+over-widening controls and they are correct — but RULES.md requires an invariant
+guard be labelled as one and not counted as regression coverage. The file header
+and each of the three now say so; the sentence made a maintainer count ten where
+there are seven.
+
+## 7. A README absolute falsified by `action: manual`
+
+`README.md` said "there is no outcome where a step is skipped and the command
+still exits `0`". But `civitai agent-setup --agent other --json` exits **0**,
+`ok: true`, with the MCP row `action: manual` and nothing written; a user-scoped
+agent with no resolvable home is the same. That is deliberate — there is no file
+for this CLI to write, so the config is printed to paste — so the absolute is
+replaced by naming the one exception, in the README and in `Long`. A step this
+CLI *could* have taken and did not is always `blocked`, never `manual`.
+
+## 8. `--dry-run`'s error claimed the instruction files were written
+
+`"the instruction files were written; the MCP config was not"` was a pre-existing
+sentence, but round 2's fix **routed a new case into it**: the broken-symlink dry
+run used to exit 0 and now exits 1 with that claim attached to a run that wrote
+nothing at all. `ok`, the exit code and the error text all derive from one
+predicate now — is any row `blocked` — and the dry-run arm says what a dry run
+actually did.
+
+## Red-then-green
+
+`agent_setup_round3_test.go` is black-box for the same reason the round-2 file
+is, including the envelope assertions, which decode into a bare `map[string]any`
+rather than naming a Go field the fix introduced. The file header enumerates
+which of its tests are **regression**, which is a **mutation guard**, and which
+are **over-widening controls** — the round-2 mistake, not repeated.

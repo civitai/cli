@@ -538,9 +538,14 @@ var agentTargets = map[string]agentTarget{
 		// adding the header themselves, which the next-step block tells them.
 		// Do not restore a benefit clause here without a live probe behind it.
 		EnvHeaderSyntax: "",
-		Caveat: "Zed documents no environment-variable interpolation, so the entries carry no Authorization " +
-			"header; the orchestration server needs one, and Zed's MCP OAuth flow cannot supply it (that " +
-			"server advertises no authorization server)",
+		// 🔴 THE CAVEAT IS ABOUT WHAT THIS COMMAND WRITES, NOT ABOUT WHAT THE FILE
+		// CONTAINS — a static sentence cannot know the second. It used to read
+		// "the entries carry no Authorization header", which contradicted the same
+		// run's own report two lines above it whenever the user had added one (the
+		// next-step block TELLS them to), so one run said both.
+		Caveat: "Zed documents no environment-variable interpolation, so this command writes no Authorization " +
+			"header for it; the orchestration server needs one, and Zed's MCP OAuth flow cannot supply it (that " +
+			"server advertises no authorization server) — add the header to that file yourself",
 	},
 }
 

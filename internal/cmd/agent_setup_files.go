@@ -208,8 +208,19 @@ func agentsMDBlockState(content string) agentsBlockState {
 // planAgentsMD renders what a run would do to <dir>/AGENTS.md without writing.
 // The real run calls exactly this and then writes the returned content, so
 // `--dry-run` cannot report an action the write path would not take.
+//
+// 🔴 THE DESTINATION IS CLASSIFIED HERE TOO, NOT ONLY FOR THE MCP CONFIG. Round
+// 2 put checkWriteTargetResolvable into `planMCPConfig` and stopped, so the same
+// lie moved one file over: with `AGENTS.md` a broken symlink, `--dry-run --json`
+// said `create` / `ok: true` / exit 0 for a destination `writeProjectFile`
+// refuses by name. Measured at 897c1cc. The check is a pure read (Lstat plus a
+// link resolution), so every plan can afford it and none of them may skip it —
+// TestDryRunAndTheRealRunAgreeOnEveryAction carries a fixture per file.
 func planAgentsMD(dir string) (path, content string, action fileAction, err error) {
 	path = filepath.Join(dir, agentsFilename)
+	if terr := checkWriteTargetResolvable(path); terr != nil {
+		return path, "", "", terr
+	}
 	raw, _, rerr := readIfExists(path)
 	if rerr != nil {
 		return path, "", "", rerr
@@ -225,8 +236,16 @@ func planAgentsMD(dir string) (path, content string, action fileAction, err erro
 // project instructions, and the shim has nothing to contribute to one that
 // already exists. The action returned says `keep-existing` so the output tells
 // them that rather than staying silent about a file it decided not to touch.
+//
+// 🔴 AND ITS DESTINATION IS CLASSIFIED FOR THE SAME REASON planAgentsMD's is: a
+// CLAUDE.md symlinked into a dotfiles repo whose target has gone is refused by
+// the writer, so the planner has to reach the same verdict or `--dry-run` lies
+// about this file the way it did about the other two.
 func planClaudeMD(dir string) (path, content string, action fileAction, err error) {
 	path = filepath.Join(dir, claudeFilename)
+	if terr := checkWriteTargetResolvable(path); terr != nil {
+		return path, "", "", terr
+	}
 	if _, statErr := os.Stat(path); statErr == nil {
 		return path, "", actionKeep, nil
 	} else if !os.IsNotExist(statErr) {

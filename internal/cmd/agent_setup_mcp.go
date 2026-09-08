@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -120,16 +121,98 @@ func mcpAnonymityNote() string {
 // REACHES, and it is simply wrong about the file just written.
 //
 // So the sentence is derived from the rendered bytes rather than from the gate.
+//
+// 🔴 AND "PRESENT" IS NOT "AUTHENTICATES", WHICH IS THE OPPOSITE-DIRECTION LIE
+// THE FIRST VERSION SHIPPED. A boolean "carries a credential" said, of any
+// non-empty string, "that is what they authenticate with". Two measured cases:
+// Zed with `Bearer <your token>` — the literal THIS command's own next-step block
+// tells the user to paste — was reported as authenticating and had its 401
+// warning dropped; and a Codex `bearer_token_env_var = "CIVITAI_TOKEN"` was
+// reported as authenticating from the NO-TOKEN branch, i.e. having just
+// established that CIVITAI_TOKEN is unset in this process. Items 28 and 34 say a
+// claim the command cannot observe does not get made, so the classification is
+// three-valued and every sentence says which value it is describing.
 type mcpAuthCoverage struct {
 	// With and Without partition civitaiMCPServers by whether that entry, as it
-	// will exist on disk, carries a credential. Both empty means the config was
-	// never rendered (a refusal, or no file to write) and nothing is claimed.
+	// will exist on disk, carries credential MATERIAL of any kind. Both empty
+	// means the config was never rendered (a refusal, or no file to write) and
+	// nothing is claimed.
 	With    []string
 	Without []string
+	// Findings says, for each name in With, WHAT was found and whether this
+	// command can evaluate it. Nil for an uninspected config, which is why every
+	// reader goes through kindOf/artefactOf rather than indexing it.
+	Findings map[string]mcpAuthFinding
 }
+
+// mcpAuthKind classifies the credential material on ONE entry.
+type mcpAuthKind int
+
+const (
+	// authNone: nothing either reader recognises. 🔴 THE RESIDUAL, IN THE
+	// CONSERVATIVE DIRECTION: a shape neither branch knows lands here and is
+	// described as absent.
+	authNone mcpAuthKind = iota
+	// authManaged: exactly what THIS command renders for this target — `Bearer `
+	// plus the vendor's own interpolation spelling, or Codex's
+	// `bearer_token_env_var = "CIVITAI_TOKEN"`. The command knows what it
+	// dereferences (CIVITAI_TOKEN in the AGENT's environment), so it may say so —
+	// and, when that variable is unset here, may say that too.
+	authManaged
+	// authOpaque: some other non-empty value. It is PRESENT, it is not this
+	// command's, and whether it resolves to a credential is not observable from
+	// here. Every sentence about one of these says exactly that and no more.
+	authOpaque
+)
+
+// mcpAuthFinding is what was found on one entry.
+type mcpAuthFinding struct {
+	Kind mcpAuthKind
+	// Artefact names the thing, as a noun phrase ("an Authorization header").
+	//
+	// 🔴 CODEX'S IS NOT A HEADER, AND CALLING IT ONE IS A FALSE CLAIM ABOUT THE
+	// USER'S FILE. `bearer_token_env_var` holds a variable NAME that Codex turns
+	// into an Authorization header itself; the file contains no header. The old
+	// output said "already carries an Authorization header" of a config.toml that
+	// has none.
+	Artefact string
+}
+
+// The two artefact nouns, named so the wording cannot drift between the four
+// surfaces that print it.
+const mcpArtefactHeader = "an Authorization header"
+
+func mcpArtefactEnvBearer(key string) string { return "a `" + key + "` key" }
 
 // known reports whether the rendered config was inspected at all.
 func (c mcpAuthCoverage) known() bool { return len(c.With)+len(c.Without) > 0 }
+
+// kindOf and artefactOf are the ONE way a caller asks about an entry, so an
+// uninspected config answers authNone rather than panicking on a nil map.
+func (c mcpAuthCoverage) kindOf(name string) mcpAuthKind { return c.Findings[name].Kind }
+
+func (c mcpAuthCoverage) artefactOf(name string) string {
+	if a := c.Findings[name].Artefact; a != "" {
+		return a
+	}
+	return mcpArtefactHeader
+}
+
+// uniform reports whether every entry in With carries the same artefact AND the
+// same kind — the case one collapsed sentence can describe without losing the
+// distinction the kind exists to carry.
+func (c mcpAuthCoverage) uniform() (artefact string, kind mcpAuthKind, ok bool) {
+	if len(c.With) == 0 {
+		return "", authNone, false
+	}
+	first := c.Findings[c.With[0]]
+	for _, name := range c.With[1:] {
+		if c.Findings[name] != first {
+			return "", authNone, false
+		}
+	}
+	return first.Artefact, first.Kind, true
+}
 
 // mcpAuthCoverageOf reads the bytes this run will write and reports which of our
 // entries end up carrying a credential.
@@ -146,15 +229,20 @@ func (c mcpAuthCoverage) known() bool { return len(c.With)+len(c.Without) > 0 }
 //     Authorization, or an `Authorization` inside a `<table>.<HeadersKey>`
 //     sub-table.
 //
-// 🔴 THE RESIDUAL: a shape neither branch recognises is reported as NO
-// credential, which is the conservative direction — it falls back to exactly the
-// message that shipped. It is conservative, not correct: a header this function
-// cannot see still gets described as absent.
+// 🔴 TWO RESIDUALS, IN OPPOSITE DIRECTIONS, AND BOTH ARE STATED BECAUSE ONLY THE
+// FIRST USED TO BE. (a) CONSERVATIVE: a shape neither branch recognises is
+// reported as authNone, i.e. described as absent — the message that shipped.
+// (b) OPTIMISTIC, and the one that had to be closed: material this function DOES
+// see is not thereby a working credential. `Bearer <your token>` is a header;
+// `bearer_token_env_var = "FOO"` is a reference to a variable that may not exist.
+// So a value that is not byte-for-byte this command's own reference is
+// authOpaque — present, unevaluable — and every sentence about it says so
+// instead of "that is what they authenticate with".
 func mcpAuthCoverageOf(data []byte, t agentTarget) mcpAuthCoverage {
 	if len(data) == 0 {
 		return mcpAuthCoverage{}
 	}
-	var carries map[string]bool
+	var carries map[string]mcpAuthFinding
 	if t.Format == formatTOML {
 		carries = tomlEntriesWithAuth(data, t)
 	} else {
@@ -163,10 +251,11 @@ func mcpAuthCoverageOf(data []byte, t agentTarget) mcpAuthCoverage {
 	if carries == nil {
 		return mcpAuthCoverage{}
 	}
-	var cov mcpAuthCoverage
+	cov := mcpAuthCoverage{Findings: map[string]mcpAuthFinding{}}
 	for _, srv := range civitaiMCPServers {
-		if carries[srv.Name] {
+		if f, ok := carries[srv.Name]; ok && f.Kind != authNone {
 			cov.With = append(cov.With, srv.Name)
+			cov.Findings[srv.Name] = f
 			continue
 		}
 		cov.Without = append(cov.Without, srv.Name)
@@ -174,32 +263,55 @@ func mcpAuthCoverageOf(data []byte, t agentTarget) mcpAuthCoverage {
 	return cov
 }
 
-func jsonEntriesWithAuth(data []byte, t agentTarget) map[string]bool {
+// noteAuthFinding records a finding without letting a later authOpaque overwrite
+// an authManaged one: an entry carrying BOTH this command's reference and some
+// other material is still one this command can speak about.
+func noteAuthFinding(found map[string]mcpAuthFinding, name string, f mcpAuthFinding) {
+	if prev, ok := found[name]; ok && prev.Kind == authManaged {
+		return
+	}
+	found[name] = f
+}
+
+// mcpHeaderKind classifies an `Authorization` VALUE against what this command
+// would have written for that target.
+func mcpHeaderKind(t agentTarget, value string) mcpAuthKind {
+	if strings.TrimSpace(value) == "" {
+		return authNone
+	}
+	if t.EnvHeaderSyntax != "" && strings.TrimSpace(value) == "Bearer "+t.EnvHeaderSyntax {
+		return authManaged
+	}
+	return authOpaque
+}
+
+func jsonEntriesWithAuth(data []byte, t agentTarget) map[string]mcpAuthFinding {
 	if t.HeadersKey == "" {
-		return map[string]bool{}
+		return map[string]mcpAuthFinding{}
 	}
 	root := map[string]any{}
 	if err := json.Unmarshal(data, &root); err != nil {
 		return nil
 	}
 	section, _ := root[t.ServersKey].(map[string]any)
-	found := map[string]bool{}
+	found := map[string]mcpAuthFinding{}
 	for _, srv := range civitaiMCPServers {
 		entry, _ := section[srv.Name].(map[string]any)
 		headers, _ := entry[t.HeadersKey].(map[string]any)
-		if v, ok := headers["Authorization"].(string); ok && strings.TrimSpace(v) != "" {
-			found[srv.Name] = true
+		v, _ := headers["Authorization"].(string)
+		if kind := mcpHeaderKind(t, v); kind != authNone {
+			noteAuthFinding(found, srv.Name, mcpAuthFinding{Kind: kind, Artefact: mcpArtefactHeader})
 		}
 	}
 	return found
 }
 
-func tomlEntriesWithAuth(data []byte, t agentTarget) map[string]bool {
+func tomlEntriesWithAuth(data []byte, t agentTarget) map[string]mcpAuthFinding {
 	blocks, err := parseTOMLBlocks("", string(data))
 	if err != nil {
 		return nil
 	}
-	found := map[string]bool{}
+	found := map[string]mcpAuthFinding{}
 	for _, srv := range civitaiMCPServers {
 		table := tomlServerTable(t, srv)
 		for _, b := range blocks {
@@ -208,11 +320,24 @@ func tomlEntriesWithAuth(data []byte, t agentTarget) map[string]bool {
 				for _, line := range b.Lines[1:] {
 					key := tomlKeyOnLine(line)
 					if t.EnvBearerKey != "" && key == t.EnvBearerKey {
-						found[srv.Name] = true
+						// The VALUE is a variable NAME. This command writes
+						// exactly tokenEnvVar; any other name is a reference it
+						// cannot follow.
+						kind := authOpaque
+						if strings.Contains(stripTOMLLineComment(line), strconv.Quote(tokenEnvVar)) {
+							kind = authManaged
+						}
+						noteAuthFinding(found, srv.Name,
+							mcpAuthFinding{Kind: kind, Artefact: mcpArtefactEnvBearer(t.EnvBearerKey)})
 					}
 					if t.HeadersKey != "" && key == t.HeadersKey &&
 						strings.Contains(strings.ToLower(line), "authorization") {
-						found[srv.Name] = true
+						// An inline `http_headers = { Authorization = "…" }`. Codex
+						// documents no interpolation for it (EnvHeaderSyntax is
+						// empty), so mcpHeaderKind can only ever call it opaque —
+						// which is exactly right: it is a static value.
+						noteAuthFinding(found, srv.Name,
+							mcpAuthFinding{Kind: authOpaque, Artefact: mcpArtefactHeader})
 					}
 				}
 			case table + "." + t.HeadersKey:
@@ -221,7 +346,8 @@ func tomlEntriesWithAuth(data []byte, t agentTarget) map[string]bool {
 				}
 				for _, line := range b.Lines[1:] {
 					if strings.EqualFold(tomlKeyOnLine(line), "Authorization") {
-						found[srv.Name] = true
+						noteAuthFinding(found, srv.Name,
+							mcpAuthFinding{Kind: authOpaque, Artefact: mcpArtefactHeader})
 					}
 				}
 			}
@@ -234,16 +360,36 @@ func tomlEntriesWithAuth(data []byte, t agentTarget) map[string]bool {
 // NOT write and did NOT touch, or "" when there is none to describe. Every
 // header-less surface builds from it, so the terminal and `--json` cannot
 // disagree about a file they are both describing.
+// 🔴 IT SAYS WHAT IS THERE, NEVER THAT IT WORKS. The sentence used to end "…and
+// that is what they authenticate with" — asserted of `Bearer <your token>`, the
+// placeholder this CLI's own Zed next-step block tells the user to paste, and of
+// a `bearer_token_env_var` naming a variable the run had just found unset. What
+// a value dereferences to at request time is not observable from here, so the
+// tail states the observable instead (mcpAuthResolutionNote).
 func mcpPreservedAuthNote(cov mcpAuthCoverage) string {
 	if !cov.known() || len(cov.With) == 0 {
 		return ""
 	}
-	if len(cov.Without) == 0 {
-		return "every Civitai entry already carries an Authorization header this run did not write " +
-			"and did not remove, and that is what they authenticate with"
+	var note string
+	if artefact, kind, ok := cov.uniform(); ok {
+		note = "every Civitai entry"
+		if len(cov.Without) > 0 {
+			note = strings.Join(cov.With, ", ")
+		}
+		note += " already carries " + artefact + " this run did not write and did not remove" +
+			mcpAuthResolutionNote(kind)
+	} else {
+		parts := make([]string, 0, len(cov.With))
+		for _, name := range cov.With {
+			parts = append(parts, name+" already carries "+cov.artefactOf(name)+
+				" this run did not write and did not remove"+mcpAuthResolutionNote(cov.kindOf(name)))
+		}
+		note = strings.Join(parts, "; ")
 	}
-	note := strings.Join(cov.With, ", ") + " already carries an Authorization header this run did not " +
-		"write and did not remove; " + strings.Join(cov.Without, ", ") + " has none"
+	if len(cov.Without) == 0 {
+		return note
+	}
+	note += "; " + strings.Join(cov.Without, ", ") + " has none"
 	var needing []string
 	for _, name := range cov.Without {
 		for _, srv := range civitaiMCPServers {
@@ -256,6 +402,17 @@ func mcpPreservedAuthNote(cov mcpAuthCoverage) string {
 		note += " and " + strings.Join(needing, ", ") + " returns 401 until one is present"
 	}
 	return note
+}
+
+// mcpAuthResolutionNote is the tail clause: what this command can and cannot say
+// about the material it just described. One function, so the terminal, `--json`
+// and the per-server row cannot disagree about the same value.
+func mcpAuthResolutionNote(kind mcpAuthKind) string {
+	if kind == authManaged {
+		return " — it references " + tokenEnvVar + " rather than holding a credential, so it authenticates " +
+			"only while that variable is set in the agent's own environment"
+	}
+	return " — this command did not write that value and cannot tell whether it resolves to a credential"
 }
 
 // mcpAuthValue is the header VALUE an interpolating agent gets, or "" when this
