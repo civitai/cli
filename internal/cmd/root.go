@@ -331,6 +331,9 @@ Get started:
 	})
 
 	root.AddCommand(newAppCmd())
+	// Top-level, beside login rather than under `app`: it configures the
+	// DEVELOPER's coding agent, not an app, and runs before any app exists.
+	root.AddCommand(newAgentSetupCmd())
 	root.AddCommand(newLoginCmd())
 	root.AddCommand(newWhoAmICmd())
 	root.AddCommand(newBuzzCmd())
