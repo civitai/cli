@@ -180,35 +180,12 @@ These go beyond the global defaults because this repo's release pipeline
   so a dependency change breaks the flake build until `bump-flake-vendorhash.yml`
   updates it; `flake.yml` is what catches that.
 
-## House conventions (with one real snippet)
+## House conventions
 
 Each command is a `newXxxCmd() *cobra.Command` constructor in `internal/cmd`.
-Always set `Short`, a useful `Long`, and an `Example`:
-
-```go
-func newWhoAmICmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:     "whoami",
-		Short:   "Verify your stored API token",
-		Long:    `Verify the stored API token … Reads the token from config or CIVITAI_TOKEN.`,
-		Example: `  civitai whoami`,
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			if cfg.Token() == "" {
-				// Actionable: tell the user the next command to run.
-				return fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)")
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Logged in as %s\n", /* … */)
-			return nil
-		},
-	}
-	return cmd
-}
-```
+Always set `Short`, a useful `Long`, and an `Example`. Copy the live one —
+`internal/cmd/whoami.go` — never a snippet: it TAGS the error it returns, and
+item 7 owns why an untagged return unpins a published exit code.
 
 - **Errors:** return `error` from `RunE`; lowercase, no trailing punctuation;
   wrap with `%w` when the cause matters. Root sets `SilenceUsage` +
