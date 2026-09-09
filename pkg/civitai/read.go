@@ -1,6 +1,7 @@
 package civitai
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -89,6 +90,10 @@ func (c *Client) getRaw(ctx context.Context, path string, q url.Values) (int, []
 
 // getInto GETs path+q, and on a 2xx unmarshals the body into out (when non-nil)
 // and returns the raw body (for --json). A non-2xx returns a readError.
+// Raw C0 control characters (0x00–0x1F) inside string literals — which violate
+// strict RFC 8259 JSON syntax but are intermittently emitted by the Civitai API
+// inside prompt/description strings — are sanitized via
+// EscapeJSONStringControlChars before unmarshaling so typed decode succeeds.
 func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any) ([]byte, error) {
 	status, raw, err := c.getRaw(ctx, path, q)
 	if err != nil {
@@ -97,12 +102,72 @@ func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any
 	if status < 200 || status >= 300 {
 		return nil, readError(status, raw)
 	}
+	if !json.Valid(raw) {
+		if fixed := EscapeJSONStringControlChars(raw); json.Valid(fixed) {
+			raw = fixed
+		}
+	}
 	if out != nil {
 		if err := json.Unmarshal(raw, out); err != nil {
 			return nil, fmt.Errorf("unexpected response from %s (status %d): %s", path, status, snippet(raw))
 		}
 	}
 	return raw, nil
+}
+
+// EscapeJSONStringControlChars walks raw JSON bytes tracking in-string state
+// (respecting \\ and \") and replaces any raw C0 control byte (0x00–0x1F) that
+// appears INSIDE a string literal with its valid JSON escape (\b \f \n \r \t or
+// \u00xx). Control bytes outside strings (structural whitespace) and everything
+// already escaped are left byte-for-byte unchanged, so valid input round-trips
+// identically. This does not attempt to repair other kinds of malformed JSON;
+// callers should verify the result with json.Valid before relying on it.
+func EscapeJSONStringControlChars(raw []byte) []byte {
+	var out bytes.Buffer
+	out.Grow(len(raw))
+	inString := false
+	escaped := false
+	for i := 0; i < len(raw); i++ {
+		c := raw[i]
+		switch {
+		case !inString:
+			out.WriteByte(c)
+			if c == '"' {
+				inString = true
+			}
+		case escaped:
+			// Previous byte was a backslash; this byte is the escape's payload
+			// (", \\, /, b, f, n, r, t, or the u of a \uXXXX). Emit verbatim.
+			out.WriteByte(c)
+			escaped = false
+		case c == '\\':
+			out.WriteByte(c)
+			escaped = true
+		case c == '"':
+			out.WriteByte(c)
+			inString = false
+		case c < 0x20:
+			// Raw control character inside a string literal — invalid JSON.
+			// Rewrite it as the shortest valid escape.
+			switch c {
+			case '\b':
+				out.WriteString(`\b`)
+			case '\f':
+				out.WriteString(`\f`)
+			case '\n':
+				out.WriteString(`\n`)
+			case '\r':
+				out.WriteString(`\r`)
+			case '\t':
+				out.WriteString(`\t`)
+			default:
+				fmt.Fprintf(&out, `\u%04x`, c)
+			}
+		default:
+			out.WriteByte(c)
+		}
+	}
+	return out.Bytes()
 }
 
 // readError turns a non-2xx read response into a clear, actionable error,
