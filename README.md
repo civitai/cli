@@ -50,6 +50,7 @@ contract, and **packages/submits** it for review.
 
 **Author an App**
 
+- [Set up your coding agent (`agent-setup`)](#set-up-your-coding-agent-agent-setup) — **run this first**
 - [SDK packages](#sdk-packages)
 - [The blockId](#the-blockid)
 - [Templates](#templates)
@@ -286,6 +287,235 @@ Enable shell completion (optional):
 source <(civitai completion bash)   # bash; see `civitai completion --help` for zsh/fish/powershell
 ```
 
+## Set up your coding agent (`agent-setup`)
+
+If you are building your App with a coding agent — Claude Code, Cursor, Codex,
+opencode, VS Code Copilot, Windsurf, Zed — run this once in the project:
+
+```bash
+civitai agent-setup
+```
+
+It does three things, and **it never authenticates**:
+
+1. Writes an `AGENTS.md` **managed block** into the project — the commands and
+   the gotchas an agent cannot infer by reading your code (Buzz is the *viewer's*,
+   a newly declared scope is consent-gated, a hung hook is usually a missing HOST
+   handler, `useSharedStorage()` has no REST route, commit the lockfile).
+2. Writes a one-line `CLAUDE.md` containing `@AGENTS.md`, **only when there is
+   no `CLAUDE.md` already**. Claude Code does not read `AGENTS.md` on its own.
+3. Registers the **two Civitai MCP servers** in the detected agent's own config
+   file.
+
+| Server | URL | What it reaches | Anonymous? |
+| --- | --- | --- | --- |
+| `civitai` | `https://mcp.civitai.com/mcp` | the Civitai site — models, images, articles, your account | **yes** — answers without a credential |
+| `civitai-orchestration` | `https://orchestration.civitai.com/mcp` | the generation orchestrator — workflows and image generation | **no** — returns `401` until an `Authorization` header is present |
+
+🔴 **The two servers differ, and the difference decides whether a header-less
+setup is finished.** Measured with no credential, `POST … {"method":"initialize"}`:
+the site server answers `200`, the orchestration server answers `401` with an
+empty body and no `WWW-Authenticate`. It is not a read/write split — the
+handshake itself is refused, so nothing on that server is reachable until you add
+a header.
+
+**Why a command and not a paragraph telling you to hand-write JSON:** the file
+*and* the key name differ per agent, and every way of getting it wrong produces
+a file that parses cleanly and registers nothing.
+
+| Agent | File | Top-level key | URL key | How the token is referenced |
+| --- | --- | --- | --- | --- |
+| `claude` | `<dir>/.mcp.json` | `mcpServers` | `url` | `Bearer ${CIVITAI_TOKEN}` |
+| `cursor` | `<dir>/.cursor/mcp.json` | `mcpServers` | `url` | `Bearer ${env:CIVITAI_TOKEN}` |
+| `vscode` | `<dir>/.vscode/mcp.json` | **`servers`** | `url` | `Bearer ${env:CIVITAI_TOKEN}` |
+| `codex` | `$CODEX_HOME/config.toml`, else `~/.codex/config.toml` | **`[mcp_servers.<name>]`** (TOML) | `url` | `bearer_token_env_var = "CIVITAI_TOKEN"` |
+| `opencode` | `<dir>/opencode.json`, or an existing `opencode.jsonc` | **`mcp`** | `url` | `Bearer {env:CIVITAI_TOKEN}` — single brace, no `$` |
+| `windsurf` | `~/.codeium/windsurf/mcp_config.json` ⚠️ | `mcpServers` | **`serverUrl`** | `Bearer ${env:CIVITAI_TOKEN}` |
+| `zed` | `~/.config/zed/settings.json` (`%APPDATA%\Zed\settings.json` on Windows) | **`context_servers`** | `url` | **no header** — see below |
+| `other` | — *(prints the config for you to paste; writes nothing)* | — | — | **no header** — see below |
+
+⚠️ **Windsurf:** that path is the **legacy Cascade agent's**. The vendor page now
+states that the *Devin Local* agent — the default for new tabs — reads the Devin
+CLI config instead (`~/.config/devin/mcp_config.json`, or
+`%APPDATA%\devin\mcp_config.json`). This CLI still writes the Cascade path and
+says so in its output; add the servers to the Devin config too if you use it.
+
+The agent is detected from the environment first and then from marker files in
+the project; `--agent <name>` overrides it, and `--dir <path>` points at a
+project other than the working directory. Paths in `--json` are always
+**absolute**, whatever `--dir` you passed.
+
+**Nothing is clobbered.** An existing `AGENTS.md` is **appended to** when it has
+no managed block, and has **only the block between the markers replaced** when it
+does — every byte outside the markers is left alone. An existing `CLAUDE.md` is
+never read and never modified. An existing MCP config is **merged into**,
+preserving every other server, every unknown key, **and every key you added to
+the Civitai entries themselves** (a hand-added `Authorization` header survives a
+re-run). A config file that does not parse is **refused by name** rather than
+repaired, because a repair there is indistinguishable from deleting what you had
+— and that refusal no longer stops `AGENTS.md` and `CLAUDE.md` being written: the
+MCP step is reported as `blocked` in `changes`, `ok` is `false`, and the command
+exits `1`. **The same is true of a step that fails at write time** — a
+destination it will not write, a directory it cannot write into — so a partial
+run always reports which step did not happen rather than exiting with an empty
+`--json`. **And the same is true of the two instruction files**: `AGENTS.md` and
+`CLAUDE.md` each get their own `blocked` row for a broken-symlink destination, a
+file that cannot be read, or an `AGENTS.md` carrying two managed blocks. The
+three writes are **independent** — one failing does not stop the other two, and
+no row ever claims an action for a file nothing attempted.
+
+**Two stated exceptions**, both reported in the run's own output rather than left
+for you to discover:
+
+- A **JSONC** config (Zed's `settings.json`, `.vscode/mcp.json`,
+  `opencode.jsonc`) is decoded and re-encoded, so its **comments, its trailing
+  commas and its key order are not preserved**. Both JSONC forms are *tolerated*
+  rather than refused — Zed ships `settings.json` with a comment block, and both
+  Zed and VS Code read a trailing comma back happily, so refusing either blamed
+  you for a file your editor authored.
+- A **symlinked** config is **followed**: the write lands on the link's target,
+  so a dotfiles repo keeps tracking the live file. A *broken* symlink is refused
+  by name.
+
+**🔴 No credential is ever written into a config file.** Four of the files above
+are **project-scoped** — `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` and
+`opencode.json` sit in the repo root and get committed — so an `Authorization`
+header holding your actual token is a secret headed for version control. Instead:
+
+- Where the vendor **documents** environment-variable interpolation, the header
+  **references** `CIVITAI_TOKEN` in that vendor's own spelling (the last column
+  above; the four spellings genuinely differ). Export it so the agent resolves
+  it: `export CIVITAI_TOKEN=<your token>` — put it in your shell profile so the
+  agent inherits it.
+- Where the vendor documents **none** — Zed today, and `--agent other`, whose
+  target agent is by definition unknown — **no header is written at all**, and the
+  output names the exact header to add yourself. Guessing a syntax
+  would be worse than omitting it: an unsupported one produces a config that
+  looks configured and sends the literal string `${CIVITAI_TOKEN}` as a bearer
+  token, which fails at request time and reads as a bad credential rather than a
+  bad config.
+
+Never a placeholder that looks like a credential, either. **A header-less config
+is not empty, but it is not complete either**: it browses models, images and
+articles through the `civitai` server, and `civitai-orchestration` answers it
+`401`. See the server table above. To authenticate Zed (or an agent this CLI does
+not know), add the header yourself to each Civitai entry — the run prints the
+exact line.
+
+**Authentication is yours to run**, and `civitai login` is a **separate store**
+from `CIVITAI_TOKEN`: it writes this CLI's own config, which your coding agent
+does not read. 🔴 **So `civitai login` alone is not enough** — the header
+*references* `CIVITAI_TOKEN` and your agent resolves it from the **environment**,
+where an unset variable becomes the empty string. If you have logged in but not
+exported it, the run says so; that is a missing `export`, not a bad token.
+
+Three rows are **reported by `--check` and never fail its verdict**, because each
+would otherwise be permanently red for someone who did everything right:
+`authenticated` (setup stops before login on purpose); an **absent
+`Authorization` header** (the correct state for Zed); and `claude-md` for any
+agent other than `claude` (every other agent reads `AGENTS.md` directly, so the
+shim is inert for it — the row stays for whoever opens Claude Code there later).
+
+**No `@civitai/*` version is pinned anywhere in what this writes.** Pins live in
+`civitai app init`, which CI holds against npm; a version literal in an
+instruction file rots in silence.
+
+Verify a setup — this writes nothing:
+
+```bash
+civitai agent-setup --check --json
+```
+
+```json
+{
+  "track": "app",
+  "agent": "claude",
+  "ok": true,
+  "checks": [
+    {"name": "cli-version",   "ok": true,  "detail": "v0.1.103"},
+    {"name": "agents-md",     "ok": true,  "detail": "/home/u/proj/AGENTS.md"},
+    {"name": "claude-md",     "ok": true,  "detail": "/home/u/proj/CLAUDE.md"},
+    {"name": "mcp-site",      "ok": true,  "detail": "/home/u/proj/.mcp.json"},
+    {"name": "mcp-orch",      "ok": true,  "detail": "/home/u/proj/.mcp.json"},
+    {"name": "authenticated", "ok": false, "detail": "no token — run `civitai login`"}
+  ]
+}
+```
+
+A config file `--check` cannot **read** is reported the same way an unknown agent
+and an unresolvable home already were: as `mcp-site`/`mcp-orch` rows carrying the
+parse failure in their `detail`, `ok: false`, exit `1` — never as an empty
+stdout. "Could not look" is not "not registered", and the detail says which. An
+`AGENTS.md` or `CLAUDE.md` that cannot be read is the same: a failed row naming
+the file and the reason, not a silent exit.
+
+🔴 **`--json` has three shapes.** A `--check` run emits `checks`; a write or
+`--dry-run` run emits `changes`; and a failure that happened before either could
+be built — no resolvable config root, for instance — emits **neither array and an
+`error` string** beside `ok: false`. Discriminate on which of the three is
+present.
+
+🔴 **A payload is emitted for every failure except a usage error, and that is
+enforced by the command's shape rather than by a list.** `agent-setup` builds its
+one stdout emitter before the first step that can fail, has a single return, and
+hands every error to that emitter, which decides from the error itself. A
+**usage** error — a mistake about the *invocation*: unknown `--agent`, a `--dir`
+that does not exist or is not a directory, `--track api` — exits `2` on stderr
+like every other command's usage error, because there is no run to describe.
+Everything else exits `1` with one of the three shapes above, **including a
+`--dir` this command cannot `stat` for some other reason** (a parent it may not
+search, a path that walks through a regular file), which is an environment
+failure rather than a mistyped command line and gets the `error` envelope. The
+property is about what the command *writes*: if stdout itself cannot be written
+to, nothing lands there, and no command can fix that.
+
+🔴 **`ok` is the AND of every check EXCEPT the non-counting rows above** —
+`authenticated`, an absent `Authorization` header, and `claude-md` for a
+non-`claude` agent. Setup deliberately stops before auth, so the payload above —
+a complete setup with no token — is `"ok": true` and **exits 0**. Read those rows
+yourself if you need them; do not fold them into your own pass/fail.
+
+`--dry-run` prints every path that would be written, with the reason, and writes
+nothing. It reports the outcomes the **plan** can classify — for **all three**
+files, not just the MCP config — with the same rows, the same `ok` and the same
+**exit code** the real run gives for those: a destination the real run would
+refuse (a broken symlink), a config that does not parse, an `AGENTS.md` it cannot
+read or that carries two managed blocks.
+
+🔴 **It cannot report a failure only the act of writing can produce.** A run that
+performs no write cannot observe one. **Measured:** a project directory the
+process may not write into — the dry run reports the intended action, `ok: true`
+and exit `0`; the real run reports `blocked`, `ok: false` and exit `1`. A full
+disk and a read-only mount are the same shape by construction and were *not*
+measured. So this is not a closed list: treat a green dry run as "the plan is
+sound", never as "the write will succeed".
+
+**Exit codes.** `--check` exits `1` when a check failed and `0` otherwise. A write
+run exits `0` when **every** step happened, and **`1`** when one did not — a
+config that does not parse, a destination it will not write (a broken symlink, for
+**any** of the three files), a file it could not write (an unwritable directory),
+an `AGENTS.md` that cannot be read or that carries two managed blocks. Each of
+those is a `blocked` row in `changes` with `ok: false`, in `--json` and on the
+terminal alike. 🔴 **There is exactly one outcome where a step does not happen and
+the command still exits `0`: `action: manual`** — `--agent other`, or a
+user-scoped agent whose home directory cannot be resolved. There is no file for
+this CLI to write in either case, so the servers are printed for you to paste and
+the run is a success with a manual step left in it; that is a `changes` row you
+have to read, not an `ok: false`. A step this CLI *could* have taken and did not
+is always `blocked`, never `manual`. Exit `2`
+covers the invocation: an unknown `--agent`, a `--dir`
+that does not exist or is not a directory, and `--track api`. 🔴 **Not every bad
+`--dir` is an exit `2`** — a directory this command cannot `stat` at all (a parent
+it may not search, a path that walks through a regular file) is a fact about the
+machine rather than a mistyped command line, so it exits `1` with the `error`
+envelope under `--json`. That last one is a
+**recognised** value, not an unknown flag: the API track is not built yet, so it
+refuses with a pointer to the two MCP servers (which work today) and to
+[developer.civitai.com/site](https://developer.civitai.com/site/) and
+[developer.civitai.com/orchestration](https://developer.civitai.com/orchestration/),
+rather than letting a reading agent conclude the API is unsupported. It never
+silently falls back to `--track app`.
+
 ## SDK packages
 
 This CLI scaffolds, validates, and submits — but the code your app actually
@@ -310,6 +540,7 @@ README. For the end-to-end walkthrough, see
 
 | Command | What it does |
 | --- | --- |
+| `civitai agent-setup [--track app\|api] [--agent <name>] [--dir <path>] [--check] [--json] [--dry-run]` | **Set up the coding agent you are using to build Civitai Apps.** Writes an `AGENTS.md` managed block into the project, a one-line `CLAUDE.md` shim **only when there is none**, and registers the two Civitai MCP servers (`https://mcp.civitai.com/mcp`, `https://orchestration.civitai.com/mcp`) in the detected agent's own config file — the path *and* the key name differ per agent (`servers` for VS Code, `mcp` for opencode, `context_servers` for Zed, `serverUrl` not `url` for Windsurf, a TOML `[mcp_servers.<name>]` for Codex), which is why this is a command. **Nothing is clobbered**: an existing `AGENTS.md` is appended to or has only its managed block replaced, an existing `CLAUDE.md` is never touched, an existing MCP config is merged into **key by key** (a header you added to a Civitai entry survives), a symlinked config is **followed** rather than replaced, and one that does not parse is refused by name — a refusal that no longer stops `AGENTS.md`/`CLAUDE.md` being written (`changes` gets a `blocked` row, `ok` is `false`, exit `1`), and a step that fails at **write** time reports itself the same way rather than exiting with an empty `--json` — as do `AGENTS.md` and `CLAUDE.md`, each with its own `blocked` row, the three writes being independent of one another. `--json` therefore has **three** shapes: `checks`, `changes`, or an `error` string with neither array when a run failed before any row could be built. A **usage** error goes to stderr alone and exits `2`; every other failure gets one of the three, including a `--dir` that cannot be `stat`ed at all, which exits `1`. A **JSONC** config is tolerated — comments **and trailing commas**, which is what Zed and VS Code themselves accept — but re-encoded, so neither survives and nor does key order; the run says so. 🔴 **It never writes a credential into any of those files** — most are project-scoped and get committed. Where the vendor documents environment-variable interpolation the `Authorization` header **references** `CIVITAI_TOKEN` in that vendor's own spelling (`${CIVITAI_TOKEN}` Claude Code, `${env:CIVITAI_TOKEN}` Cursor/VS Code/Windsurf, `{env:CIVITAI_TOKEN}` opencode, `bearer_token_env_var` Codex); where it documents none — **Zed and `--agent other`** — **no `Authorization` key is written at all** and the output names the header to add yourself, because a guessed syntax would send the literal `${CIVITAI_TOKEN}` as a bearer token. Never a placeholder either. 🔴 **The two servers differ on anonymous access**: `https://mcp.civitai.com/mcp` answers without a credential, `https://orchestration.civitai.com/mcp` returns `401` until a header is present — so a header-less config is useful but **not complete**. **It never authenticates** — the last thing it prints is to run `civitai login` yourself, which is a **separate store** from `CIVITAI_TOKEN` (your agent reads the environment, not this CLI's config). `--check` verifies a setup and writes nothing (**exit `1`** when a check failed); 🔴 **Three rows are reported and never fail the verdict** — `authenticated` (a complete but unauthenticated setup is `ok: true` and exits `0`), an **absent `Authorization` header**, and **`claude-md` for a non-`claude` agent** (every other agent reads `AGENTS.md` directly). Paths in `--json` are always absolute. `--track api` is a **recognised** value that exits `2` with a pointer, never a silent fall-back. The one step that does not happen and still exits `0` is `action: manual` — `--agent other`, or a user-scoped agent with no resolvable home — where there is no file for this CLI to write. See [Set up your coding agent](#set-up-your-coding-agent-agent-setup). |
 | `civitai login [--scopes <set>] [--token [<t>]] [--no-browser]` | Browser OAuth device login by default (stores auto-refreshing tokens). The default scope set grants identity + Apps submit + dev-tunnel and **not** Buzz-spend; `--scopes generate` additively grants generation + Buzz **spend** (needed by `civitai generate` and money-path `dev:live`). `--token <t>` stores a personal API key instead (not combinable with `--scopes`). `--token` with **no value** prints where to create a personal key (`civitai.com/user/account`) and how to re-run — handy when you know you want a personal key but haven't minted one yet. Config at `~/.config/civitai/config.yaml`, 0600. Also reads `CIVITAI_TOKEN`. |
 | `civitai whoami [--scopes] [--json]` | Verify the stored token; print the authenticated user, **a `Credential:` section** naming the credential type (**OAuth login** vs **personal API key**), and **a `Capabilities:` section** of three rows — **Read Buzz balance**, **Spend Buzz**, and **Submit Apps** — decoded from the token's scope, so a money-path dead end (a default OAuth login can't spend) is visible before `dev:live` — and when it can't, the output names the fix for that credential (`login --scopes generate` for an OAuth login, a full-scope key otherwise). **Submit Apps is tri-state**: `yes` / `no` / **`unknown`**, because a personal key is never scope-gated for submit while an OAuth token's answer *is* the scope bit — so an absent mask makes it unknowable, and `unknown` must never be read as `no`. `--scopes` also lists every granted scope; `--json` emits a **curated, not raw** identity object — `username`/`id`/`base_url`/`credentialType`/`scopesKnown`/`canReadBalance`/`canSpend`/`canSubmitApps` (`true`/`false`/**`null`**)/`scopes`/`capabilities`, plus the account profile `tier`/`status`/`isMember`/`subscriptions` (each **`null`** when the server did not report it, never a fabricated `""`/`false`/`[]`). `email`/`emailVerified` are **withheld on purpose** — they are PII this command does not print (scriptable). See [What `civitai whoami` reports](#submit--auth). |
 | `civitai buzz [--json]` | Show your spendable Buzz balance (**blue / green / yellow**, plus a **total**). Needs the BuzzRead scope — a full-scope personal API key or `civitai login --scopes generate`; a **default** OAuth login token can't read it, and gets a clear message naming both fixes. `--json` emits `{blue,green,yellow,total}` (scriptable — handy for before/after diffing a `dev:live` spend). |

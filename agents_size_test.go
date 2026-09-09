@@ -142,7 +142,25 @@ import (
 // has RISEN since it was set, so that restoration now lands at 28,650 + 5,381 =
 // 34,031 — clearing the bound by more than it did at wave 4. It got stricter
 // without being touched, which is why raising the budget below it is safe.
-const agentsMaxBytes = 29_600
+// 🔴 RAISED FROM 29,600 TO 30,200 IN THE ROUND-1 agent-setup FIX, DELIBERATELY
+// AND WITH THE ALTERNATIVE NAMED. (That number read 30,100 until round 2: a
+// typo, and one that mattered, because the whole purpose of this sentence is to
+// make the next author redo the arithmetic — reading it gave them 110 bytes of
+// spend where the constant below had actually spent 210.) That change added item 35 — the merge/parser/
+// verdict decisions for `agent-setup`, a genuinely separate subject from item
+// 34's credential rule — and the file had ~100 bytes of headroom. The two ways
+// out were (a) evict somebody else's item to pay for a new one, which is how a
+// budget turns into a queue and makes the next author delete work they did not
+// write, or (b) spend headroom the ceiling explicitly reserves for exactly this.
+// (b) was chosen. agentsMaxBytesCeiling (30,600) is UNCHANGED and still bounds
+// it, so the property it encodes — the three largest evicted bodies cannot all
+// be re-inlined — still holds and was not weakened to make this pass.
+//
+// MEASURED, not rounded: AGENTS.md is 29,990 bytes at that commit, so 30,200
+// leaves 210 bytes — room for roughly ONE more trigger line, not a licence to
+// grow. Do not raise it again without doing this arithmetic in a comment of your
+// own, and re-measure the file rather than inheriting this number.
+const agentsMaxBytes = 30_200
 
 // agentsMaxBytesCeiling bounds agentsMaxBytes itself, so the budget above cannot
 // be turned into unlimited slack by editing one number.
