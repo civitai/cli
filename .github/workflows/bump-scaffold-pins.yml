@@ -7,6 +7,18 @@
 # template + README + the scaffold_test.go canary), validates the result IN THIS
 # JOB, and opens a PR when anything changed — so the hand-fix never recurs.
 #
+# 🔴 "OPENS A PR WHEN ANYTHING CHANGED" IS THE WHOLE POINT, AND IT USED TO BE
+# FALSE. Until #530 the PR step required every validation to have passed, so one
+# failing check — an npm-side crash, not an SDK break — meant the pins were never
+# proposed at all and `pins-vs-published` (REQUIRED, `enforce_admins: true`)
+# stayed red on `main`, blocking every open PR for three days. Now: a failed
+# `validate — scaffold builds against the bumped SDK` DOWNGRADES the PR to a
+# DRAFT with a failure banner instead of suppressing it, while a failed pins or
+# suite check still withholds it (those two mean the bumper itself produced
+# something incoherent). The job still ends RED either way, so the issue is still
+# filed. Read the `open PR if pins changed` step's comment before re-tightening
+# any of it.
+#
 # A RED RUN OF THIS WORKFLOW NOW FILES ITS OWN ISSUE — see the `classify` and
 # `signal` jobs. A failing SCHEDULED run notifies almost nobody (GitHub mails
 # only whoever last edited the `cron` line, through that person's own per-user
@@ -25,8 +37,10 @@
 # ERREXIT NOTE, because this is the trap that caused #316 and #313. GitHub runs
 # every `run:` block as `bash -e {0}`, so errexit is ON before the first line and
 # `set -uo pipefail` does NOT clear it. Audited: NO step in this workflow runs a
-# command that is expected to fail as part of its logic — every `go`, `npm` and
-# `git` invocation here is expected to succeed, and the one deliberate failure
+# command that is expected to fail as part of its logic — every `go`, `npm`,
+# `gh` and `git` invocation here is expected to succeed (the `gh pr ready` call
+# is guarded by an `isDraft` read precisely because calling it on an already-ready
+# PR WOULD be a command expected to fail), and the one deliberate failure
 # (the fire drill) exits explicitly rather than leaning on the shell. So errexit
 # is welcome here. If you add a command that IS expected to fail, handle its
 # status where you write it; do not leave it to the shell.
@@ -106,9 +120,21 @@ jobs:
           go-version: "1.25"
           cache: true
 
+      # 🔴 node 24 — KEEP IT ALIGNED WITH `ci.yml`, and do not drop back to 22.
+      # The reason is stated in full at ci.yml's four `node-version: "24"` sites
+      # (npm 10's arborist crashes with `Cannot read properties of null (reading
+      # 'edgesOut')` while installing a scaffolded page-money app; npm 11
+      # succeeds). Read one of them before changing this.
+      #
+      # It matters HERE, in a job that runs no npm install, for a second reason:
+      # this is the daily DRIFT runner for the identically-named GATE job in
+      # ci.yml. A drift runner on a different node major than the gate it mirrors
+      # is a two-tier suite — the two tiers can disagree, and a failure visible in
+      # one can be structurally invisible in the other, which is the exact shape
+      # that let #530 sit for three days. Same major in both tiers, always.
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "24"
 
       # -v so the run REPORTS its controls (an inert emitter and a naive ack are
       # both driven through the same assertions and must be rejected) rather than
@@ -162,6 +188,11 @@ jobs:
       r_suite: ${{ steps.validate_suite.outcome }}
       r_build: ${{ steps.validate_build.outcome }}
       r_pr: ${{ steps.pr.outcome }}
+      r_ready: ${{ steps.pr_ready.outcome }}
+      # The PR's URL, so `classify` can LINK the draft it tells a reader to go
+      # review instead of asserting one exists. Empty when the step was skipped
+      # or failed — `classify` branches on emptiness rather than assuming.
+      pr_url: ${{ steps.pr.outputs.pull-request-url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -223,10 +254,29 @@ jobs:
       # would slip through otherwise, since this PR won't auto-run scaffold-
       # currency). Mirrors the template-page-money CI job. Scaffold into
       # RUNNER_TEMP so the generated app never pollutes the auto-PR diff.
+      #
+      # 🔴 THIS STEP FAILING NO LONGER SUPPRESSES THE PR — it downgrades it to a
+      # DRAFT (see the `open PR if pins changed` step). It used to gate it, and
+      # #530 is what that cost: an npm-side crash here meant the pins were never
+      # proposed at all, so `pins-vs-published` (REQUIRED, `enforce_admins`)
+      # stayed red on `main` and every open PR was blocked for three days until a
+      # human bumped by hand. The job still ends RED when this step fails, so
+      # `classify` → `signal` still file the issue.
+      #
+      # 🔴 node 24, NOT 22 — this line is what #530 actually was. `ci.yml` moved
+      # to 24 in aebd2fb (PR #520) FOR THIS CRASH and this sibling was left
+      # behind, so the nightly kept installing under node 22 / npm 10 and kept
+      # dying with `Cannot read properties of null (reading 'edgesOut')`. The
+      # full explanation lives at ci.yml's four `node-version: "24"` sites — read
+      # one of them (e.g. the `template-page-money` job) before changing this.
+      # Measured on the exact runner versions: node 22.23.2 / npm 10.9.8 fails
+      # the unmodified page-money template at `npm install`, node 24.19.0 /
+      # npm 11.17.0 installs, typechecks and builds it clean. Do not drop back
+      # to 22. `workflow_node_version_test.go` fails if anyone does.
       - uses: actions/setup-node@v4
         if: steps.changed.outputs.changed == 'true'
         with:
-          node-version: "22"
+          node-version: "24"
 
       - name: validate — scaffold builds against the bumped SDK
         id: validate_build
@@ -237,6 +287,94 @@ jobs:
           npm install --no-audit --no-fund
           npm run typecheck
           npm run build
+
+      # Compose the PR body HERE rather than inline in the action's `body:`,
+      # because it has to be conditional and a GitHub expression cannot hold a
+      # multi-paragraph markdown document without becoming unreadable.
+      #
+      # 🔴 The failure banner is the point. A draft PR whose body reads like a
+      # routine bump is the "reads as fine" hazard: a reviewer sees green prose,
+      # merges, and ships a scaffold that does not build. The banner goes FIRST,
+      # before any of the normal explanation.
+      #
+      # Writes to $GITHUB_OUTPUT only — nothing lands in the workspace, so the
+      # `add-paths` note below still holds. `body-path:` was rejected for exactly
+      # that reason: a body file in the workspace would ride into the commit.
+      - name: compose the PR title and body
+        id: prbody
+        if: always() && steps.changed.outputs.changed == 'true'
+        env:
+          R_BUILD: ${{ steps.validate_build.outcome }}
+        run: |
+          set -uo pipefail
+
+          # The title carries the warning too: the PR LIST is the one surface a
+          # reviewer sees before the body.
+          if [ "$R_BUILD" = "success" ]; then
+            title="chore(scaffold): bump @civitai/* pins to published latest"
+          else
+            title="DO NOT MERGE UNREVIEWED — @civitai/* pin bump validated except the scaffold build"
+          fi
+
+          {
+            echo "title=$title"
+            echo "body<<BUMP_PINS_BODY_EOF"
+            if [ "$R_BUILD" != "success" ]; then
+              cat <<'BANNER'
+          > 🔴 **DO NOT MERGE THIS UNREVIEWED — IT IS A DRAFT ON PURPOSE.**
+          >
+          > The pin rewrite validated (npm admits the new pins, and the offline
+          > scaffold suite is green), but the LAST check did not: a fresh
+          > `civitai app init … --template page-money` at these pins failed to
+          > install, typecheck or build. The bump is proposed anyway because
+          > withholding it froze the repo for three days (#530) —
+          > `pins-vs-published` is a REQUIRED check with `enforce_admins`, so
+          > un-bumped pins block every open PR regardless of its content.
+          >
+          > **A human decides which failure this is.** Read the run log, then
+          > this PR's own `template-page-money` / `scaffold-currency` checks —
+          > they run on this PR (scoped token) and are the second opinion.
+          > Mark it ready for review only once the build is understood.
+
+          BANNER
+            fi
+            cat <<'BODY'
+          Automated by the `bump-scaffold-pins` workflow (`internal/scaffold/cmd/bump-pins`).
+
+          One or more `@civitai/*` packages published a new minor, so the
+          page-money scaffold's pre-1.0 caret pins fell behind npm and the
+          `pins-vs-published` guard would go red. This PR rewrites the literal
+          pins in all three sites:
+
+          - `internal/scaffold/templates/page-money/package.json.tmpl`
+          - `internal/scaffold/templates/page-money/README.md.tmpl`
+          - `internal/scaffold/scaffold_test.go` (the `mustContain` canary)
+
+          The pins are rewritten as **literals** (not templated) on purpose:
+          the guard reads the raw `^X.Y.Z` bytes out of the `.tmpl`, so
+          templating the value would blind it.
+
+          **CI note:** this PR is opened with a scoped fine-grained token
+          (`secrets.BUMP_SCAFFOLD_PINS_TOKEN`, Contents + Pull requests RW on
+          this repo only), not the default `GITHUB_TOKEN` — so the repo's
+          normal checks (`pins-vs-published` / `scaffold-currency`) DO run on
+          it. As defense-in-depth the bump job RUNS three checks before opening
+          the PR — the network guard (`CIVITAI_CHECK_PUBLISHED_PINS=1 go test
+          -run TestScaffoldPinsSatisfyPublished`), the full offline scaffold
+          suite, and a fresh `civitai app init` scaffold that installs,
+          typechecks and **builds** against the bumped SDK (which is what would
+          catch a removed/renamed export).
+
+          The first two must pass or this PR is not opened at all. The third
+          does NOT block it — a failure there opens this PR as a **draft**
+          instead, because withholding the bump freezes the whole repo (#530).
+          Its result for this run is stated on the last line below; do not read
+          "the bump job validates" as "everything passed".
+          BODY
+            echo
+            echo "Scaffold build validation: \`$R_BUILD\`."
+            echo "BUMP_PINS_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
 
       # NO `add-paths:` here, deliberately — and that is a decision, not an
       # oversight. This action stages `git add -A` when `add-paths` is absent,
@@ -260,9 +398,30 @@ jobs:
       # trade-off before reaching for it as a reflex: a path that is written but
       # NOT listed is silently dropped from the commit, and a bot that opens an
       # incomplete PR is worse than the artifact the filter prevents.
+      #
+      # 🔴 `always()` HERE, AND WHY THE FIRE DRILL STILL CANNOT REACH THIS STEP.
+      # `always()` only defeats the implicit `success()` that a step's `if:`
+      # carries by default; the `changed == 'true'` conjunct is untouched and is
+      # what the drill trips. `drill=bump` fails the `bump` step, so `detect
+      # changes` (which has no `if:`, so it defaults to `success()`) is SKIPPED
+      # and never writes its output — `steps.changed.outputs.changed` is then the
+      # empty string, not `'true'`, and this step is skipped. The drill's own
+      # description under `workflow_dispatch` still holds; it is pinned by
+      # `TestBumpPRStepStillRequiresChangedOutput` in
+      # `workflow_node_version_test.go`, which also fails if this condition ever
+      # grows an `||`.
+      #
+      # A pins/suite failure still WITHHOLDS the PR — those two mean the bumper
+      # produced something incoherent, so there is nothing worth proposing. Only
+      # `validate_build` downgrades rather than blocks: its failure can be
+      # upstream of us entirely (#530 was npm's arborist, not the SDK).
       - name: open PR if pins changed
         id: pr
-        if: steps.changed.outputs.changed == 'true'
+        if: >-
+          always()
+          && steps.changed.outputs.changed == 'true'
+          && steps.validate_pins.outcome == 'success'
+          && steps.validate_suite.outcome == 'success'
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6.1.0
         with:
           # Scoped fine-grained token (Contents + Pull requests: RW on this repo
@@ -273,33 +432,51 @@ jobs:
           branch: automation/bump-scaffold-pins
           delete-branch: true
           commit-message: "chore(scaffold): bump @civitai/* pins to published latest"
-          title: "chore(scaffold): bump @civitai/* pins to published latest"
-          body: |
-            Automated by the `bump-scaffold-pins` workflow (`internal/scaffold/cmd/bump-pins`).
+          # Title and body are both composed by the `compose the PR title and
+          # body` step —
+          # they are conditional, and a `${{ a && 'x' || 'y' }}` ternary holding
+          # a title with a colon in it does not survive YAML parsing unquoted.
+          title: ${{ steps.prbody.outputs.title }}
+          body: ${{ steps.prbody.outputs.body }}
+          draft: ${{ steps.validate_build.outcome != 'success' }}
 
-            One or more `@civitai/*` packages published a new minor, so the
-            page-money scaffold's pre-1.0 caret pins fell behind npm and the
-            `pins-vs-published` guard would go red. This PR rewrites the literal
-            pins in all three sites:
-
-            - `internal/scaffold/templates/page-money/package.json.tmpl`
-            - `internal/scaffold/templates/page-money/README.md.tmpl`
-            - `internal/scaffold/scaffold_test.go` (the `mustContain` canary)
-
-            The pins are rewritten as **literals** (not templated) on purpose:
-            the guard reads the raw `^X.Y.Z` bytes out of the `.tmpl`, so
-            templating the value would blind it.
-
-            **CI note:** this PR is opened with a scoped fine-grained token
-            (`secrets.BUMP_SCAFFOLD_PINS_TOKEN`, Contents + Pull requests RW on
-            this repo only), not the default `GITHUB_TOKEN` — so the repo's
-            normal checks (`pins-vs-published` / `scaffold-currency`) DO run on
-            it. As defense-in-depth the bump job also validates BEFORE opening
-            the PR: the network guard (`CIVITAI_CHECK_PUBLISHED_PINS=1 go test
-            -run TestScaffoldPinsSatisfyPublished`), the full offline scaffold
-            suite, AND a fresh `civitai app init` scaffold that installs +
-            typechecks + **builds** against the bumped SDK (catching a
-            removed/renamed export).
+      # 🔴 `draft:` IS APPLIED ONLY ON CREATION. The action's own input doc says
+      # so: "It is not possible to change draft status after creation except
+      # through the web interface." Its branch is reused across runs, so without
+      # this step a PR first opened by a FAILING run and then UPDATED by a later
+      # SUCCESSFUL run would stay a draft forever — the bot would keep quietly
+      # not-landing a fix that is now fine, which is #530 again in slow motion.
+      #
+      # `gh pr ready` is a GraphQL `markPullRequestReadyForReview`, covered by
+      # the same fine-grained token's `Pull requests: write`. The `isDraft` read
+      # first is not decoration: `gh pr ready` errors on an already-ready PR, and
+      # errexit is on in this file (see the ERREXIT NOTE at the top).
+      #
+      # RESIDUAL, stated rather than papered over: the mirror case is NOT closed.
+      # A PR created READY by a good run and then updated by a run whose build
+      # fails cannot be demoted to draft (same action limitation, and `gh` has no
+      # un-ready verb for it). What that run does change is the title and the
+      # body, both of which lead with the failure banner, and the job still ends
+      # red and files an issue. A ready-for-review PR carrying a `DO NOT MERGE
+      # UNREVIEWED` title is the worst case this wiring ships with.
+      - name: mark the PR ready for review once the build validates
+        id: pr_ready
+        if: >-
+          always()
+          && steps.pr.outputs.pull-request-number != ''
+          && steps.validate_build.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_SCAFFOLD_PINS_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ steps.pr.outputs.pull-request-number }}
+        run: |
+          set -uo pipefail
+          if [ "$(gh pr view "$PR" --json isDraft --jq .isDraft)" = "true" ]; then
+            echo "PR #$PR is a draft left by an earlier failing run; the build validates now — marking it ready."
+            gh pr ready "$PR"
+          else
+            echo "PR #$PR is already ready for review — nothing to do."
+          fi
 
   # Compose ONE report out of the two independent jobs above.
   #
@@ -331,6 +508,8 @@ jobs:
           R_SUITE: ${{ needs.bump.outputs.r_suite }}
           R_BUILD: ${{ needs.bump.outputs.r_build }}
           R_PR: ${{ needs.bump.outputs.r_pr }}
+          R_READY: ${{ needs.bump.outputs.r_ready }}
+          PR_URL: ${{ needs.bump.outputs.pr_url }}
           DRILL: ${{ (github.event_name == 'workflow_dispatch' && inputs.drill) || 'none' }}
         run: |
           set -uo pipefail
@@ -369,13 +548,56 @@ jobs:
               bump_title="the scaffold pin bumper broke the offline scaffold suite"
               bump_detail="Pins were rewritten and satisfy npm, but \`go test ./internal/scaffold/...\` then failed. **No PR was opened.** The usual cause is the bumper rewriting only some of the three literal sites, leaving the \`scaffold_test.go\` \`mustContain\` canary disagreeing with the template."
             elif [ "$R_BUILD" = "failure" ]; then
+              # 🔴 THE SENTENCE THAT USED TO BE HERE COST THREE DAYS. It asserted
+              # "**No PR was opened**, on purpose — this is the removed/renamed
+              # SDK export case, and it is a real upstream break rather than a
+              # bot bug." Both halves were false: a draft PR IS opened now, and
+              # the one time this fired the cause was npm's arborist, not the
+              # SDK. That text is what #524's body said, and it is what sent the
+              # investigation at the wrong half of the stack (#530).
+              #
+              # So this verdict states the MEASUREMENT, enumerates the causes
+              # WITHOUT picking one, says the enumeration is open, and hands the
+              # reader the probe that discriminates. Do not re-narrow it into a
+              # confident diagnosis; this job has never had the evidence for one.
+              pr_line=""
+              if [ "$R_PR" = "success" ] && [ -n "$PR_URL" ]; then
+                pr_line="**A DRAFT PR was opened anyway: $PR_URL** — deliberately, because withholding it is what froze the repo. Draft means GitHub will not let it merge until a human marks it ready, and its title and body both lead with the failure. It carries the pin bump only; it does NOT fix whatever failed below. Do not mark it ready until you know which case this is."
+              elif [ "$R_PR" = "success" ]; then
+                pr_line="**A DRAFT PR was opened anyway**, deliberately, because withholding it is what froze the repo — but its URL did not reach this report, so open the run's \`bump\` job to find it. Draft means it cannot merge until a human marks it ready."
+              else
+                pr_line="**No PR was opened** — the \`open PR if pins changed\` step did not succeed either (\`r_pr=$R_PR\`), which is a SECOND failure on top of the build one. So the pin fix is un-merged and \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red, blocking every open PR, until someone bumps the pins by hand."
+              fi
               bump_state=validate-build-failed
-              bump_title="the newly-published @civitai/* SDK no longer builds the scaffold"
-              bump_detail="Pins were rewritten and satisfy npm, but a fresh \`civitai app init … --template page-money\` then failed to install, typecheck or build against them. **No PR was opened**, on purpose — this is the removed/renamed SDK export case, and it is a real upstream break rather than a bot bug. Every newly-scaffolded page-money app is affected until the template is adapted or the SDK is fixed."
+              bump_title="the scaffold did not build against the newly-bumped @civitai/* pins"
+              bump_detail="**What was measured.** Pins were rewritten and they satisfy npm's published latest; the offline scaffold suite is green. The LAST check then failed: a fresh \`civitai app init … --template page-money\` at the bumped pins did not install, typecheck or build. The step runs \`npm install\` → \`npm run typecheck\` → \`npm run build\` and this report does not record which of the three died — **the run log does, and it is the first thing to read.**
+
+          $pr_line
+
+          **What this does NOT say: which cause it is.** At least two produce this exact outcome, nothing in this report distinguishes them, and the list is OPEN — treat it as a starting set, not an enumeration of the possible:
+
+          1. **A genuine upstream break** — a removed or renamed \`@civitai/*\` export the template still imports. If so, every newly-scaffolded page-money app is affected until the template is adapted or the SDK is fixed.
+          2. **An npm-side install crash** with nothing wrong in the SDK at all. This is measured precedent, not a hypothetical: npm 10's arborist dies with \`Cannot read properties of null (reading 'edgesOut')\` on the UNMODIFIED page-money template, which is why this workflow and \`ci.yml\` both pin node 24 (npm 11). Issue #524 was this classifier asserting case 1 while the cause was case 2.
+
+          **The discriminating probe.** Run it locally against the pins this run proposed:
+
+          \`\`\`
+          go run ./cmd/civitai app init Probe --dir /tmp/pin-probe --template page-money
+          # edit /tmp/pin-probe/package.json to the @civitai/* pins from this run's diff
+          cd /tmp/pin-probe && npm install --no-audit --no-fund && npm run typecheck && npm run build
+          \`\`\`
+
+          - dies inside \`npm install\` with a tree-walk error (\`edgesOut\`, a null read, \`ERESOLVE\`) → **case 2**; re-run under a different node/npm major and compare before touching the template.
+          - installs, then fails \`typecheck\` or \`build\` naming a missing import/export → **case 1**, and the error names the export.
+          - passes clean on your machine → the difference is the runner's environment, not the pins."
             elif [ "$R_PR" = "failure" ]; then
               bump_state=pr-failed
               bump_title="the scaffold pin bumper could not open its PR"
               bump_detail="The pins were bumped and fully validated, but opening the PR failed — usually \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` being expired or missing. **The fix is still un-merged**, so \`pins-vs-published\` (a REQUIRED check on \`main\`) stays red and blocks EVERY open PR regardless of its content, until someone bumps the pins by hand or repairs the token."
+            elif [ "$R_READY" = "failure" ]; then
+              bump_state=pr-ready-failed
+              bump_title="the scaffold pin bumper opened its PR but could not take it out of draft"
+              bump_detail="Everything validated and the PR was opened/updated, but the \`mark the PR ready for review once the build validates\` step failed. That step exists because \`peter-evans/create-pull-request\` applies \`draft:\` **only on creation**, so a PR first opened by an earlier failing run stays a draft until \`gh pr ready\` flips it. **The PR is therefore probably still a DRAFT and cannot merge** — check it and mark it ready by hand. Likely causes: \`secrets.BUMP_SCAFFOLD_PINS_TOKEN\` lacking \`Pull requests: write\`, or expired."
             else
               # No step recorded a failure, yet the job is not green: it died
               # before/outside its own steps (runner failure, checkout failure,
