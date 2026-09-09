@@ -249,6 +249,7 @@ USER owns — the merge, the parsers, and which rows fail `--check`.
 Item 36 is its THIRD: what the managed block may claim about the project it was
 written into.
 Item 37 is a username that arrives as a NUMBER.
+Item 38 is what the read path may CLAIM about the bytes it prints.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -447,6 +448,10 @@ item must carry a trigger that is a routing question rather than a label
 37. **Typing a `pkg/civitai` username as `string`, or "fixing" a `FlexString`
     back?**
     → evidence: claudedocs/decisions/37-numeric-username.md
+
+38. **Moving where a read body is repaired, filtering (or unfiltering) what an
+    error snippet prints, or wording what `--json` and `Raw` are made of?**
+    → evidence: claudedocs/decisions/38-read-body-repair-and-snippet.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

@@ -433,6 +433,11 @@ var bornSplitItems = []string{
 	// merging second renumbers its own items) was written straight into
 	// claudedocs/decisions/ for the same reason as 35.
 	"claudedocs/decisions/37-numeric-username.md",
+	// Item 38 was written straight into claudedocs/decisions/ for the same
+	// reason: AGENTS.md had 472 bytes of headroom when it was added, and the
+	// body is three decisions plus their measurement and mutation matrices and
+	// four enumerated residuals.
+	"claudedocs/decisions/38-read-body-repair-and-snippet.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item

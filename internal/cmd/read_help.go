@@ -50,20 +50,33 @@ when you are logged in.`
 // The README's "Scripting with --json" section is careful about exactly this: it
 // promises "pure JSON — nothing else is written to stdout", never byte-identity.
 //
-// It also does NOT mention emitJSON's raw-control-byte repair
-// (escapeJSONStringControlChars), and that omission is measured rather than an
-// oversight: every read command reaches emitJSON only AFTER getInto has
+// 🔴 THE RAW-CONTROL-BYTE REPAIR IS A BEHAVIOUR OF THIS GROUP, AND THE COMMENT
+// THAT USED TO SIT HERE SAID IT WAS NOT — EVERY CLAUSE OF IT MEASURED FALSE.
+// It read: "every read command reaches emitJSON only AFTER getInto has
 // unmarshalled the same bytes into a typed struct, and encoding/json rejects a
 // raw C0 byte inside a string literal there first. Measured: a body carrying a
-// literal CR inside a description exits 1 with "unexpected response from
-// /api/v1/models (status 200)" and an EMPTY stdout — emitJSON is never entered.
-// The repair is real defence-in-depth for any future caller that passes raw
-// bytes through without a typed decode; it is not a behaviour of this group, so
-// it is not described as one.
+// literal CR inside a description exits 1 … and an EMPTY stdout — emitJSON is
+// never entered. … it is not a behaviour of this group, so it is not described
+// as one."
+//
+// That was true when it was written and civitai/cli#526 falsified it: getInto
+// now repairs the same class of byte before the typed decode, so the decode
+// SUCCEEDS. Re-measured on the same fixture — a literal CR inside a `name` on
+// `models search` — the command exits 0, the table renders, and with `--json`
+// emitJSON is entered and prints a document carrying `\r`. The whole suite was
+// green across that merge, because nothing asserted on this paragraph.
+//
+// So the repair IS described below, and TestReadJSONNoteDescribesTheRepair is
+// what stops this paragraph going stale a second time: it re-measures the
+// behaviour through the real command tree and pins this constant's text
+// verbatim against that measurement. A reword fails it on purpose — the note is
+// a measured claim, not prose, and the test's failure message says which
+// measurement to redo.
 const readJSONNote = `--json writes the API response to stdout and nothing else — notes and errors go
 to stderr, so ` + "`… --json | jq -e .`" + ` always parses. The document is the API's,
-the bytes are not: it is re-indented on the way out, so do not diff or hash it
-against the wire.`
+the bytes are not: it is re-indented on the way out, and a raw control byte the
+API emits inside a string (which is not legal JSON) is rewritten as its escape
+so the output still parses. Do not diff or hash it against the wire.`
 
 // limitRule renders one endpoint's --limit bounds.
 //

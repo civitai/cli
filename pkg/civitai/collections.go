@@ -53,7 +53,9 @@ type CollectionDetail struct {
 }
 
 // CollectionSearchResult bundles the parsed items + pagination metadata with the
-// raw response body (for --json passthrough).
+// body that decoded, for --json passthrough. Raw is NOT promised to be the
+// server's own bytes: see EscapeJSONStringControlChars for the one case where it
+// is the repaired body instead.
 type CollectionSearchResult struct {
 	Items    []CollectionListItem `json:"items"`
 	Metadata Metadata             `json:"metadata"`

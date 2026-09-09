@@ -104,16 +104,12 @@ func TestEmitJSONValidInputUnchanged(t *testing.T) {
 	}
 }
 
-// TestEscapeJSONStringControlCharsLeavesStructuralWhitespace ensures control
-// bytes OUTSIDE string literals (newlines/tabs between tokens, which are valid
-// JSON whitespace) are not molested.
-func TestEscapeJSONStringControlCharsLeavesStructuralWhitespace(t *testing.T) {
-	raw := []byte("{\n\t\"a\": 1\n}")
-	got := escapeJSONStringControlChars(raw)
-	if !bytes.Equal(got, raw) {
-		t.Fatalf("structural whitespace altered:\n got %q\nwant %q", got, raw)
-	}
-}
+// The structural-whitespace guard that used to sit here was a byte-identical
+// copy of pkg/civitai's TestEscapeJSONStringControlCharsLeavesStructuralWhitespace,
+// reaching the same function through a one-line delegating wrapper that existed
+// only so this file compiled. Both are gone; emitJSON calls
+// civitai.EscapeJSONStringControlChars directly and the guard lives with the
+// implementation it guards.
 
 // TestCheckLimitExplicitZeroRejected drives the bindReadFlags PreRunE guard:
 // an explicit `--limit 0` must be a usage error (exit code 2), while an UNSET

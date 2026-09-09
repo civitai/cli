@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/civitai/cli/internal/saferune"
 )
 
 // Reader is the read surface of the public Civitai REST API (`/api/v1/**`).
@@ -89,11 +91,43 @@ func (c *Client) getRaw(ctx context.Context, path string, q url.Values) (int, []
 }
 
 // getInto GETs path+q, and on a 2xx unmarshals the body into out (when non-nil)
-// and returns the raw body (for --json). A non-2xx returns a readError.
+// and returns the body (for --json). A non-2xx returns a readError.
+//
 // Raw C0 control characters (0x00–0x1F) inside string literals — which violate
 // strict RFC 8259 JSON syntax but are intermittently emitted by the Civitai API
-// inside prompt/description strings — are sanitized via
-// EscapeJSONStringControlChars before unmarshaling so typed decode succeeds.
+// inside prompt/description strings (civitai/cli#525) — are repaired by
+// EscapeJSONStringControlChars so typed decode succeeds. The returned bytes are
+// then the REPAIRED body, not the wire body; see the note on Raw in the result
+// types.
+//
+// 🔴 THE REPAIR IS A RETRY ON THE DECODE, NOT A PRE-PASS OVER EVERY BODY, AND
+// THE ORDER IS LOAD-BEARING IN THREE WAYS.
+//
+//  1. COST. The first cut ran `json.Valid(raw)` over every successful body
+//     before unmarshalling it — a second full scan of bytes Unmarshal is about
+//     to walk anyway, on the happy path of an importable SDK rather than a
+//     one-shot CLI. The load-bearing half of that is STRUCTURAL, not measured:
+//     unmarshal-first does no extra work at all on a body that decodes, which
+//     is every body but the broken ones. The size of what was removed is one
+//     host's measurement and is quoted as such — a synthetic 1.50 MB /
+//     2185-item models page, go1.25, `-benchtime 300x -count=5`: json.Valid
+//     4.9–6.4 ms against json.Unmarshal 12.9–26.4 ms, so roughly a quarter to
+//     a half again on top of the decode. Do not treat that ratio as portable;
+//     the benchmark was scratch and is not in the tree.
+//  2. THE SNIPPET. `snippet(raw)` below is the only thing the user is shown
+//     when decode fails, and the pre-pass reassigned `raw` to the repaired
+//     bytes BEFORE it ran — so a body the server sent with a literal CR was
+//     reported as `Pony\rModel`, two printable characters, and README's
+//     "the text after the colon is the server's own body" was false. Here the
+//     reassignment happens only on the branch that succeeded, so the failure
+//     message still quotes what arrived.
+//  3. THE UNREPAIRABLE CASE. A body that is invalid for a reason the sanitizer
+//     cannot fix (a trailing comma, a truncated object) must reach the same
+//     error as before, with the ORIGINAL bytes in the snippet. That path is
+//     pinned by TestGetIntoUnrepairableBodyReportsTheOriginalBytes.
+//
+// out is non-nil at every call site today; a nil out therefore performs no
+// decode and no repair, and returns the wire bytes unchanged.
 func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any) ([]byte, error) {
 	status, raw, err := c.getRaw(ctx, path, q)
 	if err != nil {
@@ -102,15 +136,29 @@ func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any
 	if status < 200 || status >= 300 {
 		return nil, readError(status, raw)
 	}
-	if !json.Valid(raw) {
-		if fixed := EscapeJSONStringControlChars(raw); json.Valid(fixed) {
-			raw = fixed
-		}
+	return decodeBody(path, status, raw, out)
+}
+
+// decodeBody is the shared 2xx-body decode for getInto and postInto: it
+// unmarshals raw into out (when non-nil) and returns the bytes that decoded.
+//
+// 🔴 IT IS ONE FUNCTION BECAUSE THE TWO CALLERS MUST NOT ANSWER THIS
+// DIFFERENTLY. postInto's doc comment enumerates what it mirrors from getInto
+// (status classification, body cap, retry/backoff) and the control-byte repair
+// was, for one release, a fourth axis on which it silently did NOT — a
+// divergence no test could see because HashMatch carries no free text today.
+// Sharing the body makes the enumeration true by construction instead of by
+// prose. Both call sites are pinned by TestDecodeBodyIsSharedByGetIntoAndPostInto.
+func decodeBody(path string, status int, raw []byte, out any) ([]byte, error) {
+	if out == nil {
+		return raw, nil
 	}
-	if out != nil {
-		if err := json.Unmarshal(raw, out); err != nil {
+	if err := json.Unmarshal(raw, out); err != nil {
+		fixed := EscapeJSONStringControlChars(raw)
+		if json.Unmarshal(fixed, out) != nil {
 			return nil, fmt.Errorf("unexpected response from %s (status %d): %s", path, status, snippet(raw))
 		}
+		return fixed, nil
 	}
 	return raw, nil
 }
@@ -121,7 +169,13 @@ func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any
 // \u00xx). Control bytes outside strings (structural whitespace) and everything
 // already escaped are left byte-for-byte unchanged, so valid input round-trips
 // identically. This does not attempt to repair other kinds of malformed JSON;
-// callers should verify the result with json.Valid before relying on it.
+// callers should verify the result with json.Valid, or by decoding it, before
+// relying on it.
+//
+// This is the ONE case in which a result type's Raw field is not the server's
+// own bytes. getInto applies this repair when — and only when — the wire body
+// fails to decode, so a body that decodes is passed through untouched, and a
+// body that does not is replaced by the repaired one that did.
 func EscapeJSONStringControlChars(raw []byte) []byte {
 	var out bytes.Buffer
 	out.Grow(len(raw))
@@ -425,10 +479,39 @@ func readResponseBody(body io.Reader, limit int64) ([]byte, error) {
 	return raw, nil
 }
 
-// snippet bounds an error/body string so a huge response can't flood the
-// terminal.
+// snippet renders SERVER-SUPPLIED bytes into the human-readable tail of an
+// error message: it removes the runes that must not reach a terminal, then
+// bounds the length so a huge response can't flood it.
+//
+// 🔴 EVERY ARGUMENT THIS FUNCTION IS EVER GIVEN IS THE SERVER'S OWN BYTES — the
+// 2xx body that failed to decode, the API's `{"error":…}`/`{"message":…}` text,
+// a zod issue out of a 400, a retry-exhaustion body, a FlexString value. None of
+// it is anything the user typed, which is what makes an unconditional strip
+// correct here and would make it wrong one layer up (internal/saferune's package
+// doc states that rule and what it costs; do not restate the class here).
+//
+// 🔴 IT STRIPS BECAUSE THE OUTPUT REACHES A RAW TERMINAL WITH NO OTHER GATE.
+// cmd/civitai/main.go prints `Error: <err>` straight to stderr — internal/cmd's
+// safeTerm sits on the HUMAN RENDERERS, not on the error path — so before this,
+// a 200 body containing `\x1b[1A\x1b[2K` could overwrite the CLI's own preceding
+// output from inside an error message. Truncating first would not have helped:
+// the escape needs a dozen bytes and the budget is 500.
+//
+// The strip runs BEFORE the bound so the 500 bytes are 500 bytes the user can
+// actually see, rather than a budget an invisible run can eat.
+//
+// 🔴 THE LAYERING COST, STATED RATHER THAN HIDDEN: this makes pkg/civitai — the
+// public SDK — depend on internal/saferune, and it means an SDK consumer that is
+// not a terminal sees an error string with those runes already removed. That was
+// chosen over the two alternatives. Filtering at the print site in
+// cmd/civitai/main.go would apply the class to EVERY error, including the ones
+// that echo what the user typed, which is exactly the regression civitai/cli#393
+// exists to prevent. Re-deriving the class inside pkg/civitai would be a second
+// table, which is the OTHER half of #393. The unaffected byte path is Raw: it is
+// returned to the caller unstripped, so nothing machine-readable passes through
+// here.
 func snippet(raw []byte) string {
-	s := strings.TrimSpace(string(raw))
+	s := strings.TrimSpace(saferune.Strip(string(raw)))
 	const max = 500
 	if len(s) > max {
 		return s[:max] + "…"
