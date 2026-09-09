@@ -18,3 +18,13 @@ coverage.html
 # and all 13 CI checks stayed green).
 /result
 /result-*
+
+# A Go repo has no node_modules of its own, but npm-adjacent tooling run with
+# this directory as cwd leaves one behind — a scaffolded template's harness, the
+# docs-snapshot tooling. What turned up here was
+# `node_modules/.cache/civitai-test-keys/block-token-rsa2048-v1.json`, a test
+# RSA keypair with a `privatePem` in it: nothing in THIS repo writes it, and it
+# sat untracked in the repo root protected only by the discipline of never
+# blind-staging. Ignoring the directory removes that from being one `git add -A`
+# away from a committed private key.
+/node_modules/
