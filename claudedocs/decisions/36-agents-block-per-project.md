@@ -141,3 +141,84 @@ description-wider-than-its-implementation looks like from the inside: the file
 read as authoritative in a project where two thirds of it was false. If the
 branch has to go, the replacement is a table that states BOTH cases with the
 condition attached — never one case asserted for all of them.
+
+---
+
+## Second defect, same block: it named the WRONG SCAFFOLDER (#534, dogfood 2)
+
+The per-project fix above made the block's *local-dev* section true of the
+directory it is written into. It left the row that tells an author how to CREATE
+that directory pointing at the other scaffolder:
+
+```
+| Scaffold a new app | `civitai app init <name>` |
+```
+
+`app init` and `app create` share one `RunE` (`runAppScaffold`) and differ in
+exactly one thing — the default `--template`. Measured on the shipped binary at
+`cbcb992`:
+
+| command (no `--template`) | template | files | `package.json` | dev scripts |
+| --- | --- | --- | --- | --- |
+| `civitai app init df-init --yes` | `static` | **8** | **none** | none |
+| `civitai app create df-create --yes` | `page-money` | **37** | yes | `dev`, `dev:harness`, `dev:live`, `dev:tunnel` |
+
+So an author following the block's own row got the project shape for which the
+block has the LEAST to say — while four sections later the same block credits the
+scaffolder with `dev:harness`/`dev`/`dev:live`/`dev:tunnel` and with the
+`@civitai/*` pins, none of which exist in a `static` project.
+
+**The binary already had an answer, and the block was the outlier.**
+`civitai app --help`: *"`civitai app create` is the friendly,
+batteries-included scaffolder (defaults to the rich page-money SDK template);
+`civitai app init` is the same scaffolder with a no-build static default
+(back-compat alias)."* `civitai --help`'s "Get started" block, `civitai --help`'s
+`Example`, `app --help`'s `Example` and `agentSetupNoSuchDir` all already said
+`create`. Three surfaces said `init`: this block, `remedyNoSuchDir`
+(`internal/cmd/project_dir.go`) and `manifest.Load`/`LoadRaw`'s
+"run `civitai app …` to create one". All three moved.
+
+### Established answer: `create`, and `init` is not named to a NEW author
+
+`init` is not deprecated and was not touched — it is a documented, tested,
+back-compat alias, and a message that needs the `static` template's artefacts
+still names it deliberately (`readyAckRemedy` in `internal/validate/readyack.go`
+tells an author to scaffold a scratch project and copy its `civitai-host.js`;
+`app create`'s page-money default ships no such file, so `init` is the *correct*
+command there and was left alone). What changed is only the surfaces addressed to
+a reader who has **no app yet**: those name one command, and it is the one this
+CLI's own help recommends.
+
+### Guards
+
+`internal/cmd/agent_setup_scaffolder_test.go`:
+
+- `TestTheBlocksScaffolderProducesAProjectItsOwnCommandsRunIn` — reads the
+  scaffold row out of the shipped template, RUNS it exactly as spelled (no
+  `--template`), and requires the result to be a project the block's own
+  local-dev section can name commands for, then checks every `npm run X` the
+  rendered block prints against that project's `package.json`. It asserts a
+  relationship, never the word "create".
+- `TestBlockScaffoldRowExtractorCanFail` — negative control for the extractor.
+- `TestEveryNewAppRemedyNamesOneScaffolder` — the seven-surface ledger, held to
+  ONE verb, with a per-surface positive control. **The ledger is an open
+  enumeration**: it is not a claim that nothing else in the repo names a
+  scaffolder (`app --help` and the README command table document both on
+  purpose), only that these seven agree.
+
+Red-then-green, run against `origin/main` `cbcb992` with only the test file
+added:
+
+```
+--- FAIL: TestTheBlocksScaffolderProducesAProjectItsOwnCommandsRunIn
+    the block's "Scaffold a new app" row names `civitai app init`, whose default
+    template produced a "no-build" project with 0 recognised dev scripts …
+--- FAIL: TestEveryNewAppRemedyNamesOneScaffolder
+    a new author is told 2 different commands by one binary …
+      `civitai app create`: agent-setup --dir remedy, civitai --help (Example),
+                            civitai --help (Long: Get started), civitai app --help (Example)
+      `civitai app init`:   agent-setup's managed block scaffold row,
+                            manifest.Load remedy, project-path remedy (remedyNoSuchDir)
+```
+
+Both green at HEAD.

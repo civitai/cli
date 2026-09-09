@@ -398,8 +398,13 @@ header holding your actual token is a secret headed for version control. Instead
 - Where the vendor **documents** environment-variable interpolation, the header
   **references** `CIVITAI_TOKEN` in that vendor's own spelling (the last column
   above; the four spellings genuinely differ). Export it so the agent resolves
-  it: `export CIVITAI_TOKEN=<your token>` — put it in your shell profile so the
-  agent inherits it.
+  it: `export CIVITAI_TOKEN=<a personal API key>` — put it in your shell profile
+  so the agent inherits it. 🔴 **Mint that key at
+  [civitai.com/user/account](https://civitai.com/user/account) (API Keys); it is
+  not the token `civitai login` stored, and no command prints that one.**
+  Exporting a value makes this CLI treat it as a personal key with **no
+  refresh**, so an OAuth login token exported here works until it expires and
+  then hard-fails.
 - Where the vendor documents **none** — Zed today, and `--agent other`, whose
   target agent is by definition unknown — **no header is written at all**, and the
   output names the exact header to add yourself. Guessing a syntax
@@ -448,8 +453,8 @@ civitai agent-setup --check --json
     {"name": "cli-version",   "ok": true,  "detail": "v0.1.103"},
     {"name": "agents-md",     "ok": true,  "detail": "/home/u/proj/AGENTS.md"},
     {"name": "claude-md",     "ok": true,  "detail": "/home/u/proj/CLAUDE.md"},
-    {"name": "mcp-site",      "ok": true,  "detail": "/home/u/proj/.mcp.json"},
-    {"name": "mcp-orch",      "ok": true,  "detail": "/home/u/proj/.mcp.json"},
+    {"name": "mcp-site",      "ok": true,  "detail": "registered in /home/u/proj/.mcp.json — this row read that file; it does not contact https://mcp.civitai.com/mcp"},
+    {"name": "mcp-orch",      "ok": true,  "detail": "registered in /home/u/proj/.mcp.json — this row read that file; it does not contact https://orchestration.civitai.com/mcp, which returns 401 until an Authorization header is present"},
     {"name": "authenticated", "ok": false, "detail": "no token in this CLI's config and no CIVITAI_TOKEN in this environment — run `civitai login` for this CLI, and `export CIVITAI_TOKEN` for claude"}
   ]
 }
@@ -464,6 +469,14 @@ exported (the setup an agent can use); a token is configured for **this CLI** bu
 `orchestration.civitai.com`); or neither. The row's `ok` is `true` for both of
 the first two and it never fails the verdict either way — what it reports is a
 value being **present**, never that a server accepted it.
+
+🔴 **An `ok: true` `mcp-*` row means an entry is IN THAT FILE — never that the
+server answered.** `--check` is offline and side-effect-free: every one of its
+steps is a file read, and it contacts nothing. So the row names the file it
+inspected and says so, because `ok: true` beside a bare path used to read as
+"this server works" — and `https://orchestration.civitai.com/mcp` returns `401`
+to an unauthenticated request, which a green row said nothing about. Same rule as
+`authenticated` above: presence, not acceptance.
 
 A config file `--check` cannot **read** is reported the same way an unknown agent
 and an unresolvable home already were: as `mcp-site`/`mcp-orch` rows carrying the
@@ -1949,7 +1962,7 @@ manifest to read, so it stops before it builds a request:
 
 ```text
 $ cd /tmp && civitai app listing status
-Error: could not resolve the app — run this from your app directory (with block.manifest.json) or pass --slug: no block.manifest.json found in . — is this an App project? run `civitai app init` to create one
+Error: could not resolve the app — run this from your app directory (with block.manifest.json) or pass --slug: no block.manifest.json found in . — is this an App project? run `civitai app create` to create one
 ```
 
 Two flags name the app instead: **`--slug <blockId>`** skips the manifest

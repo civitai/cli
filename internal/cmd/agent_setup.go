@@ -84,6 +84,43 @@ const (
 	agentSetupNotADir   = "%s is not a directory — --dir takes the project ROOT that receives AGENTS.md, not a file"
 )
 
+// tokenPlaceholder is what stands in for the credential in every line this
+// command tells a user to type, and printTokenSourceNote is the sentence that
+// follows it.
+//
+// 🔴 `<your token>` NAMED NO SOURCE, AND A BLIND DOGFOOD GOT STUCK THERE. The
+// next-step block printed `export CIVITAI_TOKEN=<your token>` and nothing — here,
+// in `--help`, or in any other command — said where that value comes from. The
+// dogfood went looking for a command that prints the stored credential and found
+// none, which is correct and deliberate: no file in internal/cmd prints
+// `cfg.Token()` / `AccessToken()` / `RefreshToken()`, and that invariant is the
+// point of this whole path, not an omission. A placeholder whose only resolution
+// would be a leak is a dead end by construction, so it has to name its source.
+//
+// 🔴 AND THE OBVIOUS GUESS IS WRONG IN A WAY THAT FAILS *LATER*. Exporting the
+// token `civitai login` stored is not equivalent to minting a key. `Config.Token`
+// prefers the env-bound `token` key over the stored `access_token`, and
+// `Config.AuthKind` returns AuthKindToken — documented as "a personal API key
+// (no refresh)" — for ANY env-supplied value. So an exported OAuth access token
+// shadows the refreshable pair, works until it expires and then hard-fails, with
+// nothing left to refresh it. That is a worse outcome than being stuck, because
+// it is a setup that verifies green today.
+//
+// 🔴 IT NAMES THE SOURCE, NEVER THE VALUE. Printing, echoing or logging the
+// stored credential to close this would be exactly the leak item 34 forbids.
+// `accountAPIKeysURL` is the one constant seven other remedies already use, so
+// this cannot drift from where `civitai login --token` sends the same user.
+const tokenPlaceholder = "<a personal API key>"
+
+func printTokenSourceNote(w io.Writer, st ui.Styler, indent string) {
+	// The wording is context-NEUTRAL on purpose: this note follows an `export`
+	// line for the interpolating agents and a pasted `Authorization` header for
+	// Zed, so it says "used this way" rather than "exported".
+	fmt.Fprintf(w, "%s%s\n", indent, st.Dim("Mint one at "+accountAPIKeysURL+" (API Keys). No command prints the"))
+	fmt.Fprintf(w, "%s%s\n", indent, st.Dim("credential `civitai login` stored, and that one is the wrong kind here: a"))
+	fmt.Fprintf(w, "%s%s\n", indent, st.Dim("token used this way is never refreshed, so an OAuth login token dies at expiry."))
+}
+
 // resolveAgentSetupDir classifies the directory the user named, BEFORE anything
 // is read or written.
 //
@@ -743,7 +780,10 @@ func agentSetupMCPChecks(env agentEnv, agent string) []agentCheckJSON {
 	rows := make([]agentCheckJSON, 0, len(civitaiMCPServers))
 	for _, srv := range civitaiMCPServers {
 		if registered[srv.Name] {
-			rows = append(rows, agentCheckJSON{Name: srv.Check, OK: true, Detail: path})
+			// 🔴 NOT THE BARE PATH. `ok: true` here means an entry for this server
+			// exists in that file; it has never meant the server answers, and the
+			// path alone read as though it did. See mcpRegisteredDetail.
+			rows = append(rows, agentCheckJSON{Name: srv.Check, OK: true, Detail: mcpRegisteredDetail(path, srv)})
 			continue
 		}
 		rows = append(rows, agentCheckJSON{Name: srv.Check, OK: false,
@@ -1227,7 +1267,8 @@ func printAgentSetupWrite(w io.Writer, env agentEnv, agent, token string, change
 	if token != "" && known && (target.EnvHeaderSyntax != "" || target.EnvBearerKey != "") {
 		n++
 		fmt.Fprintf(w, "  %d. Export the token where %s can see it — the config above references it by name:\n", n, agent)
-		fmt.Fprintf(w, "       %s\n", st.Code("export "+tokenEnvVar+"=<your token>"))
+		fmt.Fprintf(w, "       %s\n", st.Code("export "+tokenEnvVar+"="+tokenPlaceholder))
+		printTokenSourceNote(w, st, "     ")
 		if exported {
 			fmt.Fprintf(w, "     %s\n", st.Dim(tokenEnvVar+" is already set in this shell. Put it in your shell "+
 				"profile so the agent inherits it too."))
@@ -1334,7 +1375,8 @@ func printAgentSetupAuthNote(w io.Writer, st ui.Styler, agent string, t agentTar
 			fmt.Fprintf(w, "  was written. %s\n", st.Warn("Access without one: "+mcpAnonymityNote()+"."))
 		}
 		fmt.Fprintf(w, "  To authenticate, add this yourself to each Civitai entry in that file:\n")
-		fmt.Fprintf(w, "       %s\n", st.Code(`"`+t.HeadersKey+`": {"Authorization": "Bearer <your token>"}`))
+		fmt.Fprintf(w, "       %s\n", st.Code(`"`+t.HeadersKey+`": {"Authorization": "Bearer `+tokenPlaceholder+`"}`))
+		printTokenSourceNote(w, st, "  ")
 		fmt.Fprintf(w, "  %s\n", st.Dim("That file is yours; note that a literal token in it is a credential on disk, "+
 			"so keep it out of version control."))
 	}

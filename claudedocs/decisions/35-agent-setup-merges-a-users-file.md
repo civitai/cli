@@ -871,3 +871,76 @@ source. The tell was that the `grep` verifying the edit printed nothing — only
 visible if you look at it. Re-applied with a Python replace that asserts
 `count(anchor) == 1` first, the mutant dies. Assert the edit landed before
 reading the verdict.
+
+---
+
+## `--check`'s `mcp-*` rows: presence in a file, never reachability (#534, dogfood 2)
+
+A blind dogfood probed both registered servers with a real MCP `initialize`, no
+credential:
+
+```
+POST https://mcp.civitai.com/mcp            -> 200
+POST https://orchestration.civitai.com/mcp  -> 401
+```
+
+and `civitai agent-setup --check --json` reported, for both:
+
+```json
+{"name": "mcp-site", "ok": true, "detail": "/home/u/proj/.mcp.json"},
+{"name": "mcp-orch", "ok": true, "detail": "/home/u/proj/.mcp.json"}
+```
+
+`ok: true` beside a bare filename is indistinguishable from "this server works",
+and one of the two rows was green against a `401`. The command's own PROSE was
+already correct — the write path prints *"⚠ needs an Authorization header — this
+one returns 401 without a credential"*, and the `authenticated` row already says
+*"this row only checks that one is present"* — so what was narrow was the
+machine-readable row, which is the surface `developer.civitai.com`'s hosted
+prompt consumes.
+
+### What was NOT done: a network probe
+
+`--check` is offline and side-effect-free by construction — every call in
+`agentSetupChecks` is a file read — and that property is worth more than a tick
+that has to reach the network to be earned: it works on a plane, in CI, behind a
+proxy, and it can never be why a setup run hangs. `ok` was also left alone: the
+entry IS registered, which is what the row has always meant and what
+`agentSetupVerdict` counts. **The sentence is what changed**, the same fix shape
+the `authenticated` row got.
+
+`mcpRegisteredDetail(path, srv)` (`internal/cmd/agent_setup_mcp.go`) renders it:
+
+```
+registered in <path> — this row read that file; it does not contact <url>[, which
+returns 401 until an Authorization header is present]
+```
+
+The trailing clause is **derived from `mcpServer.Anonymous`**, the same field
+`mcpAnonymityNote` reads, so it cannot be spelled per Check name and drift from
+the table; a third server gets the right sentence the moment it is added.
+
+It deliberately does not claim the entry AUTHENTICATES — whether a header
+present in the file resolves to a credential is `mcpAuthCoverage`'s three-valued
+question, not this row's.
+
+### Guards
+
+`internal/cmd/agent_setup_scaffolder_test.go`:
+
+- `TestRegisteredMCPRowSaysWhatItInspected` — checks the premise (the two shipped
+  servers still disagree on `Anonymous`, else the assertion is vacuous), then
+  MUTATES `Anonymous` on a probe server in both directions and requires the
+  sentence to move with it.
+- `TestCheckJSONDoesNotReportOrchestrationAsReachable` — drives the real
+  `--check --json`, asserts each `ok: true` row is not the bare config path, and
+  that the two rows differ, because the two servers do.
+
+Red on `origin/main` `cbcb992` with a shim reproducing that branch byte-for-byte
+(`Detail: path`):
+
+```
+the mcp-orch row's ok:true detail mentions 401 = false, want true (Anonymous=false): "/home/u/proj/.mcp.json"
+mcp-orch's ok:true detail is the bare config path — presence in a file is not reachability of …
+both mcp rows carry an identical detail … while the servers disagree on anonymous access
+```

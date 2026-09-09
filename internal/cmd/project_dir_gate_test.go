@@ -450,7 +450,7 @@ func TestProjectDirRemediesMatchTheirArm(t *testing.T) {
 		why        string
 	}{
 		{
-			name: "nonexistent path gets the `app init` remedy",
+			name: "nonexistent path gets the `app create` remedy",
 			dir:  missing, want: noSuchAt, deny: notDirAt,
 			why: "the path is not there, so there is no file to have pointed at — telling the user to " +
 				"pass the ROOT rather than a file is advice about something that does not exist",
@@ -459,7 +459,7 @@ func TestProjectDirRemediesMatchTheirArm(t *testing.T) {
 			name: "a regular file gets the project-ROOT remedy",
 			dir:  file, want: notDirAt, deny: noSuchAt,
 			why: "the user has a real project and pointed one level too deep (typically at the manifest) — " +
-				"telling them to scaffold a new one with `app init` sends them to create what they already have",
+				"telling them to scaffold a new one with `app create` sends them to create what they already have",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

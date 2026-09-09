@@ -57,7 +57,7 @@ import (
 // settled on.
 // The two exit-2 arms carry DIFFERENT remedies, and which arm gets which is
 // part of the contract rather than cosmetic: "the path is not there" sends you
-// to `app init`, while "you pointed at a file" sends you to the parent
+// to the scaffolder, while "you pointed at a file" sends you to the parent
 // directory. Swapped, the CLI tells someone whose path is simply missing to
 // pass "the ROOT, not a file" — advice about a file that does not exist — and
 // tells someone who pointed at their manifest to scaffold a project they
@@ -74,8 +74,18 @@ import (
 // NOT the other's, and pins that the two are non-empty and distinct — an empty
 // or duplicated remedy would make `strings.Contains` vacuously true and disarm
 // the whole guard.
+//
+// 🔴 THE SCAFFOLDER IT NAMES IS `app create`, NOT `app init`, AND THE TWO ARE
+// NOT INTERCHANGEABLE. They share one RunE but default to different templates —
+// `create` to the batteries-included page-money, `init` to the no-build
+// `static` — and `civitai app --help` calls `init` "a back-compat alias". Every
+// other surface that tells somebody with no app how to get one already named
+// `create` (`civitai --help`'s "Get started" block, `app --help`'s example,
+// agentSetupNoSuchDir in agent_setup.go); this constant said `init` and was the
+// odd one out, alongside the `agent-setup` managed block a blind dogfood caught.
+// TestEveryNewAppRemedyNamesOneScaffolder holds the set to one.
 const (
-	remedyNoSuchDir = "%s: no such directory — pass the path to an App project root, or scaffold one with `civitai app init <name>`"
+	remedyNoSuchDir = "%s: no such directory — pass the path to an App project root, or scaffold one with `civitai app create <name>`"
 	remedyNotADir   = "%s is not a directory — pass the App project ROOT (the directory holding %s), not a file"
 )
 

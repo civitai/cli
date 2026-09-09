@@ -59,7 +59,7 @@ func Load(dir string) (*Manifest, error) {
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("no %s found in %s — is this an App project? run `civitai app init` to create one", Filename, dir)
+			return nil, fmt.Errorf("no %s found in %s — is this an App project? run `civitai app create` to create one", Filename, dir)
 		}
 		return nil, err
 	}
@@ -149,7 +149,7 @@ func LoadRaw(dir string) (any, *Manifest, error) {
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, fmt.Errorf("no %s found in %s — is this an App project? run `civitai app init` to create one", Filename, dir)
+			return nil, nil, fmt.Errorf("no %s found in %s — is this an App project? run `civitai app create` to create one", Filename, dir)
 		}
 		return nil, nil, err
 	}
