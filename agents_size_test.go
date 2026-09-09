@@ -181,6 +181,51 @@ import (
 // pass; but whoever adds the NEXT item re-derives THAT constant from the
 // achieved size in the same commit, or evicts prose. Raising this one first is the
 // "ceiling nobody bounds" failure this file already records twice.
+//
+// 🔴 THE NEXT ITEM WAS PAID FOR BY EVICTION, AND BOTH CONSTANTS ARE UNCHANGED
+// (2026-09-08). The paragraph above said the budget was spent and told the next
+// author to evict prose. That is what happened, so this entry records a
+// SUBTRACTION rather than a raise: agentsMaxBytes is still 30,500 and
+// agentsMaxBytesCeiling is still 30,600, and neither was touched to make
+// anything fit.
+//
+// WHAT WAS EVICTED, AND WHY IT IS NOT "just the longest thing". The "House
+// conventions" section carried a `newWhoAmICmd` code fence advertised as "one
+// real snippet". It was not one, and the drift was a DEFECT rather than staleness:
+// the fence returned a bare `fmt.Errorf` where internal/cmd/whoami.go returns
+// `civitai.Tag(civitai.ErrUnauthorized, …)`. Item 7 records that stripping
+// exactly that tagging leaves the whole suite green while unpinning a published
+// exit code — and this fence is the template a new command is copied from, so
+// the file's single most-copied 24 lines were teaching the one mistake item 7
+// exists to prevent. Its `Short` was two revisions behind as well, and its
+// `Long` further still. It is replaced by a routing line to the live file naming
+// item 7, and `(with one real snippet)` is dropped from the heading. The bullets
+// under it (errors / output / testability / config) already state every rule the
+// fence illustrated and they stay, so the eviction lost no warning: the fence's
+// only in-band one, "Actionable: tell the user the next command to run", is the
+// Errors bullet's own sentence.
+//
+// MEASURED, not rounded, and re-measured rather than inherited from the entry
+// above (which read 30,317 and was already 58 bytes stale — #533 and #534 landed
+// after it): AGENTS.md was 30,375 bytes at origin/main 3377a3b and is 29,827
+// after the eviction, −548. Headroom under agentsMaxBytes goes from 125 to 673.
+//
+// 🔴 THE POINT IS THE MERGED TREE, NOT THIS BRANCH. PR #532 adds one item — an
+// index clause plus a trigger block, 201 bytes of AGENTS.md. On origin/main that
+// merge lands at 30,576, which is 76 bytes OVER agentsMaxBytes and could not have
+// been raised out of, because agentsMaxBytesCeiling leaves only 100 and its own
+// property would have had to be re-derived for a docs change. MEASURED on a
+// scratch merge of this branch with refs/pull/532/head — resolving the item-36
+// collision the way AGENTS.md's own rule requires, by renumbering the
+// second-merging PR's item to 37 — the merged file is 30,028 bytes, 472 under
+// agentsMaxBytes, with the full root-package suite green. That collision is
+// pre-existing and NOT caused by this change: `git merge-tree --write-tree
+// origin/main refs/pull/532/head` conflicts identically.
+//
+// So the 673 bytes above are a real budget again, not a rounding error. The next
+// author still re-derives rather than raises — but the lever the paragraph above
+// said was gone (evicting prose) has now been shown to work, and the prose
+// sections remain the place to pull it.
 const agentsMaxBytes = 30_500
 
 // agentsMaxBytesCeiling bounds agentsMaxBytes itself, so the budget above cannot
