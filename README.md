@@ -16,6 +16,22 @@
 
 [![Request access](https://img.shields.io/badge/Request%20access-invite--only%20beta-3b82f6?style=for-the-badge&logo=github)](https://github.com/civitai/cli/issues/new?template=request-access.yml)
 
+## Using an AI coding agent? Paste this
+
+```text
+Fetch and execute the appropriate instructions to set me up for Civitai from https://developer.civitai.com/agent-setup/prompt.md
+```
+
+Your agent installs the CLI, configures itself for App development (an
+`AGENTS.md` for your project, plus Civitai's two MCP servers), and verifies the
+result. It stops before authenticating and hands `civitai login` back to you —
+it will not log in on your behalf.
+
+Prefer to read it first? The whole prompt is rendered at
+[developer.civitai.com/agent-setup](https://developer.civitai.com/agent-setup/).
+If a step is refused or an agent goes off-script, the rest of this README is the
+manual path — nothing below depends on having used the prompt.
+
 The command-line interface for [Civitai](https://civitai.com) — a single static
 binary that does two things: it's a thin **read/download client** for Civitai's
 **public** API (browse and fetch models, images, and articles — no account needed
@@ -38,6 +54,7 @@ contract, and **packages/submits** it for review.
 
 **Get started**
 
+- [Using an AI coding agent? Paste this](#using-an-ai-coding-agent-paste-this)
 - [Install](#install)
   - [npm (Node)](#npm-node)
   - [Homebrew (macOS / Linux)](#homebrew-macos--linux)
