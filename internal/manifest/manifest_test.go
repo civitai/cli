@@ -45,8 +45,14 @@ func TestLoadMissingFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing manifest")
 	}
-	if !contains(err.Error(), "civitai app init") {
-		t.Errorf("error should hint at init: %v", err)
+	// 🔴 `app create`, NOT `app init`. Both run the same scaffolder, but they
+	// default to different templates and `civitai app --help` calls `init` "a
+	// back-compat alias" — so a reader who has NO app is sent to `create`, the
+	// command `civitai --help`'s "Get started" block also names. The set is held
+	// to one across every such surface by
+	// internal/cmd.TestEveryNewAppRemedyNamesOneScaffolder.
+	if !contains(err.Error(), "civitai app create") {
+		t.Errorf("error should name the scaffolder a reader with no app should run: %v", err)
 	}
 }
 

@@ -417,6 +417,22 @@ func TestSplitItemBodiesArePreservedVerbatim(t *testing.T) {
 // of ceiling headroom.
 var bornSplitItems = []string{
 	"claudedocs/decisions/33-source-repo-url-is-not-mirrored.md",
+	"claudedocs/decisions/34-agent-setup-writes-no-credential.md",
+	// Item 35 was written straight into claudedocs/decisions/: its body is the
+	// round-1 audit's seven measured defects plus their rejected alternatives,
+	// and AGENTS.md had ~100 bytes of headroom when it was written. Parking that
+	// in the numbered list even briefly would have blown the ceiling on the same
+	// commit that raised it.
+	"claudedocs/decisions/35-agent-setup-merges-a-users-file.md",
+	// Item 36 was likewise written straight into claudedocs/decisions/: its body
+	// is the three-template measurement, the per-shape table, the guard ledger
+	// and the enumerated residuals, and AGENTS.md had 183 bytes of headroom under
+	// a ceiling with 100 of its own left. There was nowhere to park it.
+	"claudedocs/decisions/36-agents-block-per-project.md",
+	// Item 37 (renumbered from 36 on merge, per AGENTS.md's rule that the PR
+	// merging second renumbers its own items) was written straight into
+	// claudedocs/decisions/ for the same reason as 35.
+	"claudedocs/decisions/37-numeric-username.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item

@@ -180,35 +180,12 @@ These go beyond the global defaults because this repo's release pipeline
   so a dependency change breaks the flake build until `bump-flake-vendorhash.yml`
   updates it; `flake.yml` is what catches that.
 
-## House conventions (with one real snippet)
+## House conventions
 
 Each command is a `newXxxCmd() *cobra.Command` constructor in `internal/cmd`.
-Always set `Short`, a useful `Long`, and an `Example`:
-
-```go
-func newWhoAmICmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:     "whoami",
-		Short:   "Verify your stored API token",
-		Long:    `Verify the stored API token … Reads the token from config or CIVITAI_TOKEN.`,
-		Example: `  civitai whoami`,
-		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
-			if cfg.Token() == "" {
-				// Actionable: tell the user the next command to run.
-				return fmt.Errorf("no token configured — run `civitai login` (or set CIVITAI_TOKEN)")
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Logged in as %s\n", /* … */)
-			return nil
-		},
-	}
-	return cmd
-}
-```
+Always set `Short`, a useful `Long`, and an `Example`. Copy the live one —
+`internal/cmd/whoami.go` — never a snippet: it TAGS the error it returns, and
+item 7 owns why an untagged return unpins a published exit code.
 
 - **Errors:** return `error` from `RunE`; lowercase, no trailing punctuation;
   wrap with `%w` when the cause matters. Root sets `SilenceUsage` +
@@ -265,6 +242,13 @@ Item 32 is what a submit may CLAIM about the source it was built from.
 Item 33 is the source-repository URL: a deliberate NON-mirror, because the
 one mirror of that rule this repo already ships is measurably wrong in BOTH
 directions and cannot be tightened without breaking every vendored copy.
+Item 34 is `agent-setup`'s absolute no-credential-on-disk rule, the vendor
+syntaxes that replace it, and what a header-less config actually reaches.
+Item 35 is the OTHER half of that command: what it may do to a config file the
+USER owns — the merge, the parsers, and which rows fail `--check`.
+Item 36 is its THIRD: what the managed block may claim about the project it was
+written into.
+Item 37 is a username that arrives as a NUMBER.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -444,6 +428,25 @@ item must carry a trigger that is a routing question rather than a label
 33. **Adding a local check to `app listing set-source-repo`, or tightening the
     manifest schema's `repository` pattern to match the server?**
     → evidence: claudedocs/decisions/33-source-repo-url-is-not-mirrored.md
+
+34. **Putting an `Authorization` header into anything `agent-setup` writes or
+    prints — filling an empty `EnvHeaderSyntax`, adding an agent to that table,
+    or wording what a header-less config reaches?**
+    → evidence: claudedocs/decisions/34-agent-setup-writes-no-credential.md
+
+35. **Changing how `agent-setup` merges a file the USER owns, or what it CLAIMS
+    about the result — JSONC leniency, keys on OUR entries, the TOML parser,
+    symlinks, config roots, `--check`'s verdict, `--json`'s shapes?**
+    → evidence: claudedocs/decisions/35-agent-setup-merges-a-users-file.md
+
+36. **Editing what `agent-setup`'s block says a project can RUN — its local-dev
+    branch, script table, lockfile rule — flattening it to one list, or naming
+    the SCAFFOLDER an author with no app should run?**
+    → evidence: claudedocs/decisions/36-agents-block-per-project.md
+
+37. **Typing a `pkg/civitai` username as `string`, or "fixing" a `FlexString`
+    back?**
+    → evidence: claudedocs/decisions/37-numeric-username.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

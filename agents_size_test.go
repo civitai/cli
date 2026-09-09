@@ -142,7 +142,91 @@ import (
 // has RISEN since it was set, so that restoration now lands at 28,650 + 5,381 =
 // 34,031 — clearing the bound by more than it did at wave 4. It got stricter
 // without being touched, which is why raising the budget below it is safe.
-const agentsMaxBytes = 29_600
+// 🔴 RAISED FROM 29,600 TO 30,200 IN THE ROUND-1 agent-setup FIX, DELIBERATELY
+// AND WITH THE ALTERNATIVE NAMED. (That number read 30,100 until round 2: a
+// typo, and one that mattered, because the whole purpose of this sentence is to
+// make the next author redo the arithmetic — reading it gave them 110 bytes of
+// spend where the constant below had actually spent 210.) That change added item 35 — the merge/parser/
+// verdict decisions for `agent-setup`, a genuinely separate subject from item
+// 34's credential rule — and the file had ~100 bytes of headroom. The two ways
+// out were (a) evict somebody else's item to pay for a new one, which is how a
+// budget turns into a queue and makes the next author delete work they did not
+// write, or (b) spend headroom the ceiling explicitly reserves for exactly this.
+// (b) was chosen. agentsMaxBytesCeiling (30,600) is UNCHANGED and still bounds
+// it, so the property it encodes — the three largest evicted bodies cannot all
+// be re-inlined — still holds and was not weakened to make this pass.
+//
+// MEASURED, not rounded: AGENTS.md is 29,990 bytes at that commit, so 30,200
+// leaves 210 bytes — room for roughly ONE more trigger line, not a licence to
+// grow. Do not raise it again without doing this arithmetic in a comment of your
+// own, and re-measure the file rather than inheriting this number.
+//
+// 🔴 RAISED FROM 30,200 TO 30,500 FOR ITEM 36, AND THIS IS THE LAST SUCH RAISE
+// THAT FITS. The change adding it fixed the managed block asserting `npm run …`
+// in a project scaffolded from the DEFAULT template, which ships no
+// `package.json` — a third `agent-setup` subject, separate from item 34's
+// credential rule and item 35's merge rules, and one a reader "simplifying" the
+// per-project branch away must be routed to. Same two ways out as the raise
+// above; (b) again, for the same reason.
+//
+// MEASURED, not rounded, and re-measured rather than inherited: AGENTS.md is
+// 30,317 bytes with item 36 in it, so 30,500 leaves 183 bytes. That is under one
+// trigger line (162–265 bytes, mean 204) and it is deliberately being reported
+// as the end of the budget rather than as room.
+//
+// 🔴 THE NEXT ITEM CANNOT BE PAID FOR FROM HERE — agentsMaxBytesCeiling (30,600)
+// is UNCHANGED and now bounds this constant at 100 bytes of further slack. Its
+// own property still holds (re-inlining the three largest evicted bodies costs
+// 5,381 bytes net and lands well past it), so nothing was weakened to make this
+// pass; but whoever adds the NEXT item re-derives THAT constant from the
+// achieved size in the same commit, or evicts prose. Raising this one first is the
+// "ceiling nobody bounds" failure this file already records twice.
+//
+// 🔴 THE NEXT ITEM WAS PAID FOR BY EVICTION, AND BOTH CONSTANTS ARE UNCHANGED
+// (2026-09-08). The paragraph above said the budget was spent and told the next
+// author to evict prose. That is what happened, so this entry records a
+// SUBTRACTION rather than a raise: agentsMaxBytes is still 30,500 and
+// agentsMaxBytesCeiling is still 30,600, and neither was touched to make
+// anything fit.
+//
+// WHAT WAS EVICTED, AND WHY IT IS NOT "just the longest thing". The "House
+// conventions" section carried a `newWhoAmICmd` code fence advertised as "one
+// real snippet". It was not one, and the drift was a DEFECT rather than staleness:
+// the fence returned a bare `fmt.Errorf` where internal/cmd/whoami.go returns
+// `civitai.Tag(civitai.ErrUnauthorized, …)`. Item 7 records that stripping
+// exactly that tagging leaves the whole suite green while unpinning a published
+// exit code — and this fence is the template a new command is copied from, so
+// the file's single most-copied 24 lines were teaching the one mistake item 7
+// exists to prevent. Its `Short` was two revisions behind as well, and its
+// `Long` further still. It is replaced by a routing line to the live file naming
+// item 7, and `(with one real snippet)` is dropped from the heading. The bullets
+// under it (errors / output / testability / config) already state every rule the
+// fence illustrated and they stay, so the eviction lost no warning: the fence's
+// only in-band one, "Actionable: tell the user the next command to run", is the
+// Errors bullet's own sentence.
+//
+// MEASURED, not rounded, and re-measured rather than inherited from the entry
+// above (which read 30,317 and was already 58 bytes stale — #533 and #534 landed
+// after it): AGENTS.md was 30,375 bytes at origin/main 3377a3b and is 29,827
+// after the eviction, −548. Headroom under agentsMaxBytes goes from 125 to 673.
+//
+// 🔴 THE POINT IS THE MERGED TREE, NOT THIS BRANCH. PR #532 adds one item — an
+// index clause plus a trigger block, 201 bytes of AGENTS.md. On origin/main that
+// merge lands at 30,576, which is 76 bytes OVER agentsMaxBytes and could not have
+// been raised out of, because agentsMaxBytesCeiling leaves only 100 and its own
+// property would have had to be re-derived for a docs change. MEASURED on a
+// scratch merge of this branch with refs/pull/532/head — resolving the item-36
+// collision the way AGENTS.md's own rule requires, by renumbering the
+// second-merging PR's item to 37 — the merged file is 30,028 bytes, 472 under
+// agentsMaxBytes, with the full root-package suite green. That collision is
+// pre-existing and NOT caused by this change: `git merge-tree --write-tree
+// origin/main refs/pull/532/head` conflicts identically.
+//
+// So the 673 bytes above are a real budget again, not a rounding error. The next
+// author still re-derives rather than raises — but the lever the paragraph above
+// said was gone (evicting prose) has now been shown to work, and the prose
+// sections remain the place to pull it.
+const agentsMaxBytes = 30_500
 
 // agentsMaxBytesCeiling bounds agentsMaxBytes itself, so the budget above cannot
 // be turned into unlimited slack by editing one number.

@@ -174,14 +174,16 @@ const (
 // also break `--meta --json`, an advertised raw passthrough). It is decoded
 // best-effort at render time via ParseMeta.
 type ImageItem struct {
-	ID        int             `json:"id"`
-	URL       string          `json:"url"`
-	Width     int             `json:"width"`
-	Height    int             `json:"height"`
-	NSFWLevel string          `json:"nsfwLevel"`
-	Type      string          `json:"type"`
-	PostID    *int            `json:"postId"`
-	Username  string          `json:"username"`
+	ID        int    `json:"id"`
+	URL       string `json:"url"`
+	Width     int    `json:"width"`
+	Height    int    `json:"height"`
+	NSFWLevel string `json:"nsfwLevel"`
+	Type      string `json:"type"`
+	PostID    *int   `json:"postId"`
+	// Username is a FlexString, not a string: an all-digit username arrives as a
+	// bare JSON number. See FlexString — do not "fix" it back to a string.
+	Username  FlexString      `json:"username"`
 	BaseModel string          `json:"baseModel"`
 	Stats     ImageStats      `json:"stats"`
 	Meta      json.RawMessage `json:"meta"`

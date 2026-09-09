@@ -1,0 +1,757 @@
+package cmd
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+)
+
+// The round-2 audit guards for `civitai agent-setup`.
+//
+// 🔴 SEVEN OF THE TEN TESTS BELOW WERE WATCHED RED ON c801ab8 — the tip of the
+// round-1 fix — AND GREEN AFTER. Each of those names a behaviour that was
+// MEASURED wrong by running the binary against a file a real install has, and the
+// red-then-green matrix is in the PR.
+//
+// 🔴 THE OTHER THREE ARE INVARIANT GUARDS AND MUST NOT BE COUNTED AS REGRESSION
+// COVERAGE. Replayed against c801ab8's payload,
+// TestARunWithoutATokenAndWithoutAHeaderStillSaysSo,
+// TestATrailingCommaDoesNotMakeRubbishAcceptable and
+// TestAStrictAgentStaysStrictAboutTrailingCommas PASS. They are deliberate
+// OVER-WIDENING CONTROLS — each pins the direction its sibling fix could
+// overshoot in — and they are correct and wanted; what was wrong was the blanket
+// sentence here, which made a maintainer count ten regression guards where there
+// are seven. Each of the three says so at its own docstring too.
+//
+// 🔴 AND THE MATRIX ABOVE DOES NOT COVER LATER ADDITIONS TO A TEST.
+// TestDryRunAndTheRealRunAgreeOnEveryPlanTimeOutcome (round 2 and 3 called it
+// TestDryRunAndTheRealRunAgreeOnEveryAction) gained three fixtures in round 3
+// which were measured against 897c1cc — the tree this header calls "after". Its
+// own docstring carries that matrix; read it there rather than assuming this
+// paragraph covers it.
+//
+// 🔴 THEY ARE ALL BLACK-BOX ON PURPOSE. Every assertion below drives the command
+// through `run` and reads the file or the payload it produced, so the same test
+// source compiles and runs against the PRE-FIX tree. A guard that references a
+// symbol the fix introduced cannot be watched red — it fails to compile, which
+// is not the same observation.
+
+// ---------------------------------------------------------------------------
+// 1 — the published merge claim, over EVERY agent
+// ---------------------------------------------------------------------------
+
+// TestThePublishedMergeClaimHoldsForEveryAgent is the LEDGER behind round 2's
+// first finding rather than a second copy of the one case that was wrong.
+//
+// 🔴 README.md publishes "merged into **key by key** (a header you added to a
+// Civitai entry survives)". Round 1 made that true of the JSON agents and left
+// it FALSE for Codex: `mergeTOMLBlock` skipped a FIXED set of owned keys while
+// the renderer emits `http_headers` never and `bearer_token_env_var` only with a
+// token, so a key that was not re-rendered was dropped with nothing put back.
+// Measured on c801ab8, rc 0, `--check` still `ok: true`.
+//
+// So the claim is asserted over the whole table, in each agent's OWN spelling,
+// and a new agent is covered the moment it is added — which is what matters,
+// since the defect was per-format and the guard aimed at one format.
+func TestThePublishedMergeClaimHoldsForEveryAgent(t *testing.T) {
+	for _, agent := range agentsWithConfigFiles() {
+		t.Run(agent, func(t *testing.T) {
+			dir, _ := agentSetupProject(t)
+			target := agentTargets[agent]
+			path, ok := agentConfigPath(liveAgentEnv(dir), agent)
+			if !ok {
+				t.Fatalf("no config path for %s", agent)
+			}
+			const theirs = "Bearer sk-hand-added-to-our-entry-6620"
+			// The header goes on OUR entry, in the shape that agent's own file uses.
+			// `theirs` is a synthetic fixture, never a real credential.
+			var body string
+			if target.Format == formatTOML {
+				body = "[" + target.ServersKey + "." + strconv.Quote(civitaiMCPServers[0].Name) + "]\n" +
+					target.URLKey + " = " + strconv.Quote(civitaiMCPServers[0].URL) + "\n" +
+					target.HeadersKey + " = { Authorization = " + strconv.Quote(theirs) + " }\n"
+			} else {
+				raw, err := json.Marshal(map[string]any{
+					target.ServersKey: map[string]any{
+						civitaiMCPServers[0].Name: map[string]any{
+							target.URLKey:     civitaiMCPServers[0].URL,
+							target.HeadersKey: map[string]any{"Authorization": theirs},
+						},
+					},
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				body = string(raw)
+			}
+			writeFile(t, path, body)
+
+			// No token: this run renders no header of its own, so nothing it writes
+			// can legitimately replace theirs.
+			t.Setenv("CIVITAI_TOKEN", "")
+			if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agent); err != nil {
+				t.Fatalf("agent-setup: %v", err)
+			}
+			got := readFile(t, path)
+			if !strings.Contains(got, theirs) {
+				t.Errorf("the header the user added to OUR entry was deleted, and this command wrote "+
+					"nothing in its place:\n%s", got)
+			}
+			// PREMISE: the run really did register both servers, so the assertion
+			// above is not passing on a run that did nothing at all.
+			for _, srv := range civitaiMCPServers {
+				if !strings.Contains(got, srv.URL) {
+					t.Fatalf("PREMISE BROKEN: %s was not registered, so nothing was merged:\n%s", srv.Name, got)
+				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 4 — the run must not describe a header it just preserved as absent
+// ---------------------------------------------------------------------------
+
+// TestARunWithoutATokenDoesNotCallAPreservedHeaderAbsent.
+//
+// 🔴 MEASURED RED: run once with a token, then re-run in a shell without one —
+// CI, a second machine, an expired login. The merge correctly KEEPS
+// `"Authorization": "Bearer ${CIVITAI_TOKEN}"` (that is round 1's own fix
+// working) while the run printed "No token is configured, so no Authorization
+// header was written" and "civitai-orchestration returns 401 until an
+// Authorization header is present", in the terminal output and in `--json`'s
+// `reason` alike. The first sentence is true of the RUN and misleading about the
+// FILE; the second is a claim about what the REGISTRATION REACHES, and it is
+// wrong about the file that run had just written.
+func TestARunWithoutATokenDoesNotCallAPreservedHeaderAbsent(t *testing.T) {
+	dir, _ := agentSetupProject(t)
+	path := filepath.Join(dir, ".mcp.json")
+
+	// Run 1: a token is configured, so the env-var reference is written.
+	t.Setenv("CIVITAI_TOKEN", credFixtureToken)
+	if _, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude); err != nil {
+		t.Fatalf("agent-setup with a token: %v", err)
+	}
+
+	// Run 2: the same project, a shell with no token at all.
+	t.Setenv("CIVITAI_TOKEN", "")
+	out, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude)
+	if err != nil {
+		t.Fatalf("agent-setup without a token: %v", err)
+	}
+
+	// PREMISE: the header really did survive, so the assertions below are about
+	// the wording and not about a merge that quietly deleted it.
+	var root map[string]any
+	if jsonErr := json.Unmarshal([]byte(readFile(t, path)), &root); jsonErr != nil {
+		t.Fatalf("merged config is not valid JSON: %v", jsonErr)
+	}
+	servers, _ := root["mcpServers"].(map[string]any)
+	for _, srv := range civitaiMCPServers {
+		entry, _ := servers[srv.Name].(map[string]any)
+		headers, _ := entry["headers"].(map[string]any)
+		if got, _ := headers["Authorization"].(string); got == "" {
+			t.Fatalf("PREMISE BROKEN: %s lost its Authorization header, so this run does not exercise "+
+				"the preserved-header case:\n%s", srv.Name, readFile(t, path))
+		}
+	}
+
+	if strings.Contains(out, "so no Authorization header was written") {
+		t.Errorf("the run says no header was written about a file it just wrote one into:\n%s", out)
+	}
+	if strings.Contains(out, "returns 401 until an Authorization header is present") {
+		t.Errorf("the run claims the registration 401s while every entry in it carries a header:\n%s", out)
+	}
+	if !strings.Contains(out, "already carries an Authorization header") {
+		t.Errorf("the run never says the header that IS there is there:\n%s", out)
+	}
+
+	// `--json`'s reason is the same claim through the other channel, and it was
+	// wrong in the same words.
+	jsonOut, _, err := run(t, "agent-setup", "--json", "--dir", dir, "--agent", agentClaude)
+	if err != nil {
+		t.Fatalf("agent-setup --json: %v", err)
+	}
+	var payload agentSetupJSON
+	if jsonErr := json.Unmarshal([]byte(jsonOut), &payload); jsonErr != nil {
+		t.Fatalf("bad json: %v\n%s", jsonErr, jsonOut)
+	}
+	var reason string
+	for _, c := range payload.Changes {
+		if c.Path == path {
+			reason = c.Reason
+		}
+	}
+	if reason == "" {
+		t.Fatalf("no changes row for %s:\n%s", path, jsonOut)
+	}
+	if strings.Contains(reason, "returns 401 until an Authorization header is present") {
+		t.Errorf("--json's reason claims the registration 401s while it carries a header: %s", reason)
+	}
+	if !strings.Contains(reason, "already carries an Authorization header") {
+		t.Errorf("--json's reason does not say the header that IS there is there: %s", reason)
+	}
+}
+
+// TestARunWithoutATokenAndWithoutAHeaderStillSaysSo is the OTHER direction, so
+// the guard above cannot be satisfied by a command that simply stopped saying
+// anything about what a header-less registration reaches. This is the case item
+// 34 exists for and its wording must survive unchanged.
+//
+// 🔴 OVER-WIDENING CONTROL — AN INVARIANT GUARD, NOT A REGRESSION TEST. It PASSES
+// on c801ab8: nothing was ever wrong with the genuinely header-less case. Do not
+// count it as coverage of the finding above it.
+func TestARunWithoutATokenAndWithoutAHeaderStillSaysSo(t *testing.T) {
+	dir, _ := agentSetupProject(t)
+	out, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude)
+	if err != nil {
+		t.Fatalf("agent-setup: %v", err)
+	}
+	// PREMISE: nothing wrote a header, so this really is the header-less case.
+	if strings.Contains(strings.ToLower(readFile(t, filepath.Join(dir, ".mcp.json"))), "authorization") {
+		t.Fatal("PREMISE BROKEN: a header was written on a run with no token")
+	}
+	if !strings.Contains(out, "no Authorization header was written") {
+		t.Errorf("a genuinely header-less run stopped saying so:\n%s", out)
+	}
+	if !strings.Contains(out, "returns 401 until an Authorization header is present") {
+		t.Errorf("a genuinely header-less run no longer names the server it cannot reach:\n%s", out)
+	}
+}
+
+// TestZedIsToldAboutTheHeaderItWasAskedToAddByHand covers the arm that is most
+// likely to be describing a file that already has a header: Zed gets no
+// interpolation, so the run TELLS the user to add one themselves — and the next
+// run then described that file as unreachable.
+func TestZedIsToldAboutTheHeaderItWasAskedToAddByHand(t *testing.T) {
+	dir, home := agentSetupProject(t)
+	settings := filepath.Join(home, ".config", "zed", "settings.json")
+	entries := map[string]any{}
+	for _, srv := range civitaiMCPServers {
+		entries[srv.Name] = map[string]any{
+			"url":     srv.URL,
+			"headers": map[string]any{"Authorization": "Bearer sk-zed-user-added-by-hand-4417"},
+		}
+	}
+	body, err := json.Marshal(map[string]any{"context_servers": entries})
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, settings, string(body))
+
+	t.Setenv("CIVITAI_TOKEN", credFixtureToken)
+	out, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentZed)
+	if err != nil {
+		t.Fatalf("agent-setup: %v", err)
+	}
+	if !strings.Contains(readFile(t, settings), "sk-zed-user-added-by-hand-4417") {
+		t.Fatalf("PREMISE BROKEN: the hand-added header was not preserved:\n%s", readFile(t, settings))
+	}
+	if strings.Contains(out, "Access without one:") {
+		t.Errorf("the run describes a file carrying the very header it told the user to add as having "+
+			"none:\n%s", out)
+	}
+	if !strings.Contains(out, "already carries an Authorization header") {
+		t.Errorf("the run never acknowledges the header that is there:\n%s", out)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 5 — a trailing comma is JSONC too
+// ---------------------------------------------------------------------------
+
+// TestATrailingCommaIsToleratedLikeAComment.
+//
+// 🔴 MEASURED RED: `{ "theme": "One Dark", }` as Zed's settings.json exited 1
+// with "does not parse (invalid character '}' …) — fix or move that file". That
+// is this command's own stated failure mode — refusing while blaming the user —
+// on a file Zed reads happily: Zed parses settings through
+// `serde_json_lenient`, which accepts comments AND trailing commas by default,
+// and VS Code strips both in `src/vs/base/common/jsonc.ts` before `JSON.parse`.
+// Neither editor was RUN; the claim rests on those two sources.
+func TestATrailingCommaIsToleratedLikeAComment(t *testing.T) {
+	for _, tc := range []struct {
+		name, src string
+		// dropsFormatting is whether this fixture actually LOSES something in the
+		// round trip, and it is per case rather than asserted for all of them: the
+		// last fixture is the CONTROL, a file with no comment and no trailing comma
+		// at all, and a run that announced a loss there would be announcing it
+		// unconditionally — which is indistinguishable from announcing it correctly.
+		dropsFormatting bool
+		// wantValue, when set, is a key whose value must survive byte-for-byte.
+		wantKey, wantValue string
+	}{
+		{name: "an object's trailing comma", src: "{\n  \"theme\": \"One Dark\",\n}\n", dropsFormatting: true},
+		{name: "an array's trailing comma", src: "{\n  \"a\": [1, 2,],\n  \"theme\": \"One Dark\"\n}\n",
+			dropsFormatting: true},
+		{name: "nested closers", src: "{\n  \"a\": {\"b\": [1,],},\n  \"theme\": \"One Dark\"\n}\n",
+			dropsFormatting: true},
+		{name: "a comment between the comma and the brace", src: "{\n  \"theme\": \"One Dark\", // mine\n}\n",
+			dropsFormatting: true},
+		{name: "a comma before a closer INSIDE a string is not one",
+			src: "{\n  \"theme\": \"One Dark\",\n  \"x\": \"a,]\",\n}\n", dropsFormatting: true,
+			wantKey: "x", wantValue: "a,]"},
+		{name: "CONTROL: no comment, no trailing comma", src: "{\n  \"theme\": \"One Dark\"\n}\n",
+			dropsFormatting: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, home := agentSetupProject(t)
+			settings := filepath.Join(home, ".config", "zed", "settings.json")
+			writeFile(t, settings, tc.src)
+
+			out, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentZed)
+			if err != nil {
+				t.Fatalf("a JSONC file both Zed and VS Code accept was refused: %v", err)
+			}
+			var root map[string]any
+			if jsonErr := json.Unmarshal([]byte(readFile(t, settings)), &root); jsonErr != nil {
+				t.Fatalf("the merged settings.json is not valid JSON: %v", jsonErr)
+			}
+			if root["theme"] != "One Dark" {
+				t.Errorf("the user's key was lost: %v", root["theme"])
+			}
+			if tc.wantKey != "" && root[tc.wantKey] != tc.wantValue {
+				t.Errorf("a comma inside a STRING was blanked: %s = %v, want %q",
+					tc.wantKey, root[tc.wantKey], tc.wantValue)
+			}
+			section, _ := root["context_servers"].(map[string]any)
+			for _, srv := range civitaiMCPServers {
+				if _, ok := section[srv.Name]; !ok {
+					t.Errorf("%s was not registered:\n%s", srv.Name, readFile(t, settings))
+				}
+			}
+			// 🔴 THE LOSS IS STATED, AND ONLY WHEN THERE IS ONE. The re-encode drops
+			// the trailing comma along with the comments, and a change reason that
+			// named only comments would say nothing at all about a file whose only
+			// JSONC feature is a comma. The CONTROL row is the other half: a file
+			// that loses nothing must not be told it lost something.
+			said := strings.Contains(out, "trailing commas")
+			if tc.dropsFormatting && !said {
+				t.Errorf("the run does not say the trailing comma is not preserved:\n%s", out)
+			}
+			if !tc.dropsFormatting && said {
+				t.Errorf("the run announces a formatting loss for a file that has none:\n%s", out)
+			}
+		})
+	}
+}
+
+// TestATrailingCommaDoesNotMakeRubbishAcceptable is the direction a leniency fix
+// is most likely to break. Refuse-rather-than-repair is still the rule, and a
+// parser loosened for one JSONC form must not start accepting broken JSON.
+//
+// 🔴 OVER-WIDENING CONTROL — AN INVARIANT GUARD, NOT A REGRESSION TEST. It PASSES
+// on c801ab8, which refused these inputs for the wrong reason (it refused
+// everything). Do not count it as coverage of the trailing-comma finding.
+func TestATrailingCommaDoesNotMakeRubbishAcceptable(t *testing.T) {
+	for _, tc := range []struct{ name, src string }{
+		{"a doubled comma", "{\n  \"a\": [1,,],\n}\n"},
+		{"a leading comma", "{\n  ,\"a\": 1\n}\n"},
+		{"truncated after the comma", "{\n  \"a\": 1,\n"},
+		{"a comma with no container", "{\n  \"a\": 1\n},\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, home := agentSetupProject(t)
+			settings := filepath.Join(home, ".config", "zed", "settings.json")
+			writeFile(t, settings, tc.src)
+
+			_, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentZed)
+			if err == nil {
+				t.Fatalf("broken JSON was accepted:\n%s", tc.src)
+			}
+			if !strings.Contains(err.Error(), "does not parse") {
+				t.Errorf("the refusal does not name the parse failure: %v", err)
+			}
+			if got := readFile(t, settings); got != tc.src {
+				t.Errorf("the refused file was rewritten:\n%s", got)
+			}
+		})
+	}
+}
+
+// TestAStrictAgentStaysStrictAboutTrailingCommas: tolerating a trailing comma is
+// gated on the agent's own parser, exactly as tolerating a comment is. Claude
+// Code's `.mcp.json` is plain JSON.
+//
+// 🔴 OVER-WIDENING CONTROL — AN INVARIANT GUARD, NOT A REGRESSION TEST. It PASSES
+// on c801ab8 for the same reason as the one above. Do not count it as coverage.
+func TestAStrictAgentStaysStrictAboutTrailingCommas(t *testing.T) {
+	dir, _ := agentSetupProject(t)
+	path := filepath.Join(dir, ".mcp.json")
+	const src = "{\n  \"mcpServers\": {},\n}\n"
+	writeFile(t, path, src)
+
+	_, _, err := run(t, "agent-setup", "--dir", dir, "--agent", agentClaude)
+	if err == nil {
+		t.Fatal("a trailing comma was tolerated for an agent whose parser is strict JSON")
+	}
+	if got := readFile(t, path); got != src {
+		t.Errorf("the refused file was rewritten:\n%s", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 6 — `--json` emits a payload for EVERY outcome, not only the plan-time one
+// ---------------------------------------------------------------------------
+
+// TestJSONIsEmittedForEveryFailureShape.
+//
+// 🔴 MEASURED RED, FOUR TRIGGERS AND THREE DIFFERENT CONTRACTS ON ONE FLAG. A
+// plan-time refusal emitted the full payload with a `blocked` row; a write-time
+// refusal, a write-time FAILURE and `--check --json` against an unparseable
+// config each emitted ZERO BYTES on stdout at exit 1. A consumer facing the
+// silent ones cannot tell a partial run from a usage error — and the fourth is
+// what `developer.civitai.com`'s hosted prompt reads.
+//
+// 🔴 ITS NAME OVERSTATES IT: THESE ARE FOUR ENUMERATED SHAPES, NOT EVERY SHAPE.
+// Nothing here is derived from a table, so a fifth silent shape is invisible to
+// it — and there were three more, found in round 3 and measured at 897c1cc
+// (`AGENTS.md` as a directory, under `--json`, `--check --json` and
+// `--dry-run --json`). The class-level guard is round 3's
+// TestJSONNeverExitsSilently; this one stays as the four measured instances.
+func TestJSONIsEmittedForEveryFailureShape(t *testing.T) {
+	t.Run("plan-time refusal", func(t *testing.T) {
+		dir, home := agentSetupProject(t)
+		writeFile(t, filepath.Join(home, ".codex", "config.toml"), "[mcp_servers\nx = 1\n")
+		assertBlockedWritePayload(t, dir, agentCodex, "does not parse", agentsFilename, claudeFilename)
+	})
+
+	t.Run("write-time refusal: a broken symlink destination", func(t *testing.T) {
+		dir, home := agentSetupProject(t)
+		link := filepath.Join(home, ".codex", "config.toml")
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(home, "gone", "codex.toml"), link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		assertBlockedWritePayload(t, dir, agentCodex, "symlink", agentsFilename, claudeFilename)
+	})
+
+	t.Run("write-time failure: an unwritable directory", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("running as root — a 0500 directory is still writable")
+		}
+		dir, home := agentSetupProject(t)
+		codexDir := filepath.Join(home, ".codex")
+		if err := os.MkdirAll(codexDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(codexDir, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(codexDir, 0o700) })
+		assertBlockedWritePayload(t, dir, agentCodex, "permission denied", agentsFilename, claudeFilename)
+	})
+
+	t.Run("--check --json on an unparseable config", func(t *testing.T) {
+		dir, home := agentSetupProject(t)
+		writeFile(t, filepath.Join(home, ".codex", "config.toml"), "[mcp_servers\nx = 1\n")
+
+		out, _, err := run(t, "agent-setup", "--check", "--json", "--dir", dir, "--agent", agentCodex)
+		if err == nil {
+			t.Error("--check reported a config it could not read as complete")
+		}
+		var payload agentSetupJSON
+		if jsonErr := json.Unmarshal([]byte(out), &payload); jsonErr != nil {
+			t.Fatalf("--check --json emitted no readable payload (%v):\n%q", jsonErr, out)
+		}
+		if payload.OK {
+			t.Error("ok = true for a config that could not be read")
+		}
+		// 🔴 "COULD NOT LOOK" IS NOT "NOT REGISTERED", AND THE DETAIL SAYS WHICH —
+		// the same rule the other two could-not-look cases already follow.
+		for _, srv := range civitaiMCPServers {
+			var row *agentCheckJSON
+			for i := range payload.Checks {
+				if payload.Checks[i].Name == srv.Check {
+					row = &payload.Checks[i]
+				}
+			}
+			if row == nil {
+				t.Fatalf("the %s row is missing entirely:\n%s", srv.Check, out)
+			}
+			if row.OK {
+				t.Errorf("%s is ok against a config that does not parse", srv.Check)
+			}
+			if !strings.Contains(row.Detail, "does not parse") {
+				t.Errorf("%s does not say WHY it could not answer: %s", srv.Check, row.Detail)
+			}
+			if strings.Contains(row.Detail, "not registered in") {
+				t.Errorf("%s reports 'not registered' for a file nothing could read: %s", srv.Check, row.Detail)
+			}
+		}
+	})
+}
+
+// assertBlockedWritePayload is the shared half of the blocked write-run cases: a
+// payload on stdout, `ok: false`, a non-zero exit, a `blocked` row carrying the
+// reason — and every file in wantWritten present afterwards, because the three
+// writes are independent of each other.
+//
+// 🔴 wantWritten IS A PARAMETER RATHER THAN THE TWO INSTRUCTION FILES, BECAUSE
+// THE DOCSTRING WAS WIDER THAN THE BODY. It said "the instruction files written
+// anyway, because they have nothing to do with the MCP config", which is true of
+// the three MCP fixtures and describes nothing at all about a fixture whose
+// FIRST write is the one that fails — the only arrangement in which the
+// independence this helper asserts is observable. See
+// TestAFirstWriteFailureDoesNotStopTheLaterOnes.
+func assertBlockedWritePayload(t *testing.T, dir, agent, wantReason string, wantWritten ...string) {
+	t.Helper()
+	out, _, err := run(t, "agent-setup", "--json", "--dir", dir, "--agent", agent)
+	if err == nil {
+		t.Fatal("a run that wrote no MCP config exited 0")
+	}
+	var payload agentSetupJSON
+	if jsonErr := json.Unmarshal([]byte(out), &payload); jsonErr != nil {
+		t.Fatalf("--json emitted no readable payload (%v):\n%q", jsonErr, out)
+	}
+	if payload.OK {
+		t.Error("ok = true on a run that wrote no MCP config")
+	}
+	var blocked *agentChangeJSON
+	for i := range payload.Changes {
+		if payload.Changes[i].Action == actionBlocked {
+			blocked = &payload.Changes[i]
+		}
+	}
+	if blocked == nil {
+		t.Fatalf("no %q row explaining what did not happen:\n%s", actionBlocked, out)
+	}
+	if !strings.Contains(blocked.Reason, wantReason) {
+		t.Errorf("the blocked row does not carry the reason %q: %s", wantReason, blocked.Reason)
+	}
+	if blocked.Path == "" {
+		t.Error("the blocked row names no path")
+	}
+	for _, name := range wantWritten {
+		if _, statErr := os.Stat(filepath.Join(dir, name)); statErr != nil {
+			t.Errorf("%s was not written despite the failing step being unrelated to it: %v", name, statErr)
+		}
+	}
+	// 🔴 EVERY ROW IS TRUE OF WHAT HAPPENED. The old code returned on the FIRST
+	// write failure, so any payload emitted after one would have claimed actions
+	// for files nothing ever tried to write.
+	for _, c := range payload.Changes {
+		if c.Action == actionBlocked || c.Path == "" {
+			continue
+		}
+		if _, statErr := os.Stat(c.Path); statErr != nil {
+			t.Errorf("changes[] claims %q for %s, which does not exist: %v", c.Action, c.Path, statErr)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// 8 — --dry-run must not report an action the real run refuses
+// ---------------------------------------------------------------------------
+
+// TestDryRunReportsADestinationTheRealRunRefuses.
+//
+// 🔴 MEASURED RED: with a broken-symlink `~/.codex/config.toml`, `--dry-run`
+// reported action `create`, `ok: true` and exit 0 for a destination the real run
+// refuses by name. The file header claims dry-run "cannot report a path or an
+// action the write path would not take" — true for the refusals that sat in the
+// planner, blind to the one that sat in the writer. Resolving the destination is
+// a pure read, so it belongs in the planner where the claim can hold.
+func TestDryRunReportsADestinationTheRealRunRefuses(t *testing.T) {
+	dir, home := agentSetupProject(t)
+	link := filepath.Join(home, ".codex", "config.toml")
+	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "gone", "codex.toml"), link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	out, _, err := run(t, "agent-setup", "--dry-run", "--json", "--dir", dir, "--agent", agentCodex)
+	if err == nil {
+		t.Error("--dry-run exited 0 for a destination the real run refuses")
+	}
+	var payload agentSetupJSON
+	if jsonErr := json.Unmarshal([]byte(out), &payload); jsonErr != nil {
+		t.Fatalf("--dry-run --json emitted no readable payload (%v):\n%q", jsonErr, out)
+	}
+	if !payload.DryRun {
+		t.Error("dryRun is not set on a --dry-run payload")
+	}
+	if payload.OK {
+		t.Error("ok = true for a destination the real run refuses")
+	}
+	var blocked *agentChangeJSON
+	for i := range payload.Changes {
+		if payload.Changes[i].Action == actionBlocked {
+			blocked = &payload.Changes[i]
+		}
+	}
+	if blocked == nil {
+		t.Fatalf("--dry-run reports no %q row for a destination the real run refuses:\n%s", actionBlocked, out)
+	}
+	if !strings.Contains(blocked.Reason, "symlink") {
+		t.Errorf("the blocked row does not name the symlink: %s", blocked.Reason)
+	}
+	// A dry run still writes NOTHING, including the instruction files.
+	for _, name := range []string{agentsFilename, claudeFilename} {
+		if _, statErr := os.Stat(filepath.Join(dir, name)); statErr == nil {
+			t.Errorf("--dry-run wrote %s", name)
+		}
+	}
+}
+
+// TestDryRunAndTheRealRunAgreeOnEveryPlanTimeOutcome is the ledger behind that
+// finding rather than a second copy of the one case that was wrong: for each
+// fixture, the dry run's `changes` and the real run's must carry the same path,
+// the same action and the same `ok`, row for row.
+//
+// 🔴 THE ACTIONS ARE COMPARED, NOT JUST THE PATHS. A dry run reporting `create`
+// where the real run reports `blocked` is exactly the defect, and a path-only
+// comparison is satisfied by both.
+//
+// 🔴 ROUND 2'S FIXTURES ONLY VARIED THE MCP DESTINATION — which is how round 2's
+// own fix shipped with the identical lie alive for AGENTS.md: the destination
+// check went into `planMCPConfig` and the two instruction-file plans did not get
+// it. Measured at 897c1cc, `--dry-run --json` said `create` / `ok: true` / exit 0
+// for a broken-symlink AGENTS.md the real run reported `blocked` / `ok: false` /
+// exit 1. There is now a fixture per WRITTEN FILE, and `wantBlocked` names which
+// row each one must block, so a future change that makes both runs agree on the
+// WRONG action still fails.
+//
+// 🔴 IT WAS CALLED "…OnEveryAction" UNTIL ROUND 4, AND THE NAME WAS WIDER THAN
+// THE BODY IN THE ONE DIRECTION THAT MATTERS. Every fixture below varies
+// something the PLAN can see — a destination, a parse failure, an unreadable
+// file — so the seven of them establish agreement over plan-time outcomes and
+// nothing else. They cannot see, and were never able to see, a failure only the
+// WRITE can produce; `TestAFirstWriteFailureDoesNotStopTheLaterOnes` in the
+// round-3 file DEPENDS on that divergence and fails `PREMISE BROKEN` if the two
+// runs ever agree on such a case, and
+// `TestADryRunCannotSeeAFailureOnlyTheWriteCanProduce` in the round-4 file pins
+// it directly. So: this list is a claim about the fixtures in it, and adding a
+// case to it is how the claim gets wider — not rewording the name.
+func TestDryRunAndTheRealRunAgreeOnEveryPlanTimeOutcome(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		setUp func(t *testing.T, dir, home string)
+		// wantBlocked, when set, is the basename of the row that must carry the
+		// `blocked` action in BOTH runs. "" means every row must be actionable.
+		wantBlocked string
+	}{
+		{name: "a fresh project", setUp: func(*testing.T, string, string) {}},
+		{name: "an existing config", setUp: func(t *testing.T, _, home string) {
+			writeFile(t, filepath.Join(home, ".codex", "config.toml"), "model = \"gpt-5\"\n")
+		}},
+		{name: "a config that does not parse", setUp: func(t *testing.T, _, home string) {
+			writeFile(t, filepath.Join(home, ".codex", "config.toml"), "[mcp_servers\nx = 1\n")
+		}, wantBlocked: "config.toml"},
+		{name: "a broken symlink MCP destination", setUp: func(t *testing.T, _, home string) {
+			link := filepath.Join(home, ".codex", "config.toml")
+			if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(home, "gone", "codex.toml"), link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+		}, wantBlocked: "config.toml"},
+		{name: "a broken symlink AGENTS.md", setUp: func(t *testing.T, dir, _ string) {
+			if err := os.Symlink(filepath.Join(dir, "gone", agentsFilename),
+				filepath.Join(dir, agentsFilename)); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+		}, wantBlocked: agentsFilename},
+		{name: "a broken symlink CLAUDE.md", setUp: func(t *testing.T, dir, _ string) {
+			if err := os.Symlink(filepath.Join(dir, "gone", claudeFilename),
+				filepath.Join(dir, claudeFilename)); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+		}, wantBlocked: claudeFilename},
+		{name: "an AGENTS.md that cannot be read", setUp: func(t *testing.T, dir, _ string) {
+			if err := os.MkdirAll(filepath.Join(dir, agentsFilename), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}, wantBlocked: agentsFilename},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, home := agentSetupProject(t)
+			tc.setUp(t, dir, home)
+
+			// 🔴 SNAPSHOT FIRST, AND OVER ALL THREE PATHS. "The dry run wrote
+			// nothing" is only observable BEFORE the real run, and a check that
+			// looked at CLAUDE.md alone stated the general claim while sampling one
+			// third of it. Which paths a fixture has already created differs per
+			// fixture, so the set is derived rather than listed.
+			var absentBefore []string
+			for _, p := range []string{
+				filepath.Join(dir, agentsFilename),
+				filepath.Join(dir, claudeFilename),
+				filepath.Join(home, ".codex", "config.toml"),
+			} {
+				if _, statErr := os.Lstat(p); statErr != nil {
+					absentBefore = append(absentBefore, p)
+				}
+			}
+			if len(absentBefore) == 0 {
+				t.Fatal("PREMISE BROKEN: every path already exists, so this fixture cannot observe a " +
+					"dry run writing one")
+			}
+
+			dryOut, _, dryErr := run(t, "agent-setup", "--dry-run", "--json", "--dir", dir, "--agent", agentCodex)
+			for _, p := range absentBefore {
+				if _, statErr := os.Lstat(p); statErr == nil {
+					t.Errorf("--dry-run created %s", p)
+				}
+			}
+			realOut, _, realErr := run(t, "agent-setup", "--json", "--dir", dir, "--agent", agentCodex)
+
+			var dry, real agentSetupJSON
+			if err := json.Unmarshal([]byte(dryOut), &dry); err != nil {
+				t.Fatalf("bad --dry-run json: %v\n%q", err, dryOut)
+			}
+			if err := json.Unmarshal([]byte(realOut), &real); err != nil {
+				t.Fatalf("bad write-run json: %v\n%q", err, realOut)
+			}
+			if (dryErr == nil) != (realErr == nil) {
+				t.Errorf("--dry-run err = %v, the real run err = %v — the exit codes disagree", dryErr, realErr)
+			}
+			if len(dry.Changes) != len(real.Changes) {
+				t.Fatalf("--dry-run reports %d rows, the real run %d:\n%s\n%s",
+					len(dry.Changes), len(real.Changes), dryOut, realOut)
+			}
+			if dry.OK != real.OK {
+				t.Errorf("--dry-run ok = %t, the real run ok = %t", dry.OK, real.OK)
+			}
+			for i := range dry.Changes {
+				if dry.Changes[i].Path != real.Changes[i].Path {
+					t.Errorf("row %d path: dry %q, real %q", i, dry.Changes[i].Path, real.Changes[i].Path)
+				}
+				if dry.Changes[i].Action != real.Changes[i].Action {
+					t.Errorf("row %d action: dry %q, real %q — a dry run that reports an action the write "+
+						"path would not take is the whole defect",
+						i, dry.Changes[i].Action, real.Changes[i].Action)
+				}
+			}
+			// 🔴 THE AGREEMENT ABOVE IS SATISFIED BY TWO RUNS THAT ARE BOTH WRONG.
+			// This half pins WHICH row the fixture is about, in both runs, so a
+			// regression that reports `create` for a refused destination on BOTH
+			// sides is still red.
+			for _, p := range []struct {
+				label   string
+				payload agentSetupJSON
+			}{{"--dry-run", dry}, {"the real run", real}} {
+				got := ""
+				for _, c := range p.payload.Changes {
+					if c.Action == actionBlocked {
+						got = filepath.Base(c.Path)
+					}
+				}
+				if got != tc.wantBlocked {
+					t.Errorf("%s blocked %q, want %q", p.label, got, tc.wantBlocked)
+				}
+				if p.payload.OK != (tc.wantBlocked == "") {
+					t.Errorf("%s ok = %t with wantBlocked %q", p.label, p.payload.OK, tc.wantBlocked)
+				}
+			}
+		})
+	}
+}

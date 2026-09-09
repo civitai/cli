@@ -27,9 +27,11 @@ import (
 // PII). It is `null` in JSON only when the owner row vanished, so the field is a
 // pointer on the card/detail structs.
 type ListingCreatorChip struct {
-	ID       int    `json:"id"`
-	Username string `json:"username"`
-	Image    string `json:"image"`
+	ID int `json:"id"`
+	// Username is a FlexString, not a string: an all-digit username arrives as a
+	// bare JSON number. See FlexString — do not "fix" it back to a string.
+	Username FlexString `json:"username"`
+	Image    string     `json:"image"`
 }
 
 // ListingRecommend is the recommend rollup read from the AppListingMetric
