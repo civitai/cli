@@ -214,7 +214,7 @@ func printModelList(cmd *cobra.Command, items []civitai.ModelListItem) {
 	for _, m := range items {
 		creator := "-"
 		if m.Creator != nil && m.Creator.Username != "" {
-			creator = safeTerm(m.Creator.Username)
+			creator = safeTerm(m.Creator.Username.String())
 		}
 		name := safeTerm(m.Name)
 		if m.NSFW {
@@ -229,7 +229,7 @@ func printModelDetail(cmd *cobra.Command, m *civitai.ModelDetail) {
 	out := cmd.OutOrStdout()
 	creator := "-"
 	if m.Creator != nil && m.Creator.Username != "" {
-		creator = safeTerm(m.Creator.Username)
+		creator = safeTerm(m.Creator.Username.String())
 	}
 	fmt.Fprintf(out, "%s (id %d)\n", safeTerm(m.Name), m.ID)
 	fmt.Fprintf(out, "  type:      %s\n", safeTerm(m.Type))

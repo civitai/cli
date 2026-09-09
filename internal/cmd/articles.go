@@ -191,7 +191,7 @@ func printArticleList(cmd *cobra.Command, items []civitai.ArticleListItem) {
 	for _, a := range items {
 		author := "-"
 		if a.User != nil && a.User.Username != "" {
-			author = safeTerm(a.User.Username)
+			author = safeTerm(a.User.Username.String())
 		}
 		title := safeTerm(a.Title)
 		if a.NSFWLevel > 1 {
@@ -207,7 +207,7 @@ func printArticleDetail(cmd *cobra.Command, a *civitai.ArticleDetail) {
 	out := cmd.OutOrStdout()
 	author := "-"
 	if a.User != nil && a.User.Username != "" {
-		author = safeTerm(a.User.Username)
+		author = safeTerm(a.User.Username.String())
 	}
 	fmt.Fprintf(out, "%s (id %d)\n", safeTerm(a.Title), a.ID)
 	fmt.Fprintf(out, "  author:    %s\n", author)

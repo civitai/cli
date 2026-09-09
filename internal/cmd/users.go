@@ -108,7 +108,7 @@ no model list on this route.
 			if !numeric {
 				found := false
 				for _, u := range res.Items {
-					if strings.EqualFold(u.Username, arg) {
+					if strings.EqualFold(u.Username.String(), arg) {
 						match, found = u, true
 						break
 					}
@@ -116,7 +116,7 @@ no model list on this route.
 				if !found {
 					names := make([]string, 0, len(res.Items))
 					for _, u := range res.Items {
-						names = append(names, orDash(safeTerm(u.Username)))
+						names = append(names, orDash(safeTerm(u.Username.String())))
 					}
 					return civitai.Tag(civitai.ErrNotFound, fmt.Errorf("no user found with exact username %q; closest matches: %s (use the numeric id for an exact lookup)", arg, strings.Join(names, ", ")))
 				}
@@ -129,7 +129,7 @@ no model list on this route.
 					if u.ID == match.ID {
 						continue
 					}
-					fmt.Fprintf(tw, "  %d\t%s\n", u.ID, orDash(safeTerm(u.Username)))
+					fmt.Fprintf(tw, "  %d\t%s\n", u.ID, orDash(safeTerm(u.Username.String())))
 				}
 				_ = tw.Flush()
 			}
@@ -142,7 +142,7 @@ no model list on this route.
 
 func printUser(cmd *cobra.Command, u civitai.UserItem) {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "%s (id %d)\n", orDash(safeTerm(u.Username)), u.ID)
+	fmt.Fprintf(out, "%s (id %d)\n", orDash(safeTerm(u.Username.String())), u.ID)
 	if u.Image != "" {
 		fmt.Fprintf(out, "  image: %s\n", safeTerm(u.Image))
 	}
