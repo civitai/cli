@@ -661,12 +661,38 @@ func agentSetupChecks(env agentEnv, agent, token string) []agentCheckJSON {
 
 	checks = append(checks, agentSetupMCPChecks(env, agent)...)
 
-	if token != "" {
+	// 🔴 THE ROW NAMES *WHICH STORE* IT LOOKED IN, BECAUSE THERE ARE TWO AND THE
+	// AGENT ONLY READS ONE. `config.Load()` merges ~/.config/civitai/config.yaml
+	// with the CIVITAI_TOKEN environment variable, so a `civitai login` alone
+	// satisfies `token != ""` — while every MCP entry this command writes
+	// REFERENCES CIVITAI_TOKEN and the agent resolves it from the PROCESS
+	// ENVIRONMENT. The old detail read "token configured — `civitai whoami`
+	// verifies it", which is a true claim about this CLI and reads as a claim
+	// about the setup: `--check` came back fully green on a machine where the
+	// orchestration server 401s every request. The write path already says this
+	// (printAgentSetupWrite's export step, and the per-server 401 warning);
+	// `--check` was the surface that did not.
+	//
+	// 🔴 `ok` DOES NOT MOVE, AND THAT IS DELIBERATE. This row is excluded from the
+	// verdict on purpose (agentSetupVerdict), and flipping `ok` for the
+	// logged-in-but-not-exported case would change a PUBLISHED row's value for a
+	// setup that is exactly as finished as the one before it. What was wrong was
+	// the sentence, so the sentence is what changed.
+	switch {
+	case token != "" && tokenIsExported(env):
 		checks = append(checks, agentCheckJSON{Name: checkAuthenticated, OK: true,
-			Detail: "token configured — `civitai whoami` verifies it"})
-	} else {
+			Detail: tokenEnvVar + " is set in this environment, which is where " + agent + " resolves it from — " +
+				"`civitai whoami` verifies the value; this row only checks that one is present"})
+	case token != "":
+		checks = append(checks, agentCheckJSON{Name: checkAuthenticated, OK: true,
+			Detail: "a token is configured for THIS CLI (`civitai login` or the config file), but " + tokenEnvVar +
+				" is NOT set in this environment — the MCP entries reference it by name, so " + agent +
+				" resolves it to an empty string and https://orchestration.civitai.com/mcp 401s until you " +
+				"`export " + tokenEnvVar + "`"})
+	default:
 		checks = append(checks, agentCheckJSON{Name: checkAuthenticated, OK: false,
-			Detail: "no token — run `civitai login`"})
+			Detail: "no token in this CLI's config and no " + tokenEnvVar + " in this environment — " +
+				"run `civitai login` for this CLI, and `export " + tokenEnvVar + "` for " + agent})
 	}
 	return checks
 }

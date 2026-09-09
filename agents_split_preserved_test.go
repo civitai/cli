@@ -424,6 +424,11 @@ var bornSplitItems = []string{
 	// in the numbered list even briefly would have blown the ceiling on the same
 	// commit that raised it.
 	"claudedocs/decisions/35-agent-setup-merges-a-users-file.md",
+	// Item 36 was likewise written straight into claudedocs/decisions/: its body
+	// is the three-template measurement, the per-shape table, the guard ledger
+	// and the enumerated residuals, and AGENTS.md had 183 bytes of headroom under
+	// a ceiling with 100 of its own left. There was nowhere to park it.
+	"claudedocs/decisions/36-agents-block-per-project.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item

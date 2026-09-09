@@ -301,11 +301,24 @@ It does three things, and **it never authenticates**:
 1. Writes an `AGENTS.md` **managed block** into the project — the commands and
    the gotchas an agent cannot infer by reading your code (Buzz is the *viewer's*,
    a newly declared scope is consent-gated, a hung hook is usually a missing HOST
-   handler, `useSharedStorage()` has no REST route, commit the lockfile).
+   handler, `useSharedStorage()` has no REST route).
 2. Writes a one-line `CLAUDE.md` containing `@AGENTS.md`, **only when there is
    no `CLAUDE.md` already**. Claude Code does not read `AGENTS.md` on its own.
 3. Registers the **two Civitai MCP servers** in the detected agent's own config
    file.
+
+🔴 **The block's "Local development" section is READ FROM THE DIRECTORY, not
+fixed.** The `civitai` commands it lists are true in every App project; how you
+run the app locally is not, because the templates differ — `page-money` defines
+`dev:harness`, `dev:live` and `dev:tunnel`, `page-vite` defines `dev` and neither
+of the first two, and `static` (the **default** for `civitai app init`) ships no
+`package.json` at all. So that section is rendered per project: in an npm project
+it names only the scripts that are in **that** project's `package.json` and
+carries the lockfile rule; in a `static` project it says there is no
+`package.json` and points at `index.html` / serving the directory, exactly as
+`civitai app init`'s own next steps do; and in a directory where nothing has been
+scaffolded yet it says so rather than guessing. **Re-run `civitai agent-setup`
+after changing your scripts** and the section is rewritten from the file.
 
 | Server | URL | What it reaches | Anonymous? |
 | --- | --- | --- | --- |
@@ -437,10 +450,20 @@ civitai agent-setup --check --json
     {"name": "claude-md",     "ok": true,  "detail": "/home/u/proj/CLAUDE.md"},
     {"name": "mcp-site",      "ok": true,  "detail": "/home/u/proj/.mcp.json"},
     {"name": "mcp-orch",      "ok": true,  "detail": "/home/u/proj/.mcp.json"},
-    {"name": "authenticated", "ok": false, "detail": "no token — run `civitai login`"}
+    {"name": "authenticated", "ok": false, "detail": "no token in this CLI's config and no CIVITAI_TOKEN in this environment — run `civitai login` for this CLI, and `export CIVITAI_TOKEN` for claude"}
   ]
 }
 ```
+
+🔴 **The `authenticated` row names WHICH STORE it looked in, because there are
+two and your agent reads only one.** `civitai login` writes this CLI's config;
+the MCP entries reference `CIVITAI_TOKEN` and your agent resolves it from the
+**environment**. So the row has three details, not two: `CIVITAI_TOKEN` is
+exported (the setup an agent can use); a token is configured for **this CLI** but
+`CIVITAI_TOKEN` is not exported (this CLI works, your agent gets `401` from
+`orchestration.civitai.com`); or neither. The row's `ok` is `true` for both of
+the first two and it never fails the verdict either way — what it reports is a
+value being **present**, never that a server accepted it.
 
 A config file `--check` cannot **read** is reported the same way an unknown agent
 and an unresolvable home already were: as `mcp-site`/`mcp-orch` rows carrying the
