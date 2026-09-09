@@ -17,45 +17,35 @@ answered — starting with #513, and fix the API-side root cause behind it.
 
 ## State now
 
-- **Branch `main` @ `46c928a`**, clean apart from the same untracked `node_modules/`
-  (16K, NOT gitignored) the previous handoff flagged. Still a live `git add -A` footgun.
-- **The repo freeze is CLEARED** — the previous handoff's blocking item. `#529` landed
-  the pin bump to `^0.39.0` / `^0.49.0`; `CIVITAI_CHECK_PUBLISHED_PINS=1 go test
-  ./internal/scaffold -run TestScaffoldPinsSatisfyPublished` passes against live npm,
-  and CI + CodeQL are green on `main`. Verified 2026-09-09T00:50Z.
-- **Work claimed:** `claim-work --release cli-513-numeric-username` when done.
-- **No clawgate task recorded.** `clawgate_handoff.sh resolve` exited 5 — 0 tasks for
-  this session. Its positive control resolved 1 link for another session, so the board
-  IS reachable and the token IS accepted; but a wrong session id also answers 200 with
-  an empty array, so this is NOT evidence that no task exists.
+- **Branch `main` @ `69724bf`.** The base clone is synced (`merge --ff-only`).
+  🔴 **`main` moved SEVEN times during the session that wrote this** (#533, #534,
+  #536, #537, #538, plus our #535 and #532). Treat any byte count or merge-state
+  reading in this doc as a snapshot; re-measure before acting.
+- **BOTH PRs of this effort are MERGED:**
+  - **`civitai/cli#532` → `69724bf`** — `FlexString` in `pkg/civitai`, fixing #513.
+    Shipped as **`fix(read)!:`** (source-breaking for direct importers).
+  - **`civitai/cli#535` → `2c694f0`** — AGENTS.md headroom: evicted the wrong
+    `newWhoAmICmd` snippet, fixed `CONTRIBUTING.md`'s phantom `internal/api`, and
+    extended `layout_ledger_test.go` to cover `CONTRIBUTING.md`.
+- **AGENTS.md is 30,028 B** vs `agentsMaxBytes` 30,500 — **472 B headroom**.
+  Neither that constant nor `agentsMaxBytesCeiling` (30,600) was changed.
+- **Recorded in the subsystem index:** NEW entry `cli/civitai` (revision
+  `33097855f51bce77`) — the public read SDK had no entry, and the `cli/` scope now
+  holds 6. Carries the `getInto` defect class, the breaking-change/`!` rule, and one
+  `OPEN:` bullet for the unreproducible server coercion.
+- **No `clawgate-task:` recorded, deliberately.** `clawgate_handoff.sh resolve`
+  exited **6**: one task linked (#544) with `role=created` and none `worked`. Filing
+  a task is not doing its work, so this doc belongs to none of them.
+- Both claims released: `cli-513-numeric-username`, `cli-agents-md-headroom`.
 
-### IN FLIGHT — the #513 fix
+### Answered externally
 
-- Subagent working in worktree `.claude/worktrees/agent-a98d33d792f41ee1c`, branch
-  **`fix/flexstring-numeric-username`** (off `46c928a`). **Nothing committed or pushed
-  yet** — `git ls-remote --heads origin | grep flex` is empty.
-- Confirmed live from its LSP diagnostics: the field-type change fans out to **14 call
-  sites** in `internal/cmd` that pass `.Username` to `safeTerm` / `strings.EqualFold`
-  (`apps.go:334,367` · `articles.go:194,210` · `collections.go:199,210` ·
-  `models.go:217,232` · `images.go:246,275` · `creators.go:107` ·
-  `users.go:111,119,132,145`). Each needs an explicit `string(...)`. This is the
-  breaking-change cost of `FlexString`, and it was anticipated in the brief.
-
-### Decisions taken this session (settled by the operator, do not relitigate)
-
-- **Approach:** a `FlexString` type in `pkg/civitai` with a custom `UnmarshalJSON`
-  accepting a JSON string OR number, applied to the `Username` fields. NOT a lenient
-  decode inside `getInto` — that would collide with external PR #526, which edits
-  exactly that block.
-- **Scope:** the **7 sites in `pkg/civitai` only**. The 3 in `internal/appapi`
-  (`appblocks.go:172,993`, `forgejoUsername:1340`) are deliberately excluded — a
-  different service, no evidence of the coercion there.
-- **Numeric fidelity:** the bare-number branch must preserve the literal digits
-  (`json.Number`), never route through `float64` — `2802169344506` would become
-  `2.802169344506e+12`.
-- **API side:** fix it too, tracked as its own clawgate task (drafted, see next steps).
-  Scope settled as *username + pin the class with a v1 contract test*; fix at the
-  **root cause** plus a boundary test; dispatchable, human-reviewed PR.
+- **`civitai/cli#513`** — Rochet2 answered after 10 days of silence, and the issue
+  **reopened**: the merge auto-closed it via a closing keyword in #532's body,
+  seconds after the comment said it would stay open. The server half is unresolved,
+  so open is correct.
+- **clawgate #544** carries the merged-commit cross-link and the live-probe
+  correction to its own premise.
 
 ## Open investigations — live diagnosis state
 
@@ -102,47 +92,62 @@ answered — starting with #513, and fix the API-side root cause behind it.
   npm run test:unit -- src/tests/api/v1
   ```
 
+### 🔴 SUPERSEDED — "the API serializes an all-digit username as a JSON number"
+
+**The block below this one, from 2026-09-08, is RETIRED. Do not run its "Next
+probe".** It instructs you to find the coercing step between the DB read and
+`res.json`. That framing assumed the coercion is currently observable. It is not.
+
+### The server-side coercion is NOT reproducible on any reachable surface
+
+- **Symptom + exact repro:** as reported in #513 — `"username": 2802169344506`
+  unquoted, breaking a typed decode of a **200**.
+- **Observed (with values), measured 2026-09-09, RAW bytes grepped (never
+  `jq`-parsed — `jq` hides the quoting):**
+  - `GET /api/v1/users?query=2802169344506` → 200, 1 item, `"username":"2802169344506"`
+    — **quoted**.
+  - Six queries (`1234`, `999`, `2802`, `0000`, `12345678`, `2802169344506`) over
+    `/api/v1/users` returned **every** all-digit username quoted, including 13-digit
+    `280204751375`, `280220194698`, `2802217989326`. **Zero** unquoted forms.
+  - **Positive control:** `/api/v1/images?username=civitai` → 200, 1 item,
+    `"username":"civitai"`. The images query path works, so the zeros are readings.
+  - All **7** all-digit accounts found return `items=0` on `/api/v1/images`.
+- **Ruled out:** that the images query path is broken, which would have made the
+  zeros meaningless — the positive control returns an item. `via: command` · That
+  the CLI `--json` contract is affected by the Go field type — `emitJSON`
+  (`internal/cmd/read.go`) re-indents RAW server bytes. `via: code`
+- **Leading hypothesis:** UNDECIDED, and deliberately so. Three candidates an empty
+  result **cannot** separate: (a) fixed server-side since 2026-08-30; (b) specific to
+  the embedded-user serializer (`image.service.ts`) and still live but unobservable;
+  (c) conditional on a cache/index path the probe did not hit. `via: measurement`
+- **Next probe:** NOT "find the coercing step" — first get a test subject. Find or
+  seed an all-digit-username account **with a public image**, then re-probe
+  `/api/v1/images`. Failing that, Rochet2's answer on #513 is the lead.
+  ```bash
+  curl -s 'https://civitai.com/api/v1/images?username=<all-digit-user>&limit=1' \
+    | grep -oE '"username":[^,}]{0,25}'    # RAW bytes; jq hides the quoting
+  ```
+
 ## Next steps (ranked)
 
-1. **Review and land the CLI `FlexString` PR.** IN FLIGHT: branch
-   `fix/flexstring-numeric-username` in `civitai/cli`, worktree
-   `.claude/worktrees/agent-a98d33d792f41ee1c`. Touches `pkg/civitai/{apps,articles,
-   collections,images,models,tags_creators_users}.go`, a new type file, and the 14
-   `internal/cmd` call sites listed above. Demand the red-at-base/green-at-HEAD matrix
-   and the mutation matrix before believing the agent's green.
-   forcing: user — an external contributor has had no reply since 2026-08-30.
-2. **Create the API-side clawgate task.** Body is fully drafted and was rendered for
-   approval this session but **not yet POSTed** — it is in the transcript, not on disk.
-   Repo `civitai/civitai`, directory `/home/zach/workspace/civit/civitai`, tags
-   `bug,civitai,project:civitai` (all validated against `/api/tags`).
-   forcing: user — same reporter, and the client fix does nothing for third-party clients.
-3. **Reply on `civitai/cli#513`.** Rochet2 asked whether the API or the CLI needs the
-   fix; the answer settled this session is *both*, and nobody has told them.
-   forcing: user — 10 days of silence on a well-formed external report.
-4. **`civitai/cli#526`** (xsvm, opened 2026-09-06). **Zero checks have ever run** — a
-   fork PR needing maintainer approval to trigger workflows, which is why it reads
-   `BLOCKED`. Approve the run, then review. Note the reporter asked "would you be open
-   to a PR?" first and got no answer.
-   forcing: user — external contributor, 3 days, no response.
-5. **`civitai/civitai-developer-docs#61`** (giannamikaelova, 2026-08-24, **16 days**):
-   Flux 2 Klein training `whatif` returns HTTP 500 for the payload the docs publish, with
-   a working control (image whatif quotes 12 Buzz). Not fixable in either repo worked
-   this session — route it to whoever owns `orchestration.civitai.com`.
-   forcing: user — the oldest unanswered external report of the three.
-6. **Delete or gitignore `node_modules/`** in the `civitai/cli` base clone.
+1. **`civitai/cli#526`** (xsvm, opened 2026-09-06). **Zero checks have ever run** —
+   a fork PR needing maintainer approval to trigger workflows, which is why it reads
+   `BLOCKED`. Approve the run, then review. They asked "would you be open to a PR?"
+   first and got no answer. Fixes #525, the OTHER half of the `getInto` defect class.
+   forcing: user — external contributor, no response since 2026-09-06.
+2. **`civitai/civitai-developer-docs#61`** (giannamikaelova, 2026-08-24). Flux 2
+   Klein training `whatif` returns HTTP 500 for the payload the docs publish, with a
+   working control. Not fixable in either repo worked here — route it to whoever owns
+   `orchestration.civitai.com`.
+   forcing: user — the oldest unanswered external report, now 17 days.
+3. **clawgate #544** (API-side coercion) — BLOCKED pending Rochet2's repro on #513.
+   Its premise is flagged as not-currently-reproducible; closing it as
+   not-reproducible is an explicitly valid completion.
    forcing: none
-7. **Run the subsystem-index `--pr` window once the FlexString PR lands** — this
-   session's index write is OWED, not declined on content. Both windows read empty
-   (`--session` = `looked-at-nothing`, 0 paths under cwd; `--commit` =
-   `no-commits-in-range`) because the work is in a subagent worktree with nothing
-   committed. `pkg/civitai` has **no entry** in the `cli/` scope (its 5 entries are
-   `scaffold`, `appapi`, `release`, `credscan`, `pkgzip`), so the PR window is what
-   will finally nominate it.
-   ```bash
-   python3 /home/zach/workspace/devrc/scripts/lib/subsystem_touch.py \
-     --repo /home/zach/workspace/civit/cli --pr <n> \
-     --exclude claudedocs/handoff-external-issue-513-numeric-username.md
-   ```
+4. **Delete the stale local branch `fix/flexstring-numeric-username`** — it sits at
+   `12818a3` in worktree `.claude/worktrees/agent-a98d33d792f41ee1c`, which holds it
+   repo-globally. It does NOT reflect the merged PR; anyone reusing that worktree
+   gets pre-rebase code.
    forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -167,30 +172,68 @@ answered — starting with #513, and fix the API-side root cause behind it.
 - **Task-authoring tags are hard-validated** — one invalid tag is a 400 that fails the
   whole create. The three chosen were checked against `GET /api/tags` before drafting.
 
+- 🔴 **`git rerere` is ENABLED repo-globally in `civitai/cli`** (`rerere.enabled=true`,
+  cache in the shared `.git`, 37 entries). It auto-applied this session's AGENTS.md
+  renumber conflict on a later rebase, printing only `Resolved 'AGENTS.md' using
+  previous resolution`. It was correct — but it is a machine replaying an edit nobody
+  reviewed, and **rerere cannot rename files**, so it left AGENTS.md pointing at
+  `37-numeric-username.md` while the doc was still `36-…` on disk. **Read any
+  rerere-resolved hunk before trusting it, and check for the half it cannot do.**
+- 🔴 **A `!` in the COMMIT SUBJECT is not enough — put it in the PR TITLE too.** The
+  repo's `squash_merge_commit_title` is `COMMIT_OR_PR_TITLE`, so a title lacking the
+  `!` can drop the marker at merge and the break reaches release notes as an ordinary
+  fix. That is the #267 scar (`claudedocs/handoff-dogfood-2.md`). Verified present in
+  `69724bf`'s subject after merge.
+- 🔴 **`fixes #N` on a PR that fixes HALF of N still closes N.** #532 auto-closed
+  #513 on merge although only the client half shipped — seconds after a comment told
+  the reporter it would stay open. Reopened. Use a bare reference, not a closing
+  keyword, when a PR closes only part of an issue.
+- **An always-loaded file is NOT a `SKILL.md`, and `prune-skill`'s budget does not
+  govern it.** `skill-audit.py` marks `cli` `[ungoverned]` and its "cut ~17,954 B"
+  verdict binds nothing — AGENTS.md answers to `agents_size_test.go`. The deterministic
+  scan also found **no** evictable history, dated lessons or >500 B lines: what paid
+  was ONE wrong 691 B block, found by a staleness pass, not by pruning. **Correctness
+  is the lever on an always-loaded file; a pass over one may legitimately end LARGER.**
+- **AGENTS.md carries FIVE item guards, not four** — `agents_size_test.go`,
+  `agents_split_preserved_test.go` (pins moved text VERBATIM),
+  `agents_evidence_test.go` (bidirectional pointer↔file set equality),
+  `agents_trigger_test.go`, `agents_index_test.go` (every item needs an index clause
+  in the section preamble), plus `agents_xrefs_test.go` and `layout_ledger_test.go`.
+  A new item therefore costs a trigger block **and** an index clause.
+- **Do not extrapolate one item's byte cost from another's.** An audit derived item
+  37's cost from #533's item (325 B) and concluded #532 would land 42 B over the
+  CEILING. #532's actual item measured **201 B** and landed 82 B under. Measure the
+  diff, never a sibling.
+- **`users get <all-digits>` is an ID lookup, not a username query.**
+  `internal/cmd/users.go` routes any `strconv.Atoi`-parsable argument to `?ids=`, so
+  a user whose *username* is all digits is unreachable by name through that command —
+  before and after #532. The decode fix lands via `images search`, `models search`,
+  `creators list`, and `users get <name>`'s candidate list.
+
 ## How to verify
 
-The CLI fix, once the branch lands (read the OUTPUT, not the exit code):
+The merged fix, from a clean checkout:
 
 ```bash
-cd /home/zach/workspace/civit/cli
-make ci                                   # tidy + vet + test + build
-nix-shell -p golangci-lint --run "make lint"   # NOT covered by make ci
+cd /home/zach/workspace/civit/cli && git fetch origin && git merge --ff-only origin/main
+go test ./pkg/civitai -run FlexString -count=1 -v     # the type's own unit + mutation fixtures
+go test . -run 'TestContributing|TestLayout' -count=1 # the ledger #535 extended
+make ci && nix-shell -p golangci-lint --run "make lint"
 ```
 
-The regression itself — this must be RED at `origin/main` and GREEN at the fix:
+The byte budget (re-measure; do not inherit these numbers):
 
 ```bash
-go test ./pkg/civitai -run FlexString -count=1 -v
+git show origin/main:AGENTS.md | wc -c                       # 30,028 at 69724bf
+grep -nE 'agentsMaxBytes(Ceiling)? +=' agents_size_test.go   # 30,500 / 30,600
 ```
 
-The API side, once its task is worked:
+Whether the server still coerces — **read the RAW bytes**, since `jq` renders a
+quoted and unquoted value identically:
 
 ```bash
-cd /home/zach/workspace/civit/civitai
-npm run test:unit -- src/tests/api/v1     # assert a NON-ZERO test count
-curl -s 'https://civitai.com/api/v1/images?username=2802169344506&limit=1' \
-  | jq '.items[0].username | type'        # advisory only — the account may be renamed
+curl -s 'https://civitai.com/api/v1/users?query=2802169344506' \
+  | grep -oE '"username":[^,}]{0,25}'
 ```
 
-🔴 Read `rc` directly rather than `$?` after a pipe — this repo has been misled by that
-once already.
+🔴 Read `rc` directly rather than `$?` after a pipe.
