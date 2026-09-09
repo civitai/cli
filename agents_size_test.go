@@ -160,7 +160,28 @@ import (
 // leaves 210 bytes — room for roughly ONE more trigger line, not a licence to
 // grow. Do not raise it again without doing this arithmetic in a comment of your
 // own, and re-measure the file rather than inheriting this number.
-const agentsMaxBytes = 30_200
+//
+// 🔴 RAISED FROM 30,200 TO 30,500 FOR ITEM 36, AND THIS IS THE LAST SUCH RAISE
+// THAT FITS. The change adding it fixed the managed block asserting `npm run …`
+// in a project scaffolded from the DEFAULT template, which ships no
+// `package.json` — a third `agent-setup` subject, separate from item 34's
+// credential rule and item 35's merge rules, and one a reader "simplifying" the
+// per-project branch away must be routed to. Same two ways out as the raise
+// above; (b) again, for the same reason.
+//
+// MEASURED, not rounded, and re-measured rather than inherited: AGENTS.md is
+// 30,317 bytes with item 36 in it, so 30,500 leaves 183 bytes. That is under one
+// trigger line (162–265 bytes, mean 204) and it is deliberately being reported
+// as the end of the budget rather than as room.
+//
+// 🔴 THE NEXT ITEM CANNOT BE PAID FOR FROM HERE — agentsMaxBytesCeiling (30,600)
+// is UNCHANGED and now bounds this constant at 100 bytes of further slack. Its
+// own property still holds (re-inlining the three largest evicted bodies costs
+// 5,381 bytes net and lands well past it), so nothing was weakened to make this
+// pass; but whoever adds the NEXT item re-derives THAT constant from the
+// achieved size in the same commit, or evicts prose. Raising this one first is the
+// "ceiling nobody bounds" failure this file already records twice.
+const agentsMaxBytes = 30_500
 
 // agentsMaxBytesCeiling bounds agentsMaxBytes itself, so the budget above cannot
 // be turned into unlimited slack by editing one number.

@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 )
 
 // The two instruction files `agent-setup` writes into the project, and the rule
@@ -70,11 +71,27 @@ const (
 	actionKeep fileAction = "keep-existing"
 )
 
+// agentsTemplate is the embedded file parsed once. A parse failure is a defect
+// in a file that ships inside the binary, not a condition a run can be in, so it
+// panics at init rather than turning every `agent-setup` into a runtime error
+// about a file the user cannot see. TestAgentsTemplateRendersForEveryShape is
+// what makes that safe: it executes the template for all three shapes.
+var agentsTemplate = template.Must(template.New(agentsFilename).Parse(agentsAppTemplate))
+
 // agentsManagedBlock is the block as it is written into a file: the embedded
-// template with no leading or trailing blank lines, so the three cases below can
-// each control their own spacing.
-func agentsManagedBlock() string {
-	return strings.TrimSpace(agentsAppTemplate)
+// template rendered for THIS project, with no leading or trailing blank lines,
+// so the three merge cases below can each control their own spacing.
+//
+// 🔴 IT TAKES THE PROJECT SHAPE, AND THAT IS THE WHOLE FIX. The block names
+// local-dev commands, and which of those exist depends on what was scaffolded
+// here — see agent_setup_project.go for the measurement. A rendering that
+// ignores the argument is a rendering that tells a `static` project to run npm.
+func agentsManagedBlock(shape projectShape) (string, error) {
+	var b strings.Builder
+	if err := agentsTemplate.Execute(&b, shape); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(b.String()), nil
 }
 
 // mergeAgentsMD applies the three-case AGENTS.md rule to `existing` and returns
@@ -93,8 +110,11 @@ func agentsManagedBlock() string {
 // the new block": the prose above and below the block is untouched, including
 // its whitespace, because a normalising rewrite of somebody's document is a
 // change they did not ask for and cannot review.
-func mergeAgentsMD(path, existing string) (string, fileAction, error) {
-	block := agentsManagedBlock()
+func mergeAgentsMD(path, existing string, shape projectShape) (string, fileAction, error) {
+	block, err := agentsManagedBlock(shape)
+	if err != nil {
+		return "", "", err
+	}
 	if existing == "" {
 		return block + "\n", actionCreate, nil
 	}
@@ -229,7 +249,10 @@ func planAgentsMD(dir string) (path, content string, action fileAction, err erro
 	if rerr != nil {
 		return path, "", "", rerr
 	}
-	content, action, err = mergeAgentsMD(path, string(raw))
+	// 🔴 THE SHAPE IS READ FROM THE SAME `dir` THE FILE IS WRITTEN INTO, AT PLAN
+	// TIME, so `--dry-run` and the real run render byte-identical blocks over one
+	// tree state — the agreement runAgentSetupWrite documents.
+	content, action, err = mergeAgentsMD(path, string(raw), detectProjectShape(dir))
 	return path, content, action, err
 }
 

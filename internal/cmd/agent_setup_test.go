@@ -1027,9 +1027,17 @@ func TestAgentsMarkersAreInTheTemplate(t *testing.T) {
 	if !strings.Contains(agentsBeginMarker, "—") {
 		t.Error("the BEGIN marker lost its em dash — an existing file's marker would no longer match")
 	}
-	block := agentsManagedBlock()
-	if !strings.HasPrefix(block, agentsBeginMarker) || !strings.HasSuffix(block, agentsEndMarker) {
-		t.Errorf("the managed block does not start and end with its markers:\n%q", block)
+	// EVERY shape, not one: the markers now sit either side of a branch, so a
+	// template edit that closes an `{{ if }}` in the wrong place can lose them for
+	// one project shape while the other two stay green.
+	for _, shape := range allProjectShapesForTest() {
+		block, err := agentsManagedBlock(shape)
+		if err != nil {
+			t.Fatalf("rendering the managed block for kind %q: %v", shape.Kind, err)
+		}
+		if !strings.HasPrefix(block, agentsBeginMarker) || !strings.HasSuffix(block, agentsEndMarker) {
+			t.Errorf("the managed block for kind %q does not start and end with its markers:\n%q", shape.Kind, block)
+		}
 	}
 }
 

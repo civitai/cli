@@ -269,6 +269,8 @@ Item 34 is `agent-setup`'s absolute no-credential-on-disk rule, the vendor
 syntaxes that replace it, and what a header-less config actually reaches.
 Item 35 is the OTHER half of that command: what it may do to a config file the
 USER owns — the merge, the parsers, and which rows fail `--check`.
+Item 36 is its THIRD: what the managed block may claim about the project it was
+written into.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -458,6 +460,10 @@ item must carry a trigger that is a routing question rather than a label
     about the result — JSONC leniency, keys on OUR entries, the TOML parser,
     symlinks, config roots, `--check`'s verdict, `--json`'s shapes?**
     → evidence: claudedocs/decisions/35-agent-setup-merges-a-users-file.md
+
+36. **Editing what `agent-setup`'s block says a project can RUN — its local-dev
+    branch, script table or lockfile rule — or flattening it to one list?**
+    → evidence: claudedocs/decisions/36-agents-block-per-project.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including
