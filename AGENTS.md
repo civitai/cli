@@ -462,7 +462,8 @@ item must carry a trigger that is a routing question rather than a label
     → evidence: claudedocs/decisions/35-agent-setup-merges-a-users-file.md
 
 36. **Editing what `agent-setup`'s block says a project can RUN — its local-dev
-    branch, script table or lockfile rule — or flattening it to one list?**
+    branch, script table, lockfile rule — flattening it to one list, or naming
+    the SCAFFOLDER an author with no app should run?**
     → evidence: claudedocs/decisions/36-agents-block-per-project.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with

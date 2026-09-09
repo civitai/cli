@@ -105,6 +105,44 @@ func mcpAnonymityNote() string {
 	}
 }
 
+// mcpRegisteredDetail is the `detail` an `ok: true` mcp-* row carries.
+//
+// 🔴 THE ROW ESTABLISHES PRESENCE IN A FILE, NOT REACHABILITY OF A SERVER, AND
+// IT USED TO PRINT ONLY THE PATH — a bare filename beside `ok: true`, which
+// reads as "this server is set up and working". Measured by a blind dogfood, no
+// credential, POST `initialize`: `mcp.civitai.com` answered 200 and
+// `orchestration.civitai.com` answered 401, while `--check --json` reported
+// `{"name": "mcp-orch", "ok": true}` for both. The command's own PROSE was
+// already right — the write path prints "⚠ needs an Authorization header — this
+// one returns 401 without a credential" — so what was narrow was the JSON row a
+// script reads, which is the surface `developer.civitai.com`'s hosted prompt
+// consumes.
+//
+// 🔴 THE FIX IS THE SENTENCE, NOT A PROBE. `--check` is offline and
+// side-effect-free by construction (every call in agentSetupChecks is a file
+// read), and that is a property worth more than a green tick that has to reach
+// the network to be earned: it works on a plane, in CI, behind a proxy, and it
+// can never be the reason a setup run hangs. So the row says WHAT IT
+// INSPECTED — the same move the `authenticated` row already makes ("this row
+// only checks that one is present") and the one the dogfood credited as honest.
+//
+// 🔴 AND THE 401 CLAUSE IS DERIVED FROM `srv.Anonymous`, NOT SPELLED PER ROW.
+// The two servers disagree (see mcpServer.Anonymous), a third would have its own
+// answer, and a hand-written sentence per Check name is how the table and the
+// prose drift apart. TestRegisteredMCPRowSaysWhatItInspected mutates the field
+// and requires the sentence to move with it.
+//
+// What this deliberately does NOT claim: that the entry AUTHENTICATES. Whether
+// the header a config carries resolves to a credential is mcpAuthCoverage's
+// three-valued question, and `--check` does not re-derive it here.
+func mcpRegisteredDetail(path string, srv mcpServer) string {
+	detail := "registered in " + path + " — this row read that file; it does not contact " + srv.URL
+	if !srv.Anonymous {
+		detail += ", which returns 401 until an Authorization header is present"
+	}
+	return detail
+}
+
 // mcpAuthCoverage is which of the Civitai entries in the config a run LEAVES ON
 // DISK carry a credential — whichever hand wrote it.
 //

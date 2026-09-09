@@ -13,7 +13,7 @@ directory.
 
 | Task | Command |
 |---|---|
-| Scaffold a new app | `civitai app init <name>` |
+| Scaffold a new app | `civitai app create <name>` |
 | Check the manifest | `civitai app validate` |
 | Package and submit for review | `civitai app submit` |
 | Diagnose an incomplete store listing | `civitai app doctor` |
@@ -33,7 +33,7 @@ here:
 {{- end }}
 
 `npm run` lists every script, including any this CLI does not recognise. The
-descriptions are the meaning `civitai app init` gives those names; if you wrote
+descriptions are the meaning `civitai app create` gives those names; if you wrote
 your own script under one of them, yours is what runs.
 {{- else }} It defines no
 `dev` script this CLI recognises, so there is no local-dev command to name here.
@@ -43,13 +43,13 @@ Run `npm run` to list what this project does define.
 - **Commit the lockfile.** The platform builds with `npm ci` and will not build
   without one. If you switch package manager, set `buildCommand` and `outputDir`
   in the manifest and commit that lockfile instead.
-- **Do not hand-edit the `@civitai/*` versions.** `civitai app init` carries the
-  pins that are known to work together; a hand-picked version is how the money
-  path breaks silently.
+- **Do not hand-edit the `@civitai/*` versions.** `civitai app create` carries
+  the pins that are known to work together; a hand-picked version is how the
+  money path breaks silently.
 {{- else if eq .Kind "no-build" }}
 **This project has no `package.json`.** `civitai agent-setup` looked: this
 directory holds a `block.manifest.json` and no `package.json`, which is the
-no-build shape `civitai app init --template static` produces. So there is
+no-build shape `civitai app create --template static` produces. So there is
 nothing to install, no build step, no package-manager script to run, no lockfile
 to commit and no `@civitai/*` dependency to pin — the platform serves these
 files as they are.
@@ -66,7 +66,7 @@ section is rewritten from the directory each time.
 found neither a `package.json` nor a `block.manifest.json` here, so it cannot
 name a command for running one, and anything it named would be a guess.
 
-Run `civitai app init <name>` — it prints the next steps for the template you
+Run `civitai app create <name>` — it prints the next steps for the template you
 pick — then re-run `civitai agent-setup` in that directory and this section is
 rewritten to match the project.
 

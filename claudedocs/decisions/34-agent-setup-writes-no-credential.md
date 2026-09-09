@@ -430,3 +430,65 @@ merge path already refuses to do for the same reason.
 The regression guard was watched **red on the pre-fix branch code** for all
 seven agents plus the `--agent other` paste block, and green after. That matrix
 is in the PR that introduced this item.
+
+---
+
+## The `<your token>` placeholder had no source (#534, dogfood 2/3)
+
+`agent-setup`'s Next block printed:
+
+```
+  2. Export the token where claude can see it — the config above references it by name:
+       export CIVITAI_TOKEN=<your token>
+```
+
+and the Zed / `--agent other` branch printed `"Authorization": "Bearer <your
+token>"`. **Nothing in the CLI said where `<your token>` comes from.** A blind
+dogfood checked every subcommand looking for one that prints the stored
+credential and found none — which is correct and is this item's whole invariant
+(no file in `internal/cmd` prints `cfg.Token()` / `AccessToken()` /
+`RefreshToken()`; verified by grep). So the placeholder's only obvious resolution
+was the one thing the CLI must never do, which makes it a dead end by
+construction.
+
+**And the obvious guess is wrong in a way that fails LATER**, which is worse than
+being stuck. Read off `internal/config/config.go`, not remembered:
+
+- `Config.Token()` returns the env-bound `token` key when non-empty, in
+  preference to the stored `access_token` — so an exported value *shadows* the
+  refreshable OAuth pair.
+- `Config.AuthKind()` opens with `if c.v.GetString(keyToken) != "" { return
+  AuthKindToken }`, and `keyToken` is `BindEnv`'d to `CIVITAI_TOKEN`.
+  `AuthKindToken` is documented as "a personal API key (no refresh)".
+
+So a user who dug their `civitai login` token out of `config.yaml` and exported
+it gets a setup that verifies green today and hard-fails at expiry, with nothing
+left to refresh it.
+
+**The fix names the SOURCE, never the VALUE** — surfacing the credential to close
+this would be exactly the leak this item exists to prevent. `tokenPlaceholder`
+is now `<a personal API key>`, and `printTokenSourceNote` follows every
+placeholder with the mint URL, the fact that no command prints the stored
+credential, and the no-refresh consequence. It builds on `accountAPIKeysURL`, the
+constant seven other remedies already use, so it cannot drift from where
+`civitai login --token` sends the same user.
+
+### Guards (`internal/cmd/agent_setup_scaffolder_test.go`)
+
+- `TestEveryCredentialPlaceholderNamesItsSource` — a RELATIONSHIP over BOTH
+  placeholder surfaces (claude's interpolating export step and Zed's manual
+  header block, with a premise check that the two still straddle that branch):
+  output that asks the user to type a credential must name where to get one, must
+  no longer print `<your token>`, and must still not print the configured token.
+- `TestTokenSourceNoteSaysAnExportedTokenIsNotRefreshed` — asserts the
+  `AuthKind()` property the sentence rests on, so the claim cannot outlive the
+  behaviour.
+
+Red on `origin/main` `cbcb992` with a shim reproducing that branch:
+
+```
+the claude run tells the user to type <your token> and never names where one comes
+from — no command prints the stored credential, so a placeholder without a source
+is a dead end
+the claude run still prints the sourceless `<your token>` placeholder
+```
