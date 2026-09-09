@@ -118,29 +118,38 @@ func normaliseSpan(span string) string {
 	return afterInternalRe.ReplaceAllString(spanWhitespaceRe.ReplaceAllString(span, " "), "internal/")
 }
 
-func layoutSection(t *testing.T) string {
+// docSection returns the body of one `## ` section of a markdown file, heading to
+// next heading. It is the ONE locator: both ledgers below call it, so a locator
+// that stops matching fails LOUDLY in whichever file it was pointed at rather
+// than returning an empty region that reads as a clean ledger.
+func docSection(t *testing.T, path, heading string) string {
 	t.Helper()
 
-	b, err := os.ReadFile("AGENTS.md")
+	b, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read AGENTS.md: %v", err)
+		t.Fatalf("read %s: %v", path, err)
 	}
 	doc := string(b)
 
-	start := strings.Index(doc, layoutSectionHeading)
+	start := strings.Index(doc, heading)
 	if start < 0 {
-		t.Fatalf("AGENTS.md no longer contains the heading %q — this guard's locator is broken, "+
+		t.Fatalf("%s no longer contains the heading %q — this guard's locator is broken, "+
 			"which is NOT the same as the ledger being clean. Fix the locator or the heading.",
-			layoutSectionHeading)
+			path, heading)
 	}
-	rest := doc[start+len(layoutSectionHeading):]
+	rest := doc[start+len(heading):]
 
 	end := strings.Index(rest, "\n## ")
 	if end < 0 {
-		t.Fatalf("no heading follows %q — the section is unbounded, so the region would swallow "+
-			"the rest of the file and this guard would stop being scoped", layoutSectionHeading)
+		t.Fatalf("no heading follows %q in %s — the section is unbounded, so the region would swallow "+
+			"the rest of the file and this guard would stop being scoped", heading, path)
 	}
 	return rest[:end]
+}
+
+func layoutSection(t *testing.T) string {
+	t.Helper()
+	return docSection(t, "AGENTS.md", layoutSectionHeading)
 }
 
 // parseInternalRefs pulls the internal/ package names out of one code span. It
@@ -254,6 +263,103 @@ func TestLayoutSectionLedgersEveryInternalPackage(t *testing.T) {
 				"A map pointing at a deleted package is worse than no map: a reader greps for it, "+
 				"finds nothing, and cannot tell a rename from their own mistake.", name)
 		}
+	}
+}
+
+// CONTRIBUTING.md CARRIES THE SAME MAP AND WAS NOT GUARDED, WHICH IS THE EXACT
+// DEFECT THIS FILE WAS WRITTEN FOR. The doc comment above cites `internal/api`
+// — deleted 2026-07-20 by #172 — as the motivating incident. AGENTS.md was
+// fixed and ledgered in the same change; CONTRIBUTING.md's "Architecture" list
+// still said `internal/{scaffold,validate,pkgzip,manifest,api,config}` more than
+// a month later, because this guard read AGENTS.md and nothing else. A ledger
+// scoped to one of two copies of the same map leaves the other one drifting with
+// a green suite over it, which is worse than no ledger: the green is read as
+// covering the contributor docs.
+//
+// # The direction chosen, and why it is ONE direction and not two
+//
+// AGENTS.md's ledger is BIDIRECTIONAL: a named package must exist AND an
+// existing package must be named. This one asserts only the first half — a name
+// in CONTRIBUTING.md must resolve to a real directory — and completeness is
+// deliberately NOT required.
+//
+// CONTRIBUTING.md says so itself: the section links to AGENTS.md "for the full
+// layout" and calls what follows "The short version". Requiring completeness
+// would force all 16 packages into a list whose whole purpose is to be an
+// orienting subset, and it would duplicate the exhaustive map one link away —
+// making the two copies drift *harder*, not less. The completeness half is
+// already enforced, once, on the authoritative map.
+//
+// What is NOT weakened by that choice: a name pointing at a package that does
+// not exist is exactly the `internal/api` failure, and it is caught here. A
+// reader greps for it, finds nothing, and cannot tell a rename from their own
+// mistake — the direction that costs a newcomer time is the direction guarded.
+const contributingArchHeading = "## Architecture"
+
+// contributingMinPackages is the positive control for the parse, in the same
+// shape as layoutMinPackages: the "short version" list spells seven names today,
+// so a floor of four never trips on ordinary churn and exists only to catch a
+// locator or parser that matched nothing at all. Without it, a renamed heading
+// would produce an empty ledgered set, zero names to check, and a serene pass —
+// the reassuring zero this repo's rules name by hand.
+const contributingMinPackages = 4
+
+func TestContributingArchitectureNamesNoDeletedPackage(t *testing.T) {
+	real := realPackages(t)
+	ledgered := map[string]bool{}
+	parseLayoutPackages(docSection(t, "CONTRIBUTING.md", contributingArchHeading), ledgered)
+
+	if len(real) < layoutMinPackages {
+		t.Fatalf("only %d package(s) found under internal/ (%v) — expected at least %d. "+
+			"The filesystem read is broken; a comparison against it would pass for the wrong reason.",
+			len(real), sortedKeys(real), layoutMinPackages)
+	}
+	if len(ledgered) < contributingMinPackages {
+		t.Fatalf("only %d package name(s) parsed out of CONTRIBUTING.md's %q section (%v) — expected at least %d. "+
+			"The parse is broken, so every name in that list is going UNCHECKED and this test's pass means nothing.",
+			len(ledgered), contributingArchHeading, sortedKeys(ledgered), contributingMinPackages)
+	}
+
+	for _, name := range sortedKeys(ledgered) {
+		if !real[name] {
+			t.Errorf("CONTRIBUTING.md's %q section names internal/%s, which does not exist. "+
+				"This is the `internal/api` failure this file's doc comment records, in the OTHER copy of the map: "+
+				"a newcomer greps for it, finds nothing, and cannot tell a rename from their own mistake.",
+				contributingArchHeading, name)
+		}
+	}
+
+	// Completeness is deliberately NOT asserted here — see the block comment
+	// above. Logged so a reader of a green run knows the exact scope of the
+	// claim rather than inferring the stronger one.
+	var unnamed []string
+	for _, name := range sortedKeys(real) {
+		if !ledgered[name] {
+			unnamed = append(unnamed, name)
+		}
+	}
+	t.Logf("%q names %d of %d internal/ packages; the %d it omits (%v) are NOT a failure — "+
+		"that section is the short version and AGENTS.md's ledger owns completeness",
+		contributingArchHeading, len(real)-len(unnamed), len(real), len(unnamed), unnamed)
+}
+
+// TestContributingLedgerCatchesADeletedPackage is the NEGATIVE CONTROL for the
+// guard above: it feeds the parse the exact string CONTRIBUTING.md carried until
+// this change and asserts the deleted package is seen. Without it, a narrowed
+// regex or a wrong heading would leave the guard structurally unable to go red
+// and the suite would stay green while the doc drifted again.
+func TestContributingLedgerCatchesADeletedPackage(t *testing.T) {
+	real := realPackages(t)
+	got := map[string]bool{}
+	parseLayoutPackages("- `internal/{scaffold,validate,pkgzip,manifest,api,config}` — the building blocks.\n", got)
+
+	if !got["api"] {
+		t.Fatalf("the parser did not see `api` in the pre-fix CONTRIBUTING.md line — it can no longer "+
+			"observe the failure it exists for, so a green run above proves nothing. Parsed: %v", sortedKeys(got))
+	}
+	if real["api"] {
+		t.Fatalf("internal/api exists again — this control assumes it does not, and the guard above " +
+			"would now accept the stale line it was written to reject")
 	}
 }
 
