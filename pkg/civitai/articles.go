@@ -10,8 +10,10 @@ import (
 // use `creator` instead); only id + username are rendered, the rest (image,
 // cosmetics, profilePicture) is preserved for --json via the raw body.
 type ArticleUser struct {
-	ID       int    `json:"id"`
-	Username string `json:"username"`
+	ID int `json:"id"`
+	// Username is a FlexString, not a string: an all-digit username arrives as a
+	// bare JSON number. See FlexString — do not "fix" it back to a string.
+	Username FlexString `json:"username"`
 }
 
 // ArticleTag is a tag attached to an article (`tags[]` on both list + detail).

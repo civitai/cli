@@ -243,7 +243,7 @@ func printImageList(cmd *cobra.Command, items []civitai.ImageItem) {
 	fmt.Fprintln(tw, "ID\tUPLOADER\tBASE MODEL\tSIZE\tNSFW\tHEARTS\tCOMMENTS\tURL")
 	for _, im := range items {
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%dx%d\t%s\t%d\t%d\t%s\n",
-			im.ID, orDash(safeTerm(im.Username)), orDash(truncate(safeTerm(im.BaseModel), 24)),
+			im.ID, orDash(safeTerm(im.Username.String())), orDash(truncate(safeTerm(im.BaseModel), 24)),
 			im.Width, im.Height, orDash(safeTerm(im.NSFWLevel)),
 			im.Stats.HeartCount, im.Stats.CommentCount, safeTerm(im.URL))
 	}
@@ -272,7 +272,7 @@ func printImageListMeta(cmd *cobra.Command, items []civitai.ImageItem) {
 // Shared by `images search --meta` and `images get`.
 func printImageMetaBlock(out io.Writer, im civitai.ImageItem) {
 	fmt.Fprintf(out, "%d  [%s]  %dx%d  by %s\n",
-		im.ID, orDash(safeTerm(im.NSFWLevel)), im.Width, im.Height, orDash(safeTerm(im.Username)))
+		im.ID, orDash(safeTerm(im.NSFWLevel)), im.Width, im.Height, orDash(safeTerm(im.Username.String())))
 	m, state := im.ParseMeta()
 	switch state {
 	case civitai.MetaAbsent:

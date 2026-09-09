@@ -331,7 +331,7 @@ func appRating(r civitai.ListingRecommend) string {
 // chip is absent (a vanished owner row).
 func appCardAuthor(c *civitai.AppCard) string {
 	if c.Creator != nil && c.Creator.Username != "" {
-		return safeTerm(c.Creator.Username)
+		return safeTerm(c.Creator.Username.String())
 	}
 	return "-"
 }
@@ -364,7 +364,7 @@ func printAppDetail(cmd *cobra.Command, d *civitai.AppDetail) {
 	out := cmd.OutOrStdout()
 	author := "-"
 	if d.Creator != nil && d.Creator.Username != "" {
-		author = safeTerm(d.Creator.Username)
+		author = safeTerm(d.Creator.Username.String())
 	}
 	fmt.Fprintf(out, "%s (%s)\n", safeTerm(d.Name), safeTerm(d.Slug))
 	if d.Tagline != "" {

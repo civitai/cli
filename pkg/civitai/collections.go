@@ -9,8 +9,10 @@ import (
 // id and username can be null server-side, so id is a pointer and username is
 // left as its zero value ("") when absent.
 type CollectionUser struct {
-	ID       *int   `json:"id"`
-	Username string `json:"username"`
+	ID *int `json:"id"`
+	// Username is a FlexString, not a string: an all-digit username arrives as a
+	// bare JSON number, and a JSON null still leaves the zero value "".
+	Username FlexString `json:"username"`
 }
 
 // CollectionTag is a tag attached to a collection (detail-only `tags[]`).

@@ -429,6 +429,10 @@ var bornSplitItems = []string{
 	// and the enumerated residuals, and AGENTS.md had 183 bytes of headroom under
 	// a ceiling with 100 of its own left. There was nowhere to park it.
 	"claudedocs/decisions/36-agents-block-per-project.md",
+	// Item 37 (renumbered from 36 on merge, per AGENTS.md's rule that the PR
+	// merging second renumbers its own items) was written straight into
+	// claudedocs/decisions/ for the same reason as 35.
+	"claudedocs/decisions/37-numeric-username.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item

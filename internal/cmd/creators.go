@@ -104,7 +104,7 @@ func printCreatorList(cmd *cobra.Command, items []civitai.CreatorItem) {
 	tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 	fmt.Fprintln(tw, "USERNAME\tMODELS\tLINK")
 	for _, c := range items {
-		fmt.Fprintf(tw, "%s\t%d\t%s\n", orDash(safeTerm(c.Username)), c.ModelCount, safeTerm(c.Link))
+		fmt.Fprintf(tw, "%s\t%d\t%s\n", orDash(safeTerm(c.Username.String())), c.ModelCount, safeTerm(c.Link))
 	}
 	_ = tw.Flush()
 }

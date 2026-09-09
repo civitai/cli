@@ -32,9 +32,11 @@ func (c *Client) SearchTags(ctx context.Context, q url.Values) (*TagSearchResult
 
 // CreatorItem is a `GET /api/v1/creators` item.
 type CreatorItem struct {
-	Username   string `json:"username"`
-	ModelCount int    `json:"modelCount"`
-	Link       string `json:"link"`
+	// Username is a FlexString, not a string: an all-digit username arrives as a
+	// bare JSON number. See FlexString — do not "fix" it back to a string.
+	Username   FlexString `json:"username"`
+	ModelCount int        `json:"modelCount"`
+	Link       string     `json:"link"`
 }
 
 // CreatorSearchResult bundles parsed creators + metadata with the raw body.
@@ -59,9 +61,17 @@ func (c *Client) SearchCreators(ctx context.Context, q url.Values) (*CreatorSear
 // The public users search returns basic identity fields; richer fields
 // (status/avatar) are only included for internal system requests.
 type UserItem struct {
-	ID       int    `json:"id"`
-	Username string `json:"username"`
-	Image    string `json:"image"`
+	ID int `json:"id"`
+	// Username is a FlexString, not a string: an all-digit username can arrive as
+	// a bare JSON number, and this field must decode it. The path that reaches it
+	// is `civitai users get <name>` — the ?query= search, whose "closest matches"
+	// list may name an all-digit user (TestUsersGetListsANumericCandidate).
+	// `civitai users get <digits>` is NOT that path: internal/cmd/users.go routes
+	// any strconv.Atoi-parsable argument to ?ids=, an ID lookup, so a user whose
+	// USERNAME is all digits is not reachable by name through this command.
+	// See FlexString — do not "fix" it back to a string.
+	Username FlexString `json:"username"`
+	Image    string     `json:"image"`
 }
 
 // UserSearchResult bundles parsed users with the raw body. The public users

@@ -7,7 +7,9 @@ import (
 
 // Creator is the minimal creator view the model endpoints embed.
 type Creator struct {
-	Username string `json:"username"`
+	// Username is a FlexString, not a string: an all-digit username arrives as a
+	// bare JSON number. See FlexString — do not "fix" it back to a string.
+	Username FlexString `json:"username"`
 }
 
 // ModelStats is the AllTime stats block the model list/detail endpoints embed.
