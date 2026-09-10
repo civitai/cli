@@ -1120,8 +1120,13 @@ decodes as sent is passed through with no such rewrite.
 
 Both of the two piping properties above hold for `civitai generate` and
 `civitai workflows …` too, but their payloads are **not** Site API REST
-shapes — generation has no REST route,
-so those commands pass through the raw *orchestrator* reply. Read
+shapes — generation has no REST route, so those commands print the
+*orchestrator's* reply. **The two byte changes apply differently there, so take
+them one at a time:** the output is **re-indented** exactly as above, so it is no
+more diffable or hashable than the read group's; but the **repair never runs on
+a generation reply** — it is applied by the read SDK's own decode step, and the
+generation client decodes with plain `encoding/json`, so nothing rewrites a
+control byte there. Read
 [Generation `--json`](#generation---json) before scripting against them.
 
 Two `app` commands emit a shape this **CLI composes**, not a wire payload:

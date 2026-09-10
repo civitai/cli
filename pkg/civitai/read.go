@@ -257,7 +257,7 @@ func readError(status int, raw []byte) (err error) {
 			msg = wrapped.Message
 		}
 	}
-	// 🔴 THE CLASSIFIER READS wireMsg; ONLY THE DISPLAY READS msg. snippet()
+	// 🔴 THE CLASSIFIER READS classifyMsg; ONLY THE DISPLAY READS msg. snippet()
 	// removes runes (internal/saferune) and bounds length, and BOTH of those can
 	// change which substrings a matcher finds — a strip can JOIN two words into a
 	// phrase the server never sent, and the 500-byte bound can cut one in half.
@@ -265,7 +265,10 @@ func readError(status int, raw []byte) (err error) {
 	// decides a published exit code (item 7), so it is asked about what arrived,
 	// never about what will be printed. Pinned by
 	// TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne.
-	wireMsg := msg
+	//
+	// classifyWindow bounds what the classifier scans; it is NOT the display
+	// budget and the two numbers are deliberately separate. See its doc comment.
+	classifyMsg := classifyWindow(msg)
 	msg = snippet([]byte(msg))
 	switch status {
 	case http.StatusUnauthorized:
@@ -290,7 +293,7 @@ func readError(status int, raw []byte) (err error) {
 		// usage error (ErrBadRequest → exit 2) so a scripter's generic 429
 		// backoff-and-retry loop doesn't spin on it, while a real throttle 429
 		// stays ErrRateLimited (exit 6). The visible message is unchanged.
-		if isDeepPagingCap(wireMsg) {
+		if isDeepPagingCap(classifyMsg) {
 			kind = ErrBadRequest
 		}
 		return fmt.Errorf("rate limited (429): %s — for deep paging use --cursor instead of --page", msg)
@@ -308,17 +311,68 @@ func readError(status int, raw []byte) (err error) {
 // 429 carries none of these phrases. The match is deliberately narrow so a real
 // rate-limit 429 is never misclassified as a usage error.
 //
-// 🔴 msg MUST BE THE WIRE MESSAGE, NOT snippet()'s OUTPUT. "Narrow" is a claim
-// about what the SERVER sent, and any transformation applied first can only
-// widen it: snippet strips Default_Ignorable runes, so one U+00AD inside "many"
-// in a proxy's throttle message is enough to synthesise "too many pages" out of
-// bytes the server never sent, and the exit code moves 6 → 2. See readError's
-// comment at the wireMsg assignment.
+// 🔴 msg MUST NOT BE snippet()'s OUTPUT. "Narrow" is a claim about what the
+// SERVER sent, and snippet applies TWO transformations that pull in OPPOSITE
+// directions — so "any transformation can only widen the match" is false, and
+// this comment said it until round 4. Both are wrong here:
+//
+//   - the STRIP can only WIDEN. It removes Default_Ignorable runes, so one
+//     U+00AD inside "many" in a proxy's throttle message is enough to synthesise
+//     "too many pages" out of bytes the server never sent: exit 6 → 2.
+//   - the 500-byte BOUND can only NARROW. A genuine cap message whose phrase
+//     sits past the display budget stops matching: exit 2 → 6, and a scripter's
+//     backoff loop spins on a structurally doomed request.
+//
+// What this function is given is the message readError extracted from the wire
+// body, bounded by classifyWindow — a budget that is NOT snippet's and exists
+// only to cap the scan. See readError's comment at the classifyMsg assignment.
 func isDeepPagingCap(msg string) bool {
 	m := strings.ToLower(msg)
 	return strings.Contains(m, "too many pages") ||
 		strings.Contains(m, "use cursors") ||
 		strings.Contains(m, "deep paging")
+}
+
+// maxClassifyMessage bounds how many bytes of a server-supplied error message
+// may be SCANNED to pick a classification. It is deliberately a different budget
+// from snippet's 500-byte DISPLAY bound: conflating them is what round 3 fixed
+// in the other direction (a display budget silently deciding an exit code).
+//
+// 🔴 WHY A BOUND EXISTS AT ALL. readError's `msg` is the server's `error`/
+// `message` field when the body is JSON and carries one — but when a 429 body is
+// not JSON, or is JSON without either key, `msg` is the ENTIRE body, capped only
+// by maxResponseBody (64 MiB). Classifying pre-snippet removed the 500-byte
+// bound the matcher used to inherit, so without this the ToLower copy and the
+// three Contains scans run over whatever arrived.
+//
+// 🔴 THE NUMBER IS GENEROUS, NOT DERIVED, AND IS STATED AS SUCH. The only cap
+// wording this repo records is the ~60-byte one in isDeepPagingCap's doc comment
+// above — which is that comment's claim, not a fresh measurement of the API. No
+// measurement here pins a largest LEGITIMATE 429 message, and none of the
+// proxy/CDN/captive-portal 429s readError also handles has been sampled for
+// length at all. 8 KiB is ~130x that recorded wording and ~16x the display
+// budget: large enough that no plausible cap message is cut, small enough that
+// an arbitrary body is not scanned in full. That is the whole justification —
+// it is containment, not a fix for an observed false positive, and none was
+// demonstrated.
+//
+// The visible consequence: a 429 whose cap phrase sits past 8 KiB is NOT
+// reclassified and keeps exit 6. Pinned by
+// TestDeepPagingCapClassificationIsBounded.
+const maxClassifyMessage = 8 << 10 // 8 KiB
+
+// classifyWindow returns the prefix of msg that a classifier may scan. It
+// truncates by BYTE and may therefore split a multi-byte rune — which is
+// harmless HERE, and is not the same as snippet's byte bound: this result feeds
+// a substring match and is never printed, so invalid UTF-8 at the cut cannot
+// reach a terminal. It can, in principle, split one of the matched phrases; that
+// is the same truncation effect the bound exists to accept, at 8 KiB instead of
+// 500 bytes.
+func classifyWindow(msg string) string {
+	if len(msg) > maxClassifyMessage {
+		return msg[:maxClassifyMessage]
+	}
+	return msg
 }
 
 // badRequestDetail extracts a concise, human-readable detail from a 400 response

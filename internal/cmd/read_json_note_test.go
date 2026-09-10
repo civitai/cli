@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -151,16 +152,45 @@ func TestReadJSONNoteCommentNamesItsGuard(t *testing.T) {
 	}
 }
 
-// item38CommentedFiles are the files item 38 owns. The citation check below
-// runs over exactly these, and it is a LEDGER rather than a glob: a file added
-// to the item must be added here to be covered, and a file removed from the
-// item makes this list fail rather than silently shrink the check.
+// item38CommentedFiles are the files item 38 owns, REPO-RELATIVE. The citation
+// check below runs over exactly these, and it is a LEDGER rather than a glob: a
+// file added to the item must be added here to be covered, and a file removed
+// from the item makes this list fail rather than silently shrink the check.
+//
+// 🔴 IT WAS FOUR FILES, ALL IN internal/cmd, AND THE TWO SETS DISAGREED IN BOTH
+// DIRECTIONS. claudedocs/decisions/38's header declares item 38's files; this
+// ledger covered four, of which TWO (read_help_test.go, read_r2_test.go) the
+// header did not name at all, and NONE of pkg/civitai/read.go,
+// pkg/civitai/read_repair_test.go, pkg/civitai/raw_doc_ledger_test.go,
+// cmd/civitai/read_error_stderr_test.go or saferune_callers_ledger_test.go.
+// Measured consequence: renaming
+// TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne left
+// `go test ./...` fully green while pkg/civitai/read.go — item 38's PRIMARY code
+// file — and the decision doc both cited a name nothing declared.
+// TestItem38FileLedgerMatchesTheDecisionHeader now pins the two sets together,
+// so this list cannot drift from the header again in either direction.
 var item38CommentedFiles = []string{
-	"read_help.go",
-	"read_help_test.go",
-	"read_json_note_test.go",
-	"read_r2_test.go",
+	"cmd/civitai/main.go",
+	"cmd/civitai/read_error_stderr_test.go",
+	"internal/cmd/read_help.go",
+	"internal/cmd/read_help_test.go",
+	"internal/cmd/read_json_note_test.go",
+	"internal/cmd/read_r2_test.go",
+	"internal/saferune/saferune.go",
+	"pkg/civitai/hashes.go",
+	"pkg/civitai/raw_doc_ledger_test.go",
+	"pkg/civitai/read.go",
+	"pkg/civitai/read_repair_test.go",
+	"saferune_callers_ledger_test.go",
 }
+
+// item38DecisionDoc is item 38's evidence file. It is scanned for citations too
+// — it cites more guards by name than any single source file does, and a
+// dangling name there sends exactly the same reader looking for exactly the same
+// missing test. It is NOT in item38CommentedFiles because that list is compared,
+// element for element, against the file set this document's own header declares
+// — and a document cannot be a member of the list it declares.
+const item38DecisionDoc = "claudedocs/decisions/38-read-body-repair-and-snippet.md"
 
 // TestItem38CommentsCiteTestsThatExist is round 3's finding 6.
 //
@@ -187,12 +217,52 @@ var item38CommentedFiles = []string{
 // TestEscapeJSONStringControlCharsLeavesStructuralWhitespace, which lives
 // there), and a package-local resolver would report those as dangling.
 //
-// 🔴 WHAT IT DOES NOT COVER. The scan is scoped to the files above, not to the
-// tree: measured across all of internal/cmd, 31 comment-cited names do not
-// resolve — a mix of cross-package citations, hypothetical examples
-// (`TestFoo`), and real rot. Widening this to the package is a separate change
-// with 31 findings to triage, and pretending otherwise by globbing would make
-// the guard permanently red, which is worse than no guard.
+// 🔴 WHAT IT DOES NOT COVER, AND THE NUMBER THAT SAYS SO WAS MEASURED WITH THE
+// WRONG INSTRUMENT. Round 3 wrote "measured across all of internal/cmd, 31
+// comment-cited names do not resolve", listing cross-package citations among
+// them — but repoTestFuncNames is repo-WIDE precisely so cross-package citations
+// resolve, so that 31 came from a package-local resolver this guard does not
+// ship. Re-measured with the instruments below (repoTestFuncNames + testIdentRe)
+// over all 471 .go files in the module, at this commit: 2096 citations, 23
+// unresolved sites, 20 distinct names. Those are a measurement of this tree, not
+// an invariant — the citation total moves with any comment edit.
+//
+// All 20 were triaged. Each is cited by FILE AND LINE rather than by name: this
+// scan reads comments — and, since round 4, the evidence file too — so spelling
+// an unresolvable identifier in either would make the guard flag itself. Go and
+// look at the lines.
+//
+// SIXTEEN names at nineteen sites are CORRECT PROSE that this regex cannot tell
+// from rot, in five shapes:
+//
+//   - a name WRAPPED across a comment line-break, or elided with "…", leaving
+//     the regex a truncated identifier (internal/scaffold/bootskeleton.go:15,
+//     internal/validate/pattern.go:63, internal/cmd/agent_setup_round4_test.go:22,
+//     internal/cmd/workflows_list_failure_reason_test.go:217);
+//   - a GLOB naming a family (internal/cmd/app_pull_not_approved_test.go:261);
+//   - a SUBTEST path, Parent_Sub, which no func declares
+//     (internal/genapi/generate_test.go:661);
+//   - a fixture identifier quoted from the test's own source
+//     (internal/cmd/app_newest_submission_test.go:425, two names);
+//   - a deliberate citation of a test that was DELETED, RENAMED or REPLACED —
+//     this repo's own convention for recording what a test used to assert
+//     (internal/cmd/cmd_test.go:446, internal/cmd/app_listing_test.go:471 and
+//     :858, internal/scaffold/slug_test.go:21, internal/cmd/app_status_drift_test.go:522,
+//     internal/cmd/agent_setup_round2_test.go:31, agents_evidence_test.go:394,
+//     agents_trigger_test.go:78, internal/cmd/app_metrics_test.go:864,
+//     internal/cmd/newest_row_pick_test.go:323, internal/appapi/submissions_test.go:114).
+//
+// FOUR names at four sites are GENUINE ROT — a doc comment or a "pinned by"
+// pointer naming something nothing declares. They are listed with their real
+// targets as a residual in
+// claudedocs/decisions/38-read-body-repair-and-snippet.md, and are NOT fixed
+// here: each needs its own function read before its comment can be rewritten,
+// and a name-only fix leaves a truer-looking comment that is still wrong.
+//
+// So the scope limit stays for now, on the corrected number: globbing this check
+// today reports 23 sites of which 19 are correct prose. Widening it needs a
+// suppression convention for those five shapes first — a separate change, with
+// the four rot findings above as its motivation.
 func TestItem38CommentsCiteTestsThatExist(t *testing.T) {
 	defined := repoTestFuncNames(t)
 	// POSITIVE CONTROL on the resolver: a walk that collected nothing declares
@@ -217,10 +287,11 @@ func TestItem38CommentsCiteTestsThatExist(t *testing.T) {
 			deadCitation)
 	}
 
+	root := moduleRoot(t)
 	fset := token.NewFileSet()
 	cited := 0
 	for _, name := range item38CommentedFiles {
-		f, err := parser.ParseFile(fset, name, nil, parser.ParseComments)
+		f, err := parser.ParseFile(fset, filepath.Join(root, name), nil, parser.ParseComments)
 		if err != nil {
 			t.Fatalf("CONTROL failure, not a finding: cannot parse %s: %v", name, err)
 		}
@@ -240,12 +311,154 @@ func TestItem38CommentsCiteTestsThatExist(t *testing.T) {
 			}
 		}
 	}
-	// POSITIVE CONTROL on the SCAN: zero citations found is indistinguishable
-	// from zero dangling citations.
-	if cited < 5 {
-		t.Fatalf("CONTROL failure, not a finding: the scan found only %d cited test "+
-			"names across %v — it is not reading the comments", cited, item38CommentedFiles)
+	// The evidence file is Markdown, so it is scanned as TEXT rather than parsed.
+	// Same regex, same resolver, same verdict.
+	doc, err := os.ReadFile(filepath.Join(root, item38DecisionDoc))
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot read %s: %v", item38DecisionDoc, err)
 	}
+	docCited := 0
+	for i, line := range strings.Split(string(doc), "\n") {
+		for _, ident := range testIdentRe.FindAllString(line, -1) {
+			docCited++
+			cited++
+			if defined[ident] {
+				continue
+			}
+			t.Errorf("%s:%d cites %s, which no test function in this module declares.\n"+
+				"The evidence file names more guards than any source file does; an "+
+				"unresolvable one reads as coverage while providing none.",
+				item38DecisionDoc, i+1, ident)
+		}
+	}
+	// POSITIVE CONTROLS on the SCAN: zero citations found is indistinguishable
+	// from zero dangling citations, and the Markdown arm has its own zero.
+	if docCited < 5 {
+		t.Fatalf("CONTROL failure, not a finding: the scan found only %d cited test "+
+			"names in %s — the Markdown arm is not reading the file", docCited, item38DecisionDoc)
+	}
+	if cited < 20 {
+		t.Fatalf("CONTROL failure, not a finding: the scan found only %d cited test "+
+			"names across %v + %s — it is not reading the comments",
+			cited, item38CommentedFiles, item38DecisionDoc)
+	}
+}
+
+// item38HeaderPathRe matches a backticked repo-relative .go path in the decision
+// file's header paragraph.
+var item38HeaderPathRe = regexp.MustCompile("`([A-Za-z0-9_./-]+\\.go)`")
+
+// TestItem38FileLedgerMatchesTheDecisionHeader is round 4's finding 4.
+//
+// 🔴 TWO DECLARATIONS OF ONE FILE SET, DISAGREEING IN BOTH DIRECTIONS, NEITHER
+// ASSERTED. claudedocs/decisions/38's header paragraph names item 38's Code and
+// Guards; item38CommentedFiles names the files the citation check reads. The
+// ledger covered four files, two of which the header did not list, and missed
+// item 38's primary code file — so a comment in pkg/civitai/read.go could, and
+// did, cite a test by a name a rename would break, invisibly.
+//
+// This is the bidirectional assertion. Adding a file to the item means adding it
+// in BOTH places or this fails by name.
+func TestItem38FileLedgerMatchesTheDecisionHeader(t *testing.T) {
+	root := moduleRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, item38DecisionDoc))
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot read %s: %v", item38DecisionDoc, err)
+	}
+	// The header is the paragraph opening "**Item 38.**", up to the first blank
+	// line after it. Scoping to that paragraph is deliberate: the rest of the
+	// document names plenty of files it does not OWN.
+	lines := strings.Split(string(raw), "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, "**Item 38.**") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		t.Fatalf("CONTROL failure, not a finding: %s has no line opening "+
+			"\"**Item 38.**\" — this test cannot find the declaration it guards",
+			item38DecisionDoc)
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" {
+			end = i
+			break
+		}
+	}
+	header := strings.Join(lines[start:end], "\n")
+	// POSITIVE CONTROL on the extraction: a one-line header means the paragraph
+	// scanner is wrong and every path below would be reported missing.
+	if end-start < 3 {
+		t.Fatalf("CONTROL failure, not a finding: the Item 38 header extracted to %d "+
+			"lines:\n%s", end-start, header)
+	}
+
+	declared := map[string]bool{}
+	for _, m := range item38HeaderPathRe.FindAllStringSubmatch(header, -1) {
+		declared[m[1]] = true
+	}
+	// POSITIVE CONTROL on the MATCH: an empty set passes a "does the ledger
+	// contain everything declared?" check silently.
+	if len(declared) == 0 {
+		t.Fatalf("CONTROL failure, not a finding: no backticked .go path in the Item 38 "+
+			"header:\n%s", header)
+	}
+
+	ledgered := map[string]bool{}
+	for _, f := range item38CommentedFiles {
+		ledgered[f] = true
+	}
+	var missingFromLedger, missingFromHeader []string
+	for p := range declared {
+		if !ledgered[p] {
+			missingFromLedger = append(missingFromLedger, p)
+		}
+	}
+	for p := range ledgered {
+		if !declared[p] {
+			missingFromHeader = append(missingFromHeader, p)
+		}
+	}
+	sort.Strings(missingFromLedger)
+	sort.Strings(missingFromHeader)
+	if len(missingFromLedger) > 0 {
+		t.Errorf("%s declares %v as item 38's files, but item38CommentedFiles does not "+
+			"cover them — their comments are not citation-checked, which is how a\n"+
+			"rename left a dangling reference in pkg/civitai/read.go with the suite green.",
+			item38DecisionDoc, missingFromLedger)
+	}
+	if len(missingFromHeader) > 0 {
+		t.Errorf("item38CommentedFiles covers %v, which the Item 38 header in %s does not "+
+			"declare.\nEither the header is missing a file the item owns, or the ledger "+
+			"has grown past the item — say which, in the header.",
+			missingFromHeader, item38DecisionDoc)
+	}
+
+	// Every ledgered file must actually exist: a typo silently narrows the scan.
+	for _, f := range item38CommentedFiles {
+		if _, err := os.Stat(filepath.Join(root, f)); err != nil {
+			t.Errorf("item38CommentedFiles names %s, which does not exist: %v", f, err)
+		}
+	}
+}
+
+// moduleRoot resolves the module root from this package's directory and proves
+// it by finding go.mod there. Every path the item-38 guards read is relative to
+// it, so a wrong root is a broken instrument, not a finding.
+func moduleRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot resolve the module root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("CONTROL failure, not a finding: %s is not the module root "+
+			"(no go.mod): %v", root, err)
+	}
+	return root
 }
 
 // testIdentRe matches a Go test-function identifier as written in prose. The
@@ -259,16 +472,9 @@ var testFuncRe = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]*)\s*\(`)
 // module, so a comment may cite a guard that lives in another package.
 func repoTestFuncNames(t *testing.T) map[string]bool {
 	t.Helper()
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("CONTROL failure, not a finding: cannot resolve the module root: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("CONTROL failure, not a finding: %s is not the module root "+
-			"(no go.mod): %v", root, err)
-	}
+	root := moduleRoot(t)
 	out := map[string]bool{}
-	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

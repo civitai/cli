@@ -120,10 +120,19 @@ func TestRawDocCommentsDisclaimByteIdentity(t *testing.T) {
 		t.Fatalf("CONTROL failure, not a finding: parsed only %d non-test source files "+
 			"in pkg/civitai — the scan is not reading the package", files)
 	}
-	if len(found) < len(rawBearingTypes) {
-		t.Fatalf("CONTROL failure, not a finding: found %d types with a `Raw []byte` "+
-			"field, expected at least %d. Either the field detector is broken or a "+
-			"result type stopped exposing Raw.", len(found), len(rawBearingTypes))
+	// 🔴 THIS IS A HARD FLOOR OF ONE, NOT A FLOOR OF len(rawBearingTypes), AND
+	// THE DIFFERENCE IS THE WHOLE POINT. It used to read
+	// `len(found) < len(rawBearingTypes)`, which fires on EVERY shrink — so a
+	// type that genuinely dropped its Raw field was reported as "CONTROL
+	// failure, not a finding" and the SHRANK guidance below was unreachable.
+	// The label was wrong in the one direction the ledger exists for. A floor of
+	// one still separates a broken detector (matches nothing at all) from a
+	// finding (matches fewer than ledgered), and the comparison below now owns
+	// every shrink.
+	if len(found) == 0 {
+		t.Fatalf("CONTROL failure, not a finding: the `Raw []byte` field detector "+
+			"matched no type at all across %d parsed files — it is broken, or every "+
+			"result type dropped the field at once.", files)
 	}
 
 	sort.Strings(found)

@@ -1,6 +1,7 @@
 package cli_test
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -31,9 +32,18 @@ type saferuneCaller struct {
 	// pkgPath is the import path suffix the caller lives under.
 	pkgPath string
 	// question is the identifier both prose statements must name — the function
-	// that asks. Asserting the IDENTIFIER rather than a phrase is what keeps
-	// this from being a guard on wording: the function can be renamed and the
-	// texts must move with it, but the sentence around it is free.
+	// that asks.
+	//
+	// 🔴 IT IS RESOLVED TO A DECLARATION BEFORE IT IS USED AS A NEEDLE, AND THE
+	// EARLIER VERSION OF THIS COMMENT CLAIMED THE RENAME-SAFETY THAT RESOLUTION
+	// BUYS WITHOUT DOING IT. It read "the function can be renamed and the texts
+	// must move with it"; question was a plain string and nothing bound it to a
+	// declaration, so renaming safeTerm across internal/cmd left the whole suite
+	// green while AGENTS.md and saferune's package doc named a function that no
+	// longer existed. Measured, not reasoned: that rename was performed and
+	// `go test ./...` stayed green. checkQuestionsResolve below is what makes
+	// the sentence true — a rename is now red by name, at this file, before any
+	// prose is searched.
 	question string
 	// why is the question that call site asks, for a reader of this ledger.
 	why string
@@ -122,6 +132,13 @@ func TestSaferuneCallersAreLedgered(t *testing.T) {
 			got, want)
 	}
 
+	// 🔴 RESOLVE EVERY question TO A DECLARATION BEFORE SEARCHING FOR IT AS TEXT.
+	// Until this ran, `question` was a bare string used as a substring needle:
+	// the two prose statements could name a function that no longer existed and
+	// this test stayed green. It runs BEFORE the prose checks so a rename is
+	// reported as a rename rather than as two "does not name" errors.
+	checkQuestionsResolve(t)
+
 	// The two prose statements. Each must name every ledgered question and the
 	// count word derived from the ledger's own length.
 	word, ok := countWords[len(saferuneCallers)]
@@ -170,6 +187,83 @@ func TestSaferuneCallersAreLedgered(t *testing.T) {
 			"the ledger has (%d), and it said TWO for a full branch after the third "+
 			"caller landed.", word+" PACKAGES ASK THE SAME", len(saferuneCallers))
 	}
+}
+
+// checkQuestionsResolve requires every ledgered `question` to be a function
+// DECLARED in its own pkgPath. This is what turns the identifier into a binding
+// rather than a word: rename the function and this fails HERE, naming the
+// package it searched and any near-matching declaration in it, instead of the
+// prose checks failing with "AGENTS.md does not name `safeTerm`" — which is the
+// same red for the opposite cause.
+//
+// It reads top-level FuncDecls with no receiver, which is what all three
+// ledgered questions are today. A caller that moved its question onto a method
+// is a decision about the class, not a rename: extend this deliberately.
+func checkQuestionsResolve(t *testing.T) {
+	t.Helper()
+	for _, c := range saferuneCallers {
+		names, err := pkgFuncDecls(c.pkgPath)
+		if err != nil {
+			t.Fatalf("CONTROL failure, not a finding: cannot read %s: %v", c.pkgPath, err)
+		}
+		// POSITIVE CONTROL on the parse: a package that yielded no functions at
+		// all cannot answer the question below, and would report every ledgered
+		// identifier as renamed.
+		if len(names) == 0 {
+			t.Fatalf("CONTROL failure, not a finding: parsed no top-level funcs in %s — "+
+				"the resolver is not reading the package", c.pkgPath)
+		}
+		if names[c.question] {
+			continue
+		}
+		// Report NEAR MATCHES, not the whole package: internal/cmd declares
+		// hundreds of top-level funcs, and dumping them buries the one line a
+		// reader needs. The count is printed instead, as the scan's own control.
+		var near []string
+		for n := range names {
+			if strings.Contains(strings.ToLower(n), strings.ToLower(c.question)) {
+				near = append(near, n)
+			}
+		}
+		sort.Strings(near)
+		t.Fatalf("%s declares no top-level func %s, which this ledger names as the "+
+			"function that asks internal/saferune's question.\n"+
+			"RENAMED: move the new name here and into BOTH prose statements — "+
+			"saferune's package doc and AGENTS.md's Layout entry — in the same commit.\n"+
+			"MOVED ONTO A RECEIVER: that is a change to the class's shape; widen this "+
+			"resolver deliberately rather than deleting the check.\n"+
+			"%d top-level funcs in %s; names containing %q: %v",
+			c.pkgPath, c.question, len(names), c.pkgPath, c.question, near)
+	}
+}
+
+// pkgFuncDecls returns the set of top-level, receiver-less func names declared
+// in the non-test .go files of dir.
+func pkgFuncDecls(dir string) (map[string]bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	fset := token.NewFileSet()
+	out := map[string]bool{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, perr := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+		if perr != nil {
+			return nil, perr
+		}
+		for _, decl := range f.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Recv != nil {
+				continue
+			}
+			out[fd.Name.Name] = true
+		}
+	}
+	return out, nil
 }
 
 // saferunePackageDoc returns internal/saferune's package doc comment, parsed

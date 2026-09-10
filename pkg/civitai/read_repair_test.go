@@ -20,37 +20,69 @@ import (
 // hole its shape opened, and — added in round 3 — the exit code the fix for
 // that hole moved.
 //
-// 🔴 THE MATRIX IS HERE, AND IT IS NOT UNIFORM. An earlier revision of this
-// header said "every test here is RED at 517fc76 and green at HEAD" and
-// deferred the matrix to the PR body. Both halves were wrong: one of the five
-// tests below is labelled in its own doc comment as an INVARIANT GUARD that
-// PASSES at 517fc76 — so the header contradicted an accurate label 100 lines
-// under it — and a PR body is not in the tree, so a reader of the file could
-// not check either claim. A test you have not watched fail proves nothing, and
-// a header that says you watched them all fail when you did not is the same
-// error one level up.
+// 🔴 THE MATRIX IS HERE, AND IT IS NOT UNIFORM. An early revision said "every
+// test here is RED at 517fc76 and green at HEAD" while one test below is
+// labelled in its own doc comment as an INVARIANT GUARD that PASSES there.
+// Round 3 replaced that with a matrix — and got the last row wrong in the
+// reassuring direction, by describing a measurement instead of running one.
 //
-// Measured by running this file against a `git archive 517fc76` tree, not
-// reasoned about:
+// 🔴 A COUNT IN THIS HEADER IS A CLAIM LIKE ANY OTHER, AND ROUND 3'S WAS WRONG:
+// it said "one of the FIVE tests below" over a file that already declared six.
+// So this header states no count. What it states instead is a MEMBERSHIP, and
+// TestReadRepairMatrixNamesEveryTestInThisFile enforces it: every test declared
+// in this file must appear by name in this comment. Add a test without a row and
+// that is red by name.
+//
+// The rows below were produced by extracting `git archive <ref>` (517fc76 for
+// the column, f936cfc for the round-3 test's other end) and copying THIS file
+// into it, minus the round-4 test — which names a constant neither tree
+// declares, so the package would not compile — then running
+// `go test ./pkg/civitai/`. Re-run it that way rather than inheriting this:
 //
 //	TestGetIntoErrorSnippetQuotesTheWireBytesNotTheRepairedOnes   RED at 517fc76
+//	                                                              (2 assertions)
 //	TestReadErrorSnippetStripsTerminalControlRunes                RED at 517fc76
+//	                                                              (2 assertions)
 //	TestPostIntoRepairsControlBytesLikeGetInto                    RED at 517fc76
 //	TestDecodeBodyIsSharedByGetIntoAndPostInto                    RED at 517fc76
 //	TestGetIntoUnrepairableBodyReportsTheOriginalBytes            INVARIANT GUARD —
 //	                                                              PASSES at 517fc76;
 //	                                                              its value is the mutant
 //	TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne  see below
+//	TestDeepPagingCapClassificationIsBounded                      NOT RUNNABLE at
+//	                                                              517fc76; see below
+//	TestReadRepairMatrixNamesEveryTestInThisFile                  the guard on THIS
+//	                                                              matrix; no tree row
 //
-// The last one is a round-3 regression against THIS BRANCH, not against
-// 517fc76, and its row does not compress into the column above. Its subject is
-// the exit code that f936cfc — this branch's round-2 head — moved by classifying
-// a 429 on snippet()'s STRIPPED output: RED there, on the two classification
-// assertions. At 517fc76 it is ALSO red, but for the opposite reason and with
-// different assertions: that tree has no strip at all, so the classification
-// half passes and the two assertions that the DISPLAY is still filtered fail.
-// "Red at both ends, for opposite reasons" is the honest row; "red at 517fc76"
-// alone would read as regression coverage for a bug 517fc76 did not have.
+// TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne is a round-3
+// regression against THIS BRANCH, not against 517fc76, so its row does not
+// compress into the column above. Round 3 described BOTH of its ends, and got
+// both descriptions wrong in the same way — by naming two failing assertions
+// where three fail. Re-run, per the recipe above:
+//
+//   - at f936cfc (this branch's round-2 head, which classified a 429 on
+//     snippet()'s STRIPPED output): THREE assertions fail — half (a)'s two
+//     CLASSIFICATION assertions, plus half (c)'s classification assertion, which
+//     that tree also fails because it reads snippet()'s TRUNCATED output. Round
+//     3 said "on the two classification assertions of half (a)".
+//   - at 517fc76 (no strip at all): THREE assertions fail — half (a)'s two
+//     DISPLAY assertions (U+00AD survives; the server's own words are absent,
+//     because the strip that would rejoin "ma"+"ny" does not exist there), plus
+//     half (c)'s classification assertion again. Round 3 said "the
+//     classification half passes and the two assertions that the DISPLAY is
+//     still filtered fail" — the second clause holds, the first does not:
+//     halves (a) and (b) classify correctly at 517fc76, half (c) does not.
+//
+// So: red at both ends, three assertions at each, overlapping in half (c) and
+// disjoint in half (a). "Red at 517fc76" alone would still read as regression
+// coverage for a bug 517fc76 did not have.
+//
+// TestDeepPagingCapClassificationIsBounded (round 4) cannot be run at 517fc76 at
+// all: it names maxClassifyMessage, which that tree does not declare, so the
+// package does not compile. Its matrix is against THIS tree instead — RED with
+// classifyWindow removed (the pre-round-4 shape, where the classifier scanned
+// the whole extracted message), green with it. That is stated as what it is: a
+// containment guard measured against a mutant, not against a shipped tree.
 //
 // 🔴 The fixture strings below are pairwise distinct and distinct from every
 // constant asserted on, so a mutant that hardcodes one literal cannot satisfy
@@ -327,6 +359,135 @@ func TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne(t *testing.T) 
 		t.Errorf("a deep-paging cap whose phrase falls past snippet's 500-byte "+
 			"display bound must still be reclassified (exit 2). The classifier is "+
 			"reading the truncated string:\n%q", err)
+	}
+}
+
+// TestDeepPagingCapClassificationIsBounded is round 4's containment guard for
+// the window the round-3 fix opened.
+//
+// 🔴 IT IS NOT A FIX FOR A DEMONSTRATED DEFECT, AND MUST NOT BE READ AS ONE.
+// No false positive was shown. What round 3 changed is the SIZE of the string
+// the matcher scans: before it, isDeepPagingCap saw snippet()'s 500 bytes; after
+// it, it saw readError's `msg`, which is the ENTIRE body whenever a 429 is not
+// JSON or is JSON without `error`/`message` — bounded only by maxResponseBody
+// (64 MiB). maxClassifyMessage is a named, separate budget for that scan.
+//
+// The pair below is the point. (a) alone would pass against a classifier wired
+// to nothing; (b) is the positive control that the same fixture shape, with the
+// phrase moved INSIDE the window, still reclassifies — so (a) is about the
+// BOUND and not about a phrase that never matched.
+//
+// The filler word is distinct from every other fixture in this file and from
+// every phrase isDeepPagingCap matches.
+func TestDeepPagingCapClassificationIsBounded(t *testing.T) {
+	const capPhrase = "you have requested too many pages"
+	body := func(padBytes int) string {
+		pad := strings.Repeat("lattice ", (padBytes/8)+1)
+		return `{"message":"` + pad + capPhrase + `"}`
+	}
+
+	// (a) The phrase sits PAST the classification window.
+	outside := body(maxClassifyMessage + 512)
+	// CONTROL on the fixture: the phrase must genuinely fall past the window, or
+	// this asserts nothing. The window is applied to the extracted message, so
+	// measure the offset inside the message, not inside the body.
+	if idx := strings.Index(outside, capPhrase); idx <= maxClassifyMessage {
+		t.Fatalf("CONTROL failure, not a finding: the cap phrase starts at byte %d, "+
+			"which is inside the %d-byte classification window — (a) would assert "+
+			"nothing", idx, maxClassifyMessage)
+	}
+	c := serveOnce(t, http.StatusTooManyRequests, outside)
+	_, err := c.SearchModels(context.Background(), url.Values{})
+	if err == nil {
+		t.Fatal("a 429 must be an error; without it half (a) asserts on nothing")
+	}
+	if errors.Is(err, ErrBadRequest) {
+		t.Errorf("a 429 whose cap phrase sits past maxClassifyMessage (%d bytes) was "+
+			"reclassified — the classifier is scanning the whole body, which for a "+
+			"non-JSON 429 is bounded only by maxResponseBody:\n%q", maxClassifyMessage, err)
+	}
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("a 429 the classifier cannot see the cap phrase in must keep "+
+			"ErrRateLimited (exit 6):\n%q", err)
+	}
+
+	// (b) POSITIVE CONTROL: the same shape, phrase inside the window.
+	inside := body(64)
+	if idx := strings.Index(inside, capPhrase); idx > maxClassifyMessage {
+		t.Fatalf("CONTROL failure, not a finding: the control fixture's phrase is at "+
+			"byte %d, past the %d-byte window — the two arms are not the same shape",
+			idx, maxClassifyMessage)
+	}
+	c = serveOnce(t, http.StatusTooManyRequests, inside)
+	_, err = c.SearchModels(context.Background(), url.Values{})
+	if err == nil {
+		t.Fatal("a 429 must be an error; without it half (b) asserts on nothing")
+	}
+	if !errors.Is(err, ErrBadRequest) {
+		t.Errorf("CONTROL failure: the SAME fixture shape with the phrase inside the "+
+			"window is not reclassified, so half (a) proves nothing about the bound — "+
+			"it would pass against a classifier that never matches:\n%q", err)
+	}
+}
+
+// matrixMarker is a phrase from this file's header comment, used to find that
+// comment group rather than the first one in the file.
+const matrixMarker = "THE MATRIX IS HERE"
+
+// TestReadRepairMatrixNamesEveryTestInThisFile is round 4's guard on the header
+// above.
+//
+// 🔴 THE HEADER HAS MISDESCRIBED ITS OWN CONTENTS IN EVERY ROUND SO FAR — "every
+// test here is RED at 517fc76" when one is an invariant guard, then "one of the
+// five tests below" over six, then a row for the round-3 test that disagreed
+// with what running it prints. Two of those three are membership or count
+// errors, and both are mechanical. This makes them red.
+//
+// It asserts MEMBERSHIP, not a count, and not the content of a row: a row can
+// still say something false about a tree (that is what re-running the
+// measurement is for), but a test cannot be added to this file without one.
+func TestReadRepairMatrixNamesEveryTestInThisFile(t *testing.T) {
+	const self = "read_repair_test.go"
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, self, nil, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot parse %s: %v", self, err)
+	}
+	header := ""
+	for _, cg := range f.Comments {
+		if strings.Contains(cg.Text(), matrixMarker) {
+			header = cg.Text()
+			break
+		}
+	}
+	// POSITIVE CONTROL on the extraction: an empty header makes every name below
+	// "missing" for the wrong reason.
+	if header == "" {
+		t.Fatalf("CONTROL failure, not a finding: no comment in %s contains %q — "+
+			"this test cannot find the matrix it guards", self, matrixMarker)
+	}
+	var names []string
+	for _, decl := range f.Decls {
+		fd, ok := decl.(*ast.FuncDecl)
+		if !ok || fd.Recv != nil || !strings.HasPrefix(fd.Name.Name, "Test") {
+			continue
+		}
+		names = append(names, fd.Name.Name)
+	}
+	// POSITIVE CONTROL on the SCAN: zero test declarations found is
+	// indistinguishable from "every one of them is named".
+	if len(names) < 5 {
+		t.Fatalf("CONTROL failure, not a finding: found only %d test declarations in "+
+			"%s — the scan is not reading the file", len(names), self)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		if strings.Contains(header, n) {
+			continue
+		}
+		t.Errorf("%s declares %s, and the matrix in this file's header does not name "+
+			"it.\nA test with no row is a test nobody watched fail: give it a row saying "+
+			"what it is RED against, or say plainly that it is an invariant guard.", self, n)
 	}
 }
 
