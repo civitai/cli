@@ -435,17 +435,18 @@ var bornSplitItems = []string{
 	"claudedocs/decisions/37-numeric-username.md",
 	// Item 38 was written straight into claudedocs/decisions/ for the same
 	// reason: AGENTS.md had 472 bytes of headroom when it was added, and the
-	// body is five decisions, three tables and the enumerated residuals.
+	// body is five decisions, four tables and the enumerated residuals.
 	//
 	// 🔴 THIS SENTENCE HAS NOW BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, SO THE
 	// GEOMETRY IS PINNED RATHER THAN COUNTED IN PROSE. Round 2 wrote "measurement
 	// and mutation matrices" — there has never been a mutation matrix, and that
 	// half was right to correct. Round 3 then wrote "one measurement table", in
-	// the same commit that ADDED a second and a third. The tables are: a
-	// clause-by-clause table and a cross-tree measurement table in §3, and a
-	// cross-tree exit-code measurement table in §4. Their placement is asserted
-	// by TestItem38EvidenceTableGeometry below; the adjectives are not, and are
-	// the reader's to check.
+	// the same commit that ADDED a second and a third. Round 5 added a FOURTH,
+	// and this sentence with it. The tables are: a clause-by-clause table and a
+	// cross-tree measurement table in §3, and in §4 a cross-tree exit-code
+	// measurement table plus an allocation table for maxClassifyMessage. Their
+	// placement is asserted by TestItem38EvidenceTableGeometry below; the
+	// adjectives are not, and are the reader's to check.
 	//
 	// Mutation results still live in the PR body and in each guard's own doc
 	// comment, not in this file.
@@ -936,7 +937,7 @@ const item38Doc = "claudedocs/decisions/38-read-body-repair-and-snippet.md"
 // item38TablesPerSection is the LEDGER of where item 38's tables live: section
 // number -> number of Markdown table blocks in it. Sections not listed must
 // carry none.
-var item38TablesPerSection = map[int]int{3: 2, 4: 1}
+var item38TablesPerSection = map[int]int{3: 2, 4: 2}
 
 // TestItem38EvidenceTableGeometry is round 4's finding 5.
 //

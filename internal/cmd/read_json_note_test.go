@@ -223,7 +223,7 @@ const item38DecisionDoc = "claudedocs/decisions/38-read-body-repair-and-snippet.
 // them — but repoTestFuncNames is repo-WIDE precisely so cross-package citations
 // resolve, so that 31 came from a package-local resolver this guard does not
 // ship. Re-measured with the instruments below (repoTestFuncNames + testIdentRe)
-// over all 471 .go files in the module, at this commit: 2096 citations, 23
+// over all 471 .go files in the module, at this commit: 2103 citations, 23
 // unresolved sites, 20 distinct names. Those are a measurement of this tree, not
 // an invariant — the citation total moves with any comment edit.
 //
@@ -289,7 +289,7 @@ func TestItem38CommentsCiteTestsThatExist(t *testing.T) {
 
 	root := moduleRoot(t)
 	fset := token.NewFileSet()
-	cited := 0
+	goCited := 0
 	for _, name := range item38CommentedFiles {
 		f, err := parser.ParseFile(fset, filepath.Join(root, name), nil, parser.ParseComments)
 		if err != nil {
@@ -298,7 +298,7 @@ func TestItem38CommentsCiteTestsThatExist(t *testing.T) {
 		for _, cg := range f.Comments {
 			for _, c := range cg.List {
 				for _, ident := range testIdentRe.FindAllString(c.Text, -1) {
-					cited++
+					goCited++
 					if defined[ident] {
 						continue
 					}
@@ -321,7 +321,6 @@ func TestItem38CommentsCiteTestsThatExist(t *testing.T) {
 	for i, line := range strings.Split(string(doc), "\n") {
 		for _, ident := range testIdentRe.FindAllString(line, -1) {
 			docCited++
-			cited++
 			if defined[ident] {
 				continue
 			}
@@ -331,16 +330,27 @@ func TestItem38CommentsCiteTestsThatExist(t *testing.T) {
 				item38DecisionDoc, i+1, ident)
 		}
 	}
-	// POSITIVE CONTROLS on the SCAN: zero citations found is indistinguishable
-	// from zero dangling citations, and the Markdown arm has its own zero.
+	// POSITIVE CONTROLS on the SCAN — one PER ARM, because zero citations found is
+	// indistinguishable from zero dangling citations and the two arms read
+	// different things with different code.
+	//
+	// 🔴 THEY WERE ONE COMBINED FLOOR, AND IT COULD NOT SEE THE .go ARM GO TO ZERO.
+	// Both arms incremented a single counter floored at 20 while the Markdown arm
+	// alone contributes 28, so the .go arm's zero was structurally unobservable:
+	// dropping parser.ParseComments from the ParseFile call above left this test
+	// green while it read no comments at all from the twelve ledgered files.
+	// Measured at this commit: goCited 82, docCited 28. The floors below are
+	// lower bounds well under those, not the measurements themselves — the counts
+	// move with any comment edit, and a floor pinned to today's exact value would
+	// fail on the next one.
 	if docCited < 5 {
 		t.Fatalf("CONTROL failure, not a finding: the scan found only %d cited test "+
 			"names in %s — the Markdown arm is not reading the file", docCited, item38DecisionDoc)
 	}
-	if cited < 20 {
+	if goCited < 40 {
 		t.Fatalf("CONTROL failure, not a finding: the scan found only %d cited test "+
-			"names across %v + %s — it is not reading the comments",
-			cited, item38CommentedFiles, item38DecisionDoc)
+			"names across %v — the .go arm is not reading the comments",
+			goCited, item38CommentedFiles)
 	}
 }
 

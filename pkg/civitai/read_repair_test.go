@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -381,22 +382,28 @@ func TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne(t *testing.T) 
 // every phrase isDeepPagingCap matches.
 func TestDeepPagingCapClassificationIsBounded(t *testing.T) {
 	const capPhrase = "you have requested too many pages"
-	body := func(padBytes int) string {
-		pad := strings.Repeat("lattice ", (padBytes/8)+1)
-		return `{"message":"` + pad + capPhrase + `"}`
+	// 🔴 THE TWO STRINGS ARE KEPT APART ON PURPOSE. classifyWindow is applied to
+	// the MESSAGE readError extracts, never to the wire body, so an offset
+	// measured in the body is 12 bytes — the `{"message":"` prefix — larger than
+	// the one the bound acts on. The controls below measured the body while their
+	// own comment said message; the slack happened to point the safe way, which is
+	// how it stayed unnoticed. message() is what the bound sees; body() is only
+	// the envelope that delivers it.
+	message := func(padBytes int) string {
+		return strings.Repeat("lattice ", (padBytes/8)+1) + capPhrase
 	}
+	body := func(msg string) string { return `{"message":"` + msg + `"}` }
 
 	// (a) The phrase sits PAST the classification window.
-	outside := body(maxClassifyMessage + 512)
+	outsideMsg := message(maxClassifyMessage + 512)
 	// CONTROL on the fixture: the phrase must genuinely fall past the window, or
-	// this asserts nothing. The window is applied to the extracted message, so
-	// measure the offset inside the message, not inside the body.
-	if idx := strings.Index(outside, capPhrase); idx <= maxClassifyMessage {
-		t.Fatalf("CONTROL failure, not a finding: the cap phrase starts at byte %d, "+
-			"which is inside the %d-byte classification window — (a) would assert "+
-			"nothing", idx, maxClassifyMessage)
+	// this asserts nothing.
+	if idx := strings.Index(outsideMsg, capPhrase); idx <= maxClassifyMessage {
+		t.Fatalf("CONTROL failure, not a finding: the cap phrase starts at byte %d of "+
+			"the extracted message, which is inside the %d-byte classification window "+
+			"— (a) would assert nothing", idx, maxClassifyMessage)
 	}
-	c := serveOnce(t, http.StatusTooManyRequests, outside)
+	c := serveOnce(t, http.StatusTooManyRequests, body(outsideMsg))
 	_, err := c.SearchModels(context.Background(), url.Values{})
 	if err == nil {
 		t.Fatal("a 429 must be an error; without it half (a) asserts on nothing")
@@ -411,14 +418,17 @@ func TestDeepPagingCapClassificationIsBounded(t *testing.T) {
 			"ErrRateLimited (exit 6):\n%q", err)
 	}
 
-	// (b) POSITIVE CONTROL: the same shape, phrase inside the window.
-	inside := body(64)
-	if idx := strings.Index(inside, capPhrase); idx > maxClassifyMessage {
-		t.Fatalf("CONTROL failure, not a finding: the control fixture's phrase is at "+
-			"byte %d, past the %d-byte window — the two arms are not the same shape",
-			idx, maxClassifyMessage)
+	// (b) POSITIVE CONTROL: the same shape, phrase inside the window. Measured in
+	// the message, for the same reason as (a); the phrase must fit ENTIRELY inside
+	// the window, since classifyWindow cuts by byte and a split phrase matches
+	// nothing.
+	insideMsg := message(64)
+	if idx := strings.Index(insideMsg, capPhrase); idx+len(capPhrase) > maxClassifyMessage {
+		t.Fatalf("CONTROL failure, not a finding: the control fixture's phrase ends at "+
+			"byte %d of the extracted message, past the %d-byte window — the two arms "+
+			"are not the same shape", idx+len(capPhrase), maxClassifyMessage)
 	}
-	c = serveOnce(t, http.StatusTooManyRequests, inside)
+	c = serveOnce(t, http.StatusTooManyRequests, body(insideMsg))
 	_, err = c.SearchModels(context.Background(), url.Values{})
 	if err == nil {
 		t.Fatal("a 429 must be an error; without it half (b) asserts on nothing")
@@ -434,6 +444,12 @@ func TestDeepPagingCapClassificationIsBounded(t *testing.T) {
 // comment group rather than the first one in the file.
 const matrixMarker = "THE MATRIX IS HERE"
 
+// matrixIdentRe matches a Go test-function identifier as written in the header's
+// prose, so the membership check below can compare NAMES rather than substrings.
+// It is the same shape as internal/cmd's testIdentRe, re-declared because that
+// one lives in another package; keep the two in step if either changes.
+var matrixIdentRe = regexp.MustCompile(`\bTest[A-Za-z0-9_]*\b`)
+
 // TestReadRepairMatrixNamesEveryTestInThisFile is round 4's guard on the header
 // above.
 //
@@ -446,6 +462,25 @@ const matrixMarker = "THE MATRIX IS HERE"
 // It asserts MEMBERSHIP, not a count, and not the content of a row: a row can
 // still say something false about a tree (that is what re-running the
 // measurement is for), but a test cannot be added to this file without one.
+//
+// 🔴 MEMBERSHIP WAS A SUBSTRING TEST, WHICH IS NOT A NAME TEST. It asked whether
+// the header CONTAINS each declared name, so any test whose name is a strict
+// PREFIX of a name already in the matrix satisfied it with no row of its own.
+// This file's naming makes that the likely next edit rather than a contrived
+// one: TestDeepPagingCapClassificationIsBounded and
+// TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne agree on their
+// first 25 characters, and TestGetIntoUnrepairableBodyReportsTheOriginalBytes
+// and TestGetIntoErrorSnippetQuotesTheWireBytesNotTheRepairedOnes on their
+// first 11. Measured: declaring a test named
+// TestDeepPagingCapClassificationIsBounded with the trailing "IsBounded"
+// removed — a name in the file that nothing in the header names, but that is a
+// strict prefix of one the header does — left this guard green. It now extracts
+// the header's identifiers with matrixIdentRe and compares them EXACTLY, so a
+// prefix is a different name.
+//
+// The mutant is described that way rather than spelled out because
+// internal/cmd's TestItem38CommentsCiteTestsThatExist reads this comment and
+// would, correctly, report a name nothing declares as a dangling citation.
 func TestReadRepairMatrixNamesEveryTestInThisFile(t *testing.T) {
 	const self = "read_repair_test.go"
 	fset := token.NewFileSet()
@@ -466,6 +501,17 @@ func TestReadRepairMatrixNamesEveryTestInThisFile(t *testing.T) {
 		t.Fatalf("CONTROL failure, not a finding: no comment in %s contains %q — "+
 			"this test cannot find the matrix it guards", self, matrixMarker)
 	}
+	named := map[string]bool{}
+	for _, ident := range matrixIdentRe.FindAllString(header, -1) {
+		named[ident] = true
+	}
+	// POSITIVE CONTROL on the EXTRACTION: a header the regex found no identifiers
+	// in makes every name below "missing" for the wrong reason, exactly as an
+	// empty header would.
+	if len(named) < 5 {
+		t.Fatalf("CONTROL failure, not a finding: matrixIdentRe found only %d test "+
+			"names in %s's matrix header — the extraction is not reading it", len(named), self)
+	}
 	var names []string
 	for _, decl := range f.Decls {
 		fd, ok := decl.(*ast.FuncDecl)
@@ -482,7 +528,7 @@ func TestReadRepairMatrixNamesEveryTestInThisFile(t *testing.T) {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		if strings.Contains(header, n) {
+		if named[n] {
 			continue
 		}
 		t.Errorf("%s declares %s, and the matrix in this file's header does not name "+

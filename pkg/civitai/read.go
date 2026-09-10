@@ -345,16 +345,38 @@ func isDeepPagingCap(msg string) bool {
 // bound the matcher used to inherit, so without this the ToLower copy and the
 // three Contains scans run over whatever arrived.
 //
+// 🔴 IT IS A SEMANTIC BOUND, NOT RESOURCE CONTAINMENT, AND THIS COMMENT CLAIMED
+// THE SECOND. What it decides is which bytes may move a published exit code: a
+// cap phrase past 8 KiB no longer reclassifies a 429 from exit 6 to exit 2. That
+// is the consequence stated below and pinned by
+// TestDeepPagingCapClassificationIsBounded.
+//
+// It does NOT bound this function's footprint, because the very next statement
+// in readError — msg = snippet([]byte(msg)) — converts the whole message and
+// hands every byte of it to saferune.Strip, unconditionally and regardless of
+// this constant, on top of the string(raw) copy readError already made at entry.
+// Measured on this tree (go1.25.14, linux/amd64, `-bench -benchtime=20x
+// -count=3`, non-JSON 429 body): allocation is ~2x the body WITH the bound in
+// place — 67.1 MB/op for 32 MiB, 2.11 MB/op for 1 MiB.
+//
+// What it does bound is exactly ONE allocation: strings.ToLower(msg) in
+// isDeepPagingCap, which otherwise copies the whole message. Deleting
+// classifyWindow moved that same benchmark to 100.7 MB/op at 32 MiB and
+// 3.15 MB/op at 1 MiB — one extra full-body copy, ~3x rather than ~2x. That
+// difference is invisible to an all-lowercase ASCII fixture, because ToLower
+// returns its input and allocates nothing when there is nothing to fold; the
+// numbers above come from an all-uppercase body. NO WALL-TIME CLAIM IS MADE: the
+// direction was not even consistent across the four size/case pairs measured.
+//
 // 🔴 THE NUMBER IS GENEROUS, NOT DERIVED, AND IS STATED AS SUCH. The only cap
 // wording this repo records is the ~60-byte one in isDeepPagingCap's doc comment
 // above — which is that comment's claim, not a fresh measurement of the API. No
 // measurement here pins a largest LEGITIMATE 429 message, and none of the
 // proxy/CDN/captive-portal 429s readError also handles has been sampled for
 // length at all. 8 KiB is ~130x that recorded wording and ~16x the display
-// budget: large enough that no plausible cap message is cut, small enough that
-// an arbitrary body is not scanned in full. That is the whole justification —
-// it is containment, not a fix for an observed false positive, and none was
-// demonstrated.
+// budget: large enough that no plausible cap message is cut. That is the whole
+// justification — no false positive was ever demonstrated, and the 8192 is a
+// round number chosen above every message length anyone here has written down.
 //
 // The visible consequence: a 429 whose cap phrase sits past 8 KiB is NOT
 // reclassified and keeps exit 6. Pinned by

@@ -272,7 +272,7 @@ bounded only by `maxResponseBody` (64 MiB). Before round 3 the matcher inherited
 Round 4 bounds it with `maxClassifyMessage` (8 KiB) via `classifyWindow` — a
 budget deliberately separate from the display budget, since conflating the two
 is the defect this section exists for. **No false positive was demonstrated;
-this is containment, not a fix for an observed defect**, and the number is
+this is not a fix for an observed defect**, and the number is
 generous rather than derived: the API's own cap message is ~60 bytes, no
 measurement in this repo pins a largest legitimate 429 message, and none of the
 proxy/CDN/captive-portal 429s `readError` also handles has been sampled for
@@ -283,6 +283,38 @@ past 8 KiB is not reclassified and keeps exit 6. Pinned by
 `classifyMsg` and carries a positive control — the same fixture shape with the
 phrase inside the window must still reclassify, or half (a) would pass against a
 classifier that never matches.
+
+🔴 **ROUND 4 CALLED THAT BOUND "CONTAINMENT" AND MEASURED NOTHING; ROUND 5
+MEASURED IT AND THE WORD WAS WRONG.** The bound is **semantic** — it decides
+which bytes may move a published exit code, and that is the whole of what the
+guard above pins. It is **not** a bound on this function's footprint, because
+the statement immediately after the classifier, `msg = snippet([]byte(msg))`,
+converts the whole message and walks every byte of it through
+`saferune.Strip` — unconditionally, and regardless of `maxClassifyMessage` — on
+top of the `string(raw)` copy `readError` already made at entry.
+
+Measured on this tree, `go1.25.14 linux/amd64`, a `readError` benchmark over a
+non-JSON 429 body at `-benchtime=20x -count=3`:
+
+| body | `B/op` with `classifyWindow` | without |
+|---|---|---|
+| 32 MiB, uppercase | 67.12 MB | 100.67 MB |
+| 1 MiB, uppercase | 2.11 MB | 3.15 MB |
+| 32 MiB, lowercase | 67.11 MB | 67.11 MB |
+| 1 MiB, lowercase | 2.10 MB | 2.10 MB |
+
+So peak allocation is **~2x the body either way** — the bound removes a third
+full-body copy, not the first two. The one allocation it does bound is
+`strings.ToLower(msg)` inside `isDeepPagingCap`, and the lowercase rows are the
+reason that has to be said carefully: `strings.ToLower` returns its input
+without allocating when an all-ASCII string has nothing to fold, so an
+all-lowercase fixture measures the two arms as identical and would have
+"confirmed" that the bound buys no memory at all. **No wall-time claim is made
+here**: across those four size/case pairs the median direction was not even
+consistent — at 1 MiB lowercase the unbounded arm measured *faster*.
+
+The benchmark was written to take these numbers and then deleted; it is not in
+the tree. Re-derive rather than inherit the table.
 
 This is the ONLY site in `pkg/civitai` where the text of an error picks a
 classification; `readError`'s other branches classify from the status alone
