@@ -435,8 +435,11 @@ var bornSplitItems = []string{
 	"claudedocs/decisions/37-numeric-username.md",
 	// Item 38 was written straight into claudedocs/decisions/ for the same
 	// reason: AGENTS.md had 472 bytes of headroom when it was added, and the
-	// body is three decisions plus their measurement and mutation matrices and
-	// four enumerated residuals.
+	// body is three decisions, the cross-tree measurement table in §3 and the
+	// enumerated residuals. ("Measurement and mutation matrices" is what this
+	// said in round 2; the file has one measurement table and has never had a
+	// mutation matrix — the mutation results live in the PR body and in each
+	// guard's own doc comment.)
 	"claudedocs/decisions/38-read-body-repair-and-snippet.md",
 }
 

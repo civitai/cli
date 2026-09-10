@@ -97,8 +97,12 @@ func (c *Client) getRaw(ctx context.Context, path string, q url.Values) (int, []
 // strict RFC 8259 JSON syntax but are intermittently emitted by the Civitai API
 // inside prompt/description strings (civitai/cli#525) — are repaired by
 // EscapeJSONStringControlChars so typed decode succeeds. The returned bytes are
-// then the REPAIRED body, not the wire body; see the note on Raw in the result
-// types.
+// then the REPAIRED body, not the wire body — which is why every result type
+// with a `Raw []byte` field disclaims byte identity in its doc comment. That is
+// a cross-reference, so it is asserted rather than asked for:
+// TestRawDocCommentsDisclaimByteIdentity is a bidirectional ledger of those
+// types and requires the disclaimer on each. It was written because this
+// sentence pointed at eight referents and only two of them said it.
 //
 // 🔴 THE REPAIR IS A RETRY ON THE DECODE, NOT A PRE-PASS OVER EVERY BODY, AND
 // THE ORDER IS LOAD-BEARING IN THREE WAYS.
@@ -253,6 +257,15 @@ func readError(status int, raw []byte) (err error) {
 			msg = wrapped.Message
 		}
 	}
+	// 🔴 THE CLASSIFIER READS wireMsg; ONLY THE DISPLAY READS msg. snippet()
+	// removes runes (internal/saferune) and bounds length, and BOTH of those can
+	// change which substrings a matcher finds — a strip can JOIN two words into a
+	// phrase the server never sent, and the 500-byte bound can cut one in half.
+	// isDeepPagingCap is the one place in this package where the text of an error
+	// decides a published exit code (item 7), so it is asked about what arrived,
+	// never about what will be printed. Pinned by
+	// TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne.
+	wireMsg := msg
 	msg = snippet([]byte(msg))
 	switch status {
 	case http.StatusUnauthorized:
@@ -277,7 +290,7 @@ func readError(status int, raw []byte) (err error) {
 		// usage error (ErrBadRequest → exit 2) so a scripter's generic 429
 		// backoff-and-retry loop doesn't spin on it, while a real throttle 429
 		// stays ErrRateLimited (exit 6). The visible message is unchanged.
-		if isDeepPagingCap(msg) {
+		if isDeepPagingCap(wireMsg) {
 			kind = ErrBadRequest
 		}
 		return fmt.Errorf("rate limited (429): %s — for deep paging use --cursor instead of --page", msg)
@@ -294,6 +307,13 @@ func readError(status int, raw []byte) (err error) {
 // requested too many pages, please use cursors instead"; a genuine throttle
 // 429 carries none of these phrases. The match is deliberately narrow so a real
 // rate-limit 429 is never misclassified as a usage error.
+//
+// 🔴 msg MUST BE THE WIRE MESSAGE, NOT snippet()'s OUTPUT. "Narrow" is a claim
+// about what the SERVER sent, and any transformation applied first can only
+// widen it: snippet strips Default_Ignorable runes, so one U+00AD inside "many"
+// in a proxy's throttle message is enough to synthesise "too many pages" out of
+// bytes the server never sent, and the exit code moves 6 → 2. See readError's
+// comment at the wireMsg assignment.
 func isDeepPagingCap(msg string) bool {
 	m := strings.ToLower(msg)
 	return strings.Contains(m, "too many pages") ||

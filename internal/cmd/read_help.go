@@ -51,20 +51,35 @@ when you are logged in.`
 // promises "pure JSON — nothing else is written to stdout", never byte-identity.
 //
 // 🔴 THE RAW-CONTROL-BYTE REPAIR IS A BEHAVIOUR OF THIS GROUP, AND THE COMMENT
-// THAT USED TO SIT HERE SAID IT WAS NOT — EVERY CLAUSE OF IT MEASURED FALSE.
-// It read: "every read command reaches emitJSON only AFTER getInto has
-// unmarshalled the same bytes into a typed struct, and encoding/json rejects a
-// raw C0 byte inside a string literal there first. Measured: a body carrying a
-// literal CR inside a description exits 1 … and an EMPTY stdout — emitJSON is
-// never entered. … it is not a behaviour of this group, so it is not described
-// as one."
+// THAT USED TO SIT HERE SAID IT WAS NOT. It read: "every read command reaches
+// emitJSON only AFTER getInto has unmarshalled the same bytes into a typed
+// struct, and encoding/json rejects a raw C0 byte inside a string literal there
+// first. Measured: a body carrying a literal CR inside a description exits 1 …
+// and an EMPTY stdout — emitJSON is never entered. … it is not a behaviour of
+// this group, so it is not described as one."
 //
-// That was true when it was written and civitai/cli#526 falsified it: getInto
-// now repairs the same class of byte before the typed decode, so the decode
-// SUCCEEDS. Re-measured on the same fixture — a literal CR inside a `name` on
-// `models search` — the command exits 0, the table renders, and with `--json`
-// emitJSON is entered and prints a document carrying `\r`. The whole suite was
-// green across that merge, because nothing asserted on this paragraph.
+// 🔴 WHAT #526 FALSIFIED IS THE CONCLUSION, NOT EVERY PREMISE, AND AN EARLIER
+// REVISION OF THIS RETRACTION SAID "EVERY CLAUSE OF IT MEASURED FALSE". That
+// over-claim is the same failure the paragraph it retracts committed. Clause by
+// clause at HEAD:
+//
+//   - "every read command reaches emitJSON only AFTER getInto has unmarshalled
+//     the same bytes into a typed struct" — STILL TRUE. emitJSON is downstream
+//     of getInto in every leaf; #526 changed what getInto does on a failed
+//     decode, not the order.
+//   - "encoding/json rejects a raw C0 byte inside a string literal there first"
+//     — STILL TRUE. That rejection is exactly what now triggers the repair.
+//   - "a body carrying a literal CR … exits 1 … and an EMPTY stdout — emitJSON
+//     is never entered" — FALSE. Re-measured on the same fixture shape, a
+//     literal CR inside a `name` on `models search`: exit 0, the table renders,
+//     and with `--json` emitJSON IS entered and prints a document carrying `\r`.
+//   - "it is not a behaviour of this group, so it is not described as one" —
+//     FALSE, and it is the conclusion the two true premises no longer support:
+//     the rejection is now the trigger for a retry rather than the end of the
+//     call.
+//
+// The whole suite was green across that merge, because nothing asserted on this
+// paragraph.
 //
 // So the repair IS described below, and TestReadJSONNoteDescribesTheRepair is
 // what stops this paragraph going stale a second time: it re-measures the

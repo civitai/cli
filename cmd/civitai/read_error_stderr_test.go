@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,5 +66,47 @@ func TestReadErrorReachesStderrWithoutTerminalControlRunes(t *testing.T) {
 	if got := exitCode(err); got != exitNotFound {
 		t.Errorf("exit code = %d, want %d (exitNotFound) — a 404 read's published "+
 			"classification must survive the message filter", got, exitNotFound)
+	}
+}
+
+// TestThrottle429KeepsExitSixThroughTheMessageFilter is the EXIT-CODE half of
+// round 3's finding 4, at the seam where the code is actually published.
+//
+// 🔴 A 404 IS THE WRONG WITNESS FOR THIS CLAIM, AND IT WAS THE ONLY ONE.
+// The test above pins a 404 at exit 4, and item 38's evidence file cited it for
+// "the exit-code contract is unchanged". But 404 is classified from the STATUS
+// alone — the message filter cannot reach it, so that assertion is vacuous about
+// filtering. The 429 branch is the one place in pkg/civitai where the TEXT of
+// an error picks the exit code, and it is where the filter did move one:
+// snippet() strips Default_Ignorable runes, so a proxy throttle whose message
+// carried a U+00AD inside "many" was reclassified from 6 to 2.
+//
+// pkg/civitai's TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne
+// owns the sentinel; this owns the number a script reads from `$?`.
+func TestThrottle429KeepsExitSixThroughTheMessageFilter(t *testing.T) {
+	// U+00AD SOFT HYPHEN inside "many", written as an escape (ST1018).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(
+			"{\"message\":\"Edge throttle: too ma\\u00adny pages in flight, slow down\"}"))
+	}))
+	t.Cleanup(srv.Close)
+
+	_, _, err := civitai.New(srv.URL, "").GetModelVersion(context.Background(), "31708")
+	if err == nil {
+		t.Fatal("a 429 must be an error; without it this test asserts on nothing")
+	}
+	// Positive control on the INSTRUMENT: exitCode must be able to return 2, or
+	// "it returned 6" says nothing about whether it discriminates at all.
+	if got := exitCode(civitai.Tag(civitai.ErrBadRequest, errors.New("bad enum"))); got != exitUsage {
+		t.Fatalf("CONTROL failure, not a finding: exitCode(ErrBadRequest) = %d, want %d",
+			got, exitUsage)
+	}
+	if got := exitCode(err); got != exitRateLimited {
+		t.Errorf("a throttle 429 exits %d, want %d (exitRateLimited).\n"+
+			"The deep-paging-cap reclassification is reading the FILTERED message, so "+
+			"the CLI's own strip synthesised the cap phrase and turned a retryable "+
+			"throttle into a usage error:\n%q", got, exitRateLimited, err)
 	}
 }

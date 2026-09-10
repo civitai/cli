@@ -167,9 +167,11 @@ These go beyond the global defaults because this repo's release pipeline
   less U+FE0F, plus two blank-but-graphic runes. It is NOT applied to what the
   USER typed on the command line — two documented exceptions, `--input` file
   content and `download`'s mixed-origin target path.
-  `cmd`'s `safeTerm` and `genapi`'s `hasPrintableContent` both call
-  it; #393 was two tables that disagreed, and its first fix drew the class on a
-  category instead of the property and was wrong in both directions. Read its
+  `cmd`'s `safeTerm`, `genapi`'s `hasPrintableContent` and `pkg/civitai`'s
+  `snippet` all call it — three questions, one table, ledgered both ways by
+  `TestSaferuneCallersAreLedgered`; #393 was two tables that disagreed, and its
+  first fix drew the class on a category instead of the property and was wrong
+  in both directions. Read its
   doc comment before changing the class: it states the derivation, the one
   exception, what is deliberately KEPT and the nine scripts the strip costs.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to

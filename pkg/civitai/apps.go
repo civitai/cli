@@ -77,8 +77,10 @@ type AppCard struct {
 	KindData      AppCardKindData     `json:"kindData"`
 }
 
-// AppSearchResult bundles the parsed cards + pagination metadata with the raw
-// response body (for --json passthrough). It uses the shared Metadata type —
+// AppSearchResult bundles the parsed cards + pagination metadata with the body
+// that decoded, for --json passthrough. Raw is NOT promised to be the server's
+// own bytes: see EscapeJSONStringControlChars for the one case where it is the
+// repaired body instead. It uses the shared Metadata type —
 // exactly like every other Search* result — so CursorString + printPageFooter
 // work unchanged; the apps endpoint populates only nextCursor/nextPage on it
 // (keyset cursor pagination, no page/offset).

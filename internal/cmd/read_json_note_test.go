@@ -5,13 +5,18 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"net/http"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
 
-// crInAName is a raw carriage return inside a model NAME — the civitai/cli#525
-// class, written as a Go escape rather than a literal control byte (ST1018).
+// crBodyModelName is a raw carriage return inside a model NAME — the
+// civitai/cli#525 class, written as a Go escape rather than a literal control
+// byte (ST1018).
 // The two halves are distinct from every other fixture in this package so a
 // mutant that hardcodes one cannot satisfy an assertion about the other.
 const crBodyModelName = "Speckled\rGrebe"
@@ -33,8 +38,9 @@ const wantReadJSONNote = "--json writes the API response to stdout and nothing e
 // never reaches emitJSON, so the repair "is not a behaviour of this group".
 // civitai/cli#526 moved the repair ahead of the typed decode and every clause of
 // that paragraph became false, with the whole suite green: the only test
-// touching the constant was TestReadJSONNoteWordingMatchesEmitJSON's
-// claimsByteIdentity check, which asks a different question.
+// touching the constant was TestReadJSONNoteDoesNotClaimByteIdentity
+// (read_help_test.go), which asks a different question — whether the note
+// promises byte identity, not whether it describes the repair.
 //
 // So this test does both halves in one place, deliberately:
 //
@@ -143,4 +149,151 @@ func TestReadJSONNoteCommentNamesItsGuard(t *testing.T) {
 		t.Fatalf("CONTROL failure, not a finding: no documented const declaration " +
 			"named readJSONNote was found in read_help.go")
 	}
+}
+
+// item38CommentedFiles are the files item 38 owns. The citation check below
+// runs over exactly these, and it is a LEDGER rather than a glob: a file added
+// to the item must be added here to be covered, and a file removed from the
+// item makes this list fail rather than silently shrink the check.
+var item38CommentedFiles = []string{
+	"read_help.go",
+	"read_help_test.go",
+	"read_json_note_test.go",
+	"read_r2_test.go",
+}
+
+// TestItem38CommentsCiteTestsThatExist is round 3's finding 6.
+//
+// 🔴 THE COMMENT WRITTEN TO STOP COMMENTS GOING STALE CITED A TEST THAT HAS
+// NEVER EXISTED. TestReadJSONNoteDescribesTheRepair's own doc comment above
+// named a guard that appears nowhere in this repository and in no commit of its
+// history; the real test is TestReadJSONNoteDoesNotClaimByteIdentity in
+// read_help_test.go. The suite was green, the lint run was clean, and a round-2
+// audit of this very branch read the sentence without being able to check it.
+//
+// The dead identifier is spelled out ONCE, as a string literal in the third
+// control below and deliberately not in any comment: this test reads comments,
+// so writing it in prose here would make the test flag itself.
+//
+// 🔴 TestReadJSONNoteCommentNamesItsGuard PINS ONLY THE FORWARD DIRECTION —
+// that readJSONNote's doc comment CONTAINS the guard's name. A comment in the
+// same file naming a test that does not exist is structurally invisible to it,
+// which is what happened. This is the reverse direction, and it is the
+// deterministic fix: a name is either resolvable or it is not, so nobody has to
+// notice.
+//
+// Resolution is REPO-WIDE, not package-local: comments here legitimately cite
+// tests in pkg/civitai (read_r2_test.go names
+// TestEscapeJSONStringControlCharsLeavesStructuralWhitespace, which lives
+// there), and a package-local resolver would report those as dangling.
+//
+// 🔴 WHAT IT DOES NOT COVER. The scan is scoped to the files above, not to the
+// tree: measured across all of internal/cmd, 31 comment-cited names do not
+// resolve — a mix of cross-package citations, hypothetical examples
+// (`TestFoo`), and real rot. Widening this to the package is a separate change
+// with 31 findings to triage, and pretending otherwise by globbing would make
+// the guard permanently red, which is worse than no guard.
+func TestItem38CommentsCiteTestsThatExist(t *testing.T) {
+	defined := repoTestFuncNames(t)
+	// POSITIVE CONTROL on the resolver: a walk that collected nothing declares
+	// every citation dangling, and a walk that collected garbage declares none.
+	if len(defined) < 1000 {
+		t.Fatalf("CONTROL failure, not a finding: found only %d Test functions in the "+
+			"module — the resolver is not reading the tree", len(defined))
+	}
+	if !defined["TestReadJSONNoteDescribesTheRepair"] {
+		t.Fatalf("CONTROL failure, not a finding: the resolver cannot see a test " +
+			"defined in this very file")
+	}
+	// NEGATIVE CONTROL: the resolver must NOT resolve the dead name this test
+	// exists because of. If it does, the resolver is matching something other
+	// than a test-function declaration and every verdict below is worthless.
+	const deadCitation = "TestReadJSONNoteWordingMatchesEmitJSON"
+	if defined[deadCitation] {
+		t.Fatalf("CONTROL failure, not a finding: the resolver claims to have found "+
+			"%s, the name this test exists because NOTHING defines. Either it has "+
+			"since been written — in which case delete this control — or the "+
+			"resolver is matching something that is not a test function declaration.",
+			deadCitation)
+	}
+
+	fset := token.NewFileSet()
+	cited := 0
+	for _, name := range item38CommentedFiles {
+		f, err := parser.ParseFile(fset, name, nil, parser.ParseComments)
+		if err != nil {
+			t.Fatalf("CONTROL failure, not a finding: cannot parse %s: %v", name, err)
+		}
+		for _, cg := range f.Comments {
+			for _, c := range cg.List {
+				for _, ident := range testIdentRe.FindAllString(c.Text, -1) {
+					cited++
+					if defined[ident] {
+						continue
+					}
+					t.Errorf("%s:%d cites %s, which no test function in this module "+
+						"declares.\nA comment naming a guard is a POINTER; an unresolvable "+
+						"one sends the next reader looking for a test that was never "+
+						"written, and reads as coverage while providing none.",
+						name, fset.Position(c.Pos()).Line, ident)
+				}
+			}
+		}
+	}
+	// POSITIVE CONTROL on the SCAN: zero citations found is indistinguishable
+	// from zero dangling citations.
+	if cited < 5 {
+		t.Fatalf("CONTROL failure, not a finding: the scan found only %d cited test "+
+			"names across %v — it is not reading the comments", cited, item38CommentedFiles)
+	}
+}
+
+// testIdentRe matches a Go test-function identifier as written in prose. The
+// 4-character tail keeps it off the bare word "Test".
+var testIdentRe = regexp.MustCompile(`\bTest[A-Za-z0-9_]{4,}\b`)
+
+// testFuncRe matches a test function DECLARATION at the start of a line.
+var testFuncRe = regexp.MustCompile(`(?m)^func (Test[A-Za-z0-9_]*)\s*\(`)
+
+// repoTestFuncNames returns every Test function declared anywhere in the
+// module, so a comment may cite a guard that lives in another package.
+func repoTestFuncNames(t *testing.T) map[string]bool {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot resolve the module root: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		t.Fatalf("CONTROL failure, not a finding: %s is not the module root "+
+			"(no go.mod): %v", root, err)
+	}
+	out := map[string]bool{}
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			n := d.Name()
+			if path != root && (strings.HasPrefix(n, ".") || n == "node_modules" ||
+				n == "dist" || n == "bin" || n == "testdata") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), "_test.go") {
+			return nil
+		}
+		src, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		for _, m := range testFuncRe.FindAllStringSubmatch(string(src), -1) {
+			out[m[1]] = true
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: walking the module: %v", err)
+	}
+	return out
 }

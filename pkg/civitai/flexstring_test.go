@@ -285,9 +285,19 @@ func TestSearchImagesDecodesANumericUsername(t *testing.T) {
 	if got := string(res.Items[1].Username); got != "quilted-heron" {
 		t.Errorf("string username decoded to %q, want %q", got, "quilted-heron")
 	}
-	// Raw is what --json emits, and it must still be the server's own bytes.
+	// Raw is what --json emits, and it must still carry the number UNQUOTED.
+	//
+	// This is a claim about the DOCUMENT, not about the bytes: an earlier
+	// revision said "it must still be the server's own bytes" and "--json is a
+	// raw passthrough", which is the same false byte-identity claim this branch
+	// corrected in internal/cmd/numeric_username_test.go and on every Raw field's
+	// doc comment. Raw is the body that DECODED — a body the API sent with a raw
+	// control byte inside a string is repaired first (EscapeJSONStringControlChars),
+	// and emitJSON re-indents on the way to stdout. Neither touches the digits
+	// below; both make byte-identity false.
 	if !strings.Contains(string(res.Raw), `"username":`+reportedUsername) {
-		t.Errorf("Raw no longer carries the server's unquoted username — --json is a raw passthrough:\n%s", res.Raw)
+		t.Errorf("Raw no longer carries the server's unquoted username — FlexString "+
+			"re-quoted it, or something marshalled the struct:\n%s", res.Raw)
 	}
 }
 

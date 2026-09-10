@@ -1083,13 +1083,19 @@ Behavior:
 
 ## Scripting with `--json`
 
-Every read subcommand takes `--json`, which prints the **raw `/api/v1/...` REST
-response** — a stable passthrough, not a CLI-invented shape. So the field schema
+Every read subcommand takes `--json`, which prints the `/api/v1/...` REST
+response as the API shaped it — not a CLI-invented shape. So the field schema
 is exactly the public Site API's; keep the
 [REST field reference](https://developer.civitai.com/site/reference/) open
 (e.g. [models](https://developer.civitai.com/site/reference/models),
 [model-versions](https://developer.civitai.com/site/reference/model-versions))
 rather than reverse-engineering fields with `jq keys`.
+
+🔴 **It passes through the DOCUMENT, not the BYTES — do not diff or hash
+`--json` output against the wire.** Two things change the bytes without changing
+the document. The first is cosmetic: **the output is re-indented**, so a compact
+API body comes out longer than it went in. The second is not, and it has its own
+paragraph below: **a body that will not parse is repaired first.**
 
 Two properties make the output safe to pipe:
 
@@ -1101,18 +1107,20 @@ Two properties make the output safe to pipe:
   exits `4` with `Error: not found (404): Model not found` on stderr and an empty
   stdout.
 
-One thing the CLI does change, and it is not cosmetic: the API intermittently
+The repair, in full. The API intermittently
 emits a **raw control byte** — a carriage return, most often — inside a `prompt`
 or `description` string, which is not legal JSON and used to fail the whole page
 ([#525](https://github.com/civitai/cli/issues/525)). When a page will not decode,
 the CLI rewrites those bytes as their JSON escapes (`\r`, `\u0001`) and decodes
 the repaired body, and that repaired body is what `--json` prints. The *document*
 is still the API's — the same strings, the same characters — but the bytes are
-not, which is another reason not to diff or hash `--json` output against the
-wire. A page that decodes as sent is passed through with no such rewrite.
+not: this is the second of the two byte changes named above, and the reason the
+warning against diffing or hashing is not just about whitespace. A page that
+decodes as sent is passed through with no such rewrite.
 
-Both properties hold for `civitai generate` and `civitai workflows …` too, but
-their payloads are **not** Site API REST shapes — generation has no REST route,
+Both of the two piping properties above hold for `civitai generate` and
+`civitai workflows …` too, but their payloads are **not** Site API REST
+shapes — generation has no REST route,
 so those commands pass through the raw *orchestrator* reply. Read
 [Generation `--json`](#generation---json) before scripting against them.
 

@@ -2,6 +2,7 @@ package civitai
 
 import (
 	"context"
+	"errors"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -15,11 +16,41 @@ import (
 )
 
 // This file is the follow-up to civitai/cli#526's audit. #526 added the
-// raw-control-byte repair; these tests cover the three things it left unpinned
-// and the one hole its shape opened.
+// raw-control-byte repair; these tests cover the things it left unpinned, the
+// hole its shape opened, and — added in round 3 — the exit code the fix for
+// that hole moved.
 //
-// Every test here is RED at 517fc76 (the #526 squash, i.e. origin/main before
-// this branch) and green at HEAD. The matrix is in the PR body.
+// 🔴 THE MATRIX IS HERE, AND IT IS NOT UNIFORM. An earlier revision of this
+// header said "every test here is RED at 517fc76 and green at HEAD" and
+// deferred the matrix to the PR body. Both halves were wrong: one of the five
+// tests below is labelled in its own doc comment as an INVARIANT GUARD that
+// PASSES at 517fc76 — so the header contradicted an accurate label 100 lines
+// under it — and a PR body is not in the tree, so a reader of the file could
+// not check either claim. A test you have not watched fail proves nothing, and
+// a header that says you watched them all fail when you did not is the same
+// error one level up.
+//
+// Measured by running this file against a `git archive 517fc76` tree, not
+// reasoned about:
+//
+//	TestGetIntoErrorSnippetQuotesTheWireBytesNotTheRepairedOnes   RED at 517fc76
+//	TestReadErrorSnippetStripsTerminalControlRunes                RED at 517fc76
+//	TestPostIntoRepairsControlBytesLikeGetInto                    RED at 517fc76
+//	TestDecodeBodyIsSharedByGetIntoAndPostInto                    RED at 517fc76
+//	TestGetIntoUnrepairableBodyReportsTheOriginalBytes            INVARIANT GUARD —
+//	                                                              PASSES at 517fc76;
+//	                                                              its value is the mutant
+//	TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne  see below
+//
+// The last one is a round-3 regression against THIS BRANCH, not against
+// 517fc76, and its row does not compress into the column above. Its subject is
+// the exit code that f936cfc — this branch's round-2 head — moved by classifying
+// a 429 on snippet()'s STRIPPED output: RED there, on the two classification
+// assertions. At 517fc76 it is ALSO red, but for the opposite reason and with
+// different assertions: that tree has no strip at all, so the classification
+// half passes and the two assertions that the DISPLAY is still filtered fail.
+// "Red at both ends, for opposite reasons" is the honest row; "red at 517fc76"
+// alone would read as regression coverage for a bug 517fc76 did not have.
 //
 // 🔴 The fixture strings below are pairwise distinct and distinct from every
 // constant asserted on, so a mutant that hardcodes one literal cannot satisfy
@@ -182,6 +213,120 @@ func TestPostIntoRepairsControlBytesLikeGetInto(t *testing.T) {
 	}
 	if got[0].Hash != "\v"+hash {
 		t.Errorf("the repair must not change the DOCUMENT, only its encoding: hash = %q", got[0].Hash)
+	}
+}
+
+// softHyphenIn429 is a 429 body from a THROTTLE, carrying one U+00AD SOFT
+// HYPHEN inside the word "many". U+00AD is Cf, therefore
+// Default_Ignorable_Code_Point, therefore in saferune's class — so the strip
+// joins "ma" and "ny" and produces the cap's own phrase out of bytes the server
+// never sent. Written as a Go escape rather than a literal (ST1018).
+//
+// The surrounding words are distinct from every other fixture in this file and
+// from the phrases isDeepPagingCap matches, so an assertion below cannot be
+// satisfied by a mutant that hardcodes another fixture's literal.
+const softHyphenIn429 = "{\"message\":\"Upstream throttle: too ma\u00adny pages " +
+	"queued on this key, retry in 41s\"}"
+
+// softHyphen is the same rune, for the assertion that the DISPLAY still strips
+// it. Named rather than written inline so the two cannot drift apart.
+const softHyphen = '\u00ad'
+
+// realDeepPagingCap is the server's actual cap message. It carries no ignorable
+// rune, so the strip cannot be what makes it match.
+const realDeepPagingCap = `{"message":"You've requested too many pages; please use cursors instead"}`
+
+// TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne is round 3's
+// finding 4, and it is the only BEHAVIOURAL one: a published exit code moved.
+//
+// 🔴 A DISPLAY FILTER BECAME A CLASSIFIER. readError extracts the server's
+// message, hands it to snippet() — which since this PR routes it through
+// internal/saferune — and then asked isDeepPagingCap() about the STRIPPED
+// string. isDeepPagingCap's own comment says the match is "deliberately narrow
+// so a real rate-limit 429 is never misclassified as a usage error", and
+// removing invisible runes can only WIDEN it, in exactly that direction: a 429
+// whose message carries one Default_Ignorable rune inside "many" was reclassified
+// from ErrRateLimited (exit 6) to ErrBadRequest (exit 2). Contrived for
+// Civitai's own backend; not contrived for the proxy, CDN and captive-portal
+// 429s readError also handles. AGENTS.md items 7 and 24 make that a published
+// contract.
+//
+// Both halves are needed and neither is redundant:
+//
+//   - (a) is the regression. It is RED at f936cfc (this branch before round 3)
+//     and green at HEAD.
+//   - (b) is the POSITIVE CONTROL on the classifier. Without it, `func
+//     isDeepPagingCap(string) bool { return false }` — and any fix that simply
+//     stopped calling it — passes (a) and this test asserts nothing.
+func TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne(t *testing.T) {
+	// (a) A throttle 429 the strip would turn into a cap.
+	c := serveOnce(t, http.StatusTooManyRequests, softHyphenIn429)
+	_, err := c.SearchModels(context.Background(), url.Values{})
+	if err == nil {
+		t.Fatal("a 429 must be an error; without it this test asserts on nothing")
+	}
+	if !errors.Is(err, ErrRateLimited) {
+		t.Errorf("a throttle 429 whose message merely CONTAINS an invisible rune lost "+
+			"ErrRateLimited (exit 6). The classifier is reading snippet()'s output, not "+
+			"the wire message — the CLI's own strip is inventing the cap phrase:\n%q", err)
+	}
+	if errors.Is(err, ErrBadRequest) {
+		t.Errorf("a throttle 429 was reclassified as a usage error (exit 2):\n%q", err)
+	}
+	// The DISPLAY must still be stripped. A "fix" that stopped stripping the
+	// message would satisfy both checks above and reopen the stderr hole §2 of
+	// claudedocs/decisions/38-read-body-repair-and-snippet.md closes.
+	if strings.ContainsRune(err.Error(), softHyphen) {
+		t.Errorf("U+00AD survived into the error string — snippet no longer strips "+
+			"what it prints:\n%q", err)
+	}
+	if !strings.Contains(err.Error(), "too many pages queued") {
+		t.Errorf("the server's own words are missing from the message, so the checks "+
+			"above are not about the fixture they name:\n%q", err)
+	}
+
+	// (b) The real cap must still be reclassified.
+	c = serveOnce(t, http.StatusTooManyRequests, realDeepPagingCap)
+	_, err = c.SearchModels(context.Background(), url.Values{})
+	if err == nil {
+		t.Fatal("a 429 must be an error; without it half (b) asserts on nothing")
+	}
+	if !errors.Is(err, ErrBadRequest) {
+		t.Errorf("the deep-paging cap must still be reclassified as a usage error "+
+			"(exit 2) — otherwise a scripter's 429 backoff loop spins on a request "+
+			"that is structurally doomed:\n%q", err)
+	}
+	if errors.Is(err, ErrRateLimited) {
+		t.Errorf("the deep-paging cap must NOT stay ErrRateLimited:\n%q", err)
+	}
+
+	// (c) The SECOND, deliberate consequence of classifying pre-snippet, pinned
+	// rather than left in a comment: snippet also truncates at 500 BYTES, so
+	// before this change a cap message whose phrase sat past the display budget
+	// was invisible to the classifier and exited 6 — a scripter's backoff loop
+	// spinning forever on a structurally doomed request. The bound is a display
+	// budget, not a statement about what the server said.
+	long := `{"message":"` + strings.Repeat("context, ", 70) +
+		"you have requested too many pages here" + `"}`
+	if len(long) <= 520 {
+		t.Fatalf("CONTROL failure, not a finding: the fixture is %d bytes, which does "+
+			"not exceed snippet's 500-byte bound — half (c) would assert nothing", len(long))
+	}
+	c = serveOnce(t, http.StatusTooManyRequests, long)
+	_, err = c.SearchModels(context.Background(), url.Values{})
+	if err == nil {
+		t.Fatal("a 429 must be an error; without it half (c) asserts on nothing")
+	}
+	// Positive control on the FIXTURE: the phrase really is past the bound, so
+	// the assertion below is about truncation and not about the phrase.
+	if strings.Contains(snippet([]byte(long)), "too many pages") {
+		t.Fatal("CONTROL failure, not a finding: the cap phrase survives snippet's " +
+			"truncation, so half (c) is not testing what it says")
+	}
+	if !errors.Is(err, ErrBadRequest) {
+		t.Errorf("a deep-paging cap whose phrase falls past snippet's 500-byte "+
+			"display bound must still be reclassified (exit 2). The classifier is "+
+			"reading the truncated string:\n%q", err)
 	}
 }
 
