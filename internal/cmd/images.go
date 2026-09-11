@@ -243,17 +243,18 @@ func printImageList(cmd *cobra.Command, items []civitai.ImageItem) {
 	fmt.Fprintln(tw, "ID\tUPLOADER\tBASE MODEL\tSIZE\tNSFW\tHEARTS\tCOMMENTS\tURL")
 	for _, im := range items {
 		fmt.Fprintf(tw, "%d\t%s\t%s\t%dx%d\t%s\t%d\t%d\t%s\n",
-			im.ID, orDash(safeTerm(im.Username.String())), orDash(truncate(safeTerm(im.BaseModel), 24)),
-			im.Width, im.Height, orDash(safeTerm(im.NSFWLevel)),
-			im.Stats.HeartCount, im.Stats.CommentCount, safeTerm(im.URL))
+			im.ID, orDash(safeTermSingle(im.Username.String())), orDash(truncate(safeTermSingle(im.BaseModel), 24)),
+			im.Width, im.Height, orDash(safeTermSingle(im.NSFWLevel)),
+			im.Stats.HeartCount, im.Stats.CommentCount, safeTermSingle(im.URL))
 	}
 	_ = tw.Flush()
 }
 
 // printImageListMeta renders each image as an indented detail block instead of
 // the compact table, so it can carry the generation metadata (prompt, settings)
-// that --meta requests. Every server-origin string is routed through safeTerm —
-// prompts are attacker-controlled user text and can carry ANSI/control bytes.
+// that --meta requests. Every server-origin string is routed through safeTerm or
+// safeTermSingle — prompts are indented multi-line text, while inline metadata and
+// table columns are sanitized to single lines to prevent output forgery (#552).
 func printImageListMeta(cmd *cobra.Command, items []civitai.ImageItem) {
 	out := cmd.OutOrStdout()
 	if len(items) == 0 {
@@ -267,12 +268,13 @@ func printImageListMeta(cmd *cobra.Command, items []civitai.ImageItem) {
 
 // printImageMetaBlock renders one image as an indented detail block carrying its
 // generation metadata (prompt, settings, and the resources "recipe"). Every
-// server-origin string is routed through safeTerm — prompts, resource names and
-// hashes are attacker-controlled user text that can carry ANSI/control bytes.
+// server-origin string is routed through safeTerm or safeTermSingle — prompts are
+// indented multi-line text, while inline metadata (model, sampler, resources,
+// hashes, URL) is sanitized to single lines to prevent output forgery (#552).
 // Shared by `images search --meta` and `images get`.
 func printImageMetaBlock(out io.Writer, im civitai.ImageItem) {
 	fmt.Fprintf(out, "%d  [%s]  %dx%d  by %s\n",
-		im.ID, orDash(safeTerm(im.NSFWLevel)), im.Width, im.Height, orDash(safeTerm(im.Username.String())))
+		im.ID, orDash(safeTermSingle(im.NSFWLevel)), im.Width, im.Height, orDash(safeTermSingle(im.Username.String())))
 	m, state := im.ParseMeta()
 	switch state {
 	case civitai.MetaAbsent:
@@ -285,9 +287,9 @@ func printImageMetaBlock(out io.Writer, im civitai.ImageItem) {
 		fmt.Fprintln(out, "  meta: (unrecognized format)")
 	default: // civitai.MetaOK
 		fmt.Fprintf(out, "  model: %s   sampler: %s   cfg: %s   steps: %s   seed: %s\n",
-			orDash(safeTerm(m.Model)), orDash(safeTerm(m.Sampler)),
-			orDash(safeTerm(m.CfgScaleString())), orDash(safeTerm(m.StepsString())),
-			orDash(safeTerm(m.SeedString())))
+			orDash(safeTermSingle(m.Model)), orDash(safeTermSingle(m.Sampler)),
+			orDash(safeTermSingle(m.CfgScaleString())), orDash(safeTermSingle(m.StepsString())),
+			orDash(safeTermSingle(m.SeedString())))
 		if strings.TrimSpace(m.Prompt) != "" {
 			fmt.Fprintf(out, "  prompt: %s\n", indentContinuation(safeTerm(m.Prompt), "          "))
 		}
@@ -296,7 +298,7 @@ func printImageMetaBlock(out io.Writer, im civitai.ImageItem) {
 		}
 		printImageResources(out, m)
 	}
-	fmt.Fprintf(out, "  url: %s\n", safeTerm(im.URL))
+	fmt.Fprintf(out, "  url: %s\n", safeTermSingle(im.URL))
 }
 
 // printImageResources renders the meta.resources reproduction recipe — one line
@@ -312,12 +314,12 @@ func printImageResources(out io.Writer, m civitai.ImageMeta) {
 	fmt.Fprintln(out, "  resources:")
 	for _, r := range rs {
 		line := fmt.Sprintf("    - [%s] %s",
-			orDash(safeTerm(strings.TrimSpace(r.Type))), orDash(safeTerm(strings.TrimSpace(r.Name))))
+			orDash(safeTermSingle(strings.TrimSpace(r.Type))), orDash(safeTermSingle(strings.TrimSpace(r.Name))))
 		if w := strings.TrimSpace(r.WeightString()); w != "" {
-			line += "  weight " + safeTerm(w)
+			line += "  weight " + safeTermSingle(w)
 		}
 		if h := strings.TrimSpace(m.ResolveHash(r)); h != "" {
-			line += "  hash " + safeTerm(h)
+			line += "  hash " + safeTermSingle(h)
 		}
 		fmt.Fprintln(out, line)
 	}

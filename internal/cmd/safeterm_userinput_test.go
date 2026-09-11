@@ -81,6 +81,7 @@ var bareIdentArgs = map[string]string{
 	"name":       "SERVER: a published file name",
 	"h":          "SERVER: a hash out of image metadata",
 	"baseModel":  "SERVER: a base-model label",
+	"s":          "PASSTHROUGH: safeTermSingle forwards its argument to safeTerm",
 }
 
 // minSafeTermCallsScanned is the POSITIVE CONTROL. A parser that has stopped
@@ -117,17 +118,17 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 				return true
 			}
 			id, ok := ce.Fun.(*ast.Ident)
-			if !ok || id.Name != "safeTerm" || len(ce.Args) != 1 {
+			if !ok || (id.Name != "safeTerm" && id.Name != "safeTermSingle") || len(ce.Args) != 1 {
 				return true
 			}
 			scanned++
 			arg := renderExpr(ce.Args[0])
 			if why, forbidden := userTypedArgs[arg]; forbidden {
-				bad = append(bad, fmt.Sprintf("%s: safeTerm(%s) — %s", fset.Position(ce.Lparen), arg, why))
+				bad = append(bad, fmt.Sprintf("%s: %s(%s) — %s", fset.Position(ce.Lparen), id.Name, arg, why))
 			}
 			if _, bare := ce.Args[0].(*ast.Ident); bare {
 				if _, known := bareIdentArgs[arg]; !known {
-					unclassified = append(unclassified, fmt.Sprintf("%s: safeTerm(%s)", fset.Position(ce.Lparen), arg))
+					unclassified = append(unclassified, fmt.Sprintf("%s: %s(%s)", fset.Position(ce.Lparen), id.Name, arg))
 				}
 				seenBare[arg] = true
 			}

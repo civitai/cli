@@ -43,6 +43,27 @@ func safeTerm(s string) string {
 	return saferune.Strip(s)
 }
 
+// safeTermSingle ensures a server-origin string occupies exactly one line,
+// stripping terminal escapes via safeTerm and replacing any newline with a space.
+//
+// 🔴 IT IS FOR INLINE AND TABULAR FIELDS, NOT FREE TEXT.
+// safeTerm deliberately keeps \n so multi-line fields (prompt, failure reasons)
+// can format legitimately. But inline metadata (model, sampler, username, URL)
+// and table columns cannot contain newlines without breaking column alignment
+// or forging rows in tabwriter — indentContinuation cannot fix an inline field
+// because it has no indentation baseline, and cannot fix a tabwriter row because
+// tabwriter splits on \n regardless of padding (civitai/cli#552).
+//
+// Note on \r: safeTerm already strips \r as a C0 control rune (Cc), so no
+// carriage return survives to this function. Only \n needs replacing.
+func safeTermSingle(s string) string {
+	s = safeTerm(s)
+	if !strings.Contains(s, "\n") {
+		return s
+	}
+	return strings.ReplaceAll(s, "\n", " ")
+}
+
 // indentContinuation prefixes every line of s AFTER the first with pad, so a
 // multi-line SERVER string stays visibly inside the list item or block that
 // introduced it.
