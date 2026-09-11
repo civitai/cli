@@ -444,7 +444,7 @@ item must carry a trigger that is a routing question rather than a label
 
 36. **Editing what `agent-setup`'s block says — its local-dev branch, script
     table, lockfile rule, flattening it to one list, the SCAFFOLDER an author
-    with no app should run, or what its Docs section links?**
+    with no app should run, or what its Docs section links and where?**
     → evidence: claudedocs/decisions/36-agents-block-per-project.md
 
 37. **Typing a `pkg/civitai` username as `string`, or "fixing" a `FlexString`

@@ -23,9 +23,75 @@ import (
 // scaffold.Render and then drives the real command, which is the check the blind
 // dogfood ran by hand.
 
+// declaredProjectKindRe pulls the `projectKind` constants out of
+// agent_setup_project.go's own source. Go has no way to enumerate the members of
+// a string-constant "enum" at runtime, so the alternative to reading the source
+// is a literal that silently stops being the whole set — which is exactly what
+// the comment on allProjectShapesForTest used to claim it was not.
+var declaredProjectKindRe = regexp.MustCompile(`(?m)^\s*project\w+\s+projectKind\s*=\s*"([^"]+)"`)
+
+// declaredProjectKinds returns every projectKind value declared in
+// agent_setup_project.go, in source order.
+//
+// 🔴 THIS IS THE DERIVATION THE COMMENT BELOW USED TO ASSERT WITHOUT DOING.
+// `allProjectShapesForTest` names its three kinds as a literal; nothing made a
+// fourth constant show up there. Reading the source closes that, and
+// TestAllProjectShapesCoversEveryDeclaredKind is where the two are compared.
+func declaredProjectKinds(t *testing.T) []projectKind {
+	t.Helper()
+	path := filepath.Join(repoRootDir(t), "internal", "cmd", "agent_setup_project.go")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	matches := declaredProjectKindRe.FindAllStringSubmatch(string(src), -1)
+	if len(matches) < 3 {
+		t.Fatalf("CONTROL failure, not a finding: declaredProjectKindRe (%s) matched %d constant(s) in %s, "+
+			"want >= 3. The regex has stopped reading the declarations, so every set comparison built on it "+
+			"is a comparison against an empty set", declaredProjectKindRe, len(matches), path)
+	}
+	kinds := make([]projectKind, 0, len(matches))
+	for _, m := range matches {
+		kinds = append(kinds, projectKind(m[1]))
+	}
+	return kinds
+}
+
+// TestAllProjectShapesCoversEveryDeclaredKind makes the sentence on
+// allProjectShapesForTest true by checking it: every `projectKind` constant
+// declared in agent_setup_project.go is rendered by at least one shape, and no
+// shape carries a kind that is not declared.
+func TestAllProjectShapesCoversEveryDeclaredKind(t *testing.T) {
+	declared := declaredProjectKinds(t)
+	seen := map[projectKind]bool{}
+	for _, shape := range allProjectShapesForTest() {
+		seen[shape.Kind] = true
+	}
+	for _, k := range declared {
+		if !seen[k] {
+			t.Errorf("projectKind %q is declared in internal/cmd/agent_setup_project.go and rendered by NO "+
+				"shape in allProjectShapesForTest. Every guard in this package that loops over the shapes is "+
+				"silent about that branch of the template — add a shape for it.", k)
+		}
+	}
+	declaredSet := map[projectKind]bool{}
+	for _, k := range declared {
+		declaredSet[k] = true
+	}
+	for k := range seen {
+		if !declaredSet[k] {
+			t.Errorf("allProjectShapesForTest renders kind %q, which is not declared as a projectKind constant "+
+				"in internal/cmd/agent_setup_project.go — the constant was renamed or removed and the shapes "+
+				"were left behind.", k)
+		}
+	}
+}
+
 // allProjectShapesForTest enumerates the shapes the template must render for.
-// It is derived from the projectKind constants' own list rather than from a
-// literal, so a fourth kind cannot be added without a rendering test for it.
+// The kind list below is a literal — Go cannot enumerate a string-constant set —
+// and TestAllProjectShapesCoversEveryDeclaredKind is what stops it drifting from
+// the projectKind constants, so a fourth kind cannot be added without a rendering
+// test for it.
 func allProjectShapesForTest() []projectShape {
 	kinds := []projectKind{projectNPM, projectNoBuild, projectNone}
 	shapes := make([]projectShape, 0, len(kinds)+1)

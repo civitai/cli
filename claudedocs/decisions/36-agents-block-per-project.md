@@ -285,11 +285,42 @@ line:
    *does* return is not one of the seven. A list nobody maintains is a list that
    is wrong in both directions.
 
+### Re-measured 2026-09-11, WITHOUT following redirects
+
+The table above was taken with a redirect-following client, which cannot tell
+"this URL is served" from "this URL redirects somewhere that is". Re-run from the
+same host with the probe's own User-Agent and `CheckRedirect` disabled:
+
+| Probe | Result |
+|---|---|
+| `developer.civitai.com/apps/guide` | `301` → `http://developer.civitai.com/apps/guide/` |
+| `developer.civitai.com/apps/guide/` | `200` |
+| `developer.civitai.com/apps/reference` | `301` → `http://developer.civitai.com/apps/reference/` |
+| `developer.civitai.com/apps/reference/` | `200` |
+| `developer.civitai.com/apps/examples` | `200` |
+| `developer.civitai.com/apps/examples/` | `404` |
+| `developer.civitai.com/apps/showcase` | `200` |
+| `developer.civitai.com/apps/showcase/` | `404` |
+| `developer.civitai.com/llms.txt` | `200` |
+| `developer.civitai.com/__civitai-cli-link-probe-must-404__` | `404` (negative control) |
+
+All four URLs the block ships answer `200` at exactly the spelling they ship,
+with **zero** hops. Note the redirect target's scheme: the hop lands on cleartext
+`http`, so a following probe scores an https→http downgrade as a clean `200`.
+
 ### The trailing slash is measured, never tidied
 
 `/apps/guide/` is `200` **with** its slash; `/apps/showcase` is `200`
 **without** one. There is no site-wide rule to infer, so the spelling of any URL
 in this section is a measurement, not a convention. Do not normalise them by eye.
+
+🔴 **A withdrawn claim, not a replaced one.** `internal/cmd/agent_setup_docs_test.go`
+carried a comment saying `/apps/showcase` is `200` while `/apps/showcase/` `404`s
+— true, and it re-measures true — and then that "`/apps/guide/` is the other way
+round", which reads as `/apps/guide` `404`ing. It does not: it `301`s. Nothing
+narrower is put in its place, because the table above shows four distinct
+behaviours across five paths and there is no rule to state. Each spelling is a
+measurement; run the probe.
 
 ### Guards
 
@@ -305,16 +336,68 @@ in this section is a measurement, not a convention. Do not normalise them by eye
   per-shape because the three `{{ if }}` branches are what a mis-nested template
   edit can drop the section out of, and the `static` author — the one with the
   least local code to read — is exactly the reader who needs the examples most.
+  Its shape control **counts KINDS, not shapes**: the wanted set is read out of
+  `agent_setup_project.go`'s own `projectKind` constants, so three shapes of one
+  kind no longer satisfy it (see the audit repairs below).
 - `TestDocsSectionExtractorCanFail` — negative control for `docsSectionOf`, in
   both directions: it must report *absent* for a block with no section, *present*
   for one that has it, and must stop at the END marker.
+- `TestEveryDocsURLSpellingIsLedgered` — the bidirectional ledger over **where a
+  docs URL is spelled in this repo**. It walks the tree and fails both when a
+  file outside `docsURLSpellingLedger` names one of the block's URLs and when a
+  ledgered file stops naming any. Dated records under `claudedocs/handoff-` are
+  exempt: they record what was true when written and are not corrected.
 - `TestBlockDocsLinksResolve` — the liveness probe, **opt-in behind
   `CIVITAI_CHECK_DOCS_LINKS=1`**, following `internal/scaffold`'s
   `CIVITAI_CHECK_PUBLISHED_PINS` pattern so an offline `make ci` stays green. It
-  carries its own negative control (a path on the same host that cannot exist
-  must answer `>= 400` or the whole run is declared meaningless), and a transport
-  failure **skips** rather than fails — "the network is down" and "the page is
-  gone" are different findings.
+  does **not follow redirects** (the spelling that ships is the claim), probes
+  **every** link before diagnosing anything, and separates four verdicts that
+  lead to four different actions: live (`< 300`), **moved** (`3xx`), **gone**
+  (`404`/`410` — the dead-link finding), and **cannot tell**
+  (`401`/`403`/`429`/`5xx`, which a blocked edge produces as readily as a broken
+  page). A transport failure on one link is collected and the run continues; a
+  run that could not reach every link reports **SKIP with the counts**, never a
+  pass.
+
+#### The audit repairs (#549 follow-up)
+
+An adversarial audit of #549 found the probe's guards, not its conclusion. Each
+was reproduced before it was fixed:
+
+- **The gate could report `ok` without probing the link it existed to check.**
+  The per-link loop did `case err != nil: t.Skipf(...)`, abandoning the whole run
+  on the first transport error. Demonstrated: with only the FIRST link's host
+  made unresolvable and `/apps/examples` pointed at a known-404 path, the
+  pre-change test printed one skip line and exited `ok` — the dead link was never
+  fetched. The same tree at HEAD reports `checked 3 of 4 link(s); 1 unreachable`
+  and fails on the dead link.
+- **Negative control present, positive control absent.** The `mustNotResolve`
+  control is satisfied by an edge that `403`s *everything*, which is also what
+  makes every real link `>= 400`. Demonstrated against a local server answering
+  `403` to every path: the pre-change test emitted four `DEAD LINK IN THE MANAGED
+  BLOCK … fix: correct it in internal/cmd/templates/agents-app.md` errors — the
+  exact wrong instruction. HEAD emits a `CANNOT TELL` message that says in as
+  many words that it is **not** a dead-link finding, and skips when no link in
+  the run answered `< 300` (no positive control ⇒ no verdict).
+- **The probe followed redirects while the comment claimed the spelling was
+  measured.** Demonstrated with a local `301` → `200`: the pre-change test logged
+  `-> 200` and passed; HEAD reports `MOVED LINK`, with the `Location`.
+- **"Correcting the URL is those two edits and nothing else" was false when it
+  was written** — #549 itself added a third spelling, in this file. Measured
+  2026-09-11 over the whole tree, ignored files included: 9 lines in 4 files name
+  `developer.civitai.com/apps/examples`. Replaced by the ledger above rather than
+  by a narrower sentence.
+- **The three-branch control counted shapes, not kinds.** `len(shapes) < 3` is
+  satisfied by three shapes of one kind; `allProjectShapesForTest` returns four
+  shapes over three kinds, so the two numbers were never the same claim.
+  Demonstrated by rewriting its kind list to `{npm, npm, npm}`: the pre-change
+  control passed. The wanted set is now read from `agent_setup_project.go`'s own
+  constants, which also repairs an adjacent comment the audit flagged —
+  `allProjectShapesForTest` claimed to be "derived from the projectKind
+  constants' own list rather than from a literal" while being a literal.
+  `TestAllProjectShapesCoversEveryDeclaredKind` (in
+  `internal/cmd/agent_setup_project_test.go`) is the derivation that makes the
+  sentence true: a fourth `projectKind` constant with no shape now fails.
 
 Red-then-green, run at `origin/main` `8e7d2dc` with only the test file added:
 
@@ -331,13 +414,16 @@ HEAD.
 
 ### 🔴 WHAT IS NOT ESTABLISHED
 
-**The page was not live when this shipped.** `developer.civitai.com/apps/examples`
-answered `404` — both with and without a trailing slash — at the time of the
-measurements above, while the other three links in the same section answered
-`200`. The docs page is authored in a separate repository, in parallel. So this
-records a **dead link that was shipped deliberately, on the expectation that the
-page lands**; `TestBlockDocsLinksResolve` is the check that says when it has, and
-it is the check to run before believing any claim that the link works.
+**The page was not live when this shipped, and IS live now.**
+`developer.civitai.com/apps/examples` answered `404` — both with and without a
+trailing slash — when #549 was written, while the other three links in the same
+section answered `200`: a **dead link shipped deliberately, on the expectation
+that the page lands**. It landed. Re-measured 2026-09-11 with
+`CIVITAI_CHECK_DOCS_LINKS=1`, all four links answer `200` at the spelling that
+ships, with zero redirect hops. That is a measurement of **that day**:
+`TestBlockDocsLinksResolve` is still the check to run before believing any claim
+that the link works, and it is now the only thing that would catch the link dying
+later.
 
 **No CI job sets `CIVITAI_CHECK_DOCS_LINKS`.** Adding one means editing
 `.github/workflows/*`, which AGENTS.md puts behind "ask first". Until that
