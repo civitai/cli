@@ -314,8 +314,8 @@ the `civitai.com` zone. Never the origin, never the docs repo.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1, 2, 3, 5, 6 and 7 are DONE — numbering is preserved deliberately** so any
-live `claim-work` slug keeps pointing at the item it was taken for.
+🔴 **Ranks 1, 2, 3, 5, 6, 7, 8 and 9 are DONE — numbering is preserved deliberately** so
+any live `claim-work` slug keeps pointing at the item it was taken for.
 
 1. ~~**Unfreeze `civitai/cli`**~~ — **DONE**, cli#529.
    forcing: none
@@ -327,28 +327,33 @@ live `claim-work` slug keeps pointing at the item it was taken for.
    `/.well-known/agent-skills/index.json` with SHA-256 digests, advertised via
    `Link:` headers. Cloudflare ships the artifacts and advertises none; Mintlify
    advertises. Nobody does both. Repo: `civitai/civitai-developer-docs`.
+   🔴 **Check `ai-catalog.yml` FIRST — it already exists** in that repo with a daily
+   `cron: '37 6 * * *'` and a network half, so some of this may be built. Read it before
+   scoping.
    forcing: none
 5. ~~**Delete or gitignore `node_modules/`**~~ — **DONE**, cli#537.
    forcing: none
 6. ~~**Example apps**~~ — **DONE**: docs#71 + cli#549, audit-fixed by docs#72 + cli#553,
-   verified against prod after the 16:24:59Z deploy.
+   verified against prod after the 16:24:59Z deploy. Residual → rank 12.
    forcing: none
 7. ~~**cli#530**~~ — **DONE**, cli#540, verified by run 34559798234.
    forcing: none
-8. **A hard byte ceiling on `prompt.md`, enforced by `check-agent-setup.mjs`.**
-   2,798 → 6,949 B with nothing measuring the total. Measured failure mode is
-   length: a real agent's `WebFetch` returned an LLM summary that dropped the
-   install-failure section, both MCP URLs and all of step 5.
+8. ~~**A hard byte ceiling on `prompt.md`**~~ — **DONE by a PARALLEL SESSION**, not this
+   one: `civitai/civitai-developer-docs#74` merged 2026-09-11T16:36:05Z (`11311ab`),
+   "a byte budget on prompt.md, with a ceiling and a floor". Claim
+   `agent-setup-onboarding-8` was taken ~16:20Z and **may still be held** — check
+   `claim-work --list` and release it if the holder is gone.
    forcing: none
-9. **cli#542** — `snippet()`'s "every argument is server bytes" invariant is
-   unpinned; the #393 guard (`internal/cmd/safeterm_userinput_test.go:92`) parses
-   only `internal/cmd` and matches only `safeTerm(<one arg>)`, so it is blind to
-   `pkg/civitai`'s `saferune.Strip`. Read with cli#399 — same family, other side of
-   the seam, likely one instrument fixes both.
+9. ~~**cli#542** — `snippet()`'s "every argument is server bytes" invariant~~ — **DONE by
+   a PARALLEL SESSION**: issue #542 is **CLOSED**, pinned by cli#557 (`6fce127`),
+   "test(civitai): pin snippet()'s 'every argument is server bytes' invariant".
+   🔴 **cli#399, the other side of that seam, was NOT necessarily closed with it** — the
+   old text predicted one instrument would fix both. Verify before assuming.
    forcing: none
 10. **cli#543** — the read `--help` rune budget: `users` sits **5 runes** under the
     1400 cap after #541, and `read_help_test.go:164-172` still names
     `images search` as the longest consumer, which stopped being true.
+    **Confirmed still OPEN** 2026-09-11.
     forcing: none
 11. **Residuals of decisions item 38**, all in
     `claudedocs/decisions/38-read-body-repair-and-snippet.md`: four comment-citation
@@ -357,16 +362,29 @@ live `claim-work` slug keeps pointing at the item it was taken for.
     429 → exit 2 reclassification; and half (c) of
     `TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne`.
     forcing: none
-12. **NEW — nothing notifies on a red daily example-app drift run.**
+12. **Nothing notifies on a red daily example-app drift run.**
     `civitai/civitai-developer-docs:.github/workflows/appblocks-drift.yml` has no
-    notify/issue step, so BOTH a genuine rot failure AND a fully-skipped
-    "NOTHING WAS VERIFIED" run are visible only to someone opening the Actions tab.
-    This is the one remaining hole in the rot-detection story rank 6 was built on: the
-    guard can go red correctly and nobody finds out. Adding a notify step is a
-    workflow edit, which `AGENTS.md` puts behind "ask first".
-    forcing: user — flagged to the operator 2026-09-11 and explicitly left as their
-    call; no decision recorded yet. Closing condition: either a notify step merges, or
-    the operator states in writing that Actions-tab-only visibility is accepted.
+    notify/issue step — verified by grep 2026-09-11. The guard has two halves:
+    `example-apps.yml` (PR + push, `--offline`) catches rot a PR introduces;
+    the scheduled `appblocks-drift.yml` half hits `api.github.com` per repo and catches
+    EXTERNAL rot (an owner renaming or archiving). **The second half's result surfaces
+    nowhere** — a red run and a fully-skipped "nothing was verified" run are
+    indistinguishable unless someone opens the Actions tab. This is the last open leg of
+    rank 6's "so it cannot rot" objective: external rot is DETECTED but not DELIVERED.
+    Adding a notify step is a workflow edit, which `AGENTS.md` puts behind "ask first".
+    forcing: user — flagged to the operator 2026-09-11 and explicitly left as their call.
+    Closing condition: either a notify step merges, or the operator states in writing
+    that Actions-tab-only visibility is accepted.
+13. **The example page's per-repo SCOPE and HOOK lists have no rot guard at all.**
+    `civitai/civitai-developer-docs:apps/examples.md` — the audit checked all 8 repos'
+    `scopes` against `block.manifest.json` (exact, including order) and every `use*` hook
+    against the identifiers imported from `@civitai/blocks-react` (exact), but that was a
+    ONE-TIME read. `check-example-apps.mjs` guards only URL liveness. These are the
+    page's most authoritative-looking content and its least protected, and all 8 repos
+    were pushed within days of the page being written, so drift is likely and silent.
+    Either date-stamp those lists as-of, or extend the guard to fetch each
+    `block.manifest.json` and compare.
+    forcing: none
 
 ## Gotchas / decisions / dead-ends
 
@@ -715,6 +733,36 @@ live `claim-work` slug keeps pointing at the item it was taken for.
   between `→ evidence:` pointers and `claudedocs/decisions/` files — so a new decisions
   file REQUIRES a new item. Extending item 36's trigger cost +1 B, then +10 B for the
   audit fix. Now **30,453 / 30,500**. Measure before briefing anyone to add an item.
+
+### Added 2026-09-11 (session 2, closing sweep)
+
+- 🔴 **THE RANKED LIST WENT STALE WITHIN MINUTES BECAUSE PARALLEL SESSIONS WERE DRAINING
+  IT, AND A STALE LIST IS A DUPLICATE-WORK GENERATOR, NOT A COSMETIC PROBLEM.** Between
+  this session writing "ranks 8–11 untouched" and re-checking ~20 minutes later, **rank 8
+  shipped** (docs#74, `11311ab`) and **rank 9 shipped** (cli#557, `6fce127`, issue #542
+  CLOSED) — neither by this session. A `/resume` reading the list as written would have
+  claimed and re-done both. **Re-verify every ranked item against live state immediately
+  before writing the list, not when you formed it** — `gh issue view <n> --json state`
+  and `gh pr view` are one command each. `via: measurement`
+- 🔴 **THREE RESOLVED INVESTIGATIONS STILL CARRY "STILL OPEN" HEADINGS, because the
+  Open-investigations section is APPEND-only and retiring the old heading is a separate
+  manual step nobody does.** Live now: two `⚠ STILL OPEN — Python-urllib 403` headings
+  (lines ~212, ~255) sit ABOVE the `✅ RESOLVED` block that supersedes them, and a
+  `🔴 STILL OPEN — bump-scaffold-pins` sits above its own RESOLVED block. **Measured
+  2026-09-11: the urllib 403 is GONE** — `Python-urllib/3.11`, `python-requests` and
+  `ClaudeBot` all return **200** from `developer.civitai.com`. A reader who stops at the
+  first matching heading gets the opposite of the truth. The handoff skill's own rule
+  says to retire the superseded heading in the SAME delta; the append semantics make that
+  easy to skip. **When you append a RESOLVED block, say so in the REPLACE'd status
+  section too** — that one is overwritten and cannot accumulate contradictions.
+  `via: command`
+- ⚠ **`claim-work` released itself out from under this session.** The
+  `agent-setup-onboarding-6` claim was **already gone** when this session went to release
+  it (`nothing to release — ref does not exist`), and `agent-setup-onboarding-8` was
+  taken by a different session mid-arc. The lock FAILS OPEN by design, so a held claim is
+  not a guarantee of exclusivity and an absent one is not proof the work is unowned.
+  **Sweep `gh pr list --state open` as well** — that is the only thing that sees an
+  UNCLAIMED duplicate. `via: measurement`
 
 ## How to verify
 
