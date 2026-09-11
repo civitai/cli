@@ -8,7 +8,7 @@
 Guards: `pkg/civitai/read_repair_test.go`, `pkg/civitai/raw_doc_ledger_test.go`,
 `internal/cmd/read_json_note_test.go`, `internal/cmd/read_help_test.go`,
 `internal/cmd/read_r2_test.go`, `cmd/civitai/read_error_stderr_test.go`,
-`saferune_callers_ledger_test.go`.
+`saferune_callers_ledger_test.go`, `pkg/civitai/snippet_args_ledger_test.go`.
 This list and `item38CommentedFiles` — the set whose comments are checked for
 dangling test citations — are pinned equal by
 `TestItem38FileLedgerMatchesTheDecisionHeader`. They disagreed in both
@@ -132,6 +132,33 @@ Pinned by `TestReadErrorSnippetStripsTerminalControlRunes` (unit) and
 reply, the real SDK, the real `errorLine`, plus the published exit code for a
 404). The seam test exists because each side was already tested and neither side
 owned the join.
+
+🔴 **THE GUARD CITED TWO PARAGRAPHS UP COULD NOT SEE THE CALL SITE THIS SECTION
+CHOSE, AND THAT IS NOW FIXED — civitai/cli#542.** The `errorLine` rejection
+leans on `TestSafeTermIsNeverAppliedToUserTypedInput` as the thing that would
+catch the #393 regression. That test parses **only `internal/cmd`'s** own
+sources and matches **only the spelling `safeTerm(<one arg>)`**, so it is
+structurally blind to the strip this section actually shipped — `saferune.Strip`
+inside `pkg/civitai`'s `snippet`. The reason given for rejecting one option was
+therefore not available to guard the option taken instead.
+
+`read.go` states the missing half in prose, over present **and future** call
+sites: *"EVERY ARGUMENT THIS FUNCTION IS EVER GIVEN IS THE SERVER'S OWN BYTES"*.
+`TestSnippetArgumentsAreAllServerBytes` (`pkg/civitai/snippet_args_ledger_test.go`)
+is the assertion. It walks this package's non-test sources, requires every
+`snippet(...)` call site to have its argument's origin written down — keyed by
+**enclosing function**, so the three different `raw`s in three files cannot
+share one note — and fails in both directions: an unclassified site (the set
+grew) and a classified entry with no matching site (the set shrank, so the note
+is stale and the next reader would trust it). Marking a site `server: false` is
+not permission; it is its own failure, so writing the truth down does not buy a
+pass. A positive control on the call-site count keeps a walk that has stopped
+matching from reporting a serene zero.
+
+It is deliberately a **third** file rather than an extension of either existing
+ledger: `safeterm_userinput_test.go` parses a different package, and
+`saferune_callers_ledger_test.go` (module root) answers *who calls saferune*,
+never *with what*.
 
 ## 3. What `--json` and `Raw` may CLAIM
 
