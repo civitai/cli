@@ -144,12 +144,25 @@ func TestDownloadFileRefusesLoopbackIP(t *testing.T) {
 	}
 }
 
-// TestDownloadFileRedirectToLoopbackRefused proves the dial guard also catches a
-// REDIRECT to an internal IP: a public-looking first hop that 302s to loopback
-// is refused when the guard follows the redirect and dials the internal address.
-// (Modeled with the bypass off; the first hop is itself https loopback, which the
-// guard blocks — the same mechanism that would block a redirect target, since
-// CheckRedirect + the dial Control run on every hop.)
+// TestDownloadFileRedirectTargetSchemeChecked asserts the WIRING: the client
+// downloadHTTPClient builds actually carries our redirect policy, and that
+// policy refuses a plain-http target.
+//
+// It is deliberately narrow. The policy's own decision logic is owned by
+// TestCheckDownloadRedirectRejectsHTTP, which calls checkDownloadRedirect
+// directly; what nothing else covers is whether the client ever INSTALLS it —
+// a `CheckRedirect: nil` would leave every redirect unchecked with that other
+// test still green. So this one asserts CheckRedirect is non-nil and then
+// invokes it through the built client.
+//
+// 🔴 THIS COMMENT USED TO NAME A TEST NOTHING DECLARES, AND TO DESCRIBE A
+// DIFFERENT CASE: a public-looking first hop that 302s to loopback — a
+// redirect-to-LOOPBACK story — over a function that builds a
+// redirect-to-PLAIN-HTTP case and never issues a request at all. Both halves
+// were wrong, which is why it was rewritten from the function rather than
+// renamed (AGENTS.md item 38's enumerated residuals). The dead identifier is
+// deliberately not repeated here: citations are scanned repo-wide, and quoting
+// it would keep it in the unresolved count this fix exists to reduce.
 func TestDownloadFileRedirectTargetSchemeChecked(t *testing.T) {
 	// Guard on: a redirect to plain-http is refused by checkDownloadRedirect even
 	// though the dial guard would separately block an internal IP. Verified in

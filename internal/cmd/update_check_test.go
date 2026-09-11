@@ -390,8 +390,19 @@ func TestUpdateCheckDisabled(t *testing.T) {
 	}
 }
 
-// TestVersionCommandEnvOptOutMakesNoCall asserts the env opt-out path skips the
-// HTTP call entirely (the server must get zero hits).
+// TestVersionCommandEnvOptOut asserts the CIVITAI_NO_UPDATE_CHECK path skips the
+// HTTP call entirely — the server must get zero hits — AND that the notice is
+// absent from the output.
+//
+// Both halves are load-bearing and neither implies the other: a call could be
+// made and its result discarded (zero hits fails, notice absent passes), or the
+// call skipped while a cached notice still prints (zero hits passes, notice
+// absent fails). The server here is primed with v9.9.9, so the notice WOULD
+// appear if the opt-out leaked.
+//
+// (The name above previously cited a test nothing declares, and described only
+// the first half. The dead identifier is not repeated here, because citations
+// are scanned repo-wide. AGENTS.md item 38's enumerated residuals.)
 func TestVersionCommandEnvOptOut(t *testing.T) {
 	srv, hits := newReleaseServer(t, "v9.9.9", http.StatusOK)
 	pointAtServer(t, srv.URL)
