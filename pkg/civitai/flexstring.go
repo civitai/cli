@@ -21,11 +21,23 @@ import (
 // "unexpected response from /api/v1/images (status 200)". Reported by Rochet2
 // in civitai/cli#513.
 //
-// The reported shape was NOT reproducible on /api/v1/users (measured 2026-09-09:
-// every all-digit username came back quoted), and /api/v1/images — the surface
-// #513 was filed against, which serialises the embedded user differently — could
-// not be exercised. The justification does not rest on reproducing it: a client
-// must not hard-fail a 200 whose body it can read. See the decision doc.
+// 🔴 CONFIRMED LIVE 2026-09-11. An earlier note here said the shape was NOT
+// reproducible and that /api/v1/images "could not be exercised". Both were
+// wrong. /api/v1/images DOES coerce, on every request reaching the Meilisearch
+// feed branch of runImageSearch: 51/51 cache-busted responses came back
+// unquoted. The 2026-09-09 reading that said otherwise was measuring Cloudflare
+// cache HITs, not the origin — vary a query param and require
+// cf-cache-status: MISS before believing a negative here. (/api/v1/users really
+// is quoted; it is Prisma-backed, a different path.) The original justification
+// still stands on its own: a client must not hard-fail a 200 whose body it can
+// read. Tracked server-side as civitai/civitai#4768.
+//
+// 🔴 THIS TYPE MAKES THE VALUE DECODABLE, NOT CORRECT. The coercion is NUMERIC,
+// so leading zeros are destroyed upstream: a user really named "0222" reaches us
+// as 222, and 222 matches no account (?username=222 returns 0 items). FlexString
+// stops the page hard-failing, which is its whole job; it cannot recover digits
+// the wire already dropped. Do not read "#513 is fixed" as "the username printed
+// is the username that exists" — that awaits the server fix. See the decision doc.
 //
 // The coercion is deliberately NARROW — a JSON string and a JSON number are the
 // two shapes at issue, plus `null`, which every one of these fields was already

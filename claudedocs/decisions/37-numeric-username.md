@@ -26,19 +26,62 @@ arriving as a bare JSON NUMBER — not a string.** The report attached to
 {"id": 136456589, "username": 2802169344506, "baseModel": "Illustrious"}
 ```
 
-🔴 **That shape was NOT reproducible on any surface reachable at the time of
-writing, and the fix is justified as robustness rather than as a mirror of a
-confirmed live behaviour.** Measured 2026-09-09: `/api/v1/users?query=…` over
-six queries — including 13-digit usernames — returned every all-digit username
-**quoted**. The surface #513 was actually reported against, `/api/v1/images`,
-embeds the user through a *different* serialiser and could not be exercised at
-all: no all-digit account found had public images. So the live evidence neither
-confirms nor refutes the reported shape; what it does establish is that
-`/api/v1/users` is not currently a way to see it. The standing justification is
-narrower and does not depend on reproducing it: **a client must not hard-fail a
-`200` whose body it can read.** A page that decodes for every other consumer
-should not become an exit 1 with nothing printed because one field arrived in
-the other of two shapes the CLI can trivially accept.
+🔴 **RETRACTED 2026-09-11 — this paragraph used to say the shape was "NOT
+reproducible on any surface reachable at the time of writing". It is
+reproducible, it happens 100% of the time on the reported surface, and the
+mechanism is known.** The retracted text is preserved below the correction,
+because HOW a correct-looking negative was produced is the transferable part.
+
+**What is true:** `GET /api/v1/images?username=<all-digit-name>` returns the
+field unquoted on every request that reaches the **Meilisearch feed branch** of
+`runImageSearch` (`image-search.service.ts:127`). Measured 2026-09-11 over 55
+digit-username accounts with public images: **51/51 cache-busted responses
+unquoted, 0 quoted.** The Meili image index stored `user.username` under Meili's
+dynamic JSON typing, so an all-digit username is a JSON *number* in the index
+document. `/api/v1/users` really is quoted — it is Prisma-backed, a different
+path — so the 2026-09-09 reading of *that* endpoint was correct and simply did
+not address the reported surface. Tracked server-side as `civitai/civitai#4768`.
+
+🔴 **Why the earlier negative was wrong, which is the part worth keeping.** Two
+independent causes, either sufficient on its own:
+
+1. No all-digit account it found had public images, so the path was never
+   exercised — an empty result that could not distinguish "no bug" from "no
+   sample".
+2. **The quoted readings it did get were Cloudflare cache HITs, not origin
+   responses.** `s-maxage=300` served correct-looking copies. On a re-sweep with
+   a fresh cache key, **38 of 38 "quoted" readings flipped to unquoted.**
+
+The probe read raw bytes, avoided `jq`, and ran a positive control — everything
+the rules ask — and still landed on the opposite of the truth, because none of
+those checks can see a CDN. **Require `cf-cache-status: MISS` before believing
+any negative about this API**, and treat a cache anywhere between you and the
+system under test as making a clean reading a reading of the cache.
+
+**The original justification is unaffected and still stands on its own:** a
+client must not hard-fail a `200` whose body it can read. A page that decodes
+for every other consumer should not become an exit 1 with nothing printed
+because one field arrived in the other of two shapes the CLI can trivially
+accept. That argument never depended on reproducing the shape — which is why
+the fix was right even while the evidence for it was wrong.
+
+<details><summary>The retracted 2026-09-09 paragraph, verbatim</summary>
+
+> 🔴 **That shape was NOT reproducible on any surface reachable at the time of
+> writing, and the fix is justified as robustness rather than as a mirror of a
+> confirmed live behaviour.** Measured 2026-09-09: `/api/v1/users?query=…` over
+> six queries — including 13-digit usernames — returned every all-digit username
+> **quoted**. The surface #513 was actually reported against, `/api/v1/images`,
+> embeds the user through a *different* serialiser and could not be exercised at
+> all: no all-digit account found had public images. So the live evidence neither
+> confirms nor refutes the reported shape; what it does establish is that
+> `/api/v1/users` is not currently a way to see it.
+
+Note the retracted text guessed the mechanism correctly — "*embeds the user
+through a different serialiser*" — and was defeated only by not being able to
+exercise it. The inference was sound; the measurement was missing.
+
+</details>
 
 `encoding/json` refuses a number into a `string` field, and the CLI decodes a
 whole PAGE in one `json.Unmarshal` (`pkg/civitai/read.go`'s `getInto`). So ONE
@@ -126,25 +169,61 @@ converting them would be a change made on a guess, and it would put a
 `FlexString` on the identity `civitai whoami` prints. If the same shape is ever
 observed on that service, convert them then, with the observation attached.
 
-## Residual: the coercion's MECHANISM is unidentified, so the FIELD SET is a guess
+## Residual: the MECHANISM is now known, and it narrows the class without closing it
 
-🔴 **Nothing here measures *why* the server emitted a number, so "only the
-`username` field" is an inference, not a measurement — and the class it bounds
-is open in the other direction too.** If the coercion is a property of the
-`username` column, seven fields is the whole of it; but if it is a property of
-any all-digit *string* column on the way out, then `TagItem.Name` — a tag named
-`2024` is entirely plausible — fails identically, with the same opaque
-`unexpected response from … (status 200)` and the same exit 1, and no test in
-this repo would say so. That class is deliberately NOT covered: converting
-fields on a guess is exactly what the scope argument above refuses for
-`internal/appapi`, and the same discipline applies here. The trigger to widen is
-an OBSERVATION — a captured body with a non-`username` field unquoted — not the
-symmetry of the argument.
+🔴 **Updated 2026-09-11. This section used to open "the coercion's MECHANISM is
+unidentified, so the FIELD SET is a guess". The mechanism is identified: Meili's
+dynamic JSON typing on the stored image document.** That is a real narrowing —
+the class is no longer "any all-digit string column on the way out", which was
+the worst case the old text had to allow for. It is bounded by **what is stored
+on the Meilisearch image document**, and by the routes that read from it.
 
-## Residual: the server side is not fixed here
+The old reasoning's worked example dissolves under this: `TagItem.Name` does not
+come from the Meili *image* document, so a tag named `2024` is not implicated by
+this mechanism. The old text was right to refuse to convert it on a guess; the
+mechanism now says the guess would have been wrong.
+
+🔴 **But the class is NOT closed, and the trigger to widen is unchanged.** Any
+*other* all-digit-capable string field on that same Meili document has the
+identical exposure by construction — this is a property of how the document was
+indexed, not of the `username` column. `civitai/civitai#4768` asks the platform
+side to check exactly that. Until someone enumerates the document, "only
+`username`" remains an inference; it is now a *much better supported* one.
+
+So the discipline stands: converting fields on a guess is what the
+`internal/appapi` scope argument above refuses, and the same applies here. **The
+trigger to widen is still an OBSERVATION** — a captured body with a
+non-`username` field unquoted — not the symmetry of the argument, and not the
+mechanism's plausibility.
+
+## Residual: the server side is not fixed here — and the client fix does NOT make the value correct
 
 This is a CLIENT-side accommodation. The API emitting an unquoted number for a
-field its own docs describe as a string is arguably the real defect, and it is
-tracked separately on the API side. Until that lands, every consumer of these
-endpoints in any language has the same problem; a CLI that refuses to decode is
-not a useful place to make the point.
+field its own docs describe as a string is the real defect, now filed as
+**`civitai/civitai#4768`** with the root cause and a closing condition. Until
+that lands, every consumer of these endpoints in any language has the same
+problem; a CLI that refuses to decode is not a useful place to make the point.
+
+🔴 **NEW 2026-09-11, and the most important line in this document: the coercion
+is NUMERIC, so it DESTROYS LEADING ZEROS, and `FlexString` cannot recover
+them.** Measured:
+
+```
+?imageId=622901         ->  "username":"0222"     the real name, legacy DB path
+?username=0222&limit=4  ->  "username":222        what the Meili path returns
+?username=222&limit=4   ->  0 items               the returned name matches nothing
+```
+
+So a user genuinely named `0222` is printed by this CLI as `222`, and that name
+round-trips to nothing. `FlexString` decodes it without complaint — which is
+correct and is the whole job — but **it made the failure quieter, not absent**.
+Before: an opaque exit 1. After: a confident, wrong username.
+
+**Do not let item 37 be read as "#513 is solved".** The decode half is solved.
+The value half is a server bug, is tracked at `civitai/civitai#4768`, and is the
+reason `civitai/cli#513` is deliberately still OPEN. The downstream reporter was
+told this explicitly rather than left to infer it from a merged PR.
+
+General form, worth carrying past this case: **a fix on the consumer side of a
+lossy producer should always state which half it does not cover.** A decode fix
+cannot recover information the wire already dropped.
