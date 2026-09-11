@@ -19,69 +19,37 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ## State now
 
-**The entrypoint is LIVE, dogfooded twice, and repaired. This effort is essentially
-complete** — what remains is listed under Next steps and none of it blocks a user.
+**The onboarding entrypoint remains live and complete. This session closed rank 7
+and rank 3, and spawned a four-round audit ladder that ended deliberately.**
+Ranks 4, 6 and 8 are untouched — 6 is the one with a user forcing function.
 
-- **`https://developer.civitai.com/agent-setup/prompt.md`** — HTTP 200,
-  `text/markdown; charset=utf-8`, `nosniff`, `Vary: Accept-Encoding`, no redirect,
-  **byte-identical to `origin/main`** (6,949 B) verified through Cloudflare.
-- **`@civitai/cli@0.1.104`** on npm and Homebrew. Shipped artifact verified:
-  checksum OK, reports `civitai 0.1.104`, and `agent-setup` run *from the
-  downloaded binary* produces a correct per-project block.
-- **`civitai/cli` README leads with the paste string** (#536), byte-identical to
-  the docs repo's `SETUP_PROMPT` constant — four surfaces, one source.
-
-### Merged this session
+- **Branch `main`, clean, synced** at `f5a098a`.
+- **Merged this session:**
 
 | PR | |
 |---|---|
-| cli#529 | pin bump → **unfroze the repo** (`pins-vs-published` had been red, `enforce_admins`) |
-| cli#527 | the first handoff doc |
-| cli#528 | `civitai agent-setup` — 5 audit rounds, clean final round |
-| cli#533 | per-project `AGENTS.md` block (no npm commands in a `static` project) |
-| cli#534 | `create` not `init`; `--check`'s `mcp-*` wording; the token source |
-| cli#536 | README one-liner |
-| cli#537 | gitignore `/node_modules/` |
-| docs#67 | `prompt.md` route, landing page, `.md` content-type, the guard |
-| docs#69 | tag-strip rewrite (CodeQL + a real command-deleting bypass) |
-| docs#70 | round-2 doc fixes |
+| cli#540 | the nightly pin bumper ran on node 22 and could not land its own fix (rank 7 / #530) |
+| cli#526 | `xsvm`'s C0 control-char repair in `getInto` (rank 3, external contributor) |
+| cli#541 | the follow-up from #526's audit: unmarshal-first, `saferune` on the error snippet, `maxClassifyMessage` |
 
-Releases **v0.1.103** and **v0.1.104** both tagged, published, and confirmed on
-npm by polling the registry rather than trusting the workflow.
+- **Issue #530 CLOSED and verified by a real run**, not by reasoning — see the
+  RESOLVED block below.
+- **Filed, not fixed:** cli#542, cli#543. Cross-linked to the pre-existing #399,
+  which is the same family on the other side of the seam.
+- **Claim released:** `agent-setup-onboarding-7`.
+- **Recorded in the subsystem index** (`cli/scaffold`): the 2026-09-08 `OPEN:`
+  bullet rewritten as `RESOLVED 5557b6a`, plus a new bullet for the
+  sibling-workflow drift class. `cairn-validate --scope cli` → OK 6/6.
+- 🔴 **No clawgate task recorded.** `clawgate_handoff.sh resolve` exited 5. Its
+  positive control resolved 1 link for another session, so the board is
+  reachable — but a wrong session id also answers 200/empty, so this is **not**
+  evidence that no task exists.
 
-### What was NOT done, and why
+### Honest limits on what shipped
 
-- **Example apps were never covered.** They were in the original ask
-  ("design, components, site host messaging, api, example apps") and are the one
-  named surface with no pointer anywhere. Design/components/messaging are
-  reachable via `/apps/reference/`; the API track was deferred by operator choice.
-  Nothing points at the seven example-app repos or `/apps/showcase`.
-- 🔴 **The design contract was deliberately NOT committed**, retiring rank 2's
-  second clause. Decisions 34 (27 KB), 35 (52 KB) and 36 (12 KB) now own its
-  durable content with tests behind them, and the cross-repo seam it defined is
-  enforced *mechanically* by `check-agent-setup.mjs`. Committing it would have
-  added a fourth copy of rules that already have owners — the drift class this
-  session kept finding. It dies with the session on purpose.
-
-### Recorded in the subsystem index (`cli/scaffold`, 7 bullets)
-
-- The 2026-09-08 `OPEN:` bullet was **rewritten, not closed**: the freeze itself is
-  cleared (cli#529) and the SDK and node 24 are both exonerated with the
-  measurements, but the nightly's inability to land its own bump is still open
-  (cli#530), so the marker stays.
-- Appended the `init` vs `create` fact — including the one site that must KEEP
-  saying `init`, because ready-ack advice needs the static template's
-  `civitai-host.js` and page-money does not ship it.
-- ⚠ My first rewrite wrote `OPEN (narrowed …):` — a parenthetical **before** the
-  colon, which is the documented near-miss grammar. The badge flipped to
-  `1 NEAR-MISS` and the openness became invisible. Fixed to `OPEN: (narrowed …)`;
-  the row reads `🔴 1 OPEN` again. **Read the badge after any marker edit.**
-
-### Deploy/verify honesty
-
-Everything above was verified against the **served** artifact, not the merge:
-npm was polled until it served the new version; the live doc was `cmp`'d against
-`origin/main`; the release binary was downloaded, checksum-verified and run.
+- 🔴 **cli#541's final fix round received NO adversarial pass.** The ladder was
+  ended deliberately (rationale posted on the PR), not because it converged.
+- The last round's own residuals are listed under rank 11.
 
 ## Open investigations — live diagnosis state
 
@@ -238,47 +206,97 @@ Re-measured after every deploy, unchanged: `Python-urllib/3.11` → **403**
 - **Next step is not a probe:** it needs a Cloudflare dashboard change by someone
   with zone access. Not actionable from a repo.
 
+### ✅ RESOLVED — `bump-scaffold-pins` could not land its own bump (cli#530)
+
+🔴 **SUPERSEDES the "🔴 STILL OPEN — `bump-scaffold-pins` cannot land its own fix"
+block above. That block's "Leading hypothesis" and "Next probe" are both WRONG and
+must not be run** — the hypothesis it names was refuted, and the probe it suggests
+(checking for a reused workspace between steps) investigates a mechanism that does
+not exist here.
+
+- **Closed by cli#540** (`5557b6a`), **verified 2026-09-11** by an actual run.
+- **Root cause: node 22 / npm 10.** `ci.yml` moved to node 24 in `aebd2fb`
+  (cli#520) *for this exact arborist crash*; the sibling nightly was left at
+  `node-version: "22"` in **both** jobs.
+- **Ruled out — the step-order hypothesis** ("the nightly installs into a tree its
+  own earlier steps just rewrote"): step 9 scaffolds into a fresh
+  `$RUNNER_TEMP/bump-validate`, and the crash reproduces on a fresh scaffold
+  outside CI entirely. `via: measurement`
+- **Ruled out — #524's "removed/renamed SDK export … a real upstream break"**:
+  that body is generated by this workflow's own `classify` job, and the sentence
+  has since been rewritten so it no longer asserts a cause it cannot know.
+  `via: measurement`
+- **Observed (control pair, same scaffold and pins, fresh dir per arm):**
+  node 22.23.2 / npm 10.9.8 → `npm error Cannot read properties of null (reading
+  'edgesOut')`, rc **1**. node 24.19.0 / npm 11.17.0 → install + typecheck +
+  build clean, rc **0**. `via: command`
+- 🔴 **A green scheduled run could NOT have proved this.** Both runs after #540
+  merged went green with **steps 6–12 skipped** — pins current ⇒ `detect changes`
+  false ⇒ step 9 never executes. Exercised deliberately instead
+  ([run 34559798234](https://github.com/civitai/cli/actions/runs/34559798234)):
+  step 9 **success**, step 11 **success**, opened PR #546 (closed, branches
+  deleted). `via: measurement`
+
+### ⚠ STILL OPEN — `Python-urllib` 403 at the Cloudflare edge
+
+Unchanged this session and **not actionable from a repo**. Needs a Cloudflare
+dashboard change by someone with zone access. `via: measurement` (ruled out as
+ours: the same `nginx.conf` returns 200 locally to the blocked UA, and there is no
+`_headers`/`_redirects`/`wrangler.*` anywhere in the docs repo).
+
 ## Next steps (ranked)
 
-🔴 **Ranks 1, 2 and 5 are DONE — numbering is preserved deliberately** so any live
-`claim-work` slug keeps pointing at the item it was taken for.
+🔴 **Ranks 1, 2, 3, 5 and 7 are DONE — numbering is preserved deliberately** so any
+live `claim-work` slug keeps pointing at the item it was taken for.
 
 1. ~~**Unfreeze `civitai/cli`**~~ — **DONE**, cli#529.
    forcing: none
-2. ~~**Land the two draft agent-setup PRs**~~ — **DONE** (cli#528, docs#67). The
-   second clause, "move the design contract out of the scratchpad", is
-   **deliberately retired** — see State now.
+2. ~~**Land the two draft agent-setup PRs**~~ — **DONE** (cli#528, docs#67).
    forcing: none
-3. **PR `civitai/cli#526`** (external contributor `xsvm`, fixes #513's sibling
-   issue #525) — **still has zero CI ever run**; fork PRs need a maintainer to
-   approve the workflow. Cannot be synced from here (pushing to a fork branch is
-   not ours). Approve a run, then review.
-   forcing: user — an external contributor has been waiting since 2026-09-06.
+3. ~~**PR `civitai/cli#526`**~~ — **DONE**, merged `517fc76`. The "zero CI has ever
+   run" and "cannot be synced from here" claims in the old text were both WRONG:
+   CI had run on 2026-09-06, and `maintainer_can_modify` was true.
+   forcing: none
 4. **P2 of the onboarding work**: `/.well-known/ai-catalog.json` +
    `/.well-known/agent-skills/index.json` with SHA-256 digests, advertised via
    `Link:` headers. Cloudflare ships the artifacts and advertises none; Mintlify
-   advertises. Nobody does both.
+   advertises. Nobody does both. Repo: `civitai/civitai-developer-docs`.
    forcing: none
-5. ~~**Delete or gitignore `node_modules/`**~~ — **DONE**, cli#537. It was not a
-   stray npm install: it held a test RSA keypair with a `privatePem`.
+5. ~~**Delete or gitignore `node_modules/`**~~ — **DONE**, cli#537.
    forcing: none
 6. **Example apps are the one named surface with no pointer.** The shipped
    `AGENTS.md` links `/apps/guide/`, `/apps/reference/` and `/llms.txt` — nothing
    reaches the seven example-app repos or `/apps/showcase`. Decide whether the
-   block should name them, and where the list lives so it cannot rot.
+   block should name them, and where the list lives so it cannot rot. Touches
+   `civitai/cli:internal/cmd/agent_setup*.go` and the docs repo.
    forcing: user — it was in the operator's original scope and was never
-   explicitly deferred, unlike the API track.
-7. **cli#530** — make the nightly open its bump PR even when step 9 fails, and
-   diagnose the `edgesOut` crash. Until then the repo re-freezes on every
-   upstream publish and a human has to bump by hand.
-   forcing: regression — `pins-vs-published` is required with `enforce_admins`,
-   so this takes the whole repo down, and it has already happened once.
-8. **A hard byte ceiling on `prompt.md`, enforced by `check-agent-setup.mjs`.**
-   It went 2,798 → 6,949 B across two fix rounds with every addition justified,
-   and nothing measures the total. The measured failure mode is length: a real
-   agent's `WebFetch` returned an LLM *summary* that silently dropped the whole
-   install-failure section, both MCP URLs and **all of step 5**.
+   explicitly deferred, unlike the API track. **Still true after this session.**
+7. ~~**cli#530**~~ — **DONE**, cli#540, verified by run 34559798234.
    forcing: none
+8. **A hard byte ceiling on `prompt.md`, enforced by `check-agent-setup.mjs`.**
+   2,798 → 6,949 B with nothing measuring the total. Measured failure mode is
+   length: a real agent's `WebFetch` returned an LLM summary that dropped the
+   install-failure section, both MCP URLs and all of step 5.
+   forcing: none
+9. **cli#542** — `snippet()`'s "every argument is server bytes" invariant is
+   unpinned; the #393 guard (`internal/cmd/safeterm_userinput_test.go:92`) parses
+   only `internal/cmd` and matches only `safeTerm(<one arg>)`, so it is blind to
+   `pkg/civitai`'s `saferune.Strip`. True today, enforced by nothing. Read with
+   cli#399 — same family, other side of the seam, likely one instrument fixes both.
+   forcing: none
+10. **cli#543** — the read `--help` rune budget: `users` sits **5 runes** under the
+    1400 cap after #541, and `read_help_test.go:164-172` still names
+    `images search` as the longest consumer, which stopped being true.
+    forcing: none
+11. **Residuals of decisions item 38**, all recorded in
+    `claudedocs/decisions/38-read-body-repair-and-snippet.md`: four genuine
+    comment-citation rot sites (`download_ssrf_test.go:147`,
+    `app_pull_not_approved_test.go:372`, `update_check_test.go:393`,
+    `appblocks.go:1261`); the README documents no 429 → exit 2 reclassification
+    (pre-dates the PR); and half (c) of
+    `TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne` has the
+    body-vs-message offset confusion that was repaired elsewhere in the same round.
+    forcing: none
 
 ## Gotchas / decisions / dead-ends
 
@@ -394,38 +412,86 @@ Re-measured after every deploy, unchanged: `Python-urllib/3.11` → **403**
   a summary dropped the install-failure section, both MCP URLs and all of step 5.
   `curl` gets the real bytes. This is why rank 8 exists.
 
+### Added 2026-09-11 — rank 7, rank 3, and a four-round audit ladder
+
+- 🔴 **SIBLING-WORKFLOW DRIFT, and why three days of green hid it.** A fix landed
+  in `ci.yml` and not in `.github/workflows/bump-scaffold-pins.yml`. The nightly
+  only **executes** the broken path when the bumper has work to do: with pins
+  current, `detect changes` is false and steps 6–12 are **skipped**. So it went
+  green on 09-01/02/03/05 *and* on both runs after the fix merged. **A green
+  scheduled run is structurally incapable of covering it.** To exercise it: a
+  throwaway branch with the three literal pin sites rolled back, then
+  `gh workflow run bump-scaffold-pins.yml --ref <branch>`. **Do NOT roll back
+  `testdata/design-tokens.txt`** — it is provenance-stamped, `bump-pins`
+  regenerates it as site 4 of 4, and step 4 resolves the drift before step 7 runs.
+  Guard: `workflow_node_version_test.go`.
+- 🔴 **Three claims in the previous handoff were wrong, in the reassuring
+  direction.** (a) "#526 has zero checks ever run" — CI ran 2026-09-06, all 8 jobs.
+  (b) "cannot be synced from here (pushing to a fork branch is not ours)" —
+  `maintainer_can_modify: true`. (c) The `edgesOut` step-order hypothesis.
+  **A handoff's open-investigation block reads as current forever.**
+- 🔴 **`gh api --method PUT /pulls/<n>/update-branch` RE-ARMS the fork approval
+  gate.** The new commit creates a run with conclusion `action_required`. So
+  "there is nothing to approve" can become false as a *result* of unblocking the
+  PR. Approve with `POST /actions/runs/<id>/approve`.
+- 🔴 **A monitor that only emits on COMPLETED checks cannot see checks that never
+  START.** One sat silent 20 minutes on `total_count: 0` (blocked at the approval
+  gate) and exited 0 — indistinguishable from "still running". Emit on stall, on
+  the gate re-arming, and on a run ending with no checks recorded.
+- 🔴 **`audit-dispatch.py --round N` REFUSES without an `audit-claims` block, and
+  the block is what makes a delta round possible.** Briefing auditors "do not
+  comment on the PR" is right for findings and **wrong for the claims block** —
+  each round then reconstructs context from prose. Post it as an **issue** comment;
+  `gh pr view --json comments` cannot see review comments.
+- 🔴 **The audit ladder on #541: four rounds, ZERO runtime defects, ~16 unsupported
+  claims.** Each round's fixes generated the next round's findings. Ended on the
+  stated criterion, not on convergence — rationale posted on the PR, because a
+  report that ends on the escape hatch is otherwise indistinguishable from one that
+  converged. Across the whole PR only **~25 executable non-test lines**.
+- **A guard whose DESCRIPTION is wider than its BODY was the single most common
+  finding.** Examples: a ledger advertising rename-safety while substring-matching
+  prose; a matrix header asserting "measured, not reasoned" that disagreed with the
+  measurement; a positive control folded into a shared counter so one arm could
+  never observe a zero.
+- ⚠ **My own instruments were wrong three times** — a `grep -c /dev/stdin` that
+  reported empty at HEAD and near-total at base; a mutation that edited a *comment*
+  quoting `node-version: "24"`; and `$B:AGENTS.md` eaten by zsh's `:A` history
+  modifier (brace it: `${B}`). **Validate the instrument before reading its verdict.**
+- **`subsystem_touch.py --session` returned `looked-at-nothing`** because every
+  edit was made by a subagent in a worktree. `--pr 540,526,541` found the 26 real
+  paths. The better a session follows the delegate-and-isolate defaults, the
+  blinder that window is.
+
 ## How to verify
 
-The whole entrypoint, from the outside:
+The nightly's fix — the ONLY form that actually exercises it:
 
 ```bash
-# 1. the served contract
-curl -sI https://developer.civitai.com/agent-setup/prompt.md   # 200, text/markdown, nosniff
-diff <(curl -s https://developer.civitai.com/agent-setup/prompt.md) \
-     <(git -C /home/zach/workspace/civit/civitai-developer-docs show origin/main:public/agent-setup/prompt.md)
-
-# 2. the published CLI, installed the way a user would
-T=$(mktemp -d); npm install -g --prefix "$T" @civitai/cli --silent
-"$T/bin/civitai" --version          # want 0.1.104 or later
-for c in agent-setup "app create" upgrade login; do "$T/bin/civitai" $c --help >/dev/null && echo "ok $c"; done
-
-# 3. the per-project block is honest in BOTH shapes
-P=$(mktemp -d); cd "$P"
-"$T/bin/civitai" app init probe-static  && "$T/bin/civitai" agent-setup --dir probe-static
-grep -c npm probe-static/AGENTS.md      # want 0 — a static project has no package.json
-"$T/bin/civitai" app create probe-money && "$T/bin/civitai" agent-setup --dir probe-money
-grep -oE 'npm run [a-z:]+' probe-money/AGENTS.md   # every one must exist in its package.json
+cd $(mktemp -d) && git clone --depth 50 git@github.com:civitai/cli.git . && git checkout -b test/rehearse origin/main
+sed -i 's/\^0\.39\.0/^0.37.0/g; s/\^0\.49\.0/^0.46.0/g' \
+  internal/scaffold/templates/page-money/package.json.tmpl \
+  internal/scaffold/templates/page-money/README.md.tmpl \
+  internal/scaffold/scaffold_test.go
+git commit -am "test: throwaway" && git push -u origin test/rehearse
+gh workflow run bump-scaffold-pins.yml --ref test/rehearse -f drill=none
+# steps 9 AND 11 must both be success, and a PR must appear. Then close it and
+# delete BOTH branches (automation/bump-scaffold-pins and test/rehearse).
 ```
 
-🔴 **Read `rc` directly — `$?` after a pipe is the pipe's status.** This repo has
-been misled by that twice.
-
-🔴 **A bare `civitai` on the operator's machine resolves to a stale 0.1.101** at
-`~/.local/bin/civitai` (and `~/go/bin/civitai`), which has no `agent-setup`. Use a
-full path, or run `civitai upgrade` on it.
-
-The guard that keeps the doc and the CLI in agreement:
+🔴 A green *scheduled* run proves nothing — confirm steps 6–12 are not `skipped`:
 
 ```bash
-cd /home/zach/workspace/civit/civitai-developer-docs && npm run check:agent-setup; echo "rc=$?"
+gh api repos/civitai/cli/actions/runs/<id>/jobs \
+  --jq '.jobs[] | select(.name=="bump") | .steps[] | "\(.number) \(.name): \(.conclusion)"'
 ```
+
+The read-path guards added by #541:
+
+```bash
+cd /home/zach/workspace/civit/cli
+go test ./pkg/civitai ./internal/cmd -count=1
+nix-shell -p golangci-lint --run "make lint"   # make ci does NOT run lint
+```
+
+🔴 Read `rc` directly — `$?` after a pipe is the pipe's status. This repo has been
+misled by that twice.
