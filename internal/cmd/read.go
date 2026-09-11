@@ -95,7 +95,7 @@ func newReader(o *readOpts) (*civitai.Client, string, error) {
 func emitJSON(cmd *cobra.Command, raw []byte) error {
 	src := raw
 	if !json.Valid(src) {
-		if fixed := escapeJSONStringControlChars(src); json.Valid(fixed) {
+		if fixed := civitai.EscapeJSONStringControlChars(src); json.Valid(fixed) {
 			src = fixed
 		}
 	}
@@ -106,12 +106,6 @@ func emitJSON(cmd *cobra.Command, raw []byte) error {
 	}
 	fmt.Fprintln(cmd.OutOrStdout(), strings.TrimRight(buf.String(), "\n"))
 	return nil
-}
-
-// escapeJSONStringControlChars delegates to civitai.EscapeJSONStringControlChars
-// in pkg/civitai.
-func escapeJSONStringControlChars(raw []byte) []byte {
-	return civitai.EscapeJSONStringControlChars(raw)
 }
 
 // nonModelFileMarker returns a short human tag naming a version's PRIMARY file

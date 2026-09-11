@@ -433,6 +433,24 @@ var bornSplitItems = []string{
 	// merging second renumbers its own items) was written straight into
 	// claudedocs/decisions/ for the same reason as 35.
 	"claudedocs/decisions/37-numeric-username.md",
+	// Item 38 was written straight into claudedocs/decisions/ for the same
+	// reason: AGENTS.md had 472 bytes of headroom when it was added, and the
+	// body is five decisions, four tables and the enumerated residuals.
+	//
+	// 🔴 THIS SENTENCE HAS NOW BEEN WRONG TWICE, IN OPPOSITE DIRECTIONS, SO THE
+	// GEOMETRY IS PINNED RATHER THAN COUNTED IN PROSE. Round 2 wrote "measurement
+	// and mutation matrices" — there has never been a mutation matrix, and that
+	// half was right to correct. Round 3 then wrote "one measurement table", in
+	// the same commit that ADDED a second and a third. Round 5 added a FOURTH,
+	// and this sentence with it. The tables are: a clause-by-clause table and a
+	// cross-tree measurement table in §3, and in §4 a cross-tree exit-code
+	// measurement table plus an allocation table for maxClassifyMessage. Their
+	// placement is asserted by TestItem38EvidenceTableGeometry below; the
+	// adjectives are not, and are the reader's to check.
+	//
+	// Mutation results still live in the PR body and in each guard's own doc
+	// comment, not in this file.
+	"claudedocs/decisions/38-read-body-repair-and-snippet.md",
 }
 
 // splitItemsFloor is the CI-SIDE KEEPER for bornSplitItems: the set of item
@@ -910,4 +928,89 @@ func TestEveryBaseBodyLineSurvivedTheMove(t *testing.T) {
 			"The slicer or the evidence reader is broken; this is NOT the shallow-clone case, which is skipped above.")
 	}
 	t.Logf("checked %d non-blank base lines across %d moved items", total, len(splitItems))
+}
+
+// item38Doc is the evidence file whose shape the bornSplitItems comment above
+// describes.
+const item38Doc = "claudedocs/decisions/38-read-body-repair-and-snippet.md"
+
+// item38TablesPerSection is the LEDGER of where item 38's tables live: section
+// number -> number of Markdown table blocks in it. Sections not listed must
+// carry none.
+var item38TablesPerSection = map[int]int{3: 2, 4: 2}
+
+// TestItem38EvidenceTableGeometry is round 4's finding 5.
+//
+// 🔴 A SENTENCE DESCRIBING A FILE'S OWN SHAPE HAS BEEN WRONG TWICE, AND THE
+// SECOND TIME IT WAS FALSIFIED BY THE COMMIT THAT WROTE IT. Round 2's
+// "measurement and mutation matrices" was corrected by round 3 to "one
+// measurement table and no mutation matrix" — in the same commit that added a
+// second and a third table to the file. Nothing asserted on either sentence, in
+// either round, so both survived a full green suite.
+//
+// This is the assertion. It does not check the adjectives ("cross-tree",
+// "measurement", "clause") — those are a reader's judgement — but it pins WHERE
+// the tables are and HOW MANY, which is the half that was retyped and got wrong
+// both times. A table added to §5 or the residuals is red by name.
+func TestItem38EvidenceTableGeometry(t *testing.T) {
+	raw, err := os.ReadFile(item38Doc)
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot read %s: %v", item38Doc, err)
+	}
+	sectionRe := regexp.MustCompile(`^## (\d+)\. `)
+	// A GitHub-flavoured Markdown table is identified by its separator row.
+	sepRe := regexp.MustCompile(`^\|[ :|-]+\|$`)
+
+	section := 0
+	got := map[int]int{}
+	sections := 0
+	seps := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		if m := sectionRe.FindStringSubmatch(line); m != nil {
+			n, _ := strconv.Atoi(m[1])
+			section = n
+			sections++
+			continue
+		}
+		if strings.HasPrefix(line, "## ") {
+			// A non-numbered heading (the residuals) ends the numbered sections.
+			section = 0
+			continue
+		}
+		if sepRe.MatchString(strings.TrimSpace(line)) {
+			seps++
+			got[section]++
+		}
+	}
+	// POSITIVE CONTROLS, before any verdict. A parser that matched no heading or
+	// no table reports a reassuring zero indistinguishable from "as ledgered".
+	if sections < 5 {
+		t.Fatalf("CONTROL failure, not a finding: found only %d numbered sections in %s "+
+			"— the section scanner is not reading the file", sections, item38Doc)
+	}
+	if seps == 0 {
+		t.Fatalf("CONTROL failure, not a finding: found no Markdown table separator row "+
+			"in %s — the table detector is not matching", item38Doc)
+	}
+
+	for sec, want := range item38TablesPerSection {
+		if got[sec] != want {
+			t.Errorf("%s §%d holds %d table(s), ledgered as %d.\n"+
+				"The bornSplitItems comment in this file DESCRIBES this geometry, and that "+
+				"sentence has been retyped wrong twice. Move both together.",
+				item38Doc, sec, got[sec], want)
+		}
+	}
+	for sec, n := range got {
+		if _, ok := item38TablesPerSection[sec]; ok {
+			continue
+		}
+		where := "§" + strconv.Itoa(sec)
+		if sec == 0 {
+			where = "outside the numbered sections (the residuals, or the header)"
+		}
+		t.Errorf("%s holds %d unledgered table(s) %s — add the section to "+
+			"item38TablesPerSection and say so in the bornSplitItems comment.",
+			item38Doc, n, where)
+	}
 }

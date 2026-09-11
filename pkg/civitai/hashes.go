@@ -92,11 +92,18 @@ func isSHA256Hex(s string) bool {
 }
 
 // postInto POSTs body (JSON-encoded) to path and, on a 2xx, unmarshals the
-// response into out (when non-nil), returning the raw body. It mirrors getInto:
-// the same readError status classification, the same maxBody cap, and the same
-// bounded transient-failure retry/backoff via getWithRetry. Retry is safe here
-// because the by-hash lookup is idempotent and the build closure re-creates the
-// body reader on every attempt.
+// response into out (when non-nil), returning the body. It mirrors getInto: the
+// same readError status classification, the same maxBody cap, the same bounded
+// transient-failure retry/backoff via getWithRetry, and — through the shared
+// decodeBody — the same raw-control-byte repair and the same failure message.
+// Retry is safe here because the by-hash lookup is idempotent and the build
+// closure re-creates the body reader on every attempt.
+//
+// The last of those four is shared CODE rather than a parallel copy on purpose:
+// see decodeBody. It is currently unobservable on this route — a HashMatch is
+// two ints and a 64-char hex, with no free-text field the API could put a
+// control byte in — so mirroring here buys no fix today; it buys that the
+// enumeration above cannot go stale the day this route returns a name.
 func (c *Client) postInto(ctx context.Context, path string, body, out any) ([]byte, error) {
 	payload, err := json.Marshal(body)
 	if err != nil {
@@ -118,10 +125,5 @@ func (c *Client) postInto(ctx context.Context, path string, body, out any) ([]by
 	if status < 200 || status >= 300 {
 		return nil, readError(status, raw)
 	}
-	if out != nil {
-		if err := json.Unmarshal(raw, out); err != nil {
-			return nil, fmt.Errorf("unexpected response from %s (status %d): %s", path, status, snippet(raw))
-		}
-	}
-	return raw, nil
+	return decodeBody(path, status, raw, out)
 }

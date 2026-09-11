@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/civitai/cli/internal/saferune"
 )
 
 // Reader is the read surface of the public Civitai REST API (`/api/v1/**`).
@@ -89,11 +91,47 @@ func (c *Client) getRaw(ctx context.Context, path string, q url.Values) (int, []
 }
 
 // getInto GETs path+q, and on a 2xx unmarshals the body into out (when non-nil)
-// and returns the raw body (for --json). A non-2xx returns a readError.
+// and returns the body (for --json). A non-2xx returns a readError.
+//
 // Raw C0 control characters (0x00–0x1F) inside string literals — which violate
 // strict RFC 8259 JSON syntax but are intermittently emitted by the Civitai API
-// inside prompt/description strings — are sanitized via
-// EscapeJSONStringControlChars before unmarshaling so typed decode succeeds.
+// inside prompt/description strings (civitai/cli#525) — are repaired by
+// EscapeJSONStringControlChars so typed decode succeeds. The returned bytes are
+// then the REPAIRED body, not the wire body — which is why every result type
+// with a `Raw []byte` field disclaims byte identity in its doc comment. That is
+// a cross-reference, so it is asserted rather than asked for:
+// TestRawDocCommentsDisclaimByteIdentity is a bidirectional ledger of those
+// types and requires the disclaimer on each. It was written because this
+// sentence pointed at eight referents and only two of them said it.
+//
+// 🔴 THE REPAIR IS A RETRY ON THE DECODE, NOT A PRE-PASS OVER EVERY BODY, AND
+// THE ORDER IS LOAD-BEARING IN THREE WAYS.
+//
+//  1. COST. The first cut ran `json.Valid(raw)` over every successful body
+//     before unmarshalling it — a second full scan of bytes Unmarshal is about
+//     to walk anyway, on the happy path of an importable SDK rather than a
+//     one-shot CLI. The load-bearing half of that is STRUCTURAL, not measured:
+//     unmarshal-first does no extra work at all on a body that decodes, which
+//     is every body but the broken ones. The size of what was removed is one
+//     host's measurement and is quoted as such — a synthetic 1.50 MB /
+//     2185-item models page, go1.25, `-benchtime 300x -count=5`: json.Valid
+//     4.9–6.4 ms against json.Unmarshal 12.9–26.4 ms, so roughly a quarter to
+//     a half again on top of the decode. Do not treat that ratio as portable;
+//     the benchmark was scratch and is not in the tree.
+//  2. THE SNIPPET. `snippet(raw)` below is the only thing the user is shown
+//     when decode fails, and the pre-pass reassigned `raw` to the repaired
+//     bytes BEFORE it ran — so a body the server sent with a literal CR was
+//     reported as `Pony\rModel`, two printable characters, and README's
+//     "the text after the colon is the server's own body" was false. Here the
+//     reassignment happens only on the branch that succeeded, so the failure
+//     message still quotes what arrived.
+//  3. THE UNREPAIRABLE CASE. A body that is invalid for a reason the sanitizer
+//     cannot fix (a trailing comma, a truncated object) must reach the same
+//     error as before, with the ORIGINAL bytes in the snippet. That path is
+//     pinned by TestGetIntoUnrepairableBodyReportsTheOriginalBytes.
+//
+// out is non-nil at every call site today; a nil out therefore performs no
+// decode and no repair, and returns the wire bytes unchanged.
 func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any) ([]byte, error) {
 	status, raw, err := c.getRaw(ctx, path, q)
 	if err != nil {
@@ -102,15 +140,29 @@ func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any
 	if status < 200 || status >= 300 {
 		return nil, readError(status, raw)
 	}
-	if !json.Valid(raw) {
-		if fixed := EscapeJSONStringControlChars(raw); json.Valid(fixed) {
-			raw = fixed
-		}
+	return decodeBody(path, status, raw, out)
+}
+
+// decodeBody is the shared 2xx-body decode for getInto and postInto: it
+// unmarshals raw into out (when non-nil) and returns the bytes that decoded.
+//
+// 🔴 IT IS ONE FUNCTION BECAUSE THE TWO CALLERS MUST NOT ANSWER THIS
+// DIFFERENTLY. postInto's doc comment enumerates what it mirrors from getInto
+// (status classification, body cap, retry/backoff) and the control-byte repair
+// was, for one release, a fourth axis on which it silently did NOT — a
+// divergence no test could see because HashMatch carries no free text today.
+// Sharing the body makes the enumeration true by construction instead of by
+// prose. Both call sites are pinned by TestDecodeBodyIsSharedByGetIntoAndPostInto.
+func decodeBody(path string, status int, raw []byte, out any) ([]byte, error) {
+	if out == nil {
+		return raw, nil
 	}
-	if out != nil {
-		if err := json.Unmarshal(raw, out); err != nil {
+	if err := json.Unmarshal(raw, out); err != nil {
+		fixed := EscapeJSONStringControlChars(raw)
+		if json.Unmarshal(fixed, out) != nil {
 			return nil, fmt.Errorf("unexpected response from %s (status %d): %s", path, status, snippet(raw))
 		}
+		return fixed, nil
 	}
 	return raw, nil
 }
@@ -121,7 +173,13 @@ func (c *Client) getInto(ctx context.Context, path string, q url.Values, out any
 // \u00xx). Control bytes outside strings (structural whitespace) and everything
 // already escaped are left byte-for-byte unchanged, so valid input round-trips
 // identically. This does not attempt to repair other kinds of malformed JSON;
-// callers should verify the result with json.Valid before relying on it.
+// callers should verify the result with json.Valid, or by decoding it, before
+// relying on it.
+//
+// This is the ONE case in which a result type's Raw field is not the server's
+// own bytes. getInto applies this repair when — and only when — the wire body
+// fails to decode, so a body that decodes is passed through untouched, and a
+// body that does not is replaced by the repaired one that did.
 func EscapeJSONStringControlChars(raw []byte) []byte {
 	var out bytes.Buffer
 	out.Grow(len(raw))
@@ -199,6 +257,18 @@ func readError(status int, raw []byte) (err error) {
 			msg = wrapped.Message
 		}
 	}
+	// 🔴 THE CLASSIFIER READS classifyMsg; ONLY THE DISPLAY READS msg. snippet()
+	// removes runes (internal/saferune) and bounds length, and BOTH of those can
+	// change which substrings a matcher finds — a strip can JOIN two words into a
+	// phrase the server never sent, and the 500-byte bound can cut one in half.
+	// isDeepPagingCap is the one place in this package where the text of an error
+	// decides a published exit code (item 7), so it is asked about what arrived,
+	// never about what will be printed. Pinned by
+	// TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne.
+	//
+	// classifyWindow bounds what the classifier scans; it is NOT the display
+	// budget and the two numbers are deliberately separate. See its doc comment.
+	classifyMsg := classifyWindow(msg)
 	msg = snippet([]byte(msg))
 	switch status {
 	case http.StatusUnauthorized:
@@ -223,7 +293,7 @@ func readError(status int, raw []byte) (err error) {
 		// usage error (ErrBadRequest → exit 2) so a scripter's generic 429
 		// backoff-and-retry loop doesn't spin on it, while a real throttle 429
 		// stays ErrRateLimited (exit 6). The visible message is unchanged.
-		if isDeepPagingCap(msg) {
+		if isDeepPagingCap(classifyMsg) {
 			kind = ErrBadRequest
 		}
 		return fmt.Errorf("rate limited (429): %s — for deep paging use --cursor instead of --page", msg)
@@ -240,11 +310,91 @@ func readError(status int, raw []byte) (err error) {
 // requested too many pages, please use cursors instead"; a genuine throttle
 // 429 carries none of these phrases. The match is deliberately narrow so a real
 // rate-limit 429 is never misclassified as a usage error.
+//
+// 🔴 msg MUST NOT BE snippet()'s OUTPUT. "Narrow" is a claim about what the
+// SERVER sent, and snippet applies TWO transformations that pull in OPPOSITE
+// directions — so "any transformation can only widen the match" is false, and
+// this comment said it until round 4. Both are wrong here:
+//
+//   - the STRIP can only WIDEN. It removes Default_Ignorable runes, so one
+//     U+00AD inside "many" in a proxy's throttle message is enough to synthesise
+//     "too many pages" out of bytes the server never sent: exit 6 → 2.
+//   - the 500-byte BOUND can only NARROW. A genuine cap message whose phrase
+//     sits past the display budget stops matching: exit 2 → 6, and a scripter's
+//     backoff loop spins on a structurally doomed request.
+//
+// What this function is given is the message readError extracted from the wire
+// body, bounded by classifyWindow — a budget that is NOT snippet's and exists
+// only to cap the scan. See readError's comment at the classifyMsg assignment.
 func isDeepPagingCap(msg string) bool {
 	m := strings.ToLower(msg)
 	return strings.Contains(m, "too many pages") ||
 		strings.Contains(m, "use cursors") ||
 		strings.Contains(m, "deep paging")
+}
+
+// maxClassifyMessage bounds how many bytes of a server-supplied error message
+// may be SCANNED to pick a classification. It is deliberately a different budget
+// from snippet's 500-byte DISPLAY bound: conflating them is what round 3 fixed
+// in the other direction (a display budget silently deciding an exit code).
+//
+// 🔴 WHY A BOUND EXISTS AT ALL. readError's `msg` is the server's `error`/
+// `message` field when the body is JSON and carries one — but when a 429 body is
+// not JSON, or is JSON without either key, `msg` is the ENTIRE body, capped only
+// by maxResponseBody (64 MiB). Classifying pre-snippet removed the 500-byte
+// bound the matcher used to inherit, so without this the ToLower copy and the
+// three Contains scans run over whatever arrived.
+//
+// 🔴 IT IS A SEMANTIC BOUND, NOT RESOURCE CONTAINMENT, AND THIS COMMENT CLAIMED
+// THE SECOND. What it decides is which bytes may move a published exit code: a
+// cap phrase past 8 KiB no longer reclassifies a 429 from exit 6 to exit 2. That
+// is the consequence stated below and pinned by
+// TestDeepPagingCapClassificationIsBounded.
+//
+// It does NOT bound this function's footprint, because the very next statement
+// in readError — msg = snippet([]byte(msg)) — converts the whole message and
+// hands every byte of it to saferune.Strip, unconditionally and regardless of
+// this constant, on top of the string(raw) copy readError already made at entry.
+// Measured on this tree (go1.25.14, linux/amd64, `-bench -benchtime=20x
+// -count=3`, non-JSON 429 body): allocation is ~2x the body WITH the bound in
+// place — 67.1 MB/op for 32 MiB, 2.11 MB/op for 1 MiB.
+//
+// What it does bound is exactly ONE allocation: strings.ToLower(msg) in
+// isDeepPagingCap, which otherwise copies the whole message. Deleting
+// classifyWindow moved that same benchmark to 100.7 MB/op at 32 MiB and
+// 3.15 MB/op at 1 MiB — one extra full-body copy, ~3x rather than ~2x. That
+// difference is invisible to an all-lowercase ASCII fixture, because ToLower
+// returns its input and allocates nothing when there is nothing to fold; the
+// numbers above come from an all-uppercase body. NO WALL-TIME CLAIM IS MADE: the
+// direction was not even consistent across the four size/case pairs measured.
+//
+// 🔴 THE NUMBER IS GENEROUS, NOT DERIVED, AND IS STATED AS SUCH. The only cap
+// wording this repo records is the ~60-byte one in isDeepPagingCap's doc comment
+// above — which is that comment's claim, not a fresh measurement of the API. No
+// measurement here pins a largest LEGITIMATE 429 message, and none of the
+// proxy/CDN/captive-portal 429s readError also handles has been sampled for
+// length at all. 8 KiB is ~130x that recorded wording and ~16x the display
+// budget: large enough that no plausible cap message is cut. That is the whole
+// justification — no false positive was ever demonstrated, and the 8192 is a
+// round number chosen above every message length anyone here has written down.
+//
+// The visible consequence: a 429 whose cap phrase sits past 8 KiB is NOT
+// reclassified and keeps exit 6. Pinned by
+// TestDeepPagingCapClassificationIsBounded.
+const maxClassifyMessage = 8 << 10 // 8 KiB
+
+// classifyWindow returns the prefix of msg that a classifier may scan. It
+// truncates by BYTE and may therefore split a multi-byte rune — which is
+// harmless HERE, and is not the same as snippet's byte bound: this result feeds
+// a substring match and is never printed, so invalid UTF-8 at the cut cannot
+// reach a terminal. It can, in principle, split one of the matched phrases; that
+// is the same truncation effect the bound exists to accept, at 8 KiB instead of
+// 500 bytes.
+func classifyWindow(msg string) string {
+	if len(msg) > maxClassifyMessage {
+		return msg[:maxClassifyMessage]
+	}
+	return msg
 }
 
 // badRequestDetail extracts a concise, human-readable detail from a 400 response
@@ -425,10 +575,39 @@ func readResponseBody(body io.Reader, limit int64) ([]byte, error) {
 	return raw, nil
 }
 
-// snippet bounds an error/body string so a huge response can't flood the
-// terminal.
+// snippet renders SERVER-SUPPLIED bytes into the human-readable tail of an
+// error message: it removes the runes that must not reach a terminal, then
+// bounds the length so a huge response can't flood it.
+//
+// 🔴 EVERY ARGUMENT THIS FUNCTION IS EVER GIVEN IS THE SERVER'S OWN BYTES — the
+// 2xx body that failed to decode, the API's `{"error":…}`/`{"message":…}` text,
+// a zod issue out of a 400, a retry-exhaustion body, a FlexString value. None of
+// it is anything the user typed, which is what makes an unconditional strip
+// correct here and would make it wrong one layer up (internal/saferune's package
+// doc states that rule and what it costs; do not restate the class here).
+//
+// 🔴 IT STRIPS BECAUSE THE OUTPUT REACHES A RAW TERMINAL WITH NO OTHER GATE.
+// cmd/civitai/main.go prints `Error: <err>` straight to stderr — internal/cmd's
+// safeTerm sits on the HUMAN RENDERERS, not on the error path — so before this,
+// a 200 body containing `\x1b[1A\x1b[2K` could overwrite the CLI's own preceding
+// output from inside an error message. Truncating first would not have helped:
+// the escape needs a dozen bytes and the budget is 500.
+//
+// The strip runs BEFORE the bound so the 500 bytes are 500 bytes the user can
+// actually see, rather than a budget an invisible run can eat.
+//
+// 🔴 THE LAYERING COST, STATED RATHER THAN HIDDEN: this makes pkg/civitai — the
+// public SDK — depend on internal/saferune, and it means an SDK consumer that is
+// not a terminal sees an error string with those runes already removed. That was
+// chosen over the two alternatives. Filtering at the print site in
+// cmd/civitai/main.go would apply the class to EVERY error, including the ones
+// that echo what the user typed, which is exactly the regression civitai/cli#393
+// exists to prevent. Re-deriving the class inside pkg/civitai would be a second
+// table, which is the OTHER half of #393. The unaffected byte path is Raw: it is
+// returned to the caller unstripped, so nothing machine-readable passes through
+// here.
 func snippet(raw []byte) string {
-	s := strings.TrimSpace(string(raw))
+	s := strings.TrimSpace(saferune.Strip(string(raw)))
 	const max = 500
 	if len(s) > max {
 		return s[:max] + "…"

@@ -20,17 +20,33 @@
 // (structural, over every call site) and TestSameBytesTypedAndReceived_AreEchoedAndStripped
 // (behavioural, the same bytes typed and received).
 //
-// 🔴 IT IS A PACKAGE RATHER THAN A FUNCTION BECAUSE TWO PACKAGES ASK THE SAME
+// 🔴 IT IS A PACKAGE RATHER THAN A FUNCTION BECAUSE THREE PACKAGES ASK THE SAME
 // QUESTION AND MUST NOT ANSWER IT DIFFERENTLY. `internal/cmd`'s safeTerm asks
 // "may this rune reach the terminal"; `internal/genapi`'s hasPrintableContent
 // asks "would this string still say anything once a renderer has removed the
-// runes it removes". The second is the first one's complement, and before #393
-// they were answered by two tables that disagreed: safeTerm stripped C0/C1
+// runes it removes"; `pkg/civitai`'s snippet asks "what may an ERROR STRING
+// carry", because cmd/civitai/main.go prints `Error: <err>` to stderr with no
+// renderer in front of it. The second is the first one's complement, and before
+// #393 they were answered by two tables that disagreed: safeTerm stripped C0/C1
 // while hasPrintableContent used unicode.IsControl, which is Cc-only, so a
 // reason made entirely of U+200B counted as content and rendered as
 // `(the server reported: )` — an empty parenthetical. `internal/genapi` cannot
 // import `internal/cmd` (the import runs the other way), so the shared answer
 // lives below them both.
+//
+// The third question arrived with civitai/cli#526's follow-up and this sentence
+// still said TWO for the length of that branch. The count and the call-site set
+// are now a bidirectional ledger — the repo-root TestSaferuneCallersAreLedgered
+// fails when the set grows OR shrinks, and requires this paragraph and
+// AGENTS.md's Layout entry to name every caller in it. Adding a fourth caller is
+// a decision about the class, so it is meant to make you edit this text.
+//
+// 🔴 A CALLER IS NOT AUTOMATICALLY ENTITLED TO THE UNCONDITIONAL STRIP. snippet
+// qualifies because every argument it is ever given is the server's own bytes;
+// the rule at the top of this comment — never what the user typed — binds a new
+// caller exactly as hard. See pkg/civitai's snippet doc comment for the layering
+// cost that answer carries, and claudedocs/decisions/38-read-body-repair-and-snippet.md
+// for the two alternatives that were rejected.
 //
 // # THE CLASS
 //

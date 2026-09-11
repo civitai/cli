@@ -167,9 +167,11 @@ These go beyond the global defaults because this repo's release pipeline
   less U+FE0F, plus two blank-but-graphic runes. It is NOT applied to what the
   USER typed on the command line — two documented exceptions, `--input` file
   content and `download`'s mixed-origin target path.
-  `cmd`'s `safeTerm` and `genapi`'s `hasPrintableContent` both call
-  it; #393 was two tables that disagreed, and its first fix drew the class on a
-  category instead of the property and was wrong in both directions. Read its
+  `cmd`'s `safeTerm`, `genapi`'s `hasPrintableContent` and `pkg/civitai`'s
+  `snippet` all call it — three questions, one table, ledgered both ways by
+  `TestSaferuneCallersAreLedgered`; #393 was two tables that disagreed, and its
+  first fix drew the class on a category instead of the property and was wrong
+  in both directions. Read its
   doc comment before changing the class: it states the derivation, the one
   exception, what is deliberately KEPT and the nine scripts the strip costs.
 - **Module root** (`package cli`, `main.go` + `schema.go`) exists *only* to
@@ -249,6 +251,7 @@ USER owns — the merge, the parsers, and which rows fail `--check`.
 Item 36 is its THIRD: what the managed block may claim about the project it was
 written into.
 Item 37 is a username that arrives as a NUMBER.
+Item 38 is what the read path may CLAIM about the bytes it prints.
 The durable fix for the mirroring is a server-side `civitai app validate` endpoint
 calling the real `BlockManifestValidator`; until that exists, vendoring is on
 purpose.
@@ -447,6 +450,10 @@ item must carry a trigger that is a routing question rather than a label
 37. **Typing a `pkg/civitai` username as `string`, or "fixing" a `FlexString`
     back?**
     → evidence: claudedocs/decisions/37-numeric-username.md
+
+38. **Moving where a read body is repaired, filtering (or unfiltering) what an
+    error snippet prints, or wording what `--json` and `Raw` are made of?**
+    → evidence: claudedocs/decisions/38-read-body-repair-and-snippet.md
 
 **When you change a validation rule, keep all four vendored mirrors in sync with
 the server — `schema/`, the ported Go checks in `internal/validate/` (including

@@ -67,10 +67,16 @@ func TestImagesSearchDecodesANumericUsername(t *testing.T) {
 }
 
 // TestImagesSearchJSONKeepsTheUnquotedUsername pins the --json contract across
-// the fix: it is a raw passthrough of the server's own bytes, so the number stays
-// UNQUOTED on stdout. FlexString would re-emit it quoted if anything marshalled
-// the struct — nothing does, and this is the assertion that says so at the
-// published surface rather than in a comment.
+// the fix: the body is passed through undecoded, so the number stays UNQUOTED on
+// stdout. FlexString would re-emit it quoted if anything marshalled the struct —
+// nothing does, and this is the assertion that says so at the published surface
+// rather than in a comment.
+//
+// "Passed through" is not "the server's own bytes", and an earlier revision of
+// this comment said the latter. `--json` re-indents (see readJSONNote), and
+// civitai/cli#525's repair rewrites a raw control byte into its escape when the
+// wire body would not otherwise decode. Neither touches the digits this test is
+// about; both make a byte-identity claim false.
 func TestImagesSearchJSONKeepsTheUnquotedUsername(t *testing.T) {
 	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"items":[{"id":1,"url":"u","username":` + numericUploader + `}],"metadata":{}}`))

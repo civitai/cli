@@ -12,7 +12,10 @@ type TagItem struct {
 	Link string `json:"link"`
 }
 
-// TagSearchResult bundles parsed tags + metadata with the raw body.
+// TagSearchResult bundles parsed tags + metadata with the body that decoded,
+// for --json passthrough. Raw is NOT promised to be the server's own bytes: see
+// EscapeJSONStringControlChars for the one case where it is the repaired body
+// instead.
 type TagSearchResult struct {
 	Items    []TagItem `json:"items"`
 	Metadata Metadata  `json:"metadata"`
@@ -39,7 +42,10 @@ type CreatorItem struct {
 	Link       string     `json:"link"`
 }
 
-// CreatorSearchResult bundles parsed creators + metadata with the raw body.
+// CreatorSearchResult bundles parsed creators + metadata with the body that
+// decoded, for --json passthrough. Raw is NOT promised to be the server's own
+// bytes: see EscapeJSONStringControlChars for the one case where it is the
+// repaired body instead.
 type CreatorSearchResult struct {
 	Items    []CreatorItem `json:"items"`
 	Metadata Metadata      `json:"metadata"`
@@ -74,8 +80,11 @@ type UserItem struct {
 	Image    string     `json:"image"`
 }
 
-// UserSearchResult bundles parsed users with the raw body. The public users
-// endpoint returns only `{ items }` (no pagination metadata).
+// UserSearchResult bundles parsed users with the body that decoded, for --json
+// passthrough. Raw is NOT promised to be the server's own bytes: see
+// EscapeJSONStringControlChars for the one case where it is the repaired body
+// instead. The public users endpoint returns only `{ items }` (no pagination
+// metadata).
 type UserSearchResult struct {
 	Items []UserItem `json:"items"`
 	Raw   []byte     `json:"-"`

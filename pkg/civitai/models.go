@@ -54,8 +54,10 @@ type ModelDetail struct {
 	ModelVersions []ModelVersionSummary `json:"modelVersions"`
 }
 
-// ModelSearchResult bundles the parsed items + pagination metadata with the raw
-// response body (for --json passthrough).
+// ModelSearchResult bundles the parsed items + pagination metadata with the
+// body that decoded, for --json passthrough. Raw is NOT promised to be the
+// server's own bytes: see EscapeJSONStringControlChars for the one case where it
+// is the repaired body instead.
 type ModelSearchResult struct {
 	Items    []ModelListItem `json:"items"`
 	Metadata Metadata        `json:"metadata"`

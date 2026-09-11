@@ -71,12 +71,18 @@ type ArticleDetail struct {
 	Stats       *ArticleDetailStats `json:"stats"`
 	// Content is the article body as sanitized HTML (the TipTap/ProseMirror
 	// output). `articles get --content` renders it to readable plain text /
-	// lightweight markdown; --json still returns the raw body untouched.
+	// lightweight markdown; --json does NOT render it — the HTML reaches stdout
+	// as the API wrote it. ("Untouched" is what this used to say and it was a
+	// byte claim, which is a different and false one: --json re-indents the
+	// document, and a body that would not decode is repaired first. Neither
+	// changes the HTML string; both make byte-identity false.)
 	Content string `json:"content"`
 }
 
 // ArticleSearchResult bundles the parsed items + pagination metadata with the
-// raw response body (for --json passthrough).
+// body that decoded, for --json passthrough. Raw is NOT promised to be the
+// server's own bytes: see EscapeJSONStringControlChars for the one case where it
+// is the repaired body instead.
 type ArticleSearchResult struct {
 	Items    []ArticleListItem `json:"items"`
 	Metadata Metadata          `json:"metadata"`

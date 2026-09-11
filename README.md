@@ -1083,13 +1083,19 @@ Behavior:
 
 ## Scripting with `--json`
 
-Every read subcommand takes `--json`, which prints the **raw `/api/v1/...` REST
-response** — a stable passthrough, not a CLI-invented shape. So the field schema
+Every read subcommand takes `--json`, which prints the `/api/v1/...` REST
+response as the API shaped it — not a CLI-invented shape. So the field schema
 is exactly the public Site API's; keep the
 [REST field reference](https://developer.civitai.com/site/reference/) open
 (e.g. [models](https://developer.civitai.com/site/reference/models),
 [model-versions](https://developer.civitai.com/site/reference/model-versions))
 rather than reverse-engineering fields with `jq keys`.
+
+🔴 **It passes through the DOCUMENT, not the BYTES — do not diff or hash
+`--json` output against the wire.** Two things change the bytes without changing
+the document. The first is cosmetic: **the output is re-indented**, so a compact
+API body comes out longer than it went in. The second is not, and it has its own
+paragraph below: **a body that will not parse is repaired first.**
 
 Two properties make the output safe to pipe:
 
@@ -1101,9 +1107,26 @@ Two properties make the output safe to pipe:
   exits `4` with `Error: not found (404): Model not found` on stderr and an empty
   stdout.
 
-Both properties hold for `civitai generate` and `civitai workflows …` too, but
-their payloads are **not** Site API REST shapes — generation has no REST route,
-so those commands pass through the raw *orchestrator* reply. Read
+The repair, in full. The API intermittently
+emits a **raw control byte** — a carriage return, most often — inside a `prompt`
+or `description` string, which is not legal JSON and used to fail the whole page
+([#525](https://github.com/civitai/cli/issues/525)). When a page will not decode,
+the CLI rewrites those bytes as their JSON escapes (`\r`, `\u0001`) and decodes
+the repaired body, and that repaired body is what `--json` prints. The *document*
+is still the API's — the same strings, the same characters — but the bytes are
+not: this is the second of the two byte changes named above, and the reason the
+warning against diffing or hashing is not just about whitespace. A page that
+decodes as sent is passed through with no such rewrite.
+
+Both of the two piping properties above hold for `civitai generate` and
+`civitai workflows …` too, but their payloads are **not** Site API REST
+shapes — generation has no REST route, so those commands print the
+*orchestrator's* reply. **The two byte changes apply differently there, so take
+them one at a time:** the output is **re-indented** exactly as above, so it is no
+more diffable or hashable than the read group's; but the **repair never runs on
+a generation reply** — it is applied by the read SDK's own decode step, and the
+generation client decodes with plain `encoding/json`, so nothing rewrites a
+control byte there. Read
 [Generation `--json`](#generation---json) before scripting against them.
 
 Two `app` commands emit a shape this **CLI composes**, not a wire payload:
@@ -3919,7 +3942,7 @@ credited it to the wrong command.)
 | `SHA256 mismatch for` | A download's hash did not match, and the partial file was deleted. Retry — this is integrity checking working, not a bug. | [Download model files](#download-model-files) |
 | `checksum mismatch for` | The same, during `civitai upgrade`. The binary was **not** replaced. | [Upgrading](#upgrading) |
 | ``git is required for `civitai app pull` `` | `app pull` shells out to `git`, which is not on your `PATH`. | [Pull your app's repository](#pull-your-apps-repository-app-pull) |
-| `unexpected response from` | A public read endpoint answered **`200`** with a body this CLI could not decode. Nothing is wrong with your request, your credential or your network — which is why it exits `1` rather than `2` or `3` — and the text after the colon is the server's own body, truncated. One cause is known and is **fixed** as of [#513](https://github.com/civitai/cli/issues/513), reported by Rochet2: a Civitai username can be entirely digits, and such a value was reported arriving as a bare JSON **number** (`"username": 2802169344506`, unquoted) rather than a string. A single such uploader on a page failed the whole page, so `civitai images search` printed nothing at all; the CLI now accepts either shape and keeps the digits exactly as sent. If you still hit this, the body really is a shape the SDK does not model — please open an issue with the snippet. | [Exit code 1](#exit-code-1) |
+| `unexpected response from` | A public read endpoint answered **`200`** with a body this CLI could not decode. Nothing is wrong with your request, your credential or your network — which is why it exits `1` rather than `2` or `3` — and the text after the colon is the server's own body, truncated, with invisible and terminal-controlling characters removed (so a hostile body cannot rewrite what is already on your screen from inside the error line; nothing else is rewritten, and the CLI's own repair below is **not** applied to what you are shown). **Two causes are known and both are fixed.** [#513](https://github.com/civitai/cli/issues/513), reported by Rochet2: a Civitai username can be entirely digits, and such a value was reported arriving as a bare JSON **number** (`"username": 2802169344506`, unquoted) rather than a string. A single such uploader on a page failed the whole page, so `civitai images search` printed nothing at all; the CLI now accepts either shape and keeps the digits exactly as sent. [#525](https://github.com/civitai/cli/issues/525): the API intermittently emits a **raw control byte** (a carriage return, say) inside a `prompt` or `description` string, which is not legal JSON, so the whole page failed to decode; the CLI now rewrites those bytes as their JSON escapes and decodes the page. If you still hit this, the body really is a shape the SDK does not model — please open an issue with the snippet. | [Exit code 1](#exit-code-1) |
 
 Still stuck? Every command takes `--help`, `civitai --help` prints the exit-code
 contract, and failures are differentiated by [exit code](#exit-codes) — so a
