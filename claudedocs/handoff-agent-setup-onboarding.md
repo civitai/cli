@@ -19,52 +19,63 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ## State now
 
-**Rank 6 is DONE, MERGED, DEPLOYED and VERIFIED AGAINST PROD.** Four PRs landed
-across two repos; the audit ladder ran one round on each implementation PR and both
-rounds' findings were fixed and merged. Ranks 4, 8, 9, 10, 11 remain untouched.
+**This session closed ranks 4, 10 and two thirds of 11, and shipped 8 and 9 —
+the entries below that credit 8 and 9 to "a parallel session" are describing
+THIS one.** All five PRs are merged; nothing is in flight.
 
-- **Shipped and live:**
+- **Branch `main`, clean, synced.** `civitai/cli` at `3d17591`;
+  `civitai/civitai-developer-docs` at `11311ab`.
+- **Merged this session:**
 
-| PR | | merged |
+| PR | rank | |
 |---|---|---|
-| docs#71 | `/apps/examples` — the example-app catalog + `check-example-apps.mjs` rot guard (`75035bce`) | 05:42Z |
-| cli#549 | the managed block's ONE-URL Docs line, item 36's trigger widened | 05:52Z |
-| cli#548 | handoff | — |
-| docs#72 | audit fixes: `llms.txt` duplication + the rename guard's missing coverage (`89bb471`) | 16:19Z |
-| cli#553 | audit fixes: the docs-link gate could report ok without probing (`ff7a211`) | 16:19Z |
+| docs#73 (`c84684a`) | 4 | `.well-known/ai-catalog.json` + the `Link:` advertisement, and its guard |
+| docs#74 (`11311ab`) | 8 | a byte budget on `prompt.md`, with a ceiling and a floor |
+| cli#557 (`6fce127`) | 9 | `snippet()`'s "every argument is server bytes" ledger — closed #542 |
+| cli#559 (`a33daed`) | 10 | read `--help` headroom, and a residual note that named the wrong command — closed #543 |
+| cli#560 (`44a5b94`) | 11 | four rotted test citations + half (c)'s controls — 2 of 3 residuals |
 
-- **Verified against PROD, not inferred** (2026-09-11, after the 16:24:59Z deploy):
-  - `developer.civitai.com/apps/examples` → **200**; `/apps/examples/` → **404**, and
-    the CLI ships the no-slash spelling. Correct.
-  - `llms.txt` → **192 lines** (was 215): `### Examples` ×1, `Introduction to Civitai
-    Apps` ×1, `### Design system` ×1. The duplication is gone.
-  - `CIVITAI_CHECK_DOCS_LINKS=1 go test -run 'TestBlockDocsLinksResolve|TestEveryDocsURLSpellingIsLedgered' ./internal/cmd/`
-    → both PASS, `checked 4 of 4 link(s); 0 unreachable, 4 live, 0 moved, 0 gone`.
-  - Live page names all 8 repos; no org-ownership phrasing.
-- **Both base clones fast-forwarded** (`--ff-only`, neither diverged): cli at `ff7a211`,
-  docs at `89bb471`.
-- 🔴 **Claim `agent-setup-onboarding-6` was ALREADY RELEASED by something else** when I
-  went to release it (`nothing to release — ref does not exist`). I did not release it.
-  Consistent with a parallel session having worked the same queue — see the gotcha below.
-- 🔴 **No clawgate task recorded.** `resolve` exited **5** (`0 tasks`). An unknown session
-  id also answers 200/empty, so this is **not** evidence that no task exists.
-- **Carried forward from earlier sessions** (still true; keeps being dropped because it
-  sits under a REPLACE heading): recorded in the subsystem index (`cli/scaffold`) — the
-  2026-09-08 `OPEN:` bullet rewritten as `RESOLVED 5557b6a`, plus a bullet for the
-  sibling-workflow drift class; `cairn-validate --scope cli` → OK 6/6. Issue **#530 is
-  CLOSED and was verified by a real dispatched run** (run 34559798234), not by reasoning.
-  **No subsystem-index entry was written this session** — the `--session` window was empty
-  (every edit was made by a subagent in a worktree) and the `--commit` window proposed only
-  the generic slugs `cmd`/`internal`, which are not worth an entry; the durable content
-  lives in `claudedocs/decisions/36-agents-block-per-project.md` instead.
+- **Rank 4 is LIVE and verified against the origin**, not just merged:
+  `https://developer.civitai.com/.well-known/ai-catalog.json` → 200,
+  `application/ai-catalog+json; charset=utf-8`, and `/` carries the `Link:`
+  header. `node scripts/check-ai-catalog.mjs` against production: **7 URLs
+  checked, 0 failed, 0 skipped**, including "the live `Link` equals the config's".
+- 🔴 **Rank 4 shipped NARROWED, by an explicit operator decision.** The original
+  wording named `ai-catalog.json` **and** `agent-skills/index.json` with SHA-256
+  digests. Only the catalog shipped. Measured reasons, both recorded in the docs
+  repo's `CLAUDE.md` and `README.md`: an agent-skills index's every entry is a
+  `tar.gz`/`SKILL.md` with a `sha256:` digest and this project publishes no skill
+  bundles, so the index would have had zero or invented entries; and
+  `ai-catalog.json` carries **no digests at all** — digests are an agent-skills
+  field, so that half of the original wording described the wrong artifact.
+- **Claims released:** `agent-setup-onboarding-4`, `-8`, `-9`, `-10`, `-11`.
+  None held.
+- 🔴 **No clawgate task recorded.** `clawgate_handoff.sh resolve` exited **5**
+  (0 tasks for this session). Its positive control resolved **9** links for
+  another session, so the board is reachable and the token is accepted — but a
+  wrong session id also answers 200 with an empty array, so this is **not**
+  evidence that no task exists.
+- **Not done:** none of the five PRs received an adversarial audit. Each was
+  offered and the operator chose to merge. See rank 17.
+- **Recorded in the subsystem index this session** — `cli/civitai`: the stale
+  `OPEN:` bullet about #513's server-side coercion rewritten as
+  `RESOLVED d0d1805` (it is now IDENTIFIED and LIVE — Meilisearch dynamic JSON
+  typing — and the earlier "not reproducible" was defeated by Cloudflare cache
+  HITs, 38 of 38 flipping on a fresh cache key), plus a new bullet on the
+  `snippet()` ledger. 🔴 **A new `ai-catalog` entry could NOT be written** — see
+  the gotcha on the stranded store scopes.
 
-### Honest limits on what shipped
+**Carried forward from earlier sessions** (still true; keeps being dropped
+because it sits under a REPLACE heading):
 
-- **The 403/301 arms of the CLI link probe are simulated locally**, never triggered
-  against the real Cloudflare edge. The `1010` block is quoted from this doc, not
-  re-provoked.
-- **Nothing notifies on a red daily drift run** in the docs repo — see rank 12.
-- **Neither rot guard is a required context**, by explicit operator decision.
+- **Rank 6 verified against PROD, not inferred** (2026-09-11, after the 16:24:59Z
+  deploy): `/apps/examples` → **200** and `/apps/examples/` → **404**, with the
+  CLI shipping the no-slash spelling; `llms.txt` → **192 lines** (was 215) with
+  `### Examples` ×1, so the duplication is gone; the live page names all 8 repos.
+- **Issue #530 is CLOSED and was verified by a real dispatched run**
+  (run 34559798234), not by reasoning. The `cli/scaffold` index entry carries the
+  2026-09-08 `OPEN:` bullet rewritten as `RESOLVED 5557b6a`, plus the
+  sibling-workflow drift class.
 
 ## Open investigations — live diagnosis state
 
@@ -312,10 +323,42 @@ the `civitai.com` zone. Never the origin, never the docs repo.
   `/apps/` and `/agent-setup/prompt.md` — `prompt.md` 6,949 B and `llms.txt`
   13,066 B, `cmp` clean both, `content-type: text/markdown`, origin `etag` present.
 
+### The docs repo cannot be built locally from a pristine `main`, while CI builds it green
+
+- **Symptom + exact repro:**
+  ```bash
+  cd /home/zach/workspace/civit/civitai-developer-docs   # clean, at origin/main
+  npm ci --no-audit --no-fund && npm run build
+  ```
+- **Observed (with values):** `prebuild` dies in `gen-appblocks-messages.mjs`:
+  `Error: gen-appblocks-messages: 1 INVENTORY reply value(s) do not name a
+  published SDK host->block message. … Unresolved: SET_COLLECTION_FOLLOW ->
+  "COLLECTION_FOLLOW_RESULT"`. `npm run check:snapshots` is red on the same tree
+  and asks for a re-snapshot of `hostHandlerParity.ts`. `check:cli-snapshot`,
+  `check:manifest-parity` and `check:md-regions` are red on pristine `main` too.
+- **Ruled out:** that it is caused by any change made this session — reproduced
+  with the working tree byte-identical to `origin/main`, zero edits applied.
+  `via: command` · That it is node-version dependent — identical failure on node
+  **22.23.2** and node **26.8.1**; the first hypothesis was "local node 26 vs
+  CI's node 20" and it is **RETRACTED**. `via: measurement` · That the four red
+  `check:*` guards are related to this session's files — none of the four
+  references any file this session touched. `via: code`
+- **Leading hypothesis:** the committed `appblocks-snapshots/` have drifted from
+  the published SDK, which is what those scheduled drift guards exist to report;
+  the generator turns the same drift into a hard build failure. Why CI's
+  `build-site` is **green on the same commit** is NOT explained — that is the
+  open part.
+- **Next probe:** diff what CI installs against what a local `npm ci` installs —
+  `gh run view <build-site-run> --log | grep -A3 'added .* packages'` against a
+  local `npm ls @civitai/blocks-react @civitai/app-sdk`. If the resolved SDK
+  versions differ, the snapshots are fine and the lockfile/registry state is the
+  variable; if they match, the difference is in the runner image and the
+  generator is reading something outside the repo.
+
 ## Next steps (ranked)
 
-🔴 **Ranks 1, 2, 3, 5, 6, 7, 8 and 9 are DONE — numbering is preserved deliberately** so
-any live `claim-work` slug keeps pointing at the item it was taken for.
+🔴 **Ranks 1–10 are DONE — numbering is preserved deliberately** so any live
+`claim-work` slug keeps pointing at the item it was taken for.
 
 1. ~~**Unfreeze `civitai/cli`**~~ — **DONE**, cli#529.
    forcing: none
@@ -323,67 +366,97 @@ any live `claim-work` slug keeps pointing at the item it was taken for.
    forcing: none
 3. ~~**PR `civitai/cli#526`**~~ — **DONE**, merged `517fc76`.
    forcing: none
-4. **P2 of the onboarding work**: `/.well-known/ai-catalog.json` +
-   `/.well-known/agent-skills/index.json` with SHA-256 digests, advertised via
-   `Link:` headers. Cloudflare ships the artifacts and advertises none; Mintlify
-   advertises. Nobody does both. Repo: `civitai/civitai-developer-docs`.
-   🔴 **Check `ai-catalog.yml` FIRST — it already exists** in that repo with a daily
-   `cron: '37 6 * * *'` and a network half, so some of this may be built. Read it before
-   scoping.
+4. ~~**P2 of the onboarding work**~~ — **DONE**, docs#73 (`c84684a`), live and
+   verified against the origin. Shipped NARROWED: catalog + `Link:` only, no
+   agent-skills index — see State now for the measured reasons.
    forcing: none
 5. ~~**Delete or gitignore `node_modules/`**~~ — **DONE**, cli#537.
    forcing: none
-6. ~~**Example apps**~~ — **DONE**: docs#71 + cli#549, audit-fixed by docs#72 + cli#553,
-   verified against prod after the 16:24:59Z deploy. Residual → rank 12.
+6. ~~**Example apps**~~ — **DONE**: docs#71 + cli#549, audit-fixed by docs#72 +
+   cli#553.
    forcing: none
 7. ~~**cli#530**~~ — **DONE**, cli#540, verified by run 34559798234.
    forcing: none
-8. ~~**A hard byte ceiling on `prompt.md`**~~ — **DONE by a PARALLEL SESSION**, not this
-   one: `civitai/civitai-developer-docs#74` merged 2026-09-11T16:36:05Z (`11311ab`),
-   "a byte budget on prompt.md, with a ceiling and a floor". Claim
-   `agent-setup-onboarding-8` was taken ~16:20Z and **may still be held** — check
-   `claim-work --list` and release it if the holder is gone.
+8. ~~**A hard byte ceiling on `prompt.md`**~~ — **DONE**, docs#74 (`11311ab`).
+   The earlier entry credited this to "a parallel session"; it was this arc.
+   Claim `agent-setup-onboarding-8` is RELEASED.
    forcing: none
-9. ~~**cli#542** — `snippet()`'s "every argument is server bytes" invariant~~ — **DONE by
-   a PARALLEL SESSION**: issue #542 is **CLOSED**, pinned by cli#557 (`6fce127`),
-   "test(civitai): pin snippet()'s 'every argument is server bytes' invariant".
-   🔴 **cli#399, the other side of that seam, was NOT necessarily closed with it** — the
-   old text predicted one instrument would fix both. Verify before assuming.
+9. ~~**cli#542**~~ — **DONE**, cli#557 (`6fce127`), issue CLOSED.
+   🔴 **cli#399 was NOT closed with it — see rank 14.**
    forcing: none
-10. **cli#543** — the read `--help` rune budget: `users` sits **5 runes** under the
-    1400 cap after #541, and `read_help_test.go:164-172` still names
-    `images search` as the longest consumer, which stopped being true.
-    **Confirmed still OPEN** 2026-09-11.
+10. ~~**cli#543** — the read `--help` rune budget~~ — **DONE**, cli#559
+    (`a33daed`), issue CLOSED. `readJSONNote` trimmed 384 → 331 runes; `users`
+    1395 → 1342. The binding constraint MOVED rather than disappearing:
+    `images search` is longest again at 1386 (14 of headroom) — see rank 16.
     forcing: none
-11. **Residuals of decisions item 38**, all in
-    `claudedocs/decisions/38-read-body-repair-and-snippet.md`: four comment-citation
-    rot sites (`download_ssrf_test.go:147`, `app_pull_not_approved_test.go:372`,
-    `update_check_test.go:393`, `appblocks.go:1261`); the README documents no
-    429 → exit 2 reclassification; and half (c) of
-    `TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne`.
+11. **Residuals of decisions item 38 — 2 of 3 DONE** (cli#560, `44a5b94`).
+    Closed: the four comment-citation rot sites (repo-wide unresolved-name count
+    **20 → 16**, sites 23 → 19, measured on both sides with the shipped
+    instruments); and half (c)'s body-vs-message control confusion.
+    **STILL OPEN: the README documents no 429 → exit 2 reclassification.**
+    Left deliberately — BOTH README exit-code blocks are **generated** from
+    `exitCodeDocs` in `internal/cmd/exitcodes_doc.go` (pinned by
+    `TestREADMEExitCodeTableIsGenerated` / `…SectionsAreGenerated`), so writing
+    the row means editing the generator and republishing the exit-code contract.
+    Closing condition is stated in `claudedocs/decisions/38-…md`: the
+    Troubleshooting row and the exit-code table both name the deep-paging case,
+    and `readme_troubleshooting_test.go` still passes.
     forcing: none
 12. **Nothing notifies on a red daily example-app drift run.**
     `civitai/civitai-developer-docs:.github/workflows/appblocks-drift.yml` has no
-    notify/issue step — verified by grep 2026-09-11. The guard has two halves:
-    `example-apps.yml` (PR + push, `--offline`) catches rot a PR introduces;
-    the scheduled `appblocks-drift.yml` half hits `api.github.com` per repo and catches
-    EXTERNAL rot (an owner renaming or archiving). **The second half's result surfaces
-    nowhere** — a red run and a fully-skipped "nothing was verified" run are
-    indistinguishable unless someone opens the Actions tab. This is the last open leg of
-    rank 6's "so it cannot rot" objective: external rot is DETECTED but not DELIVERED.
-    Adding a notify step is a workflow edit, which `AGENTS.md` puts behind "ask first".
-    forcing: user — flagged to the operator 2026-09-11 and explicitly left as their call.
-    Closing condition: either a notify step merges, or the operator states in writing
-    that Actions-tab-only visibility is accepted.
-13. **The example page's per-repo SCOPE and HOOK lists have no rot guard at all.**
-    `civitai/civitai-developer-docs:apps/examples.md` — the audit checked all 8 repos'
-    `scopes` against `block.manifest.json` (exact, including order) and every `use*` hook
-    against the identifiers imported from `@civitai/blocks-react` (exact), but that was a
-    ONE-TIME read. `check-example-apps.mjs` guards only URL liveness. These are the
-    page's most authoritative-looking content and its least protected, and all 8 repos
-    were pushed within days of the page being written, so drift is likely and silent.
-    Either date-stamp those lists as-of, or extend the guard to fetch each
-    `block.manifest.json` and compare.
+    notify/issue step. A red run and a fully-skipped "nothing was verified" run
+    are indistinguishable unless someone opens the Actions tab. Adding a notify
+    step is a workflow edit, which `AGENTS.md` puts behind "ask first".
+    Closing condition: either a notify step merges, or the operator states in
+    writing that Actions-tab-only visibility is accepted. **Untouched this
+    session.**
+    forcing: user — flagged to the operator 2026-09-11 and explicitly left as
+    their call.
+13. **The example page's per-repo SCOPE and HOOK lists have no rot guard.**
+    `civitai/civitai-developer-docs:apps/examples.md` — `check-example-apps.mjs`
+    guards only URL liveness. Either date-stamp those lists as-of, or extend the
+    guard to fetch each `block.manifest.json` and compare. **Untouched this
+    session.**
+    forcing: none
+14. 🔴 **cli#399 — REOPENED after this session closed it by accident.** The
+    substance is untouched and unchanged: `safeTerm` is a security control called
+    from ~150 sites, and deleting it at **20 of 25 sampled sites leaves the suite
+    green**. cli#557 pinned a *ledger* in `pkg/civitai`; this is a *coverage*
+    problem in `internal/cmd` and needs a different instrument (#399's own body
+    proposes hanging a coverage ledger off the AST walk that
+    `TestSafeTermIsNeverAppliedToUserTypedInput` already performs).
+    Closing condition: deleting `safeTerm(...)` at a sampled site reddens the
+    suite, demonstrated on ≥1 site that survives today.
+    forcing: security — `safeTerm` is the CLI's only gate on server-supplied text
+    reaching a terminal, and 20 of 25 sampled call sites are provably unpinned.
+15. **The docs repo does not build from a pristine `main` locally.** See the
+    Open investigations block for the full diagnosis state, including two
+    retracted hypotheses. Blocks any local `npm run build` /
+    `npm run check:built-site` in that repo; CI is unaffected.
+    Closing condition: the local build exits 0 on a clean checkout, or the
+    divergence from CI is explained in writing in that repo's `CLAUDE.md`.
+    forcing: gate — `check:built-site` and `build-site` cannot be run locally
+    before pushing, so that job's failures are only ever discovered in CI.
+16. **`images search --help` sits 14 runes under the 1400 budget.** PRE-EXISTING
+    (1386 both before and after #541) and untouched by rank 10's fix, because it
+    does NOT interpolate `readJSONNote` — `images`, the parent, does. By this
+    repo's own standard that is effectively frozen. Levers are
+    `serverOwnedEnumNote`, `deepPagingNote`, or the body itself; the mechanism is
+    now recorded in `read_help_test.go`'s residual note.
+    forcing: none
+17. **None of this arc's five PRs was adversarially audited.** Each audit was
+    offered and the operator chose to merge. This is recorded as a known risk
+    rather than a defect: rank 6's equivalent audit found a REAL hole (cli#553,
+    "the docs-link gate could report ok without probing the link") in a PR that
+    was also fully green and mutation-tested. The two with the most judgement in
+    them are docs#74 (three derived byte constants) and cli#559 (published
+    `--help` wording).
+    forcing: none
+18. **`.well-known/mcp/server-card.json` is not published.** The two MCP
+    endpoints are deliberately absent from the catalog because a `GET` to
+    `mcp.civitai.com/mcp` is **405** and `orchestration.civitai.com/mcp` is
+    **401** — transports, not fetchable documents. A server card is the artifact
+    that would represent them, and it would then be a catalog entry.
     forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -764,34 +837,127 @@ any live `claim-work` slug keeps pointing at the item it was taken for.
   **Sweep `gh pr list --state open` as well** — that is the only thing that sees an
   UNCLAIMED duplicate. `via: measurement`
 
+### Added 2026-09-11 (third session) — ranks 4, 8, 9, 10, 11
+
+- 🔴 **"Does NOT close #399" CLOSED #399. GitHub's parser does not read
+  negations.** A commit body sentence — *"Does NOT close #399 (safeTerm unpinned
+  at ~20 of 25 sampled sites)"* — contains the literal `close #399`, and the
+  closing-keyword parser matched it. The PR body said the same thing in words, so
+  **both human-readable surfaces were correct and the issue closed anyway**; no
+  reviewer could have caught it. Reopened, with the mechanism recorded on the
+  issue. **To reference an issue without closing it, do not use the keyword at
+  all** — "see #399", "related to #399". `close`/`closes`/`fixes`/`resolves`
+  followed by `#N` closes it regardless of the surrounding sentence.
+- 🔴 **A handoff doc written on a branch describes the `main` it was CUT from,
+  not the one it MERGES into.** cli#558 was created 20:19:20Z and merged
+  20:58:23Z — after cli#559 (20:23) and cli#560 (20:33). It replaced the ranked
+  list with a pre-merge snapshot: rank 10 read *"Confirmed still OPEN"* when it
+  was closed, rank 4 read open when it was live, and the doc contained **zero**
+  mentions of docs#73, cli#559 or cli#560. It also credited ranks 8 and 9 to "a
+  parallel session" — they were the same session it was sweeping up after. The
+  merged-tree rule applies to DOCS, not just code.
+- 🔴 **`default_type` does not set a Content-Type for an extension nginx already
+  knows.** It is the FALLBACK for an unresolvable extension — which is why it
+  works for `.md`, absent from `mime.types`. `.json` IS present, so the map wins
+  and `application/ai-catalog+json` came back as `application/json`. An empty
+  `types { }` block clears the map so `default_type` applies. It reads as a
+  no-op; deleting it silently reverts the declared type.
+- 🔴 **One server-level `add_header Link` reaches almost none of a site.** nginx
+  inherits `add_header` only into blocks that declare none of their own.
+  Measured under a real nginx: with a single server-level copy, **four of five
+  document routes served NO `Link`** — `/apps/guide.html`,
+  `/agent-setup/prompt.md`, `/.well-known/ai-catalog.json` and **`/` itself**
+  (resolved through an internal redirect into `location ~* \.html$`), while
+  `/llms.txt` kept it and is the control proving the directive worked at all.
+  **Spot-checking the homepage would have passed that config.**
+- 🔴 **The docs deploy takes 83–384 s, not ~90 s — an early 404 is not a
+  failure.** Measured three times this session on the same pipeline: 83 s (#72),
+  340 s (#73's predecessor) and 384 s (#73). The handoff's earlier "~94 s"
+  precedent is the FAST end. Mid-run I called a deploy "stalled" on the strength
+  of it and was wrong; only waiting resolved it. `last-modified` on any page is
+  the origin's own value and is the honest signal — a CDN read is not.
+- 🔴 **Registering a guard in a bidirectional ledger: do ONE side first and watch
+  it fail.** Adding `pkg/civitai/snippet_args_ledger_test.go` to item 38 means
+  editing `decisions/38`'s header AND `item38CommentedFiles`, which
+  `TestItem38FileLedgerMatchesTheDecisionHeader` pins equal. Updating the header
+  alone was done deliberately and the pin caught it by name. That is the cheapest
+  possible proof the registration is real rather than asserted.
+- 🔴 **A "previously called X" note re-arms the rot it documents.** The first
+  draft of cli#560 recorded each fixed citation as "previously
+  `TestSomethingThatDoesNotExist`" — which keeps that identifier in the
+  repo-wide unresolved count the fix exists to reduce. It would have left the
+  count at 20. `decisions/38` warns about exactly this and it was still walked
+  into; the measurement caught it, not the reading.
+- **When a verbatim-pinned constant must change, the pin tells you the order.**
+  `readJSONNote` is pinned against `wantReadJSONNote`. The sequence that
+  satisfies it: change the constant, watch the pin FAIL, re-run the behavioural
+  halves that the wording is supposed to describe, and only then re-type the
+  expectation. Pasting the new string into both places passes the test while
+  proving nothing.
+- ⚠ **Four of my own instruments were wrong, each in the reassuring direction.**
+  `git merge … | tail && echo ok` tested `tail`'s status, not the merge's, and
+  reported three failed merges as successes. `pgrep -f nginxprobe` matched the
+  shell running it and killed its own caller (exit 144). zsh ate `$b:refs/…` as
+  an `:r` history modifier, producing `…ledgerefs/remotes/…` — brace it,
+  `${b}`. And `awk '$2=="pending"'` over `gh pr checks` misread `Analyze (go)`,
+  whose NAME contains a space, so the status column is not `$2`; use
+  `--json statusCheckRollup` instead of parsing the table.
+- **A single-branch clone silently fetches nothing.** The docs repo's
+  `remote.origin.fetch` is `+refs/heads/main:refs/remotes/origin/main`, so
+  `git fetch origin` leaves every other branch unresolvable and a test-merge
+  "succeeds" against refs that do not exist. Fetch explicit refspecs, or
+  `refs/pull/<n>/head` for a fork-based PR.
+- **A bare `git worktree add` has no toolchain.** `go` was not on PATH in a fresh
+  worktree of `civitai/cli` even though it is in the base clone; the full test
+  suite silently did not run. Use an absolute path or copy the environment before
+  reading any verdict from a worktree.
+- 🔴 **TWO SUBSYSTEM-INDEX SCOPES ARE STRANDED LOCAL-ONLY AND WILL NEVER SYNC —
+  `civitai-developer-docs` and `civitai-app-requests`.** They exist in the frozen
+  mirror (`~/.claude/analyze-service-index/`, files `0444`) and in NEITHER the
+  synced cache (`~/.cache/subsystem-store/`) nor the pod. The docs one holds
+  `apps.md`, 4,037 B, dated **2026-09-02** — the Cairn cutover day, which is the
+  likely mechanism. Consequences, both live: `cairn create --scope
+  civitai-developer-docs` is REFUSED `[not-found]`, so nothing new can be
+  recorded for that repo at all; and a `/resume` in it reads an EMPTY scope while
+  a whole entry sits on this host's disk. **Do not "fix" it by writing locally —
+  that is the failure, not the remedy.** It needs the pod-seeding path in the
+  `cairn` skill.
+
 ## How to verify
 
-Rank 6, end to end — all five must hold together:
+Rank 4, against production — the half that could not exist before deploy:
 
 ```bash
-# 1. the page, and the spelling the CLI ships (the slash is load-bearing)
-curl -sS -o /dev/null -w '%{http_code}\n' https://developer.civitai.com/apps/examples   # 200
-curl -sS -o /dev/null -w '%{http_code}\n' https://developer.civitai.com/apps/examples/  # 404
-
-# 2. llms.txt is not duplicated (regression fixed by docs#72)
-curl -sS https://developer.civitai.com/llms.txt | grep -c '^### Examples'   # 1, not 2
-
-# 3. the CLI's own link guards, against the live host
-cd /home/zach/workspace/civit/cli
-CIVITAI_CHECK_DOCS_LINKS=1 go test -count=1 \
-  -run 'TestBlockDocsLinksResolve|TestEveryDocsURLSpellingIsLedgered' ./internal/cmd/ -v
-# expect: both PASS, "checked 4 of 4 link(s); 0 unreachable, 4 live, 0 moved, 0 gone"
-
-# 4. the docs rot guard, and that its self-test cannot rot away
 cd /home/zach/workspace/civit/civitai-developer-docs
-node scripts/check-example-apps.mjs --offline    # rc 0
-#    then mutate `full_name` comparison to `if (false && …)` -> MUST be rc 1
-#    then delete the RENAMED fixture rows       -> MUST be rc 1 (SELF-TEST DEGENERATE)
-#    🔴 run `node --check` on the mutated file FIRST — a SyntaxError also exits 1
-
-# 5. offline gates
-make ci && nix-shell -p golangci-lint --run "make lint"   # make ci does NOT run lint
+node scripts/check-ai-catalog.mjs --verbose     # expect: 7 URLs checked, 0 failed, 0 skipped
+curl -sI https://developer.civitai.com/.well-known/ai-catalog.json | grep -iE 'HTTP/|content-type|^link'
 ```
 
-🔴 Read `rc` directly — `$?` after a pipe is the pipe's status. This repo has been
-misled by that twice.
+Rank 8 and the repo's other offline guards:
+
+```bash
+cd /home/zach/workspace/civit/civitai-developer-docs
+npm run check:agent-setup        # check 5 prints the byte count and the headroom
+npm run check:ai-catalog -- --offline
+```
+
+Ranks 9, 10 and 11 in `civitai/cli`:
+
+```bash
+cd /home/zach/workspace/civit/cli
+go test ./pkg/civitai ./internal/cmd ./internal/appapi -count=1
+make ci                                         # 21 packages report ok
+nix-shell -p golangci-lint --run "make lint"    # make ci does NOT run lint
+```
+
+Rank 11's closing measurement — the repo-wide unresolved-citation count, which
+has no committed probe on purpose:
+
+```bash
+# scan every .go comment for Test[A-Za-z0-9_]{4,} and resolve against declared
+# funcs; expect 16 distinct unresolved names, 19 sites. It was 20/23 at 44a5b94^.
+```
+
+🔴 Read `rc` directly — `$?` after a pipe is the pipe's status. This repo has
+been misled by that three times now, most recently by a `git merge | tail`
+that reported three failed merges as successes.
