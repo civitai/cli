@@ -181,6 +181,7 @@ var item38CommentedFiles = []string{
 	"pkg/civitai/raw_doc_ledger_test.go",
 	"pkg/civitai/read.go",
 	"pkg/civitai/read_repair_test.go",
+	"pkg/civitai/snippet_args_ledger_test.go",
 	"saferune_callers_ledger_test.go",
 }
 
