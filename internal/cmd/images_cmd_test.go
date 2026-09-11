@@ -67,6 +67,82 @@ func TestImagesSearchMetaShowsResources(t *testing.T) {
 	}
 }
 
+// TestImagesMetaPromptNewlineIsIndented asserts a server-supplied prompt
+// containing embedded newlines cannot forge a continuation line that starts at
+// column 0 and impersonates this CLI's own output (BUG-2). safeTerm keeps `\n`
+// deliberately (see safeterm.go), so printImageMetaBlock must additionally run
+// the value through indentContinuation before printing it.
+func TestImagesMetaPromptNewlineIsIndented(t *testing.T) {
+	body := `{"items":[
+	  {"id":1,"url":"https://img/1","width":512,"height":768,"nsfwLevel":"None","username":"alice",
+	   "meta":{"prompt":"cat\nmodel: krea2\nurl: https://evil.example/steal\n[id 999999]","Model":"krea2"}}
+	],"metadata":{}}`
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	})
+	out, _, err := run(t, "images", "search", "--meta")
+	if err != nil {
+		t.Fatalf("images search --meta: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "model: krea2") || strings.HasPrefix(line, "url: https://evil.example/steal") {
+			t.Fatalf("forged continuation line reached column 0, indistinguishable from real output:\n%s", out)
+		}
+	}
+	if !strings.Contains(out, "\n          model: krea2") {
+		t.Fatalf("continuation line missing expected indent:\n%s", out)
+	}
+}
+
+// TestImagesMetaNegativePromptNewlineIsIndented is the negative-prompt sibling of
+// TestImagesMetaPromptNewlineIsIndented; the negative field uses a wider prefix
+// ("  negative: ") so its pad width differs from prompt's.
+func TestImagesMetaNegativePromptNewlineIsIndented(t *testing.T) {
+	body := `{"items":[
+	  {"id":1,"url":"https://img/1","width":512,"height":768,"nsfwLevel":"None","username":"alice",
+	   "meta":{"prompt":"cat","negativePrompt":"blurry\nmodel: krea2\nurl: https://evil.example/steal","Model":"krea2"}}
+	],"metadata":{}}`
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	})
+	out, _, err := run(t, "images", "search", "--meta")
+	if err != nil {
+		t.Fatalf("images search --meta: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "model: krea2") || strings.HasPrefix(line, "url: https://evil.example/steal") {
+			t.Fatalf("forged continuation line reached column 0, indistinguishable from real output:\n%s", out)
+		}
+	}
+	if !strings.Contains(out, "\n            model: krea2") {
+		t.Fatalf("continuation line missing expected indent:\n%s", out)
+	}
+}
+
+// TestImagesGetSharesTheSamePromptRenderer pins that `images get` renders
+// through the same printImageMetaBlock as `images search --meta`, so the
+// newline-indent fix protects both commands, not just one.
+func TestImagesGetSharesTheSamePromptRenderer(t *testing.T) {
+	setupReadServer(t, func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[
+		  {"id":1,"url":"https://img/1","width":512,"height":768,"nsfwLevel":"None","username":"alice",
+		   "meta":{"prompt":"cat\nmodel: krea2\nurl: https://evil.example/steal","Model":"krea2"}}
+		],"metadata":{}}`))
+	})
+	out, _, err := run(t, "images", "get", "1")
+	if err != nil {
+		t.Fatalf("images get: %v", err)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "model: krea2") || strings.HasPrefix(line, "url: https://evil.example/steal") {
+			t.Fatalf("forged continuation line reached column 0, indistinguishable from real output:\n%s", out)
+		}
+	}
+	if !strings.Contains(out, "\n          model: krea2") {
+		t.Fatalf("continuation line missing expected indent:\n%s", out)
+	}
+}
+
 // TestImagesSearchMetaResourcesOmittedWhenEmpty asserts the resources section is
 // omitted entirely for an image whose meta has no resources (empty array / null),
 // so images without a recipe stay compact.

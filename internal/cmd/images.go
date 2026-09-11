@@ -289,10 +289,10 @@ func printImageMetaBlock(out io.Writer, im civitai.ImageItem) {
 			orDash(safeTerm(m.CfgScaleString())), orDash(safeTerm(m.StepsString())),
 			orDash(safeTerm(m.SeedString())))
 		if strings.TrimSpace(m.Prompt) != "" {
-			fmt.Fprintf(out, "  prompt: %s\n", safeTerm(m.Prompt))
+			fmt.Fprintf(out, "  prompt: %s\n", indentContinuation(safeTerm(m.Prompt), "          "))
 		}
 		if strings.TrimSpace(m.NegativePrompt) != "" {
-			fmt.Fprintf(out, "  negative: %s\n", safeTerm(m.NegativePrompt))
+			fmt.Fprintf(out, "  negative: %s\n", indentContinuation(safeTerm(m.NegativePrompt), "            "))
 		}
 		printImageResources(out, m)
 	}
