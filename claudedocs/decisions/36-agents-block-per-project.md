@@ -222,3 +222,125 @@ added:
 ```
 
 Both green at HEAD.
+
+---
+
+## Third: the Docs section links ONE URL, never a list of repositories
+
+The block's `### Docs` section reached the guide, the reference and `llms.txt`,
+and nothing in it reached a **worked example**. An author's agent had four
+sentences of gotchas and no App Block it could read end to end. One line was
+added:
+
+```
+- Example apps you can read end-to-end:
+  https://developer.civitai.com/apps/examples
+```
+
+### The rejected alternative, and why it is not a style preference
+
+The obvious edit is to spell the seven example repositories into the block. It
+is refused for one structural reason:
+
+🔴 **This block is written to disk in somebody else's project, and nothing can
+recall it.** A URL embedded here is copied into every directory `civitai
+agent-setup` has ever run in. The only thing that rewrites it is another
+`agent-setup` run in that same directory, which most authors never do. So a
+literal that rots here rots in every project separately and forever, while a
+docs-site page is corrected once, for every reader, by the people who own the
+list. That asymmetry is the whole argument: **the CLI ships the address, the
+docs repo ships the contents.**
+
+### The measurements behind it
+
+Taken 2026-09-10/11 from this host, anonymously, over real HTTP.
+
+| Probe | Result | What it settles |
+|---|---|---|
+| `developer.civitai.com/apps/guide/` | `200` | positive control — the prober can see a live page |
+| `developer.civitai.com/apps/reference/` | `200` | positive control |
+| `developer.civitai.com/llms.txt` | `200` | positive control |
+| `developer.civitai.com/apps/showcase` | `200` | **no trailing slash** |
+| `developer.civitai.com/apps/showcase/` | `404` | **with one** — the slash is load-bearing per path |
+| `civitai.com/models` | `200` | control: the site answers anonymous GETs |
+| `civitai.com/apps` | `404` | the whole `/apps` route family is unreachable anonymously |
+| `civitai.com/apps/run/gen-matrix` | `404` | …which is why a run-URL is not a readable example |
+
+Three residuals follow from that table, and each killed a different candidate
+line:
+
+1. **A run-URL is not an example.** `civitai.com/apps/run/<slug>` 404s for a
+   logged-out reader — and it does so because `civitai.com/apps` itself 404s,
+   not because that particular slug is wrong. An agent sent there gets a 404 and
+   no way to tell a dead app from a dead route. So the page links **repositories**,
+   which an agent can clone and read, not running instances.
+2. **`/apps/showcase` is the COMPONENT showcase, and was conflated with an
+   example gallery in the handoff this work came from.** It answers `200`, which
+   is exactly what makes the conflation survivable: a link there resolves and
+   sends the reader to the wrong thing. It is not what this line points at.
+3. **GitHub topics are already an unreliable enumeration, so "just query the
+   topic" is not a durable substitute for a curated page.** `topic:civitai-app-block`
+   returned **6** repositories, which is a different set from the seven example
+   apps: two of the seven carry no topics at all, and one repository the query
+   *does* return is not one of the seven. A list nobody maintains is a list that
+   is wrong in both directions.
+
+### The trailing slash is measured, never tidied
+
+`/apps/guide/` is `200` **with** its slash; `/apps/showcase` is `200`
+**without** one. There is no site-wide rule to infer, so the spelling of any URL
+in this section is a measurement, not a convention. Do not normalise them by eye.
+
+### Guards
+
+`internal/cmd/agent_setup_docs_test.go`:
+
+- `TestTheBlocksDocsSectionIsPinnedForEveryProjectKind` — pins the WHOLE
+  normalised `### Docs` section, byte for byte, for every shape
+  `allProjectShapesForTest` produces (`npm` with and without recognised scripts,
+  `no-build`, `none`). Two assertions with different messages: the link **set**
+  (so adding or removing a URL is a named edit) and the **whole string** (so a
+  reword is too — a word-level guard on prose is walkable by rewording, and the
+  wording is the claim about what a reader gets from following the link). It is
+  per-shape because the three `{{ if }}` branches are what a mis-nested template
+  edit can drop the section out of, and the `static` author — the one with the
+  least local code to read — is exactly the reader who needs the examples most.
+- `TestDocsSectionExtractorCanFail` — negative control for `docsSectionOf`, in
+  both directions: it must report *absent* for a block with no section, *present*
+  for one that has it, and must stop at the END marker.
+- `TestBlockDocsLinksResolve` — the liveness probe, **opt-in behind
+  `CIVITAI_CHECK_DOCS_LINKS=1`**, following `internal/scaffold`'s
+  `CIVITAI_CHECK_PUBLISHED_PINS` pattern so an offline `make ci` stays green. It
+  carries its own negative control (a path on the same host that cannot exist
+  must answer `>= 400` or the whole run is declared meaningless), and a transport
+  failure **skips** rather than fails — "the network is down" and "the page is
+  gone" are different findings.
+
+Red-then-green, run at `origin/main` `8e7d2dc` with only the test file added:
+
+```
+--- FAIL: TestTheBlocksDocsSectionIsPinnedForEveryProjectKind
+    the `### Docs` link SET changed for kind "npm".
+      want: …/apps/examples, …/apps/guide/, …/apps/reference/, …/llms.txt
+      got:  …/apps/guide/, …/apps/reference/, …/llms.txt
+    the `### Docs` section for kind "npm" is not what is pinned. …
+```
+
+reported once per shape (`npm`, `no-build`, `none`, `npm`-with-scripts). Green at
+HEAD.
+
+### 🔴 WHAT IS NOT ESTABLISHED
+
+**The page was not live when this shipped.** `developer.civitai.com/apps/examples`
+answered `404` — both with and without a trailing slash — at the time of the
+measurements above, while the other three links in the same section answered
+`200`. The docs page is authored in a separate repository, in parallel. So this
+records a **dead link that was shipped deliberately, on the expectation that the
+page lands**; `TestBlockDocsLinksResolve` is the check that says when it has, and
+it is the check to run before believing any claim that the link works.
+
+**No CI job sets `CIVITAI_CHECK_DOCS_LINKS`.** Adding one means editing
+`.github/workflows/*`, which AGENTS.md puts behind "ask first". Until that
+happens the probe is a manual pre-merge check and nothing runs it on a schedule —
+so a link that dies later dies silently. Saying so is the honest version of "the
+links are verified".
