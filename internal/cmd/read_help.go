@@ -90,8 +90,8 @@ when you are logged in.`
 const readJSONNote = `--json writes the API response to stdout and nothing else — notes and errors go
 to stderr, so ` + "`… --json | jq -e .`" + ` always parses. The document is the API's,
 the bytes are not: it is re-indented on the way out, and a raw control byte the
-API emits inside a string (which is not legal JSON) is rewritten as its escape
-so the output still parses. Do not diff or hash it against the wire.`
+API emits inside a string is rewritten as its escape. Do not diff or hash it
+against the wire.`
 
 // limitRule renders one endpoint's --limit bounds.
 //

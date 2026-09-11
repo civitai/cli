@@ -162,14 +162,33 @@ func TestReadAPIHelpBodiesAreComplete(t *testing.T) {
 // line as 81 and reddens prose that renders fine.
 //
 // 🔴 KNOWN SHIPPED RESIDUAL — READ THIS BEFORE ACTING ON A FAILURE HERE.
-// `images search` sits at 1386 of the 1400 runes: about FOURTEEN of headroom.
-// Five of these bodies interpolate shared constants (readAnonNote,
-// readAnonShort, readJSONNote, serverOwnedEnumNote, deepPagingNote), so growing
-// ONE of those by a sentence reddens this test naming `images search` — the
-// longest consumer — rather than naming the constant that actually grew. If that
-// is why you are here, edit the constant or trim `images search`, and do not
-// raise the budget to make a shared sentence fit; the budget is what stops a
-// migration turning into a `--help` nobody reads.
+// These bodies interpolate shared constants (readAnonNote, readAnonShort,
+// readJSONNote, serverOwnedEnumNote, deepPagingNote), so growing ONE of those by
+// a sentence reddens this test naming whichever BODY is longest rather than the
+// constant that actually grew. If that is why you are here, edit the constant or
+// trim the body, and do not raise the budget to make a shared sentence fit; the
+// budget is what stops a migration turning into a `--help` nobody reads.
+//
+// 🔴 "WHICH BODY IS LONGEST" IS NOT A STABLE FACT — DO NOT TRUST A NAME HERE,
+// RE-MEASURE. This comment named `images search` as "the longest consumer" and
+// that went FALSE without anyone touching it: civitai/cli#541 grew readJSONNote
+// by 131 runes (253 → 384), which pushed `users` to 1395 of 1400 — FIVE of
+// headroom — and made it the longest, while `images search` did not move at all.
+// So the note pointed the next person at the wrong command, and the command it
+// named was not the one about to red (civitai/cli#543).
+//
+// The mechanism is the thing worth remembering, because it is what makes the
+// ranking move: `images` (the parent) interpolates readJSONNote and `images
+// search` does NOT, so a change to that one constant re-orders these bodies
+// against each other. Trimming readJSONNote back to 331 runes restored the
+// earlier ordering — which is exactly why a name is the wrong thing to record.
+//
+// Measured on this tree rather than recalled: `images search` 1386 (14 of
+// headroom, the binding constraint and a PRE-EXISTING one — it was 1386 both
+// before and after #541), then `users` 1342 (58), `images` 1303 (97). To
+// re-measure, count utf8.RuneCountInString over each readAPINodes body; there is
+// no committed probe, because a helper that prints the ranking would itself need
+// pinning to stay honest.
 func TestReadAPIHelpStaysWithinTheBudget(t *testing.T) {
 	nodes := readAPINodes(t)
 	var checked int

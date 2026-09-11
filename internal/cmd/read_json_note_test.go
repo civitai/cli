@@ -28,8 +28,8 @@ const crBodyModelName = "Speckled\rGrebe"
 const wantReadJSONNote = "--json writes the API response to stdout and nothing else — notes and errors go\n" +
 	"to stderr, so `… --json | jq -e .` always parses. The document is the API's,\n" +
 	"the bytes are not: it is re-indented on the way out, and a raw control byte the\n" +
-	"API emits inside a string (which is not legal JSON) is rewritten as its escape\n" +
-	"so the output still parses. Do not diff or hash it against the wire."
+	"API emits inside a string is rewritten as its escape. Do not diff or hash it\n" +
+	"against the wire."
 
 // TestReadJSONNoteDescribesTheRepair is the guard finding 1 asked for.
 //
