@@ -19,63 +19,75 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ## State now
 
-**This session closed ranks 4, 10 and two thirds of 11, and shipped 8 and 9 —
-the entries below that credit 8 and 9 to "a parallel session" are describing
-THIS one.** All five PRs are merged; nothing is in flight.
+**Ranks 12 and 13 are now DONE too (docs#75) — the entries below marked "untouched
+this session" were written before that landed.** Combined with the parallel arc that
+closed 4, 8, 9, 10 and two thirds of 11, every ranked item with a forcing function is
+now either closed or explicitly handed to the operator. Nothing is in flight.
 
-- **Branch `main`, clean, synced.** `civitai/cli` at `3d17591`;
-  `civitai/civitai-developer-docs` at `11311ab`.
-- **Merged this session:**
+- **Branch `main`, clean, synced.** `civitai/cli` at `c3628ed`;
+  `civitai/civitai-developer-docs` at `d5b34c8`.
+- **Merged across this arc** (the first five are the parallel session's, the last three
+  this one's):
 
 | PR | rank | |
 |---|---|---|
 | docs#73 (`c84684a`) | 4 | `.well-known/ai-catalog.json` + the `Link:` advertisement, and its guard |
 | docs#74 (`11311ab`) | 8 | a byte budget on `prompt.md`, with a ceiling and a floor |
 | cli#557 (`6fce127`) | 9 | `snippet()`'s "every argument is server bytes" ledger — closed #542 |
-| cli#559 (`a33daed`) | 10 | read `--help` headroom, and a residual note that named the wrong command — closed #543 |
+| cli#559 (`a33daed`) | 10 | read `--help` headroom, and a residual note naming the wrong command — closed #543 |
 | cli#560 (`44a5b94`) | 11 | four rotted test citations + half (c)'s controls — 2 of 3 residuals |
+| docs#71 + cli#549 | 6 | `/apps/examples` and the managed block's ONE-URL Docs line |
+| docs#72 + cli#553 | 6 | the rank-6 audit fixes (`llms.txt` duplication; the link gate that could report ok without probing) |
+| **docs#75 (`d5b34c8`)** | **12 + 13** | **deliver the sweep's red, and make the page's scope lists a checked claim** |
 
 - **Rank 4 is LIVE and verified against the origin**, not just merged:
   `https://developer.civitai.com/.well-known/ai-catalog.json` → 200,
-  `application/ai-catalog+json; charset=utf-8`, and `/` carries the `Link:`
-  header. `node scripts/check-ai-catalog.mjs` against production: **7 URLs
-  checked, 0 failed, 0 skipped**, including "the live `Link` equals the config's".
-- 🔴 **Rank 4 shipped NARROWED, by an explicit operator decision.** The original
-  wording named `ai-catalog.json` **and** `agent-skills/index.json` with SHA-256
-  digests. Only the catalog shipped. Measured reasons, both recorded in the docs
-  repo's `CLAUDE.md` and `README.md`: an agent-skills index's every entry is a
-  `tar.gz`/`SKILL.md` with a `sha256:` digest and this project publishes no skill
-  bundles, so the index would have had zero or invented entries; and
-  `ai-catalog.json` carries **no digests at all** — digests are an agent-skills
-  field, so that half of the original wording described the wrong artifact.
-- **Claims released:** `agent-setup-onboarding-4`, `-8`, `-9`, `-10`, `-11`.
-  None held.
-- 🔴 **No clawgate task recorded.** `clawgate_handoff.sh resolve` exited **5**
-  (0 tasks for this session). Its positive control resolved **9** links for
-  another session, so the board is reachable and the token is accepted — but a
-  wrong session id also answers 200 with an empty array, so this is **not**
-  evidence that no task exists.
-- **Not done:** none of the five PRs received an adversarial audit. Each was
-  offered and the operator chose to merge. See rank 17.
-- **Recorded in the subsystem index this session** — `cli/civitai`: the stale
-  `OPEN:` bullet about #513's server-side coercion rewritten as
-  `RESOLVED d0d1805` (it is now IDENTIFIED and LIVE — Meilisearch dynamic JSON
-  typing — and the earlier "not reproducible" was defeated by Cloudflare cache
-  HITs, 38 of 38 flipping on a fresh cache key), plus a new bullet on the
-  `snippet()` ledger. 🔴 **A new `ai-catalog` entry could NOT be written** — see
-  the gotcha on the stranded store scopes.
+  `application/ai-catalog+json; charset=utf-8`, and `/` carries the `Link:` header.
+  `node scripts/check-ai-catalog.mjs` against production: **7 URLs checked, 0 failed,
+  0 skipped**. 🔴 It shipped **NARROWED** by explicit operator decision — catalog +
+  `Link:` only, no agent-skills index; the measured reasons are in the docs repo's
+  `CLAUDE.md` and `README.md`, and the short version is that an agent-skills index's
+  entries are `tar.gz`/`SKILL.md` with `sha256:` digests, this project publishes no skill
+  bundles, and `ai-catalog.json` carries no digests at all — so that half of the original
+  wording described the wrong artifact.
+- **Rank 6 verified against PROD** (after the 16:24:59Z deploy): `/apps/examples` → 200,
+  `/apps/examples/` → 404 with the CLI shipping the no-slash spelling; `llms.txt` → 192
+  lines (was 215) with `### Examples` ×1; the live page names all 8 repos.
+- **Claims released:** `-4`, `-6`, `-8`, `-9`, `-10`, `-11`, `-12`, `-13`. **None held.**
+- 🔴 **No clawgate task recorded.** `resolve` exited **5**. Its positive control resolved
+  9 links for another session, so the board is reachable and the token accepted — but a
+  wrong session id also answers 200/empty, so this is **not** evidence no task exists.
+- **Recorded in the subsystem index** — `cli/civitai`: the stale `OPEN:` bullet about
+  #513's server-side coercion rewritten as `RESOLVED d0d1805` (now IDENTIFIED and LIVE —
+  Meilisearch dynamic JSON typing; the earlier "not reproducible" was defeated by
+  Cloudflare cache HITs, 38 of 38 flipping on a fresh cache key), plus a bullet on the
+  `snippet()` ledger. 🔴 A new `ai-catalog` entry could NOT be written — see the gotcha on
+  the stranded store scopes.
 
-**Carried forward from earlier sessions** (still true; keeps being dropped
-because it sits under a REPLACE heading):
+### Ranks 12 + 13, verified independently rather than accepted from the agent
 
-- **Rank 6 verified against PROD, not inferred** (2026-09-11, after the 16:24:59Z
-  deploy): `/apps/examples` → **200** and `/apps/examples/` → **404**, with the
-  CLI shipping the no-slash spelling; `llms.txt` → **192 lines** (was 215) with
-  `### Examples` ×1, so the duplication is gone; the live page names all 8 repos.
-- **Issue #530 is CLOSED and was verified by a real dispatched run**
-  (run 34559798234), not by reasoning. The `cli/scaffold` index entry carries the
-  2026-09-08 `OPEN:` bullet rewritten as `RESOLVED 5557b6a`, plus the
-  sibling-workflow drift class.
+- **Live scope-drift mutation**: adding `models:read:public` to Sensei's page scopes →
+  **rc 1**, `✗ ZacxDev/civitai-app-sensei scopes — SCOPES DRIFTED … the page lists
+  \`models:read:public\` which the manifest does not declare`. Names repo, scope and
+  direction.
+- **The two-host split proved itself under a real rate limit**: one run verified **3 of 8**
+  repos live via `api.github.com` while verifying **8 of 8** scope lists via
+  `raw.githubusercontent.com`. The two numbers moving independently is the cleanest
+  evidence that the scope check added **zero** API budget — better than the assertion.
+  That run exited **0 with a loud "could not be reached and were NOT verified"**, which is
+  the documented skip-loudly behaviour, observed rather than read.
+- `check-example-apps.mjs --offline` → rc 0 on the merged tree.
+
+### Honest limits on what shipped
+
+- 🔴 **`scripts/drift-notify.mjs` HAS NEVER TALKED TO `api.github.com`** — see rank 18.
+- **Hook lists remain unverified by machine**; the date stamp is the disclosure, not a
+  substitute.
+- **Neither `check-example-apps` nor the new self-test step is a required context.** The
+  six required are `test-cli`, `test-messages`, `test-bridge`, `typecheck-snippets`,
+  `build-site`, `test-md-regions`. Consistent with the operator's earlier "not now".
+- **None of this arc's PRs was adversarially audited except rank 6's two** — see rank 17,
+  and note that the rank-6 audits found a REAL hole in a PR that was also fully green.
 
 ## Open investigations — live diagnosis state
 
@@ -357,8 +369,10 @@ the `civitai.com` zone. Never the origin, never the docs repo.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–10 are DONE — numbering is preserved deliberately** so any live
-`claim-work` slug keeps pointing at the item it was taken for.
+🔴 **Ranks 1–13 are DONE — numbering is preserved deliberately** so any live `claim-work`
+slug keeps pointing at the item it was taken for. 🔴 **Ranks 18–19 are numbered ABOVE 17
+because a parallel session filed 14–17 first and this update merged SECOND** — the
+convention is that the second merger renumbers its OWN new items, never the other's.
 
 1. ~~**Unfreeze `civitai/cli`**~~ — **DONE**, cli#529.
    forcing: none
@@ -366,97 +380,107 @@ the `civitai.com` zone. Never the origin, never the docs repo.
    forcing: none
 3. ~~**PR `civitai/cli#526`**~~ — **DONE**, merged `517fc76`.
    forcing: none
-4. ~~**P2 of the onboarding work**~~ — **DONE**, docs#73 (`c84684a`), live and
-   verified against the origin. Shipped NARROWED: catalog + `Link:` only, no
-   agent-skills index — see State now for the measured reasons.
+4. ~~**P2 of the onboarding work**~~ — **DONE**, docs#73 (`c84684a`), live and verified
+   against the origin. Shipped NARROWED: catalog + `Link:` only, no agent-skills index.
    forcing: none
 5. ~~**Delete or gitignore `node_modules/`**~~ — **DONE**, cli#537.
    forcing: none
-6. ~~**Example apps**~~ — **DONE**: docs#71 + cli#549, audit-fixed by docs#72 +
-   cli#553.
+6. ~~**Example apps**~~ — **DONE**: docs#71 + cli#549, audit-fixed by docs#72 + cli#553,
+   verified against prod.
    forcing: none
 7. ~~**cli#530**~~ — **DONE**, cli#540, verified by run 34559798234.
    forcing: none
 8. ~~**A hard byte ceiling on `prompt.md`**~~ — **DONE**, docs#74 (`11311ab`).
-   The earlier entry credited this to "a parallel session"; it was this arc.
-   Claim `agent-setup-onboarding-8` is RELEASED.
    forcing: none
 9. ~~**cli#542**~~ — **DONE**, cli#557 (`6fce127`), issue CLOSED.
    🔴 **cli#399 was NOT closed with it — see rank 14.**
    forcing: none
-10. ~~**cli#543** — the read `--help` rune budget~~ — **DONE**, cli#559
-    (`a33daed`), issue CLOSED. `readJSONNote` trimmed 384 → 331 runes; `users`
-    1395 → 1342. The binding constraint MOVED rather than disappearing:
-    `images search` is longest again at 1386 (14 of headroom) — see rank 16.
+10. ~~**cli#543** — the read `--help` rune budget~~ — **DONE**, cli#559 (`a33daed`),
+    issue CLOSED. The binding constraint MOVED rather than disappearing — see rank 16.
     forcing: none
-11. **Residuals of decisions item 38 — 2 of 3 DONE** (cli#560, `44a5b94`).
-    Closed: the four comment-citation rot sites (repo-wide unresolved-name count
-    **20 → 16**, sites 23 → 19, measured on both sides with the shipped
-    instruments); and half (c)'s body-vs-message control confusion.
-    **STILL OPEN: the README documents no 429 → exit 2 reclassification.**
-    Left deliberately — BOTH README exit-code blocks are **generated** from
-    `exitCodeDocs` in `internal/cmd/exitcodes_doc.go` (pinned by
-    `TestREADMEExitCodeTableIsGenerated` / `…SectionsAreGenerated`), so writing
-    the row means editing the generator and republishing the exit-code contract.
-    Closing condition is stated in `claudedocs/decisions/38-…md`: the
-    Troubleshooting row and the exit-code table both name the deep-paging case,
-    and `readme_troubleshooting_test.go` still passes.
+11. **Residuals of decisions item 38 — 2 of 3 DONE** (cli#560, `44a5b94`). Closed: the
+    four comment-citation rot sites (repo-wide unresolved-name count **20 → 16**) and
+    half (c)'s body-vs-message control confusion. **STILL OPEN: the README documents no
+    429 → exit 2 reclassification** — left deliberately, because BOTH README exit-code
+    blocks are **generated** from `exitCodeDocs` in `internal/cmd/exitcodes_doc.go`
+    (pinned by `TestREADMEExitCodeTableIsGenerated`), so writing the row means editing the
+    generator and republishing the exit-code contract. Closing condition is stated in
+    `claudedocs/decisions/38-…md`.
     forcing: none
-12. **Nothing notifies on a red daily example-app drift run.**
-    `civitai/civitai-developer-docs:.github/workflows/appblocks-drift.yml` has no
-    notify/issue step. A red run and a fully-skipped "nothing was verified" run
-    are indistinguishable unless someone opens the Actions tab. Adding a notify
-    step is a workflow edit, which `AGENTS.md` puts behind "ask first".
-    Closing condition: either a notify step merges, or the operator states in
-    writing that Actions-tab-only visibility is accepted. **Untouched this
-    session.**
-    forcing: user — flagged to the operator 2026-09-11 and explicitly left as
-    their call.
-13. **The example page's per-repo SCOPE and HOOK lists have no rot guard.**
-    `civitai/civitai-developer-docs:apps/examples.md` — `check-example-apps.mjs`
-    guards only URL liveness. Either date-stamp those lists as-of, or extend the
-    guard to fetch each `block.manifest.json` and compare. **Untouched this
-    session.**
+12. ~~**Nothing notifies on a red daily example-app drift run**~~ — **DONE**, docs#75
+    (`d5b34c8`). `scripts/drift-notify.mjs` + a `notify` job opens or refreshes ONE issue
+    (found by an HTML marker, not title or label), comments only when the failure
+    *fingerprint* changes, and comments-then-closes on the next clean run. It alerts on
+    **"nothing was verified"** too — skipped job, no report, zero repos verified, or the
+    guard run `--offline`. 🔴 **Its delivery is UNPROVEN against the real GitHub API —
+    see rank 18.**
     forcing: none
-14. 🔴 **cli#399 — REOPENED after this session closed it by accident.** The
-    substance is untouched and unchanged: `safeTerm` is a security control called
-    from ~150 sites, and deleting it at **20 of 25 sampled sites leaves the suite
-    green**. cli#557 pinned a *ledger* in `pkg/civitai`; this is a *coverage*
-    problem in `internal/cmd` and needs a different instrument (#399's own body
-    proposes hanging a coverage ledger off the AST walk that
-    `TestSafeTermIsNeverAppliedToUserTypedInput` already performs).
-    Closing condition: deleting `safeTerm(...)` at a sampled site reddens the
-    suite, demonstrated on ≥1 site that survives today.
-    forcing: security — `safeTerm` is the CLI's only gate on server-supplied text
-    reaching a terminal, and 20 of 25 sampled call sites are provably unpinned.
-15. **The docs repo does not build from a pristine `main` locally.** See the
-    Open investigations block for the full diagnosis state, including two
-    retracted hypotheses. Blocks any local `npm run build` /
-    `npm run check:built-site` in that repo; CI is unaffected.
-    Closing condition: the local build exits 0 on a clean checkout, or the
-    divergence from CI is explained in writing in that repo's `CLAUDE.md`.
-    forcing: gate — `check:built-site` and `build-site` cannot be run locally
-    before pushing, so that job's failures are only ever discovered in CI.
-16. **`images search --help` sits 14 runes under the 1400 budget.** PRE-EXISTING
-    (1386 both before and after #541) and untouched by rank 10's fix, because it
-    does NOT interpolate `readJSONNote` — `images`, the parent, does. By this
-    repo's own standard that is effectively frozen. Levers are
-    `serverOwnedEnumNote`, `deepPagingNote`, or the body itself; the mechanism is
-    now recorded in `read_help_test.go`'s residual note.
+13. ~~**The example page's per-repo SCOPE and HOOK lists have no rot guard**~~ — **DONE
+    for scopes**, docs#75 (`d5b34c8`). The scheduled half fetches each repo's
+    `block.manifest.json` and compares `scopes` **by set**, so a reordered array does not
+    false-fail; missing/unparseable manifest → FAIL naming the cause; 403/429/5xx/DNS →
+    loud SKIP, exit 0. Hooks are **date-stamped, not machine-verified** — deliberate: the
+    guard prints the stamp's age each run and does NOT fail on age, because that is a
+    permanently-red gate with a countdown.
     forcing: none
-17. **None of this arc's five PRs was adversarially audited.** Each audit was
-    offered and the operator chose to merge. This is recorded as a known risk
-    rather than a defect: rank 6's equivalent audit found a REAL hole (cli#553,
-    "the docs-link gate could report ok without probing the link") in a PR that
-    was also fully green and mutation-tested. The two with the most judgement in
-    them are docs#74 (three derived byte constants) and cli#559 (published
-    `--help` wording).
+14. 🔴 **cli#399 — OPEN, and now STRUCTURALLY CONFIRMED uncovered.** `safeTerm` is the
+    CLI's only gate on server-supplied text reaching a terminal; deleting it at **20 of 25
+    sampled sites leaves the suite green**. Measured 2026-09-11: **153 `safeTerm(`
+    occurrences** in `internal/` non-test sources (positive-controlled grep). cli#557's
+    guard does NOT reach it, for three reasons each verified at file:line —
+    `pkg/civitai/snippet_args_ledger_test.go:130` scans `os.ReadDir(".")` from
+    `package civitai`, so `internal/cmd` is never walked; `:168` matches only
+    `id.Name != "snippet"`, never `safeTerm`; and it is an **origin ledger** (where bytes
+    come from), not a **coverage** assertion (would a test go red if the call vanished).
+    Smallest instrument: hang a coverage ledger on the AST walk already in
+    `internal/cmd/safeterm_userinput_test.go`, keyed by **enclosing function** — that walk
+    is currently flat over `file`, not `file.Decls`, so it has no enclosing-function
+    attribution, and that is the one structural change needed — asserted bidirectionally,
+    with rows honestly reading NOT COVERED as the queue. **56 rows, not 150 tests.**
+    Closing condition: deleting `safeTerm(...)` at a sampled site reddens the suite,
+    demonstrated on ≥1 site that survives today.
+    forcing: security — `safeTerm` is the CLI's only gate on server-supplied text reaching
+    a terminal, and 20 of 25 sampled call sites are provably unpinned.
+15. **The docs repo does not build from a pristine `main` locally.** See the Open
+    investigations block for the full diagnosis state, including two retracted
+    hypotheses. Blocks any local `npm run build` / `npm run check:built-site` in that
+    repo; CI is unaffected. Closing condition: the local build exits 0 on a clean
+    checkout, or the divergence from CI is explained in writing in that repo's
+    `CLAUDE.md`.
+    forcing: gate — `check:built-site` and `build-site` cannot be run locally before
+    pushing, so that job's failures are only ever discovered in CI.
+16. **`images search --help` sits 14 runes under the 1400 budget.** PRE-EXISTING (1386
+    both before and after #541) and untouched by rank 10's fix, because it does NOT
+    interpolate `readJSONNote` — `images`, the parent, does. Levers are
+    `serverOwnedEnumNote`, `deepPagingNote`, or the body itself.
     forcing: none
-18. **`.well-known/mcp/server-card.json` is not published.** The two MCP
-    endpoints are deliberately absent from the catalog because a `GET` to
-    `mcp.civitai.com/mcp` is **405** and `orchestration.civitai.com/mcp` is
-    **401** — transports, not fetchable documents. A server card is the artifact
-    that would represent them, and it would then be a catalog entry.
+17. **Most of this arc's PRs were not adversarially audited.** Each audit was offered and
+    the operator chose to merge. Recorded as a known risk rather than a defect: rank 6's
+    two audits DID run and found a REAL hole (cli#553, "the docs-link gate could report ok
+    without probing the link") in a PR that was also fully green and mutation-tested. The
+    unaudited ones with the most judgement in them are docs#73, docs#74, cli#559 and
+    **docs#75** (920 lines of new guard and notifier).
+    forcing: none
+18. **NEW — `drift-notify.mjs` has never talked to the REAL GitHub API.** All nine
+    delivery scenarios were driven over real HTTP against a **local fake** issues API.
+    Two specific unknowns: whether GitHub auto-creates the `appblocks-drift` label under
+    `issues: write` (there is a create-without-label fallback for the 403), and whether
+    this repo's Actions policy permits the issue write at all. Cross-run behaviour across
+    two genuine cron ticks is demonstrated against the fake, never observed live.
+    **A notifier that cannot notify is the exact failure it exists to prevent — and by
+    rank 12's own argument, its failure would itself be invisible.** Closing condition:
+    one real scheduled `appblocks-drift` run observed end-to-end, or a deliberate
+    `workflow_dispatch` exercising the notify path.
+    forcing: gate — rank 12's closing condition was "a notify step merges". It has merged,
+    so rank 12 reads CLOSED, but the hole it named is not demonstrably closed until
+    delivery works against the real service.
+19. **NEW — `#542`'s stated closing condition may not be discharged.** It named "any
+    `saferune.*` call site outside `internal/cmd`". Measured 2026-09-11: there are
+    **two** — `pkg/civitai/read.go` and `internal/genapi/status.go`. cli#557's guard
+    matches `snippet`, not `saferune.*`, so it reaches neither as such, and the
+    module-root `saferune_callers_ledger_test.go` pins **which packages import saferune**,
+    not what they pass. Whether that discharges #542 is a judgement call — recorded so it
+    is not silently assumed. Read with rank 14.
     forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -922,6 +946,56 @@ the `civitai.com` zone. Never the origin, never the docs repo.
   a whole entry sits on this host's disk. **Do not "fix" it by writing locally —
   that is the failure, not the remedy.** It needs the pod-seeding path in the
   `cairn` skill.
+
+### Added 2026-09-11 (session 2 close) — ranks 12–13, the #399 check, and a real merge race
+
+- 🔴 **TWO SESSIONS WROTE THE SAME HANDOFF DOC AND GITHUB CAUGHT IT — `gh pr view` IS WHY.**
+  This session's handoff PR came back `CONFLICTING / DIRTY` because a parallel arc had
+  merged #561 into the same file. Forcing would have **regressed their closures of ranks
+  4, 10 and 11** — their update was newer and strictly better on those items. The fix was
+  to fast-forward, re-read THEIR version, and rebuild this delta on top of it.
+  🔴 **The numbering collided too**: they filed 14–17, this session had drafted its own
+  14–16 for different substance. **The second merger renumbers its OWN items** — hence
+  18–19 here, and their 14 (cli#399) absorbed this session's structural evidence rather
+  than becoming a duplicate entry. `via: measurement`
+- 🔴 **GITHUB'S KEYWORD PARSER CLOSED AN ISSUE THE COMMIT EXPLICITLY SAID IT DID NOT
+  CLOSE.** cli#557's commit `6fce127` reads *"Does **NOT** close #399"*; GitHub matched
+  `close #399`, ignored the negation, and closed it (auto-closed 16:56Z, reopened 20:59Z).
+  Both human-readable surfaces were right; the automation was not. **Never write
+  `close[s|d] #N` / `fix[es] #N` / `resolve[s] #N` in a commit or PR body unless you mean
+  it — negation does not help.** Write "does not address #399", or reference it with no
+  keyword. `via: measurement`
+- 🔴 **A NETWORK CHECK ADDED ZERO API BUDGET BECAUSE IT USES A DIFFERENT HOST, AND A RATE
+  LIMIT PROVED IT.** Manifests come from `raw.githubusercontent.com`; liveness from
+  `api.github.com`. On a rate-limited run the sweep verified **3 of 8** repos live and
+  **8 of 8** scope lists — the numbers moved independently. **When adding a network check,
+  ask which HOST it hits before assuming it shares the old one's quota**; and note this
+  was learned from an accident, not a designed experiment. `via: measurement`
+- 🔴 **THE GUARD AND THE NOTIFIER NEED OPPOSITE FAILURE POLICIES, AND SAYING SO IS THE
+  DESIGN.** `check-example-apps.mjs` skips loudly and **exits 0** on an unreachable
+  network — a false-fail makes a gate people click through. `drift-notify.mjs` **exits 1**
+  when it cannot reach the API — a notifier that cannot notify is the failure it exists to
+  prevent. Same repo, same sweep, deliberately inverted. **Do not "harmonise" them.**
+- 🔴 **A TEST GREPPED A WORKFLOW'S RAW `jobs:` TEXT — COMMENTS INCLUDED.** Correcting a
+  stale claim in `cli-snapshot-refresh.yml` ("The ONLY elevation in this repo") tripped
+  `test-refresh-cli-snapshot.mjs`, because the scope name written in a COMMENT matched its
+  forbidden-scope grep. The fix was to move the comment to the file header, **not** to
+  weaken the guard. **A guard that reads raw YAML cannot tell a comment from a
+  declaration** — expect this when documenting permissions. `via: command`
+- ⚠ **MY OWN GREP PIPELINE RETURNED A CONFIDENT `0` TWICE BEFORE I NOTICED.**
+  `xargs -0 command grep` fails — `command` is a shell BUILTIN, not an executable — and
+  `which grep` on this host returns a shell FUNCTION body, which `find -exec` then cannot
+  run. Both printed **0** matches for a pattern with **153** real hits. Fixed by calling
+  `/run/current-system/sw/bin/grep` directly **and running a positive control first**
+  (`package cmd` → 67). **A zero from a pipeline you have not positive-controlled is a
+  fact about the pipeline.** This is a third distinct shape of the same repo-recorded
+  hazard, after `$?`-after-a-pipe and ugrep's `.gitignore` blindness. `via: command`
+- ⚠ **DELIVERY VERIFIED AGAINST A FAKE IS NOT DELIVERY VERIFIED.** Nine scenarios over
+  real HTTP against a local fake issues API is good engineering and still leaves "it will
+  notify" unproven — the real service can differ on label auto-creation, org policy and
+  token scope. Filed as rank 18 rather than folded into rank 12's completion, **because
+  collapsing them is how "merged" becomes "working".** `via: assumed` (the gap is
+  structural and stated by the implementer; nothing was measured against the real API)
 
 ## How to verify
 
