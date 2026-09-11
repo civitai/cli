@@ -19,62 +19,52 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ## State now
 
-**Rank 6 (example apps) was decided and implemented across two repos. Both PRs are
-now OPEN and green; the docs half is MERGED.** Ranks 4, 8, 9, 10, 11 remain
-untouched.
+**Rank 6 is DONE, MERGED, DEPLOYED and VERIFIED AGAINST PROD.** Four PRs landed
+across two repos; the audit ladder ran one round on each implementation PR and both
+rounds' findings were fixed and merged. Ranks 4, 8, 9, 10, 11 remain untouched.
 
-- **`civitai/cli` — PR #549, branch `feat/agents-block-example-apps-link`, commit
-  `c2c1b7f`.** 13/13 checks pass. 🔴 **Its own body says DO NOT MERGE YET** — it
-  ships a link that 404s until the docs page is live *and served*.
-- **`civitai/civitai-developer-docs` — PR #71, MERGED `75035bce` 2026-09-11T05:42Z**,
-  15/15 checks pass. It grew two commits past the `a2597fe` recorded below
-  (`c4af2a5f` pinning the fetch-follows-301 measurement, `08024f4f` a sidebar-level
-  fix), so the "negative controls unreported" caveat below is **partly** addressed —
-  `check-example-apps` ran green in CI. The CLI-side red/green matrix caveat still
-  stands unaddressed.
-- 🔴 **MERGED ≠ SERVED, and this one is measured.** `Push on main` reported
-  `completed/success` while `https://developer.civitai.com/apps/examples` was still
-  **404** (both spellings). Poll the consumer before merging #549.
+- **Shipped and live:**
 
-Per-branch detail as recorded when the work was committed:
+| PR | | merged |
+|---|---|---|
+| docs#71 | `/apps/examples` — the example-app catalog + `check-example-apps.mjs` rot guard (`75035bce`) | 05:42Z |
+| cli#549 | the managed block's ONE-URL Docs line, item 36's trigger widened | 05:52Z |
+| cli#548 | handoff | — |
+| docs#72 | audit fixes: `llms.txt` duplication + the rename guard's missing coverage (`89bb471`) | 16:19Z |
+| cli#553 | audit fixes: the docs-link gate could report ok without probing (`ff7a211`) | 16:19Z |
 
-- **`civitai/cli` — branch `feat/agents-block-example-apps-link`, commit `c2c1b7f`**,
-  ahead 1 of `origin/main` (`8e7d2dc`), working tree clean.
-  - `internal/cmd/templates/agents-app.md` — the `### Docs` section gains ONE line:
-    `Example apps you can read end-to-end: https://developer.civitai.com/apps/examples`
-  - `AGENTS.md` — item 36's trigger widened to cover "what its Docs section links",
-    **net +1 byte** (30,442 → 30,443 against `agentsMaxBytes` 30,500).
-  - `claudedocs/decisions/36-agents-block-per-project.md` — +122 lines of rationale.
-  - `internal/cmd/agent_setup_docs_test.go` — new, 256 lines. 🔴 **UNVERIFIED by me:
-    no red/green matrix was reported back, and `make ci` / `make lint` output was
-    never seen.**
-- **`civitai/civitai-developer-docs` — branch `docs/apps-examples-page`, commit
-  `a2597fe`**, ahead 1 of `origin/main` (`ddb4729`), working tree clean. The worktree
-  it was written in (`/home/zach/workspace/civit/docs-examples-page`) has since been
-  removed; the branch was pushed, opened as #71 and merged.
-  - new: `apps/examples.md`, `scripts/check-example-apps.mjs`,
-    `.github/workflows/example-apps.yml`
-  - modified: `.vitepress/config.mts`, `apps/index.md`, `package.json`,
-    `.github/workflows/appblocks-drift.yml`
-  - 🔴 **UNVERIFIED by me: the guard's negative controls (404 / rename / archived)
-    were in progress when the agent stopped, and neither control's result was
-    reported.**
-- 🔴 **ORDERING CONSTRAINT — the CLI PR MUST NOT MERGE FIRST.**
-  `https://developer.civitai.com/apps/examples` **404s today**. The CLI branch ships a
-  link to a page that does not exist until the docs PR lands and deploys.
-- **Claim held:** `agent-setup-onboarding-6` (still taken — release it when the two
-  PRs are merged, or if the work is abandoned).
-- 🔴 **No clawgate task recorded.** `clawgate_handoff.sh resolve` exited **5**
-  (`0 tasks for this session`). An unknown session id also answers 200/empty, so this
-  is **not** evidence that no task exists.
-- **Not done in the session that wrote this section:** nothing was pushed, no PR was
-  opened, `make ci`/`make lint` were never run by me. Both branches were pushed and
-  both PRs opened in the resume that followed.
-- **Carried forward from the previous session** (still true, was under a REPLACE
-  heading): recorded in the subsystem index (`cli/scaffold`) — the 2026-09-08 `OPEN:`
-  bullet rewritten as `RESOLVED 5557b6a`, plus a new bullet for the sibling-workflow
-  drift class; `cairn-validate --scope cli` → OK 6/6. Issue #530 is CLOSED and was
-  verified by a real dispatched run (see the RESOLVED block below), not by reasoning.
+- **Verified against PROD, not inferred** (2026-09-11, after the 16:24:59Z deploy):
+  - `developer.civitai.com/apps/examples` → **200**; `/apps/examples/` → **404**, and
+    the CLI ships the no-slash spelling. Correct.
+  - `llms.txt` → **192 lines** (was 215): `### Examples` ×1, `Introduction to Civitai
+    Apps` ×1, `### Design system` ×1. The duplication is gone.
+  - `CIVITAI_CHECK_DOCS_LINKS=1 go test -run 'TestBlockDocsLinksResolve|TestEveryDocsURLSpellingIsLedgered' ./internal/cmd/`
+    → both PASS, `checked 4 of 4 link(s); 0 unreachable, 4 live, 0 moved, 0 gone`.
+  - Live page names all 8 repos; no org-ownership phrasing.
+- **Both base clones fast-forwarded** (`--ff-only`, neither diverged): cli at `ff7a211`,
+  docs at `89bb471`.
+- 🔴 **Claim `agent-setup-onboarding-6` was ALREADY RELEASED by something else** when I
+  went to release it (`nothing to release — ref does not exist`). I did not release it.
+  Consistent with a parallel session having worked the same queue — see the gotcha below.
+- 🔴 **No clawgate task recorded.** `resolve` exited **5** (`0 tasks`). An unknown session
+  id also answers 200/empty, so this is **not** evidence that no task exists.
+- **Carried forward from earlier sessions** (still true; keeps being dropped because it
+  sits under a REPLACE heading): recorded in the subsystem index (`cli/scaffold`) — the
+  2026-09-08 `OPEN:` bullet rewritten as `RESOLVED 5557b6a`, plus a bullet for the
+  sibling-workflow drift class; `cairn-validate --scope cli` → OK 6/6. Issue **#530 is
+  CLOSED and was verified by a real dispatched run** (run 34559798234), not by reasoning.
+  **No subsystem-index entry was written this session** — the `--session` window was empty
+  (every edit was made by a subagent in a worktree) and the `--commit` window proposed only
+  the generic slugs `cmd`/`internal`, which are not worth an entry; the durable content
+  lives in `claudedocs/decisions/36-agents-block-per-project.md` instead.
+
+### Honest limits on what shipped
+
+- **The 403/301 arms of the CLI link probe are simulated locally**, never triggered
+  against the real Cloudflare edge. The `1010` block is quoted from this doc, not
+  re-provoked.
+- **Nothing notifies on a red daily drift run** in the docs repo — see rank 12.
+- **Neither rot guard is a required context**, by explicit operator decision.
 
 ## Open investigations — live diagnosis state
 
@@ -324,7 +314,7 @@ the `civitai.com` zone. Never the origin, never the docs repo.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1, 2, 3, 5 and 7 are DONE — numbering is preserved deliberately** so any
+🔴 **Ranks 1, 2, 3, 5, 6 and 7 are DONE — numbering is preserved deliberately** so any
 live `claim-work` slug keeps pointing at the item it was taken for.
 
 1. ~~**Unfreeze `civitai/cli`**~~ — **DONE**, cli#529.
@@ -340,22 +330,9 @@ live `claim-work` slug keeps pointing at the item it was taken for.
    forcing: none
 5. ~~**Delete or gitignore `node_modules/`**~~ — **DONE**, cli#537.
    forcing: none
-6. **FINISH rank 6 — two committed branches, no PRs yet. IN FLIGHT: local only.**
-   Decision is MADE and is not to be re-litigated: *the managed block names ONE URL;
-   the repo list lives in the docs repo.* What remains is verification and landing:
-   - **docs first.** In `/home/zach/workspace/civit/docs-examples-page`: finish the
-     guard's **negative controls** (404, **rename**, archived) and its **positive
-     control** (non-zero repo count that moves when an entry is added/removed). Run
-     the repo's real CI commands. Open the PR against `main`.
-   - **then cli.** In the worktree on `feat/agents-block-example-apps-link`: produce
-     the red/green matrix for `agent_setup_docs_test.go` (break it on purpose, watch
-     it fail with ITS OWN assertion message), run `make ci` **and**
-     `nix-shell -p golangci-lint --run "make lint"`, open the PR.
-   - **correct the URL spelling if the docs page lands on a different path** — the
-     trailing slash is load-bearing (`/apps/showcase` is 200 without, 404 with).
-   forcing: user — it was in the operator's original scope and was never explicitly
-   deferred. Two branches now exist and are UNPUSHED, which is the stronger forcing
-   function: a local-only commit is invisible to everyone else.
+6. ~~**Example apps**~~ — **DONE**: docs#71 + cli#549, audit-fixed by docs#72 + cli#553,
+   verified against prod after the 16:24:59Z deploy.
+   forcing: none
 7. ~~**cli#530**~~ — **DONE**, cli#540, verified by run 34559798234.
    forcing: none
 8. **A hard byte ceiling on `prompt.md`, enforced by `check-agent-setup.mjs`.**
@@ -373,15 +350,23 @@ live `claim-work` slug keeps pointing at the item it was taken for.
     1400 cap after #541, and `read_help_test.go:164-172` still names
     `images search` as the longest consumer, which stopped being true.
     forcing: none
-11. **Residuals of decisions item 38**, all recorded in
-    `claudedocs/decisions/38-read-body-repair-and-snippet.md`: four genuine
-    comment-citation rot sites (`download_ssrf_test.go:147`,
-    `app_pull_not_approved_test.go:372`, `update_check_test.go:393`,
-    `appblocks.go:1261`); the README documents no 429 → exit 2 reclassification;
-    and half (c) of
-    `TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne` has the
-    body-vs-message offset confusion repaired elsewhere in the same round.
+11. **Residuals of decisions item 38**, all in
+    `claudedocs/decisions/38-read-body-repair-and-snippet.md`: four comment-citation
+    rot sites (`download_ssrf_test.go:147`, `app_pull_not_approved_test.go:372`,
+    `update_check_test.go:393`, `appblocks.go:1261`); the README documents no
+    429 → exit 2 reclassification; and half (c) of
+    `TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne`.
     forcing: none
+12. **NEW — nothing notifies on a red daily example-app drift run.**
+    `civitai/civitai-developer-docs:.github/workflows/appblocks-drift.yml` has no
+    notify/issue step, so BOTH a genuine rot failure AND a fully-skipped
+    "NOTHING WAS VERIFIED" run are visible only to someone opening the Actions tab.
+    This is the one remaining hole in the rot-detection story rank 6 was built on: the
+    guard can go red correctly and nobody finds out. Adding a notify step is a
+    workflow edit, which `AGENTS.md` puts behind "ask first".
+    forcing: user — flagged to the operator 2026-09-11 and explicitly left as their
+    call; no decision recorded yet. Closing condition: either a notify step merges, or
+    the operator states in writing that Actions-tab-only visibility is accepted.
 
 ## Gotchas / decisions / dead-ends
 
@@ -642,52 +627,122 @@ live `claim-work` slug keeps pointing at the item it was taken for.
   Both agents died together because the parent Claude Code process exited. Read the
   sibling notification before concluding intent.
 
+### Added 2026-09-11 (session 2) — the audit ladder on rank 6
+
+- 🔴 **A GUARD I HAD PERSONALLY WATCHED WORK WAS UNPROTECTED, AND MY CONTROLS COULD NOT
+  HAVE TOLD ME.** I ran three controls on `check-example-apps.mjs` and reported the
+  rename check verified: injected `facebook/jest` → red, stripped all links → red,
+  baseline → 8 live. All true. The auditor then set the `full_name` comparison to
+  `if (false && …)` — the exact simplification the file's own 30-line banner forbids —
+  and **every one of those controls still passed**: PR gate rc 0, daily half rc 0
+  reporting `8 verified live · 0 rotted`, the jest fixture printing `✓`. **Running a
+  guard proves it works TODAY; only mutating it proves anything about it STAYING
+  working.** Those are different claims and I reported the weaker one as the stronger.
+  Fixed in docs#72 with an embedded must-FAIL fixture table that runs on every
+  invocation, plus a degeneracy guard — verified by me: mutant → rc 1
+  (`expected verdict "fail", got "ok"`), fixtures deleted → rc 1
+  (`SELF-TEST DEGENERATE — … 0 RENAMED row(s)`). `via: measurement`
+- 🔴 **MY OWN DEGENERACY CONTROL WAS A BROKEN INSTRUMENT AND I NEARLY REPORTED ITS
+  rc=1 AS A PASS.** Deleting fixture rows with a line-grep produced a `SyntaxError`, so
+  node exited 1 before the guard ran at all. rc=1 from a syntax error and rc=1 from the
+  guard firing are indistinguishable by exit code. The fix was mechanical: `node --check`
+  FIRST, then read the verdict. **Validate the instrument before reading its verdict
+  applies to the controls you write while validating someone else's instrument.**
+  `via: command`
+- 🔴 **A `t.Skipf` ON THE FIRST TRANSPORT ERROR TURNED THE MERGE GATE INTO A PASS.**
+  `agent_setup_docs_test.go`'s link probe abandoned the whole test on the first
+  unreachable URL — so one DNS hiccup on `/apps/guide/` meant `/apps/examples`, the link
+  the gate exists for, was **never fetched** and the run reported `ok`. Reproduced by me
+  both directions: pre-fix (`7b7d5f1`) `--- SKIP` → `ok`, *"skipping, not failing"*;
+  post-fix (cli#553) `--- FAIL … DEAD LINK` preceded by `checked 3 of 4 link(s); 1
+  unreachable, 2 live, 1 gone`. **A guard that gives up on the first error is a guard
+  that reports success about work it did not do.** `via: measurement`
+- 🔴 **TWO ENVIRONMENTAL "PRE-EXISTING FAILURE" CLAIMS I RELAYED WERE WRONG, AND I HAD
+  NOT RE-DERIVED EITHER.** I briefed a fix agent that `gen:appblocks:messages` fails
+  because a sibling `../civitai` checkout is ABSENT — the mechanism is the **opposite**
+  (it fails because the sibling IS present, so the script prefers the drifted live file
+  over the snapshot; under `APPBLOCKS_SNAPSHOT_ONLY=1`, what CI grades with, it exits 0).
+  And `check:built-site` failing on a stale `public/appblocks/cli.json` **did not
+  reproduce** — `prebuild` regenerates it. Both came from an earlier subagent's report
+  that I passed along verbatim. **A subagent's environmental diagnosis is a hypothesis,
+  and relaying it launders it into an assertion.** `via: measurement`
+- 🔴 **`/apps/showcase` IS THE COMPONENT SHOWCASE — the prior handoff conflated it with
+  an example gallery**, and that conflation is what made rank 6 read as "a pointer is
+  missing" rather than "the page does not exist". Also wrong in the same item: the seven
+  repos are under **`ZacxDev`**, a personal account, not the `civitai` org; an eighth
+  (`civitai/app-panorama-360`) is org-owned and was missing entirely; and a GitHub topic
+  query is NOT a usable enumeration (`topic:civitai-app-block` → 6, a different set; two
+  of the seven carry no topics). `via: measurement`
+- 🔴 **AN ALL-404 SWEEP IS AN EMPTY RESULT AND IDENTIFIES NOTHING.** I measured
+  `civitai.com/apps/run/<slug>` → 404 for all seven and nearly concluded "not published".
+  The positive control killed it: **`civitai.com/apps` itself 404s** while
+  `civitai.com/models` → 200. The whole `/apps` route family is closed to an
+  unauthenticated fetcher, so the 404s are a fact about the ROUTE. The page therefore
+  links repos and asserts no run-URL. `via: command`
+- 🔴 **GITHUB 301-REDIRECTS A RENAMED REPO, SO A STATUS-CODE CHECK CANNOT SEE THE ROT IT
+  EXISTS FOR.** `api.github.com/repos/facebook/jest` → **200** with
+  `full_name: jestjs/jest`. Verified independently. Any link guard must compare
+  `full_name`, not status. `via: measurement`
+- ⚠ **A URL PARSER THAT FALSE-FAILS IS WORSE THAN ONE THAT MISSES.** The first guard
+  reported `✗ RENAMED` and exit 1 on a link ending `?tab=readme-ov-file` — literally what
+  GitHub's own "copy link" button produces — with a remedy telling the maintainer to
+  change the URL to the one they already had. Fixed structurally (enumerate what GitHub
+  CAN issue, so it cannot be out-spelled by the next punctuation mark). `via: code`
+- ⚠ **A DEPLOY THAT LOOKS STUCK FOR 5½ MINUTES.** Merged 16:19:20Z; `llms.txt` still
+  served the OLD 215-line body through six cache-busted polls and flipped to 192 lines at
+  **16:24:59Z**. The precedent in this doc was 94 s. **Do not diagnose from the first few
+  polls** — this surface has a recorded case where three agreeing signals all said "the
+  origin has not updated" and only waiting resolved it. `via: measurement`
+- ⚠ **BOTH SUBAGENTS ONCE STOPPED WITH EVERYTHING UNCOMMITTED** (parent process exited).
+  `apps/examples.md`, `check-example-apps.mjs` and `agent_setup_docs_test.go` sat in
+  worktrees, one stray `checkout` from deletion. On resume the first instruction to each
+  was "commit before anything else" and it recovered all of it. **Brief long-running
+  file-modifying agents to commit incrementally, not only at the end.** A "stopped by
+  user" notification did NOT mean rejection — both died from the same process exit; the
+  sibling notification is what showed it.
+- ⚠ **THE QUEUE WAS WORKED CONCURRENTLY AND I DID NOT NOTICE UNTIL AFTER THE FACT.**
+  cli#549 and cli#548 were merged by another actor while my audits ran, and a cli#550 I
+  never saw landed on `main` reporting the `Python-urllib` 403 root-caused (Cloudflare
+  Browser Integrity Check). The `agent-setup-onboarding-6` claim was **already released**
+  when I went to release it. The merge ORDER I had committed to was respected anyway
+  (docs 05:42Z, cli 05:52Z) — by luck of timing, not by the lock. **`claim-work` failing
+  open means a taken claim is not a guarantee; re-read `gh pr list` and the claim state
+  before assuming you are the only writer.** `via: measurement`
+- **AGENTS.md headroom is the binding constraint on adding an item, and it is tiny.**
+  30,442 B at session start against `agentsMaxBytes = 30_500`; `agentsMaxBytesCeiling =
+  30_600` bounds any raise and the guard's own message forbids it. A new item needs
+  ~180 B (trigger + pointer) because `agents_evidence_test.go` asserts SET EQUALITY
+  between `→ evidence:` pointers and `claudedocs/decisions/` files — so a new decisions
+  file REQUIRES a new item. Extending item 36's trigger cost +1 B, then +10 B for the
+  audit fix. Now **30,453 / 30,500**. Measure before briefing anyone to add an item.
+
 ## How to verify
 
-Rank 6, once both PRs are open — **the docs page must be live before the CLI link is
-truthful**:
+Rank 6, end to end — all five must hold together:
 
 ```bash
-# 1. the link the CLI block ships must resolve (404 today — this is the gate)
-curl -sS -o /dev/null -w '%{http_code}\n' https://developer.civitai.com/apps/examples
+# 1. the page, and the spelling the CLI ships (the slash is load-bearing)
+curl -sS -o /dev/null -w '%{http_code}\n' https://developer.civitai.com/apps/examples   # 200
+curl -sS -o /dev/null -w '%{http_code}\n' https://developer.civitai.com/apps/examples/  # 404
 
-# 2. the rot guard must go RED on a renamed repo, not just a deleted one
-cd /home/zach/workspace/civit/docs-examples-page && node scripts/check-example-apps.mjs
-#    then point it at a known-renamed repo and watch it fail on full_name mismatch
+# 2. llms.txt is not duplicated (regression fixed by docs#72)
+curl -sS https://developer.civitai.com/llms.txt | grep -c '^### Examples'   # 1, not 2
 
-# 3. the CLI guard, with its own assertion message
-cd /home/zach/workspace/civit/cli/.claude/worktrees/agent-ae94f92748718dc80
-go test ./internal/cmd -run Docs -count=1 -v
-make ci && nix-shell -p golangci-lint --run "make lint"   # make ci does NOT run lint
-```
-
-The nightly's fix — the ONLY form that actually exercises it:
-
-```bash
-cd $(mktemp -d) && git clone --depth 50 git@github.com:civitai/cli.git . && git checkout -b test/rehearse origin/main
-sed -i 's/\^0\.39\.0/^0.37.0/g; s/\^0\.49\.0/^0.46.0/g' \
-  internal/scaffold/templates/page-money/package.json.tmpl \
-  internal/scaffold/templates/page-money/README.md.tmpl \
-  internal/scaffold/scaffold_test.go
-git commit -am "test: throwaway" && git push -u origin test/rehearse
-gh workflow run bump-scaffold-pins.yml --ref test/rehearse -f drill=none
-# steps 9 AND 11 must both be success, and a PR must appear. Then close it and
-# delete BOTH branches (automation/bump-scaffold-pins and test/rehearse).
-```
-
-🔴 A green *scheduled* run proves nothing — confirm steps 6–12 are not `skipped`:
-
-```bash
-gh api repos/civitai/cli/actions/runs/<id>/jobs \
-  --jq '.jobs[] | select(.name=="bump") | .steps[] | "\(.number) \(.name): \(.conclusion)"'
-```
-
-The read-path guards added by #541:
-
-```bash
+# 3. the CLI's own link guards, against the live host
 cd /home/zach/workspace/civit/cli
-go test ./pkg/civitai ./internal/cmd -count=1
-nix-shell -p golangci-lint --run "make lint"   # make ci does NOT run lint
+CIVITAI_CHECK_DOCS_LINKS=1 go test -count=1 \
+  -run 'TestBlockDocsLinksResolve|TestEveryDocsURLSpellingIsLedgered' ./internal/cmd/ -v
+# expect: both PASS, "checked 4 of 4 link(s); 0 unreachable, 4 live, 0 moved, 0 gone"
+
+# 4. the docs rot guard, and that its self-test cannot rot away
+cd /home/zach/workspace/civit/civitai-developer-docs
+node scripts/check-example-apps.mjs --offline    # rc 0
+#    then mutate `full_name` comparison to `if (false && …)` -> MUST be rc 1
+#    then delete the RENAMED fixture rows       -> MUST be rc 1 (SELF-TEST DEGENERATE)
+#    🔴 run `node --check` on the mutated file FIRST — a SyntaxError also exits 1
+
+# 5. offline gates
+make ci && nix-shell -p golangci-lint --run "make lint"   # make ci does NOT run lint
 ```
 
 🔴 Read `rc` directly — `$?` after a pipe is the pipe's status. This repo has been
