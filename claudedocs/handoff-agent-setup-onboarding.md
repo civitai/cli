@@ -244,6 +244,59 @@ dashboard change by someone with zone access. `via: measurement` (ruled out as
 ours: the same `nginx.conf` returns 200 locally to the blocked UA, and there is no
 `_headers`/`_redirects`/`wrangler.*` anywhere in the docs repo).
 
+### ✅ RESOLVED — `developer.civitai.com` 403 to `Python-urllib`
+
+🔴 **The block below titled *"returns 403 to `Python-urllib` — IN FLIGHT, delegated"*
+is RETIRED. Do NOT run its "Next probe", and do NOT look in `nginx.conf`.** Its
+leading hypothesis — *"a UA denylist in the docs repo's own `nginx.conf`"*, tagged
+`via: assumed` — is **REFUTED**. The block is left intact above only because a
+corrected reading is worth more than a deleted one.
+
+**Root cause: Cloudflare Browser Integrity Check (BIC)**, a zone-level setting on
+the `civitai.com` zone. Never the origin, never the docs repo.
+
+- **Symptom + exact repro (now fixed — this reproduces nothing today):**
+  ```bash
+  curl -s -o /dev/null -w '%{http_code}\n' -A 'Python-urllib/3.12' \
+    https://developer.civitai.com/agent-setup/prompt.md      # was 403, now 200
+  ```
+- **Observed (with values), measured 2026-09-09 → 2026-09-11:**
+  - Cloudflare firewall events (GraphQL `firewallEventsAdaptive`, zone
+    `civitai.com`, host `developer.civitai.com`):
+    `action=block  source=bic  ruleId=bic` on `/agent-setup/prompt.md` for
+    `Python-urllib/3.11`, `Python-urllib/3.12`, `Python-urllib`, `libwww-perl/6.0`.
+  - Block body was **17 bytes**, `content-type: text/plain`: `error code: 1010`
+    — Cloudflare's BIC error code.
+  - The 403 carried **none** of the origin's headers (no `etag`, no
+    `x-content-type-options`, no `cf-cache-status`), while the 200 carried all
+    three. The request never reached nginx.
+  - Zone settings: `browser_check = "on"` (zone-wide, `editable: true`),
+    `security_level = "essentially_off"`. BIC is independent of security level.
+  - 🔴 **The denylist is exact-string and case-sensitive, and mostly porous:**
+    `Python-urllib/3.11` → 403 but `python-urllib/3.11` → **200**;
+    `MyAgent (urllib inside)` → 200; `<empty UA>` → **200**; `Wget/1.21`,
+    `Go-http-client/1.1`, `node-fetch`, `axios`, `okhttp`, `Mozilla/5.0` → all 200.
+    Only `Python-urllib*` and `libwww-perl*` were blocked. Cloudflare publishes no
+    list, no versioning and no changelog for it.
+- **Ruled out:** that it is in the docs repo's `nginx.conf` — the 403 carries no
+  origin headers at all and Cloudflare's own events attribute it to `bic`.
+  `via: measurement` · That a WAF **managed** ruleset did it — events name `bic`,
+  not a ruleset id, and BIC is a zone product a managed-rules skip cannot reach.
+  `via: measurement` · That a **custom** firewall rule did it — all 14 read; none
+  matches `urllib`/`libwww`, and the host-scoped ones target `civitai.com` and
+  `image.civitai.com` only. `via: command` · That **AI Crawl Control** could fix
+  it — it manages known, self-identifying crawlers; `Python-urllib` is neither
+  recognised nor verifiable. `via: doc`
+  (https://developers.cloudflare.com/ai-crawl-control/features/manage-ai-crawlers/)
+- **Resolution:** a **Configuration Rule** on the `civitai.com` zone:
+  `(http.host eq "developer.civitai.com")` → `action: set_config`,
+  `action_parameters: {"bic": false}`. `browser_check` stays **`on`** zone-wide,
+  so `civitai.com` and `image.civitai.com` keep BIC.
+- **Verified (content, not just status):** `Python-urllib/3.12` now receives
+  byte-identical content to a known-good UA on `/`, `/index.html`, `/llms.txt`,
+  `/apps/` and `/agent-setup/prompt.md` — `prompt.md` 6,949 B and `llms.txt`
+  13,066 B, `cmp` clean both, `content-type: text/markdown`, origin `etag` present.
+
 ## Next steps (ranked)
 
 🔴 **Ranks 1, 2, 3, 5 and 7 are DONE — numbering is preserved deliberately** so any
@@ -461,6 +514,44 @@ live `claim-work` slug keeps pointing at the item it was taken for.
   edit was made by a subagent in a worktree. `--pr 540,526,541` found the 26 real
   paths. The better a session follows the delegate-and-isolate defaults, the
   blinder that window is.
+
+- 🔴 **A Page Rule target without a trailing `*` matches ONE path.** The first
+  attempt at the fix above landed as a Page Rule targeting
+  `developer.civitai.com/` (operator `matches`). Result: `/` → 200 while
+  `/index.html`, `/llms.txt`, `/apps/` and `/agent-setup/prompt.md` all stayed
+  403. It reads as "the rule didn't work"; it worked, on exactly one path. Needs
+  `developer.civitai.com/*`.
+- 🔴 **Prefer a Configuration Rule over a Page Rule for this class.** Page Rules
+  are **(deprecated)**; Cloudflare's BIC page says *"To use this feature on
+  specific hostnames—instead of across your entire zone—use a configuration
+  rule"*, and Configuration Rules take **precedence over** Page Rules, so keeping
+  both makes the interaction ambiguous.
+  (https://developers.cloudflare.com/waf/tools/browser-integrity-check/)
+- 🔴 **`PUT /zones/{z}/rulesets/{id}` REPLACES the entire rules array — and the
+  official docs only demonstrate `PUT`.** This zone has 5 other Configuration
+  Rules, two of them active `security_level` overrides; following Cloudflare's
+  own example verbatim would have silently deleted all five. **Append with
+  `POST /zones/{z}/rulesets/{id}/rules`.**
+- 🔴 **A Configuration Rule DOES override the zone-level `browser_check`, and no
+  Cloudflare doc says so.** Searched: the settings page states a precedence rule
+  only for Disable RUM. Confirmed **empirically instead** — `browser_check` reads
+  `"on"` while the exempted host serves 200 to a UA that setting blocks. If this
+  ever regresses, re-probe rather than re-reading the docs.
+- **`set_config` is non-terminating, so within `http_config_settings` LAST MATCH
+  WINS.** Position matters if another rule ever sets `bic` for an overlapping host.
+- **The `action` field is mandatory and is `set_config`** — a Configuration Rule
+  body carrying only `expression` + `action_parameters` 400s.
+  (https://developers.cloudflare.com/rules/configuration-rules/create-api/)
+- **Reading Cloudflare state needs four separate token scopes**, and they fail
+  differently: Zone Settings read (`9109 Unauthorized`), Config Rules read and
+  Page Rules read (`request is not authorized`). 🔴 **A `pagerules` call without
+  the scope returns a body whose `.result` is null — read as a count it yields a
+  confident `0` for a zone that has 13.** Check `.success` before any count.
+- **Related, not done:** Cloudflare's **Markdown for Agents**
+  (`"content_converter": true`) sits on the same Configuration Rules surface and
+  serves the same "agents fetch our docs" goal; Cloudflare runs it on their own
+  docs. Worth its own decision.
+  (https://developers.cloudflare.com/fundamentals/reference/markdown-for-agents/)
 
 ## How to verify
 
