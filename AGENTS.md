@@ -442,9 +442,9 @@ item must carry a trigger that is a routing question rather than a label
     symlinks, config roots, `--check`'s verdict, `--json`'s shapes?**
     → evidence: claudedocs/decisions/35-agent-setup-merges-a-users-file.md
 
-36. **Editing what `agent-setup`'s block says a project can RUN — its local-dev
-    branch, script table, lockfile rule — flattening it to one list, or naming
-    the SCAFFOLDER an author with no app should run?**
+36. **Editing what `agent-setup`'s block says — its local-dev branch, script
+    table, lockfile rule, flattening it to one list, the SCAFFOLDER an author
+    with no app should run, or what its Docs section links?**
     → evidence: claudedocs/decisions/36-agents-block-per-project.md
 
 37. **Typing a `pkg/civitai` username as `string`, or "fixing" a `FlexString`

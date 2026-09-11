@@ -98,5 +98,7 @@ fixed list. As of this CLI version:
 - Guide: https://developer.civitai.com/apps/guide/
 - Reference (manifest, scopes, hooks, message bridge, CLI):
   https://developer.civitai.com/apps/reference/
+- Example apps you can read end-to-end:
+  https://developer.civitai.com/apps/examples
 - Full doc index for agents: https://developer.civitai.com/llms.txt
 <!-- END civitai agent-setup -->
