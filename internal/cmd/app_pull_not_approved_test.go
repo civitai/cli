@@ -369,8 +369,17 @@ func TestAppPullDisambiguationFailureKeepsTheServerAnswer(t *testing.T) {
 	}
 }
 
-// TestAppPullNotApprovedDoesNotRegressTheHappyPath: the disambiguation must only
-// run on a not-found. A 403 is a different question and keeps its own message.
+// TestAppPullForbiddenIsNotDisambiguated: the disambiguation must only run on a
+// not-found. A 403 is a different question and keeps its own message.
+//
+// Two assertions, and the first is the one worth naming: the fake server FAILS
+// the test if the submissions lookup is reached at all, so this pins that a 403
+// does not even attempt the disambiguation — not merely that its message
+// survives one. The second is that the error still says "not permitted".
+//
+// (The name above previously cited a test nothing declares; the dead identifier
+// is not repeated here, because citations are scanned repo-wide. AGENTS.md
+// item 38's enumerated residuals.)
 func TestAppPullForbiddenIsNotDisambiguated(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.Contains(r.URL.Path, "/blocks/submissions") {

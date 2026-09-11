@@ -1257,9 +1257,19 @@ func (c *Client) getSubmissionRows(ctx context.Context, id, blockID string) (*Su
 // submissionSubject names WHICH lookup came back empty, using the selector the
 // caller actually passed (GetSubmission takes either a pubreq id or a slug, and
 // id wins when both are set — mirror that order here or the error names a
-// selector the request did not use). The id-first order is REACHABLE and pinned
-// by TestSubmissionSelectorPrecedenceMirrorsTheRequest: `civitai app status --id
-// <id> <slug>` passes both, and submissionsURL sends only the id.
+// selector the request did not use). The id-first order is REACHABLE — `civitai
+// app status --id <id> <slug>` passes both — and is pinned by
+// TestSubmissionSelectorPrecedenceAgreesWithTheParse, which asserts the
+// behaviour and this function's wording TOGETHER: with both selectors sent and
+// the server answering both shapes, the client resolves the id-shaped reply,
+// and the subject string must then name the id and not the slug.
+//
+// 🔴 THIS COMMENT CITED A TEST NOTHING DECLARES, AND ALSO STATED THE WIRE
+// BEHAVIOUR BACKWARDS. It claimed submissionsURL "sends only the id". Both
+// selectors ARE sent — the guard's own fake server fails the
+// test unless it receives BOTH — and the precedence is applied to the REPLY, not
+// by omitting a query parameter. Fixing only the name would have left the second
+// sentence reading truer while still being false (item 38's residuals).
 func submissionSubject(id, blockID string) string {
 	if s := strings.TrimSpace(id); s != "" {
 		return fmt.Sprintf("submission id %q", s)

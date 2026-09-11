@@ -339,22 +339,34 @@ func TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne(t *testing.T) 
 	// was invisible to the classifier and exited 6 — a scripter's backoff loop
 	// spinning forever on a structurally doomed request. The bound is a display
 	// budget, not a statement about what the server said.
-	long := `{"message":"` + strings.Repeat("context, ", 70) +
-		"you have requested too many pages here" + `"}`
-	if len(long) <= 520 {
-		t.Fatalf("CONTROL failure, not a finding: the fixture is %d bytes, which does "+
-			"not exceed snippet's 500-byte bound — half (c) would assert nothing", len(long))
+	// 🔴 BOTH CONTROLS BELOW MEASURE THE MESSAGE, NOT THE BODY, AND THAT
+	// DISTINCTION IS THE POINT. readError extracts `message` out of the envelope
+	// and only then calls snippet on it — `msg = snippet([]byte(msg))` — so
+	// snippet's 500-byte bound applies to the MESSAGE. These controls used to be
+	// written against the whole `{"message":"…"}` body: the length check compared
+	// the body against a fudged 520 (500 plus a guess at the envelope), and the
+	// truncation check called snippet on the body rather than on the string
+	// snippet actually receives. They passed only because the body is a superset
+	// of the message and this fixture clears the bound either way — a control
+	// that is right by accident cannot be relied on when the fixture changes.
+	capPhrase := "you have requested too many pages here"
+	capMsg := strings.Repeat("context, ", 70) + capPhrase
+	long := `{"message":"` + capMsg + `"}`
+	if len(capMsg) <= 500 {
+		t.Fatalf("CONTROL failure, not a finding: the MESSAGE is %d bytes, which does "+
+			"not exceed snippet's 500-byte bound — half (c) would assert nothing", len(capMsg))
 	}
 	c = serveOnce(t, http.StatusTooManyRequests, long)
 	_, err = c.SearchModels(context.Background(), url.Values{})
 	if err == nil {
 		t.Fatal("a 429 must be an error; without it half (c) asserts on nothing")
 	}
-	// Positive control on the FIXTURE: the phrase really is past the bound, so
-	// the assertion below is about truncation and not about the phrase.
-	if strings.Contains(snippet([]byte(long)), "too many pages") {
+	// Positive control on the FIXTURE: the phrase really is past the bound once
+	// snippet has been applied to the MESSAGE, so the assertion below is about
+	// truncation and not about the phrase.
+	if strings.Contains(snippet([]byte(capMsg)), capPhrase) {
 		t.Fatal("CONTROL failure, not a finding: the cap phrase survives snippet's " +
-			"truncation, so half (c) is not testing what it says")
+			"truncation of the message, so half (c) is not testing what it says")
 	}
 	if !errors.Is(err, ErrBadRequest) {
 		t.Errorf("a deep-paging cap whose phrase falls past snippet's 500-byte "+

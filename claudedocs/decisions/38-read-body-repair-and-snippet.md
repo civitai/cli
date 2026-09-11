@@ -400,7 +400,15 @@ the numeral cannot drift from the membership.
   - the deep-paging cap still exits 2 (same test, half (b));
   - a cap message whose phrase falls past `snippet`'s 500-byte DISPLAY bound
     exits 2 (same test, half (c)) — the deliberate move in the opposite
-    direction;
+    direction. ✅ Half (c)'s two CONTROLS were measuring the wrong string and
+    have been corrected: `readError` extracts `message` and only then calls
+    `snippet` on it, so the 500-byte bound applies to the MESSAGE, while both
+    controls were written against the whole `{"message":"…"}` body — a length
+    check against a fudged 520 (500 plus a guess at the envelope) and a
+    truncation check calling `snippet` on the body. They passed only because the
+    body is a superset of the message and this fixture clears the bound either
+    way. A control that is right by accident cannot be relied on when the fixture
+    changes;
   - a cap message whose phrase falls past `maxClassifyMessage` (8 KiB) exits 6
     (`TestDeepPagingCapClassificationIsBounded`), with the same fixture shape
     inside the window still exiting 2 as its positive control.
@@ -449,8 +457,22 @@ the numeral cannot drift from the membership.
   `TestItem38CommentsCiteTestsThatExist`'s doc comment; neither that comment nor
   this document may quote the identifiers, because both are now scanned and would
   flag themselves.
-- 🔴 **Four genuine rot findings came out of that triage, and are NOT fixed
-  here.** Each is a doc comment, or a "pinned by" pointer, naming a test nothing
+- ✅ **RESOLVED — four genuine rot findings came out of that triage.** They were
+  NOT fixed in the PR that found them; they are fixed now. Each comment was
+  rewritten from what its function actually does rather than renamed, and the
+  repo-wide unresolved-name count dropped **20 → 16** (sites 23 → 19), measured
+  with the shipped instruments on both sides of the change. Two carried a SECOND
+  error that a rename alone would have left in place: the `download_ssrf` comment
+  described a redirect-to-loopback case over a function that builds a
+  redirect-to-plain-http one, and the `appblocks.go` comment claimed
+  `submissionsURL` "sends only the id" when the guard's own fake server fails
+  unless BOTH selectors arrive. The dead identifiers are deliberately not quoted
+  in the replacements — citations are scanned repo-wide, so quoting one would
+  keep it in the very count this closes. The original finding follows, kept
+  because a corrected reading is worth more than a deleted one:
+
+- 🔴 **Four genuine rot findings came out of that triage, and were NOT fixed
+  when they were found.** Each is a doc comment, or a "pinned by" pointer, naming a test nothing
   declares — the same defect §3 of this document exists for, four more instances
   of it, in files this PR did not write. Site, then what is actually declared
   there:
