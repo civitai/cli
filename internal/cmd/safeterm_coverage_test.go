@@ -265,7 +265,9 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"safeTermErr": {"TestDownloadOneErrorsSanitizeTheServerName",
 		"THE WRAPPED CAUSE, which #566's own first fix left raw: *fs.PathError and *os.LinkError render " +
 			"their paths with no quoting, so `%s` sanitised + `%w` raw emitted the hostile bytes one colon " +
-			"later. Pinned by the `install` subtest and writePart's `create`; errors.Is/As still reach through"},
+			"later. Pinned by the `install` subtest, writePart's `create`, and — since #572 round 2 — the " +
+			"two download-URL subtests, which cover the case `%q` does NOT neutralise; errors.Is/As still " +
+			"reach through"},
 	"emitPreDownloadNotes": {"TestSafeTermIsNeverAppliedToUserTypedInput",
 		"INCIDENTAL, NOT BEHAVIOURAL: the published file name in the `no SHA256 published` warning. " +
 			"The red comes from bareIdentArgs noticing `name` stopped being passed, not from any " +

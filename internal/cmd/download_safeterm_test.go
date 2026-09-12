@@ -40,43 +40,52 @@ import (
 //	  targetPath 1, checkTargetCollisions 3, downloadOne 6, writePart 6,
 //	  downloadStatusError 1, (*progressWriter).line 1, safeTermErr 1.
 //	21 mutants: one deletion per call site, plus 2 nesting-order mutants for
-//	  the dashIfEmpty/safeTerm swap. 17 KILLED, 4 SURVIVED, 0 build-broken.
+//	  the dashIfEmpty/safeTerm swap. 18 KILLED, 3 SURVIVED, 0 build-broken,
+//	  0 timeout panics; every run reported 1599 top-level results, so nothing
+//	  was silently skipped.
 //
 // Every kill was required to name a FAILING ASSERTION OF ITS OWN — a mutant
 // that merely fails to compile proves nothing — and the run was checked for
 // build markers and a timeout panic rather than read off an exit code.
 //
 // The negative control (safeTerm neutered to the identity, spelled so it still
-// COMPILES) reddened 36 top-level tests, 7 of this file's 8. So a SURVIVED
-// verdict here is a fact about the fixture and not a harness wired to nothing.
-// The 8th, TestDownloadErrorsReachStderrUnfiltered, stays GREEN under it and is
-// meant to: it reads main.go's SOURCE and asserts nothing about what safeTerm
-// does.
+// COMPILES) reddened 37 top-level tests, 7 of this file's 8 — against 0 failures
+// on the unmutated tree in the same harness, so the control was watched to move
+// in BOTH directions. A SURVIVED verdict here is therefore a fact about the
+// fixture and not a harness wired to nothing. The 8th,
+// TestDownloadErrorsReachStderrUnfiltered, stays GREEN under it and is meant to:
+// it reads main.go's SOURCE and asserts nothing about what safeTerm does.
 //
-// ⚠ THE NUMBERS ABOVE REPLACE "20 mutants over the 21 gated call sites" AND
-// "reddened 34 tests including all four of this file's", and the correction is
-// recorded rather than quietly applied. "21 sites" was never right: the same
-// walk measures 20 at the commit where that sentence was written, and 18 after
-// #572 removed the unreachable mkdir gate. A count in prose is a claim, and this
-// one had drifted in both a stale and an originally-wrong direction at once.
+// ⚠ THE NUMBERS ABOVE REPLACE "20 mutants over the 21 gated call sites",
+// "reddened 34 tests including all four of this file's", "17 KILLED, 4 SURVIVED"
+// and "reddened 36 top-level tests", and each correction is recorded rather than
+// quietly applied. "21 sites" was never right: the same walk measures 20 at the
+// commit where that sentence was written, and 18 after #572 removed the
+// unreachable mkdir gate. 36 went to 37 when civitai/cli#573 landed
+// TestGatedRenderersDoNotForgeOutsideTheirTable — a count in prose is a claim,
+// and this one has now drifted stale, drifted wrong, AND been moved by someone
+// else's merge.
 //
-// 🔴 THE FOUR SURVIVORS ARE NAMED RATHER THAN ROUNDED AWAY, because a ledger row
-// that reads as coverage while providing none is worse than no row. They are the
-// same four #566 named — #572 added a site and a test without moving the set:
+// 🔴 THE THREE SURVIVORS ARE NAMED RATHER THAN ROUNDED AWAY, because a ledger row
+// that reads as coverage while providing none is worse than no row. They are
+// three of the four #566 named; the fourth is now KILLED:
 //
-//   - safeTermErr on `download %s: %w`. The cause there is a *url.Error, and Go
-//     renders its URL with %q — so the standard library already escapes every
-//     rune in the class and deleting the call changes no byte. Defence in depth
-//     against a future cause that does not quote; not coverage today.
-//     ⚠ NARROWER THAN IT LOOKS, per #572: `%q` escapes what is not
-//     unicode.IsPrint, which leaves the Mn/So/Lo half of saferune's class RAW.
-//     It is sufficient HERE only because a URL that reached this path carrying
-//     those runes is not driven; it is NOT a general licence to read `%q` as a
-//     sanitiser, which is exactly the reasoning targetPath shipped on.
 //   - writePart's `finalize %s` and both `finalize`/`streaming` causes. Reaching
 //     them needs a failing Close (a full disk or a pulled descriptor) or a
 //     stream error whose own message carries hostile bytes. Neither is driven
 //     here, and neither is claimed.
+//
+// ⚠ THE FOURTH SURVIVOR IS GONE, AND ITS RECORDED REASON WAS FALSE. safeTermErr
+// on `download %s: %w` was written up as surviving "because the cause is a
+// *url.Error and Go's own %q already escapes the class — defence in depth, not
+// coverage". Measured in round 2 of #572, all three clauses are wrong: `%q` is
+// strconv.Quote, which escapes what is not unicode.IsPrint and so passes U+2800
+// (So) and U+034F (Mn) THROUGH; url.URL.String() writes RawQuery back verbatim,
+// so a hostile downloadUrl query reaches *url.Error raw; and pkg/civitai's
+// https/parse refusals on this path are not *url.Error at all. It survived for
+// want of a driving test, not for redundancy — a maintainer following that
+// sentence would have deleted a live gate against a green suite. The two
+// subtests named for it below now kill it.
 //
 // Everything else — targetPath's refusal on both streams, all three collision
 // fields, the progress line, and every error string on the downloadOne path —
