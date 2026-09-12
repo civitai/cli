@@ -84,11 +84,16 @@ import (
 //
 // ⚠ WHAT NONE OF THIS CLOSES, stated because the gates would otherwise read
 // wider than they are: saferune deliberately KEEPS `\n` and `\t`, so a newline
-// in a server-supplied name still forges whole lines on these surfaces. That is
-// a repo-level class with a repo-level answer (safeTermSingle) and it belongs to
-// civitai/cli#552, not here. Every one of these surfaces was fully RAW before
-// #566, so what this file pins is a strict improvement on that, not a claim to
-// have closed line forgery.
+// in a server-supplied name still forges whole lines on these surfaces. Every
+// one of these surfaces was fully RAW before #566, so what this file pins is a
+// strict improvement on that, not a claim to have closed line forgery.
+//
+// That residual belongs to civitai/cli#577, NOT to #552. #552 was CLOSED by
+// #573, whose measured scope was ~13 tabwriter renderers and which deliberately
+// excluded free-text surfaces; download.go was never on its table. #577 is the
+// split-out issue that owns the four download surfaces, and it leaves the
+// transform open rather than prescribing safeTermSingle — these are free-text
+// lines, not cells, so #573's cell rule does not apply to them unmodified.
 
 // --- the fixture --------------------------------------------------------------
 //

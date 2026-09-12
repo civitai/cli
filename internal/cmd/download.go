@@ -657,6 +657,17 @@ func selectOneFile(files []civitai.ModelVersionFile, want string) ([]civitai.Mod
 // answers "no"; safeTerm then empties it and the line renders "(, 2.9 MiB)"
 // with no placeholder at all. reportBaseModel already had this order; these two
 // sites did not.
+//
+// 🔴 THE REPO IS NOT CONSISTENT ON THIS, AND THIS COMMENT MUST NOT READ AS IF IT
+// WERE. #572 corrected exactly TWO sites — here and checkTargetCollisions. The
+// inverted order survives at 15 further occurrences across 5 files (measured on
+// this tree: download.go:521 ×2 and :536, generate_output.go:240 and :464,
+// workflow_settlement.go:73 and :76, workflows.go:144/145/147/150 and :221,
+// workflows_list.go:189/190/191) — the same count as the 15 that have the right
+// order, so it is a coin flip per site, not a convention. Several of those sit
+// inside tabwriter cells that civitai/cli#573 has just hardened, which makes
+// changing them a separate change with its own display consequences; they are
+// deliberately left alone here rather than swept in.
 func formatFileList(files []civitai.ModelVersionFile) string {
 	var b strings.Builder
 	for i := range files {
@@ -695,10 +706,15 @@ func formatFileList(files []civitai.ModelVersionFile) string {
 // `\n` and `\t` (saferune.go: "Cc, minus \n and \t"), so a files[].name
 // containing a newline still forges whole lines inside this refusal — the row
 // the user is choosing between can be followed by attacker-written text at
-// column zero. That class is repo-wide rather than this renderer's, it is
-// strictly better than the raw state this replaced, and the single-line
-// treatment for it is safeTermSingle; applying it here is civitai/cli#552's
-// work, not this function's.
+// column zero. That class is repo-wide rather than this renderer's, and it is
+// strictly better than the raw state this replaced.
+//
+// It is owned by civitai/cli#577, NOT by #552: #552 was closed by #573, whose
+// measured scope was ~13 TABWRITER renderers and which never had download.go on
+// its table. #577 does not simply prescribe safeTermSingle here — this refusal
+// is free text rather than a cell, and it is a fail-safe whose group structure
+// has to stay readable, so deciding WHICH transform this surface takes is the
+// work #577 describes.
 func checkTargetCollisions(files []civitai.ModelVersionFile, o *downloadOpts) error {
 	byTarget := make(map[string][]civitai.ModelVersionFile)
 	var order []string
@@ -839,11 +855,16 @@ func fileTypeInfos(files []civitai.ModelVersionFile, modelType string) []fileTyp
 // ⚠ RESIDUAL, STATED RATHER THAN IMPLIED: what these gates remove is terminal
 // ESCAPES and the invisible class — not `\n`, which saferune deliberately keeps
 // (saferune.go: "Cc, minus \n and \t"). A newline in files[].name therefore
-// still forges whole lines inside the SHA256-mismatch and status errors. That is
-// a repo-wide class with a repo-wide answer (safeTermSingle); closing it here is
-// civitai/cli#552's work, and every one of these surfaces was fully raw before
-// #566, so the gates below are a strict improvement on it rather than a claim
-// to have closed it.
+// still forges whole lines inside the SHA256-mismatch and status errors. Every
+// one of these surfaces was fully raw before #566, so the gates below are a
+// strict improvement on it rather than a claim to have closed it.
+//
+// The residual is owned by civitai/cli#577, NOT by #552: #552 was closed by
+// #573 over ~13 TABWRITER renderers, and download.go was never on its table.
+// #577 lists the SHA256-mismatch message and downloadStatusError's arms among
+// the four surfaces it covers, and leaves the choice of transform open — these
+// are free-text errors, not cells, so safeTermSingle is a candidate rather than
+// a prescription.
 func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer, f civitai.ModelVersionFile, target string, o *downloadOpts) (skipped bool, err error) {
 	sha := strings.TrimSpace(f.Hashes.SHA256)
 	verify := !o.noVerify && sha != ""
@@ -1177,9 +1198,15 @@ func (p *progressWriter) done() {
 // `\n` on purpose, so a newline in files[].name still forges whole lines here,
 // and Write re-emits "\r"+line() at 10 Hz — so a forged `Saved … (SHA256
 // verified)` can scroll past before the transfer has finished. safeTerm is the
-// escape gate, not a one-line guarantee; safeTermSingle is the guarantee, and
-// applying it across the renderers is civitai/cli#552. This line was fully raw
-// before #566, so the strip above narrows the vector rather than closing it.
+// escape gate, not a one-line guarantee. This line was fully raw before #566, so
+// the strip above narrows the vector rather than closing it.
+//
+// The residual is owned by civitai/cli#577, NOT by #552: #552 was closed by
+// #573 over ~13 TABWRITER renderers, and download.go was never on its table.
+// #577 names this function first and measures exactly the forgery above; it
+// deliberately does NOT prescribe safeTermSingle, because collapsing `\n` to a
+// space in a `\r`-rewritten line has different display consequences than it has
+// in a cell, and picking the transform is the work.
 func (p *progressWriter) line() string {
 	name := safeTerm(p.name)
 	if p.total > 0 {

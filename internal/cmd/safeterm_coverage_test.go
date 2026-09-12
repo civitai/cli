@@ -396,8 +396,19 @@ const (
 	//   25 -> 24, civitai/cli#566 (download path). downloadOne moved from
 	//   notCovered to covered, which is exactly the "unbanked progress that must
 	//   be spent in the same commit" case the paragraph above describes. The
-	//   seven NEW rows #566 and its follow-up add are all covered, so they do not
-	//   move this number in either direction.
+	//   SIX NEW rows the #566 work adds — checkTargetCollisions,
+	//   (*progressWriter).line, downloadStatusError, safeTermErr, writePart and
+	//   targetPath — are all covered, so they do not move this number in either
+	//   direction.
+	//   ⚠ THIS SAID "seven", AND IT WAS WRONG THE MOMENT IT WAS WRITTEN. The
+	//   pre-merge text said "five" and was right for ITS tree; the merge
+	//   resolution changed it to "seven" without re-measuring. Re-derived here by
+	//   diffing this map's KEYS between refs rather than by counting prose: six
+	//   against the merge base (which already carried #552/#573's three app-path
+	//   rows), and nine against this branch's fork point c4ed077 — of which the
+	//   same three arrived via main, not from this work. Neither reading is
+	//   seven. A count in a comment is a claim; re-measure it, do not carry it
+	//   through a merge.
 	//
 	// The two sets are disjoint — four distinct functions moved, so the merged
 	// count is 21, not 22 and not 24. 🔴 THAT 21 IS MEASURED, NOT DERIVED: taking
