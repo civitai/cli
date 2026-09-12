@@ -17,29 +17,31 @@ answered — starting with #513, and fix the API-side root cause behind it.
 
 ## State now
 
-- **Branch `main` @ `e3f2608`** — `#569` merged. 🔴 `main` moved ~10 times during this arc, most
-  from parallel sessions. Re-measure every sha.
-- **The arc is CLOSED.** Every item is either done, or blocked on a named third party. Nothing
-  is mid-flight and no agent is running.
-- **All `cli-*` and rank claims RELEASED.** Still held: `devdocs-61-flux2-klein-whatif-500`,
-  `devdocs-76-drift-sweep-red` — both blocked on other people, not on work.
-- **No `clawgate-task:`** — `resolve` exited 5 (0 tasks for this session; positive control
-  answered links for a different session, so the board was reached). A real reading, not a
-  clean bill of health.
+- **Branch `main` @ `6f0a8d8`** — `#573` merged. Working tree clean. 🔴 `main` moved many times
+  across this arc, mostly from PARALLEL sessions; re-measure every sha before acting.
+- **The #552 engineering is DONE and CLOSED.** What remains of this arc is three external
+  issues, each blocked on a named third party, plus one recorded-residual issue nobody owns.
+- **No `clawgate-task:`** — `resolve` exited 5 (0 tasks for this session; the board was reached).
+  A real reading, not a clean bill of health.
+- **Claims: only `devdocs-61-flux2-klein-whatif-500` and `devdocs-76-drift-sweep-red` held.**
+  All `cli-*` claims released.
 
-### Shipped across the whole arc — these shas are the only record
+### The #552 arc, closed out
 
-| what | sha / ref | state |
-|---|---|---|
-| `#545` (xsvm) images prompt indent | `feb330c` | MERGED |
-| `#556` retraction of "not reproducible" | `d0d1805` | MERGED |
-| `#551` / `#565` / `#567` handoffs r2–r4 | `5208a6b` / `d37b32a` / `f11f26e` | MERGED |
-| `#564` safeTerm per-function ledger (parallel session) | — | MERGED |
-| **`#569` tab vector + #564 reconciliation** | **`e3f2608`** | **MERGED** |
-| `devrc#1498` mentions-id-collision lesson | `550de40` | MERGED — ⚠ NOT LIVE until `home-manager switch` |
-| `civitai/civitai#4768` | new | FILED, 0 comments |
-| `civitai/cli#552` | issue | OPEN — **body REWRITTEN 2026-09-12** |
-| stale branch `fix/flexstring-numeric-username` | — | DELETED, recovery sha `12818a3` |
+| what | state |
+|---|---|
+| `#552` | **CLOSED — condition met, verified element by element** |
+| `#575` | **OPEN — the four recorded residuals** |
+| `#554` (xsvm) | CLOSED by the author, superseded by `#569` |
+
+The full sha ledger for this arc has been **moved to Gotchas** (an APPEND section) so it
+stops being at risk — see "THE ARC'S SHA LEDGER" there.
+
+**39 bare-`safeTerm` cell reaches at base → 0.** Three audit rounds ran on `#573`: a
+requirements/deletion pass, a blind correctness pass, and a delta re-audit.
+
+⚠ **Other sessions are active in this repo right now** — `PR #572` and issues `#566`, `#574`
+(the download path) are not this arc's work. Do not assume an open cli PR is yours.
 
 ## Open investigations — live diagnosis state
 
@@ -443,36 +445,72 @@ renders example-app metrics regardless of which check tripped. The drift is real
 is answered clean (above) and recorded on the issue.** The other four failing checks, and the
 `/apps/installed` → `/apps/activity` rename in the docs' own prose, are still unowned.
 
+### 🔴 `gatePreSanitised` resolves a NAME, never a relationship — filed as `#575` R1
+
+- **Symptom + exact repro:** a renderer writing a **raw server string into a tabwriter cell**
+  — no `safeTerm`, no `safeTermSingle` — ledgered as
+  `{…, gatePreSanitised, "printTagList", …}` passes `TestTabwriterRenderersAreLedgered` **and
+  the whole `internal/cmd` package**. `printTagList` is an unrelated renderer that merely
+  happens to sanitise.
+- **Observed (with values):** the gate arm checks two things — that `upstream` names a function
+  that EXISTS in the package, and that it calls `safeTermSingle` SOMEWHERE. Neither ties the
+  named function to **this** renderer's cells.
+- **Ruled out:** that `#573` introduced or widened it — the identical mutation is green at
+  `bc8ca7c`, before the ledger existed. `via: measurement` · That deleting
+  `gateUnsanitised`/`gateNoServerText` closed the walk — it narrowed it from one WORD to one
+  NAME. `via: measurement`
+- 🔴 **What actually shipped wrong was the SENTENCE.** Three separate comments asserted the set
+  was closed — the const block, `gatePreSanitised`'s own note (which called itself *"A BINDING,
+  NOT AN EXCUSE"* while describing the hazard it then implemented one level indirected), and
+  residual 1. All three retracted in `34f0257`; they now state the residual and say **nothing
+  justifies it**.
+- **Next probe:** none diagnostic. Fixing it means resolving `upstream` against the renderer's
+  own cell expressions — hard precisely for the struct-field case the state exists to cover,
+  which is why `#575` files it rather than fixing it.
+
+### RESOLVED: `#552`'s closing condition, verified element by element
+
+Checked against `origin/main` @ `6f0a8d8` before closing: ledger present · `GREW` and `SHRANK`
+arms both present and **mutation-killed by their own messages** · floor 8 against a set of 20,
+so a real SHRANK does **not** surface as `CONTROL failure` · behavioural case driving the real
+renderers · `safeTermSingle` covers `\t` as well as `\n` · predicate structural, not keyed on a
+helper name.
+
+🔴 **Closing `#552` REVERSES what `#573`'s merge commit says** (*"Issue #552 stays OPEN for the
+soft-wrap residual"*). That was the wrong call: its body enumerated ~13 unguarded renderers that
+are now all gated, so an open issue with a stale body would misinform the next reader — the exact
+failure the 2026-09-12 rewrite fixed. Said so explicitly on the issue rather than quietly.
+
 ## Next steps (ranked)
 
-🔴 Numbering stable — rank is half a `claim-work` slug's identity. 1–11 keep their meaning.
+🔴 Numbering stable; 1–12 keep their meaning.
 
 1. **DONE — `civitai/cli#526`.** forcing: none
-2. **`developer-docs#61`** — routed and re-tested (HTTP 200 now, but at the *good* end of the
-   reporter's own insufficient-balance hypothesis, so NOT fixed-by-measurement). Awaiting their
-   balance figure. Claim held.
-   forcing: user — external reporter; answered after 18 days, now waiting on them.
-3. **DONE — #513 diagnosed; `civitai/civitai#4768` filed.** cli#513 stays OPEN deliberately.
-   forcing: none
+2. **`developer-docs#61`** — routed and re-tested (HTTP 200 now, but at the GOOD end of the
+   reporter's own insufficient-balance hypothesis, so **not** fixed-by-measurement). Awaiting
+   their balance figure. Claim held.
+   forcing: user — external reporter, waiting on them since 2026-09-11.
+3. **DONE — #513 diagnosed; `civitai/civitai#4768` filed** (still 0 comments). cli#513 stays
+   OPEN deliberately. forcing: none
 4. **DONE — stale branch deleted** (`12818a3`). forcing: none
 5. **DONE — `#545` merged.** forcing: none
-6. **DONE — superseded by `#569`, merged `e3f2608`.** `#554` itself is still OPEN and that is
-   **@xsvm's call**, not ours — it is superseded in content, not credit.
-   forcing: none
+6. **DONE — `#554` closed by @xsvm**, superseded by `#569`. forcing: none
 7. **DONE — AGENTS.md item 37 / `decisions/37` corrected** via `#556`. forcing: none
-8. **DONE (decided, not filed) — the widened ledger lives on `#552`**, whose body was rewritten
-   2026-09-12 with the measured scope. forcing: none
-9. **`developer-docs#76`** — the four other failing checks, the `/apps/installed` rename in the
-   docs' prose, and fixing `drift-notify.mjs` to NAME the failing steps. Claim held.
+8. **DONE — `#552` CLOSED, condition verified element by element.** forcing: none
+9. **`developer-docs#76`** — the four other failing checks, the `/apps/installed` →
+   `/apps/activity` rename in the docs' prose, and fixing `drift-notify.mjs` to NAME the failing
+   steps. Claim held.
    forcing: gate — a red gate whose body reads all-green trains readers to dismiss it.
-10. **DONE — vendored mirrors measured CLEAN** (see the investigation block). forcing: none
-11. **`home-manager switch`** so `devrc#1498`'s lesson is live. Merged ≠ deployed for a
-    `home.file` copy. Operator's call: it restarts collector/keylog/i3 on both hosts.
-    forcing: none
-12. **`civitai/cli#552`** — the real remaining engineering work: a ledger over *renderers that
-    print server text into a line-structured surface*, covering `\t` as well as `\n`, plus the
-    soft-wrap residual and the README. ~13 renderers enumerated in the issue body.
-    forcing: security — an aligned, fully attacker-controlled table row on shipped surfaces.
+10. **DONE — vendored mirrors measured CLEAN** (slot registry 4/4, scopes 12/12,
+    `SENSITIVE_BLOCK_SCOPES` 5/5, each with a control). forcing: none
+11. **`home-manager switch`** so `devrc#1498`'s mentions-id-collision lesson is live. Merged ≠
+    deployed for a `home.file` copy. Operator's call — it restarts collector/keylog/i3 on both
+    hosts. forcing: none
+12. **`civitai/cli#575`** — the four recorded residuals. R1 (`gatePreSanitised`) is the only one
+    that is plainly a defect; R2–R4 may legitimately be accepted in writing, and the issue's
+    closing condition says so.
+    forcing: security — one gate state is still a hole any row can be moved into, on a shipped
+    guard.
 
 ## Gotchas / decisions / dead-ends
 
@@ -660,31 +698,71 @@ is answered clean (above) and recorded on the issue.** The other four failing ch
   "the only thing that says so", a stale count, and a guard that checked an identifier's NAME
   rather than its value.
 
+### THE ARC'S SHA LEDGER — deliberately filed HERE, under an APPEND heading
+
+🔴 **This lived under `State now` (a REPLACE heading) and came within one confirm of being
+deleted THREE times.** `handoff_doc.py`'s durable-line warning reads prose and does not see a
+table, so it flagged 3 unrelated lines while 8 shas were silently in the drop set. It is a
+FLOOR, not a guarantee — and the structural fix is to keep the record where nothing replaces it.
+
+| what | sha / ref | state |
+|---|---|---|
+| `#545` (xsvm) images prompt indent | `feb330c` | MERGED |
+| `#556` retraction of "not reproducible" | `d0d1805` | MERGED |
+| `#551` handoff r2 | `5208a6b` | MERGED |
+| `#565` handoff r3 | `d37b32a` | MERGED |
+| `#567` handoff r4 | `f11f26e` | MERGED |
+| `#570` handoff r5 | `c4ed077` | MERGED |
+| `#569` tab vector + #564 reconciliation | `e3f2608` | MERGED |
+| **`#573` tabwriter ledger + 20 renderers gated** | **`6f0a8d8`** | MERGED |
+| `devrc#1498` mentions-id-collision lesson | `550de40` | MERGED — ⚠ NOT live until `home-manager switch` |
+| `civitai/civitai#4768` (server-side #513) | new | FILED, 0 comments |
+| stale branch `fix/flexstring-numeric-username` | — | DELETED, recovery sha `12818a3` |
+
+
+- 🔴 **THE FIX ROUND'S OWN PROSE IS THE LIKELIEST NEXT FINDING, AND THIS ARC PROVED IT TWICE.**
+  Round 2 of `#573` refuted **no shipped behaviour claim** — all ten fixes verified under
+  mutation — yet every finding it returned was a false or incomplete SENTENCE written by the
+  round that fixed round 1. Budget for it; do not read a clean behavioural result as a clean
+  round.
+- 🔴 **SWEEP THE SHAPE, NOT THE REPORTED SITES.** The audit named the false closed-set claim at
+  two places. Grepping for the *shape* — a guard description asserting coverage its body does not
+  provide — found a **third**, in residual 1, the line a reader hits first. That sweep is what
+  made stopping legitimate rather than arbitrary.
+- 🔴 **WHERE A GUARD HAS LOST ITS REASON, WRITE THAT IT HAS NONE.** `gatePreSanitised`'s comment
+  had already been through one confident justification that was false. The fix is the retraction
+  plus the enumerated residual, not a fresh rationale.
+- 🔴 **A STALE LSP DIAGNOSTIC READS EXACTLY LIKE A BROKEN BUILD — twice in one session.**
+  `sortedKeys redeclared` and `"regexp" imported and not used` both surfaced against PR heads
+  that compiled clean; both were mid-edit worktree state. The second was especially plausible
+  because `regexp` had been *my* import for a test the fix round deleted. **Build the actual
+  pushed sha before reporting a compile error.**
+- 🔴 **A REBASED BRANCH BREAKS THE NAIVE DELTA RANGE.** `#573` was rebased, so
+  `<audited-tip>..<head>` would have spanned the rebase **and** an unrelated docs commit — the
+  silent over-covering case. Check whether the audited tip is an ancestor; if not, find its
+  rebased twin (`git diff <old> <new>` should show only main's own movement) and anchor there.
+- **A CLOSING CONDITION THAT IS MET SHOULD CLOSE, even if you said otherwise an hour ago.** An
+  open issue whose body describes fixed work is worse than a closed one with an accurate record.
+  Reverse it in the open and say why.
+- **Round-0 trial ledger, cumulative: `ran: 3 · changed the outcome: 1`.** The one that changed
+  it produced four deletion candidates and a dropped requirement, none of which the nine
+  correctness axes would have asked about. One more run before the retire/promote decision.
+
 ## How to verify
 
 ```bash
 R=/home/zach/workspace/civit/cli
 
-# rank 10 — the three vendored mirrors, each with a control. Re-run only on an upstream move.
-python3 - <<'PY'
-import json,re,subprocess,urllib.request
-def get(u):
-    rq=urllib.request.Request(u, headers={'User-Agent':'Mozilla/5.0'})
-    return urllib.request.urlopen(rq).read().decode()
-bsc=get('https://raw.githubusercontent.com/civitai/civitai/main/src/shared/constants/block-scope.constants.ts')
-i=bsc.index('BLOCK_SCOPE_TO_OAUTH_BIT')
-up=set(re.findall(r"^\s{2}'?([a-zA-Z][\w:.\-]*)'?\s*:", bsc[i:i+6000], re.M))
-cli=set(json.load(open(f'{__import__("os").environ.get("R","/home/zach/workspace/civit/cli")}/schema/app-block.manifest.schema.json'))['properties']['scopes']['items']['enum'])
-print('scopes  missing:', sorted(up-cli) or 'none', '| extra:', sorted(cli-up) or 'none')
-print('CONTROL (must print zz:ctl):', sorted((up|{'zz:ctl'})-cli))
-PY
+# #552's condition, element by element, on main
+git -C $R show origin/main:internal/cmd/tabwriter_ledger_test.go | grep -c 'GREW'    # >0
+git -C $R show origin/main:internal/cmd/tabwriter_ledger_test.go | grep -c 'SHRANK'  # >0
+git -C $R show origin/main:internal/cmd/safeterm.go | grep -A6 'func safeTermSingle' # \n AND \t
 
-# #552 body carries the measured scope, not the old 8-field framing
-gh issue view 552 --repo civitai/cli --json body --jq '.body' | grep -c 'creators.go:107'   # want >=1
+# 🔴 #575 R1 — the residual is REAL and recorded as open, not shut
+git -C $R show origin/main:internal/cmd/tabwriter_ledger_test.go | grep -c 'CLOSED AT TWO IS NOT THE SAME'  # 1
 
-# #569 landed and did NOT close #552
-git -C $R log -1 --format='%s%n%b' origin/main | grep -icE 'clos(e|es|ed) #552'   # want 0
-gh issue view 552 --repo civitai/cli --json state --jq .state                     # want OPEN
+# the gate, on the MERGED tree rather than a branch
+make -C $R ci && make -C $R lint     # lint needs nix-shell -p golangci-lint on this host
 
 # claims still held
 claim-work --list | grep -E 'devdocs-61|devdocs-76'
