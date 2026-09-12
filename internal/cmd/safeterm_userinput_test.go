@@ -67,23 +67,46 @@ var userTypedArgs = map[string]string{
 // classified name that no longer appears (the set shrank, so the note is stale
 // and the next reader would trust it).
 var bareIdentArgs = map[string]string{
-	"workflowID": "SERVER: the id from the submit reply / poll, not the one the user typed",
-	"target":     "MIXED: --out verbatim, else filepath.Base(SERVER file name). Sanitised for the server half — see targetPath",
-	"partPath":   "MIXED: `target` + \".part\", so it inherits target's two origins exactly — see targetPath",
-	"w":          "SERVER-derived: a download warning, or an image-metadata weight",
-	"status":     "SERVER: a workflow status string",
-	"r":          "SERVER: an orchestrator failure reason",
-	"note":       "SERVER-derived: a routing note built from the server's file name",
-	"k":          "SERVER cost-map key, and (generate_input.go) a key out of the user's own --input file",
-	"workflow":   "the workflow value out of the user's --input FILE — the documented file-content exception",
-	"t":          "SERVER: a trained word",
-	"sha":        "SERVER: a published hash",
-	"reason":     "SERVER: an orchestrator failure reason",
-	"name":       "SERVER: a published file name",
-	"loraLabel":  "SERVER-derived: one describeVersion label out of resolvedGraph.loras. TWO call sites, both re-gated by civitai/cli#575 R1 — the quote screen's tabwriter CELL (printGenerateQuote) and the approval screen's plain `LoRA:` LABEL LINE (confirmGenerate), the latter four lines above `Generate? [y/N]:`. Spelled out rather than `l`: this map is keyed by NAME across the package, so a one-letter key would allowlist every safeTerm(l) in internal/cmd",
-	"h":          "SERVER: a hash out of image metadata",
-	"baseModel":  "SERVER: a base-model label",
-	"typ":        "SERVER: the primary file's published `type`, defaulted to \"Other\" when blank (nonModelFileMarker)",
+	// --- download path ------------------------------------------------------
+	"checkTargetCollisions::target":  "MIXED: --out verbatim, else filepath.Base(SERVER file name) — see targetPath. The refusal that is the only thing between the user and a silent overwrite",
+	"downloadBlobTo::target":         "MIXED: as targetPath, on generate's `Saved <target>` line",
+	"downloadOne::target":            "MIXED: as targetPath, on the install error and the `Saved` line",
+	"presentTargetSatisfies::target": "MIXED: as targetPath, on the two `already present` lines",
+	"printDownloadPlan::target":      "MIXED: as targetPath, on the plan's `target:` line",
+	"writePart::partPath":            "MIXED: `target` + \".part\", so it inherits target's two origins exactly — see targetPath",
+	"downloadStatusError::name":      "SERVER: a published file name, re-assigned through the gate in place",
+	"emitPreDownloadNotes::name":     "SERVER: a published file name, in the no-SHA256 warning",
+	"writePart::name":                "SERVER: a published file name, in the streaming error",
+	"printDownloadPlan::note":        "SERVER-derived: a routing note built from the server's file name",
+	"downloadSelected::note":         "SERVER-derived: the same routing note",
+	"printDownloadPlan::sha":         "SERVER: a published hash",
+	"printDownloadPlan::w":           "SERVER-derived: a MIXED-TYPE warning (mixedTypeWarning), not a weight — see printImageResources::w, which is a different value under the same name",
+	"warnMixedTypes::w":              "SERVER-derived: the mixed-type warning again, at its own call site",
+	"reportBaseModel::w":             "SERVER-derived: a BASE-MODEL warning (baseModelWarning) — a third distinct value spelled `w`",
+	"reportBaseModel::baseModel":     "SERVER: a base-model label",
+
+	// --- read path ----------------------------------------------------------
+	"printImageResources::w":  "SERVER: an image-metadata WEIGHT (r.WeightString()). Nothing to do with the download warnings also spelled `w` — which is exactly why this ledger is keyed per function",
+	"printImageResources::h":  "SERVER: a hash out of image metadata",
+	"joinTags::t":             "SERVER: a trained word",
+	"nonModelFileMarker::typ": "SERVER: the primary file's published `type`, defaulted to \"Other\" when blank",
+
+	// --- generate path ------------------------------------------------------
+	"printCostMap::k":                     "SERVER: a cost-map key on the PRE-SPEND table",
+	"joinQuoted::k":                       "🔴 NOT SERVER: a key out of the USER's own --input FILE (generate_input.go) — the documented file-content exception. The same name as printCostMap::k and a different origin; one row covering both is what this re-keying exists to stop",
+	"parseGraphInput::workflow":           "the workflow value out of the user's --input FILE — the documented file-content exception",
+	"printGenerateQuote::loraLabel":       "SERVER-derived: a describeVersion label out of resolvedGraph.loras, in the quote screen's tabwriter CELL (civitai/cli#575 R1)",
+	"confirmGenerate::loraLabel":          "SERVER-derived: the same label on the APPROVAL screen's plain `LoRA:` line, four lines above `Generate? [y/N]:` (civitai/cli#575 R1)",
+	"printSubmitted::workflowID":          "SERVER: the id from the submit reply — the only handle to a job already paid for",
+	"printReattach::workflowID":           "SERVER: the same id on the re-attach hint",
+	"printReattach::status":               "SERVER: a workflow status string",
+	"waitAndCollect::workflowID":          "SERVER: the same id on the wait path",
+	"downloadOutputs::workflowID":         "SERVER: the same id while collecting outputs",
+	"(*quietPollReporter).finish::status": "SERVER: a workflow status string",
+	"(*ttyPollReporter).finish::status":   "SERVER: a workflow status string",
+	"serverReasonSuffix::reason":          "SERVER: an orchestrator failure reason",
+	"printWorkflow::r":                    "SERVER: an orchestrator failure reason (workflows get)",
+	"printWorkflowList::r":                "SERVER: an orchestrator failure reason (workflows list)",
 }
 
 // sanitizerComposers are the functions IN safeterm.go that may call safeTerm on
@@ -266,29 +289,161 @@ func safeTermFuncKey(fd *ast.FuncDecl) string {
 	return fd.Name.Name
 }
 
-func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
-	sites := scanSafeTermCallSites(t)
-	var bad, unclassified []string
-	seenBare := map[string]bool{}
+// bareIdentKey is the ledger key for one bare-identifier call site, and it is
+// the ONE place the keying rule lives — civitai/cli#575 R5.
+//
+// 🔴 THE ARGUMENT NAME ALONE IS NOT AN IDENTITY. `w` is four different values in
+// this package (a mixed-type warning, the same warning at a second site, a
+// base-model warning, and an image-metadata WEIGHT) and `k` is a SERVER cost-map
+// key in printCostMap and a key out of the USER's own --input file in joinQuoted.
+// Keyed by name, one row vouched for every site sharing that name, so a new
+// safeTerm(<short name>) anywhere in internal/cmd arrived pre-approved by a
+// sentence written about a different function.
+//
+// MEASURED both ways: a bare safeTerm(w) planted over the USER-TYPED prompt in
+// printGenerateQuote SURVIVES the name-keyed ledger at 3457c5d and is KILLED and
+// NAMED here.
+func bareIdentKey(s safeTermSite) string { return s.enclosing + "::" + s.arg }
+
+// classifyBareIdents is the unclassified half of the guard, as a pure function of
+// (sites, ledger), so TestBareIdentLedgerIsKeyedPerFunction can run the REAL rule
+// over synthetic sites rather than a copy of it.
+func classifyBareIdents(sites []safeTermSite, ledger map[string]string) (unclassified []string, seen map[string]bool) {
+	seen = map[string]bool{}
 	for _, s := range sites {
-		if why, forbidden := userTypedArgs[s.arg]; forbidden {
-			bad = append(bad, fmt.Sprintf("%s: safeTerm(%s) — %s", s.pos, s.arg, why))
+		if !s.bareIdent {
+			continue
 		}
 		// A sanitizer in safeterm.go delegating to safeTerm is composition, not
-		// rendering — see sanitizerComposers. BOTH conditions must hold, and the
-		// userTypedArgs check above deliberately still applies: composing is no
-		// licence to sanitise the user's own bytes.
-		if s.bareIdent && strings.HasPrefix(s.pos, sanitizerFile+":") {
+		// rendering — see sanitizerComposers. It moved here with the rest of the
+		// rule so this function IS the rule: leaving it at the call site made the
+		// live guard and the synthetic one disagree about one site, which is the
+		// failure a shared helper exists to prevent.
+		if strings.HasPrefix(s.pos, sanitizerFile+":") {
 			if _, composer := sanitizerComposers[s.enclosing]; composer {
 				continue
 			}
 		}
-		if s.bareIdent {
-			if _, known := bareIdentArgs[s.arg]; !known {
-				unclassified = append(unclassified, fmt.Sprintf("%s: safeTerm(%s)", s.pos, s.arg))
-			}
-			seenBare[s.arg] = true
+		key := bareIdentKey(s)
+		if _, known := ledger[key]; !known {
+			unclassified = append(unclassified, fmt.Sprintf("%s: safeTerm(%s) in %s", s.pos, s.arg, s.enclosing))
 		}
+		seen[key] = true
+	}
+	return unclassified, seen
+}
+
+// TestBareIdentLedgerIsKeyedPerFunction is the regression guard for
+// civitai/cli#575 R5, and it runs the real rule (classifyBareIdents) rather than
+// re-implementing it.
+//
+// The control is the last case: a ledger that rejected everything would satisfy
+// every case above it while asserting nothing.
+func TestBareIdentLedgerIsKeyedPerFunction(t *testing.T) {
+	// 🔴 THE LEDGER IS BUILT THROUGH bareIdentKey, NOT SPELLED WITH "::".
+	// A hand-spelled "alpha::w" is written in the key format under test, so
+	// reverting the keying to the bare name made NOTHING match and every case was
+	// refused — the mutant died on the POSITIVE CONTROL while the case meant to
+	// detect it passed for the wrong reason. Measured; that is why this is
+	// constructed. Built this way, the discriminating property survives any
+	// keying: alpha's own `w` must be ACCEPTED while beta's must be REFUSED, and
+	// a name-keyed rule cannot tell them apart in either direction.
+	alpha := safeTermSite{pos: "zz.go:4:1", enclosing: "alpha", arg: "w", bareIdent: true}
+	ledger := map[string]string{bareIdentKey(alpha): "SERVER: alpha's own w"}
+	for _, tc := range []struct {
+		name       string
+		site       safeTermSite
+		wantRefuse bool
+	}{
+		{
+			// 🔴 THE DEFECT ITSELF: the same NAME, a different FUNCTION. Under the
+			// name-keyed ledger this was accepted because `w` was classified
+			// somewhere; the origin of beta's `w` had never been written down.
+			name:       "same argument name, different function",
+			site:       safeTermSite{pos: "zz.go:1:1", enclosing: "beta", arg: "w", bareIdent: true},
+			wantRefuse: true,
+		},
+		{
+			name:       "a name nobody has classified at all",
+			site:       safeTermSite{pos: "zz.go:2:1", enclosing: "alpha", arg: "zzUnknown", bareIdent: true},
+			wantRefuse: true,
+		},
+		{
+			// Not a bare identifier, so this guard is not the one that answers for
+			// it — userTypedArgs is.
+			name:       "not a bare identifier",
+			site:       safeTermSite{pos: "zz.go:3:1", enclosing: "beta", arg: "o.prompt", bareIdent: false},
+			wantRefuse: false,
+		},
+		{
+			name:       "POSITIVE CONTROL: the exact pair the ledger classifies",
+			site:       alpha,
+			wantRefuse: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _ := classifyBareIdents([]safeTermSite{tc.site}, ledger)
+			if tc.wantRefuse && len(got) == 0 {
+				t.Errorf("safeTerm(%s) in %s was ACCEPTED. civitai/cli#575 R5 is back: a row written about "+
+					"one function vouches for a bare identifier in another, so a new call site arrives "+
+					"pre-approved by a sentence that is not about it.", tc.site.arg, tc.site.enclosing)
+			}
+			if !tc.wantRefuse && len(got) != 0 {
+				t.Errorf("the control was REFUSED (%v), so the cases above it prove nothing — a rule that "+
+					"rejects everything passes them all.", got)
+			}
+		})
+	}
+}
+
+// TestBareIdentLedgerCoversAMultiFunctionName proves the premise the per-function
+// keying rests on is still TRUE of this package: at least one argument name really
+// is used by more than one function. If that stopped being so, the keying would
+// still be correct but this ledger's extra rows would be unmotivated, and a future
+// author would be right to ask why.
+func TestBareIdentLedgerCoversAMultiFunctionName(t *testing.T) {
+	byName := map[string][]string{}
+	for key := range bareIdentArgs {
+		i := strings.LastIndex(key, "::")
+		if i < 0 {
+			t.Errorf("bareIdentArgs key %q is not `enclosingFunction::argument`. The name alone is not an "+
+				"identity (civitai/cli#575 R5).", key)
+			continue
+		}
+		byName[key[i+2:]] = append(byName[key[i+2:]], key[:i])
+	}
+	shared := 0
+	for name, fns := range byName {
+		if len(fns) > 1 {
+			shared++
+			t.Logf("%-12s is a bare safeTerm argument in %d functions: %v", name, len(fns), fns)
+		}
+	}
+	if shared == 0 {
+		t.Errorf("no argument name is shared by two functions, so this ledger's per-function keying is " +
+			"currently unmotivated by the tree. It was introduced because `w` named four distinct values " +
+			"and `k` two (civitai/cli#575 R5); if that is genuinely no longer true, say so here rather " +
+			"than leaving the rows looking arbitrary.")
+	}
+}
+
+func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
+	sites := scanSafeTermCallSites(t)
+	var bad []string
+	// 🔴 ONE RULE, ONE PLACE. The bare-identifier half runs through
+	// classifyBareIdents, which TestBareIdentLedgerIsKeyedPerFunction drives with
+	// synthetic sites — so that guard exercises THIS code rather than a second
+	// copy of it. An earlier draft of this change inlined the loop here as well,
+	// and a mutation caught it: breaking the keying left the synthetic test red
+	// for the wrong reason while the live one was unaffected.
+	unclassified, seenBare := classifyBareIdents(sites, bareIdentArgs)
+	for _, s := range sites {
+		if why, forbidden := userTypedArgs[s.arg]; forbidden {
+			bad = append(bad, fmt.Sprintf("%s: safeTerm(%s) — %s", s.pos, s.arg, why))
+		}
+		// NOTE: the userTypedArgs check above applies to composers too — composing
+		// is no licence to sanitise the user's own bytes. Only the BARE-IDENT half
+		// exempts them, and that exemption now lives in classifyBareIdents.
 	}
 	if len(bad) > 0 {
 		t.Errorf("%d call site(s) sanitise input the USER typed:\n  %s\n\n"+
@@ -298,14 +453,17 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 	}
 	if len(unclassified) > 0 {
 		t.Errorf("%d safeTerm call site(s) pass a bare local whose ORIGIN is not written down:\n  %s\n\n"+
-			"Add it to bareIdentArgs saying where its bytes come from. A bare name hides the answer — "+
-			"`safeTerm(target)` carries the user's own --out path and no guard could see it until this "+
-			"ledger existed.", len(unclassified), strings.Join(unclassified, "\n  "))
+			"Add it to bareIdentArgs under the key `enclosingFunction::argument`, saying where ITS bytes "+
+			"come from. A bare name hides the answer — `safeTerm(target)` carries the user's own --out path "+
+			"and no guard could see it until this ledger existed — and a name alone is not an identity: a "+
+			"row for `w` in one function must not vouch for `w` in another (civitai/cli#575 R5).",
+			len(unclassified), strings.Join(unclassified, "\n  "))
 	}
-	for name := range bareIdentArgs {
-		if !seenBare[name] {
-			t.Errorf("bareIdentArgs classifies %q, which is no longer passed to safeTerm anywhere. A stale "+
-				"note reads as coverage; delete it or fix the name.", name)
+	for key := range bareIdentArgs {
+		if !seenBare[key] {
+			t.Errorf("bareIdentArgs classifies %q, which is no longer a bare safeTerm argument in that "+
+				"function. A stale note reads as coverage; delete it, or fix the key if the function was "+
+				"renamed. Keys are `enclosingFunction::argument`.", key)
 		}
 	}
 	t.Logf("scanned %d safeTerm call site(s); %d forbidden shapes and %d bare-identifier origins are pinned",
