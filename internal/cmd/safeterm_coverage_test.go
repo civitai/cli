@@ -233,9 +233,13 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"🔴 THE SIXTH — the safeTermErr on `download %s: %w` — was recorded here as a SURVIVOR " +
 			"\"because the cause is a *url.Error and Go's own %q already escapes the class\". That " +
 			"sentence was false and is retracted (#572 round 2): %q is strconv.Quote, which escapes what " +
-			"is not unicode.IsPrint, and IsPrint admits U+2800 and U+034F; url.URL.String() writes " +
-			"RawQuery back VERBATIM, so a hostile query rides into *url.Error raw; and the https/parse " +
-			"refusals on this path are not *url.Error at all. It survived for want of a driving test, " +
+			"is not unicode.IsPrint, and IsPrint admits U+2800 and U+034F; and url.URL.String() writes " +
+			"RawQuery back VERBATIM, so a hostile query rides into *url.Error raw. 🔴 THAT RETRACTION'S " +
+			"OWN THIRD CLAUSE — \"the https/parse refusals on this path are not *url.Error at all\" — is " +
+			"retracted in turn (#572 round 4): only the http:// SCHEME refusal is not one (plain " +
+			"fmt.Errorf, no %w, exitCode 1); the PARSE refusal wraps url.Parse's *url.Error{Op:\"parse\"} " +
+			"with %w, so errors.As matches and transport_error.go classifies it exit 5. Two refusals, two " +
+			"published exit codes — do not lump them. It survived for want of a driving test, " +
 			"which the two `*url.Error carries the runes %q does not escape` / `real client's https " +
 			"refusal` subtests now supply. The `create output directory` error is deliberately NOT here: " +
 			"its `dir` is user-typed only (#572)"},

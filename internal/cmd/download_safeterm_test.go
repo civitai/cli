@@ -61,7 +61,10 @@ import (
 // and "reddened 36 top-level tests", and each correction is recorded rather than
 // quietly applied. "21 sites" was never right: the same walk measures 20 at the
 // commit where that sentence was written, and 18 after #572 removed the
-// unreachable mkdir gate. 36 went to 37 when civitai/cli#573 landed
+// unreachable mkdir gate. THOSE TWO NUMBERS ARE ON DIFFERENT SCOPES, which the
+// sentence did not say: 18 is download.go's SIX functions, 19 is those plus
+// safeTermErr's own safeTerm call, which lives in safeterm.go. 36 went to 37
+// when civitai/cli#573 landed
 // TestGatedRenderersDoNotForgeOutsideTheirTable — a count in prose is a claim,
 // and this one has now drifted stale, drifted wrong, AND been moved by someone
 // else's merge.
@@ -78,14 +81,31 @@ import (
 // ⚠ THE FOURTH SURVIVOR IS GONE, AND ITS RECORDED REASON WAS FALSE. safeTermErr
 // on `download %s: %w` was written up as surviving "because the cause is a
 // *url.Error and Go's own %q already escapes the class — defence in depth, not
-// coverage". Measured in round 2 of #572, all three clauses are wrong: `%q` is
-// strconv.Quote, which escapes what is not unicode.IsPrint and so passes U+2800
-// (So) and U+034F (Mn) THROUGH; url.URL.String() writes RawQuery back verbatim,
-// so a hostile downloadUrl query reaches *url.Error raw; and pkg/civitai's
-// https/parse refusals on this path are not *url.Error at all. It survived for
-// want of a driving test, not for redundancy — a maintainer following that
-// sentence would have deleted a live gate against a green suite. The two
-// subtests named for it below now kill it.
+// coverage". Measured in round 2 of #572, the ESCAPING half is wrong, and that
+// is what makes the gate live: `%q` is strconv.Quote, which escapes what is not
+// unicode.IsPrint and so passes U+2800 (So) and U+034F (Mn) THROUGH, and
+// url.URL.String() writes RawQuery back verbatim, so a hostile downloadUrl query
+// reaches *url.Error raw. It survived for want of a driving test, not for
+// redundancy — a maintainer following that sentence would have deleted a live
+// gate against a green suite. The two subtests named for it below now kill it.
+//
+// ⚠ THE REPLACEMENT FOR THE *url.Error HALF WAS ALSO FALSE, AND THIS IS ITS
+// CORRECTION. Round 2 replaced it with "pkg/civitai's https/parse refusals on
+// this path are not *url.Error at all". The PARSE refusal is one. Measured in
+// round 4 by driving the real client through DownloadFile with
+// AllowPrivateDownloadHosts=false, then asking cmd/civitai's own exitCode:
+//
+//   - `http://…` — requireHTTPSTransfer returns a plain fmt.Errorf with no %w,
+//     so errors.As(err, **url.Error) is FALSE and exitCode is 1 (exitGeneric).
+//   - a URL url.Parse rejects (any ASCII control byte) — requireHTTPSTransfer
+//     wraps url.Parse's own error with %w, and url.Parse returns
+//     *url.Error{Op:"parse"}, so errors.As is TRUE. pkg/civitai's
+//     transport_error.go names *url.Error as net-stack evidence, so that refusal
+//     classifies as a transport failure and exitCode is 5 (exitNetwork).
+//
+// So the two refusals carry DIFFERENT published exit codes (AGENTS.md items 7
+// and 24) and must not be lumped together. Neither fact bears on the conclusion
+// above, which rests on the two escaping clauses that survive.
 //
 // Everything else — targetPath's refusal on both streams, all three collision
 // fields, the progress line, and every error string on the downloadOne path —
@@ -158,14 +178,22 @@ const (
 	dlHostileQuoted = "pad\u2800\u034fcore\x1b[2K"
 	dlSafeQuoted    = "padcore[2K"
 
-	// \ud83d\udd34 A FOURTH FIXTURE, FOR THE HALF OF dlHostileQuoted THAT CAN RIDE IN A
-	// URL \u2014 civitai/cli#572 round 2. net/url refuses ANY ASCII control byte
-	// outright (`net/url: invalid control character in URL`), so the ESC above
-	// cannot reach a parsed URL's query; U+2800 and U+034F can, and
-	// url.URL.String() writes RawQuery back VERBATIM \u2014 it percent-encodes the
-	// path and punycodes the host, but never re-encodes the query. So this is
+	// 🔴 A FOURTH FIXTURE, FOR THE HALF OF dlHostileQuoted THAT CAN RIDE IN A
+	// URL — civitai/cli#572 round 2. net/url refuses ANY ASCII control byte
+	// outright (`net/url: invalid control character in URL`; measured over
+	// 0x00/0x01/0x09/0x0A/0x0D/0x1B/0x1F/0x7F, all rejected, 0x20 accepted), so
+	// the ESC above cannot reach a parsed URL's query; U+2800 and U+034F can, and
+	// url.URL.String() writes RawQuery back VERBATIM — it percent-encodes the
+	// path, the host and the fragment, but never re-encodes the query. So this is
 	// the payload a server's files[].downloadUrl carries all the way into the
 	// error text on the download path.
+	//
+	// ⚠ THIS SAID net/url "punycodes the host", AND IT DOES NOT — corrected in
+	// round 4 rather than quietly. net/url PERCENT-ENCODES the host like any other
+	// component; IDNA/punycode is net/http's step, not net/url's. Measured:
+	// url.Parse("https://pad<U+2800><U+034F>core.example.invalid/blob").String()
+	// is "https://pad%E2%A0%80%CD%8Fcore.example.invalid/blob". Only the
+	// query-is-verbatim clause is load-bearing here, and that one holds.
 	dlHostileQuery = "pad\u2800\u034fcore"
 	dlSafeQuery    = "padcore"
 )
@@ -232,6 +260,7 @@ func TestDownloadFixtureIsHostile(t *testing.T) {
 		{dlHostileName, dlSafeName}, {dlHostileType, dlSafeType},
 		{dlSafeName, dlSafeType}, {dlHostileName, dlHostileType},
 		{dlHostileQuoted, dlSafeQuoted}, {dlSafeQuoted, dlSafeName}, {dlSafeQuoted, dlSafeType},
+		{dlHostileQuery, dlSafeQuery}, {dlSafeQuery, dlSafeQuoted}, {dlHostileQuery, dlHostileQuoted},
 	} {
 		if pair[0] == pair[1] {
 			t.Fatalf("CONTROL failure, not a finding: fixture values %q and %q are equal", pair[0], pair[1])
@@ -573,11 +602,12 @@ func TestDownloadOneErrorsSanitizeTheServerName(t *testing.T) {
 	})
 
 	// 🔴 THE WRAPPED CAUSE IS A SECOND COPY OF THE HOSTILE BYTES, AND #566's
-	// FIRST FIX — safeTerm ON THE %s ALONE — PUT THEM STRAIGHT BACK. The real
-	// cause on this path is a *url.Error whose URL is the server's own
-	// files[].downloadUrl, so the message read "download <name-clean>: Get
-	// <url-raw>". This subtest pins the OUTCOME (nothing hostile on stderr, and
-	// the chain still classifiable), not one mechanism.
+	// FIRST FIX — safeTerm ON THE %s ALONE — PUT THEM STRAIGHT BACK. The cause on
+	// the TRANSPORT-FAILURE path (not on every path — see the two subtests below)
+	// is a *url.Error whose URL is the server's own files[].downloadUrl, so the
+	// message read "download <name-clean>: Get <url-raw>". This subtest pins the
+	// OUTCOME (nothing hostile on stderr, and the chain still classifiable), not
+	// one mechanism.
 	//
 	// ⚠ WHAT THIS ONE SUBTEST IS AND IS NOT EVIDENCE FOR. Its payload is
 	// dlHostileName, every rune of which `%q` DOES escape, so it stays green with
@@ -618,10 +648,13 @@ func TestDownloadOneErrorsSanitizeTheServerName(t *testing.T) {
 	// terms: `%q` is strconv.Quote, which escapes what is not unicode.IsPrint,
 	// and IsPrint ADMITS U+2800 (So) and U+034F (Mn) — both in saferune's class.
 	//
-	// The rune gets there because url.URL.String() percent-encodes the PATH and
-	// punycodes the HOST but writes RawQuery back untouched, so a server-supplied
-	// files[].downloadUrl with the payload in its query survives round-tripping
-	// through net/url and lands raw inside *url.Error's quoted URL.
+	// The rune gets there because url.URL.String() percent-encodes the PATH, the
+	// HOST and the FRAGMENT but writes RawQuery back untouched, so a
+	// server-supplied files[].downloadUrl with the payload in its query survives
+	// round-tripping through net/url and lands raw inside *url.Error's quoted URL.
+	// (Percent-encodes the host — it does NOT punycode it; that is net/http's
+	// IDNA step. This comment said punycode until #572 round 4. See the
+	// dlHostileQuery fixture for the measurement.)
 	t.Run("transport failure whose *url.Error carries the runes %q does not escape", func(t *testing.T) {
 		// The premise, asserted rather than assumed: net/url really does hand the
 		// query back verbatim. Without this the subtest could be green because the
@@ -657,12 +690,19 @@ func TestDownloadOneErrorsSanitizeTheServerName(t *testing.T) {
 		}
 	})
 
-	// 🔴 AND THE CAUSE ON THIS PATH IS OFTEN NOT A *url.Error AT ALL. The real
-	// pkg/civitai client refuses a non-https downloadUrl BEFORE any request is
-	// built, and returns a plain fmt.Errorf that prints the whole raw URL through
-	// `%q` — the same `%q` that does not escape the two runes above. This drives
-	// the REAL Downloader (no fake, no network: the refusal happens before the
-	// dial), so the wrapped cause is the one production produces.
+	// 🔴 AND THE SCHEME REFUSAL'S CAUSE IS NOT A *url.Error. The real pkg/civitai
+	// client refuses a non-https downloadUrl BEFORE any request is built, and
+	// returns a plain fmt.Errorf — no `%w`, so nothing is wrapped — that prints
+	// the whole raw URL through `%q`, the same `%q` that does not escape the two
+	// runes above. This drives the REAL Downloader (no fake, no network: the
+	// refusal happens before the dial), so the wrapped cause is the one production
+	// produces.
+	//
+	// ⚠ IT IS THE SCHEME REFUSAL THAT IS NOT ONE, NOT "the https/parse refusals"
+	// — requireHTTPSTransfer's OTHER return wraps url.Parse's error with `%w`, and
+	// url.Parse returns a *url.Error{Op:"parse"}, so THAT refusal is a *url.Error
+	// and classifies exit 5 where this one classifies exit 1. The header's
+	// retraction said otherwise until #572 round 4.
 	t.Run("real client's https refusal, whose cause is not a *url.Error", func(t *testing.T) {
 		var out, errb bytes.Buffer
 		f := newFile("")
@@ -676,7 +716,9 @@ func TestDownloadOneErrorsSanitizeTheServerName(t *testing.T) {
 			`download `+dlSafeName+`: refusing to download over http — downloads must use https `+
 				`(got "http://cdn.example.invalid/blob?sig=`+dlSafeQuery+`")`)
 		// The cause is deliberately asserted NOT to be a *url.Error: that is the
-		// half of the old ledger row this subtest refutes directly.
+		// half of the old ledger row this subtest refutes directly. It is a claim
+		// about THIS refusal only — see the comment above for the parse refusal,
+		// which IS one.
 		var ue *url.Error
 		if errors.As(err, &ue) {
 			t.Errorf("the https refusal is now a *url.Error (%#v). That does not make the gate redundant — "+
