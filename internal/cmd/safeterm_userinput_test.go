@@ -104,6 +104,7 @@ var bareIdentArgs = map[string]string{
 // function that no longer exists.
 var sanitizerComposers = map[string]string{
 	"safeTermSingle": "collapses \\n to a space for single-line/tabwriter fields; delegates to safeTerm first",
+	"safeTermErr":    "strips a WRAPPED CAUSE's message while leaving errors.Is/As reaching the original; delegates to safeTerm",
 }
 
 // sanitizerFile is the one file whose safeTerm calls are composition rather than

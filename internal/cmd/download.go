@@ -800,13 +800,13 @@ func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer
 
 	if dir := filepath.Dir(target); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return false, fmt.Errorf("create output directory %s: %w", safeTerm(dir), err)
+			return false, fmt.Errorf("create output directory %s: %w", safeTerm(dir), safeTermErr(err))
 		}
 	}
 
 	resp, err := dl.DownloadFile(ctx, f.DownloadURL)
 	if err != nil {
-		return false, fmt.Errorf("download %s: %w", safeTerm(f.Name), err)
+		return false, fmt.Errorf("download %s: %w", safeTerm(f.Name), safeTermErr(err))
 	}
 	defer resp.Body.Close()
 
@@ -835,7 +835,7 @@ func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer
 	if err := os.Rename(partPath, target); err != nil {
 		// The .part is finished but couldn't be installed; don't leave it behind.
 		_ = os.Remove(partPath)
-		return false, fmt.Errorf("install %s: %w", safeTerm(target), err)
+		return false, fmt.Errorf("install %s: %w", safeTerm(target), safeTermErr(err))
 	}
 
 	note := ""
@@ -913,7 +913,7 @@ func writePart(body io.Reader, partPath string, errW io.Writer, name string, tot
 	}
 	partFile, err := os.Create(partPath)
 	if err != nil {
-		return 0, "", fmt.Errorf("create %s: %w", safeTerm(partPath), err)
+		return 0, "", fmt.Errorf("create %s: %w", safeTerm(partPath), safeTermErr(err))
 	}
 	// Best-effort cleanup of the partial file on any failure before we hand a
 	// finished file back to the caller.
@@ -932,11 +932,11 @@ func writePart(body io.Reader, partPath string, errW io.Writer, name string, tot
 		writers = append(writers, hasher)
 	}
 	if _, err := io.Copy(io.MultiWriter(writers...), body); err != nil {
-		return 0, "", fmt.Errorf("streaming %s: %w", safeTerm(name), err)
+		return 0, "", fmt.Errorf("streaming %s: %w", safeTerm(name), safeTermErr(err))
 	}
 	pw.done()
 	if err := partFile.Close(); err != nil {
-		return 0, "", fmt.Errorf("finalize %s: %w", safeTerm(partPath), err)
+		return 0, "", fmt.Errorf("finalize %s: %w", safeTerm(partPath), safeTermErr(err))
 	}
 	cleanup = false
 
@@ -990,6 +990,14 @@ func downloadStatusError(status int, name string) (err error) {
 	// Classify the returned error by status (401/403→auth, 404→not-found, …)
 	// without changing its message, so the process exit code reflects the kind.
 	defer func() { err = civitai.TagStatus(status, err) }()
+	// 🔴 THE NAME IS THE SERVER'S files[].name AND main.go PRINTS err.Error()
+	// RAW — civitai/cli#566. Gated ONCE, here, rather than at each of the four
+	// returns below: they are four spellings of one rule, and #566 exists because
+	// two spellings of one rule drifted apart. The 401 arm is the most exposed of
+	// them — an anonymous download of a gated file reaches it on the FIRST run,
+	// before the user has seen that file name on any other surface, and the
+	// message it would forge is an instruction to run `civitai login`.
+	name = safeTerm(name)
 	switch {
 	case status >= 200 && status < 300:
 		return nil

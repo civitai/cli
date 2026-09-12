@@ -43,6 +43,49 @@ func safeTerm(s string) string {
 	return saferune.Strip(s)
 }
 
+// safeTermErr sanitises a WRAPPED CAUSE's message while leaving errors.Is /
+// errors.As able to reach the original, so an error can be both safe to print
+// and still classifiable into an exit code.
+//
+// 🔴 SANITISING THE %s AND WRAPPING THE CAUSE WITH %w PUTS THE HOSTILE BYTES
+// BACK, AND civitai/cli#566's OWN FIRST FIX DID EXACTLY THAT. It is the "a
+// field that exists is not a guard" shape in a new place. The standard library
+// echoes the path into the error it returns — `*fs.PathError` and
+// `*os.LinkError` both render it, and `*url.Error` renders the URL — so
+//
+//	fmt.Errorf("create output directory %s: %w", safeTerm(dir), err)
+//
+// emits `dir` sanitised, then a colon, then the SAME `dir` raw out of err. On
+// the download path the repeated value is a path built from the server's file
+// name (targetPath) or the server's own downloadUrl, which is to say: the gate
+// was decorative. MEASURED, not reasoned — the guards in
+// download_safeterm_test.go were written against the %s-only fix, and two of
+// them caught this the first time they ran.
+//
+// It deliberately does NOT reformat, truncate or re-word the cause: it strips
+// exactly what safeTerm strips and nothing else. The wrapped error stays in the
+// chain, so the exit-code classifier (AGENTS.md items 7 and 24) still sees
+// whatever sentinel or concrete type it was going to see.
+//
+// Use it at ANY site where `%w` carries a cause built from server-derived bytes
+// — sanitising the caller's own `%s` is not sufficient there and never was.
+func safeTermErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return sanitizedCause{err: err, msg: safeTerm(err.Error())}
+}
+
+// sanitizedCause renders a sanitised message and unwraps to the original, so
+// errors.Is/As are unaffected by the strip.
+type sanitizedCause struct {
+	err error
+	msg string
+}
+
+func (e sanitizedCause) Error() string { return e.msg }
+func (e sanitizedCause) Unwrap() error { return e.err }
+
 // safeTermSingle ensures a server-origin string occupies exactly one line AND
 // one tabwriter cell, stripping terminal escapes via safeTerm and replacing any
 // newline or tab with a space.

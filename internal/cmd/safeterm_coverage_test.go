@@ -186,6 +186,40 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the base-model line and the mismatch warnings above the plan"},
 	"formatFileList": {"TestReadRenderersStripTheInvisibleClass",
 		"the ambiguity list naming each candidate file by server-supplied name and type"},
+
+	// --- download path: the five surfaces civitai/cli#566 found ---------------
+	//
+	// 🔴 THESE FIVE ARE WHY THE LEDGER'S KEY IS A BLIND SPOT WORTH NAMING. GREW
+	// only fires for a function that ALREADY calls safeTerm at least once, so
+	// while these called it ZERO times no row was ever demanded — their absence
+	// was not merely unrecorded, it was UNRECORDABLE. Gating them is what made
+	// them ledgerable. The instrument that would have FOUND them (a row demanded
+	// of any function rendering a server-supplied struct field, gated or not) is
+	// deliberately still open; #566 scopes it out rather than half-building it.
+	"checkTargetCollisions": {"TestCheckTargetCollisionsSanitizesServerFields",
+		"the same-target refusal: each colliding file's name and type, plus the mixed-origin target. The " +
+			"LITERAL TWIN of formatFileList's line 44 lines above, which was gated while this was not — and " +
+			"this one is the ONLY thing between the user and a silent overwrite"},
+	"(*progressWriter).line": {"TestProgressWriterLineSanitizesServerName",
+		"the server's files[].name inside a \\r-REWRITTEN line — both callers rewrite in place (Write's TTY " +
+			"branch 10×/s, done() once), so the CLI is already moving the cursor and an ESC in the name " +
+			"extends that reach up into the pickle/archive EXECUTION WARNING printed just above it"},
+	"downloadOne": {"TestDownloadOneErrorsSanitizeTheServerName",
+		"the download/SHA256-mismatch/install/mkdir errors AND the `Saved <target>` line. main.go prints " +
+			"err.Error() unfiltered, so the mismatch string is the CLI ASSERTING AN INTEGRITY FAILURE with " +
+			"an uploader-controlled prefix. Five calls; the test drives four of them (`finalize` needs a " +
+			"failing Close and is not driven — see the #566 PR body)"},
+	"writePart": {"TestWritePartErrorsSanitizeTheServerName",
+		"the frame BETWEEN downloadOne and the progress writer: `streaming <name>` and `create <partPath>`. " +
+			"Gated so the sibling-renderer split #566 is about cannot simply reappear one call frame down"},
+	"downloadStatusError": {"TestDownloadOneErrorsSanitizeTheServerName",
+		"the four HTTP-status errors, gated ONCE at the top rather than at each return — four spellings of " +
+			"one rule is how #566 happened. The 401 arm is the most exposed: an anonymous download of a " +
+			"gated file reaches it on the FIRST run, and the message it forges tells the user to log in"},
+	"safeTermErr": {"TestDownloadOneErrorsSanitizeTheServerName",
+		"THE WRAPPED CAUSE, which #566's own first fix left raw: *fs.PathError and *os.LinkError render " +
+			"their paths with no quoting, so `%s` sanitised + `%w` raw emitted the hostile bytes one colon " +
+			"later. Pinned by the `output directory` and `install` subtests; errors.Is/As still reach through"},
 	"emitPreDownloadNotes": {"TestSafeTermIsNeverAppliedToUserTypedInput",
 		"INCIDENTAL, NOT BEHAVIOURAL: the published file name in the `no SHA256 published` warning. " +
 			"The red comes from bareIdentArgs noticing `name` stopped being passed, not from any " +
@@ -224,8 +258,6 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the mixed-file-type warnings above a download"},
 	"downloadSelected": {notCovered,
 		"the per-file routing note built from the server's file name"},
-	"downloadOne": {notCovered,
-		"the `Saved <target>` line — the one line that says where bytes landed"},
 	"presentTargetSatisfies": {notCovered,
 		"the `already present (SHA256 verified)` lines, which assert an integrity result"},
 	"pickleArchiveNote": {notCovered,
@@ -301,7 +333,12 @@ const (
 	// honest is then a review question with the evidence written next to it.
 	// That is the split #399 asked for: the count is mechanical, the content is
 	// reviewed.
-	maxUncoveredSafeTermFuncs = 25
+	//
+	// 25 -> 24 in civitai/cli#566: downloadOne moved from notCovered to covered,
+	// which is exactly the "unbanked progress that must be spent in the same
+	// commit" case the paragraph above describes. The five NEW rows #566 adds
+	// are all covered, so they do not move this number in either direction.
+	maxUncoveredSafeTermFuncs = 24
 )
 
 // TestSafeTermCallSitesAreCoveredByANamedTest is civitai/cli#399.
