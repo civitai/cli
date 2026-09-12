@@ -53,7 +53,7 @@ import (
 //
 // So a notCovered row is not "unguarded"; it is "guarded against wholesale
 // removal, not against a per-field regression". Do not read the covered count
-// as a coverage percentage of the 151 call sites — it is a count of FUNCTIONS
+// as a coverage percentage of the 152 call sites — it is a count of FUNCTIONS
 // whose output a test actually inspects.
 //
 // The walk is scanSafeTermCallSites in safeterm_userinput_test.go — the same
@@ -270,16 +270,27 @@ const (
 	// the opposite cause. There are ~1580 today.
 	minTestDeclsScanned = 500
 
-	// maxUncoveredSafeTermFuncs is the RATCHET: it is set to the exact count
-	// today, so there is no headroom to spend and the number cannot go UP.
-	// Lower it when you cover a row.
+	// maxUncoveredSafeTermFuncs is the RATCHET, and it is asserted as an
+	// EQUALITY, not as a ceiling.
 	//
-	// Say what it does NOT do, because "ratchet" oversells it: it constrains the
-	// COUNT, so a commit that covers one row and uncovers another nets out and
-	// passes. GREW is what makes a new surface impossible to add SILENTLY — it
-	// must get a row, and whether that row is honest is then a review question
-	// with the evidence written next to it. That is the split #399 asked for:
-	// the count is mechanical, the content is reviewed.
+	// 🔴 A CEILING SILENTLY ACQUIRES HEADROOM, WHICH IS THE ONE FAILURE A
+	// RATCHET EXISTS TO PREVENT. `uncovered > max` alone is satisfied by
+	// covering a row and leaving the constant where it was; the next commit may
+	// then add a brand-new safeTerm-calling surface with a notCovered row and
+	// stay green, spending headroom nobody knew was there. Measured on this
+	// file: cover one row at cap 25 -> green at 24, then add a new uncovered
+	// function -> green at 25, and a new unguarded server-text surface has
+	// landed with no signal. So BOTH directions are checked below: too many is
+	// the ratchet slipping, too few is unbanked progress that must be spent by
+	// lowering this constant in the same commit.
+	//
+	// Say what it still does NOT do, because "ratchet" would otherwise
+	// oversell it: it constrains the COUNT, so a commit that covers one row and
+	// uncovers another nets out and passes. GREW is what makes a new surface
+	// impossible to add SILENTLY — it must get a row, and whether that row is
+	// honest is then a review question with the evidence written next to it.
+	// That is the split #399 asked for: the count is mechanical, the content is
+	// reviewed.
 	maxUncoveredSafeTermFuncs = 25
 )
 
@@ -291,7 +302,9 @@ const (
 //	GREW    — a function now calls safeTerm and no row covers it.
 //	SHRANK  — a row names a function that no longer calls safeTerm.
 //	GHOST   — a row names a test that does not exist.
-//	RATCHET — the notCovered count went up.
+//	RATCHET — the notCovered count is not EXACTLY maxUncoveredSafeTermFuncs:
+//	          above it the ratchet slipped, below it there is unbanked headroom
+//	          a later commit could spend in silence.
 func TestSafeTermCallSitesAreCoveredByANamedTest(t *testing.T) {
 	sites := scanSafeTermCallSites(t)
 
@@ -360,12 +373,20 @@ func TestSafeTermCallSitesAreCoveredByANamedTest(t *testing.T) {
 		covered++
 	}
 	sort.Strings(missing)
-	if uncovered > maxUncoveredSafeTermFuncs {
+	switch {
+	case uncovered > maxUncoveredSafeTermFuncs:
 		t.Errorf("%d function(s) are ledgered notCovered, and the cap is %d:\n  %s\n\n"+
 			"This number only goes down. Cover one by adding a case to TestReadRenderersStripTheInvisibleClass "+
 			"— drive the renderer with hostileField and assert the paired predicate it uses (the class is gone "+
 			"AND every named field arrived) — then lower maxUncoveredSafeTermFuncs to match.",
 			uncovered, maxUncoveredSafeTermFuncs, strings.Join(missing, "\n  "))
+	case uncovered < maxUncoveredSafeTermFuncs:
+		t.Errorf("RATCHET HEADROOM: %d function(s) are ledgered notCovered but maxUncoveredSafeTermFuncs is %d. "+
+			"Lower it to %d in this commit.\n\nThis is not a nit. A cap above the real count is headroom a LATER "+
+			"commit can spend in silence: it adds a new safeTerm-calling surface, writes it a notCovered row, and "+
+			"the count climbs back to the stale cap while the suite stays green — a new unguarded server-text "+
+			"surface with no signal. The ratchet is an EQUALITY so progress is banked the moment it is made.",
+			uncovered, maxUncoveredSafeTermFuncs, uncovered)
 	}
 
 	t.Logf("%d safeTerm call site(s) in %d function(s): %d function(s) COVERED by a named test, "+

@@ -34,12 +34,27 @@ import (
 // string instead of the class, fails on that field by name — a single shared
 // "FIXTURE arrived" control cannot see either.
 
-// classProbe is one rune from each half of the hazard, which is why there are
-// three: U+200B is INVISIBLE (a separator no wrapper splits on), U+202E
-// REORDERS what is displayed, and U+2800 is the blank-but-graphic residue the
-// `Cf` category cut missed (#382). Putting all three inside one field means a
-// renderer cannot pass by handling only the famous one.
-const classProbe = "\u200b\u202e\u2800"
+// classProbe is one rune from each half of the hazard: U+200B is INVISIBLE (a
+// separator no wrapper splits on), U+202E REORDERS what is displayed, U+2800 is
+// the blank-but-graphic residue the `Cf` category cut missed (#382), and
+// U+001B is the ESC that starts every cursor move and line-clear. Putting all
+// four inside one field means a renderer cannot pass by handling only the
+// famous one.
+//
+// 🔴 THE ESC IS CAUGHT BY THE ADJACENCY HALF, NOT THE CLASS HALF, AND THAT IS
+// DELIBERATE. invisibleOrBidiRunes is `unicode.Cf` plus U+2800 — U+001B is
+// `Cc`, so it is invisible to that predicate. What catches it is wantStripped:
+// safeTerm removes the ESC, so the two visible halves become adjacent, and a
+// renderer that let the ESC through fails the per-field assertion by name. The
+// class half alone could not see `\x1b[1A\x1b[2K` — the escape that overwrites
+// the CLI's own `SHA256 verified` line — reaching the terminal, which is the
+// concrete attack safeTerm's doc comment names.
+//
+// It is a BARE ESC on purpose: safeTerm strips the ESC and KEEPS the rest of a
+// sequence (`a\x1b[2Kb` -> `a[2Kb`, pinned in safeterm_invisible_test.go), so a
+// probe carrying `\x1b[2K` would leave `[2K` between the halves and break
+// wantStripped even where the gate is working.
+const classProbe = "\u200b\u202e\u2800\x1b"
 
 // hostileField is a server-supplied value carrying the class BETWEEN two
 // visible halves, so "the class is gone" and "the words arrived" are the same
@@ -306,10 +321,19 @@ func TestReadRenderersStripTheInvisibleClass(t *testing.T) {
 			},
 		},
 		{
+			// 🔴 BOTH COLUMNS, BECAUSE THE LEDGER ROW CLAIMS BOTH. The row for
+			// formatFileList says "name and type", and a fixture leaving Type
+			// unset makes the type half VACUOUS: dashIfEmpty turns an empty Type
+			// into "-", so deleting `safeTerm(dashIfEmpty(f.Type))` left the whole
+			// internal/cmd suite green (measured). A second, distinct marker is
+			// what makes the row's sentence and the assertion the same claim.
 			surface: "the download plan's file list (formatFileList)",
-			fields:  []string{"ffl"},
+			fields:  []string{"ffl", "ffltype"},
 			render: func() string {
-				return formatFileList([]civitai.ModelVersionFile{{Name: hostileField("ffl")}})
+				return formatFileList([]civitai.ModelVersionFile{{
+					Name: hostileField("ffl"),
+					Type: hostileField("ffltype"),
+				}})
 			},
 		},
 		{
@@ -363,6 +387,15 @@ func TestHostileFieldCarriesTheClass(t *testing.T) {
 	if len(bad) != 3 {
 		t.Fatalf("CONTROL failure, not a finding: the fixture carries %d rune(s) of the class (%v), want 3 — "+
 			"the renderer cases assert on what safeTerm removes from it: %q", len(bad), bad, in)
+	}
+	// The ESC is the FOURTH probe rune and it is deliberately NOT one of the
+	// three above: U+001B is `Cc`, so invisibleOrBidiRunes cannot see it and the
+	// count stays 3. It is checked separately because nothing else would notice
+	// it falling out of classProbe, and without it the adjacency half of every
+	// case stops being able to see a renderer that lets `\x1b[1A\x1b[2K` through.
+	if !strings.ContainsRune(in, 0x1b) {
+		t.Fatalf("CONTROL failure, not a finding: the fixture carries no U+001B, so every case's per-field "+
+			"assertion has stopped covering cursor-move and line-clear escapes: %q", in)
 	}
 	if got := safeTerm(in); got != wantStripped("probe") {
 		t.Fatalf("CONTROL failure, not a finding: safeTerm(%q) = %q, want %q — the cases assert the halves "+
