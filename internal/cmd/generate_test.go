@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -888,5 +890,146 @@ func TestGenerate_SanitisesServerStrings(t *testing.T) {
 	// inert text rather than disappearing.
 	if !strings.Contains(out.String(), "evil[2Kname") {
 		t.Errorf("sanitised model name missing: %q", out.String())
+	}
+}
+
+// TestImageDisclosureLineIsGatedAtComposition pins the THIRD server-derived
+// label line on the approval screen — civitai/cli#575 R1, round 1.
+//
+// 🔴 THIS ONE IS GENUINELY GATED UPSTREAM, AND IT IS THE ONLY SUCH LINE LEFT.
+// Everywhere else this PR moved the gate to the rendering site, because a gate
+// the renderer applies is one the structural ledger can SEE. This line cannot
+// follow that rule: printImageDisclosure prints a string that interleaves TWO
+// origins — the path the USER typed, echoed byte-for-byte (civitai/cli#393), and
+// the SERVER's blob URL. Flattening the composed string at the render site would
+// rewrite the user's own path, which is exactly the defect #393's first cut
+// shipped. The halves are separable only where they are joined, so that is where
+// the gate is (generate.go, buildGenerateGraph).
+//
+// Which means the render-site test cannot pin it: setting built.images directly
+// bypasses the composition. This test drives the real one through the upload
+// seam instead.
+//
+// The hazard it closes was measured: printImageDisclosure is called from
+// confirmGenerate BETWEEN the LoRA lines and the real `Cost:` line, and safeTerm
+// deliberately KEEPS `\n`, so a blob URL carrying one rendered a fake
+// `Cost: 1 Buzz (balance 999999).` two lines above the true one and five above
+// `Generate? [y/N]:` — not "directly above", because confirmGenerate always
+// prints its img2img caveat after the last `Image:` line.
+func TestImageDisclosureLineIsGatedAtComposition(t *testing.T) {
+	var s genSeams
+	s.uploadReplyURL = "https://blob.example/x" + forgeCell("imgurl")
+
+	// 🔴 THE FIXTURE PATH CARRIES A ZWNJ, AND WITHOUT IT THE #393 ARM BELOW IS
+	// VACUOUS. A first cut used writePNG's own `icon.png`, which is pure ASCII —
+	// safeTermSingle is the identity on it, so `strings.Contains(line, src)` could
+	// not tell "untouched" from "flattened" and the exact regression the arm
+	// claims to stop passed the WHOLE package. Measured: gating the composed
+	// string instead of the URL half was green on 21 packages. This is RULES.md's
+	// "a fixture that can only ever produce the constant's own value cannot see
+	// the mutant" — the control is to feed a value the gate CANNOT leave alone.
+	base := writePNG(t, 64, 64)
+	raw, err := os.ReadFile(base)
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot read the fixture image: %v", err)
+	}
+	src := filepath.Join(t.TempDir(), "می\u200cروم.png")
+	if err := os.WriteFile(src, raw, 0o600); err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot write the ZWNJ-named fixture: %v", err)
+	}
+	// 🔴 THE CONTROL PINS THE PROPERTY, NOT THE RUNE, AND THE DIFFERENCE IS
+	// MEASURABLE. A first cut asserted only that the path still contained U+200C,
+	// under a sentence promising "a value the gate CANNOT leave alone" — two
+	// different claims. Demonstrated: exempt U+200C inside saferune, the way
+	// U+FE0F already is, and the rune assertion passes while safeTermSingle
+	// becomes the identity on this path, so the #393 arm below goes vacuous again
+	// with nothing saying so. Asserting the gate actually MOVES this value covers
+	// both the rune-lost and the class-changed cases.
+	if safeTermSingle(src) == src {
+		t.Fatalf("CONTROL failure, not a finding: safeTermSingle leaves the fixture path %q unchanged, so "+
+			"the #393 arm below cannot distinguish an untouched path from a flattened one. The path must "+
+			"carry a rune the gate rewrites — U+200C unless the class changed under it.", src)
+	}
+
+	o := baseOpts()
+	o.images = []string{src}
+
+	// context.Background(), not c.Context(): genCmd builds a bare cobra.Command
+	// whose Context() is nil. runGenerate normalises that at its entry, so
+	// production never reaches here with nil — a test that does is one seam change
+	// away from a panic that says nothing about the gate.
+	built, err := buildGenerateGraph(context.Background(), s.deps(t), o)
+	if err != nil {
+		t.Fatalf("buildGenerateGraph: %v", err)
+	}
+	if s.uploadCalls != 1 {
+		t.Fatalf("CONTROL failure, not a finding: the upload seam ran %d time(s), want 1 — the hostile URL "+
+			"never reached the composed line and every assertion below is about nothing.", s.uploadCalls)
+	}
+	if len(built.images) != 1 {
+		t.Fatalf("CONTROL failure, not a finding: %d disclosure line(s), want 1.", len(built.images))
+	}
+	line := built.images[0]
+
+	if strings.ContainsAny(line, "\n\t") {
+		t.Errorf("the disclosure line carries a raw newline or tab: %q\n\n"+
+			"printImageDisclosure prints this with a plain Fprintf between the LoRA lines and the real "+
+			"`Cost:` line on the approval screen, so a newline here forges a line at column zero directly "+
+			"above the cost a user is about to approve.", line)
+	}
+	if !strings.Contains(line, forgeWant("imgurl")) {
+		t.Errorf("the server URL was dropped rather than flattened: %q, want it to contain %q — `the class "+
+			"is gone` and `the value arrived` are one assertion.", line, forgeWant("imgurl"))
+	}
+	// 🔴 THE OTHER HALF, AND THE REASON THE GATE IS NOT ON THE WHOLE STRING.
+	// The user's own path must survive byte-for-byte; a fix that flattened the
+	// composed line would satisfy every assertion above and silently reintroduce
+	// civitai/cli#393.
+	if !strings.Contains(line, src) {
+		t.Errorf("the USER-typed path %q was rewritten out of %q. This line exists so a user can match the "+
+			"blob back to the file they named; #393's first cut sanitised this half and a Persian prompt "+
+			"held apart by a ZWNJ rendered joined while the wire carried the original.", src, line)
+	}
+}
+
+// TestDescribeVersionIsSanitisedAtItsOwnOutput pins describeVersion's gate
+// DIRECTLY, on its return value, rather than through a screen that renders it.
+//
+// 🔴 A DOWNSTREAM GATE MASKS AN UPSTREAM TEST, WHICH IS WHY THIS EXISTS
+// (civitai/cli#575 R1, round 0). TestGenerate_SanitisesServerStrings above drives
+// `--dry-run`, so it reaches describeVersion's output only THROUGH
+// printGenerateQuote. Once that renderer gained a safeTermSingle at its own cell
+// — correct, and the whole point of #575 R1 — it sanitises the payload whatever
+// describeVersion did, so the upstream test went green on a broken upstream.
+// MEASURED: deleting both safeTermSingle calls in describeVersion reddened THREE
+// tests at d91e857 and ONE afterwards, and that survivor is a structural ledger
+// row, not a demonstration.
+//
+// Defence in depth is meant to ADD a layer, not eat the test for the layer below
+// it. An assertion on the function's own output cannot be masked by any number of
+// gates downstream of it.
+func TestDescribeVersionIsSanitisedAtItsOwnOutput(t *testing.T) {
+	got := describeVersion(&genapi.ResolvedVersion{
+		VersionID: 7,
+		ModelName: "evil\x1b[2Kname",
+		ModelType: "Check\tpoint",
+	}, nil)
+
+	if strings.ContainsRune(got, '\x1b') {
+		t.Errorf("describeVersion returned a RAW ESC: %q. Every consumer of this value is single-line — a "+
+			"tabwriter cell on the quote screen, and a plain label line on the approval screen four lines "+
+			"above `Generate? [y/N]:`.", got)
+	}
+	if strings.ContainsRune(got, '\t') {
+		t.Errorf("describeVersion returned a TAB: %q. text/tabwriter reads a tab as its COLUMN DELIMITER, so "+
+			"the pre-spend cost table gains an attacker-placed column.", got)
+	}
+	// Paired with the two above, deliberately: a gate that DROPPED the field would
+	// satisfy both while destroying the only information the line carries.
+	for _, want := range []string{"evil[2Kname", "Check", "point", "id 7"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("describeVersion dropped %q rather than sanitising it: %q — `the class is gone` and "+
+				"`the value arrived` are one assertion.", want, got)
+		}
 	}
 }
