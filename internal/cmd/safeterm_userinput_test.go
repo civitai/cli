@@ -79,6 +79,7 @@ var bareIdentArgs = map[string]string{
 	"sha":        "SERVER: a published hash",
 	"reason":     "SERVER: an orchestrator failure reason",
 	"name":       "SERVER: a published file name",
+	"l":          "SERVER-derived: one describeVersion label out of resolvedGraph.loras, re-gated at the quote screen's cell (civitai/cli#575 R1)",
 	"h":          "SERVER: a hash out of image metadata",
 	"baseModel":  "SERVER: a base-model label",
 	"typ":        "SERVER: the primary file's published `type`, defaulted to \"Other\" when blank (nonModelFileMarker)",

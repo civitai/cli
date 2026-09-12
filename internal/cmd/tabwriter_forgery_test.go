@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"regexp"
 	"strings"
 	"testing"
@@ -464,6 +465,32 @@ func TestTabwriterRenderersCannotBeForged(t *testing.T) {
 					tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 					printCostMap(tw, "factors", map[string]float64{forgeCell("cmkey"): 2})
 					_ = tw.Flush()
+				})
+			},
+		},
+		{
+			// 🔴 THE FIELDS ARE SET DIRECTLY, BYPASSING describeVersion, AND THAT IS
+			// THE POINT — civitai/cli#575 R1. These cells are normally gated by
+			// describeVersion on the way IN, and that used to be the whole claim: a
+			// ledger row naming describeVersion as the "upstream". The row resolved
+			// only the NAME, so it was equally satisfied by any unrelated sanitising
+			// function, and nothing checked that the value in the field had actually
+			// been through one. Driving the renderer with a hostile field is what
+			// asks the question the row could not: whatever reaches
+			// resolvedGraph.checkpoint / .checkpointNote / .loras, does this screen
+			// forge? It is a PRE-SPEND surface — the table a user reads before
+			// agreeing to be charged.
+			surface: "the pre-spend quote screen (printGenerateQuote)",
+			fields:  []string{"gqckpt", "gqnote", "gqlora"},
+			render: func() string {
+				return writerOut(func(w *bytes.Buffer) {
+					built := &resolvedGraph{
+						checkpoint:     forgeCell("gqckpt"),
+						checkpointNote: forgeCell("gqnote"),
+						loras:          []string{forgeCell("gqlora")},
+					}
+					printGenerateQuote(w, io.Discard, built, generateOpts{},
+						&genapi.WhatIfResult{Ready: true, Cost: &genapi.WorkflowCost{Base: 1, Total: 1}})
 				})
 			},
 		},

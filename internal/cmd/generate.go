@@ -1825,11 +1825,21 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	if o.aspectRatio != "" {
 		fmt.Fprintf(tw, "Aspect ratio:\t%s\n", o.aspectRatio)
 	}
+	// 🔴 GATED AT THE CELL, THOUGH describeVersion ALREADY GATED THE VALUE —
+	// civitai/cli#575 R1. These are the only SERVER-derived cells on this screen,
+	// and they arrive through a resolvedGraph FIELD, which the tabwriter ledger's
+	// taint walk deliberately does not follow. That used to be recorded as a
+	// ledger row naming describeVersion as the upstream gate; the row resolved
+	// only to a NAME, so any unrelated sanitising function satisfied it and the
+	// state was a hole any ungated renderer could be moved into. Gating here costs
+	// an idempotent second pass (safeTermSingle over already-sanitised text is a
+	// no-op) and buys a gate the scan can SEE, which is what let that third
+	// classification be deleted rather than made cleverer.
 	if built.checkpoint != "" {
-		fmt.Fprintf(tw, "Checkpoint:\t%s%s\n", built.checkpoint, built.checkpointNote)
+		fmt.Fprintf(tw, "Checkpoint:\t%s%s\n", safeTermSingle(built.checkpoint), safeTermSingle(built.checkpointNote))
 	}
 	for _, l := range built.loras {
-		fmt.Fprintf(tw, "LoRA:\t%s\n", l)
+		fmt.Fprintf(tw, "LoRA:\t%s\n", safeTermSingle(l))
 	}
 	// 🔴 NOT "Generatable". The server's `ready` is a RESOURCE-AVAILABILITY flag,
 	// not a prediction that the job will produce anything: it is computed as
