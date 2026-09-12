@@ -18,7 +18,8 @@ import (
 
 // civitai/cli#566 — THE DOWNLOAD PATH HAD FIVE SURFACES THAT PRINTED
 // UPLOADER-CONTROLLED TEXT WITHOUT safeTerm, AND #564's LEDGER STRUCTURALLY
-// COULD NOT DEMAND A ROW FOR ANY OF THEM.
+// COULD NOT DEMAND A ROW FOR ANY OF THEM. civitai/cli#572 FOUND A SIXTH,
+// targetPath, WHICH LOOKED GATED BECAUSE IT USED `%q`.
 //
 // safeTermCoveredBy keys on the ENCLOSING FUNCTION and only fires its GREW
 // check for a function that ALREADY calls safeTerm at least once. Every surface
@@ -29,26 +30,65 @@ import (
 // 🔴 WHAT EACH TEST HERE HAD TO EARN, BECAUSE A LEDGER ROW IS A MEASUREMENT AND
 // NOT A LABEL: every gate below was watched to go RED with its wrapper deleted —
 // the narrowest expression that can be wrong, spliced out on its own, never
-// together with its enclosing statement — and GREEN with it restored. 20 mutants
-// over the 21 gated call sites: 16 killed, 4 survived. The negative control
-// (safeTerm neutered to the identity) reddened 34 tests including all four of
-// this file's, so a SURVIVED verdict here is a fact about the fixture and not a
-// harness wired to nothing. The full matrix is in the PR body for #566.
+// together with its enclosing statement — and GREEN with it restored.
+//
+// MEASURED AT THIS COMMIT, by an AST walk attributing every safeTerm /
+// safeTermSingle / safeTermErr call to its enclosing function, cross-checked
+// against a per-line grep that agreed exactly:
+//
+//	19 gated call sites in the SEVEN functions this file pins —
+//	  targetPath 1, checkTargetCollisions 3, downloadOne 6, writePart 6,
+//	  downloadStatusError 1, (*progressWriter).line 1, safeTermErr 1.
+//	21 mutants: one deletion per call site, plus 2 nesting-order mutants for
+//	  the dashIfEmpty/safeTerm swap. 17 KILLED, 4 SURVIVED, 0 build-broken.
+//
+// Every kill was required to name a FAILING ASSERTION OF ITS OWN — a mutant
+// that merely fails to compile proves nothing — and the run was checked for
+// build markers and a timeout panic rather than read off an exit code.
+//
+// The negative control (safeTerm neutered to the identity, spelled so it still
+// COMPILES) reddened 36 top-level tests, 7 of this file's 8. So a SURVIVED
+// verdict here is a fact about the fixture and not a harness wired to nothing.
+// The 8th, TestDownloadErrorsReachStderrUnfiltered, stays GREEN under it and is
+// meant to: it reads main.go's SOURCE and asserts nothing about what safeTerm
+// does.
+//
+// ⚠ THE NUMBERS ABOVE REPLACE "20 mutants over the 21 gated call sites" AND
+// "reddened 34 tests including all four of this file's", and the correction is
+// recorded rather than quietly applied. "21 sites" was never right: the same
+// walk measures 20 at the commit where that sentence was written, and 18 after
+// #572 removed the unreachable mkdir gate. A count in prose is a claim, and this
+// one had drifted in both a stale and an originally-wrong direction at once.
 //
 // 🔴 THE FOUR SURVIVORS ARE NAMED RATHER THAN ROUNDED AWAY, because a ledger row
-// that reads as coverage while providing none is worse than no row:
+// that reads as coverage while providing none is worse than no row. They are the
+// same four #566 named — #572 added a site and a test without moving the set:
 //
 //   - safeTermErr on `download %s: %w`. The cause there is a *url.Error, and Go
 //     renders its URL with %q — so the standard library already escapes every
 //     rune in the class and deleting the call changes no byte. Defence in depth
 //     against a future cause that does not quote; not coverage today.
+//     ⚠ NARROWER THAN IT LOOKS, per #572: `%q` escapes what is not
+//     unicode.IsPrint, which leaves the Mn/So/Lo half of saferune's class RAW.
+//     It is sufficient HERE only because a URL that reached this path carrying
+//     those runes is not driven; it is NOT a general licence to read `%q` as a
+//     sanitiser, which is exactly the reasoning targetPath shipped on.
 //   - writePart's `finalize %s` and both `finalize`/`streaming` causes. Reaching
 //     them needs a failing Close (a full disk or a pulled descriptor) or a
 //     stream error whose own message carries hostile bytes. Neither is driven
 //     here, and neither is claimed.
 //
-// Everything else — all three collision fields, the progress line, and every
-// error string on the downloadOne path — dies to a named assertion in this file.
+// Everything else — targetPath's refusal on both streams, all three collision
+// fields, the progress line, and every error string on the downloadOne path —
+// dies to a named assertion in this file.
+//
+// ⚠ WHAT NONE OF THIS CLOSES, stated because the gates would otherwise read
+// wider than they are: saferune deliberately KEEPS `\n` and `\t`, so a newline
+// in a server-supplied name still forges whole lines on these surfaces. That is
+// a repo-level class with a repo-level answer (safeTermSingle) and it belongs to
+// civitai/cli#552, not here. Every one of these surfaces was fully RAW before
+// #566, so what this file pins is a strict improvement on that, not a claim to
+// have closed line forgery.
 
 // --- the fixture --------------------------------------------------------------
 //
@@ -89,7 +129,7 @@ const (
 	dlHostileType = "Arch\u200bive\x1b]0;pwned\a"
 	dlSafeType    = "Archive]0;pwned"
 
-	// \ud83d\udd34 A THIRD FIXTURE, FOR THE ONE SURFACE WHOSE ONLY GATE WAS `%q` \u2014
+	// 🔴 A THIRD FIXTURE, FOR THE ONE SURFACE WHOSE ONLY GATE WAS `%q` —
 	// civitai/cli#572. The two above carry ESC, BEL, ZWSP and RLO, and `%q`
 	// escapes EVERY one of them; a test built from them cannot tell `safeTerm(x)`
 	// inside a `%q` from a bare `%q`, because both render safely. So this fixture
@@ -360,7 +400,11 @@ func TestTargetPathRefusalSanitizesTheServerName(t *testing.T) {
 func TestFileListPlaceholderSurvivesAnInvisibleType(t *testing.T) {
 	// A type made ENTIRELY of runes in the class, so safeTerm empties it while
 	// dashIfEmpty on the raw value would not.
-	const invisibleType = "⠀͏​"
+	// Escapes, not raw bytes: staticcheck's ST1018 rejects a literal carrying a
+	// Unicode format character, and `make ci` cannot see it (lint is a separate
+	// job). U+2800 and U+034F are not Cf so ST1018 is blind to them; they are
+	// written as escapes anyway, because a reviewer cannot see them either.
+	const invisibleType = "\u2800\u034f\u200b"
 	if safeTerm(invisibleType) != "" {
 		t.Fatalf("CONTROL failure, not a finding: the fixture type does not strip to empty (%q), so neither "+
 			"nesting order can differ and this test proves nothing", safeTerm(invisibleType))
