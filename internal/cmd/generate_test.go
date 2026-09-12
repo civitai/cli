@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -911,18 +913,45 @@ func TestGenerate_SanitisesServerStrings(t *testing.T) {
 // The hazard it closes was measured: printImageDisclosure is called from
 // confirmGenerate BETWEEN the LoRA lines and the real `Cost:` line, and safeTerm
 // deliberately KEEPS `\n`, so a blob URL carrying one rendered a fake
-// `Cost: 1 Buzz (balance 999999).` directly above the true one, four lines above
-// `Generate? [y/N]:`.
+// `Cost: 1 Buzz (balance 999999).` two lines above the true one and five above
+// `Generate? [y/N]:` — not "directly above", because confirmGenerate always
+// prints its img2img caveat after the last `Image:` line.
 func TestImageDisclosureLineIsGatedAtComposition(t *testing.T) {
 	var s genSeams
 	s.uploadReplyURL = "https://blob.example/x" + forgeCell("imgurl")
 
-	src := writePNG(t, 64, 64)
+	// 🔴 THE FIXTURE PATH CARRIES A ZWNJ, AND WITHOUT IT THE #393 ARM BELOW IS
+	// VACUOUS. A first cut used writePNG's own `icon.png`, which is pure ASCII —
+	// safeTermSingle is the identity on it, so `strings.Contains(line, src)` could
+	// not tell "untouched" from "flattened" and the exact regression the arm
+	// claims to stop passed the WHOLE package. Measured: gating the composed
+	// string instead of the URL half was green on 21 packages. This is RULES.md's
+	// "a fixture that can only ever produce the constant's own value cannot see
+	// the mutant" — the control is to feed a value the gate CANNOT leave alone.
+	base := writePNG(t, 64, 64)
+	raw, err := os.ReadFile(base)
+	if err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot read the fixture image: %v", err)
+	}
+	src := filepath.Join(t.TempDir(), "می\u200cروم.png")
+	if err := os.WriteFile(src, raw, 0o600); err != nil {
+		t.Fatalf("CONTROL failure, not a finding: cannot write the ZWNJ-named fixture: %v", err)
+	}
+	// The control ON the fixture: if the path ever loses its class rune, this arm
+	// silently stops measuring and nothing else would say so.
+	if !strings.ContainsRune(src, '\u200c') {
+		t.Fatalf("CONTROL failure, not a finding: the fixture path %q carries no U+200C, so the #393 arm "+
+			"below cannot distinguish an untouched path from a flattened one.", src)
+	}
+
 	o := baseOpts()
 	o.images = []string{src}
 
-	c, _, _ := genCmd("")
-	built, err := buildGenerateGraph(c.Context(), s.deps(t), o)
+	// context.Background(), not c.Context(): genCmd builds a bare cobra.Command
+	// whose Context() is nil. runGenerate normalises that at its entry, so
+	// production never reaches here with nil — a test that does is one seam change
+	// away from a panic that says nothing about the gate.
+	built, err := buildGenerateGraph(context.Background(), s.deps(t), o)
 	if err != nil {
 		t.Fatalf("buildGenerateGraph: %v", err)
 	}

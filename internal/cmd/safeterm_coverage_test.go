@@ -348,8 +348,13 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"(civitai/cli#393) — this row is about the two SERVER-derived labels only"},
 	"classifyGenerateError": {notCovered,
 		"the server's own error message, shown verbatim when generation is refused"},
-	"buildGenerateGraph": {notCovered,
-		"the uploaded image URL echoed back into the img2img disclosure"},
+	"buildGenerateGraph": {"TestImageDisclosureLineIsGatedAtComposition",
+		"the uploaded image URL echoed back into the img2img disclosure line. It composes the USER's own " +
+			"--image path (echoed byte-for-byte, civitai/cli#393) with the SERVER's blob URL, and only the " +
+			"server half is gated — which is why the gate is HERE and not at printImageDisclosure, the one " +
+			"place this PR did not move a gate to its render site (civitai/cli#575 R1). The named test drives " +
+			"the real upload seam and is watched red both ways: deleting the gate, and flattening the whole " +
+			"composed line (the #393 direction, which its ZWNJ-bearing fixture path is what makes visible)"},
 	"waitAndCollect": {notCovered,
 		"the terminal-status and dead-end lines naming the workflow and its status"},
 	"substitutionRefusal": {notCovered,
@@ -442,7 +447,7 @@ const (
 	// either branch's constant through the merge would have left the equality
 	// asserting a number no tree ever held. It is what this test reported for
 	// the MERGED tree, whose notCovered set it also enumerates on failure.
-	maxUncoveredSafeTermFuncs = 21
+	maxUncoveredSafeTermFuncs = 20
 )
 
 // TestSafeTermCallSitesAreCoveredByANamedTest is civitai/cli#399.

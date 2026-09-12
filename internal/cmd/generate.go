@@ -1036,8 +1036,12 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 	// printImageDisclosure is called from confirmGenerate BETWEEN the LoRA lines
 	// and the real `Cost:` line. safeTerm deliberately KEEPS `\n`, so a blob URL
 	// carrying one forged a line at column zero on the approval screen — measured,
-	// rendering a fake `Cost: 1 Buzz (balance 999999).` directly above the true
-	// one, four lines above `Generate? [y/N]:`. The `Image:` line is single-line by
+	// rendering a fake `Cost: 1 Buzz (balance 999999).` two lines above the true
+	// one and five above `Generate? [y/N]:`. (Not "directly above": this function
+	// always prints its img2img caveat after the last `Image:` line, so that
+	// sentence — carried over from the Checkpoint/LoRA comments, where four IS the
+	// figure — was wrong for this line and is corrected here.) The line is
+	// single-line by
 	// construction, so the tab half matters too: safeTermSingle is the gate for
 	// anything on a line-structured surface. Only the SERVER half is flattened;
 	// the user-typed `src` is untouched, which is the split this comment is about.
@@ -1874,7 +1878,8 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	//
 	// ⚠ THAT IS THE RULE, NOT A DESCRIPTION OF THE MAP — do not read it as one.
 	// bareIdentArgs holds FIVE one-letter keys today (`w`, `r`, `k`, `t`, `h` of
-	// 16), each a live allowlist of that name at every bare-ident safeTerm site in
+	// 17 — re-derived against this tree after #572 merged and added `partPath`; the
+	// figure was 16 when first written and a merge staled it), each a live allowlist of that name at every bare-ident safeTerm site in
 	// the package. They are pre-existing and are NOT fixed here: renaming them
 	// touches files other work is in. Recorded as R5 on civitai/cli#575, with the
 	// measurement and a closing condition, so the next reader finds an open
