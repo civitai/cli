@@ -168,6 +168,16 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"printImageResources": {"TestImagesSearchMetaResourceSanitized",
 		"the meta.resources recipe: resource type, name, weight and hash"},
 
+	// --- the one COMPOSITION row ---------------------------------------------
+	// safeTermSingle is a sanitizer, not a renderer: its safeTerm call is
+	// composition (see sanitizerComposers in safeterm_userinput_test.go). The row
+	// names a renderer test because that is where its output reaches a screen.
+	// 🔴 WATCHED, NOT READ: deleting `s = safeTerm(s)` inside safeTermSingle
+	// reddened TestReadRenderersStripTheInvisibleClass/`images_search`_table,
+	// TestImagesSearchMetaResourceSanitized and TestImagesSearchBaseModelSanitized.
+	"safeTermSingle": {"TestReadRenderersStripTheInvisibleClass",
+		"collapses \\n for single-line/tabwriter fields, delegating to safeTerm first — so the invisible class must still be stripped"},
+
 	// --- download path ------------------------------------------------------
 	"printDownloadPlan": {"TestDownloadPlanSanitizesControlChars",
 		"the plan a user reads before fetching: file name, sha256, target and notes. An escape here " +

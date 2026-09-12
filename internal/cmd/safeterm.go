@@ -43,6 +43,46 @@ func safeTerm(s string) string {
 	return saferune.Strip(s)
 }
 
+// safeTermSingle ensures a server-origin string occupies exactly one line AND
+// one tabwriter cell, stripping terminal escapes via safeTerm and replacing any
+// newline or tab with a space.
+//
+// 🔴 IT IS FOR INLINE AND TABULAR FIELDS, NOT FREE TEXT.
+// safeTerm deliberately keeps \n so multi-line fields (prompt, failure reasons)
+// can format legitimately. But inline metadata (model, sampler, username, URL)
+// and table columns cannot contain newlines without breaking column alignment
+// or forging rows in tabwriter — indentContinuation cannot fix an inline field
+// because it has no indentation baseline, and cannot fix a tabwriter row because
+// tabwriter splits on \n regardless of padding (civitai/cli#552).
+//
+// 🔴 IT REPLACES \t AS WELL AS \n, AND THE TAB IS THE MORE DANGEROUS OF THE TWO.
+// saferune deliberately KEEPS \t (saferune.go: "Cc, minus \n and \t"), and
+// text/tabwriter uses the tab as its COLUMN DELIMITER — so a tab inside a cell
+// does not merely break alignment, it lets server text INSERT COLUMNS. Measured
+// on `images search` with a guard that replaced only \n: a username of
+// "alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal" rendered as a fully
+// ALIGNED, entirely attacker-controlled row, pushing the real values past column
+// 80 and off-screen — a more convincing forgery than the \n one, because
+// tabwriter itself does the aligning. A tab is never legitimate inside a
+// single-line cell: the delimiter cannot also be content.
+//
+// Note on \r, \v, \f: safeTerm already strips them as C0 control runes (Cc), so
+// none survives to this function — measured, not assumed. Only \n and \t need
+// replacing here.
+//
+// Residual, unclosed and pre-existing: U+2028/U+2029 (Zl/Zp) pass through both
+// safeTerm and this function. saferune's own note records that no terminal is
+// known to break lines on them; if one is found, this is a second site to fix.
+// So this function guarantees one line per *terminal* line-break rune it can
+// see, not "exactly one line" unconditionally.
+func safeTermSingle(s string) string {
+	s = safeTerm(s)
+	if !strings.ContainsAny(s, "\n\t") {
+		return s
+	}
+	return strings.NewReplacer("\n", " ", "\t", " ").Replace(s)
+}
+
 // indentContinuation prefixes every line of s AFTER the first with pad, so a
 // multi-line SERVER string stays visibly inside the list item or block that
 // introduced it.
