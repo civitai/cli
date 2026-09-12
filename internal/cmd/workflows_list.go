@@ -166,14 +166,18 @@ func printWorkflowList(out, errw io.Writer, page *genapi.WorkflowPage, o workflo
 	var aligned bytes.Buffer
 	tw := tabwriter.NewWriter(&aligned, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "WORKFLOW ID\tSTATUS\tCREATED\tCOST\tOUTPUTS")
-	// rowLines[i] is how many OUTPUT lines item i's row occupies. It is almost
-	// always 1; it is not 1 when a server-origin cell contains a newline, which
-	// safeTerm deliberately preserves. tabwriter never adds or removes line
-	// breaks — it only pads cells — so counting them on the way IN is what keeps
-	// the splice below attached to the right row. Pairing by index instead would
-	// hand one workflow's reason to another's row the moment an id contained a
-	// newline, which is a worse failure than the ragged column that id already
-	// produces today.
+	// rowLines[i] is how many OUTPUT lines item i's row occupies. tabwriter never
+	// adds or removes line breaks — it only pads cells — so counting them on the
+	// way IN is what keeps the splice below attached to the right row.
+	//
+	// 🔴 IT IS NOW ALWAYS 1, AND THE COUNT IS KEPT ANYWAY. Since civitai/cli#552
+	// every cell goes through safeTermSingle, so no server-origin value in `row`
+	// can carry a newline; the count cannot exceed 1 for any input this function
+	// can receive today. It stays because it is the thing that makes the splice
+	// correct BY CONSTRUCTION rather than by that argument holding: pairing the
+	// reason lines by index instead would hand one workflow's reason to another's
+	// row the moment a future cell is added without the gate — silently, and in
+	// the direction that attributes a failure to the wrong job.
 	rowLines := make([]int, len(page.Items))
 	for i, w := range page.Items {
 		total, deliverable := w.OutputCounts()
@@ -182,9 +186,9 @@ func printWorkflowList(out, errw io.Writer, page *genapi.WorkflowPage, o workflo
 			cost = buzzAmount(w.Cost.Total)
 		}
 		row := fmt.Sprintf("%s\t%s\t%s\t%s\t%d/%d",
-			safeTerm(dashIfEmpty(w.ID)),
-			safeTerm(dashIfEmpty(w.Status)),
-			safeTerm(dashIfEmpty(w.CreatedAt)),
+			safeTermSingle(dashIfEmpty(w.ID)),
+			safeTermSingle(dashIfEmpty(w.Status)),
+			safeTermSingle(dashIfEmpty(w.CreatedAt)),
 			cost,
 			deliverable, total)
 		rowLines[i] = 1 + strings.Count(row, "\n")

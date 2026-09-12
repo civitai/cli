@@ -129,18 +129,25 @@ func runWorkflowsGet(cmd *cobra.Command, deps workflowsGetDeps, o workflowsGetOp
 }
 
 // printWorkflow renders one workflow for humans. Every server string goes
-// through safeTerm — workflow ids, statuses and moderation reasons are all
+// through the gate — workflow ids, statuses and moderation reasons are all
 // server-origin text.
+//
+// 🔴 THE HEADER CELLS USE safeTermSingle, THE REASON BLOCK BELOW USES safeTerm,
+// AND THE DIFFERENCE IS THE POINT (civitai/cli#552). An id, a status or a
+// timestamp is a one-line label in a tabwriter CELL: a `\n` in it forges a row
+// and a `\t` injects a column, and neither is ever legitimate there. The failure
+// reason is unbounded free text whose line breaks ARE legitimate, so it keeps
+// them and is indented instead — see indentContinuation.
 func printWorkflow(out, errw io.Writer, wf *genapi.Workflow) {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "Workflow ID:\t%s\n", safeTerm(wf.ID))
-	fmt.Fprintf(tw, "Status:\t%s\n", safeTerm(dashIfEmpty(wf.Status)))
-	fmt.Fprintf(tw, "Created:\t%s\n", safeTerm(dashIfEmpty(wf.CreatedAt)))
+	fmt.Fprintf(tw, "Workflow ID:\t%s\n", safeTermSingle(wf.ID))
+	fmt.Fprintf(tw, "Status:\t%s\n", safeTermSingle(dashIfEmpty(wf.Status)))
+	fmt.Fprintf(tw, "Created:\t%s\n", safeTermSingle(dashIfEmpty(wf.CreatedAt)))
 	if wf.StartedAt != nil {
-		fmt.Fprintf(tw, "Started:\t%s\n", safeTerm(dashIfEmpty(*wf.StartedAt)))
+		fmt.Fprintf(tw, "Started:\t%s\n", safeTermSingle(dashIfEmpty(*wf.StartedAt)))
 	}
 	if wf.CompletedAt != nil {
-		fmt.Fprintf(tw, "Completed:\t%s\n", safeTerm(dashIfEmpty(*wf.CompletedAt)))
+		fmt.Fprintf(tw, "Completed:\t%s\n", safeTermSingle(dashIfEmpty(*wf.CompletedAt)))
 	}
 	_ = tw.Flush()
 

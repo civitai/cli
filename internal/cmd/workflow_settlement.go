@@ -62,15 +62,18 @@ func reportWorkflowSettlement(out, errw io.Writer, wf *genapi.Workflow) bool {
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
 	for _, t := range s.Totals {
 		// The type string is server-origin text, like every other field this
-		// package prints, so it goes through safeTerm.
+		// package prints, so it goes through the gate — safeTermSingle, because
+		// this is a tabwriter CELL: safeTerm keeps `\n` and `\t`, and a type of
+		// "refund\t-100\t(2 entries)" would render as an aligned row claiming a
+		// transaction the server never recorded (civitai/cli#552).
 		// The third cell is omitted rather than emitted empty: a tab-terminated
 		// empty cell pads to the column width, leaving trailing spaces on every
 		// row of the commonest rendering.
 		if t.Count > 1 {
-			fmt.Fprintf(tw, "  %s\t%s\t(%d entries)\n", safeTerm(dashIfEmpty(t.Type)), buzzAmount(t.Amount), t.Count)
+			fmt.Fprintf(tw, "  %s\t%s\t(%d entries)\n", safeTermSingle(dashIfEmpty(t.Type)), buzzAmount(t.Amount), t.Count)
 			continue
 		}
-		fmt.Fprintf(tw, "  %s\t%s\n", safeTerm(dashIfEmpty(t.Type)), buzzAmount(t.Amount))
+		fmt.Fprintf(tw, "  %s\t%s\n", safeTermSingle(dashIfEmpty(t.Type)), buzzAmount(t.Amount))
 	}
 	if s.NetKnown {
 		fmt.Fprintf(tw, "  net\t%s\n", buzzAmount(s.Net))

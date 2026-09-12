@@ -196,9 +196,9 @@ func printCollectionList(cmd *cobra.Command, items []civitai.CollectionListItem)
 	for _, c := range items {
 		owner := "-"
 		if c.User != nil && c.User.Username != "" {
-			owner = safeTerm(c.User.Username.String())
+			owner = safeTermSingle(c.User.Username.String())
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\n", c.ID, safeTerm(c.Name), dashIfEmpty(safeTerm(c.Type)), owner, c.ItemCount)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\n", c.ID, safeTermSingle(c.Name), dashIfEmpty(safeTermSingle(c.Type)), owner, c.ItemCount)
 	}
 	_ = tw.Flush()
 }

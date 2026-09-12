@@ -224,18 +224,29 @@ func writeJSON(w io.Writer, v any) error {
 	return enc.Encode(v)
 }
 
+// printSubmissionTable renders the `app status` listing.
+//
+// 🔴 EVERY CELL HERE IS SERVER TEXT AND NONE OF IT HAD A GATE UNTIL
+// civitai/cli#552. The block id, version, status, deploy state, claimed source
+// commit, submitted date and live URL all arrive from the platform API, and this
+// function called neither safeTerm nor safeTermSingle — which also made it
+// invisible to safeTermCoveredBy, whose rows are keyed by "functions that call
+// safeTerm". A status of "approved\t1.0.0\tapproved\t…" rendered an aligned row
+// for a submission that does not exist; one containing `\n` forged a row at
+// column zero. safeTermSingle is the gate for a cell: it strips the control
+// class and replaces both `\n` and `\t` with a space.
 func printSubmissionTable(w io.Writer, subs []appapi.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(tw, "BLOCK_ID\tVERSION\tSTATUS\tDEPLOY\tSOURCE\tSUBMITTED\tURL")
 	for _, s := range subs {
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			s.BlockID,
-			s.Version,
-			s.Status,
-			deployLabel(s.DeployState),
-			sourceLabel(s.SourceCommit, s.SourceDirty),
-			shortDate(s.SubmittedAt),
-			strOr(s.LiveURL, "-"),
+			safeTermSingle(s.BlockID),
+			safeTermSingle(s.Version),
+			safeTermSingle(s.Status),
+			safeTermSingle(deployLabel(s.DeployState)),
+			safeTermSingle(sourceLabel(s.SourceCommit, s.SourceDirty)),
+			safeTermSingle(shortDate(s.SubmittedAt)),
+			safeTermSingle(strOr(s.LiveURL, "-")),
 		)
 	}
 	_ = tw.Flush()
@@ -304,28 +315,37 @@ func sourceDirtySuffix(dirty *bool) string {
 	}
 }
 
+// printSubmissionDetail renders one submission.
+//
+// 🔴 THE CELLS GO THROUGH safeTermSingle FOR THE SAME REASON THEY DO IN
+// printSubmissionTable — every one of them is server text in a tabwriter cell
+// (civitai/cli#552). The FREE-TEXT fields below the table (rejection reason,
+// approval notes) are deliberately NOT gated here: they are multi-line by
+// design and sit outside the tabwriter, so they need the safeTerm +
+// indentContinuation treatment the orchestrator failure reason gets, which is
+// tracked separately rather than smuggled in here.
 func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "Block ID:\t%s\n", s.BlockID)
-	fmt.Fprintf(tw, "Version:\t%s\n", s.Version)
-	fmt.Fprintf(tw, "Publish request:\t%s\n", s.ID)
-	fmt.Fprintf(tw, "Status:\t%s\n", s.Status)
-	fmt.Fprintf(tw, "Deploy state:\t%s\n", deployLabel(s.DeployState))
+	fmt.Fprintf(tw, "Block ID:\t%s\n", safeTermSingle(s.BlockID))
+	fmt.Fprintf(tw, "Version:\t%s\n", safeTermSingle(s.Version))
+	fmt.Fprintf(tw, "Publish request:\t%s\n", safeTermSingle(s.ID))
+	fmt.Fprintf(tw, "Status:\t%s\n", safeTermSingle(s.Status))
+	fmt.Fprintf(tw, "Deploy state:\t%s\n", safeTermSingle(deployLabel(s.DeployState)))
 	if s.DeployDetail != nil && *s.DeployDetail != "" {
-		fmt.Fprintf(tw, "Deploy detail:\t%s\n", *s.DeployDetail)
+		fmt.Fprintf(tw, "Deploy detail:\t%s\n", safeTermSingle(*s.DeployDetail))
 	}
 	// The provenance the submitting client claimed (#411). The FULL sha here —
 	// the table abbreviates, this view is where someone goes to get the value
 	// they will paste into `git show`.
 	if s.SourceCommit != nil && *s.SourceCommit != "" {
-		fmt.Fprintf(tw, "Source commit:\t%s%s\n", *s.SourceCommit, sourceDirtySuffix(s.SourceDirty))
+		fmt.Fprintf(tw, "Source commit:\t%s%s\n", safeTermSingle(*s.SourceCommit), sourceDirtySuffix(s.SourceDirty))
 	}
-	fmt.Fprintf(tw, "Submitted:\t%s\n", fullDate(s.SubmittedAt))
+	fmt.Fprintf(tw, "Submitted:\t%s\n", safeTermSingle(fullDate(s.SubmittedAt)))
 	if s.ReviewedAt != nil && *s.ReviewedAt != "" {
-		fmt.Fprintf(tw, "Reviewed:\t%s\n", fullDate(*s.ReviewedAt))
+		fmt.Fprintf(tw, "Reviewed:\t%s\n", safeTermSingle(fullDate(*s.ReviewedAt)))
 	}
 	if s.DeployUpdatedAt != nil && *s.DeployUpdatedAt != "" {
-		fmt.Fprintf(tw, "Deploy updated:\t%s\n", fullDate(*s.DeployUpdatedAt))
+		fmt.Fprintf(tw, "Deploy updated:\t%s\n", safeTermSingle(fullDate(*s.DeployUpdatedAt)))
 	}
 	_ = tw.Flush()
 

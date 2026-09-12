@@ -118,6 +118,7 @@ contract, and **packages/submits** it for review.
 
 - [Upgrading](#upgrading)
 - [Global flags](#global-flags) — colour, `--version`, the update nag
+  - [What a table cell can contain](#what-a-table-cell-can-contain)
 - [Configuration](#configuration)
 - [Exit codes](#exit-codes)
 - [Troubleshooting](#troubleshooting) — **look the error message up here**
@@ -3747,6 +3748,40 @@ what counts, not the value.
 without passing through the presentation layer at all, so `--json` is always
 safe to pipe into `jq` regardless of how colour is configured or whether a TTY
 is attached.
+
+### What a table cell can contain
+
+Almost every value the CLI prints in a human table — a model name, a username, a
+tag, a workflow status, a submission's block id — is **text a stranger uploaded**
+or that a server chose. The human renderers put all of it through one gate before
+it reaches your terminal, and this is what that gate promises:
+
+- **Terminal escapes are removed.** Cursor moves, line clears, OSC sequences and
+  the invisible / direction-reversing characters are stripped from every
+  server-supplied string, so a hostile value cannot overwrite a line the CLI
+  already printed or reorder what you read. (What the CLI prints from what **you**
+  typed — a prompt, a path, a flag value — is echoed byte-for-byte and is
+  deliberately *not* rewritten.)
+- **A table cell is one line, and one column.** In any tabular or `label: value`
+  output, a newline or a tab inside a server value is rendered as a **space**. A
+  newline would otherwise start a line at column zero, where it is
+  indistinguishable from a row the CLI wrote; a tab is the column separator, so it
+  would add an extra, perfectly aligned column. Both read as real output, which is
+  why the value is flattened rather than trusted.
+- **Genuinely multi-line server text keeps its line breaks**, and is indented
+  under the line that introduced it — a generation prompt (`images … --meta`) and
+  the orchestrator's failure reason (`workflows get`) are the two that matter. So
+  if a field you expect to be multi-line arrives on one line, it was in a cell.
+- **Known limits.** A long value is not shortened, so your terminal can still
+  soft-wrap it to column zero, and one hostile value widens a column for every
+  row. `U+2028` / `U+2029` are passed through (no terminal is known to break
+  lines on them).
+
+🔴 **None of this applies to `--json`.** That output is emitted raw, because JSON
+already escapes control characters and rewriting the bytes would corrupt what a
+script parses. **A script that renders server strings from `--json` onto a
+terminal has to do its own sanitising** — the guarantees above are about the
+human output only.
 
 ## Configuration
 

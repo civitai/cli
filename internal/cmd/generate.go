@@ -1071,9 +1071,18 @@ func printAssembledGraph(out io.Writer, g genapi.Graph) error {
 }
 
 // describeVersion renders a resolved version for human output. The name is
-// server-origin text, so it goes through safeTerm.
+// server-origin text, so it goes through the gate.
+//
+// 🔴 safeTermSingle, BECAUSE EVERY SURFACE THAT PRINTS THIS IS SINGLE-LINE, AND
+// ONE OF THEM IS A TABWRITER CELL (civitai/cli#552). The result is stored on
+// resolvedGraph.checkpoint / .loras and printed by printGenerateQuote into the
+// PRE-SPEND cost table and by confirmGenerate into the approval screen. A model
+// name carrying `\t` would add a column to the table a user reads before
+// spending Buzz; one carrying `\n` would forge a row in it. The structural
+// ledger cannot see this call site — the value reaches the cell through a struct
+// field — which is exactly why it is stated here.
 func describeVersion(rv *genapi.ResolvedVersion, strength *float64) string {
-	s := fmt.Sprintf("%s (%s, id %d)", safeTerm(rv.DisplayName()), safeTerm(rv.ModelType), rv.VersionID)
+	s := fmt.Sprintf("%s (%s, id %d)", safeTermSingle(rv.DisplayName()), safeTermSingle(rv.ModelType), rv.VersionID)
 	if strength != nil {
 		s += fmt.Sprintf(", strength %s", strconv.FormatFloat(*strength, 'g', -1, 64))
 	}
@@ -1878,7 +1887,10 @@ func printCostMap(w io.Writer, label string, m map[string]float64) {
 	sort.Strings(keys)
 	fmt.Fprintf(w, "  %s\t\n", label)
 	for _, k := range keys {
-		fmt.Fprintf(w, "    %s\t%s\n", safeTerm(k), buzzAmount(m[k]))
+		// safeTermSingle: `w` is the quote screen's tabwriter, so a cost-map key
+		// carrying `\t` would add a column to the pre-spend cost table and one
+		// carrying `\n` would forge a row in it (civitai/cli#552).
+		fmt.Fprintf(w, "    %s\t%s\n", safeTermSingle(k), buzzAmount(m[k]))
 	}
 }
 
@@ -1898,9 +1910,9 @@ func printSubmitResult(out, errw io.Writer, r *genapi.SubmitResult, externalID, 
 	}
 	fmt.Fprintln(out, ui.For(out).Success("Generation submitted"))
 	tw := tabwriter.NewWriter(out, 0, 0, 2, ' ', 0)
-	fmt.Fprintf(tw, "  Workflow ID:\t%s\n", safeTerm(r.ID))
+	fmt.Fprintf(tw, "  Workflow ID:\t%s\n", safeTermSingle(r.ID))
 	if r.Status != "" {
-		fmt.Fprintf(tw, "  Status:\t%s\n", safeTerm(r.Status))
+		fmt.Fprintf(tw, "  Status:\t%s\n", safeTermSingle(r.Status))
 	}
 	if r.Cost != nil {
 		fmt.Fprintf(tw, "  Charged:\t%s Buzz\n", buzzAmount(r.Cost.Total))

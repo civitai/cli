@@ -488,8 +488,11 @@ func listingStatusPayload(slug string, ref *appapi.ListingRef, view *appapi.List
 
 func printListingStatus(w io.Writer, slug string, ref *appapi.ListingRef, view *appapi.ListingEditView) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	// `slug` is what the USER typed, echoed exactly — sanitising the user's own
+	// bytes is the civitai/cli#393 defect. `ref.Status` is SERVER text in a
+	// tabwriter cell, so it goes through safeTermSingle (civitai/cli#552).
 	fmt.Fprintf(tw, "App:\t%s\n", slug)
-	fmt.Fprintf(tw, "Listing status:\t%s\n", ref.Status)
+	fmt.Fprintf(tw, "Listing status:\t%s\n", safeTermSingle(ref.Status))
 	fmt.Fprintf(tw, "Icon:\t%s\n", assetLabel(view.Assets.Icon.Present(), true))
 	fmt.Fprintf(tw, "Cover:\t%s\n", assetLabel(view.Assets.Cover.Present(), true))
 	fmt.Fprintf(tw, "Screenshots:\t%d\n", len(view.Assets.Screenshots))

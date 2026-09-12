@@ -183,7 +183,7 @@ func printModelVersionDetail(cmd *cobra.Command, v *civitai.ModelVersionDetail) 
 		fmt.Fprintf(out, "  files (%d):\n", len(v.Files))
 		tw := tabwriter.NewWriter(out, 0, 2, 2, ' ', 0)
 		for _, f := range v.Files {
-			fmt.Fprintf(tw, "    %s\t%s\t%.1f MB\n", safeTerm(f.Name), safeTerm(f.Type), f.SizeKB/1024)
+			fmt.Fprintf(tw, "    %s\t%s\t%.1f MB\n", safeTermSingle(f.Name), safeTermSingle(f.Type), f.SizeKB/1024)
 		}
 		_ = tw.Flush()
 	}

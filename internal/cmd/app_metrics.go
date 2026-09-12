@@ -306,8 +306,15 @@ func writeRawJSON(w io.Writer, raw json.RawMessage) error {
 func printAppMetrics(w io.Writer, slug string, a *appapi.AppAnalytics) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "App:\t%s\n", slug)
-	fmt.Fprintf(tw, "Window:\t%s → %s\n", utcStamp(a.Range.From), utcStamp(a.Range.To))
-	fmt.Fprintf(tw, "Granularity:\t%s\n", dashIfEmpty(a.Range.Granularity))
+	// 🔴 THE WINDOW AND GRANULARITY CELLS ARE SERVER TEXT TOO, AND THEY HAD NO
+	// GATE AT ALL UNTIL civitai/cli#552. utcStamp falls back to the RAW string
+	// when the timestamp does not parse — deliberately, so server data is never
+	// hidden — so a hostile `range.from` reaches this cell verbatim, and
+	// `granularity` is echoed as received. Both are single-line labels, so
+	// safeTermSingle: it strips the control class and neutralises the `\n` that
+	// forges a row and the `\t` that injects a column.
+	fmt.Fprintf(tw, "Window:\t%s → %s\n", safeTermSingle(utcStamp(a.Range.From)), safeTermSingle(utcStamp(a.Range.To)))
+	fmt.Fprintf(tw, "Granularity:\t%s\n", dashIfEmpty(safeTermSingle(a.Range.Granularity)))
 	_ = tw.Flush()
 
 	fmt.Fprintf(w, "\n%s\n", ui.For(w).Bold("Installs"))
@@ -389,7 +396,7 @@ func printAppMetrics(w io.Writer, slug string, a *appapi.AppAnalytics) {
 		fmt.Fprintln(w, "\n  Top scopes:")
 		tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, s := range a.Engagement.TopScopes {
-			fmt.Fprintf(tw, "    %s\t%d\n", safeTerm(s.Scope), s.Count)
+			fmt.Fprintf(tw, "    %s\t%d\n", safeTermSingle(s.Scope), s.Count)
 		}
 		_ = tw.Flush()
 	}
@@ -397,7 +404,7 @@ func printAppMetrics(w io.Writer, slug string, a *appapi.AppAnalytics) {
 		fmt.Fprintln(w, "\n  Top endpoints:")
 		tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 		for _, e := range a.Engagement.TopEndpoints {
-			fmt.Fprintf(tw, "    %s\t%d\n", safeTerm(e.Endpoint), e.Count)
+			fmt.Fprintf(tw, "    %s\t%d\n", safeTermSingle(e.Endpoint), e.Count)
 		}
 		_ = tw.Flush()
 	}
