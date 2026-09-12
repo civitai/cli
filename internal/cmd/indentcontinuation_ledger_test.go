@@ -315,3 +315,71 @@ func checkIndentPadArg(t *testing.T, pos token.Position, padExpr ast.Expr) {
 		t.Errorf("%s: indentContinuation pad must be a string literal or vetted constant, got %T", pos, padExpr)
 	}
 }
+
+// TestSafeTermSingleNeutralisesTheTabColumnVector is the regression guard for the
+// forgery that a \n-only replacement left open.
+//
+// 🔴 WHY A TAB AND NOT JUST A NEWLINE: text/tabwriter uses the tab as its COLUMN
+// DELIMITER, and saferune deliberately keeps \t. So before this fix, server text
+// containing tabs did not break the table — it EXTENDED it, producing an aligned
+// row the user cannot distinguish from real output. Measured on `images search`
+// with a username of "alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal".
+func TestSafeTermSingleNeutralisesTheTabColumnVector(t *testing.T) {
+	const forged = "alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal"
+	got := safeTermSingle(forged)
+
+	if strings.ContainsRune(got, '\t') {
+		t.Errorf("safeTermSingle left a TAB in %q.\n"+
+			"A tab is tabwriter's column delimiter, so server text can inject columns and forge an "+
+			"ALIGNED row. It must be replaced, not preserved.", got)
+	}
+	if strings.ContainsRune(got, '\n') {
+		t.Errorf("safeTermSingle left a NEWLINE in %q", got)
+	}
+	// The text must survive, not be dropped — a guard that ate the value would
+	// also pass the two checks above.
+	for _, want := range []string{"alice", "SDXL", "evil.example"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("safeTermSingle dropped %q from the value; got %q", want, got)
+		}
+	}
+	if want := "alice SDXL 9x9 None 0 0 https://evil.example/steal"; got != want {
+		t.Errorf("safeTermSingle(%q)\n got: %q\nwant: %q", forged, got, want)
+	}
+}
+
+// TestTabForgeryIsNeutralisedInTheRealImagesTable is the BEHAVIOURAL half of the
+// tab guard: the unit test above pins safeTermSingle, this one drives the real
+// `images search` renderer, because a helper can be correct while a call site
+// still forgets to call it.
+func TestTabForgeryIsNeutralisedInTheRealImagesTable(t *testing.T) {
+	items := []civitai.ImageItem{{
+		ID: 1, URL: "https://img/1", NSFWLevel: "None", BaseModel: "SDXL",
+		Username: civitai.FlexString("alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal"),
+	}}
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+	printImageList(cmd, items)
+	out := buf.String()
+
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want a header and exactly ONE data row, got %d line(s):\n%s", len(lines), out)
+	}
+	// The whole payload must stay inside its own cell. tabwriter pads with
+	// spaces, so a surviving tab would mean the row grew columns.
+	if strings.ContainsRune(lines[1], '\t') {
+		t.Errorf("a TAB survived into the rendered row, so server text can inject columns:\n%q", lines[1])
+	}
+	// The REAL field values must still occupy their real columns — a guard that
+	// simply ate the username would pass the check above.
+	for _, want := range []string{"SDXL", "https://img/1"} {
+		if !strings.Contains(lines[1], want) {
+			t.Errorf("real column value %q missing from the row:\n%q", want, lines[1])
+		}
+	}
+	if !strings.Contains(lines[1], "alice SDXL 9x9 None 0 0 https://evil.example/steal") {
+		t.Errorf("the forged payload should survive as INERT TEXT in one cell; got:\n%q", lines[1])
+	}
+}

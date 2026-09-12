@@ -84,6 +84,30 @@ var bareIdentArgs = map[string]string{
 	"typ":        "SERVER: the primary file's published `type`, defaulted to \"Other\" when blank (nonModelFileMarker)",
 }
 
+// sanitizerComposers are the functions IN safeterm.go that may call safeTerm on
+// their own parameter. Such a call is one sanitizer DELEGATING to another; it is
+// not a renderer handing safeTerm a value, which is the only thing #393 is about.
+//
+// 🔴 THIS IS A LEDGER, NOT A FILE EXEMPTION, AND THE DIFFERENCE IS THE WHOLE
+// POINT. The obvious fix for the same problem is to allowlist the ARGUMENT NAME
+// in bareIdentArgs — civitai/cli#554 proposed exactly that, with `"s"`. That is
+// wrong in a way that is invisible: `s` is the most common local name in Go, so
+// one entry blinds this harness in all ~67 files at once. Measured on that
+// branch: `s := userTypedPrompt; … safeTerm(s)` injected into images.go SURVIVED,
+// while the identical injection named `zzUnknownIdent` was KILLED.
+//
+// Keyed by enclosing function rather than by file so that adding a NEW function
+// to safeterm.go does not silently inherit the pass — a new composer has to be
+// named here, and TestSanitizerComposersAreLedgered fails if this set names a
+// function that no longer exists.
+var sanitizerComposers = map[string]string{
+	"safeTermSingle": "collapses \\n to a space for single-line/tabwriter fields; delegates to safeTerm first",
+}
+
+// sanitizerFile is the one file whose safeTerm calls are composition rather than
+// rendering. Both conditions must hold — file AND ledgered function.
+const sanitizerFile = "safeterm.go"
+
 // minSafeTermCallsScanned is the POSITIVE CONTROL. A parser that has stopped
 // finding calls — a moved package, a renamed helper, the wrong directory —
 // scans nothing, finds no violation and reports a serene pass. There are 152
@@ -201,10 +225,28 @@ func isSafeTermCall(n ast.Node) *ast.CallExpr {
 		return nil
 	}
 	id, ok := ce.Fun.(*ast.Ident)
-	if !ok || id.Name != "safeTerm" || len(ce.Args) != 1 {
+	if !ok || !scannedSanitizers[id.Name] || len(ce.Args) != 1 {
 		return nil
 	}
 	return ce
+}
+
+// scannedSanitizers are the sanitizer entry points this harness treats as
+// equivalent for #393 purposes: each one hands its argument to safeTerm, so
+// applying EITHER to user-typed input is the same defect.
+//
+// 🔴 MATCHING ONLY "safeTerm" SILENTLY DROPS COVERAGE THE MOMENT A WRAPPER IS
+// INTRODUCED, AND THAT IS NOT HYPOTHETICAL. civitai/cli#554 converts 16 call
+// sites in images.go from safeTerm to safeTermSingle. Merging that branch with a
+// matcher keyed to the single name "safeTerm" takes the scanned total from 152 to
+// 137 — those 16 sites leave this harness's view entirely — and the only thing
+// that says so is bareIdentArgs' shrank-direction check tripping on a now-unused
+// entry ("h"), which reads as a stale note rather than as lost coverage.
+//
+// So: a new wrapper around safeTerm belongs HERE, in the same commit that adds it.
+var scannedSanitizers = map[string]bool{
+	"safeTerm":       true,
+	"safeTermSingle": true,
 }
 
 // safeTermFuncKey is the ledger key for a function declaration.
@@ -222,6 +264,15 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 	for _, s := range sites {
 		if why, forbidden := userTypedArgs[s.arg]; forbidden {
 			bad = append(bad, fmt.Sprintf("%s: safeTerm(%s) — %s", s.pos, s.arg, why))
+		}
+		// A sanitizer in safeterm.go delegating to safeTerm is composition, not
+		// rendering — see sanitizerComposers. BOTH conditions must hold, and the
+		// userTypedArgs check above deliberately still applies: composing is no
+		// licence to sanitise the user's own bytes.
+		if s.bareIdent && strings.HasPrefix(s.pos, sanitizerFile+":") {
+			if _, composer := sanitizerComposers[s.enclosing]; composer {
+				continue
+			}
 		}
 		if s.bareIdent {
 			if _, known := bareIdentArgs[s.arg]; !known {
@@ -353,5 +404,53 @@ func TestSameBytesTypedAndReceived_AreEchoedAndStripped(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestSanitizerComposersAreLedgered pins sanitizerComposers in BOTH directions.
+//
+// 🔴 A ONE-SIDED CHECK HERE WOULD BE WORSE THAN NONE. If the set only had to be
+// a SUPERSET, a composer could be deleted and the stale entry would keep reading
+// as coverage; if only a SUBSET, a new function in safeterm.go could quietly
+// inherit the pass that sanitizerComposers exists to withhold. So: every name
+// here must exist in safeterm.go AND actually call safeTerm, and every safeTerm
+// call in safeterm.go must be enclosed by a name that is here.
+func TestSanitizerComposersAreLedgered(t *testing.T) {
+	sites := scanSafeTermCallSites(t)
+
+	inFile := map[string]bool{}
+	for _, s := range sites {
+		if strings.HasPrefix(s.pos, sanitizerFile+":") {
+			inFile[s.enclosing] = true
+		}
+	}
+
+	// GREW: a safeTerm call in safeterm.go whose enclosing function is unledgered.
+	for fn := range inFile {
+		if _, ok := sanitizerComposers[fn]; !ok {
+			t.Errorf("UNLEDGERED COMPOSER: %s in %s calls safeTerm but is not in sanitizerComposers.\n"+
+				"A new function in %s does NOT silently inherit the composition pass. Either add it with a "+
+				"reason, or — if it RENDERS rather than composes — it belongs outside %s.",
+				fn, sanitizerFile, sanitizerFile, sanitizerFile)
+		}
+	}
+
+	// SHRANK: a ledgered composer that no longer calls safeTerm at all.
+	for fn, why := range sanitizerComposers {
+		if !inFile[fn] {
+			t.Errorf("STALE COMPOSER: sanitizerComposers names %q (%s) but no safeTerm call in %s is enclosed by it.\n"+
+				"It was renamed, deleted, or no longer delegates. Remove the entry — a stale one reads as coverage "+
+				"while providing none.", fn, why, sanitizerFile)
+		}
+	}
+
+	// POSITIVE CONTROL: a zero here is indistinguishable from a scanner that
+	// stopped finding anything, so require the set to be non-empty and matched.
+	if len(sanitizerComposers) == 0 {
+		t.Fatal("CONTROL failure, not a finding: sanitizerComposers is empty, so both loops above are vacuous")
+	}
+	if len(inFile) == 0 {
+		t.Fatalf("CONTROL failure, not a finding: no safeTerm call in %s was attributed to any function; "+
+			"the scanner or the file moved", sanitizerFile)
 	}
 }
