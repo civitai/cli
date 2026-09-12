@@ -1838,8 +1838,15 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	if built.checkpoint != "" {
 		fmt.Fprintf(tw, "Checkpoint:\t%s%s\n", safeTermSingle(built.checkpoint), safeTermSingle(built.checkpointNote))
 	}
-	for _, l := range built.loras {
-		fmt.Fprintf(tw, "LoRA:\t%s\n", safeTermSingle(l))
+	// 🔴 NOT `l`. The bare-identifier half of safeterm_userinput_test.go's ledger
+	// is keyed by the argument NAME across the WHOLE package, so classifying a
+	// one-letter loop variable allowlists every other safeTerm(l) in internal/cmd
+	// — the same defect civitai/cli#554 proposed for `s` and #569 refused.
+	// Measured both ways before renaming: with "l" in bareIdentArgs a planted
+	// safeTerm(l) over the USER-TYPED prompt SURVIVES; with this name it is killed
+	// and named. A distinctive name is what keeps the ledger entry about THIS value.
+	for _, loraLabel := range built.loras {
+		fmt.Fprintf(tw, "LoRA:\t%s\n", safeTermSingle(loraLabel))
 	}
 	// 🔴 NOT "Generatable". The server's `ready` is a RESOURCE-AVAILABILITY flag,
 	// not a prediction that the job will produce anything: it is computed as
