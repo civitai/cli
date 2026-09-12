@@ -198,7 +198,7 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	// deliberately still open; #566 scopes it out rather than half-building it.
 	"checkTargetCollisions": {"TestCheckTargetCollisionsSanitizesServerFields",
 		"the same-target refusal: each colliding file's name and type, plus the mixed-origin target. The " +
-			"LITERAL TWIN of formatFileList's line 44 lines above, which was gated while this was not — and " +
+			"LITERAL TWIN of formatFileList's line, which was gated while this was not — and " +
 			"this one is the ONLY thing between the user and a silent overwrite"},
 	"(*progressWriter).line": {"TestProgressWriterLineSanitizesServerName",
 		"the server's files[].name inside a \\r-REWRITTEN line — both callers rewrite in place (Write's TTY " +
@@ -216,6 +216,20 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"is about cannot reappear one call frame down. MEASURED, 6 calls: `streaming <name>`, " +
 			"`create <partPath>` and its cause are killed; the two `finalize` calls and `streaming`'s " +
 			"cause SURVIVE — a failing Close and a hostile-bytes stream error are not driven (#566 PR body)"},
+	// 🔴 THE SIXTH, FOUND BY #572's AUDIT OF #566 — AND IT IS THE SAME BLIND SPOT
+	// ONE LAYER DEEPER. targetPath also called safeTerm zero times, so no row was
+	// demandable; worse, its refusal LOOKED gated because it used `%q`. It is not:
+	// strconv escapes what is not unicode.IsPrint, and IsPrint admits U+2800 (So)
+	// and U+034F (Mn) — both in saferune's class, both emitted raw. Measured, not
+	// argued, and the fixture that shows it (dlHostileQuoted) has its own control.
+	"targetPath": {"TestTargetPathRefusalSanitizesTheServerName",
+		"the unusable-filename refusal, which echoes files[].name with an ARBITRARY prefix — " +
+			"filepath.Base(\"<payload>/..\") is \"..\", so the degenerate basename the guard tests for says " +
+			"nothing about the bytes in front of it. Reaches BOTH streams: stderr via downloadSelected and " +
+			"STDOUT via printDownloadPlan's `target: (unresolved)`, one line under a name that IS sanitised. " +
+			"`%q` is kept alongside — it delimits a name that is often blank, and it escapes the \\n saferune " +
+			"deliberately keeps",
+	},
 	"downloadStatusError": {"TestDownloadOneErrorsSanitizeTheServerName",
 		"the four HTTP-status errors, gated ONCE at the top rather than at each return — four spellings of " +
 			"one rule is how #566 happened. The 401 arm is the most exposed: an anonymous download of a " +

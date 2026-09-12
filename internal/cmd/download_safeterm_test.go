@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -87,6 +88,21 @@ const (
 
 	dlHostileType = "Arch\u200bive\x1b]0;pwned\a"
 	dlSafeType    = "Archive]0;pwned"
+
+	// \ud83d\udd34 A THIRD FIXTURE, FOR THE ONE SURFACE WHOSE ONLY GATE WAS `%q` \u2014
+	// civitai/cli#572. The two above carry ESC, BEL, ZWSP and RLO, and `%q`
+	// escapes EVERY one of them; a test built from them cannot tell `safeTerm(x)`
+	// inside a `%q` from a bare `%q`, because both render safely. So this fixture
+	// carries the half `%q` passes THROUGH, raw: U+2800 BRAILLE PATTERN BLANK
+	// (So, a blankButGraphic member) and U+034F COMBINING GRAPHEME JOINER (Mn,
+	// the rune saferune's package doc names as the one the `Cf` first cut of #393
+	// missed). It keeps one ESC as well, so the fixture still spans both halves.
+	//
+	// Derived from the class as pinned in safeterm_invisible_test.go, not by
+	// running safeTerm over it: U+2800 and U+034F are removed outright, the ESC
+	// goes and its `[2K` survives as ordinary ASCII.
+	dlHostileQuoted = "pad\u2800\u034fcore\x1b[2K"
+	dlSafeQuoted    = "padcore[2K"
 )
 
 // dlHazardRunes reports the hazard runes still present in s, as an INDEPENDENT
@@ -107,6 +123,14 @@ func dlHazardRunes(s string) []string {
 			out = append(out, "U+200B ZWSP")
 		case 0x202e:
 			out = append(out, "U+202E RLO")
+		// 🔴 THE TWO `%q` DOES NOT ESCAPE (civitai/cli#572). strconv quotes what
+		// is not unicode.IsPrint, and IsPrint admits both of these, so a `%q`-only
+		// surface emits them verbatim. Without these arms this scanner would
+		// report a clean render for exactly the payload #572 is about.
+		case 0x2800:
+			out = append(out, "U+2800 BRAILLE PATTERN BLANK")
+		case 0x034f:
+			out = append(out, "U+034F COMBINING GRAPHEME JOINER")
 		}
 	}
 	return out
@@ -124,6 +148,7 @@ func TestDownloadFixtureIsHostile(t *testing.T) {
 	}{
 		{"name", dlHostileName, 4},
 		{"type", dlHostileType, 3},
+		{"quoted", dlHostileQuoted, 3},
 	} {
 		if got := dlHazardRunes(tc.in); len(got) != tc.want {
 			t.Errorf("CONTROL failure, not a finding: the %s fixture carries %d hazard rune(s) %v, want %d. "+
@@ -140,10 +165,26 @@ func TestDownloadFixtureIsHostile(t *testing.T) {
 	for _, pair := range [][2]string{
 		{dlHostileName, dlSafeName}, {dlHostileType, dlSafeType},
 		{dlSafeName, dlSafeType}, {dlHostileName, dlHostileType},
+		{dlHostileQuoted, dlSafeQuoted}, {dlSafeQuoted, dlSafeName}, {dlSafeQuoted, dlSafeType},
 	} {
 		if pair[0] == pair[1] {
 			t.Fatalf("CONTROL failure, not a finding: fixture values %q and %q are equal", pair[0], pair[1])
 		}
+	}
+
+	// 🔴 THE CONTROL THAT MAKES dlHostileQuoted WORTH HAVING, and it is a claim
+	// about the STANDARD LIBRARY, so it is measured here rather than assumed:
+	// `%q` alone leaves this fixture's hazard runes on the terminal. Without this,
+	// TestTargetPathRefusalSanitizesTheServerName could not distinguish the gate
+	// it pins from the `%q` that was already there (civitai/cli#572).
+	if got := dlHazardRunes(fmt.Sprintf("%q", dlHostileQuoted)); len(got) != 2 {
+		t.Errorf("CONTROL failure, not a finding: %%q of the quoted fixture left %d hazard rune(s) %v, want 2 "+
+			"(U+2800 and U+034F). If Go's strconv started escaping them, the #572 finding is closed upstream "+
+			"and this fixture no longer discriminates — re-derive it before trusting the test that uses it.",
+			len(got), got)
+	}
+	if got := dlHazardRunes(fmt.Sprintf("%q", safeTerm(dlHostileQuoted))); got != nil {
+		t.Errorf("CONTROL failure, not a finding: safeTerm+%%q still left %v", got)
 	}
 }
 
@@ -153,10 +194,15 @@ func TestDownloadFixtureIsHostile(t *testing.T) {
 //
 // The refusal lists every file that would be silently overwritten. Its per-file
 // line is the LITERAL TWIN of formatFileList's — same three fields, same shape,
-// 44 lines above in the same file — and that one was safeTerm'd while this one
-// was not. formatFileList over the IDENTICAL fixture is therefore the clean
-// positive control: it proves the expected strings are renderable, so a failure
-// here is this renderer's and not the fixture's.
+// in the same file — and that one was safeTerm'd while this one was not.
+// formatFileList over the IDENTICAL fixture is therefore the clean positive
+// control: it proves the expected strings are renderable, so a failure here is
+// this renderer's and not the fixture's.
+//
+// (The twin is named, not located. Earlier revisions of this comment and of
+// checkTargetCollisions' said "44 lines above"; it was ~55 by the time #572
+// read it. A distance between two functions is a fact with no owner — a
+// function name is one the compiler and every grep can still resolve.)
 //
 // 🔴 THE GROUP LINE'S `target` IS SANITISED TOO, AND IT IS NOT AN EXTRA. It is
 // the mixed-origin path targetPath's own doc comment says its print sites must
@@ -194,7 +240,7 @@ func TestCheckTargetCollisionsSanitizesServerFields(t *testing.T) {
 	if got := dlHazardRunes(msg); got != nil {
 		t.Errorf("SAFETERM REGRESSION in checkTargetCollisions: %v reached the terminal through the "+
 			"same-target refusal — the ONE thing standing between the user and a silent overwrite. "+
-			"formatFileList sanitises these exact fields 44 lines above (civitai/cli#566).\n%s", got, msg)
+			"formatFileList sanitises these exact fields (civitai/cli#566).\n%s", got, msg)
 	}
 
 	// The clean positive control on the identical fixture.
@@ -207,6 +253,142 @@ func TestCheckTargetCollisionsSanitizesServerFields(t *testing.T) {
 	if got := dlHazardRunes(ctl); got != nil {
 		t.Errorf("CONTROL failure, not a finding: formatFileList leaked %v, so it is no longer a clean "+
 			"control for checkTargetCollisions", got)
+	}
+}
+
+// --- surface 1b: targetPath's unusable-filename refusal -------------------------
+
+// TestTargetPathRefusalSanitizesTheServerName is civitai/cli#572.
+//
+// 🔴 THE ONE SURFACE ON THIS PATH WHOSE ONLY GATE WAS `%q`, AND `%q` IS NOT A
+// SANITISER. targetPath called safeTerm ZERO times, so — exactly like #566's
+// five — the ledger's GREW check could never demand a row for it. The refusal
+// echoes the server's files[].name, and it is reachable with an ARBITRARY
+// payload because `filepath.Base("<anything>/..")` is "..": the degenerate
+// basename the guard tests for says nothing about the bytes in front of it.
+//
+// It reaches a terminal on BOTH streams, which is why both are driven below:
+// stderr through downloadSelected (main.go prints err.Error() unfiltered), and
+// STDOUT through printDownloadPlan's "target: (unresolved) — %v", one line under
+// a file name that IS correctly sanitised.
+func TestTargetPathRefusalSanitizesTheServerName(t *testing.T) {
+	// Base(x) == ".." for this, so the guard fires carrying the whole prefix.
+	hostile := dlHostileQuoted + "/.."
+	// Derived from the class, not from running safeTerm: the invisible runes go,
+	// the ESC goes and its "[2K" stays as ordinary ASCII. Everything left is
+	// printable ASCII, so %q adds delimiters and no escapes.
+	want := `server returned an unusable filename "` + dlSafeQuoted + `/.."; pass --out to set the output path`
+	f := civitai.ModelVersionFile{ID: 7781, Name: hostile, Type: "Model", SizeKB: 12}
+
+	t.Run("the refusal itself", func(t *testing.T) {
+		_, _, err := targetPath(f, &downloadOpts{})
+		if err == nil {
+			t.Fatal("CONTROL failure, not a finding: a name whose basename is \"..\" was accepted, so the " +
+				"refusal never rendered and every assertion here is vacuous")
+		}
+		if err.Error() != want {
+			t.Errorf("SAFETERM REGRESSION in targetPath (unusable filename %%q): error was\n  %q\nwant\n  %q",
+				err.Error(), want)
+		}
+		if got := dlHazardRunes(err.Error()); got != nil {
+			t.Errorf("SAFETERM REGRESSION in targetPath: %v reached the terminal. `%%q` escapes the Cc/Cf half "+
+				"of the class and passes the rest through RAW — that is the whole finding (civitai/cli#572)", got)
+		}
+	})
+
+	// --out is the USER's own path and targetPath returns it verbatim, so the
+	// refusal is unreachable there. Asserted, not assumed: it is what makes the
+	// strip above unambiguously server-text only (saferune's package doc).
+	t.Run("--out never reaches the refusal", func(t *testing.T) {
+		got, _, err := targetPath(f, &downloadOpts{out: hostile})
+		if err != nil {
+			t.Fatalf("--out must be returned verbatim, got error %v", err)
+		}
+		if got != hostile {
+			t.Errorf("--out was rewritten: got %q, want the user's own bytes %q", got, hostile)
+		}
+	})
+
+	t.Run("on stderr via downloadSelected", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		_, err := downloadSelected(context.Background(), dlFakeDownloader{}, &out, &errb,
+			[]civitai.ModelVersionFile{f}, &downloadOpts{})
+		if err == nil {
+			t.Fatal("CONTROL failure, not a finding: downloadSelected did not surface the refusal")
+		}
+		if err.Error() != want {
+			t.Errorf("SAFETERM REGRESSION via downloadSelected: got\n  %q\nwant\n  %q", err.Error(), want)
+		}
+	})
+
+	t.Run("on stdout via printDownloadPlan", func(t *testing.T) {
+		var out bytes.Buffer
+		if err := printDownloadPlan(&out, []civitai.ModelVersionFile{f}, &downloadOpts{}, "https://civitai.com"); err != nil {
+			t.Fatalf("CONTROL failure, not a finding: printDownloadPlan: %v", err)
+		}
+		plan := out.String()
+		if !strings.Contains(plan, "  target: (unresolved) — "+want+"\n") {
+			t.Errorf("SAFETERM REGRESSION in printDownloadPlan: the unresolved-target line does not contain\n"+
+				"  %q\ngot:\n%s", want, plan)
+		}
+		// The point of driving this surface: the sanitised name is printed one
+		// line ABOVE, so a raw refusal here is the sibling-renderer split #566 is
+		// about, inside a single function.
+		if !strings.Contains(plan, "\n"+dlSafeQuoted+"/..\n") {
+			t.Errorf("CONTROL failure, not a finding: the plan's own file-name line did not render as expected, "+
+				"so the comparison this subtest makes is not available:\n%s", plan)
+		}
+		if got := dlHazardRunes(plan); got != nil {
+			t.Errorf("SAFETERM REGRESSION in printDownloadPlan: %v reached STDOUT through the unresolved-target "+
+				"line (civitai/cli#572)", got)
+		}
+	})
+}
+
+// --- the dashIfEmpty/safeTerm nesting ------------------------------------------
+
+// TestFileListPlaceholderSurvivesAnInvisibleType is civitai/cli#572.
+//
+// `safeTerm(dashIfEmpty(f.Type))` asks "is the RAW type empty" — a type of one
+// zero-width rune answers no, so the placeholder is skipped and safeTerm then
+// empties the field, rendering "(, 2.9 MiB)". Nesting the other way round asks
+// the question of the string that will actually be PRINTED. reportBaseModel
+// already had that order; formatFileList and checkTargetCollisions did not.
+//
+// Cosmetic and hostile-input-only, which is why it is pinned here rather than
+// argued about: the assertion costs one line and the drift cannot recur silently.
+func TestFileListPlaceholderSurvivesAnInvisibleType(t *testing.T) {
+	// A type made ENTIRELY of runes in the class, so safeTerm empties it while
+	// dashIfEmpty on the raw value would not.
+	const invisibleType = "⠀͏​"
+	if safeTerm(invisibleType) != "" {
+		t.Fatalf("CONTROL failure, not a finding: the fixture type does not strip to empty (%q), so neither "+
+			"nesting order can differ and this test proves nothing", safeTerm(invisibleType))
+	}
+	if dashIfEmpty(invisibleType) == "-" {
+		t.Fatal("CONTROL failure, not a finding: dashIfEmpty already replaces the RAW fixture, so the two " +
+			"nesting orders agree and this test proves nothing")
+	}
+
+	files := []civitai.ModelVersionFile{
+		{ID: 4472, Name: dlHostileName, Type: invisibleType, SizeKB: 3000},
+		{ID: 9931, Name: dlHostileName, Type: "Model", SizeKB: 1500},
+	}
+	const wantRow = "[id 4472] " + dlSafeName + " (-, 2.9 MiB)"
+
+	if got := formatFileList(files); !strings.Contains(got, wantRow) {
+		t.Errorf("formatFileList rendered an EMPTY type field instead of the %q placeholder.\nwant a row "+
+			"containing: %q\ngot:\n%s\n\ndashIfEmpty must wrap safeTerm, not the other way round "+
+			"(civitai/cli#572).", "-", wantRow, got)
+	}
+
+	err := checkTargetCollisions(files, &downloadOpts{outDir: t.TempDir()})
+	if err == nil {
+		t.Fatal("CONTROL failure, not a finding: two same-named files produced no collision refusal")
+	}
+	if !strings.Contains(err.Error(), wantRow) {
+		t.Errorf("checkTargetCollisions rendered an EMPTY type field instead of the %q placeholder.\nwant a "+
+			"row containing: %q\ngot:\n%s", "-", wantRow, err.Error())
 	}
 }
 
