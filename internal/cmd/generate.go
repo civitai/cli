@@ -1027,14 +1027,26 @@ func buildGenerateGraph(ctx context.Context, deps generateDeps, o generateOpts) 
 	// is what the USER typed on the command line and is echoed exactly — this
 	// line's whole purpose is to let them match the blob back to the file they
 	// named, which a rewritten path defeats. `img.URL` came back from the SERVER
-	// (an opaque blob URL after upload) and goes through safeTerm. Collapsing the
-	// two into one treatment is the mistake civitai/cli#393's first cut made.
+	// (an opaque blob URL after upload) and goes through the gate. Collapsing the
+	// two into one treatment is the mistake civitai/cli#393's first cut made, and
+	// the split below is deliberate — do not flatten the composed string.
+	//
+	// 🔴 safeTermSingle, NOT safeTerm — civitai/cli#575 R1, round 1. This string
+	// is printed by printImageDisclosure as a plain `Image:  %s` line, and
+	// printImageDisclosure is called from confirmGenerate BETWEEN the LoRA lines
+	// and the real `Cost:` line. safeTerm deliberately KEEPS `\n`, so a blob URL
+	// carrying one forged a line at column zero on the approval screen — measured,
+	// rendering a fake `Cost: 1 Buzz (balance 999999).` directly above the true
+	// one, four lines above `Generate? [y/N]:`. The `Image:` line is single-line by
+	// construction, so the tab half matters too: safeTermSingle is the gate for
+	// anything on a line-structured surface. Only the SERVER half is flattened;
+	// the user-typed `src` is untouched, which is the split this comment is about.
 	for i, img := range imgs {
 		src := ""
 		if i < len(o.images) {
 			src = o.images[i] + " "
 		}
-		out.images = append(out.images, fmt.Sprintf("%s(%dx%d) → %s", src, img.Width, img.Height, safeTerm(img.URL)))
+		out.images = append(out.images, fmt.Sprintf("%s(%dx%d) → %s", src, img.Width, img.Height, safeTermSingle(img.URL)))
 	}
 	return out, nil
 }
@@ -1864,9 +1876,9 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	// bareIdentArgs holds FIVE one-letter keys today (`w`, `r`, `k`, `t`, `h` of
 	// 16), each a live allowlist of that name at every bare-ident safeTerm site in
 	// the package. They are pre-existing and are NOT fixed here: renaming them
-	// touches files other work is in. Recorded on civitai/cli#575 so the next
-	// reader finds an open residual rather than a rule this comment implies is
-	// enforced.
+	// touches files other work is in. Recorded as R5 on civitai/cli#575, with the
+	// measurement and a closing condition, so the next reader finds an open
+	// residual rather than a rule this comment implies is enforced.
 	for _, loraLabel := range built.loras {
 		fmt.Fprintf(tw, "LoRA:\t%s\n", safeTermSingle(loraLabel))
 	}

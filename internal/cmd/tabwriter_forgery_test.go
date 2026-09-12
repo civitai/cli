@@ -671,9 +671,7 @@ func TestGatedRenderersDoNotForgeOutsideTheirTable(t *testing.T) {
 		// is under `go test` — without this the screen is never printed and the
 		// forgery assertions below would pass over an EMPTY buffer. The two
 		// controls at the end of this case are what caught exactly that.
-		orig := stdinIsTTY
-		t.Cleanup(func() { stdinIsTTY = orig })
-		stdinIsTTY = func() bool { return true }
+		withStdinTTY(t, true)
 
 		c, _, errb := genCmd("n\n")
 		built := &resolvedGraph{

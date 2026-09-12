@@ -79,7 +79,7 @@ var bareIdentArgs = map[string]string{
 	"sha":        "SERVER: a published hash",
 	"reason":     "SERVER: an orchestrator failure reason",
 	"name":       "SERVER: a published file name",
-	"loraLabel":  "SERVER-derived: one describeVersion label out of resolvedGraph.loras, re-gated at the quote screen's cell (civitai/cli#575 R1). Spelled out rather than `l`: this map is keyed by NAME across the package, so a one-letter key would allowlist every safeTerm(l) in internal/cmd",
+	"loraLabel":  "SERVER-derived: one describeVersion label out of resolvedGraph.loras. TWO call sites, both re-gated by civitai/cli#575 R1 — the quote screen's tabwriter CELL (printGenerateQuote) and the approval screen's plain `LoRA:` LABEL LINE (confirmGenerate), the latter four lines above `Generate? [y/N]:`. Spelled out rather than `l`: this map is keyed by NAME across the package, so a one-letter key would allowlist every safeTerm(l) in internal/cmd",
 	"h":          "SERVER: a hash out of image metadata",
 	"baseModel":  "SERVER: a base-model label",
 	"typ":        "SERVER: the primary file's published `type`, defaulted to \"Other\" when blank (nonModelFileMarker)",

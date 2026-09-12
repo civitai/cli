@@ -891,6 +891,71 @@ func TestGenerate_SanitisesServerStrings(t *testing.T) {
 	}
 }
 
+// TestImageDisclosureLineIsGatedAtComposition pins the THIRD server-derived
+// label line on the approval screen — civitai/cli#575 R1, round 1.
+//
+// 🔴 THIS ONE IS GENUINELY GATED UPSTREAM, AND IT IS THE ONLY SUCH LINE LEFT.
+// Everywhere else this PR moved the gate to the rendering site, because a gate
+// the renderer applies is one the structural ledger can SEE. This line cannot
+// follow that rule: printImageDisclosure prints a string that interleaves TWO
+// origins — the path the USER typed, echoed byte-for-byte (civitai/cli#393), and
+// the SERVER's blob URL. Flattening the composed string at the render site would
+// rewrite the user's own path, which is exactly the defect #393's first cut
+// shipped. The halves are separable only where they are joined, so that is where
+// the gate is (generate.go, buildGenerateGraph).
+//
+// Which means the render-site test cannot pin it: setting built.images directly
+// bypasses the composition. This test drives the real one through the upload
+// seam instead.
+//
+// The hazard it closes was measured: printImageDisclosure is called from
+// confirmGenerate BETWEEN the LoRA lines and the real `Cost:` line, and safeTerm
+// deliberately KEEPS `\n`, so a blob URL carrying one rendered a fake
+// `Cost: 1 Buzz (balance 999999).` directly above the true one, four lines above
+// `Generate? [y/N]:`.
+func TestImageDisclosureLineIsGatedAtComposition(t *testing.T) {
+	var s genSeams
+	s.uploadReplyURL = "https://blob.example/x" + forgeCell("imgurl")
+
+	src := writePNG(t, 64, 64)
+	o := baseOpts()
+	o.images = []string{src}
+
+	c, _, _ := genCmd("")
+	built, err := buildGenerateGraph(c.Context(), s.deps(t), o)
+	if err != nil {
+		t.Fatalf("buildGenerateGraph: %v", err)
+	}
+	if s.uploadCalls != 1 {
+		t.Fatalf("CONTROL failure, not a finding: the upload seam ran %d time(s), want 1 — the hostile URL "+
+			"never reached the composed line and every assertion below is about nothing.", s.uploadCalls)
+	}
+	if len(built.images) != 1 {
+		t.Fatalf("CONTROL failure, not a finding: %d disclosure line(s), want 1.", len(built.images))
+	}
+	line := built.images[0]
+
+	if strings.ContainsAny(line, "\n\t") {
+		t.Errorf("the disclosure line carries a raw newline or tab: %q\n\n"+
+			"printImageDisclosure prints this with a plain Fprintf between the LoRA lines and the real "+
+			"`Cost:` line on the approval screen, so a newline here forges a line at column zero directly "+
+			"above the cost a user is about to approve.", line)
+	}
+	if !strings.Contains(line, forgeWant("imgurl")) {
+		t.Errorf("the server URL was dropped rather than flattened: %q, want it to contain %q — `the class "+
+			"is gone` and `the value arrived` are one assertion.", line, forgeWant("imgurl"))
+	}
+	// 🔴 THE OTHER HALF, AND THE REASON THE GATE IS NOT ON THE WHOLE STRING.
+	// The user's own path must survive byte-for-byte; a fix that flattened the
+	// composed line would satisfy every assertion above and silently reintroduce
+	// civitai/cli#393.
+	if !strings.Contains(line, src) {
+		t.Errorf("the USER-typed path %q was rewritten out of %q. This line exists so a user can match the "+
+			"blob back to the file they named; #393's first cut sanitised this half and a Persian prompt "+
+			"held apart by a ZWNJ rendered joined while the wire carried the original.", src, line)
+	}
+}
+
 // TestDescribeVersionIsSanitisedAtItsOwnOutput pins describeVersion's gate
 // DIRECTLY, on its return value, rather than through a screen that renders it.
 //
