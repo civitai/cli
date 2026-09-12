@@ -1,4 +1,4 @@
-# Handoff: agent-setup-onboarding — 2026-09-08
+# Handoff: agent-setup-onboarding — 2026-09-12
 
 ## Run this first — the index, one command
 ```bash
@@ -19,29 +19,43 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ## State now
 
-**Rank 21 is DONE and merged — the #554/#564 collision is resolved.** Rank 20 (cli#566)
-is CLAIMED and not started.
+**Rank 20 is DONE and merged — the download path is gated and cli#566 is CLOSED.**
+**Rank 22 is DONE too**, by a parallel session. What remains of this safeTerm seam is
+**four open issues** — #574, #575, #577, #579 — all filed rather than folded in.
 
-- **Branch `main`, clean, synced.** `civitai/cli` at `e3f2608`;
-  `civitai/civitai-developer-docs` at `d5b34c8`.
-- **Merged this pass:** **cli#569** (`e3f2608`) — rank 21. Builds on @xsvm's #554
-  (their commit first, unmodified), rebased onto main after #564, plus the TAB column
-  vector and the #564 ledger reconciliation. CI on `main` at `e3f2608`: **success**,
-  both `CI` and `CodeQL`.
-- **cli#554 is deliberately still OPEN.** It is superseded in content, not in credit;
-  closing it is xsvm's call and they were told so on the PR. `Co-Authored-By: xsvm` is
-  on the squash.
-- **Issue #552 stays OPEN on purpose** and holds the remaining widened-ledger work:
-  ~13 other tabwriter renderers share the same shape with no ledger detecting it, the
-  README still does not describe the newline/tab-to-space change across the inline
-  fields, and soft-wrap can still place attacker text at column zero with no control
-  character involved.
-- **Claims:** `cli-554-564-collision-resolution` released (by the parallel session);
-  **`agent-setup-onboarding-20` HELD** — rank 20, not started.
-- 🔴 **No clawgate task recorded.** `resolve` exited **5**. Its positive control answered
-  **8** links for a different session, so the board is reachable and the token accepted —
-  but a wrong id also answers 200/empty, so this is a real reading, **not** a clean bill
-  of health.
+- **Branch `main`, clean, synced.** `civitai/cli` at `f0cb748`.
+  (`civitai/civitai-developer-docs` was at `d5b34c8` and was **not re-verified** this
+  session — treat that SHA as recalled, not measured.)
+- **Merged this pass:** **cli#572** (`f0cb748`, squash, merged 2026-09-12T20:04:11Z) —
+  rank 20. Issue **#566 was CLOSED BY HAND** at 20:06:46Z with the evidence pasted on
+  it, never by a commit keyword. Claim `agent-setup-onboarding-20` **released**
+  (verified absent from `claim-work --list`, not assumed).
+- **What #572 actually shipped** — the three surfaces #566 named, plus **three more
+  found by sweep**: `checkTargetCollisions`' group-line target, `downloadOne`'s
+  `install %s`, and `downloadStatusError`. The last is gated **once at the top**
+  (`name = safeTerm(name)`) rather than at each of its four returns, because four
+  returns spelling one rule is the mechanism that produced #566 in the first place.
+  Also `writePart`'s three error strings and `targetPath`'s unusable-filename refusal.
+  Plus **`safeTermErr`** (`internal/cmd/safeterm.go:72`): it strips a **wrapped
+  cause's** message while `Unwrap`ing to the original, so `errors.Is` / `errors.As`
+  and the published exit-code classifier are unaffected. Five call sites in
+  `download.go` (`:912, :941, :1019, :1038, :1042`).
+- 🔴 **Rank 22 landed in parallel — cli#573 (`6f0a8d8`), issue #552 CLOSED 17:30:31Z**,
+  by the `external-issue-513-numeric-username` session, not this one. **It filed a
+  successor, cli#575**, carrying four residuals of its own, and **cli#578 is OPEN
+  against #575's R1** right now (claimed `external-issue-513-numeric-username-12`).
+  Reading "#552 closed" as "that seam is finished" loses all four — see rank 26.
+- **`maxUncoveredSafeTermFuncs` is 21 on `main`.** That number was read off the
+  assertion's own failure output while resolving the #572/#573 collision, **not
+  computed** — the three trees disagreed (25 base / 22 main / 24 PR) and every one of
+  them was wrong. See the gotcha below.
+- **Claims:** `agent-setup-onboarding-20` released. No `agent-setup-onboarding-*` claim
+  is held. `external-issue-513-numeric-username-12` is HELD by another session for
+  #575 R1 — do not take that work.
+- ⚠ **16 stale agent worktrees are registered in this repo** (`git worktree list`: 17
+  under `.claude/worktrees/`, one of which is live). Several hold branches whose remote
+  has moved on. Worth a `git worktree prune` sweep — see the gotcha about the stale
+  local ref below, which is the harm they actually cause.
 
 ### Carried forward — still true, keeps being dropped under this REPLACE heading
 
@@ -62,17 +76,46 @@ is CLAIMED and not started.
 
 - **The notifier's cross-run paths are still fake-only**: update-in-place,
   comment-on-fingerprint-change, comment-then-close. The **create** path is real.
-- **#564's ledger still has the structural blind spot** — rank 20. It is why #399 could
-  close honestly while the same defect shape survives on the download path.
+- 🔴 **#564's ledger blind spot is NOT fixed by #572, and rank 20 closing does not
+  close it.** `GREW` still only fires for enclosing functions that **already call**
+  `safeTerm`; a renderer that calls it zero times stays invisible. #572 gated the
+  specific functions #566 named — it did not change what the instrument can see. The
+  harder instrument (keyed on *rendering a server-supplied struct field*) is #573's
+  tabwriter ledger, and #575 R1 records that one of ITS two gate states resolved a
+  function **name** rather than a relationship.
+- 🔴 **#572's audit ladder was STOPPED on the prose-payload criterion, not on a clean
+  round.** Rounds 0–4 ran; **no round ever returned no findings**. Round 3's range
+  shipped zero executable change and round 4's shipped one test-fixture line, so the
+  attribution gate structurally could not fire. The rationale was posted to the PR.
+  **Do not read "five rounds" as "converged".**
+- 🔴 **`\n` line forgery is still live on four download surfaces** (#577). `saferune`
+  retains `\n` and `\t` by design, so `safeTerm` does not stop a server-supplied
+  `files[].name` from forging whole lines. #572 is a **strict improvement** on
+  surfaces that were fully raw before it — it is not a closure of that class.
 - **The `1010` Cloudflare UA block was never re-provoked**; the 403/301 arms of the CLI
   link probe remain locally simulated.
-- **cli#569 was merged by a parallel session, not by the session that verified it** —
-  see the gotcha below. The verification stands (`git diff e2a7dd6 origin/main` empty);
-  the attribution in any earlier draft does not.
 
 ## Open investigations — live diagnosis state
 
-### The repo is frozen: `pins-vs-published` is red on `main` and the bump automation cannot land the fix
+🔴 **THIS SECTION IS APPEND-ONLY, SO A HEADING ALONE IS NOT A STATUS. READ THE
+HEADING PREFIX.** Blocks are never deleted — a corrected reading is worth more than a
+deleted one — so a superseded diagnosis stays in place with its heading rewritten to
+`❌ SUPERSEDED`. **Exactly ONE investigation is open below** — the one headed
+"⚠ OPEN — The docs repo cannot be built locally from a pristine main" (rank 15).
+Everything else here is `✅ RESOLVED` or
+`❌ SUPERSEDED`, and a reader who stops at the first matching heading was previously
+getting the OPPOSITE of the truth — three blocks still said `STILL OPEN` above their
+own resolutions until this delta retired them (2026-09-12).
+
+**When you append a RESOLVED block, retire the superseded heading in the SAME edit.**
+It is one `Edit` call and nobody ever comes back for it.
+
+### ❌ SUPERSEDED (2026-09-12) — "The repo is frozen: `pins-vs-published` is red on `main`"
+
+🔴 **RESOLVED. Superseded by "✅ RESOLVED — the repo freeze (`pins-vs-published`)" below
+(cli#529).** Do NOT run this block's "Next probe": it was written to separate two
+mechanisms, and the answer is already known — the npm/arborist crash was real and the
+SDK was innocent. Kept for its measurements only.
 
 - **Symptom + exact repro:** nothing merges in `civitai/cli`. Every PR shows
   `mergeStateStatus: BLOCKED`. Reproduce the cause directly:
@@ -132,7 +175,14 @@ is CLAIMED and not started.
   verdict off `internal/transport`, `internal/liveHost`, `internal/mockHost`,
   `hooks/useBuzzWorkflow`, `hooks/useAppWorkflows` by name.
 
-### `developer.civitai.com` returns 403 to `Python-urllib` — IN FLIGHT, delegated
+### ❌ SUPERSEDED (2026-09-12) — "`developer.civitai.com` returns 403 to `Python-urllib` — IN FLIGHT, delegated"
+
+🔴 **RESOLVED. Superseded by "✅ RESOLVED — `developer.civitai.com` 403 to
+`Python-urllib`" below.** Its leading hypothesis (a UA denylist in the docs repo's
+`nginx.conf`) is **REFUTED** — the cause was Cloudflare Browser Integrity Check, fixed
+by a Configuration Rule. **Do NOT run its "Next probe" and do NOT look in
+`nginx.conf`.** Re-measured live 2026-09-12: `Python-urllib/3.11` → **200**,
+`python-requests/2.31` → **200** on `/agent-setup/prompt.md`.
 
 - **Symptom + exact repro:**
   ```bash
@@ -171,7 +221,12 @@ was **wrong**.
   `scaffold-currency` scaffold and build against the bumped pins on the same
   node-24 runners and **pass**. `via: measurement`
 
-### 🔴 STILL OPEN — `bump-scaffold-pins` cannot land its own fix (cli#530)
+### ❌ SUPERSEDED (2026-09-12) — "🔴 STILL OPEN — `bump-scaffold-pins` cannot land its own fix (cli#530)"
+
+🔴 **NOT OPEN. Superseded by "✅ RESOLVED — `bump-scaffold-pins` could not land its own
+bump (cli#530)" below** — closed by cli#540 (`5557b6a`), verified 2026-09-11 by run
+34559798234. Issue **#530 is CLOSED**, re-verified 2026-09-12. Kept for the control
+pair (node 22/npm 10 vs node 24/npm 11), which is the durable evidence.
 
 The nightly bumps correctly (steps 4/6/7 green, incl. the network guard against
 the NEW pins) then dies at step 9 `validate — scaffold builds against the bumped
@@ -213,7 +268,12 @@ repo re-freezes on its own the next time upstream publishes.
   that either goes green or fails step 9 and STILL produces a PR. Nothing here
   can run the workflow.
 
-### ⚠ STILL OPEN — `Python-urllib` 403 at the Cloudflare edge
+### ❌ SUPERSEDED (2026-09-12) — "⚠ STILL OPEN — `Python-urllib` 403 at the Cloudflare edge" (1 of 2)
+
+🔴 **NOT OPEN.** Superseded by "✅ RESOLVED — `developer.civitai.com` 403 to
+`Python-urllib`" below. The 403 is **GONE**, re-measured live 2026-09-12 (200 for both
+`Python-urllib/3.11` and `python-requests/2.31`). This is the FIRST of two identical
+stale headings; the second is a few blocks down.
 
 Re-measured after every deploy, unchanged: `Python-urllib/3.11` → **403**
 (`error code: 1010`, Browser Integrity Check), `python-requests` / `curl` /
@@ -256,7 +316,11 @@ not exist here.
   step 9 **success**, step 11 **success**, opened PR #546 (closed, branches
   deleted). `via: measurement`
 
-### ⚠ STILL OPEN — `Python-urllib` 403 at the Cloudflare edge
+### ❌ SUPERSEDED (2026-09-12) — "⚠ STILL OPEN — `Python-urllib` 403 at the Cloudflare edge" (2 of 2)
+
+🔴 **NOT OPEN.** Superseded by the `✅ RESOLVED` block immediately below. It WAS
+actionable and it WAS actioned — a Configuration Rule on the `civitai.com` zone
+disabling BIC for `developer.civitai.com`.
 
 Unchanged this session and **not actionable from a repo**. Needs a Cloudflare
 dashboard change by someone with zone access. `via: measurement` (ruled out as
@@ -316,7 +380,10 @@ the `civitai.com` zone. Never the origin, never the docs repo.
   `/apps/` and `/agent-setup/prompt.md` — `prompt.md` 6,949 B and `llms.txt`
   13,066 B, `cmp` clean both, `content-type: text/markdown`, origin `etag` present.
 
-### The docs repo cannot be built locally from a pristine `main`, while CI builds it green
+### ⚠ OPEN — The docs repo cannot be built locally from a pristine `main`, while CI builds it green
+
+**Still open, and NOT re-verified on 2026-09-12** — this session did not touch the docs
+repo. Rank 15. The block below is the diagnosis as of 2026-09-11.
 
 - **Symptom + exact repro:**
   ```bash
@@ -350,8 +417,17 @@ the `civitai.com` zone. Never the origin, never the docs repo.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–14, 18 and 21 are DONE — numbering is preserved deliberately** so any live
-`claim-work` slug keeps pointing at the item it was taken for. New items continue from 22.
+🔴 **Ranks 1–10, 12, 13, 14, 18, 20, 21 and 22 are DONE — numbering is preserved
+deliberately** so any live `claim-work` slug keeps pointing at the item it was taken
+for. **Rank 11 is NOT done** (2 of 3; the previous wording "Ranks 1–14 … are DONE"
+swept it up and was wrong). Open: **11, 15, 16, 17, 19, 23, 24, 25, 26.** New items
+continue from 27.
+
+🔴 **Every item below was re-verified against live state on 2026-09-12, immediately
+before this list was written** — `gh issue list --state all`, `gh pr list --state open`
+and `gh pr view` — not carried over from the previous delta. Do the same before you
+trust it: this list has gone stale **within twenty minutes** while parallel sessions
+drained it, and a stale list is a duplicate-work generator.
 
 1. ~~**Unfreeze `civitai/cli`**~~ — **DONE**, cli#529.
    forcing: none
@@ -374,7 +450,9 @@ the `civitai.com` zone. Never the origin, never the docs repo.
 10. ~~**cli#543** — the read `--help` rune budget~~ — **DONE**, cli#559 (`a33daed`).
     The binding constraint MOVED rather than disappearing — see rank 16.
     forcing: none
-11. **Residuals of decisions item 38 — 2 of 3 DONE** (cli#560, `44a5b94`). **STILL OPEN:
+11. **NOT ASSESSED on 2026-09-12** — this session did not look at it; the text below is
+    carried forward unchanged from the previous delta, not re-measured.
+    **Residuals of decisions item 38 — 2 of 3 DONE** (cli#560, `44a5b94`). **STILL OPEN:
     the README documents no 429 → exit 2 reclassification.** Left deliberately — both
     README exit-code blocks are **generated** from `exitCodeDocs` in
     `internal/cmd/exitcodes_doc.go`, so writing the row means editing the generator and
@@ -401,6 +479,11 @@ the `civitai.com` zone. Never the origin, never the docs repo.
     before and after #541), untouched by rank 10's fix because it does not interpolate
     `readJSONNote`. Files: `internal/cmd/images.go`. Levers: `serverOwnedEnumNote`,
     `deepPagingNote`, or the body.
+    🔴 **The guard PASSES — re-run 2026-09-12,
+    `TestReadAPIHelpStaysWithinTheBudget` → `--- PASS`.** This item is **thin headroom,
+    not a failure**: 14 runes of slack on the binding body. It is ranked because the
+    next edit to any of the five shared constants spends that slack silently and reds
+    a command nobody touched. Do not read it as a broken gate.
     forcing: none
 17. **Most of this arc's PRs were not adversarially audited.** The ones that WERE
     (rank 6's two, #564's, and #569's) each found real defects in PRs that were fully
@@ -411,38 +494,104 @@ the `civitai.com` zone. Never the origin, never the docs repo.
     verified live by `gh workflow run appblocks-drift.yml`: ALERT path, docs#76 opened,
     label applied. **Residual**: the cross-run paths are still fake-only.
     forcing: none
-19. **`#542`'s stated closing condition may not be discharged.** It named "any
-    `saferune.*` call site outside `internal/cmd`". There are **two** —
-    `pkg/civitai/read.go` and `internal/genapi/status.go` — and cli#557's guard matches
-    `snippet`, not `saferune.*`. Read with rank 20.
+19. 🔴 **CONFIRMED STILL OPEN, re-measured 2026-09-12. `#542`'s stated closing condition
+    is NOT discharged — and the issue is CLOSED, which is exactly what makes this easy
+    to miss.** #542 named "any `saferune.*` call site outside `internal/cmd`". There are
+    still **two**, both live on `f0cb748`: **`pkg/civitai/read.go:610`**
+    (`saferune.Strip`) and **`internal/genapi/status.go:256`**
+    (`saferune.HasVisibleContent`). cli#557's guard is `snippetArgs` in
+    `pkg/civitai/snippet_args_ledger_test.go` — it enumerates **`snippet(` call sites in
+    `pkg/civitai` only** (verified: the identifier appears in that one file and nowhere
+    else in the tree), so it **cannot reach `internal/genapi` at all**. A closed issue
+    is not a discharged condition. Read with ranks 23–26 — same seam.
     forcing: none
-20. 🔴 **cli#566 — three uploader-controlled surfaces on the download path reach the
-    terminal raw, and #564's ledger STRUCTURALLY CANNOT demand a row for them.**
-    **CLAIMED `agent-setup-onboarding-20`, not started.** `GREW` only fires for functions
-    that **already call `safeTerm`**; these call it zero times. Surfaces, all in
-    `internal/cmd/download.go`: `(*progressWriter).line()` (`:1043,1045` — raw
-    `files[].name` inside a `\r`-rewritten progress line, every download);
-    `checkTargetCollisions` (`:702` — the **literal twin** of the sanitized `:658`, same
-    fields, same shape, 44 lines apart); and `fmt.Errorf` at `:787,:810` reaching
-    unfiltered stderr via `cmd/civitai/main.go:57`. First two **reproduced**; the third
-    **read, not driven**. Verified pre-existing:
-    `git diff --stat cf5e4a8 8063caa -- internal/cmd/download.go` empty, with
-    `git cat-file -e cf5e4a8:internal/cmd/download.go` proving the path existed.
-    Closing condition is in the issue.
-    forcing: security — uploader-controlled text reaches a terminal through a `\r`-rewrite
-    and through a message asserting an integrity result; the same defect shape #564's
-    headline fix closed one function away.
+20. ~~**cli#566 — three uploader-controlled surfaces on the download path reach the
+    terminal raw**~~ — **DONE**, cli#572 (`f0cb748`, merged 2026-09-12T20:04:11Z).
+    Issue **#566 CLOSED BY HAND** 20:06:46Z with evidence; no commit keyword was used.
+    Shipped the three named surfaces **plus three more found by sweep**, plus
+    `safeTermErr`. Ran a **five-round audit ladder (0–4)** that ended on the
+    prose-payload criterion, **not** on a clean round — see the gotchas.
+    🔴 **This did NOT fix the blind spot that caused it**: `GREW` still only fires for
+    functions that already call `safeTerm`. Residuals filed rather than folded in:
+    **ranks 23, 24, 25.**
+    forcing: none
 21. ~~**cli#554 was broken by merging #564**~~ — **DONE**, cli#569 (`e3f2608`), merged
     with a squash body that deliberately drops the inherited closing keyword. #554 left
     OPEN for xsvm to close; issue #552 left OPEN and holding the residuals.
     forcing: none
-22. **The widened-ledger work on issue #552 — a ledger keyed on RENDERING a
-    server-supplied struct field, not on the presence of a `safeTerm` call.** This is the
-    instrument rank 20's issue deliberately excludes from its own closing condition, and
-    it is what would cover the ~13 other tabwriter renderers in one move rather than
-    one function at a time. Read rank 19 and rank 20 first — all three are the same seam.
-    forcing: security — the same uploader-controlled-text class as rank 20, at the ~13
-    renderers no current guard can see.
+22. ~~**The widened-ledger work on issue #552 — a ledger keyed on RENDERING a
+    server-supplied struct field**~~ — **DONE**, cli#573 (`6f0a8d8`, merged
+    2026-09-12T07:24:07Z) by the parallel `external-issue-513-numeric-username`
+    session, **not by this arc**. Issue **#552 CLOSED** 17:30:31Z with its condition
+    verified. It shipped `tabwriter_ledger_test.go` + `tabwriter_forgery_test.go` over
+    ~13 renderers. 🔴 **It filed a successor, cli#575, carrying four residuals — see
+    rank 26.** Closing #552 did not close that seam.
+    forcing: none
+23. **cli#574 — `generate`'s blob download path prints the server-derived workflow id
+    raw in six error strings, while its own `Saved` line is gated.** OPEN, verified
+    2026-09-12. Found by the round-1 audit of #572; **pre-existing, not introduced by
+    it.** `internal/cmd/generate_output.go`: `:408` `refusing to overwrite …` (`target`),
+    `:419` `download %s` (`name`), `:433` `install %s` (`target`), and `blobStatusError`'s
+    three arms at `:388/:390/:392` (`name`). **`blobStatusError` (`:382`) is the
+    structural twin of the `downloadStatusError` that #572 gated** — same signature,
+    same `defer civitai.TagStatus`, same arms — and #572 gated that one **once at the
+    top**. The id is genuinely server-supplied: `renderOutName`'s own doc comment says so.
+    🔴 **`:413` `create output directory %s: %w` is CORRECTLY UNGATED and must stay that
+    way** — `dir` is `filepath.Dir(target)`, i.e. the user's `--out-dir`, never the
+    server's leaf, because `outputTarget` refuses any `name != filepath.Base(name)`.
+    Sanitizing it would strip **user-typed** bytes, which `internal/saferune`'s rule
+    forbids. #572's round 0 **removed** the byte-equivalent gate from `download.go` for
+    exactly this reason (`download.go:906` is now ungated, matching). A future reader
+    will see one gated twin and one ungated one and "fix" it. Do not.
+    forcing: security — the same uploader-controlled-text class as rank 20, one command
+    over, on the path that spends money.
+24. **cli#577 — a `\n` in a server-supplied file name still forges lines on four
+    download surfaces.** OPEN, verified 2026-09-12. `internal/saferune` **deliberately
+    retains** `\n` and `\t` (`Cc, minus \n and \t`), so `safeTerm` does not stop it.
+    Sites: `(*progressWriter).line` (the `\r`-rewritten progress line, re-emitted at
+    10 Hz on a TTY), `checkTargetCollisions`, `downloadOne`'s SHA256-mismatch message
+    (the CLI asserting an integrity **failure**), and `downloadStatusError`'s 401/403/404
+    arms. Measured: a name ending
+    `"\nSaved /home/u/legit.safetensors (4.0 GiB)  (SHA256 verified)"` renders the forged
+    line **before any transfer completes**, and `done()` leaves it standing.
+    🔴 **NOT a regression — all four were fully RAW before #572**, which is a strict
+    improvement that states this residual rather than hiding it. #552's closure by #573
+    **orphaned** this: #573's measured scope was ~13 **tabwriter** renderers and
+    `download.go` was never on that table, so as of #552 closing it had no tracking
+    object at all. The work is **deciding which transform each surface takes** — a
+    `\r`-rewritten progress line and a multi-line refusal do not want the cell rule —
+    and the issue deliberately does not prescribe one.
+    forcing: security — a forged `(SHA256 verified)` line is the CLI lying about an
+    integrity result on a surface the user is watching.
+25. **cli#579 — `saferune.Strip`'s doc claims a byte-for-byte subsequence, but its two
+    paths disagree on invalid UTF-8.** OPEN, verified 2026-09-12. The fast path
+    (`if !strings.ContainsFunc(s, Stripped) { return s }`) returns the input **untouched**,
+    invalid bytes and all; the rewrite path ranges over the string, where Go yields
+    `utf8.RuneError` per invalid byte and writes **U+FFFD** back out. Measured:
+    `Strip("\xff")` → `"\xff"` (identical), `Strip("\xff" + ZWSP)` → `"�"` (3 B, not
+    a subsequence). **A trailing zero-width space decides the fate of a leading `0xff`.**
+    🔴 **Inert today** — but it is a **false comment on the one function every `safeTerm`
+    call site in this repo funnels through**, and `AGENTS.md` treats a comment as a claim.
+    The cheap fix is the doc; the real question is which path is correct.
+    forcing: none
+26. 🔴 **cli#575 — four recorded residuals of the tabwriter ledger, and cli#578 is OPEN
+    against R1 RIGHT NOW.** Filed by the #573 session as #552's successor; **this arc's
+    brief did not know it existed.** Each residual is stated in
+    `internal/cmd/tabwriter_ledger_test.go` rather than implied. **R1 (the only plain
+    defect):** `gatePreSanitised` resolves a function **NAME**, never a relationship —
+    a renderer writing a raw server string into a cell, ledgered as
+    `{…, gatePreSanitised, "printTagList", …}` (an unrelated renderer that merely happens
+    to sanitise), **passes the whole `internal/cmd` package**. R2: `sanitizerReach` stops
+    at depth 4 (measured: 4 hops reported, 5 hops missed). R3: an all-CLI-owned renderer
+    has no honest row — the choice is deferred, not made. R4: ~60 single-line
+    `label: value` `Fprintf` sites one line **outside** a cell.
+    ⚠ **Claimed by another session** as `external-issue-513-numeric-username-12`, and
+    **cli#578 is open against R1** (it deletes the gate state rather than making it
+    cleverer). **Do not take R1.** R2–R4 are unclaimed, and R2–R4 may legitimately be
+    *accepted in writing* rather than fixed — that is in the closing condition.
+    forcing: security — same seam as ranks 19, 23 and 24; R1 is a hole any ledger row
+    can be moved into, which makes the guard's verdict unreliable rather than merely
+    incomplete.
 
 ## Gotchas / decisions / dead-ends
 
