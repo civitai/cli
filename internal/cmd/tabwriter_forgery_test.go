@@ -90,7 +90,9 @@ func TestForgeCellCarriesBothVectors(t *testing.T) {
 // tab and pads with its padchar (a space here), so runs of 2+ spaces are what
 // separate columns on screen — asserting on a literal tab in the OUTPUT cannot
 // fail on this path and would read as the test's thesis while proving nothing
-// (the same trap TestTabForgeryIsNeutralisedInTheRealImagesTable documents).
+// (that trap shipped here once: an assertion on a literal tab in tabwriter's
+// output, whose failure message read as the test's thesis while being unable to
+// fail at all).
 var twColSep = regexp.MustCompile(` {2,}`)
 
 func twCols(line string) int { return len(twColSep.Split(strings.TrimSpace(line), -1)) }

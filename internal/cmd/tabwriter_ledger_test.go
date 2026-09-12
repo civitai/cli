@@ -47,8 +47,12 @@ import (
 //  1. Server text written into a cell with NO sanitizer at all. No AST can tell
 //     a server string from a CLI-owned label, so that judgement is the LEDGER's
 //     job: every renderer carries a gate classification and a reason naming the
-//     fields, and the set of classifications is CLOSED at two — there is no
-//     "ungated but declared" state to move a hole into (see the const block).
+//     fields, and the set of classifications is CLOSED at two.
+//     🔴 CLOSED AT TWO IS NOT THE SAME AS "no state to move a hole into", and an
+//     earlier draft of this line claimed it was. gatePreSanitised resolves its
+//     `upstream` only to a NAME, never against this renderer's own cells, so a
+//     row naming any unrelated sanitising renderer passes — see its const-block
+//     note. The hole is one NAME wide rather than one WORD wide; it is not shut.
 //  2. A tabwriter reached through a struct field, a function-typed variable or
 //     an interface method — the taint walk follows locals, direct calls and
 //     parameters, not values stored on a struct. The same gap on the VALUE side
@@ -87,6 +91,16 @@ import (
 //     this round made it for the app path. Stated as an open residual rather than
 //     half-converted, and the README's "What a table cell can contain" says the
 //     same thing to users rather than promising the wider claim.
+//  7. A renderer whose cells are ALL CLI-owned — integers and literals, no server
+//     text — has no honest row. The analyzer registers it (the calibration table
+//     proves it sees such a tabwriter), so GREW demands a row; gateSingle then
+//     fails MISLABELLED with "the gate was deleted — which is the #552 defect
+//     happening", which is untrue of it; and gatePreSanitised would be a lie.
+//     This is the cost of closing the set, and it is a real cost: the honest
+//     options are a no-op safeTermSingle on an integer, or adding a third state
+//     back. No such renderer exists today, so the choice is deferred rather than
+//     made — but the next author to hit it should change this file, not reach
+//     for gatePreSanitised, which is where the GREW message currently points.
 
 // --- the analysis -----------------------------------------------------------
 
@@ -506,11 +520,23 @@ func parsePackageFiles(t *testing.T) (*token.FileSet, map[string]*ast.File) {
 // renderer writes `gateNoServerText` instead of `gateUnsanitised`, the counted
 // set stays empty, and the suite is green with a new forgery surface in it.
 //
-// With both gone, a renderer that reaches a cell without safeTermSingle has no
-// truthful row available: gateSingle fails MISLABELLED, gatePreSanitised has to
-// name an upstream function that actually calls the gate, any other spelling
-// fails the default arm, and no row at all fails GREW. That is strictly stronger
-// than a ceiling nobody was under.
+// Deleting them is strictly stronger than a ceiling nobody was under: gateSingle
+// fails MISLABELLED, any invented spelling fails the default arm, and no row at
+// all fails GREW.
+//
+// 🔴 BUT IT DOES NOT CLOSE THE WALK, AND AN EARLIER DRAFT OF THIS PARAGRAPH SAID
+// IT DID. It claimed "a renderer that reaches a cell without safeTermSingle has
+// no truthful row available". That is FALSE, and measured so: a renderer writing
+// a RAW server string into a cell — no safeTerm, no safeTermSingle — ledgered as
+// gatePreSanitised naming any unrelated renderer that happens to sanitise
+// (printTagList, say) passes this test and the whole package. See
+// gatePreSanitised's own note below for why: its resolution is not relational.
+// The walk was narrowed from one WORD to one NAME, not eliminated.
+//
+// This residual is PRE-EXISTING — the same row is green before this file existed
+// — so nothing here widened it. What is recorded is that it is open, because the
+// paragraph that said otherwise is what a reader adding a renderer would have
+// believed.
 const (
 	// gateSingle: at least one cell value is routed through safeTermSingle, and
 	// none through a bare safeTerm.
@@ -518,11 +544,24 @@ const (
 	// gatePreSanitised: a cell DOES carry server text, but it was gated upstream
 	// and reaches the cell through a struct field the scan does not follow.
 	//
-	// 🔴 IT IS A BINDING, NOT AN EXCUSE. The row must name the upstream function
-	// in `upstream`, and that name is RESOLVED: it has to exist in this package
-	// and to call safeTermSingle. Otherwise this state would be the hole every
-	// other row could be moved into — "it is handled somewhere else" asserted in
-	// prose, which is how a guard on a word gets walked.
+	// 🔴 THE RESOLUTION IS NOT RELATIONAL, AND THAT IS THIS STATE'S RESIDUAL.
+	// The row must name a function in `upstream`, and that name is checked two
+	// ways: it must EXIST in this package, and it must call safeTermSingle
+	// SOMEWHERE. Neither check ties the named function to THIS renderer's cells.
+	//
+	// So a row naming any unrelated sanitising renderer passes — measured: a
+	// renderer writing a raw server string into a cell, gated
+	// `{…, gatePreSanitised, "printTagList", …}`, is green here and across the
+	// whole package. This state IS therefore the hole other rows can be moved
+	// into: "it is handled somewhere else", asserted in prose and resolved only
+	// to a name. An earlier draft of this comment called it "A BINDING, NOT AN
+	// EXCUSE"; that was the thing it warns against, one level indirected.
+	//
+	// It is not fixed here and nothing justifies it — closing it means resolving
+	// the upstream against this renderer's OWN cell expressions, which the scan
+	// cannot do for the struct-field case this state exists to cover. Two facts
+	// bound the damage and neither is a defence: exactly ONE row uses it today
+	// (describeVersion), and its use is independently true.
 	gatePreSanitised = "pre-sanitised-upstream"
 )
 
