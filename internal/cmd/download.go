@@ -651,11 +651,28 @@ func selectOneFile(files []civitai.ModelVersionFile, want string) ([]civitai.Mod
 // formatFileList renders a compact "  - [id N] name (type, size)" list for
 // errors. The id is included so the user can copy it into --file <id> to
 // disambiguate same-named files.
+//
+// The placeholder nests dashIfEmpty OUTSIDE safeTerm — civitai/cli#572. The
+// other order asks "is the RAW type empty", which a type of one zero-width rune
+// answers "no"; safeTerm then empties it and the line renders "(, 2.9 MiB)"
+// with no placeholder at all. reportBaseModel already had this order; these two
+// sites did not.
+//
+// 🔴 THE REPO IS NOT CONSISTENT ON THIS, AND THIS COMMENT MUST NOT READ AS IF IT
+// WERE. #572 corrected exactly TWO sites — here and checkTargetCollisions. The
+// inverted order survives at 15 further occurrences across 5 files (measured on
+// this tree: download.go:521 ×2 and :536, generate_output.go:240 and :464,
+// workflow_settlement.go:73 and :76, workflows.go:144/145/147/150 and :221,
+// workflows_list.go:189/190/191) — the same count as the 15 that have the right
+// order, so it is a coin flip per site, not a convention. Several of those sit
+// inside tabwriter cells that civitai/cli#573 has just hardened, which makes
+// changing them a separate change with its own display consequences; they are
+// deliberately left alone here rather than swept in.
 func formatFileList(files []civitai.ModelVersionFile) string {
 	var b strings.Builder
 	for i := range files {
 		f := files[i]
-		fmt.Fprintf(&b, "  - [id %d] %s (%s, %s)\n", f.ID, safeTerm(f.Name), safeTerm(dashIfEmpty(f.Type)), humanBytes(int64(f.SizeKB*1024)))
+		fmt.Fprintf(&b, "  - [id %d] %s (%s, %s)\n", f.ID, safeTerm(f.Name), dashIfEmpty(safeTerm(f.Type)), humanBytes(int64(f.SizeKB*1024)))
 	}
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -672,6 +689,32 @@ func formatFileList(files []civitai.ModelVersionFile) string {
 // numeric id + size to distinguish them) BEFORE anything is transferred, so no
 // data is ever lost to a silent overwrite. Per-file targetPath errors are left
 // for the normal per-file path to surface.
+//
+// 🔴 EVERY SERVER-ORIGIN FIELD IN THE LISTING IS safeTerm'd, AND IT WAS NOT
+// UNTIL civitai/cli#566. The group line's `target` is mixed-origin (targetPath's
+// doc comment states that, and names sanitising its print sites as the reason),
+// and the per-file line is the LITERAL TWIN of formatFileList's — same fields,
+// same shape — and that one was gated while this one was not. That is the defect
+// shape #564's nonModelFileMarker fix closed: one renderer sanitising a field
+// while its sibling does not. The stakes are higher here than on the ambiguity
+// list, because this error is the ONLY thing standing between the user and a
+// silent overwrite — a cursor escape in a file name can erase the sibling row
+// the user is being asked to choose between.
+//
+// ⚠ RESIDUAL, STATED RATHER THAN IMPLIED: safeTerm removes terminal ESCAPES and
+// the invisible class, NOT every forgery primitive. saferune deliberately keeps
+// `\n` and `\t` (saferune.go: "Cc, minus \n and \t"), so a files[].name
+// containing a newline still forges whole lines inside this refusal — the row
+// the user is choosing between can be followed by attacker-written text at
+// column zero. That class is repo-wide rather than this renderer's, and it is
+// strictly better than the raw state this replaced.
+//
+// It is owned by civitai/cli#577, NOT by #552: #552 was closed by #573, whose
+// measured scope was ~13 TABWRITER renderers and which never had download.go on
+// its table. #577 does not simply prescribe safeTermSingle here — this refusal
+// is free text rather than a cell, and it is a fail-safe whose group structure
+// has to stay readable, so deciding WHICH transform this surface takes is the
+// work #577 describes.
 func checkTargetCollisions(files []civitai.ModelVersionFile, o *downloadOpts) error {
 	byTarget := make(map[string][]civitai.ModelVersionFile)
 	var order []string
@@ -696,10 +739,11 @@ func checkTargetCollisions(files []civitai.ModelVersionFile, o *downloadOpts) er
 			continue
 		}
 		groups++
-		fmt.Fprintf(&b, "  %s  ← %d files:\n", target, len(grp))
+		fmt.Fprintf(&b, "  %s  ← %d files:\n", safeTerm(target), len(grp))
 		for i := range grp {
 			f := grp[i]
-			fmt.Fprintf(&b, "      - [id %d] %s (%s, %s)\n", f.ID, f.Name, dashIfEmpty(f.Type), humanBytes(int64(f.SizeKB*1024)))
+			// dashIfEmpty OUTSIDE safeTerm — see formatFileList (civitai/cli#572).
+			fmt.Fprintf(&b, "      - [id %d] %s (%s, %s)\n", f.ID, safeTerm(f.Name), dashIfEmpty(safeTerm(f.Type)), humanBytes(int64(f.SizeKB*1024)))
 		}
 	}
 	if groups == 0 {
@@ -734,13 +778,43 @@ func checkTargetCollisions(files []civitai.ModelVersionFile, o *downloadOpts) er
 // that line gets a path that does not exist. Separating the two would mean
 // threading the origin out of here; it is not worth it on this path, and the
 // README says what the CLI actually does.
+//
+// 🔴 ITS REFUSAL IS A TERMINAL SURFACE TOO, AND `%q` IS NOT A SANITISER —
+// civitai/cli#572. The unusable-filename error below echoes the RAW `f.Name`,
+// and it is reachable with an arbitrary payload: `filepath.Base` of
+// "<anything>/.." is "..", so a name can carry any prefix it likes into the
+// message. It reaches a terminal twice — on stderr via downloadSelected (main.go
+// prints err.Error() unfiltered) and on STDOUT via printDownloadPlan's
+// "target: (unresolved) — %v", one line below a correctly-sanitised name.
+//
+// An earlier round shipped this ungated, reasoning that "%q already escapes
+// every Cc/Cf; only the blank-but-graphic pair survives, which cannot move a
+// cursor". That is wrong in the direction that matters, and it is wrong by
+// MEASUREMENT, not by argument: strconv's quoting escapes what is not
+// `IsPrint`, and Go's `IsPrint` admits every non-spacing mark and symbol. So
+// `%q` escapes the Cc/Cf half of saferune's class and passes the rest THROUGH,
+// RAW — U+034F (Mn), U+2800 (So), U+FE00 and U+180B (Mn), U+17B4 (Mn), and the
+// Hangul fillers U+3164/U+115F (Lo). That is precisely the half saferune's
+// package doc records the `Cf`-based first cut of #393 missing, and why the
+// class was redrawn on Default_Ignorable_Code_Point. It is not a cursor vector
+// and was never claimed to be one; it is the PADDING/FORGERY vector this repo
+// already demonstrated — hardSplitOverlong's comment records a U+2800 run
+// rendering as a table row.
+//
+// `%q` is KEPT as well as safeTerm, for two things safeTerm does not do. It
+// DELIMITS — this refusal fires exactly when the basename degenerated, so the
+// name is often empty, blank or all-slashes, and unquoted it would render as
+// nothing at all. And it escapes `\n` and `\t`, which saferune deliberately
+// KEEPS (see safeTermSingle), so quoting is what stops this particular message
+// forging a line. Order matters: safeTerm runs FIRST, so `%q` never sees the
+// invisible class and cannot be read as the thing removing it.
 func targetPath(f civitai.ModelVersionFile, o *downloadOpts) (string, string, error) {
 	if o.out != "" {
 		return o.out, "", nil
 	}
 	base := filepath.Base(f.Name)
 	if base == "." || base == ".." || base == string(filepath.Separator) || base == "/" {
-		return "", "", fmt.Errorf("server returned an unusable filename %q; pass --out to set the output path", f.Name)
+		return "", "", fmt.Errorf("server returned an unusable filename %q; pass --out to set the output path", safeTerm(f.Name))
 	}
 	if o.layout != "" {
 		dir, note := routeDir(o.layout, o.root, f.Type, o.modelType, base)
@@ -766,6 +840,31 @@ func fileTypeInfos(files []civitai.ModelVersionFile, modelType string) []fileTyp
 // and renaming on success. Returns skipped=true when an already-present target
 // satisfied the idempotency check. Verification (SHA256, default on) deletes the
 // partial file and errors on mismatch.
+//
+// 🔴 THE ERROR STRINGS ARE A TERMINAL SURFACE TOO, AND THEY WERE NOT GATED
+// UNTIL civitai/cli#566. `cmd/civitai/main.go` prints err.Error() to stderr
+// with no filter of its own, so every %s here reaches a terminal exactly like a
+// rendered line does — which makes an unsanitised `f.Name` or `target` in one
+// of them the same forgery vector as an unsanitised table cell, with a worse
+// payload: the SHA256-mismatch string is the CLI ASSERTING AN INTEGRITY
+// FAILURE, so a cursor escape in the uploader's file name can overwrite the
+// word "mismatch" before the user reads it. `target` is mixed-origin for the
+// reason targetPath's doc comment gives; it was already safeTerm'd on the
+// `Saved …` line below and raw two returns above it.
+//
+// ⚠ RESIDUAL, STATED RATHER THAN IMPLIED: what these gates remove is terminal
+// ESCAPES and the invisible class — not `\n`, which saferune deliberately keeps
+// (saferune.go: "Cc, minus \n and \t"). A newline in files[].name therefore
+// still forges whole lines inside the SHA256-mismatch and status errors. Every
+// one of these surfaces was fully raw before #566, so the gates below are a
+// strict improvement on it rather than a claim to have closed it.
+//
+// The residual is owned by civitai/cli#577, NOT by #552: #552 was closed by
+// #573 over ~13 TABWRITER renderers, and download.go was never on its table.
+// #577 lists the SHA256-mismatch message and downloadStatusError's arms among
+// the four surfaces it covers, and leaves the choice of transform open — these
+// are free-text errors, not cells, so safeTermSingle is a candidate rather than
+// a prescription.
 func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer, f civitai.ModelVersionFile, target string, o *downloadOpts) (skipped bool, err error) {
 	sha := strings.TrimSpace(f.Hashes.SHA256)
 	verify := !o.noVerify && sha != ""
@@ -776,6 +875,32 @@ func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer
 		return true, nil
 	}
 
+	// Deliberately NOT gated, unlike every other error below, because `dir` holds
+	// only bytes the USER typed and saferune's package doc is explicit that the
+	// strip is not applied to those. That rests on THREE premises, all true today
+	// and all verified in civitai/cli#572:
+	//
+	//  1. targetPath puts the server's name at the LEAF (`filepath.Base(f.Name)`),
+	//     which `filepath.Dir` drops;
+	//  2. its bare-`base` return yields Dir == "." and is skipped by the condition
+	//     below;
+	//  3. under --layout, `routeDir` returns --root, or --root joined with a
+	//     compile-time `layoutFolders` constant — the server's file/model type
+	//     only picks the map key, it never reaches `dir`.
+	//
+	// MkdirAll's *fs.PathError carries a prefix of `dir`, so the cause is
+	// user-typed too, and gating it would be the #393 defect (rewriting the user's
+	// own path back at them).
+	//
+	// 🔴 SO THIS IS A CONDITIONAL, NOT A PROHIBITION, AND NOTHING MECHANICAL HOLDS
+	// IT. The ledger's GREW check only fires for a function that ALREADY calls
+	// safeTerm, and the `bareIdentArgs["dir"]` row went away with the old gate — so
+	// if a later change breaks any of the three premises (the obvious one: a
+	// --layout variant routing by a server-supplied type STRING rather than by a
+	// map key), `dir` silently becomes server text printed raw, with nothing red
+	// and this comment reading as permission. RE-DERIVE ALL THREE before deciding;
+	// if any has stopped holding, a gate here is correct and this comment is what
+	// is stale.
 	if dir := filepath.Dir(target); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			return false, fmt.Errorf("create output directory %s: %w", dir, err)
@@ -784,7 +909,7 @@ func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer
 
 	resp, err := dl.DownloadFile(ctx, f.DownloadURL)
 	if err != nil {
-		return false, fmt.Errorf("download %s: %w", f.Name, err)
+		return false, fmt.Errorf("download %s: %w", safeTerm(f.Name), safeTermErr(err))
 	}
 	defer resp.Body.Close()
 
@@ -807,13 +932,13 @@ func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer
 		// Delete the corrupt partial so the failure message is honest about the
 		// state on disk.
 		_ = os.Remove(partPath)
-		return false, fmt.Errorf("SHA256 mismatch for %s — expected %s, got %s (deleted the partial download)", f.Name, strings.ToLower(sha), got)
+		return false, fmt.Errorf("SHA256 mismatch for %s — expected %s, got %s (deleted the partial download)", safeTerm(f.Name), strings.ToLower(sha), got)
 	}
 
 	if err := os.Rename(partPath, target); err != nil {
 		// The .part is finished but couldn't be installed; don't leave it behind.
 		_ = os.Remove(partPath)
-		return false, fmt.Errorf("install %s: %w", target, err)
+		return false, fmt.Errorf("install %s: %w", safeTerm(target), safeTermErr(err))
 	}
 
 	note := ""
@@ -877,6 +1002,12 @@ func presentTargetSatisfies(out io.Writer, target, sha string, verify, force boo
 // byte count written and, when verify is set, the lowercase-hex SHA256 of the
 // streamed bytes; the caller then owns the finished (closed) ".part" file and is
 // responsible for verifying / renaming / removing it.
+//
+// 🔴 ITS THREE ERROR STRINGS ARE GATED FOR THE REASON downloadOne's ARE
+// (civitai/cli#566): main.go prints err.Error() raw to stderr. `name` is the
+// SERVER's files[].name; `partPath` is the mixed-origin target plus ".part".
+// Leaving these raw while downloadOne's are gated would rebuild the exact
+// sibling-renderer split #566 was filed about, one call frame down.
 func writePart(body io.Reader, partPath string, errW io.Writer, name string, total int64, verify bool) (written int64, gotHash string, err error) {
 	// Self-heal a stale ".part": remove it before a fresh transfer (os.Create
 	// truncates too, but be explicit).
@@ -885,7 +1016,7 @@ func writePart(body io.Reader, partPath string, errW io.Writer, name string, tot
 	}
 	partFile, err := os.Create(partPath)
 	if err != nil {
-		return 0, "", fmt.Errorf("create %s: %w", partPath, err)
+		return 0, "", fmt.Errorf("create %s: %w", safeTerm(partPath), safeTermErr(err))
 	}
 	// Best-effort cleanup of the partial file on any failure before we hand a
 	// finished file back to the caller.
@@ -904,11 +1035,11 @@ func writePart(body io.Reader, partPath string, errW io.Writer, name string, tot
 		writers = append(writers, hasher)
 	}
 	if _, err := io.Copy(io.MultiWriter(writers...), body); err != nil {
-		return 0, "", fmt.Errorf("streaming %s: %w", name, err)
+		return 0, "", fmt.Errorf("streaming %s: %w", safeTerm(name), safeTermErr(err))
 	}
 	pw.done()
 	if err := partFile.Close(); err != nil {
-		return 0, "", fmt.Errorf("finalize %s: %w", partPath, err)
+		return 0, "", fmt.Errorf("finalize %s: %w", safeTerm(partPath), safeTermErr(err))
 	}
 	cleanup = false
 
@@ -962,6 +1093,14 @@ func downloadStatusError(status int, name string) (err error) {
 	// Classify the returned error by status (401/403→auth, 404→not-found, …)
 	// without changing its message, so the process exit code reflects the kind.
 	defer func() { err = civitai.TagStatus(status, err) }()
+	// 🔴 THE NAME IS THE SERVER'S files[].name AND main.go PRINTS err.Error()
+	// RAW — civitai/cli#566. Gated ONCE, here, rather than at each of the four
+	// returns below: they are four spellings of one rule, and #566 exists because
+	// two spellings of one rule drifted apart. The 401 arm is the most exposed of
+	// them — an anonymous download of a gated file reaches it on the FIRST run,
+	// before the user has seen that file name on any other surface, and the
+	// message it would forge is an instruction to run `civitai login`.
+	name = safeTerm(name)
 	switch {
 	case status >= 200 && status < 300:
 		return nil
@@ -1037,12 +1176,44 @@ func (p *progressWriter) done() {
 	}
 }
 
+// line renders the progress line. p.name is the SERVER's files[].name — it is
+// threaded here from downloadOne via writePart's `name` parameter — so it is
+// gated by safeTerm like every other server-origin string this CLI prints.
+//
+// 🔴 THIS IS THE \r-REWRITTEN SURFACE, WHERE A CURSOR ESCAPE IS WORTH MOST, AND
+// IT WAS RAW UNTIL civitai/cli#566. Both of line's callers rewrite the line in
+// place — Write's TTY branch prints "\r"+line() ten times a second, done()
+// prints "\r"+line()+"\n" — so the terminal is already being told to move the
+// cursor by the CLI itself, and an `\x1b[1A\x1b[2K` in the file name simply
+// extends that reach upward into lines the CLI wrote earlier (the pickle/archive
+// EXECUTION WARNING and the no-SHA256 warning, both emitted by
+// emitPreDownloadNotes immediately above this progress line). #564's ledger
+// makes exactly this argument for (*ttyPollReporter).tick.
+//
+// It is stripped ONCE per call rather than once per interpolation so the two
+// branches cannot drift apart — the defect shape #566 found in
+// checkTargetCollisions.
+//
+// ⚠ RESIDUAL, AND IT IS WORTH MOST ON THIS SURFACE OF THE FOUR: saferune keeps
+// `\n` on purpose, so a newline in files[].name still forges whole lines here,
+// and Write re-emits "\r"+line() at 10 Hz — so a forged `Saved … (SHA256
+// verified)` can scroll past before the transfer has finished. safeTerm is the
+// escape gate, not a one-line guarantee. This line was fully raw before #566, so
+// the strip above narrows the vector rather than closing it.
+//
+// The residual is owned by civitai/cli#577, NOT by #552: #552 was closed by
+// #573 over ~13 TABWRITER renderers, and download.go was never on its table.
+// #577 names this function first and measures exactly the forgery above; it
+// deliberately does NOT prescribe safeTermSingle, because collapsing `\n` to a
+// space in a `\r`-rewritten line has different display consequences than it has
+// in a cell, and picking the transform is the work.
 func (p *progressWriter) line() string {
+	name := safeTerm(p.name)
 	if p.total > 0 {
 		pct := float64(p.written) / float64(p.total) * 100
-		return fmt.Sprintf("  %s  %s / %s (%.0f%%)", p.name, humanBytes(p.written), humanBytes(p.total), pct)
+		return fmt.Sprintf("  %s  %s / %s (%.0f%%)", name, humanBytes(p.written), humanBytes(p.total), pct)
 	}
-	return fmt.Sprintf("  %s  %s", p.name, humanBytes(p.written))
+	return fmt.Sprintf("  %s  %s", name, humanBytes(p.written))
 }
 
 // humanBytes renders a byte count in IEC binary units (KiB/MiB/GiB…).
