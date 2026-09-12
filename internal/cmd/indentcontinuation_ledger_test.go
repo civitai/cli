@@ -7,7 +7,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,15 +17,35 @@ import (
 )
 
 // indentcontinuation_ledger_test.go pins the set of call sites that route
-// multi-line server text through indentContinuation (civitai/cli#552, follow-up
-// to #545).
+// multi-line server text through indentContinuation, and asserts that each one
+// sanitises its text and indents with real whitespace (civitai/cli#545, #552).
+//
+// 🔴 IT IS NOT THE CLOSING CONDITION FOR #552, AND IT USED TO SAY IT WAS. That
+// claim was written when this was the only ledger in the package, and #552's own
+// body disowns it: its ask was a ledger over "call sites that call
+// indentContinuation", which is satisfiable BY CONSTRUCTION and blind to every
+// renderer that has never called the helper — the issue records that #554 should
+// not be read as closing it even once merged. The closing condition is
+// tabwriterRenderers in tabwriter_ledger_test.go, whose predicate is structural
+// ("a value written into a tabwriter cell may not reach it through a bare
+// safeTerm") rather than keyed on a helper's name, plus the behavioural table in
+// tabwriter_forgery_test.go that drives the real renderers.
+//
+// 🔴 SO WHAT THIS FILE ACTUALLY PINS, stated at the scope it measures: for the
+// eight places that DO call indentContinuation, the argument passed through
+// safeTerm or wrapServerText, the pad is whitespace (RESOLVED, not
+// name-allowlisted — see checkIndentPadArg), and the set neither grows nor
+// shrinks unnoticed. It says nothing about whether the set is the RIGHT one.
 //
 // 🔴 WHAT THIS LEDGER CANNOT SEE, stated rather than waved at:
 // 1. A call routed through a local function-typed variable or alias;
 // 2. An un-ledgered renderer that prints multi-line server text using raw
 //    fmt.Fprintf without ever invoking indentContinuation or safeTermSingle.
-// The behavioural subtest beside this is what guards the rendered surfaces
-// against (2).
+//    This is (2) restated as the general case, and it is precisely why this file
+//    cannot close #552: printSubmissionDetail sat in exactly that state — no
+//    call, therefore no row, therefore no signal — while printing a raw ESC.
+// The behavioural subtest beside this guards the images.go surfaces against (2);
+// TestGatedRenderersDoNotForgeOutsideTheirTable guards the app-path ones.
 //
 // 🔴 THE SET GROWS OR SHRINKS:
 // Adding a call site without adding it to the ledger fails this test (GREW).
@@ -39,6 +58,19 @@ type indentCallSite struct {
 }
 
 var pinnedIndentCallSites = []indentCallSite{
+	{
+		file: "app_status.go",
+		fn:   "printSubmissionDetail",
+		why: "`app status --id`'s rejection reason — reviewer free text, multi-line by design, printed " +
+			"one line under the submission table this function flushes. It was UNGATED until #552's " +
+			"follow-up: a reason of \"\\x1b[1A\\x1b[2KOVERWRITTEN\" put a raw ESC on stdout and overwrote " +
+			"the row above it",
+	},
+	{
+		file: "app_status.go",
+		fn:   "printSubmissionDetail",
+		why:  "`app status --id`'s approval notes — the same field class, the same gap, the same fix",
+	},
 	{
 		file: "generate.go",
 		fn:   "serverReasonSuffix",
@@ -87,9 +119,14 @@ var pinnedIndentCallSites = []indentCallSite{
 // and anything at or above this is the set comparison's business, not ours.
 const minIndentCallSitesExpected = 3
 
-// TestIndentContinuationCallSitesAreLedgered is the closing condition for #552.
-// It combines a structural AST ledger with a behavioural seam test, ensuring
-// that go test ./internal/cmd -run Ledger covers both guards in one invocation.
+// TestIndentContinuationCallSitesAreLedgered combines the structural AST ledger
+// over indentContinuation's call sites with a behavioural seam test over
+// images.go, so `go test ./internal/cmd -run Ledger` covers both in one
+// invocation.
+//
+// 🔴 IT IS NOT THE CLOSING CONDITION FOR #552 — that is tabwriterRenderers, and
+// the file header says why this one cannot be. Read the claim there before
+// citing this test as coverage of anything wider than its own eight call sites.
 func TestIndentContinuationCallSitesAreLedgered(t *testing.T) {
 	t.Run("StructuralLedger", func(t *testing.T) {
 		entries, err := os.ReadDir(".")
@@ -434,46 +471,17 @@ func TestSafeTermSingleNeutralisesTheTabColumnVector(t *testing.T) {
 	}
 }
 
-// TestTabForgeryIsNeutralisedInTheRealImagesTable is the BEHAVIOURAL half of the
-// tab guard: the unit test above pins safeTermSingle, this one drives the real
-// `images search` renderer, because a helper can be correct while a call site
-// still forgets to call it.
-func TestTabForgeryIsNeutralisedInTheRealImagesTable(t *testing.T) {
-	items := []civitai.ImageItem{{
-		ID: 1, URL: "https://img/1", NSFWLevel: "None", BaseModel: "SDXL",
-		Username: civitai.FlexString("alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal"),
-	}}
-	var buf bytes.Buffer
-	cmd := &cobra.Command{}
-	cmd.SetOut(&buf)
-	printImageList(cmd, items)
-	out := buf.String()
-
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	if len(lines) != 2 {
-		t.Fatalf("want a header and exactly ONE data row, got %d line(s):\n%s", len(lines), out)
-	}
-	// 🔴 DO NOT ASSERT ON A LITERAL \t IN THE OUTPUT — that check cannot fail on
-	// this path and reads as the test's thesis while proving nothing. tabwriter
-	// CONSUMES the tab as its cell delimiter and pads with padchar (' '), so its
-	// output contains no literal tab whether or not the input did.
-	//
-	// The property that actually matters is COLUMN COUNT: a forged tab would make
-	// the data row carry more columns than the header. Compare them by counting
-	// runs of 2+ spaces, which is how tabwriter separates cells here.
-	cols := func(line string) int { return len(regexp.MustCompile(` {2,}`).Split(strings.TrimSpace(line), -1)) }
-	if got, want := cols(lines[1]), cols(lines[0]); got != want {
-		t.Errorf("the data row has %d column(s) but the header has %d — server text injected columns:\n%q\n%q",
-			got, want, lines[0], lines[1])
-	}
-	// The REAL field values must still occupy their real columns — a guard that
-	// simply ate the username would pass the check above.
-	for _, want := range []string{"SDXL", "https://img/1"} {
-		if !strings.Contains(lines[1], want) {
-			t.Errorf("real column value %q missing from the row:\n%q", want, lines[1])
-		}
-	}
-	if !strings.Contains(lines[1], "alice SDXL 9x9 None 0 0 https://evil.example/steal") {
-		t.Errorf("the forged payload should survive as INERT TEXT in one cell; got:\n%q", lines[1])
-	}
-}
+// (TestTabForgeryIsNeutralisedInTheRealImagesTable lived here. It drove
+// printImageList with the #569 username payload and asserted a 2-line,
+// square-column render in which the payload survived as inert text. It was
+// deleted as STRICTLY SUBSUMED: TestTabwriterRenderersCannotBeForged's
+// `images search` case asserts everything it did against a payload carrying a
+// tab AND a newline, plus the per-field naming this one could not do — and it
+// does so for eighteen other renderers besides. The historically measured
+// payload was not lost with it: it is the `images search`, the #569 payload case
+// in that table, kept as a second fixture precisely because it is the shape an
+// attacker sent rather than one a test author invented.
+//
+// TestSafeTermSingleNeutralisesTheTabColumnVector above is NOT subsumed — it
+// pins the helper directly, which is the claim that survives a renderer being
+// rewritten.)

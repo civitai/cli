@@ -131,7 +131,14 @@ func nonModelFileMarker(files []civitai.ModelVersionFile) string {
 	// most to an attacker. The same field is safeTerm'd in the files table a few
 	// lines further down; here it was not, and nothing could see the difference
 	// until a hostile fixture was fed through this function.
-	return "[" + safeTerm(typ) + "]"
+	//
+	// 🔴 safeTermSingle, NOT safeTerm (civitai/cli#552). Both of this marker's
+	// call sites are single-line: one is interpolated into a header LINE, the
+	// other into a tabwriter CELL, and safeTerm keeps `\n` and `\t` — the one
+	// that forges a row at column zero and the one that injects a column. The
+	// marker is a bracketed type word; a line break inside it is never
+	// legitimate.
+	return "[" + safeTermSingle(typ) + "]"
 }
 
 // checkLimit validates a --limit against an endpoint's documented maximum. It

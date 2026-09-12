@@ -488,19 +488,30 @@ func listingStatusPayload(slug string, ref *appapi.ListingRef, view *appapi.List
 
 func printListingStatus(w io.Writer, slug string, ref *appapi.ListingRef, view *appapi.ListingEditView) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	// `slug` is what the USER typed, echoed exactly — sanitising the user's own
+	// bytes is the civitai/cli#393 defect. `ref.Status` is SERVER text in a
+	// tabwriter cell, so it goes through safeTermSingle (civitai/cli#552).
 	fmt.Fprintf(tw, "App:\t%s\n", slug)
-	fmt.Fprintf(tw, "Listing status:\t%s\n", ref.Status)
+	fmt.Fprintf(tw, "Listing status:\t%s\n", safeTermSingle(ref.Status))
 	fmt.Fprintf(tw, "Icon:\t%s\n", assetLabel(view.Assets.Icon.Present(), true))
 	fmt.Fprintf(tw, "Cover:\t%s\n", assetLabel(view.Assets.Cover.Present(), true))
 	fmt.Fprintf(tw, "Screenshots:\t%d\n", len(view.Assets.Screenshots))
 	_ = tw.Flush()
 
+	// 🔴 THESE TWO ARE SERVER TEXT TOO, AND THEY ARE NOT CELLS — which is exactly
+	// why they were missed: the tabwriter ledger's row for this function reads as
+	// coverage of `app listing status`, and it is a claim about the five cells
+	// above only. Measured: a caption of "GOOD\tTABBED\nApp:  forged-line" emitted
+	// `App:  forged-line` at column zero, five lines under the REAL `App:` row
+	// this same function writes through its tabwriter (civitai/cli#552).
+	// A screenshot id and a caption are single-line metadata, so safeTermSingle is
+	// the gate: a newline or tab here has no legitimate use.
 	for _, s := range view.Assets.Screenshots {
 		caption := ""
 		if s.Caption != nil && *s.Caption != "" {
-			caption = "  — " + *s.Caption
+			caption = "  — " + safeTermSingle(*s.Caption)
 		}
-		fmt.Fprintf(w, "  %s%s\n", s.ID, caption)
+		fmt.Fprintf(w, "  %s%s\n", safeTermSingle(s.ID), caption)
 	}
 
 	iconOK := view.Assets.Icon.Present()

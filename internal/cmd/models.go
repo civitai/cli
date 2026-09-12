@@ -214,13 +214,13 @@ func printModelList(cmd *cobra.Command, items []civitai.ModelListItem) {
 	for _, m := range items {
 		creator := "-"
 		if m.Creator != nil && m.Creator.Username != "" {
-			creator = safeTerm(m.Creator.Username.String())
+			creator = safeTermSingle(m.Creator.Username.String())
 		}
-		name := safeTerm(m.Name)
+		name := safeTermSingle(m.Name)
 		if m.NSFW {
 			name += " [nsfw]"
 		}
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\n", m.ID, name, safeTerm(m.Type), creator, m.Stats.DownloadCount, m.Stats.ThumbsUpCount)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\n", m.ID, name, safeTermSingle(m.Type), creator, m.Stats.DownloadCount, m.Stats.ThumbsUpCount)
 	}
 	_ = tw.Flush()
 }
@@ -246,7 +246,7 @@ func printModelDetail(cmd *cobra.Command, m *civitai.ModelDetail) {
 		if marker != "" {
 			marker = "  " + marker
 		}
-		fmt.Fprintf(tw, "    %d\t%s\t%s%s\n", v.ID, safeTerm(v.Name), safeTerm(v.BaseModel), marker)
+		fmt.Fprintf(tw, "    %d\t%s\t%s%s\n", v.ID, safeTermSingle(v.Name), safeTermSingle(v.BaseModel), marker)
 	}
 	_ = tw.Flush()
 }

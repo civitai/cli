@@ -329,9 +329,11 @@ func appRating(r civitai.ListingRecommend) string {
 
 // appCardAuthor renders a card's creator username, or a dash when the creator
 // chip is absent (a vanished owner row).
+// It is safeTermSingle because its only caller puts it in a tabwriter CELL: a
+// `\n` in a username forges a row and a `\t` injects a column (civitai/cli#552).
 func appCardAuthor(c *civitai.AppCard) string {
 	if c.Creator != nil && c.Creator.Username != "" {
-		return safeTerm(c.Creator.Username.String())
+		return safeTermSingle(c.Creator.Username.String())
 	}
 	return "-"
 }
@@ -348,10 +350,10 @@ func printAppList(cmd *cobra.Command, items []civitai.AppCard) {
 	for i := range items {
 		c := &items[i]
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%d\n",
-			safeTerm(c.Name),
-			dashIfEmpty(safeTerm(c.Slug)),
-			dashIfEmpty(safeTerm(c.Kind)),
-			dashIfEmpty(safeTerm(c.Category)),
+			safeTermSingle(c.Name),
+			dashIfEmpty(safeTermSingle(c.Slug)),
+			dashIfEmpty(safeTermSingle(c.Kind)),
+			dashIfEmpty(safeTermSingle(c.Category)),
 			appCardAuthor(c),
 			appRating(c.Recommend),
 			c.ReviewCount,
