@@ -1229,7 +1229,105 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   `s` is the commonest local name in Go and one entry blinds the harness across ~67 files.
   Measured both directions this session. **Do not "simplify" it back to a name or a file.**
 
+### Added 2026-09-12 (rank 20 close-out) — a five-round ladder, a semantic merge conflict, and a live tooling defect
+
+- 🔴 **ROUND 0 FOUND A GUARD THAT SHOULD NOT EXIST — INSIDE A PR WHOSE ENTIRE PURPOSE
+  WAS ADDING GUARDS.** #572 shipped `safeTerm(dir)` on the `create output directory`
+  error. It is **unreachable for server bytes**: `filepath.Base` puts the uploader's
+  name in the **leaf**, so `filepath.Dir(target)` yields only user-typed `--out` /
+  `--out-dir` / `--root` or a `layoutFolders` constant — and stripping user-typed input
+  is precisely what `internal/saferune`'s rule **forbids**. 🔴 **It had already passed a
+  20-mutant sweep.** The killing subtest handed `downloadOne` a target with the hostile
+  name as a **directory component**, a shape `targetPath` cannot produce. **BREAKABLE IS
+  NOT REACHABLE** — a mutation sweep proves a guard can go red, never that production
+  can reach it. Removing it *restored consistency*: `generate_output.go:413` carries the
+  same ungated `create output directory %s: %w` line, so the gate was the outlier, not
+  the exception. **Ask of every new guard: what production input reaches this line?**
+  `via: measurement`
+- 🔴 **ROUNDS 1→4 EACH RETRACTED A JUSTIFICATION THE PREVIOUS ROUND HAD WRITTEN WHILE
+  FIXING THE ROUND BEFORE IT.** The chain, in full, because the shape is the lesson:
+  round 1 wrote a false claim (*"`%q` already escapes the class"*) → round 2 retracted
+  it, **but the retraction landed in a test header while the authoritative ledger row
+  kept the false sentence** → round 3 found round 2's retraction contained its own false
+  clause (*"the https/parse refusals are not `*url.Error` at all"* — the **parse**
+  refusal IS one, and the two classify to **different published exit codes, 5 vs 1**) →
+  round 4 corrected that and swept the shape everywhere. **The cure was to STOP
+  SUPPLYING REPLACEMENT JUSTIFICATIONS**: state the measured fact, and name which
+  clauses of the old sentence survive. A fix that reaches for a fresh explanation is how
+  round N+1 gets its finding. `via: measurement`
+- 🔴 **THE LADDER WAS STOPPED ON THE PROSE-PAYLOAD CRITERION, NOT ON A CLEAN ROUND — AND
+  SAYING SO IS THE POINT.** Round 3's range shipped **zero** executable change
+  (`download.go`'s 39 changed lines were **100% comments**); round 4's shipped **one
+  test-fixture line**. When the payload is prose, the attribution gate **structurally
+  cannot fire** — there is nothing for a delta audit to attribute. The rationale was
+  posted to the PR, because **a report ending on that escape hatch is otherwise
+  indistinguishable from one that converged.** No round ever returned zero findings.
+  `via: measurement`
+- 🔴 **A PREDICTED MERGE COLLISION HAPPENED, AND THE CONFLICT WAS SEMANTIC, NOT
+  TEXTUAL.** #573 merged mid-flight. File-level fencing held for 20 of 21 paths — but
+  both PRs edited `internal/cmd/safeterm_coverage_test.go`, and
+  `maxUncoveredSafeTermFuncs` is an **equality** assertion. The three trees read **25
+  (base) / 22 (main) / 24 (PR)**. 🔴 **Taking either side's number would have been
+  wrong, and git would not have said so.** Resolved by **union of the rows** plus
+  reading the correct value — **21** — off the assertion's own failure output.
+  **MEASURED, NOT COMPUTED**: with a ratchet, the test already knows the answer, so make
+  it tell you rather than doing the arithmetic. `via: measurement`
+- 🔴 **THE LITERAL-`\uXXXX`-IN-COMMENTS DEFECT IS LIVE, NOT HISTORICAL.** The editing
+  tooling reproduced it **mid-round, on freshly typed characters**. `gofmt`, `go vet`
+  **and** `golangci-lint` are all **blind** to it — confirmed green with the escapes
+  present, so the repo's whole lint stack is not a control for this.
+  **Diff-review for `\uXXXX` before committing prose**, every time. `via: measurement`
+- 🔴 **GREPPING FOR A RETRACTED PHRASE RETURNS HITS FROM THE RETRACTION QUOTING IT.**
+  Twice this session a count of **1** read as "still broken", and reading the context
+  showed a correct retraction doing its job. **A COUNT CANNOT DISTINGUISH A CLAIM FROM
+  ITS RETRACTION** — and in a repo whose convention is to keep refuted text visible with
+  a correction above it, that is the *normal* case, not an edge case. Read the context
+  before acting on any count over this doc or these test headers. `via: command`
+- 🔴 **A LOCAL BRANCH REF WAS STALE BECAUSE AN AGENT WORKTREE HELD IT, AND BRANCHING
+  FROM THE LOCAL NAME WOULD HAVE SILENTLY LOST COMMITS.** `fix/download-path-safeterm`
+  read **`036151b`** locally while the PR head was **`35c7213`** — **10 commits** behind,
+  and `036151b` is **not an ancestor of `origin/main`**. The holder was
+  `.claude/worktrees/agent-a937852b…`. This is the concrete harm behind the 16 stale
+  worktrees noted in *State now*: a worktree pins a branch **repo-globally** at whatever
+  commit it stopped on. **Always `git checkout -b <new> origin/<branch>`, never the bare
+  local name** — the repo's own `AGENTS.md` says this and the failure is silent.
+  `via: measurement`
+- **`audit-dispatch.py` REFUSED to emit a claims block for round 0** — `round 0 has no
+  fixes to claim`. **Correct behaviour, recorded so nobody "fixes" it**: the claims block
+  starts at the round that first *fixes* something, because a claims block is a record of
+  what a fix asserted. Round 0 is a pure findings round and has nothing to assert.
+- ⚠ **`gh issue create` WAS BLOCKED TWICE BY THE CLOSING-CONDITION GATE, AND BOTH
+  REFUSALS WERE LITERALLY ACCURATE.** (a) The body arrived via a **shell substitution**
+  the gate could not read, so *"could not read the body-file path"* was exactly true.
+  (b) A compound `heredoc && gh` command meant the **PreToolUse block prevented the
+  heredoc from ever writing the file** — so the gate then correctly reported a body file
+  that did not exist. **Write the body to a real file in a SEPARATE call, then invoke
+  `gh` in its own call.** Chaining the two makes the gate's diagnosis describe a file
+  your blocked command never created. `via: command`
+
 ## How to verify
+
+Rank 20, against the merged tree (`f0cb748`):
+
+```bash
+cd /home/zach/workspace/civit/cli
+go test ./internal/cmd -count=1                 # expect: ok
+# the download-path ledger and the ratchet, by name
+go test ./internal/cmd -count=1 -v \
+  -run 'TestDownloadOneErrorsSanitizeTheServerName|SafeTermCoverage'
+```
+
+🔴 **The ratchet is an EQUALITY assertion, so it fails in BOTH directions.**
+`maxUncoveredSafeTermFuncs` is **21** on `main`. If you cover a row without lowering it,
+the test says so by name and prints the number to write — **read the value off that
+failure rather than computing it**, which is how the #572/#573 collision was resolved
+after three trees disagreed (25 / 22 / 24, all wrong).
+
+🔴 **Two things #572 did NOT do**, both easy to misread as closed:
+`safeTerm` does **not** strip `\n` or `\t` (rank 24, #577), and the `GREW` ledger still
+cannot demand a row from a function that never calls `safeTerm` (the blind spot that
+produced #566 in the first place). The `create output directory` line at
+`download.go:906` is **deliberately ungated** — see rank 23 before "fixing" it.
 
 Rank 21, against the merged tree — the controls that matter, each re-derivable:
 
