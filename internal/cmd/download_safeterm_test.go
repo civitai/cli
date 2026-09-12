@@ -26,10 +26,28 @@ import (
 // them ledgerable; this file is what makes the rows honest.
 //
 // 🔴 WHAT EACH TEST HERE HAD TO EARN, BECAUSE A LEDGER ROW IS A MEASUREMENT AND
-// NOT A LABEL: every assertion below was watched to go RED with the safeTerm
-// wrapper at its site deleted — the narrowest expression that can be wrong,
-// spliced out on its own, never together with its enclosing statement — and
-// GREEN with it restored. The matrix is in the PR body for #566.
+// NOT A LABEL: every gate below was watched to go RED with its wrapper deleted —
+// the narrowest expression that can be wrong, spliced out on its own, never
+// together with its enclosing statement — and GREEN with it restored. 20 mutants
+// over the 21 gated call sites: 16 killed, 4 survived. The negative control
+// (safeTerm neutered to the identity) reddened 34 tests including all four of
+// this file's, so a SURVIVED verdict here is a fact about the fixture and not a
+// harness wired to nothing. The full matrix is in the PR body for #566.
+//
+// 🔴 THE FOUR SURVIVORS ARE NAMED RATHER THAN ROUNDED AWAY, because a ledger row
+// that reads as coverage while providing none is worse than no row:
+//
+//   - safeTermErr on `download %s: %w`. The cause there is a *url.Error, and Go
+//     renders its URL with %q — so the standard library already escapes every
+//     rune in the class and deleting the call changes no byte. Defence in depth
+//     against a future cause that does not quote; not coverage today.
+//   - writePart's `finalize %s` and both `finalize`/`streaming` causes. Reaching
+//     them needs a failing Close (a full disk or a pulled descriptor) or a
+//     stream error whose own message carries hostile bytes. Neither is driven
+//     here, and neither is claimed.
+//
+// Everything else — all three collision fields, the progress line, and every
+// error string on the downloadOne path — dies to a named assertion in this file.
 
 // --- the fixture --------------------------------------------------------------
 //
@@ -53,16 +71,21 @@ import (
 //     occupying a cell.
 //
 // The expected values are derived from the class as PINNED IN
-// safeterm_invisible_test.go's TestSafeTerm_StripsTheInvisibleAndBidiClass
-// ("a\x1b[2Kb" -> "a[2Kb", "a‮b" -> "ab", "a​b" -> "ab"), not by
+// safeterm_invisible_test.go's TestSafeTerm_StripsTheInvisibleAndBidiClass —
+// `a\x1b[2Kb` -> `a[2Kb`, `a<U+202E>b` -> `ab`, `a<U+200B>b` -> `ab` — not by
 // running safeTerm over the fixture and writing down what came back. Deriving
 // them that way would make every assertion here satisfied by a safeTerm that
 // strips nothing.
+//
+// Written as ESCAPES, not as raw bytes: staticcheck's ST1018 rejects a literal
+// carrying a Unicode format character, and AGENTS.md records that `make ci`
+// cannot see that (lint is a separate job) — four fixtures once reached a push
+// on exactly this rule.
 const (
-	dlHostileName = "alfa\x1b[1A\x1b[2Kbravo‮charlie​delta.safetensors"
+	dlHostileName = "alfa\x1b[1A\x1b[2Kbravo\u202echarlie\u200bdelta.safetensors"
 	dlSafeName    = "alfa[1A[2Kbravocharliedelta.safetensors"
 
-	dlHostileType = "Arch​ive\x1b]0;pwned\a"
+	dlHostileType = "Arch\u200bive\x1b]0;pwned\a"
 	dlSafeType    = "Archive]0;pwned"
 )
 

@@ -205,13 +205,16 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"branch 10×/s, done() once), so the CLI is already moving the cursor and an ESC in the name " +
 			"extends that reach up into the pickle/archive EXECUTION WARNING printed just above it"},
 	"downloadOne": {"TestDownloadOneErrorsSanitizeTheServerName",
-		"the download/SHA256-mismatch/install/mkdir errors AND the `Saved <target>` line. main.go prints " +
-			"err.Error() unfiltered, so the mismatch string is the CLI ASSERTING AN INTEGRITY FAILURE with " +
-			"an uploader-controlled prefix. Five calls; the test drives four of them (`finalize` needs a " +
-			"failing Close and is not driven — see the #566 PR body)"},
+		"the download / SHA256-mismatch / install / mkdir errors AND the `Saved <target>` line. main.go " +
+			"prints err.Error() unfiltered, so the mismatch string is the CLI ASSERTING AN INTEGRITY " +
+			"FAILURE with an uploader-controlled prefix. MEASURED, 8 calls: 7 killed individually; the " +
+			"safeTermErr on `download %s: %w` SURVIVES because on this path the cause is a *url.Error and " +
+			"Go's own %q already escapes the class — defence in depth, not coverage"},
 	"writePart": {"TestWritePartErrorsSanitizeTheServerName",
-		"the frame BETWEEN downloadOne and the progress writer: `streaming <name>` and `create <partPath>`. " +
-			"Gated so the sibling-renderer split #566 is about cannot simply reappear one call frame down"},
+		"the frame BETWEEN downloadOne and the progress writer, gated so the sibling-renderer split #566 " +
+			"is about cannot reappear one call frame down. MEASURED, 6 calls: `streaming <name>`, " +
+			"`create <partPath>` and its cause are killed; the two `finalize` calls and `streaming`'s " +
+			"cause SURVIVE — a failing Close and a hostile-bytes stream error are not driven (#566 PR body)"},
 	"downloadStatusError": {"TestDownloadOneErrorsSanitizeTheServerName",
 		"the four HTTP-status errors, gated ONCE at the top rather than at each return — four spellings of " +
 			"one rule is how #566 happened. The 401 arm is the most exposed: an anonymous download of a " +
