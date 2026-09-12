@@ -44,20 +44,27 @@ import (
 // satisfied by adding a call to a named helper.
 //
 // 🔴 WHAT THE STRUCTURAL HALF CANNOT SEE, stated rather than waved at:
-//  1. Server text written into a cell with NO sanitizer at all. No AST can tell
-//     a server string from a CLI-owned label, so that judgement is the LEDGER's
-//     job: every renderer carries a gate classification and a reason naming the
-//     fields, and the set of classifications is CLOSED at two.
-//     🔴 CLOSED AT TWO IS NOT THE SAME AS "no state to move a hole into", and an
-//     earlier draft of this line claimed it was. gatePreSanitised resolves its
-//     `upstream` only to a NAME, never against this renderer's own cells, so a
-//     row naming any unrelated sanitising renderer passes — see its const-block
-//     note. The hole is one NAME wide rather than one WORD wide; it is not shut.
+//  1. WHICH cells carry server text, and which are CLI-owned labels. No AST can
+//     tell the two apart, so that judgement is the LEDGER's job: every renderer
+//     carries a reason naming the fields, field by field.
+//     🔴 WHAT IS NO LONGER A RESIDUAL: a cell reaching a tabwriter with NO
+//     sanitizer at all. This file shipped a third classification,
+//     gatePreSanitised — "gated upstream, through a struct field the scan cannot
+//     follow" — whose `upstream` resolved to a NAME and never against this
+//     renderer's own cells, so a row naming ANY unrelated sanitising function
+//     passed. That made it a hole every other row could be moved into
+//     (civitai/cli#575 R1; reproduced before this change, on a renderer writing a
+//     raw server string into a cell). It is DELETED rather than made relational:
+//     its single user (printGenerateQuote) now gates at the cell, where a second
+//     idempotent safeTermSingle costs nothing and the scan can SEE it.
+//     TestNoLedgerStateClassifiesAnUngatedRenderer holds it shut by asserting the
+//     ungated shape has no truthful row under ANY gate spelling.
 //  2. A tabwriter reached through a struct field, a function-typed variable or
 //     an interface method — the taint walk follows locals, direct calls and
-//     parameters, not values stored on a struct. The same gap on the VALUE side
-//     (a cell fed from a struct field that was gated upstream) is what
-//     gatePreSanitised exists to make someone write down.
+//     parameters, not values stored on a struct. On the VALUE side that gap is
+//     now benign rather than excused: a cell fed from a pre-gated struct field
+//     has to be gated AGAIN at the cell, because no row can claim it was handled
+//     somewhere else.
 //  3. A write that is not fmt.Fprint/Fprintf/Fprintln/io.WriteString —
 //     `tw.Write([]byte(…))` would make the whole renderer invisible, GREW
 //     included. No such call exists in this package today.
@@ -92,15 +99,18 @@ import (
 //     half-converted, and the README's "What a table cell can contain" says the
 //     same thing to users rather than promising the wider claim.
 //  7. A renderer whose cells are ALL CLI-owned — integers and literals, no server
-//     text — has no honest row. The analyzer registers it (the calibration table
-//     proves it sees such a tabwriter), so GREW demands a row; gateSingle then
-//     fails MISLABELLED with "the gate was deleted — which is the #552 defect
-//     happening", which is untrue of it; and gatePreSanitised would be a lie.
-//     This is the cost of closing the set, and it is a real cost: the honest
-//     options are a no-op safeTermSingle on an integer, or adding a third state
-//     back. No such renderer exists today, so the choice is deferred rather than
-//     made — but the next author to hit it should change this file, not reach
-//     for gatePreSanitised, which is where the GREW message currently points.
+//     text — has no honest row (civitai/cli#575 R3). The analyzer registers it
+//     (the calibration table proves it sees such a tabwriter), so GREW demands a
+//     row, and the one remaining gate then fails MISLABELLED with "the gate was
+//     deleted — which is the #552 defect happening", which is untrue of it.
+//     🔴 DELETING gatePreSanitised NARROWS THIS RESIDUAL RATHER THAN WIDENING IT,
+//     and the distinction is worth stating because the arithmetic looks the other
+//     way. That state was never an honest option for such a renderer either — the
+//     old text called it "a lie" — so no truthful row was lost. What is gone is
+//     the UNTRUTHFUL one the GREW message used to point at. No such renderer
+//     exists today, so the choice stays deferred; the next author to hit it should
+//     change this file and add a state that asserts something checkable, not
+//     restore one that asserted a name.
 
 // --- the analysis -----------------------------------------------------------
 
@@ -128,9 +138,6 @@ type tabwriterAnalysis struct {
 	// sanitizers maps a function key to the set of sanitizer names that reach a
 	// cell from it ("safeTerm", "safeTermSingle").
 	sanitizers map[string]map[string]bool
-	// calls maps a function key to the sanitizer names it calls ANYWHERE, cell or
-	// not. It is what resolves a gatePreSanitised row's `upstream` to a fact.
-	calls      map[string]map[string]bool
 	violations []twViolation
 	sinks      []twSink
 	files      int
@@ -146,7 +153,6 @@ func analyzeTabwriterUse(fset *token.FileSet, files map[string]*ast.File) *tabwr
 		renderers:  map[string]int{},
 		file:       map[string]string{},
 		sanitizers: map[string]map[string]bool{},
-		calls:      map[string]map[string]bool{},
 		files:      len(files),
 	}
 
@@ -279,28 +285,7 @@ func analyzeTabwriterUse(fset *token.FileSet, files map[string]*ast.File) *tabwr
 		}
 	}
 
-	// 3. Record every sanitizer call by enclosing function, cell or not. This is
-	//    what a gatePreSanitised row's `upstream` is resolved against.
-	for _, key := range order {
-		k := key
-		ast.Inspect(look.byKey[k], func(n ast.Node) bool {
-			ce, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			id, ok := ce.Fun.(*ast.Ident)
-			if !ok || !scannedSanitizers[id.Name] || len(ce.Args) != 1 {
-				return true
-			}
-			if a.calls[k] == nil {
-				a.calls[k] = map[string]bool{}
-			}
-			a.calls[k][id.Name] = true
-			return true
-		})
-	}
-
-	// 4. Collect the writes and check every cell expression.
+	// 3. Collect the writes and check every cell expression.
 	for _, key := range order {
 		fd := look.byKey[key]
 		locals := localAssignments(fd)
@@ -508,70 +493,61 @@ func parsePackageFiles(t *testing.T) (*token.FileSet, map[string]*ast.File) {
 // one is checked against what the analysis found, so a row cannot claim a gate
 // the code does not have (nor hide one it does).
 //
-// 🔴 THERE ARE EXACTLY TWO, AND THE THIRD AND FOURTH WERE DELETED RATHER THAN
-// KEPT FOR LATER. This file shipped `gateNoServerText` ("nothing in a cell comes
-// from the server") and `gateUnsanitised` ("server text reaches a cell with no
-// gate"), with a `maxUnsanitisedTabwriterRenderers = 0` ratchet under the second.
-// Both were used by ZERO rows, so both `case` arms were unreachable on the
-// committed tree and the ratchet asserted 0 == 0. Worse, they were
+// 🔴 THERE IS EXACTLY ONE, AND THE OTHER THREE WERE DELETED RATHER THAN KEPT FOR
+// LATER. The deletions happened in two rounds, for the same reason each time: a
+// state the scan cannot DISTINGUISH is a state an author can walk into.
+//
+// Round one (#573) deleted `gateNoServerText` ("nothing in a cell comes from the
+// server") and `gateUnsanitised` ("server text reaches a cell with no gate"),
+// with a `maxUnsanitisedTabwriterRenderers = 0` ratchet under the second. Both
+// were used by ZERO rows, so both `case` arms were unreachable on the committed
+// tree and the ratchet asserted 0 == 0. Worse, they were
 // MACHINE-INDISTINGUISHABLE: the scan can only observe "does safeTermSingle reach
 // a cell", so both arms asserted the same predicate and differed only in their
 // prose. That made the ratchet walkable by ONE WORD — an author adding an ungated
 // renderer writes `gateNoServerText` instead of `gateUnsanitised`, the counted
 // set stays empty, and the suite is green with a new forgery surface in it.
 //
-// Deleting them is strictly stronger than a ceiling nobody was under: gateSingle
-// fails MISLABELLED, any invented spelling fails the default arm, and no row at
-// all fails GREW.
+// 🔴 ROUND ONE CLAIMED TO CLOSE THE WALK AND DID NOT, WHICH IS WHY ROUND TWO
+// EXISTS. Its paragraph here said "a renderer that reaches a cell without
+// safeTermSingle has no truthful row available". That was FALSE while a third
+// state, `gatePreSanitised`, survived: it asserted "gated upstream, through a
+// struct field the scan does not follow" and resolved its `upstream` to a NAME —
+// checked only for existing in this package and calling safeTermSingle
+// SOMEWHERE, never against THIS renderer's cells. Measured twice, before and
+// after that round: a renderer writing a RAW server string into a cell, ledgered
+// `{…, gatePreSanitised, "printTagList", …}`, passed this test and the whole
+// package. The walk had been narrowed from one WORD to one NAME, not shut
+// (civitai/cli#575 R1).
 //
-// 🔴 BUT IT DOES NOT CLOSE THE WALK, AND AN EARLIER DRAFT OF THIS PARAGRAPH SAID
-// IT DID. It claimed "a renderer that reaches a cell without safeTermSingle has
-// no truthful row available". That is FALSE, and measured so: a renderer writing
-// a RAW server string into a cell — no safeTerm, no safeTermSingle — ledgered as
-// gatePreSanitised naming any unrelated renderer that happens to sanitise
-// (printTagList, say) passes this test and the whole package. See
-// gatePreSanitised's own note below for why: its resolution is not relational.
-// The walk was narrowed from one WORD to one NAME, not eliminated.
+// Round two deletes it. The alternative was to make the resolution relational —
+// match the upstream's sanitised output to the struct FIELD this renderer's cell
+// reads — which narrows the hole to a field name and still leaves one. Deleting
+// is strictly stronger and much smaller: the state's single user
+// (printGenerateQuote) gates at the cell instead, where safeTermSingle over
+// already-gated text is an idempotent no-op the scan CAN see.
 //
-// This residual is PRE-EXISTING — the same row is green before this file existed
-// — so nothing here widened it. What is recorded is that it is open, because the
-// paragraph that said otherwise is what a reader adding a renderer would have
-// believed.
+// 🔴 NOTHING WAS UNPINNED BY THE DELETION, AND THAT WAS MEASURED, NOT ASSUMED.
+// The row's stated value was that deleting describeVersion's gate would fail
+// HERE; its message went further and claimed "nothing else would have said so".
+// Removing that safeTermSingle in fact reddens THREE tests —
+// TestGenerate_SanitisesServerStrings (behavioural),
+// TestSafeTermCallSitesAreCoveredByANamedTest (the coverage ledger) and this one
+// — so the claim was false and the pin is redundant twice over.
+//
+// What holds the set shut now is not a sentence:
+// TestNoLedgerStateClassifiesAnUngatedRenderer runs the verdict logic over an
+// ungated renderer under every gate spelling — the live one, the deleted one,
+// and an invented one — and asserts each is refused.
 const (
 	// gateSingle: at least one cell value is routed through safeTermSingle, and
 	// none through a bare safeTerm.
 	gateSingle = "safeTermSingle"
-	// gatePreSanitised: a cell DOES carry server text, but it was gated upstream
-	// and reaches the cell through a struct field the scan does not follow.
-	//
-	// 🔴 THE RESOLUTION IS NOT RELATIONAL, AND THAT IS THIS STATE'S RESIDUAL.
-	// The row must name a function in `upstream`, and that name is checked two
-	// ways: it must EXIST in this package, and it must call safeTermSingle
-	// SOMEWHERE. Neither check ties the named function to THIS renderer's cells.
-	//
-	// So a row naming any unrelated sanitising renderer passes — measured: a
-	// renderer writing a raw server string into a cell, gated
-	// `{…, gatePreSanitised, "printTagList", …}`, is green here and across the
-	// whole package. This state IS therefore the hole other rows can be moved
-	// into: "it is handled somewhere else", asserted in prose and resolved only
-	// to a name. An earlier draft of this comment called it "A BINDING, NOT AN
-	// EXCUSE"; that was the thing it warns against, one level indirected.
-	//
-	// It is not fixed here and nothing justifies it — closing it means resolving
-	// the upstream against this renderer's OWN cell expressions, which the scan
-	// cannot do for the struct-field case this state exists to cover. Two facts
-	// bound the damage and neither is a defence: exactly ONE row uses it today
-	// (describeVersion), and its use is independently true.
-	gatePreSanitised = "pre-sanitised-upstream"
 )
 
 type tabwriterRenderer struct {
 	file string
 	gate string
-	// upstream is required by — and only by — gatePreSanitised: the function
-	// that applied the gate before the value reached this renderer. It is
-	// resolved against the package, not read as a label.
-	upstream string
 	// why says WHICH server-supplied values land in a cell here, named field by
 	// field. It is the half no AST can check, so a row with an empty one fails.
 	why string
@@ -588,70 +564,71 @@ type tabwriterRenderer struct {
 // with the sanitizers actually reaching its cells.
 var tabwriterRenderers = map[string]tabwriterRenderer{
 	// --- read path ----------------------------------------------------------
-	"printModelList": {"models.go", gateSingle, "",
+	"printModelList": {"models.go", gateSingle,
 		"`models search` rows: uploader model name, type and creator username"},
-	"printModelDetail": {"models.go", gateSingle, "",
+	"printModelDetail": {"models.go", gateSingle,
 		"`models get`'s version table: version name, base model, and the " +
 			"[Archive]/[Training Data] marker built from files[].type"},
-	"printModelVersionDetail": {"model_versions.go", gateSingle, "",
+	"printModelVersionDetail": {"model_versions.go", gateSingle,
 		"`model-versions get`'s file table: published file name and type"},
-	"printCreatorList": {"creators.go", gateSingle, "",
+	"printCreatorList": {"creators.go", gateSingle,
 		"`creators search` rows: username and link. The measured #552 forgery — a username of " +
 			"\"alice\\t99\\thttps://evil.example/steal\" rendered a fully aligned attacker-controlled row"},
-	"printTagList": {"tags.go", gateSingle, "",
+	"printTagList": {"tags.go", gateSingle,
 		"`tags search` rows: tag name and link"},
-	"printCollectionList": {"collections.go", gateSingle, "",
+	"printCollectionList": {"collections.go", gateSingle,
 		"`collections search` rows: name, type and owner username"},
-	"printArticleList": {"articles.go", gateSingle, "",
+	"printArticleList": {"articles.go", gateSingle,
 		"`articles search` rows: title, author username and published date (shortDate passes a " +
 			"bad timestamp through verbatim)"},
-	"printAppList": {"apps.go", gateSingle, "",
+	"printAppList": {"apps.go", gateSingle,
 		"`app list` rows: name, slug, kind, category and the creator chip (appCardAuthor)"},
-	"printImageList": {"images.go", gateSingle, "",
+	"printImageList": {"images.go", gateSingle,
 		"`images search` rows: uploader, base model, rating and URL — the surface #569 fixed"},
-	"newUsersGetCmd": {"users.go", gateSingle, "",
+	"newUsersGetCmd": {"users.go", gateSingle,
 		"the `other matches` table after an inexact `users get`: each candidate username"},
 
 	// --- app path -----------------------------------------------------------
-	"printAppMetrics": {"app_metrics.go", gateSingle, "",
+	"printAppMetrics": {"app_metrics.go", gateSingle,
 		"`app metrics`: the window timestamps (utcStamp falls back to the RAW string), the " +
 			"granularity, and the top-scope / top-endpoint tokens, which are kept raw on purpose " +
 			"(AGENTS.md item 8) so the gate is the only thing between an uploader-shaped token and the table"},
-	"printSubmissionTable": {"app_status.go", gateSingle, "",
+	"printSubmissionTable": {"app_status.go", gateSingle,
 		"`app status` rows: block id, version, status, deploy state, claimed source commit, date and " +
 			"live URL. It had NO gate at all until #552, which also made it invisible to safeTermCoveredBy"},
-	"printSubmissionDetail": {"app_status.go", gateSingle, "",
+	"printSubmissionDetail": {"app_status.go", gateSingle,
 		"`app status --id` rows: the same fields plus the publish-request id and deploy detail. This row " +
 			"is a claim about its CELLS only — the live URL, the block id in the not-live sentence, and " +
 			"the free-text rejection reason / approval notes sit OUTSIDE the table and are gated " +
 			"separately (safeTermSingle for the first two, safeTerm + indentContinuation for the last " +
 			"two). They were ungated while this row read as coverage; " +
 			"TestGatedRenderersDoNotForgeOutsideTheirTable is what now holds them"},
-	"printListingStatus": {"app_listing.go", gateSingle, "",
+	"printListingStatus": {"app_listing.go", gateSingle,
 		"`app listing status`: the listing status. `App:` is the slug the USER typed and is echoed " +
 			"exactly (civitai/cli#393). The screenshot id and caption printed below the flushed table " +
 			"are NOT cells — they are gated by safeTermSingle at their own call site, and were raw while " +
 			"this row read as coverage of the command"},
 
 	// --- generate path ------------------------------------------------------
-	"printWorkflow": {"workflows.go", gateSingle, "",
+	"printWorkflow": {"workflows.go", gateSingle,
 		"`workflows get`'s header block: workflow id, status and timestamps"},
-	"printWorkflowList": {"workflows_list.go", gateSingle, "",
+	"printWorkflowList": {"workflows_list.go", gateSingle,
 		"`workflows list` rows: id, status and date. A newline here also mis-splices the reason " +
 			"lines spliced into the flushed block"},
-	"reportWorkflowSettlement": {"workflow_settlement.go", gateSingle, "",
+	"reportWorkflowSettlement": {"workflow_settlement.go", gateSingle,
 		"the settlement table's transaction TYPE, printed next to a Buzz amount"},
-	"printSubmitResult": {"generate.go", gateSingle, "",
+	"printSubmitResult": {"generate.go", gateSingle,
 		"the post-spend receipt: workflow id and status — the only handle to a job already paid for"},
-	"printCostMap": {"generate.go", gateSingle, "",
+	"printCostMap": {"generate.go", gateSingle,
 		"the PRE-SPEND cost table's server-named factor/fixed/tip keys. It takes the tabwriter as a " +
 			"PARAMETER from printGenerateQuote, which is why the scan propagates the sink across calls"},
-	"printGenerateQuote": {"generate.go", gatePreSanitised, "describeVersion",
+	"printGenerateQuote": {"generate.go", gateSingle,
 		"most of the quote screen's cells are CLI-owned labels, user-typed flag values echoed exactly " +
-			"(civitai/cli#393) and numbers. Its two SERVER-derived cells — Checkpoint and LoRA — are " +
-			"gated by describeVersion and reach the cell through a resolvedGraph FIELD, which the scan " +
-			"deliberately does not follow. That is why the row names the upstream function: the name is " +
-			"resolved, so deleting describeVersion's gate fails HERE too"},
+			"(civitai/cli#393) and numbers. Its SERVER-derived cells are Checkpoint (with its " +
+			"substitution note) and each LoRA. They were already gated by describeVersion and reach " +
+			"the cell through a resolvedGraph FIELD the scan does not follow, so this row used to be " +
+			"the ledger's one gatePreSanitised entry; #575 R1 deleted that state and the cells are now " +
+			"gated AGAIN at the write, where the scan can see them (safeTermSingle is idempotent)"},
 }
 
 const (
@@ -675,6 +652,88 @@ const (
 	minTabwriterWrites = 30
 	minTabwriterFiles  = 20
 )
+
+// ledgerVerdicts is the ROW half of the guard — GREW, SHRANK and MISLABELLED —
+// as a pure function of (what the scan found, what the ledger claims).
+//
+// 🔴 IT IS FACTORED OUT SO THE REGRESSION TEST CAN RUN THE REAL VERDICT, NOT A
+// COPY OF IT. TestNoLedgerStateClassifiesAnUngatedRenderer asserts that an
+// ungated renderer has no truthful row under ANY gate spelling; a test that
+// re-implemented these rules would prove only that two copies of them agree, and
+// would go on passing if the live ones were loosened (civitai/cli#575 R1).
+//
+// An empty result means the ledger and the code agree.
+func ledgerVerdicts(a *tabwriterAnalysis, ledger map[string]tabwriterRenderer) []string {
+	var out []string
+
+	// --- GREW ----------------------------------------------------------------
+	var unledgered []string
+	for _, fn := range twSortedKeys(a.renderers) {
+		if _, ok := ledger[fn]; !ok {
+			unledgered = append(unledgered, fmt.Sprintf("%s (%s) — %d cell write(s)", fn, a.file[fn], a.renderers[fn]))
+		}
+	}
+	if len(unledgered) > 0 {
+		out = append(out, fmt.Sprintf("%d function(s) write into a tabwriter with no row in tabwriterRenderers:\n  %s\n\n"+
+			"There is exactly ONE truthful classification, %s: at least one cell value is routed through "+
+			"safeTermSingle and none through a bare safeTerm — say in `why` WHICH cells carry server text. "+
+			"Three other states existed and all three were deleted: two ('ungated', 'no server text') were "+
+			"machine-indistinguishable from each other and made this guard walkable by one WORD, and the "+
+			"third ('gated by a named upstream') resolved only to a NAME and made it walkable by one NAME "+
+			"(civitai/cli#575 R1). So there is no row that describes a hole. If a cell here really is "+
+			"ungated server text, that is the #552 defect — route it through safeTermSingle. If the value "+
+			"was gated upstream and arrives through a struct field, gate it AGAIN here: safeTermSingle is "+
+			"idempotent and this guard can only see a gate that is at the cell.",
+			len(unledgered), strings.Join(unledgered, "\n  "), gateSingle))
+	}
+
+	// --- SHRANK --------------------------------------------------------------
+	var stale []string
+	for _, fn := range twSortedKeys(ledger) {
+		if a.renderers[fn] == 0 {
+			stale = append(stale, fmt.Sprintf("%s (recorded in %s as %s)", fn, ledger[fn].file, ledger[fn].gate))
+		}
+	}
+	if len(stale) > 0 {
+		out = append(out, fmt.Sprintf("%d ledger row(s) name a function that no longer writes into a tabwriter:\n  %s\n\n"+
+			"RENAMED or MOVED: move the row with it, in the same commit. DELETED: delete the row. "+
+			"STOPPED USING A TABWRITER: check what replaced it is not line-structured too — this row would "+
+			"otherwise go on reading as a classification of a surface nobody has looked at.",
+			len(stale), strings.Join(stale, "\n  ")))
+	}
+
+	// --- MISLABELLED ---------------------------------------------------------
+	for _, fn := range twSortedKeys(ledger) {
+		row := ledger[fn]
+		if row.why == "" {
+			out = append(out, fmt.Sprintf("tabwriterRenderers[%q] has an empty `why`. A row with no reason is a row "+
+				"nobody thought about; name the server-supplied fields that land in a cell here.", fn))
+		}
+		if a.file[fn] != "" && row.file != a.file[fn] {
+			out = append(out, fmt.Sprintf("tabwriterRenderers[%q] says %s, but the declaration is in %s.", fn, row.file, a.file[fn]))
+		}
+		switch row.gate {
+		case gateSingle:
+			if !a.sanitizers[fn][gateSingle] {
+				out = append(out, fmt.Sprintf("MISLABELLED: tabwriterRenderers[%q] claims %s, but no safeTermSingle "+
+					"call reaches any of its cells. Either the gate was deleted — which is the #552 defect "+
+					"happening, and the row would have gone on reading as coverage — or the value now arrives "+
+					"pre-sanitised through a field the scan cannot follow, in which case gate it again AT THE "+
+					"CELL. There is no longer a row that can assert it was handled somewhere else.", fn, gateSingle))
+			}
+		default:
+			// 🔴 THE CLOSED SET IS THE GUARD, AND CLOSED AT ONE IS THE FIRST TIME
+			// THAT SENTENCE HAS BEEN TRUE HERE. Every other spelling — including
+			// the deleted "pre-sanitised-upstream" — lands in this arm, so an
+			// author cannot classify an ungated renderer by choosing a word.
+			out = append(out, fmt.Sprintf("tabwriterRenderers[%q] has an unknown gate %q. The only one is %s — a "+
+				"second spelling is not a classification, it is a row that asserts nothing. Three earlier states "+
+				"were deleted for exactly that (civitai/cli#552, #575 R1); do not reintroduce one without a "+
+				"check that resolves against THIS renderer's own cells.", fn, row.gate, gateSingle))
+		}
+	}
+	return out
+}
 
 // TestTabwriterRenderersAreLedgered is the structural half of civitai/cli#552.
 //
@@ -723,92 +782,9 @@ func TestTabwriterRenderersAreLedgered(t *testing.T) {
 			"reason (civitai/cli#552).", len(a.violations), strings.Join(lines, "\n  "))
 	}
 
-	// --- GREW ----------------------------------------------------------------
-	var unledgered []string
-	for _, fn := range twSortedKeys(a.renderers) {
-		if _, ok := tabwriterRenderers[fn]; !ok {
-			unledgered = append(unledgered, fmt.Sprintf("%s (%s) — %d cell write(s)", fn, a.file[fn], a.renderers[fn]))
-		}
-	}
-	if len(unledgered) > 0 {
-		t.Errorf("%d function(s) write into a tabwriter with no row in tabwriterRenderers:\n  %s\n\n"+
-			"Classify it, and there are only two truthful classifications. gateSingle: its cells carry "+
-			"server text routed through safeTermSingle — say in `why` WHICH cells. gatePreSanitised: a cell "+
-			"carries server text gated by a named upstream function that this test RESOLVES. There is "+
-			"deliberately no third state for 'ungated' or 'no server text': both existed, were "+
-			"machine-indistinguishable from each other, and made this guard walkable by one word. If a cell "+
-			"here really is ungated server text, that is the #552 defect — route it through safeTermSingle "+
-			"rather than looking for a row that describes the hole.",
-			len(unledgered), strings.Join(unledgered, "\n  "))
-	}
-
-	// --- SHRANK --------------------------------------------------------------
-	var stale []string
-	for _, fn := range twSortedKeys(tabwriterRenderers) {
-		if a.renderers[fn] == 0 {
-			stale = append(stale, fmt.Sprintf("%s (recorded in %s as %s)", fn, tabwriterRenderers[fn].file, tabwriterRenderers[fn].gate))
-		}
-	}
-	if len(stale) > 0 {
-		t.Errorf("%d ledger row(s) name a function that no longer writes into a tabwriter:\n  %s\n\n"+
-			"RENAMED or MOVED: move the row with it, in the same commit. DELETED: delete the row. "+
-			"STOPPED USING A TABWRITER: check what replaced it is not line-structured too — this row would "+
-			"otherwise go on reading as a classification of a surface nobody has looked at.",
-			len(stale), strings.Join(stale, "\n  "))
-	}
-
-	// --- MISLABELLED ---------------------------------------------------------
-	for _, fn := range twSortedKeys(tabwriterRenderers) {
-		row := tabwriterRenderers[fn]
-		if row.why == "" {
-			t.Errorf("tabwriterRenderers[%q] has an empty `why`. A row with no reason is a row nobody thought "+
-				"about; name the server-supplied fields that land in a cell here.", fn)
-		}
-		if a.file[fn] != "" && row.file != a.file[fn] {
-			t.Errorf("tabwriterRenderers[%q] says %s, but the declaration is in %s.", fn, row.file, a.file[fn])
-		}
-		sanitised := a.sanitizers[fn][gateSingle]
-		switch row.gate {
-		case gateSingle:
-			if !sanitised {
-				t.Errorf("MISLABELLED: tabwriterRenderers[%q] claims %s, but no safeTermSingle call reaches any "+
-					"of its cells. Either the gate was deleted — which is the #552 defect happening, and the "+
-					"row would have gone on reading as coverage — or the value now arrives pre-sanitised "+
-					"through a field the scan cannot follow, in which case say so in `why` and change the "+
-					"gate.", fn, gateSingle)
-			}
-		case gatePreSanitised:
-			if sanitised {
-				t.Errorf("MISLABELLED: tabwriterRenderers[%q] claims %s, but a sanitizer DOES run at one of its "+
-					"own cells. Use %s — the row is describing a gate somewhere else while one is right here.",
-					fn, gatePreSanitised, gateSingle)
-			}
-			// 🔴 RESOLVE THE UPSTREAM, DO NOT READ IT. A row asserting "this was
-			// handled elsewhere" is the one state that could absorb every other
-			// row, so the name it gives has to be a function that exists AND that
-			// still applies the gate. Deleting describeVersion's safeTermSingle
-			// therefore fails HERE as well as in the behavioural test.
-			switch {
-			case row.upstream == "":
-				t.Errorf("tabwriterRenderers[%q] claims %s but names no upstream function. The claim is only "+
-					"checkable if it names one.", fn, gatePreSanitised)
-			case a.file[row.upstream] == "":
-				t.Errorf("tabwriterRenderers[%q] names upstream %q, which is not a function in this package. A "+
-					"row pointing at a gate that does not exist reads as coverage and stops anyone looking.",
-					fn, row.upstream)
-			case !a.calls[row.upstream][gateSingle]:
-				t.Errorf("tabwriterRenderers[%q] says its cells are pre-sanitised by %s, but %s does not call "+
-					"safeTermSingle anywhere. Either the gate was deleted upstream — in which case this "+
-					"renderer's cells are now ungated and nothing else would have said so — or the value comes "+
-					"from somewhere else and the row is wrong.", fn, row.upstream, row.upstream)
-			}
-		default:
-			// 🔴 THE CLOSED SET IS THE GUARD. There are two states and no escape
-			// hatch; an invented gate name lands here rather than silently
-			// classifying a renderer nobody checked.
-			t.Errorf("tabwriterRenderers[%q] has an unknown gate %q. The only two are %s and %s — a third "+
-				"spelling is not a classification, it is a row that asserts nothing.", fn, row.gate, gateSingle, gatePreSanitised)
-		}
+	// --- GREW, SHRANK, MISLABELLED -------------------------------------------
+	for _, msg := range ledgerVerdicts(a, tabwriterRenderers) {
+		t.Error(msg)
 	}
 
 	for _, k := range twSortedKeys(a.renderers) {
@@ -981,6 +957,144 @@ func zzRender(w io.Writer, s string) {
 			got := twSortedKeys(a.renderers)
 			if strings.Join(got, ",") != strings.Join(tc.wantRenderers, ",") {
 				t.Errorf("scanner attributed the tabwriter to %v, want %v:\n%s", got, tc.wantRenderers, tc.src)
+			}
+		})
+	}
+}
+
+// TestNoLedgerStateClassifiesAnUngatedRenderer is the regression guard for
+// civitai/cli#575 R1, and the thing #552's closed-set claim never had.
+//
+// 🔴 THE DEFECT IT PINS, REPRODUCED BEFORE THE FIX: a renderer writing a RAW
+// server string into a tabwriter cell — no safeTerm, no safeTermSingle — ledgered
+// as `{…, gatePreSanitised, "printTagList", …}`, where printTagList is an
+// unrelated renderer that merely happens to sanitise, passed this file's
+// TestTabwriterRenderersAreLedgered AND the whole internal/cmd package. The gate
+// arm resolved `upstream` to a NAME (does it exist? does it call safeTermSingle
+// anywhere?) and never against the renderer's own cells, so the state was a hole
+// any row could be moved into.
+//
+// The assertion is therefore about the SET, not about one spelling: whatever an
+// author writes in the gate column, an ungated renderer must be refused. That
+// survives someone adding a fourth state, which a test naming only the deleted
+// one would not.
+//
+// The last case is the POSITIVE CONTROL and it is not decoration: a verdict
+// function that rejected everything would satisfy every case above it while
+// asserting nothing.
+func TestNoLedgerStateClassifiesAnUngatedRenderer(t *testing.T) {
+	const head = "package cmd\n\nimport (\n\t\"fmt\"\n\t\"io\"\n\t\"text/tabwriter\"\n)\n\n"
+
+	// The R1 shape exactly: the cell is a STRUCT FIELD, which is the case
+	// gatePreSanitised existed to excuse and the one the taint walk cannot follow.
+	const ungated = head + `type zzItem struct{ Name, Link string }
+
+func zzRender(w io.Writer, items []zzItem) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, it := range items {
+		fmt.Fprintf(tw, "%s\t%s\n", it.Name, it.Link)
+	}
+	_ = tw.Flush()
+}`
+
+	// Identical but gated at the cell — the repair this change made to
+	// printGenerateQuote, and the control on the whole test.
+	const gated = head + `type zzItem struct{ Name, Link string }
+
+func zzRender(w io.Writer, items []zzItem) {
+	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	for _, it := range items {
+		fmt.Fprintf(tw, "%s\t%s\n", safeTermSingle(it.Name), safeTermSingle(it.Link))
+	}
+	_ = tw.Flush()
+}`
+
+	const why = "the R1 fixture: a raw server string reaching a cell through a struct field"
+
+	for _, tc := range []struct {
+		name       string
+		src        string
+		ledger     map[string]tabwriterRenderer
+		wantRefuse bool
+		// wantMentions is a substring the refusal must carry, so a case cannot
+		// pass on a DIFFERENT rule's failure — the vacuous-green shape where a
+		// mutation dies for the wrong reason.
+		wantMentions string
+	}{
+		{
+			name:         "no row at all",
+			src:          ungated,
+			ledger:       map[string]tabwriterRenderer{},
+			wantRefuse:   true,
+			wantMentions: "no row in tabwriterRenderers",
+		},
+		{
+			name:         "claimed as gateSingle",
+			src:          ungated,
+			ledger:       map[string]tabwriterRenderer{"zzRender": {"zz_fixture.go", gateSingle, why}},
+			wantRefuse:   true,
+			wantMentions: "MISLABELLED",
+		},
+		{
+			// 🔴 THE DELETED STATE, SPELLED AS A LITERAL ON PURPOSE. Referencing the
+			// old const would not compile, and that is a weaker guarantee than it
+			// looks: someone reintroducing the state would reintroduce the const
+			// too. The literal is what the ledger row would actually say.
+			name:         "claimed as the DELETED pre-sanitised-upstream state",
+			src:          ungated,
+			ledger:       map[string]tabwriterRenderer{"zzRender": {"zz_fixture.go", "pre-sanitised-upstream", why}},
+			wantRefuse:   true,
+			wantMentions: "unknown gate",
+		},
+		{
+			name:         "claimed as an invented state",
+			src:          ungated,
+			ledger:       map[string]tabwriterRenderer{"zzRender": {"zz_fixture.go", "reviewed-by-hand", why}},
+			wantRefuse:   true,
+			wantMentions: "unknown gate",
+		},
+		{
+			name:         "a row with a gate but no reason",
+			src:          gated,
+			ledger:       map[string]tabwriterRenderer{"zzRender": {"zz_fixture.go", gateSingle, ""}},
+			wantRefuse:   true,
+			wantMentions: "empty `why`",
+		},
+		{
+			name:       "POSITIVE CONTROL: gated at the cell, honestly ledgered",
+			src:        gated,
+			ledger:     map[string]tabwriterRenderer{"zzRender": {"zz_fixture.go", gateSingle, why}},
+			wantRefuse: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, "zz_fixture.go", tc.src, 0)
+			if err != nil {
+				t.Fatalf("CONTROL failure, not a finding: the fixture does not parse: %v", err)
+			}
+			a := analyzeTabwriterUse(fset, map[string]*ast.File{"zz_fixture.go": f})
+			if len(a.renderers) != 1 {
+				t.Fatalf("CONTROL failure, not a finding: the scan saw %d renderer(s) in the fixture, want 1. "+
+					"Every verdict below would be about a renderer nobody found.", len(a.renderers))
+			}
+			got := ledgerVerdicts(a, tc.ledger)
+			if !tc.wantRefuse {
+				if len(got) != 0 {
+					t.Errorf("the positive control was REFUSED, so this test proves nothing about the cases "+
+						"above it — a verdict function that rejects everything passes them all:\n  %s",
+						strings.Join(got, "\n  "))
+				}
+				return
+			}
+			if len(got) == 0 {
+				t.Fatalf("an UNGATED renderer was accepted with gate %q. civitai/cli#575 R1 is back: server "+
+					"text reaches a tabwriter cell and the ledger says it is fine.", tc.ledger["zzRender"].gate)
+			}
+			if !strings.Contains(strings.Join(got, "\n"), tc.wantMentions) {
+				t.Errorf("refused, but not for the expected reason — want a message containing %q, got:\n  %s\n\n"+
+					"A guard that reddens for a DIFFERENT rule's reason is green for the wrong reason and stays "+
+					"green when this one is deleted.", tc.wantMentions, strings.Join(got, "\n  "))
 			}
 		})
 	}
