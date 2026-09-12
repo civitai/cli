@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -70,7 +71,21 @@ var pinnedIndentCallSites = []indentCallSite{
 	},
 }
 
-const minIndentCallSitesExpected = 6
+// minIndentCallSitesExpected is the POSITIVE CONTROL — it answers "did the
+// scanner find anything at all?", NOT "is the ledger complete".
+//
+// 🔴 IT MUST STAY STRICTLY BELOW len(pinnedIndentCallSites), AND IT WAS EQUAL TO
+// IT. At 6-against-6 a single deleted call site — precisely the regression this
+// ledger exists to catch — tripped this Fatalf instead of the SHRANK branch
+// below, so the only message a reader saw was "CONTROL failure", which is this
+// file's own idiom for "the harness is broken, not your code". That is how a
+// floor gets lowered instead of a regression investigated. Measured: deleting
+// the real call at workflows_list.go reported `CONTROL failure: found only 5`
+// and never printed the SHRANK text.
+//
+// 3 is deliberately loose: a scanner that has stopped working returns 0 or 1,
+// and anything at or above this is the set comparison's business, not ours.
+const minIndentCallSitesExpected = 3
 
 // TestIndentContinuationCallSitesAreLedgered is the closing condition for #552.
 // It combines a structural AST ledger with a behavioural seam test, ensuring
@@ -277,8 +292,9 @@ func containsSanitizerCall(e ast.Expr) bool {
 	return found
 }
 
-// checkIndentPadArg verifies that pad is either a string literal containing
-// only whitespace (spaces/tabs), or a known whitespace-indent constant.
+// checkIndentPadArg verifies that pad is whitespace: either a string literal
+// containing only spaces/tabs, or a package-level string constant WHOSE VALUE IS
+// RESOLVED and checked by the same rule. It does not trust an identifier's name.
 func checkIndentPadArg(t *testing.T, pos token.Position, padExpr ast.Expr) {
 	t.Helper()
 	switch p := padExpr.(type) {
@@ -303,17 +319,87 @@ func checkIndentPadArg(t *testing.T, pos token.Position, padExpr ast.Expr) {
 			}
 		}
 	case *ast.Ident:
-		// Known package constants declared as indentation pads
-		knownConstants := map[string]bool{
-			"listReasonIndent": true,
+		// 🔴 RESOLVE THE CONSTANT'S VALUE — DO NOT ALLOWLIST ITS NAME.
+		//
+		// This branch used to check only that the identifier was one of a set of
+		// approved spellings, while the docstring claimed it verified a
+		// "whitespace-indent constant". That is a guard on a WORD, walkable by
+		// rewriting what the word means. Measured: setting
+		// `listReasonIndent = "XX>>"` left this test fully GREEN, both subtests,
+		// while the pad it vets was no longer whitespace at all.
+		//
+		// So the name is now only how we FIND the declaration; the assertion is
+		// on its value, using the same whitespace rule as the literal branch.
+		val, ok := resolvePackageStringConst(p.Name)
+		if !ok {
+			t.Errorf("%s: indentContinuation pad uses identifier %q, which is not a package-level string constant "+
+				"in internal/cmd; must be a string literal or such a constant", pos, p.Name)
+			return
 		}
-		if !knownConstants[p.Name] {
-			t.Errorf("%s: indentContinuation pad uses unvetted identifier %q; must be literal or vetted constant",
-				pos, p.Name)
+		if len(val) == 0 {
+			t.Errorf("%s: indentContinuation pad constant %s is empty", pos, p.Name)
+			return
+		}
+		for _, r := range val {
+			if r != ' ' && r != '\t' {
+				t.Errorf("%s: indentContinuation pad constant %s = %q contains non-whitespace rune %q; "+
+					"a pad that is not whitespace lets a continuation line impersonate real output",
+					pos, p.Name, val, r)
+				return
+			}
 		}
 	default:
 		t.Errorf("%s: indentContinuation pad must be a string literal or vetted constant, got %T", pos, padExpr)
 	}
+}
+
+// resolvePackageStringConst finds a package-level `const name = "..."` in this
+// package's own non-test sources and returns its unquoted value. It exists so
+// checkIndentPadArg can assert on what a pad constant IS rather than on what it
+// is called.
+func resolvePackageStringConst(name string) (string, bool) {
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		return "", false
+	}
+	fset := token.NewFileSet()
+	for _, e := range entries {
+		fn := e.Name()
+		if e.IsDir() || !strings.HasSuffix(fn, ".go") || strings.HasSuffix(fn, "_test.go") {
+			continue
+		}
+		file, perr := parser.ParseFile(fset, fn, nil, 0)
+		if perr != nil {
+			continue
+		}
+		for _, decl := range file.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for i, id := range vs.Names {
+					if id.Name != name || i >= len(vs.Values) {
+						continue
+					}
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						return "", false
+					}
+					unq, uerr := strconv.Unquote(lit.Value)
+					if uerr != nil {
+						return "", false
+					}
+					return unq, true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 // TestSafeTermSingleNeutralisesTheTabColumnVector is the regression guard for the
@@ -367,10 +453,18 @@ func TestTabForgeryIsNeutralisedInTheRealImagesTable(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("want a header and exactly ONE data row, got %d line(s):\n%s", len(lines), out)
 	}
-	// The whole payload must stay inside its own cell. tabwriter pads with
-	// spaces, so a surviving tab would mean the row grew columns.
-	if strings.ContainsRune(lines[1], '\t') {
-		t.Errorf("a TAB survived into the rendered row, so server text can inject columns:\n%q", lines[1])
+	// 🔴 DO NOT ASSERT ON A LITERAL \t IN THE OUTPUT — that check cannot fail on
+	// this path and reads as the test's thesis while proving nothing. tabwriter
+	// CONSUMES the tab as its cell delimiter and pads with padchar (' '), so its
+	// output contains no literal tab whether or not the input did.
+	//
+	// The property that actually matters is COLUMN COUNT: a forged tab would make
+	// the data row carry more columns than the header. Compare them by counting
+	// runs of 2+ spaces, which is how tabwriter separates cells here.
+	cols := func(line string) int { return len(regexp.MustCompile(` {2,}`).Split(strings.TrimSpace(line), -1)) }
+	if got, want := cols(lines[1]), cols(lines[0]); got != want {
+		t.Errorf("the data row has %d column(s) but the header has %d — server text injected columns:\n%q\n%q",
+			got, want, lines[0], lines[1])
 	}
 	// The REAL field values must still occupy their real columns — a guard that
 	// simply ate the username would pass the check above.

@@ -110,7 +110,7 @@ const sanitizerFile = "safeterm.go"
 
 // minSafeTermCallsScanned is the POSITIVE CONTROL. A parser that has stopped
 // finding calls — a moved package, a renamed helper, the wrong directory —
-// scans nothing, finds no violation and reports a serene pass. There are 152
+// scans nothing, finds no violation and reports a serene pass. There are 153
 // calls today.
 const minSafeTermCallsScanned = 100
 
@@ -242,6 +242,12 @@ func isSafeTermCall(n ast.Node) *ast.CallExpr {
 // 137 — those 16 sites leave this harness's view entirely — and the only thing
 // that says so is bareIdentArgs' shrank-direction check tripping on a now-unused
 // entry ("h"), which reads as a stale note rather than as lost coverage.
+//
+// ⚠ CORRECTION, measured after the above was written: "the only thing" is wrong.
+// TestSafeTermCallSitesAreCoveredByANamedTest ALSO reddens, and with an accurate
+// message ("CALL REMOVED: that is the #399 defect happening"). The narrowing is
+// still worth preventing here — this is the guard that should name it — but the
+// tree is not as blind to it as this paragraph claimed.
 //
 // So: a new wrapper around safeTerm belongs HERE, in the same commit that adds it.
 var scannedSanitizers = map[string]bool{
