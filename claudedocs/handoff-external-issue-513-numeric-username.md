@@ -17,26 +17,38 @@ answered — starting with #513, and fix the API-side root cause behind it.
 
 ## State now
 
-- **Branch `main` @ `cf5e4a8`.** 🔴 `main` moved SIX times during the session that wrote this
-  (`1123812` → `1f6d130` → `7b7d5f1` → `feb330c` → `263299e`/`6fce127` → `cf5e4a8`), several of
-  them from parallel sessions. Every sha here is a snapshot; re-measure.
-- **All external-issue work from this arc is DISPATCHED OR DONE. Nothing is mid-flight.**
-- **Claims: ALL RELEASED.** `external-issue-513-numeric-username-3`,
-  `cli-545-images-prompt-indent-audit`, `cli-554-indentcontinuation-ledger-audit`.
-  **Still HELD:** `devdocs-61-flux2-klein-whatif-500` and `devdocs-76-drift-sweep-red` —
-  both blocked on someone else, not finished by the comments posted.
+- **Branch `main` @ `d37b32a`** — `#565` MERGED, so this doc's previous update is landed.
+  🔴 `main` moved SEVEN times during the session that wrote this, most from PARALLEL sessions
+  (`3d17591`/#558, `c3628ed`/#561, `cf5e4a8`/#563 are all other sessions' handoffs). Re-measure
+  any sha before acting.
+- **Everything in the previous update still holds.** The ONE thing it does not carry is the
+  `#564`/`#554` collision below, found immediately after `#565`'s content was written.
+- **No `clawgate-task:` recorded.** `clawgate_handoff.sh resolve` exited **5** — 0 tasks for
+  this session. Positive control answered 2 links for a different session, so the board was
+  genuinely reached; but a wrong id also answers 200 with an empty array, so this is a real
+  reading and NOT a clean bill of health.
+- **Claims: `devdocs-61-flux2-klein-whatif-500` and `devdocs-76-drift-sweep-red` STILL HELD**,
+  both blocked on other people. All `cli-*` claims released.
+- **Two external PRs are open and BOTH are blocked on a decision, not on work:**
+  `#554` (xsvm) `OPEN`, head `733d218` · `#564` (parallel session) `OPEN MERGEABLE/CLEAN`,
+  head `8063caa`.
 
-### Shipped this arc
+### Shipped across this arc — carried forward, these shas are the only record
 
-| what | where | state |
+| what | sha / ref | state |
 |---|---|---|
 | `#545` (xsvm) images prompt indent | `feb330c` | MERGED, public correction posted |
-| `#552` ledger follow-up | issue | OPEN, **closing condition AMENDED** — see below |
 | `#556` retraction of "not reproducible" | `d0d1805` | MERGED |
 | `#551` handoff r2 | `5208a6b` | MERGED |
+| `#565` handoff r3 | `d37b32a` | MERGED |
 | `devrc#1498` mentions-id-collision lesson | `550de40` | MERGED — ⚠ NOT LIVE until `home-manager switch` |
-| `civitai/civitai#4768` | new | FILED, server-side root cause |
+| `civitai/civitai#4768` | new | FILED, server-side root cause for #513 |
+| `civitai/cli#552` | issue | OPEN, closing condition AMENDED |
 | stale branch `fix/flexstring-numeric-username` | — | DELETED, recovery sha `12818a3` |
+
+⚠ This table was nearly lost: it sits under a REPLACE heading, and `handoff_doc.py`'s
+durable-line warning **did not flag it** because it is a table rather than prose. That warning
+is a FLOOR, not a guarantee — read the `-` lines of the diff yourself before confirming.
 
 ## Open investigations — live diagnosis state
 
@@ -361,33 +373,77 @@ and round 1 agent reports"). Both reported; both are folded in here.
 - **Next probe:** diff the vendored slot ids and scope bitmask against upstream
   `block-scope.constants.ts` at its current 411-line form.
 
+### 🔴 #554 and #564 COLLIDE — and the dangerous half is the one a merge would not show you
+
+- **Symptom + exact repro:**
+  ```bash
+  git -C <repo> fetch origin refs/pull/554/head:refs/remotes/pr/554 \
+                         refs/pull/564/head:refs/remotes/pr/564 -f
+  git -C <repo> merge-tree --write-tree refs/remotes/pr/554 refs/remotes/pr/564 >/dev/null
+  echo $?     # 1 — re-confirmed at heads 733d218 / 8063caa
+  ```
+  🔴 **Branch on the EXIT CODE, never a marker grep** — `merge-tree --write-tree` prints only a
+  tree OID on success and emits no `<<<<<<<` markers, so grepping finds nothing either way and
+  reads as a confident "no conflict".
+- **Observed (with values):** both PRs rewrite the same `bareIdentArgs` lookup in
+  `internal/cmd/safeterm_userinput_test.go`. `#564` moves it to `bareIdentArgs[s.arg]` (`:173`)
+  as part of a per-function restructure; `#554` adds a new entry to the same map,
+  `"s": "PASSTHROUGH: safeTermSingle forwards its argument to safeTerm"` (`:84`).
+- 🔴 **THE SEMANTIC HALF IS WORSE THAN THE TEXTUAL ONE, AND NO CONFLICT MARKER REVEALS IT.**
+  `#564` *strengthens* the #393 harness — it measured that **36 of 59 functions survived losing
+  every `safeTerm` call they had**, a far better predicate than counting call sites. `#554`
+  *blinds* that same harness: `s` is the most common local-variable name in Go, so allowlisting
+  it hides the #393 defect wherever the variable is named `s`. Measured in a detached copy:
+  `s := userTypedPrompt; … safeTerm(s)` **SURVIVES**; the identical injection named
+  `zzUnknownIdent` is **KILLED**. Merged in either order the result is a harness that is
+  simultaneously more thorough per-function and newly blind to a whole class of argument name —
+  **worse than either PR alone**.
+- **Ruled out:** that a clean textual merge would make this safe — the two edits are to
+  different concerns in one map and a marker-free merge is exactly the outcome that would hide
+  it. `via: code` · That `#564` touches the `"s"` entry itself — it does not; it only moves the
+  lookup. `via: command`
+- **Leading hypothesis:** there is **ONE ledger here, not two**. `#564`'s per-function
+  predicate is the right invariant; `#552`'s amended predicate and rank 8's widened ledger
+  should probably FOLD INTO `#564` rather than be filed separately.
+- **Next probe:** none diagnostic — this needs a maintainer ordering decision. Recommended:
+  (1) `#554` fixes its 🔴 2 (skip `safeterm.go` in the walk, or rename the parameter to
+  `serverText`), which deletes the `"s"` entry and with it most of the conflict; (2) rebase one
+  onto the other; (3) **run the suite on the MERGED tree**, not on either branch — a green run
+  on one branch says nothing about the tree its merge creates.
+- **Both PRs carry this on the record** — commented 2026-09-12 with the same suggested ordering.
+
 ## Next steps (ranked)
 
-🔴 Numbering stable; ranks 1–7 keep their meaning. Ranks 8–10 are new.
+🔴 Numbering stable. Ranks 1–5, 7 are DONE and keep their numbers only so live claims do not
+re-point. Rank 8's MEANING is refined below, not re-pointed.
 
 1. **DONE — `civitai/cli#526`.** forcing: none
-2. **DONE — `developer-docs#61` routed and re-tested.** Awaiting the reporter's balance figure.
-   forcing: user — external reporter, now answered after 18 days.
-3. **DONE — #513 diagnosed, server side filed as `civitai/civitai#4768`.** forcing: none
+2. **DONE — `developer-docs#61` routed and re-tested.** Awaiting the reporter's balance figure;
+   claim `devdocs-61-flux2-klein-whatif-500` still held.
+   forcing: user — external reporter, answered after 18 days, now awaiting their reply.
+3. **DONE — #513 diagnosed; server side filed as `civitai/civitai#4768`.** forcing: none
 4. **DONE — stale branch deleted** (recovery sha `12818a3`). forcing: none
 5. **DONE — `#545` merged.** forcing: none
-6. **`civitai/cli#554`** — BLOCKED on the contributor fixing two 🔴: the `\t` forgery vector,
-   and the `"s"` entry in `bareIdentArgs` that blinds the #393 guard wherever a variable is
-   named `s`. Do NOT merge until both land; re-audit the DELTA, not the whole PR.
+6. **`civitai/cli#554`** — BLOCKED on the contributor fixing two 🔴 (the `\t` forgery vector;
+   the `"s"` entry blinding the #393 guard). 🔴 **Do NOT merge before `#564` is reconciled** —
+   see the collision block. Re-audit the DELTA, not the whole PR.
    forcing: security — an aligned, fully attacker-controlled table row on a shipped surface.
 7. **DONE — AGENTS.md item 37 / `decisions/37` corrected** via `#556`. forcing: none
-8. **File the WIDENED ledger** — predicate `"prints server-supplied text into a
-   line-structured surface"`, over renderers, covering `\t` as well as `\n`. Eight known-live
-   sites listed in the investigation block above. Keep it separate so #554 is not held up.
+8. **The widened ledger — now most likely a FOLD INTO `#564`, not a separate issue.** Predicate:
+   *"prints server-supplied text into a line-structured surface"*, over renderers, covering `\t`
+   as well as `\n`. Eight known-live sites are listed in the previous update's investigation
+   block. Decide fold-vs-file **after** the `#554`/`#564` ordering is settled, so the decision is
+   made once.
    forcing: security — same class, eight commands, currently unguarded and unpinned.
-9. **`developer-docs#76`** — re-snapshot the three drifted files AFTER reading the diffs (two
-   describe behaviour changes, not wording), triage the other four failing checks, and fix
-   `drift-notify.mjs` to NAME the failing steps.
+9. **`developer-docs#76`** — re-snapshot the three drifted files AFTER reading the diffs, triage
+   the other four failing checks, and fix `drift-notify.mjs` to NAME the failing steps. Claim
+   `devdocs-76-drift-sweep-red` still held.
    forcing: gate — a red gate whose issue body reads all-green trains readers to dismiss it.
 10. **Check the CLI's vendored mirrors against the moved upstream vocabulary** — item 2's
     `vendoredSlotIDs` and item 4's scope bitmask vs the 411-line `block-scope.constants.ts`.
     forcing: regression — the mirrors exist to track exactly this, and nothing signalled them.
-11. **`home-manager switch`** so `devrc#1498`'s lesson is actually live.
+11. **`home-manager switch`** so `devrc#1498`'s mentions-id-collision lesson is actually live
+    (it is a `home.file` copy; merged ≠ deployed).
     forcing: none
 
 ## Gotchas / decisions / dead-ends
@@ -527,21 +583,41 @@ and round 1 agent reports"). Both reported; both are folded in here.
   unreviewed** (#545 for 13h; #554 until this arc). External PRs here are rare enough that
   nothing routes them to a human. That is the recurring failure, not any individual defect.
 
+- 🔴 **TWO PARALLEL PRs ON ONE FILE: THE TEXTUAL CONFLICT IS THE HARMLESS HALF.** `#554` and
+  `#564` were developed simultaneously against `cf5e4a8`, neither able to see the other, and
+  both touch one map. `merge-tree` catches the textual clash — but the real damage is that one
+  PR strengthens a guard while the other blinds it, which **no conflict marker can express**.
+  Whenever two PRs touch one guard, ask *what each does to the guard's POWER*, not just whether
+  the lines merge. Generalises past this pair: a clean merge means "no textual conflict", never
+  "safe".
+- 🔴 **`gh pr view --json mergeable` returns `UNKNOWN` until GitHub computes it lazily.**
+  `UNKNOWN` is not an answer — re-poll until `MERGEABLE`/`CLEAN` rather than merging on it.
+  Seen on `#554` again this session.
+- **A PR's `updatedAt` moves when you COMMENT on it.** Both `#554` and `#564` show
+  `2026-09-12T01:12` because of this session's own comments — do not read that as the author
+  having pushed.
+- **The ranked list here is now mostly DONE rows kept for numbering stability.** That is
+  deliberate (rank is half a `claim-work` slug's identity) and is why `forcing: none` outnumbers
+  the rest — it is not a queue of unforced work.
+
 ## How to verify
 
 ```bash
-# #554's two 🔴 — mechanism, no build required
-git -C <repo> show refs/remotes/pr/554:internal/cmd/safeterm.go | grep -A6 'func safeTermSingle'   # only "\n"
-git -C <repo> show refs/remotes/pr/554:internal/saferune/saferune.go | grep -n "r == '\\\\t'"      # tab KEPT
-git -C <repo> show refs/remotes/pr/554:internal/cmd/safeterm_userinput_test.go | grep -n '"s":'    # the allowlist hole
+R=/home/zach/workspace/civit/cli
 
-# #61 — ALWAYS guard the URL; without whatif=true this SUBMITS a paid training job
-URL='https://orchestration.civitai.com/v2/consumer/workflows?whatif=true&allowMatureContent=false'
-case "$URL" in *"whatif=true"*) : ;; *) echo REFUSING; exit 9 ;; esac
+# 🔴 the #554/#564 collision — EXIT CODE is the authority, a marker grep finds nothing either way
+git -C $R fetch origin refs/pull/554/head:refs/remotes/pr/554 \
+                      refs/pull/564/head:refs/remotes/pr/564 -f -q
+git -C $R merge-tree --write-tree refs/remotes/pr/554 refs/remotes/pr/564 >/dev/null 2>&1
+echo "rc=$?   # non-zero = still conflicts"
 
-# #76 — what actually failed (the issue body cannot tell you)
-gh run view <run-id> --repo civitai/civitai-developer-docs \
-  --json jobs --jq '.jobs[].steps[] | select(.conclusion=="failure") | .name'
+# the semantic half — what each PR does to the SAME map
+git -C $R show refs/remotes/pr/554:internal/cmd/safeterm_userinput_test.go | grep -n '"s":'
+git -C $R diff origin/main...refs/remotes/pr/564 -- internal/cmd/safeterm_userinput_test.go \
+  | grep -nE '^[+-].*bareIdentArgs'
+
+# #565 landed, by CONTENT (a squash is never an ancestor)
+git -C $R show origin/main:claudedocs/handoff-external-issue-513-numeric-username.md | grep -c tabwriter
 
 # claims still held
 claim-work --list | grep -E 'devdocs-61|devdocs-76'
