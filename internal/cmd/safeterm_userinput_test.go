@@ -69,6 +69,7 @@ var userTypedArgs = map[string]string{
 var bareIdentArgs = map[string]string{
 	"workflowID": "SERVER: the id from the submit reply / poll, not the one the user typed",
 	"target":     "MIXED: --out verbatim, else filepath.Base(SERVER file name). Sanitised for the server half — see targetPath",
+	"partPath":   "MIXED: `target` + \".part\", so it inherits target's two origins exactly — see targetPath",
 	"w":          "SERVER-derived: a download warning, or an image-metadata weight",
 	"status":     "SERVER: a workflow status string",
 	"r":          "SERVER: an orchestrator failure reason",
@@ -102,6 +103,7 @@ var bareIdentArgs = map[string]string{
 // function that no longer exists.
 var sanitizerComposers = map[string]string{
 	"safeTermSingle": "collapses \\n to a space for single-line/tabwriter fields; delegates to safeTerm first",
+	"safeTermErr":    "strips a WRAPPED CAUSE's message while leaving errors.Is/As reaching the original; delegates to safeTerm",
 }
 
 // sanitizerFile is the one file whose safeTerm calls are composition rather than

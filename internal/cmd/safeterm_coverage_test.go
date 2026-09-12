@@ -208,6 +208,66 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the base-model line and the mismatch warnings above the plan"},
 	"formatFileList": {"TestReadRenderersStripTheInvisibleClass",
 		"the ambiguity list naming each candidate file by server-supplied name and type"},
+
+	// --- download path: the five surfaces civitai/cli#566 found ---------------
+	//
+	// 🔴 THESE FIVE ARE WHY THE LEDGER'S KEY IS A BLIND SPOT WORTH NAMING. GREW
+	// only fires for a function that ALREADY calls safeTerm at least once, so
+	// while these called it ZERO times no row was ever demanded — their absence
+	// was not merely unrecorded, it was UNRECORDABLE. Gating them is what made
+	// them ledgerable. The instrument that would have FOUND them (a row demanded
+	// of any function rendering a server-supplied struct field, gated or not) is
+	// deliberately still open; #566 scopes it out rather than half-building it.
+	"checkTargetCollisions": {"TestCheckTargetCollisionsSanitizesServerFields",
+		"the same-target refusal: each colliding file's name and type, plus the mixed-origin target. The " +
+			"LITERAL TWIN of formatFileList's line, which was gated while this was not — and " +
+			"this one is the ONLY thing between the user and a silent overwrite"},
+	"(*progressWriter).line": {"TestProgressWriterLineSanitizesServerName",
+		"the server's files[].name inside a \\r-REWRITTEN line — both callers rewrite in place (Write's TTY " +
+			"branch 10×/s, done() once), so the CLI is already moving the cursor and an ESC in the name " +
+			"extends that reach up into the pickle/archive EXECUTION WARNING printed just above it"},
+	"downloadOne": {"TestDownloadOneErrorsSanitizeTheServerName",
+		"the download / SHA256-mismatch / install errors AND the `Saved <target>` line. main.go " +
+			"prints err.Error() unfiltered, so the mismatch string is the CLI ASSERTING AN INTEGRITY " +
+			"FAILURE with an uploader-controlled prefix. MEASURED, 6 calls, ALL SIX killed individually. " +
+			"🔴 THE SIXTH — the safeTermErr on `download %s: %w` — was recorded here as a SURVIVOR " +
+			"\"because the cause is a *url.Error and Go's own %q already escapes the class\". That " +
+			"sentence was false and is retracted (#572 round 2): %q is strconv.Quote, which escapes what " +
+			"is not unicode.IsPrint, and IsPrint admits U+2800 and U+034F; url.URL.String() writes " +
+			"RawQuery back VERBATIM, so a hostile query rides into *url.Error raw; and the https/parse " +
+			"refusals on this path are not *url.Error at all. It survived for want of a driving test, " +
+			"which the two `*url.Error carries the runes %q does not escape` / `real client's https " +
+			"refusal` subtests now supply. The `create output directory` error is deliberately NOT here: " +
+			"its `dir` is user-typed only (#572)"},
+	"writePart": {"TestWritePartErrorsSanitizeTheServerName",
+		"the frame BETWEEN downloadOne and the progress writer, gated so the sibling-renderer split #566 " +
+			"is about cannot reappear one call frame down. MEASURED, 6 calls: `streaming <name>`, " +
+			"`create <partPath>` and its cause are killed; the two `finalize` calls and `streaming`'s " +
+			"cause SURVIVE — a failing Close and a hostile-bytes stream error are not driven (#566 PR body)"},
+	// 🔴 THE SIXTH, FOUND BY #572's AUDIT OF #566 — AND IT IS THE SAME BLIND SPOT
+	// ONE LAYER DEEPER. targetPath also called safeTerm zero times, so no row was
+	// demandable; worse, its refusal LOOKED gated because it used `%q`. It is not:
+	// strconv escapes what is not unicode.IsPrint, and IsPrint admits U+2800 (So)
+	// and U+034F (Mn) — both in saferune's class, both emitted raw. Measured, not
+	// argued, and the fixture that shows it (dlHostileQuoted) has its own control.
+	"targetPath": {"TestTargetPathRefusalSanitizesTheServerName",
+		"the unusable-filename refusal, which echoes files[].name with an ARBITRARY prefix — " +
+			"filepath.Base(\"<payload>/..\") is \"..\", so the degenerate basename the guard tests for says " +
+			"nothing about the bytes in front of it. Reaches BOTH streams: stderr via downloadSelected and " +
+			"STDOUT via printDownloadPlan's `target: (unresolved)`, one line under a name that IS sanitised. " +
+			"`%q` is kept alongside — it delimits a name that is often blank, and it escapes the \\n saferune " +
+			"deliberately keeps",
+	},
+	"downloadStatusError": {"TestDownloadOneErrorsSanitizeTheServerName",
+		"the four HTTP-status errors, gated ONCE at the top rather than at each return — four spellings of " +
+			"one rule is how #566 happened. The 401 arm is the most exposed: an anonymous download of a " +
+			"gated file reaches it on the FIRST run, and the message it forges tells the user to log in"},
+	"safeTermErr": {"TestDownloadOneErrorsSanitizeTheServerName",
+		"THE WRAPPED CAUSE, which #566's own first fix left raw: *fs.PathError and *os.LinkError render " +
+			"their paths with no quoting, so `%s` sanitised + `%w` raw emitted the hostile bytes one colon " +
+			"later. Pinned by the `install` subtest, writePart's `create`, and — since #572 round 2 — the " +
+			"two download-URL subtests, which cover the case `%q` does NOT neutralise; errors.Is/As still " +
+			"reach through"},
 	"emitPreDownloadNotes": {"TestSafeTermIsNeverAppliedToUserTypedInput",
 		"INCIDENTAL, NOT BEHAVIOURAL: the published file name in the `no SHA256 published` warning. " +
 			"The red comes from bareIdentArgs noticing `name` stopped being passed, not from any " +
@@ -246,8 +306,6 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the mixed-file-type warnings above a download"},
 	"downloadSelected": {notCovered,
 		"the per-file routing note built from the server's file name"},
-	"downloadOne": {notCovered,
-		"the `Saved <target>` line — the one line that says where bytes landed"},
 	"presentTargetSatisfies": {notCovered,
 		"the `already present (SHA256 verified)` lines, which assert an integrity result"},
 	"pickleArchiveNote": {notCovered,
@@ -325,14 +383,41 @@ const (
 	// honest is then a review question with the evidence written next to it.
 	// That is the split #399 asked for: the count is mechanical, the content is
 	// reviewed.
-	// 🔴 LOWERED 25 -> 22 BY civitai/cli#552, WHICH IS THE RATCHET WORKING AS
-	// DESIGNED. printAppMetrics, printCostMap and printSubmitResult moved to
-	// covered when TestTabwriterRenderersCannotBeForged started driving them
-	// with a forgery payload — measured by deleting each one's gate and watching
-	// that test go red, not by reading it. The three renderers #552 added to this
-	// ledger (printSubmissionTable, printSubmissionDetail, printListingStatus)
-	// arrive COVERED by the same test, so they do not spend headroom either.
-	maxUncoveredSafeTermFuncs = 22
+	// 🔴 LOWERED 25 -> 21 BY TWO INDEPENDENT EFFORTS THAT LANDED TOGETHER, AND
+	// THE MERGED VALUE IS NEITHER SIDE'S. This is the ratchet working as
+	// designed, twice over, on disjoint sets of functions:
+	//
+	//   25 -> 22, civitai/cli#552 (app path). printAppMetrics, printCostMap and
+	//   printSubmitResult moved to covered when
+	//   TestTabwriterRenderersCannotBeForged started driving them with a forgery
+	//   payload — measured by deleting each one's gate and watching that test go
+	//   red, not by reading it. The three renderers #552 added to this ledger
+	//   (printSubmissionTable, printSubmissionDetail, printListingStatus) arrive
+	//   COVERED by the same test, so they do not spend headroom either.
+	//
+	//   25 -> 24, civitai/cli#566 (download path). downloadOne moved from
+	//   notCovered to covered, which is exactly the "unbanked progress that must
+	//   be spent in the same commit" case the paragraph above describes. The
+	//   SIX NEW rows the #566 work adds — checkTargetCollisions,
+	//   (*progressWriter).line, downloadStatusError, safeTermErr, writePart and
+	//   targetPath — are all covered, so they do not move this number in either
+	//   direction.
+	//   ⚠ THIS SAID "seven", AND IT WAS WRONG THE MOMENT IT WAS WRITTEN. The
+	//   pre-merge text said "five" and was right for ITS tree; the merge
+	//   resolution changed it to "seven" without re-measuring. Re-derived here by
+	//   diffing this map's KEYS between refs rather than by counting prose: six
+	//   against the merge base (which already carried #552/#573's three app-path
+	//   rows), and nine against this branch's fork point c4ed077 — of which the
+	//   same three arrived via main, not from this work. Neither reading is
+	//   seven. A count in a comment is a claim; re-measure it, do not carry it
+	//   through a merge.
+	//
+	// The two sets are disjoint — four distinct functions moved, so the merged
+	// count is 21, not 22 and not 24. 🔴 THAT 21 IS MEASURED, NOT DERIVED: taking
+	// either branch's constant through the merge would have left the equality
+	// asserting a number no tree ever held. It is what this test reported for
+	// the MERGED tree, whose notCovered set it also enumerates on failure.
+	maxUncoveredSafeTermFuncs = 21
 )
 
 // TestSafeTermCallSitesAreCoveredByANamedTest is civitai/cli#399.
