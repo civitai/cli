@@ -53,14 +53,14 @@ func safeTerm(s string) string {
 // echoes the path into the error it returns — `*fs.PathError` and
 // `*os.LinkError` both render it, and `*url.Error` renders the URL — so
 //
-//	fmt.Errorf("create output directory %s: %w", safeTerm(dir), err)
+//	fmt.Errorf("install %s: %w", safeTerm(target), err)
 //
-// emits `dir` sanitised, then a colon, then the SAME `dir` raw out of err. On
-// the download path the repeated value is a path built from the server's file
-// name (targetPath) or the server's own downloadUrl, which is to say: the gate
-// was decorative. MEASURED, not reasoned — the guards in
-// download_safeterm_test.go were written against the %s-only fix, and two of
-// them caught this the first time they ran.
+// emits `target` sanitised, then a colon, then the SAME `target` raw out of the
+// *os.LinkError, which is to say: the gate was decorative. On the download path
+// that repeated value is a path whose leaf is the server's own file name
+// (targetPath), or the server's downloadUrl inside a *url.Error. MEASURED, not
+// reasoned — the guards in download_safeterm_test.go were written against the
+// %s-only fix, and two of them caught this the first time they ran.
 //
 // It deliberately does NOT reformat, truncate or re-word the cause: it strips
 // exactly what safeTerm strips and nothing else. The wrapped error stays in the

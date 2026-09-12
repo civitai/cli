@@ -332,8 +332,8 @@ func TestDownloadOneErrorsSanitizeTheServerName(t *testing.T) {
 	// the URL with %q and so escapes every rune in the class as ASCII text.
 	// safeTermErr is defence in depth here and this subtest does NOT go red if
 	// it is deleted from this one call. The subtests that DO pin safeTermErr are
-	// "output directory" below and writePart's "create" — *fs.PathError and
-	// *os.LinkError render their paths RAW, with no quoting anywhere.
+	// "install" below and writePart's "create" — *os.LinkError and *fs.PathError
+	// render their paths RAW, with no quoting anywhere.
 	t.Run("transport failure whose cause quotes the server URL", func(t *testing.T) {
 		var out, errb bytes.Buffer
 		hostileURL := "https://cdn.example.invalid/" + dlHostileName
@@ -409,27 +409,12 @@ func TestDownloadOneErrorsSanitizeTheServerName(t *testing.T) {
 				"(or set CIVITAI_TOKEN); this file needs a token (most model files do; some public files don't)")
 	})
 
-	t.Run("output directory", func(t *testing.T) {
-		// A regular FILE where downloadOne wants a directory, so MkdirAll fails
-		// with ENOTDIR and the hostile bytes land in "create output directory %s".
-		root := t.TempDir()
-		blocker := filepath.Join(root, dlHostileName)
-		if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
-			t.Fatalf("CONTROL failure, not a finding: %v", err)
-		}
-		var out, errb bytes.Buffer
-		_, err := downloadOne(context.Background(), dlFakeDownloader{}, &out, &errb, newFile(""),
-			filepath.Join(blocker, "weights.bin"), &downloadOpts{})
-		if err == nil {
-			t.Fatal("CONTROL failure, not a finding: MkdirAll over a regular file succeeded")
-		}
-		if !strings.HasPrefix(err.Error(), "create output directory "+filepath.Join(root, dlSafeName)+":") {
-			t.Errorf("SAFETERM REGRESSION in downloadOne (create output directory %%s): got\n  %q", err.Error())
-		}
-		if got := dlHazardRunes(err.Error()); got != nil {
-			t.Errorf("SAFETERM REGRESSION in downloadOne (create output directory %%s): %v reached stderr", got)
-		}
-	})
+	// There is deliberately NO `create output directory` subtest. The one that
+	// stood here handed downloadOne a target of <tmp>/<hostile name>/weights.bin —
+	// a shape targetPath cannot produce, since the server's name is always the
+	// LEAF. It went red on a mutation and so read as coverage, while the gate it
+	// pinned could never have run on a real path. See download.go's comment at the
+	// MkdirAll (civitai/cli#572).
 
 	t.Run("saved line", func(t *testing.T) {
 		// The success path, so the already-gated `Saved <target>` line is covered
@@ -530,9 +515,14 @@ func TestDownloadErrorsReachStderrUnfiltered(t *testing.T) {
 				"because nothing downstream was (civitai/cli#566).", want)
 		}
 	}
+	// A NOTE, NOT A FAILURE. main.go growing a sanitiser would be a CORRECT
+	// change, and a gate that goes red on a correct change is one people learn to
+	// click through. The load-bearing claim is the loop above — that main.go
+	// filters nothing TODAY, which is what makes the per-error gates in
+	// download.go load-bearing rather than redundant. If this line ever prints,
+	// reconcile the two claims; do not treat it as a regression (civitai/cli#572).
 	if strings.Contains(string(src), "safeTerm") || strings.Contains(string(src), "saferune") {
-		t.Errorf("main.go now sanitises on the way out. That is not wrong, but the per-error gates in " +
-			"download.go were justified by its absence — reconcile the two rather than leaving both " +
-			"claims standing (civitai/cli#566).")
+		t.Log("main.go now references a sanitiser on the way out. Not a failure: re-read download.go's " +
+			"per-error gates and decide whether they are still the load-bearing ones (civitai/cli#566).")
 	}
 }

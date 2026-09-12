@@ -798,9 +798,18 @@ func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer
 		return true, nil
 	}
 
+	// Deliberately NOT gated, unlike every other error below: `dir` can only hold
+	// bytes the USER typed, and saferune's package doc is explicit that the strip
+	// is not applied to those. targetPath always puts the server's name at the
+	// LEAF (`filepath.Base(f.Name)`), which `filepath.Dir` drops; its bare-`base`
+	// return yields "." and is skipped here; and under --layout `routeDir` returns
+	// --root, or --root joined with a compile-time `layoutFolders` constant — the
+	// server's file/model type only picks the map key, it never reaches `dir`.
+	// MkdirAll's *fs.PathError carries a prefix of `dir`, so the cause is
+	// user-typed too. Measured in civitai/cli#572; do not re-add a gate here.
 	if dir := filepath.Dir(target); dir != "" && dir != "." {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return false, fmt.Errorf("create output directory %s: %w", safeTerm(dir), safeTermErr(err))
+			return false, fmt.Errorf("create output directory %s: %w", dir, err)
 		}
 	}
 

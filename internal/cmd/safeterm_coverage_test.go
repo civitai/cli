@@ -205,11 +205,12 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"branch 10×/s, done() once), so the CLI is already moving the cursor and an ESC in the name " +
 			"extends that reach up into the pickle/archive EXECUTION WARNING printed just above it"},
 	"downloadOne": {"TestDownloadOneErrorsSanitizeTheServerName",
-		"the download / SHA256-mismatch / install / mkdir errors AND the `Saved <target>` line. main.go " +
+		"the download / SHA256-mismatch / install errors AND the `Saved <target>` line. main.go " +
 			"prints err.Error() unfiltered, so the mismatch string is the CLI ASSERTING AN INTEGRITY " +
-			"FAILURE with an uploader-controlled prefix. MEASURED, 8 calls: 7 killed individually; the " +
+			"FAILURE with an uploader-controlled prefix. MEASURED, 6 calls: 5 killed individually; the " +
 			"safeTermErr on `download %s: %w` SURVIVES because on this path the cause is a *url.Error and " +
-			"Go's own %q already escapes the class — defence in depth, not coverage"},
+			"Go's own %q already escapes the class — defence in depth, not coverage. The `create output " +
+			"directory` error is deliberately NOT here: its `dir` is user-typed only (#572)"},
 	"writePart": {"TestWritePartErrorsSanitizeTheServerName",
 		"the frame BETWEEN downloadOne and the progress writer, gated so the sibling-renderer split #566 " +
 			"is about cannot reappear one call frame down. MEASURED, 6 calls: `streaming <name>`, " +
@@ -222,7 +223,7 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"safeTermErr": {"TestDownloadOneErrorsSanitizeTheServerName",
 		"THE WRAPPED CAUSE, which #566's own first fix left raw: *fs.PathError and *os.LinkError render " +
 			"their paths with no quoting, so `%s` sanitised + `%w` raw emitted the hostile bytes one colon " +
-			"later. Pinned by the `output directory` and `install` subtests; errors.Is/As still reach through"},
+			"later. Pinned by the `install` subtest and writePart's `create`; errors.Is/As still reach through"},
 	"emitPreDownloadNotes": {"TestSafeTermIsNeverAppliedToUserTypedInput",
 		"INCIDENTAL, NOT BEHAVIOURAL: the published file name in the `no SHA256 published` warning. " +
 			"The red comes from bareIdentArgs noticing `name` stopped being passed, not from any " +
