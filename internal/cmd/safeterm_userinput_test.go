@@ -81,15 +81,52 @@ var bareIdentArgs = map[string]string{
 	"name":       "SERVER: a published file name",
 	"h":          "SERVER: a hash out of image metadata",
 	"baseModel":  "SERVER: a base-model label",
+	"typ":        "SERVER: the primary file's published `type`, defaulted to \"Other\" when blank (nonModelFileMarker)",
 }
 
 // minSafeTermCallsScanned is the POSITIVE CONTROL. A parser that has stopped
 // finding calls — a moved package, a renamed helper, the wrong directory —
-// scans nothing, finds no violation and reports a serene pass. There are 150
+// scans nothing, finds no violation and reports a serene pass. There are 152
 // calls today.
 const minSafeTermCallsScanned = 100
 
-func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
+// safeTermSite is one safeTerm(...) call, ATTRIBUTED TO THE FUNCTION THAT
+// ENCLOSES IT.
+type safeTermSite struct {
+	// pos is file:line:col, for a failure message a reader can jump to.
+	pos string
+	// enclosing is the ledger key: the bare name for a top-level func, or
+	// `(*T).name` for a method, so two methods of different types that share a
+	// name stay distinguishable.
+	enclosing string
+	// arg is the rendered argument expression, and bareIdent says whether it was
+	// spelled as a bare local.
+	arg       string
+	bareIdent bool
+}
+
+// scanSafeTermCallSites parses this package's own non-test sources and returns
+// every one-argument safeTerm(...) call with its enclosing function.
+//
+// 🔴 IT WALKS file.Decls AND RECURSES INTO EACH *ast.FuncDecl, AND THAT ONE
+// STRUCTURAL DIFFERENCE IS WHAT #399 TURNED ON. The original walk here was a
+// flat `ast.Inspect(file, …)`: it saw every call and knew where NONE of them
+// lived, so the only thing it could count was a total. Deleting a safeTerm call
+// moved that total from ~151 to ~150 — nowhere near the floor below — and the
+// suite stayed green, which is exactly the defect #399 reports (20 of 25 sampled
+// sites survived deletion). Attribution is what lets a ledger be keyed by
+// SOMETHING THAT SHRINKS TO ZERO when a function's last call is removed.
+//
+// Two controls run here rather than in either caller, so both get them:
+//
+//  1. the file and call counts, against the floors above;
+//  2. 🔴 TOTALITY — a flat count of the same calls must equal the attributed
+//     count. A call in a package-level var initialiser, or in a func literal
+//     assigned outside any FuncDecl, is invisible to a Decls walk; without this
+//     it would silently be attributed to nothing and be covered by no row,
+//     which reads exactly like "no such site exists".
+func scanSafeTermCallSites(t *testing.T) []safeTermSite {
+	t.Helper()
 	// parser.ParseFile over an explicit file list rather than parser.ParseDir,
 	// which Go 1.25 deprecated. The list is the package's own non-test sources;
 	// a read that returns none of them trips the control below.
@@ -98,9 +135,8 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 		t.Fatalf("CONTROL failure, not a finding: cannot read the package directory: %v", err)
 	}
 	fset := token.NewFileSet()
-	scanned, files := 0, 0
-	var bad, unclassified []string
-	seenBare := map[string]bool{}
+	files, flat := 0, 0
+	var sites []safeTermSite
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -112,35 +148,87 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 		}
 		files++
 		ast.Inspect(file, func(n ast.Node) bool {
-			ce, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			id, ok := ce.Fun.(*ast.Ident)
-			if !ok || id.Name != "safeTerm" || len(ce.Args) != 1 {
-				return true
-			}
-			scanned++
-			arg := renderExpr(ce.Args[0])
-			if why, forbidden := userTypedArgs[arg]; forbidden {
-				bad = append(bad, fmt.Sprintf("%s: safeTerm(%s) — %s", fset.Position(ce.Lparen), arg, why))
-			}
-			if _, bare := ce.Args[0].(*ast.Ident); bare {
-				if _, known := bareIdentArgs[arg]; !known {
-					unclassified = append(unclassified, fmt.Sprintf("%s: safeTerm(%s)", fset.Position(ce.Lparen), arg))
-				}
-				seenBare[arg] = true
+			if isSafeTermCall(n) != nil {
+				flat++
 			}
 			return true
 		})
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			key := safeTermFuncKey(fd)
+			ast.Inspect(fd, func(n ast.Node) bool {
+				ce := isSafeTermCall(n)
+				if ce == nil {
+					return true
+				}
+				_, bare := ce.Args[0].(*ast.Ident)
+				sites = append(sites, safeTermSite{
+					pos:       fset.Position(ce.Lparen).String(),
+					enclosing: key,
+					arg:       renderExpr(ce.Args[0]),
+					bareIdent: bare,
+				})
+				return true
+			})
+		}
 	}
 	if files < 20 {
 		t.Fatalf("CONTROL failure, not a finding: only %d source file(s) parsed in this package", files)
 	}
-
-	if scanned < minSafeTermCallsScanned {
+	if len(sites) < minSafeTermCallsScanned {
 		t.Fatalf("CONTROL failure, not a finding: only %d safeTerm call(s) found, want >= %d. The scan is "+
-			"broken, and a clean result from it means nothing.", scanned, minSafeTermCallsScanned)
+			"broken, and a clean result from it means nothing.", len(sites), minSafeTermCallsScanned)
+	}
+	if flat != len(sites) {
+		t.Fatalf("CONTROL failure, not a finding: %d safeTerm call(s) exist but only %d sit inside a func "+
+			"declaration. The missing one is in a package-level initialiser or a func literal outside any "+
+			"FuncDecl, so no enclosing function owns it and no ledger row can cover it. Widen this walk "+
+			"before trusting either test that reads it.", flat, len(sites))
+	}
+	return sites
+}
+
+// isSafeTermCall returns the call when n is a one-argument safeTerm(...), and
+// nil otherwise. ONE spelling of the match, used by both halves of the totality
+// control above — two copies of it could disagree and the disagreement would
+// read as a finding.
+func isSafeTermCall(n ast.Node) *ast.CallExpr {
+	ce, ok := n.(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+	id, ok := ce.Fun.(*ast.Ident)
+	if !ok || id.Name != "safeTerm" || len(ce.Args) != 1 {
+		return nil
+	}
+	return ce
+}
+
+// safeTermFuncKey is the ledger key for a function declaration.
+func safeTermFuncKey(fd *ast.FuncDecl) string {
+	if fd.Recv != nil && len(fd.Recv.List) > 0 {
+		return "(" + renderExpr(fd.Recv.List[0].Type) + ")." + fd.Name.Name
+	}
+	return fd.Name.Name
+}
+
+func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
+	sites := scanSafeTermCallSites(t)
+	var bad, unclassified []string
+	seenBare := map[string]bool{}
+	for _, s := range sites {
+		if why, forbidden := userTypedArgs[s.arg]; forbidden {
+			bad = append(bad, fmt.Sprintf("%s: safeTerm(%s) — %s", s.pos, s.arg, why))
+		}
+		if s.bareIdent {
+			if _, known := bareIdentArgs[s.arg]; !known {
+				unclassified = append(unclassified, fmt.Sprintf("%s: safeTerm(%s)", s.pos, s.arg))
+			}
+			seenBare[s.arg] = true
+		}
 	}
 	if len(bad) > 0 {
 		t.Errorf("%d call site(s) sanitise input the USER typed:\n  %s\n\n"+
@@ -160,8 +248,8 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 				"note reads as coverage; delete it or fix the name.", name)
 		}
 	}
-	t.Logf("scanned %d safeTerm call site(s) across %d file(s); %d forbidden shapes and %d bare-identifier "+
-		"origins are pinned", scanned, files, len(userTypedArgs), len(bareIdentArgs))
+	t.Logf("scanned %d safeTerm call site(s); %d forbidden shapes and %d bare-identifier origins are pinned",
+		len(sites), len(userTypedArgs), len(bareIdentArgs))
 }
 
 // renderExpr prints the small set of expression shapes safeTerm arguments take.
