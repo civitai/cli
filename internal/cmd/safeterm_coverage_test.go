@@ -16,16 +16,20 @@ import (
 //
 // safeTerm is the CLI's ONE gate on server-supplied text reaching a terminal
 // (see internal/saferune's package doc for the class it removes, and
-// safeterm.go for what a hostile field does without it). It is called from 152
-// sites in 60 functions. An adversarial audit of #398 deleted `safeTerm(...)`
+// safeterm.go for what a hostile field does without it). It was called from 152
+// sites in 60 functions when this file was written; at civitai/cli#575 R1 the
+// harness reports 199 sites in 72. 🔴 THE FIGURES IN THIS HEADER ARE DATED, NOT
+// LIVE — nothing checks them, and they are kept only because the #398 audit below
+// is a claim about the tree it ran on. Read the harness's own log line for today's
+// numbers. An adversarial audit of #398 deleted `safeTerm(...)`
 // at each of 25 sampled sites in turn: 20 of them left the WHOLE SUITE GREEN.
 // A refactor could drop the call and CI would say nothing.
 //
 // 🔴 THE PROBLEM WAS NOT A MISSING TEST, IT WAS A MISSING NUMBER. Nobody could
 // answer "which of these sites is pinned?" without re-running that audit by
 // hand, so the answer was never written down and never re-checked. A table of
-// 60 rows beats 152 tests: this is the answer, in a form a compiler keeps
-// honest.
+// table of rows beats a test per site: this is the answer, in a form a compiler
+// keeps honest.
 //
 // It is deliberately NOT a claim that every site is covered. Most rows say
 // notCovered, and that is the point — the absence is now IMPOSSIBLE NOT TO
@@ -45,8 +49,9 @@ import (
 //
 //   - The LEDGER pins that a function still calls safeTerm AT ALL. Deleting a
 //     function's LAST safeTerm call empties its row and fails SHRANK below —
-//     for every row, notCovered ones included. That is the whole set of 60
-//     functions, and it is what #399's headline measurement was about.
+//     for every row, notCovered ones included. That is the whole ledgered set —
+//     60 functions when #399 measured it — and it is what its headline
+//     measurement was about.
 //   - A NAMED TEST pins that the class does not reach the SCREEN. That is
 //     strictly more, and it is the only thing that catches deleting ONE of a
 //     function's twelve calls, or a new field printed without the gate.
@@ -278,8 +283,19 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 			"assertion about what reaches the terminal"},
 
 	// --- generate path ------------------------------------------------------
-	"describeVersion": {"TestGenerate_SanitisesServerStrings",
-		"the resolved checkpoint/LoRA name and type on the PRE-SPEND quote screen"},
+	// 🔴 REPOINTED BY civitai/cli#575 R1, AND THE OLD NAME IS WHY THIS FIELD EXISTS.
+	// This row read TestGenerate_SanitisesServerStrings, which was TRUE until this
+	// same PR gave printGenerateQuote its own cell gate — that gate sanitises the
+	// payload whatever describeVersion did, so the named test went green on a
+	// broken upstream. MEASURED: deleting both calls here reddens 3 tests at
+	// f0cb748 and, without this repoint, would have left the row naming one that
+	// no longer moves. A row naming a test that cannot go red is the "resolves a
+	// NAME, not a relationship" defect this PR deletes a ledger state for,
+	// regenerated one file over.
+	"describeVersion": {"TestDescribeVersionIsSanitisedAtItsOwnOutput",
+		"the resolved checkpoint/LoRA name and type. It reaches a tabwriter CELL on the quote screen and " +
+			"a plain label line on the approval screen, and BOTH now gate at their own render site — so the " +
+			"named test asserts this function's RETURN VALUE, which no downstream gate can mask"},
 	"serverReasonSuffix": {"TestGenerate_ServerReasonIsSanitizedForTheTerminal",
 		"the orchestrator's failure reason appended to a generate error"},
 	"printWorkflow": {"TestWorkflowsGet_ReasonBlockIsSanitized",
@@ -443,10 +459,23 @@ const (
 	//   through a merge.
 	//
 	// The two sets are disjoint — four distinct functions moved, so the merged
-	// count is 21, not 22 and not 24. 🔴 THAT 21 IS MEASURED, NOT DERIVED: taking
+	// count WAS 21, not 22 and not 24. 🔴 THAT 21 WAS MEASURED, NOT DERIVED: taking
 	// either branch's constant through the merge would have left the equality
 	// asserting a number no tree ever held. It is what this test reported for
 	// the MERGED tree, whose notCovered set it also enumerates on failure.
+	//
+	// 🔴 LOWERED 21 -> 20 BY civitai/cli#575 R1, AND THE PARAGRAPH ABOVE IS LEFT
+	// IN THE PAST TENSE ON PURPOSE. That PR made buildGenerateGraph covered
+	// (TestImageDisclosureLineIsGatedAtComposition reddens when its gate goes) and
+	// banked the unit in the same commit, as the RATCHET HEADROOM message demands.
+	// 20 is what this test reports for the current tree: 52 covered, 20 not.
+	// 🔴 The three sentences above asserting 21 went on asserting it for one round
+	// after the constant moved, directly above the retraction that says "a count in
+	// a comment is a claim; re-measure it, do not carry it through a merge" — found
+	// by an audit round, not by any check. A reader hitting a RATCHET failure reads
+	// this paragraph as the authority on what the number should be, so it is
+	// amended rather than search-and-replaced: each bullet now says which tree its
+	// figure belonged to.
 	maxUncoveredSafeTermFuncs = 20
 )
 

@@ -937,11 +937,18 @@ func TestImageDisclosureLineIsGatedAtComposition(t *testing.T) {
 	if err := os.WriteFile(src, raw, 0o600); err != nil {
 		t.Fatalf("CONTROL failure, not a finding: cannot write the ZWNJ-named fixture: %v", err)
 	}
-	// The control ON the fixture: if the path ever loses its class rune, this arm
-	// silently stops measuring and nothing else would say so.
-	if !strings.ContainsRune(src, '\u200c') {
-		t.Fatalf("CONTROL failure, not a finding: the fixture path %q carries no U+200C, so the #393 arm "+
-			"below cannot distinguish an untouched path from a flattened one.", src)
+	// 🔴 THE CONTROL PINS THE PROPERTY, NOT THE RUNE, AND THE DIFFERENCE IS
+	// MEASURABLE. A first cut asserted only that the path still contained U+200C,
+	// under a sentence promising "a value the gate CANNOT leave alone" — two
+	// different claims. Demonstrated: exempt U+200C inside saferune, the way
+	// U+FE0F already is, and the rune assertion passes while safeTermSingle
+	// becomes the identity on this path, so the #393 arm below goes vacuous again
+	// with nothing saying so. Asserting the gate actually MOVES this value covers
+	// both the rune-lost and the class-changed cases.
+	if safeTermSingle(src) == src {
+		t.Fatalf("CONTROL failure, not a finding: safeTermSingle leaves the fixture path %q unchanged, so "+
+			"the #393 arm below cannot distinguish an untouched path from a flattened one. The path must "+
+			"carry a rune the gate rewrites — U+200C unless the class changed under it.", src)
 	}
 
 	o := baseOpts()
