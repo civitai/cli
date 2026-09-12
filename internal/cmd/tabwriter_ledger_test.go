@@ -46,8 +46,9 @@ import (
 // 🔴 WHAT THE STRUCTURAL HALF CANNOT SEE, stated rather than waved at:
 //  1. Server text written into a cell with NO sanitizer at all. No AST can tell
 //     a server string from a CLI-owned label, so that judgement is the LEDGER's
-//     job: every renderer carries a gate classification and a reason, and the
-//     unsanitised ones are counted by a ratchet that only goes down.
+//     job: every renderer carries a gate classification and a reason naming the
+//     fields, and the set of classifications is CLOSED at two — there is no
+//     "ungated but declared" state to move a hole into (see the const block).
 //  2. A tabwriter reached through a struct field, a function-typed variable or
 //     an interface method — the taint walk follows locals, direct calls and
 //     parameters, not values stored on a struct. The same gap on the VALUE side
@@ -59,13 +60,33 @@ import (
 //  4. Whether the sanitised value is the RIGHT one. A structural check
 //     type-checks past a wrong argument, which is why
 //     TestTabwriterRenderersCannotBeForged drives the real renderers.
-//  5. The SAME hazard one line outside a tabwriter: a `label: value` line
+//  5. A bare safeTerm LAUNDERED through more than four hops. sanitizerReach
+//     stops at depth 4, so a value passed through five successive local
+//     assignments — or four helper hops — reaches a cell without being counted
+//     as a violation. It is a real hole and it is left open deliberately: the
+//     RENDERER is still seen either way, so GREW, SHRANK and MISLABELLED all
+//     still apply to it, and the cost of an unbounded walk (cycles, whole-package
+//     traversal per cell) buys only the BARE-SAFETERM half of one contrived
+//     shape. No value in this package is currently passed through more than two
+//     hops; a real one at five is a code smell before it is a security finding.
+//  6. The SAME hazard one line outside a tabwriter: a `label: value` line
 //     printed with plain Fprintf still puts a forged line at column zero if the
-//     value carries `\n`. Several detail renderers (printModelDetail's header,
-//     printCollectionDetail, printAppDetail) are in that state deliberately —
-//     telling a single-line label from legitimately multi-line free text there
-//     is a per-field judgement, not a structural one, and #569 already made it
-//     for images.go. Stated as an open residual rather than half-converted.
+//     value carries `\n`. This is the residual that BIT — a row here is a claim
+//     about CELLS, and it was read as coverage of a command. printSubmissionDetail
+//     (rejection reason, approval notes, live URL, block id) and
+//     printListingStatus (screenshot id and caption) printed raw server text one
+//     line under their own flushed table; a rejection reason of
+//     "\x1b[1A\x1b[2KOVERWRITTEN" put a RAW ESC on stdout. Both are now gated at
+//     their own call sites and driven by
+//     TestGatedRenderersDoNotForgeOutsideTheirTable, because a structural scan
+//     over tabwriter cells cannot see either.
+//     Still open, deliberately: the detail renderers whose header lines are plain
+//     Fprintf (printModelDetail's header, printCollectionDetail, printAppDetail).
+//     Telling a single-line label from legitimately multi-line free text there is
+//     a per-field judgement, not a structural one; #569 made it for images.go and
+//     this round made it for the app path. Stated as an open residual rather than
+//     half-converted, and the README's "What a table cell can contain" says the
+//     same thing to users rather than promising the wider claim.
 
 // --- the analysis -----------------------------------------------------------
 
@@ -153,20 +174,40 @@ func analyzeTabwriterUse(fset *token.FileSet, files map[string]*ast.File) *tabwr
 		return true
 	}
 
-	// 1. Seed: `x := tabwriter.NewWriter(…)` / `x = tabwriter.NewWriter(…)`.
+	// 1. Seed: `x := tabwriter.NewWriter(…)`, `x = tabwriter.NewWriter(…)` and
+	//    `var x = tabwriter.NewWriter(…)`.
+	//
+	// 🔴 BOTH STATEMENT SHAPES, AND THE SECOND ONE IS NOT A HYPOTHETICAL. This
+	// seed inspected only *ast.AssignStmt at first, so a renderer whose sink was
+	// spelled `var tw = tabwriter.NewWriter(…)` was invisible to the ENTIRE
+	// ledger — not merely un-violated: it produced no cell writes, so GREW never
+	// fired either and nothing asked anyone to classify it. Measured: a renderer
+	// writing a raw server string into a cell, added to tags.go with that
+	// spelling, left this package green; the same renderer with `tw :=` failed
+	// GREW. localAssignments below already walked both shapes, which is what made
+	// the asymmetry easy to miss — the value side handled `var`, the sink side
+	// did not. TestTabwriterScannerSeesShapesNotInTree pins both spellings.
 	for _, key := range order {
 		fd := look.byKey[key]
 		ast.Inspect(fd, func(n ast.Node) bool {
-			as, ok := n.(*ast.AssignStmt)
-			if !ok || len(as.Lhs) != len(as.Rhs) {
-				return true
-			}
-			for i, rhs := range as.Rhs {
-				if !isTabwriterNew(rhs) {
-					continue
+			switch x := n.(type) {
+			case *ast.AssignStmt:
+				if len(x.Lhs) != len(x.Rhs) {
+					return true
 				}
-				if id, ok := as.Lhs[i].(*ast.Ident); ok {
-					add(key, id.Name)
+				for i, rhs := range x.Rhs {
+					if !isTabwriterNew(rhs) {
+						continue
+					}
+					if id, ok := x.Lhs[i].(*ast.Ident); ok {
+						add(key, id.Name)
+					}
+				}
+			case *ast.ValueSpec:
+				for i, nm := range x.Names {
+					if i < len(x.Values) && isTabwriterNew(x.Values[i]) {
+						add(key, nm.Name)
+					}
 				}
 			}
 			return true
@@ -452,14 +493,28 @@ func parsePackageFiles(t *testing.T) (*token.FileSet, map[string]*ast.File) {
 // The gate a renderer's cells are under. These are STATES, not spellings: each
 // one is checked against what the analysis found, so a row cannot claim a gate
 // the code does not have (nor hide one it does).
+//
+// 🔴 THERE ARE EXACTLY TWO, AND THE THIRD AND FOURTH WERE DELETED RATHER THAN
+// KEPT FOR LATER. This file shipped `gateNoServerText` ("nothing in a cell comes
+// from the server") and `gateUnsanitised` ("server text reaches a cell with no
+// gate"), with a `maxUnsanitisedTabwriterRenderers = 0` ratchet under the second.
+// Both were used by ZERO rows, so both `case` arms were unreachable on the
+// committed tree and the ratchet asserted 0 == 0. Worse, they were
+// MACHINE-INDISTINGUISHABLE: the scan can only observe "does safeTermSingle reach
+// a cell", so both arms asserted the same predicate and differed only in their
+// prose. That made the ratchet walkable by ONE WORD — an author adding an ungated
+// renderer writes `gateNoServerText` instead of `gateUnsanitised`, the counted
+// set stays empty, and the suite is green with a new forgery surface in it.
+//
+// With both gone, a renderer that reaches a cell without safeTermSingle has no
+// truthful row available: gateSingle fails MISLABELLED, gatePreSanitised has to
+// name an upstream function that actually calls the gate, any other spelling
+// fails the default arm, and no row at all fails GREW. That is strictly stronger
+// than a ceiling nobody was under.
 const (
 	// gateSingle: at least one cell value is routed through safeTermSingle, and
 	// none through a bare safeTerm.
 	gateSingle = "safeTermSingle"
-	// gateNoServerText: no cell in this renderer carries server-supplied text, so
-	// there is nothing to gate. Asserted as "no sanitizer call reaches a cell" —
-	// a renderer that starts sanitising stops matching this row.
-	gateNoServerText = "no-server-text"
 	// gatePreSanitised: a cell DOES carry server text, but it was gated upstream
 	// and reaches the cell through a struct field the scan does not follow.
 	//
@@ -469,12 +524,6 @@ const (
 	// other row could be moved into — "it is handled somewhere else" asserted in
 	// prose, which is how a guard on a word gets walked.
 	gatePreSanitised = "pre-sanitised-upstream"
-	// gateUnsanitised: server text reaches a cell with no gate at all. An honest
-	// row for a known hole, counted by maxUnsanitisedTabwriterRenderers, which
-	// only goes down. It is currently EMPTY, and that is the point of keeping the
-	// value: the next renderer added without a gate has somewhere truthful to go
-	// other than a lie.
-	gateUnsanitised = "none"
 )
 
 type tabwriterRenderer struct {
@@ -484,8 +533,8 @@ type tabwriterRenderer struct {
 	// that applied the gate before the value reached this renderer. It is
 	// resolved against the package, not read as a label.
 	upstream string
-	// why says what server text lands in a cell here — or, for a
-	// gateNoServerText row, why nothing does. Every row must say something.
+	// why says WHICH server-supplied values land in a cell here, named field by
+	// field. It is the half no AST can check, so a row with an empty one fails.
 	why string
 }
 
@@ -533,12 +582,17 @@ var tabwriterRenderers = map[string]tabwriterRenderer{
 		"`app status` rows: block id, version, status, deploy state, claimed source commit, date and " +
 			"live URL. It had NO gate at all until #552, which also made it invisible to safeTermCoveredBy"},
 	"printSubmissionDetail": {"app_status.go", gateSingle, "",
-		"`app status --id` rows: the same fields plus the publish-request id and deploy detail. The " +
-			"free-text rejection reason / approval notes below the table are NOT in a cell and are not " +
-			"gated here — see the residuals in this file's header"},
+		"`app status --id` rows: the same fields plus the publish-request id and deploy detail. This row " +
+			"is a claim about its CELLS only — the live URL, the block id in the not-live sentence, and " +
+			"the free-text rejection reason / approval notes sit OUTSIDE the table and are gated " +
+			"separately (safeTermSingle for the first two, safeTerm + indentContinuation for the last " +
+			"two). They were ungated while this row read as coverage; " +
+			"TestGatedRenderersDoNotForgeOutsideTheirTable is what now holds them"},
 	"printListingStatus": {"app_listing.go", gateSingle, "",
 		"`app listing status`: the listing status. `App:` is the slug the USER typed and is echoed " +
-			"exactly (civitai/cli#393)"},
+			"exactly (civitai/cli#393). The screenshot id and caption printed below the flushed table " +
+			"are NOT cells — they are gated by safeTermSingle at their own call site, and were raw while " +
+			"this row read as coverage of the command"},
 
 	// --- generate path ------------------------------------------------------
 	"printWorkflow": {"workflows.go", gateSingle, "",
@@ -581,19 +635,11 @@ const (
 	// wrong directory parses nothing and reports a serene zero.
 	minTabwriterWrites = 30
 	minTabwriterFiles  = 20
-
-	// maxUnsanitisedTabwriterRenderers is the RATCHET, asserted as an EQUALITY
-	// for the reason maxUncoveredSafeTermFuncs is: a ceiling silently acquires
-	// headroom, and the next commit spends it by adding an ungated renderer with
-	// an honest row and a green suite. It is ZERO today because #552 closed every
-	// one; a commit that has to raise it is a commit shipping a new forgery
-	// surface, and it should have to say so.
-	maxUnsanitisedTabwriterRenderers = 0
 )
 
 // TestTabwriterRenderersAreLedgered is the structural half of civitai/cli#552.
 //
-// Five assertions, each with its own message so a failure names the thing that
+// Four assertions, each with its own message so a failure names the thing that
 // went wrong:
 //
 //	BARE SAFETERM — a cell value reaches a tabwriter through safeTerm, which
@@ -602,7 +648,6 @@ const (
 //	GREW          — a function writes into a tabwriter and no row classifies it.
 //	SHRANK        — a row names a function that no longer writes into one.
 //	MISLABELLED   — a row's gate disagrees with what the scan found.
-//	RATCHET       — the ungated count is not exactly maxUnsanitisedTabwriterRenderers.
 func TestTabwriterRenderersAreLedgered(t *testing.T) {
 	fset, files := parsePackageFiles(t)
 	a := analyzeTabwriterUse(fset, files)
@@ -648,11 +693,14 @@ func TestTabwriterRenderersAreLedgered(t *testing.T) {
 	}
 	if len(unledgered) > 0 {
 		t.Errorf("%d function(s) write into a tabwriter with no row in tabwriterRenderers:\n  %s\n\n"+
-			"Classify it. gateSingle when its cells carry server text routed through safeTermSingle; "+
-			"gateNoServerText when nothing in a cell comes from the server (say why); gateUnsanitised when "+
-			"server text reaches a cell with no gate — that is an honest row, and it counts against "+
-			"maxUnsanitisedTabwriterRenderers (%d), which does not go up.",
-			len(unledgered), strings.Join(unledgered, "\n  "), maxUnsanitisedTabwriterRenderers)
+			"Classify it, and there are only two truthful classifications. gateSingle: its cells carry "+
+			"server text routed through safeTermSingle — say in `why` WHICH cells. gatePreSanitised: a cell "+
+			"carries server text gated by a named upstream function that this test RESOLVES. There is "+
+			"deliberately no third state for 'ungated' or 'no server text': both existed, were "+
+			"machine-indistinguishable from each other, and made this guard walkable by one word. If a cell "+
+			"here really is ungated server text, that is the #552 defect — route it through safeTermSingle "+
+			"rather than looking for a row that describes the hole.",
+			len(unledgered), strings.Join(unledgered, "\n  "))
 	}
 
 	// --- SHRANK --------------------------------------------------------------
@@ -670,13 +718,12 @@ func TestTabwriterRenderersAreLedgered(t *testing.T) {
 			len(stale), strings.Join(stale, "\n  "))
 	}
 
-	// --- MISLABELLED + RATCHET ----------------------------------------------
-	ungated := 0
+	// --- MISLABELLED ---------------------------------------------------------
 	for _, fn := range twSortedKeys(tabwriterRenderers) {
 		row := tabwriterRenderers[fn]
 		if row.why == "" {
 			t.Errorf("tabwriterRenderers[%q] has an empty `why`. A row with no reason is a row nobody thought "+
-				"about; say what server text lands in a cell, or why none does.", fn)
+				"about; name the server-supplied fields that land in a cell here.", fn)
 		}
 		if a.file[fn] != "" && row.file != a.file[fn] {
 			t.Errorf("tabwriterRenderers[%q] says %s, but the declaration is in %s.", fn, row.file, a.file[fn])
@@ -690,11 +737,6 @@ func TestTabwriterRenderersAreLedgered(t *testing.T) {
 					"row would have gone on reading as coverage — or the value now arrives pre-sanitised "+
 					"through a field the scan cannot follow, in which case say so in `why` and change the "+
 					"gate.", fn, gateSingle)
-			}
-		case gateNoServerText:
-			if sanitised {
-				t.Errorf("MISLABELLED: tabwriterRenderers[%q] claims %s, but a sanitizer call DOES reach one of "+
-					"its cells. Somebody found server text there; the row says there is none.", fn, gateNoServerText)
 			}
 		case gatePreSanitised:
 			if sanitised {
@@ -721,22 +763,13 @@ func TestTabwriterRenderersAreLedgered(t *testing.T) {
 					"renderer's cells are now ungated and nothing else would have said so — or the value comes "+
 					"from somewhere else and the row is wrong.", fn, row.upstream, row.upstream)
 			}
-		case gateUnsanitised:
-			ungated++
-			if sanitised {
-				t.Errorf("MISLABELLED: tabwriterRenderers[%q] claims %s, but safeTermSingle reaches a cell — the "+
-					"hole was closed and the row was not. Move it to %s and lower "+
-					"maxUnsanitisedTabwriterRenderers in the same commit.", fn, gateUnsanitised, gateSingle)
-			}
 		default:
-			t.Errorf("tabwriterRenderers[%q] has an unknown gate %q.", fn, row.gate)
+			// 🔴 THE CLOSED SET IS THE GUARD. There are two states and no escape
+			// hatch; an invented gate name lands here rather than silently
+			// classifying a renderer nobody checked.
+			t.Errorf("tabwriterRenderers[%q] has an unknown gate %q. The only two are %s and %s — a third "+
+				"spelling is not a classification, it is a row that asserts nothing.", fn, row.gate, gateSingle, gatePreSanitised)
 		}
-	}
-	if ungated != maxUnsanitisedTabwriterRenderers {
-		t.Errorf("RATCHET: %d renderer(s) are ledgered %s and maxUnsanitisedTabwriterRenderers is %d.\n\n"+
-			"Above it, a new ungated forgery surface landed. Below it, there is unbanked headroom a LATER "+
-			"commit can spend in silence — lower the constant to %d in this commit.",
-			ungated, gateUnsanitised, maxUnsanitisedTabwriterRenderers, ungated)
 	}
 
 	for _, k := range twSortedKeys(a.renderers) {
@@ -770,6 +803,38 @@ func TestTabwriterScannerSeesShapesNotInTree(t *testing.T) {
 	_ = tw.Flush()
 }`,
 			wantViolations: 1,
+			wantRenderers:  []string{"zzRender"},
+		},
+		{
+			// 🔴 THE SINK'S SPELLING IS NOT THE SINK. The seed once inspected only
+			// *ast.AssignStmt, so a renderer whose tabwriter was declared with `var`
+			// was invisible to the WHOLE ledger — no violation, no GREW row, no cell
+			// count — while `tw :=` next to it was seen. Measured on a real renderer
+			// added to tags.go writing a raw server string into a cell: the package
+			// stayed green. Both assertions below matter: wantViolations proves the
+			// cell is checked, wantRenderers proves GREW would have fired.
+			name: "the sink declared with var, not :=",
+			src: head + `func zzRender(w io.Writer, s string) {
+	var tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	fmt.Fprintf(tw, "%s\t1\n", safeTerm(s))
+	_ = tw.Flush()
+}`,
+			wantViolations: 1,
+			wantRenderers:  []string{"zzRender"},
+		},
+		{
+			// The same hole one spelling further out: a grouped `var ( … )` block,
+			// which parses to the same *ast.ValueSpec inside a different GenDecl.
+			name: "the sink declared in a grouped var block",
+			src: head + `func zzRender(w io.Writer, s string) {
+	var (
+		n  = 1
+		tw = tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
+	)
+	fmt.Fprintf(tw, "%s\t%d\n", safeTermSingle(s), n)
+	_ = tw.Flush()
+}`,
+			wantViolations: 0,
 			wantRenderers:  []string{"zzRender"},
 		},
 		{

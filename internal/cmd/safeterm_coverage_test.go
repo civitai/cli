@@ -159,9 +159,15 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"printSubmissionTable": {"TestTabwriterRenderersCannotBeForged",
 		"`app status` rows: block id, version, status, deploy state, source commit, date and live URL"},
 	"printSubmissionDetail": {"TestTabwriterRenderersCannotBeForged",
-		"`app status --id`: the same fields plus the publish-request id and the deploy detail"},
+		"`app status --id`: the same fields plus the publish-request id and the deploy detail. The named " +
+			"test drives its CELLS. Its four NON-cell surfaces — rejection reason, approval notes, live " +
+			"URL and the block id in the not-live sentence — are killed by " +
+			"TestGatedRenderersDoNotForgeOutsideTheirTable instead; they were ungated while this row read " +
+			"as coverage of the whole function, which is why both tests are named here"},
 	"printListingStatus": {"TestTabwriterRenderersCannotBeForged",
-		"`app listing status`: the server's listing status, beside the slug the USER typed"},
+		"`app listing status`: the server's listing status, beside the slug the USER typed. The screenshot " +
+			"id and caption printed below the flushed table are NOT cells and are killed by " +
+			"TestGatedRenderersDoNotForgeOutsideTheirTable"},
 
 	// --- read path: apps ----------------------------------------------------
 	"printAppList": {"TestReadRenderersStripTheInvisibleClass",

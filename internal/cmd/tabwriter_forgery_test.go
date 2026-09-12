@@ -121,7 +121,13 @@ func TestTabwriterRenderersCannotBeForged(t *testing.T) {
 		// first, which is how an INJECTED column shows up in a table that has a
 		// header.
 		squareCols bool
-		render     func() string
+		// alsoWant are literal contiguous strings this case's output must carry,
+		// for a fixture whose payload is not built by forgeCell. It exists for the
+		// one HISTORICALLY MEASURED payload (see the `images search` cases) — a
+		// case with neither fields nor alsoWant asserts only line and column
+		// counts, and the control below refuses that.
+		alsoWant []string
+		render   func() string
 	}{
 		{
 			surface:    "`creators search` (printCreatorList)",
@@ -273,6 +279,34 @@ func TestTabwriterRenderersCannotBeForged(t *testing.T) {
 						BaseModel: forgeCell("imbase"),
 						NSFWLevel: forgeCell("imnsfw"),
 						URL:       forgeCell("imurl"),
+					}})
+				})
+			},
+		},
+		{
+			// 🔴 THE HISTORICALLY MEASURED PAYLOAD, KEPT AS A SECOND FIXTURE. This
+			// is the exact username #569 measured the column-injection forgery
+			// with — six tabs, no newline — folded in when
+			// TestTabForgeryIsNeutralisedInTheRealImagesTable was deleted as
+			// strictly subsumed by the case above (that test asserted a 2-line,
+			// square-column render of a WEAKER payload). The generic forgeCell
+			// payload carries one tab and one newline; this one carries the shape
+			// an attacker actually sends, where every real column of the row is
+			// supplied by the attacker and the real values are pushed off-screen.
+			surface:    "`images search`, the #569 payload (printImageList)",
+			wantLines:  2,
+			squareCols: true,
+			alsoWant: []string{
+				"alice SDXL 9x9 None 0 0 https://evil.example/steal",
+				// The REAL column values must still occupy their real columns — a
+				// guard that simply ate the username would pass every count above.
+				"https://img/1",
+			},
+			render: func() string {
+				return cmdOut(func(c *cobra.Command) {
+					printImageList(c, []civitai.ImageItem{{
+						ID: 1, URL: "https://img/1", NSFWLevel: "None", BaseModel: "SDXL",
+						Username: civitai.FlexString("alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal"),
 					}})
 				})
 			},
@@ -436,6 +470,20 @@ func TestTabwriterRenderersCannotBeForged(t *testing.T) {
 			got := tc.render()
 			lines := strings.Split(strings.TrimRight(got, "\n"), "\n")
 
+			// CONTROL on the CASE: line and column counts alone would pass against
+			// a renderer that dropped every server field, so a case must name at
+			// least one string the output has to carry.
+			if len(tc.fields) == 0 && len(tc.alsoWant) == 0 {
+				t.Fatalf("CONTROL failure, not a finding: %s names neither `fields` nor `alsoWant`, so it asserts "+
+					"only that the shape is square — which a renderer that ate the payload also satisfies.", tc.surface)
+			}
+			for _, w := range tc.alsoWant {
+				if !strings.Contains(got, w) {
+					t.Errorf("%s did not render %q contiguously.\n got:\n%s\n\n"+
+						"A surviving newline splits the string across lines; a surviving tab is consumed by "+
+						"tabwriter as a COLUMN DELIMITER and re-emitted as padding.", tc.surface, w, got)
+				}
+			}
 			for _, f := range tc.fields {
 				// CONTROL on the fixture, per field: a payload longer than the
 				// narrowest truncated column in this package cannot be asserted
@@ -477,6 +525,199 @@ func TestTabwriterRenderersCannotBeForged(t *testing.T) {
 			}
 		})
 	}
+}
+
+// escForge is the payload for the surfaces that are NOT cells: a cursor-up plus
+// line-clear, which is the exact #399 vector safeTerm exists to remove, wrapped
+// in words so "the class is gone" and "the value arrived" stay one assertion.
+const escForge = "reason-head\x1b[1A\x1b[2KOVERWRITTEN\nFORGED-LINE"
+
+// TestGatedRenderersDoNotForgeOutsideTheirTable — civitai/cli#552, second round.
+//
+// 🔴 A ROW IN tabwriterRenderers IS A CLAIM ABOUT CELLS, NOT ABOUT A COMMAND.
+// Both renderers below hold one, and both print SERVER TEXT one line under their
+// own flushed table, where the ledger next door cannot see it and the row reads
+// as coverage of the whole surface:
+//
+//   - printSubmissionDetail wrote *s.RejectionReason, *s.ApprovalNotes,
+//     *s.LiveURL and s.BlockID with NO gate at all — a rejection reason of
+//     "\x1b[1A\x1b[2KOVERWRITTEN" put a RAW ESC on stdout and overwrote the
+//     "Reviewed:" row the same function had just written;
+//   - printListingStatus wrote the screenshot id and caption raw, so a caption
+//     of "…\nApp:  forged-line" emitted `App:  forged-line` at column zero, five
+//     lines under the real `App:` row that function writes through its tabwriter.
+//
+// The split is by SHAPE, not by surface: a rejection reason is legitimately
+// multi-line free text, so it gets safeTerm + indentContinuation (its line breaks
+// survive but cannot reach column zero); everything else here is single-line
+// metadata and gets safeTermSingle.
+func TestGatedRenderersDoNotForgeOutsideTheirTable(t *testing.T) {
+	render := func(f func(w *bytes.Buffer)) string {
+		var buf bytes.Buffer
+		f(&buf)
+		return buf.String()
+	}
+	// noColumnZero is the property every case shares: no line of the rendered
+	// block may BEGIN with attacker-supplied text, because a line at column zero
+	// is indistinguishable from one the CLI wrote itself.
+	noColumnZero := func(t *testing.T, out string, markers ...string) {
+		t.Helper()
+		for i, line := range strings.Split(out, "\n") {
+			for _, m := range markers {
+				if strings.HasPrefix(line, m) {
+					t.Errorf("line %d begins with the forged payload %q — server text reached column zero:\n%s",
+						i+1, m, out)
+				}
+			}
+		}
+	}
+	// noRawEscape pairs with it: the control class must be gone, and the words
+	// must still be there, so a renderer that dropped the field fails too.
+	noRawEscape := func(t *testing.T, out string, wantWords ...string) {
+		t.Helper()
+		if strings.ContainsRune(out, '\x1b') {
+			t.Errorf("a RAW ESC reached the output — this is the #399 vector, and safeTerm is what removes it:\n%q", out)
+		}
+		for _, w := range wantWords {
+			if !strings.Contains(out, w) {
+				t.Errorf("the value %q was dropped rather than sanitised; a guard that ate the field would "+
+					"pass every other check here:\n%q", w, out)
+			}
+		}
+	}
+
+	t.Run("app status --id: the rejection reason keeps its line breaks but not column zero", func(t *testing.T) {
+		reason := escForge
+		out := render(func(w *bytes.Buffer) {
+			printSubmissionDetail(w, &appapi.Submission{
+				BlockID: "my-app", Version: "1.0.0", Status: "rejected",
+				RejectionReason: &reason,
+				SubmittedAt:     "2026-09-01T10:00:00Z",
+				LiveURL:         strPtr("https://example.civit.ai"),
+			})
+		})
+		noRawEscape(t, out, "reason-head", "OVERWRITTEN", "FORGED-LINE")
+		noColumnZero(t, out, "FORGED-LINE", "OVERWRITTEN")
+		// The line break itself must SURVIVE — this is free text, and flattening it
+		// would be the other failure mode (a reason is the only thing a rejected
+		// author has to act on).
+		if !strings.Contains(out, "\n  FORGED-LINE") {
+			t.Errorf("the reason's own newline was flattened or left unindented; want a continuation indented "+
+				"to the reason's own margin:\n%q", out)
+		}
+	})
+
+	t.Run("app status --id: the approval notes get the same treatment", func(t *testing.T) {
+		notes := escForge
+		out := render(func(w *bytes.Buffer) {
+			printSubmissionDetail(w, &appapi.Submission{
+				BlockID: "my-app", Version: "1.0.0", Status: "approved",
+				ApprovalNotes: &notes,
+				SubmittedAt:   "2026-09-01T10:00:00Z",
+				LiveURL:       strPtr("https://example.civit.ai"),
+			})
+		})
+		noRawEscape(t, out, "reason-head", "OVERWRITTEN", "FORGED-LINE")
+		noColumnZero(t, out, "FORGED-LINE", "OVERWRITTEN")
+		if !strings.Contains(out, "\n  FORGED-LINE") {
+			t.Errorf("the notes' newline was flattened or left unindented:\n%q", out)
+		}
+	})
+
+	t.Run("app status --id: the live URL is single-line", func(t *testing.T) {
+		live := forgeCell("lvurl")
+		out := render(func(w *bytes.Buffer) {
+			printSubmissionDetail(w, &appapi.Submission{
+				BlockID: "my-app", Version: "1.0.0", Status: "approved",
+				LiveURL:     &live,
+				SubmittedAt: "2026-09-01T10:00:00Z",
+			})
+		})
+		if !strings.Contains(out, forgeWant("lvurl")) {
+			t.Errorf("the `Live at:` URL did not render as one inert string; want %q:\n%s", forgeWant("lvurl"), out)
+		}
+		noColumnZero(t, out, forgedRow)
+	})
+
+	t.Run("app status --id: the blockId in the not-live sentence is single-line", func(t *testing.T) {
+		out := render(func(w *bytes.Buffer) {
+			printSubmissionDetail(w, &appapi.Submission{
+				BlockID: forgeCell("nlblock"), Version: "1.0.0", Status: "pending",
+				SubmittedAt: "2026-09-01T10:00:00Z",
+			})
+		})
+		var sentence string
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "Not live yet") {
+				sentence = line
+			}
+		}
+		if sentence == "" {
+			t.Fatalf("CONTROL failure, not a finding: the `Not live yet` sentence did not render, so this case "+
+				"asserts nothing:\n%s", out)
+		}
+		if !strings.Contains(sentence, forgeWant("nlblock")) {
+			t.Errorf("the blockId in the `Not live yet` sentence is not one inert string; want %q:\n%q",
+				forgeWant("nlblock"), sentence)
+		}
+		noColumnZero(t, out, forgedRow)
+	})
+
+	t.Run("app listing status: the screenshot id and caption are single-line", func(t *testing.T) {
+		// 🔴 THE CAPTION PAYLOAD IS THE MEASURED ONE, NOT forgeCell. It forges the
+		// label this very function writes through its tabwriter five lines above,
+		// which is what makes the `App:` count below a live assertion rather than a
+		// string that happens never to appear. The id carries the generic payload,
+		// so the contiguity check still names which of the two leaked.
+		caption := "GOOD\tTABBED\nApp:  forged-line"
+		view := &appapi.ListingEditView{}
+		view.Assets.Screenshots = []appapi.ListingScreenshot{{ID: forgeCell("lsid"), Caption: &caption}}
+		out := render(func(w *bytes.Buffer) {
+			printListingStatus(w, "my-app", &appapi.ListingRef{Status: "draft"}, view)
+		})
+		if !strings.Contains(out, forgeWant("lsid")) {
+			t.Errorf("the screenshot ID did not render %q as one inert string:\n%s", forgeWant("lsid"), out)
+		}
+		if !strings.Contains(out, "GOOD TABBED App:  forged-line") {
+			t.Errorf("the caption did not render as one inert line; want the flattened payload:\n%s", out)
+		}
+		// The precise #552 shape: the same function writes `App:` at column zero
+		// through its tabwriter, so a caption carrying a newline forges a SECOND
+		// such line, indistinguishable from the real row above it.
+		//
+		// 🔴 COUNT LINES THAT BEGIN WITH IT, NOT OCCURRENCES OF THE WORD. The
+		// payload's own "App:" legitimately SURVIVES as inert mid-line text — the
+		// assertion two lines up requires it to — so counting occurrences is red
+		// against a correct fix. What may not happen is a second line STARTING
+		// there.
+		labelLines := 0
+		for _, line := range strings.Split(out, "\n") {
+			if strings.HasPrefix(line, "App:") {
+				labelLines++
+			}
+		}
+		if labelLines != 1 {
+			t.Errorf("%d line(s) begin with the `App:` label, want 1 — a caption forged one at column zero:\n%s",
+				labelLines, out)
+		}
+		noColumnZero(t, out, forgedRow, "App:  forged-line")
+	})
+
+	t.Run("generate --no-wait: the re-attach hint carries the same id as the receipt", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		printSubmitResult(&out, &errb, &genapi.SubmitResult{
+			ID: forgeCell("nwid"), Status: "processing",
+		}, "ext_1", "https://civitai.com", true)
+		// 🔴 ONE VALUE, ONE GATE. The receipt's cell used safeTermSingle and the
+		// --no-wait hint three lines below used a bare safeTerm on the SAME r.ID,
+		// so the id a user is told to paste into `civitai workflows get` could
+		// carry a newline the receipt had already flattened.
+		if !strings.Contains(errb.String(), forgeWant("nwid")) {
+			t.Errorf("the --no-wait hint did not render the workflow id as one inert string; want %q:\n%s",
+				forgeWant("nwid"), errb.String())
+		}
+		noColumnZero(t, errb.String(), forgedRow)
+	})
 }
 
 // mustJSONString renders s as a JSON string literal for a fixture payload.

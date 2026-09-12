@@ -320,10 +320,12 @@ func sourceDirtySuffix(dirty *bool) string {
 // 🔴 THE CELLS GO THROUGH safeTermSingle FOR THE SAME REASON THEY DO IN
 // printSubmissionTable — every one of them is server text in a tabwriter cell
 // (civitai/cli#552). The FREE-TEXT fields below the table (rejection reason,
-// approval notes) are deliberately NOT gated here: they are multi-line by
-// design and sit outside the tabwriter, so they need the safeTerm +
-// indentContinuation treatment the orchestrator failure reason gets, which is
-// tracked separately rather than smuggled in here.
+// approval notes) get safeTerm + indentContinuation instead, the treatment the
+// orchestrator failure reason gets, because they are multi-line by design and
+// sit outside the tabwriter. An earlier cut of this comment said they were
+// "deliberately NOT gated here … tracked separately"; they were simply ungated,
+// and a reviewer's note was putting raw escapes on stdout. See the block comment
+// at that code for the shape rule.
 func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
 	tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 	fmt.Fprintf(tw, "Block ID:\t%s\n", safeTermSingle(s.BlockID))
@@ -356,16 +358,35 @@ func printSubmissionDetail(w io.Writer, s *appapi.Submission) {
 		fmt.Fprintf(w, "  %s\n", sourceClaimNote)
 	}
 
+	// 🔴 THE FOUR SURFACES BELOW ARE NOT CELLS, AND THEY WERE UNGATED UNTIL
+	// civitai/cli#552's follow-up. The tabwriter ledger only sees values that
+	// reach a cell, so its `printSubmissionDetail` row read as coverage of this
+	// whole function while a rejection reason of "\x1b[1A\x1b[2KOVERWRITTEN" put a
+	// RAW ESC on stdout and overwrote the row this same function had just flushed
+	// — the exact #399 vector, one line outside the table.
+	//
+	// The split is by SHAPE. A rejection reason and approval notes are reviewer
+	// free text that is legitimately multi-line, so they get safeTerm (the escape
+	// class goes, the line breaks stay) plus indentContinuation, which is what
+	// stops a continuation line occupying column zero where it would be
+	// indistinguishable from a line the CLI wrote. The live URL and the block id
+	// are single-line metadata, so they get safeTermSingle.
+	//
+	// Residual, stated rather than rediscovered: indentContinuation cannot stop
+	// the TERMINAL from soft-wrapping one over-long reason line back to column
+	// zero. `workflows list` answers that with wrapServerText against a fixed
+	// budget; this surface does not, because it has no column budget of its own
+	// and inventing one here would be a second, unmeasured decision.
 	if s.Status == "rejected" && s.RejectionReason != nil && *s.RejectionReason != "" {
-		fmt.Fprintf(w, "\nRejection reason:\n  %s\n", *s.RejectionReason)
+		fmt.Fprintf(w, "\nRejection reason:\n  %s\n", indentContinuation(safeTerm(*s.RejectionReason), "  "))
 	}
 	if s.ApprovalNotes != nil && *s.ApprovalNotes != "" {
-		fmt.Fprintf(w, "\nApproval notes:\n  %s\n", *s.ApprovalNotes)
+		fmt.Fprintf(w, "\nApproval notes:\n  %s\n", indentContinuation(safeTerm(*s.ApprovalNotes), "  "))
 	}
 	if s.LiveURL != nil && *s.LiveURL != "" {
-		fmt.Fprintf(w, "\nLive at: %s\n", ui.URL(*s.LiveURL))
+		fmt.Fprintf(w, "\nLive at: %s\n", ui.URL(safeTermSingle(*s.LiveURL)))
 	} else {
-		fmt.Fprintf(w, "\nNot live yet — %s.civit.ai only serves after the app is approved and deployed (deployState 'live').\n", s.BlockID)
+		fmt.Fprintf(w, "\nNot live yet — %s.civit.ai only serves after the app is approved and deployed (deployState 'live').\n", safeTermSingle(s.BlockID))
 	}
 }
 

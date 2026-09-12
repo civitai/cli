@@ -3757,25 +3757,39 @@ or that a server chose. The human renderers put all of it through one gate befor
 it reaches your terminal, and this is what that gate promises:
 
 - **Terminal escapes are removed.** Cursor moves, line clears, OSC sequences and
-  the invisible / direction-reversing characters are stripped from every
-  server-supplied string, so a hostile value cannot overwrite a line the CLI
-  already printed or reorder what you read. (What the CLI prints from what **you**
-  typed — a prompt, a path, a flag value — is echoed byte-for-byte and is
-  deliberately *not* rewritten.)
-- **A table cell is one line, and one column.** In any tabular or `label: value`
-  output, a newline or a tab inside a server value is rendered as a **space**. A
-  newline would otherwise start a line at column zero, where it is
-  indistinguishable from a row the CLI wrote; a tab is the column separator, so it
-  would add an extra, perfectly aligned column. Both read as real output, which is
-  why the value is flattened rather than trusted.
-- **Genuinely multi-line server text keeps its line breaks**, and is indented
-  under the line that introduced it — a generation prompt (`images … --meta`) and
-  the orchestrator's failure reason (`workflows get`) are the two that matter. So
-  if a field you expect to be multi-line arrives on one line, it was in a cell.
+  the invisible / direction-reversing characters are stripped from the
+  server-supplied strings the human renderers print, so a hostile value cannot
+  overwrite a line the CLI already printed or reorder what you read. (What the CLI
+  prints from what **you** typed — a prompt, a path, a flag value — is echoed
+  byte-for-byte and is deliberately *not* rewritten.)
+- **A table cell is one line, and one column.** Every value that reaches a cell of
+  a rendered table — `models search`, `images search`, `app status`,
+  `workflows list`, the pre-spend cost table, and the rest — has any newline or
+  tab in it replaced by a **space**. A newline would otherwise start a line at
+  column zero, where it is indistinguishable from a row the CLI wrote; a tab is
+  the column separator, so it would add an extra, perfectly aligned column. Both
+  read as real output, which is why the value is flattened rather than trusted.
+- **`label: value` lines are a narrower promise.** The single-line metadata fields
+  — `images … --meta`'s model / sampler / seed / resources, `app status --id`'s
+  live URL and block id, `app listing status`'s screenshot ids and captions, the
+  `--no-wait` re-attach hint — are flattened the same way. Other one-off detail
+  lines outside a table (for example the header block above `models get`'s version
+  table, `collections get`, `app view`) have their escapes stripped but **may still
+  carry a newline**, so a hostile value there can start a line at column zero.
+  Telling a genuinely single-line field from legitimately multi-line free text is
+  a per-field judgement, and only the fields listed above have had it made.
+- **Genuinely multi-line server text keeps its line breaks**, and is indented under
+  the line that introduced it, so a continuation can never sit at column zero.
+  There are four such surfaces: the generation prompt and negative prompt
+  (`images … --meta`), the orchestrator's failure reason (`workflows get` and
+  `workflows list`), per-output exclusion reasons (`generate`), and the reviewer's
+  rejection reason / approval notes (`app status --id`). If a field you expect to
+  be multi-line arrives on one line, it was in a cell.
 - **Known limits.** A long value is not shortened, so your terminal can still
   soft-wrap it to column zero, and one hostile value widens a column for every
-  row. `U+2028` / `U+2029` are passed through (no terminal is known to break
-  lines on them).
+  row. Only `workflows list` wraps its reason text to a fixed budget; the other
+  multi-line surfaces do not. `U+2028` / `U+2029` are passed through (no terminal
+  is known to break lines on them).
 
 🔴 **None of this applies to `--json`.** That output is emitted raw, because JSON
 already escapes control characters and rewriting the bytes would corrupt what a

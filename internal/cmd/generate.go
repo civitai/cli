@@ -1921,8 +1921,12 @@ func printSubmitResult(out, errw io.Writer, r *genapi.SubmitResult, externalID, 
 	_ = tw.Flush()
 	if noWait {
 		fmt.Fprintln(errw, ui.For(errw).Dim(fmt.Sprintf(
+			// 🔴 THE SAME r.ID AS THE CELL THIRTEEN LINES ABOVE, SO THE SAME GATE.
+			// This was a bare safeTerm while the receipt's cell used
+			// safeTermSingle: one value, two gates, and the weaker one was on the
+			// string the user is told to PASTE into a command (civitai/cli#552).
 			"Not waiting (--no-wait). Collect the results with `civitai workflows get %s`, or watch it at %s/generate",
-			safeTerm(r.ID), strings.TrimRight(baseURL, "/"))))
+			safeTermSingle(r.ID), strings.TrimRight(baseURL, "/"))))
 	}
 }
 
