@@ -19,75 +19,56 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ## State now
 
-**Ranks 12 and 13 are now DONE too (docs#75) — the entries below marked "untouched
-this session" were written before that landed.** Combined with the parallel arc that
-closed 4, 8, 9, 10 and two thirds of 11, every ranked item with a forcing function is
-now either closed or explicitly handed to the operator. Nothing is in flight.
+**Ranks 14 and 18 are DONE and merged. cli#399 is CLOSED with its condition demonstrated.**
+Two new items filed (20, 21) — one of them a PR this session BROKE by merging.
 
-- **Branch `main`, clean, synced.** `civitai/cli` at `c3628ed`;
+- **Branch `main`, clean, synced.** `civitai/cli` at `4dbcda3`;
   `civitai/civitai-developer-docs` at `d5b34c8`.
-- **Merged across this arc** (the first five are the parallel session's, the last three
-  this one's):
+- **Merged this pass:**
 
 | PR | rank | |
 |---|---|---|
-| docs#73 (`c84684a`) | 4 | `.well-known/ai-catalog.json` + the `Link:` advertisement, and its guard |
-| docs#74 (`11311ab`) | 8 | a byte budget on `prompt.md`, with a ceiling and a floor |
-| cli#557 (`6fce127`) | 9 | `snippet()`'s "every argument is server bytes" ledger — closed #542 |
-| cli#559 (`a33daed`) | 10 | read `--help` headroom, and a residual note naming the wrong command — closed #543 |
-| cli#560 (`44a5b94`) | 11 | four rotted test citations + half (c)'s controls — 2 of 3 residuals |
-| docs#71 + cli#549 | 6 | `/apps/examples` and the managed block's ONE-URL Docs line |
-| docs#72 + cli#553 | 6 | the rank-6 audit fixes (`llms.txt` duplication; the link gate that could report ok without probing) |
-| **docs#75 (`d5b34c8`)** | **12 + 13** | **deliver the sweep's red, and make the page's scope lists a checked claim** |
+| **cli#564** (`4dbcda3`) | **14** | `safeTerm` coverage ledger keyed by enclosing function + 12 newly pinned functions + a real fix to `nonModelFileMarker` |
+| docs#75 (`d5b34c8`) | 12 + 13 | the drift notifier and the scope check (previous pass) |
 
-- **Rank 4 is LIVE and verified against the origin**, not just merged:
-  `https://developer.civitai.com/.well-known/ai-catalog.json` → 200,
-  `application/ai-catalog+json; charset=utf-8`, and `/` carries the `Link:` header.
-  `node scripts/check-ai-catalog.mjs` against production: **7 URLs checked, 0 failed,
-  0 skipped**. 🔴 It shipped **NARROWED** by explicit operator decision — catalog +
-  `Link:` only, no agent-skills index; the measured reasons are in the docs repo's
-  `CLAUDE.md` and `README.md`, and the short version is that an agent-skills index's
-  entries are `tar.gz`/`SKILL.md` with `sha256:` digests, this project publishes no skill
-  bundles, and `ai-catalog.json` carries no digests at all — so that half of the original
-  wording described the wrong artifact.
-- **Rank 6 verified against PROD** (after the 16:24:59Z deploy): `/apps/examples` → 200,
-  `/apps/examples/` → 404 with the CLI shipping the no-slash spelling; `llms.txt` → 192
-  lines (was 215) with `### Examples` ×1; the live page names all 8 repos.
-- **Claims released:** `-4`, `-6`, `-8`, `-9`, `-10`, `-11`, `-12`, `-13`. **None held.**
-- 🔴 **No clawgate task recorded.** `resolve` exited **5**. Its positive control resolved
-  9 links for another session, so the board is reachable and the token accepted — but a
-  wrong session id also answers 200/empty, so this is **not** evidence no task exists.
-- **Recorded in the subsystem index** — `cli/civitai`: the stale `OPEN:` bullet about
-  #513's server-side coercion rewritten as `RESOLVED d0d1805` (now IDENTIFIED and LIVE —
-  Meilisearch dynamic JSON typing; the earlier "not reproducible" was defeated by
-  Cloudflare cache HITs, 38 of 38 flipping on a fresh cache key), plus a bullet on the
-  `snippet()` ledger. 🔴 A new `ai-catalog` entry could NOT be written — see the gotcha on
-  the stranded store scopes.
+- **cli#399 CLOSED**, by hand with evidence, **not** by a commit keyword. Its stated
+  condition — *deleting `safeTerm(...)` at a sampled site reddens the suite, demonstrated
+  on ≥1 site that survives today* — was verified independently by this session, both
+  arms, mutant compiling in each so the red is the guard and not a build break:
+  baseline `cf5e4a8` full `internal/cmd` suite → **rc 0, `ok`, 41.3s**; after #564 →
+  **FAIL** naming `U+200B, U+202E, U+2800`.
+- **Rank 18 verified LIVE**, not against a fake: `gh workflow run appblocks-drift.yml`
+  took the **ALERT** path and opened
+  [docs#76](https://github.com/civitai/civitai-developer-docs/issues/76) against the real
+  GitHub API, label `appblocks-drift` applied (auto-created — the 403 fallback was never
+  needed), `issues: write` permitted by org policy.
+- **Filed:** [cli#566](https://github.com/civitai/cli/issues/566) — the download-path
+  residual (rank 20).
+- **Claims released:** `-14`, `-18`. **None held.**
+- 🔴 **No clawgate task recorded.** `resolve` exited **5**. Its positive control answered
+  **8** links for a different session, so the board is reachable and the token accepted —
+  but a wrong id also answers 200/empty, so this is a real reading, **not** a clean bill
+  of health.
 
-### Ranks 12 + 13, verified independently rather than accepted from the agent
+### Carried forward — still true, keeps being dropped under a REPLACE heading
 
-- **Live scope-drift mutation**: adding `models:read:public` to Sensei's page scopes →
-  **rc 1**, `✗ ZacxDev/civitai-app-sensei scopes — SCOPES DRIFTED … the page lists
-  \`models:read:public\` which the manifest does not declare`. Names repo, scope and
-  direction.
-- **The two-host split proved itself under a real rate limit**: one run verified **3 of 8**
-  repos live via `api.github.com` while verifying **8 of 8** scope lists via
-  `raw.githubusercontent.com`. The two numbers moving independently is the cleanest
-  evidence that the scope check added **zero** API budget — better than the assertion.
-  That run exited **0 with a loud "could not be reached and were NOT verified"**, which is
-  the documented skip-loudly behaviour, observed rather than read.
-- `check-example-apps.mjs --offline` → rc 0 on the merged tree.
+- **Rank 4 LIVE and verified**: `/.well-known/ai-catalog.json` → 200,
+  `application/ai-catalog+json; charset=utf-8`; `check-ai-catalog.mjs` against production
+  → 7 URLs, 0 failed, 0 skipped. Shipped NARROWED (catalog + `Link:` only) by operator
+  decision.
+- **Rank 6 verified against PROD**: `/apps/examples` → 200, `/apps/examples/` → 404 with
+  the CLI shipping the no-slash spelling; `llms.txt` 215 → **192** lines.
+- **Subsystem index**: `cli/civitai`'s stale `OPEN:` bullet rewritten `RESOLVED d0d1805`
+  (#513's coercion is IDENTIFIED and LIVE — Meilisearch dynamic JSON typing).
 
-### Honest limits on what shipped
+### Honest limits
 
-- 🔴 **`scripts/drift-notify.mjs` HAS NEVER TALKED TO `api.github.com`** — see rank 18.
-- **Hook lists remain unverified by machine**; the date stamp is the disclosure, not a
-  substitute.
-- **Neither `check-example-apps` nor the new self-test step is a required context.** The
-  six required are `test-cli`, `test-messages`, `test-bridge`, `typecheck-snippets`,
-  `build-site`, `test-md-regions`. Consistent with the operator's earlier "not now".
-- **None of this arc's PRs was adversarially audited except rank 6's two** — see rank 17,
-  and note that the rank-6 audits found a REAL hole in a PR that was also fully green.
+- **The notifier's cross-run paths are still fake-only**: update-in-place,
+  comment-on-fingerprint-change, comment-then-close. The **create** path is now real.
+- **`#564`'s ledger has a structural blind spot** — rank 20, and it is the reason #399
+  could close honestly while the same defect shape survives elsewhere.
+- **The `1010` Cloudflare UA block was never re-provoked**; the 403/301 arms of the CLI
+  link probe remain locally simulated.
 
 ## Open investigations — live diagnosis state
 
@@ -369,10 +350,8 @@ the `civitai.com` zone. Never the origin, never the docs repo.
 
 ## Next steps (ranked)
 
-🔴 **Ranks 1–13 are DONE — numbering is preserved deliberately** so any live `claim-work`
-slug keeps pointing at the item it was taken for. 🔴 **Ranks 18–19 are numbered ABOVE 17
-because a parallel session filed 14–17 first and this update merged SECOND** — the
-convention is that the second merger renumbers its OWN new items, never the other's.
+🔴 **Ranks 1–14 and 18 are DONE — numbering is preserved deliberately** so any live
+`claim-work` slug keeps pointing at the item it was taken for. New items continue from 20.
 
 1. ~~**Unfreeze `civitai/cli`**~~ — **DONE**, cli#529.
    forcing: none
@@ -398,13 +377,11 @@ convention is that the second merger renumbers its OWN new items, never the othe
 10. ~~**cli#543** — the read `--help` rune budget~~ — **DONE**, cli#559 (`a33daed`),
     issue CLOSED. The binding constraint MOVED rather than disappearing — see rank 16.
     forcing: none
-11. **Residuals of decisions item 38 — 2 of 3 DONE** (cli#560, `44a5b94`). Closed: the
-    four comment-citation rot sites (repo-wide unresolved-name count **20 → 16**) and
-    half (c)'s body-vs-message control confusion. **STILL OPEN: the README documents no
-    429 → exit 2 reclassification** — left deliberately, because BOTH README exit-code
-    blocks are **generated** from `exitCodeDocs` in `internal/cmd/exitcodes_doc.go`
-    (pinned by `TestREADMEExitCodeTableIsGenerated`), so writing the row means editing the
-    generator and republishing the exit-code contract. Closing condition is stated in
+11. **Residuals of decisions item 38 — 2 of 3 DONE** (cli#560, `44a5b94`). **STILL OPEN:
+    the README documents no 429 → exit 2 reclassification.** Left deliberately — both
+    README exit-code blocks are **generated** from `exitCodeDocs` in
+    `internal/cmd/exitcodes_doc.go`, so writing the row means editing the generator and
+    republishing the exit-code contract. Closing condition in
     `claudedocs/decisions/38-…md`.
     forcing: none
 12. ~~**Nothing notifies on a red daily example-app drift run**~~ — **DONE**, docs#75
@@ -423,65 +400,72 @@ convention is that the second merger renumbers its OWN new items, never the othe
     guard prints the stamp's age each run and does NOT fail on age, because that is a
     permanently-red gate with a countdown.
     forcing: none
-14. 🔴 **cli#399 — OPEN, and now STRUCTURALLY CONFIRMED uncovered.** `safeTerm` is the
-    CLI's only gate on server-supplied text reaching a terminal; deleting it at **20 of 25
-    sampled sites leaves the suite green**. Measured 2026-09-11: **153 `safeTerm(`
-    occurrences** in `internal/` non-test sources (positive-controlled grep). cli#557's
-    guard does NOT reach it, for three reasons each verified at file:line —
-    `pkg/civitai/snippet_args_ledger_test.go:130` scans `os.ReadDir(".")` from
-    `package civitai`, so `internal/cmd` is never walked; `:168` matches only
-    `id.Name != "snippet"`, never `safeTerm`; and it is an **origin ledger** (where bytes
-    come from), not a **coverage** assertion (would a test go red if the call vanished).
-    Smallest instrument: hang a coverage ledger on the AST walk already in
-    `internal/cmd/safeterm_userinput_test.go`, keyed by **enclosing function** — that walk
-    is currently flat over `file`, not `file.Decls`, so it has no enclosing-function
-    attribution, and that is the one structural change needed — asserted bidirectionally,
-    with rows honestly reading NOT COVERED as the queue. **56 rows, not 150 tests.**
-    Closing condition: deleting `safeTerm(...)` at a sampled site reddens the suite,
-    demonstrated on ≥1 site that survives today.
-    forcing: security — `safeTerm` is the CLI's only gate on server-supplied text reaching
-    a terminal, and 20 of 25 sampled call sites are provably unpinned.
-15. **The docs repo does not build from a pristine `main` locally.** See the Open
-    investigations block for the full diagnosis state, including two retracted
-    hypotheses. Blocks any local `npm run build` / `npm run check:built-site` in that
-    repo; CI is unaffected. Closing condition: the local build exits 0 on a clean
-    checkout, or the divergence from CI is explained in writing in that repo's
+14. ~~**cli#399 — `safeTerm` unpinned at most call sites**~~ — **DONE**, cli#564
+    (`4dbcda3`), issue CLOSED with the condition demonstrated. The audit re-derived the
+    move by full sweep: **36 of 59** functions were deletable-while-green at base,
+    **0 of 60** now; all 35 covered rows verified by deletion, 35/35 red under only the
+    test their row names. Scale, measured with a positive-controlled pipeline
+    (`package cmd` → 67 before quoting): **153 `safeTerm(` occurrences** in `internal/`
+    non-test sources = 151 calls + 1 declaration + 1 comment; the ledger counts 152 call
+    sites across 60 functions. 🔴 **Does NOT cover the download path — see rank 20.**
+    forcing: none
+15. **The docs repo does not build from a pristine `main` locally.** Blocks any local
+    `npm run build` / `check:built-site`; CI unaffected. Closing condition: the local
+    build exits 0 on a clean checkout, or the divergence is explained in that repo's
     `CLAUDE.md`.
     forcing: gate — `check:built-site` and `build-site` cannot be run locally before
     pushing, so that job's failures are only ever discovered in CI.
 16. **`images search --help` sits 14 runes under the 1400 budget.** PRE-EXISTING (1386
-    both before and after #541) and untouched by rank 10's fix, because it does NOT
-    interpolate `readJSONNote` — `images`, the parent, does. Levers are
-    `serverOwnedEnumNote`, `deepPagingNote`, or the body itself.
+    before and after #541), untouched by rank 10's fix because it does not interpolate
+    `readJSONNote`. Levers: `serverOwnedEnumNote`, `deepPagingNote`, or the body.
     forcing: none
-17. **Most of this arc's PRs were not adversarially audited.** Each audit was offered and
-    the operator chose to merge. Recorded as a known risk rather than a defect: rank 6's
-    two audits DID run and found a REAL hole (cli#553, "the docs-link gate could report ok
-    without probing the link") in a PR that was also fully green and mutation-tested. The
-    unaudited ones with the most judgement in them are docs#73, docs#74, cli#559 and
-    **docs#75** (920 lines of new guard and notifier).
+17. **Most of this arc's PRs were not adversarially audited.** The ones that WERE
+    (rank 6's two, and #564's) each found real defects — #553 "the docs-link gate could
+    report ok without probing the link", and #564's two ledger findings — in PRs that
+    were fully green and mutation-tested. Unaudited with the most judgement in them:
+    docs#73, docs#74, cli#559.
     forcing: none
-18. **NEW — `drift-notify.mjs` has never talked to the REAL GitHub API.** All nine
-    delivery scenarios were driven over real HTTP against a **local fake** issues API.
-    Two specific unknowns: whether GitHub auto-creates the `appblocks-drift` label under
-    `issues: write` (there is a create-without-label fallback for the 403), and whether
-    this repo's Actions policy permits the issue write at all. Cross-run behaviour across
-    two genuine cron ticks is demonstrated against the fake, never observed live.
-    **A notifier that cannot notify is the exact failure it exists to prevent — and by
-    rank 12's own argument, its failure would itself be invisible.** Closing condition:
-    one real scheduled `appblocks-drift` run observed end-to-end, or a deliberate
-    `workflow_dispatch` exercising the notify path.
-    forcing: gate — rank 12's closing condition was "a notify step merges". It has merged,
-    so rank 12 reads CLOSED, but the hole it named is not demonstrably closed until
-    delivery works against the real service.
-19. **NEW — `#542`'s stated closing condition may not be discharged.** It named "any
-    `saferune.*` call site outside `internal/cmd`". Measured 2026-09-11: there are
-    **two** — `pkg/civitai/read.go` and `internal/genapi/status.go`. cli#557's guard
-    matches `snippet`, not `saferune.*`, so it reaches neither as such, and the
-    module-root `saferune_callers_ledger_test.go` pins **which packages import saferune**,
-    not what they pass. Whether that discharges #542 is a judgement call — recorded so it
-    is not silently assumed. Read with rank 14.
+18. ~~**`drift-notify.mjs` has never talked to the REAL GitHub API**~~ — **DONE**,
+    verified live 2026-09-11 by `gh workflow run appblocks-drift.yml`: ALERT path taken,
+    docs#76 opened, label applied, org policy confirmed. **Residual**: the cross-run paths
+    (update-in-place, comment-on-fingerprint-change, comment-then-close) are still
+    fake-only and need a second tick.
     forcing: none
+19. **`#542`'s stated closing condition may not be discharged.** It named "any
+    `saferune.*` call site outside `internal/cmd`". There are **two** —
+    `pkg/civitai/read.go` and `internal/genapi/status.go` — and cli#557's guard matches
+    `snippet`, not `saferune.*`. Read with rank 20.
+    forcing: none
+20. 🔴 **NEW — cli#566: three uploader-controlled surfaces on the download path reach the
+    terminal raw, and #564's ledger STRUCTURALLY CANNOT demand a row for them.**
+    `GREW` only fires for functions that **already call `safeTerm`**; these call it zero
+    times. Surfaces: `(*progressWriter).line()` (`download.go:1043,1045` — raw
+    `files[].name` inside a `\r`-rewritten progress line, every download);
+    `checkTargetCollisions` (`download.go:702` — the **literal twin** of the sanitized
+    `:658`, same fields, same shape, 44 lines apart); and `fmt.Errorf` at `:787,:810`
+    reaching unfiltered stderr via `cmd/civitai/main.go:57`. First two **reproduced**;
+    the third **read, not driven**. Verified pre-existing:
+    `git diff --stat cf5e4a8 8063caa -- internal/cmd/download.go` empty, with
+    `git cat-file -e cf5e4a8:internal/cmd/download.go` proving the path existed.
+    Closing condition is in the issue.
+    forcing: security — uploader-controlled text reaches a terminal through a `\r`-rewrite
+    and through a message asserting an integrity result; the same defect shape #564's
+    headline fix closed one function away.
+21. 🔴 **NEW — cli#554 (external contributor, xsvm) is CONFLICTING, and THIS SESSION'S
+    MERGE OF #564 IS THE LIKELY CAUSE.** Measured after merging: `gh pr view 554` →
+    `CONFLICTING / DIRTY`, head `733d218`, **13 commits behind `main`**. Both PRs edit
+    **`internal/cmd/safeterm_userinput_test.go`**, and #564 **rewrote that file's AST walk**
+    (flat `ast.Inspect(file, …)` → `file.Decls` with enclosing-function attribution) —
+    which is exactly the function #554's new `indentContinuation` ledger builds on.
+    🔴 **A clean textual rebase will NOT be sufficient**: the walk #554 extends no longer
+    has the shape it was written against, so re-check the merged tree's BEHAVIOUR, not
+    just that it compiles. Per `claudedocs/handoff-external-issue-513-numeric-username.md`
+    this collision was ALREADY PREDICTED by a parallel session before #564 merged.
+    Note `maintainer_can_modify` was **true** on a previous xsvm PR, so pushing a rebase
+    may be possible — **check, do not assume**, and this is an external contributor, so
+    the courteous move is to tell them first.
+    forcing: regression — an external contributor's green, reviewed PR was broken by a
+    merge this session performed; it cannot land until someone resolves it.
 
 ## Gotchas / decisions / dead-ends
 
@@ -996,6 +980,58 @@ convention is that the second merger renumbers its OWN new items, never the othe
   token scope. Filed as rank 18 rather than folded into rank 12's completion, **because
   collapsing them is how "merged" becomes "working".** `via: assumed` (the gap is
   structural and stated by the implementer; nothing was measured against the real API)
+
+### Added 2026-09-12 — ranks 14 and 18, and a PR this session broke
+
+- 🔴 **MERGING A LEDGER PR BROKE AN EXTERNAL CONTRIBUTOR'S LEDGER PR, AND THE COLLISION
+  HAD ALREADY BEEN WRITTEN DOWN.** cli#564 and cli#554 both edit
+  `internal/cmd/safeterm_userinput_test.go`; #564 rewrote its AST walk. A parallel
+  session recorded the `#564`/`#554` collision in a *different* handoff doc
+  (`handoff-external-issue-513-numeric-username.md`) **before** #564 merged, and this
+  session did not read that doc before merging. **A sibling handoff doc is part of the
+  pre-merge check when two PRs touch one package** — `gh pr list --state open` showed
+  #554 the whole time and I read it as unrelated because its title is about `images`.
+  `via: measurement`
+- 🔴 **GITHUB'S KEYWORD PARSER CLOSED #399 A SECOND TIME — FROM THE TEXT WARNING ABOUT
+  THE FIRST.** cli#562's body **quoted** the string `close #399` while documenting the
+  earlier accident; the parser matched the quote. Closed 21:49:58Z with `commit_id: null`
+  and nothing on `main` fixing it. **Quoting the keyword is writing the keyword.** The
+  discipline that worked: brief every agent never to write it *even inside quotes*, then
+  close the issue **by hand** with the evidence. #564 shipped and #399 stayed open until
+  deliberately closed. `via: measurement`
+- 🔴 **AN AUDIT FOUND TWO DEFECTS INSIDE THE GUARD BUILT TO PREVENT THEM, AND BOTH WERE
+  "DESCRIPTION WIDER THAN BODY".** (a) `formatFileList`'s ledger row said the test asserts
+  "name **and type**"; the fixture never set `Type`, so deleting
+  `safeTerm(dashIfEmpty(f.Type))` at `download.go:658` left the **full suite green**.
+  (b) The RATCHET's comment said "the number cannot go UP" while the body only checked
+  `>`, so covering a row without lowering the cap banked headroom a later commit could
+  spend silently. Both reproduced by me before and after the fix; (a) now fails naming
+  `ffltype` with the name column still rendering correctly, (b) now fails
+  `RATCHET HEADROOM: 24 … but maxUncoveredSafeTermFuncs is 25. Lower it to 24 in this
+  commit.` `via: measurement`
+- 🔴 **A LEDGER CAN ONLY DEMAND ROWS FOR FUNCTIONS THAT ALREADY CALL THE THING IT
+  GUARDS.** #564's `GREW` fires per enclosing function *that calls `safeTerm`*. A renderer
+  that never calls it is invisible — which is precisely where the remaining download-path
+  holes live (rank 20). **When a guard is keyed on the presence of the call, it cannot see
+  its absence.** The harder instrument keys on *rendering a server-supplied struct field*;
+  that is deliberately NOT part of #566's closing condition. `via: code`
+- ⚠ **A TRANSIENT EDITOR DIAGNOSTIC REPORTED A COMPILE ERROR THAT WAS NEVER COMMITTED.**
+  An unused `bytes` import was flagged in `safeterm_renderers_test.go`; the committed file
+  had no such import, the worktree was clean at the pushed head, and CI was 13/13. **An
+  LSP diagnostic describes the buffer, not the commit** — check `git show HEAD:<path>`
+  before treating one as a finding. `via: command`
+- ⚠ **MY OWN ISSUE-FILING WAS REFUSED BY A HOOK, CORRECTLY.** I wrote
+  `## Suggested closing condition` — *leading* text, where the gate allows only trailing —
+  and my section restated the remedy rather than naming an observable end state. The gate
+  says plainly that it cannot check the latter and that passing is a floor, not a verdict.
+  Rewrote with a command that exits non-zero until the fix lands. `via: command`
+- ⚠ **A THIRD BROKEN-PIPELINE ZERO, THIS TIME IN A CHECK-SETTLING LOOP.**
+  `gh pr checks | awk '{print $2}'` reads `(actions)` — not the status — for any check
+  whose NAME contains a space, so my terminal-state counter never fired while all 13
+  checks had been green for minutes. After `xargs -0 command grep` and the shell-function
+  `grep`, that is three distinct shapes in one session, all returning a confident wrong
+  answer instead of an error. **Positive-control every counting pipeline before reading
+  its verdict.** `via: command`
 
 ## How to verify
 
