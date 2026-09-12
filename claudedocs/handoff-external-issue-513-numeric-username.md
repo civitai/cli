@@ -17,38 +17,29 @@ answered — starting with #513, and fix the API-side root cause behind it.
 
 ## State now
 
-- **Branch `main` @ `d37b32a`** — `#565` MERGED, so this doc's previous update is landed.
-  🔴 `main` moved SEVEN times during the session that wrote this, most from PARALLEL sessions
-  (`3d17591`/#558, `c3628ed`/#561, `cf5e4a8`/#563 are all other sessions' handoffs). Re-measure
-  any sha before acting.
-- **Everything in the previous update still holds.** The ONE thing it does not carry is the
-  `#564`/`#554` collision below, found immediately after `#565`'s content was written.
-- **No `clawgate-task:` recorded.** `clawgate_handoff.sh resolve` exited **5** — 0 tasks for
-  this session. Positive control answered 2 links for a different session, so the board was
-  genuinely reached; but a wrong id also answers 200 with an empty array, so this is a real
-  reading and NOT a clean bill of health.
-- **Claims: `devdocs-61-flux2-klein-whatif-500` and `devdocs-76-drift-sweep-red` STILL HELD**,
-  both blocked on other people. All `cli-*` claims released.
-- **Two external PRs are open and BOTH are blocked on a decision, not on work:**
-  `#554` (xsvm) `OPEN`, head `733d218` · `#564` (parallel session) `OPEN MERGEABLE/CLEAN`,
-  head `8063caa`.
+- **Branch `main` @ `e3f2608`** — `#569` merged. 🔴 `main` moved ~10 times during this arc, most
+  from parallel sessions. Re-measure every sha.
+- **The arc is CLOSED.** Every item is either done, or blocked on a named third party. Nothing
+  is mid-flight and no agent is running.
+- **All `cli-*` and rank claims RELEASED.** Still held: `devdocs-61-flux2-klein-whatif-500`,
+  `devdocs-76-drift-sweep-red` — both blocked on other people, not on work.
+- **No `clawgate-task:`** — `resolve` exited 5 (0 tasks for this session; positive control
+  answered links for a different session, so the board was reached). A real reading, not a
+  clean bill of health.
 
-### Shipped across this arc — carried forward, these shas are the only record
+### Shipped across the whole arc — these shas are the only record
 
 | what | sha / ref | state |
 |---|---|---|
-| `#545` (xsvm) images prompt indent | `feb330c` | MERGED, public correction posted |
+| `#545` (xsvm) images prompt indent | `feb330c` | MERGED |
 | `#556` retraction of "not reproducible" | `d0d1805` | MERGED |
-| `#551` handoff r2 | `5208a6b` | MERGED |
-| `#565` handoff r3 | `d37b32a` | MERGED |
+| `#551` / `#565` / `#567` handoffs r2–r4 | `5208a6b` / `d37b32a` / `f11f26e` | MERGED |
+| `#564` safeTerm per-function ledger (parallel session) | — | MERGED |
+| **`#569` tab vector + #564 reconciliation** | **`e3f2608`** | **MERGED** |
 | `devrc#1498` mentions-id-collision lesson | `550de40` | MERGED — ⚠ NOT LIVE until `home-manager switch` |
-| `civitai/civitai#4768` | new | FILED, server-side root cause for #513 |
-| `civitai/cli#552` | issue | OPEN, closing condition AMENDED |
+| `civitai/civitai#4768` | new | FILED, 0 comments |
+| `civitai/cli#552` | issue | OPEN — **body REWRITTEN 2026-09-12** |
 | stale branch `fix/flexstring-numeric-username` | — | DELETED, recovery sha `12818a3` |
-
-⚠ This table was nearly lost: it sits under a REPLACE heading, and `handoff_doc.py`'s
-durable-line warning **did not flag it** because it is a table rather than prose. That warning
-is a FLOOR, not a guarantee — read the `-` lines of the diff yourself before confirming.
 
 ## Open investigations — live diagnosis state
 
@@ -412,39 +403,76 @@ and round 1 agent reports"). Both reported; both are folded in here.
   on one branch says nothing about the tree its merge creates.
 - **Both PRs carry this on the record** — commented 2026-09-12 with the same suggested ordering.
 
+### RESOLVED CLEAN: the CLI's vendored mirrors did NOT drift with upstream
+
+🔴 **This CLOSES rank 10 and retires the "unverified cross-repo consequence" worry recorded in
+the `developer-docs#76` block of the previous update.** Do not re-run it on a hunch; re-run it
+only when upstream moves again.
+
+- **Symptom that prompted it:** `developer-docs#76` measured real snapshot drift —
+  `block-scope.constants.ts` 347 → 411 lines upstream, `/apps/installed` → `/apps/activity`.
+  The CLI *vendors* that vocabulary (AGENTS.md items 2 and 4), and nothing signals it.
+- **Observed (with values), 2026-09-12, set-compared in BOTH directions against live
+  `raw.githubusercontent.com/civitai/civitai/main`, each with a positive control proving the
+  comparison can detect a difference:**
+
+  | mirror | upstream | cli | diff |
+  |---|---|---|---|
+  | `SLOT_REGISTRY` → `internal/validate/targets.go` `vendoredSlotIDs` | 4 ids, one `kind:'page'` | 4, `app.page: true` | **none** |
+  | `BLOCK_SCOPE_TO_OAUTH_BIT` keys → `schema/…scopes` enum | 12 | 12 | **none** |
+  | `SENSITIVE_BLOCK_SCOPES` → `internal/validate/semantic.go` | 5 | 5 | **none** |
+
+- **Ruled out:** that the new upstream constants owe the CLI a mirror —
+  `BLOCK_BUZZ_CAP_PER_DAY`, `BLOCK_CONSENT_BUDGET_*`, `REVIEW_RUN_FOR_REAL_BUZZ_CAP` are
+  runtime/consent concepts, not manifest ones; the manifest schema correctly declares no
+  budget field, and item 13 says the generate path models no server limits ON PURPOSE.
+  `via: code` · That the docs-repo drift reached the CLI — the drifted files are
+  `hostHandlerParity.ts` and the scope *descriptions*, not the scope vocabulary.
+  `via: measurement`
+- 🔴 **Method note worth reusing: my first three attempts at this returned ZEROS FROM GUESSED
+  REGEXES** — `'[a-z]+:[a-z_.]+'` found 0 upstream keys in a 410-line file of scope constants.
+  A zero from a pattern you have not controlled is not a reading. Every number above was taken
+  with a control injected into the comparison.
+- **Next probe:** none. Re-run only on a future upstream move; the script is three
+  set-comparisons and lives in this doc's How to verify.
+
+### `developer-docs#76` — diagnosed, and the cross-repo half is now closed
+
+The reporting defect stands: six checks failed, none of them in the issue body's table, which
+renders example-app metrics regardless of which check tripped. The drift is real. **The CLI half
+is answered clean (above) and recorded on the issue.** The other four failing checks, and the
+`/apps/installed` → `/apps/activity` rename in the docs' own prose, are still unowned.
+
 ## Next steps (ranked)
 
-🔴 Numbering stable. Ranks 1–5, 7 are DONE and keep their numbers only so live claims do not
-re-point. Rank 8's MEANING is refined below, not re-pointed.
+🔴 Numbering stable — rank is half a `claim-work` slug's identity. 1–11 keep their meaning.
 
 1. **DONE — `civitai/cli#526`.** forcing: none
-2. **DONE — `developer-docs#61` routed and re-tested.** Awaiting the reporter's balance figure;
-   claim `devdocs-61-flux2-klein-whatif-500` still held.
-   forcing: user — external reporter, answered after 18 days, now awaiting their reply.
-3. **DONE — #513 diagnosed; server side filed as `civitai/civitai#4768`.** forcing: none
-4. **DONE — stale branch deleted** (recovery sha `12818a3`). forcing: none
+2. **`developer-docs#61`** — routed and re-tested (HTTP 200 now, but at the *good* end of the
+   reporter's own insufficient-balance hypothesis, so NOT fixed-by-measurement). Awaiting their
+   balance figure. Claim held.
+   forcing: user — external reporter; answered after 18 days, now waiting on them.
+3. **DONE — #513 diagnosed; `civitai/civitai#4768` filed.** cli#513 stays OPEN deliberately.
+   forcing: none
+4. **DONE — stale branch deleted** (`12818a3`). forcing: none
 5. **DONE — `#545` merged.** forcing: none
-6. **`civitai/cli#554`** — BLOCKED on the contributor fixing two 🔴 (the `\t` forgery vector;
-   the `"s"` entry blinding the #393 guard). 🔴 **Do NOT merge before `#564` is reconciled** —
-   see the collision block. Re-audit the DELTA, not the whole PR.
-   forcing: security — an aligned, fully attacker-controlled table row on a shipped surface.
+6. **DONE — superseded by `#569`, merged `e3f2608`.** `#554` itself is still OPEN and that is
+   **@xsvm's call**, not ours — it is superseded in content, not credit.
+   forcing: none
 7. **DONE — AGENTS.md item 37 / `decisions/37` corrected** via `#556`. forcing: none
-8. **The widened ledger — now most likely a FOLD INTO `#564`, not a separate issue.** Predicate:
-   *"prints server-supplied text into a line-structured surface"*, over renderers, covering `\t`
-   as well as `\n`. Eight known-live sites are listed in the previous update's investigation
-   block. Decide fold-vs-file **after** the `#554`/`#564` ordering is settled, so the decision is
-   made once.
-   forcing: security — same class, eight commands, currently unguarded and unpinned.
-9. **`developer-docs#76`** — re-snapshot the three drifted files AFTER reading the diffs, triage
-   the other four failing checks, and fix `drift-notify.mjs` to NAME the failing steps. Claim
-   `devdocs-76-drift-sweep-red` still held.
-   forcing: gate — a red gate whose issue body reads all-green trains readers to dismiss it.
-10. **Check the CLI's vendored mirrors against the moved upstream vocabulary** — item 2's
-    `vendoredSlotIDs` and item 4's scope bitmask vs the 411-line `block-scope.constants.ts`.
-    forcing: regression — the mirrors exist to track exactly this, and nothing signalled them.
-11. **`home-manager switch`** so `devrc#1498`'s mentions-id-collision lesson is actually live
-    (it is a `home.file` copy; merged ≠ deployed).
+8. **DONE (decided, not filed) — the widened ledger lives on `#552`**, whose body was rewritten
+   2026-09-12 with the measured scope. forcing: none
+9. **`developer-docs#76`** — the four other failing checks, the `/apps/installed` rename in the
+   docs' prose, and fixing `drift-notify.mjs` to NAME the failing steps. Claim held.
+   forcing: gate — a red gate whose body reads all-green trains readers to dismiss it.
+10. **DONE — vendored mirrors measured CLEAN** (see the investigation block). forcing: none
+11. **`home-manager switch`** so `devrc#1498`'s lesson is live. Merged ≠ deployed for a
+    `home.file` copy. Operator's call: it restarts collector/keylog/i3 on both hosts.
     forcing: none
+12. **`civitai/cli#552`** — the real remaining engineering work: a ledger over *renderers that
+    print server text into a line-structured surface*, covering `\t` as well as `\n`, plus the
+    soft-wrap residual and the README. ~13 renderers enumerated in the issue body.
+    forcing: security — an aligned, fully attacker-controlled table row on shipped surfaces.
 
 ## Gotchas / decisions / dead-ends
 
@@ -600,24 +628,63 @@ re-point. Rank 8's MEANING is refined below, not re-pointed.
   deliberate (rank is half a `claim-work` slug's identity) and is why `forcing: none` outnumbers
   the rest — it is not a queue of unforced work.
 
+- 🔴 **A ZERO FROM A GUESSED PATTERN IS NOT A READING, AND I PRODUCED THREE IN A ROW.** Checking
+  the vendored mirrors, `grep -oE "'[a-z]+:[a-z_.]+'"` returned **0** against a 410-line file of
+  scope constants, and a schema probe returned "no scopes" for a file that plainly has them.
+  Both were wrong patterns, not absences. **Inject a control into the comparison itself** — I
+  added a fake scope to the upstream set and confirmed the diff reported it — and only then
+  quote the zero.
+- 🔴 **A TAB IS A COLUMN DELIMITER, SO "REACH COLUMN ZERO" WAS NEVER THE WHOLE HAZARD.**
+  `saferune` keeps `\t` by design and `text/tabwriter` splits on it, so server text could
+  *insert columns* and forge an ALIGNED row — more convincing than a newline forgery, because
+  tabwriter does the aligning. Any guard on server text reaching a table must cover both.
+- 🔴 **A GUARD'S FLOOR MUST BE STRICTLY BELOW THE SET IT GUARDS.** `minIndentCallSitesExpected`
+  was 6 against 6 pinned sites and `Fatalf`'d first, so deleting a real call reported
+  `CONTROL failure` — the file's own idiom for "the harness is broken" — and the SHRANK message
+  never ran. That is how a floor gets lowered instead of a regression investigated.
+- 🔴 **A MUTATION THAT DOES NOT APPLY REPORTS "SURVIVED".** Re-checking a guard, my replacement
+  string did not match the source (`listReasonWrapWidth`, not a literal `79`), so the mutant was
+  a no-op and read as a surviving defect. **Assert the target exists before mutating.**
+- 🔴 **A SQUASH INHERITS COMMIT SUBJECTS, INCLUDING CLOSING KEYWORDS.** `#554`'s subject carried
+  `(closes #552)`; merging `#569` would have auto-closed the issue holding all the deferred
+  work. Merged with an explicit `--subject`/`--body`; verified **0** closing-keyword hits in the
+  merge commit and `#552` still OPEN.
+- **Amending an issue in a COMMENT is weaker than amending its BODY.** `#552`'s closing
+  condition was corrected in a comment on 2026-09-11 while its body still described the narrow
+  predicate and "8 fields". The body is what the next reader acts on; it was rewritten
+  2026-09-12 with the original preserved in a `<details>`.
+- **Round-0 trial ledger, cumulative: `ran: 1 · changed the outcome: 0`.** Two more runs before
+  the retire/promote decision.
+- **Blind audits paid for themselves twice.** #545's audit and #569's each refuted claims made
+  by the work they reviewed — #569's refuted **three of my own**, including a comment asserting
+  "the only thing that says so", a stale count, and a guard that checked an identifier's NAME
+  rather than its value.
+
 ## How to verify
 
 ```bash
 R=/home/zach/workspace/civit/cli
 
-# 🔴 the #554/#564 collision — EXIT CODE is the authority, a marker grep finds nothing either way
-git -C $R fetch origin refs/pull/554/head:refs/remotes/pr/554 \
-                      refs/pull/564/head:refs/remotes/pr/564 -f -q
-git -C $R merge-tree --write-tree refs/remotes/pr/554 refs/remotes/pr/564 >/dev/null 2>&1
-echo "rc=$?   # non-zero = still conflicts"
+# rank 10 — the three vendored mirrors, each with a control. Re-run only on an upstream move.
+python3 - <<'PY'
+import json,re,subprocess,urllib.request
+def get(u):
+    rq=urllib.request.Request(u, headers={'User-Agent':'Mozilla/5.0'})
+    return urllib.request.urlopen(rq).read().decode()
+bsc=get('https://raw.githubusercontent.com/civitai/civitai/main/src/shared/constants/block-scope.constants.ts')
+i=bsc.index('BLOCK_SCOPE_TO_OAUTH_BIT')
+up=set(re.findall(r"^\s{2}'?([a-zA-Z][\w:.\-]*)'?\s*:", bsc[i:i+6000], re.M))
+cli=set(json.load(open(f'{__import__("os").environ.get("R","/home/zach/workspace/civit/cli")}/schema/app-block.manifest.schema.json'))['properties']['scopes']['items']['enum'])
+print('scopes  missing:', sorted(up-cli) or 'none', '| extra:', sorted(cli-up) or 'none')
+print('CONTROL (must print zz:ctl):', sorted((up|{'zz:ctl'})-cli))
+PY
 
-# the semantic half — what each PR does to the SAME map
-git -C $R show refs/remotes/pr/554:internal/cmd/safeterm_userinput_test.go | grep -n '"s":'
-git -C $R diff origin/main...refs/remotes/pr/564 -- internal/cmd/safeterm_userinput_test.go \
-  | grep -nE '^[+-].*bareIdentArgs'
+# #552 body carries the measured scope, not the old 8-field framing
+gh issue view 552 --repo civitai/cli --json body --jq '.body' | grep -c 'creators.go:107'   # want >=1
 
-# #565 landed, by CONTENT (a squash is never an ancestor)
-git -C $R show origin/main:claudedocs/handoff-external-issue-513-numeric-username.md | grep -c tabwriter
+# #569 landed and did NOT close #552
+git -C $R log -1 --format='%s%n%b' origin/main | grep -icE 'clos(e|es|ed) #552'   # want 0
+gh issue view 552 --repo civitai/cli --json state --jq .state                     # want OPEN
 
 # claims still held
 claim-work --list | grep -E 'devdocs-61|devdocs-76'
