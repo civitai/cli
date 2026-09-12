@@ -17,29 +17,26 @@ answered — starting with #513, and fix the API-side root cause behind it.
 
 ## State now
 
-- **Branch `main` @ `feb330c4`** — `civitai/cli#545` merged (squash). 🔴 `main` moved FOUR times
-  during the session that wrote this (`1123812` → `1f6d130` → `7b7d5f1` → `feb330c4`); treat every
-  sha here as a snapshot and re-measure.
-- **All three dispatched agents have REPORTED.** The earlier "results NOT known" block is
-  superseded — see the two retraction blocks below.
-- **`civitai/cli#545` (xsvm) is MERGED** as `feb330c4`, verified by CONTENT not ancestry
-  (`git show origin/main:internal/cmd/images.go` carries both `indentContinuation` calls at
-  lines 292 and 295). A squash merge never makes the branch head an ancestor of `main`, so an
-  ancestry check would read "not merged" forever. **#544 auto-closed COMPLETED.**
-- **`civitai/cli#552` filed** — the `indentContinuation` call-site ledger, with a closing
-  condition. This is the item that actually closes the forgery class; #545 closed 2 of 10 fields.
-- **A public correction was posted to #545** (comment `5630251541`) rather than silently editing
-  the body, because the false Scope Evaluation was already in the review record.
-- **Claim released:** `cli-545-images-prompt-indent-audit`.
-  **Claim STILL HELD:** `external-issue-513-numeric-username-3` — the probe is done but the
-  outward actions (reply to Rochet2, file against `civitai/civitai`) are undecided.
-- **Round-0 trial data, recorded here rather than on #545** — that PR belongs to an external
-  contributor and the trial is our internal instrument, so posting it there would be noise:
-  **`ran: 1 · changed the outcome: 0 (framing only)`**. Round 0 uniquely produced the
-  *attribution* (that the Scope Evaluation was unattributed and contradicted by our own type
-  doc, and that the pad widths' real justification is written nowhere and therefore deletable
-  by a future `/simplify`). Round 1, dispatched blind, reached the same defect via its scope
-  axis. Two more trial runs are needed before the retire/promote decision.
+- **Branch `main` @ `cf5e4a8`.** 🔴 `main` moved SIX times during the session that wrote this
+  (`1123812` → `1f6d130` → `7b7d5f1` → `feb330c` → `263299e`/`6fce127` → `cf5e4a8`), several of
+  them from parallel sessions. Every sha here is a snapshot; re-measure.
+- **All external-issue work from this arc is DISPATCHED OR DONE. Nothing is mid-flight.**
+- **Claims: ALL RELEASED.** `external-issue-513-numeric-username-3`,
+  `cli-545-images-prompt-indent-audit`, `cli-554-indentcontinuation-ledger-audit`.
+  **Still HELD:** `devdocs-61-flux2-klein-whatif-500` and `devdocs-76-drift-sweep-red` —
+  both blocked on someone else, not finished by the comments posted.
+
+### Shipped this arc
+
+| what | where | state |
+|---|---|---|
+| `#545` (xsvm) images prompt indent | `feb330c` | MERGED, public correction posted |
+| `#552` ledger follow-up | issue | OPEN, **closing condition AMENDED** — see below |
+| `#556` retraction of "not reproducible" | `d0d1805` | MERGED |
+| `#551` handoff r2 | `5208a6b` | MERGED |
+| `devrc#1498` mentions-id-collision lesson | `550de40` | MERGED — ⚠ NOT LIVE until `home-manager switch` |
+| `civitai/civitai#4768` | new | FILED, server-side root cause |
+| stale branch `fix/flexstring-numeric-username` | — | DELETED, recovery sha `12818a3` |
 
 ## Open investigations — live diagnosis state
 
@@ -277,41 +274,121 @@ and round 1 agent reports"). Both reported; both are folded in here.
   prompt emits a **410-byte unwrapped line** that the terminal spills to column 0 with no `\n`
   for `indentContinuation` to see. Tracked in #552.
 
+### 🔴 #554's ledger is green-by-construction, and the forgery is LIVE on eight other commands
+
+- **Symptom + exact repro:** `civitai tags search` with a server `name` of
+  `"cat\nNAME<pad>LINK"` renders `NAME    LINK` as a third line at **column zero** — a forged
+  table header. `civitai creators search` with `username = "alice\nbob  99  https://evil…"`
+  forges a creator row the same way. Both at #554's HEAD, with its new ledger GREEN.
+- **Observed (with values):** unguarded server strings in tabwriter rows at `tags.go:110`,
+  `creators.go:107`, `collections.go:201`, `models.go:223`, `models.go:249`, `users.go:132`,
+  `model_versions.go:186`, `articles.go:201`.
+- 🔴 **ROOT CAUSE IS MY OWN PREDICATE IN #552, not #554's implementation.** I asked for a
+  ledger over "the set of renderers that print server-supplied text"; what is implementable
+  from that wording is "the set of call sites that **call `indentContinuation`**" — which is
+  satisfied by construction and is **GREEN AT BASE** (an invariant guard, not regression
+  coverage). A guard keyed to a function NAME can only find places that already call it.
+  #552's closing condition has been amended in a comment to:
+  **"prints server-supplied text into a line-structured surface"**, ledgered over the
+  RENDERERS.
+- **Ruled out:** that #554 is wrong about what it claims — its `BehaviouralSeam` subtest IS
+  real regression coverage, red at `feb330c` and green at `733d218`, verified by restoring
+  only the payload files. `via: measurement`
+- **Next probe:** file the widened-predicate ledger as its own issue so #554 is not held up.
+
+### 🔴 A TAB is a worse forgery vector than a newline, because tabwriter's delimiter IS the tab
+
+- **Symptom + exact repro:** at #554 HEAD, `images search` (no `--meta`) with
+  `username = "alice\tSDXL\t9x9\tNone\t0\t0\thttps://evil.example/steal"` emits a **fully
+  aligned**, entirely attacker-controlled row, pushing the real values past column 80.
+- **Observed (with values), verified first-hand not just by the auditor:**
+  `safeTermSingle` (`safeterm.go:59-65`) replaces **only `"\n"`**; `saferune.go:219` reads
+  `if r == '\n' || r == '\t'` — tab is **deliberately kept**. Survival through
+  `safeTermSingle`: `\n`→space; `\r`, `\v`, `\f`, U+0085 **stripped**; **`\t`, U+2028,
+  U+2029 SURVIVE**.
+- 🔴 **The generalisable part: "reach column zero" was never the whole hazard.** In a
+  `tabwriter`, a tab lets the attacker **inject a column**, so alignment — the thing that
+  makes output look trustworthy — becomes the attack surface. Any replacement predicate must
+  cover both.
+- **Ruled out:** that this is new in #554 — the tab behaviour predates it. What is new is the
+  CLAIM: `safeterm.go:49-55` justifies the helper by naming column-alignment and tabwriter
+  row-forging, while guarding only `\n`. `via: code`
+
+### #513's server half — FILED, and the CLI cannot do more
+
+- **State:** `civitai/civitai#4768` carries the root cause (Meilisearch feed path stores
+  `user.username` under dynamic JSON typing), the 8-row path-fork table, the 51/51 sweep and
+  a closing condition. `civitai/cli#513` deliberately **stays open**; Rochet2 was told
+  directly that `FlexString` does not make the value correct.
+- **Ruled out:** that `/api/v1/blocks/images` could be confirmed — it returns
+  `401 Block token required`, so it is labelled *suspected, not verified* in #4768 rather
+  than asserted. `via: command`
+
+### `developer-docs#61` does NOT reproduce — but at the WRONG end of the reporter's own dimension
+
+- **Symptom + exact repro:** reporter (giannamikaelova, 2026-08-24) got HTTP 500 from
+  `POST https://orchestration.civitai.com/v2/consumer/workflows?whatif=true&allowMatureContent=false`
+  with the official `klein4bBody`.
+- **Observed (with values), 2026-09-11:** the byte-identical official payload returns
+  **HTTP 200** with a valid quote — `{"transactions":{"list":[{"type":"debit","amount":500,
+  "accountType":"blue"}],"insufficientBuzz":false},"status":"unassigned"}`. **Nothing was
+  created or charged:** the returned id is absent from `civitai workflows list`, whose newest
+  entry is 2026-09-10.
+- 🔴 **This is NOT evidence the bug is fixed, and must not be recorded as such.** The reporter
+  hypothesised the 500 might be the *insufficient-balance* path. The account used holds far
+  more than the 500-Buzz quote and returned `insufficientBuzz: false` — the GOOD end of
+  exactly that dimension. One reading there says nothing about the under-funded end.
+- **Next probe:** a `whatif` for this payload from an account whose blue balance is **below
+  500**. Asked the reporter for their balance at the time; that one detail likely settles it.
+- **Method note:** the request URL was hard-guarded on `whatif=true` before sending —
+  omitting it would SUBMIT a paid training job. Reuse that guard.
+
+### `developer-docs#76` — red-on-green is a REPORTING defect over six real failures
+
+- **Observed (with values):** the issue body's table shows every example-app counter clean
+  (8 verified, 0 rotted, 0 drifted) while the job failed. Six checks failed, **none of them
+  in that table**: snapshot drift, CLI snapshot freshness, manifest schema parity,
+  generation-bridge pin drift, OpenAPI spec drift, design-system pin drift.
+- **The drift is REAL:** `block-scope.constants.ts` snapshot 347 lines vs upstream **411**,
+  now documenting a *"PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling"*;
+  `scope-descriptions.constants.ts` renames `/apps/installed` → **`/apps/activity`**;
+  `hostHandlerParity.ts` 600 vs 635.
+- 🔴 **Cross-repo consequence, UNVERIFIED and worth checking:** this repo VENDORS that
+  vocabulary — `internal/validate/targets.go`'s `vendoredSlotIDs` (item 2) and
+  `internal/appapi`'s token-scope bitmask (item 4). A scope-vocabulary change upstream is
+  precisely the event those mirrors exist to track, and nothing tells this repo about it.
+  The per-user-per-day Buzz ceiling also bears on the generate path (item 13).
+- **Next probe:** diff the vendored slot ids and scope bitmask against upstream
+  `block-scope.constants.ts` at its current 411-line form.
+
 ## Next steps (ranked)
 
-🔴 **NUMBERING IS STABLE AND LOAD-BEARING** — rank is half a `claim-work` slug's identity.
-Items 1–5 keep their numbers; rank 3 is CLAIMED and its meaning is unchanged (the #513 server
-half), only its state moved from "probe not run" to "diagnosed, outward actions pending".
+🔴 Numbering stable; ranks 1–7 keep their meaning. Ranks 8–10 are new.
 
-1. **DONE — `civitai/cli#526` merged.** Kept at this number so ranks 2–5 do not shift.
-   forcing: none
-2. **`civitai/civitai-developer-docs#61`** (giannamikaelova, 2026-08-24). Flux 2 Klein training
-   `whatif` returns HTTP 500 for the payload the docs publish, with a working control. Not
-   fixable in either repo worked here — route it to whoever owns `orchestration.civitai.com`.
-   forcing: user — the oldest unanswered external report, now 18 days.
-3. **#513 — DIAGNOSED; the remaining work is OUTWARD and needs a human decision.** Still
-   CLAIMED as `external-issue-513-numeric-username-3`. Two actions, both leaving this machine:
-   (a) reply to Rochet2 on `civitai/cli#513` with the live repro and the `?imageId=` vs
-   `?username=` contrast, telling them #532 shipped but that `"0222"` still arrives as `222`;
-   (b) file against `civitai/civitai` — the Meilisearch images index stores `user.username` as
-   a number; fix at the index-document boundary and re-index, because `String(...)` at
-   `image-search.service.ts:255` fixes the type but **not** the lost leading zeros.
-   forcing: user — external reporter, no reply since 2026-08-30, and the bug is confirmed live.
-4. **Delete the stale branch `fix/flexstring-numeric-username`** — still live, both locally and
-   on `origin`, at pre-rebase `12818a3`, held repo-globally by a worktree. Does NOT reflect the
-   merged #532.
-   forcing: none
-5. **DONE — `civitai/cli#545` merged** as `feb330c4`; correction posted; #552 filed.
-   forcing: none
-6. **`civitai/cli#552`** — the `indentContinuation` call-site ledger. The item that actually
-   closes the forgery class. Carries its own closing condition.
-   forcing: security — 8 fields can forge CLI output on a merged, shipped surface, one of them
-   without any flag.
-7. **Correct AGENTS.md item 37 / `claudedocs/decisions/37-numeric-username.md`** if either
-   asserts the server coercion is unreproducible or the client fix is sufficient. Not yet read
-   this session; check before trusting. The `flexstring.go` doc comment reportedly says the
-   coercion "could not be exercised", which is now false.
-   forcing: regression — a decisions doc that misstates a live bug will misroute the next reader.
+1. **DONE — `civitai/cli#526`.** forcing: none
+2. **DONE — `developer-docs#61` routed and re-tested.** Awaiting the reporter's balance figure.
+   forcing: user — external reporter, now answered after 18 days.
+3. **DONE — #513 diagnosed, server side filed as `civitai/civitai#4768`.** forcing: none
+4. **DONE — stale branch deleted** (recovery sha `12818a3`). forcing: none
+5. **DONE — `#545` merged.** forcing: none
+6. **`civitai/cli#554`** — BLOCKED on the contributor fixing two 🔴: the `\t` forgery vector,
+   and the `"s"` entry in `bareIdentArgs` that blinds the #393 guard wherever a variable is
+   named `s`. Do NOT merge until both land; re-audit the DELTA, not the whole PR.
+   forcing: security — an aligned, fully attacker-controlled table row on a shipped surface.
+7. **DONE — AGENTS.md item 37 / `decisions/37` corrected** via `#556`. forcing: none
+8. **File the WIDENED ledger** — predicate `"prints server-supplied text into a
+   line-structured surface"`, over renderers, covering `\t` as well as `\n`. Eight known-live
+   sites listed in the investigation block above. Keep it separate so #554 is not held up.
+   forcing: security — same class, eight commands, currently unguarded and unpinned.
+9. **`developer-docs#76`** — re-snapshot the three drifted files AFTER reading the diffs (two
+   describe behaviour changes, not wording), triage the other four failing checks, and fix
+   `drift-notify.mjs` to NAME the failing steps.
+   forcing: gate — a red gate whose issue body reads all-green trains readers to dismiss it.
+10. **Check the CLI's vendored mirrors against the moved upstream vocabulary** — item 2's
+    `vendoredSlotIDs` and item 4's scope bitmask vs the 411-line `block-scope.constants.ts`.
+    forcing: regression — the mirrors exist to track exactly this, and nothing signalled them.
+11. **`home-manager switch`** so `devrc#1498`'s lesson is actually live.
+    forcing: none
 
 ## Gotchas / decisions / dead-ends
 
@@ -427,31 +504,45 @@ half), only its state moved from "probe not run" to "diagnosed, outward actions 
   heading shape only — it cannot check that what you wrote is an observable end-state rather than
   a restatement of the fix.
 
+- 🔴 **A COMPARISON AGAINST AN ABSENT OPERAND REPORTS "SAME", NOT "MISSING" — this bit me
+  twice in one session and I reported the wrong thing to the operator both times.** I twice
+  claimed the stale branch existed "locally AND on origin". The remote branch had been
+  deleted; I was reading a stale remote-tracking ref. Worse, `git rev-list --count
+  origin/main..origin/<gone>` and `git diff --stat origin/main origin/<gone>` both returned
+  **EMPTY**, which reads exactly like "identical, safe to delete". **Prove the ref exists
+  first** — `git show-ref --verify`, `git ls-remote --heads origin <branch>` — then compare.
+  The previous handoff carried the same wrong claim, so it was wrong for two sessions.
+- 🔴 **A `grep` for a phrase that spans a LINE WRAP returns a false zero.** Verifying
+  `devrc#1498` landed, I grepped for `unique only within ITS OWN tracker` and got **0** on a
+  file that contains it — the phrase straddles a newline. Pick a pattern that cannot wrap, and
+  pair it with a positive control.
+- 🔴 **Guard a money URL structurally, not by care.** Before probing #61 I gated the request
+  on `case "$URL" in *"whatif=true"*)`. Without that flag the same POST SUBMITS a paid
+  training job. Make the dangerous case unreachable rather than trusting yourself to type it.
+- **An auto-generated issue's BODY is overwritten by the next run; COMMENTS persist.** #76
+  says so explicitly. Put diagnosis in a comment.
+- **Round-0 trial ledger, cumulative: `ran: 1 · changed the outcome: 0`.** Two more runs
+  needed before the retire/promote decision. Recorded here, not on external contributors' PRs.
+- **Both #545 and #554 came from the same external contributor within two weeks, and BOTH sat
+  unreviewed** (#545 for 13h; #554 until this arc). External PRs here are rare enough that
+  nothing routes them to a human. That is the recurring failure, not any individual defect.
+
 ## How to verify
 
 ```bash
-# 🔴 The #513 coercion is LIVE — requires a browser UA and a cache MISS
-UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0 Safari/537.36'
-curl -s -A "$UA" 'https://civitai.com/api/v1/images?username=2428023993&limit=3' \
-  -D /tmp/h.txt -o /tmp/b.json
-grep -i '^cf-cache-status' /tmp/h.txt          # must read MISS, else you measured the CDN
-grep -oE '"username":[^,}]{0,25}' /tmp/b.json  # -> "username":2428023993   UNQUOTED
+# #554's two 🔴 — mechanism, no build required
+git -C <repo> show refs/remotes/pr/554:internal/cmd/safeterm.go | grep -A6 'func safeTermSingle'   # only "\n"
+git -C <repo> show refs/remotes/pr/554:internal/saferune/saferune.go | grep -n "r == '\\\\t'"      # tab KEPT
+git -C <repo> show refs/remotes/pr/554:internal/cmd/safeterm_userinput_test.go | grep -n '"s":'    # the allowlist hole
 
-# the SAME user on the legacy DB path is correct — this is the discriminator
-curl -s -A "$UA" 'https://civitai.com/api/v1/images?imageId=1446527' \
-  | grep -oE '"username":[^,}]{0,25}'          # -> "username":"2428023993"  QUOTED
+# #61 — ALWAYS guard the URL; without whatif=true this SUBMITS a paid training job
+URL='https://orchestration.civitai.com/v2/consumer/workflows?whatif=true&allowMatureContent=false'
+case "$URL" in *"whatif=true"*) : ;; *) echo REFUSING; exit 9 ;; esac
 
-# leading zeros are destroyed, and the printed name round-trips to nothing
-curl -s -A "$UA" 'https://civitai.com/api/v1/images?imageId=622901' | grep -oE '"username":[^,}]{0,25}'
-curl -s -A "$UA" 'https://civitai.com/api/v1/images?username=0222&limit=4' | grep -oE '"username":[^,}]{0,25}'
-curl -s -A "$UA" 'https://civitai.com/api/v1/images?username=222&limit=4'  | grep -c '"id"'
+# #76 — what actually failed (the issue body cannot tell you)
+gh run view <run-id> --repo civitai/civitai-developer-docs \
+  --json jobs --jq '.jobs[].steps[] | select(.conclusion=="failure") | .name'
 
-# #545 landed, verified by CONTENT (a squash is never an ancestor)
-git -C /home/zach/workspace/civit/cli show origin/main:internal/cmd/images.go | grep -n indentContinuation
-
-# the claim still held by this effort
-claim-work --list | grep external-issue-513-numeric-username-3
-
-# the repo gate — AGENTS.md: `make ci` is NOT a superset of CI
-make -C /home/zach/workspace/civit/cli ci && make -C /home/zach/workspace/civit/cli lint
+# claims still held
+claim-work --list | grep -E 'devdocs-61|devdocs-76'
 ```
