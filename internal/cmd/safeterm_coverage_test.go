@@ -229,10 +229,16 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"downloadOne": {"TestDownloadOneErrorsSanitizeTheServerName",
 		"the download / SHA256-mismatch / install errors AND the `Saved <target>` line. main.go " +
 			"prints err.Error() unfiltered, so the mismatch string is the CLI ASSERTING AN INTEGRITY " +
-			"FAILURE with an uploader-controlled prefix. MEASURED, 6 calls: 5 killed individually; the " +
-			"safeTermErr on `download %s: %w` SURVIVES because on this path the cause is a *url.Error and " +
-			"Go's own %q already escapes the class — defence in depth, not coverage. The `create output " +
-			"directory` error is deliberately NOT here: its `dir` is user-typed only (#572)"},
+			"FAILURE with an uploader-controlled prefix. MEASURED, 6 calls, ALL SIX killed individually. " +
+			"🔴 THE SIXTH — the safeTermErr on `download %s: %w` — was recorded here as a SURVIVOR " +
+			"\"because the cause is a *url.Error and Go's own %q already escapes the class\". That " +
+			"sentence was false and is retracted (#572 round 2): %q is strconv.Quote, which escapes what " +
+			"is not unicode.IsPrint, and IsPrint admits U+2800 and U+034F; url.URL.String() writes " +
+			"RawQuery back VERBATIM, so a hostile query rides into *url.Error raw; and the https/parse " +
+			"refusals on this path are not *url.Error at all. It survived for want of a driving test, " +
+			"which the two `*url.Error carries the runes %q does not escape` / `real client's https " +
+			"refusal` subtests now supply. The `create output directory` error is deliberately NOT here: " +
+			"its `dir` is user-typed only (#572)"},
 	"writePart": {"TestWritePartErrorsSanitizeTheServerName",
 		"the frame BETWEEN downloadOne and the progress writer, gated so the sibling-renderer split #566 " +
 			"is about cannot reappear one call frame down. MEASURED, 6 calls: `streaming <name>`, " +

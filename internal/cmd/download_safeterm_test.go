@@ -143,6 +143,17 @@ const (
 	// goes and its `[2K` survives as ordinary ASCII.
 	dlHostileQuoted = "pad\u2800\u034fcore\x1b[2K"
 	dlSafeQuoted    = "padcore[2K"
+
+	// \ud83d\udd34 A FOURTH FIXTURE, FOR THE HALF OF dlHostileQuoted THAT CAN RIDE IN A
+	// URL \u2014 civitai/cli#572 round 2. net/url refuses ANY ASCII control byte
+	// outright (`net/url: invalid control character in URL`), so the ESC above
+	// cannot reach a parsed URL's query; U+2800 and U+034F can, and
+	// url.URL.String() writes RawQuery back VERBATIM \u2014 it percent-encodes the
+	// path and punycodes the host, but never re-encodes the query. So this is
+	// the payload a server's files[].downloadUrl carries all the way into the
+	// error text on the download path.
+	dlHostileQuery = "pad\u2800\u034fcore"
+	dlSafeQuery    = "padcore"
 )
 
 // dlHazardRunes reports the hazard runes still present in s, as an INDEPENDENT
@@ -189,6 +200,7 @@ func TestDownloadFixtureIsHostile(t *testing.T) {
 		{"name", dlHostileName, 4},
 		{"type", dlHostileType, 3},
 		{"quoted", dlHostileQuoted, 3},
+		{"query", dlHostileQuery, 2},
 	} {
 		if got := dlHazardRunes(tc.in); len(got) != tc.want {
 			t.Errorf("CONTROL failure, not a finding: the %s fixture carries %d hazard rune(s) %v, want %d. "+
@@ -553,13 +565,12 @@ func TestDownloadOneErrorsSanitizeTheServerName(t *testing.T) {
 	// <url-raw>". This subtest pins the OUTCOME (nothing hostile on stderr, and
 	// the chain still classifiable), not one mechanism.
 	//
-	// ⚠ STATED BECAUSE IT CHANGES WHAT THIS SUBTEST IS EVIDENCE FOR: on a
-	// *url.Error the neutralising is done by the STANDARD LIBRARY, which renders
-	// the URL with %q and so escapes every rune in the class as ASCII text.
-	// safeTermErr is defence in depth here and this subtest does NOT go red if
-	// it is deleted from this one call. The subtests that DO pin safeTermErr are
-	// "install" below and writePart's "create" — *os.LinkError and *fs.PathError
-	// render their paths RAW, with no quoting anywhere.
+	// ⚠ WHAT THIS ONE SUBTEST IS AND IS NOT EVIDENCE FOR. Its payload is
+	// dlHostileName, every rune of which `%q` DOES escape, so it stays green with
+	// the safeTermErr on this call deleted. It pins the message shape; the two
+	// subtests after it are what pin the call. Read them together — this one
+	// alone was once written up as proof that the call was redundant, and that
+	// write-up was wrong (civitai/cli#572 round 2).
 	t.Run("transport failure whose cause quotes the server URL", func(t *testing.T) {
 		var out, errb bytes.Buffer
 		hostileURL := "https://cdn.example.invalid/" + dlHostileName
@@ -583,6 +594,79 @@ func TestDownloadOneErrorsSanitizeTheServerName(t *testing.T) {
 		if !errors.As(err, &ue) {
 			t.Errorf("safeTermErr broke the error chain: errors.As(*url.Error) no longer matches, so the "+
 				"exit-code classifier can no longer see what kind of failure this is:\n  %#v", err)
+		}
+	})
+
+	// 🔴 THE `download %s: %w` GATE IS LIVE, AND THIS IS WHAT KILLS IT —
+	// civitai/cli#572 round 2. Until this subtest existed the ledger claimed the
+	// call SURVIVED "because the cause is a *url.Error and Go's own %q already
+	// escapes the class". Measured here, that sentence is false on its own
+	// terms: `%q` is strconv.Quote, which escapes what is not unicode.IsPrint,
+	// and IsPrint ADMITS U+2800 (So) and U+034F (Mn) — both in saferune's class.
+	//
+	// The rune gets there because url.URL.String() percent-encodes the PATH and
+	// punycodes the HOST but writes RawQuery back untouched, so a server-supplied
+	// files[].downloadUrl with the payload in its query survives round-tripping
+	// through net/url and lands raw inside *url.Error's quoted URL.
+	t.Run("transport failure whose *url.Error carries the runes %q does not escape", func(t *testing.T) {
+		// The premise, asserted rather than assumed: net/url really does hand the
+		// query back verbatim. Without this the subtest could be green because the
+		// fixture never reached the error, which is indistinguishable from a strip.
+		parsed, perr := url.Parse("https://cdn.example.invalid/blob?sig=" + dlHostileQuery)
+		if perr != nil {
+			t.Fatalf("CONTROL failure, not a finding: url.Parse rejected the fixture: %v", perr)
+		}
+		hostileURL := parsed.String()
+		if got := dlHazardRunes(hostileURL); len(got) != 2 {
+			t.Fatalf("CONTROL failure, not a finding: url.URL.String() left %d hazard rune(s) %v in the "+
+				"query, want 2. If net/url started encoding RawQuery this subtest proves nothing and the "+
+				"ledger row for safeTermErr must be re-measured.", len(got), got)
+		}
+		// And that Go's own rendering of that URL is NOT safe, which is the exact
+		// claim the old ledger row made in the opposite direction.
+		raw := (&url.Error{Op: "Get", URL: hostileURL, Err: errors.New("EOF")}).Error()
+		if dlHazardRunes(raw) == nil {
+			t.Fatalf("CONTROL failure, not a finding: *url.Error rendered %q clean, so this subtest cannot "+
+				"distinguish safeTermErr from the standard library", hostileURL)
+		}
+
+		var out, errb bytes.Buffer
+		dl := dlFakeDownloader{err: &url.Error{Op: "Get", URL: hostileURL, Err: errors.New("EOF")}}
+		_, err := downloadOne(context.Background(), dl, &out, &errb, newFile(""),
+			filepath.Join(t.TempDir(), dlHostileName), &downloadOpts{})
+		assertDownloadErr(t, err, "downloadOne (download %s: %w, *url.Error query)",
+			`download `+dlSafeName+`: Get "https://cdn.example.invalid/blob?sig=`+dlSafeQuery+`": EOF`)
+		var ue *url.Error
+		if !errors.As(err, &ue) {
+			t.Errorf("safeTermErr broke the error chain: errors.As(*url.Error) no longer matches, so the "+
+				"exit-code classifier can no longer see what kind of failure this is:\n  %#v", err)
+		}
+	})
+
+	// 🔴 AND THE CAUSE ON THIS PATH IS OFTEN NOT A *url.Error AT ALL. The real
+	// pkg/civitai client refuses a non-https downloadUrl BEFORE any request is
+	// built, and returns a plain fmt.Errorf that prints the whole raw URL through
+	// `%q` — the same `%q` that does not escape the two runes above. This drives
+	// the REAL Downloader (no fake, no network: the refusal happens before the
+	// dial), so the wrapped cause is the one production produces.
+	t.Run("real client's https refusal, whose cause is not a *url.Error", func(t *testing.T) {
+		var out, errb bytes.Buffer
+		f := newFile("")
+		f.DownloadURL = "http://cdn.example.invalid/blob?sig=" + dlHostileQuery
+		// The default client, i.e. AllowPrivateDownloadHosts=false — the shipped
+		// configuration, not a test-only bypass.
+		dl := civitai.New("https://civitai.com", "tok")
+		_, err := downloadOne(context.Background(), dl, &out, &errb, f,
+			filepath.Join(t.TempDir(), dlHostileName), &downloadOpts{})
+		assertDownloadErr(t, err, "downloadOne (download %s: %w, https refusal)",
+			`download `+dlSafeName+`: refusing to download over http — downloads must use https `+
+				`(got "http://cdn.example.invalid/blob?sig=`+dlSafeQuery+`")`)
+		// The cause is deliberately asserted NOT to be a *url.Error: that is the
+		// half of the old ledger row this subtest refutes directly.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			t.Errorf("the https refusal is now a *url.Error (%#v). That does not make the gate redundant — "+
+				"see the sibling subtest — but the comment above is then describing the wrong mechanism.", ue)
 		}
 	})
 
