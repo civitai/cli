@@ -191,14 +191,14 @@ func printArticleList(cmd *cobra.Command, items []civitai.ArticleListItem) {
 	for _, a := range items {
 		author := "-"
 		if a.User != nil && a.User.Username != "" {
-			author = safeTerm(a.User.Username.String())
+			author = safeTermSingle(a.User.Username.String())
 		}
-		title := safeTerm(a.Title)
+		title := safeTermSingle(a.Title)
 		if a.NSFWLevel > 1 {
 			title += " [nsfw]"
 		}
 		reactions := a.Stats.LikeCount + a.Stats.FavoriteCount
-		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\n", a.ID, title, author, dashIfEmpty(safeTerm(shortDate(a.PublishedAt))), reactions, a.Stats.CommentCount)
+		fmt.Fprintf(tw, "%d\t%s\t%s\t%s\t%d\t%d\n", a.ID, title, author, dashIfEmpty(safeTermSingle(shortDate(a.PublishedAt))), reactions, a.Stats.CommentCount)
 	}
 	_ = tw.Flush()
 }

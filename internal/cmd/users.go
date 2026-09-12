@@ -129,7 +129,7 @@ no model list on this route.
 					if u.ID == match.ID {
 						continue
 					}
-					fmt.Fprintf(tw, "  %d\t%s\n", u.ID, orDash(safeTerm(u.Username.String())))
+					fmt.Fprintf(tw, "  %d\t%s\n", u.ID, orDash(safeTermSingle(u.Username.String())))
 				}
 				_ = tw.Flush()
 			}

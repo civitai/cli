@@ -147,6 +147,28 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 	"htmlToText": {"TestHTMLToTextStripsControlChars",
 		"`articles get --content`: the article BODY, the largest free-text surface the CLI prints"},
 
+	// --- app path: the tabwriter renderers that had NO gate at all ----------
+	// 🔴 THESE THREE WERE INVISIBLE TO THIS LEDGER UNTIL civitai/cli#552, AND
+	// NOT BECAUSE THEY WERE SAFE. Its rows are keyed by "functions that call
+	// safeTerm", so a renderer that sanitises NOTHING has no row, no count and no
+	// signal — the absence reads exactly like "no such surface exists". #552
+	// named printSubmissionTable specifically for that reason. They are here now
+	// because they acquired a gate, and tabwriterRenderers
+	// (tabwriter_ledger_test.go) is the ledger that could have seen them without
+	// one.
+	"printSubmissionTable": {"TestTabwriterRenderersCannotBeForged",
+		"`app status` rows: block id, version, status, deploy state, source commit, date and live URL"},
+	"printSubmissionDetail": {"TestTabwriterRenderersCannotBeForged",
+		"`app status --id`: the same fields plus the publish-request id and the deploy detail. The named " +
+			"test drives its CELLS. Its four NON-cell surfaces — rejection reason, approval notes, live " +
+			"URL and the block id in the not-live sentence — are killed by " +
+			"TestGatedRenderersDoNotForgeOutsideTheirTable instead; they were ungated while this row read " +
+			"as coverage of the whole function, which is why both tests are named here"},
+	"printListingStatus": {"TestTabwriterRenderersCannotBeForged",
+		"`app listing status`: the server's listing status, beside the slug the USER typed. The screenshot " +
+			"id and caption printed below the flushed table are NOT cells and are killed by " +
+			"TestGatedRenderersDoNotForgeOutsideTheirTable"},
+
 	// --- read path: apps ----------------------------------------------------
 	"printAppList": {"TestReadRenderersStripTheInvisibleClass",
 		"`app list` rows: name, slug, kind, category and author"},
@@ -286,10 +308,11 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the submitted-workflow id and its civitai.com link"},
 	"printReattach": {notCovered,
 		"the re-attach block: workflow id and last status"},
-	"printSubmitResult": {notCovered,
-		"the submit result's id and status"},
-	"printCostMap": {notCovered,
-		"the cost-map KEYS on the quote screen — server-named factors beside Buzz amounts"},
+	"printSubmitResult": {"TestTabwriterRenderersCannotBeForged",
+		"the submit result's id and status — the receipt for money already spent"},
+	"printCostMap": {"TestTabwriterRenderersCannotBeForged",
+		"the cost-map KEYS on the quote screen — server-named factors beside Buzz amounts, written " +
+			"into the PRE-SPEND table through a tabwriter its caller owns"},
 	"classifyGenerateError": {notCovered,
 		"the server's own error message, shown verbatim when generation is refused"},
 	"buildGenerateGraph": {notCovered,
@@ -304,9 +327,10 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the `Saved <target>` line on the generate output path"},
 	"downloadOutputs": {notCovered,
 		"the multi-output progress line and the no-URL error, both naming server ids"},
-	"printAppMetrics": {notCovered,
+	"printAppMetrics": {"TestTabwriterRenderersCannotBeForged",
 		"the scope and endpoint tokens — kept RAW on purpose (AGENTS.md item 8), which makes the " +
-			"strip the ONLY thing between an uploader-shaped token and the terminal"},
+			"strip the ONLY thing between an uploader-shaped token and the terminal — plus the window " +
+			"timestamps and granularity, which had no gate at all until #552"},
 	"newUsersGetCmd": {notCovered,
 		"the `closest matches` usernames printed when a user lookup misses"},
 	"(*quietPollReporter).tick": {notCovered,
@@ -351,12 +375,30 @@ const (
 	// honest is then a review question with the evidence written next to it.
 	// That is the split #399 asked for: the count is mechanical, the content is
 	// reviewed.
+	// 🔴 LOWERED 25 -> 21 BY TWO INDEPENDENT EFFORTS THAT LANDED TOGETHER, AND
+	// THE MERGED VALUE IS NEITHER SIDE'S. This is the ratchet working as
+	// designed, twice over, on disjoint sets of functions:
 	//
-	// 25 -> 24 in civitai/cli#566: downloadOne moved from notCovered to covered,
-	// which is exactly the "unbanked progress that must be spent in the same
-	// commit" case the paragraph above describes. The five NEW rows #566 adds
-	// are all covered, so they do not move this number in either direction.
-	maxUncoveredSafeTermFuncs = 24
+	//   25 -> 22, civitai/cli#552 (app path). printAppMetrics, printCostMap and
+	//   printSubmitResult moved to covered when
+	//   TestTabwriterRenderersCannotBeForged started driving them with a forgery
+	//   payload — measured by deleting each one's gate and watching that test go
+	//   red, not by reading it. The three renderers #552 added to this ledger
+	//   (printSubmissionTable, printSubmissionDetail, printListingStatus) arrive
+	//   COVERED by the same test, so they do not spend headroom either.
+	//
+	//   25 -> 24, civitai/cli#566 (download path). downloadOne moved from
+	//   notCovered to covered, which is exactly the "unbanked progress that must
+	//   be spent in the same commit" case the paragraph above describes. The
+	//   seven NEW rows #566 and its follow-up add are all covered, so they do not
+	//   move this number in either direction.
+	//
+	// The two sets are disjoint — four distinct functions moved, so the merged
+	// count is 21, not 22 and not 24. 🔴 THAT 21 IS MEASURED, NOT DERIVED: taking
+	// either branch's constant through the merge would have left the equality
+	// asserting a number no tree ever held. It is what this test reported for
+	// the MERGED tree, whose notCovered set it also enumerates on failure.
+	maxUncoveredSafeTermFuncs = 21
 )
 
 // TestSafeTermCallSitesAreCoveredByANamedTest is civitai/cli#399.
