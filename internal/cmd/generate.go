@@ -1733,11 +1733,25 @@ func confirmGenerate(cmd *cobra.Command, o generateOpts, built *resolvedGraph, c
 	if o.quantitySet {
 		fmt.Fprintf(errw, "  Quantity:   %d\n", o.quantity)
 	}
+	// 🔴 GATED AT THE CALL SITE, ON THE APPROVAL SCREEN — civitai/cli#575 R1,
+	// round 0. These two lines sit FOUR LINES ABOVE `Generate? [y/N]:`, so a
+	// model name carrying `\n` forges arbitrary lines at column zero in the last
+	// thing a user reads before an IRREVERSIBLE Buzz spend — the Cost line
+	// included. They were ungated here and safe only because describeVersion
+	// gates on the way IN, which is defence by upstream accident; the round-0
+	// audit measured what that costs. Once printGenerateQuote gained its own cell
+	// gate, deleting describeVersion's gate stopped reddening any BEHAVIOURAL
+	// test at all (3 tests on main, 1 after — and that one structural). Gating
+	// here is the money-path half of the residual #575 R4 records for plain
+	// `label: value` Fprintf lines, and is why
+	// TestGatedRenderersDoNotForgeOutsideTheirTable now drives this screen.
 	if built.checkpoint != "" {
-		fmt.Fprintf(errw, "  Checkpoint: %s%s\n", built.checkpoint, built.checkpointNote)
+		fmt.Fprintf(errw, "  Checkpoint: %s%s\n", safeTermSingle(built.checkpoint), safeTermSingle(built.checkpointNote))
 	}
-	for _, l := range built.loras {
-		fmt.Fprintf(errw, "  LoRA:       %s\n", l)
+	// Not `l` — see printGenerateQuote's note: bareIdentArgs is keyed by NAME
+	// across the whole package.
+	for _, loraLabel := range built.loras {
+		fmt.Fprintf(errw, "  LoRA:       %s\n", safeTermSingle(loraLabel))
 	}
 	printImageDisclosure(errw, o, built)
 	if balanceKnown {
@@ -1845,6 +1859,14 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	// Measured both ways before renaming: with "l" in bareIdentArgs a planted
 	// safeTerm(l) over the USER-TYPED prompt SURVIVES; with this name it is killed
 	// and named. A distinctive name is what keeps the ledger entry about THIS value.
+	//
+	// ⚠ THAT IS THE RULE, NOT A DESCRIPTION OF THE MAP — do not read it as one.
+	// bareIdentArgs holds FIVE one-letter keys today (`w`, `r`, `k`, `t`, `h` of
+	// 16), each a live allowlist of that name at every bare-ident safeTerm site in
+	// the package. They are pre-existing and are NOT fixed here: renaming them
+	// touches files other work is in. Recorded on civitai/cli#575 so the next
+	// reader finds an open residual rather than a rule this comment implies is
+	// enforced.
 	for _, loraLabel := range built.loras {
 		fmt.Fprintf(tw, "LoRA:\t%s\n", safeTermSingle(loraLabel))
 	}

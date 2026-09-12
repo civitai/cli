@@ -264,13 +264,26 @@ var safeTermCoveredBy = map[string]safeTermCoverage{
 		"the cost-map KEYS on the quote screen — server-named factors beside Buzz amounts, written " +
 			"into the PRE-SPEND table through a tabwriter its caller owns"},
 	"printGenerateQuote": {"TestTabwriterRenderersCannotBeForged",
-		"the Checkpoint cell, its substitution note and each LoRA cell on the PRE-SPEND quote screen. " +
-			"describeVersion already gates these on the way INTO resolvedGraph; they are gated AGAIN at " +
-			"the cell because a ledger row naming an upstream function resolved only to a NAME and was " +
-			"therefore satisfiable by any unrelated sanitising renderer (civitai/cli#575 R1). The named " +
-			"test drives this renderer with the fields set DIRECTLY, bypassing describeVersion, so it " +
-			"goes red when the cell gate is deleted — watched, not read: deleting safeTermSingle from " +
+		"the Checkpoint cell and each LoRA cell on the PRE-SPEND quote screen, both filled by " +
+			"describeVersion, plus checkpointNote beside them. 🔴 checkpointNote is NOT from " +
+			"describeVersion and an earlier draft of this row said it was: substitutionCheckpointNote " +
+			"(generate_substitution.go) builds a CLI-owned literal around a %d, so it carries no server " +
+			"text today — it is gated here because the next author to extend it to name the SUBSTITUTED " +
+			"model would otherwise inherit a row claiming it was already handled. The cells are gated at " +
+			"the cell, not upstream, because a ledger row naming an upstream function resolved only to a " +
+			"NAME and was satisfiable by any unrelated sanitising renderer (civitai/cli#575 R1). The " +
+			"named test drives this renderer with the fields set DIRECTLY, bypassing describeVersion, so " +
+			"it goes red when the cell gate is deleted — watched, not read: deleting safeTermSingle from " +
 			"the Checkpoint cell fails it on gqckpt and gqnote plus two column-zero findings"},
+	"confirmGenerate": {"TestGatedRenderersDoNotForgeOutsideTheirTable",
+		"the `Checkpoint:` and `LoRA:` label lines on the APPROVAL screen — plain Fprintf, four lines " +
+			"above `Generate? [y/N]:`, so a `\\n` here forges the last thing a user reads before an " +
+			"IRREVERSIBLE spend, Cost line included. They were ungated and safe only because " +
+			"describeVersion gates on the way in; #575 R1's round 0 measured that once printGenerateQuote " +
+			"had its own cell gate, deleting describeVersion's stopped reddening ANY behavioural test. " +
+			"Watched red, not read: deleting the Checkpoint gate here fails the named test with two " +
+			"column-zero findings. Everything the USER typed on this screen stays unsanitised on purpose " +
+			"(civitai/cli#393) — this row is about the two SERVER-derived labels only"},
 	"classifyGenerateError": {notCovered,
 		"the server's own error message, shown verbatim when generation is refused"},
 	"buildGenerateGraph": {notCovered,

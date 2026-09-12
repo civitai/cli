@@ -653,6 +653,53 @@ func TestGatedRenderersDoNotForgeOutsideTheirTable(t *testing.T) {
 		}
 	})
 
+	// 🔴 THE MONEY PATH, AND THE ONE SCREEN WHERE A FORGED LINE IS WORTH MOST —
+	// civitai/cli#575 R1, round 0. confirmGenerate prints `Checkpoint:` and each
+	// `LoRA:` with a plain Fprintf FOUR LINES ABOVE `Generate? [y/N]:`, so a
+	// `\n` in a model name forges arbitrary lines at column zero in the last thing
+	// a user reads before an irreversible Buzz spend — including a fake Cost line.
+	//
+	// It was ungated at this call site and safe only because describeVersion gates
+	// on the way IN. Nothing drove this screen with a hostile value, so that
+	// protection was never asserted here; when printGenerateQuote gained its own
+	// cell gate, deleting describeVersion's gate stopped reddening any behavioural
+	// test at all. The fields are set DIRECTLY below, bypassing describeVersion,
+	// because the question is what THIS screen does with whatever reaches the
+	// struct — not what the one function that currently fills it happens to do.
+	t.Run("generate's approval screen: the checkpoint and LoRA labels cannot forge a line", func(t *testing.T) {
+		// confirmGenerate refuses outright when stdin is not a TTY, which it never
+		// is under `go test` — without this the screen is never printed and the
+		// forgery assertions below would pass over an EMPTY buffer. The two
+		// controls at the end of this case are what caught exactly that.
+		orig := stdinIsTTY
+		t.Cleanup(func() { stdinIsTTY = orig })
+		stdinIsTTY = func() bool { return true }
+
+		c, _, errb := genCmd("n\n")
+		built := &resolvedGraph{
+			checkpoint:     forgeCell("cgckpt"),
+			checkpointNote: forgeCell("cgnote"),
+			loras:          []string{forgeCell("cglora")},
+		}
+		// It returns the "declined" error for the `n` on stdin; the screen is
+		// printed either way and the screen is what is under test.
+		_ = confirmGenerate(c, generateOpts{prompt: "a cat"}, built, 100, 5000, true)
+		out := errb.String()
+
+		noRawEscape(t, out, forgeWant("cgckpt"), forgeWant("cgnote"), forgeWant("cglora"))
+		noColumnZero(t, out, forgedRow, forgedCol)
+		// The prompt line is the CONTROL on the fixture: this screen must still be
+		// echoing the user's own text byte-for-byte (civitai/cli#393), so a case
+		// that passed by rendering nothing at all would fail here.
+		if !strings.Contains(out, "a cat") {
+			t.Errorf("the approval screen rendered no prompt, so the assertions above are about an empty "+
+				"screen:\n%q", out)
+		}
+		if !strings.Contains(out, "Generate? [y/N]: ") {
+			t.Errorf("the approval screen never reached its prompt line, so nothing above it was exercised:\n%q", out)
+		}
+	})
+
 	t.Run("app status --id: the live URL is single-line", func(t *testing.T) {
 		live := forgeCell("lvurl")
 		out := render(func(w *bytes.Buffer) {

@@ -890,3 +890,45 @@ func TestGenerate_SanitisesServerStrings(t *testing.T) {
 		t.Errorf("sanitised model name missing: %q", out.String())
 	}
 }
+
+// TestDescribeVersionIsSanitisedAtItsOwnOutput pins describeVersion's gate
+// DIRECTLY, on its return value, rather than through a screen that renders it.
+//
+// 🔴 A DOWNSTREAM GATE MASKS AN UPSTREAM TEST, WHICH IS WHY THIS EXISTS
+// (civitai/cli#575 R1, round 0). TestGenerate_SanitisesServerStrings above drives
+// `--dry-run`, so it reaches describeVersion's output only THROUGH
+// printGenerateQuote. Once that renderer gained a safeTermSingle at its own cell
+// — correct, and the whole point of #575 R1 — it sanitises the payload whatever
+// describeVersion did, so the upstream test went green on a broken upstream.
+// MEASURED: deleting both safeTermSingle calls in describeVersion reddened THREE
+// tests at d91e857 and ONE afterwards, and that survivor is a structural ledger
+// row, not a demonstration.
+//
+// Defence in depth is meant to ADD a layer, not eat the test for the layer below
+// it. An assertion on the function's own output cannot be masked by any number of
+// gates downstream of it.
+func TestDescribeVersionIsSanitisedAtItsOwnOutput(t *testing.T) {
+	got := describeVersion(&genapi.ResolvedVersion{
+		VersionID: 7,
+		ModelName: "evil\x1b[2Kname",
+		ModelType: "Check\tpoint",
+	}, nil)
+
+	if strings.ContainsRune(got, '\x1b') {
+		t.Errorf("describeVersion returned a RAW ESC: %q. Every consumer of this value is single-line — a "+
+			"tabwriter cell on the quote screen, and a plain label line on the approval screen four lines "+
+			"above `Generate? [y/N]:`.", got)
+	}
+	if strings.ContainsRune(got, '\t') {
+		t.Errorf("describeVersion returned a TAB: %q. text/tabwriter reads a tab as its COLUMN DELIMITER, so "+
+			"the pre-spend cost table gains an attacker-placed column.", got)
+	}
+	// Paired with the two above, deliberately: a gate that DROPPED the field would
+	// satisfy both while destroying the only information the line carries.
+	for _, want := range []string{"evil[2Kname", "Check", "point", "id 7"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("describeVersion dropped %q rather than sanitising it: %q — `the class is gone` and "+
+				"`the value arrived` are one assertion.", want, got)
+		}
+	}
+}
