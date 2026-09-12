@@ -123,7 +123,15 @@ func nonModelFileMarker(files []civitai.ModelVersionFile) string {
 	if typ == "" {
 		typ = "Other"
 	}
-	return "[" + typ + "]"
+	// 🔴 SERVER TEXT, SO IT GOES THROUGH THE GATE — civitai/cli#399 found this
+	// one by driving the renderer rather than by reading it. `files[].type` is
+	// uploader-supplied and this marker is INTERPOLATED INTO A HEADER LINE
+	// (`printModelVersionDetail`'s first line, and a row of `printModelDetail`'s
+	// version table), which is precisely where an escape sequence is worth the
+	// most to an attacker. The same field is safeTerm'd in the files table a few
+	// lines further down; here it was not, and nothing could see the difference
+	// until a hostile fixture was fed through this function.
+	return "[" + safeTerm(typ) + "]"
 }
 
 // checkLimit validates a --limit against an endpoint's documented maximum. It
