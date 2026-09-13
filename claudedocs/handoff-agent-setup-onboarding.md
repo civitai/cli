@@ -89,9 +89,33 @@ passes. What remains of this safeTerm seam is **five open issues** — #574, #57
   the single largest change in the PR) were never read by any round.** The stated
   reason for stopping was that the reduction "deleted the surface every finding came
   from, so a delta frame would be stale and the honest version is a first-full audit"
-  — a sentence that concludes an audit is needed, followed by a merge without one. A
-  first-full audit of the merged artifact was dispatched during closeout; **read its
-  result before treating this seam as settled.**
+  — a sentence that concludes an audit is needed, followed by a merge without one.
+  **That audit then ran, and it found a 🔴 on merged `main` — fixed by cli#588
+  (`e7cd7f3`).** The unaudited commit had deleted a property nobody noticed it
+  carried; see the entry below. **Every commit in this arc that shipped without an
+  audit round contained a defect. That is four for four.**
+- 🔴 **A DELETION JUSTIFIED BY A MEASUREMENT INHERITS THAT MEASUREMENT'S SCOPE, AND
+  THAT IS HOW cli#583 SHIPPED A LIVE COVERAGE HOLE.** The reduction deleted the
+  guard's owner key on the measurement *"every package has had exactly ONE saferune
+  call site, always"* — true, and about COLLISIONS only. The key also carried
+  RELOCATION: it named the enclosing function, so moving the reference into a
+  different wrapper was red. Measured on merged `main`: rename `safeTerm`'s body to
+  delegate to a new `stripInvisible` → count still 1, `safeTerm` still resolves,
+  `pinnedBy` still resolves, `go test ./...` **fully green**; then route
+  `o.aspectRatio` — listed at `safeterm_userinput_test.go:43` as "a typed flag value",
+  i.e. must NEVER be stripped — through it, and the suite is **still green**, while the
+  same line spelled `safeTerm(o.aspectRatio)` is red with the #393 message. Red
+  pre-reduction (`5db4fce`), green after (`af3194b`). Restored by cli#588 as `inFunc`
+  — an asserted VALUE, not a key, so none of the collision machinery came back: ~30
+  lines against the 160 that were cut. **Before removing a mechanism, enumerate what
+  it DOES — not what the measurement covers.**
+- ⚠ **TWO MORE FOUND BY THE SAME AUDIT, both fixed in cli#588:** `internal/genapi`'s
+  positive-control floors equalled the live counts, so the SHRINK direction was
+  unreachable — removing a `dedupeReasons` caller produced *"CONTROL failure, not a
+  finding: found 2 … want >= 3"* and `t.Fatalf`'d before the stale-row report that
+  exists for that case (the masking-control class, a second instance). And the wrapper
+  reached as a FUNCTION VALUE escaped both genapi walks, invisible to the totality
+  control because `flat` and `sites` move together.
 - 🔴 **`pinnedBy` PROVES THE NAMED GUARD LIVES WHERE THE HAZARD IS, NOT THAT IT
   WORKS.** Measured: gutting `TestHasPrintableContentArgumentsAreServerBytes`' body to
   `_ = …` leaves `go test ./...` fully green while the module-root ledger keeps
