@@ -3,9 +3,9 @@ package cmd
 import (
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -30,6 +30,10 @@ import (
 // anything; one that only fails when it SHRINKS lets a new unreviewed caller in.
 // Adding a caller is not forbidden — it requires deciding, in this file, that the
 // new site is single-line, and widening safeTermErr's doc comment to match.
+// attributedIn reports how many call sites the walk attributed to a function in
+// the given file. Split out so the totality check reads as one comparison.
+func attributedIn(found map[string][]string, file string) int { return len(found[file]) }
+
 func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 	// file -> enclosing function, for every permitted safeTermErr call site.
 	// Every entry is on download.go's single-line error path.
@@ -65,20 +69,63 @@ func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 			t.Fatalf("parse %s: %v", name, perr)
 		}
 		scanned++
-		var fn string
+
+		// 🔴 WALK Decls AND ATTRIBUTE TO THE DECL, not a running "most recent
+		// FuncDecl" set by a flat ast.Inspect. The flat form computes "the last
+		// FuncDecl seen in this file", which is the enclosing function only by
+		// coincidence: a call in a package-level `var x = safeTermErr(...)` is
+		// attributed to whichever function happens to sit above it, so the
+		// multiset can stay identical while a call leaves the single-line path
+		// entirely. safeterm_userinput_test.go's scanner already documents this
+		// class under "🔴 TOTALITY"; this is the same shape.
+		for _, d := range f.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			key := fd.Name.Name
+			// Keep the receiver: a method `writePart` on some type is not the
+			// function `writePart`, and dropping it makes them indistinguishable.
+			if fd.Recv != nil && len(fd.Recv.List) > 0 {
+				var buf strings.Builder
+				if err := printer.Fprint(&buf, fset, fd.Recv.List[0].Type); err == nil {
+					key = "(" + buf.String() + ")." + fd.Name.Name
+				}
+			}
+			ast.Inspect(fd, func(n ast.Node) bool {
+				if ce, ok := n.(*ast.CallExpr); ok {
+					if id, ok := ce.Fun.(*ast.Ident); ok && id.Name == "safeTermErr" {
+						found[name] = append(found[name], key)
+						total++
+					}
+				}
+				return true
+			})
+		}
+
+		// 🔴 TOTALITY. Count the SAME calls flatly over the whole file and require
+		// the two numbers to agree. Without this, a call that no FuncDecl encloses
+		// — a package-level var initialiser, a func literal assigned outside any
+		// declaration — is attributed to NOTHING, covered by no row, and reads
+		// exactly like "no such site exists". That is the failure this whole
+		// ledger exists to prevent, one level up.
+		flat := 0
 		ast.Inspect(f, func(n ast.Node) bool {
-			switch v := n.(type) {
-			case *ast.FuncDecl:
-				fn = v.Name.Name
-			case *ast.CallExpr:
-				if id, ok := v.Fun.(*ast.Ident); ok && id.Name == "safeTermErr" {
-					found[filepath.Base(name)] = append(found[filepath.Base(name)], fn)
-					total++
+			if ce, ok := n.(*ast.CallExpr); ok {
+				if id, ok := ce.Fun.(*ast.Ident); ok && id.Name == "safeTermErr" {
+					flat++
 				}
 			}
 			return true
 		})
+		if flat != attributedIn(found, name) {
+			t.Errorf("%s holds %d safeTermErr call(s) but only %d are inside a function declaration. "+
+				"The rest sit in a package-level initialiser or a func literal outside any decl, so no ledger "+
+				"row can cover them and their absence reads exactly like \"no such site exists\". Move them "+
+				"into a function, or widen this scanner deliberately.", name, flat, attributedIn(found, name))
+		}
 	}
+
 	if scanned == 0 {
 		t.Fatal("CONTROL failure, not a finding: no non-test .go files were parsed in internal/cmd")
 	}
@@ -87,9 +134,12 @@ func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 	// "unledgered set is empty" check below and report a cheerful pass — the
 	// reassuring zero that is indistinguishable from a harness wired to nothing.
 	if total == 0 {
-		t.Fatal("CONTROL failure, not a finding: the AST scan found ZERO safeTermErr calls in internal/cmd. " +
-			"The function is called at least five times, so this is a broken scanner, not a clean tree. " +
-			"Every assertion below is vacuous until this passes.")
+		t.Fatal("the AST scan found ZERO safeTermErr calls in internal/cmd, so every assertion below is " +
+			"vacuous. TWO different causes, and they need opposite responses: either this scanner broke " +
+			"(most likely — check the identifier it matches), or the last safeTermErr call was legitimately " +
+			"removed, in which case delete this test AND the scope paragraph in safeterm.go that points at " +
+			"it. Do not assume the first: an earlier version of this message asserted the function 'is called " +
+			"at least five times', which would be a false statement about the tree in the second case.")
 	}
 
 	norm := func(m map[string][]string) map[string][]string {

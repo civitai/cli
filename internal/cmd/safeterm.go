@@ -67,8 +67,11 @@ func safeTerm(s string) string {
 // chain, so the exit-code classifier (AGENTS.md items 7 and 24) still sees
 // whatever sentinel or concrete type it was going to see.
 //
-// 🔴 DO NOT use it at ANY site — it is scoped to download.go's SINGLE-LINE error
-// path, and the two halves of that sentence pull in opposite directions. An
+// 🔴 USE IT ONLY ON download.go's SINGLE-LINE ERROR PATH — not at just any site
+// that wraps server bytes. (An earlier draft of this line opened "DO NOT use it
+// at ANY site", which skims as "never call this function" and is false of five
+// live call sites — the same read-the-bold-line failure this comment exists to
+// fix.) The two halves of the sentence it replaced pull in opposite directions. An
 // earlier draft said "use it at ANY site where `%w` carries a cause built from
 // server-derived bytes" in the same comment that justifies collapsing \n and \t
 // with "every caller is on download.go's single-line error path". Both cannot be

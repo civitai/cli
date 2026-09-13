@@ -281,7 +281,17 @@ func TestWrappedCauseCannotForgeALine(t *testing.T) {
 			// Unwrap, so the assertion reads the half that matters.
 			cause := errors.Unwrap(err)
 			if cause == nil {
-				t.Fatalf("CONTROL failure, not a finding: the error wraps nothing, so there is no cause to inspect:\n%s", err.Error())
+				// 🔴 THIS IS A FINDING, NOT A CONTROL FAILURE, and it is worth the
+				// extra sentence: "CONTROL failure, not a finding" is this repo's
+				// idiom for "the harness broke, disregard it", and this branch is
+				// the ONLY signal in the suite that catches a dropped %w. Labelling
+				// it as harness noise would tell the one reader who sees it to look
+				// away. safeterm.go states that the wrap is what keeps the
+				// exit-code classifier (AGENTS.md items 7 and 24) able to see the
+				// sentinel, so losing it is a real regression.
+				t.Fatalf("REGRESSION: writePart's error wraps nothing, so the exit-code classifier can no "+
+					"longer see the cause's sentinel (AGENTS.md items 7 and 24). The likeliest cause is a `%%w` "+
+					"that became `%%s`. Error was:\n%s", err.Error())
 			}
 			if !strings.Contains(cause.Error(), "weights.safetensors") {
 				t.Fatalf("CONTROL failure, not a finding: the name never reached the CAUSE:\n%s", cause.Error())
