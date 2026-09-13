@@ -106,10 +106,23 @@ var dedupeReasonsCallers = map[string]genapiArgOrigin{
 // renamed, the walk reading the wrong directory, the parser handed the wrong
 // mode — finds no call sites, reports nothing unledgered, and passes. A floor
 // makes that state red by construction rather than by luck.
+// 🔴 A FLOOR EQUAL TO THE LIVE COUNT MAKES THE SHRINK DIRECTION UNREACHABLE, AND
+// THAT IS WHAT minDedupeReasonsCallSites = 3 DID. Removing one caller — precisely
+// the "second table that will drift" hazard dedupeReasons exists to prevent —
+// produced "CONTROL failure, not a finding: found 2 … want >= 3. The scan is
+// broken", which t.Fatalf'd before the stale-row report that exists for exactly
+// that case and would have named the orphaned row. Same class as the all-empty
+// control next door: a control relabelling a finding as "not a finding".
+//
+// A floor's job is only "did the scan find ANYTHING" — the ledger's own count
+// and stale arms carry the shrink detection, bidirectionally. So the floors are
+// 1: enough to catch a scan wired to nothing, low enough that the arms below it
+// stay reachable. The natural remedy a reader would otherwise apply ("the floor
+// is stale, lower it to 2") is the one that quietly deletes its meaning.
 const (
 	minGenapiSourceFiles        = 5
 	minHasPrintableContentCalls = 1
-	minDedupeReasonsCallSites   = 3
+	minDedupeReasonsCallSites   = 1
 	minGenapiParsedFuncsPerScan = 20
 	genapiSaferuneWrapper       = "hasPrintableContent"
 	// genapiFileLevel is the PREFIX for an owner with no enclosing function —
@@ -167,6 +180,7 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 		unclassified []string
 		userTyped    []string
 		unownable    []string
+		valueRefs    []string
 	)
 	seen := map[string]bool{}
 
@@ -205,6 +219,16 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 	for _, pf := range parsed {
 		file := pf.file
 
+		// Call positions first, so an identifier that IS the call's Fun is not
+		// also counted as a value reference.
+		calleeCalls := map[token.Pos]bool{}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if ce := isGenapiCallTo(n, callee); ce != nil {
+				calleeCalls[ce.Fun.Pos()] = true
+			}
+			return true
+		})
+
 		// THE FLAT WALK — one pass over the whole file node, counting every
 		// matching call wherever it sits. Deliberately built differently from
 		// the attributing walk below so the two can DISAGREE; see the totality
@@ -217,6 +241,18 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 			}
 			if isGenapiCallTo(n, callee) != nil {
 				flat++
+			}
+			// 🔴 A FUNCTION VALUE ESCAPES BOTH WALKS, AND THE TOTALITY CONTROL
+			// CANNOT SEE IT because flat and sites move together. Measured:
+			//   var visible = hasPrintableContent
+			//   func KeepUserTyped(u string) bool { return visible(u) }
+			// left this package and the module-root ledger both green. The
+			// module-root guard refuses exactly this shape for saferune itself;
+			// there was no analogue one level down, which is where the
+			// delegation actually lands.
+			if id, ok := n.(*ast.Ident); ok && id.Name == callee && !calleeCalls[id.Pos()] {
+				valueRefs = append(valueRefs,
+					fmt.Sprintf("%s: %s referenced as a value, not called", fset.Position(id.Pos()), callee))
 			}
 			return true
 		})
@@ -313,6 +349,15 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 			"site with no owner can carry no ledger row, so every verdict below is about a subset "+
 			"nobody declared. Widen the attributing walk before trusting either half of this test.",
 			flat, callee, sites)
+	}
+
+	if len(valueRefs) > 0 {
+		sort.Strings(valueRefs)
+		t.Errorf("%d reference(s) to %s as a VALUE rather than a call:\n  %s\n\n"+
+			"A function value has no call sites this ledger can enumerate, so every row below "+
+			"stops meaning anything for whatever calls it. Call %s directly, or give the value a "+
+			"named wrapper whose own callers a guard enumerates — and add that guard.",
+			len(valueRefs), callee, strings.Join(valueRefs, "\n  "), callee)
 	}
 
 	if len(unownable) > 0 {

@@ -485,7 +485,28 @@ The identity machinery is gone. What replaces it is a **COUNT**: a row records
 how many references it covers, so a package that gains a second call site fails
 because 2 ≠ 1 and the failure names every position. A count cannot collide with
 itself, cannot be out-spelled, and needs no owner key, no argument rendering and
-no uniqueness proof. Verified: every shape that beat the old machinery —
+no uniqueness proof.
+
+🔴 **AND THE ARGUMENT ABOVE WAS TOO WIDE — A FIRST-FULL AUDIT OF THE MERGED
+ARTIFACT FALSIFIED IT.** The owner key carried **two** properties, and the
+measurement that justified deleting it spoke to only one. The other was
+**relocation**: the key named the enclosing function, so moving the reference
+into a different wrapper was red. Measured on merged `main`: rename `safeTerm`'s
+body to delegate to a new `stripInvisible` and the count is still 1, `safeTerm`
+still resolves, `pinnedBy` still resolves — `go test ./...` fully green; then
+route `o.aspectRatio` (listed at `safeterm_userinput_test.go:43` as *"a typed
+flag value"*, i.e. must never be stripped) through it, and the suite is **still
+green**, while the same line spelled `safeTerm(o.aspectRatio)` is red with the
+#393 message. Red pre-reduction, green after.
+
+Restored as `inFunc` — an asserted **value**, not a key, so it needs no
+uniqueness and brings none of the collision machinery back: ~30 lines against
+the 160 that were cut. **The transferable half:** a deletion justified by a
+measurement inherits that measurement's SCOPE. This one measured collisions and
+was used to delete something that also did relocation. Before removing a
+mechanism, enumerate what it does — not what the measurement covers.
+
+Verified: every shape that beat the old machinery —
 `func _()` ×2, `func init()` ×2, `var _ =` ×2, a multi-name spec, two
 `BinaryExpr` arguments, an aliased import — now dies on that one comparison.
 480 lines, down from 741.
