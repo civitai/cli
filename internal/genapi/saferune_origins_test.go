@@ -112,10 +112,15 @@ const (
 	minDedupeReasonsCallSites   = 3
 	minGenapiParsedFuncsPerScan = 20
 	genapiSaferuneWrapper       = "hasPrintableContent"
-	// genapiFileLevel owns a call site with no enclosing function — a
-	// package-level initialiser or a func literal at package scope. It is a
-	// real key, not a refusal: such a site CAN be ledgered, and pretending it
-	// cannot is how two of them once sat unledgered behind a green suite.
+	// genapiFileLevel is the PREFIX for an owner with no enclosing function —
+	// a package-level initialiser or a func literal at package scope. Such a
+	// site CAN be ledgered; pretending it could not is how two of them once sat
+	// unledgered behind a green suite.
+	//
+	// Every such owner is qualified by the variable it initialises, so the BARE
+	// string is reachable only from a spec with no names, which an
+	// *ast.ValueSpec cannot be. An earlier draft called this "a real key"; it is
+	// the prefix of one.
 	genapiFileLevel              = "<file-level>"
 	genapiReasonDedupeEntryPoint = "dedupeReasons"
 )
@@ -165,6 +170,17 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 	)
 	seen := map[string]bool{}
 
+	// PASS 1 — parse every file and collect its declaration units, so an owner
+	// collision that SPANS TWO FILES (two `func init()`, one in each) is visible.
+	// A per-file check could not see it, and per-file is what the previous three
+	// attempts at this property were.
+	type parsedFile struct {
+		file  *ast.File
+		units []genapiOwner
+	}
+	var parsed []parsedFile
+	ownerDecls := map[string]map[token.Pos]bool{}
+
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -175,6 +191,19 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 			t.Fatalf("CONTROL failure, not a finding: cannot parse %s: %v", name, perr)
 		}
 		files++
+		units := genapiOwners(file, callee, &funcs)
+		for _, u := range units {
+			if ownerDecls[u.owner] == nil {
+				ownerDecls[u.owner] = map[token.Pos]bool{}
+			}
+			ownerDecls[u.owner][u.pos] = true
+		}
+		parsed = append(parsed, parsedFile{file: file, units: units})
+	}
+
+	// PASS 2 — walk, now able to ask whether each site's owner is unique.
+	for _, pf := range parsed {
+		file := pf.file
 
 		// THE FLAT WALK — one pass over the whole file node, counting every
 		// matching call wherever it sits. Deliberately built differently from
@@ -209,21 +238,24 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 		// floor could not either: both were computed from the same restricted
 		// traversal, which is a positive control that shares the step it is
 		// supposed to be checking.
-		for _, decl := range genapiOwners(file, callee, &funcs) {
-			enclosing, blank := decl.owner, decl.blank
+		for _, decl := range pf.units {
+			enclosing := decl.owner
+			shared := len(ownerDecls[enclosing]) > 1
 			ast.Inspect(decl.node, func(n ast.Node) bool {
 				ce := isGenapiCallTo(n, callee)
 				if ce == nil {
 					return true
 				}
 				sites++
-				if blank {
-					// Checked BEFORE the ledger and never against it: a site
-					// no name owns cannot be classified, and letting a row
-					// answer for it is the collision this guard exists to stop.
+				if shared {
+					// Checked BEFORE the ledger and never against it: a key
+					// more than one declaration claims cannot carry a row that
+					// means anything, and letting a row answer for it is the
+					// collision this guard exists to stop.
 					unownable = append(unownable,
-						fmt.Sprintf("%s: %s(%s) assigned to the blank identifier",
-							fset.Position(ce.Lparen), callee, genapiRenderExpr(ce.Args[0])))
+						fmt.Sprintf("%s: %s(%s) — owner key %q is claimed by %d declarations",
+							fset.Position(ce.Lparen), callee, genapiRenderExpr(ce.Args[0]),
+							enclosing, len(ownerDecls[enclosing])))
 					return true
 				}
 				key := enclosing
@@ -285,13 +317,15 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 
 	if len(unownable) > 0 {
 		sort.Strings(unownable)
-		t.Errorf("%d %s(...) call site(s) are assigned to the blank identifier:\n  %s\n\n"+
-			"`_` cannot own a ledger row: two `var _ = %s(…)` declarations are indistinguishable, "+
-			"so one row would vouch for both — which is the collision per-owner keying exists to "+
-			"prevent. Name the variable. This is checked structurally, not by the key's spelling: "+
-			"an earlier fix made the key a sentence and a row spelling that sentence walked "+
-			"straight past it.",
-			len(unownable), callee, strings.Join(unownable, "\n  "), callee)
+		t.Errorf("%d %s(...) call site(s) sit under an owner key more than one declaration "+
+			"claims:\n  %s\n\n"+
+			"A row on a shared key vouches for every declaration that claims it, which is the "+
+			"collision per-owner keying exists to prevent. Give the declarations distinct names.\n"+
+			"This is a STATE check — how many declarations claim the key — not a list of special "+
+			"names. Three earlier fixes enumerated names (`vs.Names[0]`, then `_` as a key "+
+			"sentence, then `_` as a flag on one branch) and each was beaten by the next shape: a "+
+			"multi-name spec, a row spelling the sentence, then `func _()` and `func init()`.",
+			len(unownable), callee, strings.Join(unownable, "\n  "))
 	}
 
 	if len(unclassified) > 0 {
@@ -342,9 +376,22 @@ func genapiFuncKey(fn *ast.FuncDecl) string {
 	return "(" + genapiRenderExpr(fn.Recv.List[0].Type) + ")." + fn.Name.Name
 }
 
-// genapiRenderExpr prints the expression shapes these arguments take. Anything
-// unrecognised renders to a form that cannot collide with a ledgered key, so an
-// unknown shape is reported as unclassified rather than treated as covered.
+// genapiRenderExpr prints the expression shapes these arguments take.
+//
+// 🔴 THIS COMMENT SAID AN UNRECOGNISED SHAPE "CANNOT COLLIDE WITH A LEDGERED
+// KEY" AND THAT WAS FALSE — the same false sentence as the module-root guard's,
+// left standing here when that one was corrected, because the correction was
+// done by hand at one of the two sites. `<unrecognised %T>` is keyed on the AST
+// TYPE, so two different expressions of one type render identically and one row
+// covers both. `a + b` (*ast.BinaryExpr) is the common case and is handled now,
+// along with parens and unary operators.
+//
+// The residual, stated rather than re-asserted away: a shape still unknown to
+// this function renders by type and CAN be shared. It is bounded here rather
+// than refused, because this renderer only feeds keys for
+// hasPrintableContentArgs, whose single site takes a plain identifier — the
+// module-root guard, whose keys carry arbitrary caller expressions, refuses an
+// unnameable argument outright instead.
 func genapiRenderExpr(e ast.Expr) string {
 	switch v := e.(type) {
 	case *ast.Ident:
@@ -355,6 +402,14 @@ func genapiRenderExpr(e ast.Expr) string {
 		return genapiRenderExpr(v.X) + "[" + genapiRenderExpr(v.Index) + "]"
 	case *ast.StarExpr:
 		return "*" + genapiRenderExpr(v.X)
+	case *ast.ParenExpr:
+		return "(" + genapiRenderExpr(v.X) + ")"
+	case *ast.UnaryExpr:
+		return v.Op.String() + genapiRenderExpr(v.X)
+	case *ast.BinaryExpr:
+		return genapiRenderExpr(v.X) + " " + v.Op.String() + " " + genapiRenderExpr(v.Y)
+	case *ast.BasicLit:
+		return v.Value
 	case *ast.CallExpr:
 		parts := make([]string, 0, len(v.Args))
 		for _, a := range v.Args {
@@ -394,10 +449,9 @@ func isGenapiCallTo(n ast.Node, callee string) *ast.CallExpr {
 type genapiOwner struct {
 	node  ast.Node
 	owner string
-	// blank marks an owner that is the blank identifier. It is carried as a
-	// FLAG rather than inferred from the key, so no ledger row can spell its
-	// way past it.
-	blank bool
+	// pos is where the declaration starts. Two units with the same owner key
+	// are a COLLISION, and this is how they are told apart when reporting it.
+	pos token.Pos
 }
 
 // genapiOwners splits a file into the units a ledger row can name, so that
@@ -425,7 +479,7 @@ func genapiOwners(file *ast.File, callee string, funcs *int) []genapiOwner {
 			if d.Name.Name == callee {
 				continue
 			}
-			out = append(out, genapiOwner{node: d, owner: genapiFuncKey(d)})
+			out = append(out, genapiOwner{node: d, owner: genapiFuncKey(d), pos: d.Pos()})
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
 				vs, ok := spec.(*ast.ValueSpec)
@@ -435,7 +489,7 @@ func genapiOwners(file *ast.File, callee string, funcs *int) []genapiOwner {
 					// dropped: a unit this function declines to name is a unit
 					// the totality control will report as missing, which is the
 					// loud failure and the intended one.
-					out = append(out, genapiOwner{node: spec, owner: genapiFileLevel})
+					out = append(out, genapiOwner{node: spec, owner: genapiFileLevel, pos: spec.Pos()})
 					continue
 				}
 				// 🔴 ONE OWNER PER VALUE, PAIRED BY INDEX — vs.Names[0] WAS
@@ -451,7 +505,7 @@ func genapiOwners(file *ast.File, callee string, funcs *int) []genapiOwner {
 						out = append(out, genapiOwner{
 							node:  vs.Values[i],
 							owner: genapiValueOwner(name.Name),
-							blank: genapiBlankOwner(name.Name),
+							pos:   vs.Values[i].Pos(),
 						})
 					}
 					continue
@@ -462,36 +516,31 @@ func genapiOwners(file *ast.File, callee string, funcs *int) []genapiOwner {
 				out = append(out, genapiOwner{
 					node:  vs,
 					owner: genapiValueOwner(vs.Names[0].Name),
-					blank: genapiBlankOwner(vs.Names[0].Name),
+					pos:   vs.Pos(),
 				})
 			}
 		default:
-			out = append(out, genapiOwner{node: decl, owner: genapiFileLevel})
+			out = append(out, genapiOwner{node: decl, owner: genapiFileLevel, pos: decl.Pos()})
 		}
 	}
 	return out
 }
 
 // genapiValueOwner renders the owner key for a package-level variable.
-//
-// 🔴 THE BLANK IDENTIFIER CANNOT OWN A ROW, AND THE FIRST TWO ATTEMPTS AT THAT
-// WERE BOTH WRONG. Measured: two separate `var _ = dedupeReasons(…)`
-// declarations both keyed `<file-level>:_`, and one ledger row for that key made
-// the test PASS with two unexamined callers in the tree — the exact defect
-// per-owner keying exists to prevent, one level further down than the walk it
-// was introduced to fix.
-//
-// The SECOND attempt made the key a sentence a row was not supposed to spell
-// ("the blank identifier cannot own a ledger row — name the variable"). That is
-// a SPELLED guard, and it failed its own mutant immediately: a row spelling that
-// exact string covered both sites and the suite went green. A key is a string;
-// any string a row can be written with is a string a row can be written with.
-//
-// So blankness is STRUCTURE, not a word: genapiBlankOwner reports it, the caller
-// collects those sites in their own bucket, and they fail INDEPENDENTLY of the
-// ledger. No row can reach them.
 func genapiValueOwner(name string) string { return genapiFileLevel + ":" + name }
 
-// genapiBlankOwner reports whether an owner key belongs to a blank identifier —
-// asked of the NAME, not of the rendered key, so it cannot be spelled around.
-func genapiBlankOwner(name string) bool { return name == "_" }
+// 🔴 THREE ATTEMPTS AT "NO TWO SITES SHARE A ROW" FAILED BECAUSE ALL THREE
+// ENUMERATED NAMES. The first keyed on vs.Names[0], so a multi-name spec
+// collided. The second made `_` a key-sentence a row was not supposed to spell,
+// and a row spelling it walked past. The third made `_` a FLAG — but wired it
+// into the ValueSpec branch only, so `func _() { … }` (legal Go, and legal more
+// than once per package) collided exactly as before, and so did two
+// `func init()`, which no blocklist of blank identifiers would ever have
+// covered.
+//
+// A blocklist of names cannot be completed by thinking harder; the next shape
+// is always one identifier away. So the question is no longer "is this name
+// special" but the STATE the guard actually cares about: DOES MORE THAN ONE
+// DECLARATION CLAIM THIS OWNER KEY? That is checked below by counting distinct
+// declaration positions per key — `_`, `init`, a repeated var name and any
+// future shape are all the same answer, and none of them has to be foreseen.

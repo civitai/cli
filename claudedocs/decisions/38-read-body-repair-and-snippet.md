@@ -464,7 +464,7 @@ first fix did and which would have let one row vouch for two sites), plus a
 TOTALITY CONTROL: a second traversal, built differently, whose disagreement with
 the first is the failure. (b) `pinnedBy` resolved a Test name MODULE-WIDE, so a
 stub of the right name in any package satisfied it — the name-not-a-relationship
-state `3457c5d` (civitai/cli#578) had deleted from this repo one commit earlier,
+state `3457c5d` (civitai/cli#578) had deleted from this repo shortly before this branch was cut,
 reintroduced in the file that cites it. Now resolved inside the site's own
 package, as `checkQuestionsResolve` already did. **Residual, stated:** package
 scoping does not catch a GUTTED test in the right package, and no static scan

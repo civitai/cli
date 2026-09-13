@@ -197,18 +197,23 @@ type saferuneRef struct {
 	// pinnedBy lookup, so it is carried rather than re-derived from the key.
 	pkgDir string
 	bare   bool
-	// unowned marks a reference whose enclosing declaration is assigned to the
-	// blank identifier, so no name can own its row. Carried as a FLAG, never
-	// inferred from the key: the sibling guard in internal/genapi tried the
-	// key-spelling version first and a row spelling it walked past.
-	unowned bool
+	// owner is the enclosing declaration's key, and declPos is where that
+	// declaration starts. Two declarations sharing one owner key is a
+	// COLLISION — checked as STATE, never as a list of special names.
+	owner   string
+	declPos token.Pos
+	// unrenderable marks a reference whose argument the renderer could not
+	// name. Such a site cannot own a row either: `<unrecognised *ast.T>` is
+	// keyed by TYPE, so two different expressions of one type render
+	// identically and collide with each other.
+	unrenderable bool
 }
 
 // saferuneUnit pairs a declaration with the key that owns references inside it.
 type saferuneUnit struct {
 	node  ast.Node
 	owner string
-	blank bool
+	pos   token.Pos
 }
 
 // saferuneOwners splits a file into units a ledger row can name.
@@ -224,12 +229,12 @@ func saferuneOwners(f *ast.File) []saferuneUnit {
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
-			out = append(out, saferuneUnit{node: d, owner: saferuneFuncKey(d)})
+			out = append(out, saferuneUnit{node: d, owner: saferuneFuncKey(d), pos: d.Pos()})
 		case *ast.GenDecl:
 			for _, spec := range d.Specs {
 				vs, ok := spec.(*ast.ValueSpec)
 				if !ok || len(vs.Names) == 0 {
-					out = append(out, saferuneUnit{node: spec, owner: saferuneFileLevel})
+					out = append(out, saferuneUnit{node: spec, owner: saferuneFileLevel, pos: spec.Pos()})
 					continue
 				}
 				if len(vs.Names) == len(vs.Values) {
@@ -237,7 +242,7 @@ func saferuneOwners(f *ast.File) []saferuneUnit {
 						out = append(out, saferuneUnit{
 							node:  vs.Values[i],
 							owner: saferuneFileLevel + ":" + name.Name,
-							blank: name.Name == "_",
+							pos:   vs.Values[i].Pos(),
 						})
 					}
 					continue
@@ -245,11 +250,11 @@ func saferuneOwners(f *ast.File) []saferuneUnit {
 				out = append(out, saferuneUnit{
 					node:  vs,
 					owner: saferuneFileLevel + ":" + vs.Names[0].Name,
-					blank: vs.Names[0].Name == "_",
+					pos:   vs.Pos(),
 				})
 			}
 		default:
-			out = append(out, saferuneUnit{node: decl, owner: saferuneFileLevel})
+			out = append(out, saferuneUnit{node: decl, owner: saferuneFileLevel, pos: decl.Pos()})
 		}
 	}
 	return out
@@ -293,33 +298,69 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 			total, minTestDeclsForPinResolution)
 	}
 	// 🔴 THE FLOOR ABOVE STOPPED BRACKETING THE QUANTITY THE VERDICT USES WHEN
-	// THE LOOKUP WENT PER-PACKAGE, AND AN AUDIT MUTANT PROVED IT. Re-keying the
-	// index by ABSOLUTE directory leaves the total untouched — the floor passes
-	// — while every delegation below is reported as "no _test.go file in <pkg>
-	// declares it": a red for the wrong reason, which is the shape that gets a
-	// real guard deleted. A total cannot control a per-package lookup. This
-	// does: every package a row delegates INTO must have resolved some tests.
-	// checkQuestionsResolve next door carries the same per-package control; this
-	// is what "now matches it" actually requires.
+	// THE LOOKUP WENT PER-PACKAGE, AND AN AUDIT MUTANT PROVED IT: re-keying the
+	// index by ABSOLUTE directory leaves the total untouched, so the floor passes
+	// while every delegation reports "no _test.go file in <pkg>". A total cannot
+	// control a per-package lookup.
+	//
+	// 🔴 AND THE FIRST FIX FOR THAT MASKED THE FINDINGS IT SAT IN FRONT OF. It
+	// Fatal'd whenever ANY delegated package resolved empty — which is a strict
+	// subset of the `unpinned` arm below, so a genuinely dangling delegation was
+	// relabelled "CONTROL failure, not a finding" and every later arm was never
+	// reached. Measured: an unledgered site in a second package went unreported.
+	//
+	// The two cases are separated by WHICH packages are empty. If EVERY package
+	// a row delegates into resolves empty, the index was built from the wrong
+	// tree — an instrument failure, and fatal. If only some are, the index works
+	// and those delegations are genuinely dangling, which is a FINDING and is
+	// left to the `unpinned` arm to report alongside everything else.
+	delegated := map[string]bool{}
 	for _, r := range refs {
-		origin, known := saferuneRefs[r.key]
-		if !known || origin.kind != originDelegated {
-			continue
+		if origin, known := saferuneRefs[r.key]; known && origin.kind == originDelegated {
+			delegated[r.pkgDir] = true
 		}
-		if len(testDecls[r.pkgDir]) == 0 {
-			t.Fatalf("CONTROL failure, not a finding: the resolver indexed %d Test declaration(s) "+
-				"in %s, which a row delegates into. Every delegation into that package would be "+
-				"reported missing, and the module-wide floor of %d cannot see it because the total "+
-				"does not move.", len(testDecls[r.pkgDir]), r.pkgDir, minTestDeclsForPinResolution)
+	}
+	empty := 0
+	for pkg := range delegated {
+		if len(testDecls[pkg]) == 0 {
+			empty++
 		}
+	}
+	if len(delegated) > 0 && empty == len(delegated) {
+		t.Fatalf("CONTROL failure, not a finding: every one of the %d package(s) a row delegates "+
+			"into resolved ZERO Test declarations. One empty package is a dangling delegation and "+
+			"is reported below as a finding; ALL of them empty is the index being built from the "+
+			"wrong tree, and no verdict below would mean anything.", len(delegated))
+	}
+
+	// Declarations claiming each (package, owner) pair — across the WHOLE
+	// module, so a collision spanning two files of one package is visible.
+	// Per-file is what the earlier attempts at this property were, and it is
+	// exactly what `func init()` in two files walks through.
+	ownerDecls := map[string]map[token.Pos]bool{}
+	for _, r := range refs {
+		k := r.pkgDir + "\x00" + r.owner
+		if ownerDecls[k] == nil {
+			ownerDecls[k] = map[token.Pos]bool{}
+		}
+		ownerDecls[k][r.declPos] = true
 	}
 
 	seen := map[string]bool{}
 	var unledgered, userTyped, unpinned, unownable []string
 	for _, r := range refs {
-		if r.unowned {
-			// Before the ledger, never against it.
-			unownable = append(unownable, fmt.Sprintf("%s: %s", r.pos, r.key))
+		// Both checks run BEFORE the ledger and never against it: a key more
+		// than one declaration claims, or an argument the renderer cannot name,
+		// cannot carry a row that means anything.
+		if n := len(ownerDecls[r.pkgDir+"\x00"+r.owner]); n > 1 {
+			unownable = append(unownable, fmt.Sprintf(
+				"%s: %s — owner key %q is claimed by %d declarations", r.pos, r.key, r.owner, n))
+			continue
+		}
+		if r.unrenderable {
+			unownable = append(unownable, fmt.Sprintf(
+				"%s: %s — the argument has no nameable rendering, so its key is shared by "+
+					"every expression of that AST type", r.pos, r.key))
 			continue
 		}
 		seen[r.key] = true
@@ -351,7 +392,7 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 					"delegation is only meaningful if the guard it names can actually see this "+
 					"site, and a guard in another package cannot. This resolver was module-wide "+
 					"in the first draft, which is the name-not-a-relationship state civitai/cli#578 "+
-					"deleted from this repo one commit earlier",
+					"deleted from this repo shortly before this branch was cut",
 					r.pos, r.key, origin.pinnedBy, r.pkgDir))
 			}
 		}
@@ -359,10 +400,13 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 
 	if len(unownable) > 0 {
 		sort.Strings(unownable)
-		t.Errorf("%d saferune reference(s) sit in a declaration assigned to the blank "+
-			"identifier:\n  %s\n\n"+
-			"`_` cannot own a ledger row — two `var _ = saferune.Strip(…)` declarations are "+
-			"indistinguishable, so one row would vouch for both. Name the variable.",
+		t.Errorf("%d saferune reference(s) cannot own a ledger row:\n  %s\n\n"+
+			"A row on a shared key vouches for every site that lands on it. Give colliding "+
+			"declarations distinct names; give an unnameable argument a named local.\n"+
+			"Both are STATE checks — how many declarations claim the key, and whether the "+
+			"renderer could name the expression — not lists of special cases. Earlier fixes "+
+			"enumerated names and shapes and each was beaten by the next one: a multi-name spec, "+
+			"a row spelling a refusal sentence, `func _()`, `func init()`, and `a + b`.",
 			len(unownable), strings.Join(unownable, "\n  "))
 	}
 
@@ -503,21 +547,25 @@ func saferuneRefsInFile(t *testing.T, path string) ([]saferuneRef, error) {
 				return true
 			}
 			rendered := sel.Sel.Name
-			bare := true
+			bare, renderable := true, true
 			if ce, isCall := calls[sel.Pos()]; isCall {
 				bare = false
-				rendered += "(" + saferuneJoinArgs(ce.Args) + ")"
+				args, ok := saferuneJoinArgs(ce.Args)
+				renderable = ok
+				rendered += "(" + args + ")"
 			}
 			// The key always spells the package as `saferune`, whatever the
 			// file called it: the ledger is about the class, and an alias must
 			// not be able to mint a second identity for one site.
 			key := pkgDir + ":" + enclosing + ":saferune." + rendered
 			out = append(out, saferuneRef{
-				key:     key,
-				pos:     fset.Position(sel.Pos()).String(),
-				pkgDir:  pkgDir,
-				bare:    bare,
-				unowned: unit.blank,
+				key:          key,
+				pos:          fset.Position(sel.Pos()).String(),
+				pkgDir:       pkgDir,
+				bare:         bare,
+				owner:        enclosing,
+				declPos:      unit.pos,
+				unrenderable: !renderable,
 			})
 			return true
 		})
@@ -538,45 +586,86 @@ func saferuneFuncKey(fd *ast.FuncDecl) string {
 	if fd.Recv == nil || len(fd.Recv.List) == 0 {
 		return fd.Name.Name
 	}
-	return "(" + saferuneRenderExpr(fd.Recv.List[0].Type) + ")." + fd.Name.Name
+	recv, _ := saferuneRenderExpr(fd.Recv.List[0].Type)
+	return "(" + recv + ")." + fd.Name.Name
 }
 
-// saferuneRenderExpr prints the expression shapes these arguments take.
-// Anything unrecognised renders to a form that cannot collide with a ledgered
-// key, so an unknown shape is reported as unledgered rather than silently
-// treated as covered.
-func saferuneRenderExpr(e ast.Expr) string {
+// saferuneRenderExpr prints the expression shapes these arguments take, and
+// reports whether it could name the expression at all.
+//
+// 🔴 THE OLD COMMENT HERE SAID AN UNRECOGNISED SHAPE "RENDERS TO A FORM THAT
+// CANNOT COLLIDE WITH A LEDGERED KEY". THAT WAS FALSE, AND THE FIX CLAIMING TO
+// HAVE REMOVED IT NEVER LANDED — a string replace that did not match, reported
+// as done, then asserted as fixed in a claims block. Both halves are worth
+// recording: the claim, and the silent no-op that let it be claimed.
+//
+// Why it was false: an unrecognised shape rendered `<unrecognised %T>`, keyed on
+// the AST TYPE. `saferune.Strip(serverA + serverB)` and
+// `saferune.Strip(userFlagA + userFlagB)` both rendered
+// `saferune.Strip(<unrecognised *ast.BinaryExpr>)` — the same key — so ONE row
+// classifying the first as server bytes silently vouched for the second, which
+// is user-typed. A key is a string; "cannot collide with a ledgered key" was
+// only ever true of rows nobody had written yet.
+//
+// So an unnameable expression is now a REFUSAL, not a key: the second return
+// value is false and the caller reports the site structurally, before the ledger
+// is consulted. `*ast.BinaryExpr` — plain `a + b`, the commonest unhandled shape
+// — is handled outright, along with parens and unary operators; anything still
+// unknown is refused rather than rendered into a shared bucket.
+func saferuneRenderExpr(e ast.Expr) (string, bool) {
 	switch v := e.(type) {
 	case *ast.Ident:
-		return v.Name
+		return v.Name, true
 	case *ast.SelectorExpr:
-		return saferuneRenderExpr(v.X) + "." + v.Sel.Name
+		x, ok := saferuneRenderExpr(v.X)
+		return x + "." + v.Sel.Name, ok
 	case *ast.IndexExpr:
-		return saferuneRenderExpr(v.X) + "[" + saferuneRenderExpr(v.Index) + "]"
+		x, ok1 := saferuneRenderExpr(v.X)
+		i, ok2 := saferuneRenderExpr(v.Index)
+		return x + "[" + i + "]", ok1 && ok2
 	case *ast.StarExpr:
-		return "*" + saferuneRenderExpr(v.X)
+		x, ok := saferuneRenderExpr(v.X)
+		return "*" + x, ok
+	case *ast.ParenExpr:
+		x, ok := saferuneRenderExpr(v.X)
+		return "(" + x + ")", ok
+	case *ast.UnaryExpr:
+		x, ok := saferuneRenderExpr(v.X)
+		return v.Op.String() + x, ok
+	case *ast.BinaryExpr:
+		l, ok1 := saferuneRenderExpr(v.X)
+		r, ok2 := saferuneRenderExpr(v.Y)
+		return l + " " + v.Op.String() + " " + r, ok1 && ok2
 	case *ast.CallExpr:
-		return saferuneRenderExpr(v.Fun) + "(" + saferuneJoinArgs(v.Args) + ")"
+		f, ok1 := saferuneRenderExpr(v.Fun)
+		a, ok2 := saferuneJoinArgs(v.Args)
+		return f + "(" + a + ")", ok1 && ok2
 	case *ast.BasicLit:
 		// Literals render by VALUE, so two calls with different literals cannot
 		// share a key.
-		return v.Value
+		return v.Value, true
 	case *ast.ArrayType:
 		if v.Len == nil {
-			return "[]" + saferuneRenderExpr(v.Elt)
+			elt, ok := saferuneRenderExpr(v.Elt)
+			return "[]" + elt, ok
 		}
-		return "[" + saferuneRenderExpr(v.Len) + "]" + saferuneRenderExpr(v.Elt)
+		l, ok1 := saferuneRenderExpr(v.Len)
+		elt, ok2 := saferuneRenderExpr(v.Elt)
+		return "[" + l + "]" + elt, ok1 && ok2
 	default:
-		return fmt.Sprintf("<unrecognised %T>", e)
+		return fmt.Sprintf("<unnameable %T>", e), false
 	}
 }
 
-func saferuneJoinArgs(args []ast.Expr) string {
+func saferuneJoinArgs(args []ast.Expr) (string, bool) {
 	parts := make([]string, 0, len(args))
+	all := true
 	for _, a := range args {
-		parts = append(parts, saferuneRenderExpr(a))
+		p, ok := saferuneRenderExpr(a)
+		all = all && ok
+		parts = append(parts, p)
 	}
-	return strings.Join(parts, ", ")
+	return strings.Join(parts, ", "), all
 }
 
 // moduleGoFiles walks the module for .go files, sorted, relative to the module
