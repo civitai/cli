@@ -470,8 +470,16 @@ package has had exactly ONE `saferune` call site, always.** The set has only eve
 grown by *package* (two to three, when `snippet` arrived), and that direction was
 already covered bidirectionally by `TestSaferuneCallersAreLedgered` before this
 file existed. Not one of the colliding shapes those rounds fixed has ever
-occurred here — 741 lines that found **zero** defects in this repository's code
-and **nine** in themselves.
+occurred here. The identity machinery was **~160 of the file's 741 lines**, and
+it is what the count below replaces: it found **zero** defects in this
+repository's code and **nine** in itself across the three rounds.
+
+⚠ **That sentence conflated two subjects in its first draft** — it read "741
+lines that found zero defects in this repository's code and nine in themselves",
+attaching the machinery's defect count to the whole file. The nine were in the
+~160 lines of keying, not in the 741. It shipped in the one commit of that PR
+that no audit round read, which is the argument for this correction being made
+rather than the arithmetic being re-litigated.
 
 The identity machinery is gone. What replaces it is a **COUNT**: a row records
 how many references it covers, so a package that gains a second call site fails
