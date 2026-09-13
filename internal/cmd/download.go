@@ -652,9 +652,9 @@ func selectOneFile(files []civitai.ModelVersionFile, want string) ([]civitai.Mod
 // errors. The id is included so the user can copy it into --file <id> to
 // disambiguate same-named files.
 //
-// The placeholder nests dashIfEmpty OUTSIDE safeTerm — civitai/cli#572. The
+// The placeholder nests dashIfEmpty OUTSIDE the sanitiser — civitai/cli#572. The
 // other order asks "is the RAW type empty", which a type of one zero-width rune
-// answers "no"; safeTerm then empties it and the line renders "(, 2.9 MiB)"
+// answers "no"; the sanitiser then empties it and the line renders "(, 2.9 MiB)"
 // with no placeholder at all. reportBaseModel already had this order; these two
 // sites did not.
 //
@@ -690,7 +690,12 @@ func formatFileList(files []civitai.ModelVersionFile) string {
 // data is ever lost to a silent overwrite. Per-file targetPath errors are left
 // for the normal per-file path to surface.
 //
-// 🔴 EVERY SERVER-ORIGIN FIELD IN THE LISTING IS safeTerm'd, AND IT WAS NOT
+// NOTE ON THE SPELLING: this file calls safeTermSingle, not safeTerm — every
+// surface here is a single line (civitai/cli#577), so the sanitiser must collapse
+// \n and \t as well as strip the invisible class. Comments that say "sanitised"
+// mean that one. There are no bare safeTerm calls left in this file.
+//
+// 🔴 EVERY SERVER-ORIGIN FIELD IN THE LISTING IS SANITISED, AND IT WAS NOT
 // UNTIL civitai/cli#566. The group line's `target` is mixed-origin (targetPath's
 // doc comment states that, and names sanitising its print sites as the reason),
 // and the per-file line is the LITERAL TWIN of formatFileList's — same fields,
@@ -742,7 +747,7 @@ func checkTargetCollisions(files []civitai.ModelVersionFile, o *downloadOpts) er
 		fmt.Fprintf(&b, "  %s  ← %d files:\n", safeTermSingle(target), len(grp))
 		for i := range grp {
 			f := grp[i]
-			// dashIfEmpty OUTSIDE safeTerm — see formatFileList (civitai/cli#572).
+			// dashIfEmpty OUTSIDE the sanitiser — see formatFileList (civitai/cli#572).
 			fmt.Fprintf(&b, "      - [id %d] %s (%s, %s)\n", f.ID, safeTermSingle(f.Name), dashIfEmpty(safeTermSingle(f.Type)), humanBytes(int64(f.SizeKB*1024)))
 		}
 	}
@@ -814,7 +819,7 @@ func targetPath(f civitai.ModelVersionFile, o *downloadOpts) (string, string, er
 	}
 	base := filepath.Base(f.Name)
 	if base == "." || base == ".." || base == string(filepath.Separator) || base == "/" {
-		return "", "", fmt.Errorf("server returned an unusable filename %q; pass --out to set the output path", safeTermSingle(f.Name))
+		return "", "", fmt.Errorf("server returned an unusable filename %q; pass --out to set the output path", safeTerm(f.Name))
 	}
 	if o.layout != "" {
 		dir, note := routeDir(o.layout, o.root, f.Type, o.modelType, base)
@@ -857,7 +862,7 @@ func fileTypeInfos(files []civitai.ModelVersionFile, modelType string) []fileTyp
 // not stop a server-supplied name from forging a line in the SHA256-mismatch
 // message or in downloadStatusError's arms. Both are single-line contexts and
 // both now take safeTermSingle. Pinned by TestDownloadOneMismatchCannotForgeALine
-// and TestDownloadStatusErrorCannotForgeALine — the latter drives all three arms,
+// and TestDownloadStatusErrorCannotForgeALine — the latter drives all four arms,
 // because #572 gated this function once at the top precisely so they cannot
 // drift, and a test driving one arm would not notice if that changed.
 func downloadOne(ctx context.Context, dl civitai.Downloader, out, errW io.Writer, f civitai.ModelVersionFile, target string, o *downloadOpts) (skipped bool, err error) {
@@ -1214,7 +1219,11 @@ func (p *progressWriter) done() {
 // forgery on this path misleads about a NAME; this one misleads about whether
 // the bytes are the bytes.
 //
-// safeTermSingle collapses \n and \t to a space, so the line stays one line.
+// safeTermSingle collapses \n and \t to a space, so no LINE-BREAK RUNE survives.
+// 🔴 That is not the same as "cannot be forged": p.name is length-unbounded, so
+// a name padded to the terminal width SOFT-WRAPS and strands the identical
+// forged text at column zero with no \n and no \t. Out of #577's scope, real,
+// and stated here rather than implied — see TestProgressLineCannotForgeALine.
 // Pinned by TestProgressLineCannotForgeALine, mutation-verified: reverting this
 // one call to safeTerm reddens it by name.
 func (p *progressWriter) line() string {

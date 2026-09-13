@@ -111,18 +111,27 @@ import (
 // fields, the progress line, and every error string on the downloadOne path —
 // dies to a named assertion in this file.
 //
-// ⚠ WHAT NONE OF THIS CLOSES, stated because the gates would otherwise read
-// wider than they are: saferune deliberately KEEPS `\n` and `\t`, so a newline
-// in a server-supplied name still forges whole lines on these surfaces. Every
-// one of these surfaces was fully RAW before #566, so what this file pins is a
-// strict improvement on that, not a claim to have closed line forgery.
+// 🔴 THE `\n` / `\t` RESIDUAL THIS HEADER STATED AS OPEN IS CLOSED —
+// civitai/cli#577, pinned in download_newline_test.go. saferune deliberately
+// KEEPS `\n` and `\t`, so safeTerm alone let a server-supplied name forge whole
+// lines on these surfaces; every one of them is a single-line context, so every
+// one takes safeTermSingle. #577 declined to prescribe a transform, calling that
+// decision the work; the answer is that a group listing is made of ROWS and a
+// row is a line.
 //
-// That residual belongs to civitai/cli#577, NOT to #552. #552 was CLOSED by
-// #573, whose measured scope was ~13 tabwriter renderers and which deliberately
-// excluded free-text surfaces; download.go was never on its table. #577 is the
-// split-out issue that owns the four download surfaces, and it leaves the
-// transform open rather than prescribing safeTermSingle — these are free-text
-// lines, not cells, so #573's cell rule does not apply to them unmodified.
+// 🔴 AND THE FIRST PASS AT #577 CLOSED IT ONLY HALF-WAY, WHICH IS WHY THIS
+// PARAGRAPH IS NOT SIMPLY DELETED. It converted the `%s` operands and left
+// safeTermErr on safeTerm, so every `%s: %w` pair here stayed forgeable through
+// the CAUSE — *fs.PathError renders its path unquoted, and that path carries
+// filepath.Base(f.Name). Measured, two lines, the second entirely
+// attacker-written. safeTermErr now takes the single-line rule too. The lesson
+// is the one #566 already taught and this repo relearned: one value, printed
+// twice, sanitised on one half.
+//
+// ONE DELIBERATE EXCEPTION REMAINS: targetPath's refusal renders through `%q`,
+// which ESCAPES `\n` rather than passing it through — so the line cannot be
+// forged there, and collapsing it would hide from the user that the server sent
+// a newline at all. That site keeps safeTerm.
 
 // --- the fixture --------------------------------------------------------------
 //

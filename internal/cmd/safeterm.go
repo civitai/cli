@@ -69,11 +69,27 @@ func safeTerm(s string) string {
 //
 // Use it at ANY site where `%w` carries a cause built from server-derived bytes
 // — sanitising the caller's own `%s` is not sufficient there and never was.
+// 🔴 IT COLLAPSES \n AND \t, NOT ONLY THE INVISIBLE CLASS — civitai/cli#577.
+// safeTerm alone left the forgery HALF-CLOSED on every `%s: %w` pair in
+// download.go: the `%s` half was one line and the CAUSE was not, because
+// *fs.PathError and *os.LinkError render their path UNQUOTED and that path
+// carries filepath.Base(f.Name). Measured before this changed — writePart's
+// create error with a newline-bearing name rendered:
+//
+//	create /…/weights.safetensors Saved … (SHA256 verified).part: open /…/weights.safetensors
+//	Saved /home/u/legit.safetensors (4.0 GiB)  (SHA256 verified).part: no such file or directory
+//
+// Two lines, the second entirely attacker-written, at column zero. That is the
+// SAME shape this function's own history records from #566 — "one value,
+// printed twice, sanitised on one half" — one class down, and a first pass at
+// #577 shipped three comments claiming the residual was closed while it was not.
+// Every caller is on download.go's single-line error path, so the whole
+// function takes the single-line rule.
 func safeTermErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	return sanitizedCause{err: err, msg: safeTerm(err.Error())}
+	return sanitizedCause{err: err, msg: safeTermSingle(err.Error())}
 }
 
 // sanitizedCause renders a sanitised message and unwraps to the original, so

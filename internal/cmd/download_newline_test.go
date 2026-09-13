@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -80,6 +81,22 @@ func assertOneLine(t *testing.T, surface, got string) {
 // The progress line is rewritten with `\r` at 10 Hz on a TTY, so a newline in it
 // does not merely add a line — it strands the forged text ABOVE the rewrite
 // point, where nothing ever overwrites it.
+//
+// 🔴 THE NAME CLAIMS MORE THAN THE TEST, AND THE GAP IS STATED RATHER THAN
+// RENAMED AWAY. What is pinned is that no LINE-BREAK RUNE survives — #577's
+// whole scope. It is NOT true that this line cannot be forged: `p.name` is
+// length-unbounded (nothing in pkg/civitai caps it), and a name padded to the
+// terminal width SOFT-WRAPS, which produces the identical stranded
+// `(SHA256 verified)` at column zero with no `\n` and no `\t` anywhere.
+// Measured by the audit of this PR at widths 80/100/120/132: one logical line
+// occupying 14 display rows, 12 of them beginning with the forged text.
+// safeTermSingle is a no-op on it and assertOneLine is green.
+//
+// That is a DIFFERENT primitive (display width, not control runes) and out of
+// #577's scope, but the machinery already exists — safeterm.go's
+// hardSplitOverlong treats soft-wrap as the same forgery elsewhere. Bounding
+// p.name is its own change; until then, do not read this test's name as the
+// outcome.
 func TestProgressLineCannotForgeALine(t *testing.T) {
 	for _, tc := range []struct{ name, payload string }{
 		{"newline", dlNewlineName},
@@ -140,6 +157,18 @@ func TestCheckTargetCollisionsCannotForgeARow(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := render(t, tc.payload)
+			// 🔴 THE LINE-COUNT BOUND CANNOT SEE A TAB, AND AN AUDIT MEASURED
+			// THIS SUBTEST PASSING ON FULLY UNFIXED CODE. A tab adds no line, so
+			// len(got) != len(benign) never fires for it, and the forged-claim
+			// loop skips a row containing "[id ". The tab needs its own
+			// assertion or `dlTabName` here is decoration.
+			for _, l := range got {
+				if strings.Contains(l, "\t") {
+					t.Errorf("#577 FORGERY in checkTargetCollisions: a TAB survived into a row — on a "+
+						"tabwriter surface it inserts a column rather than misaligning one:\n%s",
+						strings.Join(got, "\n"))
+				}
+			}
 			if len(got) != len(benign) {
 				t.Errorf("#577 FORGERY in checkTargetCollisions: a hostile name rendered %d line(s) "+
 					"where a benign one renders %d — the server chose the geometry:\n%s",
@@ -155,16 +184,26 @@ func TestCheckTargetCollisionsCannotForgeARow(t *testing.T) {
 	}
 }
 
-// TestDownloadStatusErrorCannotForgeALine drives surface 4 — all three arms,
+// TestDownloadStatusErrorCannotForgeALine drives surface 4 — all four arms,
 // because #572 gated this function ONCE at the top precisely so the arms cannot
 // drift, and a test that drove one arm would not notice if that changed.
 func TestDownloadStatusErrorCannotForgeALine(t *testing.T) {
-	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound} {
-		err := downloadStatusError(status, dlNewlineName)
-		if err == nil {
-			t.Fatalf("CONTROL failure, not a finding: status %d produced no error", status)
+	// 🔴 FOUR ARMS, NOT THREE. An earlier draft of this test and its comment both
+	// said "all three arms", and the function has four — the default arm
+	// (`download of %s failed (HTTP %d)`) was untested. If someone later pushes
+	// the gate down into the arms, which is exactly the #566 drift this guard
+	// names as its reason to exist, that arm would break with the suite green.
+	for _, status := range []int{
+		http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound,
+		http.StatusInternalServerError, // the default arm
+	} {
+		for _, payload := range []string{dlNewlineName, dlTabName} {
+			err := downloadStatusError(status, payload)
+			if err == nil {
+				t.Fatalf("CONTROL failure, not a finding: status %d produced no error", status)
+			}
+			assertOneLine(t, "downloadStatusError (status "+http.StatusText(status)+")", err.Error())
 		}
-		assertOneLine(t, "downloadStatusError (status "+http.StatusText(status)+")", err.Error())
 	}
 	// The gate must not have broken the classification it sits in front of.
 	if err := downloadStatusError(http.StatusOK, dlNewlineName); err != nil {
@@ -197,4 +236,43 @@ func TestDownloadOneMismatchCannotForgeALine(t *testing.T) {
 			"this test drives the wrong surface: %v", err)
 	}
 	assertOneLine(t, "downloadOne (SHA256 mismatch)", err.Error())
+}
+
+// TestWrappedCauseCannotForgeALine is the guard my own F1 fix did not have.
+//
+// 🔴 THE `%s` HALF AND THE `%w` HALF ARE TWO SURFACES, AND A FIRST PASS AT #577
+// CLOSED ONLY ONE. Every `%s: %w` pair on this path sanitises the operand and
+// wraps the cause with safeTermErr — which used safeTerm, so it kept `\n`.
+// *fs.PathError and *os.LinkError render their path UNQUOTED, and that path
+// carries filepath.Base(f.Name), so the CAUSE forged the line the operand could
+// not. Measured before the fix:
+//
+//	create /…/weights.safetensors Saved … (SHA256 verified).part: open /…/weights.safetensors
+//	Saved /home/u/legit.safetensors (4.0 GiB)  (SHA256 verified).part: no such file or directory
+//
+// That is #566's own shape — one value, printed twice, sanitised on one half —
+// and three comments claimed the residual was closed while it was open. Reverting
+// safeTermErr to safeTerm reddened NOTHING until this test existed.
+func TestWrappedCauseCannotForgeALine(t *testing.T) {
+	for _, tc := range []struct{ name, payload string }{
+		{"newline", dlNewlineName},
+		{"tab", dlTabName},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A parent directory that does not exist makes os.Create fail with
+			// an *fs.PathError whose Path carries the hostile name.
+			_, _, err := writePart(strings.NewReader(""),
+				filepath.Join("/nonexistent-dir-for-577", tc.payload+".part"),
+				io.Discard, tc.payload, 0, false)
+			if err == nil {
+				t.Fatal("CONTROL failure, not a finding: creating under a missing directory succeeded")
+			}
+			// POSITIVE CONTROL: the hostile bytes must actually be in the cause,
+			// or this asserts on a message that never carried them.
+			if !strings.Contains(err.Error(), "weights.safetensors") {
+				t.Fatalf("CONTROL failure, not a finding: the name never reached the error:\n%s", err.Error())
+			}
+			assertOneLine(t, "writePart (create %s: %w — the WRAPPED CAUSE)", err.Error())
+		})
+	}
 }
