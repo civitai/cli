@@ -1004,8 +1004,17 @@ func presentTargetSatisfies(out io.Writer, target, sha string, verify, force boo
 // responsible for verifying / renaming / removing it.
 //
 // 🔴 ITS THREE ERROR STRINGS ARE GATED FOR THE REASON downloadOne's ARE
-// (civitai/cli#566): main.go prints err.Error() raw to stderr. `name` is the
-// SERVER's files[].name; `partPath` is the mixed-origin target plus ".part".
+// (civitai/cli#566): main.go prints err.Error() raw to stderr. `partPath` is the
+// mixed-origin target plus ".part".
+//
+// 🔴 `name` HAS TWO ORIGINS, NOT ONE, AND THIS COMMENT USED TO SAY OTHERWISE.
+// downloadOne (:926) passes the SERVER's files[].name. downloadBlobTo
+// (generate_output.go:427) passes filepath.Base(target) off planOutputTarget —
+// which with the DEFAULT --out-name template is `{workflow}-{n}{ext}`, i.e. the
+// SERVER's workflow id plus a bounded extension, and carries user text only from
+// the literal parts of an explicit --out-name. Both origins need the gate; the
+// single-origin version of this sentence is what let a ledger row be written
+// calling the second one "the user's template" (civitai/cli#575 R6).
 // Leaving these raw while downloadOne's are gated would rebuild the exact
 // sibling-renderer split #566 was filed about, one call frame down.
 func writePart(body io.Reader, partPath string, errW io.Writer, name string, total int64, verify bool) (written int64, gotHash string, err error) {
@@ -1176,9 +1185,16 @@ func (p *progressWriter) done() {
 	}
 }
 
-// line renders the progress line. p.name is the SERVER's files[].name — it is
-// threaded here from downloadOne via writePart's `name` parameter — so it is
-// gated by safeTerm like every other server-origin string this CLI prints.
+// line renders the progress line. p.name is server-origin on both paths that
+// reach it — downloadOne threads the SERVER's files[].name, and downloadBlobTo
+// threads the rendered output basename, which by default is the SERVER's workflow
+// id (`{workflow}-{n}{ext}`) — so it is gated by safeTerm like every other
+// server-origin string this CLI prints.
+//
+// ⚠ THIS SAID "threaded here from downloadOne" AND NAMED ONLY ONE CALLER. On the
+// generate-output path it arrives from downloadBlobTo instead. The gate is right
+// either way; what was wrong was a reader being able to conclude this surface only
+// ever sees files[].name (civitai/cli#575 R6).
 //
 // 🔴 THIS IS THE \r-REWRITTEN SURFACE, WHERE A CURSOR ESCAPE IS WORTH MOST, AND
 // IT WAS RAW UNTIL civitai/cli#566. Both of line's callers rewrite the line in
