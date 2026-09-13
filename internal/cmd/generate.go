@@ -1882,7 +1882,15 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	// two call sites each, and that ten one-letter-keyed rows happen to govern one
 	// apiece today is an accident nothing asserts. The rule the
 	// comment was really about survives in one line: a row should be a claim about
-	// ONE function's value, which is now enforced rather than requested.
+	// ONE function's value.
+	//
+	// ⚠ WHAT IS ENFORCED IS THE KEY, NOT THE CLAIM — an earlier draft of this
+	// sentence said "which is now enforced rather than requested", and that is
+	// wider than the harness. classifyBareIdents enforces that every bare-ident
+	// site HAS a row keyed `enclosingFunction::argument`; nothing checks that such
+	// a key resolves to one origin, and writePart::name is a live case where it
+	// does not (two callers, two origins). Read the stronger sense and you stop
+	// re-checking a row when you add a caller, which is how that one went wrong.
 	for _, loraLabel := range built.loras {
 		fmt.Fprintf(tw, "LoRA:\t%s\n", safeTermSingle(loraLabel))
 	}
