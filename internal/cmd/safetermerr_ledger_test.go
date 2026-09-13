@@ -4,7 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -43,34 +43,44 @@ func TestSafeTermErrCallersAreLedgered(t *testing.T) {
 		},
 	}
 
+	// os.ReadDir + ParseFile, matching indentcontinuation_ledger_test.go and
+	// floor_predicate_ledger_test.go. NOT parser.ParseDir: it is deprecated as of
+	// Go 1.25 and staticcheck's SA1019 fails the `lint` job on it — which `make
+	// ci` does not run, so this cost a red CI check to discover.
 	fset := token.NewFileSet()
-	pkg, err := parser.ParseDir(fset, ".", func(fi fs.FileInfo) bool {
-		return !strings.HasSuffix(fi.Name(), "_test.go")
-	}, 0)
+	entries, err := os.ReadDir(".")
 	if err != nil {
-		t.Fatalf("parse internal/cmd: %v", err)
+		t.Fatalf("read internal/cmd: %v", err)
 	}
 
 	found := map[string][]string{}
-	total := 0
-	for _, p := range pkg {
-		for path, f := range p.Files {
-			base := filepath.Base(path)
-			var fn string
-			ast.Inspect(f, func(n ast.Node) bool {
-				switch v := n.(type) {
-				case *ast.FuncDecl:
-					fn = v.Name.Name
-				case *ast.CallExpr:
-					id, ok := v.Fun.(*ast.Ident)
-					if ok && id.Name == "safeTermErr" {
-						found[base] = append(found[base], fn)
-						total++
-					}
-				}
-				return true
-			})
+	total, scanned := 0, 0
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
 		}
+		f, perr := parser.ParseFile(fset, name, nil, parser.SkipObjectResolution)
+		if perr != nil {
+			t.Fatalf("parse %s: %v", name, perr)
+		}
+		scanned++
+		var fn string
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch v := n.(type) {
+			case *ast.FuncDecl:
+				fn = v.Name.Name
+			case *ast.CallExpr:
+				if id, ok := v.Fun.(*ast.Ident); ok && id.Name == "safeTermErr" {
+					found[filepath.Base(name)] = append(found[filepath.Base(name)], fn)
+					total++
+				}
+			}
+			return true
+		})
+	}
+	if scanned == 0 {
+		t.Fatal("CONTROL failure, not a finding: no non-test .go files were parsed in internal/cmd")
 	}
 
 	// POSITIVE CONTROL. A scan that matched nothing would satisfy every
