@@ -1305,6 +1305,27 @@ rewrite. They are the evidence behind two closures, and re-deriving either costs
   `gh` in its own call.** Chaining the two makes the gate's diagnosis describe a file
   your blocked command never created. `via: command`
 
+### Added 2026-09-12 (rank 20 close, post-merge sweep)
+
+- **`audit-dispatch.py --round 0 --emit-claims` REFUSES, correctly, and it is worth knowing
+  before you reach for it.** `🔴 REFUSING TO EMIT an audit-claims block: round 0 has no fixes
+  to claim.` Round 0 reports requirements and deletion candidates and does not move the
+  ladder, so a `round=0` block would be anchorable and the next delta round would diff FROM
+  the tip round 0 merely READ — attributing the whole change to a round that fixed nothing.
+  **The claims block starts at the round that first FIXES something.** Round 0's verdict goes
+  on the PR as prose instead. Exit 4. `via: command`
+- **A handoff doc's own `State now` SHA is stale by exactly one commit the moment it merges,
+  and that is structural, not rot.** `deacd19` (this doc's merge) advanced `main` past the
+  `f0cb748` the block names. Every handoff has this property. **Do not "fix" it by rewriting
+  `State now`** — that heading REPLACES, and its `Carried forward` subsection is the one the
+  file itself records as "keeps being dropped under this REPLACE heading". Re-verify the SHA
+  live instead; it is one `git log -1` away. `via: measurement`
+- ⚠ **`clawgate_handoff.sh resolve` answered `rc=5` for this session** — 0 tasks, with its
+  positive control showing 10 links for a *different* session, so the board is reachable and
+  the token accepted. **That zero is a real reading and NOT a clean bill of health**: an
+  unknown session id also answers `200` with an empty array. No `clawgate-task:` field is
+  recorded on this doc, and none should be invented to fill the blank. `via: command`
+
 ## How to verify
 
 Rank 20, against the merged tree (`f0cb748`):
