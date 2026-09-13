@@ -90,6 +90,21 @@ var exitCodeClaimsFloor = []string{
 func exitCodeContractClaims() []contractClaim {
 	return []contractClaim{
 		{
+			code: 6,
+			name: "a 429 is not always 6 — the deep-paging cap is a usage error and exits 2",
+			phrases: []string{
+				"genuine throttle", "deep-paging cap", "structurally doomed",
+				"--cursor", "Branch on the exit code",
+			},
+			why: "the published table said \"Rate limited — throttled by the API (HTTP 429)\" flatly while " +
+				"pkg/civitai reclassified the deep-paging cap to ErrBadRequest (exit 2), so the contract was " +
+				"WRONG in the dangerous direction: a scripter reading it writes `if rc == 6: backoff; retry`, " +
+				"gets 2, and reads 2's row as \"you passed a bad flag\". The reclassification is deliberate — " +
+				"the capped request is permanent, so a generic 429 retry loop spins forever on it — and the " +
+				"VISIBLE MESSAGE IS IDENTICAL in both cases, which is why the row insists on branching by code",
+			pinnedBy: "pkg/civitai's TestDeepPagingCapClassifiesOnTheWireMessageNotTheStrippedOne",
+		},
+		{
 			code:    1,
 			name:    "a filesystem failure is 1, not 2 and not 5",
 			phrases: []string{"filesystem failure", "cannot be read"},

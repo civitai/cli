@@ -158,6 +158,7 @@ var exitCodeDocs = []ExitCodeDoc{
 		Detail: []string{
 			"Usage error — a bad flag, a **missing required flag or argument** (e.g. `civitai app withdraw` with no publish-request id), a bad flag **value** (`--limit` out of range, a non-integer id, `--template nope`), or a request the API rejected as malformed (HTTP 400, e.g. a bad `--period`/`--sort` enum).",
 			"This does not depend on where the refusal happens: a mistake the CLI catches locally and one the server rejects both exit `2`.",
+			"**A 429 can land here.** The API's deep-paging cap (`page*limit` past its fixed offset ceiling) arrives as HTTP 429, but it is permanent rather than transient — retrying the same page loops forever — so it is classified as a usage error and exits `2` rather than `6`. The fix is `--cursor` instead of `--page`. A genuine throttle still exits `6`; see [exit code 6](#exit-code-6).",
 			"A local image the CLI refuses before uploading anything (`civitai app listing set-icon <file>`, `civitai generate --image`) exits `2` when the file is " + joinPhrases(imageUsageRefusals) + " — but a file that exists and cannot be **read** (permissions, an I/O error) is a filesystem failure rather than a mistake about the invocation, and exits `1`, not `2`.",
 			"That split is not images-only and it is not flags-only — it holds for **a flag's value and a positional argument alike**, over the paths listed here: `civitai generate --input <file>` likewise exits `2` for a path that is not there or is a directory, and `1` when the file is there and the read fails.",
 			"The project commands take a positional path and refuse it the same way: `civitai app validate <dir>` and `civitai app submit <dir>` exit `2` when the path does not exist **or is not a directory**, because both are mistakes about the invocation. A directory that **does** exist but holds no `block.manifest.json` is a validation verdict instead, and exits `1`.",
@@ -197,7 +198,12 @@ var exitCodeDocs = []ExitCodeDoc{
 	},
 	{
 		Code:    6,
-		Summary: "Rate limited — throttled by the API (HTTP 429).",
+		Summary: "Rate limited — throttled by the API (HTTP 429). **Not every 429 lands here**: the deep-paging cap is a usage error and exits `2`.",
+		Detail: []string{
+			"A **genuine throttle** — the API asking you to slow down — exits `6`. Retry with backoff; the read endpoints already do this for you when the response carries `Retry-After`.",
+			"🔴 **A 429 that is really the deep-paging cap exits `2`, not `6`, and this row exists because the contract used to say otherwise.** The API caps `page*limit` at a fixed offset ceiling and phrases the refusal as a 429 (\"too many pages\", \"use cursors instead\"). That request is **structurally doomed**: retrying the same page loops forever. It is reclassified to `2` so a generic 429 backoff-and-retry loop does not spin on it — the remedy is `--cursor` instead of `--page`, which is a change to the invocation, which is what `2` means.",
+			"The distinction is drawn from the server's own message, deliberately narrowly, so a real throttle is never misclassified as a usage error. The **visible message is unchanged** in both cases: `rate limited (429): … — for deep paging use --cursor instead of --page`. **Branch on the exit code, not the text.**",
+		},
 	},
 }
 
