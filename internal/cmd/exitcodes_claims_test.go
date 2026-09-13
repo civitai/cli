@@ -86,10 +86,27 @@ var exitCodeClaimsFloor = []string{
 	"`app validate --json` publishes a result only when it produced one",
 	"5 is the retry code and a filesystem failure never lands there",
 	"a 429 is not always 6 — the deep-paging cap is a usage error and exits 2",
+	"a retried 429 that never cleared exits 5, and prints a different message",
 }
 
 func exitCodeContractClaims() []contractClaim {
 	return []contractClaim{
+		{
+			code: 5,
+			name: "a retried 429 that never cleared exits 5, and prints a different message",
+			phrases: []string{
+				"Civitai returned HTTP 429 after", "service-availability", "Retry-After",
+			},
+			why: "the 429 STATUS reaches three codes but the `rate limited (429)` MESSAGE reaches only two, and " +
+				"an earlier draft of this contract said otherwise — \"this one message has THREE exit codes\". " +
+				"Measured against a local server: Retry-After present exits 5 after 4 requests and prints " +
+				"\"Civitai returned HTTP 429 after 4 attempts\"; absent, it exits 2 (cap wording) or 6 (generic) and " +
+				"prints \"rate limited (429)\". A reader who greps the Troubleshooting index for the message they saw " +
+				"must land on a row that names the code they got, so the two messages need two rows. The header is " +
+				"also consulted BEFORE the message, so a cap-worded 429 carrying Retry-After exits 5 rather than 2 — " +
+				"a structurally doomed request on the code to RETRY on, published rather than left implicit",
+			pinnedBy: "pkg/civitai's retryExhaustedError tagging ErrNetwork (retry.go:170-178), reached from retry.go:226-234",
+		},
 		{
 			code: 6,
 			name: "a 429 is not always 6 — the deep-paging cap is a usage error and exits 2",

@@ -601,7 +601,7 @@ can; `pinnedBy` is not evidence the delegated guard is effective.
   throttle carrying `Retry-After` is retried, and if it survives `readMaxAttempts`
   then `retryExhaustedError` tags it `ErrNetwork` (`pkg/civitai/retry.go:170-178`,
   reached from `:226-234`). So one message — `rate limited (429)` — reaches **2, 5
-  or 6**, and before `#591` no surface published any of that. The exit-5 row still
+  or 6**, and before `#591` no surface published any of that. Both the exit-5 and exit-6 rows now state it — the exit-5 row no longer
   lists only "HTTP 502/503/504 after retries".
 
   **Nothing ties a Troubleshooting row's stated exit code to `exitCodeDocs`.**

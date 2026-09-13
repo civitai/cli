@@ -41,7 +41,10 @@ const (
 // an idempotent GET: 429 (rate limited) and the 502/503/504 gateway/overload
 // family. Note 429 is only CONDITIONALLY retried — the retry loop further gates
 // it on the presence of a Retry-After header (a Retry-After-less 429 is
-// Civitai's deterministic deep-paging limit, terminal for reads). Other 4xx
+// terminal for reads). 🔴 The absent header decides whether to RETRY; it does
+// NOT identify the deep-paging cap. Measured: a header-less GENERIC throttle is
+// also terminal here and exits 6 — the cap is identified later, by readError,
+// from the server's MESSAGE. Other 4xx
 // (400/401/403/404) are terminal — a retry can't change them — and 401 already
 // has its own refresh path.
 func isRetriableStatus(status int) bool {
@@ -197,7 +200,7 @@ func sleepCtx(ctx context.Context, d time.Duration) error {
 // (retriable statuses + transient network errors) with bounded exponential
 // backoff. It reuses authedDoHdr so the existing single 401-refresh still
 // happens inside each try. Terminal statuses (incl. 400/401/403/404, and a 429
-// WITHOUT a Retry-After header — Civitai's deterministic deep-paging limit)
+// WITHOUT a Retry-After header, whatever its message)
 // return on the first try, so a non-transient read makes exactly one request.
 func (c *Client) getWithRetry(ctx context.Context, path string, build func() (*http.Request, error)) (int, []byte, error) {
 	for attempt := 0; ; attempt++ {
@@ -214,14 +217,26 @@ func (c *Client) getWithRetry(ctx context.Context, path string, build func() (*h
 		case err != nil:
 			return 0, nil, err
 		case isRetriableStatus(status):
-			// A 429 is retriable ONLY when it carries a Retry-After header (a
-			// genuine, server-signalled throttle we can honor). Civitai also
-			// returns 429 DETERMINISTICALLY on deep --page offsets — a
-			// paging-depth limit, not a transient outage — and those responses
-			// carry NO Retry-After. Retrying them is futile and buries the
-			// actionable hint, so a Retry-After-less 429 is terminal for reads:
-			// return the body/status cleanly so readError's 429 branch surfaces
-			// the "use --cursor for deep paging" guidance.
+			// A 429 is retried ONLY when it carries a Retry-After header (a
+			// genuine, server-signalled throttle we can honor). Civitai returns
+			// 429 DETERMINISTICALLY on deep --page offsets — a paging-depth
+			// limit, not a transient outage — and those responses carry NO
+			// Retry-After. Retrying them is futile and buries the actionable
+			// hint, so a Retry-After-less 429 is terminal for reads: return the
+			// body/status cleanly so readError's 429 branch can classify it.
+			//
+			// 🔴 THE HEADER IS NOT AN IDENTIFICATION OF THE CAP, AND THREE
+			// COMMENTS IN THIS FILE USED TO SAY IT WAS. Two things follow, both
+			// measured against a local server on civitai/cli#591:
+			//   - a header-less GENERIC throttle is terminal here too, and exits
+			//     6, not 2 — readError decides that from the MESSAGE, not from
+			//     anything this branch knows;
+			//   - a cap-worded 429 that DOES carry Retry-After is retried by the
+			//     code below and exits 5, not 2. That is a structurally doomed
+			//     request landing on the code to RETRY on. It rests entirely on
+			//     the vendored assumption that the server never attaches
+			//     Retry-After to a cap 429 — there is no local guard on it, so it
+			//     is published in README's exit-code rows rather than left here.
 			var override *time.Duration
 			if status == http.StatusTooManyRequests {
 				if d, ok := retryAfterDelay(hdr, retryAfterCap); ok {
