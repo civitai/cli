@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -267,10 +268,23 @@ func TestWrappedCauseCannotForgeALine(t *testing.T) {
 			if err == nil {
 				t.Fatal("CONTROL failure, not a finding: creating under a missing directory succeeded")
 			}
-			// POSITIVE CONTROL: the hostile bytes must actually be in the cause,
-			// or this asserts on a message that never carried them.
-			if !strings.Contains(err.Error(), "weights.safetensors") {
-				t.Fatalf("CONTROL failure, not a finding: the name never reached the error:\n%s", err.Error())
+			// POSITIVE CONTROL: the hostile bytes must be in the CAUSE, not merely
+			// somewhere in the rendered message.
+			//
+			// 🔴 THIS USED TO READ err.Error(), WHICH COULD NOT FAIL. The message is
+			// "create <sanitised partPath>: <cause>", and the %s operand supplies
+			// "weights.safetensors" on its own — so the control stayed green even
+			// when the cause carried no name at all, which is the one condition its
+			// own sentence claims to rule out. Measured: replacing the wrapped cause
+			// with a name-free fs.ErrNotExist left it green, and compounding that
+			// with the safeTermErr revert this test exists to kill left it green too.
+			// Unwrap, so the assertion reads the half that matters.
+			cause := errors.Unwrap(err)
+			if cause == nil {
+				t.Fatalf("CONTROL failure, not a finding: the error wraps nothing, so there is no cause to inspect:\n%s", err.Error())
+			}
+			if !strings.Contains(cause.Error(), "weights.safetensors") {
+				t.Fatalf("CONTROL failure, not a finding: the name never reached the CAUSE:\n%s", cause.Error())
 			}
 			assertOneLine(t, "writePart (create %s: %w — the WRAPPED CAUSE)", err.Error())
 		})

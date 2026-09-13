@@ -67,8 +67,19 @@ func safeTerm(s string) string {
 // chain, so the exit-code classifier (AGENTS.md items 7 and 24) still sees
 // whatever sentinel or concrete type it was going to see.
 //
-// Use it at ANY site where `%w` carries a cause built from server-derived bytes
-// — sanitising the caller's own `%s` is not sufficient there and never was.
+// 🔴 DO NOT use it at ANY site — it is scoped to download.go's SINGLE-LINE error
+// path, and the two halves of that sentence pull in opposite directions. An
+// earlier draft said "use it at ANY site where `%w` carries a cause built from
+// server-derived bytes" in the same comment that justifies collapsing \n and \t
+// with "every caller is on download.go's single-line error path". Both cannot be
+// the contract. The narrow one is: a caller elsewhere that wraps a legitimately
+// MULTI-LINE server string — an orchestrator failure reason, the one case
+// indentContinuation exists to format — would be silently flattened, and nothing
+// would go red. The caller set is pinned by TestSafeTermErrCallersAreLedgered;
+// widen this doc comment only by widening that ledger first.
+//
+// Within that scope: sanitising the caller's own `%s` is not sufficient and
+// never was.
 // 🔴 IT COLLAPSES \n AND \t, NOT ONLY THE INVISIBLE CLASS — civitai/cli#577.
 // safeTerm alone left the forgery HALF-CLOSED on every `%s: %w` pair in
 // download.go: the `%s` half was one line and the CAUSE was not, because

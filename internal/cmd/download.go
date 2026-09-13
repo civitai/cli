@@ -693,7 +693,16 @@ func formatFileList(files []civitai.ModelVersionFile) string {
 // NOTE ON THE SPELLING: this file calls safeTermSingle, not safeTerm — every
 // surface here is a single line (civitai/cli#577), so the sanitiser must collapse
 // \n and \t as well as strip the invisible class. Comments that say "sanitised"
-// mean that one. There are no bare safeTerm calls left in this file.
+// mean that one.
+//
+// 🔴 THERE IS EXACTLY ONE BARE safeTerm CALL LEFT IN THIS FILE, AND IT IS
+// DELIBERATE: targetPath's `unusable filename %q` refusal. An earlier draft of
+// this comment said there were none — written by the same commit that created
+// it. Do not "fix" that call to safeTermSingle: `%q` escapes \n and \t to their
+// two-character forms, so nothing can forge a line there, and collapsing them
+// first destroys the byte the message exists to show you. Measured: making that
+// change leaves the whole suite green, which is why the refusal now carries a
+// newline-bearing payload in TestTargetPathRefusalSanitizesTheServerName.
 //
 // 🔴 EVERY SERVER-ORIGIN FIELD IN THE LISTING IS SANITISED, AND IT WAS NOT
 // UNTIL civitai/cli#566. The group line's `target` is mixed-origin (targetPath's
@@ -1072,7 +1081,7 @@ var (
 // executable or archive extension, warning that the file can execute code when
 // loaded and that SHA256 proves integrity (byte-match), not authenticity (a
 // trusted source). It returns "" for safetensors, images, and other inert types.
-// The returned string is safeTerm-sanitized (the file name is server-supplied).
+// The returned string is safeTermSingle-sanitized (the file name is server-supplied).
 func pickleArchiveNote(name string) string {
 	base := strings.ToLower(filepath.Base(name))
 	ext := filepath.Ext(base)
@@ -1188,7 +1197,7 @@ func (p *progressWriter) done() {
 // line renders the progress line. p.name is server-origin on both paths that
 // reach it — downloadOne threads the SERVER's files[].name, and downloadBlobTo
 // threads the rendered output basename, which by default is the SERVER's workflow
-// id (`{workflow}-{n}{ext}`) — so it is gated by safeTerm like every other
+// id (`{workflow}-{n}{ext}`) — so it is gated by safeTermSingle like every other
 // server-origin string this CLI prints.
 //
 // ⚠ THIS SAID "threaded here from downloadOne" AND NAMED ONLY ONE CALLER. On the

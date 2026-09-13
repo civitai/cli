@@ -400,6 +400,43 @@ func TestTargetPathRefusalSanitizesTheServerName(t *testing.T) {
 		}
 	})
 
+	// 🔴 THE DELIBERATE BARE-safeTerm EXCEPTION, MADE VISIBLE TO THE SUITE.
+	//
+	// targetPath is the ONE site on this path that still calls bare safeTerm
+	// rather than safeTermSingle, because `%q` escapes \n and \t into their
+	// two-character forms — nothing can forge a line through it, and collapsing
+	// them first would destroy the byte the message exists to show.
+	//
+	// That decision had NO test. Measured on civitai/cli#590: changing the call
+	// to safeTermSingle compiles and leaves the ENTIRE suite green, because the
+	// fixture above carries no \n or \t, so both spellings render identically.
+	// A maintainer reading the (then false) "no bare safeTerm calls left in this
+	// file" comment would make exactly that change and see nothing go red, and a
+	// user whose server sent a newline-bearing name would silently lose it.
+	//
+	// So: assert the literal two-character \n SURVIVES into the refusal. This
+	// fails under safeTermSingle, which collapses it to a space.
+	t.Run("a newline-bearing name keeps its escaped \\n — the %q exception", func(t *testing.T) {
+		nf := civitai.ModelVersionFile{ID: 7782, Name: dlNewlineName + "/..", Type: "Model", SizeKB: 12}
+		_, _, err := targetPath(nf, &downloadOpts{})
+		if err == nil {
+			t.Fatal("CONTROL failure, not a finding: a name whose basename is \"..\" was accepted, so the refusal never rendered")
+		}
+		got := err.Error()
+		if !strings.Contains(got, `\n`) {
+			t.Errorf("the escaped \\n did not survive into the refusal, so the deliberate bare-safeTerm exception "+
+				"has been collapsed to safeTermSingle. `%%q` already makes a newline harmless AND visible; "+
+				"collapsing it destroys the byte the message exists to convey. Got:\n  %q", got)
+		}
+		if strings.Contains(got, "\n") {
+			t.Errorf("a RAW newline reached the terminal — %%q did not escape it, which is the forgery this path "+
+				"must not allow. Got:\n  %q", got)
+		}
+		if n := strings.Count(got, "\n"); n != 0 {
+			t.Errorf("the refusal rendered %d raw newline(s); it must be one line", n)
+		}
+	})
+
 	// --out is the USER's own path and targetPath returns it verbatim, so the
 	// refusal is unreachable there. Asserted, not assumed: it is what makes the
 	// strip above unambiguously server-text only (saferune's package doc).
