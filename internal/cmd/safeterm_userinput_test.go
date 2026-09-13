@@ -69,20 +69,20 @@ var userTypedArgs = map[string]string{
 var bareIdentArgs = map[string]string{
 	// --- download path ------------------------------------------------------
 	"checkTargetCollisions::target":  "MIXED: --out verbatim, else filepath.Base(SERVER file name) — see targetPath. The refusal that is the only thing between the user and a silent overwrite",
-	"downloadBlobTo::target":         "MIXED: as targetPath, on generate's `Saved <target>` line",
+	"downloadBlobTo::target":         "MIXED: on generate's `Saved <target>` line. NOT via targetPath — on this path the target comes from planOutputTarget(o.outName,…), so the user half is the --out-name TEMPLATE rather than --out",
 	"downloadOne::target":            "MIXED: as targetPath, on the install error and the `Saved` line",
 	"presentTargetSatisfies::target": "MIXED: as targetPath, on the two `already present` lines",
 	"printDownloadPlan::target":      "MIXED: as targetPath, on the plan's `target:` line",
-	"writePart::partPath":            "MIXED: `target` + \".part\", so it inherits target's two origins exactly — see targetPath",
+	"writePart::partPath":            "MIXED: `target` + \".part\", inheriting whichever origin its caller's target had — targetPath on the download path, planOutputTarget on the generate-output one",
 	"downloadStatusError::name":      "SERVER: a published file name, re-assigned through the gate in place",
 	"emitPreDownloadNotes::name":     "SERVER: a published file name, in the no-SHA256 warning",
-	"writePart::name":                "SERVER: a published file name, in the streaming error",
-	"printDownloadPlan::note":        "SERVER-derived: a routing note built from the server's file name",
-	"downloadSelected::note":         "SERVER-derived: the same routing note",
+	"writePart::name":                "🔴 MIXED, and the reason is a RESIDUAL OF THIS LEDGER'S OWN KEY FORMAT. writePart has TWO callers with TWO origins: download.go:926 passes the SERVER's f.Name, and generate_output.go:427 passes filepath.Base(target) off planOutputTarget(o.outName,…) — the USER's --out-name template. A (function, name) key cannot express that, so this row is MIXED by necessity rather than by measurement of one value. MEASURED: --out-name with a U+2800 writes that byte to disk while the stream error prints the name without it — an error naming a file that does not exist. Recorded on civitai/cli#575",
+	"printDownloadPlan::note":        "🔴 MIXED, not SERVER — an earlier draft of this row said SERVER and was wrong. routeDir (layout.go:145) interpolates `root`, the USER's --root, alongside the server file name. MEASURED: --root with a U+2800 in it prints the path without it, so the line whose whole job is to say WHERE THE FILE GOES names a directory that is not the directory",
+	"downloadSelected::note":         "🔴 MIXED, not SERVER — the same routeDir note at its other call site, carrying the user's --root the same way",
 	"printDownloadPlan::sha":         "SERVER: a published hash",
 	"printDownloadPlan::w":           "SERVER-derived: a MIXED-TYPE warning (mixedTypeWarning), not a weight — see printImageResources::w, which is a different value under the same name",
 	"warnMixedTypes::w":              "SERVER-derived: the mixed-type warning again, at its own call site",
-	"reportBaseModel::w":             "SERVER-derived: a BASE-MODEL warning (baseModelWarning) — a third distinct value spelled `w`",
+	"reportBaseModel::w":             "🔴 MIXED, not SERVER — an earlier draft of this row said SERVER and was wrong. baseModelWarning(have, want) (compat.go:103) interpolates `want`, the USER's --for-base flag. MEASURED: a --for-base carrying a U+2800 renders without it at download.go:336 — the gate rewrites the user's own bytes. Accepted on this path for the same reason the ::target rows are, but the row has to SAY so",
 	"reportBaseModel::baseModel":     "SERVER: a base-model label",
 
 	// --- read path ----------------------------------------------------------
@@ -123,7 +123,10 @@ var bareIdentArgs = map[string]string{
 // injection survived because bareIdentArgs was keyed by the bare NAME across the
 // package, so one `"s"` blinded the harness everywhere — this paragraph used to
 // say "in all ~67 files at once", and civitai/cli#575 R5 made that false by
-// re-keying to `enclosingFunction::argument`. A row now blinds exactly one site.
+// re-keying to `enclosingFunction::argument`. A row now blinds ONE (function,
+// name) PAIR — one call site for 29 of the 35 rows and two for the other six,
+// not "exactly one site", which is what an earlier draft of this very sentence
+// said while the same commit retracted that wording 200 lines below.
 // What still holds is why composers are a LEDGER: a file-wide exemption would
 // pass every future function added to safeterm.go without anyone naming it.
 //

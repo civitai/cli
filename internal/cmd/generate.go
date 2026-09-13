@@ -1877,7 +1877,10 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	// every bare-ident safeTerm site; five such keys exist; recorded as an open
 	// residual on civitai/cli#575 R5. Every clause of that is false since R5
 	// closed — the ledger is keyed `enclosingFunction::argument`, so no key is
-	// package-wide and a short name allowlists exactly one site. The rule the
+	// package-wide and a short name allowlists one (function, name) PAIR. Not
+	// "exactly one site", which an earlier draft said: six of the 35 rows govern
+	// two call sites each, and that ten one-letter-keyed rows happen to govern one
+	// apiece today is an accident nothing asserts. The rule the
 	// comment was really about survives in one line: a row should be a claim about
 	// ONE function's value, which is now enforced rather than requested.
 	for _, loraLabel := range built.loras {
