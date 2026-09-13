@@ -193,6 +193,7 @@ var exitCodeDocs = []ExitCodeDoc{
 		Summary: "Network/transport failure or service unavailable — the code to **retry** on.",
 		Detail: []string{
 			"Network/transport failure or service unavailable — dial/timeout, or HTTP 502/503/504 after retries.",
+			"**A 429 can land here too**, which no surface used to say: a throttle that carries `Retry-After` is retried, and when it persists through every attempt the failure is tagged as service-availability rather than rate-limiting. A 429 therefore reaches `2` (the deep-paging cap), `5` (a retried throttle that never cleared) or `6` (a throttle terminal on the first response) — see [exit code 6](#exit-code-6).",
 			"This is the code to **retry** on, so a **filesystem** failure never lands here however retryable its errno looks: a permissions or I/O problem does not fix itself, and a loop that sleeps and re-runs would never terminate. Those exit `1`.",
 		},
 	},
@@ -200,7 +201,8 @@ var exitCodeDocs = []ExitCodeDoc{
 		Code:    6,
 		Summary: "Rate limited — throttled by the API (HTTP 429). **Not every 429 lands here**: the deep-paging cap is a usage error and exits `2`.",
 		Detail: []string{
-			"A **genuine throttle** — the API asking you to slow down — exits `6`. Retry with backoff; the read endpoints already do this for you when the response carries `Retry-After`.",
+			"A **genuine throttle** — the API asking you to slow down — exits `6` **when it is terminal on the first response**. Retry with backoff.",
+			"🔴 **A throttle carrying `Retry-After` is RETRIED for you, and if it survives every attempt it exits `5`, not `6`.** The read endpoints honour `Retry-After`; once the attempts are exhausted the failure is tagged as a service-availability problem, which is what `5` means. So one message — `rate limited (429)` — reaches **`2`, `5` or `6`** depending on which of the three it was. That is the whole reason the rule below is to branch on the code.",
 			"🔴 **A 429 that is really the deep-paging cap exits `2`, not `6`, and this row exists because the contract used to say otherwise.** The API caps `page*limit` at a fixed offset ceiling and phrases the refusal as a 429 (\"too many pages\", \"use cursors instead\"). That request is **structurally doomed**: retrying the same page loops forever. It is reclassified to `2` so a generic 429 backoff-and-retry loop does not spin on it — the remedy is `--cursor` instead of `--page`, which is a change to the invocation, which is what `2` means.",
 			"The distinction is drawn from the server's own message, deliberately narrowly, so a real throttle is never misclassified as a usage error. The **visible message is unchanged** in both cases: `rate limited (429): … — for deep paging use --cursor instead of --page`. **Branch on the exit code, not the text.**",
 		},

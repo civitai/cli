@@ -85,6 +85,7 @@ var exitCodeClaimsFloor = []string{
 	"a validation VERDICT is 1, and a manifest-less directory is a verdict",
 	"`app validate --json` publishes a result only when it produced one",
 	"5 is the retry code and a filesystem failure never lands there",
+	"a 429 is not always 6 — the deep-paging cap is a usage error and exits 2",
 }
 
 func exitCodeContractClaims() []contractClaim {

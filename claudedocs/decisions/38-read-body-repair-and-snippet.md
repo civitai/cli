@@ -581,16 +581,33 @@ can; `pinnedBy` is not evidence the delegated guard is effective.
   Nothing asserts that the filter cannot move a code the CLI does not yet
   classify from text. Today there is no such code — §4 records the grep — but
   that is a measurement of the tree, not a guard on it.
-- **The README does not document the 429 → exit 2 reclassification at all**, so
-  neither the round-3 change nor round 4's bound has a published counterpart to
-  keep in sync. Its Troubleshooting row reads "`rate limited (429)` | Throttled;
-  exit `6`", and §4 above is the only statement anywhere that some 429s exit 2.
-  This gap PRE-DATES this PR — `isDeepPagingCap` and its reclassification are
-  live at `517fc76` — and is recorded rather than fixed here, because writing the
-  row is a change to the published exit-code contract's wording and belongs with
-  whoever owns AGENTS.md item 7's table, not with a follow-up audit. Closing
-  condition: the Troubleshooting row and the exit-code table both name the
-  deep-paging case, and `readme_troubleshooting_test.go` still passes.
+- **RESOLVED by `#591` — and the closing condition below was NOT met by that PR's
+  first pass, which is worth recording because it is the same half-done shape
+  twice.** This bullet used to read *"The README does not document the 429 → exit
+  2 reclassification at all"*. It now does: `exitcodes_doc.go` (the generator),
+  the generated exit-code table, a generated `### Exit code 6` section, and
+  `civitai --help` all name it.
+
+  🔴 **`#591` as first pushed updated four surfaces and left the FIFTH** — the
+  hand-written Troubleshooting row, which still read "`rate limited (429)` |
+  Throttled; exit `6`". That is the row `README.md`'s own Troubleshooting preamble
+  tells the reader to look up, and the message a capped user greps matches it — so
+  the one surface a scripter reaches said the opposite of the four that had been
+  fixed. Exactly the "#371 shipped having updated two of three" failure AGENTS.md
+  warns about, in a PR whose entire purpose was to close a contract gap. Caught by
+  the audit round on `#591` and fixed there.
+
+  🔴 **A THIRD code was found while fixing it: a 429 can also exit `5`.** A
+  throttle carrying `Retry-After` is retried, and if it survives `readMaxAttempts`
+  then `retryExhaustedError` tags it `ErrNetwork` (`pkg/civitai/retry.go:170-178`,
+  reached from `:226-234`). So one message — `rate limited (429)` — reaches **2, 5
+  or 6**, and before `#591` no surface published any of that. The exit-5 row still
+  lists only "HTTP 502/503/504 after retries".
+
+  **Nothing ties a Troubleshooting row's stated exit code to `exitCodeDocs`.**
+  `readme_troubleshooting_test.go` asserts only that the row's left-column string
+  exists in the source, which is why this went stale and can again. That is the
+  open residual now — not the prose.
 - **`TestRawDocCommentsDisclaimByteIdentity` covers doc comments on struct
   fields, not prose.** The detail getters (`GetModel`, `GetArticle`,
   `GetCollection`, `GetApp`, `GetModelVersion`, `GetModelVersionByHash`) return
