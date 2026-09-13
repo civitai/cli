@@ -19,15 +19,23 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 
 ## State now
 
-**Rank 20 is DONE and merged — the download path is gated and cli#566 is CLOSED.**
-**Rank 22 is DONE too**, by a parallel session. What remains of this safeTerm seam is
-**four open issues** — #574, #575, #577, #579 — all filed rather than folded in.
+**Rank 19 is DONE and merged — `#542`'s second clause is discharged, and the issue
+was already closed before this arc touched it.** Ranks 20 and 22 were done in earlier
+passes. What remains of this safeTerm seam is **five open issues** — #574, #575, #577,
+#579 and the newly filed **#586** — all filed rather than folded in.
 
-- **Branch `main`, clean, synced.** `civitai/cli` at `f0cb748`.
+- **Branch `main`, clean, synced.** `civitai/cli` at `af3194b`.
   (`civitai/civitai-developer-docs` was at `d5b34c8` and was **not re-verified** this
   session — treat that SHA as recalled, not measured.)
-- **Merged this pass:** **cli#572** (`f0cb748`, squash, merged 2026-09-12T20:04:11Z) —
-  rank 20. Issue **#566 was CLOSED BY HAND** at 20:06:46Z with the evidence pasted on
+- **Merged this pass:** **cli#583** (`af3194b`, squash, merged 2026-09-13T04:54:58Z) —
+  rank 19. Verified by CONTENT, not ancestry: `git diff <verified-head> origin/main`
+  was empty, which is what licenses "what landed is what I verified" after a squash.
+  Issue **#542 was left CLOSED and untouched**; the evidence was pasted on it by hand.
+  Claim `agent-setup-onboarding-19` **released** (verified absent from
+  `claim-work --list`, not assumed). 🔴 **Two of its five commits shipped UNAUDITED —
+  see the honest-limits entry.**
+- **Earlier pass, kept for the trail:** **cli#572** (`f0cb748`, squash, merged
+  2026-09-12T20:04:11Z) — rank 20. Issue **#566 was CLOSED BY HAND** at 20:06:46Z with the evidence pasted on
   it, never by a commit keyword. Claim `agent-setup-onboarding-20` **released**
   (verified absent from `claim-work --list`, not assumed).
 - **What #572 actually shipped** — the three surfaces #566 named, plus **three more
@@ -73,6 +81,32 @@ plus a `civitai agent-setup` command (all the real logic, in Go, tested).
 - **Subsystem index**: `cli/civitai`'s stale `OPEN:` bullet reads `RESOLVED d0d1805`.
 
 ### Honest limits
+
+- 🔴 **TWO OF cli#583's FIVE COMMITS SHIPPED UNAUDITED, AND THE REASONING THAT
+  SKIPPED THE AUDIT IS WHAT REQUIRED IT.** The ladder covered `fe509f4 → dc88b8e →
+  86bfc4c` (round 0 plus three delta rounds; claims blocks exist for rounds 1 and 2).
+  **`5db4fce` (the round-3 fixes) and `4408bf6` (the REDUCTION — a 520-line deletion,
+  the single largest change in the PR) were never read by any round.** The stated
+  reason for stopping was that the reduction "deleted the surface every finding came
+  from, so a delta frame would be stale and the honest version is a first-full audit"
+  — a sentence that concludes an audit is needed, followed by a merge without one. A
+  first-full audit of the merged artifact was dispatched during closeout; **read its
+  result before treating this seam as settled.**
+- 🔴 **`pinnedBy` PROVES THE NAMED GUARD LIVES WHERE THE HAZARD IS, NOT THAT IT
+  WORKS.** Measured: gutting `TestHasPrintableContentArgumentsAreServerBytes`' body to
+  `_ = …` leaves `go test ./...` fully green while the module-root ledger keeps
+  asserting that `internal/genapi`'s site is covered. Package scoping killed the
+  wrong-package stub; no static scan can see a gutted test. Do not read a green
+  `saferuneRefs` as evidence the delegated guards are effective.
+- ⚠ **THE COUNT REPLACED IDENTITY KEYING BECAUSE THE HAZARD HAD NEVER OCCURRED, NOT
+  BECAUSE THE KEYING WAS FINISHED.** Three rounds each fixed "no two sites share a
+  row" and each fix was beaten by a shape it had not foreseen (`vs.Names[0]` vs a
+  multi-name spec; a refusal spelled into a key, which a row spelled; a blank flag in
+  one branch, which `func _()` and `func init()` walked past). The measurement that
+  ended it: **every package has had exactly ONE `saferune` call site for the whole
+  history**. If that ever stops being true, the count still catches it — but the
+  reasoning for the simpler shape expires with the measurement, so re-measure before
+  citing it.
 
 - **The notifier's cross-run paths are still fake-only**: update-in-place,
   comment-on-fingerprint-change, comment-then-close. The **create** path is real.
@@ -420,8 +454,8 @@ repo. Rank 15. The block below is the diagnosis as of 2026-09-11.
 🔴 **Ranks 1–10, 12, 13, 14, 18, 20, 21 and 22 are DONE — numbering is preserved
 deliberately** so any live `claim-work` slug keeps pointing at the item it was taken
 for. **Rank 11 is NOT done** (2 of 3; the previous wording "Ranks 1–14 … are DONE"
-swept it up and was wrong). Open: **11, 15, 16, 17, 19, 23, 24, 25, 26.** New items
-continue from 27.
+swept it up and was wrong). Open: **11, 15, 16, 17, 23, 24, 25, 26.** New items
+continue from 27. **Rank 19 closed 2026-09-13** (cli#583).
 
 🔴 **Every item below was re-verified against live state on 2026-09-12, immediately
 before this list was written** — `gh issue list --state all`, `gh pr list --state open`
@@ -494,16 +528,19 @@ drained it, and a stale list is a duplicate-work generator.
     verified live by `gh workflow run appblocks-drift.yml`: ALERT path, docs#76 opened,
     label applied. **Residual**: the cross-run paths are still fake-only.
     forcing: none
-19. 🔴 **CONFIRMED STILL OPEN, re-measured 2026-09-12. `#542`'s stated closing condition
-    is NOT discharged — and the issue is CLOSED, which is exactly what makes this easy
-    to miss.** #542 named "any `saferune.*` call site outside `internal/cmd`". There are
-    still **two**, both live on `f0cb748`: **`pkg/civitai/read.go:610`**
-    (`saferune.Strip`) and **`internal/genapi/status.go:256`**
-    (`saferune.HasVisibleContent`). cli#557's guard is `snippetArgs` in
-    `pkg/civitai/snippet_args_ledger_test.go` — it enumerates **`snippet(` call sites in
-    `pkg/civitai` only** (verified: the identifier appears in that one file and nowhere
-    else in the tree), so it **cannot reach `internal/genapi` at all**. A closed issue
-    is not a discharged condition. Read with ranks 23–26 — same seam.
+19. ~~**`#542`'s stated closing condition is not discharged**~~ — **DONE**, cli#583
+    (`af3194b`, squash, merged 2026-09-13T04:54:58Z). #542 named "any `saferune.*` call
+    site outside `internal/cmd`"; #557's `snippetArgs` covers `snippet(` sites in
+    `pkg/civitai` only, and the issue was closed on it. **A closed issue is not a
+    discharged condition** — that is the durable line.
+    Shipped `saferune_arg_origins_test.go` (module root) and
+    `internal/genapi/saferune_origins_test.go`, the guard the delegation points at,
+    which did not exist. The genapi half found a live stale claim on its first run:
+    `dedupeReasons`' doc said "four callers … the two step types' `failureReasons`";
+    there are **three**, and `ListedStep.failureReasons` has never existed.
+    Issue **#542 left CLOSED and untouched**; evidence pasted by hand, no keyword.
+    🔴 **Read the two honest-limits entries before trusting this as finished** — two
+    commits shipped unaudited, and `pinnedBy` is weaker than it looks.
     forcing: none
 20. ~~**cli#566 — three uploader-controlled surfaces on the download path reach the
     terminal raw**~~ — **DONE**, cli#572 (`f0cb748`, merged 2026-09-12T20:04:11Z).
@@ -594,6 +631,49 @@ drained it, and a stale list is a duplicate-work generator.
     incomplete.
 
 ## Gotchas / decisions / dead-ends
+
+### Added 2026-09-13 — rank 19, four audit rounds, and a reduction
+
+- 🔴 **A `str.replace` WITH NO ASSERT IS A SILENT NO-OP THAT GETS LAUNDERED INTO A
+  CLAIM.** A fix-round edit did not match (`"rather than being silently treated"`
+  against a file saying `"rather than silently treated"`), the script printed `ok`,
+  and the next round's claims block asserted the fix as done. The audit caught it by
+  `git grep` at three shas: byte-identical. **Every scripted replace must assert and
+  exit non-zero on a miss** — one did on the very next round and caught a second miss.
+- 🔴 **A GUARD THAT KEEPS FAILING ITS OWN PROPERTY IS EVIDENCE ABOUT THAT PROPERTY'S
+  COST.** Ask what it defends against and whether that has ever happened, BEFORE
+  paying for the fourth attempt. `/audit-pr`'s round 0 asked exactly this on day one —
+  *"the half that found something is 302 lines, the half that found nothing is 494"* —
+  and three rounds of findings landed in the half it named before anyone acted.
+  Round 0's value here was not a defect; it was a sentence nobody read for two days.
+- 🔴 **A NAME BLOCKLIST CANNOT BE COMPLETED BY THINKING HARDER.** Three attempts at
+  "no two sites share a row" enumerated names; the next shape was always one
+  identifier away. What worked was asking the STATE — *does more than one declaration
+  claim this key?* — and later, not needing the property at all.
+- 🔴 **A POSITIVE CONTROL THAT SHARES THE WALK IT CHECKS IS NOT A CONTROL.** A ledger's
+  site-count floor was computed from the same restricted traversal that missed the
+  sites, so both were blind together. The fix is a second traversal built differently,
+  whose DISAGREEMENT is the failure.
+- 🔴 **A CONTROL PLACED BEFORE THE ARMS IT GUARDS CAN MASK THEM.** A `t.Fatalf` on
+  "this package resolved zero tests" was a strict subset of the dangling-pin arm below
+  it, so a real finding was relabelled *"CONTROL failure, not a finding"* and later
+  arms never ran. Split by WHICH cases are empty: all ⇒ instrument, some ⇒ finding.
+- 🔴 **`git worktree prune` DOES NOT REMOVE WORKTREES.** It only clears administrative
+  entries whose directories are already gone. 29 remain in this repo, each pinning a
+  branch repo-globally — the stale-local-ref hazard recorded earlier in this doc.
+  Remove by path: `git worktree remove --force <path>`.
+- ⚠ **A BATTERY SCRIPT IN THE SCRATCHPAD HARD-CODED A LIVE WORKTREE PATH AND RAN
+  `git checkout --` AGAINST IT** — which its own second line forbade. An auditor
+  re-ran it and wrote into the PR's tree. Two lessons: a script's header is a claim
+  like any other, and **do not re-run another round's scratch scripts** — brief
+  auditors to build their own probes.
+- ⚠ **A MUTANT CAN DIE OF A COMPILE ERROR FOR TWO ROUNDS WITHOUT ANYONE NOTICING.**
+  The SHRANK-arm mutant referenced a constant a previous round had deleted, so it
+  failed with `undefined:` rather than firing the arm it was named for. **Read the
+  failure TEXT, never just rc=1.**
+- ⚠ **`gh pr merge` RETURNS rc 0 WITHOUT PRINTING ANYTHING.** Verify by CONTENT —
+  `git diff <the head you verified> origin/main` empty — because a squash merge never
+  makes the branch head an ancestor, and read back the merge commit's own body.
 
 - 🔴 **A hosted instruction file is a lossy channel, and this is measured, not
   theoretical.** Claude Code's WebFetch is *"lossy by design"* (per
