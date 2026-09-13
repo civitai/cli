@@ -67,11 +67,30 @@ import (
 // out of three, which is how a guard ends up reading as coverage while
 // providing none.
 //
-// So `originDelegated` carries a `pinnedBy`, and `pinnedBy` is RESOLVED TO A
-// REAL Test DECLARATION before it is believed — the same move
-// checkQuestionsResolve makes next door, for the same reason: a delegation to a
-// guard that has been renamed or deleted is worse than no delegation, because
-// it names a check nobody will look for.
+// So `originDelegated` carries a `pinnedBy`, and `pinnedBy` is resolved to a
+// real Test declaration IN THE SITE'S OWN PACKAGE before it is believed: a
+// delegation to a guard that has been renamed or deleted is worse than no
+// delegation, because it names a check nobody will look for.
+//
+// 🔴 THE FIRST DRAFT RESOLVED IT MODULE-WIDE, AND THAT IS THE STATE THIS REPO
+// DELETED ONE COMMIT EARLIER. `3457c5d` — "fix(safeterm): delete the ledger gate
+// state that resolved a name, not a relationship" (civitai/cli#578) — removed
+// `gatePreSanitised` for checking only that a name existed. This file then
+// reintroduced the same shape while citing it: any `func Test*` anywhere in the
+// module satisfied `pinnedBy`, so a stub of the right NAME in an unrelated
+// package vouched for a site it could never see. Package scoping is what
+// `checkQuestionsResolve` next door already does (it resolves inside the
+// ledgered `pkgPath`), and this now matches it.
+//
+// 🔴 THE RESIDUAL, STATED RATHER THAN PAPERED OVER: package scoping kills the
+// wrong-package stub, NOT a gutted one. Measured — replacing
+// TestHasPrintableContentArgumentsAreServerBytes' body with `_ = …` leaves
+// `go test ./...` fully green, and still does, because a static scan cannot see
+// whether a test asserts anything. What it buys is that the delegation now names
+// a guard that at least LIVES where the hazard is; what it does not buy is proof
+// that the guard works. Deleting a named guard's body is visible in review in a
+// way a cross-package name collision is not, and that is the whole of the
+// defence. Do not read `pinnedBy` as evidence the delegated test is effective.
 type saferuneOriginKind int
 
 const (
@@ -79,11 +98,6 @@ const (
 	// row that forgot to say anything is red rather than defaulting to the
 	// reassuring answer.
 	originUnset saferuneOriginKind = iota
-	// originServer means the bytes at THIS site are the server's own, decidable
-	// by reading the enclosing function. No row uses it today — every current
-	// site delegates — and it is kept because a future direct call is the
-	// normal case, not an exotic one.
-	originServer
 	// originDelegated means the argument is the enclosing function's own
 	// parameter, so the origin question belongs to that function's call sites
 	// and is answered by the guard named in pinnedBy.
@@ -97,7 +111,9 @@ const (
 type saferuneRefOrigin struct {
 	kind saferuneOriginKind
 	// pinnedBy is the Test function that answers the origin question for this
-	// site. Required for originDelegated, and checked to exist.
+	// site. Required for originDelegated, and resolved to a declaration in the
+	// site's OWN package — never module-wide; see the 🔴 residual above for
+	// exactly how much that is worth.
 	pinnedBy string
 	// why is the provenance, specific enough to be checkable by reading the
 	// named function — not "it's server data".
@@ -112,8 +128,11 @@ type saferuneRefOrigin struct {
 // in pkg/civitai alone; a ledger keyed on the argument spelling alone lets one
 // classification vouch for every site that happens to use that name. That
 // failure has already been paid for twice here — civitai/cli#557 recorded it
-// while building snippetArgs, and civitai/cli#582 fixed the live instance of it
-// in internal/cmd's bare-identifier ledger.
+// while building snippetArgs, and civitai/cli#582 is OPEN against the live
+// instance of it in internal/cmd's bare-identifier ledger, which is still keyed
+// by argument name on this branch's base. Stated in the present tense
+// deliberately: an earlier draft of this line said #582 "fixed" it, and if that
+// PR is closed unmerged the past tense would cite a fix that never landed.
 //
 // Every entry below was verified by READING the named function and following
 // the value back, not by trusting this file's own prose.
@@ -125,8 +144,9 @@ var saferuneRefs = map[string]saferuneRefOrigin{
 			"MUST NOT BE: internal/cmd routes two deliberately non-server values through safeTerm " +
 			"— `--input` file content and download's mixed-origin target path — both enumerated in " +
 			"saferune's package doc as documented exceptions. The origin question is therefore " +
-			"answered across safeTerm's ~150 call sites by the named guard, which is structural " +
-			"over every one of them",
+			"answered at safeTerm's own call sites by the named guard, which is structural over " +
+			"every one of them. No count is quoted here on purpose: the first draft said ~150 and " +
+			"the guard's own log says 199, and a number nothing asserts on drifts silently",
 	},
 	"internal/genapi:hasPrintableContent:saferune.HasVisibleContent(s)": {
 		kind:     originDelegated,
@@ -163,9 +183,12 @@ const minTestDeclsForPinResolution = 100
 
 // saferuneRef is one reference to the saferune package in a non-test source.
 type saferuneRef struct {
-	key  string
-	pos  string
-	bare bool
+	key string
+	pos string
+	// pkgDir is the package the reference lives in. It is what scopes the
+	// pinnedBy lookup, so it is carried rather than re-derived from the key.
+	pkgDir string
+	bare   bool
 }
 
 func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
@@ -191,12 +214,16 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 			"result from a broken scan means nothing.", len(refs), minSaferuneRefs)
 	}
 
-	testDecls := moduleTestDecls(t)
-	if len(testDecls) < minTestDeclsForPinResolution {
-		t.Fatalf("CONTROL failure, not a finding: indexed only %d Test declarations in the "+
+	testDecls := moduleTestDeclsByPackage(t)
+	total := 0
+	for _, names := range testDecls {
+		total += len(names)
+	}
+	if total < minTestDeclsForPinResolution {
+		t.Fatalf("CONTROL failure, not a finding: indexed only %d Test declarations across the "+
 			"module, want >= %d — the pinnedBy resolver is not reading the tree, and every "+
 			"delegation below would be reported missing for that reason",
-			len(testDecls), minTestDeclsForPinResolution)
+			total, minTestDeclsForPinResolution)
 	}
 
 	seen := map[string]bool{}
@@ -225,14 +252,15 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 				unpinned = append(unpinned, fmt.Sprintf("%s: %s — originDelegated with an "+
 					"empty pinnedBy: the row defers the question and names nobody to answer it",
 					r.pos, r.key))
-			case !testDecls[origin.pinnedBy]:
+			case !testDecls[r.pkgDir][origin.pinnedBy]:
 				unpinned = append(unpinned, fmt.Sprintf("%s: %s — pinnedBy names %s, which no "+
-					"_test.go file in this module declares. RENAMED or DELETED: a delegation to "+
-					"a guard that is not there names a check nobody will go and read",
-					r.pos, r.key, origin.pinnedBy))
+					"_test.go file in %s declares. RENAMED, DELETED, or IN THE WRONG PACKAGE: a "+
+					"delegation is only meaningful if the guard it names can actually see this "+
+					"site, and a guard in another package cannot. This resolver was module-wide "+
+					"in the first draft, which is the name-not-a-relationship state civitai/cli#578 "+
+					"deleted from this repo one commit earlier",
+					r.pos, r.key, origin.pinnedBy, r.pkgDir))
 			}
-		case originServer:
-			// Decidable here; nothing further to resolve.
 		}
 	}
 
@@ -304,14 +332,30 @@ func saferuneRefsInFile(t *testing.T, path string) ([]saferuneRef, error) {
 		return nil, fmt.Errorf("cannot parse %s: %w", path, err)
 	}
 
-	local := ""
+	// 🔴 A SET, NOT A VARIABLE — THE FIRST DRAFT KEPT ONLY THE LAST MATCHING
+	// IMPORT AND AN AUDIT WALKED THROUGH THE GAP. A file may bind this one
+	// package to two names:
+	//
+	//	import (
+	//		sr       "github.com/civitai/cli/internal/saferune"
+	//		saferune "github.com/civitai/cli/internal/saferune"
+	//	)
+	//
+	// With `local` a plain string the loop overwrote it, so every reference
+	// through the losing name was invisible — measured: a planted
+	// `sr.Strip(userFlagValue)` was never seen at all. Neither `gofmt -s` nor
+	// golangci-lint rejects a duplicate import (gofmt only reorders it), so
+	// nothing else in this repo closes that. The doc line above claimed the
+	// local name "is whatever that file chose"; it now handles every name the
+	// file chose.
+	locals := map[string]bool{}
 	for _, imp := range f.Imports {
 		if imp.Path == nil || strings.Trim(imp.Path.Value, `"`) != saferuneImportPath {
 			continue
 		}
 		switch {
 		case imp.Name == nil:
-			local = "saferune"
+			locals["saferune"] = true
 		case imp.Name.Name == ".":
 			// A dot import makes every reference unqualified, so no selector
 			// scan can see it. That is a decision about the class, not an
@@ -323,10 +367,10 @@ func saferuneRefsInFile(t *testing.T, path string) ([]saferuneRef, error) {
 			// A blank import cannot produce a reference; nothing to ledger.
 			continue
 		default:
-			local = imp.Name.Name
+			locals[imp.Name.Name] = true
 		}
 	}
-	if local == "" {
+	if len(locals) == 0 {
 		return nil, nil
 	}
 
@@ -351,17 +395,17 @@ func saferuneRefsInFile(t *testing.T, path string) ([]saferuneRef, error) {
 			if !ok {
 				return true
 			}
-			if sel, ok := ce.Fun.(*ast.SelectorExpr); ok && isIdent(sel.X, local) {
+			if sel, ok := ce.Fun.(*ast.SelectorExpr); ok && isSaferuneQualifier(sel.X, locals) {
 				calls[sel.Pos()] = ce
 			}
 			return true
 		})
 		ast.Inspect(node, func(n ast.Node) bool {
 			sel, ok := n.(*ast.SelectorExpr)
-			if !ok || !isIdent(sel.X, local) {
+			if !ok || !isSaferuneQualifier(sel.X, locals) {
 				return true
 			}
-			rendered := local + "." + sel.Sel.Name
+			rendered := sel.Sel.Name
 			bare := true
 			if ce, isCall := calls[sel.Pos()]; isCall {
 				bare = false
@@ -370,12 +414,12 @@ func saferuneRefsInFile(t *testing.T, path string) ([]saferuneRef, error) {
 			// The key always spells the package as `saferune`, whatever the
 			// file called it: the ledger is about the class, and an alias must
 			// not be able to mint a second identity for one site.
-			key := pkgDir + ":" + enclosing + ":" +
-				"saferune" + strings.TrimPrefix(rendered, local)
+			key := pkgDir + ":" + enclosing + ":saferune." + rendered
 			out = append(out, saferuneRef{
-				key:  key,
-				pos:  fset.Position(sel.Pos()).String(),
-				bare: bare,
+				key:    key,
+				pos:    fset.Position(sel.Pos()).String(),
+				pkgDir: pkgDir,
+				bare:   bare,
 			})
 			return true
 		})
@@ -383,9 +427,11 @@ func saferuneRefsInFile(t *testing.T, path string) ([]saferuneRef, error) {
 	return out, nil
 }
 
-func isIdent(e ast.Expr, name string) bool {
+// isSaferuneQualifier reports whether e is one of the local names this file
+// bound to internal/saferune.
+func isSaferuneQualifier(e ast.Expr, locals map[string]bool) bool {
 	id, ok := e.(*ast.Ident)
-	return ok && id.Name == name
+	return ok && locals[id.Name]
 }
 
 // saferuneFuncKey renders a function's identity including its receiver, so a
@@ -471,23 +517,33 @@ func moduleGoFiles(t *testing.T, tests bool) []string {
 	return out
 }
 
-// moduleTestDecls indexes every `func TestXxx(t *testing.T)` declared anywhere
-// in the module, so a pinnedBy can be resolved rather than trusted.
-func moduleTestDecls(t *testing.T) map[string]bool {
+// moduleTestDeclsByPackage indexes every `func TestXxx(...)` in the module,
+// KEYED BY THE PACKAGE DIRECTORY IT IS DECLARED IN, so a pinnedBy can be
+// resolved against the package whose site it claims to cover rather than
+// against the module as a whole.
+//
+// A package's `_test` variant (package foo_test, same directory) lands under
+// the same directory key on purpose: it can see the same sites and is the same
+// guard from this ledger's point of view.
+func moduleTestDeclsByPackage(t *testing.T) map[string]map[string]bool {
 	t.Helper()
-	out := map[string]bool{}
+	out := map[string]map[string]bool{}
 	fset := token.NewFileSet()
 	for _, path := range moduleGoFiles(t, true) {
 		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			t.Fatalf("CONTROL failure, not a finding: cannot parse %s: %v", path, err)
 		}
+		dir := filepath.ToSlash(filepath.Dir(path))
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
 			if !ok || fd.Recv != nil || !strings.HasPrefix(fd.Name.Name, "Test") {
 				continue
 			}
-			out[fd.Name.Name] = true
+			if out[dir] == nil {
+				out[dir] = map[string]bool{}
+			}
+			out[dir][fd.Name.Name] = true
 		}
 	}
 	return out

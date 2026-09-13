@@ -71,9 +71,11 @@ var hasPrintableContentArgs = map[string]genapiArgOrigin{
 	"dedupeReasons:t": {
 		server: true,
 		why: "t is strings.TrimSpace(e) over an element of dedupeReasons' own `raw []string` " +
-			"parameter. Every caller of dedupeReasons is ledgered below, and all three build raw " +
-			"from a server `errors` array decoded straight off the generation payload; nothing in " +
-			"this package hands it a flag value, an --input file or anything else the user typed",
+			"parameter. Every caller of dedupeReasons is ledgered below — enforced, not asserted: " +
+			"dedupeReasonsCallers is bidirectional and its walk owns package-level and func-literal " +
+			"call sites too, which the first draft of this file missed. All three build raw from a " +
+			"server `errors` array decoded straight off the generation payload; nothing in this " +
+			"package hands it a flag value, an --input file or anything else the user typed",
 	},
 }
 
@@ -105,11 +107,16 @@ var dedupeReasonsCallers = map[string]genapiArgOrigin{
 // mode — finds no call sites, reports nothing unledgered, and passes. A floor
 // makes that state red by construction rather than by luck.
 const (
-	minGenapiSourceFiles         = 5
-	minHasPrintableContentCalls  = 1
-	minDedupeReasonsCallSites    = 3
-	minGenapiParsedFuncsPerScan  = 20
-	genapiSaferuneWrapper        = "hasPrintableContent"
+	minGenapiSourceFiles        = 5
+	minHasPrintableContentCalls = 1
+	minDedupeReasonsCallSites   = 3
+	minGenapiParsedFuncsPerScan = 20
+	genapiSaferuneWrapper       = "hasPrintableContent"
+	// genapiFileLevel owns a call site with no enclosing function — a
+	// package-level initialiser or a func literal at package scope. It is a
+	// real key, not a refusal: such a site CAN be ledgered, and pretending it
+	// cannot is how two of them once sat unledgered behind a green suite.
+	genapiFileLevel              = "<file-level>"
 	genapiReasonDedupeEntryPoint = "dedupeReasons"
 )
 
@@ -151,6 +158,7 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 		files        int
 		funcs        int
 		sites        int
+		flat         int
 		unclassified []string
 		userTyped    []string
 	)
@@ -167,28 +175,48 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 		}
 		files++
 
-		for _, decl := range file.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
+		// THE FLAT WALK — one pass over the whole file node, counting every
+		// matching call wherever it sits. Deliberately built differently from
+		// the attributing walk below so the two can DISAGREE; see the totality
+		// control after the loop.
+		ast.Inspect(file, func(n ast.Node) bool {
+			if fn, ok := n.(*ast.FuncDecl); ok && fn.Name.Name == callee {
+				// The callee's own body, skipped here exactly as below, so the
+				// two counts compare like with like.
+				return false
 			}
-			funcs++
-			// The declaration itself is not a call site, and counting it would
-			// hand the positive control a free hit.
-			if fn.Name.Name == callee {
-				continue
+			if isGenapiCallTo(n, callee) != nil {
+				flat++
 			}
-			ast.Inspect(fn, func(n ast.Node) bool {
-				ce, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				id, ok := ce.Fun.(*ast.Ident)
-				if !ok || id.Name != callee || len(ce.Args) != 1 {
+			return true
+		})
+
+		// THE ATTRIBUTING WALK. It covers every top-level declaration, not only
+		// FuncDecls.
+		//
+		// 🔴 IT WALKED FuncDecls ONLY, AND THAT WAS A DEMONSTRATED SURVIVED
+		// MUTANT AGAINST THE EXACT RELATIONSHIP THIS TEST PINS. Adding
+		//
+		//	var untrustedReasons = dedupeReasons([]string{"…"})
+		//	var reasonsFor = func(raw []string) []string { return dedupeReasons(raw) }
+		//
+		// to this package left `go test ./...` FULLY GREEN, with this test still
+		// logging "scanned 3 dedupeReasons(...) call site(s)" — two unledgered
+		// callers of the function whose caller set it exists to hold. A call in a
+		// package-level initialiser or in a func literal at package scope has no
+		// enclosing FuncDecl, so the old walk could not see it AND the `sites`
+		// floor could not either: both were computed from the same restricted
+		// traversal, which is a positive control that shares the step it is
+		// supposed to be checking.
+		for _, decl := range genapiOwners(file, callee, &funcs) {
+			enclosing := decl.owner
+			ast.Inspect(decl.node, func(n ast.Node) bool {
+				ce := isGenapiCallTo(n, callee)
+				if ce == nil {
 					return true
 				}
 				sites++
-				key := genapiFuncKey(fn)
+				key := enclosing
 				if byArg {
 					key += ":" + genapiRenderExpr(ce.Args[0])
 				}
@@ -199,12 +227,12 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 					unclassified = append(unclassified,
 						fmt.Sprintf("%s: %s(%s) in %s — key %q",
 							fset.Position(ce.Lparen), callee, genapiRenderExpr(ce.Args[0]),
-							genapiFuncKey(fn), key))
+							enclosing, key))
 				case !origin.server:
 					userTyped = append(userTyped,
 						fmt.Sprintf("%s: %s(%s) in %s — %s",
 							fset.Position(ce.Lparen), callee, genapiRenderExpr(ce.Args[0]),
-							genapiFuncKey(fn), origin.why))
+							enclosing, origin.why))
 				}
 				return true
 			})
@@ -222,6 +250,27 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 		t.Fatalf("CONTROL failure, not a finding: found %d %s(...) call site(s), want >= %d. "+
 			"The scan is broken, and a clean result from a broken scan means nothing.",
 			sites, callee, minSites)
+	}
+
+	// 🔴 THE TOTALITY CONTROL — A SECOND WALK, BUILT DIFFERENTLY, OVER THE SAME
+	// QUESTION. The floor above cannot see a call the attributing walk never
+	// reached, because the floor counts what that walk found: a control that
+	// shares the step it is checking is not a control. `flat` descends the whole
+	// file node in one pass instead of iterating declarations, so a hole in the
+	// per-declaration attribution surfaces as a DISAGREEMENT between two
+	// traversals rather than as a serene number.
+	//
+	// It does not fire today and is not meant to. It exists so that a future
+	// edit narrowing the attributing walk — precisely the defect the first draft
+	// of this file shipped — is red at this line instead of quietly counting a
+	// subset. internal/cmd/safeterm_userinput_test.go carries the same control
+	// for the same reason; this is that shape, not a new idea.
+	if flat != sites {
+		t.Fatalf("CONTROL failure, not a finding: %d %s(...) call(s) exist in this package but the "+
+			"attributing walk reached only %d. The difference is a call no declaration owns — and a "+
+			"site with no owner can carry no ledger row, so every verdict below is about a subset "+
+			"nobody declared. Widen the attributing walk before trusting either half of this test.",
+			flat, callee, sites)
 	}
 
 	if len(unclassified) > 0 {
@@ -299,4 +348,79 @@ func genapiRenderExpr(e ast.Expr) string {
 	default:
 		return fmt.Sprintf("<unrecognised %T>", e)
 	}
+}
+
+// isGenapiCallTo returns the call when n is a one-argument call to callee, and
+// nil otherwise.
+//
+// ONE spelling of the match, used by BOTH walks above. Two copies could
+// disagree, and a disagreement between them would surface as the totality
+// control firing — i.e. as a finding about the code under audit rather than
+// about the instrument, which is the most expensive kind of wrong answer.
+func isGenapiCallTo(n ast.Node, callee string) *ast.CallExpr {
+	ce, ok := n.(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+	id, ok := ce.Fun.(*ast.Ident)
+	if !ok || id.Name != callee || len(ce.Args) != 1 {
+		return nil
+	}
+	return ce
+}
+
+// genapiOwner pairs a syntax node with the key that OWNS any call inside it.
+type genapiOwner struct {
+	node  ast.Node
+	owner string
+}
+
+// genapiOwners splits a file into the units a ledger row can name, so that
+// every call site has exactly one owner and no two sites share one.
+//
+// 🔴 A PACKAGE-LEVEL OWNER IS THE DECLARED NAME, NOT THE BARE SENTINEL, AND THE
+// FIRST FIX FOR THE FuncDecl-ONLY WALK GOT THIS WRONG. Attributing every
+// file-level call to the literal string "<file-level>" made the two callers in
+// the reproducing mutant collapse onto ONE key — so a single row would have
+// vouched for both, which is the "one note vouches for two sites" defect the
+// per-function keying exists to prevent, reintroduced one level down while
+// fixing something else. Each ValueSpec is therefore its own owner, named after
+// the variable it initialises.
+//
+// funcs is incremented per FuncDecl seen, for the caller's positive control.
+func genapiOwners(file *ast.File, callee string, funcs *int) []genapiOwner {
+	var out []genapiOwner
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			*funcs++
+			// The callee's own declaration is not a call site of itself.
+			// Skipped in BOTH walks, so the totality control compares like
+			// with like.
+			if d.Name.Name == callee {
+				continue
+			}
+			out = append(out, genapiOwner{node: d, owner: genapiFuncKey(d)})
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok || len(vs.Names) == 0 {
+					// A type or import spec cannot hold a call to callee, but
+					// it is still walked under the bare sentinel rather than
+					// dropped: a unit this function declines to name is a unit
+					// the totality control will report as missing, which is the
+					// loud failure and the intended one.
+					out = append(out, genapiOwner{node: spec, owner: genapiFileLevel})
+					continue
+				}
+				out = append(out, genapiOwner{
+					node:  vs,
+					owner: genapiFileLevel + ":" + vs.Names[0].Name,
+				})
+			}
+		default:
+			out = append(out, genapiOwner{node: decl, owner: genapiFileLevel})
+		}
+	}
+	return out
 }

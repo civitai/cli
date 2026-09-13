@@ -17,7 +17,7 @@ directions until round 4: the ledger held four files, two of which this header
 did not name, and none of the `pkg/civitai` or `cmd/civitai` ones.
 
 Born split: written straight into `claudedocs/decisions/` — AGENTS.md had 472
-bytes of headroom when this was added, and the body is five decisions, three
+bytes of headroom when this was added, and the body is six decisions, four
 tables and the enumerated residuals. See `bornSplitItems` in
 `agents_split_preserved_test.go`.
 
@@ -431,12 +431,44 @@ each row naming the wire field its array is built from — a **ledger, not a
 count**, because a count of four would have been satisfied by any four
 functions at all.
 
+**Why a `genapi` guard is described here but is NOT in item 38's file ledger** —
+an inconsistency a round-0 audit named, resolved rather than left implicit. What
+item 38 owns is the DELEGATION: `saferune_arg_origins_test.go` is item 38's guard
+(it covers `snippet`, and `saferune_callers_ledger_test.go` is already item 38's),
+and a delegation is unreadable without saying where it points. The file it points
+*at* answers for `internal/genapi`'s failure-reason path, which is item 13's seam,
+so it is not in `item38CommentedFiles` and this header does not name it. The rule,
+stated so the next reader does not have to re-derive it: **item 38 owns the
+pointer; the item whose seam the target guards owns the target.**
+
 The scan is structural rather than spelled, which is the property that decides
 whether it can be walked around: the saferune import's **local name is
 resolved** (so `import sr ".../saferune"` is caught), a dot import is a hard
 refusal (it would make every reference unqualified and the scan blind), and a
 **bare, non-call reference** — `f := saferune.Strip` — is reported separately
-rather than ignored, because it escapes the argument question entirely.
+rather than ignored, because it escapes the argument question entirely. The
+import scan collects EVERY local name the file binds to the package, not just the
+last: a file may bind one import twice under two names, `gofmt` and
+golangci-lint both accept it, and the first draft kept only one — an audit
+planted `sr.Strip(userFlagValue)` beside a `saferune.` alias and the guard never
+saw it.
+
+🔴 **Two of this section's own guards shipped defects that a green suite could
+not see, and both were SURVIVED MUTANTS against the exact relationship they
+pin.** (a) The genapi walk iterated `FuncDecl`s only, so two `dedupeReasons`
+callers added as package-level initialisers left `go test ./...` fully green with
+the ledger still reporting three call sites — falsifying its own row's *"every
+caller is ledgered below"*. Fixed by attributing package-level declarations to
+the variable they initialise (not to one shared `<file-level>` key, which the
+first fix did and which would have let one row vouch for two sites), plus a
+TOTALITY CONTROL: a second traversal, built differently, whose disagreement with
+the first is the failure. (b) `pinnedBy` resolved a Test name MODULE-WIDE, so a
+stub of the right name in any package satisfied it — the name-not-a-relationship
+state `3457c5d` (civitai/cli#578) had deleted from this repo one commit earlier,
+reintroduced in the file that cites it. Now resolved inside the site's own
+package, as `checkQuestionsResolve` already did. **Residual, stated:** package
+scoping does not catch a GUTTED test in the right package, and no static scan
+can; `pinnedBy` is not evidence the delegated guard is effective.
 
 ## Residuals, enumerated
 
