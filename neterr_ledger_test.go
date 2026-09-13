@@ -5,7 +5,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -123,7 +122,7 @@ var netErrorAsLedger = []struct {
 }
 
 func TestNetErrorAsSitesMatchTheLedger(t *testing.T) {
-	files := moduleGoFiles(t)
+	files := moduleGoFiles(t, false)
 	// Positive control on the WALKER: this module has ~110 non-test .go files.
 	// A short list means the walk is looking at the wrong tree and every
 	// assertion below would pass vacuously — the "harness wired to nothing"
@@ -360,36 +359,6 @@ func gofmtSimplify(t *testing.T, src []byte) []byte {
 	if len(out) == 0 {
 		t.Fatal("gofmt -s produced empty output — the control is measuring nothing")
 	}
-	return out
-}
-
-// moduleGoFiles returns every non-test .go file in the module, relative to the
-// module root, sorted. Hidden dirs, testdata and the scaffold's template trees
-// are excluded; nothing else is.
-func moduleGoFiles(t *testing.T) []string {
-	t.Helper()
-	var out []string
-	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		name := d.Name()
-		if d.IsDir() {
-			if path != "." && (strings.HasPrefix(name, ".") || name == "testdata" || name == "node_modules" || name == "dist" || name == "bin") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			return nil
-		}
-		out = append(out, path)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk module: %v", err)
-	}
-	sort.Strings(out)
 	return out
 }
 

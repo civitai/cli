@@ -8,7 +8,8 @@
 Guards: `pkg/civitai/read_repair_test.go`, `pkg/civitai/raw_doc_ledger_test.go`,
 `internal/cmd/read_json_note_test.go`, `internal/cmd/read_help_test.go`,
 `internal/cmd/read_r2_test.go`, `cmd/civitai/read_error_stderr_test.go`,
-`saferune_callers_ledger_test.go`, `pkg/civitai/snippet_args_ledger_test.go`.
+`saferune_callers_ledger_test.go`, `pkg/civitai/snippet_args_ledger_test.go`,
+`saferune_arg_origins_test.go`.
 This list and `item38CommentedFiles` — the set whose comments are checked for
 dangling test citations — are pinned equal by
 `TestItem38FileLedgerMatchesTheDecisionHeader`. They disagreed in both
@@ -369,6 +370,73 @@ number. `TestSaferuneCallersAreLedgered` is the bidirectional ledger: it fails
 when the importer set grows or shrinks, requires both texts to name every
 ledgered call site, and derives the count WORD from the ledger's own length so
 the numeral cannot drift from the membership.
+
+## 6. A CLOSED ISSUE IS NOT A DISCHARGED CONDITION — #542's second clause
+
+`civitai/cli#542` asked for a guard that fails when "`snippet()` **or any
+`saferune.*` call site outside `internal/cmd`**" gains a caller whose argument
+is not server-supplied, **or when the caller set changes at all,
+bidirectionally**. It was CLOSED by `civitai/cli#557`, which shipped
+`pkg/civitai`'s `snippetArgs` — the right guard for the first clause, keyed per
+enclosing function, bidirectional. It enumerates `snippet(` call sites in
+`pkg/civitai` and nothing else, so the words "or any `saferune.*` call site
+outside `internal/cmd`" were never covered by anything.
+
+Measured when this section was written: `saferune.*` appears at **three** places
+in the module's non-test sources — `internal/cmd/safeterm.go` (`safeTerm`),
+`internal/genapi/status.go` (`hasPrintableContent`) and `pkg/civitai/read.go`
+(`snippet`). `snippetArgs` sees one of them. The gap sat behind a green suite,
+a lint run and a **closed issue** for a full arc, which is the durable part: a
+closed issue reads as a discharged condition, and nothing in this repository was
+asserting the difference.
+
+**All three sites delegate, and that is the finding rather than a shortcut.**
+Every one is a one-line wrapper whose argument is the wrapper's own parameter,
+so the bytes' origin is not decidable at the `saferune` call site at all — it is
+decided one level out. A ledger that only asked "are these server bytes?" would
+answer "cannot tell here" three times out of three, which is how a guard ends up
+reading as coverage while providing none. So `saferuneRefs`
+(`saferune_arg_origins_test.go`) records `originDelegated` plus the Test that
+answers the question at the wrapper's own call sites, and **resolves that name
+to a real declaration** before believing it — the move
+`checkQuestionsResolve` already makes next door, for the same reason.
+
+The delegations, and what each buys:
+
+- `internal/cmd:safeTerm` → `TestSafeTermIsNeverAppliedToUserTypedInput`. This
+  site **must not** be classified server-or-user here: `internal/cmd`
+  deliberately routes two non-server values through `safeTerm` — `--input` file
+  content and `download`'s mixed-origin target path — both named in
+  `saferune`'s package doc as documented exceptions.
+- `pkg/civitai:snippet` → `TestSnippetArgumentsAreAllServerBytes`, i.e. #557's
+  own ledger, now reachable from the module root instead of being a fact about
+  one package's test directory.
+- `internal/genapi:hasPrintableContent` →
+  `TestHasPrintableContentArgumentsAreServerBytes`, which did not exist: this is
+  the hole. `internal/genapi/saferune_origins_test.go` is `snippetArgs`' sibling
+  for it, and it pins **two** hops, because `hasPrintableContent`'s only caller
+  is `dedupeReasons` and `dedupeReasons`' callers are where the wire fields are
+  actually read. Pinning only the first hop would be a description ("the
+  argument is server bytes") wider than its body ("the argument is whatever
+  `dedupeReasons` passes").
+
+🔴 **The second hop found a live stale claim on its first run.** `dedupeReasons`'
+doc comment read *"The four callers are the two step types' `failureReasons` and
+the two workflow-level `FailureReasons`."* There is **one** step-type
+`failureReasons` and there are **three** callers; no `ListedStep.failureReasons`
+has ever existed, because `ListedWorkflow.FailureReasons` reads `steps[].errors`
+inline. A comment is a claim, and that one had been green since it was written.
+`TestDedupeReasonsCallersAreLedgered` now holds the set bidirectionally, with
+each row naming the wire field its array is built from — a **ledger, not a
+count**, because a count of four would have been satisfied by any four
+functions at all.
+
+The scan is structural rather than spelled, which is the property that decides
+whether it can be walked around: the saferune import's **local name is
+resolved** (so `import sr ".../saferune"` is caught), a dot import is a hard
+refusal (it would make every reference unqualified and the scan blind), and a
+**bare, non-call reference** — `f := saferune.Strip` — is reported separately
+rather than ignored, because it escapes the argument question entirely.
 
 ## Residuals, enumerated
 
