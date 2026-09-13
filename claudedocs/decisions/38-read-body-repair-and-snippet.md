@@ -396,7 +396,8 @@ so the bytes' origin is not decidable at the `saferune` call site at all — it 
 decided one level out. A ledger that only asked "are these server bytes?" would
 answer "cannot tell here" three times out of three, which is how a guard ends up
 reading as coverage while providing none. So `saferuneRefs`
-(`saferune_arg_origins_test.go`) records `originDelegated` plus the Test that
+(`saferune_arg_origins_test.go`) records `originDelegated`, a reference COUNT,
+plus the Test that
 answers the question at the wrapper's own call sites, and **resolves that name
 to a real declaration** before believing it — the move
 `checkQuestionsResolve` already makes next door, for the same reason.
@@ -452,6 +453,42 @@ last: a file may bind one import twice under two names, `gofmt` and
 golangci-lint both accept it, and the first draft kept only one — an audit
 planted `sr.Strip(userFlagValue)` beside a `saferune.` alias and the guard never
 saw it.
+
+🔴 **THE MODULE-ROOT GUARD WAS CUT IN HALF AFTER FOUR AUDIT ROUNDS, AND THE
+MEASUREMENT THAT JUSTIFIED THE CUT IS THE DURABLE PART.** Its first form keyed
+every reference by package, enclosing declaration and rendered argument, so that
+no two sites could share a row. Three rounds found that property broken three
+times — `vs.Names[0]` collapsing a multi-name spec; a refusal encoded in a key's
+spelling, which a row simply spelled; a blank-identifier flag wired into one
+branch, which `func _()` and `func init()` walked past — plus an unnameable
+argument rendering by AST *type* so two expressions shared a key, and a control
+that masked the findings it guarded.
+
+Then the question nobody had asked: **has the thing that machinery defends
+against ever happened?** Measured over the repository's whole history: **every
+package has had exactly ONE `saferune` call site, always.** The set has only ever
+grown by *package* (two to three, when `snippet` arrived), and that direction was
+already covered bidirectionally by `TestSaferuneCallersAreLedgered` before this
+file existed. Not one of the colliding shapes those rounds fixed has ever
+occurred here — 741 lines that found **zero** defects in this repository's code
+and **nine** in themselves.
+
+The identity machinery is gone. What replaces it is a **COUNT**: a row records
+how many references it covers, so a package that gains a second call site fails
+because 2 ≠ 1 and the failure names every position. A count cannot collide with
+itself, cannot be out-spelled, and needs no owner key, no argument rendering and
+no uniqueness proof. Verified: every shape that beat the old machinery —
+`func _()` ×2, `func init()` ×2, `var _ =` ×2, a multi-name spec, two
+`BinaryExpr` arguments, an aliased import — now dies on that one comparison.
+480 lines, down from 741.
+
+**The general lesson, which is not about this file:** a guard that keeps failing
+its own property is evidence about the property's *cost*, not only about the
+fixes. Ask what it defends against and whether that has ever happened, before
+paying for the fourth attempt. `/audit-pr`'s round 0 asked exactly this on day
+one — *"the half that found something is 302 lines, the half that found nothing
+is 494"* — and three rounds of findings landed in the half it named before anyone
+acted on it.
 
 🔴 **Two of this section's own guards shipped defects that a green suite could
 not see, and both were SURVIVED MUTANTS against the exact relationship they
