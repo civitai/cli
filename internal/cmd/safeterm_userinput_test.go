@@ -115,11 +115,17 @@ var bareIdentArgs = map[string]string{
 //
 // 🔴 THIS IS A LEDGER, NOT A FILE EXEMPTION, AND THE DIFFERENCE IS THE WHOLE
 // POINT. The obvious fix for the same problem is to allowlist the ARGUMENT NAME
-// in bareIdentArgs — civitai/cli#554 proposed exactly that, with `"s"`. That is
-// wrong in a way that is invisible: `s` is the most common local name in Go, so
-// one entry blinds this harness in all ~67 files at once. Measured on that
-// branch: `s := userTypedPrompt; … safeTerm(s)` injected into images.go SURVIVED,
-// while the identical injection named `zzUnknownIdent` was KILLED.
+// in bareIdentArgs — civitai/cli#554 proposed exactly that, with `"s"`. Measured
+// on that branch: `s := userTypedPrompt; … safeTerm(s)` injected into images.go
+// SURVIVED, while the identical injection named `zzUnknownIdent` was KILLED.
+//
+// ⚠ THE MECHANISM THAT MADE IT INVISIBLE IS GONE; THE CONCLUSION IS NOT. That
+// injection survived because bareIdentArgs was keyed by the bare NAME across the
+// package, so one `"s"` blinded the harness everywhere — this paragraph used to
+// say "in all ~67 files at once", and civitai/cli#575 R5 made that false by
+// re-keying to `enclosingFunction::argument`. A row now blinds exactly one site.
+// What still holds is why composers are a LEDGER: a file-wide exemption would
+// pass every future function added to safeterm.go without anyone naming it.
 //
 // Keyed by enclosing function rather than by file so that adding a NEW function
 // to safeterm.go does not silently inherit the pass — a new composer has to be
@@ -300,9 +306,27 @@ func safeTermFuncKey(fd *ast.FuncDecl) string {
 // safeTerm(<short name>) anywhere in internal/cmd arrived pre-approved by a
 // sentence written about a different function.
 //
-// MEASURED both ways: a bare safeTerm(w) planted over the USER-TYPED prompt in
-// printGenerateQuote SURVIVES the name-keyed ledger at 3457c5d and is KILLED and
-// NAMED here.
+// MEASURED both ways, with a REACHABLE plant at a site that has no dedicated
+// guard of its own: `w := d.Name; … safeTerm(w)` in printAppDetail (apps.go) —
+// `w` being ledgered in four OTHER functions — is GREEN across the whole package
+// at 3457c5d and is KILLED and NAMED here (apps.go:372:40).
+//
+// 🔴 THE SITE MATTERS, AND THE FIRST DEMONSTRATION PICKED A BAD ONE. It planted
+// into printGenerateQuote inside an `if false` block. That is green at base and
+// red here too, so the claim was literally true — but printGenerateQuote is the
+// MOST-guarded function in this package for exactly this hazard
+// (TestGenerateDryRun_DoesNotEchoTheUncheckedPrompt, TestGoldenSpendCopy and the
+// tabwriter ledger all watch it), and the `if false` dodged their runtime reach.
+// A reader would have concluded nothing else catches this, which is false there
+// and true at printAppDetail. Pick the unguarded site, and make the plant
+// reachable.
+//
+// 🔴 AND THE ROW COUNT IS NOT A SITE COUNT. 35 rows govern 41 bare-identifier
+// call sites: six rows cover two sites each (downloadOne::target,
+// presentTargetSatisfies::target, printReattach::workflowID,
+// printSubmitted::workflowID, waitAndCollect::workflowID, writePart::partPath).
+// A row is a claim about one (function, name) PAIR — not about one call site,
+// which an earlier draft of this comment said.
 func bareIdentKey(s safeTermSite) string { return s.enclosing + "::" + s.arg }
 
 // classifyBareIdents is the unclassified half of the guard, as a pure function of
@@ -396,37 +420,6 @@ func TestBareIdentLedgerIsKeyedPerFunction(t *testing.T) {
 	}
 }
 
-// TestBareIdentLedgerCoversAMultiFunctionName proves the premise the per-function
-// keying rests on is still TRUE of this package: at least one argument name really
-// is used by more than one function. If that stopped being so, the keying would
-// still be correct but this ledger's extra rows would be unmotivated, and a future
-// author would be right to ask why.
-func TestBareIdentLedgerCoversAMultiFunctionName(t *testing.T) {
-	byName := map[string][]string{}
-	for key := range bareIdentArgs {
-		i := strings.LastIndex(key, "::")
-		if i < 0 {
-			t.Errorf("bareIdentArgs key %q is not `enclosingFunction::argument`. The name alone is not an "+
-				"identity (civitai/cli#575 R5).", key)
-			continue
-		}
-		byName[key[i+2:]] = append(byName[key[i+2:]], key[:i])
-	}
-	shared := 0
-	for name, fns := range byName {
-		if len(fns) > 1 {
-			shared++
-			t.Logf("%-12s is a bare safeTerm argument in %d functions: %v", name, len(fns), fns)
-		}
-	}
-	if shared == 0 {
-		t.Errorf("no argument name is shared by two functions, so this ledger's per-function keying is " +
-			"currently unmotivated by the tree. It was introduced because `w` named four distinct values " +
-			"and `k` two (civitai/cli#575 R5); if that is genuinely no longer true, say so here rather " +
-			"than leaving the rows looking arbitrary.")
-	}
-}
-
 func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 	sites := scanSafeTermCallSites(t)
 	var bad []string
@@ -464,6 +457,25 @@ func TestSafeTermIsNeverAppliedToUserTypedInput(t *testing.T) {
 			t.Errorf("bareIdentArgs classifies %q, which is no longer a bare safeTerm argument in that "+
 				"function. A stale note reads as coverage; delete it, or fix the key if the function was "+
 				"renamed. Keys are `enclosingFunction::argument`.", key)
+		}
+	}
+	// 🔴 LOGGED, NOT ASSERTED. An earlier draft made this a test
+	// (TestBareIdentLedgerCoversAMultiFunctionName) that failed when NO name was
+	// shared. That is an invariant guard: losing every shared name is not a
+	// defect, no mutant kills it alone, and both its arms were already covered —
+	// the `::` arm by the SHRANK loop above, the rest by
+	// TestBareIdentLedgerIsKeyedPerFunction. Deleted; the numbers are worth
+	// printing, which is a different thing from being worth asserting.
+	byName := map[string][]string{}
+	for key := range bareIdentArgs {
+		if i := strings.LastIndex(key, "::"); i >= 0 {
+			byName[key[i+2:]] = append(byName[key[i+2:]], key[:i])
+		}
+	}
+	for _, name := range twSortedKeys(byName) {
+		if fns := byName[name]; len(fns) > 1 {
+			t.Logf("%-12s is a bare safeTerm argument in %d functions: %v — one row each, since "+
+				"civitai/cli#575 R5", name, len(fns), fns)
 		}
 	}
 	t.Logf("scanned %d safeTerm call site(s); %d forbidden shapes and %d bare-identifier origins are pinned",

@@ -1868,22 +1868,18 @@ func printGenerateQuote(out, errw io.Writer, built *resolvedGraph, o generateOpt
 	if built.checkpoint != "" {
 		fmt.Fprintf(tw, "Checkpoint:\t%s%s\n", safeTermSingle(built.checkpoint), safeTermSingle(built.checkpointNote))
 	}
-	// 🔴 NOT `l`. The bare-identifier half of safeterm_userinput_test.go's ledger
-	// is keyed by the argument NAME across the WHOLE package, so classifying a
-	// one-letter loop variable allowlists every other safeTerm(l) in internal/cmd
-	// — the same defect civitai/cli#554 proposed for `s` and #569 refused.
-	// Measured both ways before renaming: with "l" in bareIdentArgs a planted
-	// safeTerm(l) over the USER-TYPED prompt SURVIVES; with this name it is killed
-	// and named. A distinctive name is what keeps the ledger entry about THIS value.
+	// The name is spelled out rather than `l` because safeterm_userinput_test.go's
+	// bare-identifier ledger reads better when a row's key says what the value is.
 	//
-	// ⚠ THAT IS THE RULE, NOT A DESCRIPTION OF THE MAP — do not read it as one.
-	// bareIdentArgs holds FIVE one-letter keys today (`w`, `r`, `k`, `t`, `h` of
-	// 17 — re-derived against this tree after #572 merged and added `partPath`; the
-	// figure was 16 when first written and a merge staled it), each a live allowlist of that name at every bare-ident safeTerm site in
-	// the package. They are pre-existing and are NOT fixed here: renaming them
-	// touches files other work is in. Recorded as R5 on civitai/cli#575, with the
-	// measurement and a closing condition, so the next reader finds an open
-	// residual rather than a rule this comment implies is enforced.
+	// 🔴 THIS COMMENT USED TO STATE A HAZARD THAT IS NOW CLOSED, AND SAYING SO IS
+	// THE POINT OF THE RETRACTION. It read: the ledger is keyed by the argument
+	// NAME across the whole package, so a one-letter key allowlists that name at
+	// every bare-ident safeTerm site; five such keys exist; recorded as an open
+	// residual on civitai/cli#575 R5. Every clause of that is false since R5
+	// closed — the ledger is keyed `enclosingFunction::argument`, so no key is
+	// package-wide and a short name allowlists exactly one site. The rule the
+	// comment was really about survives in one line: a row should be a claim about
+	// ONE function's value, which is now enforced rather than requested.
 	for _, loraLabel := range built.loras {
 		fmt.Fprintf(tw, "LoRA:\t%s\n", safeTermSingle(loraLabel))
 	}
