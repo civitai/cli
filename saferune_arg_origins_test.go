@@ -128,11 +128,18 @@ type saferuneRefOrigin struct {
 // in pkg/civitai alone; a ledger keyed on the argument spelling alone lets one
 // classification vouch for every site that happens to use that name. That
 // failure has already been paid for twice here — civitai/cli#557 recorded it
-// while building snippetArgs, and civitai/cli#582 is OPEN against the live
-// instance of it in internal/cmd's bare-identifier ledger, which is still keyed
-// by argument name on this branch's base. Stated in the present tense
-// deliberately: an earlier draft of this line said #582 "fixed" it, and if that
-// PR is closed unmerged the past tense would cite a fix that never landed.
+// while building snippetArgs, and civitai/cli#582 fixed the live instance of it
+// in internal/cmd's bare-identifier ledger — `bareIdentKey` is now per function,
+// not per argument name.
+//
+// 🔴 THIS LINE HAS BEEN WRONG IN BOTH DIRECTIONS WITHIN ONE HOUR, WHICH IS THE
+// ARGUMENT AGAINST TIMING CLAIMS IN SOURCE. It first said #582 "fixed" it while
+// #582 was open; an audit caught that, and the correction to "is OPEN" was true
+// for SIXTEEN MINUTES before #582 merged (`095f4ac`), at which point the
+// correction was the false one. The tense is now past because the merge is a
+// fact that cannot un-happen — unlike "is open", which was always going to
+// expire. Do not restate a sibling PR's LIFECYCLE here; state what its merged
+// code does, or say nothing.
 //
 // Every entry below was verified by READING the named function and following
 // the value back, not by trusting this file's own prose.
@@ -145,8 +152,9 @@ var saferuneRefs = map[string]saferuneRefOrigin{
 			"— `--input` file content and download's mixed-origin target path — both enumerated in " +
 			"saferune's package doc as documented exceptions. The origin question is therefore " +
 			"answered at safeTerm's own call sites by the named guard, which is structural over " +
-			"every one of them. No count is quoted here on purpose: the first draft said ~150 and " +
-			"the guard's own log says 199, and a number nothing asserts on drifts silently",
+			"every one of them. No count is quoted here: nothing asserts on one, so it drifts " +
+			"silently — an earlier draft quoted a figure that was already wrong, and the draft " +
+			"after it disclaimed counts in a sentence containing two",
 	},
 	"internal/genapi:hasPrintableContent:saferune.HasVisibleContent(s)": {
 		kind:     originDelegated,
@@ -189,7 +197,66 @@ type saferuneRef struct {
 	// pinnedBy lookup, so it is carried rather than re-derived from the key.
 	pkgDir string
 	bare   bool
+	// unowned marks a reference whose enclosing declaration is assigned to the
+	// blank identifier, so no name can own its row. Carried as a FLAG, never
+	// inferred from the key: the sibling guard in internal/genapi tried the
+	// key-spelling version first and a row spelling it walked past.
+	unowned bool
 }
+
+// saferuneUnit pairs a declaration with the key that owns references inside it.
+type saferuneUnit struct {
+	node  ast.Node
+	owner string
+	blank bool
+}
+
+// saferuneOwners splits a file into units a ledger row can name.
+//
+// 🔴 EVERY NON-FUNCTION DECLARATION USED TO COLLAPSE ONTO THE LITERAL STRING
+// "<file-level>", SO TWO OF THEM SHARED ONE ROW. Demonstrated in the sibling
+// guard in internal/genapi, where two `var _ = dedupeReasons(…)` declarations
+// keyed identically and a single row covered both. This file had the same
+// defect and the same fix: one owner per value, paired by index, and the blank
+// identifier refused structurally rather than by the key's spelling.
+func saferuneOwners(f *ast.File) []saferuneUnit {
+	var out []saferuneUnit
+	for _, decl := range f.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			out = append(out, saferuneUnit{node: d, owner: saferuneFuncKey(d)})
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				vs, ok := spec.(*ast.ValueSpec)
+				if !ok || len(vs.Names) == 0 {
+					out = append(out, saferuneUnit{node: spec, owner: saferuneFileLevel})
+					continue
+				}
+				if len(vs.Names) == len(vs.Values) {
+					for i, name := range vs.Names {
+						out = append(out, saferuneUnit{
+							node:  vs.Values[i],
+							owner: saferuneFileLevel + ":" + name.Name,
+							blank: name.Name == "_",
+						})
+					}
+					continue
+				}
+				out = append(out, saferuneUnit{
+					node:  vs,
+					owner: saferuneFileLevel + ":" + vs.Names[0].Name,
+					blank: vs.Names[0].Name == "_",
+				})
+			}
+		default:
+			out = append(out, saferuneUnit{node: decl, owner: saferuneFileLevel})
+		}
+	}
+	return out
+}
+
+// saferuneFileLevel owns a reference with no enclosing function.
+const saferuneFileLevel = "<file-level>"
 
 func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 	files := moduleGoFiles(t, false)
@@ -225,10 +292,36 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 			"delegation below would be reported missing for that reason",
 			total, minTestDeclsForPinResolution)
 	}
+	// 🔴 THE FLOOR ABOVE STOPPED BRACKETING THE QUANTITY THE VERDICT USES WHEN
+	// THE LOOKUP WENT PER-PACKAGE, AND AN AUDIT MUTANT PROVED IT. Re-keying the
+	// index by ABSOLUTE directory leaves the total untouched — the floor passes
+	// — while every delegation below is reported as "no _test.go file in <pkg>
+	// declares it": a red for the wrong reason, which is the shape that gets a
+	// real guard deleted. A total cannot control a per-package lookup. This
+	// does: every package a row delegates INTO must have resolved some tests.
+	// checkQuestionsResolve next door carries the same per-package control; this
+	// is what "now matches it" actually requires.
+	for _, r := range refs {
+		origin, known := saferuneRefs[r.key]
+		if !known || origin.kind != originDelegated {
+			continue
+		}
+		if len(testDecls[r.pkgDir]) == 0 {
+			t.Fatalf("CONTROL failure, not a finding: the resolver indexed %d Test declaration(s) "+
+				"in %s, which a row delegates into. Every delegation into that package would be "+
+				"reported missing, and the module-wide floor of %d cannot see it because the total "+
+				"does not move.", len(testDecls[r.pkgDir]), r.pkgDir, minTestDeclsForPinResolution)
+		}
+	}
 
 	seen := map[string]bool{}
-	var unledgered, userTyped, unpinned []string
+	var unledgered, userTyped, unpinned, unownable []string
 	for _, r := range refs {
+		if r.unowned {
+			// Before the ledger, never against it.
+			unownable = append(unownable, fmt.Sprintf("%s: %s", r.pos, r.key))
+			continue
+		}
 		seen[r.key] = true
 		origin, known := saferuneRefs[r.key]
 		if !known {
@@ -262,6 +355,15 @@ func TestSaferuneReferenceArgumentsAreLedgered(t *testing.T) {
 					r.pos, r.key, origin.pinnedBy, r.pkgDir))
 			}
 		}
+	}
+
+	if len(unownable) > 0 {
+		sort.Strings(unownable)
+		t.Errorf("%d saferune reference(s) sit in a declaration assigned to the blank "+
+			"identifier:\n  %s\n\n"+
+			"`_` cannot own a ledger row — two `var _ = saferune.Strip(…)` declarations are "+
+			"indistinguishable, so one row would vouch for both. Name the variable.",
+			len(unownable), strings.Join(unownable, "\n  "))
 	}
 
 	if len(unledgered) > 0 {
@@ -376,13 +478,8 @@ func saferuneRefsInFile(t *testing.T, path string) ([]saferuneRef, error) {
 
 	pkgDir := filepath.ToSlash(filepath.Dir(path))
 	var out []saferuneRef
-	for _, decl := range f.Decls {
-		enclosing := "<file-level>"
-		var node ast.Node = decl
-		if fd, ok := decl.(*ast.FuncDecl); ok {
-			enclosing = saferuneFuncKey(fd)
-			node = fd
-		}
+	for _, unit := range saferuneOwners(f) {
+		enclosing, node := unit.owner, unit.node
 
 		// Two passes over the same declaration: the calls first, so a selector
 		// that is a call's Fun is not double-counted as a bare reference. A
@@ -416,10 +513,11 @@ func saferuneRefsInFile(t *testing.T, path string) ([]saferuneRef, error) {
 			// not be able to mint a second identity for one site.
 			key := pkgDir + ":" + enclosing + ":saferune." + rendered
 			out = append(out, saferuneRef{
-				key:    key,
-				pos:    fset.Position(sel.Pos()).String(),
-				pkgDir: pkgDir,
-				bare:   bare,
+				key:     key,
+				pos:     fset.Position(sel.Pos()).String(),
+				pkgDir:  pkgDir,
+				bare:    bare,
+				unowned: unit.blank,
 			})
 			return true
 		})
@@ -459,6 +557,10 @@ func saferuneRenderExpr(e ast.Expr) string {
 		return "*" + saferuneRenderExpr(v.X)
 	case *ast.CallExpr:
 		return saferuneRenderExpr(v.Fun) + "(" + saferuneJoinArgs(v.Args) + ")"
+	case *ast.BasicLit:
+		// Literals render by VALUE, so two calls with different literals cannot
+		// share a key.
+		return v.Value
 	case *ast.ArrayType:
 		if v.Len == nil {
 			return "[]" + saferuneRenderExpr(v.Elt)

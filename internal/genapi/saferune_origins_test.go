@@ -161,6 +161,7 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 		flat         int
 		unclassified []string
 		userTyped    []string
+		unownable    []string
 	)
 	seen := map[string]bool{}
 
@@ -209,13 +210,22 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 		// traversal, which is a positive control that shares the step it is
 		// supposed to be checking.
 		for _, decl := range genapiOwners(file, callee, &funcs) {
-			enclosing := decl.owner
+			enclosing, blank := decl.owner, decl.blank
 			ast.Inspect(decl.node, func(n ast.Node) bool {
 				ce := isGenapiCallTo(n, callee)
 				if ce == nil {
 					return true
 				}
 				sites++
+				if blank {
+					// Checked BEFORE the ledger and never against it: a site
+					// no name owns cannot be classified, and letting a row
+					// answer for it is the collision this guard exists to stop.
+					unownable = append(unownable,
+						fmt.Sprintf("%s: %s(%s) assigned to the blank identifier",
+							fset.Position(ce.Lparen), callee, genapiRenderExpr(ce.Args[0])))
+					return true
+				}
 				key := enclosing
 				if byArg {
 					key += ":" + genapiRenderExpr(ce.Args[0])
@@ -271,6 +281,17 @@ func checkGenapiCallLedger(t *testing.T, callee string, ledger map[string]genapi
 			"site with no owner can carry no ledger row, so every verdict below is about a subset "+
 			"nobody declared. Widen the attributing walk before trusting either half of this test.",
 			flat, callee, sites)
+	}
+
+	if len(unownable) > 0 {
+		sort.Strings(unownable)
+		t.Errorf("%d %s(...) call site(s) are assigned to the blank identifier:\n  %s\n\n"+
+			"`_` cannot own a ledger row: two `var _ = %s(…)` declarations are indistinguishable, "+
+			"so one row would vouch for both — which is the collision per-owner keying exists to "+
+			"prevent. Name the variable. This is checked structurally, not by the key's spelling: "+
+			"an earlier fix made the key a sentence and a row spelling that sentence walked "+
+			"straight past it.",
+			len(unownable), callee, strings.Join(unownable, "\n  "), callee)
 	}
 
 	if len(unclassified) > 0 {
@@ -373,6 +394,10 @@ func isGenapiCallTo(n ast.Node, callee string) *ast.CallExpr {
 type genapiOwner struct {
 	node  ast.Node
 	owner string
+	// blank marks an owner that is the blank identifier. It is carried as a
+	// FLAG rather than inferred from the key, so no ledger row can spell its
+	// way past it.
+	blank bool
 }
 
 // genapiOwners splits a file into the units a ledger row can name, so that
@@ -413,9 +438,31 @@ func genapiOwners(file *ast.File, callee string, funcs *int) []genapiOwner {
 					out = append(out, genapiOwner{node: spec, owner: genapiFileLevel})
 					continue
 				}
+				// 🔴 ONE OWNER PER VALUE, PAIRED BY INDEX — vs.Names[0] WAS
+				// WRONG IN TWO WAYS AND AN AUDIT DEMONSTRATED BOTH.
+				// `var a, b = dedupeReasons(x), dedupeReasons(y)` is ONE
+				// ValueSpec with two names: keying on Names[0] gave both call
+				// sites the key `<file-level>:a`, so one row covered both AND
+				// the second site was reported under the wrong variable's name.
+				// Names[i] pairs with Values[i] whenever the counts match,
+				// which is the only shape that can hold two calls.
+				if len(vs.Names) == len(vs.Values) {
+					for i, name := range vs.Names {
+						out = append(out, genapiOwner{
+							node:  vs.Values[i],
+							owner: genapiValueOwner(name.Name),
+							blank: genapiBlankOwner(name.Name),
+						})
+					}
+					continue
+				}
+				// Counts differ (`var a, b = f()` — one multi-return call).
+				// One owner, named for the first variable: the single call
+				// genuinely does initialise all of them.
 				out = append(out, genapiOwner{
 					node:  vs,
-					owner: genapiFileLevel + ":" + vs.Names[0].Name,
+					owner: genapiValueOwner(vs.Names[0].Name),
+					blank: genapiBlankOwner(vs.Names[0].Name),
 				})
 			}
 		default:
@@ -424,3 +471,27 @@ func genapiOwners(file *ast.File, callee string, funcs *int) []genapiOwner {
 	}
 	return out
 }
+
+// genapiValueOwner renders the owner key for a package-level variable.
+//
+// 🔴 THE BLANK IDENTIFIER CANNOT OWN A ROW, AND THE FIRST TWO ATTEMPTS AT THAT
+// WERE BOTH WRONG. Measured: two separate `var _ = dedupeReasons(…)`
+// declarations both keyed `<file-level>:_`, and one ledger row for that key made
+// the test PASS with two unexamined callers in the tree — the exact defect
+// per-owner keying exists to prevent, one level further down than the walk it
+// was introduced to fix.
+//
+// The SECOND attempt made the key a sentence a row was not supposed to spell
+// ("the blank identifier cannot own a ledger row — name the variable"). That is
+// a SPELLED guard, and it failed its own mutant immediately: a row spelling that
+// exact string covered both sites and the suite went green. A key is a string;
+// any string a row can be written with is a string a row can be written with.
+//
+// So blankness is STRUCTURE, not a word: genapiBlankOwner reports it, the caller
+// collects those sites in their own bucket, and they fail INDEPENDENTLY of the
+// ledger. No row can reach them.
+func genapiValueOwner(name string) string { return genapiFileLevel + ":" + name }
+
+// genapiBlankOwner reports whether an owner key belongs to a blank identifier —
+// asked of the NAME, not of the rendered key, so it cannot be spelled around.
+func genapiBlankOwner(name string) bool { return name == "_" }

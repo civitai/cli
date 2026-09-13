@@ -159,9 +159,14 @@ var scannedExts = map[string]bool{
 // The first draft of this comment named it — and THIS TEST FAILED ON ITS OWN
 // DOC COMMENT, because the scan reads `.go` files for `item N` and cannot tell a
 // comment from a citation. Exactly the hazard the paragraph describes, produced
-// by describing it. The same constraint is recorded against
-// `agents_evidence_test.go`, whose own source comment says a brief must not name
-// the next free number either. Describe it; do not write it.
+// by describing it. Describe the number; do not write it.
+//
+// ⚠ An earlier draft of THIS paragraph sourced that rule to
+// `agents_evidence_test.go` — wrongly. That file records a different constraint,
+// about decisions-file PATHS, and says nothing about item numbers; a maintainer
+// following the pointer would have found nothing and concluded the rule was
+// invented. The constraint actually lives a few lines below, in parseAgentsItems,
+// which is what makes an out-of-range number fatal.
 //
 // `skipDirsForSourceScan` in agents_evidence_test.go — same package, same
 // question — has always included it. Two spellings of one predicate, disagreeing
